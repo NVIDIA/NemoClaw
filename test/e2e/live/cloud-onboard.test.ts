@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
@@ -111,7 +112,9 @@ function publicInstallRef(): string {
   return process.env.NEMOCLAW_PUBLIC_INSTALL_REF || process.env.GITHUB_SHA || "main";
 }
 
-test("cloud onboard: public installer creates healthy sandbox with security checks", {
+test(
+  "cloud onboard: public installer creates healthy sandbox with security checks",
+  {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -126,7 +129,16 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
       "remove cloud sandbox",
     ],
   },
-}, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({
+    artifacts,
+    cleanup: cleanupRegistry,
+    host,
+    progress,
+    runtimeProvider,
+    sandbox,
+    secrets,
+  }) => {
   const hosted = requireHostedInferenceConfig(secrets);
   const ref = publicInstallRef();
   const installUrl =
@@ -160,6 +172,9 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
     corporateCaSource: corporateCa.sourceLabel,
     contracts: [
       "public curl installer uses GitHub clone path for the requested ref",
+      ...(runtimeProvider.id === "podman"
+        ? ["public installer leaves Docker unavailable during native Podman onboarding"]
+        : []),
       "ordinary cloud onboard migrates an allowlisted legacy credential through the real gateway",
       "tampered non-credential legacy fields do not become gateway providers",
       "successful onboard removes plaintext credentials.json",
@@ -172,15 +187,10 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
     ],
   });
 
-  const docker = await host.command("docker", ["info"], {
+    await runtimeProvider.requireAvailable({
     artifactName: "phase-0-docker-info",
-    env: testEnv(),
-    timeoutMs: 30_000,
+      scenarioLabel: "cloud onboarding",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
-    skip(`Docker is required: ${resultText(docker)}`);
-  }
 
   cleanupRegistry.trackDisposable("remove cloud-onboard sandbox", () =>
     cleanup(host, sandbox, { home: testHome, label: "cleanup", verify: true }),
@@ -218,10 +228,18 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
         NEMOCLAW_REASONING: "true",
       }),
       redactionValues,
-      timeoutMs: 25 * 60_000,
+      timeoutMs: execTimeout(25 * 60_000),
     },
   );
   expect(install.exitCode, resultText(install)).toBe(0);
+  const dockerAfterInstall = await host.command("bash", ["-lc", "command -v docker"], {
+    artifactName: "phase-1-docker-cli-after-public-install",
+    env: testEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(dockerAfterInstall.exitCode === 0, resultText(dockerAfterInstall)).toBe(
+    runtimeProvider.id === "docker",
+  );
   assertStockManagedImageReceipt({
     environment: testEnv(),
     expectedAgent: "openclaw",
@@ -235,9 +253,10 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   if (ref !== "main") expect(resultText(install)).toContain(`Resolved install ref: ${ref}`);
 
   progress.phase("verify migrated gateway credential");
-  expect(fs.existsSync(legacyFile), "successful onboard must remove legacy credentials.json").toBe(
-    false,
-  );
+    expect(
+      fs.existsSync(legacyFile),
+      "successful onboard must remove legacy credentials.json",
+    ).toBe(false);
   const providers = await host.command(
     "openshell",
     ["-g", "nemoclaw", "provider", "list", "--names"],
@@ -361,4 +380,5 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
         !providerNames.includes("OPENSHELL_GATEWAY") && !providerNames.includes("NODE_OPTIONS"),
     },
   });
-});
+  },
+);

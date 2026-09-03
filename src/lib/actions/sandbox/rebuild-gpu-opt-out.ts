@@ -106,6 +106,8 @@ export type RebuildRecreateOnboardOpts = {
   nonInteractive: true;
   recreateSandbox: true;
   authoritativeResumeConfig: true;
+  /** Internal permission granted only by a validated prepared-backup recovery. */
+  allowRemovedImmutabilityStateRecord?: true;
   endpointSource?: InferenceEndpointSource | null;
   acceptThirdPartySoftware: true;
   agent: string | null | undefined;

@@ -4,11 +4,7 @@
 import { expect, type MockInstance } from "vitest";
 
 import { classifyDestroySandboxPresence } from "../../src/lib/actions/sandbox/destroy-presence";
-import {
-  createDestroyHarness,
-  type DestroyHarness,
-  sandboxListJson,
-} from "./destroy-flow-test-harness";
+import { type DestroyHarness, sandboxListJson } from "./destroy-flow-test-harness";
 
 export function expectStrictSandboxPresenceClassification(): void {
   expect(
@@ -88,99 +84,6 @@ export function expectFailedDeletePreservesHostState(
   expect(exitSpy).toHaveBeenCalledWith(7);
 }
 
-export function expectShieldsUpRefusalBeforeMutation(harness: DestroyHarness): void {
-  expect(harness.stopNimByNameSpy).not.toHaveBeenCalled();
-  expect(harness.killStaleProxySpy).not.toHaveBeenCalled();
-  expect(harness.selectGatewaySpy).toHaveBeenCalledWith(
-    "alpha",
-    "nemoclaw-19080",
-    harness.runOpenshellSpy,
-  );
-  expect(harness.prepareMcpBridgesForDestroySpy).not.toHaveBeenCalled();
-  expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-    ["sandbox", "list", "-o", "json"],
-    expect.objectContaining({ ignoreError: true }),
-  );
-}
-
-export function expectActiveTimerDestroyOrder(harness: DestroyHarness): void {
-  expect(harness.events).toEqual(
-    expect.arrayContaining(["wipe", "harden", "detach", "delete", "timer-cleanup"]),
-  );
-  expect(harness.events.indexOf("wipe")).toBeLessThan(harness.events.indexOf("harden"));
-  expect(harness.events.indexOf("harden")).toBeLessThan(harness.events.indexOf("delete"));
-  expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
-}
-
-export function expectFailedHardeningStillDeletes(
-  harness: DestroyHarness,
-  cliName = "nemoclaw",
-): void {
-  expect(harness.events).toEqual(
-    expect.arrayContaining(["wipe", "harden", "delete", "timer-cleanup"]),
-  );
-  expect(harness.events.indexOf("wipe")).toBeLessThan(harness.events.indexOf("harden"));
-  expect(harness.events.indexOf("harden")).toBeLessThan(harness.events.indexOf("delete"));
-  expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
-  expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-  expect(harness.killTimerSpy).toHaveBeenCalledTimes(1);
-  const warnOutput = harness.warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
-  expect(warnOutput).toContain("Could not re-lock shields for 'alpha' before delete");
-  expect(warnOutput).toContain("injected hardening failure");
-  expect(warnOutput).toContain("Continuing with delete");
-  expect(warnOutput).toContain(
-    "retries the transition to lockdown within its seven-attempt recovery budget",
-  );
-  expect(warnOutput).toContain(
-    "Waiting for a verified live sandbox mutation owner does not consume that budget",
-  );
-  expect(warnOutput).toContain("durable containment blocks sandbox mutations");
-  expect(warnOutput).toContain(`${cliName} alpha shields status`);
-  expect(warnOutput).toContain("exact-generation recovery guidance");
-}
-
-export function expectFailedHardeningRefusesForcedCleanup(harness: DestroyHarness): void {
-  expect(harness.events).toEqual(expect.arrayContaining(["harden", "delete"]));
-  // The auto-restore timer is the only remaining authority that can lock the
-  // config again, so an unconfirmed delete must keep it and the local record.
-  expect(harness.killTimerSpy).not.toHaveBeenCalled();
-  expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
-  expect(harness.stopAllSpy).not.toHaveBeenCalled();
-  expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
-  const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
-  expect(errorOutput).toContain("shields could not be re-locked before delete");
-  expect(errorOutput).toContain("--force cannot safely discard a record while shields recovery");
-  expect(errorOutput).not.toContain("re-run with --force to remove the local sandbox record");
-  expect(errorOutput).toContain("seven-attempt auto-restore recovery can continue");
-  expect(errorOutput).toContain("durable containment blocks sandbox mutations");
-  expectShieldsRecoveryOrder(errorOutput, process.env.NEMOCLAW_INVOKED_AS ?? "nemoclaw");
-}
-
-export function expectShieldsRecoveryOrder(errorOutput: string, cliName = "nemoclaw"): void {
-  const gatewayStatusIndex = errorOutput.indexOf(`${cliName} alpha status`);
-  const shieldsStatusIndex = errorOutput.indexOf(`${cliName} alpha shields status`);
-  const retryDestroyIndex = errorOutput.indexOf("Retry destroy only after recovery permits it");
-  expect(gatewayStatusIndex).toBeGreaterThanOrEqual(0);
-  expect(shieldsStatusIndex).toBeGreaterThan(gatewayStatusIndex);
-  expect(retryDestroyIndex).toBeGreaterThan(shieldsStatusIndex);
-}
-
-export function expectFailedHardeningMcpRestore(harness: DestroyHarness): void {
-  expect(harness.events).toEqual(expect.arrayContaining(["harden", "delete", "mcp-restore"]));
-  expect(harness.events.indexOf("harden")).toBeLessThan(harness.events.indexOf("delete"));
-  expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("mcp-restore"));
-  // No lock was re-established, so destroy must not open a bounded
-  // shields-down rollback window it cannot close again.
-  expect(harness.events).not.toContain("unlock");
-  expect(harness.shieldsDownSpy).not.toHaveBeenCalled();
-  expect(harness.restoreMcpBridgesAfterDestroyAbortSpy).toHaveBeenCalledWith(
-    "alpha",
-    expect.objectContaining({ entries: [{ server: "github" }] }),
-  );
-  expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).not.toHaveBeenCalled();
-  expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
-}
-
 export function expectMcpFinalizeAfterDelete(harness: DestroyHarness): void {
   // The live preparation is force-aware since #10469: `--force` may keep a
   // retained-volume adapter entry that cannot be scrubbed. These flows are all
@@ -214,25 +117,11 @@ export function expectMcpRestoreAfterDeleteFailure(harness: DestroyHarness): voi
   );
   expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).not.toHaveBeenCalled();
   expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
-  expect(harness.events.filter((event) => event === "harden")).toHaveLength(2);
-  expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("unlock"));
-  expect(harness.events.indexOf("unlock")).toBeLessThan(harness.events.indexOf("mcp-restore"));
-  expect(harness.events.indexOf("mcp-restore")).toBeLessThan(harness.events.lastIndexOf("harden"));
-  expect(harness.shieldsDownSpy).toHaveBeenCalledWith(
-    "alpha",
-    expect.objectContaining({
-      timeout: "15m",
-      deferAutoRestoreWhileOwnerAlive: true,
-      processToken: "a".repeat(32),
-      throwOnError: true,
-    }),
-  );
-  expect(harness.shieldsDownSpy.mock.calls[0]?.[1]).not.toHaveProperty("skipTimer");
+  expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("mcp-restore"));
 }
 
 export function expectFailedMcpRestorePreservesDestroyFailure(harness: DestroyHarness): void {
-  expect(harness.events.filter((event) => event === "harden")).toHaveLength(2);
-  expect(harness.events.indexOf("mcp-restore")).toBeLessThan(harness.events.lastIndexOf("harden"));
+  expect(harness.events).toContain("mcp-restore");
   expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
 }
 

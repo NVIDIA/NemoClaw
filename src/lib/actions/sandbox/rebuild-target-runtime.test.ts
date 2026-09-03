@@ -145,6 +145,7 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
         selectedRoute,
         gatewayPort: 8080,
         log,
+        reverifyBridgeReachability: expect.any(Function),
       },
     );
     expect(bail).not.toHaveBeenCalled();

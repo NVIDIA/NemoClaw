@@ -357,7 +357,7 @@ function createAgentBaseImageResolutionOptions(
     forceRefresh: options.forceBaseImageRefresh,
     rootDir: ROOT,
     pinnedRemoteRef,
-    preferPinnedRemoteRef: agent.name === "hermes" && pinnedRemoteRef !== undefined,
+    requirePinnedRemoteRef: agent.name === "hermes" && pinnedRemoteRef !== undefined,
     ...validationOptions,
   };
 }
@@ -624,7 +624,7 @@ export function ensureAgentBaseImage(
           `Hermes final image does not accept base image ref '${pinnedBaseImageTag}'; use the tracked official digest or a repository-built local base`,
         );
       }
-      console.log(`  \u2713 Base image built: ${pinnedBaseImageTag}`);
+      console.log("  \u2713 Base image built.");
       const resolutionMetadata = createLocalResolutionMetadata(
         resolutionOptions,
         pinnedBaseImageTag,
@@ -711,7 +711,7 @@ export function ensureAgentBaseImage(
         : ` (exit ${buildResult.status ?? "unknown"})`;
       throw new Error(`Failed to build ${agent.displayName} base image${detail}`);
     }
-    console.log(`  \u2713 Base image built: ${baseImageTag}`);
+    console.log("  \u2713 Base image built.");
     const resolutionMetadata = createLocalResolutionMetadata(resolutionOptions, baseImageTag);
     return {
       imageTag: baseImageTag,
@@ -720,7 +720,7 @@ export function ensureAgentBaseImage(
     };
   }
 
-  console.log(`  Base image exists: ${baseImageTag}`);
+  console.log("  Base image exists.");
   const resolutionMetadata = createLocalResolutionMetadata(resolutionOptions, baseImageTag);
   return {
     imageTag: baseImageTag,

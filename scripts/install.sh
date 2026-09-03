@@ -3789,11 +3789,13 @@ run_installer_host_preflight() {
   local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
   local gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/gateway-management.js"
   local portable_profile_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/experimental/portable-profile.js"
+  local gateway_runtime_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/docker-driver-gateway-env.js"
   local host_readiness_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/host.js"
   local onboard_admission_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/onboard-admission.js"
   if ! command_exists node \
     || [[ ! -f "$preflight_module" ]] \
     || [[ ! -f "$gateway_management_module" ]] \
+    || [[ ! -f "$gateway_runtime_module" ]] \
     || [[ ! -f "$host_readiness_module" ]] \
     || [[ ! -f "$onboard_admission_module" ]]; then
     return 0
@@ -3810,6 +3812,7 @@ run_installer_host_preflight() {
       const onboardAdmissionPath = process.argv[3];
       const gatewayManagementPath = process.argv[4];
       const portableProfilePath = process.argv[5];
+      const gatewayRuntimePath = process.argv[6];
       let explicitlySelectedPortableProfile = false;
       try {
         const portableProfile = require(portableProfilePath);
@@ -3824,13 +3827,21 @@ run_installer_host_preflight() {
         const { createHostReadinessReport } = require(hostReadinessPath);
         const { evaluateOnboardReadinessAdmission } = require(onboardAdmissionPath);
         const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
+        const { configuredRuntimeProviderOwnsHostReadiness } = require(gatewayRuntimePath);
         const host = assessHost();
-        const actions = planHostAdvisories(host);
         const gatewayManagement = loadGatewayManagementDeclaration();
         const allowStorageRemediation =
           gatewayManagement.ok &&
           (gatewayManagement.declaration === null ||
             gatewayManagement.declaration?.mode === "nemoclaw-managed");
+        const selectedRuntimeOwnsHostReadiness =
+          configuredRuntimeProviderOwnsHostReadiness({
+            environment: process.env,
+            platform: process.platform,
+          });
+        const actions = planHostAdvisories(host, {
+          providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
+        });
         const readiness = createHostReadinessReport(
           { nemoclawVersion: "installer", sourceRevision: "installer" },
           {
@@ -3844,6 +3855,7 @@ run_installer_host_preflight() {
         const admission = evaluateOnboardReadinessAdmission(readiness, {
           explicitlyOptedOutGpuPassthrough: false,
           allowUnsupportedRuntime: explicitlySelectedPortableProfile,
+          providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
           // The installer starts a NemoClaw-managed onboarding flow. Let the
           // authoritative onboarding gate apply supported storage remediation,
           // but only when the gateway declaration confirms NemoClaw ownership.
@@ -3912,10 +3924,26 @@ run_installer_host_preflight() {
           process.stdout.write(`__ACTIONS__\n${actionLines.join("\n")}`);
         }
         process.exit(admission.admitted ? 0 : 10);
-      } catch {
-        process.exit(0);
+      } catch (error) {
+        const optionalModules = [
+          preflightPath,
+          hostReadinessPath,
+          onboardAdmissionPath,
+          gatewayManagementPath,
+          gatewayRuntimePath,
+        ];
+        const missingOptionalModule =
+          error?.code === "MODULE_NOT_FOUND" &&
+          optionalModules.some((modulePath) =>
+            String(error?.message || "").includes(modulePath)
+          );
+        if (missingOptionalModule) process.exit(0);
+        process.stderr.write(
+          `NemoClaw installer host preflight failed: ${error instanceof Error ? error.message : String(error)}\n`
+        );
+        process.exit(11);
       }
-    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module" "$portable_profile_module"
+    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module" "$portable_profile_module" "$gateway_runtime_module"
   )"; then
     status=0
   else
@@ -3947,7 +3975,7 @@ run_installer_host_preflight() {
     fi
   fi
 
-  [[ "$status" -ne 10 ]]
+  [[ "$status" -eq 0 ]]
 }
 
 recover_preexisting_sandboxes_before_onboard() {
@@ -4485,6 +4513,15 @@ prepare_portable_experimental_runtime_override() {
   info "Portable profile selected rootless Podman through DOCKER_HOST=${DOCKER_HOST}."
 }
 
+# Resolve the legacy Docker bootstrap requirement at the installer runtime
+# configuration boundary. Native managed Podman owns its host preparation via
+# the registered runtime provider; the portable experimental profile remains
+# on its existing Docker-CLI-over-Podman compatibility path.
+installer_requires_legacy_docker_bootstrap() {
+  [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]] && return 0
+  [[ "${NEMOCLAW_GATEWAY_RUNTIME:-docker}" != "podman" ]]
+}
+
 is_wsl_host() {
   if [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ]; then
     return 0
@@ -4620,15 +4657,14 @@ spark_fastos_release_is_trusted() {
 }
 
 n1x_pci_identity_is_valid() {
-  local vendor="" device="" pci_class=""
+  local vendor="" pci_class=""
   vendor="$(printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]')"
-  device="$(printf "%s" "${2:-}" | tr '[:upper:]' '[:lower:]')"
-  pci_class="$(printf "%s" "${3:-}" | tr '[:upper:]' '[:lower:]')"
-  [[ "$vendor" = "0x10de" && "$device" = "0x2e2a" && "$pci_class" =~ ^0x03[0-9a-f]{4}$ ]]
+  pci_class="$(printf "%s" "${2:-}" | tr '[:upper:]' '[:lower:]')"
+  [[ "$vendor" = "0x10de" && "$pci_class" =~ ^0x03[0-9a-f]{4}$ ]]
 }
 
 n1x_has_pci_gpu() {
-  local pci_root="" pci_device="" vendor="" device="" pci_class="" scanned=0
+  local pci_root="" pci_device="" vendor="" pci_class="" scanned=0
   pci_root="$(n1x_pci_devices_path)"
   [ -d "$pci_root" ] || return 1
   for pci_device in "$pci_root"/*; do
@@ -4636,15 +4672,13 @@ n1x_has_pci_gpu() {
     ((scanned += 1))
     [ "$scanned" -le 256 ] || return 1
     vendor="$(head -c 65 "$pci_device/vendor" 2>/dev/null)" || continue
-    device="$(head -c 65 "$pci_device/device" 2>/dev/null)" || continue
     pci_class="$(head -c 65 "$pci_device/class" 2>/dev/null)" || continue
-    if [ "${#vendor}" -gt 64 ] || [ "${#device}" -gt 64 ] || [ "${#pci_class}" -gt 64 ]; then
+    if [ "${#vendor}" -gt 64 ] || [ "${#pci_class}" -gt 64 ]; then
       continue
     fi
     vendor="${vendor//[[:space:]]/}"
-    device="${device//[[:space:]]/}"
     pci_class="${pci_class//[[:space:]]/}"
-    n1x_pci_identity_is_valid "$vendor" "$device" "$pci_class" && return 0
+    n1x_pci_identity_is_valid "$vendor" "$pci_class" && return 0
   done
   return 1
 }
@@ -5406,6 +5440,31 @@ express_wsl_can_use_windows_host_ollama() {
   express_wsl_docker_operating_system | grep -qi 'docker desktop'
 }
 
+# Select the accepted N1x WSL llama.cpp candidate only when Windows product
+# identity, WSL architecture, Docker Desktop locality, and the 48 GB GPU class
+# all match. Later readiness still requires container GPU proof before launch.
+express_wsl_can_use_n1x_managed_llama_cpp() {
+  express_wsl_can_use_windows_host_ollama || return 1
+  [ "$(uname -m 2>/dev/null | tr -d '[:space:]')" = "aarch64" ] || return 1
+  command_exists timeout || return 1
+  command_exists powershell.exe || return 1
+  command_exists nvidia-smi || return 1
+
+  local product_name=""
+  local memory_mb=""
+  product_name="$(timeout 10s powershell.exe -NoProfile -NonInteractive -Command '(Get-CimInstance Win32_ComputerSystem).Model' 2>/dev/null | tr -d '\r' | head -n 1)"
+  case "$product_name" in
+    *"RTX Spark N1X"*) ;;
+    *) return 1 ;;
+  esac
+
+  memory_mb="$(timeout 10s nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d '[:space:]')"
+  case "$memory_mb" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "$memory_mb" -ge 48000 ]
+}
+
 # True when a readable Docker configuration decides the context but no Node.js can
 # parse it yet. The express prompt runs before install_nodejs, so treating that
 # window as non-local pinned WSL-local Ollama on hosts whose Docker Desktop
@@ -5421,8 +5480,14 @@ express_wsl_docker_context_needs_node() {
 
 # Choose between Windows-host and WSL-local Ollama, or defer when only the
 # missing Node.js runtime blocks the decision.
-select_express_wsl_ollama_provider() {
+select_express_wsl_provider() {
   _EXPRESS_WSL_PROVIDER_PENDING=""
+  unset NEMOCLAW_LLAMACPP_RECIPE
+  if express_wsl_can_use_n1x_managed_llama_cpp; then
+    export NEMOCLAW_PROVIDER=install-llama-cpp
+    export NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1
+    return 0
+  fi
   if express_wsl_can_use_windows_host_ollama; then
     export NEMOCLAW_PROVIDER=install-windows-ollama
     return 0
@@ -5439,13 +5504,18 @@ select_express_wsl_ollama_provider() {
 resolve_pending_express_wsl_provider() {
   [ "${_EXPRESS_WSL_PROVIDER_PENDING:-}" = "1" ] || return 0
   _EXPRESS_WSL_PROVIDER_PENDING=""
-  if express_wsl_can_use_windows_host_ollama; then
-    export NEMOCLAW_PROVIDER=install-windows-ollama
-    info "Express install will configure Windows-host Ollama through host.docker.internal."
-  else
-    export NEMOCLAW_PROVIDER=install-ollama
-    info "Express install will configure WSL-local Ollama."
-  fi
+  select_express_wsl_provider
+  case "${NEMOCLAW_PROVIDER:-}" in
+    install-llama-cpp)
+      info "Express install will configure managed Qwen 3.6 35B with llama.cpp on N1x WSL."
+      ;;
+    install-windows-ollama)
+      info "Express install will configure Windows-host Ollama through host.docker.internal."
+      ;;
+    *)
+      info "Express install will configure WSL-local Ollama."
+      ;;
+  esac
 }
 
 select_spark_express_inference() {
@@ -5531,7 +5601,7 @@ activate_express_install() {
       configure_station_express_model
       ;;
     "Windows WSL")
-      select_express_wsl_ollama_provider
+      select_express_wsl_provider
       ;;
   esac
 }
@@ -5933,7 +6003,9 @@ prepare_installer_host() {
   # generic Docker bootstrap; ensure_station_express_host is a no-op elsewhere.
   ensure_station_express_host
   prepare_portable_experimental_runtime_override
-  ensure_docker
+  if installer_requires_legacy_docker_bootstrap; then
+    ensure_docker
+  fi
   ensure_openshell_build_deps
 }
 
@@ -6013,10 +6085,14 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
-      if express_wsl_can_use_windows_host_ollama; then
+      if express_wsl_can_use_n1x_managed_llama_cpp; then
+        show_hf_authentication="1"
+        inference_summary="managed Qwen 3.6 35B with llama.cpp on N1x WSL"
+        inference_disclosure="Managed llama.cpp downloads a pinned 20.4 GB GGUF file before it starts the loopback-only authenticated server."
+      elif express_wsl_can_use_windows_host_ollama; then
         inference_summary="Windows-host Ollama through host.docker.internal"
       elif express_wsl_docker_context_needs_node; then
-        inference_summary="local Ollama, selected once the installed Node.js runtime reads the Docker configuration"
+        inference_summary="local inference, selected once the installed Node.js runtime reads the Docker configuration"
       else
         inference_summary="WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback"
       fi

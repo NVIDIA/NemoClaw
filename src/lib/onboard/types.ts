@@ -132,6 +132,8 @@ export type OnboardOptions = {
     "prompt" | "sandboxName"
   >;
   authoritativeResumeConfig?: boolean;
+  /** Internal permission granted only by a validated prepared-backup rebuild. */
+  allowRemovedImmutabilityStateRecord?: true;
   /** Internal endpoint provenance preserved across an authoritative rebuild. */
   endpointSource?: import("../inference/selection").InferenceEndpointSource | null;
   /** Internal authoritative rebuild target; never exposed as a public CLI option. */
