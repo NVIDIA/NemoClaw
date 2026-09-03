@@ -11,6 +11,7 @@ import { resolveOpenshell } from "../../../src/lib/adapters/openshell/resolve.ts
 import { resolveOrdinaryOpenClawPairingTarget } from "../../../src/lib/actions/sandbox/launch-readiness.ts";
 import { pullAndResolveBaseImageDigest } from "../../../src/lib/onboard/base-image.ts";
 import { loadSession } from "../../../src/lib/state/onboard-session.ts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -51,7 +52,8 @@ import {
 
 const WEATHER_FIXTURE_DIR = path.join(REPO_ROOT, "test/e2e/fixtures/plugins/weather");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-exdev";
-const ONBOARD_TIMEOUT_MS = 25 * 60_000;
+const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
+const LIVE_TIMEOUT_MS = testTimeout(65 * 60_000);
 const PROBE_TIMEOUT_MS = 60_000;
 const EXDEV_TMPFS_MOUNT = "/tmp/nemoclaw-exdev-tmpfs";
 const EXDEV_TMPFS_SOURCE = `${EXDEV_TMPFS_MOUNT}/source`;
@@ -349,7 +351,7 @@ async function requireDocker(
 test(
   "the current-lifecycle custom plugin survives restart and recreation without EXDEV failures (#6108)",
   {
-    timeout: ONBOARD_TIMEOUT_MS * 2 + 15 * 60_000,
+    timeout: LIVE_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm Docker CLI and clear the current plugin sandbox",

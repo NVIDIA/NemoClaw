@@ -71,7 +71,11 @@ describe("Pi qualification receipt refresh", () => {
 
   function run(
     changedPaths: readonly string[],
-    options: { accepted?: ReadonlySet<string>; sourceParity?: boolean } = {},
+    options: {
+      accepted?: ReadonlySet<string>;
+      headRevision?: string;
+      sourceParity?: boolean;
+    } = {},
   ): void {
     checkPiQualificationReceiptRefresh({
       acceptedDigests: options.accepted ?? acceptedDigests,
@@ -82,12 +86,17 @@ describe("Pi qualification receipt refresh", () => {
           : args.includes("--name-only")
             ? { status: 0, stdout: `${changedPaths.join("\0")}\0` }
             : args.includes("--quiet")
-              ? { status: options.sourceParity === false ? 1 : 0, stdout: "" }
+              ? args[3] === (options.headRevision ?? "HEAD")
+                ? { status: options.sourceParity === false ? 1 : 0, stdout: "" }
+                : (() => {
+                    throw new Error(`Unexpected comparison revision: ${args[3]}`);
+                  })()
               : (() => {
                   throw new Error(`Unexpected git arguments: ${args.join(" ")}`);
                 })(),
       receipts: RECEIPTS,
       rootDir,
+      headRevision: options.headRevision ?? "HEAD",
     });
   }
 
@@ -117,6 +126,15 @@ describe("Pi qualification receipt refresh", () => {
   it("accepts refreshed receipts when image sources match the receipt revision", () => {
     expect(() =>
       run(["protected/app/config.json", ...RECEIPTS.map(({ path: receiptPath }) => receiptPath)]),
+    ).not.toThrow();
+  });
+
+  it("compares receipt parity against the exact PR head instead of a synthetic merge", () => {
+    const headRevision = "d".repeat(40);
+    expect(() =>
+      run(["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)], {
+        headRevision,
+      }),
     ).not.toThrow();
   });
 

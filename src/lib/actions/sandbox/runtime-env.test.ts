@@ -12,23 +12,25 @@ import {
   wrapOpenClawAgentCommandWithRuntimeEnv,
 } from "./runtime-env";
 
-const TEST_PATH = `${path.dirname(process.execPath)}:/usr/bin:/bin`;
+const BASH_WRAPPER_ARGV_PREFIX = ["--noprofile", "--norc", "-p", "-c"] as const;
+const RUNTIME_ENV_EXEC_SCRIPT =
+  'if [ -r "/tmp/nemoclaw-proxy-env.sh" ]; then builtin source "/tmp/nemoclaw-proxy-env.sh" || exit $?; fi; builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"';
+const OPENCLAW_AGENT_RUNTIME_ENV_EXEC_SCRIPT =
+  'if [ -r "/tmp/nemoclaw-proxy-env.sh" ]; then builtin source "/tmp/nemoclaw-proxy-env.sh" || exit $?; fi; builtin unset OPENCLAW_GATEWAY_TOKEN; builtin export NODE_OPTIONS="${NODE_OPTIONS:+${NODE_OPTIONS} }--disable-warning=UNDICI-EHPA"; builtin exec -- "$@"';
+
+function trustedRuntimeEnvArgv(
+  command: readonly string[],
+  script = RUNTIME_ENV_EXEC_SCRIPT,
+): string[] {
+  return [...BASH_WRAPPER_ARGV_PREFIX, script, "nemoclaw-runtime-env", ...command];
+}
 
 describe("wrapExecCommandWithRuntimeEnv", () => {
   it("sources the trusted runtime env and preserves each original argv element (#4504)", () => {
     const command = ["openclaw", "agent", "-m", "hello world", "quote'and\"double"];
     const wrapped = wrapExecCommandWithRuntimeEnv(command);
 
-    expect(wrapped).toEqual([
-      "/bin/bash",
-      "--noprofile",
-      "--norc",
-      "-p",
-      "-c",
-      'if [ -r "/tmp/nemoclaw-proxy-env.sh" ]; then builtin source "/tmp/nemoclaw-proxy-env.sh" || exit $?; fi; builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"',
-      "nemoclaw-runtime-env",
-      ...command,
-    ]);
+    expect(wrapped).toEqual(["/bin/bash", ...trustedRuntimeEnvArgv(command)]);
     expect(wrapped[5]).not.toMatch(/[\r\n]/);
   });
 
@@ -40,16 +42,19 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
       `single ' and double " quotes`,
       "cat <<'EOF'\nline one\nline 'two'\nEOF",
     ];
-    const wrapped = wrapExecCommandWithRuntimeEnv([
+    const command = [
       "node",
       "-e",
       "process.stdout.write(JSON.stringify(process.argv.slice(1)))",
       ...payloads,
-    ]);
+    ];
+    const wrapped = wrapExecCommandWithRuntimeEnv(command);
+    const trustedArgv = trustedRuntimeEnvArgv(command);
+    expect(wrapped).toEqual(["/bin/bash", ...trustedArgv]);
 
-    const result = spawnSync(wrapped[0], wrapped.slice(1), {
+    const result = spawnSync("/bin/bash", trustedArgv, {
       encoding: "utf-8",
-      env: { PATH: TEST_PATH },
+      env: { ...process.env },
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -57,14 +62,17 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
   });
 
   it("removes OPENCLAW_GATEWAY_TOKEN from the executed command environment (#6291)", () => {
-    const wrapped = wrapExecCommandWithRuntimeEnv([
+    const command = [
       "/bin/sh",
       "-c",
       'printf "TOKEN=[%s]" "${OPENCLAW_GATEWAY_TOKEN:-}"',
-    ]);
-    const result = spawnSync(wrapped[0], wrapped.slice(1), {
+    ];
+    const wrapped = wrapExecCommandWithRuntimeEnv(command);
+    const trustedArgv = trustedRuntimeEnvArgv(command);
+    expect(wrapped).toEqual(["/bin/bash", ...trustedArgv]);
+    const result = spawnSync("/bin/bash", trustedArgv, {
       encoding: "utf-8",
-      env: { PATH: TEST_PATH, OPENCLAW_GATEWAY_TOKEN: "super-secret-gateway-token" },
+      env: { ...process.env, OPENCLAW_GATEWAY_TOKEN: "super-secret-gateway-token" },
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -73,15 +81,18 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
   });
 
   it("preserves required non-credential proxy and gateway routing metadata", () => {
-    const wrapped = wrapExecCommandWithRuntimeEnv([
+    const command = [
       "/bin/sh",
       "-c",
       'printf "%s|%s|%s" "$HTTP_PROXY" "$NEMOCLAW_OPENCLAW_GATEWAY_URL" "$NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS"',
-    ]);
-    const result = spawnSync(wrapped[0], wrapped.slice(1), {
+    ];
+    const wrapped = wrapExecCommandWithRuntimeEnv(command);
+    const trustedArgv = trustedRuntimeEnvArgv(command);
+    expect(wrapped).toEqual(["/bin/bash", ...trustedArgv]);
+    const result = spawnSync("/bin/bash", trustedArgv, {
       encoding: "utf-8",
       env: {
-        PATH: TEST_PATH,
+        ...process.env,
         HTTP_PROXY: "http://10.200.0.1:3128",
         NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: "1",
         NEMOCLAW_OPENCLAW_GATEWAY_URL: "ws://10.200.0.2:18789",
@@ -98,12 +109,15 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exec-bash-env-"));
     const bashEnv = path.join(root, "bash-env.sh");
     fs.writeFileSync(bashEnv, 'printf "BASH_ENV_RAN"\n');
-    const wrapped = wrapExecCommandWithRuntimeEnv(["/usr/bin/printf", "%s", "COMMAND_RAN"]);
+    const command = ["/usr/bin/printf", "%s", "COMMAND_RAN"];
+    const wrapped = wrapExecCommandWithRuntimeEnv(command);
+    const trustedArgv = trustedRuntimeEnvArgv(command);
+    expect(wrapped).toEqual(["/bin/bash", ...trustedArgv]);
 
     try {
-      const result = spawnSync(wrapped[0], wrapped.slice(1), {
+      const result = spawnSync("/bin/bash", trustedArgv, {
         encoding: "utf-8",
-        env: { PATH: TEST_PATH, BASH_ENV: bashEnv },
+        env: { ...process.env, BASH_ENV: bashEnv },
       });
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toBe("COMMAND_RAN");
@@ -113,23 +127,23 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
   });
 
   it("does not reinterpret a command-leading exec option (#4504)", () => {
-    const wrapped = wrapExecCommandWithRuntimeEnv([
+    const command = [
       "-a",
       "spoofed-argv-zero",
       "/usr/bin/printf",
       "SHOULD_NOT_RUN",
-    ]);
-    const result = spawnSync(wrapped[0], wrapped.slice(1), {
-      encoding: "utf-8",
-      env: { PATH: TEST_PATH },
-    });
+    ];
+    const wrapped = wrapExecCommandWithRuntimeEnv(command);
+    const trustedArgv = trustedRuntimeEnvArgv(command);
+    expect(wrapped).toEqual(["/bin/bash", ...trustedArgv]);
+    const result = spawnSync("/bin/bash", trustedArgv, { encoding: "utf-8" });
 
     expect(result.status).toBe(127);
     expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
   });
 
   it("suppresses only the UNDICI-EHPA warning for OpenClaw agent commands (#8975)", () => {
-    const wrapped = wrapOpenClawAgentCommandWithRuntimeEnv([
+    const command = [
       "node",
       "-e",
       [
@@ -137,10 +151,13 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
         'process.emitWarning("proxy warning", { code: "UNDICI-EHPA" });',
         'process.emitWarning("other warning", { code: "NEMOCLAW-TEST" });',
       ].join(""),
-    ]);
-    const result = spawnSync(wrapped[0], wrapped.slice(1), {
+    ];
+    const wrapped = wrapOpenClawAgentCommandWithRuntimeEnv(command);
+    const trustedArgv = trustedRuntimeEnvArgv(command, OPENCLAW_AGENT_RUNTIME_ENV_EXEC_SCRIPT);
+    expect(wrapped).toEqual(["/bin/bash", ...trustedArgv]);
+    const result = spawnSync("/bin/bash", trustedArgv, {
       encoding: "utf-8",
-      env: { PATH: TEST_PATH, OPENCLAW_GATEWAY_TOKEN: "test-gateway-token" },
+      env: { ...process.env, OPENCLAW_GATEWAY_TOKEN: "test-gateway-token" },
     });
 
     expect(result.status, result.stderr).toBe(0);

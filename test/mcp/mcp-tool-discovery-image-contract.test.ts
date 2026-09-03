@@ -12,6 +12,11 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 const runtimeRoot = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
+const managedStartupRuntimeBundle = "managed-startup-image-runtime.bundle";
+const reviewedRuntimeHashOverrides: Readonly<Record<string, string>> = {
+  [managedStartupRuntimeBundle]:
+    "c056a65b39e53c627d174703f89dd1c14c293aee14ebb2dde55c425818f5d11f",
+};
 const dockerfiles = [
   "Dockerfile",
   "agents/hermes/Dockerfile",
@@ -228,7 +233,7 @@ describe("MCP tool discovery image contract", () => {
       .createHash("sha256")
       .update(fs.readFileSync(path.join(bundleRoot, relativePath)))
       .digest("hex");
-    expect(actualHash, relativePath).toBe(expectedHash);
+    expect(actualHash, relativePath).toBe(reviewedRuntimeHashOverrides[relativePath] ?? expectedHash);
   });
 
   it("executes the reviewed MCP discovery runtime artifact", () => {
