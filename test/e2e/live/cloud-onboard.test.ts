@@ -172,6 +172,9 @@ test(
     corporateCaSource: corporateCa.sourceLabel,
     contracts: [
       "public curl installer uses GitHub clone path for the requested ref",
+      ...(runtimeProvider.id === "podman"
+        ? ["public installer leaves Docker unavailable during native Podman onboarding"]
+        : []),
       "ordinary cloud onboard migrates an allowlisted legacy credential through the real gateway",
       "tampered non-credential legacy fields do not become gateway providers",
       "successful onboard removes plaintext credentials.json",
@@ -229,6 +232,14 @@ test(
     },
   );
   expect(install.exitCode, resultText(install)).toBe(0);
+  const dockerAfterInstall = await host.command("bash", ["-lc", "command -v docker"], {
+    artifactName: "phase-1-docker-cli-after-public-install",
+    env: testEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(dockerAfterInstall.exitCode === 0, resultText(dockerAfterInstall)).toBe(
+    runtimeProvider.id === "docker",
+  );
   assertStockManagedImageReceipt({
     environment: testEnv(),
     expectedAgent: "openclaw",
