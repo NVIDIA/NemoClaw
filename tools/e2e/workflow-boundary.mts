@@ -1085,6 +1085,7 @@ function validateCloudOnboardDockerAbsenceBoundary(
   requireRunContains(errors, hideDockerForPodman, 'sudo mv -- "${docker_cli}" "${disabled_path}"');
   requireRunContains(errors, hideDockerForPodman, "if command -v docker >/dev/null 2>&1");
   requireRunContains(errors, hideDockerForPodman, "dockerClientAvailable: false");
+  requireRunContains(errors, hideDockerForPodman, "NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s");
   requireRunContains(errors, hideDockerForPodman, "NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH=%s");
   requireRunContains(
     errors,

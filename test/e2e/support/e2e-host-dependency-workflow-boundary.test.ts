@@ -222,6 +222,10 @@ exit 64
       "if command -v docker >/dev/null 2>&1",
       "if command -v docker-does-not-exist >/dev/null 2>&1",
     );
+    hide.run = hide.run?.replace(
+      "NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s",
+      "NEMOCLAW_E2E_DISABLED_DOCKER_CLI_MISSING=%s",
+    );
     restore.run = restore.run?.replace(
       'sudo mv -- "${disabled_path}" "${restore_path}"',
       'sudo mv -- "${disabled_path}" "${restore_path}.wrong"',
@@ -230,6 +234,7 @@ exit 64
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "step 'Hide Docker CLI from native Podman public install' run script must include if command -v docker >/dev/null 2>&1",
+        "step 'Hide Docker CLI from native Podman public install' run script must include NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s",
         'step \'Restore Docker CLI after native Podman public install\' run script must include sudo mv -- "${disabled_path}" "${restore_path}"',
       ]),
     );
