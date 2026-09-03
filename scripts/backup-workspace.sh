@@ -62,12 +62,12 @@ download_backup_item() {
     status=$?
   fi
 
-  local missing_message="Cannot download '${remote_path}' from sandbox '${sandbox}': no such path in the sandbox."
-  if [ "$optional" = "1" ] && [[ "$output" == *"$missing_message"* ]]; then
+  if [ "$optional" = "1" ] && [ "$status" -eq 2 ]; then
     return 2
   fi
 
   [ -z "$output" ] || printf '%s\n' "$output" >&2
+  [ "$status" -ne 2 ] || return 1
   return "$status"
 }
 

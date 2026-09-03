@@ -33,7 +33,7 @@ import {
   OPENSHELL_PROBE_TIMEOUT_MS,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
-import { downloadFromSandbox } from "./download";
+import { downloadFromSandbox, SandboxDownloadSourceMissingError } from "./download";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
 import { publishDownloadArtifact } from "./sessions/download-verify";
 
@@ -143,9 +143,15 @@ describe("downloadFromSandbox", () => {
   it("rejects a missing sandbox source before attempting the download (#7367)", async () => {
     captureMock.mockReturnValue({ status: 0, output: "missing" });
 
-    await expect(
-      downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/nope", hostDest: "./o" }),
-    ).rejects.toThrow(/no such path in the sandbox/);
+    const error = await downloadFromSandbox({
+      sandboxName: "alpha",
+      sandboxPath: "/sandbox/nope",
+      hostDest: "./o",
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(SandboxDownloadSourceMissingError);
+    expect(error).toMatchObject({ exitCode: 2 });
+    expect((error as Error).message).toMatch(/no such path in the sandbox/);
     expect(runMock).not.toHaveBeenCalled();
   });
 
@@ -200,6 +206,39 @@ describe("downloadFromSandbox", () => {
             hostDest: "./o",
           }),
         ).rejects.toThrow(/directory contains an entry that is not a regular file or directory/);
+        expect(runMock).not.toHaveBeenCalled();
+        expect(publishMock).not.toHaveBeenCalled();
+      } finally {
+        await fs.promises.rm(probeRoot, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform !== "win32").each(["linked/", "linked/."])(
+    "rejects a directory source link written as %s before download (#10636)",
+    async (sandboxPath) => {
+      const probeRoot = await fs.promises.mkdtemp(
+        path.join(os.tmpdir(), "nemoclaw-download-root-link-probe-"),
+      );
+      try {
+        const target = path.join(probeRoot, "target");
+        await fs.promises.mkdir(target);
+        await fs.promises.writeFile(path.join(target, "inside.txt"), "target contents");
+        await fs.promises.symlink(target, path.join(probeRoot, "linked"));
+
+        captureMock.mockImplementation((args: string[]) => {
+          const separator = args.indexOf("--");
+          const command = args.slice(separator + 1);
+          const probe = childProcess.spawnSync(command[0], command.slice(1), {
+            cwd: probeRoot,
+            encoding: "utf8",
+          });
+          return { status: probe.status, output: probe.stdout };
+        });
+
+        await expect(
+          downloadFromSandbox({ sandboxName: "alpha", sandboxPath, hostDest: "./o" }),
+        ).rejects.toThrow(/source is not a regular file or directory/);
         expect(runMock).not.toHaveBeenCalled();
         expect(publishMock).not.toHaveBeenCalled();
       } finally {

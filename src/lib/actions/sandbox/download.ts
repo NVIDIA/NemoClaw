@@ -28,7 +28,16 @@ import {
 // Probe failures fail closed.
 const SANDBOX_SOURCE_PROBE_SCRIPT = [
   "p=$1",
-  'if [ -L "$p" ]; then printf unsupported; exit 0; fi',
+  "link_probe=$p",
+  'while [ "$link_probe" != "/" ]; do',
+  '  case "$link_probe" in',
+  '    */.) link_probe=${link_probe%/.} ;;',
+  '    */) link_probe=${link_probe%/} ;;',
+  "    *) break ;;",
+  "  esac",
+  '  [ -n "$link_probe" ] || link_probe=/',
+  "done",
+  'if [ -L "$link_probe" ]; then printf unsupported; exit 0; fi',
   'if [ -d "$p" ]; then',
   '  case "$p" in',
   "    /*) root=$p ;;",
@@ -89,6 +98,17 @@ export interface SandboxDownloadResult {
   hostDest: string;
 }
 
+export class SandboxDownloadSourceMissingError extends Error {
+  readonly exitCode = 2;
+
+  constructor(sandboxPath: string, sandboxName: string) {
+    super(
+      `Cannot download '${sandboxPath}' from sandbox '${sandboxName}': no such path in the sandbox.`,
+    );
+    this.name = "SandboxDownloadSourceMissingError";
+  }
+}
+
 export async function downloadFromSandbox(
   opts: SandboxDownloadOptions,
 ): Promise<SandboxDownloadResult> {
@@ -123,9 +143,7 @@ async function downloadFromSandboxUnlocked(
   // before it publishes anything to the requested host destination.
   const sourceKind = probeSandboxSourceKind(opts.sandboxName, sandboxPath);
   if (sourceKind === "missing") {
-    throw new Error(
-      `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': no such path in the sandbox.`,
-    );
+    throw new SandboxDownloadSourceMissingError(sandboxPath, opts.sandboxName);
   }
   if (sourceKind === "unsupported") {
     throw new Error(

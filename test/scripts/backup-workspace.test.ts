@@ -31,7 +31,7 @@ describe("backup-workspace.sh", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it("removes an incomplete backup when a declared file download fails (#10636)", () => {
+  it("removes an incomplete backup when a required file is absent (#10636)", () => {
     const calls = path.join(root, "nemoclaw-calls.txt");
     const openshellCalls = path.join(root, "openshell-calls.txt");
     const nemoclaw = path.join(bin, "nemoclaw");
@@ -41,8 +41,8 @@ describe("backup-workspace.sh", () => {
 set -euo pipefail
 printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$NEMOCLAW_TEST_CALLS"
 if [[ "$3" == */SOUL.md ]]; then
-  printf 'NEMOCLAW_TEST_REJECTED_DECLARED_FILE\n' >&2
-  exit 1
+  printf 'NEMOCLAW_TEST_REQUIRED_SOURCE_ABSENT\n' >&2
+  exit 2
 fi
 exit 99
 `,
@@ -70,7 +70,7 @@ exit 99
     });
 
     expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toContain("NEMOCLAW_TEST_REJECTED_DECLARED_FILE");
+    expect(result.stderr).toContain("NEMOCLAW_TEST_REQUIRED_SOURCE_ABSENT");
     expect(result.stderr).toContain("because SOUL.md was not downloaded");
     expect(fs.readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
 
@@ -175,8 +175,8 @@ set -euo pipefail
 printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$NEMOCLAW_TEST_CALLS"
 case "$3" in
   */MEMORY.md|*/memory/)
-    printf "Cannot download '%s' from sandbox '%s': no such path in the sandbox.\n" "$3" "$1" >&2
-    exit 1
+    printf 'NEMOCLAW_TEST_OPTIONAL_SOURCE_ABSENT\n' >&2
+    exit 2
     ;;
 esac
 mkdir -p "$4"
