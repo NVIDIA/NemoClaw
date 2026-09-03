@@ -1476,18 +1476,6 @@ async function runSnapshotRestoreUnlocked(
       snapshotTarget?.agent === "langchain-deepagents-code"
         ? Object.values(snapshotTarget.mcp?.bridges ?? {})
         : [];
-    if (managedDeepAgentsEntries.length > 0) {
-      try {
-        restoreDeepAgentsManagedMcpProjection(targetSandbox, managedDeepAgentsEntries);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        throw new SnapshotCommandError([
-          `Snapshot files were not restored into '${targetSandbox}'.`,
-          `The managed Deep Agents MCP projection at '/sandbox/.deepagents/.nemoclaw-mcp.json' could not be repaired: ${detail}`,
-          `Inspect that path in '${targetSandbox}'. If it is a directory, run \`${CLI_NAME} ${targetSandbox} exec -- mv -- /sandbox/.deepagents/.nemoclaw-mcp.json /sandbox/.nemoclaw-mcp.json.recovery\`, then rerun the snapshot restore command.`,
-        ]);
-      }
-    }
     const validateProviderRestoreBeforeMutation =
       preparedRuntimeRestore || preparedHostLocalInferenceRestore
         ? () => {
@@ -1528,17 +1516,44 @@ async function runSnapshotRestoreUnlocked(
             }
           }
         : null;
-    if (targetSandbox !== sandboxName) {
-      console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
-    } else {
-      console.log(`  Restoring snapshot into '${sandboxName}'...`);
-    }
     if (Boolean(snapshotRestoreAuthority) !== Boolean(validateProviderRestoreBeforeMutation)) {
       console.error(
         `  Cannot restore provider snapshot '${sandboxName}': content authority and the runtime mutation fence must both be present.`,
       );
       console.error(`  Destination '${targetSandbox}' was not changed.`);
       snapshotExit(1);
+    }
+    if (
+      managedDeepAgentsEntries.length > 0 &&
+      snapshotRestoreAuthority &&
+      validateProviderRestoreBeforeMutation
+    ) {
+      const authorityError = sandboxState.validateSnapshotRestoreMutation(backupPath, {
+        authority: snapshotRestoreAuthority,
+        validateBeforeMutation: validateProviderRestoreBeforeMutation,
+      });
+      if (authorityError) {
+        console.error(`  Cannot restore provider snapshot '${sandboxName}': ${authorityError}.`);
+        console.error(`  Destination '${targetSandbox}' was not changed.`);
+        snapshotExit(1);
+      }
+    }
+    if (managedDeepAgentsEntries.length > 0) {
+      try {
+        restoreDeepAgentsManagedMcpProjection(targetSandbox, managedDeepAgentsEntries);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new SnapshotCommandError([
+          `Snapshot files were not restored into '${targetSandbox}'.`,
+          `The managed Deep Agents MCP projection at '/sandbox/.deepagents/.nemoclaw-mcp.json' could not be repaired: ${detail}`,
+          `Inspect that path in '${targetSandbox}'. If it is a directory, run \`${CLI_NAME} ${targetSandbox} exec -- mv -- /sandbox/.deepagents/.nemoclaw-mcp.json /sandbox/.nemoclaw-mcp.json.recovery\`, then rerun the snapshot restore command.`,
+        ]);
+      }
+    }
+    if (targetSandbox !== sandboxName) {
+      console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
+    } else {
+      console.log(`  Restoring snapshot into '${sandboxName}'...`);
     }
     const result =
       snapshotRestoreAuthority && validateProviderRestoreBeforeMutation

@@ -13,6 +13,7 @@ import {
 import {
   MANAGED_HTTP_SERVER_MATCH_HELPERS,
   DEEPAGENTS_MCP_CONFIG_PATH,
+  buildDeepAgentsMcpRuntimeKindCommand,
   deepAgentsManagedServerConfig,
   pythonJsonLiteral,
 } from "./mcp-bridge-adapter-status";
@@ -264,12 +265,30 @@ export function restoreDeepAgentsManagedMcpProjection(
   const managedEntries = [...entries].sort((left, right) =>
     left.server.localeCompare(right.server),
   );
-  if (managedEntries.some((entry) => entry.adapter && entry.adapter !== "deepagents-config")) {
+  if (
+    managedEntries.some(
+      (entry) =>
+        entry.agent !== "langchain-deepagents-code" || entry.adapter !== "deepagents-config",
+    )
+  ) {
     throw new McpBridgeError(
       "Managed MCP projection repair requires Deep Agents registry entries.",
     );
   }
   const entry = managedEntries[0];
+  const runtimeKind = runDeepAgentsAdapterCommand(
+    sandboxName,
+    entry,
+    buildDeepAgentsMcpRuntimeKindCommand(),
+    "Could not identify the managed Deep Agents MCP runtime.",
+  )
+    .trim()
+    .split(/\r?\n/u)
+    .at(-1);
+  if (runtimeKind === "legacy") return;
+  if (runtimeKind !== "v2") {
+    throw new McpBridgeError("Could not identify the managed Deep Agents MCP runtime.");
+  }
   runDeepAgentsAdapterCommand(
     sandboxName,
     entry,

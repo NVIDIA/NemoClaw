@@ -226,6 +226,8 @@ The managed `.deepagents/.nemoclaw-mcp.json` projection and `hooks.json` are exc
 
 For a NemoClaw-managed Deep Agents image, NemoClaw restores only the allowlisted `ui.show_scrollbar`, `ui.show_url_open_toast`, `threads.relative_time`, and `threads.sort_order` preferences from the previous `config.toml` when their values pass validation. Unknown, runtime-controlled, executable, and security-sensitive backup keys are dropped instead of replacing freshly generated settings on that managed path.
 
+Before it restores snapshot files, NemoClaw reconstructs the managed MCP projection from the host registry. If `/sandbox/.deepagents/.nemoclaw-mcp.json` is a directory, the restore leaves snapshot files unchanged and prints a recovery command. Run that command to move the directory to the printed recovery name, then rerun the same snapshot restore command.
+
 A Deep Agents target created from a custom Dockerfile restores `config.toml` as a whole file because the custom image owns its config schema. On the managed key-level restore path, malformed config, missing managed data, an unsafe link, or an unsafe file replacement fails the restore without falling back to a whole-file copy.
 
 ### Validate Before Replacement

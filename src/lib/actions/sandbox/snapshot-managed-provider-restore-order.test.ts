@@ -221,6 +221,67 @@ describe("managed snapshot provider restore ordering", () => {
     );
     expect(providerRestore.confirmSandboxRuntimeRestore).not.toHaveBeenCalled();
   });
+
+  it("rejects changed provider authority before repairing the managed MCP projection (#10756)", async () => {
+    fixture.getLatestBackupMock.mockReturnValue(managedSnapshot("langchain-deepagents-code"));
+    fixture.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      openshellDriver: "docker",
+      mcp: {
+        bridges: {
+          github: {
+            server: "github",
+            agent: "langchain-deepagents-code",
+            adapter: "deepagents-config",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["GITHUB_TOKEN"],
+            providerName: "alpha-mcp-github",
+            policyName: "mcp-bridge-github",
+            addedAt: "2026-06-01T00:00:00.000Z",
+          },
+        },
+      },
+    });
+    providerRestore.readManagedSnapshotProfileAuthority.mockReturnValue({
+      agent: "langchain-deepagents-code",
+    });
+    providerRestore.prepareManagedSnapshotProfileRestore.mockReturnValue({
+      providerRestoreAuthority: {
+        agent: "langchain-deepagents-code",
+        profileFingerprint: "a".repeat(64),
+      },
+    });
+    providerRestore.prepareSandboxRuntimeRestore
+      .mockImplementationOnce(() => {
+        providerRestore.events.push("provider-preflight");
+        return {
+          phase: "preflighted",
+          targetProviderId: "docker",
+          targetSandboxName: "alpha",
+          source: providerRestore.source,
+          preflight: {},
+          managedProfile: {
+            agent: "langchain-deepagents-code",
+            profileFingerprint: "a".repeat(64),
+          },
+        };
+      })
+      .mockImplementationOnce(() => {
+        providerRestore.events.push("provider-preflight-rejected");
+        throw new Error("runtime changed before projection repair");
+      });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(providerRestore.events).toEqual(["provider-preflight", "provider-preflight-rejected"]);
+    expect(fixture.restoreDeepAgentsManagedMcpProjectionMock).not.toHaveBeenCalled();
+    expect(fixture.restoreSandboxStateMock).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith("  Destination 'alpha' was not changed.");
+  });
 });
 
 describe("legacy snapshot compatibility gate", () => {

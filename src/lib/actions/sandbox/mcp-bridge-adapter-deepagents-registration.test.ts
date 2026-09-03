@@ -1,13 +1,37 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   baseEntry,
   runDeepAgentsConfigCommand,
 } from "../../../../test/helpers/mcp-bridge-adapter-deepagents-fixture";
 import type { McpBridgeEntry } from "../../state/registry";
 import { buildDeepAgentsMcpRegisterCommand } from "./mcp-bridge-adapter-deepagents";
+import { restoreDeepAgentsManagedMcpProjection } from "./mcp-bridge-adapter-deepagents-registration";
+import { buildDeepAgentsMcpRuntimeKindCommand } from "./mcp-bridge-adapter-status";
+import { executeSandboxCommand } from "./process-recovery";
+
+vi.mock("./process-recovery", () => ({
+  executeSandboxCommand: vi.fn(),
+}));
+
+const executeSandboxCommandMock = vi.mocked(executeSandboxCommand);
+
+function jiraEntry(): McpBridgeEntry {
+  return {
+    ...baseEntry,
+    server: "jira",
+    url: "https://mcp.atlassian.com/v1/",
+    env: ["JIRA_MCP_TOKEN"],
+    providerName: "alpha-mcp-jira",
+    policyName: "mcp-bridge-jira",
+  };
+}
+
+beforeEach(() => {
+  executeSandboxCommandMock.mockReset();
+});
 
 describe("Deep Agents MCP config adapter registration", () => {
   it("writes only the dedicated managed projection with a credential placeholder", () => {
@@ -270,5 +294,100 @@ describe("Deep Agents MCP config adapter registration", () => {
     expect(() =>
       buildDeepAgentsMcpRegisterCommand(managedEntries[0], false, managedEntries.slice(0, 64)),
     ).not.toThrow();
+  });
+
+  it("repairs and verifies every registry-owned server through the sandbox command boundary (#10756)", () => {
+    const entries = [jiraEntry(), baseEntry];
+    executeSandboxCommandMock
+      .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "registered\n", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "registered\n", stderr: "" });
+
+    restoreDeepAgentsManagedMcpProjection("alpha", entries);
+
+    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(4);
+    const commands = executeSandboxCommandMock.mock.calls.map(([, command]) => command);
+    expect(commands[1]).toContain("github");
+    expect(commands[1]).toContain("jira");
+    expect(commands[2]).toContain("github");
+    expect(commands[3]).toContain("jira");
+    expect(commands.filter((command) => command.includes("allowRevisioned"))).toHaveLength(2);
+  });
+
+  it("leaves the v2 projection unchanged for a legacy Deep Agents runtime (#10756)", () => {
+    executeSandboxCommandMock.mockReturnValueOnce({
+      status: 0,
+      stdout: "legacy\n",
+      stderr: "",
+    });
+
+    restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry]);
+
+    expect(executeSandboxCommandMock).toHaveBeenCalledOnce();
+  });
+
+  it("identifies a legacy runtime without changing either MCP config fixture (#10756)", () => {
+    const managedConfig = { mcpServers: { managed: { url: "https://managed.invalid" } } };
+    const legacyConfig = { mcpServers: { legacy: { url: "https://legacy.invalid" } } };
+
+    const inspection = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRuntimeKindCommand(),
+      managedConfig,
+      "legacy",
+      legacyConfig,
+    );
+
+    expect(inspection.status, inspection.stderr).toBe(0);
+    expect(inspection.stdout.trim()).toBe("legacy");
+    expect(inspection.config).toEqual(managedConfig);
+    expect(inspection.legacyConfig).toEqual(legacyConfig);
+  });
+
+  it("fails when the managed projection mutation command fails (#10756)", () => {
+    executeSandboxCommandMock
+      .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
+      .mockReturnValueOnce({ status: 2, stdout: "", stderr: "projection is unsafe" });
+
+    expect(() => restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry, jiraEntry()])).toThrow(
+      "projection is unsafe",
+    );
+    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails when a repaired registry entry is not registered (#10756)", () => {
+    executeSandboxCommandMock
+      .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "registered\n", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "mismatch\n", stderr: "" });
+
+    expect(() => restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry, jiraEntry()])).toThrow(
+      "config verification failed after adding 'jira': mismatch",
+    );
+  });
+
+  it.each([
+    {
+      label: "an adapter-less entry",
+      entry: {
+        server: baseEntry.server,
+        agent: baseEntry.agent,
+        url: baseEntry.url,
+        env: baseEntry.env,
+        providerName: baseEntry.providerName,
+        policyName: baseEntry.policyName,
+        addedAt: baseEntry.addedAt,
+      },
+    },
+    {
+      label: "another agent's entry",
+      entry: { ...baseEntry, agent: "openclaw" },
+    },
+  ])("rejects $label before running a sandbox command (#10756)", ({ entry }) => {
+    expect(() => restoreDeepAgentsManagedMcpProjection("alpha", [entry as McpBridgeEntry])).toThrow(
+      "requires Deep Agents registry entries",
+    );
+    expect(executeSandboxCommandMock).not.toHaveBeenCalled();
   });
 });
