@@ -45,7 +45,7 @@ jobs:
             image: hermes
             old_base: ""
             swap: true
-            install_openshell: false
+            install_openshell: true
             mcp: true
             settings: '{"NEMOCLAW_MCP_BRIDGE_AGENT":"hermes"}'
 
