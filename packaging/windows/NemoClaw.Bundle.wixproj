@@ -8,6 +8,7 @@
     <OutputPath>$(PackageOutputRoot)</OutputPath>
     <IntermediateOutputPath>$(PackageIntermediateRoot)\bundle\</IntermediateOutputPath>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
     <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);SourceRoot=$(SourceRoot);MsiPath=$(MsiPath);WxcHostPrepPath=$(PayloadRoot)\mxc\wxc-host-prep.exe</DefineConstants>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- The null-device prerequisite is boot-ephemeral by Windows design, so a

@@ -8,6 +8,7 @@
     <OutputPath>$(PackageOutputRoot)</OutputPath>
     <IntermediateOutputPath>$(PackageIntermediateRoot)\msi\</IntermediateOutputPath>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
     <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);PayloadRoot=$(PayloadRoot);SourceRoot=$(SourceRoot)</DefineConstants>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- Locked npm graphs contain three versionless native payloads. They remain
