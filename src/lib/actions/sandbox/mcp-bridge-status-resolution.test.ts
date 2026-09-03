@@ -359,9 +359,30 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
   providerCredentialObservation = "absent";
   process.env.GITHUB_TOKEN = "Unsafe";
   const cases = [
-    { name: "dangling symbolic link", config: undefined, options: { symlink: true } },
-    { name: "symbolic link", config: { mcpServers: {} }, options: { symlink: true } },
-    { name: "FIFO", config: undefined, options: { fifo: true, mode: 0o000 } },
+    {
+      name: "dangling symbolic link",
+      type: "symbolic link",
+      config: undefined,
+      options: { symlink: true },
+    },
+    {
+      name: "symbolic link",
+      type: "symbolic link",
+      config: { mcpServers: {} },
+      options: { symlink: true },
+    },
+    {
+      name: "FIFO",
+      type: "FIFO",
+      config: undefined,
+      options: { fifo: true, mode: 0o000 },
+    },
+    {
+      name: "directory",
+      type: "non-regular file",
+      config: undefined,
+      options: { directory: true },
+    },
   ];
   const outcomes = [];
   for (const fixture of cases) {
@@ -380,6 +401,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github"]);
     outcomes.push({
       name: fixture.name,
+      type: fixture.type,
       exitCode: process.exitCode ?? 0,
       stdout: logLines.join("\n"),
       stderr: errorLines.join("\n"),
@@ -391,6 +413,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     );
     const outcomes = JSON.parse(stdout) as Array<{
       name: string;
+      type: string;
       exitCode: number;
       stdout: string;
       stderr: string;
@@ -400,11 +423,12 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       { name: "dangling symbolic link", exitCode: 2 },
       { name: "symbolic link", exitCode: 2 },
       { name: "FIFO", exitCode: 2 },
+      { name: "directory", exitCode: 2 },
     ]);
     outcomes.forEach((outcome) => {
       expect(outcome.stdout, outcome.name).toBe("");
       expect(outcome.stderr, outcome.name).toContain(
-        `Unsafe managed Deep Agents MCP projection path: ${outcome.name.replace("dangling ", "")}`,
+        `Unsafe managed Deep Agents MCP projection path: ${outcome.type}`,
       );
       expect(outcome.stderr, outcome.name).not.toContain("adapter does not match");
     });

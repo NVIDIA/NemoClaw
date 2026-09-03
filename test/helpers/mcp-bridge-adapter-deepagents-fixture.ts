@@ -35,6 +35,7 @@ export interface DeepAgentsConfigCommandResult {
 }
 
 export interface DeepAgentsManagedFixtureOptions {
+  directory?: boolean;
   fifo?: boolean;
   mode?: number;
   symlink?: boolean;
@@ -67,7 +68,9 @@ export function runDeepAgentsConfigCommand(
     );
   };
   const managedInitialPath = managedOptions.symlink ? managedSymlinkTarget : configPath;
-  if (managedOptions.fifo) {
+  if (managedOptions.directory) {
+    fs.mkdirSync(configPath, { recursive: true });
+  } else if (managedOptions.fifo) {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const fifo = spawnSync("mkfifo", [configPath], { encoding: "utf-8", timeout: 5000 });
     if (fifo.status !== 0) throw new Error(fifo.stderr || "could not create managed fixture FIFO");
@@ -104,8 +107,8 @@ export function runDeepAgentsConfigCommand(
     });
     const configExists = fs.existsSync(configPath);
     const legacyConfigExists = fs.existsSync(legacyConfigPath);
-    const configIsFifo = configExists && fs.lstatSync(configPath).isFIFO();
-    const configText = configExists && !configIsFifo ? fs.readFileSync(configPath, "utf-8") : null;
+    const configIsRegularFile = configExists && fs.lstatSync(configPath).isFile();
+    const configText = configIsRegularFile ? fs.readFileSync(configPath, "utf-8") : null;
     const managedSymlinkTargetExists = fs.existsSync(managedSymlinkTarget);
     const managedSymlinkTargetText = managedSymlinkTargetExists
       ? fs.readFileSync(managedSymlinkTarget, "utf-8")

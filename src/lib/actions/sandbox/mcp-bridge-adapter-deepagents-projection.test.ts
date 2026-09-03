@@ -96,6 +96,13 @@ describe("Deep Agents managed MCP projection safety", () => {
       type: "FIFO",
       targetText: null,
     },
+    {
+      name: "a directory",
+      config: undefined,
+      options: { directory: true },
+      type: "non-regular file",
+      targetText: null,
+    },
   ])("rejects $name during status inspection (#10754)", ({ config, options, type, targetText }) => {
     const statusCommand = buildDeepAgentsMcpStatusCommand(baseEntry);
     const result = runDeepAgentsConfigCommand(
