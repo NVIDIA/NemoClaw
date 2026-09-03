@@ -52,8 +52,10 @@ const providerDefaults = {
   },
 };
 
-const qualification = new URLSearchParams(window.location.search).get("qualification") === "1";
-const requestedAgent = new URLSearchParams(window.location.search).get("agent");
+const query = new URLSearchParams(window.location.search);
+const qualification = query.get("qualification") === "1";
+const requestedAgent = query.get("agent");
+const sessionToken = query.get("session") ?? "";
 const state = {
   step: 1,
   agent: Object.hasOwn(agentNames, requestedAgent) ? requestedAgent : "openclaw",
@@ -200,7 +202,7 @@ form.addEventListener("submit", async (event) => {
   try {
     const response = await fetch("/api/configure", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-nemoclaw-session": sessionToken },
       body: JSON.stringify({ ...state, options }),
     });
     const result = await response.json();

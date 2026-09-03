@@ -437,10 +437,13 @@ async function startOnboardingServer(
   ]);
   let selection = null;
   let runtimeConfiguration = null;
+  const sessionToken = randomBytes(32).toString("base64url");
   const server = createServer(async (request, response) => {
     try {
       const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
       if (request.method === "POST" && pathname === "/api/configure") {
+        if (request.headers["x-nemoclaw-session"] !== sessionToken)
+          throw new Error("The onboarding session token is invalid.");
         const chunks = [];
         let size = 0;
         for await (const chunk of request) {
@@ -539,9 +542,11 @@ async function startOnboardingServer(
     server.once("error", reject);
     server.listen(port, "127.0.0.1", resolve);
   });
+  const origin = `http://127.0.0.1:${port}`;
   return {
     server,
-    url: `http://127.0.0.1:${port}`,
+    origin,
+    url: `${origin}?session=${sessionToken}`,
     selection: () => selection,
     runtimeConfiguration: () => runtimeConfiguration,
   };
@@ -587,6 +592,7 @@ async function driveBrowser(
     });
     const page = await context.newPage();
     const onboardingPageUrl = new URL(onboardingUrl);
+    const onboardingOrigin = onboardingPageUrl.origin;
     onboardingPageUrl.searchParams.set("agent", targetAgent);
     if (qualification) onboardingPageUrl.searchParams.set("qualification", "1");
     await page.goto(onboardingPageUrl.toString(), {
@@ -601,8 +607,8 @@ async function driveBrowser(
       await page.screenshot({
         path: path.join(evidenceRoot, "onboarding-agent.png"),
       });
-      console.log(`WEB UI> READY ${onboardingUrl}`);
-      await page.waitForURL(`${onboardingUrl}/launching.html?agent=*`, {
+      console.log(`WEB UI> READY ${onboardingOrigin}`);
+      await page.waitForURL(`${onboardingOrigin}/launching.html?agent=*`, {
         timeout: 30 * 60_000,
       });
       return {
@@ -650,7 +656,7 @@ async function driveBrowser(
     await sleep(2500);
     await page.locator("#launch").click();
     if (targetAgent !== "openclaw") {
-      await page.waitForURL(`${onboardingUrl}/launching.html?agent=${targetAgent}`, {
+      await page.waitForURL(`${onboardingOrigin}/launching.html?agent=${targetAgent}`, {
         timeout: 30_000,
       });
       await page.screenshot({
@@ -1157,7 +1163,7 @@ async function main() {
         true,
         launcherPath,
       );
-      console.log(`WEB UI> Launching the NemoClaw graphical onboarder at ${onboarding.url}`);
+      console.log(`WEB UI> Launching the NemoClaw graphical onboarder at ${onboarding.origin}`);
       browserProof = await driveBrowser(
         openClawRoot,
         onboarding.url,
