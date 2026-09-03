@@ -39,6 +39,7 @@ import type { SandboxGatewayState } from "./gateway-state";
 import { getReconciledSandboxGatewayState, getSandboxGatewayStateForStatus } from "./gateway-state";
 import {
   buildSandboxInferenceRouteHealth,
+  isTransientInferenceInvocationFailure,
   type ProbeSandboxInferenceInvocation,
   probeSandboxInferenceGatewayHealth,
   runSandboxInferenceInvocationProbe,
@@ -65,36 +66,6 @@ type DelayInferenceRecoveryProbe = (delayMs: number) => Promise<void>;
 
 const INFERENCE_PROBE_ATTEMPTS = 3;
 const INFERENCE_PROBE_RETRY_DELAY_MS = 2_000;
-
-// 429 = Too Many Requests; 502/503/504 = gateway and availability answers from
-// the proxy in front of `inference.local` and from hosted providers. This is
-// the same signature `src/lib/inference/probe-retry.ts` already retries for the
-// onboarding probes (#2980, #3033); that module is CommonJS and `@ts-nocheck`,
-// so it cannot export the set to a typed module. A Ready sandbox must not
-// report a failing route because one of these landed in the single request
-// `status` sends (#10709).
-const TRANSIENT_INFERENCE_INVOCATION_STATUSES: ReadonlySet<number> = new Set([429, 502, 503, 504]);
-
-/**
- * True only when the inference request itself was refused with a transient
- * gateway or availability status, so one more 16-token request is worth
- * sending.
- *
- * HTTP 401, 403, 404, and 500, an invalid 2xx response body, and a request that
- * never reached an HTTP status all return false. Those stay final on the first
- * attempt and add no delay to the interactive `status` path. A failing
- * `/v1/models` route probe is not retried here either: it reports a different
- * hop, and status renders the route probe result for that hop.
- */
-function inferenceInvocationFailureIsTransient(
-  invocation: ReturnType<typeof runSandboxInferenceInvocationProbe> | null,
-): boolean {
-  if (invocation === null || invocation.ok) return false;
-  return (
-    invocation.httpStatus !== null &&
-    TRANSIENT_INFERENCE_INVOCATION_STATUSES.has(invocation.httpStatus)
-  );
-}
 
 /**
  * Honest serving-process state while the self-report response and probe
@@ -660,7 +631,7 @@ export async function collectSandboxStatusSnapshot(
             // Otherwise retry only a transient gateway or availability status on
             // the inference request. Every other request failure, and every
             // route probe failure, is final on the first attempt (#10709).
-            return !inferenceInvocationFailureIsTransient(result);
+            return !isTransientInferenceInvocationFailure(result);
           },
           retryDelaysMs: Array.from(
             { length: INFERENCE_PROBE_ATTEMPTS - 1 },
