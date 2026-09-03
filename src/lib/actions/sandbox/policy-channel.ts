@@ -437,11 +437,7 @@ async function addSandboxPolicyUnlocked(
   }
   if (!answer) return;
 
-  const presetContent = policies.loadPresetForSandbox(
-    sandboxName,
-    answer,
-    messagingPolicyOptions,
-  );
+  const presetContent = policies.loadPresetForSandbox(sandboxName, answer, messagingPolicyOptions);
   if (!presetContent) return;
 
   if (reapplyState) {
@@ -951,9 +947,7 @@ async function applyChannelAddToGatewayAndRegistry(
       const updatedProviderNames = err.mutatedProviderNames.filter(
         (providerName) => !createdProviders.has(providerName),
       );
-      const originalFailure = redactFullWithUrls(
-        err instanceof Error ? err.message : String(err),
-      )
+      const originalFailure = redactFullWithUrls(err instanceof Error ? err.message : String(err))
         .replace(/\s+/gu, " ")
         .trim()
         .slice(0, 500);
@@ -961,20 +955,16 @@ async function applyChannelAddToGatewayAndRegistry(
       if (updatedProviderNames.length > 0) {
         const providerNames = updatedProviderNames.map((name) => JSON.stringify(name)).join(", ");
         console.error(
-          `  ${YW}⚠${R} Provider state may have changed for ${providerNames}; inspect the named provider, correct the gateway failure, then retry the channel add.`,
+          `  ${YW}⚠${R} Provider state may have changed for ${providerNames}; inspect the named provider, correct the gateway failure, then retry the channel add.`, // lgtm[js/clear-text-logging] Validated provider identifiers only.
         );
       }
       if (cleanupFailures.length > 0) {
         for (const { providerName, diagnostic } of cleanupFailures) {
-          // lgtm[js/clear-text-logging] Provider names are validated identifiers;
-          // the gateway diagnostic is fully redacted above before display.
           console.error(
-            `  ${YW}⚠${R} Could not remove newly created provider ${JSON.stringify(providerName)}: ${diagnostic}.`,
+            `  ${YW}⚠${R} Could not remove newly created provider ${JSON.stringify(providerName)}: ${diagnostic}.`, // lgtm[js/clear-text-logging] Validated provider identifier and fully redacted diagnostic only.
           );
-          // lgtm[js/clear-text-logging] Gateway and provider names are validated
-          // identifiers needed to render the exact scoped recovery command.
           console.error(
-            `  Run \`openshell provider delete -g ${JSON.stringify(gatewayName)} ${JSON.stringify(providerName)}\`, then retry the channel add.`,
+            `  Run \`openshell provider delete -g ${JSON.stringify(gatewayName)} ${JSON.stringify(providerName)}\`, then retry the channel add.`, // lgtm[js/clear-text-logging] Validated gateway and provider identifiers only.
           );
         }
       }
