@@ -206,7 +206,7 @@ $$nemoclaw headless-agent status
 $$nemoclaw headless-agent connect --probe-only
 ```
 
-`$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified. Its main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox, then sends an inference request over the same route when that probe reports the route reachable. It repeats both probes up to three total attempts when that request returns a transient gateway status; refer to the [CLI commands reference](../reference/commands) for the retried statuses and their token cost. The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` when the route returned HTTP `500` through `599`.
+`$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified. Its main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox, then sends an inference request over the same route when that probe reports the route reachable. It repeats both probes up to three total attempts when that request returns a transient gateway status; refer to the [CLI commands reference](../reference/commands) for the retried statuses and their token cost. The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` after a final failure or after all transient attempts fail.
 
 <AgentOnly variant="openclaw,hermes">
 
