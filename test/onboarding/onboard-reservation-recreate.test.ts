@@ -98,6 +98,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   lifecycleState: "created",
   phase: "NotReady",
 });
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
@@ -105,6 +106,7 @@ runner.run = (command) => {
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete")) {
     createdSandbox.delete();
+    forwardService.release();
     return { status: 0 };
   }
   const sandboxResult = createdSandbox.run(command);
@@ -114,7 +116,7 @@ runner.runCapture = (command) => {
   const cmd = _n(command);
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -182,7 +184,8 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-  if (command.includes("sandbox create")) {
+  const forwardSpawn = forwardService.recordSpawn(args);
+  if (!forwardSpawn && command.includes("sandbox create")) {
     createdSandbox.recreate(args.flat());
     createdSandbox.setPhase("Ready");
   }
@@ -447,6 +450,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxId: "sbx-resumable-create",
   lifecycleState: mode === "resume" ? "created" : "absent",
 });
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 let createChild = null;
 runner.run = (command) => {
   const cmd = normalize(command);
@@ -470,7 +474,7 @@ runner.runCapture = (command) => {
   }
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   const mocked = fixtureMocks.mockOnboardRunCapture(command, { defaultCurlOutput: "ok" });
   return mocked === null ? "" : mocked;
 };
@@ -485,7 +489,8 @@ process.kill = (pid, signal) => {
 };
 childProcess.spawn = (...args) => {
   const command = normalize([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-  if (command.includes("sandbox create")) {
+  const forwardSpawn = forwardService.recordSpawn(args);
+  if (!forwardSpawn && command.includes("sandbox create")) {
     fs.appendFileSync(createCountPath, "create\n");
     createdSandbox.create(args.flat());
   }

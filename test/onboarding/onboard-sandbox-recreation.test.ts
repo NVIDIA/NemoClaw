@@ -14,6 +14,7 @@ import { type CommandEntry, onboardScriptMocksPath } from "../helpers/onboard-sp
 
 beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
+  vi.stubEnv("NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE", "1");
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
 
@@ -63,7 +64,7 @@ runner.run = (command) => {
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-	  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+	  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
 	  return "";
 	};
 	registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture({
@@ -170,7 +171,7 @@ runner.run = (command, opts = {}) => {
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-	  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+	  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -330,7 +331,7 @@ runner.run = (command) => {
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -509,7 +510,7 @@ runner.run = (command) => {
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -659,7 +660,7 @@ runner.run = (command) => {
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -850,7 +851,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-	  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+	  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
 	  return "";
 	};
 	registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture({
@@ -1000,7 +1001,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-	  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+	  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -1157,7 +1158,7 @@ runner.run = (command, opts = {}) => {
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-	  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+	  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
