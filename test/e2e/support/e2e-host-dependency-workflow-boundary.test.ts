@@ -239,4 +239,20 @@ exit 64
       ]),
     );
   });
+
+  it("records Docker CLI recovery state before moving the executable", () => {
+    const workflow = readWorkflow();
+    const steps = workflow.jobs["cloud-onboard"].steps;
+    const hide =
+      steps[requireStepIndex(steps, "Hide Docker CLI from native Podman public install")]!;
+    const moveDockerCli = 'sudo mv -- "${docker_cli}" "${disabled_path}"';
+    hide.run = `${moveDockerCli}\n${hide.run ?? ""}`;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "step 'Hide Docker CLI from native Podman public install' run script must include NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s before sudo mv -- \"${docker_cli}\" \"${disabled_path}\"",
+        "step 'Hide Docker CLI from native Podman public install' run script must include NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH=%s before sudo mv -- \"${docker_cli}\" \"${disabled_path}\"",
+      ]),
+    );
+  });
 });

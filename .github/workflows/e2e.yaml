@@ -5696,9 +5696,9 @@ jobs:
               echo "::error::Docker CLI disable target already exists" >&2
               exit 1
             fi
-            sudo mv -- "${docker_cli}" "${disabled_path}"
             printf 'NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s\n' "${disabled_path}" >>"${GITHUB_ENV}"
             printf 'NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH=%s\n' "${docker_cli}" >>"${GITHUB_ENV}"
+            sudo mv -- "${docker_cli}" "${disabled_path}"
           fi
           if command -v docker >/dev/null 2>&1; then
             echo "::error::Native Podman public install still resolves a Docker CLI" >&2

@@ -1082,11 +1082,16 @@ function validateCloudOnboardDockerAbsenceBoundary(
     errors.push("cloud-onboard Docker restoration must always run for native Podman");
   }
   requireRunContains(errors, hideDockerForPodman, "/usr/bin/docker | /usr/local/bin/docker");
-  requireRunContains(errors, hideDockerForPodman, 'sudo mv -- "${docker_cli}" "${disabled_path}"');
+  const moveDockerCli = 'sudo mv -- "${docker_cli}" "${disabled_path}"';
+  const exportDisabledDockerCli = "NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s";
+  const exportDockerCliRestorePath = "NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH=%s";
+  requireRunContains(errors, hideDockerForPodman, moveDockerCli);
   requireRunContains(errors, hideDockerForPodman, "if command -v docker >/dev/null 2>&1");
   requireRunContains(errors, hideDockerForPodman, "dockerClientAvailable: false");
-  requireRunContains(errors, hideDockerForPodman, "NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s");
-  requireRunContains(errors, hideDockerForPodman, "NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH=%s");
+  requireRunContains(errors, hideDockerForPodman, exportDisabledDockerCli);
+  requireRunContains(errors, hideDockerForPodman, exportDockerCliRestorePath);
+  requireRunFragmentBefore(errors, hideDockerForPodman, exportDisabledDockerCli, moveDockerCli);
+  requireRunFragmentBefore(errors, hideDockerForPodman, exportDockerCliRestorePath, moveDockerCli);
   requireRunContains(
     errors,
     restoreDockerAfterPodman,
