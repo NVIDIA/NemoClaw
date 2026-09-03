@@ -58,6 +58,11 @@ function isolatedDockerEnvironment() {
   };
 }
 
+const WINDOWS_WSL_DETECTION = {
+  isWsl: true,
+  env: { DOCKER_CONTEXT: "default" },
+} as const;
+
 function withMockedSpawnSync<T>(
   responder: (call: SpawnCall) => SpawnSyncReturns<string>,
   fn: (calls: SpawnCall[], modules: OllamaModules) => T | Promise<T>,
@@ -133,7 +138,7 @@ describe("Ollama GPU cleanup", () => {
       resetOllamaHostCache();
       const result = unloadOllamaModelsImpl(["llama3.2:1b"], {
         findReachableOllamaHost: (root) =>
-          findReachableOllamaHost(capture, { isWsl: true }, root, {
+          findReachableOllamaHost(capture, WINDOWS_WSL_DETECTION, root, {
             runtime: "docker-desktop",
             prepareDockerEnvironment: isolatedDockerEnvironment,
           }),
@@ -188,7 +193,7 @@ describe("Ollama GPU cleanup", () => {
 
       const result = unloadOllamaModelsImpl(["llama3.2:1b"], {
         findReachableOllamaHost: (root) =>
-          findReachableOllamaHost(capture, { isWsl: true }, root, {
+          findReachableOllamaHost(capture, WINDOWS_WSL_DETECTION, root, {
             runtime: "docker-desktop",
             prepareDockerEnvironment: isolatedDockerEnvironment,
             revalidate: true,
