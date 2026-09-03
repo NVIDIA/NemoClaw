@@ -51,32 +51,9 @@
       </Directory>
     </StandardDirectory>
 
-    <StandardDirectory Id="ProgramMenuFolder">
-      <Directory Id="NvidiaStartMenuFolder" Name="NVIDIA">
-        <Component Id="StartMenuShortcutComponent" Guid="2C1A57AA-1529-4ED5-9E66-7FEB069790DA" Bitness="always64">
-          <Shortcut
-            Id="NemoClawStartMenuShortcut"
-            Name="NemoClaw"
-            Description="Launch NemoClaw"
-            Target="[BinFolder]NemoClaw.exe"
-            WorkingDirectory="INSTALLFOLDER"
-            Icon="NemoClawIcon" />
-          <RemoveFolder Id="RemoveNvidiaStartMenuFolder" On="uninstall" />
-          <RegistryValue
-            Root="HKLM"
-            Key="Software\NVIDIA Corporation\NemoClaw Native Windows Candidate"
-            Name="StartMenuShortcut"
-            Type="integer"
-            Value="1"
-            KeyPath="yes" />
-        </Component>
-      </Directory>
-    </StandardDirectory>
-
     <Feature Id="Complete" Title="NemoClaw" Level="1">
       <Files Include="$(var.PayloadRoot)\**" Directory="INSTALLFOLDER" />
       <ComponentRef Id="MachinePathComponent" />
-      <ComponentRef Id="StartMenuShortcutComponent" />
     </Feature>
   </Package>
 </Wix>
