@@ -3,7 +3,23 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { OpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { execSandbox, type SandboxExecCleanupDeps } from "./exec";
+
+function commandExecutor(options: {
+  run?: OpenShellSandboxCommandExecutor["runStreaming"];
+  probe?: OpenShellSandboxCommandExecutor["probeDirectory"];
+}): OpenShellSandboxCommandExecutor {
+  return {
+    probeDirectory: options.probe ?? (async () => ({ state: "present" })),
+    runStreaming:
+      options.run ??
+      (async () => ({
+        outcome: { kind: "completed", exitCode: 0 },
+        release: () => {},
+      })),
+  };
+}
 
 const cleanupSkipped: SandboxExecCleanupDeps = {
   getSandbox: () => null,
@@ -27,9 +43,9 @@ describe("execSandbox gateway targeting", () => {
       order.push(`select:${name}`);
       return { outcome: "selected" as const, gatewayName: name };
     });
-    const run = vi.fn(async (_binary: string, _args: readonly string[]) => {
+    const run = vi.fn<OpenShellSandboxCommandExecutor["runStreaming"]>(async () => {
       order.push("run");
-      return { status: 0 };
+      return { outcome: { kind: "completed", exitCode: 0 }, release: () => {} };
     });
     vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`__exit_${code ?? 0}__`);
@@ -42,9 +58,8 @@ describe("execSandbox gateway targeting", () => {
         ["hostname"],
         {},
         {
-          resolveBinary: () => "openshell",
           selectGateway,
-          run,
+          commandExecutor: commandExecutor({ run }),
           cleanupDeps: cleanupSkipped,
           policyHint: {
             now: () => 0,
@@ -61,10 +76,12 @@ describe("execSandbox gateway targeting", () => {
 
     expect(selectGateway).toHaveBeenCalledWith("beta");
     expect(run).toHaveBeenCalled();
-    const execArgs = run.mock.calls[0]?.[1] ?? [];
-    expect(execArgs.slice(0, 7)).toEqual(["sandbox", "exec", "--name", "beta", "-g", "beta", "--"]);
-    expect(execArgs.at(-2)).toBe("nemoclaw-runtime-env");
-    expect(execArgs.at(-1)).toBe("hostname");
+    expect(run.mock.calls[0]?.[0]).toMatchObject({
+      sandboxName: "beta",
+      target: { kind: "named", gatewayName: "beta" },
+    });
+    expect(run.mock.calls[0]?.[0].command.at(-2)).toBe("nemoclaw-runtime-env");
+    expect(run.mock.calls[0]?.[0].command.at(-1)).toBe("hostname");
     expect(order.indexOf("select:beta")).toBeGreaterThanOrEqual(0);
     expect(order.indexOf("select:beta")).toBeLessThan(order.indexOf("run"));
   });
@@ -77,13 +94,13 @@ describe("execSandbox gateway targeting", () => {
       process.env.OPENSHELL_GATEWAY = "drifted-sibling";
       return { outcome: "selected" as const, gatewayName: "nemoclaw-8091" };
     });
-    const probeWorkdir = vi.fn((_binary: string, _args: readonly string[]) => {
+    const probeWorkdir = vi.fn<OpenShellSandboxCommandExecutor["probeDirectory"]>(async () => {
       order.push("probe");
-      return { status: 0, error: undefined };
+      return { state: "present" };
     });
-    const run = vi.fn(async (_binary: string, _args: readonly string[]) => {
+    const run = vi.fn<OpenShellSandboxCommandExecutor["runStreaming"]>(async () => {
       order.push("run");
-      return { status: 0 };
+      return { outcome: { kind: "completed", exitCode: 0 }, release: () => {} };
     });
     vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`__exit_${code ?? 0}__`);
@@ -96,10 +113,8 @@ describe("execSandbox gateway targeting", () => {
         ["hostname"],
         { workdir: "/work" },
         {
-          resolveBinary: () => "openshell",
           selectGateway,
-          probeWorkdir,
-          run,
+          commandExecutor: commandExecutor({ probe: probeWorkdir, run }),
           cleanupDeps: cleanupSkipped,
           policyHint: {
             now: () => 0,
@@ -116,40 +131,26 @@ describe("execSandbox gateway targeting", () => {
 
     expect(order).toEqual(["select:beta", "probe", "run"]);
     expect(process.env.OPENSHELL_GATEWAY).toBe("drifted-sibling");
-    expect(probeWorkdir.mock.calls[0]?.[1]).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
-      "beta",
-      "-g",
-      "nemoclaw-8091",
-      "--",
-      "test",
-      "-d",
-      "/work",
-    ]);
-    const execArgs = run.mock.calls[0]?.[1] ?? [];
-    expect(execArgs.slice(0, 9)).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
-      "beta",
-      "-g",
-      "nemoclaw-8091",
-      "--workdir",
-      "/work",
-      "--",
-    ]);
-    expect(execArgs.at(-2)).toBe("nemoclaw-runtime-env");
-    expect(execArgs.at(-1)).toBe("hostname");
+    expect(probeWorkdir).toHaveBeenCalledWith({
+      sandboxName: "beta",
+      target: { kind: "named", gatewayName: "nemoclaw-8091" },
+      path: "/work",
+    });
+    expect(run.mock.calls[0]?.[0]).toMatchObject({
+      sandboxName: "beta",
+      target: { kind: "named", gatewayName: "nemoclaw-8091" },
+      workdir: "/work",
+    });
+    expect(run.mock.calls[0]?.[0].command.at(-2)).toBe("nemoclaw-runtime-env");
+    expect(run.mock.calls[0]?.[0].command.at(-1)).toBe("hostname");
   });
 
   it("rejects a direct endpoint override before selecting, probing, or dispatching", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://sibling.invalid");
-    const resolveBinary = vi.fn(() => "openshell");
     const selectGateway = vi.fn();
     const probeWorkdir = vi.fn();
     const run = vi.fn();
+    const executor = commandExecutor({ probe: probeWorkdir, run });
     vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`__exit_${code ?? 0}__`);
     }) as never);
@@ -160,14 +161,13 @@ describe("execSandbox gateway targeting", () => {
         "beta",
         ["hostname"],
         { workdir: "/work" },
-        { resolveBinary, selectGateway, probeWorkdir, run },
+        { commandExecutor: executor, selectGateway },
       ),
     ).rejects.toThrow("__exit_1__");
 
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("OPENSHELL_GATEWAY_ENDPOINT is set"),
     );
-    expect(resolveBinary).not.toHaveBeenCalled();
     expect(selectGateway).not.toHaveBeenCalled();
     expect(probeWorkdir).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
@@ -192,9 +192,13 @@ describe("execSandbox gateway targeting", () => {
         ["curl", "https://example.invalid"],
         {},
         {
-          resolveBinary: () => "openshell",
           selectGateway,
-          run: async () => ({ status: 56 }),
+          commandExecutor: commandExecutor({
+            run: async () => ({
+              outcome: { kind: "completed", exitCode: 56 },
+              release: () => {},
+            }),
+          }),
           cleanupDeps: cleanupSkipped,
           policyHint: {
             now: () => 0,
@@ -220,13 +224,13 @@ describe("execSandbox gateway targeting", () => {
       order.push("select");
       return { outcome: "failed" as const, gatewayName: "nemoclaw-8091" };
     });
-    const probeWorkdir = vi.fn(() => {
+    const probeWorkdir = vi.fn<OpenShellSandboxCommandExecutor["probeDirectory"]>(async () => {
       order.push("probe");
-      return { status: 0, error: undefined };
+      return { state: "present" };
     });
-    const run = vi.fn(async () => {
+    const run = vi.fn<OpenShellSandboxCommandExecutor["runStreaming"]>(async () => {
       order.push("run");
-      return { status: 0 };
+      return { outcome: { kind: "completed", exitCode: 0 }, release: () => {} };
     });
     vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`__exit_${code ?? 0}__`);
@@ -239,10 +243,8 @@ describe("execSandbox gateway targeting", () => {
         ["hostname"],
         { workdir: "/work" },
         {
-          resolveBinary: () => "openshell",
           selectGateway,
-          probeWorkdir,
-          run,
+          commandExecutor: commandExecutor({ probe: probeWorkdir, run }),
           cleanupDeps: cleanupSkipped,
         },
       ),

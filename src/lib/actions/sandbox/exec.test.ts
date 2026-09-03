@@ -354,11 +354,21 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
       ["curl", "-sS", "https://example.com/"],
       {},
       {
-        resolveBinary: () => "openshell",
         selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
-        run: async () => {
-          options.onRun?.();
-          return { status, ...(options.error ? { error: options.error } : {}) };
+        commandExecutor: {
+          probeDirectory: async () => ({ state: "present" }),
+          runStreaming: async () => {
+            options.onRun?.();
+            return {
+              outcome: options.error
+                ? {
+                    kind: "failed" as const,
+                    error: { kind: "invocation" as const, message: options.error.message },
+                  }
+                : { kind: "completed" as const, exitCode: status ?? 1 },
+              release: () => {},
+            };
+          },
         },
         cleanupDeps: options.cleanupDeps ?? cleanupSkipped,
         exit,
@@ -529,9 +539,14 @@ describe("execSandbox scope-upgrade hint wiring (#9744)", () => {
       ["openclaw", "cron", "add"],
       {},
       {
-        resolveBinary: () => "openshell",
         selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
-        run: async () => ({ status }),
+        commandExecutor: {
+          probeDirectory: async () => ({ state: "present" }),
+          runStreaming: async () => ({
+            outcome: { kind: "completed", exitCode: status },
+            release: () => {},
+          }),
+        },
         cleanupDeps: cleanupSkipped,
         exit,
         policyHint: {

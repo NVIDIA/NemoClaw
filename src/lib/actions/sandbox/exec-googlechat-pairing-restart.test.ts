@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import {
   execSandbox,
   isGoogleChatPairingApproval,
@@ -27,9 +28,14 @@ const CLEANUP_SKIPPED: SandboxExecCleanupDeps = {
 
 function depsFor(status: number, restartGateway = vi.fn(() => ({ ok: true }))): ExecSandboxDeps {
   return {
-    resolveBinary: () => "openshell",
     selectGateway: () => ({ outcome: "selected", gatewayName: "nemoclaw-alpha" }),
-    run: () => ({ status }),
+    commandExecutor: {
+      probeDirectory: async () => ({ state: "present" }),
+      runStreaming: async () => ({
+        outcome: { kind: "completed", exitCode: status },
+        release: () => {},
+      }),
+    },
     cleanupDeps: CLEANUP_SKIPPED,
     restartGateway,
     resolveSandboxAgent: () => "openclaw",
@@ -110,9 +116,12 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
       return { ok: true };
     });
     const deps = depsFor(0, restartGateway);
-    deps.run = () => {
-      order.push("command");
-      return { status: 0 };
+    deps.commandExecutor = {
+      probeDirectory: async () => ({ state: "present" }),
+      runStreaming: async () => {
+        order.push("command");
+        return { outcome: { kind: "completed", exitCode: 0 }, release: () => {} };
+      },
     };
     deps.cleanupDeps = {
       getSandbox: () => ({ agent: "openclaw" }),
@@ -181,8 +190,10 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
       const exitCode = await runAndCaptureExit(
         ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
         {
-          resolveBinary: () => openshellPath,
           selectGateway: () => ({ outcome: "selected", gatewayName: "nemoclaw-alpha" }),
+          commandExecutor: createCliOpenShellSandboxCommandExecutor({
+            resolveBinary: () => openshellPath,
+          }),
           cleanupDeps: {
             getSandbox: () => ({ agent: "openclaw" }),
             inspectMutableConfigPerms: () => ({
