@@ -68,7 +68,9 @@ function authenticationConditionWorkflow(condition: string): OperationsWorkflow 
   };
 }
 
-function nativeQualificationCleanupWorkflow(): OperationsWorkflow {
+// Independent synthetic input for the cleanup-contract validator. This fixture
+// deliberately does not read the checked-in workflow.
+function syntheticNativeQualificationCleanupWorkflow(): OperationsWorkflow {
   return {
     jobs: {
       "native-runtime-qualification-producer": {
@@ -705,14 +707,14 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("accepts an always-retained native qualification cleanup recovery receipt", () => {
-    expect(validateNativeQualificationCleanupRecovery(nativeQualificationCleanupWorkflow())).toEqual(
-      [],
-    );
+  it("accepts a synthetic cleanup contract with unconditional receipt retention", () => {
+    expect(
+      validateNativeQualificationCleanupRecovery(syntheticNativeQualificationCleanupWorkflow()),
+    ).toEqual([]);
   });
 
-  it("rejects success-only native qualification cleanup recovery evidence", () => {
-    const workflow = nativeQualificationCleanupWorkflow();
+  it("rejects a synthetic cleanup contract gated to successful runs", () => {
+    const workflow = syntheticNativeQualificationCleanupWorkflow();
     workflow.jobs["native-runtime-qualification-producer"].steps!.find(
       (step) => step.name === "Upload the qualification cleanup recovery receipt",
     )!.if = "success()";
@@ -722,8 +724,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("rejects a cleanup receipt that omits a resolved recovery target", () => {
-    const workflow = nativeQualificationCleanupWorkflow();
+  it("rejects a synthetic cleanup contract missing a resolved recovery target", () => {
+    const workflow = syntheticNativeQualificationCleanupWorkflow();
     const cleanup = workflow.jobs["native-runtime-qualification-producer"].steps!.find(
       (step) => step.name === "Remove qualification resources",
     )!;
