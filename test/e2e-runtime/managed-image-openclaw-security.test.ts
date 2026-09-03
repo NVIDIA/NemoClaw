@@ -112,6 +112,7 @@ cp /opt/nemoclaw-blueprint/private-networks.yaml "$APPLY_BLUEPRINT_PATH/private-
 cat >"$FAKE_OPENSHELL_BIN/openshell" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+printf '%s\n' "$*" >>"${"${"}BASH_SOURCE[0]%/*}/calls"
 if [ "${"${"}1:-}" = "status" ]; then
   printf '%s\n' 'Gateway Status' '  Status: Connected' '  Gateway: fixture-gateway'
   exit 0
@@ -136,9 +137,6 @@ if [ "${"${"}1:-} ${"${"}2:-}" = "policy set" ]; then
   fi
   cp "$6" "${"${"}BASH_SOURCE[0]%/*}/effective-policy.yaml"
   exit 0
-fi
-if [ "${"${"}1:-} ${"${"}2:-}" = "policy get" ]; then
-  printf '%s\n' "$*" >>"${"${"}BASH_SOURCE[0]%/*}/calls"
 fi
 if [ "${"${"}1:-} ${"${"}2:-}" = "policy get" ] && [[ " $* " == *" --output json "* ]]; then
   sandbox="${"${"}@: -1}"
@@ -213,18 +211,21 @@ if grep -q "PROGRESS:100:Apply complete" "$APPLY_OUTPUT"; then
 else
   fail "Apply did not complete"
 fi
-if grep -Eq '^policy get -g fixture-gateway --base [^ ]+$' "$APPLY_CALLS"; then
-  pass "Apply reads base policy through the active gateway"
-else
-  fail "Apply did not use the gateway-pinned base-policy read"
-fi
-# Verify run state was persisted to disk
+grep -Eq '^sandbox create -g fixture-gateway --from openclaw --name openclaw --policy [^ ]+ --forward 18789$' "$APPLY_CALLS"
+grep -qx 'provider create --name nvidia-ncp --type nvidia' "$APPLY_CALLS"
+grep -qx 'inference set --provider nvidia-ncp --model nvidia/nemotron-3-super-120b-a12b' "$APPLY_CALLS"
+grep -Eq '^policy get -g fixture-gateway --base [^ ]+$' "$APPLY_CALLS"
 RUN_ID=$(grep -o 'nc-[0-9]*-[0-9]*-[a-f0-9]*' "$APPLY_OUTPUT" | head -1)
-if [ -f "$HOME/.nemoclaw/state/runs/$RUN_ID/plan.json" ]; then
-  pass "Apply persisted run state to disk"
-else
-  fail "Apply did not persist run state (plan.json missing for $RUN_ID)"
-fi
+PLAN_FILE="$HOME/.nemoclaw/state/runs/$RUN_ID/plan.json"
+node - "$PLAN_FILE" "$RUN_ID" <<'NODE_ASSERT_PLAN'
+const fs = require("node:fs");
+const plan = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (plan.run_id !== process.argv[3]) throw new Error("persisted run id mismatch");
+if (plan.profile !== "ncp") throw new Error("persisted profile mismatch");
+if (plan.sandbox_name !== "openclaw" || plan.sandbox_created_by_apply !== true) throw new Error("persisted sandbox receipt mismatch");
+if (plan.inference?.provider_name !== "nvidia-ncp" || plan.inference?.model !== "nvidia/nemotron-3-super-120b-a12b" || plan.inference_provider_created_by_apply !== true) throw new Error("persisted provider receipt mismatch");
+if (plan.gateway?.name !== "fixture-gateway" || plan.gateway?.host !== "127.0.0.1" || plan.gateway?.port !== 8080) throw new Error("persisted gateway mismatch");
+NODE_ASSERT_PLAN
 cleanup_apply_fixture
 trap - EXIT
 `;
