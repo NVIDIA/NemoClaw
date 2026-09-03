@@ -507,7 +507,7 @@ describe("llama.cpp image PR workflow", () => {
     const downloadAnonymousPull = namedStep(verify, "Download anonymous pull evidence");
 
     expect(scan.needs).toEqual(["config", "publication-gate", "assemble-candidate"]);
-    expect(scanStep.uses).toBe("anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2");
+    expect(scanStep.uses).toBe("anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439");
     expect(scanStep.with).toMatchObject({
       "severity-cutoff": "${{ needs.config.outputs.publication_vulnerability_severity_cutoff }}",
       "only-fixed": "${{ needs.config.outputs.publication_vulnerability_only_fixed }}",
