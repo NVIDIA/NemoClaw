@@ -318,7 +318,6 @@ export function createDeps(
       stageSandboxCredentialProviders: calls.stageCredentialProviders,
       promptValidatedSandboxName: calls.promptName,
       selectResourceProfileForSandbox: calls.selectResourceProfile,
-      stopStaleDashboardListenersForSandbox: calls.stopStale,
       listRegistrySandboxes: () => ({ sandboxes: [{ name: "old" }] }),
       planRegisteredExtraProviders: calls.planRegisteredExtraProviders,
       resolveSandboxCreateIntent: calls.resolveCreateIntent,
