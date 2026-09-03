@@ -9,6 +9,7 @@ const RECORDED_ROUTER_PID = 4321;
 
 const holder = vi.hoisted(() => ({
   currentRecoveryHash: "MATCHING-HASH" as string | null,
+  legacyCredentialHash: "LEGACY-CREDENTIAL-HASH" as string | null,
   recordedRecoveryHash: "MATCHING-HASH" as string | null,
   snapshotBody: null as string | null,
   stopped: [] as Array<[number, number]>,
@@ -49,7 +50,8 @@ vi.mock("../state/onboard-session", () => ({
 }));
 
 vi.mock("../security/credential-hash", () => ({
-  hashCredential: () => holder.currentRecoveryHash,
+  hashCredential: (value: string) =>
+    value.startsWith("{") ? holder.currentRecoveryHash : holder.legacyCredentialHash,
 }));
 
 vi.mock("./host-service-reachability", () => ({
@@ -63,6 +65,7 @@ vi.mock("./host-service-reachability", () => ({
 describe("model router reconciliation", () => {
   beforeEach(() => {
     holder.currentRecoveryHash = "MATCHING-HASH";
+    holder.legacyCredentialHash = "LEGACY-CREDENTIAL-HASH";
     holder.recordedRecoveryHash = "MATCHING-HASH";
     holder.snapshotBody = null;
     holder.stopped = [];
@@ -111,7 +114,7 @@ describe("model router reconciliation", () => {
       healthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
       unhealthy_endpoints: [],
     });
-    holder.recordedRecoveryHash = null;
+    holder.recordedRecoveryHash = holder.legacyCredentialHash;
 
     await expect(reconcileModelRouter()).rejects.toThrow("router restart reached");
 
