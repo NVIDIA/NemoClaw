@@ -2,11 +2,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncReturns } from "node:child_process";
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 
+import {
+  OLLAMA_HOST_DOCKER_INTERNAL,
+  persistResolvedOllamaHost,
+  prepareOllamaApiExecution,
+  resetOllamaHostCache,
+} from "../../../src/lib/inference/local.js";
 import { unloadOllamaModels as unloadOllamaModelsImpl } from "../../../src/lib/inference/ollama/proxy.js";
 
-type SpawnCall = { command: string; args: readonly string[] };
+type SpawnCall = {
+  command: string;
+  args: readonly string[];
+  options?: { env?: NodeJS.ProcessEnv };
+};
 type SpawnSync = (typeof import("node:child_process"))["spawnSync"];
 type OllamaModules = {
   unloadOllamaModels: (typeof import("../../../src/lib/inference/ollama/proxy.ts"))["unloadOllamaModels"];
@@ -40,8 +53,12 @@ function withMockedSpawnSync<T>(
   ollamaHost = "127.0.0.1",
 ): T | Promise<T> {
   const calls: SpawnCall[] = [];
-  const spawnSync = ((command: string, args: readonly string[]) => {
-    const call = { command, args };
+  const spawnSync = ((
+    command: string,
+    args: readonly string[],
+    options?: { env?: NodeJS.ProcessEnv },
+  ) => {
+    const call = { command, args, options };
     calls.push(call);
     return responder(call);
   }) as SpawnSync;
@@ -80,6 +97,47 @@ function unloadOf(model: string) {
 }
 
 describe("Ollama GPU cleanup", () => {
+  it("restores the persisted Windows-host transport after the process cache is cleared", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-cleanup-route-"));
+    const calls: SpawnCall[] = [];
+    const respond = respondWithLoadedModels("llama3.2:1b");
+    const spawnSync = ((command: string, args: readonly string[]) => {
+      const call = { command, args };
+      calls.push(call);
+      return respond(call);
+    }) as SpawnSync;
+
+    try {
+      persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
+      resetOllamaHostCache();
+      const result = unloadOllamaModelsImpl(["llama3.2:1b"], {
+        ollamaHostStateRoot: stateRoot,
+        sleep: () => {},
+        spawnSync,
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        outcome: "released",
+        endpoint: "http://host.docker.internal:11434",
+      });
+      expect(calls).toHaveLength(3);
+      calls.forEach(({ command, args }) => {
+        expect(command).toBe("docker");
+        expect(args).toEqual(
+          expect.arrayContaining([
+            "run",
+            "--rm",
+            "docker.io/curlimages/curl@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b",
+          ]),
+        );
+      });
+    } finally {
+      resetOllamaHostCache();
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
   it("uses the resolved local Ollama host for discovery, release, and verification (#10074)", async () => {
     await withMockedSpawnSync(
       respondWithLoadedModels("llama3.2:1b"),
@@ -91,16 +149,91 @@ describe("Ollama GPU cleanup", () => {
           outcome: "released",
           endpoint: "http://host.docker.internal:11434",
         });
-        expect(
-          calls.filter(({ command }) => command === "curl").map(({ args }) => args.at(-1)),
-        ).toEqual([
+        const dockerCalls = calls.filter(({ command }) => command === "docker");
+        expect(dockerCalls).toHaveLength(3);
+        expect(dockerCalls.map(({ args }) => args.at(-1))).toEqual([
           "http://host.docker.internal:11434/api/ps",
           "http://host.docker.internal:11434/api/generate",
           "http://host.docker.internal:11434/api/ps",
         ]);
+        dockerCalls.forEach(({ args }) => {
+          expect(args).toEqual(
+            expect.arrayContaining([
+              "run",
+              "--rm",
+              "docker.io/curlimages/curl@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b",
+            ]),
+          );
+        });
       },
       "host.docker.internal",
     );
+  });
+
+  it("retains cleanup recovery when no local Ollama endpoint is reachable", () => {
+    const result = unloadOllamaModelsImpl(["llama3.2:1b"], {
+      getResolvedOllamaHost: () => null,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      outcome: "discovery-failed",
+      endpoint: "http://127.0.0.1:11434",
+      selectedModels: ["llama3.2:1b"],
+      discoveries: [],
+      requests: [],
+      message: "No reachable local Ollama endpoint was found for cleanup",
+    });
+  });
+
+  it("isolates Docker credentials for discovery, release, and verification", () => {
+    const calls: SpawnCall[] = [];
+    const cleanup = vi.fn(() => ({ ok: true as const }));
+    const respond = respondWithLoadedModels("llama3.2:1b");
+    const spawnSync = ((
+      command: string,
+      args: readonly string[],
+      options?: { env?: NodeJS.ProcessEnv },
+    ) => {
+      const call = { command, args, options };
+      calls.push(call);
+      return options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
+        ? respond(call)
+        : fail("ambient Docker config used");
+    }) as SpawnSync;
+
+    const result = unloadOllamaModelsImpl(["llama3.2:1b"], {
+      getResolvedOllamaHost: () => OLLAMA_HOST_DOCKER_INTERNAL,
+      sleep: () => {},
+      spawnSync,
+      prepareOllamaApiExecution: (
+        command: Parameters<typeof prepareOllamaApiExecution>[0],
+        host: Parameters<typeof prepareOllamaApiExecution>[1],
+        options: NonNullable<Parameters<typeof prepareOllamaApiExecution>[2]>,
+      ) =>
+        prepareOllamaApiExecution(command, host, {
+          ...options,
+          prepareDockerEnvironment: () => ({
+            env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+            isolatedCredentialConfig: true,
+            cleanup,
+          }),
+        }),
+    });
+
+    expect(result).toMatchObject({ ok: true, outcome: "released" });
+    expect(calls).toHaveLength(3);
+    expect(calls.map(({ options }) => options?.env?.DOCKER_CONFIG)).toEqual([
+      "/tmp/credential-free-docker",
+      "/tmp/credential-free-docker",
+      "/tmp/credential-free-docker",
+    ]);
+    expect(calls.map(({ args }) => args.at(-1))).toEqual([
+      "http://host.docker.internal:11434/api/ps",
+      "http://host.docker.internal:11434/api/generate",
+      "http://host.docker.internal:11434/api/ps",
+    ]);
+    expect(cleanup).toHaveBeenCalledTimes(3);
   });
 
   it("unloads every running model through the Ollama API", async () => {

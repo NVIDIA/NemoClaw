@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { LAUNCH_READINESS_FIXTURE_POLICY } from "../../helpers/launch-readiness-fixture";
 import { runWithEnv, writeSandboxRegistry } from "../../cli/helpers";
 
 function buildStubOpenshell(
@@ -25,6 +26,8 @@ function buildStubOpenshell(
       '  "sandbox list"*) printf "alpha Ready\\n"; exit 0 ;;',
       '  "sandbox get alpha"*) printf "Name: alpha\\nPhase: Ready\\nPolicy:\\n"; exit 0 ;;',
       '  "gateway info -g nemoclaw"*) printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+      '  "policy get"*)',
+      `    printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}; exit 0 ;;`,
       '  *"openclaw sessions list"*)',
       `    printf '%s\\n' ${JSON.stringify(sessionListJson)}`,
       `    if [ -n ${JSON.stringify(sessionListStderr)} ]; then printf '%s\\n' ${JSON.stringify(sessionListStderr)} >&2; fi`,

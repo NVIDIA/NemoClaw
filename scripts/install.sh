@@ -516,7 +516,7 @@ resolve_hermes_api_port() {
 }
 
 restore_onboard_forward_after_post_checks() {
-  local sandbox_name agent_name agent_display port openshell_bin openshell_dir attempt selected_state_dir state_dir pid_file watcher_script watcher_pid start_diagnostic diagnostic_file
+  local sandbox_name agent_name agent_display port selected_state_dir state_dir pid_file cli_runner
   sandbox_name="$(resolve_default_sandbox_name)"
   agent_name="$(resolve_onboarded_agent)"
   agent_display="$(agent_display_name "$agent_name")"
@@ -530,20 +530,6 @@ restore_onboard_forward_after_post_checks() {
     *) return 0 ;;
   esac
 
-  if [[ -n "${NEMOCLAW_OPENSHELL_BIN:-}" && -x "$NEMOCLAW_OPENSHELL_BIN" ]]; then
-    openshell_bin="$NEMOCLAW_OPENSHELL_BIN"
-  elif command_exists openshell; then
-    openshell_bin="$(command -v openshell)"
-  else
-    return 0
-  fi
-  if [[ "$openshell_bin" != /* ]]; then
-    openshell_dir="${openshell_bin%/*}"
-    [[ "$openshell_dir" == "$openshell_bin" ]] && openshell_dir="."
-    openshell_dir="$(cd -- "$openshell_dir" && pwd -P)" || return 1
-    openshell_bin="${openshell_dir}/${openshell_bin##*/}"
-  fi
-
   selected_state_dir="$(ensure_nemoclaw_state_dir)" || return 1
   state_dir="${selected_state_dir}/state"
   assert_nemoclaw_state_path_safe "$state_dir"
@@ -554,178 +540,50 @@ restore_onboard_forward_after_post_checks() {
     || error "Could not secure gateway-scoped runtime state directory: ${state_dir}"
   pid_file="${state_dir}/${agent_name}-${sandbox_name}-${port}.forward.pid"
   if [[ -f "$pid_file" ]]; then
-    local old_pid expected_watcher_script current_uid old_uid old_args
+    local old_pid expected_watcher_script current_uid old_uid old_args node_bin openshell_bin expected_args
     old_pid="$(cat "$pid_file" 2>/dev/null || true)"
     expected_watcher_script="${pid_file}.js"
     current_uid="$(id -u)"
     if [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" >/dev/null 2>&1; then
       old_uid="$(ps -p "$old_pid" -o uid= 2>/dev/null | tr -d '[:space:]' || true)"
       old_args="$(ps -p "$old_pid" -o args= 2>/dev/null || true)"
-      if [[ "$old_uid" == "$current_uid" && "$old_args" == *"$expected_watcher_script"* ]]; then
-        kill "$old_pid" >/dev/null 2>&1 || true
+      node_bin="$(command -v node 2>/dev/null || true)"
+      if [[ -n "${NEMOCLAW_OPENSHELL_BIN:-}" && -x "$NEMOCLAW_OPENSHELL_BIN" ]]; then
+        openshell_bin="$NEMOCLAW_OPENSHELL_BIN"
+      else
+        openshell_bin="$(command -v openshell 2>/dev/null || true)"
       fi
-    fi
-    rm -f "$pid_file"
-  fi
-
-  redact_forward_start_diagnostic() {
-    local redactor
-    redactor="$(resolve_repo_root)/dist/lib/security/redact.js"
-    if command_exists node && [[ -f "$redactor" ]] \
-      && node -e '
-        const fs = require("fs");
-        const { redactFull } = require(process.argv[1]);
-        process.stdout.write(redactFull(fs.readFileSync(0, "utf8")));
-      ' "$redactor" 2>/dev/null; then
-      return 0
-    fi
-    printf "<REDACTED>"
-  }
-
-  sanitize_forward_start_diagnostic() {
-    if command_exists node && node -e '
-      const fs = require("fs");
-      const encoded = fs.readFileSync(0).toString("latin1")
-        .replace(/\x1B\][\s\S]*?(?:\x07|\x1B\\|$)/g, "")
-        .replace(/\x9D[\s\S]*?(?:\x07|\x1B\\|\x9C|$)/g, "")
-        .replace(/(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~]/g, "")
-        .replace(/\x1B[@-_]/g, "");
-      const diagnostic = Buffer.from(encoded, "latin1").toString("utf8")
-        .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ");
-      process.stdout.write(diagnostic);
-    ' 2>/dev/null; then
-      return 0
-    fi
-    printf "<REDACTED>"
-  }
-
-  stop_agent_forward_if_owned() {
-    local forward_list owner status
-    "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 && return 0
-    forward_list="$("$openshell_bin" forward list 2>/dev/null || true)"
-    owner="$(awk -v sandbox="$sandbox_name" -v port="$port" '
-      $1 == sandbox && $3 == port {
-        print $1
-        exit
-      }
-    ' <<<"$forward_list")"
-    status="$(awk -v sandbox="$sandbox_name" -v port="$port" '
-      $1 == sandbox && $3 == port {
-        print tolower($5)
-        exit
-      }
-    ' <<<"$forward_list")"
-    if [[ "$owner" == "$sandbox_name" && ("$status" == "running" || "$status" == "active") ]]; then
-      "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 || true
-    fi
-  }
-
-  start_diagnostic=""
-  diagnostic_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-forward-start-XXXXXX" 2>/dev/null)" \
-    || diagnostic_file=""
-
-  for attempt in 1 2 3; do
-    stop_agent_forward_if_owned
-    if [ "$attempt" -gt 1 ]; then
-      sleep 2
-    fi
-    if [[ -n "$diagnostic_file" ]]; then
-      "$openshell_bin" forward start --background "$port" "$sandbox_name" \
-        >"$diagnostic_file" 2>&1 || true
-      start_diagnostic="$(sanitize_forward_start_diagnostic <"$diagnostic_file" | awk '
-        {
-          gsub(/[[:space:]]+/, " ")
-          sub(/^ /, "")
-          sub(/ $/, "")
-          if ($0 != "") joined = (joined == "" ? $0 : joined "; " $0)
+      expected_args="${node_bin} ${expected_watcher_script} ${openshell_bin} ${port} ${sandbox_name}"
+      if [[ -z "$node_bin" || -z "$openshell_bin" || "$old_uid" != "$current_uid" || "$old_args" != "$expected_args" ]]; then
+        warn "Could not authenticate the legacy ${agent_display} forward watcher; leaving it untouched."
+        return 1
+      fi
+      kill "$old_pid" >/dev/null 2>&1 \
+        || {
+          warn "Could not stop the authenticated legacy ${agent_display} forward watcher."
+          return 1
         }
-        END { printf "%s", joined }
-      ' 2>/dev/null || true)"
-      start_diagnostic="$(
-        printf "%s" "$start_diagnostic" | redact_forward_start_diagnostic
-      )"
-      if [[ "${#start_diagnostic}" -gt 300 ]]; then
-        start_diagnostic="${start_diagnostic:0:300} [truncated]"
-      fi
-    else
-      "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || true
     fi
-    watcher_pid=""
-    if [[ "${NEMOCLAW_SKIP_FORWARD_WATCHER:-}" != "1" ]] && command_exists node; then
-      watcher_script="${pid_file}.js"
-      cat >"$watcher_script" <<'NODE'
-const { spawnSync } = require("child_process");
-const [openshellBin, port, sandboxName] = process.argv.slice(2);
-function run(args) {
-  spawnSync(openshellBin, args, { stdio: "ignore" });
-}
-function healthy() {
-  return spawnSync("curl", ["-sf", "--max-time", "3", `http://127.0.0.1:${port}/health`], {
-    stdio: "ignore",
-  }).status === 0;
-}
-function listedStatus() {
-  const listed = spawnSync(openshellBin, ["forward", "list"], { encoding: "utf-8" });
-  if (listed.status !== 0 || typeof listed.stdout !== "string") return null;
-  for (const line of listed.stdout.split("\n")) {
-    const columns = line.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "").trim().split(/\s+/);
-    if (columns[0] === sandboxName && columns[2] === port) {
-      return (columns[4] || "").toLowerCase();
-    }
-  }
-  return "";
-}
-function tick() {
-  if (healthy()) return;
-  const status = listedStatus();
-  if (status === null) return;
-  if (status === "dead") {
-    run(["forward", "stop", port, sandboxName]);
-    run(["forward", "start", "--background", port, sandboxName]);
-    return;
-  }
-  if (status === "") run(["forward", "start", "--background", port, sandboxName]);
-}
-tick();
-setInterval(tick, 10_000);
-NODE
-      node -e '
-        const { spawn } = require("child_process");
-        const fs = require("fs");
-        const [script, openshellBin, port, sandboxName, pidFile] = process.argv.slice(1);
-        const child = spawn(process.execPath, [script, openshellBin, port, sandboxName], {
-          detached: true,
-          stdio: "ignore",
-        });
-        fs.writeFileSync(pidFile, String(child.pid) + "\n");
-        child.unref();
-      ' "$watcher_script" "$openshell_bin" "$port" "$sandbox_name" "$pid_file" \
-        >/dev/null 2>&1 || true
-    fi
-    sleep 4
-    if command_exists curl \
-      && curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
-      [[ -n "$diagnostic_file" ]] && rm -f "$diagnostic_file"
-      return 0
-    fi
-    watcher_pid="$(cat "$pid_file" 2>/dev/null || true)"
-    if ! command_exists curl && [[ -n "$watcher_pid" ]] && kill -0 "$watcher_pid" >/dev/null 2>&1; then
-      [[ -n "$diagnostic_file" ]] && rm -f "$diagnostic_file"
-      return 0
-    fi
-    if [[ -n "$watcher_pid" ]]; then
-      kill "$watcher_pid" >/dev/null 2>&1 || true
-    fi
-    rm -f "$pid_file"
-  done
-  [[ -n "$diagnostic_file" ]] && rm -f "$diagnostic_file"
-
-  warn "Could not restore ${agent_display} host forward on port ${port}."
-  if [[ -n "$start_diagnostic" ]]; then
-    warn "OpenShell reported: ${start_diagnostic}"
+    rm -f "$pid_file" "$expected_watcher_script"
   fi
-  warn "Run: openshell forward start --background ${port} ${sandbox_name}"
-  return 1
+
+  cli_runner="${_CLI_PATH:-$_CLI_BIN}"
+  if ! [[ -x "$cli_runner" ]] && ! command_exists "$cli_runner"; then
+    warn "Could not restore ${agent_display} ForwardTcp service: ${_CLI_BIN} is unavailable."
+    return 1
+  fi
+  if ! "$cli_runner" "$sandbox_name" recover; then
+    warn "Could not restore ${agent_display} ForwardTcp service on port ${port}."
+    warn "Run: ${_CLI_BIN} ${sandbox_name} recover"
+    return 1
+  fi
+  if command_exists curl \
+    && ! curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+    warn "${agent_display} recovery completed, but its host forward on port ${port} is unhealthy."
+    warn "Run: ${_CLI_BIN} ${sandbox_name} status"
+    return 1
+  fi
+  return 0
 }
 
 # step N "Description" — numbered section header
@@ -3409,7 +3267,7 @@ stop_legacy_openshell_gateway_process() {
     fi
     kill -KILL "$pid" 2>/dev/null \
       || error "Could not terminate the recorded legacy OpenShell gateway process ${pid}."
-    for attempt in {1..10}; do
+    for ((attempt = 0; attempt < 10; attempt++)); do
       kill -0 "$pid" 2>/dev/null || break
       sleep 0.1
     done
@@ -3789,11 +3647,13 @@ run_installer_host_preflight() {
   local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
   local gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/gateway-management.js"
   local portable_profile_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/experimental/portable-profile.js"
+  local gateway_runtime_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/docker-driver-gateway-env.js"
   local host_readiness_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/host.js"
   local onboard_admission_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/onboard-admission.js"
   if ! command_exists node \
     || [[ ! -f "$preflight_module" ]] \
     || [[ ! -f "$gateway_management_module" ]] \
+    || [[ ! -f "$gateway_runtime_module" ]] \
     || [[ ! -f "$host_readiness_module" ]] \
     || [[ ! -f "$onboard_admission_module" ]]; then
     return 0
@@ -3810,6 +3670,7 @@ run_installer_host_preflight() {
       const onboardAdmissionPath = process.argv[3];
       const gatewayManagementPath = process.argv[4];
       const portableProfilePath = process.argv[5];
+      const gatewayRuntimePath = process.argv[6];
       let explicitlySelectedPortableProfile = false;
       try {
         const portableProfile = require(portableProfilePath);
@@ -3824,13 +3685,21 @@ run_installer_host_preflight() {
         const { createHostReadinessReport } = require(hostReadinessPath);
         const { evaluateOnboardReadinessAdmission } = require(onboardAdmissionPath);
         const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
+        const { configuredRuntimeProviderOwnsHostReadiness } = require(gatewayRuntimePath);
         const host = assessHost();
-        const actions = planHostAdvisories(host);
         const gatewayManagement = loadGatewayManagementDeclaration();
         const allowStorageRemediation =
           gatewayManagement.ok &&
           (gatewayManagement.declaration === null ||
             gatewayManagement.declaration?.mode === "nemoclaw-managed");
+        const selectedRuntimeOwnsHostReadiness =
+          configuredRuntimeProviderOwnsHostReadiness({
+            environment: process.env,
+            platform: process.platform,
+          });
+        const actions = planHostAdvisories(host, {
+          providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
+        });
         const readiness = createHostReadinessReport(
           { nemoclawVersion: "installer", sourceRevision: "installer" },
           {
@@ -3844,6 +3713,7 @@ run_installer_host_preflight() {
         const admission = evaluateOnboardReadinessAdmission(readiness, {
           explicitlyOptedOutGpuPassthrough: false,
           allowUnsupportedRuntime: explicitlySelectedPortableProfile,
+          providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
           // The installer starts a NemoClaw-managed onboarding flow. Let the
           // authoritative onboarding gate apply supported storage remediation,
           // but only when the gateway declaration confirms NemoClaw ownership.
@@ -3912,10 +3782,26 @@ run_installer_host_preflight() {
           process.stdout.write(`__ACTIONS__\n${actionLines.join("\n")}`);
         }
         process.exit(admission.admitted ? 0 : 10);
-      } catch {
-        process.exit(0);
+      } catch (error) {
+        const optionalModules = [
+          preflightPath,
+          hostReadinessPath,
+          onboardAdmissionPath,
+          gatewayManagementPath,
+          gatewayRuntimePath,
+        ];
+        const missingOptionalModule =
+          error?.code === "MODULE_NOT_FOUND" &&
+          optionalModules.some((modulePath) =>
+            String(error?.message || "").includes(modulePath)
+          );
+        if (missingOptionalModule) process.exit(0);
+        process.stderr.write(
+          `NemoClaw installer host preflight failed: ${error instanceof Error ? error.message : String(error)}\n`
+        );
+        process.exit(11);
       }
-    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module" "$portable_profile_module"
+    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module" "$portable_profile_module" "$gateway_runtime_module"
   )"; then
     status=0
   else
@@ -3947,7 +3833,7 @@ run_installer_host_preflight() {
     fi
   fi
 
-  [[ "$status" -ne 10 ]]
+  [[ "$status" -eq 0 ]]
 }
 
 recover_preexisting_sandboxes_before_onboard() {
@@ -4483,6 +4369,15 @@ prepare_portable_experimental_runtime_override() {
   _PORTABLE_INSTALLER_DOCKER_HOST="$DOCKER_HOST"
 
   info "Portable profile selected rootless Podman through DOCKER_HOST=${DOCKER_HOST}."
+}
+
+# Resolve the legacy Docker bootstrap requirement at the installer runtime
+# configuration boundary. Native managed Podman owns its host preparation via
+# the registered runtime provider; the portable experimental profile remains
+# on its existing Docker-CLI-over-Podman compatibility path.
+installer_requires_legacy_docker_bootstrap() {
+  [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]] && return 0
+  [[ "${NEMOCLAW_GATEWAY_RUNTIME:-docker}" != "podman" ]]
 }
 
 is_wsl_host() {
@@ -5403,6 +5298,31 @@ express_wsl_can_use_windows_host_ollama() {
   express_wsl_docker_operating_system | grep -qi 'docker desktop'
 }
 
+# Select the accepted N1x WSL llama.cpp candidate only when Windows product
+# identity, WSL architecture, Docker Desktop locality, and the 48 GB GPU class
+# all match. Later readiness still requires container GPU proof before launch.
+express_wsl_can_use_n1x_managed_llama_cpp() {
+  express_wsl_can_use_windows_host_ollama || return 1
+  [ "$(uname -m 2>/dev/null | tr -d '[:space:]')" = "aarch64" ] || return 1
+  command_exists timeout || return 1
+  command_exists powershell.exe || return 1
+  command_exists nvidia-smi || return 1
+
+  local product_name=""
+  local memory_mb=""
+  product_name="$(timeout 10s powershell.exe -NoProfile -NonInteractive -Command '(Get-CimInstance Win32_ComputerSystem).Model' 2>/dev/null | tr -d '\r' | head -n 1)"
+  case "$product_name" in
+    *"RTX Spark N1X"*) ;;
+    *) return 1 ;;
+  esac
+
+  memory_mb="$(timeout 10s nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d '[:space:]')"
+  case "$memory_mb" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "$memory_mb" -ge 48000 ]
+}
+
 # True when a readable Docker configuration decides the context but no Node.js can
 # parse it yet. The express prompt runs before install_nodejs, so treating that
 # window as non-local pinned WSL-local Ollama on hosts whose Docker Desktop
@@ -5418,8 +5338,14 @@ express_wsl_docker_context_needs_node() {
 
 # Choose between Windows-host and WSL-local Ollama, or defer when only the
 # missing Node.js runtime blocks the decision.
-select_express_wsl_ollama_provider() {
+select_express_wsl_provider() {
   _EXPRESS_WSL_PROVIDER_PENDING=""
+  unset NEMOCLAW_LLAMACPP_RECIPE
+  if express_wsl_can_use_n1x_managed_llama_cpp; then
+    export NEMOCLAW_PROVIDER=install-llama-cpp
+    export NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1
+    return 0
+  fi
   if express_wsl_can_use_windows_host_ollama; then
     export NEMOCLAW_PROVIDER=install-windows-ollama
     return 0
@@ -5436,13 +5362,18 @@ select_express_wsl_ollama_provider() {
 resolve_pending_express_wsl_provider() {
   [ "${_EXPRESS_WSL_PROVIDER_PENDING:-}" = "1" ] || return 0
   _EXPRESS_WSL_PROVIDER_PENDING=""
-  if express_wsl_can_use_windows_host_ollama; then
-    export NEMOCLAW_PROVIDER=install-windows-ollama
-    info "Express install will configure Windows-host Ollama through host.docker.internal."
-  else
-    export NEMOCLAW_PROVIDER=install-ollama
-    info "Express install will configure WSL-local Ollama."
-  fi
+  select_express_wsl_provider
+  case "${NEMOCLAW_PROVIDER:-}" in
+    install-llama-cpp)
+      info "Express install will configure managed Qwen 3.6 35B with llama.cpp on N1x WSL."
+      ;;
+    install-windows-ollama)
+      info "Express install will configure Windows-host Ollama through host.docker.internal."
+      ;;
+    *)
+      info "Express install will configure WSL-local Ollama."
+      ;;
+  esac
 }
 
 select_spark_express_inference() {
@@ -5528,7 +5459,7 @@ activate_express_install() {
       configure_station_express_model
       ;;
     "Windows WSL")
-      select_express_wsl_ollama_provider
+      select_express_wsl_provider
       ;;
   esac
 }
@@ -5930,7 +5861,9 @@ prepare_installer_host() {
   # generic Docker bootstrap; ensure_station_express_host is a no-op elsewhere.
   ensure_station_express_host
   prepare_portable_experimental_runtime_override
-  ensure_docker
+  if installer_requires_legacy_docker_bootstrap; then
+    ensure_docker
+  fi
   ensure_openshell_build_deps
 }
 
@@ -6010,10 +5943,14 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
-      if express_wsl_can_use_windows_host_ollama; then
+      if express_wsl_can_use_n1x_managed_llama_cpp; then
+        show_hf_authentication="1"
+        inference_summary="managed Qwen 3.6 35B with llama.cpp on N1x WSL"
+        inference_disclosure="Managed llama.cpp downloads a pinned 20.4 GB GGUF file before it starts the loopback-only authenticated server."
+      elif express_wsl_can_use_windows_host_ollama; then
         inference_summary="Windows-host Ollama through host.docker.internal"
       elif express_wsl_docker_context_needs_node; then
-        inference_summary="local Ollama, selected once the installed Node.js runtime reads the Docker configuration"
+        inference_summary="local inference, selected once the installed Node.js runtime reads the Docker configuration"
       else
         inference_summary="WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback"
       fi
