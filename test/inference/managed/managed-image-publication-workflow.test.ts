@@ -604,9 +604,16 @@ describe("complete managed-image publication workflow", () => {
 
   it("runs the exact candidate CLI through real all-agent Docker and OpenShell activation (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
+    const builder = managedPrBuilder(workflow);
     const activation = managedPrActivation(workflow);
     const steps = activation.steps ?? [];
 
+    expect(builder.outputs?.contract_run_attempt).toBe(
+      "${{ steps.contract-attempt.outputs.value }}",
+    );
+    const contractAttempt = step(builder, "Bind exact contract artifact run attempt");
+    expect(contractAttempt.id).toBe("contract-attempt");
+    expect(contractAttempt.run).toContain("printf 'value=%s\\n' \"$GITHUB_RUN_ATTEMPT\"");
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         "src/lib/onboard/**",
@@ -626,6 +633,9 @@ describe("complete managed-image publication workflow", () => {
     expect(JSON.stringify(activation)).not.toContain("github.token");
     expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
       "${{ github.event.pull_request.head.sha }}",
+    );
+    expect(step(activation, "Download exact published all-agent contracts").with?.pattern).toBe(
+      "managed-pr-contract-${{ github.run_id }}-${{ needs.pr-build-and-entrypoint.outputs.contract_run_attempt }}-*",
     );
     expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
       /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
@@ -677,6 +687,9 @@ describe("complete managed-image publication workflow", () => {
     expect(JSON.stringify(discovery)).not.toContain("github.token");
     expect(step(discovery, "Checkout exact PR head").with?.ref).toBe(
       "${{ github.event.pull_request.head.sha }}",
+    );
+    expect(step(discovery, "Download exact published all-agent contracts").with?.pattern).toBe(
+      "managed-pr-contract-${{ github.run_id }}-${{ needs.pr-build-and-entrypoint.outputs.contract_run_attempt }}-*",
     );
     expect(step(discovery, "Bind E2E correlation identity").run).toContain("randomUUID()");
     const assemble = step(discovery, "Assemble exact all-agent MCP catalog").run ?? "";
