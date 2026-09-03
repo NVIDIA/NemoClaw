@@ -124,7 +124,7 @@ const HEALTH_WAIT_PROGRAM = [
   "        response = connection.getresponse()",
   "        status = response.status",
   "        response.close()",
-  "        if status == 200:",
+  "        if status in (200, 401):",
   "            ready = True",
   "        else:",
   "            not_ready += 1",

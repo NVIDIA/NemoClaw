@@ -132,6 +132,24 @@ describe("Podman executable authority", () => {
     expect(realpath).toHaveBeenCalledTimes(2);
   });
 
+  it("does not repeat a timed authority operation that returns undefined", () => {
+    const operations = new Map<string, number>();
+
+    assertPodmanExecutableMetadataAuthority(
+      capturePodmanExecutableAuthority(EXECUTABLE_PATH, authorityDeps()),
+      authorityDeps({
+        timing: {
+          measure: (stage, operation) => {
+            operations.set(stage, (operations.get(stage) ?? 0) + 1);
+            return operation();
+          },
+        },
+      }),
+    );
+
+    expect(operations.get("podmanAuthorityCompare")).toBe(2);
+  });
+
   it("reports non-overlapping executable authority leaf operations", () => {
     const stages: string[] = [];
 

@@ -72,7 +72,7 @@ function measure<T>(
   stage: PodmanExecutableAuthorityTimingStage,
   operation: () => T,
 ): T {
-  return deps.timing?.measure(stage, operation) ?? operation();
+  return deps.timing ? deps.timing.measure(stage, operation) : operation();
 }
 
 function integerIdentity(value: bigint | number, label: string): string {
