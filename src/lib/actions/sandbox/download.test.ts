@@ -30,6 +30,7 @@ vi.mock("./sessions/download-verify", async (importOriginal) => {
 
 import {
   captureOpenshell,
+  OPENSHELL_DOWNLOAD_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
@@ -78,13 +79,34 @@ describe("downloadFromSandbox", () => {
     expect(ensureMock).toHaveBeenCalledWith("alpha", { allowNonReadyPhase: true });
     expect(runMock).toHaveBeenCalledWith(
       ["sandbox", "download", "alpha", "/sandbox/.openclaw/workspace/SOUL.md", stagedArtifact],
-      expect.objectContaining({ ignoreError: true, stdio: "inherit" }),
+      expect.objectContaining({
+        ignoreError: true,
+        stdio: "inherit",
+        timeout: OPENSHELL_DOWNLOAD_TIMEOUT_MS,
+      }),
     );
     expect(publishMock).toHaveBeenCalledWith(stagedArtifact, expectedHostDest, "file");
     expect(result).toEqual({
       sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
       hostDest: expectedHostDest,
     });
+    expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
+  });
+
+  it("removes the staged artifact when the download times out (#10636)", async () => {
+    runMock.mockReturnValue({
+      status: null,
+      error: Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }),
+    });
+
+    await expect(
+      downloadFromSandbox({
+        sandboxName: "alpha",
+        sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
+        hostDest: "./out",
+      }),
+    ).rejects.toThrow(/transfer timed out/);
+    expect(publishMock).not.toHaveBeenCalled();
     expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
   });
 

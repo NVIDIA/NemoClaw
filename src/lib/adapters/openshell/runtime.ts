@@ -13,11 +13,20 @@ import {
   runOpenshellCommand,
 } from "./client";
 import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
-import { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
+import {
+  OPENSHELL_DOWNLOAD_TIMEOUT_MS,
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "./timeouts";
 
 type CommandArgs = string[];
 
-export { buildOpenShellSubprocessEnv, OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS };
+export {
+  buildOpenShellSubprocessEnv,
+  OPENSHELL_DOWNLOAD_TIMEOUT_MS,
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+};
 export { classifyManagedGatewayEndpointBinding } from "./client";
 export { runCaptureEx } from "../../runner";
 

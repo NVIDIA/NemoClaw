@@ -8,6 +8,7 @@ import path from "node:path";
 import {
   captureOpenshell,
   isCommandTimeout,
+  OPENSHELL_DOWNLOAD_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
@@ -176,8 +177,14 @@ async function downloadFromSandboxUnlocked(
       {
         ignoreError: true,
         stdio: "inherit",
+        timeout: OPENSHELL_DOWNLOAD_TIMEOUT_MS,
       },
     );
+    if (isCommandTimeout(download)) {
+      throw new Error(
+        `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': transfer timed out.`,
+      );
+    }
     if (download.status !== 0) {
       throw new Error(
         `Failed to download '${sandboxPath}' from sandbox '${opts.sandboxName}' (exit ${download.status}).`,
