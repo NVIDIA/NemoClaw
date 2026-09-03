@@ -581,14 +581,14 @@ async function driveBrowser(
       "--no-first-run",
       "--no-default-browser-check",
       "--window-position=20,10",
-      "--window-size=1240,700",
+      "--window-size=1280,900",
     ],
   });
   let browserVersion = "unknown";
   try {
     browserVersion = browser.version();
     const context = await browser.newContext({
-      viewport: { width: 1200, height: 630 },
+      viewport: { width: 1240, height: 820 },
     });
     const page = await context.newPage();
     const onboardingPageUrl = new URL(onboardingUrl);
@@ -774,11 +774,11 @@ async function driveConfiguredOpenClaw(openClawRoot, openClawUrl) {
       "--no-first-run",
       "--no-default-browser-check",
       "--window-position=20,10",
-      "--window-size=1240,700",
+      "--window-size=1280,900",
     ],
   });
   try {
-    const context = await browser.newContext({ viewport: { width: 1200, height: 630 } });
+    const context = await browser.newContext({ viewport: { width: 1240, height: 820 } });
     const page = await context.newPage();
     await page.goto(`${openClawUrl}/chat`, { waitUntil: "domcontentloaded", timeout: 90_000 });
     const composer = page.locator(".agent-chat__composer-combobox > textarea").first();

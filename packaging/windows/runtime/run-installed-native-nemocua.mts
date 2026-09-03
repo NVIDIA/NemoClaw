@@ -219,10 +219,10 @@ async function startBrowserBridge(
       "--no-first-run",
       "--no-default-browser-check",
       "--window-position=20,10",
-      "--window-size=1240,700",
+      "--window-size=1280,900",
     ],
   });
-  const context = await browser.newContext({ viewport: { width: 1200, height: 630 } });
+  const context = await browser.newContext({ viewport: { width: 1240, height: 820 } });
   const page = await context.newPage();
   let observationIndex = 0;
   let port = 0;

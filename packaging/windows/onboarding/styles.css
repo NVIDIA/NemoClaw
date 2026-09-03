@@ -30,14 +30,24 @@ button {
 }
 
 .shell {
+  display: flex;
   width: min(1120px, calc(100vw - 64px));
-  min-height: calc(100vh - 64px);
+  height: calc(100vh - 64px);
+  min-height: 620px;
+  flex-direction: column;
   margin: 32px auto;
   overflow: hidden;
   background: var(--surface);
   border: 1px solid #d8d8d8;
   border-radius: 14px;
   box-shadow: 0 22px 60px rgba(0, 0, 0, 0.09);
+}
+
+#onboarding-form {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
 }
 
 .masthead {
@@ -107,6 +117,8 @@ button {
 }
 .panel.active {
   display: block;
+  flex: 1;
+  overflow-y: auto;
 }
 .eyebrow {
   margin: 0 0 8px;
@@ -251,14 +263,14 @@ h1 {
 
 .choice-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  max-width: 860px;
+  max-width: none;
 }
 .choice {
   position: relative;
   display: flex;
-  min-height: 112px;
+  min-height: 106px;
   flex-direction: column;
   gap: 8px;
   padding: 20px;
@@ -276,9 +288,8 @@ h1 {
   line-height: 1.4;
 }
 .choice em {
-  position: absolute;
-  top: 18px;
-  right: 18px;
+  align-self: flex-start;
+  margin-top: auto;
   color: var(--green-dark);
   font-size: 11px;
   font-style: normal;
@@ -291,7 +302,7 @@ h1 {
 
 .qualification-note,
 .configuration-card {
-  max-width: 860px;
+  max-width: none;
   margin-bottom: 18px;
 }
 .qualification-note {
@@ -494,8 +505,8 @@ h1 {
   }
   .shell {
     width: calc(100vw - 28px);
+    height: calc(100vh - 28px);
     margin: 14px;
-    min-height: calc(100vh - 28px);
   }
   .agent-grid,
   .choice-grid,
@@ -506,6 +517,9 @@ h1 {
 
 @media (min-width: 981px) and (max-width: 1180px) {
   .agent-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .choice-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
