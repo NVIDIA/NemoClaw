@@ -97,6 +97,14 @@ function endpointFlavor(provider: string): EndpointFlavor {
   return provider === "compatible-anthropic-endpoint" ? "anthropic" : "openai";
 }
 
+/** Canonical endpoint identity shared by route compatibility and read-only route reporting. */
+export function canonicalGatewayRouteEndpoint(
+  provider: string,
+  endpointUrl: string | null | undefined,
+): string | null {
+  return canonicalEndpoint(endpointUrl, endpointFlavor(provider));
+}
+
 function normalizedInferenceApi(value: unknown): string | null {
   const api = nonEmptyString(value);
   return api && SUPPORTED_INFERENCE_APIS.has(api) ? api : null;
@@ -107,9 +115,8 @@ function customRouteConflict(
   requested: GatewayInferenceRoute,
   recorded: GatewayInferenceRoute,
 ): GatewayRouteConflictReason | null {
-  const flavor = endpointFlavor(provider);
-  const requestedEndpoint = canonicalEndpoint(requested.endpointUrl, flavor);
-  const recordedEndpoint = canonicalEndpoint(recorded.endpointUrl, flavor);
+  const requestedEndpoint = canonicalGatewayRouteEndpoint(provider, requested.endpointUrl);
+  const recordedEndpoint = canonicalGatewayRouteEndpoint(provider, recorded.endpointUrl);
   const requestedApi = normalizedInferenceApi(requested.preferredInferenceApi);
   const recordedApi = normalizedInferenceApi(recorded.preferredInferenceApi);
   if (!requestedEndpoint || !recordedEndpoint || !requestedApi || !recordedApi) {

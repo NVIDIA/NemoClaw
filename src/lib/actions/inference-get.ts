@@ -5,6 +5,7 @@ import { captureOpenshell } from "../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import { sanitizeRouteValueForDisplay } from "../inference/config";
+import { canonicalGatewayRouteEndpoint } from "../inference/gateway-route-compatibility";
 import { getLiveGatewayInference } from "../inference/live";
 import { isPublishedSandboxRegistration } from "../state/registry/route-reservation";
 import {
@@ -24,20 +25,6 @@ export interface InferenceGetResult {
   provider: string | null;
   model: string | null;
   endpointUrl?: string;
-  endpointDiagnostic?: InferenceEndpointDiagnostic;
-}
-
-export type InferenceEndpointDiagnosticReason =
-  | "missing-endpoint"
-  | "invalid-endpoint"
-  | "conflicting-endpoints"
-  | "invalid-gateway-binding";
-
-export interface InferenceEndpointDiagnostic {
-  reason: InferenceEndpointDiagnosticReason;
-  affectedSandboxNames: string[];
-  additionalAffectedSandboxCount: number;
-  recovery: string;
 }
 
 export interface InferenceGetDeps {
@@ -70,56 +57,17 @@ const COMPATIBLE_CUSTOM_PROVIDERS = new Set([
   "compatible-endpoint",
   "compatible-anthropic-endpoint",
 ]);
-const MAX_DIAGNOSTIC_SANDBOX_NAMES = 5;
-const MAX_DIAGNOSTIC_SANDBOX_NAME_LENGTH = 64;
-const INVALID_GATEWAY_BINDING_RECOVERY =
-  "For an invalid gateway binding, restore known-good gatewayName and gatewayPort metadata from a trusted backup. Do not copy a binding from another sandbox. Otherwise, back up and remove the affected sandbox, then re-onboard it.";
 
-type PersistedEndpointSelection =
-  | { endpointUrl: string; diagnostic: null }
-  | { endpointUrl: null; diagnostic: InferenceEndpointDiagnostic | null };
-
-/** Build a bounded, terminal-safe diagnostic without rejected registry values. */
-function endpointDiagnostic(
-  reason: InferenceEndpointDiagnosticReason,
-  sandboxNames: readonly string[],
-  cliName: string,
-  sandboxName: string | undefined,
-): InferenceEndpointDiagnostic {
-  const safeNames = [
-    ...new Set(
-      sandboxNames
-        .map((name) =>
-          sanitizeRouteValueForDisplay(name).slice(0, MAX_DIAGNOSTIC_SANDBOX_NAME_LENGTH),
-        )
-        .filter(Boolean),
-    ),
-  ].sort();
-  const safeCliName = sanitizeRouteValueForDisplay(cliName).slice(0, 32) || "nemoclaw";
-  const safeRequestedName = sandboxName
-    ? sanitizeRouteValueForDisplay(sandboxName).slice(0, MAX_DIAGNOSTIC_SANDBOX_NAME_LENGTH)
-    : null;
-  const recoveryCommand = safeRequestedName
-    ? `${safeCliName} ${safeRequestedName} status`
-    : `${safeCliName} status`;
-  return {
-    reason,
-    affectedSandboxNames: safeNames.slice(0, MAX_DIAGNOSTIC_SANDBOX_NAMES),
-    additionalAffectedSandboxCount: Math.max(0, safeNames.length - MAX_DIAGNOSTIC_SANDBOX_NAMES),
-    recovery: `Run '${recoveryCommand}' to inspect the affected registry metadata. ${INVALID_GATEWAY_BINDING_RECOVERY}`,
-  };
-}
-
-/** Select one safe endpoint from the route-participating rows on the live gateway. */
+/** Select one safe endpoint from published rows on the live gateway. */
 function getPersistedEndpointUrl(
   provider: string | null,
   gatewayName: string,
   sandboxName: string | undefined,
   cliName: string,
   deps: InferenceGetDeps,
-): PersistedEndpointSelection {
+): string | null {
   if (!provider || !COMPATIBLE_CUSTOM_PROVIDERS.has(provider)) {
-    return { endpointUrl: null, diagnostic: null };
+    return null;
   }
 
   let sandboxes: ReturnType<InferenceGetDeps["listSandboxes"]>;
@@ -134,10 +82,8 @@ function getPersistedEndpointUrl(
     );
   }
 
-  const matchingEndpoints: { endpointUrl: string; sandboxName: string }[] = [];
-  const missingEndpointNames: string[] = [];
-  const invalidEndpointNames: string[] = [];
-  const invalidBindingNames: string[] = [];
+  const matchingEndpoints: { canonical: string; display: string }[] = [];
+  let incompleteMatchingMetadata = false;
   for (const sandbox of sandboxes) {
     if (!isPublishedSandboxRegistration(sandbox)) continue;
     if (sandboxName && sandbox.name !== sandboxName) continue;
@@ -145,66 +91,34 @@ function getPersistedEndpointUrl(
     try {
       if (getPersistedSandboxTargetGatewayName(sandbox) !== gatewayName) continue;
     } catch {
-      invalidBindingNames.push(sandbox.name);
+      // A matching row with an invalid binding could belong to this gateway.
+      // Omit the endpoint unless every participating row can be scoped safely.
+      incompleteMatchingMetadata = true;
       continue;
     }
     if (typeof sandbox.endpointUrl !== "string" || !sandbox.endpointUrl.trim()) {
-      missingEndpointNames.push(sandbox.name);
+      incompleteMatchingMetadata = true;
       continue;
     }
     if (unsafeEndpointUrlViolation(sandbox.endpointUrl)) {
-      invalidEndpointNames.push(sandbox.name);
+      incompleteMatchingMetadata = true;
       continue;
     }
-    matchingEndpoints.push({ endpointUrl: sandbox.endpointUrl.trim(), sandboxName: sandbox.name });
+    const display = sandbox.endpointUrl.trim();
+    const canonical = canonicalGatewayRouteEndpoint(provider, display);
+    if (!canonical) {
+      incompleteMatchingMetadata = true;
+      continue;
+    }
+    matchingEndpoints.push({ canonical, display });
   }
-
-  if (invalidBindingNames.length > 0) {
-    return {
-      endpointUrl: null,
-      diagnostic: endpointDiagnostic(
-        "invalid-gateway-binding",
-        invalidBindingNames,
-        cliName,
-        sandboxName,
-      ),
-    };
+  if (incompleteMatchingMetadata || matchingEndpoints.length === 0) {
+    return null;
   }
-  if (invalidEndpointNames.length > 0) {
-    return {
-      endpointUrl: null,
-      diagnostic: endpointDiagnostic(
-        "invalid-endpoint",
-        invalidEndpointNames,
-        cliName,
-        sandboxName,
-      ),
-    };
-  }
-  if (missingEndpointNames.length > 0 || matchingEndpoints.length === 0) {
-    return {
-      endpointUrl: null,
-      diagnostic: endpointDiagnostic(
-        "missing-endpoint",
-        missingEndpointNames,
-        cliName,
-        sandboxName,
-      ),
-    };
-  }
-  const endpointUrl = matchingEndpoints[0].endpointUrl;
-  if (matchingEndpoints.some((candidate) => candidate.endpointUrl !== endpointUrl)) {
-    return {
-      endpointUrl: null,
-      diagnostic: endpointDiagnostic(
-        "conflicting-endpoints",
-        matchingEndpoints.map((candidate) => candidate.sandboxName),
-        cliName,
-        sandboxName,
-      ),
-    };
-  }
-  return { endpointUrl, diagnostic: null };
+  const selected = matchingEndpoints[0];
+  return matchingEndpoints.some((candidate) => candidate.canonical !== selected.canonical)
+    ? null
+    : selected.display;
 }
 
 /** Read the live route and add safe persisted endpoint evidence when applicable. */
@@ -217,15 +131,12 @@ export async function runInferenceGet(
     gatewayName = deps.getSandboxTargetGatewayName(options.sandboxName);
   } catch {
     const safeCliName = sanitizeRouteValueForDisplay(options.cliName ?? "nemoclaw").slice(0, 32);
-    const safeSandboxName = sanitizeRouteValueForDisplay(options.sandboxName).slice(
-      0,
-      MAX_DIAGNOSTIC_SANDBOX_NAME_LENGTH,
-    );
+    const safeSandboxName = sanitizeRouteValueForDisplay(options.sandboxName).slice(0, 64);
     const statusCommand = safeSandboxName
       ? `${safeCliName || "nemoclaw"} ${safeSandboxName} status`
       : `${safeCliName || "nemoclaw"} status`;
     throw new InferenceGetError(
-      `NemoClaw could not resolve the sandbox's recorded gateway. Run '${statusCommand}' to inspect its registry metadata. ${INVALID_GATEWAY_BINDING_RECOVERY}`,
+      `NemoClaw could not resolve the sandbox's recorded gateway. Run '${statusCommand}' to inspect and repair its registry metadata.`,
     );
   }
   const result = getLiveGatewayInference(deps.captureOpenshell, {
@@ -250,7 +161,7 @@ export async function runInferenceGet(
     );
   }
 
-  const endpointSelection = getPersistedEndpointUrl(
+  const endpointUrl = getPersistedEndpointUrl(
     result.inference.provider,
     gatewayName,
     options.sandboxName,
@@ -260,8 +171,7 @@ export async function runInferenceGet(
   const payload: InferenceGetResult = {
     provider: result.inference.provider,
     model: result.inference.model,
-    ...(endpointSelection.endpointUrl ? { endpointUrl: endpointSelection.endpointUrl } : {}),
-    ...(endpointSelection.diagnostic ? { endpointDiagnostic: endpointSelection.diagnostic } : {}),
+    ...(endpointUrl ? { endpointUrl } : {}),
   };
   if (!options.quiet) {
     if (options.json) {
@@ -271,15 +181,6 @@ export async function runInferenceGet(
       deps.log(`Model:    ${formatRouteValueForDisplay(payload.model)}`);
       if (payload.endpointUrl) {
         deps.log(`Endpoint: ${formatRouteValueForDisplay(payload.endpointUrl)}`);
-      } else if (payload.endpointDiagnostic) {
-        deps.log(`Endpoint: unavailable (${payload.endpointDiagnostic.reason})`);
-        if (payload.endpointDiagnostic.affectedSandboxNames.length > 0) {
-          const additional = payload.endpointDiagnostic.additionalAffectedSandboxCount;
-          deps.log(
-            `Affected sandboxes: ${payload.endpointDiagnostic.affectedSandboxNames.join(", ")}${additional > 0 ? ` (+${String(additional)} more)` : ""}`,
-          );
-        }
-        deps.log(`Recovery: ${payload.endpointDiagnostic.recovery}`);
       }
     }
   }

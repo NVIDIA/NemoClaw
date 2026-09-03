@@ -46,7 +46,7 @@ Expected output:
 }
 ```
 
-For `compatible-endpoint` and `compatible-anthropic-endpoint`, the text output adds `Endpoint` when every matching registry row for the selected gateway records the same credential-free HTTP(S) URL.
+For `compatible-endpoint` and `compatible-anthropic-endpoint`, the text output adds `Endpoint` when every matching published registry row for the selected gateway records the same canonical credential-free HTTP(S) URL.
 The JSON output adds `endpointUrl` under the same condition.
 For example:
 
@@ -67,13 +67,7 @@ Endpoint: https://inference.example.com/v1
 Managed providers keep the existing provider-and-model output.
 Unpublished sandbox rows do not participate in endpoint selection.
 NemoClaw omits the endpoint when participating registry metadata is absent, conflicting, invalid, or contains userinfo, a query, a fragment, or control characters.
-Text output reports `Endpoint: unavailable` with a non-secret reason, up to five affected sandbox names, and a recovery action.
-JSON output adds `endpointDiagnostic` with `reason`, `affectedSandboxNames`, `additionalAffectedSandboxCount`, and `recovery`; it never includes the rejected endpoint or gateway binding.
-The reason is `missing-endpoint`, `invalid-endpoint`, `conflicting-endpoints`, or `invalid-gateway-binding`.
-Run the reported status command before changing registry metadata.
-For `invalid-gateway-binding`, restore known-good `gatewayName` and `gatewayPort` metadata from a trusted backup.
-Do not copy a binding from another sandbox.
-If no trusted backup is available, back up and remove the affected sandbox, then re-onboard it.
+In that case, both formats retain the provider and model without adding endpoint details.
 If the registry cannot be read for a compatible custom route, the command exits non-zero without exposing the underlying registry error and directs you to the applicable `status` command.
 
 The command exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no configured inference route.
