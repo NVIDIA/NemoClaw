@@ -20,6 +20,7 @@ import {
 } from "../pr-review-advisor/review-state.mts";
 import {
   CANONICAL_REPOSITORY,
+  PHASE1_PILOT_AUTHOR,
   parseSelectionInput,
   readBoundedJson,
   readBoundedRegularFile,
@@ -81,7 +82,6 @@ type PullRequestApi = {
   number?: unknown;
   state?: unknown;
   draft?: unknown;
-  maintainer_can_modify?: unknown;
   user?: { login?: unknown };
   head?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } };
   base?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } };
@@ -153,11 +153,10 @@ export type RepairSelectionAuthority = {
   pullRequest: {
     state: "open";
     draft: false;
-    author: string;
+    author: typeof PHASE1_PILOT_AUTHOR;
     baseRef: "main";
     headRepository: typeof CANONICAL_REPOSITORY;
     headRef: string;
-    maintainerCanModify: true;
   };
   sourceHeadSha: string;
   baseSha: string;
@@ -322,27 +321,23 @@ export function validatePullRequest(
   headSha: string;
   baseSha: string;
   headRef: string;
-  author: string;
-  maintainerCanModify: true;
+  author: typeof PHASE1_PILOT_AUTHOR;
 } {
   const number = positiveInteger(value.number, "pull request number");
   if (number !== expectedNumber) throw new RepairContractError("pull request number changed");
   if (value.state !== "open" || value.draft !== false) {
     throw new RepairContractError("Phase 1 accepts only open non-draft pull requests");
   }
-  if (value.maintainer_can_modify !== true) {
-    throw new RepairContractError("Phase 1 requires maintainer branch edits to be enabled");
-  }
   exactString(value.head?.repo?.full_name, CANONICAL_REPOSITORY, "head repository");
   exactString(value.base?.repo?.full_name, CANONICAL_REPOSITORY, "base repository");
   exactString(value.base?.ref, "main", "base ref");
+  exactString(value.user?.login, PHASE1_PILOT_AUTHOR, "Phase 1 pilot pull request author");
   return {
     number,
     headSha: fullSha(value.head?.sha, "pull request head SHA"),
     baseSha: fullSha(value.base?.sha, "pull request base SHA"),
     headRef: plainString(value.head?.ref, "pull request head ref", 255),
-    author: plainString(value.user?.login, "pull request author", 256),
-    maintainerCanModify: true,
+    author: PHASE1_PILOT_AUTHOR,
   };
 }
 
@@ -486,29 +481,42 @@ export async function collectRepairSelectionAuthority(
       throw new RepairContractError(`${label} is not a canonical GitHub login`);
     }
   }
-  const [pullRequestValue, runValue, artifactValue, permissionValue, triggeringPermissionValue] =
-    await Promise.all([
-      request<PullRequestApi>(`repos/${CANONICAL_REPOSITORY}/pulls/${input.prNumber}`, input.token),
-      request<WorkflowRunApi>(
-        `repos/${CANONICAL_REPOSITORY}/actions/runs/${input.advisorRunId}`,
-        input.token,
-      ),
-      request<ArtifactListingApi>(
-        `repos/${CANONICAL_REPOSITORY}/actions/runs/${input.advisorRunId}/artifacts?per_page=100`,
-        input.token,
-      ),
-      request<RepositoryPermissionApi>(
-        `repos/${CANONICAL_REPOSITORY}/collaborators/${encodeURIComponent(input.actor)}/permission`,
-        input.token,
-      ),
-      request<RepositoryPermissionApi>(
-        `repos/${CANONICAL_REPOSITORY}/collaborators/${encodeURIComponent(input.triggeringActor)}/permission`,
-        input.token,
-      ),
-    ]);
+  const pullRequestValue = await request<PullRequestApi>(
+    `repos/${CANONICAL_REPOSITORY}/pulls/${input.prNumber}`,
+    input.token,
+  );
+  const pullRequest = validatePullRequest(pullRequestValue, input.prNumber);
+  const [
+    runValue,
+    artifactValue,
+    permissionValue,
+    triggeringPermissionValue,
+    authorPermissionValue,
+  ] = await Promise.all([
+    request<WorkflowRunApi>(
+      `repos/${CANONICAL_REPOSITORY}/actions/runs/${input.advisorRunId}`,
+      input.token,
+    ),
+    request<ArtifactListingApi>(
+      `repos/${CANONICAL_REPOSITORY}/actions/runs/${input.advisorRunId}/artifacts?per_page=100`,
+      input.token,
+    ),
+    request<RepositoryPermissionApi>(
+      `repos/${CANONICAL_REPOSITORY}/collaborators/${encodeURIComponent(input.actor)}/permission`,
+      input.token,
+    ),
+    request<RepositoryPermissionApi>(
+      `repos/${CANONICAL_REPOSITORY}/collaborators/${encodeURIComponent(input.triggeringActor)}/permission`,
+      input.token,
+    ),
+    request<RepositoryPermissionApi>(
+      `repos/${CANONICAL_REPOSITORY}/collaborators/${encodeURIComponent(pullRequest.author)}/permission`,
+      input.token,
+    ),
+  ]);
   validateMaintainerPermission(permissionValue, input.actor);
   validateMaintainerPermission(triggeringPermissionValue, input.triggeringActor);
-  const pullRequest = validatePullRequest(pullRequestValue, input.prNumber);
+  validateMaintainerPermission(authorPermissionValue, pullRequest.author);
   if (pullRequest.headSha !== fullSha(input.sourceHeadSha, "maintainer opt-in head SHA")) {
     throw new RepairContractError("maintainer opt-in is stale for the current pull request head");
   }
@@ -528,7 +536,6 @@ export async function collectRepairSelectionAuthority(
       baseRef: "main",
       headRepository: CANONICAL_REPOSITORY,
       headRef: pullRequest.headRef,
-      maintainerCanModify: pullRequest.maintainerCanModify,
     },
     sourceHeadSha: pullRequest.headSha,
     baseSha: pullRequest.baseSha,
@@ -684,7 +691,7 @@ export function parseRepairSelectionAuthority(value: unknown): RepairSelectionAu
   );
   exactRecord(
     authority.pullRequest,
-    ["state", "draft", "author", "baseRef", "headRepository", "headRef", "maintainerCanModify"],
+    ["state", "draft", "author", "baseRef", "headRepository", "headRef"],
     "selection authority pullRequest",
   );
   const advisor = exactRecord(

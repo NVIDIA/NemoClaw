@@ -29,17 +29,15 @@
         "author",
         "baseRef",
         "headRepository",
-        "headRef",
-        "maintainerCanModify"
+        "headRef"
       ],
       "properties": {
         "state": { "const": "open" },
         "draft": { "const": false },
-        "author": { "$ref": "#/$defs/githubLogin" },
+        "author": { "const": "cjagwani" },
         "baseRef": { "const": "main" },
         "headRepository": { "const": "NVIDIA/NemoClaw" },
-        "headRef": { "type": "string", "minLength": 1, "maxLength": 255 },
-        "maintainerCanModify": { "const": true }
+        "headRef": { "type": "string", "minLength": 1, "maxLength": 255 }
       }
     },
     "sourceHeadSha": { "$ref": "#/$defs/sha" },

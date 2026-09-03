@@ -30,7 +30,7 @@
     "attemptKey": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "repository": { "const": "NVIDIA/NemoClaw" },
     "prNumber": { "type": "integer", "minimum": 1 },
-    "author": { "$ref": "#/$defs/githubLogin" },
+    "author": { "const": "cjagwani" },
     "headRef": { "type": "string", "minLength": 1, "maxLength": 255 },
     "sourceHeadSha": { "$ref": "#/$defs/sha" },
     "baseSha": { "$ref": "#/$defs/sha" },

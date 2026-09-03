@@ -29,6 +29,7 @@ import {
   listGeneratedHeadWorkflowRuns,
 } from "../../../tools/pr-review-advisor-repair/generated-head-validation.mts";
 import {
+  assertPublicationMaintainerPermissions,
   assertPublicationPullRequest,
   atomicUpdate,
   ensureVerifiedRepairCommit,
@@ -44,7 +45,6 @@ import {
 } from "../../../tools/pr-review-advisor-repair/reconcile.mts";
 import {
   collectRepairSelectionAuthority,
-  expectedAdvisorArtifactNames,
   type GitHubRequest as SelectionGitHubRequest,
 } from "../../../tools/pr-review-advisor-repair/select.mts";
 import {
@@ -81,11 +81,10 @@ function selection(overrides: Record<string, unknown> = {}): SelectionBundle {
     pullRequest: {
       state: "open",
       draft: false,
-      author: "contributor",
+      author: "cjagwani",
       baseRef: "main",
       headRepository: "NVIDIA/NemoClaw",
       headRef: "fix/demo",
-      maintainerCanModify: true,
     },
     sourceHeadSha: head,
     baseSha: "b".repeat(40),
@@ -393,131 +392,41 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     ).rejects.toThrow("changed during pagination");
   });
 
-  it("requires both dispatch identities to have maintain permission (#10791)", async () => {
-    const sourceHeadSha = "a".repeat(40);
-    const baseSha = "b".repeat(40);
-    const workflowSha = "c".repeat(40);
-    const names = expectedAdvisorArtifactNames(700, 2);
-    const pull = {
+  it("rejects a same-repository PR outside the Phase 1 pilot author (#10791)", async () => {
+    const request = vi.fn().mockResolvedValue({
       number: 42,
       state: "open",
       draft: false,
-      maintainer_can_modify: true,
-      user: { login: "contributor" },
+      user: { login: "different-maintainer" },
       head: {
-        sha: sourceHeadSha,
+        sha: "a".repeat(40),
         ref: "fix/demo",
         repo: { full_name: "NVIDIA/NemoClaw" },
       },
       base: {
-        sha: baseSha,
+        sha: "b".repeat(40),
         ref: "main",
         repo: { full_name: "NVIDIA/NemoClaw" },
       },
-    };
-    const advisorRun = {
-      id: 700,
-      run_attempt: 2,
-      event: "pull_request_target",
-      status: "completed",
-      conclusion: "success",
-      name: "Automation / PR Review Advisor",
-      path: ".github/workflows/pr-review-advisor.yaml",
-      head_sha: workflowSha,
-      repository: { full_name: "NVIDIA/NemoClaw" },
-      head_repository: { full_name: "NVIDIA/NemoClaw" },
-      pull_requests: [{ number: 42 }],
-    };
-    const artifacts = {
-      total_count: names.length,
-      artifacts: names.map((name, index) => ({
-        id: 100 + index,
-        name,
-        expired: false,
-        size_in_bytes: 1024,
-        digest: `sha256:${String(index).padStart(64, "0")}`,
-        workflow_run: { id: 700, head_sha: workflowSha },
-      })),
-    };
-    const maintainerOne = {
-      permission: "write",
-      role_name: "maintain",
-      user: {
-        login: "maintainer-one",
-        permissions: { admin: false, maintain: true },
-      },
-    };
-    const maintainerTwo = {
-      permission: "write",
-      role_name: "maintain",
-      user: {
-        login: "maintainer-two",
-        permissions: { admin: false, maintain: true },
-      },
-    };
-    const requestMock = vi
-      .fn()
-      .mockResolvedValueOnce(pull)
-      .mockResolvedValueOnce(advisorRun)
-      .mockResolvedValueOnce(artifacts)
-      .mockResolvedValueOnce(maintainerOne)
-      .mockResolvedValueOnce(maintainerTwo);
-    const request = requestMock as unknown as SelectionGitHubRequest;
-
-    const collected = await collectRepairSelectionAuthority(
-      {
-        token: "token",
-        prNumber: 42,
-        advisorRunId: 700,
-        sourceHeadSha,
-        actor: "maintainer-one",
-        triggeringActor: "maintainer-two",
-        productScopeKind: "maintainer-decision",
-        productScopeIdentity: "#10791-maintainer-comment",
-        findingIdsJson: JSON.stringify([finding().id]),
-      },
-      request,
-    );
-
-    expect(collected.authority.optIn).toMatchObject({
-      actor: "maintainer-one",
-      triggeringActor: "maintainer-two",
-      headSha: sourceHeadSha,
     });
-    expect(
-      requestMock.mock.calls.filter(([apiPath]) => String(apiPath).includes("/collaborators/")),
-    ).toHaveLength(2);
 
-    const deniedRequest = vi
-      .fn()
-      .mockResolvedValueOnce(pull)
-      .mockResolvedValueOnce(advisorRun)
-      .mockResolvedValueOnce(artifacts)
-      .mockResolvedValueOnce(maintainerOne)
-      .mockResolvedValueOnce({
-        permission: "write",
-        role_name: "write",
-        user: {
-          login: "maintainer-two",
-          permissions: { admin: false, maintain: false },
-        },
-      });
     await expect(
       collectRepairSelectionAuthority(
         {
           token: "token",
           prNumber: 42,
           advisorRunId: 700,
-          sourceHeadSha,
+          sourceHeadSha: "a".repeat(40),
           actor: "maintainer-one",
           triggeringActor: "maintainer-two",
           productScopeKind: "maintainer-decision",
           productScopeIdentity: "#10791-maintainer-comment",
           findingIdsJson: JSON.stringify([finding().id]),
         },
-        deniedRequest as unknown as SelectionGitHubRequest,
+        request as unknown as SelectionGitHubRequest,
       ),
-    ).rejects.toThrow("admin or maintain permission");
+    ).rejects.toThrow("Phase 1 pilot pull request author does not match cjagwani");
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a changed PR author at the publication boundary (#10791)", () => {
@@ -529,7 +438,6 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         number: bundle.input.prNumber,
         state: "open",
         draft: false,
-        maintainer_can_modify: true,
         user: { login: "different-author" },
         head: {
           sha: bundle.input.sourceHeadSha,
@@ -543,6 +451,31 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         },
       }),
     ).toThrow("identity or ownership changed");
+  });
+
+  it("rechecks all pilot publication identities for maintain permission (#10791)", async () => {
+    const bundle = selection();
+    const receipt = validationReceipt(bundle, Buffer.from("validated patch"));
+    const request = vi.fn(async (apiPath: string) => ({
+      permission: "write",
+      role_name: apiPath.includes("/collaborators/cjagwani/") ? "write" : "maintain",
+      user: {
+        login: apiPath.split("/collaborators/")[1]?.split("/")[0],
+        permissions: {
+          admin: false,
+          maintain: !apiPath.includes("/collaborators/cjagwani/"),
+        },
+      },
+    }));
+
+    await expect(
+      assertPublicationMaintainerPermissions(
+        receipt,
+        "token",
+        request as unknown as NonNullable<Parameters<typeof publishValidatedRepair>[0]["request"]>,
+      ),
+    ).rejects.toThrow("admin or maintain permission");
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it("binds reconciliation to one bounded artifact from the original repair run (#10791)", async () => {
@@ -661,10 +594,9 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
       number: bundle.input.prNumber,
       state: "open",
       draft: false,
-      maintainer_can_modify: true,
       title: "fix(cli): preserve exact generated head",
       body: "Summary\n\nSigned-off-by: Maintainer <maintainer@example.com>",
-      user: { login: "maintainer" },
+      user: { login: "cjagwani" },
       head: {
         sha: bundle.input.sourceHeadSha,
         repo: { full_name: "NVIDIA/NemoClaw" },
@@ -713,7 +645,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
   });
 
   it.each(["dependabot[bot]", "app/dependabot"])(
-    "applies the intended DCO exemption to %s (#10791)",
+    "rejects non-pilot generated-head author %s (#10791)",
     async (author) => {
       const bundle = selection();
       const trustedWorkflowSha = "e".repeat(40);
@@ -721,7 +653,6 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         number: bundle.input.prNumber,
         state: "open",
         draft: false,
-        maintainer_can_modify: true,
         title: "chore(deps): update dependency",
         body: "Automated dependency update.",
         user: { login: author },
@@ -735,23 +666,23 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
           repo: { full_name: "NVIDIA/NemoClaw" },
         },
       });
-      const context = await collectGeneratedHeadContext(
-        {
-          GITHUB_EVENT_NAME: "workflow_dispatch",
-          GITHUB_REF: "refs/heads/main",
-          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-          GITHUB_SHA: trustedWorkflowSha,
-          GITHUB_TOKEN: "token",
-          GITHUB_WORKFLOW_SHA: trustedWorkflowSha,
-          PR_NUMBER: String(bundle.input.prNumber),
-          SOURCE_HEAD_SHA: bundle.input.sourceHeadSha,
-          BASE_SHA: bundle.input.baseSha,
-          REPAIR_ATTEMPT_KEY: bundle.attemptKey,
-        },
-        request,
-      );
-
-      expect(() => assertDcoDeclaration(context)).not.toThrow();
+      await expect(
+        collectGeneratedHeadContext(
+          {
+            GITHUB_EVENT_NAME: "workflow_dispatch",
+            GITHUB_REF: "refs/heads/main",
+            GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+            GITHUB_SHA: trustedWorkflowSha,
+            GITHUB_TOKEN: "token",
+            GITHUB_WORKFLOW_SHA: trustedWorkflowSha,
+            PR_NUMBER: String(bundle.input.prNumber),
+            SOURCE_HEAD_SHA: bundle.input.sourceHeadSha,
+            BASE_SHA: bundle.input.baseSha,
+            REPAIR_ATTEMPT_KEY: bundle.attemptKey,
+          },
+          request,
+        ),
+      ).rejects.toThrow("no longer matches generated-head dispatch");
     },
   );
 
@@ -1130,7 +1061,6 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         number: bundle.input.prNumber,
         state: "open",
         draft: false,
-        maintainer_can_modify: true,
         user: { login: bundle.input.pullRequest.author },
         head: {
           sha: sourceHeadSha,
@@ -1153,6 +1083,46 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
       ];
       const responseEntries: Array<[string, unknown[]]> = [
         ["GET repos/NVIDIA/NemoClaw/pulls/42", [pullRequest, pullRequest]],
+        [
+          "GET repos/NVIDIA/NemoClaw/collaborators/cjagwani/permission",
+          [
+            {
+              permission: "write",
+              role_name: "maintain",
+              user: { login: "cjagwani", permissions: { admin: false, maintain: true } },
+            },
+            {
+              permission: "write",
+              role_name: "maintain",
+              user: { login: "cjagwani", permissions: { admin: false, maintain: true } },
+            },
+          ],
+        ],
+        [
+          "GET repos/NVIDIA/NemoClaw/collaborators/maintainer/permission",
+          [
+            {
+              permission: "write",
+              role_name: "maintain",
+              user: { login: "maintainer", permissions: { admin: false, maintain: true } },
+            },
+            {
+              permission: "write",
+              role_name: "maintain",
+              user: { login: "maintainer", permissions: { admin: false, maintain: true } },
+            },
+            {
+              permission: "write",
+              role_name: "maintain",
+              user: { login: "maintainer", permissions: { admin: false, maintain: true } },
+            },
+            {
+              permission: "write",
+              role_name: "maintain",
+              user: { login: "maintainer", permissions: { admin: false, maintain: true } },
+            },
+          ],
+        ],
         ...workflowNames.map((workflow): [string, unknown[]] => [
           `GET repos/NVIDIA/NemoClaw/actions/workflows/${workflow}`,
           [{ state: "active", path: `.github/workflows/${workflow}` }],

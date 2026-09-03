@@ -55,11 +55,10 @@ function selectionInput(
     pullRequest: {
       state: "open",
       draft: false,
-      author: "contributor",
+      author: "cjagwani",
       baseRef: "main",
       headRepository: "NVIDIA/NemoClaw",
       headRef: "fix/demo",
-      maintainerCanModify: true,
     },
     sourceHeadSha,
     baseSha,

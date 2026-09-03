@@ -786,7 +786,6 @@ export async function assertLivePullRequestIdentity(
     number?: unknown;
     state?: unknown;
     draft?: unknown;
-    maintainer_can_modify?: unknown;
     user?: { login?: unknown };
     head?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } };
     base?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } };
@@ -795,7 +794,6 @@ export async function assertLivePullRequestIdentity(
     pull.number !== selection.input.prNumber ||
     pull.state !== "open" ||
     pull.draft !== false ||
-    pull.maintainer_can_modify !== true ||
     pull.user?.login !== selection.input.pullRequest.author ||
     pull.head?.sha !== selection.input.sourceHeadSha ||
     pull.head?.ref !== selection.input.pullRequest.headRef ||

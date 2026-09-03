@@ -41,11 +41,10 @@ function selection(summary: string) {
       pullRequest: {
         state: "open",
         draft: false,
-        author: "contributor",
+        author: "cjagwani",
         baseRef: "main",
         headRepository: "NVIDIA/NemoClaw",
         headRef: summary,
-        maintainerCanModify: true,
       },
       sourceHeadSha: head,
       baseSha: "b".repeat(40),

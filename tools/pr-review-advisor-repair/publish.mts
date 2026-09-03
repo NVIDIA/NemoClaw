@@ -17,6 +17,7 @@ import {
   assertRepairContractSchema,
   CANONICAL_REPOSITORY,
   MAX_PATCH_BYTES,
+  PHASE1_PILOT_AUTHOR,
   parseValidatedReceiptForPublication,
   readBoundedJson,
   readBoundedRegularFile,
@@ -30,6 +31,7 @@ import {
   listGeneratedHeadWorkflowRuns,
   TRUSTED_GENERATED_HEAD_REF,
 } from "./generated-head-validation.mts";
+import { validateMaintainerPermission } from "./select.mts";
 import { appendPublicationJobSummary } from "./summary.mts";
 
 const VERIFIED_RETRY_ATTEMPTS = 12;
@@ -47,7 +49,6 @@ type PullRequest = {
   number?: unknown;
   state?: unknown;
   draft?: unknown;
-  maintainer_can_modify?: unknown;
   user?: { login?: unknown };
   head?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } };
   base?: {
@@ -158,6 +159,20 @@ export function assertPublicationPullRequest(
   return { repositoryId: identity.repositoryId };
 }
 
+export async function assertPublicationMaintainerPermissions(
+  receipt: ValidationReceipt,
+  token: string,
+  request: GitHubRequest,
+): Promise<void> {
+  for (const actor of [receipt.author, receipt.optIn.actor, receipt.optIn.triggeringActor]) {
+    const permission = await request<Parameters<typeof validateMaintainerPermission>[0]>(
+      `repos/${CANONICAL_REPOSITORY}/collaborators/${encodeURIComponent(actor)}/permission`,
+      token,
+    );
+    validateMaintainerPermission(permission, actor);
+  }
+}
+
 function publicationPullRequestIdentity(
   receipt: ValidationReceipt,
   pull: PullRequest,
@@ -166,8 +181,8 @@ function publicationPullRequestIdentity(
     pull.number !== receipt.prNumber ||
     pull.state !== "open" ||
     pull.draft !== false ||
-    pull.maintainer_can_modify !== true ||
-    pull.user?.login !== receipt.author ||
+    pull.user?.login !== PHASE1_PILOT_AUTHOR ||
+    receipt.author !== PHASE1_PILOT_AUTHOR ||
     pull.head?.ref !== receipt.headRef ||
     pull.head?.repo?.full_name !== CANONICAL_REPOSITORY ||
     pull.base?.sha !== receipt.baseSha ||
@@ -708,6 +723,7 @@ export async function publishValidatedRepair(input: {
   );
   const initialIdentity = publicationPullRequestIdentity(input.receipt, pull);
   const { repositoryId } = initialIdentity;
+  await assertPublicationMaintainerPermissions(input.receipt, input.token, request);
   const collectReviewState = input.collectReviewState ?? collectPullRequestReviewState;
   if (initialIdentity.headSha === input.receipt.sourceHeadSha) {
     const initialReviewState = await collectReviewState(
@@ -750,6 +766,7 @@ export async function publishValidatedRepair(input: {
     commitSha,
   );
   if (headAction === "atomic-update") {
+    await assertPublicationMaintainerPermissions(input.receipt, input.token, request);
     const currentReviewState = await collectReviewState(
       CANONICAL_REPOSITORY,
       input.receipt.prNumber,

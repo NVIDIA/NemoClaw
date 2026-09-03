@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 import { githubApi } from "../advisors/github.mts";
 import {
   CANONICAL_REPOSITORY,
-  githubLogin,
+  PHASE1_PILOT_AUTHOR,
   readBoundedJson,
   RepairContractError,
   sanitizeDiagnostic,
@@ -22,7 +22,6 @@ type PullRequest = {
   number?: unknown;
   state?: unknown;
   draft?: unknown;
-  maintainer_can_modify?: unknown;
   title?: unknown;
   body?: unknown;
   user?: { login?: unknown };
@@ -39,7 +38,7 @@ export type GeneratedHeadContext = {
   repairAttemptKey: string;
   title: string;
   body: string;
-  author: string;
+  author: typeof PHASE1_PILOT_AUTHOR;
 };
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -118,7 +117,7 @@ export async function collectGeneratedHeadContext(
     pull.number !== prNumber ||
     pull.state !== "open" ||
     pull.draft !== false ||
-    pull.maintainer_can_modify !== true ||
+    pull.user?.login !== PHASE1_PILOT_AUTHOR ||
     pull.head?.sha !== sourceHeadSha ||
     pull.head?.repo?.full_name !== CANONICAL_REPOSITORY ||
     pull.base?.sha !== baseSha ||
@@ -127,7 +126,6 @@ export async function collectGeneratedHeadContext(
   ) {
     throw new RepairContractError("live pull request no longer matches generated-head dispatch");
   }
-  const author = githubLogin(pull.user?.login, "pull request author");
   return {
     version: 1,
     repository: CANONICAL_REPOSITORY,
@@ -137,7 +135,7 @@ export async function collectGeneratedHeadContext(
     repairAttemptKey,
     title: boundedText(pull.title, "pull request title", 512),
     body: boundedText(pull.body ?? "", "pull request body", 128 * 1024, true),
-    author,
+    author: PHASE1_PILOT_AUTHOR,
   };
 }
 
@@ -152,7 +150,7 @@ function parseContext(file: string): GeneratedHeadContext {
     typeof value.repairAttemptKey !== "string" ||
     typeof value.title !== "string" ||
     typeof value.body !== "string" ||
-    typeof value.author !== "string"
+    value.author !== PHASE1_PILOT_AUTHOR
   ) {
     throw new RepairContractError("generated-head context is malformed");
   }
@@ -160,7 +158,6 @@ function parseContext(file: string): GeneratedHeadContext {
 }
 
 export function assertDcoDeclaration(context: GeneratedHeadContext): void {
-  if (["dependabot[bot]", "app/dependabot"].includes(context.author)) return;
   const normalized = context.body.replace(/\r/gu, "");
   if (!/^Signed-off-by:\s+.+\s+<[^<>]+>$/mu.test(normalized)) {
     throw new RepairContractError("PR description must contain a valid Signed-off-by declaration");

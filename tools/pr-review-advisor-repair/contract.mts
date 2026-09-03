@@ -10,6 +10,7 @@ import { repairContractSchemaErrors, type RepairContractSchemaName } from "./sch
 export type { RepairContractSchemaName } from "./schemas.mts";
 
 export const CANONICAL_REPOSITORY = "NVIDIA/NemoClaw";
+export const PHASE1_PILOT_AUTHOR = "cjagwani";
 export const MAX_PATCH_BYTES = 2 * 1024 * 1024;
 export const MAX_CHANGED_FILES = 20;
 export const MAX_CHANGED_FILE_BYTES = 1024 * 1024;
@@ -46,11 +47,10 @@ export type SelectionInput = {
   pullRequest: {
     state: "open";
     draft: false;
-    author: string;
+    author: typeof PHASE1_PILOT_AUTHOR;
     baseRef: "main";
     headRepository: typeof CANONICAL_REPOSITORY;
     headRef: string;
-    maintainerCanModify: true;
   };
   sourceHeadSha: string;
   baseSha: string;
@@ -128,7 +128,7 @@ export type ValidationReceipt = {
   attemptKey: string;
   repository: typeof CANONICAL_REPOSITORY;
   prNumber: number;
-  author: string;
+  author: typeof PHASE1_PILOT_AUTHOR;
   headRef: string;
   sourceHeadSha: string;
   baseSha: string;
@@ -457,7 +457,7 @@ export function parseSelectionInput(value: unknown): SelectionInput {
   const pullRequest = record(input.pullRequest, "pullRequest");
   exactKeys(
     pullRequest,
-    ["state", "draft", "author", "baseRef", "headRepository", "headRef", "maintainerCanModify"],
+    ["state", "draft", "author", "baseRef", "headRepository", "headRef"],
     "pullRequest",
   );
   if (
@@ -465,7 +465,7 @@ export function parseSelectionInput(value: unknown): SelectionInput {
     pullRequest.draft !== false ||
     pullRequest.baseRef !== "main" ||
     pullRequest.headRepository !== CANONICAL_REPOSITORY ||
-    pullRequest.maintainerCanModify !== true
+    pullRequest.author !== PHASE1_PILOT_AUTHOR
   ) {
     throw new RepairContractError("pull request is not an eligible canonical open PR into main");
   }
@@ -542,11 +542,10 @@ export function parseSelectionInput(value: unknown): SelectionInput {
     pullRequest: {
       state: "open",
       draft: false,
-      author: githubLogin(pullRequest.author, "pullRequest.author"),
+      author: PHASE1_PILOT_AUTHOR,
       baseRef: "main",
       headRepository: CANONICAL_REPOSITORY,
       headRef: branchRef(pullRequest.headRef, "pullRequest.headRef"),
-      maintainerCanModify: true,
     },
     sourceHeadSha,
     baseSha: sha(input.baseSha, "baseSha"),
@@ -780,6 +779,9 @@ export function parseValidatedReceiptForPublication(
   const attemptKey = digest(input.attemptKey, "validation receipt attemptKey");
   const prNumber = integer(input.prNumber, "validation receipt prNumber");
   const author = githubLogin(input.author, "validation receipt author");
+  if (author !== PHASE1_PILOT_AUTHOR) {
+    throw new RepairContractError("validation receipt author is outside the Phase 1 pilot");
+  }
   const headRef = branchRef(input.headRef, "validation receipt headRef");
   const sourceHeadSha = sha(input.sourceHeadSha, "validation receipt sourceHeadSha");
   const baseSha = sha(input.baseSha, "validation receipt baseSha");
