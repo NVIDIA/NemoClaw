@@ -424,10 +424,8 @@ RUN printf '%s\n' \
 # final image when selected.
 # New Hermes integrations should be installed by the agent workflow when they
 # are enabled rather than shipped in the base image by default.
-# Hermes 0.20.6 deliberately keeps agent-browser outside the root workspace
-# graph and resolves the exact NemoClaw-pinned package through npx. Warm that
-# package in the sandbox user's runtime cache below so browser startup does not
-# require a registry fetch.
+# Hermes 0.20.6 keeps agent-browser outside its root dependency graph. The
+# root-owned runtime below installs the pinned package from a reviewed lockfile.
 # The WhatsApp adapter ships a separate Node project under
 # scripts/whatsapp-bridge whose dependencies Hermes otherwise installs lazily
 # on the first `hermes whatsapp` run. That lazy `npm install` targets

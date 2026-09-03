@@ -29,9 +29,11 @@ job is supplemental evidence and does not replace the selected job set.
 | Target source | `5fc308a70719a83cccdbba4c0e39c23f5a8239d5` |
 | Target source archive SHA-256 | `e622723b5bf3cd6c1db974d92d32242f1cb63f61c1112b6f708b34d619ef0fc7` |
 | Target npm integrity cross-check | `sha512-s5q1IEBifCBb77QMwkse4MRaAaoZSxIa4IkicIO3jL7MIdq15YvnSyiNvsTOWNBi6t3shFpIg+H7+9MJsOiSkg==` |
-| Target base image | `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:378c7a2586261dc6ab2c36fb58f4874dde7c91587afb1efd1923227092d62ec1` |
-| Base image publication | NVIDIA/NemoClaw run `33290836352`, attempt `1`, source `13574de0d24ffc535c996951b6d91e13bb4e1405` |
-| Base image contract SHA-256 | `0aed2feac82586b19fae3108d199449e2c1363b6ffa36403a7a082491d67bbbc` |
+| Target base image index | `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:c588bf76ba1c280f8a366bdfd672193e852de4f509a280662c7070a9b6e2fa48` |
+| Base image publication | NVIDIA/NemoClaw run `33694485635`, source revision `d7855f99095861db4d14dd9f831a3827d5122a2f` |
+| Base image amd64 digest | `sha256:b6a7359adaa4694d7321b785bcb86afa5d29315b1ed601be68d29f7da494ed50` |
+| Base image arm64 digest | `sha256:1d7b4d64d1f4cb7d20923f31ab3fe7e3631bfbeaf5b8e7c3473d138894e01eb1` |
+| Base image contract SHA-256 | `23de5d6fa2eaaa78a59ddfc91af5b2655f2f07d02047d49d6fb39e04308ee76f` |
 | NemoPin comparison base | `4e0e663a9a4cf6bac8df8972ea23dfc26ce3c309` |
 | NVIDIA/NemoClaw authoring base | `b12bede8bfa5bc7a8c083f54fc79a4f5663b81df` |
 | NemoPin handoff manifest | `sha256:ec3f152824a843b9970aa8342de0ad15289d99899af06e6eb94baec8e29e5744` |
@@ -128,14 +130,15 @@ separately hash-verified offline 0.6.1 probe.
 Hermes 0.20.6 resolves agent-browser through an npx fallback instead of the
 root dependency graph. The source patch changes `agent-browser@^0.26.0` to
 `agent-browser@0.26.0`. A reviewed npm lockfile binds the package archive and
-integrity. The base image caches the exact-version packument and archive, then
-reads its integrity without network access and requires it to match the reviewed
-lockfile. The network-disabled `npx` execution verifies the cached archive and
-exact version. The final image inherits that immutable source and cache boundary
-and repeats only the network-disabled version probe. The final-image profile
-policy patch also forces the browser subprocess into npm offline mode after
-ambient values are copied, so a missing runtime cache fails closed instead of
-contacting the registry.
+integrity. The base image installs the locked package into root-owned
+`/opt/nemoclaw-agent-browser-runtime`, removes sandbox-user write access, and
+links `/usr/local/bin/agent-browser` to the installed executable. The same image
+layer removes the root npm cache and temporary npm configuration files. A
+network-disabled probe runs the link as the sandbox user, verifies the exact
+version and link target, and confirms that the sandbox user cannot modify the
+executable or delete the link. Hermes must then resolve
+`/usr/local/bin/agent-browser`. The final image inherits this boundary and keeps
+the npx fallback in npm offline mode.
 
 Hermes 0.20.6 also added a one-shot completion linger that waits on every
 tracked process in the CLI registry. A managed sandbox can contain unrelated
