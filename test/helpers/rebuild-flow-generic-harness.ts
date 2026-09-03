@@ -8,7 +8,6 @@ import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebu
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import {
   agentDefs,
-  agentForwardStop,
   agentOnboard,
   agentRuntime,
   buildContextFingerprint,
@@ -19,6 +18,7 @@ import {
   dockerImage,
   dockerInspect,
   gatewayDrift,
+  forwardRecovery,
   gatewayRuntime,
   gatewayState,
   gatewayTeardownAuthority,
@@ -336,7 +336,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .spyOn(rebuildFlowHelpers, "warnUnpreservedUserManagedFiles")
     .mockImplementation(() => undefined);
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
-  vi.spyOn(agentForwardStop, "settleAgentForwardPortsForRebuild").mockReturnValue(true);
+  vi.spyOn(forwardRecovery, "teardownSandboxDashboardForward").mockReturnValue(true);
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
   const sessionAgentName =
     overrides.sessionAgentName === undefined ? agentName : overrides.sessionAgentName;
