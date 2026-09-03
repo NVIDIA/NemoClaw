@@ -21,6 +21,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isNvidiaEndpointRateLimitFailure } from "./messaging-providers-helpers.ts";
 
@@ -323,13 +324,12 @@ export async function sandboxNode(
   );
 }
 
-export async function dockerInfo(
-  host: HostCliClient,
-  env: NodeJS.ProcessEnv,
-): Promise<ShellProbeResult> {
-  return host.command("docker", ["info"], {
-    artifactName: "phase6-docker-info",
-    env,
-    timeoutMs: 30_000,
+export async function requirePhase6RuntimeProvider(
+  runtimeProvider: RuntimeProviderPrerequisite,
+  scenarioLabel: string,
+): Promise<void> {
+  await runtimeProvider.requireAvailable({
+    artifactName: "phase6-runtime-provider-info",
+    scenarioLabel,
   });
 }

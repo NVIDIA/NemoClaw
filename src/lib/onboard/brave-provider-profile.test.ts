@@ -76,12 +76,17 @@ function makeRunOpenshell(
   importResult: RunResult,
   registeredBoundaryOverrides: Record<string, Record<string, unknown>> = {},
 ) {
+  const importedIds = new Set<string>();
   return vi.fn((args: string[]) => {
     const exportIndex = args.indexOf("export");
-    const probedId = exportIndex === -1 ? null : args[exportIndex + 1];
+    const probedId = exportIndex === -1 ? null : (args[exportIndex + 1] ?? "");
+    const file = args[args.indexOf("--file") + 1] ?? "";
+    const importedId = WEB_SEARCH_IDS.find((candidate) => file.endsWith(`${candidate}.yaml`));
+    const shouldRecordImport = importResult.status === 0 && importedId !== undefined;
+    shouldRecordImport && importedIds.add(importedId);
     return probedId === null
       ? importResult
-      : registeredIds.includes(probedId)
+      : registeredIds.includes(probedId) || importedIds.has(probedId)
         ? {
             status: 0,
             stderr: "",

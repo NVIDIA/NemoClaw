@@ -529,13 +529,23 @@ describe("ensureMessagingBridgeProfiles", () => {
   });
 
   it("imports the profile from its co-located path when not yet registered", () => {
-    const runOpenshell = vi.fn((args: string[], _opts: unknown) =>
-      args.includes("export")
-        ? { status: 1, stderr: "custom provider profile not found" }
-        : { status: 0 },
-    );
+    let imported = false;
+    const runOpenshell = vi.fn((args: string[], _opts: unknown) => {
+      const importsProfile = args.includes("import");
+      imported = imported || importsProfile;
+      return importsProfile
+        ? { status: 0 }
+        : imported
+          ? { status: 0, stdout: JSON.stringify(GC_PROFILE_DOC) }
+          : { status: 1, stderr: "custom provider profile not found" };
+    });
     const exit = vi.fn(() => undefined as never);
-    ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
+    ensureMessagingBridgeProfiles([BRIDGE_DEF], {
+      ...baseDeps(),
+      readFileSync: () => YAML.stringify(GC_PROFILE_DOC),
+      runOpenshell,
+      exit,
+    });
     const importCall = runOpenshell.mock.calls.find((call) => call[0].includes("import"));
     expect(importCall?.[0].slice(0, 4)).toEqual(["provider", "profile", "import", "--file"]);
     expect(importCall?.[0]).toContain(GC_PROFILE.profilePath);
@@ -705,6 +715,7 @@ describe("ensureMessagingBridgeProfiles", () => {
     ensureMessagingBridgeProfiles([BRIDGE_DEF], {
       ...baseDeps(),
       redact: (text) => text.replaceAll("secret-value", "[REDACTED]"),
+      readFileSync: () => YAML.stringify(GC_PROFILE_DOC),
       runOpenshell,
       exit,
       log,
@@ -829,7 +840,13 @@ describe("ensureMessagingBridgeProfiles", () => {
     );
     const exit = vi.fn(() => undefined as never);
     const log = vi.fn();
-    ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), log, runOpenshell, exit });
+    ensureMessagingBridgeProfiles([BRIDGE_DEF], {
+      ...baseDeps(),
+      readFileSync: () => YAML.stringify(GC_PROFILE_DOC),
+      log,
+      runOpenshell,
+      exit,
+    });
     expect(exit).toHaveBeenCalledWith(1);
     const logged = log.mock.calls.flat().join("\n");
     expect(logged).toContain("gateway unreachable");

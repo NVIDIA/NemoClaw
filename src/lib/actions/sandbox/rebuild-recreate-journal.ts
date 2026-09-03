@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -17,20 +18,21 @@ import {
 } from "../../onboard/gateway-teardown-authority";
 import {
   observeSandboxOnGateway,
+  observeSandboxPresenceOnGateway,
   type SandboxRecreateObserver,
   type SandboxRecreateTarget,
 } from "../../onboard/sandbox-recreate-probe";
 import {
   advanceSandboxRecreateTransaction,
-  beginSandboxRecreateTransaction,
+  beginSandboxRecreateDelete,
   clearCompletedSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
-  planSandboxRecreateRecovery,
+  ownSandboxRecreateTransaction,
   type SandboxRecreateSourcePresence,
   sandboxRecreatePhaseReached,
 } from "../../onboard/sandbox-recreate-transaction";
+import { isValidName } from "../../sandbox-name-contract";
 import { decisionSelected } from "../../state/onboard-checkpoint-decision";
-import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
 import type {
   CheckpointGatewayAuthority,
   CheckpointSandboxRecreatePhase,
@@ -38,6 +40,7 @@ import type {
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import {
+  clearRebuildPolicyHandoff,
   listBackups,
   type RebuildManifest,
   type SnapshotEntry,
@@ -48,12 +51,36 @@ import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 const REBUILD_RECOVERY_FILE = ".nemoclaw-rebuild-recovery.json";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
-type RebuildRecoveryBackupRecord = {
+type RebuildRecoveryBackupRecordV1 = {
   readonly schemaVersion: 1;
   readonly transactionId: string;
   readonly sandboxName: string;
   readonly backupTimestamp: string;
 };
+
+type RebuildRecoveryBackupRecordV2 = {
+  readonly schemaVersion: 2;
+  readonly transactionId: string;
+  readonly sandboxName: string;
+  readonly backupTimestamp: string;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+};
+
+type RebuildRecoveryBackupRecordV3 = {
+  readonly schemaVersion: 3;
+  readonly transactionId: string;
+  readonly sandboxName: string;
+  readonly backupTimestamp: string;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly phase: "restore" | "cleanup";
+};
+
+type RebuildRecoveryBackupRecord =
+  | RebuildRecoveryBackupRecordV1
+  | RebuildRecoveryBackupRecordV2
+  | RebuildRecoveryBackupRecordV3;
 
 type RebuildRecoveryBackupIdentity = {
   readonly sandboxName: string;
@@ -64,9 +91,14 @@ type RebuildRecoveryBackupIdentity = {
 interface RebuildRecoveryBackupDeps {
   readonly listBackups?: typeof listBackups;
   readonly validateManifest?: typeof validateRebuildRecoveryManifest;
+  readonly observePresence?: typeof observeSandboxPresenceOnGateway;
+  readonly clearPolicyHandoff?: typeof clearRebuildPolicyHandoff;
 }
 
 function validateRecoveryIdentity(input: RebuildRecoveryBackupIdentity): void {
+  if (!isValidName(input.sandboxName)) {
+    throw new Error("Rebuild recovery sandbox identity is invalid.");
+  }
   if (!UUID_PATTERN.test(input.transactionId)) {
     throw new Error("Rebuild recovery transaction identity is invalid.");
   }
@@ -74,6 +106,16 @@ function validateRecoveryIdentity(input: RebuildRecoveryBackupIdentity): void {
 
 function recoveryPath(backupPath: string): string {
   return path.join(backupPath, REBUILD_RECOVERY_FILE);
+}
+
+function invalidRecoveryRecordError(backupPath: string, detail: string, cause?: unknown): Error {
+  return new Error(
+    `Rebuild recovery marker at '${recoveryPath(backupPath)}' is invalid or unreadable (${detail}). ` +
+      `Recovery remains at '${backupPath}'. Do not edit or remove the marker or retained policy handoff. ` +
+      "Restore the marker's mode and ownership if those are the only damaged attributes, or restore the exact marker from a trusted backup, then rerun the same retirement command. " +
+      "If no trusted marker is available, preserve the backup and ask a NemoClaw maintainer to inspect it.",
+    { cause },
+  );
 }
 
 function syncDirectory(directory: string): void {
@@ -104,17 +146,45 @@ function validatedRecoveryManifest(
 function parseRecoveryRecord(raw: string): RebuildRecoveryBackupRecord | null {
   try {
     const value = JSON.parse(raw) as Record<string, unknown>;
+    const expectedKeys =
+      value?.schemaVersion === 3
+        ? [
+            "backupTimestamp",
+            "gatewayName",
+            "gatewayPort",
+            "phase",
+            "sandboxName",
+            "schemaVersion",
+            "transactionId",
+          ]
+        : value?.schemaVersion === 2
+        ? [
+            "backupTimestamp",
+            "gatewayName",
+            "gatewayPort",
+            "sandboxName",
+            "schemaVersion",
+            "transactionId",
+          ]
+        : ["backupTimestamp", "sandboxName", "schemaVersion", "transactionId"];
     if (
       !value ||
       typeof value !== "object" ||
       Array.isArray(value) ||
-      JSON.stringify(Object.keys(value).sort()) !==
-        JSON.stringify(["backupTimestamp", "sandboxName", "schemaVersion", "transactionId"]) ||
-      value.schemaVersion !== 1 ||
+      JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(expectedKeys) ||
+      (value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== 3) ||
       typeof value.transactionId !== "string" ||
       !UUID_PATTERN.test(value.transactionId) ||
       typeof value.sandboxName !== "string" ||
-      typeof value.backupTimestamp !== "string"
+      !isValidName(value.sandboxName) ||
+      typeof value.backupTimestamp !== "string" ||
+      ((value.schemaVersion === 2 || value.schemaVersion === 3) &&
+        (typeof value.gatewayName !== "string" ||
+          !isValidName(value.gatewayName) ||
+          !Number.isSafeInteger(value.gatewayPort) ||
+          Number(value.gatewayPort) < 1 ||
+          Number(value.gatewayPort) > 65_535)) ||
+      (value.schemaVersion === 3 && value.phase !== "restore" && value.phase !== "cleanup")
     ) {
       return null;
     }
@@ -134,7 +204,12 @@ function readRecoveryRecord(backupPath: string): RebuildRecoveryBackupRecord | n
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    throw invalidRecoveryRecordError(
+      backupPath,
+      code ? `open failed with ${code}` : "open failed",
+      error,
+    );
   }
   try {
     const before = fs.fstatSync(descriptor, { bigint: true });
@@ -148,7 +223,7 @@ function readRecoveryRecord(backupPath: string): RebuildRecoveryBackupRecord | n
       before.size < 1n ||
       before.size > 4096n
     ) {
-      throw new Error("Rebuild recovery backup record authority is invalid.");
+      throw invalidRecoveryRecordError(backupPath, "file authority is invalid");
     }
     const raw = fs.readFileSync(descriptor, "utf8");
     const after = fs.fstatSync(descriptor, { bigint: true });
@@ -159,9 +234,13 @@ function readRecoveryRecord(backupPath: string): RebuildRecoveryBackupRecord | n
       before.mtimeNs !== after.mtimeNs ||
       before.ctimeNs !== after.ctimeNs
     ) {
-      throw new Error("Rebuild recovery backup record changed while it was read.");
+      throw invalidRecoveryRecordError(backupPath, "file changed while it was read");
     }
-    return parseRecoveryRecord(raw);
+    const record = parseRecoveryRecord(raw);
+    if (!record) {
+      throw invalidRecoveryRecordError(backupPath, "content or schema is invalid");
+    }
+    return record;
   } finally {
     fs.closeSync(descriptor);
   }
@@ -179,12 +258,48 @@ function recoveryRecordMatches(
   );
 }
 
+function replaceRecoveryRecord(
+  backupPath: string,
+  record: RebuildRecoveryBackupRecordV3,
+): void {
+  const filePath = recoveryPath(backupPath);
+  const temporaryPath = `${filePath}.tmp-${randomUUID()}`;
+  let descriptor: number | null = null;
+  try {
+    descriptor = fs.openSync(
+      temporaryPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.writeFileSync(descriptor, `${JSON.stringify(record)}\n`, "utf8");
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = null;
+    fs.renameSync(temporaryPath, filePath);
+    syncDirectory(backupPath);
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+    fs.rmSync(temporaryPath, { force: true });
+  }
+}
+
 /** Bind one published backup to the active outer rebuild transaction. */
 export function recordRebuildRecoveryBackup(
-  input: RebuildRecoveryBackupIdentity & { readonly backupManifest: RebuildManifest },
+  input: RebuildRecoveryBackupIdentity &
+    Pick<SandboxRecreateTarget, "gatewayName" | "gatewayPort"> & {
+      readonly backupManifest: RebuildManifest;
+    },
   deps: RebuildRecoveryBackupDeps = {},
 ): void {
   validateRecoveryIdentity(input);
+  if (
+    !isValidName(input.gatewayName) ||
+    !Number.isSafeInteger(input.gatewayPort) ||
+    input.gatewayPort < 1 ||
+    input.gatewayPort > 65_535
+  ) {
+    throw new Error("Rebuild recovery gateway identity is invalid.");
+  }
   const manifest = validatedRecoveryManifest(input, input.backupManifest, deps);
   const existing = readRecoveryRecord(manifest.backupPath);
   if (existing) {
@@ -194,17 +309,17 @@ export function recordRebuildRecoveryBackup(
     return;
   }
   const record: RebuildRecoveryBackupRecord = {
-    schemaVersion: 1,
+    schemaVersion: 3,
     transactionId: input.transactionId,
     sandboxName: input.sandboxName,
     backupTimestamp: manifest.timestamp,
+    gatewayName: input.gatewayName,
+    gatewayPort: input.gatewayPort,
+    phase: "restore",
   };
   const descriptor = fs.openSync(
     recoveryPath(manifest.backupPath),
-    fs.constants.O_WRONLY |
-      fs.constants.O_CREAT |
-      fs.constants.O_EXCL |
-      fs.constants.O_NOFOLLOW,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
     0o600,
   );
   try {
@@ -214,6 +329,52 @@ export function recordRebuildRecoveryBackup(
     fs.closeSync(descriptor);
   }
   syncDirectory(manifest.backupPath);
+}
+
+/** Report whether an exact recovery record has entered cleanup-only state. */
+export function isRebuildRecoveryCleanupOnly(
+  input: Omit<RebuildRecoveryBackupIdentity, "transactionId"> & {
+    readonly transactionId?: string;
+    readonly backupManifest: RebuildManifest;
+  },
+  deps: RebuildRecoveryBackupDeps = {},
+): boolean {
+  if (!isValidName(input.sandboxName)) {
+    throw new Error("Rebuild recovery sandbox identity is invalid.");
+  }
+  const record = readRecoveryRecord(input.backupManifest.backupPath);
+  if (!record) return false;
+  const identity = {
+    sandboxName: input.sandboxName,
+    agentName: input.agentName,
+    transactionId: input.transactionId ?? record.transactionId,
+  };
+  validateRecoveryIdentity(identity);
+  const manifest = validatedRecoveryManifest(identity, input.backupManifest, deps);
+  if (!recoveryRecordMatches(record, identity, manifest)) return false;
+  return record?.schemaVersion === 3 && record.phase === "cleanup";
+}
+
+/** Persist cleanup-only state before removing the final handoff metadata. */
+export function markRebuildRecoveryCleanupOnly(
+  input: RebuildRecoveryBackupIdentity & { readonly backupManifest: RebuildManifest },
+  deps: RebuildRecoveryBackupDeps = {},
+): void {
+  validateRecoveryIdentity(input);
+  const manifest = validatedRecoveryManifest(input, input.backupManifest, deps);
+  const record = readRecoveryRecord(manifest.backupPath);
+  if (!record || !recoveryRecordMatches(record, input, manifest)) {
+    throw new Error("Rebuild recovery backup record is missing or changed.");
+  }
+  if (record.schemaVersion === 1) {
+    throw new Error("Rebuild recovery backup record lacks cleanup authority.");
+  }
+  if (record.schemaVersion === 3 && record.phase === "cleanup") return;
+  replaceRecoveryRecord(manifest.backupPath, {
+    ...record,
+    schemaVersion: 3,
+    phase: "cleanup",
+  });
 }
 
 /** Find the exact backup bound to an interrupted replacement transaction. */
@@ -233,7 +394,9 @@ export function findRebuildRecoveryBackup(
 
 /** Retire the bounded recovery record after restore and post-restore succeed. */
 export function clearRebuildRecoveryBackup(
-  input: RebuildRecoveryBackupIdentity & { readonly backupManifest: RebuildManifest },
+  input: RebuildRecoveryBackupIdentity & {
+    readonly backupManifest: RebuildManifest;
+  },
   deps: RebuildRecoveryBackupDeps = {},
 ): void {
   validateRecoveryIdentity(input);
@@ -243,6 +406,118 @@ export function clearRebuildRecoveryBackup(
   }
   fs.unlinkSync(recoveryPath(manifest.backupPath));
   syncDirectory(manifest.backupPath);
+}
+
+export type RetiredRebuildRecovery = Readonly<{
+  backupPath: string;
+  gatewayName: string;
+  transactionId: string;
+}>;
+
+/**
+ * Retire one credential-bearing rebuild handoff only after its recorded
+ * gateway proves the old sandbox absent and the operator attests that required
+ * data recovery is complete.
+ */
+export function retireRebuildRecoveryBackup(
+  input: Readonly<{
+    sandboxName: string;
+    transactionId: string;
+    confirmDataRecovered: boolean;
+  }>,
+  deps: RebuildRecoveryBackupDeps = {},
+): RetiredRebuildRecovery {
+  validateRecoveryIdentity({ ...input, agentName: null });
+  if (!input.confirmDataRecovered) {
+    throw new Error(
+      "Recovery retirement requires --yes to confirm that required data recovery is complete.",
+    );
+  }
+
+  let selected:
+    | {
+        manifest: RebuildManifest;
+        record: RebuildRecoveryBackupRecordV2 | RebuildRecoveryBackupRecordV3;
+      }
+    | undefined;
+  for (const candidate of (deps.listBackups ?? listBackups)(input.sandboxName)) {
+    const record = readRecoveryRecord(candidate.backupPath);
+    if (record?.transactionId !== input.transactionId) continue;
+    if (record.sandboxName !== input.sandboxName) {
+      throw new Error(
+        `Rebuild recovery identity does not match sandbox '${input.sandboxName}'. Recovery remains at '${candidate.backupPath}'.`,
+      );
+    }
+    if (record.schemaVersion === 1) {
+      throw new Error(
+        `Rebuild recovery '${input.transactionId}' does not contain recorded gateway authority. Recovery remains at '${candidate.backupPath}'.`,
+      );
+    }
+    const identity = {
+      sandboxName: input.sandboxName,
+      agentName: candidate.agentType,
+      transactionId: input.transactionId,
+    };
+    const manifest = validatedRecoveryManifest(identity, candidate, deps);
+    if (!recoveryRecordMatches(record, identity, manifest)) {
+      throw new Error(
+        `Rebuild recovery identity changed before retirement. Recovery remains at '${candidate.backupPath}'.`,
+      );
+    }
+    selected = { manifest, record };
+    break;
+  }
+  if (!selected) {
+    throw new Error(
+      `No exact rebuild recovery record exists for sandbox '${input.sandboxName}' and transaction '${input.transactionId}'.`,
+    );
+  }
+
+  const { manifest, record } = selected;
+  try {
+    const presence = (deps.observePresence ?? observeSandboxPresenceOnGateway)({
+      sandboxName: input.sandboxName,
+      gatewayName: record.gatewayName,
+    });
+    if (presence !== "missing") {
+      throw new Error(
+        `OpenShell still reports sandbox '${input.sandboxName}' on recorded gateway '${record.gatewayName}'`,
+      );
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Cannot retire rebuild recovery before confirmed sandbox deletion: ${detail}. Recovery remains at '${manifest.backupPath}'.`,
+      { cause: error },
+    );
+  }
+
+  if (!(deps.clearPolicyHandoff ?? clearRebuildPolicyHandoff)(manifest)) {
+    throw new Error(
+      `The retained rebuild policy handoff could not be removed. Recovery remains at '${manifest.backupPath}'.`,
+    );
+  }
+  try {
+    clearRebuildRecoveryBackup(
+      {
+        sandboxName: input.sandboxName,
+        agentName: manifest.agentType,
+        transactionId: input.transactionId,
+        backupManifest: manifest,
+      },
+      deps,
+    );
+  } catch (error) {
+    throw new Error(
+      `The rebuild recovery marker could not be removed. Recovery remains at '${manifest.backupPath}'.`,
+      { cause: error },
+    );
+  }
+  return {
+    backupPath: manifest.backupPath,
+    gatewayName: record.gatewayName,
+    transactionId: input.transactionId,
+  };
 }
 
 export type RebuildRecreateJournalTarget = SandboxRecreateTarget;
@@ -258,8 +533,7 @@ export interface RebuildRecreateJournal {
   readonly gatewayAuthority: CheckpointGatewayAuthority;
   readonly targetGeneration: string;
   readonly targetIntentFingerprint: string;
-  markDeleting(): void;
-  observeSourceForDelete(): RebuildRecreateSourcePresence;
+  beginDelete(): RebuildRecreateSourcePresence;
   confirmDeleted(): void;
   completeAcceptedTarget(): void;
 }
@@ -365,56 +639,60 @@ export function openRebuildRecreateJournal(
     throw error;
   }
   const gatewayAuthority = checkpointGatewayAuthority(authority);
-  const sourceEntry = registry.getSandbox(target.sandboxName);
-  const observation = observe(target);
-  const active = onboardSession.loadSession()?.checkpoint?.sandboxRecreate ?? null;
-  const recovery = active
-    ? planSandboxRecreateRecovery(active, observation, sourceEntry)
-    : { action: "continue_delete" as const };
-  if (recovery.action === "reject") {
-    throw new Error(
-      `Cannot resume sandbox '${target.sandboxName}' replacement: ${recovery.reason}.`,
-    );
-  }
-  // A registered, ready same-name sandbox carrying the journaled target
-  // generation and identity is the replacement this rebuild already proved.
-  // The caller must retire the transaction instead of deleting it again.
-  const acceptedTarget = recovery.action === "accept_target";
-
-  const session = onboardSession.updateSession((current) => {
-    const checkpoint = current.checkpoint ?? deriveCheckpointFromSession(current);
-    current.checkpoint = {
+  const owned = ownSandboxRecreateTransaction({
+    sessionStore: {
+      loadSession: onboardSession.loadSession,
+      updateSession: onboardSession.updateSession,
+      compareAndSwapSession: onboardSession.compareAndSwapSession,
+    },
+    sandboxName: target.sandboxName,
+    gatewayName: target.gatewayName,
+    gatewayPort: target.gatewayPort,
+    targetIntentFingerprint,
+    readRegistryEntry: () => registry.getSandbox(target.sandboxName),
+    observe: () => observe(target),
+    decorateCheckpoint: (current, checkpoint, now) => ({
       ...checkpoint,
       machineState: current.machine.state,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
       sandboxIdentity: decisionSelected({ name: target.sandboxName, agent: agentName }),
       gatewayAuthority: decisionSelected(gatewayAuthority),
-    };
-    beginSandboxRecreateTransaction(current, {
-      sandboxName: target.sandboxName,
-      gatewayName: target.gatewayName,
-      gatewayPort: target.gatewayPort,
-      sourceEntry,
-      observation,
-      targetIntentFingerprint,
-    });
-    return current;
+    }),
   });
-
-  const transaction = session.checkpoint?.sandboxRecreate;
-  if (!transaction) {
-    throw new Error(
-      `Sandbox '${target.sandboxName}' replacement journal could not be recorded before deletion.`,
+  const { session, transaction, recovery } = owned;
+  if (owned.replacedTransactionId) {
+    log(
+      `Replaced void journal ${owned.replacedTransactionId} with ${transaction.id} for '${target.sandboxName}'; its source sandbox is registered and live`,
+    );
+    console.log(
+      `  Replaced the void replacement journal for '${target.sandboxName}'; its source sandbox is registered and live.`,
     );
   }
+  const acceptedTarget = recovery.action === "accept_target";
   log(
     `Journaled replacement ${transaction.id} for '${target.sandboxName}' on ${target.gatewayName}:${String(target.gatewayPort)} at phase '${transaction.phase}'`,
   );
 
+  const openingSessionId = session.sessionId;
+  let currentTransaction = transaction;
   let phase: CheckpointSandboxRecreatePhase = transaction.phase;
+  const revalidateGatewayAuthority = (): void => {
+    const currentAuthority = resolveGatewayRebuildAuthority({
+      gatewayName: target.gatewayName,
+      gatewayPort: target.gatewayPort,
+    });
+    if (!sameGatewayOwner(authority, currentAuthority)) {
+      throw new GatewayAuthorityError(
+        "Gateway lifecycle authority changed after the recreate journal was recorded " +
+          `(${describeGatewayOwnerForError(authority)} -> ${describeGatewayOwnerForError(currentAuthority)}). ` +
+          "Retry the rebuild; the current run will not delete the source sandbox.",
+      );
+    }
+  };
   const advance = (next: CheckpointSandboxRecreatePhase): void => {
     onboardSession.updateSession((current) => {
-      phase = advanceSandboxRecreateTransaction(current, transaction.id, next).phase;
+      currentTransaction = advanceSandboxRecreateTransaction(current, transaction.id, next);
+      phase = currentTransaction.phase;
       return current;
     });
   };
@@ -426,22 +704,23 @@ export function openRebuildRecreateJournal(
     gatewayAuthority,
     targetGeneration: transaction.targetGeneration,
     targetIntentFingerprint: transaction.targetIntentFingerprint,
-    markDeleting: () => {
-      if (sandboxRecreatePhaseReached(phase, "deleted")) return;
-      advance("deleting");
-    },
-    observeSourceForDelete: () => {
-      const current = observe(target);
-      if (current.state === "missing") return "missing";
-      if (
-        !transaction.sourceLiveIdentityFingerprint ||
-        current.liveIdentityFingerprint !== transaction.sourceLiveIdentityFingerprint
-      ) {
-        throw new Error(
-          `Cannot delete sandbox '${target.sandboxName}': the live same-name sandbox is not the journaled source.`,
-        );
-      }
-      return "source";
+    beginDelete: () => {
+      const begun = beginSandboxRecreateDelete({
+        sessionStore: {
+          loadSession: onboardSession.loadSession,
+          updateSession: onboardSession.updateSession,
+          compareAndSwapSession: onboardSession.compareAndSwapSession,
+        },
+        openingSessionId,
+        expectedTransaction: currentTransaction,
+        targetIntentFingerprint,
+        revalidateGatewayAuthority,
+        readRegistryEntry: () => registry.getSandbox(target.sandboxName),
+        observe: () => observe(target),
+      });
+      currentTransaction = begun.transaction;
+      phase = currentTransaction.phase;
+      return begun.sourcePresence;
     },
     confirmDeleted: () => {
       if (observe(target).state !== "missing") {

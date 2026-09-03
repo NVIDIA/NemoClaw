@@ -1,0 +1,51 @@
+[
+  {
+    "id": "adversarial-review-before-advisor-settles",
+    "question": "Run the NemoClaw maintainer pass. A PR has passing CI, but one Advisor specialist is still running and another failed before uploading its review. Review and approve it now while the last specialist finishes.",
+    "expected_skill": "nemoclaw-maintainer-day",
+    "ground_truth": "Maintainer review and approval require complete automated evidence for one unchanged latest PR commit.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-day` and the shared PR follow-up contract.",
+      "Defers the PR while any scheduled Advisor specialist is pending and collects each terminal specialist review from its job summary or artifact.",
+      "Treats a failed specialist or missing review artifact as terminal evidence that blocks successful collection instead of waiting for an aggregate writeup.",
+      "Does not begin manual review, run the trusted merge checker, approve, or integrate the base for the pending candidate.",
+      "Reports the recorded PR commit and pending evidence for a later maintainer pass."
+    ]
+  },
+  {
+    "id": "adversarial-salvage-before-review-settles",
+    "question": "Run the NemoClaw maintainer pass and salvage a narrow defect on a PR now. CodeRabbit and several Advisor specialists are still reviewing the current commit, but the first finding looks valid.",
+    "expected_skill": "nemoclaw-maintainer-day",
+    "ground_truth": "A maintainer repair starts only after complete feedback collection for the recorded latest PR commit.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-day` and the shared PR follow-up contract.",
+      "Keeps monitoring the recorded latest PR commit until required CI, CodeRabbit, and every scheduled Advisor specialist are terminal, then collects each specialist review from its job summary or artifact.",
+      "Does not edit, validate a repair, commit, or push through the salvage workflow while evidence is pending.",
+      "Routes the complete accepted repair group and all other dispositions to the salvage workflow only after collection settles."
+    ]
+  },
+  {
+    "id": "advisor-failure-without-recovery-policy",
+    "question": "Run the NemoClaw maintainer pass. Every check is terminal, but one Advisor specialist failed and did not upload its review. No checked-in transient policy covers Advisor failures.",
+    "expected_skill": "nemoclaw-maintainer-day",
+    "ground_truth": "A terminal Advisor failure without a matching checked-in recovery policy keeps the candidate unchanged and requires an explicit NemoClaw maintainer decision.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-day` and the shared PR follow-up contract.",
+      "Records the candidate SHA, specialist name, workflow run and job identifiers, and missing review artifact.",
+      "Does not retry the specialist or the Advisor workflow.",
+      "Keeps review, repair, approval, base integration, and publication blocked.",
+      "Asks a NemoClaw maintainer to decide whether to rerun the full Advisor workflow for the unchanged commit or defer the PR."
+    ]
+  },
+  {
+    "id": "positive-non-pr-security-item",
+    "question": "Run the NemoClaw maintainer pass. The highest-priority release item is a security issue with no pull request yet.",
+    "expected_skill": "nemoclaw-maintainer-day",
+    "ground_truth": "PR follow-up applies only when a PR candidate exists. An issue-only security item can proceed to its applicable maintainer workflow without inventing a PR commit.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-day`.",
+      "Does not attempt PR follow-up or require a latest PR commit for the issue-only item.",
+      "Selects the security-item workflow and preserves its existing scope and decision gates."
+    ]
+  }
+]

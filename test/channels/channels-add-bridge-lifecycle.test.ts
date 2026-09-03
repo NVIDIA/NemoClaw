@@ -293,7 +293,8 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
 
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(providerSpy).not.toHaveBeenCalled();
-    expect(printedText()).toContain("GOOGLECHAT_SERVICE_ACCOUNT");
+    expect(printedText()).toContain("Missing required inputs for this channel.");
+    expect(printedText()).not.toContain("GOOGLECHAT_SERVICE_ACCOUNT");
   });
 
   it("tears the just-created bridge provider back down when gateway registration fails", async () => {
@@ -305,7 +306,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
       code: 1,
     });
 
-    expect(printedText()).toContain("Failed to register 'googlechat' providers");
+    expect(printedText()).toContain("Failed to register channel providers with the gateway.");
     expect(openshellCalls()).toEqual(
       expect.arrayContaining([
         ["sandbox", "provider", "detach", "test-sb", "test-sb-googlechat-bridge"],

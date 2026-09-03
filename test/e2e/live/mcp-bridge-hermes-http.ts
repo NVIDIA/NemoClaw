@@ -50,7 +50,7 @@ export function buildHermesMcpChatProbeScript(payload: string, resultToken: stri
     "set -e",
     `printf '\\n${HERMES_MCP_HTTP_STATUS_MARKER}%s\\n' "$status" >&2`,
     'if [ "$curl_rc" -ne 0 ]; then exit "$curl_rc"; fi',
-    `case "$status" in 2??) if grep -Fq -- ${shellQuote(resultToken)} "$response_file"; then printf '${HERMES_MCP_RESULT_TOKEN_MARKER}present\\n' >&2; else printf '${HERMES_MCP_RESULT_TOKEN_MARKER}missing\\n' >&2; fi ;; *) emit_failure_body ;; esac`,
+    `case "$status" in 2??) if grep -Fq -- ${shellQuote(resultToken)} "$response_file"; then printf '${HERMES_MCP_RESULT_TOKEN_MARKER}present\\n' >&2; else printf '${HERMES_MCP_RESULT_TOKEN_MARKER}missing\\n' >&2; emit_failure_body; fi ;; *) emit_failure_body ;; esac`,
   ].join("\n");
 }
 
@@ -122,7 +122,10 @@ export function assertHermesMcpHttpResponse(
     );
   }
   if (!hasResultToken(result.stderr)) {
-    throw new Error("Hermes real MCP tool call response did not contain the fixture result token");
+    const body = sanitizedPreview(result.stdout, explicitRedactionValues);
+    throw new Error(
+      `Hermes real MCP tool call response did not contain the fixture result token; redacted response body: ${body}`,
+    );
   }
   if (result.stdout !== "") {
     throw new Error("Hermes real MCP tool call success path emitted response contents");

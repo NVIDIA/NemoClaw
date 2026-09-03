@@ -21,14 +21,15 @@ import YAML from "yaml";
 
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/provider-command";
 import type {
-  CheckedInBoundaryComparison,
+  CheckedInProviderProfileResult,
   RegisteredProfileComparison,
 } from "../adapters/openshell/provider-profile";
 import {
-  compareExportedProfileToCheckedIn,
+  compareExportedProviderProfileWithContract,
   isMissingProviderProfile,
-  normalizeOpenshellDiagnostic,
   openshellResultDiagnostic,
+  parseCheckedInProviderProfileContract,
+  reconcileCheckedInProviderProfile,
 } from "../adapters/openshell/provider-profile";
 import { compactText } from "../core/url-utils";
 import { createBuiltInChannelManifestRegistry } from "../messaging/channels";
@@ -163,28 +164,6 @@ function bufferOrStringToText(value: string | Buffer | null | undefined): string
   return "";
 }
 
-/**
- * Whether an exported profile is the checked-in YAML this codebase ships for
- * it. The checked-in boundary itself defines what's allowed for both static
- * and refreshing profiles; a profile ID match alone is not proof this is that
- * checked-in profile (#10371).
- *
- * Compares through OpenShell's export representation, since a refresh block
- * does not round-trip byte-identically, and distinguishes a read that never
- * completed from confirmed drift.
- */
-function compareProfileToCheckedIn(
-  profile: MessagingBridgeProfile,
-  exported: string,
-  readFileSync: (file: string) => string,
-): CheckedInBoundaryComparison {
-  return compareExportedProfileToCheckedIn(
-    exported,
-    () => readFileSync(profile.profilePath),
-    profile.profileId,
-  );
-}
-
 type MessagingBridgeProfileCandidate = Pick<
   MessagingBridgeProfile,
   "agent" | "channelId" | "profilePath" | "sourceSecretEnv"
@@ -263,10 +242,17 @@ export function matchesRegisteredStaticMessagingProfile(
       ? "absent"
       : "indeterminate";
   }
-  return compareProfileToCheckedIn(
-    profile,
+  const readFileSync = deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8"));
+  let expected;
+  try {
+    expected = parseCheckedInProviderProfileContract(readFileSync(profile.profilePath));
+  } catch {
+    return "indeterminate";
+  }
+  if (!expected || expected.profileId !== profile.profileId) return "indeterminate";
+  return compareExportedProviderProfileWithContract(
     bufferOrStringToText(exported.stdout),
-    deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8")),
+    expected,
   );
 }
 
@@ -492,177 +478,62 @@ export function bridgeSecretEnvsForChannel(
   ];
 }
 
-/**
- * Register each active bridge provider profile with OpenShell before providers
- * are created (they are created with `--type <profileId>`). Idempotent: tolerates
- * OpenShell reporting the custom profile already exists. Self-gates when no bridge
- * token def is present.
- */
+/** Register or validate each active messaging bridge profile before provider creation. */
 export function ensureMessagingBridgeProfiles(
   tokenDefs: readonly TokenDefShape[],
   deps: EnsureMessagingBridgeProfilesDeps,
 ): void {
   const profiles = deps.profiles ?? listMessagingBridgeProfiles({ root: deps.root });
   const active = bridgeProfilesForTokenDefs(tokenDefs, profiles);
-  if (active.length === 0) return;
-
-  const errorLog = deps.log ?? console.error;
+  const log = deps.log ?? console.error;
   const exit = deps.exit ?? ((code?: number) => process.exit(code));
   const readFileSync = deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8"));
 
-  const rejectMismatchedProfile = (profile: MessagingBridgeProfile): void => {
-    errorLog(
-      `\n  ✗ OpenShell provider profile '${profile.profileId}' already registered in the selected ` +
-        `OpenShell gateway does not match NemoClaw's checked-in ${profile.channelId} credential contract.`,
-    );
-    errorLog(
-      "    Find the selected gateway's name with 'openshell gateway info', then remove the " +
-        `conflicting profile from that gateway (openshell provider profile -g <gateway-name> ` +
-        `delete ${profile.profileId}) and re-run onboarding. Other sandboxes that use the same ` +
-        "gateway may share this profile — confirm the effect before removing it.",
-    );
-    exit(1);
-  };
-
-  const rejectUnverifiableProfile = (profile: MessagingBridgeProfile): void => {
-    errorLog(
-      `\n  ✗ Could not verify the OpenShell provider profile '${profile.profileId}' already ` +
-        `registered in the selected OpenShell gateway against NemoClaw's checked-in ` +
-        `${profile.channelId} credential contract.`,
-    );
-    errorLog(
-      `    The gateway's export was not readable as JSON, or ${profile.profilePath} could not be ` +
-        "read as a provider profile. An unfinished check is not proof the registered profile " +
-        "drifted, so it was left in place. Resolve the read failure and re-run onboarding.",
-    );
-    exit(1);
-  };
-
-  const rejectProbeFailure = (
-    profile: MessagingBridgeProfile,
-    operation: string,
-    rawDiagnostic: string,
-  ): void => {
-    const diagnostic = compactText(deps.redact(rawDiagnostic));
-    errorLog(
-      `\n  ✗ Could not check whether the ${profile.channelId} provider profile is already ` +
-        `registered (${operation} failed).`,
-    );
-    if (diagnostic) errorLog(`    ${diagnostic.slice(0, 500)}`);
-    errorLog(
-      "    Confirm the OpenShell gateway is reachable and this account is authorized, then re-run onboarding.",
-    );
-    exit(1);
-  };
-
   for (const profile of active) {
-    // Onboard registers each bridge provider twice: once up front so an
-    // interrupted run can resume, then again during create-plan materialization.
-    // Probe before import so the second registration reuses the host-global
-    // profile. Only a recognized missing-profile result permits an import.
-    const alreadyRegistered = deps.runOpenshell(
-      ["provider", "profile", "export", profile.profileId, "--output", "json"],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-      },
-    );
-    if (alreadyRegistered.status === 0) {
-      const comparison = compareProfileToCheckedIn(
-        profile,
-        bufferOrStringToText(alreadyRegistered.stdout),
-        readFileSync,
-      );
-      if (comparison === "indeterminate") {
-        rejectUnverifiableProfile(profile);
-        return;
-      }
-      if (comparison === "mismatch") {
-        rejectMismatchedProfile(profile);
-        return;
-      }
-      continue;
-    }
-    // A nonzero probe status alone is not proof the profile is missing — the
-    // gateway could be unreachable, this account unauthorized, or the probe
-    // could have timed out or spawned incorrectly. Only a recognized "not
-    // found" diagnostic makes it safe to proceed to import; anything else
-    // must stop here rather than attempt a state-changing import in
-    // response to a read that never actually completed.
-    const probeDiagnostic = openshellResultDiagnostic(alreadyRegistered);
-    if (
-      !Number.isInteger(alreadyRegistered.status) ||
-      !isMissingProviderProfile(probeDiagnostic, profile.profileId)
-    ) {
-      rejectProbeFailure(profile, "provider profile export", probeDiagnostic);
-      return;
-    }
-
-    const result = deps.runOpenshell(
-      ["provider", "profile", "import", "--file", profile.profilePath],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-      },
-    );
-    if (result.status === 0) continue;
-
-    // Reconcile a lost race: the probe saw no profile but a concurrent import made it.
-    // Normalize the diagnostic because OpenShell can wrap `already exists`
-    // across a box-drawing continuation (#10159, #10371).
-    const rawDiagnostic = openshellResultDiagnostic(result);
-    if (/already exists/iu.test(normalizeOpenshellDiagnostic(rawDiagnostic))) {
-      const racedProfile = deps.runOpenshell(
-        ["provider", "profile", "export", profile.profileId, "--output", "json"],
-        {
-          ignoreError: true,
-          suppressOutput: true,
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-        },
-      );
-      // A nonzero post-race export status means the export itself failed
-      // (gateway unreachable, unauthorized, timed out) — the profile content
-      // was never read, so this is not proof of a conflict. Report the real
-      // cause instead of telling the operator to delete a profile that may
-      // be fine.
-      if (racedProfile.status !== 0) {
-        rejectProbeFailure(
-          profile,
-          "post-race provider profile export",
-          openshellResultDiagnostic(racedProfile),
-        );
-        return;
-      }
-      const racedComparison = compareProfileToCheckedIn(
-        profile,
-        bufferOrStringToText(racedProfile.stdout),
-        readFileSync,
-      );
-      if (racedComparison === "indeterminate") {
-        rejectUnverifiableProfile(profile);
-        return;
-      }
-      if (racedComparison === "mismatch") {
-        rejectMismatchedProfile(profile);
-        return;
-      }
-      continue;
-    }
-
-    const diagnostic = compactText(deps.redact(rawDiagnostic));
-    errorLog(`\n  ✗ Failed to register the ${profile.channelId} provider profile with OpenShell.`);
-    if (diagnostic) errorLog(`    ${diagnostic.slice(0, 500)}`);
-    errorLog(
-      "    Fix the error above. If OpenShell requires an update, rerun the NemoClaw installer. Then rerun onboarding.",
-    );
-    exit(result.status || 1);
+    const result = reconcileCheckedInProviderProfile({
+      profileId: profile.profileId,
+      profilePath: profile.profilePath,
+      readCheckedInProfile: () => readFileSync(profile.profilePath),
+      runOpenshell: deps.runOpenshell,
+    });
+    if (result.ok) continue;
+    for (const message of messagingProfileFailureMessages(profile, result, deps.redact))
+      log(message);
+    exit(1);
     return;
   }
+}
+
+function messagingProfileFailureMessages(
+  profile: MessagingBridgeProfile,
+  result: Exclude<CheckedInProviderProfileResult, { ok: true }>,
+  redact: (input: string) => string,
+): string[] {
+  if (result.reason === "profile-drifted") {
+    return [
+      `\n  ✗ OpenShell provider profile '${profile.profileId}' does not match NemoClaw's checked-in ${profile.channelId} credential contract.`,
+      "    Remove the conflicting profile from the selected gateway and re-run onboarding. Other sandboxes may share it, so confirm the effect first.",
+    ];
+  }
+  if (result.reason === "profile-unreadable") {
+    return [
+      `\n  ✗ Could not verify OpenShell provider profile '${profile.profileId}' against ${profile.profilePath}.`,
+      "    The exported or checked-in profile was unreadable. It was left in place; resolve the read failure and re-run onboarding.",
+    ];
+  }
+  const diagnostic = compactText(redact(result.diagnostic ?? ""));
+  const messages = [
+    result.reason === "import-failed"
+      ? `\n  ✗ Failed to register the ${profile.channelId} provider profile with OpenShell.`
+      : `\n  ✗ Could not check whether the ${profile.channelId} provider profile is registered (${result.operation ?? "profile operation"} failed).`,
+  ];
+  if (diagnostic) messages.push(`    ${diagnostic.slice(0, 500)}`);
+  messages.push(
+    result.reason === "import-failed"
+      ? "    Fix the error. If OpenShell requires an update, rerun the NemoClaw installer, then onboarding."
+      : "    Confirm the OpenShell gateway is reachable and this account is authorized, then re-run onboarding.",
+  );
+  return messages;
 }
 
 function buildRefreshMaterial(

@@ -26,6 +26,7 @@ jobs:
       pull-requests: read
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      hugging_face_models: ${{ steps.filter.outputs.hugging_face_models }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,6 +45,8 @@ jobs:
               - '!docs/**'
               - '!fern/docs.yml'
               - '!fern/assets/**'
+            hugging_face_models:
+              - '{managed-inference/models/**,src/lib/inference/serving/catalog-loader.ts,src/lib/inference/serving/generate-catalog.ts,src/lib/inference/serving/hugging-face-model-verification.ts,tools/managed-inference/verify-hugging-face-models.ts,package.json,package-lock.json}'
 
   docs-only-checks:
     needs: changes
@@ -139,6 +142,29 @@ jobs:
 
       - name: Run static checks
         uses: ./.trusted-ci-actions/.github/actions/ci-static-checks
+
+  hugging-face-models:
+    needs: changes
+    if: needs.changes.outputs.hugging_face_models == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Verify Hugging Face model references
+        run: npm run catalog:verify-hugging-face
 
   openshell-sdk-package:
     needs: changes
@@ -325,7 +351,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  build-typecheck:
+  compile-artifacts:
     needs: [changes, openshell-sdk-package]
     if: needs.changes.outputs.code == 'true'
     permissions:
@@ -371,8 +397,15 @@ jobs:
       - name: Compile and verify CLI and plugin outputs
         uses: ./.trusted-ci-actions/.github/actions/ci-compile-artifacts
 
-      - name: Run package-contract and type checks
-        uses: ./.trusted-ci-actions/.github/actions/ci-build-typecheck
+      - name: Upload compiled test inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compiled-test-inputs
+          path: |
+            dist
+            nemoclaw/dist
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Upload compiled CLI artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -381,6 +414,65 @@ jobs:
           path: dist
           if-no-files-found: error
           retention-days: 1
+
+  build-typecheck:
+    needs: [changes, compile-artifacts, openshell-sdk-package]
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-install-dependencies.sh
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-audit.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Download verified OpenShell SDK archive
+        if: needs.openshell-sdk-package.outputs.required == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: openshell-sdk-package
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Download compiled test inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: compiled-test-inputs
+          path: .
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            nemoclaw/package-lock.json
+
+      - name: Install dependencies
+        run: bash .trusted-ci-actions/.github/actions/ci-install-dependencies.sh
+
+      - name: Run package-contract and type checks
+        uses: ./.trusted-ci-actions/.github/actions/ci-build-typecheck
 
   installer-integration:
     needs: [changes, openshell-sdk-package]
@@ -493,9 +585,10 @@ jobs:
           report-dir: artifacts/reviewed-npm-audit
 
   cli-test-shards:
-    needs: [changes, openshell-sdk-package]
+    needs: [changes, compile-artifacts, openshell-sdk-package]
     if: needs.changes.outputs.code == 'true'
     permissions:
+      actions: read
       contents: read
     runs-on: ubuntu-24.04
     # Coverage startup plus the stable, duration-weighted roster can exceed
@@ -541,6 +634,20 @@ jobs:
         with:
           name: openshell-sdk-package
           path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Download compiled test inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: compiled-test-inputs
+          path: .
+
+      - name: Verify compiled test inputs
+        run: |
+          test -s dist/nemoclaw.js
+          test -s dist/managed-inference/catalog.json
+          test -s nemoclaw/dist/index.js
+          test -s nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs
+          test -s nemoclaw/dist/shared/sandbox-name.cjs
 
       - name: Run CLI coverage shard
         uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard
@@ -712,6 +819,7 @@ jobs:
       - changes
       - docs-only-checks
       - static-checks
+      - hugging-face-models
       - build-typecheck
       - installer-integration
       - wechat-runtime-audit
@@ -731,6 +839,8 @@ jobs:
           CODE_CHANGED: ${{ needs.changes.outputs.code }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           DOCS_ONLY_RESULT: ${{ needs['docs-only-checks'].result }}
+          HF_MODELS_CHANGED: ${{ needs.changes.outputs.hugging_face_models }}
+          HF_MODELS_RESULT: ${{ needs['hugging-face-models'].result }}
           STATIC_RESULT: ${{ needs['static-checks'].result }}
           BUILD_TYPECHECK_RESULT: ${{ needs['build-typecheck'].result }}
           INSTALLER_INTEGRATION_RESULT: ${{ needs['installer-integration'].result }}
@@ -782,7 +892,7 @@ jobs:
             local job_id=""
             dependency_url="$RUN_URL"
             case "$name" in
-              changes|docs-only-checks|static-checks|build-typecheck|installer-integration|wechat-runtime-audit|reviewed-npm-audit|openshell-sdk-package|cli-tests|plugin-tests) ;;
+              changes|docs-only-checks|static-checks|hugging-face-models|build-typecheck|installer-integration|wechat-runtime-audit|reviewed-npm-audit|openshell-sdk-package|cli-tests|plugin-tests) ;;
               *) return ;;
             esac
             load_job_listing
@@ -835,6 +945,11 @@ jobs:
           if [ "$CODE_CHANGED" = "true" ]; then
             allow_success_or_skipped "docs-only-checks" "$DOCS_ONLY_RESULT"
             require_success "static-checks" "$STATIC_RESULT"
+            if [ "$HF_MODELS_CHANGED" = "true" ]; then
+              require_success "hugging-face-models" "$HF_MODELS_RESULT"
+            else
+              allow_success_or_skipped "hugging-face-models" "$HF_MODELS_RESULT"
+            fi
             require_success "build-typecheck" "$BUILD_TYPECHECK_RESULT"
             require_success "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
             require_success "wechat-runtime-audit" "$WECHAT_RUNTIME_AUDIT_RESULT"
@@ -845,6 +960,7 @@ jobs:
           else
             require_success "docs-only-checks" "$DOCS_ONLY_RESULT"
             allow_success_or_skipped "static-checks" "$STATIC_RESULT"
+            allow_success_or_skipped "hugging-face-models" "$HF_MODELS_RESULT"
             allow_success_or_skipped "build-typecheck" "$BUILD_TYPECHECK_RESULT"
             allow_success_or_skipped "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
             allow_success_or_skipped "wechat-runtime-audit" "$WECHAT_RUNTIME_AUDIT_RESULT"

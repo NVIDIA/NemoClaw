@@ -8,10 +8,9 @@ import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
 import { requiredMessagingProviderBindings } from "./checkpoint-replay";
 import {
-  credentialProviderRegistrationDependencies,
   type CredentialProviderRegistrationDeps,
   createCredentialProviderRegistration,
-  installLiveE2eCredentialProviderRegistrationOverride,
+  UnverifiableStaticProviderProfileError,
 } from "./credential-provider-registration";
 import type { MessagingTokenDef } from "./messaging-prep";
 
@@ -46,8 +45,10 @@ function providerMetadata(
   return {
     status: 0,
     stdout: [
+      `Id: provider-${name}`,
       `Name: ${name}`,
       `Type: ${type}`,
+      "Resource version: 1",
       `Credential keys: ${credentialKey}`,
       "Config keys: <none>",
     ].join("\n"),
@@ -93,75 +94,6 @@ function sandboxInput(bindings: ReturnType<typeof requiredBindings>) {
 }
 
 describe("credential provider registration", () => {
-  it("restricts the process-global provider override to the destructive live E2E", () => {
-    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "0");
-    try {
-      expect(() =>
-        installLiveE2eCredentialProviderRegistrationOverride({
-          expectedName: "e2e-oc-ch-cycle-googlechat-bridge",
-          expectedType: "google-chat-bridge",
-          upsert: vi.fn(() => []),
-        }),
-      ).toThrow("restricted to its destructive live E2E");
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it("routes one exact Google Chat live E2E plan through the process-global override", () => {
-    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
-    const tokenDefs: MessagingTokenDef[] = [
-      {
-        name: "e2e-oc-ch-cycle-googlechat-bridge",
-        envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-        token: null,
-        providerType: "google-chat-bridge",
-      },
-    ];
-    const runOpenshell = vi.fn();
-    const override = vi.fn(() => ["e2e-oc-ch-cycle-googlechat-bridge"]);
-    const restore = installLiveE2eCredentialProviderRegistrationOverride({
-      expectedName: "e2e-oc-ch-cycle-googlechat-bridge",
-      expectedType: "google-chat-bridge",
-      upsert: override,
-    });
-    try {
-      expect(
-        credentialProviderRegistrationDependencies.upsertMessagingProviders(
-          tokenDefs,
-          runOpenshell,
-          { replaceExisting: true },
-        ),
-      ).toEqual(["e2e-oc-ch-cycle-googlechat-bridge"]);
-      expect(override).toHaveBeenCalledExactlyOnceWith(tokenDefs, runOpenshell, {
-        replaceExisting: true,
-      });
-    } finally {
-      restore();
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it("resolves the provider upsert dependency when registration executes", () => {
-    const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const runOpenshell = vi.fn();
-    const deps = registrationDeps(runOpenshell, session);
-    const registration = createCredentialProviderRegistration(deps);
-    const tokenDefs: MessagingTokenDef[] = [
-      { name: "alpha-googlechat-bridge", envKey: "GOOGLE_CHAT_ACCESS_TOKEN", token: null },
-    ];
-    const upsert = vi
-      .spyOn(credentialProviderRegistrationDependencies, "upsertMessagingProviders")
-      .mockReturnValue(["alpha-googlechat-bridge"]);
-
-    try {
-      expect(registration.upsertMessagingProviders(tokenDefs)).toEqual(["alpha-googlechat-bridge"]);
-      expect(upsert).toHaveBeenCalledExactlyOnceWith(tokenDefs, deps.runOpenshell, {});
-    } finally {
-      upsert.mockRestore();
-    }
-  });
-
   it.each([
     { condition: "matches", endpoints: [], expected: true },
     {
@@ -302,10 +234,77 @@ describe("credential provider registration", () => {
         "DISCORD_BOT_TOKEN",
       ),
     ).toBe(true);
-    expect(runOpenshell.mock.calls.map(([args]) => args.join(" "))).toEqual([
-      "provider profile -g test-gateway export discord-hermes-static-v1 --output json",
-      "provider get -g test-gateway alpha-discord-bridge",
+    const commands = runOpenshell.mock.calls.map(([args]) => args);
+    expect(commands).toContainEqual([
+      "provider",
+      "profile",
+      "-g",
+      "test-gateway",
+      "export",
+      "discord-hermes-static-v1",
+      "--output",
+      "json",
     ]);
+    expect(commands).toContainEqual([
+      "provider",
+      "get",
+      "-g",
+      "test-gateway",
+      "alpha-discord-bridge",
+    ]);
+  });
+
+  it.each([
+    {
+      condition: "a gateway command failure",
+      result: () => ({ status: 2, stderr: "gateway unavailable" }),
+      expected: { kind: "indeterminate" as const },
+    },
+    {
+      condition: "malformed provider metadata",
+      result: () => ({ status: 0, stdout: "unexpected output" }),
+      expected: { kind: "collision" as const },
+    },
+    {
+      condition: "a thrown gateway command",
+      result: () => {
+        throw new Error("gateway unavailable");
+      },
+      expected: { kind: "indeterminate" as const },
+    },
+  ])("preserves $condition when inspecting a credential binding", ({ result, expected }) => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const registration = createCredentialProviderRegistration(
+      registrationDeps(vi.fn(result), session),
+    );
+
+    expect(
+      registration.inspectGatewayCredential(
+        "alpha-telegram-bridge",
+        "nemoclaw-mcp-v1",
+        "TELEGRAM_BOT_TOKEN",
+      ),
+    ).toEqual(expected);
+  });
+
+  it("reports a failed static profile inspection as unverifiable", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn((args: string[]) =>
+      args.includes("profile")
+        ? { status: 2, stderr: "gateway unavailable" }
+        : providerMetadata("alpha-discord-bridge", "discord-hermes-static-v1", "DISCORD_BOT_TOKEN"),
+    );
+    const deps = registrationDeps(runOpenshell, session);
+    deps.root = process.cwd();
+    const registration = createCredentialProviderRegistration(deps);
+
+    expect(() =>
+      registration.inspectGatewayCredential(
+        "alpha-discord-bridge",
+        "discord-hermes-static-v1",
+        "DISCORD_BOT_TOKEN",
+      ),
+    ).toThrow(UnverifiableStaticProviderProfileError);
   });
 
   it("rejects tokenless Hermes Discord profile drift before provider mutation", async () => {
@@ -441,9 +440,45 @@ describe("credential provider registration", () => {
       ],
     ]);
     const defaultResult = { status: 0, stdout: "", stderr: "" };
-    const runOpenshell = vi.fn(
-      (args: string[]) => commandResults.get(args.join(" ")) ?? defaultResult,
-    );
+    let braveImported = false;
+    const runOpenshell = vi.fn((args: string[]) => {
+      braveImported = braveImported || (args.includes("import") && args.includes("--file"));
+      return args.includes("export") && args.includes("brave") && braveImported
+        ? {
+            status: 0,
+            stdout: JSON.stringify({
+              id: "brave",
+              credentials: [
+                {
+                  name: "api_key",
+                  env_vars: ["BRAVE_API_KEY"],
+                  required: true,
+                  auth_style: "header",
+                  header_name: "x-subscription-token",
+                  query_param: "",
+                },
+              ],
+              endpoints: [
+                {
+                  host: "api.search.brave.com",
+                  port: 443,
+                  protocol: "rest",
+                  access: "read-write",
+                  enforcement: "enforce",
+                },
+              ],
+              binaries: [
+                "/usr/local/bin/node",
+                "/usr/bin/node",
+                "/usr/local/bin/curl",
+                "/usr/bin/curl",
+              ],
+              inference_capable: false,
+            }),
+            stderr: "",
+          }
+        : (commandResults.get(args.join(" ")) ?? defaultResult);
+    });
     const registration = createCredentialProviderRegistration(
       registrationDeps(runOpenshell, session),
     );
@@ -557,12 +592,21 @@ describe("credential provider registration", () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const missing = { status: 1, stdout: "", stderr: "custom provider profile not found" };
     const success = { status: 0, stdout: "", stderr: "" };
-    const runOpenshell = vi.fn((args: string[]) =>
-      (args[0] === "provider" && args.includes("profile") && args.includes("export")) ||
-      (args[0] === "provider" && args[1] === "get")
-        ? missing
-        : success,
-    );
+    let profileImported = false;
+    const runOpenshell = vi.fn((args: string[]) => {
+      const importsProfile = args.includes("profile") && args.includes("import");
+      profileImported = profileImported || importsProfile;
+      const exportsProfile = args.includes("profile") && args.includes("export");
+      return importsProfile
+        ? success
+        : exportsProfile
+          ? profileImported
+            ? { status: 0, stdout: JSON.stringify(DISCORD_STATIC_PROFILE), stderr: "" }
+            : missing
+          : args[0] === "provider" && args[1] === "get"
+            ? missing
+            : success;
+    });
     const registration = createCredentialProviderRegistration(
       registrationDeps(runOpenshell, session),
     );

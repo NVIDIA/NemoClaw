@@ -3,9 +3,7 @@
 
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-
 import YAML from "yaml";
-
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "./provider-command";
 
@@ -22,6 +20,7 @@ export type EndpointlessProviderProfileRunner = (
   readonly output?: unknown;
   readonly stdout?: unknown;
   readonly stderr?: unknown;
+  readonly error?: unknown;
 };
 
 function outputText(value: unknown): string {
@@ -31,13 +30,14 @@ function outputText(value: unknown): string {
 
 /** Join captured OpenShell diagnostics without exposing them to the terminal. */
 export function openshellResultDiagnostic(result: {
-  readonly error?: Error;
+  readonly error?: unknown;
+  readonly output?: unknown;
   readonly stderr?: unknown;
   readonly stdout?: unknown;
 }): string {
-  return [outputText(result.stderr), outputText(result.stdout), result.error?.message ?? ""]
-    .filter(Boolean)
-    .join(" ");
+  const errorMessage = result.error instanceof Error ? result.error.message : "";
+  const streams = [commandOutput(result), errorMessage].filter(Boolean);
+  return streams.join(" ");
 }
 
 function commandOutput(result: {
@@ -59,11 +59,134 @@ function commandStdout(result: { readonly output?: unknown; readonly stdout?: un
   return Array.isArray(result.output) ? outputText(result.output[1]) : outputText(result.output);
 }
 
-/**
- * Strip ANSI escapes, carriage returns, and OpenShell's box-drawing line
- * continuations so a diagnostic can be pattern-matched regardless of the
- * terminal width or TTY-ness that produced them (#10159).
- */
+type ProviderProfileBoundary = Readonly<{
+  id: string;
+  credentials: readonly Readonly<Record<string, unknown>>[];
+  endpoints: readonly unknown[];
+  binaries: readonly string[];
+  inference_capable: boolean;
+}>;
+
+export type CheckedInProviderProfileContract = Readonly<{
+  profileId: string;
+  boundary: ProviderProfileBoundary;
+}>;
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function canonicalizeRefresh(refresh: unknown): unknown {
+  const block = recordValue(refresh);
+  if (!block) return refresh;
+  const canonical: Record<string, unknown> = { ...block };
+  if (typeof block.strategy === "string") {
+    canonical.strategy = block.strategy.trim().toLowerCase().replaceAll("-", "_");
+  }
+  if (Array.isArray(block.material)) {
+    canonical.material = block.material.map((value) => {
+      const material = recordValue(value);
+      if (!material) return value;
+      const { description: _description, ...fields } = material;
+      return {
+        ...fields,
+        required: material.required ?? false,
+        secret: material.secret ?? false,
+      };
+    });
+  }
+  return canonical;
+}
+
+function providerProfileBoundary(value: unknown): ProviderProfileBoundary | null {
+  const profile = recordValue(value);
+  if (
+    !profile ||
+    typeof profile.id !== "string" ||
+    !Array.isArray(profile.credentials) ||
+    !Array.isArray(profile.endpoints) ||
+    !Array.isArray(profile.binaries) ||
+    profile.binaries.some((binary) => typeof binary !== "string") ||
+    typeof profile.inference_capable !== "boolean"
+  ) {
+    return null;
+  }
+  const credentials = profile.credentials.map((value) => {
+    const credential = recordValue(value);
+    if (
+      !credential ||
+      typeof credential.name !== "string" ||
+      !Array.isArray(credential.env_vars) ||
+      credential.env_vars.some((envVar) => typeof envVar !== "string") ||
+      typeof credential.required !== "boolean" ||
+      typeof credential.auth_style !== "string" ||
+      typeof credential.header_name !== "string" ||
+      (credential.query_param !== undefined && typeof credential.query_param !== "string") ||
+      (credential.refresh !== undefined && recordValue(credential.refresh) === null)
+    ) {
+      return null;
+    }
+    return {
+      name: credential.name,
+      env_vars: credential.env_vars,
+      required: credential.required,
+      auth_style: credential.auth_style,
+      header_name: credential.header_name,
+      query_param: credential.query_param,
+      refresh: canonicalizeRefresh(credential.refresh ?? null),
+    };
+  });
+  if (credentials.some((credential) => credential === null)) return null;
+  if (profile.endpoints.some((endpoint) => recordValue(endpoint) === null)) return null;
+  return {
+    id: profile.id,
+    credentials: credentials as readonly Readonly<Record<string, unknown>>[],
+    endpoints: profile.endpoints,
+    binaries: profile.binaries as string[],
+    inference_capable: profile.inference_capable,
+  };
+}
+
+/** Parse the credential boundary owned by one checked-in provider profile. */
+export function parseCheckedInProviderProfileContract(
+  source: string,
+): CheckedInProviderProfileContract | null {
+  try {
+    const boundary = providerProfileBoundary(YAML.parse(source) as unknown);
+    return boundary ? { profileId: boundary.id, boundary } : null;
+  } catch {
+    return null;
+  }
+}
+
+export type CheckedInProviderProfileComparison = "indeterminate" | "match" | "mismatch";
+export type RegisteredProfileComparison = CheckedInProviderProfileComparison | "absent";
+
+/** Compare an exported gateway profile with its checked-in credential boundary. */
+export function compareExportedProviderProfileWithContract(
+  exported: string,
+  expected: CheckedInProviderProfileContract,
+): CheckedInProviderProfileComparison {
+  try {
+    const actual = providerProfileBoundary(JSON.parse(exported) as unknown);
+    if (!actual) return "indeterminate";
+    return isDeepStrictEqual(actual, expected.boundary) ? "match" : "mismatch";
+  } catch {
+    return "indeterminate";
+  }
+}
+
+/** Return whether an exported gateway profile matches the checked-in contract. */
+export function exportedProviderProfileMatchesContract(
+  exported: string,
+  expected: CheckedInProviderProfileContract,
+): boolean {
+  return compareExportedProviderProfileWithContract(exported, expected) === "match";
+}
+
+/** Normalize captured OpenShell diagnostics before exact classification. */
 export function normalizeOpenshellDiagnostic(output: string): string {
   return output
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, "")
@@ -72,12 +195,7 @@ export function normalizeOpenshellDiagnostic(output: string): string {
     .trim();
 }
 
-/**
- * Whether `output` (an export probe's failure diagnostic) means the profile
- * genuinely doesn't exist yet, as opposed to the probe itself failing for
- * some other reason (gateway unavailable, auth, timeout, malformed
- * response). Only a genuine "not found" makes it safe to proceed to import.
- */
+/** Return whether a failed export proves that the requested profile is absent. */
 export function isMissingProviderProfile(output: string, profileId: string): boolean {
   const normalized = normalizeOpenshellDiagnostic(output);
   const escapedProfileId = profileId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -93,211 +211,119 @@ export function isMissingProviderProfile(output: string, profileId: string): boo
   return structuredStatus.test(normalized) && missingMessage.test(message);
 }
 
-/**
- * Project an OpenShell provider-profile document down to the fields that
- * define its authorization boundary (credentials, endpoints, binaries,
- * inference capability), or null if the document doesn't have the expected
- * shape. Callers compare this projection between an exported profile and its
- * checked-in YAML rather than trusting a matching profile ID alone, since a
- * host-global profile store can hold a profile some other process imported
- * under the same ID with a different boundary.
- */
-export function credentialBoundary(doc: Record<string, unknown>): Record<string, unknown> | null {
-  if (
-    typeof doc.id !== "string" ||
-    !Array.isArray(doc.credentials) ||
-    !Array.isArray(doc.endpoints) ||
-    !Array.isArray(doc.binaries) ||
-    typeof doc.inference_capable !== "boolean"
-  ) {
-    return null;
-  }
-  const credentials = doc.credentials.map((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
-    const credential = entry as Record<string, unknown>;
-    return {
-      name: credential.name,
-      env_vars: credential.env_vars,
-      required: credential.required,
-      auth_style: credential.auth_style,
-      header_name: credential.header_name,
-      query_param: credential.query_param,
-      refresh: credential.refresh ?? null,
-    };
-  });
-  if (credentials.some((entry) => entry === null)) return null;
-  return {
-    id: doc.id,
-    credentials,
-    endpoints: doc.endpoints,
-    binaries: doc.binaries,
-    inference_capable: doc.inference_capable,
-  };
-}
-
-/**
- * Project one credential's `refresh` block into the representation OpenShell
- * exports it in.
- *
- * `provider profile export` re-serializes the stored profile rather than
- * echoing the YAML that was imported, so two fields do not survive the round
- * trip byte-identically on the OpenShell release this blueprint pins
- * (v0.0.106):
- *
- * - `strategy` is read through `provider_refresh_strategy_from_yaml`, which
- *   lowercases and maps `-` to `_`, and written back through
- *   `provider_refresh_strategy_to_yaml`, which only ever emits the snake_case
- *   wire spelling. A profile checked in as `google-service-account-jwt`
- *   therefore exports as `google_service_account_jwt`.
- * - `material[].required` and `material[].secret` carry no
- *   `skip_serializing_if`, so both are emitted on every entry even where the
- *   checked-in YAML omits them and relies on the `false` default.
- */
-function canonicalizeRefresh(refresh: unknown): unknown {
-  if (refresh === null || typeof refresh !== "object" || Array.isArray(refresh)) return refresh;
-  const block = refresh as Record<string, unknown>;
-  const canonical: Record<string, unknown> = { ...block };
-  if (typeof block.strategy === "string") {
-    canonical.strategy = block.strategy.trim().toLowerCase().replaceAll("-", "_");
-  }
-  if (Array.isArray(block.material)) {
-    canonical.material = block.material.map((entry) => {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
-      const material = entry as Record<string, unknown>;
-      const { description: _description, ...credentialMaterial } = material;
-      return {
-        ...credentialMaterial,
-        required: material.required ?? false,
-        secret: material.secret ?? false,
-      };
-    });
-  }
-  return canonical;
-}
-
-/**
- * Project a credential boundary into OpenShell's export representation so a
- * checked-in profile and the export of that same profile compare equal. Applied
- * to both sides of the comparison; it is a no-op on an already-exported
- * boundary. See {@link canonicalizeRefresh} for what OpenShell normalizes.
- */
-export function canonicalizeCredentialBoundary(
-  boundary: Record<string, unknown>,
-): Record<string, unknown> {
-  const credentials = boundary.credentials as Record<string, unknown>[];
-  return {
-    ...boundary,
-    credentials: credentials.map((credential) => ({
-      ...credential,
-      refresh: canonicalizeRefresh(credential.refresh),
-    })),
-  };
-}
-
-/**
- * Whether an exported profile is the checked-in profile this codebase ships
- * for `expectedId`.
- *
- * `indeterminate` means the comparison never completed: the export was not
- * JSON, or the checked-in YAML could not be read, parsed, or projected to a
- * credential boundary. An unfinished read is not evidence of drift, so callers
- * must route it to "could not verify" rather than to guidance that deletes the
- * registered profile.
- */
-export type CheckedInBoundaryComparison = "match" | "mismatch" | "indeterminate";
-export type RegisteredProfileComparison = CheckedInBoundaryComparison | "absent";
-
-function hasValidRefreshMaterialFlags(
-  boundary: Record<string, unknown>,
-  requireExplicitFlags: boolean,
-): boolean {
-  const credentials = boundary.credentials as Record<string, unknown>[];
-  return credentials.every((credential) => {
-    const refresh = credential.refresh;
-    if (refresh === null || refresh === undefined) return true;
-    if (typeof refresh !== "object" || Array.isArray(refresh)) return false;
-    const material = (refresh as Record<string, unknown>).material;
-    if (material === undefined) return true;
-    if (!Array.isArray(material)) return false;
-    return material.every((entry) => {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
-      const item = entry as Record<string, unknown>;
-      return ["required", "secret"].every((field) => {
-        const value = item[field];
-        return requireExplicitFlags
-          ? typeof value === "boolean"
-          : value === undefined || typeof value === "boolean";
-      });
-    });
-  });
-}
-
-export function compareExportedProfileToCheckedIn(
-  exportedJson: string,
-  readCheckedInYaml: () => string,
-  expectedId: string,
-): CheckedInBoundaryComparison {
-  let expected: Record<string, unknown> | null;
-  try {
-    expected = credentialBoundary(YAML.parse(readCheckedInYaml()) as Record<string, unknown>);
-  } catch {
-    return "indeterminate";
-  }
-  if (expected === null || expected.id !== expectedId) return "indeterminate";
-
-  let actual: Record<string, unknown> | null;
-  try {
-    actual = credentialBoundary(JSON.parse(exportedJson) as Record<string, unknown>);
-  } catch {
-    return "indeterminate";
-  }
-  if (actual === null) return "indeterminate";
-  if (
-    !hasValidRefreshMaterialFlags(actual, true) ||
-    !hasValidRefreshMaterialFlags(expected, false)
-  ) {
-    return "indeterminate";
-  }
-
-  return isDeepStrictEqual(
-    canonicalizeCredentialBoundary(actual),
-    canonicalizeCredentialBoundary(expected),
-  )
-    ? "match"
-    : "mismatch";
-}
-
-function profileHasExpectedCredentialBoundary(
-  output: string,
-  expected: { readonly id: string; readonly inferenceCapable: boolean },
-): boolean {
-  try {
-    const profile = JSON.parse(output) as Record<string, unknown>;
-    return (
-      profile.id === expected.id &&
-      Array.isArray(profile.credentials) &&
-      profile.credentials.length === 0 &&
-      Array.isArray(profile.endpoints) &&
-      profile.endpoints.length === 0 &&
-      Array.isArray(profile.binaries) &&
-      profile.binaries.length === 0 &&
-      profile.inference_capable === expected.inferenceCapable
-    );
-  } catch {
-    return false;
-  }
-}
-
 export function endpointlessProviderProfilePath(root: string, profileId: string): string {
   return path.join(root, "nemoclaw-blueprint", "provider-profiles", `${profileId}.yaml`);
 }
 
-export type EndpointlessProviderProfileResult =
-  | { readonly ok: true }
+export type CheckedInProviderProfileResult =
+  | { readonly ok: true; readonly action: "imported" | "reused" }
   | {
       readonly ok: false;
-      readonly reason: "export-failed" | "import-failed" | "incompatible";
+      readonly reason: "import-failed" | "probe-failed" | "profile-drifted" | "profile-unreadable";
+      readonly operation?: "import" | "post-import-export" | "profile-export";
+      readonly diagnostic?: string;
+      readonly diagnosticStatus?: number | null;
     };
+
+const PROFILE_COMMAND_OPTIONS = {
+  ignoreError: true,
+  suppressOutput: true,
+  stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
+  timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+};
+
+/** Import a checked-in profile when absent, or validate and reuse the registered profile. */
+export function reconcileCheckedInProviderProfile(input: {
+  readonly profileId: string;
+  readonly profilePath: string;
+  readonly readCheckedInProfile: () => string;
+  readonly runOpenshell: EndpointlessProviderProfileRunner;
+}): CheckedInProviderProfileResult {
+  const expected = parseCheckedInProviderProfileContractSafely(input);
+  if (!expected) return { ok: false, reason: "profile-unreadable" };
+
+  const exportProfile = () =>
+    input.runOpenshell(
+      ["provider", "profile", "export", input.profileId, "--output", "json"],
+      PROFILE_COMMAND_OPTIONS,
+    );
+  const validateExport = (
+    result: ReturnType<EndpointlessProviderProfileRunner>,
+    action: "imported" | "reused",
+  ): CheckedInProviderProfileResult => {
+    if (result.status !== 0) {
+      return {
+        ok: false,
+        reason: "probe-failed",
+        operation: action === "imported" ? "post-import-export" : "profile-export",
+        diagnostic: openshellResultDiagnostic(result),
+      };
+    }
+    const comparison = compareExportedProviderProfileWithContract(commandStdout(result), expected);
+    if (comparison !== "match") {
+      return {
+        ok: false,
+        reason: comparison === "mismatch" ? "profile-drifted" : "profile-unreadable",
+      };
+    }
+    return { ok: true, action };
+  };
+
+  const exported = exportProfile();
+  if (exported.status === 0) return validateExport(exported, "reused");
+  const exportDiagnostic = openshellResultDiagnostic(exported);
+  if (
+    !Number.isInteger(exported.status) ||
+    !isMissingProviderProfile(exportDiagnostic, input.profileId)
+  ) {
+    return {
+      ok: false,
+      reason: "probe-failed",
+      operation: "profile-export",
+      diagnostic: exportDiagnostic,
+    };
+  }
+
+  const imported = input.runOpenshell(
+    ["provider", "profile", "import", "--file", input.profilePath],
+    PROFILE_COMMAND_OPTIONS,
+  );
+  const importDiagnostic = openshellResultDiagnostic(imported);
+  if (
+    imported.status !== 0 &&
+    !/already exists/iu.test(normalizeOpenshellDiagnostic(importDiagnostic))
+  ) {
+    return {
+      ok: false,
+      reason: "import-failed",
+      operation: "import",
+      diagnostic: importDiagnostic,
+      diagnosticStatus: imported.status,
+    };
+  }
+  return validateExport(exportProfile(), imported.status === 0 ? "imported" : "reused");
+}
+
+function parseCheckedInProviderProfileContractSafely(input: {
+  readonly profileId: string;
+  readonly readCheckedInProfile: () => string;
+}): CheckedInProviderProfileContract | null {
+  try {
+    const expected = parseCheckedInProviderProfileContract(input.readCheckedInProfile());
+    return expected?.profileId === input.profileId ? expected : null;
+  } catch {
+    return null;
+  }
+}
+
+export type EndpointlessProviderProfileFailureReason =
+  | "export-failed"
+  | "import-failed"
+  | "incompatible";
+
+export type EndpointlessProviderProfileResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: EndpointlessProviderProfileFailureReason };
 
 /** OpenShell provider type registered for every OpenAI-surface inference route. */
 export const OPENAI_GATEWAY_PROVIDER_TYPE = "openai";
@@ -306,6 +332,28 @@ export type OpenAiProviderProfileCheck =
   | { readonly ok: true }
   | { readonly ok: false; readonly messages: readonly string[] };
 
+/** Return the recovery guidance for an endpointless OpenAI profile failure. */
+export function endpointlessProviderProfileFailureMessages(
+  reason: EndpointlessProviderProfileFailureReason,
+): readonly string[] {
+  if (reason === "import-failed") {
+    return [
+      `\n  ✗ OpenShell could not import the checked-in '${OPENAI_GATEWAY_PROVIDER_TYPE}' inference provider profile.`,
+      "    Confirm OpenShell is available and authorized, then retry this command.",
+    ];
+  }
+  if (reason === "export-failed") {
+    return [
+      `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' could not be read for validation.`,
+      "    Confirm OpenShell is available, authorized, and the profile is readable, then retry this command.",
+    ];
+  }
+  return [
+    `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' already exists but does not match NemoClaw's endpointless inference contract.`,
+    "    Remove the conflicting profile, then retry this command.",
+  ];
+}
+
 /** Import one endpointless profile or validate the exact existing contract. */
 export function ensureEndpointlessProviderProfile(input: {
   readonly profileId: string;
@@ -313,61 +361,23 @@ export function ensureEndpointlessProviderProfile(input: {
   readonly profilePath: string;
   readonly runOpenshell: EndpointlessProviderProfileRunner;
 }): EndpointlessProviderProfileResult {
-  const exportProfile = () =>
-    input.runOpenshell(["provider", "profile", "export", input.profileId, "--output", "json"], {
-      ignoreError: true,
-      suppressOutput: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-    });
-
-  const exported = exportProfile();
-  if (exported.status === 0) {
-    return profileHasExpectedCredentialBoundary(commandStdout(exported), {
-      id: input.profileId,
-      inferenceCapable: input.inferenceCapable,
-    })
-      ? { ok: true }
-      : { ok: false, reason: "incompatible" };
-  }
-
-  if (!Number.isInteger(exported.status)) {
-    return { ok: false, reason: "export-failed" };
-  }
-  const exportOutput = commandOutput(exported);
-  if (!isMissingProviderProfile(exportOutput, input.profileId)) {
-    return { ok: false, reason: "export-failed" };
-  }
-
-  const imported = input.runOpenshell(
-    ["provider", "profile", "import", "--file", input.profilePath],
-    {
-      ignoreError: true,
-      suppressOutput: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-    },
-  );
-  if (imported.status === 0) return { ok: true };
-
-  const importOutput = commandOutput(imported);
-  if (!/already exists/iu.test(normalizeOpenshellDiagnostic(importOutput))) {
-    return { ok: false, reason: "import-failed" };
-  }
-
-  const racedExport = exportProfile();
-  if (racedExport.status !== 0) {
-    return { ok: false, reason: "export-failed" };
-  }
-  if (
-    !profileHasExpectedCredentialBoundary(commandStdout(racedExport), {
-      id: input.profileId,
-      inferenceCapable: input.inferenceCapable,
-    })
-  ) {
-    return { ok: false, reason: "incompatible" };
-  }
-  return { ok: true };
+  const checkedInProfile = YAML.stringify({
+    id: input.profileId,
+    credentials: [],
+    endpoints: [],
+    binaries: [],
+    inference_capable: input.inferenceCapable,
+  });
+  const result = reconcileCheckedInProviderProfile({
+    profileId: input.profileId,
+    profilePath: input.profilePath,
+    readCheckedInProfile: () => checkedInProfile,
+    runOpenshell: input.runOpenshell,
+  });
+  if (result.ok) return { ok: true };
+  if (result.reason === "import-failed") return { ok: false, reason: "import-failed" };
+  if (result.reason === "probe-failed") return { ok: false, reason: "export-failed" };
+  return { ok: false, reason: "incompatible" };
 }
 
 /** Validate or import the endpointless OpenAI profile through the OpenShell adapter. */
@@ -385,30 +395,5 @@ export function checkOpenAiInferenceProviderProfile(deps: {
     runOpenshell: deps.runOpenshell,
   });
   if (result.ok) return { ok: true };
-
-  if (result.reason === "import-failed") {
-    return {
-      ok: false,
-      messages: [
-        `\n  ✗ OpenShell could not import the checked-in '${OPENAI_GATEWAY_PROVIDER_TYPE}' inference provider profile.`,
-        "    Confirm OpenShell is available and authorized, then retry this command.",
-      ],
-    };
-  }
-  if (result.reason === "export-failed") {
-    return {
-      ok: false,
-      messages: [
-        `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' could not be read for validation.`,
-        "    Confirm OpenShell is available, authorized, and the profile is readable, then retry this command.",
-      ],
-    };
-  }
-  return {
-    ok: false,
-    messages: [
-      `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' already exists but does not match NemoClaw's endpointless inference contract.`,
-      "    Remove the conflicting profile, then retry this command.",
-    ],
-  };
+  return { ok: false, messages: endpointlessProviderProfileFailureMessages(result.reason) };
 }

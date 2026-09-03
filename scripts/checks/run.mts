@@ -64,11 +64,6 @@ export const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/no-coverage-ignore.mts"],
   },
   {
-    name: "openshell-policy-mutation-read",
-    command: TSX,
-    args: ["scripts/checks/openshell-policy-mutation-read.mts"],
-  },
-  {
     name: "layer-import-boundaries",
     command: TSX,
     args: ["scripts/checks/layer-import-boundaries.mts"],
@@ -112,6 +107,11 @@ export const CHECKS: readonly CheckCommand[] = [
     name: "optimized-build-context-copy-sources",
     command: TSX,
     args: ["scripts/checks/optimized-build-context-copy-sources.mts"],
+  },
+  {
+    name: "pi-qualification-receipt-refresh",
+    command: TSX,
+    args: ["scripts/checks/pi-qualification-receipt-refresh.mts"],
   },
   {
     name: "test-registration-boundary",
