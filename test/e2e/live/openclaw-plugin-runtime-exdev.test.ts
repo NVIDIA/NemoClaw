@@ -522,6 +522,7 @@ test(
     });
     const onboardText = onboard.value ? resultText(onboard.value) : "onboard returned no result";
     expect(onboard.outcome, onboardText).toBe("passed");
+    const weatherAfterOnboard = await assertWeatherPluginRuntime(sandbox, "after-onboard", "v1");
     progress.phase("install a distinct plugin payload across filesystems");
     const crossDeviceInstall = await sandbox.execShell(SANDBOX_NAME, crossDevicePluginInstall, {
       artifactName: "openclaw-plugin-exdev-production-install",
@@ -596,6 +597,7 @@ test(
       recreateExitCode: recreate.value!.exitCode,
       testOnlyTmpfsSource: EXDEV_TMPFS_SOURCE,
       assertions: {
+        initialImagePluginV1: weatherAfterOnboard === "v1",
         crossDevicePayloadSurvivedRestart: weatherAfterRestart === "v1-exdev",
         recreationInstalledV2: weatherAfterRecreate === "v2",
         distinctDevices: sourceDevice !== targetDevice,

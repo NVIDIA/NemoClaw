@@ -13,6 +13,7 @@ import {
   REQUIRED_OPENSHELL_MCP_FEATURES,
   REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE,
 } from "../../../src/lib/onboard/openshell-feature-gate.ts";
+import { ordinaryOpenClawPairingIncompleteMessage } from "../../../src/lib/onboard/machine/finalization-deps.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import {
@@ -100,7 +101,7 @@ describe("OpenClaw plugin onboarding pairing evidence", () => {
     const run = vi.fn(async () =>
       onboardResult(
         1,
-        `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
+        ordinaryOpenClawPairingIncompleteMessage(sandboxName, "pairing-unavailable"),
       ),
     );
     const captureDiagnostics = vi.fn(async () => false);
@@ -159,7 +160,7 @@ describe("OpenClaw plugin onboarding pairing evidence", () => {
       const run = vi.fn(async () =>
         onboardResult(
           1,
-          `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
+          ordinaryOpenClawPairingIncompleteMessage(sandboxName, "pairing-unavailable"),
         ),
       );
       const diagnosticExec = vi.fn(diagnosticExecution);
@@ -239,7 +240,7 @@ describe("OpenClaw plugin recreation pairing evidence", () => {
     const runCommand = vi.fn(async () =>
       onboardResult(
         1,
-        `OpenClaw onboarding for '${options.sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
+        ordinaryOpenClawPairingIncompleteMessage(options.sandboxName, "scope-warmup-failed"),
       ),
     );
 

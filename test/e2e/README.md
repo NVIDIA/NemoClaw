@@ -627,17 +627,17 @@ mode.
 
 The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
 
-1. Onboard the custom weather plugin as v1.
+1. Onboard the custom weather plugin as v1 and verify it through `tools.invoke`.
 2. Install v1-exdev with OpenClaw across distinct filesystems.
 3. Restart the gateway and verify v1-exdev.
 4. Recreate the sandbox with the plugin changed to v2 and verify v2.
 
 The recreation remains the replacement boundary. Initial onboarding and
-recreation each run once. If canonical CLI device pairing does not appear, the
-test attempts to record distinct structured diagnostics, always records bounded
-`failed-no-retry` evidence, and then stops without automatically resuming the
-ambiguously mutated session. `tools.invoke` assertions prove the plugin version
-after restart and recreation.
+recreation each run once. If canonical CLI device pairing does not appear or the
+bounded CLI scope warm-up fails, the test attempts to record distinct structured
+diagnostics, always records bounded `failed-no-retry` evidence, and then stops
+without automatically resuming the ambiguously mutated session. `tools.invoke`
+assertions prove the plugin version after onboarding, restart, and recreation.
 The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
 across the proven filesystem boundary before restart. `e2e-support` tests own
 deterministic wrapper argument rewriting. Deterministic tests own exact package

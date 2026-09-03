@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CommandExitResult } from "./clients/command.ts";
+import { ordinaryOpenClawPairingIncompleteMessage } from "../../../src/lib/onboard/machine/finalization-deps.ts";
 import {
   runBoundedRetry,
   type BoundedRetryResult,
@@ -14,6 +15,10 @@ const OWNER = "openclaw-plugin-runtime-exdev";
 const RECREATE_ARTIFACT = "openclaw-weather-plugin-recreate";
 const RECREATE_DIAGNOSTICS_ARTIFACT = "openclaw-weather-plugin-recreate-pairing-diagnostics";
 const RECREATE_RETRY_EVIDENCE_ARTIFACT = "openclaw-weather-plugin-recreate-retry.json";
+const DIAGNOSTIC_PAIRING_FAILURE_REASONS = [
+  "pairing-unavailable",
+  "scope-warmup-failed",
+] as const satisfies readonly Parameters<typeof ordinaryOpenClawPairingIncompleteMessage>[1][];
 
 type OnboardPairingEvidenceOptions<T extends CommandExitResult> = {
   captureDiagnostics(): Promise<unknown>;
@@ -39,12 +44,14 @@ export function classifyOpenClawPluginOnboard<T extends CommandExitResult>(
   | { outcome: "passed" }
   | { outcome: "failed"; failureClass: "ambiguous-mutation" | "deterministic" } {
   if (error === undefined && value?.exitCode === 0) return { outcome: "passed" };
-  const message = `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`;
   const output = value ? `${value.stdout}\n${value.stderr}` : "";
+  const preservesPairingDiagnostics = DIAGNOSTIC_PAIRING_FAILURE_REASONS.some((reason) =>
+    output.includes(ordinaryOpenClawPairingIncompleteMessage(sandboxName, reason)),
+  );
   return {
     outcome: "failed",
     failureClass:
-      error === undefined && output.includes(message) ? "ambiguous-mutation" : "deterministic",
+      error === undefined && preservesPairingDiagnostics ? "ambiguous-mutation" : "deterministic",
   };
 }
 
