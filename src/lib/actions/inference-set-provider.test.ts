@@ -351,16 +351,12 @@ describe("inference set provider binding", () => {
     await expect(mutation.commit()).rejects.toThrow("may be partial");
   });
 
-  it("reports partial provider state when an update error follows a revision increase (#9806)", async () => {
+  it("reports partial provider state without reinspecting after an uncertain update failure (#9806)", async () => {
     const getProvider = vi
       .fn<OpenShellProviderAdapter["getProvider"]>()
       .mockResolvedValueOnce({ ok: true, value: metadata() })
       .mockResolvedValueOnce({ ok: true, value: metadata() })
-      .mockResolvedValueOnce({ ok: true, value: metadata() })
-      .mockResolvedValueOnce({
-        ok: true,
-        value: metadata({ revision: { id: PROVIDER_ID, resourceVersion: 5 } }),
-      });
+      .mockResolvedValueOnce({ ok: true, value: metadata() });
     const updateProvider = vi.fn(async () => ({
       ok: false as const,
       error: {
@@ -379,7 +375,7 @@ describe("inference set provider binding", () => {
     await expect(mutation.commit()).rejects.toThrow(
       "OpenShell could not confirm the update operation for provider 'compatible-endpoint'. Provider state may be partial. redacted failure",
     );
-    expect(getProvider).toHaveBeenCalledTimes(4);
+    expect(getProvider).toHaveBeenCalledTimes(3);
   });
 
   it("reports a definite update failure without claiming partial provider state (#9806)", async () => {
@@ -405,6 +401,7 @@ describe("inference set provider binding", () => {
       "OpenShell could not update provider 'compatible-endpoint': safe validation failure",
     );
     await expect(commit).rejects.not.toThrow("partial");
+    expect(getProvider).toHaveBeenCalledTimes(3);
   });
 
   it("deletes and verifies a newly created provider during rollback (#9806)", async () => {

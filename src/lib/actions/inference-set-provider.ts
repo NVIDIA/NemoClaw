@@ -434,13 +434,13 @@ export async function prepareInferenceSetProviderBinding(options: {
             credentials,
             config,
           });
-    const after = await inspectProvider(providerAdapter, gatewayName, providerName);
     if (!result.ok) {
       throw new InferenceSetProviderCommitError(
         providerMutationFailureMessage(action, providerName, result.error),
         isUncertainProviderMutationError(result.error),
       );
     }
+    const after = await inspectProvider(providerAdapter, gatewayName, providerName);
     if (
       after.kind !== "present" ||
       after.metadata.revision == null ||
