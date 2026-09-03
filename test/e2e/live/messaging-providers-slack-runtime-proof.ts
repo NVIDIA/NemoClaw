@@ -20,7 +20,7 @@ export type InstalledSlackRuntimeProof = {
   channelId: string;
 };
 
-export const SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE = String.raw`
+export const SLACK_PROOF_WORKSPACE_SOURCE = String.raw`
 function addManagedNpmProjectSlackCandidates(projectsDir, addExternalCandidate) {
   let entries;
   try {
@@ -45,20 +45,13 @@ function addManagedNpmProjectSlackCandidates(projectsDir, addExternalCandidate) 
     );
   }
 }
-`;
 
-export const SLACK_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
-import { execFileSync } from "node:child_process";
-import fs from "node:fs";
-import http from "node:http";
-import { createRequire } from "node:module";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
-
-${SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE}
-
-function invariant(condition, message) {
-  if (!condition) throw new Error(message);
+function resolveInstalledPackageRoot(candidate) {
+  try {
+    return fs.realpathSync(candidate);
+  } catch {
+    return candidate;
+  }
 }
 
 function resolveOpenClawSlackApiLocation() {
@@ -136,11 +129,14 @@ function resolveOpenClawSlackApiLocation() {
   addCoreCandidate("/usr/local/lib/node_modules/openclaw");
   addCoreCandidate("/tmp/npm-global/lib/node_modules/openclaw");
 
-  const openclawRoot = coreCandidates.find(
+  const openclawCandidate = coreCandidates.find(
     (candidate) =>
       fs.existsSync(path.join(candidate, "package.json")) &&
       fs.existsSync(path.join(candidate, "dist/plugin-sdk/temp-path.js")),
   );
+  const openclawRoot = openclawCandidate
+    ? resolveInstalledPackageRoot(openclawCandidate)
+    : openclawCandidate;
   for (const candidate of externalCandidates) {
     const distDir = path.join(candidate, "dist");
     const runtimeApiPath = path.join(distDir, "runtime-api.js");
@@ -226,6 +222,21 @@ function findPipelineRuntimePath(slackDir) {
   } catch {
     return undefined;
   }
+}
+`;
+
+export const SLACK_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import http from "node:http";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+${SLACK_PROOF_WORKSPACE_SOURCE}
+
+function invariant(condition, message) {
+  if (!condition) throw new Error(message);
 }
 
 async function importProofModules(slackDir) {

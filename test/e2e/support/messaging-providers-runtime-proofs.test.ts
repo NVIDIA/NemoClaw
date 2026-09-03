@@ -27,7 +27,7 @@ import {
 } from "../live/messaging-providers-helpers.ts";
 import {
   parseInstalledSlackProof,
-  SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
+  SLACK_PROOF_WORKSPACE_SOURCE,
 } from "../live/messaging-providers-slack-runtime-proof.ts";
 import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-runtime-proof.ts";
 
@@ -924,7 +924,7 @@ describe("messaging provider installed-runtime proofs", () => {
       const source = [
         'import fs from "node:fs";',
         'import path from "node:path";',
-        SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
+        SLACK_PROOF_WORKSPACE_SOURCE,
         "const candidates = [];",
         "addManagedNpmProjectSlackCandidates(",
         "  process.env.NEMOCLAW_TEST_PROJECTS_DIR,",
@@ -941,6 +941,91 @@ describe("messaging provider installed-runtime proofs", () => {
       expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual([path.resolve(slackPackageRoot)]);
     } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("links hoisted OpenClaw install-root dependencies into the Slack proof workspace", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-proof-workspace-"));
+    const installRoot = path.join(dir, "lib", "nemoclaw", "openclaw-runtime", "node_modules");
+    const openclawPackageRoot = path.join(installRoot, "openclaw");
+    const globalNodeModules = path.join(dir, "lib", "node_modules");
+    const stateDir = path.join(dir, "state");
+    const slackExtensionRoot = path.join(stateDir, "extensions", "slack");
+    let proofWorkspace = dir;
+
+    try {
+      fs.mkdirSync(path.join(openclawPackageRoot, "dist", "plugin-sdk"), { recursive: true });
+      fs.writeFileSync(
+        path.join(openclawPackageRoot, "package.json"),
+        JSON.stringify({ name: "openclaw", version: "2026.7.1" }),
+      );
+      fs.writeFileSync(path.join(openclawPackageRoot, "dist", "plugin-sdk", "temp-path.js"), "");
+      fs.mkdirSync(path.join(openclawPackageRoot, "node_modules", "ajv"), { recursive: true });
+      fs.writeFileSync(
+        path.join(openclawPackageRoot, "node_modules", "ajv", "package.json"),
+        JSON.stringify({ name: "ajv", version: "8.20.0" }),
+      );
+      fs.mkdirSync(path.join(installRoot, "fast-uri"), { recursive: true });
+      fs.writeFileSync(
+        path.join(installRoot, "fast-uri", "package.json"),
+        JSON.stringify({ name: "fast-uri", version: "3.1.0" }),
+      );
+      fs.mkdirSync(globalNodeModules, { recursive: true });
+      fs.symlinkSync(openclawPackageRoot, path.join(globalNodeModules, "openclaw"), "dir");
+      fs.mkdirSync(path.join(slackExtensionRoot, "dist"), { recursive: true });
+      fs.writeFileSync(path.join(slackExtensionRoot, "dist", "runtime-api.js"), "");
+      fs.writeFileSync(path.join(slackExtensionRoot, "dist", "pipeline.runtime-abc.js"), "");
+      fs.mkdirSync(path.join(slackExtensionRoot, "node_modules"), { recursive: true });
+      fs.symlinkSync(
+        path.join(globalNodeModules, "openclaw"),
+        path.join(slackExtensionRoot, "node_modules", "openclaw"),
+        "dir",
+      );
+
+      const source = [
+        'import { execFileSync } from "node:child_process";',
+        'import fs from "node:fs";',
+        'import { createRequire } from "node:module";',
+        'import path from "node:path";',
+        SLACK_PROOF_WORKSPACE_SOURCE,
+        "const location = resolveOpenClawSlackApiLocation();",
+        "const slackProofRoot = createExternalProofRoot(location);",
+        "const workspaceNodeModules = path.dirname(path.dirname(slackProofRoot));",
+        "process.stdout.write(",
+        "  JSON.stringify({",
+        "    kind: location.kind,",
+        "    workspaceNodeModules,",
+        "    entries: fs.readdirSync(workspaceNodeModules).sort(),",
+        "    hoistedDependencyResolved: fs.existsSync(",
+        '      path.join(workspaceNodeModules, "fast-uri", "package.json"),',
+        "    ),",
+        "    nestedDependencyResolved: fs.existsSync(",
+        '      path.join(workspaceNodeModules, "openclaw", "node_modules", "ajv", "package.json"),',
+        "    ),",
+        "  }),",
+        ");",
+      ].join("\n");
+      const result = spawnSync(process.execPath, ["--input-type=module", "-"], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          OPENCLAW_PACKAGE_ROOT: path.join(globalNodeModules, "openclaw"),
+          OPENCLAW_STATE_DIR: stateDir,
+        },
+        input: source,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      const workspace = JSON.parse(result.stdout);
+      proofWorkspace = path.dirname(workspace.workspaceNodeModules);
+
+      expect(workspace.kind).toBe("external");
+      expect(workspace.entries).toContain("fast-uri");
+      expect(workspace.hoistedDependencyResolved).toBe(true);
+      expect(workspace.nestedDependencyResolved).toBe(true);
+    } finally {
+      fs.rmSync(proofWorkspace, { recursive: true, force: true });
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
