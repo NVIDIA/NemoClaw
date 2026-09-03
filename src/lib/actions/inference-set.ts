@@ -77,6 +77,7 @@ import {
   prepareInferenceSetProviderBinding,
   probeInferenceSetSandboxRoute,
   probeInferenceSetSandboxRouteUntilConverged,
+  providerCommitMayHaveChangedBinding,
   type RuntimeProviderBundleRegistry,
   RuntimeProviderSelectionError,
   requireInferenceSetRuntimeAuthority,
@@ -124,6 +125,39 @@ export interface InferenceSetResult {
   configChanged: boolean;
   sessionUpdated: boolean;
   inSandboxConfigSynced: boolean;
+}
+
+function providerCommitFailureAfterSelection(options: {
+  providerError: unknown;
+  restoreFailure: string | null;
+  previousProvider: string;
+  previousModel: string;
+}): InferenceSetError {
+  const providerDetail =
+    options.providerError instanceof Error
+      ? options.providerError.message
+      : String(options.providerError);
+  const providerExitCode =
+    options.providerError instanceof InferenceSetError ? options.providerError.exitCode : 1;
+  const providerStateMayBePartial = providerCommitMayHaveChangedBinding(options.providerError);
+  if (options.restoreFailure) {
+    const providerState = providerStateMayBePartial
+      ? "The live selection and provider binding may be split; rerun onboarding before using this route."
+      : "The provider binding was not changed, but the live inference selection may still differ. Resolve the reported selection restore failure, then rerun onboarding before using this route.";
+    return new InferenceSetError(
+      `${providerDetail}\n  Failed to restore the previous OpenShell inference selection ` +
+        `'${options.previousProvider}' / '${options.previousModel}': ${options.restoreFailure}. ` +
+        providerState,
+      providerExitCode,
+    );
+  }
+  const providerState = providerStateMayBePartial
+    ? "Provider state may still be partial. Rerun onboarding to reconcile it before rerunning this command."
+    : "The provider binding was not changed.";
+  return new InferenceSetError(
+    `${providerDetail}\n  The previous OpenShell inference selection was restored. ${providerState}`,
+    providerExitCode,
+  );
 }
 
 interface InferenceSetMutationResult extends InferenceSetResult {
@@ -1171,26 +1205,14 @@ async function runInferenceSetWithoutHostLock(
         await providerMutation.commit();
         appliedProvider = true;
       } catch (providerError) {
-        const providerDetail =
-          providerError instanceof Error ? providerError.message : String(providerError);
-        const providerExitCode =
-          providerError instanceof InferenceSetError ? providerError.exitCode : 1;
         const restoreFailure = restorePreviousInferenceSelection();
-        if (restoreFailure) {
-          throw new InferenceSetError(
-            `${providerDetail}\n  Failed to restore the previous OpenShell inference selection ` +
-              `'${previousProvider}' / '${previousModel}': ${restoreFailure}. ` +
-              `The live selection and provider binding may be split; re-run onboarding before using this route.`,
-            providerExitCode,
-          );
-        }
-        restoredSelectionAfterProviderFailure = true;
-        throw new InferenceSetError(
-          `${providerDetail}\n  The previous OpenShell inference selection was restored to ` +
-            `'${previousProvider}' / '${previousModel}'. Provider state may still be partial; ` +
-            `retry this command or re-run onboarding to reconcile it.`,
-          providerExitCode,
-        );
+        restoredSelectionAfterProviderFailure = restoreFailure === null;
+        throw providerCommitFailureAfterSelection({
+          providerError,
+          restoreFailure,
+          previousProvider,
+          previousModel,
+        });
       }
     }
 

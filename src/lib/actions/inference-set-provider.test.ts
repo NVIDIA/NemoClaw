@@ -187,7 +187,7 @@ describe("inference set provider binding", () => {
     expect(createProvider).toHaveBeenCalledOnce();
   });
 
-  it("stops before mutation when the OpenAI profile is unavailable (#9895)", async () => {
+  it("does not update an OpenAI provider when provider profile preparation fails (#9895)", async () => {
     const updateProvider = vi.fn(async () => ({ ok: true as const }));
     const adapter = providerAdapter({
       getProvider: vi.fn(async () => ({ ok: true as const, value: metadata() })),
@@ -209,7 +209,7 @@ describe("inference set provider binding", () => {
     });
 
     await expect(mutation.commit()).rejects.toThrow(
-      "Fix the reported OpenShell provider-profile error, then rerun this command. redacted profile failure",
+      "redacted profile failure Fix the reported OpenShell provider profile error, then rerun this command.",
     );
     expect(updateProvider).not.toHaveBeenCalled();
   });
@@ -510,6 +510,74 @@ describe("inference set provider binding", () => {
     await expect(mutation.rollback()).resolves.toBeUndefined();
   });
 
+  it("preserves a typed inspection failure before provider rollback (#9806)", async () => {
+    const getProvider = vi
+      .fn<OpenShellProviderAdapter["getProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "provider not found" },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: metadata({ revision: { id: PROVIDER_ID, resourceVersion: 1 } }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "authentication", message: "safe authentication failure" },
+      });
+    const deleteProvider = vi.fn(async () => ({ ok: true as const }));
+    const mutation = await prepareInferenceSetProviderBinding({
+      gatewayName: "nemoclaw",
+      providerName: "compatible-endpoint",
+      binding: binding(),
+      providerAdapter: providerAdapter({ getProvider, deleteProvider }),
+    });
+
+    await expect(mutation.rollback()).rejects.toThrow(
+      "Could not inspect newly created provider 'compatible-endpoint': safe authentication failure No provider deletion was attempted.",
+    );
+    expect(deleteProvider).not.toHaveBeenCalled();
+  });
+
+  it("preserves deletion and follow-up inspection failures during rollback (#9806)", async () => {
+    const getProvider = vi
+      .fn<OpenShellProviderAdapter["getProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "provider not found" },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: metadata({ revision: { id: PROVIDER_ID, resourceVersion: 1 } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: metadata({ revision: { id: PROVIDER_ID, resourceVersion: 1 } }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "timeout", message: "safe inspection timeout" },
+      });
+    const deleteProvider = vi.fn(async () => ({
+      ok: false as const,
+      error: {
+        kind: "command" as const,
+        reason: "failed" as const,
+        message: "safe delete failure",
+      },
+    }));
+    const mutation = await prepareInferenceSetProviderBinding({
+      gatewayName: "nemoclaw",
+      providerName: "compatible-endpoint",
+      binding: binding(),
+      providerAdapter: providerAdapter({ getProvider, deleteProvider }),
+    });
+
+    await expect(mutation.rollback()).rejects.toThrow(
+      "safe delete failure A follow-up inspection failed: safe inspection timeout",
+    );
+  });
+
   it("refuses to delete a stale provider revision during rollback (#9806)", async () => {
     const getProvider = vi
       .fn<OpenShellProviderAdapter["getProvider"]>()
@@ -537,7 +605,7 @@ describe("inference set provider binding", () => {
     expect(deleteProvider).not.toHaveBeenCalled();
   });
 
-  it("rejects incomplete ownership before a model-only route mutation (#9806)", async () => {
+  it("rejects provider ownership when provider metadata has no revision (#9806)", async () => {
     const getProvider = vi.fn(async () => ({
       ok: true as const,
       value: metadata({ revision: null }),
