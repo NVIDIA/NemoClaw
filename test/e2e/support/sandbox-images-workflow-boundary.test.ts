@@ -54,6 +54,15 @@ describe("sandbox image workflow boundary", () => {
     });
   });
 
+  it("rejects a shortened managed-image security job budget", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    imageWorkflow.jobs["managed-image-openclaw-security"]["timeout-minutes"] = 12;
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "managed-image-openclaw-security must retain its 15-minute job budget",
+    );
+  });
+
   it.each([
     ["Validate OpenClaw managed-image security boundary", "run", "true"],
     ["Validate OpenClaw managed-image security boundary", "continue-on-error", true],

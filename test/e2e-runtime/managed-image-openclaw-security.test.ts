@@ -349,6 +349,9 @@ const ROOT_BOOT_RECOVERY_PROBE = String.raw`
   printf "ROOT_BOOT_RECLAIM_OK\n"
 `;
 
+const DOCKER_OPERATION_TIMEOUT_MS = 45_000;
+const MANAGED_IMAGE_SECURITY_TIMEOUT_MS = 8 * 60_000;
+
 function managedImageCohort(): string {
   return (
     process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT ??
@@ -380,7 +383,7 @@ async function runContainer(
       "-c",
       script,
     ],
-    { artifactName, captureLimitBytes: 1024 * 1024, timeoutMs: 120_000 },
+    { artifactName, captureLimitBytes: 1024 * 1024, timeoutMs: DOCKER_OPERATION_TIMEOUT_MS },
   );
   expect(
     result.exitCode,
@@ -408,7 +411,7 @@ async function runDefaultContainer(
       image,
       ...command,
     ],
-    { artifactName, captureLimitBytes: 1024 * 1024, timeoutMs: 120_000 },
+    { artifactName, captureLimitBytes: 1024 * 1024, timeoutMs: DOCKER_OPERATION_TIMEOUT_MS },
   );
   expect(
     result.exitCode,
@@ -420,7 +423,7 @@ async function runDefaultContainer(
 test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
   "enforces the OpenClaw managed-image sandbox boundary",
   {
-    timeout: 120_000,
+    timeout: MANAGED_IMAGE_SECURITY_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "verify final image identities and runtime tools",
@@ -457,7 +460,10 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
     const imageUser = await host.command(
       "docker",
       ["image", "inspect", "--format", "{{.Config.User}}", image],
-      { artifactName: "managed-image-openclaw-default-user" },
+      {
+        artifactName: "managed-image-openclaw-default-user",
+        timeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
+      },
     );
     expect(imageUser.exitCode, imageUser.stderr).toBe(0);
     expect(["sandbox", "root"]).toContain(imageUser.stdout.trim());
@@ -719,7 +725,10 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
           `io.nvidia.nemoclaw.managed-image.cohort=${cohort}`,
           repairVolume,
         ],
-        { artifactName: "managed-image-openclaw-create-repair-volume" },
+        {
+          artifactName: "managed-image-openclaw-create-repair-volume",
+          timeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
+        },
       );
       expect(repairCreate.exitCode).toBe(0);
       repairVolumeCreated = true;
@@ -732,7 +741,10 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
           '{{ index .Labels "io.nvidia.nemoclaw.managed-image.cohort" }}',
           repairVolume,
         ],
-        { artifactName: "managed-image-openclaw-inspect-repair-volume" },
+        {
+          artifactName: "managed-image-openclaw-inspect-repair-volume",
+          timeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
+        },
       );
       expect(repairLabel.stdout.trim()).toBe(cohort);
       const refusalCreate = await host.command(
@@ -744,7 +756,10 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
           `io.nvidia.nemoclaw.managed-image.cohort=${cohort}`,
           refusalVolume,
         ],
-        { artifactName: "managed-image-openclaw-create-refusal-volume" },
+        {
+          artifactName: "managed-image-openclaw-create-refusal-volume",
+          timeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
+        },
       );
       expect(refusalCreate.exitCode).toBe(0);
       refusalVolumeCreated = true;
@@ -757,7 +772,10 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
           '{{ index .Labels "io.nvidia.nemoclaw.managed-image.cohort" }}',
           refusalVolume,
         ],
-        { artifactName: "managed-image-openclaw-inspect-refusal-volume" },
+        {
+          artifactName: "managed-image-openclaw-inspect-refusal-volume",
+          timeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
+        },
       );
       expect(refusalLabel.stdout.trim()).toBe(cohort);
       await runContainer(
@@ -809,7 +827,10 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
           image,
           "/bin/true",
         ],
-        { artifactName: "managed-image-openclaw-default-entrypoint-refusal", timeoutMs: 120_000 },
+        {
+          artifactName: "managed-image-openclaw-default-entrypoint-refusal",
+          timeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
+        },
       );
       expect(refused.exitCode).not.toBe(0);
       await runContainer(
@@ -823,12 +844,18 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
       const repairRemoved = await host.command(
         "docker",
         repairVolumeCreated ? ["volume", "rm", "-f", repairVolume] : ["volume", "ls", "--quiet"],
-        { artifactName: "managed-image-openclaw-remove-repair-volume" },
+        {
+          artifactName: "managed-image-openclaw-remove-repair-volume",
+          timeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
+        },
       );
       const refusalRemoved = await host.command(
         "docker",
         refusalVolumeCreated ? ["volume", "rm", "-f", refusalVolume] : ["volume", "ls", "--quiet"],
-        { artifactName: "managed-image-openclaw-remove-refusal-volume" },
+        {
+          artifactName: "managed-image-openclaw-remove-refusal-volume",
+          timeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
+        },
       );
       expect(repairRemoved.exitCode).toBe(0);
       expect(refusalRemoved.exitCode).toBe(0);

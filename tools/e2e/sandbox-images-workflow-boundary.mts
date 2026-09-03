@@ -821,6 +821,9 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
   }
   const securityName = "managed-image-openclaw-security";
   const securityJob = workflow.jobs[securityName] ?? {};
+  if (securityJob["timeout-minutes"] !== 15) {
+    errors.push(`${securityName} must retain its 15-minute job budget`);
+  }
   const securityStep = requireStep(
     errors,
     securityName,
