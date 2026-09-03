@@ -119,9 +119,7 @@ export type OpenShellTrustedImageWrapper = OpenShellDriverConfigTestWrapper & {
 };
 
 export function trustedExdevImageRef(tag: string): string {
-  const imageRef = `${LOCAL_SANDBOX_IMAGE_REPO}:${tag}`;
-  assert.match(imageRef, TRUSTED_EXDEV_IMAGE_REF_PATTERN);
-  return imageRef;
+  return `${LOCAL_SANDBOX_IMAGE_REPO}:${tag}`;
 }
 
 export function createOpenShellTrustedImageWrapper(options: {
@@ -166,24 +164,27 @@ if (args[0] === "sandbox" && args[1] === "create") {
   try {
     selected = JSON.parse(fs.readFileSync(${JSON.stringify(imageSelectionPath)}, "utf8"));
   } catch {}
-  if (!selected || !${TRUSTED_EXDEV_IMAGE_REF_PATTERN.toString()}.test(selected.imageRef)) {
-    process.stderr.write("trusted EXDEV image handoff rejected the selected image ref\\n");
+  const imageRef = typeof selected?.imageRef === "string" ? selected.imageRef : "";
+  const imageId = typeof selected?.imageId === "string" ? selected.imageId : "";
+  const invalidImageRef = !${TRUSTED_EXDEV_IMAGE_REF_PATTERN.toString()}.test(imageRef);
+  const invalidImageId = !/^sha256:[0-9a-f]{64}$/.test(imageId);
+  const inspectArgs = ["image", "inspect", "--format", "{{.Id}}", imageRef];
+  const inspected =
+    invalidImageRef || invalidImageId
+      ? { error: undefined, status: 64, stdout: "" }
+      : spawnSync(${JSON.stringify(imageInspectorPath)}, inspectArgs, { encoding: "utf8" });
+  const rejection = invalidImageRef
+    ? "trusted EXDEV image handoff rejected the selected image ref"
+    : invalidImageId
+      ? "trusted EXDEV image handoff rejected the selected image ID"
+      : inspected.error || inspected.status !== 0 || inspected.stdout.trim() !== imageId
+        ? "trusted EXDEV image handoff detected an immutable identity mismatch"
+        : "";
+  if (rejection) {
+    process.stderr.write(rejection + "\\n");
     process.exit(64);
   }
-  if (!/^sha256:[0-9a-f]{64}$/.test(selected.imageId)) {
-    process.stderr.write("trusted EXDEV image handoff rejected the selected image ID\\n");
-    process.exit(64);
-  }
-  const inspected = spawnSync(
-    ${JSON.stringify(imageInspectorPath)},
-    ["image", "inspect", "--format", "{{.Id}}", selected.imageRef],
-    { encoding: "utf8" },
-  );
-  if (inspected.error || inspected.status !== 0 || inspected.stdout.trim() !== selected.imageId) {
-    process.stderr.write("trusted EXDEV image handoff detected an immutable identity mismatch\\n");
-    process.exit(64);
-  }
-  args[fromIndexes[0] + 1] = selected.imageId;
+  args[fromIndexes[0] + 1] = imageId;
 }
 const result = spawnSync(${JSON.stringify(delegated.executable)}, args, { stdio: "inherit" });
 if (result.error) throw result.error;
@@ -209,7 +210,6 @@ exec ${shellQuote(process.execPath)} ${shellQuote(rewriterPath)} "$@"
     executable,
     selectImage: (image) => {
       assert.match(image.imageRef, TRUSTED_EXDEV_IMAGE_REF_PATTERN);
-      assert.match(image.imageId, /^sha256:[0-9a-f]{64}$/);
       fs.writeFileSync(imageSelectionPath, `${JSON.stringify(image)}\n`, {
         encoding: "utf8",
         mode: 0o600,
@@ -272,8 +272,7 @@ export function acceptTrustedPluginFixturePrebuild(options: {
   sandboxName: string;
   version: "v1" | "v2";
 }): { imageId: string; imageRef: string } {
-  assert(options.prebuild.imageRef, "trusted EXDEV fixture prebuild must return a local image ref");
-  const imageRef = options.prebuild.imageRef;
+  const imageRef = String(options.prebuild.imageRef ?? "");
   assert.match(imageRef, TRUSTED_EXDEV_IMAGE_REF_PATTERN);
   options.images.track(imageRef, options.version);
   assert.deepEqual(options.prebuild.createArgs, [

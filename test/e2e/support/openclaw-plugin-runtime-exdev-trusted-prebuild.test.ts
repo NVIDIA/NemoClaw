@@ -15,6 +15,11 @@ import {
 } from "../../../src/lib/onboard/openshell-feature-gate.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
+import {
+  reconcileOpenClawPluginOnboardPairing,
+  runOpenClawPluginOnboardWithPairingResume,
+  runOpenClawPluginRecreateWithPairingResume,
+} from "../fixtures/openclaw-plugin-runtime-exdev-onboard.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   acceptTrustedPluginFixturePrebuild,
@@ -23,11 +28,6 @@ import {
   registerTrustedPluginFixtureImageCleanup,
   trustedExdevImageRef,
 } from "../live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
-import {
-  reconcileOpenClawPluginOnboardPairing,
-  runOpenClawPluginOnboardWithPairingResume,
-  runOpenClawPluginRecreateWithPairingResume,
-} from "../live/openclaw-plugin-runtime-exdev-onboard.ts";
 import {
   resolveOpenShellSiblingComponents,
   withOpenShellDriverConfigWrapperEnv,

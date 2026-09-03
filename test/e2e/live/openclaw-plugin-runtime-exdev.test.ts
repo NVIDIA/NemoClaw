@@ -25,14 +25,14 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
-import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import type { TestProgress } from "../fixtures/progress.ts";
-import { parseJsonFromText } from "./json-envelope.ts";
 import {
   reconcileOpenClawPluginOnboardPairing,
   runOpenClawPluginOnboardWithPairingResume,
   runOpenClawPluginRecreateWithPairingResume,
-} from "./openclaw-plugin-runtime-exdev-onboard.ts";
+} from "../fixtures/openclaw-plugin-runtime-exdev-onboard.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
+import { parseJsonFromText } from "./json-envelope.ts";
 import {
   buildTrustedPluginFixtureImage,
   createOpenShellTrustedImageWrapper,
@@ -549,9 +549,8 @@ test(
     });
     const crossDeviceInstallText = resultText(crossDeviceInstall);
     expect(crossDeviceInstall.exitCode, crossDeviceInstallText).toBe(0);
-    const deviceMatch = /source_device=(\d+) target_device=(\d+)/.exec(crossDeviceInstallText);
-    expect(deviceMatch, crossDeviceInstallText).not.toBeNull();
-    const [, sourceDevice, targetDevice] = deviceMatch!;
+    const [, sourceDevice, targetDevice] =
+      /source_device=(\d+) target_device=(\d+)/.exec(crossDeviceInstallText) ?? [];
     expect(sourceDevice, crossDeviceInstallText).not.toBe(targetDevice);
 
     progress.phase("restart the gateway and confirm the installed payload");
