@@ -13,9 +13,8 @@ export const CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS: Readonly<
   Record<CandidateManagedImageAgent, readonly string[]>
 > = Object.freeze({
   pi: Object.freeze([
-    // Linux AMD64, then Linux ARM64; each digest seals the matching receipt file.
-    "308cf048ec07554106ac6d415af995bb67f61bee29bba29aef5546f775d270c9",
-    "2c7c81e725f5ef72e926eef8c799ec945f42a67e4177e9e1a1752951b97e52ff",
+    "aa0cf71163ac4741e70b794e8a0d9afdb49e1c16770b0ad2fed33ccb2c65c8c7",
+    "0eba30f97b70724a9f35a5193ba46358caae15708e3c7c87d2488434d0950cbc",
   ]),
 });
 
