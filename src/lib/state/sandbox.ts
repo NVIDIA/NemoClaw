@@ -225,8 +225,7 @@ export interface StateDirectoryCaptureRequest {
 }
 
 export type StateDirectoryCaptureResult =
-  | { outcome: "backed_up" }
-  | { outcome: "failed"; error?: string; unreachable?: boolean };
+  { outcome: "backed_up" } | { outcome: "failed"; error?: string; unreachable?: boolean };
 
 export type StateFileCapture = (request: StateFileCaptureRequest) => StateFileCaptureResult | null;
 export type StateDirectoryCapture = (
@@ -787,7 +786,10 @@ export function sanitizeBackupDirectory(
   dirPath: string,
   overrides: Partial<BackupSanitizationOperations> = {},
 ): void {
-  const operations = { ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS, ...overrides };
+  const operations = {
+    ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS,
+    ...overrides,
+  };
 
   try {
     operations.sanitizeDirectory(dirPath);
@@ -1070,7 +1072,11 @@ function capturePreservedEnvFile(
   dir: string,
   inventory: PreservedEnvInventory,
   captureFallback?: StateFileCapture,
-): { outcome: StateFileBackupOutcome; file?: PreservedEnvFile; unreachable: boolean } {
+): {
+  outcome: StateFileBackupOutcome;
+  file?: PreservedEnvFile;
+  unreachable: boolean;
+} {
   const command = buildStateFileBackupCommand(dir, {
     path: inventory.path,
     strategy: "copy",
@@ -1364,7 +1370,9 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
     options.hostLocalInferenceProvenance,
   );
   if (options.runtimeSnapshot !== undefined && runtimeSnapshot === undefined) {
-    return { error: "snapshot runtime state is invalid or cannot be represented" };
+    return {
+      error: "snapshot runtime state is invalid or cannot be represented",
+    };
   }
   if (options.workload !== undefined && workload === undefined) {
     return { error: "snapshot workload authority is invalid" };
@@ -1623,7 +1631,14 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     }
     manifest.backupComplete = true;
     writeManifest(backupPath, manifest);
-    return { success: true, manifest, backedUpDirs, failedDirs, backedUpFiles, failedFiles };
+    return {
+      success: true,
+      manifest,
+      backedUpDirs,
+      failedDirs,
+      backedUpFiles,
+      failedFiles,
+    };
   }
 
   // SSH+tar single-roundtrip download
@@ -2441,7 +2456,13 @@ function restoreSandboxStateInternal(
       return failRestoreContract(mutationAuthorityError);
     }
     _log("No dirs or files to restore");
-    return { success: true, restoredDirs, failedDirs, restoredFiles, failedFiles };
+    return {
+      success: true,
+      restoredDirs,
+      failedDirs,
+      restoredFiles,
+      failedFiles,
+    };
   }
 
   _log("Getting SSH config for restore");
@@ -2697,7 +2718,10 @@ function writeManifest(
   try {
     // A snapshot becomes recoverable only after its complete, private manifest
     // is atomically renamed into place.
-    ops.write(tempPath, JSON.stringify(manifest, null, 2), { mode: 0o600, flag: "wx" });
+    ops.write(tempPath, JSON.stringify(manifest, null, 2), {
+      mode: 0o600,
+      flag: "wx",
+    });
     ops.rename(tempPath, manifestPath);
     published = true;
   } finally {
@@ -2766,7 +2790,11 @@ export function writeRebuildPolicyHandoff(
   let published = false;
   try {
     try {
-      writeFileSync(filePath, policyDocument, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      writeFileSync(filePath, policyDocument, {
+        encoding: "utf8",
+        mode: 0o600,
+        flag: "wx",
+      });
       created = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -2819,7 +2847,10 @@ export function clearRebuildPolicyHandoff(
   const write = ops.write ?? writeManifest;
   const remove = ops.remove ?? rmSync;
   if (handoff.retired !== true) {
-    const retired = { ...manifest, rebuildPolicyHandoff: { ...handoff, retired: true as const } };
+    const retired = {
+      ...manifest,
+      rebuildPolicyHandoff: { ...handoff, retired: true as const },
+    };
     try {
       write(manifest.backupPath, retired);
     } catch {
@@ -2867,7 +2898,10 @@ function readManifest(backupPath: string): RebuildManifest | null {
   try {
     const parsed = readManifestPayload(backupPath);
     if (!isRebuildManifest(parsed)) return null;
-    const manifest = parsed as RebuildManifest & { dir?: string; writableDir?: string };
+    const manifest = parsed as RebuildManifest & {
+      dir?: string;
+      writableDir?: string;
+    };
     const dir = manifest.dir ?? manifest.writableDir;
     if (!dir) return null;
     const runtimeSnapshot =
@@ -2902,8 +2936,7 @@ function readManifest(backupPath: string): RebuildManifest | null {
 // ── Listing ────────────────────────────────────────────────────────
 
 export type RebuildRecoveryManifestValidation =
-  | { ok: true; manifest: RebuildManifest }
-  | { ok: false; reason: string };
+  { ok: true; manifest: RebuildManifest } | { ok: false; reason: string };
 
 function legacyStateFilesArePresent(backupPath: string, manifest: RebuildManifest): boolean {
   if (manifest.backupComplete !== undefined) return true;
@@ -2974,7 +3007,10 @@ export function validateRebuildRecoveryManifest(
 
   const persisted = readManifest(candidateBackupPath);
   if (!persisted || persisted.version !== MANIFEST_VERSION) {
-    return { ok: false, reason: "latest backup manifest is missing, malformed, or unsupported" };
+    return {
+      ok: false,
+      reason: "latest backup manifest is missing, malformed, or unsupported",
+    };
   }
   if (persisted.sandboxName !== sandboxName) {
     return {
@@ -2992,7 +3028,10 @@ export function validateRebuildRecoveryManifest(
     persisted.timestamp !== candidate.timestamp ||
     path.resolve(persisted.backupPath) !== candidateBackupPath
   ) {
-    return { ok: false, reason: "persisted backup identity changed during validation" };
+    return {
+      ok: false,
+      reason: "persisted backup identity changed during validation",
+    };
   }
 
   return { ok: true, manifest: persisted };
@@ -3012,6 +3051,23 @@ export function hasPositiveManagedImageEvidence(
   sandbox: Pick<registry.SandboxEntry, "nemoclawVersion">,
 ): boolean {
   return typeof sandbox.nemoclawVersion === "string" && sandbox.nemoclawVersion.trim().length > 0;
+}
+
+/**
+ * The DGX Station qualification projection was introduced in v0.0.97. A Hermes
+ * sandbox stamped by an earlier managed release may be rebuilt once without
+ * reapplying that later admission rule. Version-shaped text is not authority.
+ */
+export function hasLegacyDgxStationQualificationAuthority(
+  sandbox: Pick<registry.SandboxEntry, "agent" | "fromDockerfile" | "nemoclawVersion">,
+): boolean {
+  if (sandbox.agent !== "hermes" || sandbox.fromDockerfile != null) return false;
+  const match = /^(?:v)?0\.0\.(0|[1-9]\d*)(?:-[1-9]\d*-g[0-9a-f]{7,40})?$/i.exec(
+    sandbox.nemoclawVersion ?? "",
+  );
+  if (!match) return false;
+  const patch = Number(match[1]);
+  return Number.isSafeInteger(patch) && patch < 97;
 }
 
 /**

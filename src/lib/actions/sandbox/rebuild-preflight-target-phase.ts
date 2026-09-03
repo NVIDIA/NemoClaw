@@ -21,6 +21,7 @@ import {
 import { resolveSandboxWorkloadRuntimeCapabilities } from "../../onboard/workload/runtime";
 import { readSandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as registry from "../../state/registry";
+import * as sandboxState from "../../state/sandbox";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import { prepareManagedRebuildProfileHandoff } from "./agents/managed-workload-rebuild-profile";
 import {
@@ -49,7 +50,6 @@ import {
 } from "./rebuild-preflight-guards";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
-  hasLegacyDgxStationQualificationAuthority,
   hydrateMessagingConfigForRebuild,
   preflightAuthoritativeOnboardRuntime,
   preflightRebuildTargetRuntime,
@@ -199,7 +199,7 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   );
   if (!recreateOptions) return null;
-  if (hasLegacyDgxStationQualificationAuthority(sandboxEntry)) {
+  if (sandboxState.hasLegacyDgxStationQualificationAuthority(sandboxEntry)) {
     recreateOptions.allowLegacyDgxStationQualification = true;
   }
   let managedWorkloadRebuildCatalog: Awaited<

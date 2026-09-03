@@ -185,7 +185,9 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
       ],
     ],
   ])("rejects image-plugin provenance with %s", (_case, openclawImagePluginInstalls) => {
-    writeBackup("alpha", "2026-07-01T06-50-42-046Z", { openclawImagePluginInstalls });
+    writeBackup("alpha", "2026-07-01T06-50-42-046Z", {
+      openclawImagePluginInstalls,
+    });
 
     expect(sandboxState.getLatestBackup("alpha")).toBeNull();
   });
@@ -252,15 +254,61 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
   });
 
   it("requires a non-empty managed-image fingerprint", () => {
-    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: "0.0.71" })).toBe(true);
+    expect(
+      sandboxState.hasPositiveManagedImageEvidence({
+        nemoclawVersion: "0.0.71",
+      }),
+    ).toBe(true);
     expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: null })).toBe(false);
     expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: "  " })).toBe(false);
-    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: 123 } as never)).toBe(
-      false,
-    );
-    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: {} } as never)).toBe(
-      false,
-    );
+    expect(
+      sandboxState.hasPositiveManagedImageEvidence({
+        nemoclawVersion: 123,
+      } as never),
+    ).toBe(false);
+    expect(
+      sandboxState.hasPositiveManagedImageEvidence({
+        nemoclawVersion: {},
+      } as never),
+    ).toBe(false);
+  });
+
+  describe("legacy DGX Station rebuild authority", () => {
+    it.each([
+      ["v0.0.83", true],
+      ["0.0.96-12-gabcdef0", true],
+      ["v0.0.97", false],
+      ["0.0.97-1-gabcdef0", false],
+      ["0.0.83-preview", false],
+      ["v0.0.096", false],
+      ["0.0.x", false],
+      ["", false],
+    ])("accepts only a valid release older than v0.0.97: %s", (nemoclawVersion, expected) => {
+      expect(
+        sandboxState.hasLegacyDgxStationQualificationAuthority({
+          agent: "hermes",
+          fromDockerfile: null,
+          nemoclawVersion,
+        }),
+      ).toBe(expected);
+    });
+
+    it("rejects unrelated sandbox state", () => {
+      expect(
+        sandboxState.hasLegacyDgxStationQualificationAuthority({
+          agent: "openclaw",
+          fromDockerfile: null,
+          nemoclawVersion: "v0.0.83",
+        }),
+      ).toBe(false);
+      expect(
+        sandboxState.hasLegacyDgxStationQualificationAuthority({
+          agent: "hermes",
+          fromDockerfile: "/tmp/Dockerfile",
+          nemoclawVersion: "v0.0.83",
+        }),
+      ).toBe(false);
+    });
   });
 
   it("allows legacy managed-image recovery only with per-row authority and no custom image (#6114)", () => {

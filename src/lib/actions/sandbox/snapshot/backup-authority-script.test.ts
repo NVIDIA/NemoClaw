@@ -119,6 +119,23 @@ exec(capture_script)
 `;
 }
 
+function hermesDirectoryListingMutationHarness(mutation: string): string {
+  return `import os, sys
+capture_script = ${JSON.stringify(HERMES_DIRECTORY_CAPTURE_SCRIPT)}
+real_listdir = os.listdir
+mutated = False
+def mutate_after_list(descriptor):
+    global mutated
+    entries = real_listdir(descriptor)
+    if not mutated:
+        mutated = True
+${mutation}
+    return entries
+os.listdir = mutate_after_list
+exec(capture_script)
+`;
+}
+
 afterEach(() => {
   for (const root of fixtureRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -291,6 +308,27 @@ describe("Hermes privileged state capture scripts", () => {
 
     expect(captured.status).toBe(13);
     expect(captured.stdout.includes(Buffer.from("outside-secret"))).toBe(false);
+  });
+
+  it("rejects a directory entry created after traversal starts", () => {
+    const directory = fixtureDirectory();
+    const workspace = path.join(directory, "workspace");
+    fs.mkdirSync(workspace);
+    fs.writeFileSync(path.join(workspace, "marker"), "state");
+    const script = hermesDirectoryListingMutationHarness(
+      `        descriptor = os.open("late-state", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=descriptor)\n` +
+        `        os.write(descriptor, b"late")\n` +
+        `        os.close(descriptor)`,
+    );
+
+    const captured = spawnSync(
+      "/usr/bin/python3",
+      ["-I", "-S", "-c", script, directory, "workspace"],
+      { encoding: null },
+    );
+
+    expect(captured.status).toBe(13);
+    expect(fs.readFileSync(path.join(workspace, "late-state"), "utf8")).toBe("late");
   });
 
   it("rejects unsafe directory entries before streaming a tar archive", () => {

@@ -3,6 +3,7 @@
 
 import { isDeepStrictEqual } from "node:util";
 
+import { dockerSpawnSync } from "../../../adapters/docker/exec";
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
 import {
@@ -14,6 +15,7 @@ import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
 import {
   executePrivilegedSandboxCommand,
+  privilegedSandboxExecArgv,
   withPrivilegedSandboxExecutionLease,
 } from "../../../sandbox/privileged-exec";
 import { sanitizeReadinessText } from "../../../readiness/sanitize";
@@ -213,7 +215,10 @@ export function captureOpenClawStateFile(
             ? `reason ${protocolFailure}`
             : captureFailureDiagnostic(result.stderr);
           const detail = stderrDetail ? `${primaryDetail}; ${stderrDetail}` : primaryDetail;
-          return { outcome: "failed", error: `privileged config capture failed: ${detail}` };
+          return {
+            outcome: "failed",
+            error: `privileged config capture failed: ${detail}`,
+          };
         }
         return { outcome: "backed_up", data: result.stdout };
       },
@@ -320,7 +325,7 @@ base, *names = sys.argv[1:]
 def identity(value):
     return (value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode), value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_nlink)
 def directory_identity(value):
-    return (value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode))
+    return (value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode), value.st_mtime_ns, value.st_ctime_ns, value.st_nlink)
 def tar_info(name, value):
     info = tarfile.TarInfo(name)
     info.mode = stat.S_IMODE(value.st_mode)
@@ -431,7 +436,10 @@ export function captureHermesStateFile(
       return { outcome: "backed_up", data: result.stdout };
     });
   } catch (error) {
-    return { outcome: "failed", error: error instanceof Error ? error.message : String(error) };
+    return {
+      outcome: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -483,7 +491,10 @@ export function captureHermesStateDirectories(
       },
     );
   } catch (error) {
-    return { outcome: "failed", error: error instanceof Error ? error.message : String(error) };
+    return {
+      outcome: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -639,7 +650,9 @@ function captureSnapshotAuthority(
       : { hostLocalInferenceReceipt: hostLocal.hostLocalInferenceReceipt }),
     ...(hostLocal?.hostLocalInferenceProvenance === undefined
       ? {}
-      : { hostLocalInferenceProvenance: hostLocal.hostLocalInferenceProvenance }),
+      : {
+          hostLocalInferenceProvenance: hostLocal.hostLocalInferenceProvenance,
+        }),
     validateBeforePublish: () => {
       managed?.validateBeforePublish?.();
       hostLocal?.validateBeforePublish?.();
