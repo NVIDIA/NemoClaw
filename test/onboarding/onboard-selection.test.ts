@@ -3071,7 +3071,7 @@ reportChildScenario(async () => {
     }
   });
 
-  it("lets users re-enter an NVIDIA API key after authorization failure without restarting selection", () => {
+  it("lets users re-enter an NVIDIA API key and preserves the build revalidation payload (#10880)", () => {
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-build-auth-retry-");
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
@@ -3083,10 +3083,10 @@ body='{"error":{"message":"forbidden"}}'
 status="403"
 outfile=""
 auth=""
-url=""
+data="" url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    -o) outfile="$2"; shift 2 ;;
+    -o) outfile="$2"; shift 2 ;; -d) data="$2"; shift 2 ;;
     -H)
       if echo "$2" | grep -q '^Authorization: Bearer '; then
         auth="$2"
@@ -3099,7 +3099,7 @@ done
 if echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/responses$'; then
   body='{"id":"resp_123"}'
   status="200"
-elif echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/chat/completions$'; then
+elif echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/chat/completions$' && echo "$data" | grep -q '"temperature":1' && echo "$data" | grep -q '"top_p":0.95' && echo "$data" | grep -q '"enable_thinking":false'; then
   body='{"id":"chatcmpl-123"}'
   status="200"
 fi

@@ -938,6 +938,7 @@ const {
   verifyOnboardInferenceSmoke,
   getProbeAuthMode,
   getValidationProbeCurlArgs,
+  getOpenAiSelectionProbeOptions,
 } = require("./inference/onboard-probes");
 
 const {
@@ -2315,11 +2316,7 @@ async function handleRemoteProviderSelection(
           state.credentialEnv,
           "Please choose a provider/model again.",
           remoteConfig.helpUrl,
-          withCredentialMutationGuard(state, {
-            requireResponsesToolCalling: shouldRequireResponsesToolCalling(state.provider),
-            skipResponsesProbe: shouldSkipResponsesProbe(state.provider),
-            authMode: getProbeAuthMode(state.provider),
-          }),
+          withCredentialMutationGuard(state, getOpenAiSelectionProbeOptions(state.provider)),
         ),
     });
     if (buildValidation.retrySelection) return "retry-selection";
