@@ -911,11 +911,16 @@ describe("created OpenClaw sandbox finalization", () => {
   it("restores through a revalidated target row before publishing it (#10546)", () => {
     const order: string[] = [];
     const prepared = { name: "openclaw" } as SandboxEntry;
+    const restoredTarget = { ...prepared } as SandboxEntry;
+    const publishedTarget = { ...prepared } as SandboxEntry;
+    const expectedTargets = [prepared, restoredTarget];
+    const refreshedTargets = [restoredTarget, publishedTarget];
     const register = vi.fn((_plugins, target) => {
       order.push("register");
-      expect(target).toBe(prepared);
+      expect(target).toBe(publishedTarget);
       return target;
     });
+    let revalidation = 0;
 
     const result = finalizeCreatedSandbox(
       {
@@ -936,12 +941,12 @@ describe("created OpenClaw sandbox finalization", () => {
         },
         revalidatePreparedRegistration: (target) => {
           order.push("revalidate");
-          expect(target).toBe(prepared);
-          return target;
+          expect(target).toBe(expectedTargets[revalidation]);
+          return refreshedTargets[revalidation++]!;
         },
         restoreRecreatedSandboxState: (_name, _backupPath, _options, resolveTarget) => {
           order.push("restore");
-          expect(resolveTarget?.()).toBe(prepared);
+          expect(resolveTarget?.()).toBe(restoredTarget);
           return {
             success: true,
             restoredDirs: ["workspace"],
@@ -960,9 +965,9 @@ describe("created OpenClaw sandbox finalization", () => {
       },
     );
 
-    expect(result).toBe(prepared);
-    expect(order).toEqual(["prepare", "restore", "revalidate", "register"]);
-    expect(register).toHaveBeenCalledWith(undefined, prepared);
+    expect(result).toBe(publishedTarget);
+    expect(order).toEqual(["prepare", "restore", "revalidate", "revalidate", "register"]);
+    expect(register).toHaveBeenCalledWith(undefined, publishedTarget);
   });
 
   it("does not publish the prepared target when managed restore fails (#10546)", () => {

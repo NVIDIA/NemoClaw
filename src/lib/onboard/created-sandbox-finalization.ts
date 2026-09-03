@@ -847,8 +847,13 @@ export function finalizeCreatedSandbox(
         ? { freshOpenClawImagePluginInstalls }
         : {}),
     } satisfies RecreatedSandboxRestoreOptions;
-    const resolveTarget = () =>
-      deps.revalidatePreparedRegistration!(preparedRegistration!, freshOpenClawImagePluginInstalls);
+    const resolveTarget = () => {
+      preparedRegistration = deps.revalidatePreparedRegistration!(
+        preparedRegistration!,
+        freshOpenClawImagePluginInstalls,
+      );
+      return preparedRegistration;
+    };
     const restore = deps.restoreRecreatedSandboxState(
       options.sandboxName,
       options.restoreBackupPath,
@@ -934,6 +939,12 @@ export function finalizeCreatedSandbox(
   }
 
   deps.revalidateSandboxIdentity?.(`registering sandbox '${options.sandboxName}'`);
+  if (preparedRegistration) {
+    preparedRegistration = deps.revalidatePreparedRegistration!(
+      preparedRegistration,
+      freshOpenClawImagePluginInstalls,
+    );
+  }
   return preparedRegistration
     ? deps.register(freshOpenClawImagePluginInstalls, preparedRegistration)
     : deps.register(freshOpenClawImagePluginInstalls);
