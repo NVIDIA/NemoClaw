@@ -23,13 +23,12 @@ describe("Hermes CLI adapter live assertions", () => {
   });
 
   it.each([
-    ["N8011_mthe9zxn_PROFILE_CONTINUE", true],
-    ["N8011_mthe9zxn_PROFILE_CON", true],
-    ["N8011_mthe9zxn_PROFILE_", false],
-    ["N8011_mthe9zxn_PROFILE_SEED", false],
+    ["N8011_mthe9zxn_PROFILE_CONTINUE   sandbox   just now   20260831_153001_12c622", true],
+    ["N8011_mthe9zxn_PROFILE_CON   sandbox   just now   20260831_153001_12c622", true],
+    ["N8011_mthe9zxn_PROFILE_   sandbox   just now   20260831_153001_12c622", false],
+    ["N8011_mthe9zxn_PROFILE_SEED   sandbox   just now   20260831_153001_12c622", false],
     ["", false],
-  ])("classifies displayed continuation title %j as %s", (displayedTitle, expected) => {
-    const row = `${displayedTitle}   sandbox   just now   20260831_153001_12c622`;
+  ])("classifies displayed continuation row %j as %s", (row, expected) => {
     expect(
       isDisplayedHermesSessionTitleForContinuation(
         row,

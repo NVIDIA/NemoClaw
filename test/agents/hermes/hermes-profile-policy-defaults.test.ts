@@ -109,11 +109,6 @@ def _get_reasoning_status(cfg):
 `;
 
 const agentFixture = `\
-from types import SimpleNamespace
-
-agent = SimpleNamespace()
-_agent_cfg = {}
-
 # Codex commentary visibility (display.show_commentary, default true).
 agent.show_commentary = True
 try:
@@ -288,19 +283,25 @@ print(json.dumps({
     const result = patchSource("agent", agentFixture);
 
     expect(result.status, result.stderr).toBe(0);
-    const probe = runPatchedPython(
-      result.stdout,
-      `
+    const probeScript = `
 import types
+import sys
+
+source = sys.stdin.read()
 def evaluate(config):
     scope = {"agent": types.SimpleNamespace(), "_agent_cfg": config}
-    exec(compile(sys.stdin.read() if False else ${JSON.stringify(result.stdout)}, "<agent>", "exec"), scope)
+    exec(compile(source, "<agent>", "exec"), scope)
     return scope["agent"].show_commentary
 class BrokenConfig:
     def get(self, *_args):
         raise RuntimeError("broken")
-print(evaluate({}), evaluate(BrokenConfig()))`,
-    );
+print(evaluate({}), evaluate(BrokenConfig()))
+`;
+    const probe = spawnSync("python3", ["-I", "-c", probeScript], {
+      encoding: "utf8",
+      input: result.stdout,
+      timeout: 5000,
+    });
     expect(probe.status, probe.stderr).toBe(0);
     expect(probe.stdout.trim()).toBe("False False");
   });

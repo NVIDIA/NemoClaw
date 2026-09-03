@@ -183,7 +183,8 @@ print(json.dumps({
   it("re-arms eligible one-shots in every profile before the restore gate opens", () => {
     const fixture = createFixture();
     try {
-      expect(runPatcher(fixture).status).toBe(0);
+      const patchResult = runPatcher(fixture);
+      expect(patchResult.status, patchResult.stderr).toBe(0);
       const probe = `
 import contextlib
 import importlib.util
@@ -253,6 +254,8 @@ print(json.dumps({"changed": changed, "replayed": replayed, "stores": stores, "s
       const result = spawnSync(process.env.PYTHON || "python3", ["-I", "-c", probe], {
         encoding: "utf8",
       });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toBe("");
       const observed = JSON.parse(result.stdout) as {
         changed: number;
         replayed: number;
@@ -263,8 +266,6 @@ print(json.dumps({"changed": changed, "replayed": replayed, "stores": stores, "s
         saved: Array<{ home: string }>;
       };
 
-      expect(result.status).toBe(0);
-      expect(result.stderr).toBe("");
       expect(observed.changed).toBe(2);
       expect(observed.replayed).toBe(2);
       expect(observed.saved.map(({ home }) => home)).toEqual([

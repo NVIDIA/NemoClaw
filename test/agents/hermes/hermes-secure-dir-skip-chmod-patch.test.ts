@@ -117,6 +117,35 @@ for raw, expected in ((sys.argv[2], 0o3770), (sys.argv[3], 0o2770)):
     }
   });
 
+  it("retains upstream hardening when the opt-out is unset", () => {
+    const fixture = patchedFixture();
+    const home = path.join(fixture.directory, ".hermes");
+    fs.mkdirSync(home, { recursive: true });
+    fs.chmodSync(home, 0o3770);
+    const probe = `\
+import pathlib
+import sys
+
+namespace = {}
+exec(compile(pathlib.Path(sys.argv[1]).read_text(), sys.argv[1], "exec"), namespace)
+namespace["_secure_dir"](pathlib.Path(sys.argv[2]))
+`;
+    try {
+      const env = { ...process.env };
+      delete env.HERMES_HOME_MODE;
+      delete env.HERMES_SKIP_CHMOD;
+      const result = spawnSync("python3", ["-I", "-c", probe, fixture.config, home], {
+        encoding: "utf8",
+        env,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.statSync(home).mode & 0o7777).toBe(0o700);
+    } finally {
+      fs.rmSync(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ["base image", baseDockerfile],
     ["final image", dockerfile],
