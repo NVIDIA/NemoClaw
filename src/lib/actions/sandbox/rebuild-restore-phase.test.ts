@@ -180,6 +180,10 @@ describe("rebuild filesystem restore", () => {
       });
 
       expect(write).toHaveBeenCalledOnce();
+      expect(write).toHaveBeenCalledWith("hermes", target, {
+        model: { default: "fresh", max_tokens: 24576 },
+        memory: { provider: "hindsight" },
+      });
       expect(reseed.mock.invocationCallOrder[0]).toBeGreaterThan(write.mock.invocationCallOrder[0]);
       expect(result).toEqual({
         restoreSucceeded: true,
@@ -242,7 +246,9 @@ describe("rebuild filesystem restore", () => {
     try {
       const sha256 = "a".repeat(64);
       const file = `hermes-operator-config-handoff.${sha256}.json`;
-      fs.writeFileSync(path.join(dir, file), '{"tampered":true}\n', { mode: 0o600 });
+      fs.writeFileSync(path.join(dir, file), '{"tampered":true}\n', {
+        mode: 0o600,
+      });
 
       const result = runRebuildRestorePhase({
         sandboxName: "hermes",
@@ -251,14 +257,21 @@ describe("rebuild filesystem restore", () => {
         backupManifest: {
           agentType: "hermes",
           backupPath: dir,
-          hermesOperatorConfigHandoff: { file, sha256 },
+          hermesOperatorConfigHandoff: {
+            file,
+            sha256,
+            keys: ["memory.provider", "model.max_tokens"],
+          },
         } as never,
         log: vi.fn(),
       });
 
       expect(result).toEqual({
         restoreSucceeded: false,
-        hermesOperatorConfigRestore: { restoredKeys: [], droppedKeys: [] },
+        hermesOperatorConfigRestore: {
+          restoredKeys: [],
+          droppedKeys: ["memory.provider", "model.max_tokens"],
+        },
       });
       expect(write).not.toHaveBeenCalled();
     } finally {

@@ -65,4 +65,16 @@ describe("operational audit", () => {
     expect(Object.keys(rows[0] ?? {}).sort()).toEqual(["action", "reason", "sandbox", "timestamp"]);
     expect(fs.statSync(OPERATIONAL_AUDIT_FILE).mode & 0o777).toBe(0o600);
   });
+
+  it("reads a stable regular audit file without following a symbolic link", async () => {
+    const { readStableOperationalAudit } = await import("./operational");
+    const auditFile = path.join(homeDir, "audit.jsonl");
+    const linkedFile = path.join(homeDir, "audit-link.jsonl");
+    fs.writeFileSync(auditFile, '{"action":"config_set"}\n', { mode: 0o600 });
+    fs.symlinkSync(auditFile, linkedFile);
+
+    expect(readStableOperationalAudit(auditFile)).toBe('{"action":"config_set"}\n');
+    expect(() => readStableOperationalAudit(linkedFile)).toThrow();
+    expect(readStableOperationalAudit(path.join(homeDir, "missing.jsonl"))).toBe("");
+  });
 });

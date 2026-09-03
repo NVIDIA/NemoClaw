@@ -8,7 +8,7 @@
  * the mutation class, sandbox, timestamp, and a redacted non-secret reason.
  */
 
-import { appendFileSync } from "node:fs";
+import { appendFileSync, closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { redactFull } from "../../security/redact";
@@ -17,6 +17,7 @@ import { resolveNemoclawStateDir } from "../paths";
 
 const OPERATIONAL_AUDIT_DIR = resolveNemoclawStateDir();
 const OPERATIONAL_AUDIT_FILE = join(OPERATIONAL_AUDIT_DIR, "operational-audit.jsonl");
+const MAX_OPERATIONAL_AUDIT_READ_BYTES = 8 * 1024 * 1024;
 
 export interface OperationalAuditEntry {
   readonly action: "inference_set" | "config_set" | "rotate_token";
@@ -37,6 +38,36 @@ export function appendAuditEntry(entry: OperationalAuditEntry): void {
   appendFileSync(OPERATIONAL_AUDIT_FILE, `${JSON.stringify(safe)}\n`, {
     mode: 0o600,
   });
+}
+
+/** Read one stable audit snapshot without following a replaced or linked file. */
+export function readStableOperationalAudit(filePath = OPERATIONAL_AUDIT_FILE): string {
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const before = fstatSync(descriptor, { bigint: true });
+    if (!before.isFile()) throw new Error("audit path is not a regular file");
+    if (before.size > BigInt(MAX_OPERATIONAL_AUDIT_READ_BYTES)) {
+      throw new Error("config audit exceeds the bounded 8 MiB rebuild capture limit");
+    }
+    const text = readFileSync(descriptor, "utf8");
+    const after = fstatSync(descriptor, { bigint: true });
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs
+    ) {
+      throw new Error("config audit changed during rebuild capture");
+    }
+    return text;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+  }
 }
 
 export { OPERATIONAL_AUDIT_DIR, OPERATIONAL_AUDIT_FILE };

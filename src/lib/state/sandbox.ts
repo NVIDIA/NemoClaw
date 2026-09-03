@@ -143,6 +143,8 @@ export interface RebuildManifest {
   hermesOperatorConfigHandoff?: {
     file: string;
     sha256: string;
+    /** Keys captured or classified as dropped before the handoff was written. */
+    keys?: string[];
     /** Cleanup-only identity; retired handoffs cannot be consumed for recovery. */
     retired?: boolean;
   };
@@ -323,6 +325,15 @@ function isInstanceBackup(value: unknown): value is InstanceBackup {
   );
 }
 
+function isHermesOperatorConfigInventoryKey(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 512 &&
+    !/[\u0000-\u001f\u007f]/u.test(value)
+  );
+}
+
 function cloneOpenClawImagePluginInstalls(
   installs: readonly OpenClawImagePluginInstall[],
 ): OpenClawImagePluginInstall[] {
@@ -416,6 +427,10 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
         typeof value.hermesOperatorConfigHandoff.file === "string" &&
         typeof value.hermesOperatorConfigHandoff.sha256 === "string" &&
         /^[a-f0-9]{64}$/.test(value.hermesOperatorConfigHandoff.sha256) &&
+        (value.hermesOperatorConfigHandoff.keys === undefined ||
+          (Array.isArray(value.hermesOperatorConfigHandoff.keys) &&
+            value.hermesOperatorConfigHandoff.keys.length <= 4096 &&
+            value.hermesOperatorConfigHandoff.keys.every(isHermesOperatorConfigInventoryKey))) &&
         (value.hermesOperatorConfigHandoff.retired === undefined ||
           value.hermesOperatorConfigHandoff.retired === true) &&
         value.hermesOperatorConfigHandoff.file ===
@@ -783,7 +798,10 @@ export function sanitizeBackupDirectory(
   dirPath: string,
   overrides: Partial<BackupSanitizationOperations> = {},
 ): void {
-  const operations = { ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS, ...overrides };
+  const operations = {
+    ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS,
+    ...overrides,
+  };
 
   try {
     operations.sanitizeDirectory(dirPath);
@@ -1033,7 +1051,11 @@ function capturePreservedEnvFile(
   sandboxName: string,
   dir: string,
   inventory: PreservedEnvInventory,
-): { outcome: StateFileBackupOutcome; file?: PreservedEnvFile; unreachable: boolean } {
+): {
+  outcome: StateFileBackupOutcome;
+  file?: PreservedEnvFile;
+  unreachable: boolean;
+} {
   const command = buildStateFileBackupCommand(dir, {
     path: inventory.path,
     strategy: "copy",
@@ -1208,7 +1230,9 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
     options.hostLocalInferenceProvenance,
   );
   if (options.runtimeSnapshot !== undefined && runtimeSnapshot === undefined) {
-    return { error: "snapshot runtime state is invalid or cannot be represented" };
+    return {
+      error: "snapshot runtime state is invalid or cannot be represented",
+    };
   }
   if (options.workload !== undefined && workload === undefined) {
     return { error: "snapshot workload authority is invalid" };
@@ -1467,7 +1491,14 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     }
     manifest.backupComplete = true;
     writeManifest(backupPath, manifest);
-    return { success: true, manifest, backedUpDirs, failedDirs, backedUpFiles, failedFiles };
+    return {
+      success: true,
+      manifest,
+      backedUpDirs,
+      failedDirs,
+      backedUpFiles,
+      failedFiles,
+    };
   }
 
   // SSH+tar single-roundtrip download
@@ -2266,7 +2297,13 @@ function restoreSandboxStateInternal(
       return failRestoreContract(mutationAuthorityError);
     }
     _log("No dirs or files to restore");
-    return { success: true, restoredDirs, failedDirs, restoredFiles, failedFiles };
+    return {
+      success: true,
+      restoredDirs,
+      failedDirs,
+      restoredFiles,
+      failedFiles,
+    };
   }
 
   _log("Getting SSH config for restore");
@@ -2522,7 +2559,10 @@ function writeManifest(
   try {
     // A snapshot becomes recoverable only after its complete, private manifest
     // is atomically renamed into place.
-    ops.write(tempPath, JSON.stringify(manifest, null, 2), { mode: 0o600, flag: "wx" });
+    ops.write(tempPath, JSON.stringify(manifest, null, 2), {
+      mode: 0o600,
+      flag: "wx",
+    });
     ops.rename(tempPath, manifestPath);
     published = true;
   } finally {
@@ -2591,7 +2631,11 @@ export function writeRebuildPolicyHandoff(
   let published = false;
   try {
     try {
-      writeFileSync(filePath, policyDocument, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      writeFileSync(filePath, policyDocument, {
+        encoding: "utf8",
+        mode: 0o600,
+        flag: "wx",
+      });
       created = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -2644,7 +2688,10 @@ export function clearRebuildPolicyHandoff(
   const write = ops.write ?? writeManifest;
   const remove = ops.remove ?? rmSync;
   if (handoff.retired !== true) {
-    const retired = { ...manifest, rebuildPolicyHandoff: { ...handoff, retired: true as const } };
+    const retired = {
+      ...manifest,
+      rebuildPolicyHandoff: { ...handoff, retired: true as const },
+    };
     try {
       write(manifest.backupPath, retired);
     } catch {
@@ -2673,6 +2720,7 @@ export function clearRebuildPolicyHandoff(
 export function writeHermesOperatorConfigHandoff(
   manifest: RebuildManifest,
   document: string,
+  keys: readonly string[] = [],
 ): RebuildManifest {
   if (manifest.agentType !== "hermes") {
     throw new Error("Hermes operator config handoff requires a Hermes rebuild manifest");
@@ -2683,12 +2731,23 @@ export function writeHermesOperatorConfigHandoff(
   }
   const sha256 = createHash("sha256").update(document).digest("hex");
   const file = `hermes-operator-config-handoff.${sha256}.json`;
+  const keyInventory = [...new Set(keys)].sort();
+  if (
+    keyInventory.length > 4096 ||
+    keyInventory.some((key) => !isHermesOperatorConfigInventoryKey(key))
+  ) {
+    throw new Error("Hermes operator config key inventory is invalid or exceeds its bound");
+  }
   const filePath = path.join(manifest.backupPath, file);
   let created = false;
   let published = false;
   try {
     try {
-      writeFileSync(filePath, document, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      writeFileSync(filePath, document, {
+        encoding: "utf8",
+        mode: 0o600,
+        flag: "wx",
+      });
       created = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -2701,7 +2760,7 @@ export function writeHermesOperatorConfigHandoff(
     }
     const next = {
       ...manifest,
-      hermesOperatorConfigHandoff: { file, sha256 },
+      hermesOperatorConfigHandoff: { file, sha256, keys: keyInventory },
     };
     writeManifest(manifest.backupPath, next);
     const previousFile = manifest.hermesOperatorConfigHandoff?.file;
@@ -2789,7 +2848,10 @@ function readManifest(backupPath: string): RebuildManifest | null {
   try {
     const parsed = readManifestPayload(backupPath);
     if (!isRebuildManifest(parsed)) return null;
-    const manifest = parsed as RebuildManifest & { dir?: string; writableDir?: string };
+    const manifest = parsed as RebuildManifest & {
+      dir?: string;
+      writableDir?: string;
+    };
     const dir = manifest.dir ?? manifest.writableDir;
     if (!dir) return null;
     const runtimeSnapshot =
@@ -2824,8 +2886,7 @@ function readManifest(backupPath: string): RebuildManifest | null {
 // ── Listing ────────────────────────────────────────────────────────
 
 export type RebuildRecoveryManifestValidation =
-  | { ok: true; manifest: RebuildManifest }
-  | { ok: false; reason: string };
+  { ok: true; manifest: RebuildManifest } | { ok: false; reason: string };
 
 function legacyStateFilesArePresent(backupPath: string, manifest: RebuildManifest): boolean {
   if (manifest.backupComplete !== undefined) return true;
@@ -2896,7 +2957,10 @@ export function validateRebuildRecoveryManifest(
 
   const persisted = readManifest(candidateBackupPath);
   if (!persisted || persisted.version !== MANIFEST_VERSION) {
-    return { ok: false, reason: "latest backup manifest is missing, malformed, or unsupported" };
+    return {
+      ok: false,
+      reason: "latest backup manifest is missing, malformed, or unsupported",
+    };
   }
   if (persisted.sandboxName !== sandboxName) {
     return {
@@ -2914,7 +2978,10 @@ export function validateRebuildRecoveryManifest(
     persisted.timestamp !== candidate.timestamp ||
     path.resolve(persisted.backupPath) !== candidateBackupPath
   ) {
-    return { ok: false, reason: "persisted backup identity changed during validation" };
+    return {
+      ok: false,
+      reason: "persisted backup identity changed during validation",
+    };
   }
 
   return { ok: true, manifest: persisted };

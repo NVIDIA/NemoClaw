@@ -33,7 +33,11 @@ describe("resolveRebuildDurableConfig", () => {
   it("lets an explicit transactional rebuild override the recorded selection", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", toolDisclosure: "progressive", nemoclawVersion: "0.1.0" },
+      {
+        name: "alpha",
+        toolDisclosure: "progressive",
+        nemoclawVersion: "0.1.0",
+      },
       createSession({ sandboxName: "alpha", toolDisclosure: "progressive" }),
       undefined,
       "direct",
@@ -46,7 +50,12 @@ describe("resolveRebuildDurableConfig", () => {
   it("recovers tool disclosure from a matching legacy session", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", provider: "ollama-local", model: "model", nemoclawVersion: "0.1.0" },
+      {
+        name: "alpha",
+        provider: "ollama-local",
+        model: "model",
+        nemoclawVersion: "0.1.0",
+      },
       createSession({
         sandboxName: "alpha",
         provider: "ollama-local",
@@ -73,7 +82,11 @@ describe("resolveRebuildDurableConfig", () => {
   it("fails closed for corrupt durable tool-disclosure state", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", toolDisclosure: "everything" as never, nemoclawVersion: "0.1.0" },
+      {
+        name: "alpha",
+        toolDisclosure: "everything" as never,
+        nemoclawVersion: "0.1.0",
+      },
       null,
     );
 
@@ -84,7 +97,11 @@ describe("resolveRebuildDurableConfig", () => {
   it("does not let an explicit override mask corrupt durable state", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", toolDisclosure: "everything" as never, nemoclawVersion: "0.1.0" },
+      {
+        name: "alpha",
+        toolDisclosure: "everything" as never,
+        nemoclawVersion: "0.1.0",
+      },
       null,
       undefined,
       "direct",
@@ -112,7 +129,11 @@ describe("resolveRebuildDurableConfig", () => {
   it("uses a matching direct session when a legacy registry stores null", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", toolDisclosure: null as never, nemoclawVersion: "0.1.0" },
+      {
+        name: "alpha",
+        toolDisclosure: null as never,
+        nemoclawVersion: "0.1.0",
+      },
       createSession({ sandboxName: "alpha", toolDisclosure: "direct" }),
     );
 
@@ -140,7 +161,10 @@ describe("resolveRebuildDurableConfig", () => {
         webSearchEnabled: false,
         fromDockerfile: null,
       },
-      createSession({ sandboxName: "alpha", webSearchConfig: { fetchEnabled: true } }),
+      createSession({
+        sandboxName: "alpha",
+        webSearchConfig: { fetchEnabled: true },
+      }),
     );
     expect(config.webSearchConfig).toBeNull();
   });
@@ -170,12 +194,20 @@ describe("resolveRebuildDurableConfig", () => {
   it("rejects matching-session custom-image evidence despite legacy confirmation (#6114)", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", provider: "ollama-local", model: "model", nemoclawVersion: null },
+      {
+        name: "alpha",
+        provider: "ollama-local",
+        model: "model",
+        nemoclawVersion: null,
+      },
       createSession({
         sandboxName: "alpha",
         provider: "ollama-local",
         model: "model",
-        metadata: { gatewayName: "nemoclaw", fromDockerfile: "/tmp/custom.Dockerfile" },
+        metadata: {
+          gatewayName: "nemoclaw",
+          fromDockerfile: "/tmp/custom.Dockerfile",
+        },
       }),
       undefined,
       undefined,
@@ -202,8 +234,17 @@ describe("resolveRebuildDurableConfig", () => {
   it("does not treat a same-name null image session as proof of a legacy managed image", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", provider: "ollama-local", model: "model", nemoclawVersion: null },
-      createSession({ sandboxName: "alpha", provider: "ollama-local", model: "model" }),
+      {
+        name: "alpha",
+        provider: "ollama-local",
+        model: "model",
+        nemoclawVersion: null,
+      },
+      createSession({
+        sandboxName: "alpha",
+        provider: "ollama-local",
+        model: "model",
+      }),
     );
     expect(config.fromDockerfileError).toContain("cannot distinguish");
   });
@@ -211,7 +252,11 @@ describe("resolveRebuildDurableConfig", () => {
   it("fails closed for corrupt durable web-search state", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", webSearchEnabled: "false" as never, fromDockerfile: null },
+      {
+        name: "alpha",
+        webSearchEnabled: "false" as never,
+        fromDockerfile: null,
+      },
       null,
     );
     expect(config.webSearchError).toContain("not boolean");
@@ -228,7 +273,10 @@ describe("resolveRebuildDurableConfig", () => {
       },
       createSession({ sandboxName: "other" }),
     );
-    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+    expect(config.webSearchConfig).toEqual({
+      fetchEnabled: true,
+      provider: "tavily",
+    });
     expect(config.webSearchError).toBeNull();
   });
 
@@ -249,7 +297,10 @@ describe("resolveRebuildDurableConfig", () => {
         webSearchConfig: { fetchEnabled: true, provider: "tavily" },
       }),
     );
-    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+    expect(config.webSearchConfig).toEqual({
+      fetchEnabled: true,
+      provider: "tavily",
+    });
   });
 
   it("does not infer managed Tavily from the DCode interpreter opt-in preset", () => {
@@ -288,7 +339,10 @@ describe("resolveRebuildDurableConfig", () => {
       },
       createSession({ sandboxName: "other", webSearchConfig: null }),
     );
-    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+    expect(config.webSearchConfig).toEqual({
+      fetchEnabled: true,
+      provider: "tavily",
+    });
     expect(config.webSearchError).toBeNull();
   });
 
@@ -336,7 +390,12 @@ describe("resolveRebuildDurableConfig", () => {
   it("does not borrow Hermes auth from a same-name conflicting selection", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
-      { name: "alpha", provider: "hermes-provider", model: "target", nemoclawVersion: "0.1.0" },
+      {
+        name: "alpha",
+        provider: "hermes-provider",
+        model: "target",
+        nemoclawVersion: "0.1.0",
+      },
       createSession({
         sandboxName: "alpha",
         provider: "hermes-provider",
@@ -389,7 +448,11 @@ describe("Hermes operator config rebuild handoff", () => {
         api_key: "sentinel",
         discover_models: true,
       },
-      { name: "operator-extra", base_url: "http://192.0.2.10/v1", discover_models: false },
+      {
+        name: "operator-extra",
+        base_url: "http://192.0.2.10/v1",
+        discover_models: false,
+      },
     ],
     operator_issue_10495: { enabled: true, label: "preserve-rebuild" },
   };
@@ -418,8 +481,44 @@ describe("Hermes operator config rebuild handoff", () => {
     expect(snapshot.entries.map((entry) => entry.key)).toEqual(contractKeys.slice(0, -1).sort());
     expect(snapshot.droppedKeys).toEqual(["model.default"]);
     expect(snapshot.entries.find((entry) => entry.key === "custom_providers")?.value).toEqual([
-      { name: "operator-extra", base_url: "http://192.0.2.10/v1", discover_models: false },
+      {
+        name: "operator-extra",
+        base_url: "http://192.0.2.10/v1",
+        discover_models: false,
+      },
     ]);
+  });
+
+  it("derives the managed provider key when the upstream marker omits it", () => {
+    const config: ConfigObject = structuredClone(liveConfig);
+    config._nemoclaw_upstream = {
+      provider: "Compatible Endpoint",
+      model: "llama3.2:1b",
+    };
+    config.providers = {
+      "compatible-endpoint": {
+        name: "compatible-endpoint",
+        api_key: "managed-sentinel",
+        request_timeout_seconds: 182,
+      },
+    };
+
+    const snapshot = captureHermesOperatorConfigSnapshotFromConfig("hermes", config, [
+      "providers.compatible-endpoint",
+    ]);
+
+    expect(snapshot).toEqual({
+      version: 1,
+      sandboxName: "hermes",
+      entries: [
+        {
+          key: "providers.compatible-endpoint",
+          value: { request_timeout_seconds: 182 },
+        },
+      ],
+      droppedKeys: [],
+    });
+    expect(JSON.stringify(snapshot)).not.toContain("managed-sentinel");
   });
 
   it("merges operator values over a fresh route and verifies restored and dropped keys", () => {
@@ -487,7 +586,12 @@ describe("Hermes operator config rebuild handoff", () => {
         }),
         "hermes",
       ),
-    ).toBeNull();
+    ).toEqual({
+      version: 1,
+      sandboxName: "hermes",
+      entries: [],
+      droppedKeys: ["gateway.authToken"],
+    });
     expect(() =>
       captureHermesOperatorConfigSnapshotFromConfig("hermes", liveConfig, ["custom_providers.0"]),
     ).toThrow("unsupported Hermes operator config key");
@@ -510,6 +614,11 @@ describe("Hermes operator config rebuild handoff", () => {
             sandbox: "other",
             reason: "config set hermes:memory.provider",
           }),
+          JSON.stringify({
+            action: "config_set",
+            sandbox: "hermes",
+            reason: "config set hermes:gateway.authToken",
+          }),
         ].join("\n"),
       );
       const snapshot = captureHermesOperatorConfigSnapshot("hermes", {
@@ -521,8 +630,62 @@ describe("Hermes operator config rebuild handoff", () => {
       expect(parseHermesOperatorConfigSnapshot(document, "hermes")).toEqual(snapshot);
       expect(parseHermesOperatorConfigSnapshot(document, "other")).toBeNull();
       expect(snapshot.entries).toEqual([{ key: "model.max_tokens", value: 24576 }]);
+      expect(snapshot.droppedKeys).toEqual(["gateway.authToken"]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("requires distinct array entries when it verifies duplicate operator values", () => {
+    const snapshot = {
+      version: 1 as const,
+      sandboxName: "hermes",
+      entries: [{ key: "operator_issue_10495.values", value: ["same", "same"] }],
+      droppedKeys: [],
+    };
+
+    expect(
+      verifyHermesOperatorConfigSnapshot({ operator_issue_10495: { values: ["same"] } }, snapshot),
+    ).toEqual({
+      restoredKeys: [],
+      droppedKeys: ["operator_issue_10495.values"],
+    });
+    expect(
+      verifyHermesOperatorConfigSnapshot(
+        { operator_issue_10495: { values: ["same", "same"] } },
+        snapshot,
+      ),
+    ).toEqual({
+      restoredKeys: ["operator_issue_10495.values"],
+      droppedKeys: [],
+    });
+  });
+
+  it("reassigns an ambiguous array match without exponential backtracking", () => {
+    const snapshot = {
+      version: 1 as const,
+      sandboxName: "hermes",
+      entries: [
+        {
+          key: "operator_issue_10495.values",
+          value: [{}, { name: "specific" }],
+        },
+      ],
+      droppedKeys: [],
+    };
+
+    expect(
+      verifyHermesOperatorConfigSnapshot(
+        {
+          operator_issue_10495: {
+            values: [{ name: "specific" }, { name: "other" }],
+          },
+        },
+        snapshot,
+      ),
+    ).toEqual({
+      restoredKeys: ["operator_issue_10495.values"],
+      droppedKeys: [],
+    });
   });
 });

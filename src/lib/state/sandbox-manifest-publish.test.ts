@@ -96,8 +96,15 @@ describe("bounded Hermes operator config handoff", () => {
     __test.writeManifest(backupPath, published);
     const document = '{"version":1,"sandboxName":"alpha","entries":[],"droppedKeys":[]}\n';
 
-    const withHandoff = writeHermesOperatorConfigHandoff(published, document);
+    const withHandoff = writeHermesOperatorConfigHandoff(published, document, [
+      "memory.provider",
+      "model.max_tokens",
+    ]);
     const handoffPath = path.join(backupPath, withHandoff.hermesOperatorConfigHandoff!.file);
+    expect(withHandoff.hermesOperatorConfigHandoff?.keys).toEqual([
+      "memory.provider",
+      "model.max_tokens",
+    ]);
     expect(readHermesOperatorConfigHandoff(withHandoff)).toBe(document);
     const descriptor = fs.openSync(handoffPath, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
     try {
@@ -134,13 +141,27 @@ describe("bounded Hermes operator config handoff", () => {
         }),
       }),
     ).toBe(false);
-    expect(withHandoff.hermesOperatorConfigHandoff).toMatchObject({ retired: true });
+    expect(withHandoff.hermesOperatorConfigHandoff).toMatchObject({
+      retired: true,
+    });
     expect(readHermesOperatorConfigHandoff(withHandoff)).toBeNull();
     expect(fs.existsSync(handoffPath)).toBe(true);
 
     expect(clearHermesOperatorConfigHandoff(withHandoff)).toBe(true);
     expect(fs.existsSync(handoffPath)).toBe(false);
     expect(withHandoff).not.toHaveProperty("hermesOperatorConfigHandoff");
+  });
+
+  it("rejects control characters in the Hermes config key inventory", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-keys-"));
+    tempDirs.push(backupPath);
+    const published = { ...manifest(backupPath), agentType: "hermes" };
+    __test.writeManifest(backupPath, published);
+    const document = '{"version":1,"sandboxName":"alpha","entries":[],"droppedKeys":[]}\n';
+
+    expect(() =>
+      writeHermesOperatorConfigHandoff(published, document, ["model.max_tokens\nforged"]),
+    ).toThrow("key inventory is invalid");
   });
 });
 

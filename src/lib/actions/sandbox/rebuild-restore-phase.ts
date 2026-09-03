@@ -47,7 +47,13 @@ function restoreHermesOperatorConfig(
   if (!snapshot) {
     log("Hermes operator config handoff failed digest or schema validation");
     console.error(`  ${YW}Hermes operator config restore blocked:${R} invalid rebuild handoff`);
-    return { success: false, report: EMPTY_HERMES_OPERATOR_CONFIG_RESTORE };
+    return {
+      success: false,
+      report: {
+        restoredKeys: [],
+        droppedKeys: [...new Set(backupManifest.hermesOperatorConfigHandoff.keys ?? [])].sort(),
+      },
+    };
   }
   if (snapshot.entries.length === 0) {
     return {

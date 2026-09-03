@@ -121,7 +121,9 @@ export async function rebuildSandbox(
       withMcpLifecycleLock(sandboxName, async () => {
         const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
           sandboxName,
-          { allowStateRecord: true },
+          {
+            allowStateRecord: true,
+          },
         );
         assertSandboxRebuildCommandAvailable(sandboxName);
         const scopedEnvKeys = [
@@ -435,6 +437,7 @@ async function rebuildSandboxUnlocked(
           backup.backupManifest = writeHermesOperatorConfigHandoff(
             backup.backupManifest,
             serializeHermesOperatorConfigSnapshot(operatorConfig),
+            [...operatorConfig.entries.map((entry) => entry.key), ...operatorConfig.droppedKeys],
           );
           rebuildPolicyHandoffManifest = backup.backupManifest;
           log(
