@@ -3,24 +3,8 @@
 
 import type { AdvisorPromptTurn } from "../advisors/session.mts";
 import { buildInvestigateTurn, type InvestigateTurnContext } from "./investigate-turn.mts";
-import {
-  ADVISOR_INTERESTS,
-  ADVISOR_SPECIALISTS,
-  parseAdvisorInterest,
-  readAdvisorSpecialists,
-  type AdvisorInterest,
-  type AdvisorSpecialist,
-} from "./specialist-catalog.mts";
-import { TERMINOLOGY_TRACE_TOOL } from "./terminology.mts";
-
-export {
-  ADVISOR_INTERESTS,
-  ADVISOR_SPECIALISTS,
-  parseAdvisorInterest,
-  readAdvisorSpecialists,
-  type AdvisorInterest,
-  type AdvisorSpecialist,
-};
+import { ADVISOR_SPECIALISTS, type AdvisorInterest, type AdvisorSpecialist } from "./specialist-catalog.mts";
+import { specialistToolNames } from "./specialist-tools.mts";
 
 function advisorSpecialist(interest: AdvisorInterest): AdvisorSpecialist {
   const specialist = ADVISOR_SPECIALISTS.find((candidate) => candidate.interest === interest);
@@ -97,13 +81,11 @@ export function buildSpecialistInvestigateTurn(
 ): AdvisorPromptTurn {
   const specialist = advisorSpecialist(interest);
   const fullTurn = chunkSpecialistContext(buildInvestigateTurn(context));
-  const activeToolNames = ["read", "grep", "find", "ls"];
-  if (interest === "documentation") activeToolNames.push(TERMINOLOGY_TRACE_TOOL);
-
   return {
     ...fullTurn,
     name: `investigate-${interest}`,
-    activeToolNames,
+    activeToolNames: specialistToolNames(interest),
+    requiredReadPaths: [context.diffPath],
     prompt: `Review the ${specialist.label} area.
 
 ${COMMON_PROMPT}

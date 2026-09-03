@@ -1115,7 +1115,9 @@ async function assertNoBedrockLeaks(options: {
   expect(leaks).toEqual([]);
 }
 
-test("bedrock runtime compatible Anthropic endpoint routes through managed inference.local", {
+test(
+  "bedrock runtime compatible Anthropic endpoint routes through managed inference.local",
+  {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -1126,7 +1128,8 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
       "audit Bedrock traffic and secret isolation",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
   assertAgent(AGENT);
   const shard =
     process.env.GITHUB_ACTIONS === "true"
@@ -1188,7 +1191,7 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
     sandboxName: SANDBOX_NAME,
     boundary: "host-bedrock-mock-source-cli-onboard-and-sandbox-exec",
     contracts: [
-      "Docker, python3, source CLI, and OpenShell are available",
+      "the selected runtime, python3, source CLI, and OpenShell are available",
       "bedrock-runtime.us-east-1.amazonaws.com maps to the host fake endpoint",
       "non-interactive anthropicCompatible onboarding selects compatible-anthropic-endpoint",
       "OpenShell owns the hidden Bedrock adapter token while sandbox config uses inference.local",
@@ -1199,19 +1202,10 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
     ],
   });
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "prereq-docker-info-bedrock-runtime",
-    env: testEnv(home),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "prereq-runtime-info-bedrock-runtime",
+      scenarioLabel: "Bedrock Runtime compatible Anthropic",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(
-        `Docker is required for Bedrock Runtime compatible Anthropic E2E: ${resultText(docker)}`,
-      );
-    }
-    skip("Docker is required for Bedrock Runtime compatible Anthropic E2E");
-  }
   expectExitZero(
     await host.command("python3", ["--version"], {
       artifactName: "prereq-python-version-bedrock-runtime",
@@ -1313,4 +1307,5 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
       leakScanPassed: true,
     },
   });
-});
+  },
+);

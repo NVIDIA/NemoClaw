@@ -60,6 +60,7 @@ export interface EnsureHttpsPinRuntimeAdapterOptions {
   endpointUrl: string;
   providerType: HttpsPinCredentialProviderType;
   credentialValue: string;
+  discoverAllowedSourceCidrs?: () => readonly string[];
 }
 export type EnsureHttpsPinRuntimeAdapterFn = (
   options: EnsureHttpsPinRuntimeAdapterOptions,
