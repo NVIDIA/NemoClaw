@@ -89,7 +89,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(91);
+    expect(plan.coverageMatrix).toHaveLength(90);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -252,15 +252,12 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-inference"]);
   });
 
-  it("routes both Pi qualification targets through the NVIDIA API key profile", () => {
-    const targetIds = ["pi-agent-qualification-amd64", "pi-agent-qualification-arm64"];
-    const plan = buildE2eWorkflowPlan({ targets: targetIds.join(",") });
+  it("routes Pi lifecycle qualification through the AMD64 NVIDIA API key profile (#7926)", () => {
+    const targetId = "pi-agent-qualification-amd64";
+    const plan = buildE2eWorkflowPlan({ targets: targetId });
 
-    expect(targetIds.map((id) => catalogueTarget(id).profile)).toEqual([
-      "nvidia-api",
-      "nvidia-api",
-    ]);
-    expect(plan.catalogueMatrices["nvidia-api"].map((row) => row.id)).toEqual(targetIds);
+    expect(catalogueTarget(targetId).profile).toBe("nvidia-api");
+    expect(plan.catalogueMatrices["nvidia-api"].map((row) => row.id)).toEqual([targetId]);
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual([]);
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api"]);
   });
