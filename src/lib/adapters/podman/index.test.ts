@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ContainerEngineCommandCapture } from "../container-engine";
 import {
+  capturePodmanExecutableAuthority,
   createPodmanContainerEngine,
   localPodmanEnvironment,
   resolvePodmanExecutablePath,
@@ -61,7 +62,7 @@ function executableAuthorityDeps(
 }
 
 describe("Podman container engine command adapter", () => {
-  it("resolves and pins the canonical Podman executable for state mutation", ({
+  it("resolves and pins the canonical Podman executable for host-local inference", ({
     onTestFinished,
   }) => {
     const directory = fs.mkdtempSync(
@@ -78,7 +79,7 @@ describe("Podman container engine command adapter", () => {
       stderr: "",
     }));
     const engine = createPodmanContainerEngine({
-      operation: "state-mutation",
+      operation: "host-local-inference",
       socketAuthority: AUTHORITY,
       executableSearchEnv: { PATH: directory },
       assertAuthority: vi.fn(),
@@ -177,15 +178,17 @@ describe("Podman container engine command adapter", () => {
     expect(capture).toHaveBeenCalledTimes(1);
   });
 
-  it("pins socket and executable authority for state-mutation retries", () => {
+  it("pins socket and executable authority for sandbox lifecycle retries", () => {
     const assertSocketAuthority = vi.fn();
     const capture = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
     const readFile = vi.fn(() => PODMAN_BYTES);
+    const authorityDeps = executableAuthorityDeps(PODMAN_BYTES, { readFile });
     const engine = createPodmanContainerEngine({
-      operation: "state-mutation",
+      operation: "sandbox-lifecycle",
       socketAuthority: AUTHORITY,
       executable: "/usr/bin/podman",
-      executableAuthorityDeps: executableAuthorityDeps(PODMAN_BYTES, { readFile }),
+      executableAuthority: capturePodmanExecutableAuthority("/usr/bin/podman", authorityDeps),
+      executableAuthorityDeps: authorityDeps,
       assertAuthority: assertSocketAuthority,
       capture,
     });
@@ -193,8 +196,8 @@ describe("Podman container engine command adapter", () => {
     engine.assertAuthority();
     engine.capture(["container", "inspect", "a".repeat(64)]);
 
-    expect(engine.operation).toBe("state-mutation");
-    expect(readFile).toHaveBeenCalledTimes(2);
+    expect(engine.operation).toBe("sandbox-lifecycle");
+    expect(readFile).toHaveBeenCalledTimes(3);
     expect(assertSocketAuthority).toHaveBeenCalledTimes(3);
     expect(capture).toHaveBeenCalledExactlyOnceWith(
       "/usr/bin/podman",
@@ -202,8 +205,101 @@ describe("Podman container engine command adapter", () => {
       15_000,
     );
     expect(() => engine.captureHost(["info"])).toThrow(
-      "Podman state-mutation forbids ambient host command capture",
+      "Podman sandbox-lifecycle forbids ambient host command capture",
     );
+  });
+
+  it("prepares one exact managed-bootstrap workspace root through Podman's user namespace", ({
+    onTestFinished,
+  }) => {
+    const directory = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-workspace-")),
+    );
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args) => {
+      const payload = JSON.parse(args.at(-1) ?? "{}") as Record<string, unknown>;
+      return { status: 0, stdout: JSON.stringify(payload), stderr: "" };
+    });
+    const engine = createPodmanContainerEngine({
+      operation: "managed-bootstrap",
+      socketAuthority: AUTHORITY,
+      executable: "/usr/bin/podman",
+      executableAuthorityDeps: executableAuthorityDeps(),
+      assertAuthority: vi.fn(),
+      commandEnvironment: {
+        HOME: "/home/podman",
+        XDG_RUNTIME_DIR: "/run/user/1000",
+        CONTAINERS_CONF: "/tmp/native-podman-containers.conf",
+        CONTAINERS_STORAGE_CONF: "/tmp/native-podman-storage.conf",
+      },
+      capture,
+    });
+
+    expect(
+      engine.prepareManagedWorkspaceRoot?.({ path: directory, uid: 0, gid: 999, mode: 0o1775 }),
+    ).toMatchObject({
+      path: directory,
+      uid: 0,
+      gid: 999,
+      mode: 0o1775,
+    });
+    expect(capture).toHaveBeenCalledOnce();
+    expect(capture.mock.calls[0]?.[1].slice(0, 2)).toEqual([
+      "unshare",
+      fs.realpathSync(process.execPath),
+    ]);
+    expect(JSON.parse(capture.mock.calls[0]?.[1].at(-1) ?? "{}")).toMatchObject({
+      path: directory,
+      uid: 0,
+      gid: 999,
+      mode: 0o1775,
+    });
+    expect(capture.mock.calls[0]?.[4]).toEqual({
+      HOME: "/home/podman",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      CONTAINERS_CONF: "/tmp/native-podman-containers.conf",
+      CONTAINERS_STORAGE_CONF: "/tmp/native-podman-storage.conf",
+    });
+    expect(() => engine.captureHost(["unshare", "id"])).toThrow(
+      "forbids ambient host command capture",
+    );
+  });
+
+  it("prepares one exact managed-bootstrap volume root without recursive ownership changes", ({
+    onTestFinished,
+  }) => {
+    const directory = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-volume-")),
+    );
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args) => {
+      const payload = JSON.parse(args.at(-1) ?? "{}") as Record<string, unknown>;
+      return { status: 0, stdout: JSON.stringify(payload), stderr: "" };
+    });
+    const engine = createPodmanContainerEngine({
+      operation: "managed-bootstrap",
+      socketAuthority: AUTHORITY,
+      executable: "/usr/bin/podman",
+      executableAuthorityDeps: executableAuthorityDeps(),
+      assertAuthority: vi.fn(),
+      capture,
+    });
+
+    expect(
+      engine.prepareManagedVolumeRoot?.({
+        path: directory,
+        uid: 1000,
+        gid: 1000,
+        mode: 0o2770,
+      }),
+    ).toMatchObject({ path: directory, uid: 1000, gid: 1000, mode: 0o2770 });
+    expect(capture).toHaveBeenCalledOnce();
+    expect(JSON.parse(capture.mock.calls[0]?.[1].at(-1) ?? "{}")).toMatchObject({
+      path: directory,
+      uid: 1000,
+      gid: 1000,
+      mode: 0o2770,
+    });
   });
 
   it("shares only socket authority across real operation-scoped engines", () => {
