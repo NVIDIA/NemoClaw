@@ -210,7 +210,7 @@ describe("CLI OpenShell provider adapter", () => {
     });
   });
 
-  it("returns explicit absent revision evidence for legacy provider output (#9806)", async () => {
+  it("returns a null revision when provider output omits revision fields (#9806)", async () => {
     const adapter = createCliOpenShellProviderAdapter({
       run: () =>
         captured(

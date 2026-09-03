@@ -65,7 +65,7 @@ function providerAdapter(
 }
 
 describe("inference set provider binding", () => {
-  it("updates an owned provider through exact adapter calls (#9806)", async () => {
+  it("updates an owned provider when its revision remains unchanged (#9806)", async () => {
     const getProvider = vi
       .fn<OpenShellProviderAdapter["getProvider"]>()
       .mockResolvedValueOnce({ ok: true, value: metadata() })
@@ -208,7 +208,9 @@ describe("inference set provider binding", () => {
       providerAdapter: adapter,
     });
 
-    await expect(mutation.commit()).rejects.toThrow("redacted profile failure");
+    await expect(mutation.commit()).rejects.toThrow(
+      "Fix the reported OpenShell provider-profile error, then rerun this command. redacted profile failure",
+    );
     expect(updateProvider).not.toHaveBeenCalled();
   });
 
@@ -231,7 +233,11 @@ describe("inference set provider binding", () => {
         binding: binding(),
         providerAdapter: adapter,
       }),
-    ).rejects.toThrow(_case === "foreign credential" ? "malformed, foreign" : "without a revision");
+    ).rejects.toThrow(
+      _case === "foreign credential"
+        ? "malformed, foreign"
+        : "Update OpenShell with `scripts/install-openshell.sh`, then rerun this command.",
+    );
     expect(updateProvider).not.toHaveBeenCalled();
     expect(importProviderProfile).not.toHaveBeenCalled();
   });
@@ -345,7 +351,7 @@ describe("inference set provider binding", () => {
     await expect(mutation.commit()).rejects.toThrow("may be partial");
   });
 
-  it("treats a failed mutation as ambiguous after settlement (#9806)", async () => {
+  it("reports partial provider state when an update error follows a revision increase (#9806)", async () => {
     const getProvider = vi
       .fn<OpenShellProviderAdapter["getProvider"]>()
       .mockResolvedValueOnce({ ok: true, value: metadata() })
@@ -370,8 +376,35 @@ describe("inference set provider binding", () => {
       providerAdapter: providerAdapter({ getProvider, updateProvider }),
     });
 
-    await expect(mutation.commit()).rejects.toThrow("may have partially applied");
+    await expect(mutation.commit()).rejects.toThrow(
+      "OpenShell could not confirm the update operation for provider 'compatible-endpoint'. Provider state may be partial. redacted failure",
+    );
     expect(getProvider).toHaveBeenCalledTimes(4);
+  });
+
+  it("reports a definite update failure without claiming partial provider state (#9806)", async () => {
+    const getProvider = vi
+      .fn<OpenShellProviderAdapter["getProvider"]>()
+      .mockResolvedValueOnce({ ok: true, value: metadata() })
+      .mockResolvedValueOnce({ ok: true, value: metadata() })
+      .mockResolvedValueOnce({ ok: true, value: metadata() })
+      .mockResolvedValueOnce({ ok: true, value: metadata() });
+    const updateProvider = vi.fn(async () => ({
+      ok: false as const,
+      error: { kind: "validation" as const, message: "safe validation failure" },
+    }));
+    const mutation = await prepareInferenceSetProviderBinding({
+      gatewayName: "nemoclaw",
+      providerName: "compatible-endpoint",
+      binding: binding(),
+      providerAdapter: providerAdapter({ getProvider, updateProvider }),
+    });
+
+    const commit = mutation.commit();
+    await expect(commit).rejects.toThrow(
+      "OpenShell could not update provider 'compatible-endpoint': safe validation failure",
+    );
+    await expect(commit).rejects.not.toThrow("partial");
   });
 
   it("deletes and verifies a newly created provider during rollback (#9806)", async () => {
@@ -409,7 +442,7 @@ describe("inference set provider binding", () => {
     expect(getProvider).toHaveBeenCalledTimes(4);
   });
 
-  it("reports rollback when provider deletion does not settle (#9806)", async () => {
+  it("reports a rollback failure when the created provider remains registered (#9806)", async () => {
     const getProvider = vi
       .fn<OpenShellProviderAdapter["getProvider"]>()
       .mockResolvedValueOnce({
@@ -439,7 +472,42 @@ describe("inference set provider binding", () => {
       providerAdapter: providerAdapter({ getProvider, deleteProvider }),
     });
 
-    await expect(mutation.rollback()).rejects.toThrow("Failed to remove newly created provider");
+    await expect(mutation.rollback()).rejects.toThrow(
+      "OpenShell could not remove newly created provider 'compatible-endpoint' during rollback. The provider remains registered. safe failure",
+    );
+  });
+
+  it("accepts rollback when inspection confirms the created provider is absent (#9806)", async () => {
+    const getProvider = vi
+      .fn<OpenShellProviderAdapter["getProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "provider not found" },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: metadata({ revision: { id: PROVIDER_ID, resourceVersion: 1 } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: metadata({ revision: { id: PROVIDER_ID, resourceVersion: 1 } }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "provider not found" },
+      });
+    const deleteProvider = vi.fn(async () => ({
+      ok: false as const,
+      error: { kind: "command" as const, reason: "uncertain" as const, message: "safe failure" },
+    }));
+    const mutation = await prepareInferenceSetProviderBinding({
+      gatewayName: "nemoclaw",
+      providerName: "compatible-endpoint",
+      binding: binding(),
+      providerAdapter: providerAdapter({ getProvider, deleteProvider }),
+    });
+
+    await expect(mutation.rollback()).resolves.toBeUndefined();
   });
 
   it("refuses to delete a stale provider revision during rollback (#9806)", async () => {
@@ -483,7 +551,9 @@ describe("inference set provider binding", () => {
         credentialEnv: "COMPATIBLE_API_KEY",
         providerAdapter: providerAdapter({ getProvider }),
       }),
-    ).rejects.toThrow("no inference route mutation was attempted");
+    ).rejects.toThrow(
+      "Update OpenShell with `scripts/install-openshell.sh`, then rerun this command.",
+    );
     expect(getProvider).toHaveBeenCalledExactlyOnceWith({
       target: TARGET,
       providerName: "compatible-endpoint",

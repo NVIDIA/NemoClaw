@@ -22,7 +22,7 @@ function adapterWithList(
 }
 
 describe("inference set provider diagnostics", () => {
-  it("returns sorted credentials through the exact adapter query (#5924)", async () => {
+  it("returns sorted credential provider names and excludes messaging providers (#5924)", async () => {
     const providerAdapter = adapterWithList({
       ok: true,
       value: { names: ["nvidia-prod", "alpha-telegram-bridge", "anthropic-prod"] },
@@ -40,7 +40,7 @@ describe("inference set provider diagnostics", () => {
     expect(log).not.toHaveBeenCalled();
   });
 
-  it("partitions empty and messaging-only provider inventories", () => {
+  it("partitions empty and messaging-only provider inventories (#5924)", () => {
     expect(classifyGatewayProviderNames([])).toEqual({ bridgeNames: [], credentialNames: [] });
     expect(classifyGatewayProviderNames(["alpha-telegram-bridge", "alpha-slack-app"])).toEqual({
       bridgeNames: ["alpha-telegram-bridge", "alpha-slack-app"],
@@ -71,7 +71,7 @@ describe("inference set provider diagnostics", () => {
         error: { kind: "command" as const, reason: "failed" as const, message: "safe failure" },
       }),
     },
-  ])("uses the static fallback for $name", async ({ list }) => {
+  ])("uses the static fallback for $name (#5924)", async ({ list }) => {
     const providerAdapter = {
       listProviders: vi.fn(list),
     } as unknown as OpenShellProviderAdapter;

@@ -174,7 +174,7 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
-  it("refuses incomplete typed provider identity before route mutation (#9806)", async () => {
+  it("refuses a provider without a revision before route mutation (#9806)", async () => {
     const captureOpenshell = noAuthProviderCapture();
     const deps = createDeps({
       config: CONFIG,
@@ -182,18 +182,16 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
       session: noAuthSession(),
       captureOpenshell,
     });
-    const getProvider = vi
-      .spyOn(deps.providerAdapter, "getProvider")
-      .mockResolvedValue({
-        ok: true as const,
-        value: {
-          name: "compatible-endpoint",
-          type: "openai",
-          credentialKeys: [NO_AUTH_CREDENTIAL_ENV],
-          configKeys: ["OPENAI_BASE_URL"],
-          revision: null,
-        },
-      });
+    const getProvider = vi.spyOn(deps.providerAdapter, "getProvider").mockResolvedValue({
+      ok: true as const,
+      value: {
+        name: "compatible-endpoint",
+        type: "openai",
+        credentialKeys: [NO_AUTH_CREDENTIAL_ENV],
+        configKeys: ["OPENAI_BASE_URL"],
+        revision: null,
+      },
+    });
 
     await expect(
       runInferenceSet({ provider: "compatible-endpoint", model: "model-b" }, deps),
@@ -220,7 +218,7 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
 
     await expect(
       runInferenceSet({ provider: "compatible-endpoint", model: "model-b" }, deps),
-    ).rejects.toThrow(/Re-run onboarding to restore the provider/);
+    ).rejects.toThrow(/Rerun onboarding to restore the provider/);
 
     expect(inferenceSetArgs(captureOpenshell)).toEqual([]);
     expect(providerMutationArgs(captureOpenshell)).toEqual([]);
@@ -331,7 +329,7 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
         },
         deps,
       ),
-    ).rejects.toThrow(/Re-run onboarding to restore the provider/);
+    ).rejects.toThrow(/Rerun onboarding to restore the provider/);
 
     expect(providerMutationArgs(captureOpenshell)).toEqual([]);
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();

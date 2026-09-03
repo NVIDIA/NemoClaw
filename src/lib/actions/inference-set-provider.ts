@@ -188,7 +188,7 @@ function assertProviderOwnership(options: {
       throw new InferenceSetError(
         `Provider '${providerName}' is no longer registered on this sandbox's gateway and cannot be ` +
           `recreated by inference set: its endpoint was onboarded without authentication, so the ` +
-          `provider binding is owned by onboarding. Re-run onboarding to restore the provider.`,
+          `provider binding is owned by onboarding. Rerun onboarding to restore the provider.`,
         2,
       );
     }
@@ -207,7 +207,7 @@ function assertProviderOwnership(options: {
     )
   ) {
     throw new InferenceSetError(
-      `Refusing to replace provider '${providerName}': its live binding is malformed, foreign, or does not match this sandbox's durable custom-endpoint provenance. Re-run onboarding to reconcile the provider safely.`,
+      `Refusing to replace provider '${providerName}': its live binding is malformed, foreign, or does not match this sandbox's durable custom-endpoint provenance. Rerun onboarding to reconcile the provider safely.`,
       2,
     );
   }
@@ -215,9 +215,66 @@ function assertProviderOwnership(options: {
 }
 
 function profileFailureMessage(error: OpenShellProviderError): string {
-  return error.kind === "command" && error.reason === "profile_incompatible"
-    ? endpointlessProviderProfileFailureMessages("incompatible").join("\n").trim()
-    : error.message;
+  if (error.kind === "command" && error.reason === "profile_incompatible") {
+    return `${endpointlessProviderProfileFailureMessages("incompatible").join("\n").trim()}\n    ${error.message}`;
+  }
+  const recovery = (() => {
+    switch (error.kind) {
+      case "authentication":
+        return "Restore OpenShell authentication for the selected gateway, then rerun this command.";
+      case "timeout":
+        return "Confirm the selected OpenShell gateway is available, then rerun this command.";
+      case "schema":
+        return "Update OpenShell with `scripts/install-openshell.sh`, then rerun this command.";
+      case "validation":
+        return "Restore the checked-in OpenAI provider profile from this NemoClaw release, then rerun this command.";
+      case "transport":
+        if (error.reason === "unreachable") {
+          return "Start the selected OpenShell gateway with its owning deployment, then rerun this command.";
+        }
+        if (error.reason === "identity_mismatch") {
+          return "Reselect the intended OpenShell gateway and restore its recorded identity, then rerun this command.";
+        }
+        return "Repair OpenShell with `scripts/install-openshell.sh`, then rerun this command.";
+      case "command":
+        return "Fix the reported OpenShell provider-profile error, then rerun this command.";
+    }
+  })();
+  return `OpenShell could not prepare its checked-in OpenAI provider profile. ${recovery} ${error.message}`;
+}
+
+function incompleteProviderRevisionMessage(
+  providerName: string,
+  blockedMutation: "inference route" | "provider",
+): string {
+  return (
+    `Could not inspect provider '${providerName}'; no ${blockedMutation} mutation was attempted. ` +
+    "OpenShell returned provider metadata without a revision. " +
+    "Update OpenShell with `scripts/install-openshell.sh`, then rerun this command."
+  );
+}
+
+function isUncertainProviderMutationError(error: OpenShellProviderError): boolean {
+  return (
+    error.kind === "timeout" ||
+    (error.kind === "transport" && error.reason === "unreachable") ||
+    (error.kind === "command" && error.reason === "uncertain")
+  );
+}
+
+function providerMutationFailureMessage(
+  action: "create" | "update",
+  providerName: string,
+  error: OpenShellProviderError,
+): string {
+  if (!isUncertainProviderMutationError(error)) {
+    return `OpenShell could not ${action} provider '${providerName}': ${error.message}`;
+  }
+  return (
+    `OpenShell could not confirm the ${action} operation for provider '${providerName}'. ` +
+    `Provider state may be partial. ${error.message} ` +
+    "Rerun onboarding to reconcile the provider before retrying this command."
+  );
 }
 
 /**
@@ -241,7 +298,7 @@ export async function assertInferenceSetProviderOwnership(options: {
   );
   if (observation.kind === "present" && observation.metadata.revision == null) {
     throw new InferenceSetError(
-      `Could not inspect provider '${options.providerName}'; no inference route mutation was attempted. OpenShell returned provider metadata without a revision.`,
+      incompleteProviderRevisionMessage(options.providerName, "inference route"),
       1,
     );
   }
@@ -280,10 +337,7 @@ export async function prepareInferenceSetProviderBinding(options: {
     allowCreate: options.allowCreate !== false,
   });
   if (action === "update" && (before.kind !== "present" || before.metadata.revision == null)) {
-    throw new InferenceSetError(
-      `Could not inspect provider '${providerName}'; no provider mutation was attempted. OpenShell returned provider metadata without a revision.`,
-      1,
-    );
+    throw new InferenceSetError(incompleteProviderRevisionMessage(providerName, "provider"), 1);
   }
 
   const apply = async (): Promise<OpenShellProviderMetadata> => {
@@ -302,10 +356,7 @@ export async function prepareInferenceSetProviderBinding(options: {
         current.metadata.revision == null ||
         updateRevision == null
       ) {
-        throw new InferenceSetError(
-          `Could not verify provider '${providerName}' immediately before update; no provider mutation was attempted. OpenShell returned provider metadata without a revision.`,
-          1,
-        );
+        throw new InferenceSetError(incompleteProviderRevisionMessage(providerName, "provider"), 1);
       }
       if (
         current.metadata.revision.id !== updateRevision.id ||
@@ -349,8 +400,7 @@ export async function prepareInferenceSetProviderBinding(options: {
     const after = await inspectProvider(providerAdapter, gatewayName, providerName);
     if (!result.ok) {
       throw new InferenceSetError(
-        `Failed to ${action} provider '${providerName}' on gateway '${gatewayName}'. ` +
-          `The provider command may have partially applied; retry this command or re-run onboarding to converge the requested binding.`,
+        providerMutationFailureMessage(action, providerName, result.error),
         1,
       );
     }
@@ -368,7 +418,7 @@ export async function prepareInferenceSetProviderBinding(options: {
     ) {
       throw new InferenceSetError(
         `Provider '${providerName}' did not converge to the expected type and binding-key shape after ${action}. ` +
-          `Provider state may be partial; retry this command or re-run onboarding to reconcile it.`,
+          `Provider state may be partial. Rerun onboarding to reconcile it before retrying this command.`,
         1,
       );
     }
@@ -405,7 +455,7 @@ export async function prepareInferenceSetProviderBinding(options: {
         )
       ) {
         throw new InferenceSetError(
-          `Could not verify newly created provider '${providerName}' before rollback; no provider deletion was attempted. Re-run onboarding before retrying this switch.`,
+          `Could not verify newly created provider '${providerName}' before rollback; no provider deletion was attempted. Rerun onboarding before retrying this switch.`,
           1,
         );
       }
@@ -414,12 +464,27 @@ export async function prepareInferenceSetProviderBinding(options: {
         providerName,
       });
       const restored = await inspectProvider(providerAdapter, gatewayName, providerName);
-      if (!result.ok || restored.kind !== "absent") {
+      if (restored.kind === "absent") return;
+      if (!result.ok) {
+        const state =
+          restored.kind === "present"
+            ? "The provider remains registered."
+            : "A follow-up inspection could not confirm whether the provider remains registered.";
         throw new InferenceSetError(
-          `Failed to remove newly created provider '${providerName}' after inference selection failed.`,
+          `OpenShell could not remove newly created provider '${providerName}' during rollback. ` +
+            `${state} ${result.error.message} Rerun onboarding to reconcile the provider before retrying this switch.`,
           1,
         );
       }
+      const state =
+        restored.kind === "present"
+          ? "The provider remains registered."
+          : `A follow-up inspection failed: ${restored.error.message}`;
+      throw new InferenceSetError(
+        `Newly created provider '${providerName}' did not settle as absent after rollback. ` +
+          `${state} Rerun onboarding to reconcile the provider before retrying this switch.`,
+        1,
+      );
     },
   };
 }
