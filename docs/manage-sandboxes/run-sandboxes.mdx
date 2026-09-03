@@ -136,9 +136,6 @@ $$nemoclaw <sandbox-name> start
 After Docker reports the existing container as running, NemoClaw waits for OpenShell to report the sandbox in the `Ready` or `Running` state.
 NemoClaw recovers missing agent processes and host forwards only after that phase, so a slow sandbox start does not need a separate `recover` command.
 </AgentOnly>
-<AgentOnly variant="openclaw">
-NemoClaw restores locked startup access before that wait when Shields are up.
-</AgentOnly>
 <AgentOnly variant="deepagents">
 After Docker reports the existing container as running, NemoClaw waits for OpenShell to report the sandbox in the `Ready` or `Running` state, then verifies the managed terminal runtime before the command reports success.
 </AgentOnly>

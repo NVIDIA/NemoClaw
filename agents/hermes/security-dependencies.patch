@@ -8,8 +8,8 @@
 # fallback exact so runtime resolution cannot drift beyond the separately
 # verified build-time probes. Scope one-shot completion waits to the exact turn
 # so unrelated managed-runtime processes cannot hold a completed query open.
-# Keep the cron tick lock in writable runtime state while Shields keeps cron
-# definitions sealed read-only.
+# Keep the cron tick lock in writable runtime state while cron definitions stay
+# separate from gateway-owned runtime files.
 diff --git a/plugins/memory/hindsight/plugin.yaml b/plugins/memory/hindsight/plugin.yaml
 --- a/plugins/memory/hindsight/plugin.yaml
 +++ b/plugins/memory/hindsight/plugin.yaml

@@ -6,6 +6,7 @@
 > Internal engineering evidence. This file is not part of the public documentation set.
 
 Review date: August 29, 2026.
+Last updated: September 2, 2026.
 
 ## Decision
 
@@ -60,10 +61,10 @@ ledger to `runtime/cron-executions.db`. The online backup inventory remains
 bound to the same runtime file.
 
 The upstream scheduler also writes its per-profile tick lock below `cron/`.
-NVIDIA/NemoClaw Shields seals that directory after configuration, so the
-source patch moves only `.tick.lock` to writable `runtime/` state. Cron
-definitions remain read-only while concurrent scheduler ticks retain the
-upstream file-lock behavior.
+NVIDIA/NemoClaw keeps cron definitions separate from gateway-owned runtime
+files, so the source patch moves only `.tick.lock` to writable `runtime/`
+state. Cron definitions remain read-only while concurrent scheduler ticks
+retain the upstream file-lock behavior.
 
 The session-list implementation contains five exact preview queries in the
 target source. The patch remains necessary and changes each preview from the

@@ -78,6 +78,7 @@ ARG HERMES_NPM_INTEGRITY=sha512-s5q1IEBifCBb77QMwkse4MRaAaoZSxIa4IkicIO3jL7MIdq1
 ARG HERMES_UV_EXTRAS="anthropic messaging web pty mcp acp"
 ARG NODE_VERSION=24.18.1
 ARG UV_VERSION=0.11.33
+ARG NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256=85c61b2391784bef749d955c0a6c84b3918c73ae752b1a984bd5a2fe42b2da57
 
 # build-essential: hermes-agent >= 0.16.0 ships npm dependencies that need a
 # node-gyp native build during `npm ci`; the runtime Dockerfile purges build
@@ -438,12 +439,8 @@ RUN printf '%s\n' \
 # build.
 RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
     && uv_version_output="$(uv --version)" \
-    && uv_command="${uv_version_output%% *}" \
-    && uv_version_tail="${uv_version_output#* }" \
-    && uv_version="${uv_version_tail%% *}" \
-    && [ "$uv_version_tail" != "$uv_version_output" ] \
-    && [ "$uv_command" = "uv" ] \
-    && [ "$uv_version" = "$UV_VERSION" ]
+    && uv_version="${uv_version_output#uv }" \
+    && test "${uv_version%% *}" = "${UV_VERSION}"
 # Upstream tests are not part of the production runtime and can contain
 # intentionally hostile security-test fixtures. Remove them in the extraction
 # RUN so their bytes never enter a published image layer.
@@ -451,20 +448,36 @@ COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies
 COPY agents/hermes/agent-browser-runtime/package.json \
     agents/hermes/agent-browser-runtime/package-lock.json \
     /opt/nemoclaw-agent-browser-runtime/
+COPY agents/hermes/runtime-boundaries.patch /tmp/hermes-runtime-boundaries.patch
 COPY agents/hermes/whatsapp-proxy.patch /tmp/hermes-whatsapp-proxy.patch
 COPY scripts/checks/download-hermes-source-archive.sh /tmp/nemoclaw-download-hermes-source-archive.sh
+# hadolint ignore=DL4006
 RUN mkdir -p /opt/hermes \
     && bash /tmp/nemoclaw-download-hermes-source-archive.sh "${HERMES_VERSION}" /tmp/hermes.tar.gz \
     && printf '%s  /tmp/hermes.tar.gz\n' "${HERMES_TARBALL_SHA256}" > /tmp/hermes.tar.gz.sha256 \
     && sha256sum -c /tmp/hermes.tar.gz.sha256 \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && rm -rf /opt/hermes/tests \
+    && printf '%s  %s\n' "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /tmp/hermes-runtime-boundaries.patch | sha256sum -c - \
     && git -C /opt/hermes apply --check /tmp/hermes-security-dependencies.patch \
     && git -C /opt/hermes apply /tmp/hermes-security-dependencies.patch \
+    && git -C /opt/hermes apply --check /tmp/hermes-runtime-boundaries.patch \
+    && git -C /opt/hermes apply /tmp/hermes-runtime-boundaries.patch \
+    && grep -Fq 'def nemoclaw_managed_gateway_plugins_only()' /opt/hermes/hermes_constants.py \
+    && grep -Fq 'nemoclaw_protected_process_control' /opt/hermes/hermes_cli/env_loader.py \
+    && grep -Fq 'nemoclaw_sanitized_installer_env' /opt/hermes/tools/lazy_deps.py \
+    && grep -Fq 'Managed gateway: user and project plugins disabled' /opt/hermes/hermes_cli/plugins.py \
+    && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/plugins/memory/__init__.py \
+    && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/plugins/cron_providers/__init__.py \
+    && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/providers/__init__.py \
+    && grep -Fq '_NEMOCLAW_HINDSIGHT_REQUIREMENTS' /opt/hermes/tools/lazy_deps.py \
+    && ! grep -Fq 'provides_tools:' /opt/hermes/plugins/platforms/a2a/plugin.yaml \
+    && ! grep -Fq 'from .tools import register_tools' /opt/hermes/plugins/platforms/a2a/__init__.py \
     && git -C /opt/hermes apply --check /tmp/hermes-whatsapp-proxy.patch \
     && git -C /opt/hermes apply /tmp/hermes-whatsapp-proxy.patch \
     && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256 \
-        /tmp/hermes-security-dependencies.patch /tmp/hermes-whatsapp-proxy.patch \
+        /tmp/hermes-security-dependencies.patch /tmp/hermes-runtime-boundaries.patch \
+        /tmp/hermes-whatsapp-proxy.patch \
         /tmp/nemoclaw-download-hermes-source-archive.sh
 
 # Cross-check the pinned release against two independent sources before
@@ -506,17 +519,13 @@ WORKDIR /opt/hermes
 # workspaces disabled; this keeps browser tooling without either UI build tree.
 # Root npm, Electron, and node-gyp caches are build-only. Remove them in the
 # same RUN that creates them so Docker cannot retain their bytes in this layer.
-# Hermes ships a `.python-version` for Python 3.11. Use the reviewed system
-# Python 3.13 directly and forbid a root-private uv-managed interpreter so the
-# finished virtual environment remains executable by the sandbox user.
 # hadolint ignore=SC2086
 RUN set -eu; \
     set --; \
     for extra in ${HERMES_UV_EXTRAS}; do \
         set -- "$@" --extra "$extra"; \
     done; \
-    uv sync --python /usr/bin/python3.13 --no-managed-python \
-        --frozen --no-dev "$@" --no-cache \
+    uv sync --frozen --no-dev "$@" --no-cache \
     && uv pip check --python /opt/hermes/.venv/bin/python \
     && /opt/hermes/.venv/bin/python -I -c \
         "from importlib.metadata import version; expected = {'agent-client-protocol': '0.9.0', 'aiohttp': '3.14.3', 'cryptography': '50.0.0', 'mcp': '2.0.0', 'pillow': '12.3.0', 'starlette': '1.3.1', 'tornado': '6.5.7'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
@@ -580,10 +589,6 @@ RUN printf '%s\n' \
     && /opt/hermes/.venv/bin/python -c \
         "import multipart; assert multipart.__version__ == '0.0.32', multipart.__version__" \
     && rm -rf /root/.cache/uv
-
-# The offline lazy-package probe runs as the sandbox user. Make the finalized
-# virtual environment readable before that unprivileged build-time check.
-RUN chmod -R a+rX /opt/hermes/.venv
 
 # Keep official-package compatibility separate from the final image's offline
 # lazy-installer contract. BuildKit verifies both reviewed PyPI artifacts before
@@ -679,9 +684,10 @@ RUN /usr/local/bin/hermes --version \
     && rmdir /opt/hermes/node_modules \
     && mv /opt/hermes/.node_modules.runtime /opt/hermes/node_modules \
     && /opt/hermes/.venv/bin/python -c \
-        'import mcp; from tools import mcp_tool; assert mcp_tool._ensure_mcp_sdk(), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'
+        'import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'
 
-RUN test -r /opt/hermes/.venv/pyvenv.cfg \
+RUN chmod -R a+rX /opt/hermes/.venv \
+    && test -r /opt/hermes/.venv/pyvenv.cfg \
     && su -s /bin/sh sandbox -c '/opt/hermes/.venv/bin/python3 -c "import urllib.request"'
 
 # Reject build-only paths before the base image can be published.

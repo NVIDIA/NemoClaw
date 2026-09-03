@@ -25,7 +25,7 @@ export type GeneratedHermesConfig = {
   written: WrittenHermesConfig;
 };
 
-/** Generate the immutable Hermes config files from an explicit build environment. */
+/** Generate the initial mutable Hermes config files from an explicit build environment. */
 export function generateHermesConfig({
   env,
   scriptDir,

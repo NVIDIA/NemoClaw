@@ -452,11 +452,11 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.result.stderr).not.toContain(run.apiServerKey ?? "missing-key");
   });
 
-  it("refuses to mint an API key into a shields-up env", () => {
+  it("refuses to mint an API key into a read-only env file", () => {
     const run = runHermesRuntimeApiServerKeyMint({ fakeRoot: true, locked: true });
 
     expect(run.result.status).not.toBe(0);
-    expect(run.result.stderr).toContain("cannot update .env while shields are up");
+    expect(run.result.stderr).toContain("cannot update the read-only .env file");
     expect(run.apiServerKey).toBeNull();
     expect(run.envFileMode).toBe("444");
     expect(run.strictHashValid).toBe(true);
@@ -793,7 +793,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashValid).toBe(true);
   });
 
-  it("refuses to replace a sealed canonical placeholder without a rebuild or sandbox recreation (#8893)", () => {
+  it("refuses to replace a read-only canonical placeholder without sandbox recreation (#8893)", () => {
     const originalEnv = "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n";
     const run = runHermesRuntimeProviderPlaceholderRefresh({
       envFile: originalEnv,
@@ -814,7 +814,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
 
     expect(run.result.status).toBe(1);
     expect(run.result.stderr).toContain(
-      "cannot update provider placeholders while shields are up; rebuild or recreate the sandbox",
+      "cannot update read-only provider placeholders; rebuild or recreate the sandbox",
     );
     expect(run.envFileContent).toBe(originalEnv);
     expect(run.strictHashValid).toBe(true);
