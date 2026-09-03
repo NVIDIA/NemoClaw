@@ -10,7 +10,6 @@ import {
   unregisterDeepAgentsAdapter,
 } from "./mcp-bridge-adapter-deepagents";
 import {
-  assertHermesMcpConfigMutationAllowed,
   assertHermesMcpMutationRuntimeCapability,
   inspectHermesAdapterRegistration,
   registerHermesAdapter,
@@ -22,7 +21,6 @@ import type {
   AdapterRemovalOutcome,
 } from "./mcp-bridge-adapter-inspection";
 import {
-  assertOpenClawMcpConfigMutationAllowed,
   inspectOpenClawAdapterRegistration,
   registerOpenClawAdapter,
   unregisterOpenClawAdapter,
@@ -81,40 +79,6 @@ export function inspectAgentAdapterRegistration(
   }
 }
 
-/**
- * Refuse an in-sandbox adapter config mutation while the agent config is
- * locked. This host-side check intentionally runs before provider, policy,
- * attachment, or adapter work; the Hermes transaction helper repeats the
- * file-level check to close posture drift between this preflight and the
- * actual config write.
- *
- * Every path that mutates a managed adapter definition — `mcp add`, `mcp
- * remove`, `mcp restart`, rebuild preparation, and both destroy preflights —
- * funnels through this predicate, so covering an adapter here covers the whole
- * class for that adapter.
- *
- * Deep Agents is exempt: its managed projection is
- * `/sandbox/.deepagents/.nemoclaw-mcp.json`, the agent ships no
- * `state-lock-plan.json`, and no shields posture makes that path unwritable.
- * Teardown of a legacy Deep Agents entry must also remain possible on an image
- * that predates the managed launcher capability marker.
- */
-export function assertAgentMcpConfigMutationAllowed(
-  sandboxName: string,
-  adapter: AgentMcpAdapter,
-): void {
-  switch (adapter) {
-    case "hermes-config":
-      assertHermesMcpConfigMutationAllowed(sandboxName);
-      return;
-    case "mcporter":
-      assertOpenClawMcpConfigMutationAllowed(sandboxName);
-      return;
-    case "deepagents-config":
-      return;
-  }
-}
-
 export function assertAgentMcpMutationRuntimeCapability(
   sandboxName: string,
   adapter: AgentMcpAdapter,
@@ -142,7 +106,6 @@ export function assertAgentMcpTeardownRuntimeCapability(
   sandboxName: string,
   adapter: AgentMcpAdapter,
 ): void {
-  assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
   if (adapter === "hermes-config") {
     assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
   }
@@ -157,7 +120,6 @@ export function registerAgentAdapter(
     replaceExisting?: boolean;
     teardownRollback?: boolean;
     credentialRevision?: McpAttachedCredentialRevision;
-    resetDeepAgentsProjection?: boolean;
   } = {},
 ): void {
   switch (adapter) {
@@ -187,7 +149,6 @@ export function registerAgentAdapter(
         options.replaceExisting === true,
         options.teardownRollback === true,
         options.credentialRevision,
-        options.resetDeepAgentsProjection === true,
       );
       return;
   }
@@ -200,11 +161,7 @@ export function registerAgentAdapterAtCurrentCredentialRevision(
   entry: McpBridgeEntry,
   envValues: Record<string, string>,
   initialCredentialRevision: McpAttachedCredentialRevision,
-  options: {
-    replaceExisting?: boolean;
-    teardownRollback?: boolean;
-    resetDeepAgentsProjection?: boolean;
-  } = {},
+  options: { replaceExisting?: boolean; teardownRollback?: boolean } = {},
 ): McpAttachedCredentialRevision {
   const timeoutSeconds = Number.parseInt(
     process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS ?? "30",
@@ -212,7 +169,6 @@ export function registerAgentAdapterAtCurrentCredentialRevision(
   );
   let credentialRevision = initialCredentialRevision;
   let replaceExisting = options.replaceExisting === true;
-  let resetDeepAgentsProjection = options.resetDeepAgentsProjection === true;
   for (
     let registration = 1;
     registration <= MAX_CREDENTIAL_REVISION_REGISTRATIONS;
@@ -222,9 +178,7 @@ export function registerAgentAdapterAtCurrentCredentialRevision(
       replaceExisting,
       teardownRollback: options.teardownRollback === true,
       credentialRevision,
-      resetDeepAgentsProjection,
     });
-    resetDeepAgentsProjection = false;
     let candidateRevision: McpAttachedCredentialRevision | undefined;
     let stableObservations = 0;
     let observedRevision: McpAttachedCredentialRevision | undefined;

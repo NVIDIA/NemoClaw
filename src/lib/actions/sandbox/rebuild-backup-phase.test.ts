@@ -66,7 +66,6 @@ describe("rebuild policy handoff", () => {
     bail: (message): never => {
       throw new Error(message);
     },
-    relockShieldsIfNeeded: vi.fn(() => true),
     ...overrides,
   });
 
@@ -229,7 +228,6 @@ describe("rebuild backup safety", () => {
       bail: (message): never => {
         throw new Error(message);
       },
-      relockShieldsIfNeeded: vi.fn(() => true),
       ...overrides,
     } as RebuildBackupPhaseInput;
   }
@@ -243,7 +241,6 @@ describe("rebuild backup safety", () => {
       "Custom-image OpenClaw plugin provenance is unavailable.",
     );
     expect(backup).not.toHaveBeenCalled();
-    expect(input.relockShieldsIfNeeded).toHaveBeenCalledWith(true);
   });
 
   it("uses a marked prepared manifest while still capturing live OpenShell policy", () => {

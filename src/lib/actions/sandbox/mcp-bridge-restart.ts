@@ -27,7 +27,6 @@ import {
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import {
-  assertMcpAdapterConfigMutationsAllowed,
   assertMcpAdapterMutationRuntimeCapabilities,
   assertMcpAdapterTeardownRuntimeCapabilities,
 } from "./mcp-bridge-runtime-capabilities";
@@ -139,9 +138,6 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   const targetEntries = targets
     .map(([, entry]) => entry)
     .filter((entry): entry is McpBridgeEntry => !!entry);
-  // Hermes shields posture is host-visible. Refuse before DNS, gateway
-  // recovery/selection, provider inspection, or any lifecycle mutation.
-  assertMcpAdapterConfigMutationsAllowed(sandboxName, sandbox, targetEntries);
   const resolvedByServer = await preflightMcpEntryTargets(targetEntries);
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName);
@@ -249,7 +245,6 @@ export async function restoreExistingMcpBridgeRuntime(
   options: {
     lifecyclePhase?: "active-mutation" | "teardown-rollback";
     applyPolicy?: boolean;
-    resetDeepAgentsProjection?: boolean;
   } = {},
 ): Promise<void> {
   if (entries.length === 0) return;
@@ -271,19 +266,6 @@ export async function restoreExistingMcpBridgeRuntime(
     assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, entries);
   }
   const defaultAdapter = getBridgeAdapter(getSandboxAgent(sandbox));
-  if (
-    options.resetDeepAgentsProjection === true &&
-    entries.some(
-      (entry) =>
-        ((entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter) !==
-        "deepagents-config",
-    )
-  ) {
-    throw new McpBridgeError(
-      "Managed MCP projection reset is supported only for Deep Agents snapshot restore.",
-    );
-  }
-  let resetDeepAgentsProjection = options.resetDeepAgentsProjection === true;
   for (const entry of entries) {
     assertGeneratedPolicyMutationSafe(sandboxName, entry);
     const provider = assertMcpProviderRecoverable(entry);
@@ -322,10 +304,8 @@ export async function restoreExistingMcpBridgeRuntime(
       {
         replaceExisting: true,
         teardownRollback: options.lifecyclePhase === "teardown-rollback",
-        resetDeepAgentsProjection,
       },
     );
-    resetDeepAgentsProjection = false;
     writeBridgeEntry(sandboxName, { ...entry, adapter, updatedAt: nowIso() });
   }
   if (

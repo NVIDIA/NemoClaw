@@ -8,62 +8,19 @@ import {
 } from "../../../../test/helpers/mcp-bridge-adapter-deepagents-fixture";
 import type { McpBridgeEntry } from "../../state/registry";
 import { buildDeepAgentsMcpRegisterCommand } from "./mcp-bridge-adapter-deepagents";
-import { DEEPAGENTS_MCP_CONFIG_PATH } from "./mcp-bridge-adapter-status";
-
-function resetUnsafeSnapshotProjection(
-  options: {
-    danglingSymlink?: boolean;
-    fifo?: boolean;
-    symlink?: boolean;
-  },
-  initialConfig: { mcpServers: Record<string, never> } | undefined,
-) {
-  const registration = runDeepAgentsConfigCommand(
-    buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], false, "v12", {
-      resetManagedProjection: true,
-    }),
-    initialConfig,
-    "v2",
-    undefined,
-    0o600,
-    options,
-  );
-  expect(registration.status, registration.stderr).toBe(0);
-  expect(registration.config).toEqual({
-    mcpServers: {
-      github: {
-        type: "http",
-        url: baseEntry.url,
-        headers: {
-          Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
-        },
-      },
-    },
-  });
-  return { initialConfig, registration };
-}
 
 describe("Deep Agents MCP config adapter registration", () => {
-  it("constructs a dedicated NemoClaw MCP projection with placeholders", () => {
-    const command = buildDeepAgentsMcpRegisterCommand(baseEntry);
-
-    expect(DEEPAGENTS_MCP_CONFIG_PATH).toBe("/sandbox/.deepagents/.nemoclaw-mcp.json");
-    expect(command).toContain(DEEPAGENTS_MCP_CONFIG_PATH);
-    expect(command).not.toContain('pathlib.Path("/sandbox/.mcp.json")');
-    expect(command).toContain("mcpServers");
-    expect(command).toContain('\\"type\\":\\"http\\"');
-    expect(command).toContain("https://api.githubcopilot.com/mcp/");
-    expect(command).toContain("openshell:resolve:env:GITHUB_TOKEN");
-    expect(command).toContain("Invalid /sandbox/.deepagents/.nemoclaw-mcp.json");
-    expect(command).toContain("mcpServers must be an object");
-    expect(command).toContain("already exists in /sandbox/.deepagents/.nemoclaw-mcp.json");
-  });
-
-  it("creates the Deep Agents config parent on first registration", () => {
-    const registration = runDeepAgentsConfigCommand(buildDeepAgentsMcpRegisterCommand(baseEntry));
+  it("writes only the dedicated managed projection with a credential placeholder", () => {
+    const legacyConfig = { mcpServers: { user: { command: "user-command" } } };
+    const registration = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRegisterCommand(baseEntry),
+      undefined,
+      "v2",
+      legacyConfig,
+    );
 
     expect(registration.status, registration.stderr).toBe(0);
-    expect(registration.configExists).toBe(true);
+    expect(registration.configIsRegularFile).toBe(true);
     expect(registration.config).toEqual({
       mcpServers: {
         github: {
@@ -71,6 +28,30 @@ describe("Deep Agents MCP config adapter registration", () => {
           url: "https://api.githubcopilot.com/mcp/",
           headers: {
             Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN",
+          },
+        },
+      },
+    });
+    expect(registration.legacyConfig).toEqual(legacyConfig);
+  });
+
+  it("creates a missing Deep Agents config parent during snapshot repair (#10756)", () => {
+    const registration = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], false, "v12", {
+        resetManagedProjection: true,
+      }),
+    );
+
+    expect(registration.status, registration.stderr).toBe(0);
+    expect(registration.configIsRegularFile).toBe(true);
+    expect(registration.configMode).toBe(0o600);
+    expect(registration.config).toEqual({
+      mcpServers: {
+        github: {
+          type: "http",
+          url: baseEntry.url,
+          headers: {
+            Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
           },
         },
       },
@@ -110,24 +91,106 @@ describe("Deep Agents MCP config adapter registration", () => {
   });
 
   it("replaces an unsafe symbolic link during snapshot restore without following it (#10756)", () => {
-    const { initialConfig, registration } = resetUnsafeSnapshotProjection(
+    const initialConfig = { mcpServers: {} };
+    const registration = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], false, "v12", {
+        resetManagedProjection: true,
+      }),
+      initialConfig,
+      "v2",
+      undefined,
+      0o600,
       { symlink: true },
-      { mcpServers: {} },
     );
 
+    expect(registration.status, registration.stderr).toBe(0);
+    expect(registration.configIsRegularFile).toBe(true);
+    expect(registration.config).toEqual({
+      mcpServers: {
+        github: {
+          type: "http",
+          url: baseEntry.url,
+          headers: {
+            Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+          },
+        },
+      },
+    });
     expect(registration.managedSymlinkTargetText).toBe(
       `${JSON.stringify(initialConfig, null, 2)}\n`,
     );
   });
 
   it("replaces an unsafe FIFO during snapshot restore without opening it (#10756)", () => {
-    resetUnsafeSnapshotProjection({ fifo: true }, { mcpServers: {} });
+    const registration = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], false, "v12", {
+        resetManagedProjection: true,
+      }),
+      { mcpServers: {} },
+      "v2",
+      undefined,
+      0o600,
+      { fifo: true },
+    );
+
+    expect(registration.status, registration.stderr).toBe(0);
+    expect(registration.configIsRegularFile).toBe(true);
+    expect(registration.config).toEqual({
+      mcpServers: {
+        github: {
+          type: "http",
+          url: baseEntry.url,
+          headers: {
+            Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+          },
+        },
+      },
+    });
   });
 
   it("replaces an unsafe dangling symlink during snapshot restore (#10756)", () => {
-    const { registration } = resetUnsafeSnapshotProjection({ danglingSymlink: true }, undefined);
+    const registration = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], false, "v12", {
+        resetManagedProjection: true,
+      }),
+      undefined,
+      "v2",
+      undefined,
+      0o600,
+      { danglingSymlink: true },
+    );
 
+    expect(registration.status, registration.stderr).toBe(0);
+    expect(registration.configIsRegularFile).toBe(true);
+    expect(registration.config).toEqual({
+      mcpServers: {
+        github: {
+          type: "http",
+          url: baseEntry.url,
+          headers: {
+            Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+          },
+        },
+      },
+    });
     expect(registration.managedSymlinkTargetExists).toBe(false);
+  });
+
+  it("preserves a directory at the managed projection path for operator recovery (#10756)", () => {
+    const registration = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], false, "v12", {
+        resetManagedProjection: true,
+      }),
+      undefined,
+      "v2",
+      undefined,
+      0o600,
+      { directory: true },
+    );
+
+    expect(registration.status).toBe(2);
+    expect(registration.stderr).toContain("managed MCP projection path is a directory");
+    expect(registration.managedDirectoryEntries).toEqual(["preserved.txt"]);
   });
 
   it("preserves a sibling revision while revising the target server", () => {
@@ -207,18 +270,5 @@ describe("Deep Agents MCP config adapter registration", () => {
     expect(() =>
       buildDeepAgentsMcpRegisterCommand(managedEntries[0], false, managedEntries.slice(0, 64)),
     ).not.toThrow();
-  });
-
-  it("rejects an oversized rendered projection before truncating existing state", () => {
-    const initialConfig = { mcpServers: {} };
-    const oversized = buildDeepAgentsMcpRegisterCommand(baseEntry).replace(
-      "data = {'mcpServers': next_servers}",
-      "data = {'mcpServers': {'oversized': {'blob': 'x' * 300000}}}",
-    );
-    const registration = runDeepAgentsConfigCommand(oversized, initialConfig);
-
-    expect(registration.status).toBe(2);
-    expect(registration.stderr).toContain("invalid rendered size");
-    expect(registration.config).toEqual(initialConfig);
   });
 });

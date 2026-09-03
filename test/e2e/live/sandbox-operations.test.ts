@@ -13,6 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
@@ -148,7 +149,7 @@ async function onboardSandbox(
         NEMOCLAW_RECREATE_SANDBOX: "1",
       },
       redactionValues: [hosted.apiKey],
-      timeoutMs: 20 * 60_000,
+      timeoutMs: execTimeout(20 * 60_000),
     },
   );
   expectExitZero(result, `nemoclaw onboard ${sandboxName}`);
@@ -816,7 +817,7 @@ test(
 test(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
   {
-    timeout: 45 * 60_000,
+    timeout: testTimeout(45 * 60_000),
     meta: {
       e2ePhases: [
         "confirm Docker and clear the sandbox operation fixtures",

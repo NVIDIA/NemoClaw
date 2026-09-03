@@ -52,7 +52,6 @@ import {
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
 import { createDockerLlamaCppHostLocalOperation } from "./docker-llama-cpp-operation";
-import { createDockerStateMutationSurface } from "./docker-state-mutation";
 import { createDockerPrivilegedSandboxControl } from "./docker-privileged-sandbox-control";
 import { createDockerRuntimeProviderSnapshotSurface } from "./snapshot";
 
@@ -620,7 +619,6 @@ export function createDockerRuntimeProviderBundle(
         "workload-cleanup",
       ],
     },
-    stateMutation: createDockerStateMutationSurface(),
     bootstrap: createDockerManagedBootstrapSurface(providerId),
     snapshot: createDockerRuntimeProviderSnapshotSurface(providerId, {
       captureHostCommand: deps.captureHostCommand,
@@ -736,7 +734,6 @@ export function createKubernetesRuntimeProviderBundle(
         "workload-cleanup",
       ],
     },
-    stateMutation: unsupported(providerId, futureReason),
     bootstrap: unsupported(providerId, futureReason),
     snapshot: unsupported(providerId, futureReason),
     recovery: unsupported(providerId, futureReason),

@@ -74,12 +74,32 @@ export function buildDeepAgentsMcpRegisterCommand(
     "    close_managed_projection_descriptor(source_descriptor)",
     "    print(message, file=sys.stderr)",
     "    raise SystemExit(2)",
+    "def open_projection_parent():",
+    "    parent_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW",
+    "    parent_name = config_path.parent.name",
+    "    if not parent_name or parent_name in ('.', '..'):",
+    "        raise ValueError('managed MCP projection parent is unsafe')",
+    "    anchor_descriptor = os.open(config_path.parent.parent, parent_flags)",
+    "    try:",
+    "        try:",
+    "            os.mkdir(parent_name, 0o700, dir_fd=anchor_descriptor)",
+    "        except FileExistsError:",
+    "            pass",
+    "        parent_descriptor = os.open(parent_name, parent_flags, dir_fd=anchor_descriptor)",
+    "        opened = os.fstat(parent_descriptor)",
+    "        linked = os.stat(parent_name, dir_fd=anchor_descriptor, follow_symlinks=False)",
+    "        safe = (stat.S_ISDIR(opened.st_mode) and opened.st_uid == os.getuid() and (opened.st_dev, opened.st_ino) == (linked.st_dev, linked.st_ino))",
+    "        if not safe:",
+    "            os.close(parent_descriptor)",
+    "            raise ValueError('managed MCP projection parent is unsafe')",
+    "        return parent_descriptor",
+    "    finally:",
+    "        os.close(anchor_descriptor)",
     "def reset_projection(value):",
     "    payload_bytes = managed_projection_bytes(value)",
-    "    parent_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW",
     "    try:",
-    "        parent_descriptor = os.open(config_path.parent, parent_flags)",
-    "    except OSError as exc:",
+    "        parent_descriptor = open_projection_parent()",
+    "    except (OSError, ValueError) as exc:",
     "        raise ValueError('managed MCP projection parent is unsafe') from exc",
     "    staged_name = ''",
     "    staged_descriptor = None",
@@ -167,7 +187,8 @@ export function buildDeepAgentsMcpRegisterCommand(
     "    else:",
     "        next_servers[name] = expected",
     "data = {'mcpServers': next_servers}",
-    "config_path.parent.mkdir(parents=True, exist_ok=True)",
+    "if not payload['resetManagedProjection']:",
+    "    config_path.parent.mkdir(parents=True, exist_ok=True)",
     "try:",
     "    if payload['resetManagedProjection']:",
     "        reset_projection(data)",
@@ -210,7 +231,6 @@ export function registerDeepAgentsAdapter(
   replaceExisting = false,
   teardownRollback = false,
   credentialRevision?: McpAttachedCredentialRevision,
-  resetManagedProjection = false,
 ): void {
   const stdout = runDeepAgentsAdapterCommand(
     sandboxName,
@@ -221,7 +241,6 @@ export function registerDeepAgentsAdapter(
       registryOwnedDeepAgentsEntries(sandboxName, entry),
       teardownRollback,
       credentialRevision,
-      { resetManagedProjection },
     ),
     `Deep Agents Code MCP config registration failed for '${entry.server}'.`,
     { envValues },
@@ -234,5 +253,32 @@ export function registerDeepAgentsAdapter(
     }
   } else {
     verifyDeepAgentsAdapterRegistration(sandboxName, entry, credentialRevision);
+  }
+}
+
+export function restoreDeepAgentsManagedMcpProjection(
+  sandboxName: string,
+  entries: readonly McpBridgeEntry[],
+): void {
+  if (entries.length === 0) return;
+  const managedEntries = [...entries].sort((left, right) =>
+    left.server.localeCompare(right.server),
+  );
+  if (managedEntries.some((entry) => entry.adapter && entry.adapter !== "deepagents-config")) {
+    throw new McpBridgeError(
+      "Managed MCP projection repair requires Deep Agents registry entries.",
+    );
+  }
+  const entry = managedEntries[0];
+  runDeepAgentsAdapterCommand(
+    sandboxName,
+    entry,
+    buildDeepAgentsMcpRegisterCommand(entry, true, managedEntries, false, undefined, {
+      resetManagedProjection: true,
+    }),
+    "Deep Agents Code managed MCP projection repair failed.",
+  );
+  for (const managedEntry of managedEntries) {
+    verifyDeepAgentsAdapterRegistration(sandboxName, managedEntry);
   }
 }
