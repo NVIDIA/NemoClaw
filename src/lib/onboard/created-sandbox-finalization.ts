@@ -29,6 +29,7 @@ import {
   type PreservedDashboardForward,
 } from "./dashboard-forward-control";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
+import { buildDashboardChain } from "./dashboard-access";
 import { shouldManageDashboardForAgent } from "./dashboard-runtime";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
@@ -690,6 +691,10 @@ export function createOnboardCreatedSandboxCompletion(
           fromDockerfile,
           creation.hermesAuthMethod,
           preparedPolicy.dashboardRemoteBindPrepared,
+          // Record the address this run actually bound. CHAT_UI_URL and
+          // NEMOCLAW_DASHBOARD_BIND decide it and are usually absent from
+          // later commands, so only onboarding can answer truthfully (#10861).
+          buildDashboardChain(chatUiUrl).bindAddress,
         ),
         ...messaging,
         hermesApiPort,

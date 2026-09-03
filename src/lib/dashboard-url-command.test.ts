@@ -68,6 +68,46 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toEqual(["http://172.22.1.1:19000/#token=secret-token"]);
   });
 
+  it("prefers the recorded bind over an access URL recomputed without CHAT_UI_URL", () => {
+    const sinks = makeSinks();
+
+    runDashboardUrlCommand(
+      "alpha",
+      { quiet: true },
+      {
+        fetchToken: () => "secret-token",
+        getSandbox: () => ({
+          agent: "openclaw",
+          dashboardPort: 19000,
+          dashboardBindAddress: "0.0.0.0",
+        }),
+        getAccessUrl: () => "http://127.0.0.1:19000",
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(sinks.out).toEqual(["http://0.0.0.0:19000/#token=secret-token"]);
+  });
+
+  it("keeps the recomputed access URL for a row with no recorded bind", () => {
+    const sinks = makeSinks();
+
+    runDashboardUrlCommand(
+      "alpha",
+      { quiet: true },
+      {
+        fetchToken: () => "secret-token",
+        getSandbox: () => ({ agent: "openclaw", dashboardPort: 19000 }),
+        getAccessUrl: () => "http://172.22.1.1:19000",
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(sinks.out).toEqual(["http://172.22.1.1:19000/#token=secret-token"]);
+  });
+
   it("prints a human label and warning outside quiet mode", () => {
     const sinks = makeSinks();
     runDashboardUrlCommand(

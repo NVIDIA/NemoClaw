@@ -118,6 +118,7 @@ export function creationFidelity(
   fromDockerfile: string | null,
   hermesAuthMethod: "oauth" | "api_key" | null,
   dashboardRemoteBindPrepared?: boolean,
+  dashboardBindAddress?: string | null,
 ): Pick<
   SandboxEntry,
   | "webSearchEnabled"
@@ -125,6 +126,7 @@ export function creationFidelity(
   | "fromDockerfile"
   | "hermesAuthMethod"
   | "dashboardRemoteBindPrepared"
+  | "dashboardBindAddress"
 > {
   return {
     webSearchEnabled: webSearchConfig?.fetchEnabled === true,
@@ -132,6 +134,7 @@ export function creationFidelity(
     fromDockerfile,
     hermesAuthMethod,
     dashboardRemoteBindPrepared: dashboardRemoteBindPrepared === true,
+    dashboardBindAddress: dashboardBindAddress ?? null,
   };
 }
 
