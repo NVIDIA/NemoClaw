@@ -9,8 +9,8 @@
 # /sandbox/.openclaw are writable (mutable default), trusted shell startup
 # files remain read-only, system paths are read-only, and /tmp is writable.
 #
-# The Docker-only e2e tests (test/e2e-gateway-isolation.sh) cover DAC
-# enforcement but cannot exercise Landlock. This script closes that gap.
+# The managed-image OpenClaw security E2E covers DAC enforcement but cannot
+# exercise Landlock. This script closes that gap.
 #
 # Prerequisites:
 #   - openshell on PATH, sandbox exists and is Ready

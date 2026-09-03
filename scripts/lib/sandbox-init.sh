@@ -205,7 +205,7 @@ validate_tmp_permissions() {
 #     the sandbox/gateway UIDs during entrypoint privilege separation.
 #   cap_kill — sandbox user signals gateway-user processes via the UID
 #     separation enforced by the entrypoint (see test 13 in
-#     e2e-gateway-isolation.sh).
+#     managed-image-openclaw-security.test.ts).
 # When the runtime cannot drop the bounding set (no CAP_SETPCAP, or capsh
 # missing), the default is to warn and continue. Set NEMOCLAW_REQUIRE_CAP_DROP=1
 # to make that case fail-closed instead — see enforce_cap_drop_if_required.

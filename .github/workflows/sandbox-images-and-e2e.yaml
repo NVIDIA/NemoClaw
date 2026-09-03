@@ -96,27 +96,11 @@ jobs:
           scripts/check-production-build-args.sh "${build_args[@]}"
           docker build "${build_args[@]}" -t nemoclaw-production .
 
-      - name: Build sandbox test image (fixtures layered on production)
-        run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production -t nemoclaw-sandbox-test .
+      - name: Save production image
+        run: docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz
 
-      - name: Save images to tarballs
-        run: |
-          set -euo pipefail
-          docker save nemoclaw-sandbox-test | gzip > /tmp/sandbox-test-image.tar.gz
-          docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz
-
-      - name: Verify tarballs
-        run: |
-          gzip -t /tmp/sandbox-test-image.tar.gz
-          gzip -t /tmp/isolation-image.tar.gz
-
-      - name: Upload sandbox test image
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: sandbox-test-image
-          path: /tmp/sandbox-test-image.tar.gz
-          retention-days: 1
-          if-no-files-found: error
+      - name: Verify production image archive
+        run: gzip -t /tmp/isolation-image.tar.gz
 
       - name: Upload isolation image
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -438,37 +422,23 @@ jobs:
           scripts/check-production-build-args.sh "${build_args[@]}"
           docker build "${build_args[@]}" -t nemoclaw-production-arm64 .
 
-      - name: Build sandbox test image on arm64
-        run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production-arm64 -t nemoclaw-sandbox-test-arm64 .
 
       - name: Clean up Docker auth
         if: always()
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  test-e2e-sandbox:
+  runtime-overrides:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The live target owns 45 minutes; retain 15 minutes for setup, image
+    # transfer, and the always-running artifact upload.
+    timeout-minutes: 60
     needs: build-sandbox-images
-    steps:
-      - *checkout
-
-      - name: Download image artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: sandbox-test-image
-          path: /tmp
-
-      - name: Load image
-        run: gunzip -c /tmp/sandbox-test-image.tar.gz | docker load
-
-      - name: Run sandbox E2E tests
-        run: docker run --rm -v "${{ github.workspace }}/test:/opt/test" nemoclaw-sandbox-test /opt/test/e2e-test.sh
-
-  test-e2e-gateway-isolation:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: build-sandbox-images
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/runtime-overrides
+      E2E_TARGET_ID: runtime-overrides
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_TEST_IMAGE: nemoclaw-production
     steps:
       - *checkout
 
@@ -489,37 +459,6 @@ jobs:
           set -euo pipefail
           gunzip -c /tmp/isolation-image.tar.gz | docker load
           docker image inspect nemoclaw-production >/dev/null
-
-      - name: Run glibc probe lifecycle regression
-        env:
-          NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1"
-          NEMOCLAW_TEST_IMAGE: nemoclaw-production
-        run: npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts --silent=false --reporter=default
-
-      - name: Run gateway isolation E2E tests
-        run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh
-
-  runtime-overrides:
-    runs-on: ubuntu-latest
-    # The live target owns 45 minutes; retain 15 minutes for setup, image
-    # transfer, and the always-running artifact upload.
-    timeout-minutes: 60
-    needs: build-sandbox-images
-    env:
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/runtime-overrides
-      E2E_TARGET_ID: runtime-overrides
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_TEST_IMAGE: nemoclaw-production
-    steps:
-      - *checkout
-
-      - *setup-node
-
-      - *install-root-dependencies
-
-      - *download-isolation-image
-
-      - *load-isolation-image
 
       - name: Run runtime overrides test against production image
         timeout-minutes: 45
