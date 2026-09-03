@@ -42,22 +42,25 @@ describe("managed image registry transport package contract", () => {
       entries: ["dist"],
       omitOptionalDependencies: true,
     });
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-registry-package-"));
+    const archiveRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-managed-registry-archive-"),
+    );
+    const consumerRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-managed-registry-consumer-"),
+    );
     try {
       const packed = spawnSync(
         "npm",
-        ["pack", "--ignore-scripts", "--silent", "--pack-destination", tempDir],
+        ["pack", "--ignore-scripts", "--silent", "--pack-destination", archiveRoot],
         { cwd: fixtureRoot, encoding: "utf8", timeout: 120_000 },
       );
       expect(packed.status, `${packed.stdout}${packed.stderr}`).toBe(0);
-      const archives = fs.readdirSync(tempDir).filter((entry) => entry.endsWith(".tgz"));
+      const archives = fs.readdirSync(archiveRoot).filter((entry) => entry.endsWith(".tgz"));
       expect(archives).toHaveLength(1);
 
-      const consumerRoot = path.join(tempDir, "consumer");
-      fs.mkdirSync(consumerRoot);
       fs.writeFileSync(
         path.join(consumerRoot, "package.json"),
-        `${JSON.stringify({ name: "managed-registry-consumer", private: true })}\n`,
+        `${JSON.stringify({ name: "managed-image-registry-consumer", private: true })}\n`,
       );
       const installed = spawnSync(
         "npm",
@@ -71,7 +74,7 @@ describe("managed image registry transport package contract", () => {
           "--no-package-lock",
           "--no-save",
           "--prefer-offline",
-          path.join(tempDir, archives[0]!),
+          path.join(archiveRoot, archives[0]!),
         ],
         {
           cwd: consumerRoot,
@@ -117,13 +120,18 @@ session.close().then(
 );
 `,
         ],
-        { cwd: installedRoot, encoding: "utf8", timeout: 10_000 },
+        {
+          cwd: path.join(consumerRoot, "node_modules", "nemoclaw"),
+          encoding: "utf8",
+          timeout: 10_000,
+        },
       );
       expect(probe.status, `${probe.stdout}${probe.stderr}`).toBe(0);
       expect(probe.stdout).toBe("constructed");
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });
-      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(archiveRoot, { recursive: true, force: true });
+      fs.rmSync(consumerRoot, { recursive: true, force: true });
     }
   });
 });
