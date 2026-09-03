@@ -64,9 +64,9 @@ describe("portable agent requalification across gateway ports", () => {
     expect(outcome).toEqual({ kind: "not-hermes" });
   });
 
-  it("keeps the lifecycle lock requirement for a sandbox that has a portable receipt", async () => {
+  it("requires the lifecycle lock when a sandbox has a portable receipt", async () => {
     const home = makeHome();
-    const { lock, lifecycle, receipt, portable } = await loadLifecycleForGatewayPort(
+    const { lifecycle, receipt, portable } = await loadLifecycleForGatewayPort(
       NON_DEFAULT_GATEWAY_PORT,
       home,
     );
@@ -74,9 +74,7 @@ describe("portable agent requalification across gateway ports", () => {
     fs.mkdirSync(receipt.hermesPortableReceiptDirectory(SANDBOX, stateDir), { recursive: true });
 
     expect(() =>
-      lock.withMcpLifecycleLockSync(SANDBOX, () =>
-        lifecycle.requalifyPortableAgentSandboxAuthority(SANDBOX, { readRegistry: () => null }),
-      ),
+      lifecycle.requalifyPortableAgentSandboxAuthority(SANDBOX, { readRegistry: () => null }),
     ).toThrow(/requalification requires the sandbox lifecycle lock/u);
   });
 });
