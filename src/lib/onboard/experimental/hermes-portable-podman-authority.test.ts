@@ -16,6 +16,7 @@ import {
   captureHermesPortablePodmanExecutableFileAuthority,
   createHermesPortablePodmanCommandAuthority,
   createHermesPortablePodmanInferenceInspectionAuthority,
+  createHermesPortablePodmanOperationEngines,
   type HermesPortablePodmanAuthorityDeps,
 } from "./hermes-portable-podman-authority";
 
@@ -299,7 +300,7 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
     ]);
   });
 
-  it("checks transaction currentness without repeating the Podman behavior matrix", () => {
+  it("latches wrapper assertion failure across operation engines", () => {
     const generation = { executableInode: 10n, parentInode: 20n };
     const capture = successfulCapture();
     const deps = authorityDeps(capture, executableDeps(generation));
@@ -312,7 +313,7 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
       sourceEnv,
       deps,
     );
-    const command = createHermesPortablePodmanCommandAuthority(
+    const engines = createHermesPortablePodmanOperationEngines(
       authority,
       socket,
       runtime,
@@ -320,16 +321,14 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
       deps,
     );
     capture.mockClear();
-
-    command.assertTransactionCurrent();
-
-    expect(capture).not.toHaveBeenCalled();
     generation.executableInode = 11n;
-    expect(() => command.assertTransactionCurrent()).toThrow("changed after it was qualified");
-    expect(capture).not.toHaveBeenCalled();
+
+    expect(() => engines.assertTransactionCurrent()).toThrow("changed after it was qualified");
     generation.executableInode = 10n;
-    command.assertCurrent();
-    expect(capture).toHaveBeenCalled();
+    expect(() => engines.sandboxLifecycle.capture(["info"])).toThrow(
+      "changed after it was qualified",
+    );
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it.each([

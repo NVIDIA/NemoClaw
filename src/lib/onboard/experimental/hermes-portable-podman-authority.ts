@@ -4,7 +4,6 @@
 import { isDeepStrictEqual } from "node:util";
 
 import {
-  assertPodmanExecutableAuthority,
   assertPodmanExecutableMetadataAuthority,
   capturePodmanExecutableAuthority,
   createPodmanContainerEngine,
@@ -149,7 +148,7 @@ function createHermesPortablePodmanOperationCommandAuthority(
   requireRuntimeAuthority(runtimeAuthority, socketAuthority, deps);
   const commandEnvironment = buildHermesPortablePodmanEnvironment(runtimeAuthority, sourceEnv);
   requireResolvedExecutable(authority, sourceEnv, deps);
-  assertPodmanExecutableAuthority(authority.executable, deps.executableAuthorityDeps);
+  executableProof.assertContentAuthority();
   const engine = createPodmanContainerEngine({
     operation,
     socketAuthority,
@@ -168,7 +167,7 @@ function createHermesPortablePodmanOperationCommandAuthority(
     requireRuntimeAuthority(runtimeAuthority, socketAuthority, deps);
     buildHermesPortablePodmanEnvironment(runtimeAuthority, sourceEnv);
     requireResolvedExecutable(authority, sourceEnv, deps);
-    assertPodmanExecutableAuthority(authority.executable, deps.executableAuthorityDeps);
+    executableProof.assertContentAuthority();
     engine.assertAuthority();
   };
   const assertCurrent = (): void => {
