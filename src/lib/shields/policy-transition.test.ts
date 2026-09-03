@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -238,10 +240,13 @@ describe("shields down policy rejection", () => {
     const configDir = "/sandbox/.deepagents";
     const configPath = `${configDir}/config.toml`;
     const hashPath = `${configDir}/.config-hash`;
-    const { CONFIG_HASH_REPAIR_NOFOLLOW_SCRIPT } = requireSource(
-      "./seal.js",
-    ) as typeof import("./seal.js");
-    let hashRecord: { content: string; mode: string } | undefined;
+    const fixtureConfigDir = path.join(tmpDir, "sandbox", ".deepagents");
+    const fixtureConfigPath = path.join(fixtureConfigDir, "config.toml");
+    const fixtureHashPath = path.join(fixtureConfigDir, ".config-hash");
+    const configContent = "model = \"test\"\n";
+    const expectedHashRecord = `${createHash("sha256").update(configContent).digest("hex")}  config.toml\n`;
+    fs.mkdirSync(fixtureConfigDir, { recursive: true });
+    fs.writeFileSync(fixtureConfigPath, configContent);
     const agent = "langchain-deepagents-code";
     const harness = createShieldsFlowHarness(requireSource, tmpDir, {
       sandboxName: "dcode-safety",
@@ -267,15 +272,41 @@ describe("shields down policy rejection", () => {
         const args = Array.isArray(argv) ? argv.map(String) : [];
         const command = args.slice(4);
         const script = String(command[3] ?? "");
-        return new Map<boolean, () => string>([
-          [true, () => ""],
+        const commandKind = new Map<boolean, "default" | "lsattr" | "repair" | "sha" | "stat" | "unlock">([
+          [true, "default"],
           [
-            command[0] === "lsattr",
-            () => `-------------- ${String(command.at(-1))}`,
+            command[0] === "python3" &&
+              !script.includes("nemoclaw-shields-down-path-preflight"),
+            "unlock",
           ],
-          [command[0] === "sha256sum", () => `${"a".repeat(64)}  ${configPath}`],
           [
-            command[0] === "stat",
+            command.length === 6 &&
+              command[0] === "python3" &&
+              command[1] === "-I" &&
+              command[2] === "-c" &&
+              command[4] === configDir &&
+              command[5] === configPath,
+            "repair",
+          ],
+          [command[0] === "lsattr", "lsattr"],
+          [command[0] === "sha256sum", "sha"],
+          [command[0] === "stat", "stat"],
+        ]).get(true)!;
+        return new Map<typeof commandKind, () => string>([
+          ["default", () => ""],
+          ["lsattr", () => `-------------- ${String(command.at(-1))}`],
+          [
+            "repair",
+            () =>
+              execFileSync(
+                "python3",
+                ["-I", "-c", script, fixtureConfigDir, fixtureConfigPath],
+                { encoding: "utf8" },
+              ),
+          ],
+          ["sha", () => `${"a".repeat(64)}  ${configPath}`],
+          [
+            "stat",
             () =>
               new Map<string, string>([
                 ["/sandbox", "755 sandbox:sandbox"],
@@ -283,28 +314,21 @@ describe("shields down policy rejection", () => {
               ]).get(String(command.at(-1))) ?? "660 sandbox:sandbox",
           ],
           [
-            command[0] === "python3" &&
-              script !== CONFIG_HASH_REPAIR_NOFOLLOW_SCRIPT &&
-              !script.includes("nemoclaw-shields-down-path-preflight"),
+            "unlock",
             () => {
-              expect(hashRecord).toEqual({ content: `${"a".repeat(64)}\n`, mode: "444" });
+              expect(fs.readFileSync(fixtureHashPath, "utf8")).toBe(expectedHashRecord);
+              expect(fs.statSync(fixtureHashPath).mode & 0o777).toBe(0o444);
               return "";
             },
           ],
-          [
-            command[0] === "python3" && script === CONFIG_HASH_REPAIR_NOFOLLOW_SCRIPT,
-            () => {
-              hashRecord = { content: `${"a".repeat(64)}\n`, mode: "444" };
-              return "";
-            },
-          ],
-        ]).get(true)!();
+        ]).get(commandKind)!();
       },
     });
 
     harness.shieldsDown("dcode-safety", { throwOnError: true });
 
-    expect(hashRecord).toEqual({ content: `${"a".repeat(64)}\n`, mode: "444" });
+    expect(fs.readFileSync(fixtureHashPath, "utf8")).toBe(expectedHashRecord);
+    expect(fs.statSync(fixtureHashPath).mode & 0o777).toBe(0o444);
     expect(harness.isShieldsDown("dcode-safety")).toBe(true);
   });
 

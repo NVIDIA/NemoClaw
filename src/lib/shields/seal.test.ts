@@ -205,6 +205,7 @@ describe("buildConfigHashRepairCommand", () => {
     expect(outcome.status).toBe(1);
     expect(fs.statSync(parentDir).mode & 0o7777).toBe(0o751);
     expect(fs.statSync(configDir).mode & 0o7777).toBe(0o2770);
+    expect(fs.existsSync(path.join(configDir, "config.toml"))).toBe(false);
     expect(fs.existsSync(hashRecordPath(configDir))).toBe(false);
   });
 
