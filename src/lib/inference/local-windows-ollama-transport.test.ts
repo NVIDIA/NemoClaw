@@ -18,6 +18,7 @@ import {
   OLLAMA_HOST_DOCKER_INTERNAL,
   loadPersistedOllamaHost,
   persistResolvedOllamaHost,
+  prepareOllamaApiExecution,
   probeLocalProviderHealth,
   probeOllamaModelCapabilities,
   resetOllamaHostCache,
@@ -65,6 +66,26 @@ describe("Windows-host Ollama transport", () => {
       "docker",
       "run",
       "--rm",
+      "--env",
+      "HTTP_PROXY=",
+      "--env",
+      "http_proxy=",
+      "--env",
+      "HTTPS_PROXY=",
+      "--env",
+      "https_proxy=",
+      "--env",
+      "ALL_PROXY=",
+      "--env",
+      "all_proxy=",
+      "--env",
+      "FTP_PROXY=",
+      "--env",
+      "ftp_proxy=",
+      "--env",
+      "NO_PROXY=host.docker.internal",
+      "--env",
+      "no_proxy=host.docker.internal",
       CONTAINER_REACHABILITY_IMAGE,
       "-sf",
       "--connect-timeout",
@@ -78,6 +99,51 @@ describe("Windows-host Ollama transport", () => {
       "-sf",
       "http://127.0.0.1:11434/api/tags",
     ]);
+  });
+
+  it("overrides healthy Docker-config proxies without changing Docker client authority", () => {
+    const cleanup = vi.fn(() => ({ ok: true as const }));
+    const dockerEnv = {
+      DOCKER_CONFIG: "/tmp/healthy-docker-config",
+      DOCKER_CONTEXT: "desktop-linux",
+      DOCKER_HOST: "npipe:////./pipe/dockerDesktopLinuxEngine",
+      HTTPS_PROXY: "https://operator:private-token@proxy.example",
+    };
+    const execution = prepareOllamaApiExecution(
+      ["curl", "-sf", "http://host.docker.internal:11434/api/tags"],
+      OLLAMA_HOST_DOCKER_INTERNAL,
+      {
+        env: dockerEnv,
+        prepareDockerEnvironment: () => ({
+          env: dockerEnv,
+          isolatedCredentialConfig: false,
+          cleanup,
+        }),
+      },
+    );
+
+    expect(execution.env).toEqual(dockerEnv);
+    expect(execution.command).toEqual(
+      expect.arrayContaining([
+        "HTTP_PROXY=",
+        "http_proxy=",
+        "HTTPS_PROXY=",
+        "https_proxy=",
+        "ALL_PROXY=",
+        "all_proxy=",
+        "FTP_PROXY=",
+        "ftp_proxy=",
+        "NO_PROXY=host.docker.internal",
+        "no_proxy=host.docker.internal",
+      ]),
+    );
+    expect(execution.command.join(" ")).not.toContain("private-token");
+    expect(execution.command.indexOf("HTTPS_PROXY=")).toBeLessThan(
+      execution.command.indexOf(CONTAINER_REACHABILITY_IMAGE),
+    );
+
+    execution.cleanup();
+    expect(cleanup).toHaveBeenCalledOnce();
   });
 
   it("restores the accepted route receipt in a fresh process", () => {
@@ -248,7 +314,7 @@ describe("Windows-host Ollama transport", () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-discovery-"));
     const commands: (readonly string[])[] = [];
     const endpoints: string[] = [];
-    const capture = vi.fn((command: readonly string[]) => {
+    const capture = vi.fn((command: readonly string[], _options?: unknown) => {
       commands.push(command);
       const endpoint = command.at(-1) ?? "";
       endpoints.push(endpoint);
@@ -276,6 +342,10 @@ describe("Windows-host Ollama transport", () => {
           "5",
         ]),
       );
+      expect(capture.mock.calls[1]?.[1]).toMatchObject({
+        ignoreError: true,
+        timeout: 5_000,
+      });
     } finally {
       rmSync(stateRoot, { recursive: true, force: true });
     }
@@ -328,7 +398,7 @@ describe("Windows-host Ollama transport", () => {
           command[0] === "docker" &&
           command[1] === "run" &&
           command[2] === "--rm" &&
-          command[3] === CONTAINER_REACHABILITY_IMAGE &&
+          command.includes(CONTAINER_REACHABILITY_IMAGE) &&
           command.some((argument) => argument === "http://host.docker.internal:11434/api/tags")
             ? JSON.stringify({ models: [] })
             : "",
@@ -376,7 +446,7 @@ describe("Windows-host Ollama transport", () => {
         command[0] === "docker" &&
         command[1] === "run" &&
         command[2] === "--rm" &&
-        command[3] === CONTAINER_REACHABILITY_IMAGE &&
+        command.includes(CONTAINER_REACHABILITY_IMAGE) &&
         options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker" &&
         command.some((argument) => argument === "http://host.docker.internal:11434/api/generate");
       return {

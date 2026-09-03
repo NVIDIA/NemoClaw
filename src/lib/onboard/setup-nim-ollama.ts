@@ -7,6 +7,7 @@ import type {
   WindowsOllamaInstallResult,
   WindowsOllamaSetupResult,
 } from "../inference/ollama/windows";
+import { OllamaSelectionFatalError } from "./ollama-probe-failure";
 
 const {
   getRequestedModelFromEnv,
@@ -74,7 +75,7 @@ type SetupNimOllamaDeps = {
     restartOnly?: boolean;
     contextWindowFloor?: number;
   }) => { ok: boolean };
-  abortNonInteractive: (message: string) => never;
+  abortNonInteractive: (message: string, hint?: string) => never;
   assertOllamaUpgradeApplied: (menu: {
     hasUpgradableOllama: boolean;
   }) => { ok: true } | { ok: false; message: string };
@@ -150,6 +151,13 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     }
   }
 
+  function terminateFatalSelection(error: OllamaSelectionFatalError): never {
+    if (error.termination === "non-interactive") {
+      deps.abortNonInteractive(error.message, error.hint);
+    }
+    deps.process.exit(1);
+  }
+
   function configureOllamaState(state: SetupNimSelectionState): void {
     state.provider = "ollama-local";
     state.credentialEnv = null;
@@ -222,7 +230,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
       : !(await deps.prompt(promptMsg)).trim().toLowerCase().startsWith("n");
     if (!proceed) return "retry-selection";
 
-    let mutationSession: { commit: () => void; rollback: () => void } | null = null;
+    let mutationSession: { commit: () => void; rollback: () => void | Promise<void> } | null = null;
     try {
       if (isSwitch) {
         state.revalidateSandboxIdentity?.("switch to the Windows Ollama runtime");
@@ -269,14 +277,15 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
 
       const result = await selectModel(gpu, state, requestedModel, null, lockedModel);
       if (result === "retry-selection") {
-        mutationSession?.rollback();
+        await mutationSession?.rollback();
         deps.resetOllamaHostCache();
       } else {
         mutationSession?.commit();
       }
       return result;
     } catch (error) {
-      mutationSession?.rollback();
+      await mutationSession?.rollback();
+      if (error instanceof OllamaSelectionFatalError) terminateFatalSelection(error);
       throw error;
     }
   }
@@ -335,7 +344,12 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
         return "selected";
       case "ready":
         announceOllamaRoute();
-        return selectModel(gpu, state, requestedModel, recoveredModel, lockedModel);
+        try {
+          return await selectModel(gpu, state, requestedModel, recoveredModel, lockedModel);
+        } catch (error) {
+          if (error instanceof OllamaSelectionFatalError) terminateFatalSelection(error);
+          throw error;
+        }
       default: {
         const kind = (startup as { kind?: unknown }).kind;
         Object.assign(state, initialState);
@@ -383,7 +397,12 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
       return "retry-selection";
     }
     announceOllamaRoute();
-    return selectModel(gpu, state, requestedModel, recoveredModel, lockedModel);
+    try {
+      return await selectModel(gpu, state, requestedModel, recoveredModel, lockedModel);
+    } catch (error) {
+      if (error instanceof OllamaSelectionFatalError) terminateFatalSelection(error);
+      throw error;
+    }
   }
 
   return {

@@ -227,9 +227,13 @@ function createWindowsInstallBoundary(options: {
   readinessResults?: boolean[];
   rollbackStatus?: number;
   installerInterrupt?: "SIGINT" | "SIGTERM";
+  cancelInstaller?: () => Promise<void>;
 }) {
   const boundary = createWindowsSetupBoundary(options);
-  const cancelInstaller = vi.fn(() => boundary.state.events.push("cancel-installer"));
+  const cancelInstaller = vi.fn(async () => {
+    boundary.state.events.push("cancel-installer");
+    await options.cancelInstaller?.();
+  });
   const completion = options.installerInterrupt
     ? Promise.resolve().then(() => boundary.triggerInterrupt(options.installerInterrupt!))
     : Promise.resolve();
@@ -240,7 +244,7 @@ function createWindowsInstallBoundary(options: {
       boundary.state.userHost = "0.0.0.0:11434";
       boundary.state.watcherRunning = true;
       boundary.state.daemonRunning = true;
-      return { completion, cancel: cancelInstaller };
+      return { completion, cancelAndWait: cancelInstaller };
     }),
     resolveInstalledPath: vi.fn(() => {
       boundary.state.events.push("resolve-path");
@@ -549,20 +553,30 @@ describe("Windows Ollama helper", () => {
   it("cancels install and restores prior Windows state before preserving SIGTERM", async () => {
     const priorHost = "127.0.0.1:11434";
     const watcherPath = "C:\\Users\\tester\\Ollama\\ollama app.exe";
+    let finishProcessTreeCancellation = () => {};
+    const processTreeDrained = new Promise<void>((resolve) => {
+      finishProcessTreeCancellation = resolve;
+    });
     const boundary = createWindowsInstallBoundary({
       userHost: priorHost,
       watcherPath,
       daemonPath: null,
       installerInterrupt: "SIGTERM",
+      cancelInstaller: () => processTreeDrained,
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
 
     try {
-      await expect(windows.installOllamaOnWindowsHost({}, boundary.operations)).rejects.toThrow(
-        PreservedWindowsInterrupt,
-      );
+      const installation = windows.installOllamaOnWindowsHost({}, boundary.operations);
+      await vi.waitFor(() => expect(boundary.cancelInstaller).toHaveBeenCalledOnce());
+      expect(boundary.state.events).toEqual(["snapshot", "install", "cancel-installer"]);
+      expect(boundary.operations.rollbackSnapshot).not.toHaveBeenCalled();
+      expect(boundary.operations.preserveInterrupt).not.toHaveBeenCalled();
+
+      finishProcessTreeCancellation();
+      await expect(installation).rejects.toThrow(PreservedWindowsInterrupt);
     } finally {
       restore();
       logSpy.mockRestore();
@@ -580,6 +594,36 @@ describe("Windows Ollama helper", () => {
     expect(boundary.state.userHost).toBe(priorHost);
     expect(boundary.state.watcherRunning).toBe(true);
     expect(boundary.cancelInstaller).toHaveBeenCalledOnce();
+  });
+
+  it("does not restore mutable Windows state when installer tree cancellation fails", async () => {
+    const boundary = createWindowsInstallBoundary({
+      userHost: "127.0.0.1:11434",
+      watcherPath: "C:\\Users\\tester\\Ollama\\ollama app.exe",
+      daemonPath: null,
+      installerInterrupt: "SIGINT",
+      cancelInstaller: async () => {
+        throw new Error("taskkill tree termination failed");
+      },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
+
+    try {
+      await expect(windows.installOllamaOnWindowsHost({}, boundary.operations)).rejects.toThrow(
+        "taskkill tree termination failed",
+      );
+    } finally {
+      restore();
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+
+    expect(boundary.cancelInstaller).toHaveBeenCalledOnce();
+    expect(boundary.operations.rollbackSnapshot).not.toHaveBeenCalled();
+    expect(boundary.operations.preserveInterrupt).not.toHaveBeenCalled();
+    expect(boundary.state.events).toEqual(["snapshot", "install", "cancel-installer"]);
   });
 
   it("reports manual recovery when install rollback fails", async () => {

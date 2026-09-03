@@ -21,8 +21,38 @@ function psSingleQuote(value: string): string {
 
 type WindowsOllamaInstallerProcess = {
   completion: Promise<void>;
-  cancel: () => void;
+  cancelAndWait: () => Promise<void>;
 };
+
+const WINDOWS_INSTALLER_PID_SENTINEL = "__NEMOCLAW_WINDOWS_INSTALLER_PID__:";
+
+function parseWindowsProcessId(value: string): number | null {
+  if (!/^[1-9][0-9]*$/.test(value)) return null;
+  const pid = Number(value);
+  return Number.isSafeInteger(pid) && pid <= 0xffff_ffff ? pid : null;
+}
+
+function terminateWindowsProcessTree(pid: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const taskkill = spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+      stdio: "ignore",
+    });
+    taskkill.once("error", (error: NodeJS.ErrnoException) => {
+      reject(
+        new Error(
+          `Failed to start taskkill.exe for Windows installer PID ${pid}: ${error.message}`,
+        ),
+      );
+    });
+    taskkill.once("close", (code: number | null) => {
+      if (code === 0) resolve();
+      else
+        reject(
+          new Error(`taskkill.exe failed for Windows installer PID ${pid} (exit ${String(code)})`),
+        );
+    });
+  });
+}
 
 // Pre-set OLLAMA_HOST in both User scope (persists across logins) and the
 // current PowerShell session (inherited by the installer's auto-spawned
@@ -37,27 +67,71 @@ function startWindowsOllamaInstaller(): WindowsOllamaInstallerProcess {
     "powershell.exe",
     [
       "-Command",
-      "[Environment]::SetEnvironmentVariable('OLLAMA_HOST','0.0.0.0:11434','User'); $env:OLLAMA_HOST='0.0.0.0:11434'; irm https://ollama.com/install.ps1 | iex",
+      `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::Out.WriteLine('${WINDOWS_INSTALLER_PID_SENTINEL}' + $PID); [Console]::Out.Flush(); ` +
+        "[Environment]::SetEnvironmentVariable('OLLAMA_HOST','0.0.0.0:11434','User'); $env:OLLAMA_HOST='0.0.0.0:11434'; irm https://ollama.com/install.ps1 | iex",
     ],
     { stdio: ["ignore", "pipe", "pipe"] },
   );
+  let windowsPid: number | null = null;
+  let stdoutBuffer = "";
+  let resolveWindowsPid: (pid: number | null) => void = () => {};
+  const windowsPidReady = new Promise<number | null>((resolve) => {
+    resolveWindowsPid = resolve;
+  });
+  const flushStdoutLines = (final: boolean) => {
+    while (true) {
+      const newlineIndex = stdoutBuffer.indexOf("\n");
+      if (newlineIndex < 0 && !final) return;
+      const line = newlineIndex < 0 ? stdoutBuffer : stdoutBuffer.slice(0, newlineIndex + 1);
+      stdoutBuffer = newlineIndex < 0 ? "" : stdoutBuffer.slice(newlineIndex + 1);
+      if (!line) return;
+      const candidate = line.replace(/\r?\n$/, "").slice(WINDOWS_INSTALLER_PID_SENTINEL.length);
+      const parsedPid = line.startsWith(WINDOWS_INSTALLER_PID_SENTINEL)
+        ? parseWindowsProcessId(candidate)
+        : null;
+      if (parsedPid !== null && windowsPid === null) {
+        windowsPid = parsedPid;
+        resolveWindowsPid(parsedPid);
+      } else {
+        process.stdout.write(line);
+      }
+    }
+  };
   const completion = new Promise<void>((resolve) => {
-    child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(chunk));
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdoutBuffer += chunk.toString("utf8");
+      flushStdoutLines(false);
+    });
     child.stderr?.on("data", (chunk: Buffer) => process.stderr.write(chunk));
-    child.on("close", () => resolve());
+    child.on("close", () => {
+      flushStdoutLines(true);
+      resolveWindowsPid(windowsPid);
+      resolve();
+    });
     child.on("error", (err: NodeJS.ErrnoException) => {
       console.error(`  Failed to spawn powershell.exe: ${err.message}`);
+      resolveWindowsPid(null);
       resolve();
     });
   });
+  let cancellation: Promise<void> | null = null;
   return {
     completion,
-    cancel: () => {
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // Rollback below still stops any installer-created Ollama processes.
-      }
+    cancelAndWait: () => {
+      cancellation ??= (async () => {
+        const pid = await windowsPidReady;
+        if (pid !== null) {
+          await terminateWindowsProcessTree(pid);
+        } else {
+          try {
+            child.kill("SIGTERM");
+          } catch {
+            // The wrapper has already exited, so completion below is authoritative.
+          }
+        }
+        await completion;
+      })();
+      return cancellation;
     },
   };
 }
@@ -316,7 +390,9 @@ type WindowsOllamaSetupOperations = {
   wait: (seconds: number) => void;
   launchOperations: WindowsOllamaLaunchOperations;
   rollbackSnapshot: (snapshot: WindowsOllamaHostSnapshot) => boolean;
-  registerInterruptHandler: (handler: (signal: WindowsOllamaInterruptSignal) => void) => () => void;
+  registerInterruptHandler: (
+    handler: (signal: WindowsOllamaInterruptSignal) => void | Promise<void>,
+  ) => () => void;
   preserveInterrupt: (signal: WindowsOllamaInterruptSignal) => void;
 };
 
@@ -328,7 +404,7 @@ type WindowsOllamaInstallOperations = WindowsOllamaSetupOperations & {
 
 export type WindowsOllamaMutationSession = {
   commit: () => void;
-  rollback: () => void;
+  rollback: () => void | Promise<void>;
 };
 
 export type WindowsOllamaFailureReason = "binding" | "install" | "readiness" | "snapshot";
@@ -342,10 +418,21 @@ export type WindowsOllamaSetupResult =
   | ({ ok: true } & WindowsOllamaMutationSession);
 
 function registerWindowsOllamaInterruptHandler(
-  handler: (signal: WindowsOllamaInterruptSignal) => void,
+  handler: (signal: WindowsOllamaInterruptSignal) => void | Promise<void>,
 ): () => void {
-  const onSigint = () => handler("SIGINT");
-  const onSigterm = () => handler("SIGTERM");
+  const reportFailure = (error: unknown) => {
+    console.error(`  Windows Ollama interrupt rollback failed: ${String(error)}`);
+    process.exitCode = 1;
+  };
+  const runHandler = (signal: WindowsOllamaInterruptSignal) => {
+    try {
+      Promise.resolve(handler(signal)).catch(reportFailure);
+    } catch (error) {
+      reportFailure(error);
+    }
+  };
+  const onSigint = () => runHandler("SIGINT");
+  const onSigterm = () => runHandler("SIGTERM");
   process.once("SIGINT", onSigint);
   process.once("SIGTERM", onSigterm);
   return () => {
@@ -387,32 +474,40 @@ function beginWindowsOllamaMutation(
 ) {
   let active = true;
   let mutated = false;
-  let cancelActiveOperation = () => {};
+  let cancelActiveOperation: () => void | Promise<void> = () => {};
   let removeInterruptHandler = () => {};
+  let rollbackPromise: Promise<void> | null = null;
+  let interruptPromise: Promise<void> | null = null;
   const commit = () => {
     if (!active) return;
     active = false;
     cancelActiveOperation = () => {};
     removeInterruptHandler();
   };
-  const rollback = () => {
+  const restore = () => {
+    if (mutated) rollbackWindowsOllamaSetup(snapshot, operations);
+  };
+  const rollback = (): void | Promise<void> => {
+    if (rollbackPromise) return rollbackPromise;
     if (!active) return;
     active = false;
     removeInterruptHandler();
     const cancel = cancelActiveOperation;
     cancelActiveOperation = () => {};
-    try {
-      cancel();
-    } finally {
-      if (mutated) rollbackWindowsOllamaSetup(snapshot, operations);
+    const cancellation = cancel();
+    if (cancellation && typeof cancellation.then === "function") {
+      rollbackPromise = Promise.resolve(cancellation).then(restore);
+      return rollbackPromise;
     }
+    restore();
   };
   removeInterruptHandler = operations.registerInterruptHandler((signal) => {
-    try {
-      rollback();
-    } finally {
-      operations.preserveInterrupt(signal);
+    const result = rollback();
+    if (result && typeof result.then === "function") {
+      interruptPromise = result.then(() => operations.preserveInterrupt(signal));
+      return interruptPromise;
     }
+    operations.preserveInterrupt(signal);
   });
   return {
     commit,
@@ -420,8 +515,11 @@ function beginWindowsOllamaMutation(
       mutated = true;
     },
     rollback,
-    setInterruptCancellation: (cancel: () => void) => {
+    setInterruptCancellation: (cancel: () => void | Promise<void>) => {
       if (active) cancelActiveOperation = cancel;
+    },
+    waitForInterrupt: async () => {
+      if (interruptPromise) await interruptPromise;
     },
   };
 }
@@ -468,12 +566,13 @@ async function installOllamaOnWindowsHost(
   console.log("  This can take several minutes. Output may pause silently");
   try {
     const installer = operations.startInstaller();
-    mutation.setInterruptCancellation(installer.cancel);
+    mutation.setInterruptCancellation(installer.cancelAndWait);
     await installer.completion;
     mutation.setInterruptCancellation(() => {});
+    await mutation.waitForInterrupt();
     const installedPath = operations.resolveInstalledPath();
     if (!installedPath) {
-      mutation.rollback();
+      await mutation.rollback();
       return { ok: false, path: "", reason: "install" };
     }
     console.log(`  ✓ Installed: ${installedPath}`);
@@ -487,13 +586,13 @@ async function installOllamaOnWindowsHost(
         mutation.markMutated,
       );
       if (!setupResult.ok) {
-        mutation.rollback();
+        await mutation.rollback();
         return { ok: false, path: installedPath, reason: setupResult.reason };
       }
     }
     return { ok: true, path: installedPath, commit: mutation.commit, rollback: mutation.rollback };
   } catch (error) {
-    mutation.rollback();
+    await mutation.rollback();
     throw error;
   }
 }

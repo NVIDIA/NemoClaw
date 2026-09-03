@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
+import { OllamaSelectionFatalError } from "./ollama-probe-failure";
 import { createSetupNimOllamaHandlers } from "./setup-nim-ollama";
 import type { SetupNimSelectionState } from "./setup-nim-selection";
 
@@ -509,6 +510,45 @@ describe("createSetupNimOllamaHandlers", () => {
 
     expect(restart).toHaveBeenCalledOnce();
     expect(rollback).toHaveBeenCalledOnce();
+  });
+
+  it("awaits Windows rollback before terminating a fatal model selection", async () => {
+    const events: string[] = [];
+    const rollback = vi.fn(async () => {
+      events.push("rollback:start");
+      await Promise.resolve();
+      events.push("rollback:done");
+    });
+    const exit = vi.fn((code?: number): never => {
+      events.push(`exit:${String(code)}`);
+      throw new Error(`process.exit:${String(code)}`);
+    });
+    const restart = vi.fn(() => ({ ok: true as const, commit: vi.fn(), rollback }));
+    const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        process: { ...process, exit } as unknown as NodeJS.Process,
+        selectAndValidateOllamaModel: async () => {
+          throw new OllamaSelectionFatalError("process", "fatal model selection");
+        },
+        setupWindowsOllamaWith0000Binding: restart,
+      }),
+    );
+
+    await expect(
+      handleWindowsHostOllamaSelection(
+        null,
+        "start-windows-ollama",
+        "qwen3:8b",
+        false,
+        true,
+        "C:/Ollama/ollama.exe",
+        makeState(),
+      ),
+    ).rejects.toThrow("process.exit:1");
+
+    expect(events).toEqual(["rollback:start", "rollback:done", "exit:1"]);
+    expect(rollback).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledWith(1);
   });
 
   it("preserves accepted tools-incompatible state for running Ollama", async () => {

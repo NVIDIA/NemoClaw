@@ -6,6 +6,7 @@ import type { StdioOptions } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
+import { CONTAINER_REACHABILITY_IMAGE } from "../../../inference/local";
 import type { SandboxExecSignalSource } from "../exec";
 import type { AgentDispatchChild } from "./passthrough-dispatch";
 import {
@@ -260,6 +261,23 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       `http://host.docker.internal:${OLLAMA_PORT}/api/tags`,
     ]);
     expect(commands.every((command) => command[0] === "docker")).toBe(true);
+    const proxyGuard = [
+      "HTTP_PROXY=",
+      "http_proxy=",
+      "HTTPS_PROXY=",
+      "https_proxy=",
+      "ALL_PROXY=",
+      "all_proxy=",
+      "FTP_PROXY=",
+      "ftp_proxy=",
+      "NO_PROXY=host.docker.internal",
+      "no_proxy=host.docker.internal",
+    ];
+    expect(commands).toEqual([
+      expect.arrayContaining([...proxyGuard, CONTAINER_REACHABILITY_IMAGE]),
+      expect.arrayContaining([...proxyGuard, CONTAINER_REACHABILITY_IMAGE]),
+      expect.arrayContaining([...proxyGuard, CONTAINER_REACHABILITY_IMAGE]),
+    ]);
     expect(spawnRecoveryChild.mock.calls.map(([, , , env]) => env.DOCKER_CONFIG)).toEqual([
       "/tmp/credential-free-docker-1",
       "/tmp/credential-free-docker-2",
@@ -605,6 +623,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       endpoint: `http://host.docker.internal:${OLLAMA_PORT}`,
       inventoryLabel: "llama3.2:1b",
     });
+    expect(runRecoveryCaptureImpl).toHaveBeenCalledTimes(3);
     expect(getCommandUrl(runRecoveryCaptureImpl.mock.calls[2]?.[0] ?? [])).toBe(
       `http://host.docker.internal:${OLLAMA_PORT}/api/tags`,
     );
@@ -629,6 +648,10 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       endpoint: "http://127.0.0.1:11434",
       detail: expect.stringContaining("runner stopped unexpectedly"),
     });
+    expect(runRecoveryCaptureImpl).toHaveBeenCalledTimes(3);
+    expect(getCommandUrl(runRecoveryCaptureImpl.mock.calls[2]?.[0] ?? [])).toBe(
+      `http://127.0.0.1:${OLLAMA_PORT}/api/tags`,
+    );
   });
 
   it("accepts a completed thinking-only response from a thinking model", async () => {

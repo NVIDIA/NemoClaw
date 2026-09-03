@@ -204,7 +204,7 @@ export function findReachableOllamaHost(
         "5",
         `http://${host}:${OLLAMA_PORT}/api/tags`,
       ],
-      { ignoreError: true },
+      { ignoreError: true, timeout: 5_000 },
     );
     if (isValidOllamaTagsResponseBody(result)) {
       _resolvedOllamaHost = host;
@@ -278,12 +278,42 @@ export function clearPersistedOllamaHostIfUnused(
 }
 
 /** Keep Windows-host Ollama requests in Docker Desktop's verified network context. */
+const OLLAMA_DOCKER_PROXY_GUARD_ARGS = [
+  "--env",
+  "HTTP_PROXY=",
+  "--env",
+  "http_proxy=",
+  "--env",
+  "HTTPS_PROXY=",
+  "--env",
+  "https_proxy=",
+  "--env",
+  "ALL_PROXY=",
+  "--env",
+  "all_proxy=",
+  "--env",
+  "FTP_PROXY=",
+  "--env",
+  "ftp_proxy=",
+  "--env",
+  `NO_PROXY=${OLLAMA_HOST_DOCKER_INTERNAL}`,
+  "--env",
+  `no_proxy=${OLLAMA_HOST_DOCKER_INTERNAL}`,
+] as const;
+
 export function getOllamaApiCommand(
   curlArgs: readonly string[],
   host: string = getResolvedOllamaHost(),
 ): string[] {
   return host === OLLAMA_HOST_DOCKER_INTERNAL
-    ? ["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE, ...curlArgs]
+    ? [
+        "docker",
+        "run",
+        "--rm",
+        ...OLLAMA_DOCKER_PROXY_GUARD_ARGS,
+        CONTAINER_REACHABILITY_IMAGE,
+        ...curlArgs,
+      ]
     : ["curl", ...curlArgs];
 }
 
