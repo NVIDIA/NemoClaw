@@ -41,7 +41,11 @@ describe("sandbox image workflow boundary", () => {
     });
     expect(
       job.steps?.find((step) => step.name === "Validate OpenClaw managed-image security boundary"),
-    ).toMatchObject({ run: expect.stringContaining("managed-image-openclaw-security.test.ts") });
+    ).toMatchObject({
+      run: expect.stringMatching(
+        /vitest run --project integration test\/e2e-runtime\/managed-image-openclaw-security\.test\.ts/u,
+      ),
+    });
     expect(
       job.steps?.find((step) => step.name === "Upload OpenClaw managed-image security evidence"),
     ).toMatchObject({

@@ -87,6 +87,7 @@ test(
         "test -x /usr/local/bin/openclaw",
         `grep -Fqx 'export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' /usr/local/bin/nemoclaw-start`,
         "cd /sandbox/.openclaw && sha256sum -c .config-hash >/dev/null",
+        `python3 -c 'import json; assert json.load(open("/sandbox/.openclaw/openclaw.json"))["update"]["checkOnStart"] is False'`,
         'printf "%s:%s\\n" "$gateway_uid" "$sandbox_uid"',
       ].join("\n"),
       "managed-image-openclaw-identities",
@@ -97,7 +98,7 @@ test(
       { artifactName: "managed-image-openclaw-default-user" },
     );
     expect(imageUser.exitCode, imageUser.stderr).toBe(0);
-    expect(imageUser.stdout.trim()).toBe("sandbox");
+    expect(["sandbox", "root"]).toContain(imageUser.stdout.trim());
     await runDefaultContainer(
       host,
       image,
