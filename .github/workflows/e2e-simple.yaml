@@ -23,6 +23,7 @@ jobs:
     outputs:
       catalog: ${{ steps.catalog.outputs.catalog }}
       cli_provenance: ${{ steps.provenance.outputs.provenance }}
+      correlation_id: ${{ steps.correlation.outputs.correlation_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,6 +84,11 @@ jobs:
         name: Select the existing managed-image catalog
         shell: bash
         run: printf 'catalog=%s\n' "$MANAGED_IMAGE_CATALOG" >>"$GITHUB_OUTPUT"
+
+      - id: correlation
+        name: Create one regression correlation ID
+        shell: bash
+        run: printf 'correlation_id=%s\n' "$(python3 -c 'import uuid; print(uuid.uuid4())')" >>"$GITHUB_OUTPUT"
 
   regressions:
     needs: prepare
@@ -210,6 +216,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+      NEMOCLAW_E2E_CORRELATION_ID: ${{ needs.prepare.outputs.correlation_id }}
       NEMOCLAW_E2E_HERMES_DASHBOARD: "1"
       NEMOCLAW_E2E_INFERENCE_MODE: mock
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.prepare.outputs.catalog }}
@@ -311,7 +318,6 @@ jobs:
         with:
           name: simple-e2e-${{ matrix.execution_id }}
           path: e2e-artifacts/live/
-          if-no-files-found: warn
 
       - name: Remove simple Hermes swap
         if: ${{ always() && matrix.swap }}
