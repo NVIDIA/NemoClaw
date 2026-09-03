@@ -285,16 +285,9 @@ describe("OpenShell policy boundary package contract", () => {
     expect(validation).toEqual([true, false]);
   });
 
-  it("ships agent manifests, generated state lock plans, and the OpenClaw policy asset", () => {
-    expect(packageFiles(repoRoot)).toEqual(
-      expect.arrayContaining([
-        "agents/*/manifest.yaml",
-        "agents/*/state-lock-plan.json",
-        "agents/openclaw/policy-permissive.yaml",
-      ]),
-    );
+  it("ships agent manifests", () => {
+    expect(packageFiles(repoRoot)).toEqual(expect.arrayContaining(["agents/*/manifest.yaml"]));
     expect(packedPaths).toContain("agents/openclaw/manifest.yaml");
-    expect(packedPaths).toContain("agents/openclaw/policy-permissive.yaml");
   });
 
   it("ships the complete repository-owned NemoCUA agent definition (#9649)", () => {

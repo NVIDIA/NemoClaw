@@ -117,7 +117,6 @@ function runHermesStartupReadiness(gatewayInitStatus: 0 | 1) {
     '_HERMES_PYTHON="hermes-python"',
     '_HERMES_RUNTIME_CONFIG_GUARD="runtime-guard"',
     'hermes-python() { printf "publish:%s\\n" "$*" >&2; return 0; }',
-    'nemoclaw_runtime_state_mutation_checkpoint() { printf "state-mutation-checkpoint\\n" >&2; }',
     "print_dashboard_urls() { trace dashboard-urls; }",
     block,
   ]);
@@ -129,7 +128,6 @@ describe("Hermes PID 1 supervisor recovery", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim().split("\n")).toEqual(["gateway-control-init", "dashboard-urls"]);
-    expect(result.stderr).toContain("state-mutation-checkpoint");
     expect(result.stderr).toContain(
       "publish:-I runtime-guard publish-startup-ready --hermes-dir /sandbox/.hermes --startup-owner",
     );
@@ -226,18 +224,16 @@ describe("Hermes PID 1 supervisor recovery", () => {
         "handler-rc:1",
       ],
     },
-  ])("keeps the authenticated probe read-only when it $label", ({
-    prepareStatus,
-    healthStatus,
-    auxiliariesStatus,
-    expected,
-  }) => {
-    const result = runHermesGatewayProbe({ prepareStatus, healthStatus, auxiliariesStatus });
+  ])(
+    "keeps the authenticated probe read-only when it $label",
+    ({ prepareStatus, healthStatus, auxiliariesStatus, expected }) => {
+      const result = runHermesGatewayProbe({ prepareStatus, healthStatus, auxiliariesStatus });
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim().split("\n")).toEqual(expected);
-    expect(result.stdout).not.toContain("unexpected-");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim().split("\n")).toEqual(expected);
+      expect(result.stdout).not.toContain("unexpected-");
+    },
+  );
 
   it("stops a healthy replacement gateway when the pending MCP applied-state commit fails", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
@@ -402,78 +398,6 @@ describe("Hermes orphaned restart seal detection", () => {
 });
 
 describe("Hermes startup mutation ownership", () => {
-  it("cold-resumes a pending 0500 shields clamp through recursive verification", () => {
-    const source = fs.readFileSync(START_SCRIPT, "utf-8");
-    const result = runBashHarness(
-      [
-        'trace() { printf "%s\\n" "$*"; }',
-        "install_hermes_restart_seal_traps() { trace unexpected-install-traps; }",
-        "unseal_hermes_restart_inputs() { trace unexpected-unseal; return 0; }",
-        extractShellFunction(source, "resume_startup_hermes_shields_lock"),
-        extractShellFunction(source, "recover_startup_hermes_mutation"),
-        '_HERMES_PYTHON="$FAKE_PYTHON"',
-        '_HERMES_RUNTIME_CONFIG_GUARD="/trusted/runtime-config-guard.py"',
-        "_HERMES_GUARD_TIMEOUT=()",
-        'HERMES_DIR="/sandbox/.hermes"',
-        'HERMES_HASH_FILE="/etc/nemoclaw/hermes.config-hash"',
-        'HERMES_CONFIG_MUTATION_LOCK="$LOCK_PATH"',
-        'HERMES_RESTART_SEAL_STATE="$STATE_PATH"',
-        "if recover_startup_hermes_mutation; then trace recovered; else trace failed; fi",
-        'cat "$TRACE_FILE"',
-      ],
-      (tmpDir) => {
-        const statePath = path.join(tmpDir, "state.json");
-        const lockPath = path.join(tmpDir, "lock");
-        const traceFile = path.join(tmpDir, "trace");
-        fs.writeFileSync(statePath, "state\n");
-        fs.writeFileSync(lockPath, "lock\n");
-        const fakePython = path.join(tmpDir, "python");
-        fs.writeFileSync(
-          fakePython,
-          `#!/usr/bin/env bash
-[ "$1" = "-I" ] || { echo "runtime guard did not use isolated Python" >&2; exit 98; }
-[ "$2" = "/trusted/runtime-config-guard.py" ] || { echo "unexpected guard path: $2" >&2; exit 98; }
-case "$3" in
-  inspect-mutation-owner)
-    echo inspect >>"$TRACE_FILE"
-    echo "state=1 lock=1 owner_active=1 token_match=0 original_locked=0 recovery_safe=0 resumable_lock=1"
-    ;;
-  begin-shields-transition)
-    echo begin >>"$TRACE_FILE"
-    echo "lock_token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa original_locked=0"
-    ;;
-  run-state-dir-transition) echo state-lock >>"$TRACE_FILE" ;;
-  apply-shields-transition) echo apply >>"$TRACE_FILE" ;;
-  finish-shields-transition)
-    echo finish >>"$TRACE_FILE"
-    rm -f "$STATE_PATH" "$LOCK_PATH"
-    ;;
-  *) echo "unexpected action: $3" >&2; exit 99 ;;
-esac
-`,
-          { mode: 0o700 },
-        );
-        return {
-          FAKE_PYTHON: fakePython,
-          STATE_PATH: statePath,
-          LOCK_PATH: lockPath,
-          TRACE_FILE: traceFile,
-        };
-      },
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim().split("\n")).toEqual([
-      "recovered",
-      "inspect",
-      "begin",
-      "state-lock",
-      "apply",
-      "finish",
-    ]);
-    expect(result.stderr).toContain("Resumed interrupted Hermes shields lock");
-  });
-
   it("waits for a live host transaction to finish instead of consuming its state", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness(
@@ -499,7 +423,7 @@ esac
           fakePython,
           `#!/usr/bin/env bash
 rm -f "$STATE_PATH" "$LOCK_PATH"
-echo "state=1 lock=1 owner_active=1 token_match=0 original_locked=0 recovery_safe=1"
+echo "state=1 lock=1 owner_active=1 token_match=0"
 `,
           { mode: 0o700 },
         );
@@ -510,42 +434,6 @@ echo "state=1 lock=1 owner_active=1 token_match=0 original_locked=0 recovery_saf
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe("recovered");
     expect(result.stdout).not.toContain("unexpected-unseal");
-  });
-
-  it("fails closed instead of guessing how to recover an interrupted shields transition", () => {
-    const source = fs.readFileSync(START_SCRIPT, "utf-8");
-    const result = runBashHarness(
-      [
-        'trace() { printf "%s\\n" "$*"; }',
-        "install_hermes_restart_seal_traps() { trace unexpected-install-traps; }",
-        "unseal_hermes_restart_inputs() { trace unexpected-unseal; return 0; }",
-        extractShellFunction(source, "recover_startup_hermes_mutation"),
-        '_HERMES_PYTHON="$FAKE_PYTHON"',
-        '_HERMES_RUNTIME_CONFIG_GUARD="/trusted/runtime-config-guard.py"',
-        'HERMES_DIR="/sandbox/.hermes"',
-        'HERMES_CONFIG_MUTATION_LOCK="$LOCK_PATH"',
-        'HERMES_RESTART_SEAL_STATE="$STATE_PATH"',
-        "if recover_startup_hermes_mutation; then trace unexpected-success; else trace failed-closed; fi",
-      ],
-      (tmpDir) => {
-        const statePath = path.join(tmpDir, "state.json");
-        const lockPath = path.join(tmpDir, "lock");
-        fs.writeFileSync(statePath, "state\n");
-        fs.writeFileSync(lockPath, "lock\n");
-        const fakePython = path.join(tmpDir, "python");
-        fs.writeFileSync(
-          fakePython,
-          '#!/usr/bin/env bash\necho "state=1 lock=1 owner_active=0 token_match=0 original_locked=1 recovery_safe=0"\n',
-          { mode: 0o700 },
-        );
-        return { FAKE_PYTHON: fakePython, STATE_PATH: statePath, LOCK_PATH: lockPath };
-      },
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe("failed-closed");
-    expect(result.stdout).not.toContain("unexpected-unseal");
-    expect(result.stderr).toContain("HERMES_CONFIG_MUTATION_ORPHANED");
   });
 });
 
@@ -618,7 +506,6 @@ describe("Hermes supervised auxiliary recovery", () => {
       "finalize_tirith_marker_retry() { :; }",
       "commit_hermes_mcp_applied_if_pending() { return 0; }",
       'refresh_hermes_supervised_child_pids() { trace "refresh:$GATEWAY_PID"; }',
-      "nemoclaw_runtime_state_mutation_checkpoint() { :; }",
       "hermes_gateway_healthy() { return 0; }",
       'hermes_stop_tracked_role() { trace "unexpected-stop:$2"; return 1; }',
       extractShellFunction(source, "quarantine_hermes_managed_gateway_relaunch"),
@@ -782,7 +669,6 @@ describe("Hermes supervised auxiliary recovery", () => {
       "finalize_tirith_marker_retry() { :; }",
       "commit_hermes_mcp_applied_if_pending() { return 0; }",
       "refresh_hermes_supervised_child_pids() { trace refresh; }",
-      "nemoclaw_runtime_state_mutation_checkpoint() { :; }",
       'date() { trace unexpected-exit-record; printf "100\\n"; }',
       'sleep() { trace "sleep:$1"; }',
       extractShellFunction(source, "quarantine_hermes_managed_gateway_relaunch"),
@@ -823,7 +709,6 @@ describe("Hermes supervised auxiliary recovery", () => {
       'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
       "mark_hermes_gateway_stopped() { trace mark-stopped; GATEWAY_PID=0; }",
       'recover_hermes_gateway_current_user() { GATEWAY_PID=4200; trace "recover:$GATEWAY_PID"; }',
-      "nemoclaw_runtime_state_mutation_checkpoint() { :; }",
       'date() { printf "100\\n"; }',
       'sleep() { trace "sleep:$1"; }',
       extractShellFunction(source, "quarantine_hermes_managed_gateway_relaunch"),

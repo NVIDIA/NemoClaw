@@ -23,13 +23,14 @@ import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { execTimeout } from "../../helpers/timeouts.ts";
 import { isNvidiaEndpointRateLimitFailure } from "./messaging-providers-helpers.ts";
 
 export { expectExitZero, REPO_ROOT, resultText };
 
 export const CLI = process.env.NEMOCLAW_CLI_BIN ?? CLI_ENTRYPOINT;
 
-export const INSTALL_TIMEOUT_MS = 45 * 60_000;
+export const INSTALL_TIMEOUT_MS = execTimeout(45 * 60_000);
 export const COMMAND_TIMEOUT_MS = 120_000;
 
 export type AgentKind = "openclaw" | "hermes";

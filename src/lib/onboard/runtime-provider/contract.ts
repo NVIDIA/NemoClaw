@@ -27,8 +27,6 @@ export {
 export const RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION = 1 as const;
-export const RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION = 2 as const;
-export const RUNTIME_PROVIDER_STATE_MUTATION_PLAN_SCHEMA_VERSION = 2 as const;
 export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION = 4 as const;
 export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_PLAN_SCHEMA_VERSION = 1 as const;
 
@@ -50,7 +48,6 @@ export type RuntimeProviderContainerEngineOperation =
   | "gateway-inspection"
   | "host-local-inference"
   | "sandbox-lifecycle"
-  | "state-mutation"
   | "workload-cleanup";
 
 export interface RuntimeProviderIdentity {
@@ -513,104 +510,6 @@ export interface RuntimeProviderManagedProfileRestoreAuthority {
   readonly profileFingerprint: string;
 }
 
-export type RuntimeProviderStateMutationSelector =
-  | { readonly kind: "path"; readonly path: string }
-  | { readonly kind: "prefix"; readonly prefix: string };
-
-export type RuntimeProviderStateMutationProtectionPosture = "locked" | "mutable";
-export type RuntimeProviderStateMutationFencePhase =
-  | "fenced"
-  | "published"
-  | "rolled-back"
-  | "activation-proven";
-
-/** Exact recursive protection policy consumed by a fixed provider helper. */
-export interface RuntimeProviderStateMutationStateLockPlan {
-  readonly version: 1;
-  readonly readOnlyRoots: readonly string[];
-  readonly confidentialRoots: readonly string[];
-  readonly readOnlyPrefixes: readonly string[];
-  readonly confidentialPrefixes: readonly string[];
-  readonly writableSubpaths: readonly string[];
-}
-
-/** One bounded runtime provider state mutation. Providers never accept commands or callbacks. */
-interface RuntimeProviderStateMutationPlanBase {
-  readonly schemaVersion: typeof RUNTIME_PROVIDER_STATE_MUTATION_PLAN_SCHEMA_VERSION;
-  readonly stateRoot: string;
-  readonly selectors: readonly RuntimeProviderStateMutationSelector[];
-  /** Digest of the complete projection produced by the selected AgentDefinition. */
-  readonly projectionSha256: string;
-}
-
-export type RuntimeProviderStateMutationPlan =
-  | (RuntimeProviderStateMutationPlanBase & {
-      readonly intent: "protection-transition";
-      readonly target: RuntimeProviderStateMutationProtectionPosture;
-      readonly rollback: RuntimeProviderStateMutationProtectionPosture;
-      readonly stateLockPlan: RuntimeProviderStateMutationStateLockPlan;
-    })
-  | (RuntimeProviderStateMutationPlanBase & {
-      readonly intent: "restore";
-      readonly target?: never;
-      readonly rollback?: never;
-      readonly stateLockPlan?: never;
-    });
-
-export interface RuntimeProviderPreparedStateMutationPlan {
-  readonly plan: RuntimeProviderStateMutationPlan;
-  /** Canonical bounded JSON suitable for a fixed provider helper's stdin. */
-  readonly serializedPlan: string;
-  readonly planSha256: string;
-  readonly projectionSha256: string;
-}
-
-export interface RuntimeProviderStateMutationContext {
-  readonly environment: NodeJS.ProcessEnv;
-  readonly sandbox: SandboxEntry;
-  readonly sandboxName: string;
-}
-
-/** Opaque provider proof for one active, exact-runtime provider state mutation fence. */
-export interface RuntimeProviderStateMutationFence {
-  readonly schemaVersion: 1;
-  readonly intent: "protection-transition";
-  /** Last durable helper phase observed when this fence was returned. */
-  readonly phase: RuntimeProviderStateMutationFencePhase;
-  readonly providerId: string;
-  readonly sandboxName: string;
-  readonly transactionId: string;
-  readonly lifecycleGeneration: string;
-  readonly runtimeId: string;
-  readonly runtimeStateSha256: string;
-  /** Digest of the exact operation-scoped provider engine binding. */
-  readonly engineBindingSha256: string;
-  readonly stateRoot: string;
-  readonly mountNamespaceId: string;
-  readonly stateRootDevice: string;
-  readonly stateRootInode: string;
-  readonly planSha256: string;
-  readonly projectionSha256: string;
-  readonly target: RuntimeProviderStateMutationProtectionPosture;
-  readonly rollback: RuntimeProviderStateMutationProtectionPosture;
-  readonly nonce: string;
-  readonly providerHandle: string;
-}
-
-/** Fresh service evidence required before a runtime provider state mutation fence may retire. */
-export interface RuntimeProviderStateMutationActivationProof {
-  readonly schemaVersion: 1;
-  readonly providerId: string;
-  readonly sandboxName: string;
-  readonly lifecycleGeneration: string;
-  readonly runtimeId: string;
-  readonly nonce: string;
-  readonly configurationGeneration: string;
-  readonly listenerIdentity: string;
-  readonly healthSha256: string;
-  readonly providerHandle: string;
-}
-
 /**
  * Complete normalized source state supplied to the owning restore facet.
  * `providerHandle` binds the lifecycle generation and full runtime receipt.
@@ -688,41 +587,6 @@ export type RuntimeProviderLifecycleSurface =
 export type RuntimeProviderMutationAuthoritySurface =
   | RuntimeProviderSupportedSurface<{
       readonly operations: readonly RuntimeProviderMutationOperation[];
-    }>
-  | RuntimeProviderUnsupportedSurface;
-
-export type RuntimeProviderStateMutationSurface =
-  | RuntimeProviderSupportedSurface<{
-      readonly contractVersion: typeof RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION;
-      acquire(
-        input: RuntimeProviderStateMutationContext & {
-          /** Frozen, digested runtime provider state mutation plan. */
-          readonly plan: RuntimeProviderPreparedStateMutationPlan;
-        },
-      ): RuntimeProviderStateMutationFence;
-      assertFenced(
-        input: RuntimeProviderStateMutationContext,
-        fence: RuntimeProviderStateMutationFence,
-      ): void;
-      publish(
-        input: RuntimeProviderStateMutationContext,
-        fence: RuntimeProviderStateMutationFence,
-      ): void;
-      rollback(
-        input: RuntimeProviderStateMutationContext,
-        fence: RuntimeProviderStateMutationFence,
-      ): void;
-      activate(
-        input: RuntimeProviderStateMutationContext,
-        fence: RuntimeProviderStateMutationFence,
-      ): RuntimeProviderStateMutationActivationProof;
-      release(
-        input: RuntimeProviderStateMutationContext,
-        fence: RuntimeProviderStateMutationFence,
-        proof: RuntimeProviderStateMutationActivationProof,
-        completedLedgerSha256: string,
-      ): void;
-      recover(input: RuntimeProviderStateMutationContext): RuntimeProviderStateMutationFence | null;
     }>
   | RuntimeProviderUnsupportedSurface;
 
@@ -852,7 +716,6 @@ export interface RuntimeProviderBundle {
   readonly hostLocalInference: RuntimeProviderHostLocalInferenceSurface;
   readonly lifecycle: RuntimeProviderLifecycleSurface;
   readonly mutationAuthority: RuntimeProviderMutationAuthoritySurface;
-  readonly stateMutation: RuntimeProviderStateMutationSurface;
   readonly bootstrap: RuntimeProviderBootstrapSurface;
   readonly snapshot: RuntimeProviderSnapshotSurface;
   readonly recovery: RuntimeProviderRecoverySurface;

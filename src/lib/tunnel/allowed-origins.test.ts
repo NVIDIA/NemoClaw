@@ -22,7 +22,6 @@ const OPENCLAW_TARGET: AgentConfigTarget = {
   configDir: "/sandbox/.openclaw",
   format: "json",
   configFile: "openclaw.json",
-  stateLockPlanInImage: true,
 };
 
 /**

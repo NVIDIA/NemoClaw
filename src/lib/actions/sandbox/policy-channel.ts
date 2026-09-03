@@ -70,7 +70,7 @@ import {
 } from "../../policy/baseline-exclusion";
 import { formatPolicyListPresetRow } from "../../policy/policy-list-display";
 import type { PolicyObject } from "../../policy/preset-parsing";
-import { shellQuote } from "../../runner";
+import { redactFullWithUrls, shellQuote } from "../../runner";
 import {
   type ChannelDef,
   channelUsesInSandboxQrPairing,
@@ -437,11 +437,7 @@ async function addSandboxPolicyUnlocked(
   }
   if (!answer) return;
 
-  const presetContent = policies.loadPresetForSandbox(
-    sandboxName,
-    answer,
-    messagingPolicyOptions,
-  );
+  const presetContent = policies.loadPresetForSandbox(sandboxName, answer, messagingPolicyOptions);
   if (!presetContent) return;
 
   if (reapplyState) {
@@ -930,23 +926,47 @@ async function applyChannelAddToGatewayAndRegistry(
     ) {
       const createdProviderNames = [...(err.createdProviderNames ?? [])];
       const createdProviders = new Set(createdProviderNames);
-      const cleanupFailures = createdProviderNames.filter((providerName) => {
+      const cleanupFailures = createdProviderNames.flatMap((providerName) => {
         const result = policyChannelDependencies.runGatewayOpenshell(
           gatewayName,
           ["provider", "delete", providerName],
           { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
         );
         const output = `${result.stdout || ""}${result.stderr || ""}`;
-        return result.status !== 0 && !/\bNotFound\b|not found/i.test(output);
+        return result.status === 0 || /\bNotFound\b|not found/i.test(output)
+          ? []
+          : [
+              {
+                providerName,
+                diagnostic:
+                  redactFullWithUrls(output).replace(/\s+/gu, " ").trim() ||
+                  `provider delete exited with status ${result.status ?? "unknown"}`,
+              },
+            ];
       });
       const updatedProviderNames = err.mutatedProviderNames.filter(
         (providerName) => !createdProviders.has(providerName),
       );
+      const originalFailure = redactFullWithUrls(err instanceof Error ? err.message : String(err))
+        .replace(/\s+/gu, " ")
+        .trim()
+        .slice(0, 500);
+      if (originalFailure) console.error(`  ${originalFailure}`);
       if (updatedProviderNames.length > 0) {
-        console.error(`  ${YW}⚠${R} Updated provider state remains; resolve it and retry.`);
+        const providerNames = updatedProviderNames.map((name) => JSON.stringify(name)).join(", ");
+        console.error(
+          `  ${YW}⚠${R} Provider state may have changed for ${providerNames}; inspect the named provider, correct the gateway failure, then retry the channel add.`, // lgtm[js/clear-text-logging] Validated provider identifiers only.
+        );
       }
       if (cleanupFailures.length > 0) {
-        console.error(`  ${YW}⚠${R} Could not remove newly created providers; retry cleanup.`);
+        for (const { providerName, diagnostic } of cleanupFailures) {
+          console.error(
+            `  ${YW}⚠${R} Could not remove newly created provider ${JSON.stringify(providerName)}: ${diagnostic}.`, // lgtm[js/clear-text-logging] Validated provider identifier and fully redacted diagnostic only.
+          );
+          console.error(
+            `  Run \`openshell provider delete -g ${JSON.stringify(gatewayName)} ${JSON.stringify(providerName)}\`, then retry the channel add.`, // lgtm[js/clear-text-logging] Validated gateway and provider identifiers only.
+          );
+        }
       }
       cleanupCredentialFreePolicy?.();
       process.exit(1);

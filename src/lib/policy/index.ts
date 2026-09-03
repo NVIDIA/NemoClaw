@@ -33,7 +33,6 @@ import {
   listMessagingChannelPolicyPresets,
   listMessagingPolicyPresetMetadata,
   loadMessagingChannelPolicyPreset,
-  materializeMessagingPolicySandboxName,
 } from "../messaging/channels";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
@@ -2800,69 +2799,8 @@ async function selectFromList(
   return item.name;
 }
 
-const PERMISSIVE_POLICY_PATH = path.join(
-  ROOT,
-  "nemoclaw-blueprint",
-  "policies",
-  "openclaw-sandbox-permissive.yaml",
-);
-
-/**
- * Resolve the on-disk path to the permissive policy YAML for the given
- * sandbox, honoring the agent-specific override registered in
- * `agent-defs.ts`. Returns `null` if no permissive policy is configured.
- */
-function resolvePermissivePolicyPath(sandboxName: string): string {
-  // Use agent-specific permissive policy if the sandbox has an agent with one.
-  try {
-    const sandbox = registry.getSandbox(sandboxName);
-    if (sandbox?.agent && sandbox.agent !== "openclaw") {
-      const agent = loadAgent(sandbox.agent);
-      if (agent?.policyPermissivePath) return agent.policyPermissivePath;
-    }
-    if (sandbox?.agent === "openclaw") {
-      const agent = loadAgent("openclaw");
-      if (agent?.policyPermissivePath) return agent.policyPermissivePath;
-    }
-  } catch {
-    // Fall through to global permissive policy
-  }
-  return PERMISSIVE_POLICY_PATH;
-}
-
-function applyPermissivePolicy(sandboxName: string): void {
-  if (!isValidName(sandboxName)) {
-    throw new Error(
-      `Invalid or truncated sandbox name: ${diagnosticPreview(sandboxName)}. ` +
-        `Allowed format: ${NAME_ALLOWED_FORMAT}.`,
-    );
-  }
-
-  const operation = "apply the permissive sandbox policy";
-  const context = preparePolicyMutationContext(sandboxName, operation);
-
-  const policyPath = resolvePermissivePolicyPath(sandboxName);
-  if (!fs.existsSync(policyPath)) {
-    throw new Error(`Permissive policy not found: ${policyPath}`);
-  }
-  const policyDocument = fs.readFileSync(policyPath, "utf-8");
-  const materializedPolicy = materializeMessagingPolicySandboxName(policyDocument, sandboxName);
-  if (materializedPolicy === null) {
-    throw new Error("Cannot materialize the permissive policy credential provider binding");
-  }
-
-  console.log("  Applying permissive policy...");
-  assertOpenshellResolvable();
-  recheckPolicyMutationContext(sandboxName, operation, context);
-  setPolicyDocument(sandboxName, materializedPolicy, {
-    context,
-  });
-  console.log("  Applied permissive policy.");
-}
-
 export type { ExternalPolicyPreset };
 export {
-  applyPermissivePolicy,
   applyPreset,
   applyPresetContent,
   applyPresets,
@@ -2894,7 +2832,6 @@ export {
   mergePresetIntoPolicy,
   mergePresetNamesIntoPolicy,
   networkPoliciesHasAllowedIps,
-  PERMISSIVE_POLICY_PATH,
   PRESETS_DIR,
   parseCurrentPolicyOrEmpty as parseCurrentPolicy,
   parsePresetPolicyKeys,
@@ -2905,7 +2842,6 @@ export {
   reconcileTeamsOutlookLoginCredentialBinding,
   renderPresetScope,
   resolveAgentBaselinePolicy,
-  resolvePermissivePolicyPath,
   resolveSandboxBaselinePolicy,
   restoreBaselineEntry,
   selectForRemoval,
