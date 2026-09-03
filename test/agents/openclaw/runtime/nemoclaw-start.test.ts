@@ -2328,19 +2328,21 @@ describe("provider placeholder refresh (#4251)", () => {
     config: unknown,
     env: Record<string, string> = {},
     rootMode = false,
+    runtimePlan: unknown = { credentialBindings: [] },
   ): { config: any; handoffEnv: string; hash: string; result: ReturnType<typeof spawnSync> } {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-placeholders-"));
     const openclawDir = path.join(tmpDir, ".openclaw");
     const configPath = path.join(openclawDir, "openclaw.json");
     const hashPath = path.join(openclawDir, ".config-hash");
     const handoffEnvPath = path.join(tmpDir, "handoff-env");
+    const runtimePlanPath = path.join(tmpDir, "messaging-runtime-plan.json");
     const scriptPath = path.join(tmpDir, "run.sh");
     fs.mkdirSync(openclawDir, { recursive: true });
     fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
-    const fn = extractShellFunctionFromSource(
-      src,
-      "refresh_openclaw_provider_placeholders",
-    ).replaceAll("/sandbox/.openclaw", openclawDir);
+    fs.writeFileSync(runtimePlanPath, JSON.stringify(runtimePlan));
+    const fn = extractShellFunctionFromSource(src, "refresh_openclaw_provider_placeholders")
+      .replaceAll("/sandbox/.openclaw", openclawDir)
+      .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath);
     fs.writeFileSync(
       scriptPath,
       [
@@ -2606,27 +2608,19 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("emits the deterministic accepted-extras breadcrumb so e2e harnesses can prove env-arg propagation", () => {
+  it("emits the accepted-extras signal from canonical keys in the default runtime plan (#10967)", () => {
     const run = runRefresh(
+      {},
       {
-        channels: {
-          telegram: {
-            accounts: {
-              default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" },
-            },
-          },
-        },
+        NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: "",
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "TELEGRAM_BOT_TOKEN_AGENT_A",
       },
-      {
-        NEMOCLAW_MESSAGING_PLAN_B64: placeholderPlan(["TELEGRAM_BOT_TOKEN", "SLACK_BOT_TOKEN"]),
-        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "TELEGRAM_BOT_TOKEN_AGENT_A SLACK_BOT_TOKEN_AGENT_B",
-      },
+      false,
+      { credentialBindings: [{ providerEnvKey: "TELEGRAM_BOT_TOKEN" }] },
     );
 
     expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.result.stderr).toMatch(
-      /\[config\] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted 2 entry\(ies\): TELEGRAM_BOT_TOKEN_AGENT_A SLACK_BOT_TOKEN_AGENT_B/,
-    );
+    expect(run.result.stderr).toMatch(/accepted 1 entry\(ies\): TELEGRAM_BOT_TOKEN_AGENT_A/u);
   });
 
   it("does not emit the accepted-extras breadcrumb when NEMOCLAW_EXTRA_PLACEHOLDER_KEYS is unset", () => {
