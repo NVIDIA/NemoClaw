@@ -461,15 +461,26 @@ try {
     Assert-Arm64PortableExecutable `
         -Path (Join-Path $bootstrapperOutput 'mbanative.dll') `
         -Label 'WiX managed-bootstrapper native bridge'
-    foreach ($bootstrapperDependency in @(
-        'NemoClaw.Bootstrapper.deps.json',
-        'NemoClaw.Bootstrapper.dll',
-        'NemoClaw.Bootstrapper.runtimeconfig.json',
-        'WixToolset.BootstrapperApplicationApi.dll'
-    )) {
+    $expectedBootstrapperSupportPayloads = @(
+        'mbanative.dll',
+        'PenImc_cor3.dll',
+        'PresentationNative_cor3.dll',
+        'vcruntime140_cor3.dll',
+        'wpfgfx_cor3.dll'
+    )
+    $observedBootstrapperSupportPayloads = @(Get-ChildItem -LiteralPath $bootstrapperOutput -File | Where-Object {
+        $_.Name -cne 'NemoClaw.Bootstrapper.exe'
+    } | ForEach-Object { $_.Name } | Sort-Object)
+    if (@(Compare-Object $expectedBootstrapperSupportPayloads $observedBootstrapperSupportPayloads).Count -ne 0) {
+        Fail-WindowsPackageBuild 'The single-file bootstrapper publish did not contain the exact native support payload set.'
+    }
+    foreach ($bootstrapperDependency in $expectedBootstrapperSupportPayloads) {
         if (-not (Test-Path -LiteralPath (Join-Path $bootstrapperOutput $bootstrapperDependency) -PathType Leaf)) {
             Fail-WindowsPackageBuild "Native bootstrapper publish is missing $bootstrapperDependency."
         }
+        Assert-Arm64PortableExecutable `
+            -Path (Join-Path $bootstrapperOutput $bootstrapperDependency) `
+            -Label "Native bootstrapper support payload $bootstrapperDependency"
     }
     $bootstrapperSha256 = (Get-FileHash -LiteralPath $bootstrapperPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $bootstrapperAuthenticodeStatus = (Get-AuthenticodeSignature -LiteralPath $bootstrapperPath).Status.ToString()

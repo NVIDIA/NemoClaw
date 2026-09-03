@@ -602,6 +602,32 @@ function Stop-ProhibitedProcessAudit {
     }
 }
 
+function Export-BootstrapperStartupDiagnostics {
+    param([Parameter(Mandatory)][DateTime]$StartedAt)
+
+    foreach ($startupLog in @(Get-ChildItem `
+        -LiteralPath ([IO.Path]::GetTempPath()) `
+        -Filter 'NemoClaw.Bootstrapper.*.startup.log' `
+        -File `
+        -ErrorAction SilentlyContinue)) {
+        Copy-Item -LiteralPath $startupLog.FullName -Destination $artifactRoot -Force
+        Remove-Item -LiteralPath $startupLog.FullName -Force -ErrorAction SilentlyContinue
+    }
+
+    $events = @(Get-WinEvent `
+        -FilterHashtable @{ LogName = 'Application'; StartTime = $StartedAt; Level = @(1, 2, 3) } `
+        -ErrorAction SilentlyContinue | Where-Object {
+        $_.ProviderName -in @('.NET Runtime', 'Application Error', 'SideBySide', 'Windows Error Reporting')
+    } | Select-Object TimeCreated, ProviderName, Id, LevelDisplayName, Message)
+    if ($events.Count -gt 0) {
+        [IO.File]::WriteAllText(
+            (Join-Path $artifactRoot 'bootstrapper-application-events.json'),
+            (($events | ConvertTo-Json -Depth 4) + [Environment]::NewLine),
+            [Text.UTF8Encoding]::new($false)
+        )
+    }
+}
+
 if ($ProductVersion -cnotmatch '^[0-9]{1,3}\.[0-9]{1,5}\.[0-9]{1,5}$') {
     Fail-PackageQualification 'ProductVersion is invalid.'
 }
@@ -716,6 +742,7 @@ $processAudit = Start-ProhibitedProcessAudit
 $processAuditStopped = $false
 $repairRestoredDigest = $false
 $reinstallPreservedRegistration = $false
+$qualificationStartedAt = [DateTime]::Now
 
 Write-Host "HOST> NemoClaw native Windows ARM64 package qualification"
 Write-Host "HOST> os=$([Environment]::OSVersion.Version) architecture=$([Runtime.InteropServices.RuntimeInformation]::OSArchitecture) product=$ProductVersion"
@@ -1157,6 +1184,7 @@ try {
     Write-Host '[PASS] NATIVE WINDOWS PACKAGE QUALIFICATION COMPLETE'
     Write-Host "Windows native package qualification receipts: $artifactRoot"
 } finally {
+    Export-BootstrapperStartupDiagnostics -StartedAt $qualificationStartedAt
     if (-not $processAuditStopped) {
         try {
             Stop-ProhibitedProcessAudit -Audit $processAudit -RootProcessId $PID | Out-Null

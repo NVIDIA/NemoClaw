@@ -10,7 +10,8 @@
     <PlatformTarget>ARM64</PlatformTarget>
     <UseWPF>true</UseWPF>
     <SelfContained>true</SelfContained>
-    <PublishSingleFile>false</PublishSingleFile>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <PublishTrimmed>false</PublishTrimmed>
     <PublishReadyToRun>false</PublishReadyToRun>
