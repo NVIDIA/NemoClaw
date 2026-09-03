@@ -13,9 +13,7 @@ import { dockerfileInstructions } from "../../../src/lib/onboard/dockerfile-tool
 const root = path.join(import.meta.dirname, "../../..");
 const probes = path.join(root, "agents", "hermes", "image-build-probes.py");
 const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
-const a2aNeutralPatch = fs.readFileSync(
-  path.join(root, "agents", "hermes", "a2a-neutral.patch"),
-);
+const a2aNeutralPatch = fs.readFileSync(path.join(root, "agents", "hermes", "a2a-neutral.patch"));
 const probeSource = fs.readFileSync(probes, "utf8");
 const imageProbePath = "/opt/nemoclaw-hermes-config/image-build-probes.py";
 const commands = [
@@ -195,6 +193,39 @@ describe("Hermes image build probes", () => {
     expect(copyIndex).toBeGreaterThan(-1);
     expect(removalIndex).toBeGreaterThan(copyIndex);
     expect(absenceCheckIndex).toBeGreaterThan(removalIndex);
+  });
+
+  it.each([
+    {
+      digest: "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256",
+      invocation:
+        "/usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py",
+      name: "profile policy",
+    },
+    {
+      digest: "$NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256",
+      invocation:
+        "/usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
+      name: "neutral platform",
+    },
+  ])("keeps $name patch verification and application in one layer", ({ digest, invocation }) => {
+    const verificationLayer = dockerfileInstructions(dockerfile).find(
+      ({ text }) => text.startsWith("RUN ") && text.includes(digest),
+    );
+
+    expect(verificationLayer?.text).toContain("sha256sum -c -");
+    expect(verificationLayer?.text).toContain(invocation);
+  });
+
+  it("keeps wrapper prerequisites and compatibility validation in one layer", () => {
+    const runInstructions = dockerfileInstructions(dockerfile).filter(({ text }) =>
+      text.startsWith("RUN "),
+    );
+    const prerequisiteLayer = runInstructions.find(({ text }) =>
+      text.includes("test -x /usr/bin/python3"),
+    );
+
+    expect(prerequisiteLayer?.text).toContain(`${imageProbePath} compatibility-retirement`);
   });
 
   it("rejects an upgrade that retains the Hermes 0.20.6 adapter", () => {
@@ -390,9 +421,7 @@ assert module._session_state_journal_mode(SimpleNamespace(_conn=Connection())) =
     expect(sessionStateLayers[0]?.start).toBe(
       layersFor("cron").find(({ text }) => text.includes(`${imageProbePath} cron-create`))?.start,
     );
-    expect(sessionStateLayers[0]?.text).toContain(
-      "rm -f /sandbox/.hermes/runtime/state.db",
-    );
+    expect(sessionStateLayers[0]?.text).toContain("rm -f /sandbox/.hermes/runtime/state.db");
     const pluginIsolationLayer = runInstructions.find(({ text }) =>
       text.includes("nemoclaw-hostile-user-plugin"),
     );

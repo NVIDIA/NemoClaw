@@ -823,8 +823,8 @@ RUN printf '%s  %s\n' \
 COPY --from=hermes-wrapper-payload / /
 
 RUN test -x /usr/bin/python3 \
-    || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }
-RUN /opt/hermes/.venv/bin/python -I \
+    || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }; \
+    /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py compatibility-retirement
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
@@ -990,8 +990,8 @@ ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=71388064485328862ea1783d24dc57
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
     | sha256sum -c - \
-    || { echo "ERROR: patch-profile-policy-defaults.py hash mismatch (update NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256)" >&2; exit 1; }
-RUN /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
+    || { echo "ERROR: patch-profile-policy-defaults.py hash mismatch (update NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256)" >&2; exit 1; }; \
+    /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
     && grep -Fqx '    env["npm_config_offline"] = "true"' /opt/hermes/tools/browser_tool.py \
     && rm /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
         /opt/nemoclaw-hermes-config/managed_policy.py
@@ -1008,9 +1008,8 @@ RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
         "$NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256" /opt/hermes/gateway/config.py \
     | sha256sum -c - \
-    || { echo "ERROR: Hermes neutral platform environment source identity mismatch" >&2; exit 1; }
-# hadolint ignore=DL4006
-RUN /usr/bin/python3 -I \
+    || { echo "ERROR: Hermes neutral platform environment source identity mismatch" >&2; exit 1; }; \
+    /usr/bin/python3 -I \
         /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
         /opt/hermes/gateway/config.py \
     && printf '%s  %s\n' \
