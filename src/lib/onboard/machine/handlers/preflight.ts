@@ -65,13 +65,11 @@ export interface PreflightStateOptions<
     assertGatewayReadiness(): Promise<void>;
     now?: () => Date;
     /**
-     * Resume backstop for #3508/#3630. Runs the same bridge+DNS fatal
-     * gate that `preflight()` does, so a cached preflight step cannot
-     * skip the new fatal checks for hosts where Docker bridge networking
-     * or container DNS is broken. Optional for back-compat with callers
-     * that haven't been updated yet.
+     * Resume backstop for #3508/#3630. Runs the selected provider's host,
+     * bridge, and DNS gate so cached preflight cannot skip live runtime
+     * readiness checks. Optional for back-compat with older callers.
      */
-    assertDockerBridgeAndContainerDnsHealthy?(host: Host): void;
+    assertRuntimeProviderHealthy?(host: Host, config: Config): void;
     resolveSandboxGpuConfig(
       gpu: Gpu,
       options: {
@@ -207,11 +205,14 @@ export async function handlePreflightState<
         presentAdvisories: false,
       });
     }
-    deps.validateSandboxGpuPreflight(resumeSandboxGpuConfig);
     // Resume backstop for #3508/#3630. Cached preflight does not capture
-    // host Docker/DNS state, and a session written by an older NemoClaw
-    // may have skipped the new bridge/DNS fatal checks.
-    deps.assertDockerBridgeAndContainerDnsHealthy?.(resumeHost);
+    // live runtime/DNS state, and a session written by an older NemoClaw
+    // may have skipped the provider-owned checks.
+    if (deps.assertRuntimeProviderHealthy) {
+      deps.assertRuntimeProviderHealthy(resumeHost, resumeSandboxGpuConfig);
+    } else {
+      deps.validateSandboxGpuPreflight(resumeSandboxGpuConfig);
+    }
   } else {
     await deps.startRecordedStep("preflight");
     gpu = await withPreflightTrace(() => deps.runPreflight({ optedOutGpuPassthrough: noGpu }));

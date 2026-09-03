@@ -11,7 +11,7 @@
 
 import type { StdioOptions } from "node:child_process";
 
-import { checkOpenAiInferenceProviderProfile } from "./adapters/openshell/provider-profile";
+import { checkOpenAiInferenceProviderProfile } from "./adapters/openshell/provider-profile-registration";
 import * as oauth from "./oauth-device-code";
 
 const onboardProviders = require("./onboard/providers") as {

@@ -92,6 +92,92 @@ export interface HermesPortableContainerInspection {
   readonly status: string;
 }
 
+export type HermesPortableContainerInspectionTimingStage =
+  | "preGuard"
+  | "podmanCapture"
+  | "postGuard"
+  | "jsonParse"
+  | "identityCompare";
+
+export interface HermesPortableContainerInspectionTiming {
+  readonly measure: <T>(
+    stage: HermesPortableContainerInspectionTimingStage,
+    operation: () => T,
+  ) => T;
+}
+
+export interface HermesPortableContainerInspectionTimingEvidence {
+  readonly preGuardMs: number;
+  readonly preGuardCount: number;
+  readonly podmanCaptureMs: number;
+  readonly podmanCaptureCount: number;
+  readonly postGuardMs: number;
+  readonly postGuardCount: number;
+  readonly jsonParseMs: number;
+  readonly jsonParseCount: number;
+  readonly identityCompareMs: number;
+  readonly identityCompareCount: number;
+}
+
+export function createHermesPortableContainerInspectionTiming(
+  onComplete: (evidence: HermesPortableContainerInspectionTimingEvidence) => void,
+  now: () => number = () => performance.now(),
+): HermesPortableContainerInspectionTiming & { readonly finish: () => void } {
+  const durations = new Map<HermesPortableContainerInspectionTimingStage, number>();
+  const counts = new Map<HermesPortableContainerInspectionTimingStage, number>();
+  let finished = false;
+  return Object.freeze({
+    measure<T>(stage: HermesPortableContainerInspectionTimingStage, operation: () => T): T {
+      const startedAt = safeTimingNow(now);
+      counts.set(stage, Math.min(9_999_999, (counts.get(stage) ?? 0) + 1));
+      try {
+        return operation();
+      } finally {
+        const endedAt = safeTimingNow(now);
+        const duration = startedAt === null || endedAt === null ? 0 : endedAt - startedAt;
+        durations.set(
+          stage,
+          Math.min(9_999_999, (durations.get(stage) ?? 0) + Math.max(0, Math.round(duration))),
+        );
+      }
+    },
+    finish(): void {
+      if (finished) return;
+      finished = true;
+      const duration = (stage: HermesPortableContainerInspectionTimingStage) =>
+        durations.get(stage) ?? 0;
+      const count = (stage: HermesPortableContainerInspectionTimingStage) => counts.get(stage) ?? 0;
+      try {
+        onComplete(
+          Object.freeze({
+            preGuardMs: duration("preGuard"),
+            preGuardCount: count("preGuard"),
+            podmanCaptureMs: duration("podmanCapture"),
+            podmanCaptureCount: count("podmanCapture"),
+            postGuardMs: duration("postGuard"),
+            postGuardCount: count("postGuard"),
+            jsonParseMs: duration("jsonParse"),
+            jsonParseCount: count("jsonParse"),
+            identityCompareMs: duration("identityCompare"),
+            identityCompareCount: count("identityCompare"),
+          }),
+        );
+      } catch {
+        // Timing output must not change container authority checks.
+      }
+    },
+  });
+}
+
+function safeTimingNow(now: () => number): number | null {
+  try {
+    const value = now();
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface HermesPortableContainerDeps {
   readonly podman: HermesPortablePodmanCapture;
   readonly authenticatedHealth?: HermesPortableAuthenticatedHealthCapture;
@@ -99,6 +185,7 @@ export interface HermesPortableContainerDeps {
   readonly assertSocketAuthority?: typeof assertPodmanSocketAuthority;
   readonly now?: () => number;
   readonly sleep?: (milliseconds: number) => void;
+  readonly inspectionTiming?: HermesPortableContainerInspectionTiming;
 }
 
 export type HermesPortableContainerStartResult = "already-running" | "started";
@@ -269,17 +356,22 @@ function inspectExact(
   containerId: string,
   deps: HermesPortableContainerDeps,
 ): HermesPortableContainerInspection {
-  assertSocket(receipt, deps);
-  const output = requireCommand(
-    deps.podman(["container", "inspect", containerId], INSPECT_TIMEOUT_MS),
-    "exact inspect",
+  const measure = deps.inspectionTiming?.measure ?? ((_stage, operation) => operation());
+  measure("preGuard", () => assertSocket(receipt, deps));
+  const output = measure("podmanCapture", () =>
+    requireCommand(
+      deps.podman(["container", "inspect", containerId], INSPECT_TIMEOUT_MS),
+      "exact inspect",
+    ),
   );
-  assertSocket(receipt, deps);
-  return parseInspection(output, {
-    sandboxName: receipt.sandboxName,
-    sandboxId,
-    containerId,
-  });
+  measure("postGuard", () => assertSocket(receipt, deps));
+  return measure("jsonParse", () =>
+    parseInspection(output, {
+      sandboxName: receipt.sandboxName,
+      sandboxId,
+      containerId,
+    }),
+  );
 }
 
 /** Enroll exactly one live OpenShell-managed container after Ready. */
@@ -344,7 +436,10 @@ export function assertCurrentHermesPortableContainer(
     running: _currentState,
     ...current
   } = inspected.authority;
-  if (!isDeepStrictEqual(current, recorded)) fail("live immutable identity disagrees with receipt");
+  const compare = deps.inspectionTiming?.measure ?? ((_stage, operation) => operation());
+  compare("identityCompare", () => {
+    if (!isDeepStrictEqual(current, recorded)) fail("live immutable identity disagrees with receipt");
+  });
   return inspected;
 }
 

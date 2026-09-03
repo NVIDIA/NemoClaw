@@ -32,6 +32,7 @@ on:
   pull_request:
     paths:
       - ".github/actions/ci-reviewed-npm-audit/**"
+      - ".github/workflows/base-image.yaml"
       - ".github/actions/publish-managed-image-digest/**"
       - ".github/workflows/managed-images.yaml"
       - ".dockerignore"
@@ -599,6 +600,18 @@ jobs:
           fi
           if [ "$(docker image inspect --format '{{.Id}}' "$image_id")" != "$image_id" ]; then
             echo "ERROR: PR managed image ID did not resolve to itself." >&2
+            exit 1
+          fi
+          layer_count="$(
+            jq -er '
+              if length == 1 and (.[0].RootFS.Layers | type) == "array"
+              then .[0].RootFS.Layers | length
+              else error("expected one local image layer graph")
+              end
+            ' <<< "$image_json"
+          )"
+          if [ "$layer_count" -gt 124 ]; then
+            echo "ERROR: PR managed image has $layer_count filesystem layers; Docker import requires at most 124 to preserve one layer of headroom." >&2
             exit 1
           fi
 

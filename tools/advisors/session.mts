@@ -70,11 +70,15 @@ export {
 
 const ADVISOR_BASE_URL_ENV = "PR_REVIEW_ADVISOR_BASE_URL";
 
-export function advisorRetrySettings(_modelId?: string) {
+export function advisorRetrySettings(modelId = DEFAULT_ADVISOR_MODEL, identity = "advisor") {
+  let hash = 0;
+  for (const character of `${modelId}:${identity}`) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  }
   return {
     enabled: true,
-    maxRetries: 4,
-    baseDelayMs: 6_000,
+    maxRetries: 5,
+    baseDelayMs: 12_000 + (hash % 8_000),
     provider: {
       maxRetries: 0,
       maxRetryDelayMs: 60_000,
@@ -127,6 +131,7 @@ export type RunReadOnlyAdvisorOptions = {
   logPrefix: string;
   logProgress: (message: string) => void;
   customTools?: ToolDefinition[];
+  additionalReadRoots?: string[];
   onTurnStart?: (turn: AdvisorPromptTurn) => void;
   onTurnComplete?: (turn: AdvisorCompletedTurn) => void | Promise<void>;
 };
@@ -202,13 +207,14 @@ export function advisorInferenceBaseUrl(env: NodeJS.ProcessEnv = process.env): s
 export function openAiAdvisorProviderConfig(
   credentialEnv: string,
   baseUrl = ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
+  modelId = DEFAULT_ADVISOR_MODEL,
 ): AdvisorProviderConfig {
   return {
     api: "openai-completions",
     baseUrl,
     models: [
       advisorModel(
-        DEFAULT_ADVISOR_MODEL,
+        modelId,
         "GPT-5.6 Terra",
         256000,
         32768,
@@ -336,6 +342,7 @@ export async function runReadOnlyAdvisor(
     provider,
     options.credentialEnv,
     baseUrl,
+    modelId,
   );
   const model = modelRegistry.find(provider, modelId);
   if (!model || !modelRegistry.hasConfiguredAuth(model)) {
@@ -348,13 +355,17 @@ export async function runReadOnlyAdvisor(
   }
 
   const promptTurns = normalizePromptTurns(options.promptTurns);
-  await canonicalizeRequiredReadPaths(promptTurns, options.cwd);
+  await canonicalizeRequiredReadPaths(promptTurns, options.cwd, options.additionalReadRoots);
   const contextTools = createAdvisorContextToolRuntime(promptTurns);
   let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
   const customTools = [
-    ...createRepoConfinedReadOnlyTools(options.cwd, (observation) => {
-      currentTurnFlow.push({ type: "read", ...observation });
-    }),
+    ...createRepoConfinedReadOnlyTools(
+      options.cwd,
+      (observation) => {
+        currentTurnFlow.push({ type: "read", ...observation });
+      },
+      options.additionalReadRoots,
+    ),
     ...contextTools.customTools,
   ];
   const availableToolNames = new Set(READ_ONLY_TOOLS);
@@ -379,7 +390,7 @@ export async function runReadOnlyAdvisor(
 
   const settingsManager = SettingsManager.inMemory({
     compaction: { enabled: false },
-    retry: advisorRetrySettings(),
+    retry: advisorRetrySettings(modelId, options.logPrefix),
   });
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.cwd,
@@ -796,13 +807,14 @@ function errorText(error: unknown): string {
 async function canonicalizeRequiredReadPaths(
   promptTurns: AdvisorPromptTurn[],
   cwd: string,
+  additionalReadRoots: string[] = [],
 ): Promise<void> {
   await Promise.all(
     promptTurns.map(async (turn) => {
       if (turn.requiredReadPaths === undefined) return;
       const canonicalPaths = await Promise.all(
         [...new Set(turn.requiredReadPaths)].map((candidate) =>
-          canonicalRepoReadPath(cwd, candidate),
+          canonicalRepoReadPath(cwd, candidate, additionalReadRoots),
         ),
       );
       turn.requiredReadPaths = [...new Set(canonicalPaths)];
@@ -902,6 +914,7 @@ function prepareAdvisorConfig(
   provider: string,
   credentialEnv: string,
   baseUrl: string,
+  modelId: string,
 ): { authStorage: AuthStorage; modelRegistry: ModelRegistry } {
   const authStorage = AuthStorage.inMemory();
   const modelRegistry = ModelRegistry.inMemory(authStorage);
@@ -909,7 +922,10 @@ function prepareAdvisorConfig(
   if (credential) {
     try {
       authStorage.setRuntimeApiKey(provider, credential);
-      modelRegistry.registerProvider(provider, openAiAdvisorProviderConfig(credentialEnv, baseUrl));
+      modelRegistry.registerProvider(
+        provider,
+        openAiAdvisorProviderConfig(credentialEnv, baseUrl, modelId),
+      );
     } finally {
       delete process.env[credentialEnv];
     }
