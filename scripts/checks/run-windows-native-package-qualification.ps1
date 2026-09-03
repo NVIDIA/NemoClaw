@@ -219,6 +219,7 @@ function Invoke-PythonDistributionVersionProbe {
         [Parameter(Mandatory)][string]$SitePackages,
         [Parameter(Mandatory)][string]$Distribution,
         [Parameter(Mandatory)][string]$ExpectedVersion,
+        [Parameter(Mandatory)][string]$EntryRelativePath,
         [Parameter(Mandatory)][string]$Label
     )
 
@@ -269,7 +270,7 @@ function Invoke-PythonDistributionVersionProbe {
         file = $SitePackages.Substring($installRoot.Length + 1)
         exitCode = $exitCode
         output = $stdout
-        sha256 = (Get-FileHash -LiteralPath (Join-Path $SitePackages 'hermes_cli\main.py') -Algorithm SHA256).Hash.ToLowerInvariant()
+        sha256 = (Get-FileHash -LiteralPath (Join-Path $SitePackages $EntryRelativePath) -Algorithm SHA256).Hash.ToLowerInvariant()
     }
 }
 
@@ -503,6 +504,7 @@ foreach ($requiredPayload in @(
     'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js',
     'python\python.exe',
     'hermes\site-packages\hermes_cli\main.py',
+    'deepagents\site-packages\deepagents_code\main.py',
     'onboarding\index.html',
     'onboarding\styles.css',
     'onboarding\app.ts',
@@ -535,6 +537,7 @@ $openshellPath = Join-Path $installBin 'openshell.exe'
 $gatewayPath = Join-Path $installBin 'openshell-gateway.exe'
 $pythonPath = Join-Path $installRoot 'python\python.exe'
 $hermesSitePackages = Join-Path $installRoot 'hermes\site-packages'
+$deepAgentsSitePackages = Join-Path $installRoot 'deepagents\site-packages'
 $piEntryPath = Join-Path $installRoot 'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js'
 $piQualificationPath = Join-Path $installRoot 'qualification\run-installed-native-pi.mts'
 $nodePath = Join-Path $installBin 'node.exe'
@@ -591,7 +594,8 @@ try {
         Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $nemoclawEntryPath -ExpectedVersion $ProductVersion -Label 'Installed NemoClaw CLI'
         Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $openClawEntryPath -ExpectedVersion '2026.7.1' -Label 'Installed OpenClaw runtime'
         Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $piEntryPath -ExpectedVersion '0.84.1' -Label 'Installed Pi runtime'
-        Invoke-PythonDistributionVersionProbe -PythonPath $pythonPath -SitePackages $hermesSitePackages -Distribution 'hermes-agent' -ExpectedVersion '0.19.0' -Label 'Installed Hermes Agent runtime'
+        Invoke-PythonDistributionVersionProbe -PythonPath $pythonPath -SitePackages $hermesSitePackages -Distribution 'hermes-agent' -ExpectedVersion '0.19.0' -EntryRelativePath 'hermes_cli\main.py' -Label 'Installed Hermes Agent runtime'
+        Invoke-PythonDistributionVersionProbe -PythonPath $pythonPath -SitePackages $deepAgentsSitePackages -Distribution 'deepagents-code' -ExpectedVersion '0.1.55' -EntryRelativePath 'deepagents_code\main.py' -Label 'Installed Deep Agents Code runtime'
     )
     $nativeTurnArtifacts = Join-Path $artifactRoot 'native-turn'
     Write-Host "PS> Installed NemoClaw native MXC agent turn :: nemoclaw debug --native-windows-turn"
@@ -733,6 +737,32 @@ try {
         Fail-PackageQualification 'Installed Hermes qualification receipt is incomplete.'
     }
     Write-Host '[PASS] Installed Hermes completed three real terminal agent turns inside native MXC'
+    $deepAgentsArtifacts = Join-Path $artifactRoot 'deepagents'
+    Write-Host 'PS> Launch installed Deep Agents Code runtime and complete three native MXC agent turns'
+    Invoke-BoundedProcess `
+        -FilePath $nodePath `
+        -Arguments @('--experimental-strip-types', '--no-warnings', $piQualificationPath, '--qualification', '--agent', 'langchain-deepagents-code', '--artifact-directory', $deepAgentsArtifacts) `
+        -Label 'Installed native Windows Deep Agents Code qualification' `
+        -AllowedExitCodes @(0) | Out-Null
+    $deepAgentsReceipts = @(Get-ChildItem -LiteralPath $deepAgentsArtifacts -Filter 'native-windows-langchain-deepagents-code-*.json' -File -ErrorAction SilentlyContinue)
+    if ($deepAgentsReceipts.Count -ne 1) {
+        Fail-PackageQualification 'Installed Deep Agents Code runtime did not publish exactly one receipt.'
+    }
+    $deepAgentsReceipt = Get-Content -LiteralPath $deepAgentsReceipts[0].FullName -Raw | ConvertFrom-Json
+    if ($deepAgentsReceipt.verdict -cne 'pass' -or
+        $deepAgentsReceipt.deepAgentsCodeVersion -cne '0.1.55' -or
+        $deepAgentsReceipt.backend -cne 'process_container' -or
+        $deepAgentsReceipt.interface -cne 'Deep Agents Code terminal one-shot mode' -or
+        [int]$deepAgentsReceipt.turnCount -ne 3 -or
+        @($deepAgentsReceipt.turns).Count -ne 3 -or
+        $deepAgentsReceipt.createWatcherStopped -ne $true -or
+        $deepAgentsReceipt.sandboxDeleted -ne $true -or
+        $deepAgentsReceipt.sandboxRegistryAbsent -ne $true -or
+        $deepAgentsReceipt.gatewayStopped -ne $true -or
+        $deepAgentsReceipt.qualificationRootsRemoved -ne $true) {
+        Fail-PackageQualification 'Installed Deep Agents Code qualification receipt is incomplete.'
+    }
+    Write-Host '[PASS] Installed Deep Agents Code completed three real terminal agent turns inside native MXC'
     if ($InteractiveProof) {
         Start-Sleep -Seconds 3
     }
@@ -866,6 +896,7 @@ try {
         webUi = $webUiReceipt
         pi = $piReceipt
         hermes = $hermesReceipt
+        deepAgentsCode = $deepAgentsReceipt
         msiRegistration = $msiArp
         bundleRegistration = $bundleArp
         repairRestoredDigest = $repairRestoredDigest

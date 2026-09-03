@@ -347,8 +347,10 @@ if ($null -ne $qualification -and (-not $qualification.repairRestoredDigest -or
     [int]$qualification.pi.turnCount -ne 3 -or
     $qualification.hermes.verdict -cne 'pass' -or
     [int]$qualification.hermes.turnCount -ne 3 -or
+    $qualification.deepAgentsCode.verdict -cne 'pass' -or
+    [int]$qualification.deepAgentsCode.turnCount -ne 3 -or
     @($qualification.nativeExecutions).Count -ne 4 -or
-    @($qualification.applicationExecutions).Count -ne 4 -or
+    @($qualification.applicationExecutions).Count -ne 5 -or
     @($qualification.packageDescendantProhibitedStarts).Count -ne 0 -or
     @($qualification.newPackageDescendantProhibitedProcesses).Count -ne 0)) {
     Fail-ProofVideo 'Initial package qualification receipt is not a complete passing lifecycle.'
@@ -654,6 +656,11 @@ public static class NemoClawConsoleVideoEncoder
         [int]$recordedQualification.hermes.turnCount -ne 3 -or
         @($recordedQualification.hermes.turns).Count -ne 3)) {
         $captureFailures.Add('The recorded qualification receipt does not prove three real Hermes terminal turns.')
+    }
+    if ($null -ne $recordedQualification -and ($recordedQualification.deepAgentsCode.verdict -cne 'pass' -or
+        [int]$recordedQualification.deepAgentsCode.turnCount -ne 3 -or
+        @($recordedQualification.deepAgentsCode.turns).Count -ne 3)) {
+        $captureFailures.Add('The recorded qualification receipt does not prove three real Deep Agents Code terminal turns.')
     }
     $initialQualificationHash = if (Test-Path -LiteralPath $qualificationPath -PathType Leaf) {
         (Get-FileHash -LiteralPath $qualificationPath -Algorithm SHA256).Hash.ToLowerInvariant()

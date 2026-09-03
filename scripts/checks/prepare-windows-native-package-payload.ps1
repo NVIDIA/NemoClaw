@@ -32,6 +32,7 @@ $script:PythonEmbedArchiveSha256 = '1230310118a6330cd6385cfc04de48bc77c7d18c240f
 $script:HermesVersion = '0.19.0'
 $script:HermesWheelSha256 = 'bd0bac012aee38a60894781f4597dc29ee7bedb3448540249921f10d3bef327f'
 $script:RuamelYamlWheelSha256 = '9c8ba9eb3e793efdf924b60d521820869d5bf0cb9c6f1b82d82de8295e290b9d'
+$script:ForbiddenFruitArchiveSha256 = 'e3f7e66561a29ae129aac139a85d610dbf3dd896128187ed5454b6421f624253'
 $script:RustVersion = '1.95.0'
 $script:MxcSdkVersion = '0.8.0'
 $script:MxcSdkArchiveSha256 = '06bb2399d7e98ab1907acf851e12a4e44748dd467b79d3e53c2f2fbf569da14e'
@@ -265,6 +266,33 @@ try {
         ) `
         -Label 'Hermes Agent runtime restore'
 
+    $deepAgentsRoot = Join-Path $output 'deepagents'
+    $deepAgentsSitePackages = Join-Path $deepAgentsRoot 'site-packages'
+    [IO.Directory]::CreateDirectory($deepAgentsSitePackages) | Out-Null
+    $deepAgentsLock = Join-Path $candidate 'packaging\windows\python\deepagents-windows-arm64.lock'
+    Invoke-Checked `
+        -FilePath $pythonBuilder `
+        -Arguments @(
+            '-m', 'pip', 'install',
+            '--disable-pip-version-check',
+            '--require-hashes',
+            '--only-binary=:all:',
+            '--no-deps',
+            '--no-compile',
+            '--target', $deepAgentsSitePackages,
+            '--requirement', $deepAgentsLock
+        ) `
+        -Label 'Deep Agents Code native ARM64 runtime restore'
+    $forbiddenFruitArchive = Join-Path $workRoot 'forbiddenfruit-0.1.4.tar.gz'
+    Invoke-WebRequest -UseBasicParsing -Uri 'https://files.pythonhosted.org/packages/e6/79/d4f20e91327c98096d605646bdc6a5ffedae820f38d378d3515c42ec5e60/forbiddenfruit-0.1.4.tar.gz' -OutFile $forbiddenFruitArchive
+    Assert-Sha256 -Path $forbiddenFruitArchive -Expected $script:ForbiddenFruitArchiveSha256 -Label 'forbiddenfruit source archive'
+    $forbiddenFruitExtract = Join-Path $workRoot 'forbiddenfruit'
+    [IO.Directory]::CreateDirectory($forbiddenFruitExtract) | Out-Null
+    Invoke-Checked -FilePath $tar -Arguments @('-xzf', $forbiddenFruitArchive, '-C', $forbiddenFruitExtract) -Label 'forbiddenfruit extraction'
+    Copy-Item -LiteralPath (Join-Path $forbiddenFruitExtract 'forbiddenfruit-0.1.4\forbiddenfruit') -Destination $deepAgentsSitePackages -Recurse
+    Copy-Item -LiteralPath (Join-Path $forbiddenFruitExtract 'forbiddenfruit-0.1.4\forbiddenfruit.egg-info') -Destination $deepAgentsSitePackages -Recurse
+    Copy-Item -LiteralPath (Join-Path $forbiddenFruitExtract 'forbiddenfruit-0.1.4\COPYING.mit') -Destination (Join-Path $deepAgentsRoot 'FORBIDDENFRUIT-LICENSE.txt')
+
     $nodeArchivePath = Join-Path $workRoot $script:NodeArchive
     Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/v$($script:NodeVersion)/$($script:NodeArchive)" -OutFile $nodeArchivePath
     Assert-Sha256 -Path $nodeArchivePath -Expected $script:NodeArchiveSha256 -Label 'Node.js ARM64 archive'
@@ -362,6 +390,7 @@ debug = false
         'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js',
         'python\python.exe',
         'hermes\site-packages\hermes_cli\main.py',
+        'deepagents\site-packages\deepagents_code\main.py',
         'onboarding\index.html',
         'onboarding\styles.css',
         'onboarding\app.ts',
@@ -399,6 +428,23 @@ debug = false
             wheelSha256 = $script:HermesWheelSha256
             dependencyLockSha256 = (Get-FileHash -LiteralPath $hermesLock -Algorithm SHA256).Hash.ToLowerInvariant()
             omittedUnqualifiedNativeExtensions = @('cryptography==46.0.7', 'pywinpty==2.0.15')
+        }
+        deepAgentsCode = [pscustomobject]@{
+            version = '0.1.55'
+            dependencyLockSha256 = (Get-FileHash -LiteralPath $deepAgentsLock -Algorithm SHA256).Hash.ToLowerInvariant()
+            omittedUnqualifiedNativeExtensions = @(
+                'bsdiff4==1.2.6',
+                'cryptography==50.0.0',
+                'grpcio==1.81.1',
+                'grpcio-tools==1.81.1',
+                'httptools==0.8.0',
+                'jsonschema-rs==0.44.1',
+                'quickjs-rs==0.2.5',
+                'sqlite-vec==0.1.9',
+                'textual-speedups==0.2.1',
+                'tiktoken==0.13.0',
+                'uvloop==0.22.1'
+            )
         }
         agentSupportSha256 = (Get-FileHash -LiteralPath (Join-Path $output 'agent-support.json') -Algorithm SHA256).Hash.ToLowerInvariant()
         openShell = [pscustomobject]@{ pullRequest = 'NVIDIA/OpenShell#2721'; revision = $script:OpenShellRevision }

@@ -104,6 +104,7 @@ foreach ($requiredPayload in @(
     'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js',
     'python\python.exe',
     'hermes\site-packages\hermes_cli\main.py',
+    'deepagents\site-packages\deepagents_code\main.py',
     'onboarding\index.html',
     'onboarding\styles.css',
     'onboarding\app.ts',

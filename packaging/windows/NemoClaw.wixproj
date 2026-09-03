@@ -34,6 +34,7 @@
     <Error Condition="!Exists('$(PayloadRoot)\pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js')" Text="The Pi runtime package is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\python\python.exe')" Text="The native ARM64 Python runtime is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\hermes\site-packages\hermes_cli\main.py')" Text="The Hermes Agent runtime is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\deepagents\site-packages\deepagents_code\main.py')" Text="The Deep Agents Code runtime is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\onboarding\index.html')" Text="The NemoClaw graphical onboarder is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-exec.exe')" Text="The MXC executor is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-host-prep.exe')" Text="The MXC host preparation utility is missing." />
