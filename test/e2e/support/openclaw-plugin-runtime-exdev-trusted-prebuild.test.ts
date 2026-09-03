@@ -16,9 +16,8 @@ import {
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import {
-  reconcileOpenClawPluginOnboardPairing,
-  runOpenClawPluginOnboardWithPairingResume,
-  runOpenClawPluginRecreateWithPairingResume,
+  runOpenClawPluginOnboardWithFailureEvidence,
+  runOpenClawPluginRecreateWithFailureEvidence,
 } from "../fixtures/openclaw-plugin-runtime-exdev-onboard.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -64,152 +63,28 @@ function onboardResult(exitCode: number, stderr = ""): ShellProbeResult {
   };
 }
 
-describe("OpenClaw plugin onboarding pairing resume", () => {
-  const pausedSession = (
-    overrides: Partial<{
-      agent: string | null;
-      failure: unknown;
-      fromDockerfile: string | null;
-      gatewayName: string;
-      machineState: string;
-      resumable: boolean;
-      sandboxName: string | null;
-      status: string;
-    }> = {},
-  ) => ({
-    agent: overrides.agent ?? "openclaw",
-    failure: overrides.failure ?? null,
-    machine: { state: overrides.machineState ?? "post_verify" },
-    metadata: {
-      fromDockerfile: overrides.fromDockerfile ?? "/tmp/plugin/Dockerfile",
-      gatewayName: overrides.gatewayName ?? "nemoclaw",
-    },
-    resumable: overrides.resumable ?? true,
-    sandboxName: overrides.sandboxName ?? "fixture-sandbox",
-    status: overrides.status ?? "in_progress",
-  });
+describe("OpenClaw plugin onboarding pairing evidence", () => {
+  it("records first-attempt success without diagnostics (#9844)", async () => {
+    const run = vi.fn(async () => onboardResult(0));
+    const captureDiagnostics = vi.fn(async () => true);
+    const onEvidence = vi.fn();
 
-  it("reconciles the paused finalization session for the Ready runtime (#9844)", async () => {
-    await expect(
-      reconcileOpenClawPluginOnboardPairing({
-        expectedFromDockerfile: "/tmp/plugin/Dockerfile",
-        sandboxName: "fixture-sandbox",
-        captureDiagnostics: vi.fn(async () => true),
-        listSandbox: vi.fn(async () => ({
-          ...onboardResult(0),
-          stdout: "NAME STATUS\nfixture-sandbox Ready\n",
-        })),
-        loadSession: vi.fn(() => pausedSession()),
-        resolveTarget: vi.fn(() => ({
-          gatewayName: "nemoclaw",
-        })),
-      }),
-    ).resolves.toBe(true);
-  });
-
-  it.each([
-    ["completed", { status: "complete" }],
-    ["not resumable", { resumable: false }],
-    ["failed", { failure: { step: "post_verify" } }],
-    ["for another sandbox", { sandboxName: "other-sandbox" }],
-    ["for another agent", { agent: "hermes" }],
-    ["before final verification", { machineState: "finalizing" }],
-    ["for another gateway", { gatewayName: "other-gateway" }],
-    ["for another Dockerfile", { fromDockerfile: "/tmp/other/Dockerfile" }],
-  ])("rejects a session that is %s (#9844)", async (_condition, overrides) => {
-    await expect(
-      reconcileOpenClawPluginOnboardPairing({
-        expectedFromDockerfile: "/tmp/plugin/Dockerfile",
-        sandboxName: "fixture-sandbox",
-        captureDiagnostics: vi.fn(async () => true),
-        listSandbox: vi.fn(async () => ({
-          ...onboardResult(0),
-          stdout: "NAME STATUS\nfixture-sandbox Ready\n",
-        })),
-        loadSession: vi.fn(() => pausedSession(overrides)),
-        resolveTarget: vi.fn(() => ({
-          gatewayName: "nemoclaw",
-        })),
-      }),
-    ).resolves.toBe(false);
-  });
-
-  it.each([
-    ["the sandbox is not Ready", "Stopped", pausedSession(), true],
-    ["the runtime identity is unavailable", "Ready", pausedSession(), false],
-    ["the saved session is unavailable", "Ready", null, true],
-  ])(
-    "rejects reconciliation when %s (#9844)",
-    async (_condition, sandboxPhase, session, hasTarget) => {
-      await expect(
-        reconcileOpenClawPluginOnboardPairing({
-          expectedFromDockerfile: "/tmp/plugin/Dockerfile",
-          sandboxName: "fixture-sandbox",
-          captureDiagnostics: vi.fn(async () => true),
-          listSandbox: vi.fn(async () => ({
-            ...onboardResult(0),
-            stdout: `NAME STATUS\nfixture-sandbox ${sandboxPhase}\n`,
-          })),
-          loadSession: vi.fn(() => session),
-          resolveTarget: vi.fn(() =>
-            hasTarget
-              ? {
-                  gatewayName: "nemoclaw",
-                }
-              : null,
-          ),
-        }),
-      ).resolves.toBe(false);
-    },
-  );
-
-  it("resumes once after canonical pairing appears late (#9844)", async () => {
-    const sandboxName = "fixture-sandbox";
-    const attempts = [
-      onboardResult(
-        1,
-        `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
-      ),
-      onboardResult(0),
-    ];
-    const reconcile = vi.fn(async () => true);
-    const evidence = vi.fn();
-
-    const result = await runOpenClawPluginOnboardWithPairingResume({
-      sandboxName,
-      run: vi.fn(async (attempt) => attempts[attempt - 1]),
-      reconcile,
-      onEvidence: evidence,
+    const result = await runOpenClawPluginOnboardWithFailureEvidence({
+      captureDiagnostics,
+      sandboxName: "fixture-sandbox",
+      run,
+      onEvidence,
     });
 
     expect(result.outcome).toBe("passed");
-    expect(reconcile).toHaveBeenCalledExactlyOnceWith(attempts[0], undefined, 1);
-    expect(evidence).toHaveBeenCalledWith(
-      expect.objectContaining({
-        idempotence: "reconciled-mutation",
-        maxAttempts: 2,
-        outcome: "passed-after-retry",
-      }),
+    expect(run).toHaveBeenCalledOnce();
+    expect(captureDiagnostics).not.toHaveBeenCalled();
+    expect(onEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({ maxAttempts: 1, outcome: "passed-first-attempt" }),
     );
   });
 
-  it("does not resume without the pairing-unavailable message (#9844)", async () => {
-    const run = vi.fn(async () => onboardResult(1, "provider registration failed"));
-    const reconcile = vi.fn(async () => true);
-
-    const result = await runOpenClawPluginOnboardWithPairingResume({
-      sandboxName: "fixture-sandbox",
-      run,
-      reconcile,
-      onEvidence: vi.fn(),
-    });
-
-    expect(result.outcome).toBe("failed");
-    expect(run).toHaveBeenCalledOnce();
-    expect(reconcile).not.toHaveBeenCalled();
-  });
-
-  it("does not resume when paused-session reconciliation fails (#9844)", async () => {
+  it("captures diagnostics and fails without retrying ambiguous pairing (#9844)", async () => {
     const sandboxName = "fixture-sandbox";
     const run = vi.fn(async () =>
       onboardResult(
@@ -217,16 +92,45 @@ describe("OpenClaw plugin onboarding pairing resume", () => {
         `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
       ),
     );
+    const captureDiagnostics = vi.fn(async () => false);
+    const onEvidence = vi.fn();
 
-    const result = await runOpenClawPluginOnboardWithPairingResume({
+    const result = await runOpenClawPluginOnboardWithFailureEvidence({
+      captureDiagnostics,
       sandboxName,
       run,
-      reconcile: vi.fn(async () => false),
-      onEvidence: vi.fn(),
+      onEvidence,
     });
 
     expect(result.outcome).toBe("failed");
     expect(run).toHaveBeenCalledOnce();
+    expect(captureDiagnostics).toHaveBeenCalledOnce();
+    expect(onEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxAttempts: 1,
+        outcome: "failed-no-retry",
+        attempts: [
+          expect.objectContaining({
+            failureClass: "ambiguous-mutation",
+            retryScheduled: false,
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("does not capture diagnostics for another onboarding failure (#9844)", async () => {
+    const captureDiagnostics = vi.fn(async () => true);
+
+    const result = await runOpenClawPluginOnboardWithFailureEvidence({
+      captureDiagnostics,
+      sandboxName: "fixture-sandbox",
+      run: vi.fn(async () => onboardResult(1, "provider registration failed")),
+      onEvidence: vi.fn(),
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(captureDiagnostics).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -236,9 +140,9 @@ describe("OpenClaw plugin onboarding pairing resume", () => {
         throw new Error("diagnostics unavailable");
       },
     ],
-    ["returns nonzero", async () => onboardResult(1, "diagnostics failed")],
+    ["returns nonzero", async () => ({ ...onboardResult(1), stdout: "" })],
   ])(
-    "fails closed without a retry when diagnostic execution %s (#9844)",
+    "preserves the pairing failure when diagnostic execution %s (#9844)",
     async (_condition, diagnosticExecution) => {
       const sandboxName = "fixture-sandbox";
       const run = vi.fn(async () =>
@@ -247,31 +151,18 @@ describe("OpenClaw plugin onboarding pairing resume", () => {
           `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
         ),
       );
-      const onEvidence = vi.fn();
       const diagnosticExec = vi.fn(diagnosticExecution);
-      const listSandbox = vi.fn(async () => ({
-        ...onboardResult(0),
-        stdout: `NAME STATUS\n${sandboxName} Ready\n`,
-      }));
 
-      const result = await runOpenClawPluginOnboardWithPairingResume({
+      const result = await runOpenClawPluginOnboardWithFailureEvidence({
+        captureDiagnostics: () =>
+          captureIssue4462FailureDiagnostics({ exec: diagnosticExec } as never, {
+            env: { PATH: "/usr/bin" },
+            redactionValues: ["secret-api-key"],
+            sandboxName,
+          }),
         sandboxName,
         run,
-        reconcile: () =>
-          reconcileOpenClawPluginOnboardPairing({
-            expectedFromDockerfile: "/tmp/plugin/Dockerfile",
-            sandboxName,
-            captureDiagnostics: () =>
-              captureIssue4462FailureDiagnostics({ exec: diagnosticExec } as never, {
-                env: { PATH: "/usr/bin" },
-                redactionValues: ["secret-api-key"],
-                sandboxName,
-              }),
-            listSandbox,
-            loadSession: vi.fn(() => pausedSession()),
-            resolveTarget: vi.fn(() => ({ gatewayName: "nemoclaw" })),
-          }),
-        onEvidence,
+        onEvidence: vi.fn(),
       });
 
       expect(result.outcome).toBe("failed");
@@ -284,97 +175,32 @@ describe("OpenClaw plugin onboarding pairing resume", () => {
           redactionValues: ["secret-api-key"],
         }),
       );
-      expect(listSandbox).not.toHaveBeenCalled();
-      expect(onEvidence).toHaveBeenCalledWith(
-        expect.objectContaining({
-          outcome: "failed-no-retry",
-          attempts: [
-            expect.objectContaining({
-              reconciled: false,
-              retryScheduled: false,
-            }),
-          ],
-        }),
-      );
     },
   );
-
-  it("fails closed without a retry when sandbox listing rejects (#9844)", async () => {
-    const sandboxName = "fixture-sandbox";
-    const run = vi.fn(async () =>
-      onboardResult(
-        1,
-        `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
-      ),
-    );
-    const onEvidence = vi.fn();
-
-    const result = await runOpenClawPluginOnboardWithPairingResume({
-      sandboxName,
-      run,
-      reconcile: () =>
-        reconcileOpenClawPluginOnboardPairing({
-          expectedFromDockerfile: "/tmp/plugin/Dockerfile",
-          sandboxName,
-          captureDiagnostics: vi.fn(async () => true),
-          listSandbox: vi.fn(async () => {
-            throw new Error("listing unavailable");
-          }),
-          loadSession: vi.fn(() => pausedSession()),
-          resolveTarget: vi.fn(() => ({ gatewayName: "nemoclaw" })),
-        }),
-      onEvidence,
-    });
-
-    expect(result.outcome).toBe("failed");
-    expect(run).toHaveBeenCalledOnce();
-    expect(onEvidence).toHaveBeenCalledWith(
-      expect.objectContaining({
-        outcome: "failed-no-retry",
-        attempts: [
-          expect.objectContaining({
-            reconciled: false,
-            retryScheduled: false,
-          }),
-        ],
-      }),
-    );
-  });
 });
 
-describe("OpenClaw plugin recreation pairing resume", () => {
-  it("resumes recreation once after canonical pairing appears late (#9844)", async () => {
-    const sandboxName = "fixture-sandbox";
-    const cliEntrypoint = "/repo/bin/nemoclaw.js";
-    const fromDockerfile = "/tmp/fixture/Dockerfile";
-    const attempts = [
-      onboardResult(
-        1,
-        `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
-      ),
-      onboardResult(0),
-    ];
-    const runCommand = vi
-      .fn()
-      .mockResolvedValueOnce(attempts[0])
-      .mockResolvedValueOnce(attempts[1]);
-    const reconcile = vi.fn(async () => true);
-    const writeEvidence = vi.fn();
+describe("OpenClaw plugin recreation pairing evidence", () => {
+  const recreateOptions = () => ({
+    captureDiagnostics: vi.fn(async () => true),
+    cliEntrypoint: "/repo/bin/nemoclaw.js",
+    fromDockerfile: "/tmp/fixture/Dockerfile",
+    sandboxName: "fixture-sandbox",
+    writeEvidence: vi.fn(),
+  });
 
-    const result = await runOpenClawPluginRecreateWithPairingResume({
-      cliEntrypoint,
-      fromDockerfile,
-      reconcile,
+  it("runs the exact recreation command once (#9844)", async () => {
+    const options = recreateOptions();
+    const runCommand = vi.fn(async () => onboardResult(0));
+
+    const result = await runOpenClawPluginRecreateWithFailureEvidence({
+      ...options,
       runCommand,
-      sandboxName,
-      writeEvidence,
     });
 
     expect(result.outcome).toBe("passed");
-    expect(runCommand).toHaveBeenNthCalledWith(
-      1,
+    expect(runCommand).toHaveBeenCalledExactlyOnceWith(
       [
-        cliEntrypoint,
+        options.cliEntrypoint,
         "onboard",
         "--fresh",
         "--recreate-sandbox",
@@ -382,62 +208,50 @@ describe("OpenClaw plugin recreation pairing resume", () => {
         "--yes",
         "--yes-i-accept-third-party-software",
         "--name",
-        sandboxName,
+        options.sandboxName,
         "--agent",
         "openclaw",
         "--from",
-        fromDockerfile,
+        options.fromDockerfile,
       ],
       "openclaw-weather-plugin-recreate",
     );
-    expect(reconcile).toHaveBeenCalledOnce();
-    expect(reconcile).toHaveBeenCalledWith(
-      "openclaw-weather-plugin-recreate-pairing-reconcile",
-    );
-    expect(runCommand).toHaveBeenNthCalledWith(
-      2,
-      [cliEntrypoint, "onboard", "--resume", "--non-interactive"],
-      "openclaw-weather-plugin-recreate-pairing-resume",
-    );
-    expect(writeEvidence).toHaveBeenCalledWith(
+    expect(options.captureDiagnostics).not.toHaveBeenCalled();
+    expect(options.writeEvidence).toHaveBeenCalledWith(
       "openclaw-weather-plugin-recreate-retry.json",
-      expect.objectContaining({
-        operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
-        outcome: "passed-after-retry",
-      }),
+      expect.objectContaining({ outcome: "passed-first-attempt" }),
     );
   });
 
-  it("does not resume recreation when reconciliation fails (#9844)", async () => {
-    const sandboxName = "fixture-sandbox";
-    const failed = onboardResult(
-      1,
-      `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
+  it("captures recreation diagnostics and fails without resuming (#9844)", async () => {
+    const options = recreateOptions();
+    const runCommand = vi.fn(async () =>
+      onboardResult(
+        1,
+        `OpenClaw onboarding for '${options.sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
+      ),
     );
-    const runCommand = vi.fn(async () => failed);
-    const reconcile = vi.fn(async () => false);
-    const writeEvidence = vi.fn();
 
-    const result = await runOpenClawPluginRecreateWithPairingResume({
-      cliEntrypoint: "/repo/bin/nemoclaw.js",
-      fromDockerfile: "/tmp/fixture/Dockerfile",
-      reconcile,
+    const result = await runOpenClawPluginRecreateWithFailureEvidence({
+      ...options,
       runCommand,
-      sandboxName,
-      writeEvidence,
     });
 
     expect(result.outcome).toBe("failed");
     expect(runCommand).toHaveBeenCalledOnce();
-    expect(reconcile).toHaveBeenCalledWith(
-      "openclaw-weather-plugin-recreate-pairing-reconcile",
+    expect(options.captureDiagnostics).toHaveBeenCalledExactlyOnceWith(
+      "openclaw-weather-plugin-recreate-pairing-diagnostics",
     );
-    expect(writeEvidence).toHaveBeenCalledWith(
+    expect(options.writeEvidence).toHaveBeenCalledWith(
       "openclaw-weather-plugin-recreate-retry.json",
       expect.objectContaining({
-        operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
         outcome: "failed-no-retry",
-        attempts: [expect.objectContaining({ reconciled: false, retryScheduled: false })],
+        attempts: [
+          expect.objectContaining({
+            failureClass: "ambiguous-mutation",
+            retryScheduled: false,
+          }),
+        ],
       }),
     );
   });

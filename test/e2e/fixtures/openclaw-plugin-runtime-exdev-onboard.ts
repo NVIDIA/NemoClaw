@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type CommandExitResult, outputContainsReadySandbox } from "./clients/command.ts";
+import type { CommandExitResult } from "./clients/command.ts";
 import {
   runBoundedRetry,
   type BoundedRetryResult,
@@ -12,47 +12,23 @@ const ONBOARD_OPERATION = "openclaw-plugin-runtime-exdev.onboard-pairing";
 const RECREATE_OPERATION = "openclaw-plugin-runtime-exdev.recreate-pairing";
 const OWNER = "openclaw-plugin-runtime-exdev";
 const RECREATE_ARTIFACT = "openclaw-weather-plugin-recreate";
-const RECREATE_RESUME_ARTIFACT = "openclaw-weather-plugin-recreate-pairing-resume";
-const RECREATE_RECONCILE_ARTIFACT = "openclaw-weather-plugin-recreate-pairing-reconcile";
+const RECREATE_DIAGNOSTICS_ARTIFACT = "openclaw-weather-plugin-recreate-pairing-diagnostics";
 const RECREATE_RETRY_EVIDENCE_ARTIFACT = "openclaw-weather-plugin-recreate-retry.json";
 
-type OnboardPairingRetryOptions<T extends CommandExitResult> = {
+type OnboardPairingEvidenceOptions<T extends CommandExitResult> = {
+  captureDiagnostics(): Promise<unknown>;
   sandboxName: string;
-  run(attempt: number): Promise<T>;
-  reconcile(value: T | undefined, error: unknown, attempt: number): Promise<boolean>;
+  run(): Promise<T>;
   onEvidence(evidence: RetryEvidence): Promise<void> | void;
 };
 
-type RecreatePairingRetryOptions<T extends CommandExitResult> = {
+type RecreatePairingEvidenceOptions<T extends CommandExitResult> = {
+  captureDiagnostics(artifactName: string): Promise<unknown>;
   cliEntrypoint: string;
   fromDockerfile: string;
-  reconcile(artifactName: string): Promise<boolean>;
   runCommand(args: string[], artifactName: string): Promise<T>;
   sandboxName: string;
   writeEvidence(artifactName: string, evidence: RetryEvidence): Promise<void> | void;
-};
-
-type PairingTarget = {
-  gatewayName: string;
-};
-
-type OnboardPairingSession = {
-  agent: string | null;
-  failure: unknown;
-  machine: { state: string };
-  metadata: { fromDockerfile: string | null; gatewayName: string };
-  resumable: boolean;
-  sandboxName: string | null;
-  status: string;
-};
-
-type OnboardPairingReconciliationOptions<T extends CommandExitResult> = {
-  expectedFromDockerfile: string;
-  sandboxName: string;
-  captureDiagnostics(): Promise<boolean>;
-  listSandbox(): Promise<T>;
-  loadSession(): OnboardPairingSession | null;
-  resolveTarget(): PairingTarget | null;
 };
 
 export function classifyOpenClawPluginOnboard<T extends CommandExitResult>(
@@ -61,98 +37,85 @@ export function classifyOpenClawPluginOnboard<T extends CommandExitResult>(
   sandboxName: string,
 ):
   | { outcome: "passed" }
-  | { outcome: "failed"; failureClass: "deterministic" | "transient-external" } {
+  | { outcome: "failed"; failureClass: "ambiguous-mutation" | "deterministic" } {
   if (error === undefined && value?.exitCode === 0) return { outcome: "passed" };
   const message = `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`;
   const output = value ? `${value.stdout}\n${value.stderr}` : "";
   return {
     outcome: "failed",
     failureClass:
-      error === undefined && output.includes(message) ? "transient-external" : "deterministic",
+      error === undefined && output.includes(message) ? "ambiguous-mutation" : "deterministic",
   };
 }
 
-function runOpenClawPluginWithPairingResume<T extends CommandExitResult>(
-  options: OnboardPairingRetryOptions<T>,
+async function capturePairingFailure<T extends CommandExitResult>(
+  run: () => Promise<T>,
+  sandboxName: string,
+  captureDiagnostics: () => Promise<unknown>,
+): Promise<T> {
+  const value = await run();
+  const classification = classifyOpenClawPluginOnboard(value, undefined, sandboxName);
+  if (classification.outcome === "failed" && classification.failureClass === "ambiguous-mutation") {
+    try {
+      await captureDiagnostics();
+    } catch {
+      // Preserve the primary pairing failure when diagnostics are unavailable.
+    }
+  }
+  return value;
+}
+
+function runOpenClawPluginWithFailureEvidence<T extends CommandExitResult>(
+  options: OnboardPairingEvidenceOptions<T>,
   operation: string,
 ): Promise<BoundedRetryResult<T>> {
   return runBoundedRetry({
     operation,
     owner: OWNER,
     idempotence: "reconciled-mutation",
-    maxAttempts: 2,
-    run: options.run,
+    maxAttempts: 1,
+    run: () => capturePairingFailure(options.run, options.sandboxName, options.captureDiagnostics),
     classify: (value, error) => classifyOpenClawPluginOnboard(value, error, options.sandboxName),
-    reconcile: options.reconcile,
     onEvidence: options.onEvidence,
   });
 }
 
-/** Resume initial onboarding once when the startup watcher has not published canonical pairing. */
-export function runOpenClawPluginOnboardWithPairingResume<T extends CommandExitResult>(
-  options: OnboardPairingRetryOptions<T>,
+/** Run initial onboarding once and retain evidence for any canonical pairing failure. */
+export function runOpenClawPluginOnboardWithFailureEvidence<T extends CommandExitResult>(
+  options: OnboardPairingEvidenceOptions<T>,
 ): Promise<BoundedRetryResult<T>> {
-  return runOpenClawPluginWithPairingResume(options, ONBOARD_OPERATION);
+  return runOpenClawPluginWithFailureEvidence(options, ONBOARD_OPERATION);
 }
 
-/** Resume sandbox recreation once when the startup watcher has not published canonical pairing. */
-export function runOpenClawPluginRecreateWithPairingResume<T extends CommandExitResult>(
-  options: RecreatePairingRetryOptions<T>,
+/** Run sandbox recreation once and retain evidence for any canonical pairing failure. */
+export function runOpenClawPluginRecreateWithFailureEvidence<T extends CommandExitResult>(
+  options: RecreatePairingEvidenceOptions<T>,
 ): Promise<BoundedRetryResult<T>> {
-  return runOpenClawPluginWithPairingResume(
+  return runOpenClawPluginWithFailureEvidence(
     {
       sandboxName: options.sandboxName,
-      run: (attempt) =>
+      run: () =>
         options.runCommand(
-          attempt === 1
-            ? [
-                options.cliEntrypoint,
-                "onboard",
-                "--fresh",
-                "--recreate-sandbox",
-                "--non-interactive",
-                "--yes",
-                "--yes-i-accept-third-party-software",
-                "--name",
-                options.sandboxName,
-                "--agent",
-                "openclaw",
-                "--from",
-                options.fromDockerfile,
-              ]
-            : [options.cliEntrypoint, "onboard", "--resume", "--non-interactive"],
-          attempt === 1 ? RECREATE_ARTIFACT : RECREATE_RESUME_ARTIFACT,
+          [
+            options.cliEntrypoint,
+            "onboard",
+            "--fresh",
+            "--recreate-sandbox",
+            "--non-interactive",
+            "--yes",
+            "--yes-i-accept-third-party-software",
+            "--name",
+            options.sandboxName,
+            "--agent",
+            "openclaw",
+            "--from",
+            options.fromDockerfile,
+          ],
+          RECREATE_ARTIFACT,
         ),
-      reconcile: () => options.reconcile(RECREATE_RECONCILE_ARTIFACT),
+      captureDiagnostics: () => options.captureDiagnostics(RECREATE_DIAGNOSTICS_ARTIFACT),
       onEvidence: (evidence) => options.writeEvidence(RECREATE_RETRY_EVIDENCE_ARTIFACT, evidence),
     },
     RECREATE_OPERATION,
   );
-}
-
-/** Require the paused finalization session and its live runtime before resume can continue. */
-export async function reconcileOpenClawPluginOnboardPairing<T extends CommandExitResult>(
-  options: OnboardPairingReconciliationOptions<T>,
-): Promise<boolean> {
-  try {
-    if (!(await options.captureDiagnostics())) return false;
-    const list = await options.listSandbox();
-    if (list.exitCode !== 0 || !outputContainsReadySandbox(list, options.sandboxName)) return false;
-    const target = options.resolveTarget();
-    if (!target) return false;
-    const session = options.loadSession();
-    return (
-      session !== null &&
-      session.status === "in_progress" &&
-      session.resumable === true &&
-      session.failure === null &&
-      session.sandboxName === options.sandboxName &&
-      session.agent === "openclaw" &&
-      session.machine.state === "post_verify" &&
-      session.metadata.gatewayName === target.gatewayName &&
-      session.metadata.fromDockerfile === options.expectedFromDockerfile
-    );
-  } catch {
-    return false;
-  }
 }

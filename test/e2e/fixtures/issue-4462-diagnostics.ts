@@ -5,6 +5,7 @@ import type { SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 
 interface Issue4462FailureDiagnosticsOptions {
+  artifactName?: string;
   env: NodeJS.ProcessEnv;
   redactionValues: readonly string[];
   sandboxName: string;
@@ -128,20 +129,37 @@ export function buildIssue4462DiagnosticsCommand(
   return ["node", "-e", PROJECT_PAIRING_DIAGNOSTICS_PROGRAM, ...logPaths];
 }
 
-/** Preserve startup pairing evidence and report whether its command completed successfully. */
+function hasReadablePairingDiagnostics(output: string): boolean {
+  try {
+    const value = JSON.parse(output.trim()) as {
+      autoPair?: { readable?: unknown };
+      gateway?: { readable?: unknown };
+      schemaVersion?: unknown;
+    };
+    return (
+      value.schemaVersion === 1 &&
+      value.autoPair?.readable === true &&
+      value.gateway?.readable === true
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Preserve startup pairing evidence and report whether both required logs were readable. */
 export async function captureIssue4462FailureDiagnostics(
   sandbox: Pick<SandboxClient, "exec">,
   options: Issue4462FailureDiagnosticsOptions,
 ): Promise<boolean> {
   try {
     const result = await sandbox.exec(options.sandboxName, buildIssue4462DiagnosticsCommand(), {
-      artifactName: "failure-openclaw-pairing-diagnostics",
+      artifactName: options.artifactName ?? "failure-openclaw-pairing-diagnostics",
       captureLimitBytes: 1024 * 1024,
       env: options.env,
       redactionValues: [...options.redactionValues],
       timeoutMs: 30_000,
     });
-    return result.exitCode === 0;
+    return result.exitCode === 0 && hasReadablePairingDiagnostics(result.stdout);
   } catch {
     // Preserve the primary failure when the sandbox or its logs are unavailable.
     return false;

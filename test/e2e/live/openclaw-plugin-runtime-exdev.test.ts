@@ -8,9 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { resolveOpenshell } from "../../../src/lib/adapters/openshell/resolve.ts";
-import { resolveOrdinaryOpenClawPairingTarget } from "../../../src/lib/actions/sandbox/launch-readiness.ts";
 import { pullAndResolveBaseImageDigest } from "../../../src/lib/onboard/base-image.ts";
-import { loadSession } from "../../../src/lib/state/onboard-session.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -26,9 +24,8 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import {
-  reconcileOpenClawPluginOnboardPairing,
-  runOpenClawPluginOnboardWithPairingResume,
-  runOpenClawPluginRecreateWithPairingResume,
+  runOpenClawPluginOnboardWithFailureEvidence,
+  runOpenClawPluginRecreateWithFailureEvidence,
 } from "../fixtures/openclaw-plugin-runtime-exdev-onboard.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -448,24 +445,12 @@ test(
       openshellWrapper,
       openshell,
     );
-    const reconcilePairing = (artifactName: string) =>
-      reconcileOpenClawPluginOnboardPairing({
-        expectedFromDockerfile: customPluginContext.dockerfilePath,
+    const capturePairingDiagnostics = (artifactName: string) =>
+      captureIssue4462FailureDiagnostics(sandbox, {
+        artifactName,
+        env: sandboxEnv,
+        redactionValues: ["nemoclaw-exdev-dummy-key"],
         sandboxName: SANDBOX_NAME,
-        captureDiagnostics: () =>
-          captureIssue4462FailureDiagnostics(sandbox, {
-            env: sandboxEnv,
-            redactionValues: ["nemoclaw-exdev-dummy-key"],
-            sandboxName: SANDBOX_NAME,
-          }),
-        listSandbox: () =>
-          sandbox.list({
-            artifactName,
-            env: sandboxEnv,
-            timeoutMs: PROBE_TIMEOUT_MS,
-          }),
-        loadSession,
-        resolveTarget: () => resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME),
       });
 
     progress.phase("build and onboard plugin v1");
@@ -507,34 +492,30 @@ test(
       version: "v1",
     });
     openshellWrapper.selectImage(pluginImageV1);
-    const onboard = await runOpenClawPluginOnboardWithPairingResume({
+    const onboard = await runOpenClawPluginOnboardWithFailureEvidence({
       sandboxName: SANDBOX_NAME,
-      run: (attempt) =>
+      run: () =>
         host.command(
           "node",
-          attempt === 1
-            ? [
-                CLI_ENTRYPOINT,
-                "onboard",
-                "--fresh",
-                "--non-interactive",
-                "--yes-i-accept-third-party-software",
-                "--agent",
-                "openclaw",
-                "--from",
-                customPluginContext.dockerfilePath,
-              ]
-            : [CLI_ENTRYPOINT, "onboard", "--resume", "--non-interactive"],
+          [
+            CLI_ENTRYPOINT,
+            "onboard",
+            "--fresh",
+            "--non-interactive",
+            "--yes-i-accept-third-party-software",
+            "--agent",
+            "openclaw",
+            "--from",
+            customPluginContext.dockerfilePath,
+          ],
           {
-            artifactName:
-              attempt === 1
-                ? "openclaw-plugin-exdev-onboard"
-                : "openclaw-plugin-exdev-onboard-pairing-resume",
+            artifactName: "openclaw-plugin-exdev-onboard",
             env: sandboxEnv,
             timeoutMs: ONBOARD_TIMEOUT_MS,
           },
         ),
-      reconcile: () => reconcilePairing("openclaw-plugin-exdev-onboard-pairing-reconcile"),
+      captureDiagnostics: () =>
+        capturePairingDiagnostics("openclaw-plugin-exdev-onboard-pairing-diagnostics"),
       onEvidence: async (evidence) => {
         await artifacts.writeJson("openclaw-plugin-exdev-onboard-retry.json", evidence);
       },
@@ -586,10 +567,10 @@ test(
       version: "v2",
     });
     openshellWrapper.selectImage(pluginImageV2);
-    const recreate = await runOpenClawPluginRecreateWithPairingResume({
+    const recreate = await runOpenClawPluginRecreateWithFailureEvidence({
       cliEntrypoint: CLI_ENTRYPOINT,
       fromDockerfile: customPluginContext.dockerfilePath,
-      reconcile: reconcilePairing,
+      captureDiagnostics: (artifactName) => capturePairingDiagnostics(artifactName),
       runCommand: (args, artifactName) =>
         host.command("node", args, {
           artifactName,
@@ -601,7 +582,9 @@ test(
         await artifacts.writeJson(artifactName, evidence);
       },
     });
-    const recreateText = recreate.value ? resultText(recreate.value) : "recreate returned no result";
+    const recreateText = recreate.value
+      ? resultText(recreate.value)
+      : "recreate returned no result";
     expect(recreate.outcome, recreateText).toBe("passed");
     const weatherAfterRecreate = await assertWeatherPluginRuntime(sandbox, "after-recreate", "v2");
 

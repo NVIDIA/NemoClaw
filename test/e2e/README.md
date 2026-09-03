@@ -633,9 +633,10 @@ The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
 4. Recreate the sandbox with the plugin changed to v2 and verify v2.
 
 The recreation remains the replacement boundary. Initial onboarding and
-recreation can each resume once after structured failure diagnostics, the same
-Ready sandbox, ordinary OpenClaw runtime, and matching paused session pass reconciliation. `tools.invoke`
-assertions prove the plugin version after restart and recreation.
+recreation each run once. If canonical CLI device pairing does not appear, the
+test records distinct structured diagnostics and bounded `failed-no-retry`
+evidence, then stops without automatically resuming the ambiguously mutated
+session. `tools.invoke` assertions prove the plugin version after restart and recreation.
 The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
 across the proven filesystem boundary before restart. `e2e-support` tests own
 deterministic wrapper argument rewriting. Deterministic tests own exact package

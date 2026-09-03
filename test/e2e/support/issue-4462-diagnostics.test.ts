@@ -16,7 +16,14 @@ import {
 
 describe("pairing failure evidence", () => {
   it("invokes structured auto-pair and gateway diagnostics with fixed arguments (#9844)", async () => {
-    const exec = vi.fn(async () => ({ exitCode: 0 }));
+    const exec = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        autoPair: { readable: true },
+        gateway: { readable: true },
+      }),
+    }));
 
     await expect(
       captureIssue4462FailureDiagnostics({ exec } as never, {
@@ -35,6 +42,31 @@ describe("pairing failure evidence", () => {
       }),
     );
   });
+
+  it.each([
+    [false, true],
+    [true, false],
+  ])(
+    "fails closed when required diagnostic readability is autoPair=%s gateway=%s (#9844)",
+    async (autoPairReadable, gatewayReadable) => {
+      const exec = vi.fn(async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify({
+          schemaVersion: 1,
+          autoPair: { readable: autoPairReadable },
+          gateway: { readable: gatewayReadable },
+        }),
+      }));
+
+      await expect(
+        captureIssue4462FailureDiagnostics({ exec } as never, {
+          env: {},
+          redactionValues: [],
+          sandboxName: "issue-4462",
+        }),
+      ).resolves.toBe(false);
+    },
+  );
 
   it("emits only structured allowlisted diagnostics from secret-bearing logs (#9844)", () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-issue4462-diagnostics-"));
