@@ -186,6 +186,17 @@ describe("Hermes image build probes", () => {
     expect(dockerfile.indexOf(applyCheck, shaCheckIndex)).toBeGreaterThan(shaCheckIndex);
   });
 
+  it("removes the Hindsight probe wheel after staging its temporary copy", () => {
+    const probeWheel = "/opt/nemoclaw-hermes-config/hindsight-probe-aiohttp-retry.whl";
+    const copyIndex = dockerfile.indexOf(`cp ${probeWheel}`);
+    const removalIndex = dockerfile.indexOf(`rm ${probeWheel}`, copyIndex);
+    const absenceCheckIndex = dockerfile.indexOf(`check_absent ${probeWheel}`);
+
+    expect(copyIndex).toBeGreaterThan(-1);
+    expect(removalIndex).toBeGreaterThan(copyIndex);
+    expect(absenceCheckIndex).toBeGreaterThan(removalIndex);
+  });
+
   it("rejects an upgrade that retains the Hermes 0.20.6 adapter", () => {
     const result = runCompatibilityRetirementProbe({ version: "hermes v0.20.0" });
 
