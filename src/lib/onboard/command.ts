@@ -10,6 +10,7 @@ import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { NEMOCLAW_SERVING_PRESET_ENV } from "../inference/serving/managed-cluster-discovery";
 import {
   resolveServingProfileSelection,
+  type ListServingProfilesOptions,
   type ServingProfileListEntry,
   ServingProfileSelectionError,
 } from "../inference/serving/profile-list";
@@ -99,8 +100,9 @@ export interface ResolveOnboardOptionsDeps {
   platform?: NodeJS.Platform;
   arch?: NodeJS.Architecture;
   runtimeProviders?: import("./runtime-provider/access").RuntimeProviderBundleRegistry;
+  providerOwnsVllmHostReadiness?: () => boolean;
   listAgents?: () => string[];
-  listServingProfiles?: () => ServingProfileListEntry[];
+  listServingProfiles?: (options?: ListServingProfilesOptions) => ServingProfileListEntry[];
   loadServingCatalog?: () => CompiledServingCatalog;
   loadSession?: () => {
     servingProfileProvenance?: ServingProfileProvenance | null;
@@ -298,9 +300,19 @@ function validateServingProfileConflicts(
   }
 }
 
+function servingProfileProviderOwnsHostReadiness(
+  requested: string | undefined,
+  experimentalProfile: ExperimentalOnboardProfile | null,
+  deps: ResolveOnboardOptionsDeps,
+): boolean {
+  if (requested === undefined || experimentalProfile !== null) return false;
+  return deps.providerOwnsVllmHostReadiness?.() ?? false;
+}
+
 function resolveServingProfile(
   requested: string | undefined,
   deps: ResolveOnboardOptionsDeps,
+  providerOwnsHostReadiness: boolean,
 ): ServingProfileProvenance | null {
   if (requested === undefined) return null;
   const catalog = (deps.loadServingCatalog ?? loadServingCatalog)();
@@ -308,7 +320,10 @@ function resolveServingProfile(
   try {
     selectedProfileId = resolveServingProfileSelection(requested.trim(), {
       catalog,
-      listProfiles: deps.listServingProfiles ? () => deps.listServingProfiles!() : undefined,
+      providerOwnsHostReadiness,
+      listProfiles: deps.listServingProfiles
+        ? (_catalog, options) => deps.listServingProfiles!(options)
+        : undefined,
     });
   } catch (error) {
     if (error instanceof ServingProfileSelectionError) fail(deps, `  ${error.message}`);
@@ -340,8 +355,9 @@ function resolveServingProfileLifecycle(
   flags: OnboardFlags,
   deps: ResolveOnboardOptionsDeps,
   resume: boolean,
+  providerOwnsHostReadiness: boolean,
 ): ServingProfileProvenance | null {
-  const explicit = resolveServingProfile(flags.profile, deps);
+  const explicit = resolveServingProfile(flags.profile, deps, providerOwnsHostReadiness);
   const installerProfile = resolveInstallerServingProfile(deps);
   if (
     explicit &&
@@ -469,7 +485,17 @@ export function resolveOnboardOptions(
   const experimentalProfile = resolveExperimentalProfile(flags, deps.resumeIntent);
   const resume = deps.resumeIntent?.effectiveResume ?? flags.resume === true;
   const agent = resolveAgent(flags.agent, deps);
-  const servingProfileProvenance = resolveServingProfileLifecycle(flags, deps, resume);
+  const providerOwnsHostReadiness = servingProfileProviderOwnsHostReadiness(
+    flags.profile,
+    experimentalProfile,
+    deps,
+  );
+  const servingProfileProvenance = resolveServingProfileLifecycle(
+    flags,
+    deps,
+    resume,
+    providerOwnsHostReadiness,
+  );
   const vllmGpuDevice = resolveVllmGpuDevice(flags["vllm-gpu-device"], resume, deps);
   validateObservabilityAgent(flags.observability, agent, deps);
   const toolDisclosure = resolveOnboardToolDisclosure(flags, experimentalProfile, resume, deps);

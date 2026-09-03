@@ -884,13 +884,18 @@ describe("onboard command options", () => {
       displayName: "Muse Glimmer 30B NVFP4 W4A4 on one DGX Spark",
       backend: "vllm",
     };
-    const env: NodeJS.ProcessEnv = {};
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_GATEWAY_RUNTIME: "podman" };
     let observedProvider: string | undefined;
     let observedPreset: string | undefined;
+    const observedReadinessOwnership: Array<boolean | undefined> = [];
     await runOnboardCommand({
       flags: { profile: vllmProfile.id },
       env,
-      listServingProfiles: () => [vllmProfile],
+      providerOwnsVllmHostReadiness: () => true,
+      listServingProfiles: (options) => {
+        observedReadinessOwnership.push(options?.providerOwnsHostReadiness);
+        return [vllmProfile];
+      },
       runOnboard: async () => {
         observedProvider = env.NEMOCLAW_PROVIDER;
         observedPreset = env.NEMOCLAW_SERVING_PRESET;
@@ -899,9 +904,31 @@ describe("onboard command options", () => {
 
     expect(observedProvider).toBe("install-vllm");
     expect(observedPreset).toBe(vllmProfile.id);
+    expect(observedReadinessOwnership).toEqual([true]);
     // Scoped to the run, like the preset itself.
     expect(env.NEMOCLAW_PROVIDER).toBeUndefined();
     expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
+  });
+
+  it("keeps Docker readiness for --profile under the portable profile", () => {
+    const observedReadinessOwnership: Array<boolean | undefined> = [];
+
+    resolve(
+      {
+        profile: COMPATIBLE_NANO_PROFILE.id,
+        "experimental-profile": "portable",
+      },
+      {
+        env: { NEMOCLAW_GATEWAY_RUNTIME: "podman" },
+        providerOwnsVllmHostReadiness: () => true,
+        listServingProfiles: (options) => {
+          observedReadinessOwnership.push(options?.providerOwnsHostReadiness);
+          return [COMPATIBLE_NANO_PROFILE];
+        },
+      },
+    );
+
+    expect(observedReadinessOwnership).toEqual([false]);
   });
 
   it("selects the managed llama.cpp provider for a llama-cpp profile (#9313)", async () => {

@@ -7,6 +7,10 @@ import { type OnboardCommandOptions, runOnboardCommand } from "../onboard/comman
 import { type OnboardFlags, readAgentRegistryNames } from "../onboard/command-support";
 import { resolveOnboardResumeIntent } from "../onboard/session-bootstrap";
 import { loadOnboardCommandResumeSession } from "../onboard/sandbox-registration";
+import {
+  resolveCurrentRuntimeProviderBundle,
+  runtimeProviderOwnsHostLocalInferenceReadiness,
+} from "../onboard/runtime-provider/access";
 import type { OnboardOptions } from "../onboard/types";
 
 export interface OnboardActionRuntimeDeps {
@@ -32,6 +36,11 @@ function buildOnboardCommandDeps(flags: OnboardFlags, runtimeDeps: OnboardAction
     runOnboard: (options: OnboardCommandOptions) => runOnboard(options, runtimeDeps),
     listAgents: () => [...readAgentRegistryNames()],
     loadServingCatalog,
+    providerOwnsVllmHostReadiness: () =>
+      runtimeProviderOwnsHostLocalInferenceReadiness(
+        resolveCurrentRuntimeProviderBundle(),
+        "vllm",
+      ),
     loadSession: loadOnboardCommandResumeSession,
     resolveResumeIntent: resolveOnboardResumeIntent,
     log: console.log,

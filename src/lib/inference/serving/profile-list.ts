@@ -72,6 +72,7 @@ function compatibility(
   preset: ServingPreset,
   recipe: ServingRecipe,
   readinessReports: readonly ManagedInferenceReadinessSource[],
+  providerOwnsHostReadiness: boolean,
 ): { compatible: boolean; incompatibilityReason: string | null } {
   if (preset.spec.selection === "disabled" || supportState(preset) === "disabled") {
     return { compatible: false, incompatibilityReason: "Profile is disabled." };
@@ -86,6 +87,7 @@ function compatibility(
     {
       readinessReports,
       topologyQualifications: [],
+      providerOwnsHostReadiness,
       intent: { preset: preset.metadata.id },
     },
     managedInferenceCatalogFromServingCatalog(catalog),
@@ -98,11 +100,16 @@ function compatibility(
 export interface ListServingProfilesOptions {
   readonly evaluateCompatibility?: typeof compatibility;
   readonly readinessReports?: readonly ManagedInferenceReadinessSource[];
+  readonly providerOwnsHostReadiness?: boolean;
 }
 
 export interface ResolveServingProfileOptions {
   readonly catalog?: CompiledServingCatalog;
-  readonly listProfiles?: (catalog: CompiledServingCatalog) => ServingProfileListEntry[];
+  readonly listProfiles?: (
+    catalog: CompiledServingCatalog,
+    options: ListServingProfilesOptions,
+  ) => ServingProfileListEntry[];
+  readonly providerOwnsHostReadiness?: boolean;
 }
 
 export class ServingProfileSelectionError extends Error {}
@@ -135,7 +142,9 @@ export function resolveServingProfileSelection(
       `Serving profile '${selected.metadata.id}' is disabled.`,
     );
   }
-  const profile = (options.listProfiles ?? listServingProfiles)(catalog).find(
+  const profile = (options.listProfiles ?? listServingProfiles)(catalog, {
+    providerOwnsHostReadiness: options.providerOwnsHostReadiness,
+  }).find(
     ({ id }) => id === selected.metadata.id,
   );
   if (!profile?.compatible) {
@@ -199,6 +208,7 @@ export function listServingProfiles(
           preset,
           recipe,
           readinessReports,
+          options.providerOwnsHostReadiness === true,
         ),
       };
     });

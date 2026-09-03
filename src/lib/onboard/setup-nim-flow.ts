@@ -57,7 +57,10 @@ import { reportProviderSelectionFailure } from "./provider-selection-failure";
 import { promptForInferenceProviderSelection } from "./provider-selection-prompt";
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
 import type { RuntimeProviderBundle } from "./runtime-provider/contract";
-import { resolveCurrentRuntimeProviderBundle } from "./runtime-provider/current";
+import {
+  resolveCurrentRuntimeProviderBundle,
+  runtimeProviderHostReadinessOptions,
+} from "./runtime-provider/current";
 
 export { resolveCurrentRuntimeProviderBundle };
 export { createHermesPortableOllamaInferenceResolver } from "./experimental/hermes-portable-ollama-inference";
@@ -69,17 +72,6 @@ export { probeLlamaCppAttachment } from "../inference/llama-cpp";
 export { createLlamaCppSelectionHandler } from "./llama-cpp-selection";
 export { createLocalModelProfileIntegration } from "./local-model-profile/integration";
 export { resumeManagedLlamaCppRuntime };
-
-function managedVllmHostReadinessOptions(
-  provider: RuntimeProviderBundle,
-): { readonly providerOwnsHostReadiness?: true } {
-  const ownsReadiness =
-    provider.gateway.supported &&
-    provider.gateway.ownsHostReadiness &&
-    provider.hostLocalInference.supported &&
-    provider.hostLocalInference.services.includes("vllm");
-  return ownsReadiness ? { providerOwnsHostReadiness: true } : {};
-}
 
 /** Bind managed llama.cpp resume to the selected runtime provider. */
 export function bindManagedLlamaCppResume(gatewayPort: number) {
@@ -1300,7 +1292,7 @@ export function createSetupNim(
             hasImage: hasVllmImage,
             nonInteractive: deps.isNonInteractive(),
             promptFn: deps.prompt,
-            ...managedVllmHostReadinessOptions(deps.getRuntimeProvider()),
+            ...runtimeProviderHostReadinessOptions(deps.getRuntimeProvider(), "vllm"),
             ...vllmRecovery,
             beforeInstall: (modelId) => {
               seedVllmInstallRoute(modelId);

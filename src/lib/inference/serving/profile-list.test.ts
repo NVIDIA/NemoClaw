@@ -77,17 +77,21 @@ describe("serving profile discovery", () => {
     const catalog = loadServingCatalog();
     const readinessReports = [] as const;
     const observed: unknown[] = [];
+    const observedOwnership: boolean[] = [];
 
     listServingProfiles(catalog, {
       readinessReports,
-      evaluateCompatibility: (_catalog, _preset, _recipe, reports) => {
+      providerOwnsHostReadiness: true,
+      evaluateCompatibility: (_catalog, _preset, _recipe, reports, ownsHostReadiness) => {
         observed.push(reports);
+        observedOwnership.push(ownsHostReadiness);
         return { compatible: true, incompatibilityReason: null };
       },
     });
 
     expect(observed).toHaveLength(catalog.presets.length);
     expect(observed.every((reports) => reports === readinessReports)).toBe(true);
+    expect(observedOwnership.every(Boolean)).toBe(true);
   });
 
   it("escapes an untrusted profile candidate in diagnostics (#8384)", () => {

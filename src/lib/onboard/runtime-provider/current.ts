@@ -24,6 +24,8 @@ import {
   resolveRuntimeProviderBundle,
 } from "./registry";
 
+export { runtimeProviderHostReadinessOptions } from "./contract";
+
 /**
  * Established providers precede qualification-gated registrations so adding a
  * provider does not add another selection branch to managed orchestration.

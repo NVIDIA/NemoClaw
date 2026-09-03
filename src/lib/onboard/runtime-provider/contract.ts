@@ -725,4 +725,26 @@ export interface RuntimeProviderBundle {
   readonly containerEngine: RuntimeProviderContainerEngineSurface;
 }
 
+/** Whether the selected provider replaces standard Docker readiness for a supported service. */
+export function runtimeProviderOwnsHostLocalInferenceReadiness(
+  provider: RuntimeProviderBundle,
+  service: HostLocalInferenceService,
+): boolean {
+  return (
+    provider.gateway.supported &&
+    provider.gateway.ownsHostReadiness &&
+    provider.hostLocalInference.supported &&
+    provider.hostLocalInference.services.includes(service)
+  );
+}
+
+export function runtimeProviderHostReadinessOptions(
+  provider: RuntimeProviderBundle,
+  service: HostLocalInferenceService,
+): { readonly providerOwnsHostReadiness?: true } {
+  return runtimeProviderOwnsHostLocalInferenceReadiness(provider, service)
+    ? { providerOwnsHostReadiness: true }
+    : {};
+}
+
 export type RuntimeProviderBundleRegistry = Readonly<Record<string, RuntimeProviderBundle>>;

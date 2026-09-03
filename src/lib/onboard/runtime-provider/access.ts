@@ -27,6 +27,10 @@ export type {
   RuntimeProviderWorkloadProfile,
 } from "./contract";
 export {
+  runtimeProviderHostReadinessOptions,
+  runtimeProviderOwnsHostLocalInferenceReadiness,
+} from "./contract";
+export {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   createCurrentRuntimeProviderBundles,
   resolveCurrentRuntimeProviderBundle,
