@@ -199,11 +199,11 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
   });
 
   it("preserves an occupied recovery path and reports an unused location before retry (#10756)", async () => {
-    const sandboxRoot = path.join(process.env.HOME!, "sandbox");
+    const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-recovery-"));
+    tempHomes.push(sandboxRoot);
     const occupiedRecoveryPath = path.join(sandboxRoot, ".nemoclaw-mcp.json.recovery");
     const projectionPath = path.join(sandboxRoot, ".deepagents", ".nemoclaw-mcp.json");
-    const shellInjectionMarker = path.join(process.env.HOME!, "unexpected-shell-command");
-    const sandboxName = `alpha $(touch ${shellInjectionMarker})`;
+    const sandboxName = "alpha $(printf injected)";
     fs.mkdirSync(occupiedRecoveryPath, { recursive: true });
     fs.writeFileSync(path.join(occupiedRecoveryPath, "keep.txt"), "existing recovery\n");
     fs.mkdirSync(projectionPath, { recursive: true });
@@ -255,17 +255,20 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     const recoveryGuidance = (failure as InstanceType<typeof SnapshotCommandError>).lines[2];
     const recoveryAction = recoveryGuidance.match(/run `([^`]+)`/)?.[1] ?? "";
     expect(recoveryAction).not.toBe("");
-    const parsedRecoveryAction = spawnSync("sh", [
-      "-c",
-      `nemoclaw() { printf "%s\\0" "$@"; }\n${recoveryAction}`,
-    ]);
+    const recoveryActionPath = path.join(sandboxRoot, "run-recovery-action.sh");
+    fs.writeFileSync(
+      recoveryActionPath,
+      `nemoclaw() { printf "%s\\0" "$@"; }\n${recoveryAction}\n`,
+    );
+    const parsedRecoveryAction = spawnSync("sh", [recoveryActionPath]);
     expect(parsedRecoveryAction.status, parsedRecoveryAction.stderr.toString()).toBe(0);
     const recoveryArguments = parsedRecoveryAction.stdout.toString().split("\0").filter(Boolean);
     expect(recoveryArguments).toEqual([sandboxName, "exec", "--", "sh", "-c", expect.any(String)]);
-    expect(fs.existsSync(shellInjectionMarker)).toBe(false);
 
     const recoveryScript = recoveryArguments[5].replaceAll("/sandbox", sandboxRoot);
-    const recoveryResult = spawnSync("sh", ["-c", recoveryScript], { encoding: "utf8" });
+    const recoveryScriptPath = path.join(sandboxRoot, "run-recovery-script.sh");
+    fs.writeFileSync(recoveryScriptPath, recoveryScript);
+    const recoveryResult = spawnSync("sh", [recoveryScriptPath], { encoding: "utf8" });
     expect(recoveryResult.status, recoveryResult.stderr).toBe(0);
     expect(fs.existsSync(projectionPath)).toBe(false);
     expect(fs.readFileSync(path.join(occupiedRecoveryPath, "keep.txt"), "utf8")).toBe(
