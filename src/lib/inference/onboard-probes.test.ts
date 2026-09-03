@@ -309,7 +309,7 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
-  it("sends the Nemotron 3 Super validation request parameters (#10880)", () => {
+  it("serializes the Nemotron 3 Super validation request parameters (#10880)", () => {
     const args = getChatCompletionsProbeCurlArgs({
       credentialArgs: FAKE_CREDENTIAL_ARGS,
       model: "nvidia/nemotron-3-super-120b-a12b",
