@@ -4236,6 +4236,20 @@ jobs:
       NEMOCLAW_PROTECTED_REGISTRY_NAME: nemoclaw-managed-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
     steps:
+      - name: Bind protected E2E correlation identity
+        shell: bash
+        env:
+          REQUESTED_CORRELATION_ID: ${{ inputs.correlation_id }}
+        run: |
+          set -euo pipefail
+          correlation_id="$REQUESTED_CORRELATION_ID"
+          if [[ -z "$correlation_id" ]]; then
+            correlation_id="$(node --input-type=module -e \
+              'import { randomUUID } from "node:crypto"; console.log(randomUUID())')"
+          fi
+          [[ "$correlation_id" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]]
+          printf 'NEMOCLAW_E2E_CORRELATION_ID=%s\n' "$correlation_id" >>"$GITHUB_ENV"
+
       - name: Validate protected exact-head dispatch
         env:
           BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}

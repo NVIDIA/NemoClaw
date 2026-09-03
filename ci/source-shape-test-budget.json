@@ -257,6 +257,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+      "test": "binds a correlation identity for main pushes without an input",
+      "category": "compatibility"
+    },
+    {
       "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
       "test": "runs the typed security test against the produced image and uploads evidence",
       "category": "security"

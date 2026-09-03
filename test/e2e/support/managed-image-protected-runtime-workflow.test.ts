@@ -210,6 +210,18 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
+  // source-shape-contract: compatibility -- Main-push qualification must create the UUID consumed by reporter-backed risk evidence when workflow_dispatch inputs do not exist.
+  it("binds a correlation identity for main pushes without an input", () => {
+    const step = namedMultiarchStep(workflow(), "Bind protected E2E correlation identity");
+
+    expect(step).toMatchObject({
+      env: { REQUESTED_CORRELATION_ID: "${{ inputs.correlation_id }}" },
+      run: expect.stringMatching(
+        /if \[\[ -z "\$correlation_id" \]\][\s\S]*randomUUID[\s\S]*NEMOCLAW_E2E_CORRELATION_ID/u,
+      ),
+    });
+  });
+
   it("uses github.sha for main pushes", () => {
     const value = workflow();
     const jobEnv = multiarchJob(value).env as Record<string, unknown>;

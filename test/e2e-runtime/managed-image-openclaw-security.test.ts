@@ -7,6 +7,69 @@ import { openclawProtectedImage } from "./managed-image-openclaw-security.ts";
 import type { HostCliClient } from "../e2e/fixtures/clients/host.ts";
 import { expect, test } from "../e2e/fixtures/e2e-test.ts";
 
+const RUN_MANAGED_IMAGE_SECURITY = Boolean(
+  process.env.NEMOCLAW_TEST_IMAGE ?? process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT,
+);
+
+const PACKAGED_IMAGE_CONTRACT_PROBE = String.raw`import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createRequire } from "node:module";
+const require = createRequire("/opt/nemoclaw/");
+const YAML = require("yaml");
+const blueprint = YAML.parse(fs.readFileSync("/opt/nemoclaw-blueprint/blueprint.yaml", "utf8"));
+if (blueprint.version !== "0.1.0") throw new Error("unexpected blueprint version");
+const profiles = blueprint.components?.inference?.profiles ?? {};
+for (const name of blueprint.profiles ?? []) {
+  if (!profiles[name]) throw new Error("missing profile: " + name);
+}
+const policy = YAML.parse(fs.readFileSync("/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml", "utf8"));
+if (!policy.version || !policy.network_policies) throw new Error("invalid packaged policy");
+const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "blueprint-plan-"));
+fs.writeFileSync(path.join(fixture, "blueprint.yaml"), "components:\n  inference:\n    profiles:\n      default: {}\n");
+process.env.NEMOCLAW_BLUEPRINT_PATH = fixture;
+const { main } = await import("/opt/nemoclaw/dist/blueprint/runner.js");
+let expectedFailure = false;
+try {
+  await main(["plan", "--profile", "default", "--dry-run"]);
+} catch (error) {
+  expectedFailure = String(error?.message).includes("openshell CLI not found");
+}
+if (!expectedFailure) throw new Error("packaged runner did not reach expected OpenShell prerequisite");
+const home = fs.mkdtempSync(path.join(os.tmpdir(), "snapshot-home-"));
+process.env.HOME = home;
+const state = path.join(home, ".openclaw");
+fs.mkdirSync(state, { recursive: true });
+fs.writeFileSync(path.join(state, "openclaw.json"), '{"fixture":true}\n');
+const { createSnapshot, listSnapshots, rollbackFromSnapshot } = await import("/opt/nemoclaw/dist/blueprint/snapshot.js");
+const snapshot = createSnapshot();
+if (!snapshot || listSnapshots().length !== 1) throw new Error("packaged snapshot creation failed");
+fs.writeFileSync(path.join(state, "openclaw.json"), '{"corrupted":true}\n');
+if (!rollbackFromSnapshot(snapshot)) throw new Error("packaged snapshot rollback failed");
+if (JSON.parse(fs.readFileSync(path.join(state, "openclaw.json"), "utf8")).fixture !== true) {
+  throw new Error("snapshot content was not restored");
+}
+`;
+
+const NORMALIZER_HANDOFF_RACE_PROBE = String.raw`from pathlib import Path
+source = Path("/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py").read_text()
+needle = "            rights_fds = [root_fd]\n"
+replacement = """            for required_name in ("openclaw.json", ".config-hash"):
+                os.unlink(os.path.join(config_dir, required_name))
+            os.rmdir(config_dir)
+            os.mkdir(config_dir, 0o700)
+            for name, content in (("openclaw.json", "{}\\n"), (".config-hash", "hash\\n")):
+                path = os.path.join(config_dir, name)
+                with open(path, "w", encoding="utf-8") as replacement_file:
+                    replacement_file.write(content)
+                os.chmod(path, 0o600)
+            rights_fds = [root_fd]
+"""
+if source.count(needle) != 1:
+    raise SystemExit("handoff injection point changed")
+Path("/tmp/normalizer-handoff-race.py").write_text(source.replace(needle, replacement))
+`;
+
 function managedImageCohort(): string {
   return (
     process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT ??
@@ -75,7 +138,7 @@ async function runDefaultContainer(
   return result;
 }
 
-test(
+test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
   "enforces the OpenClaw managed-image sandbox boundary",
   {
     timeout: 120_000,
@@ -134,7 +197,7 @@ test(
     await runContainer(
       host,
       image,
-      `printf %s aW1wb3J0IGZzIGZyb20gIm5vZGU6ZnMiOwppbXBvcnQgb3MgZnJvbSAibm9kZTpvcyI7CmltcG9ydCBwYXRoIGZyb20gIm5vZGU6cGF0aCI7CmltcG9ydCB7IGNyZWF0ZVJlcXVpcmUgfSBmcm9tICJub2RlOm1vZHVsZSI7CmNvbnN0IHJlcXVpcmUgPSBjcmVhdGVSZXF1aXJlKCIvb3B0L25lbW9jbGF3LyIpOwpjb25zdCBZQU1MID0gcmVxdWlyZSgieWFtbCIpOwpjb25zdCBibHVlcHJpbnQgPSBZQU1MLnBhcnNlKGZzLnJlYWRGaWxlU3luYygiL29wdC9uZW1vY2xhdy1ibHVlcHJpbnQvYmx1ZXByaW50LnlhbWwiLCAidXRmOCIpKTsKaWYgKGJsdWVwcmludC52ZXJzaW9uICE9PSAiMC4xLjAiKSB0aHJvdyBuZXcgRXJyb3IoInVuZXhwZWN0ZWQgYmx1ZXByaW50IHZlcnNpb24iKTsKY29uc3QgcHJvZmlsZXMgPSBibHVlcHJpbnQuY29tcG9uZW50cz8uaW5mZXJlbmNlPy5wcm9maWxlcyA/PyB7fTsKZm9yIChjb25zdCBuYW1lIG9mIGJsdWVwcmludC5wcm9maWxlcyA/PyBbXSkgaWYgKCFwcm9maWxlc1tuYW1lXSkgdGhyb3cgbmV3IEVycm9yKGBtaXNzaW5nIHByb2ZpbGU6ICR7bmFtZX1gKTsKY29uc3QgcG9saWN5ID0gWUFNTC5wYXJzZShmcy5yZWFkRmlsZVN5bmMoIi9vcHQvbmVtb2NsYXctYmx1ZXByaW50L3BvbGljaWVzL29wZW5jbGF3LXNhbmRib3gueWFtbCIsICJ1dGY4IikpOwppZiAoIXBvbGljeS52ZXJzaW9uIHx8ICFwb2xpY3kubmV0d29ya19wb2xpY2llcykgdGhyb3cgbmV3IEVycm9yKCJpbnZhbGlkIHBhY2thZ2VkIHBvbGljeSIpOwpjb25zdCBmaXh0dXJlID0gZnMubWtkdGVtcFN5bmMocGF0aC5qb2luKG9zLnRtcGRpcigpLCAiYmx1ZXByaW50LXBsYW4tIikpOwpmcy53cml0ZUZpbGVTeW5jKHBhdGguam9pbihmaXh0dXJlLCAiYmx1ZXByaW50LnlhbWwiKSwgImNvbXBvbmVudHM6XG4gIGluZmVyZW5jZTpcbiAgICBwcm9maWxlczpcbiAgICAgIGRlZmF1bHQ6IHt9XG4iKTsKcHJvY2Vzcy5lbnYuTkVNT0NMQVdfQkxVRVBSSU5UX1BBVEggPSBmaXh0dXJlOwpjb25zdCB7IG1haW4gfSA9IGF3YWl0IGltcG9ydCgiL29wdC9uZW1vY2xhdy9kaXN0L2JsdWVwcmludC9ydW5uZXIuanMiKTsKbGV0IGV4cGVjdGVkRmFpbHVyZSA9IGZhbHNlOwp0cnkgeyBhd2FpdCBtYWluKFsicGxhbiIsICItLXByb2ZpbGUiLCAiZGVmYXVsdCIsICItLWRyeS1ydW4iXSk7IH0gY2F0Y2ggKGVycm9yKSB7CiAgZXhwZWN0ZWRGYWlsdXJlID0gU3RyaW5nKGVycm9yPy5tZXNzYWdlKS5pbmNsdWRlcygib3BlbnNoZWxsIENMSSBub3QgZm91bmQiKTsKfQppZiAoIWV4cGVjdGVkRmFpbHVyZSkgdGhyb3cgbmV3IEVycm9yKCJwYWNrYWdlZCBydW5uZXIgZGlkIG5vdCByZWFjaCBleHBlY3RlZCBPcGVuU2hlbGwgcHJlcmVxdWlzaXRlIik7CmNvbnN0IGhvbWUgPSBmcy5ta2R0ZW1wU3luYyhwYXRoLmpvaW4ob3MudG1wZGlyKCksICJzbmFwc2hvdC1ob21lLSIpKTsKcHJvY2Vzcy5lbnYuSE9NRSA9IGhvbWU7CmNvbnN0IHN0YXRlID0gcGF0aC5qb2luKGhvbWUsICIub3BlbmNsYXciKTsKZnMubWtkaXJTeW5jKHN0YXRlLCB7IHJlY3Vyc2l2ZTogdHJ1ZSB9KTsKZnMud3JpdGVGaWxlU3luYyhwYXRoLmpvaW4oc3RhdGUsICJvcGVuY2xhdy5qc29uIiksICd7ImZpeHR1cmUiOnRydWV9XG4nKTsKY29uc3QgeyBjcmVhdGVTbmFwc2hvdCwgbGlzdFNuYXBzaG90cywgcm9sbGJhY2tGcm9tU25hcHNob3QgfSA9IGF3YWl0IGltcG9ydCgiL29wdC9uZW1vY2xhdy9kaXN0L2JsdWVwcmludC9zbmFwc2hvdC5qcyIpOwpjb25zdCBzbmFwc2hvdCA9IGNyZWF0ZVNuYXBzaG90KCk7CmlmICghc25hcHNob3QgfHwgbGlzdFNuYXBzaG90cygpLmxlbmd0aCAhPT0gMSkgdGhyb3cgbmV3IEVycm9yKCJwYWNrYWdlZCBzbmFwc2hvdCBjcmVhdGlvbiBmYWlsZWQiKTsKZnMud3JpdGVGaWxlU3luYyhwYXRoLmpvaW4oc3RhdGUsICJvcGVuY2xhdy5qc29uIiksICd7ImNvcnJ1cHRlZCI6dHJ1ZX1cbicpOwppZiAoIXJvbGxiYWNrRnJvbVNuYXBzaG90KHNuYXBzaG90KSkgdGhyb3cgbmV3IEVycm9yKCJwYWNrYWdlZCBzbmFwc2hvdCByb2xsYmFjayBmYWlsZWQiKTsKaWYgKEpTT04ucGFyc2UoZnMucmVhZEZpbGVTeW5jKHBhdGguam9pbihzdGF0ZSwgIm9wZW5jbGF3Lmpzb24iKSwgInV0ZjgiKSkuZml4dHVyZSAhPT0gdHJ1ZSkgdGhyb3cgbmV3IEVycm9yKCJzbmFwc2hvdCBjb250ZW50IHdhcyBub3QgcmVzdG9yZWQiKTsK | base64 -d >/tmp/packaged-image-contract.mjs; node /tmp/packaged-image-contract.mjs`,
+      `cat >/tmp/packaged-image-contract.mjs <<'NEMOCLAW_PACKAGED_IMAGE_CONTRACT'\n${PACKAGED_IMAGE_CONTRACT_PROBE}\nNEMOCLAW_PACKAGED_IMAGE_CONTRACT\nnode /tmp/packaged-image-contract.mjs`,
       "managed-image-openclaw-packaged-blueprint-contract",
     );
 
@@ -304,7 +367,7 @@ test(
       host,
       image,
       [
-        "printf %s ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCnNvdXJjZSA9IFBhdGgoIi91c3IvbG9jYWwvbGliL25lbW9jbGF3L25vcm1hbGl6ZV9tdXRhYmxlX2NvbmZpZ19wZXJtcy5weSIpLnJlYWRfdGV4dCgpCm5lZWRsZSA9ICIgICAgICAgICAgICByaWdodHNfZmRzID0gW3Jvb3RfZmRdXG4iCnJlcGxhY2VtZW50ID0gIiIiICAgICAgICAgICAgZm9yIHJlcXVpcmVkX25hbWUgaW4gKCJvcGVuY2xhdy5qc29uIiwgIi5jb25maWctaGFzaCIpOgogICAgICAgICAgICAgICAgb3MudW5saW5rKG9zLnBhdGguam9pbihjb25maWdfZGlyLCByZXF1aXJlZF9uYW1lKSkKICAgICAgICAgICAgb3Mucm1kaXIoY29uZmlnX2RpcikKICAgICAgICAgICAgb3MubWtkaXIoY29uZmlnX2RpciwgMG83MDApCiAgICAgICAgICAgIGZvciBuYW1lLCBjb250ZW50IGluICgoIm9wZW5jbGF3Lmpzb24iLCAie31cXG4iKSwgKCIuY29uZmlnLWhhc2giLCAiaGFzaFxcbiIpKToKICAgICAgICAgICAgICAgIHBhdGggPSBvcy5wYXRoLmpvaW4oY29uZmlnX2RpciwgbmFtZSkKICAgICAgICAgICAgICAgIHdpdGggb3BlbihwYXRoLCAidyIsIGVuY29kaW5nPSJ1dGYtOCIpIGFzIHJlcGxhY2VtZW50X2ZpbGU6CiAgICAgICAgICAgICAgICAgICAgcmVwbGFjZW1lbnRfZmlsZS53cml0ZShjb250ZW50KQogICAgICAgICAgICAgICAgb3MuY2htb2QocGF0aCwgMG82MDApCiAgICAgICAgICAgIHJpZ2h0c19mZHMgPSBbcm9vdF9mZF0KIiIiCmlmIHNvdXJjZS5jb3VudChuZWVkbGUpICE9IDE6CiAgICByYWlzZSBTeXN0ZW1FeGl0KCJoYW5kb2ZmIGluamVjdGlvbiBwb2ludCBjaGFuZ2VkIikKUGF0aCgiL3RtcC9ub3JtYWxpemVyLWhhbmRvZmYtcmFjZS5weSIpLndyaXRlX3RleHQoc291cmNlLnJlcGxhY2UobmVlZGxlLCByZXBsYWNlbWVudCkpCg== | base64 -d | python3 -",
+        `cat >/tmp/write-normalizer-handoff-race.py <<'NEMOCLAW_NORMALIZER_RACE'\n${NORMALIZER_HANDOFF_RACE_PROBE}\nNEMOCLAW_NORMALIZER_RACE\npython3 /tmp/write-normalizer-handoff-race.py`,
         "find /sandbox/.openclaw -mindepth 1 -delete",
         '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c \'printf "{}\\n" > /sandbox/.openclaw/openclaw.json; printf "hash\\n" > /sandbox/.openclaw/.config-hash; chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash; chmod 700 /sandbox/.openclaw\'',
         'rc=0; python3 -I /tmp/normalizer-handoff-race.py /sandbox/.openclaw "$(id -u sandbox)" "$(id -g sandbox)" || rc=$?',
