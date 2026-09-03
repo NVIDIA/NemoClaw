@@ -17,7 +17,9 @@ function temporaryRoot(): string {
 }
 
 function temporaryEntries(root: string): string[] {
-  return fs.readdirSync(root).filter((entry) => entry.endsWith(".tmp"));
+  return fs
+    .readdirSync(root)
+    .filter((entry) => entry.endsWith(".tmp") || entry.endsWith(".previous"));
 }
 
 afterEach(() => {
@@ -117,35 +119,88 @@ describe("publishExportFile", () => {
     },
   );
 
-  it("removes the temporary file when rename fails (#10938)", () => {
+  it("retains the validated parent and refuses its exchanged path (#10938)", () => {
     const root = temporaryRoot();
-    const outputPath = path.join(root, "selected.yaml");
-    vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
-      throw new Error("injected rename failure");
+    const outputParent = path.join(root, "output");
+    const movedParent = path.join(root, "moved");
+    const outputPath = path.join(outputParent, "selected.yaml");
+    fs.mkdirSync(outputParent);
+    const fchmodSync = fs.fchmodSync;
+    vi.spyOn(fs, "fchmodSync").mockImplementationOnce((descriptor, mode) => {
+      fchmodSync(descriptor, mode);
+      fs.renameSync(outputParent, movedParent);
+      fs.mkdirSync(outputParent);
     });
 
-    expect(() => publishExportFile(outputPath, "content")).toThrow("injected rename failure");
+    expect(() => publishExportFile(outputPath, "content")).toThrowError(
+      expect.objectContaining<Partial<YamlExportOutputError>>({
+        category: "unsafe-output",
+        outputPath,
+      }),
+    );
     expect(fs.existsSync(outputPath)).toBe(false);
+    expect(fs.existsSync(path.join(movedParent, "selected.yaml"))).toBe(false);
+    expect(temporaryEntries(movedParent)).toEqual([]);
+  });
+
+  it("atomically refuses a destination created during non-force publication (#10938)", () => {
+    const root = temporaryRoot();
+    const outputPath = path.join(root, "selected.yaml");
+    const linkSync = fs.linkSync;
+    vi.spyOn(fs, "linkSync").mockImplementationOnce((source, destination) => {
+      fs.writeFileSync(outputPath, "racing writer");
+      linkSync(source, destination);
+    });
+
+    expect(() => publishExportFile(outputPath, "content")).toThrowError(
+      expect.objectContaining<Partial<YamlExportOutputError>>({
+        category: "output-conflict",
+        outputPath,
+      }),
+    );
+    expect(fs.readFileSync(outputPath, "utf8")).toBe("racing writer");
     expect(temporaryEntries(root)).toEqual([]);
   });
 
-  it("fsyncs the file before rename and then fsyncs the parent directory (#10938)", () => {
+  it("does not overwrite a destination exchanged during force publication (#10938)", () => {
+    const root = temporaryRoot();
+    const outputPath = path.join(root, "selected.yaml");
+    fs.writeFileSync(outputPath, "validated");
+    const exchangedPath = path.join(root, "exchanged.yaml");
+    fs.writeFileSync(exchangedPath, "exchanged");
+    const fchmodSync = fs.fchmodSync;
+    vi.spyOn(fs, "fchmodSync").mockImplementationOnce((descriptor, mode) => {
+      fchmodSync(descriptor, mode);
+      fs.renameSync(exchangedPath, outputPath);
+    });
+
+    expect(() => publishExportFile(outputPath, "content", true)).toThrowError(
+      expect.objectContaining<Partial<YamlExportOutputError>>({
+        category: "unsafe-output",
+        outputPath,
+      }),
+    );
+    expect(fs.readFileSync(outputPath, "utf8")).toBe("exchanged");
+    expect(temporaryEntries(root)).toEqual([]);
+  });
+
+  it("fsyncs the temporary file before publication and then fsyncs the parent (#10938)", () => {
     const root = temporaryRoot();
     const outputPath = path.join(root, "selected.yaml");
     const calls: string[] = [];
-    const renameSync = fs.renameSync;
+    const linkSync = fs.linkSync;
     const fsyncSync = fs.fsyncSync;
     vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
       calls.push("fsync");
       fsyncSync(descriptor);
     });
-    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
-      calls.push("rename");
-      renameSync(source, destination);
+    vi.spyOn(fs, "linkSync").mockImplementation((source, destination) => {
+      calls.push("publish");
+      linkSync(source, destination);
     });
 
     publishExportFile(outputPath, "content");
 
-    expect(calls).toEqual(["fsync", "rename", "fsync"]);
+    expect(calls).toEqual(["fsync", "publish", "fsync"]);
   });
 });

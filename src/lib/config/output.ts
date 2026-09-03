@@ -37,15 +37,18 @@ function sameFile(left: fs.Stats, right: fs.Stats): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-function inspectDestination(outputPath: string, force: boolean): fs.Stats | null {
+function inspectDestination(
+  destination: string,
+  outputPath: string,
+  force: boolean,
+): fs.Stats | null {
   let pathStat: fs.Stats;
   try {
-    pathStat = fs.lstatSync(outputPath);
+    pathStat = fs.lstatSync(destination);
   } catch (error) {
     if (isErrnoException(error) && error.code === "ENOENT") return null;
     throw error;
   }
-
   if (!pathStat.isFile()) {
     throw new YamlExportOutputError(
       "unsafe-output",
@@ -60,11 +63,10 @@ function inspectDestination(outputPath: string, force: boolean): fs.Stats | null
       `Output already exists: ${outputPath}`,
     );
   }
-
   let descriptor: number;
   try {
     descriptor = fs.openSync(
-      outputPath,
+      destination,
       fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (fs.constants.O_NOFOLLOW ?? 0),
     );
   } catch (error) {
@@ -92,35 +94,6 @@ function inspectDestination(outputPath: string, force: boolean): fs.Stats | null
   }
 }
 
-function assertDestinationIsStable(outputPath: string, expected: fs.Stats | null): void {
-  let current: fs.Stats;
-  try {
-    current = fs.lstatSync(outputPath);
-  } catch (error) {
-    if (expected === null && isErrnoException(error) && error.code === "ENOENT") return;
-    throw new YamlExportOutputError(
-      "unsafe-output",
-      outputPath,
-      `Refusing to publish because the output path changed: ${outputPath}`,
-    );
-  }
-
-  if (expected === null) {
-    throw new YamlExportOutputError(
-      current.isFile() ? "output-conflict" : "unsafe-output",
-      outputPath,
-      `Refusing to replace an output path created during publication: ${outputPath}`,
-    );
-  }
-  if (!current.isFile() || !sameFile(expected, current)) {
-    throw new YamlExportOutputError(
-      "unsafe-output",
-      outputPath,
-      `Refusing to replace an output path that changed during publication: ${outputPath}`,
-    );
-  }
-}
-
 function writeComplete(descriptor: number, bytes: Uint8Array): void {
   let offset = 0;
   while (offset < bytes.byteLength) {
@@ -130,41 +103,103 @@ function writeComplete(descriptor: number, bytes: Uint8Array): void {
   }
 }
 
-function fsyncParent(directoryPath: string): void {
-  let descriptor: number;
+function openParent(outputPath: string) {
+  if (process.platform !== "linux") {
+    throw new YamlExportOutputError(
+      "unsafe-output",
+      outputPath,
+      "Safe export publication requires Linux retained-directory descriptors",
+    );
+  }
+  const directoryPath = path.dirname(outputPath);
+  const before = fs.lstatSync(directoryPath);
+  if (!before.isDirectory() || before.isSymbolicLink()) {
+    throw new YamlExportOutputError(
+      "unsafe-output",
+      outputPath,
+      `Refusing to publish through an output parent that is not a real directory: ${directoryPath}`,
+    );
+  }
+  const descriptor = fs.openSync(
+    directoryPath,
+    fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0) | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  const stat = fs.fstatSync(descriptor);
+  if (!stat.isDirectory() || !sameFile(before, stat)) {
+    fs.closeSync(descriptor);
+    throw new YamlExportOutputError(
+      "unsafe-output",
+      outputPath,
+      `Refusing to publish because the output parent changed: ${directoryPath}`,
+    );
+  }
+  return { descriptor, directoryPath, retainedPath: `/proc/self/fd/${descriptor}`, stat };
+}
+
+function publishNew(temporary: string, destination: string, outputPath: string): void {
   try {
-    descriptor = fs.openSync(directoryPath, fs.constants.O_RDONLY);
+    fs.linkSync(temporary, destination);
   } catch (error) {
-    if (process.platform === "win32" && isErrnoException(error)) return;
+    if (isErrnoException(error) && error.code === "EEXIST") {
+      throw new YamlExportOutputError(
+        "output-conflict",
+        outputPath,
+        `Refusing to replace an output path created during publication: ${outputPath}`,
+      );
+    }
     throw error;
   }
-  try {
-    fs.fsyncSync(descriptor);
-  } catch (error) {
-    if (
-      !isErrnoException(error) ||
-      !["EINVAL", "ENOTSUP", "EOPNOTSUPP", "EBADF"].includes(error.code ?? "")
-    ) {
-      throw error;
-    }
-  } finally {
-    fs.closeSync(descriptor);
+}
+
+function restoreMoved(moved: string, destination: string): void {
+  fs.linkSync(moved, destination);
+  fs.unlinkSync(moved);
+}
+
+function publishForced(
+  temporary: string,
+  destination: string,
+  moved: string,
+  expected: fs.Stats,
+  outputPath: string,
+): void {
+  fs.renameSync(destination, moved);
+  const movedStat = fs.lstatSync(moved);
+  if (!movedStat.isFile() || !sameFile(expected, movedStat)) {
+    restoreMoved(moved, destination);
+    throw new YamlExportOutputError(
+      "unsafe-output",
+      outputPath,
+      `Refusing to replace an output path that changed during publication: ${outputPath}`,
+    );
   }
+  try {
+    publishNew(temporary, destination, outputPath);
+  } catch (error) {
+    try {
+      restoreMoved(moved, destination);
+    } catch {
+      // A concurrent destination remains authoritative.
+      fs.unlinkSync(moved);
+    }
+    throw error;
+  }
+  fs.unlinkSync(moved);
 }
 
 function publishYamlExport(options: PublishYamlExportOptions): PublishExportFileResult {
   const outputPath = path.resolve(options.outputPath);
-  const directoryPath = path.dirname(outputPath);
-  const expectedDestination = inspectDestination(outputPath, options.force === true);
-  const temporaryPath = path.join(
-    directoryPath,
-    `.${path.basename(outputPath)}.${String(process.pid)}.${randomUUID()}.tmp`,
-  );
+  const parent = openParent(outputPath);
+  const name = path.basename(outputPath);
+  const destination = path.join(parent.retainedPath, name);
+  const suffix = `${String(process.pid)}.${randomUUID()}`;
+  const temporary = path.join(parent.retainedPath, `.${name}.${suffix}.tmp`);
+  const moved = path.join(parent.retainedPath, `.${name}.${suffix}.previous`);
   let descriptor: number | null = null;
-
   try {
+    const expected = inspectDestination(destination, outputPath, options.force === true);
     descriptor = fs.openSync(
-      temporaryPath,
+      temporary,
       fs.constants.O_WRONLY |
         fs.constants.O_CREAT |
         fs.constants.O_EXCL |
@@ -180,26 +215,36 @@ function publishYamlExport(options: PublishYamlExportOptions): PublishExportFile
       );
     }
     fs.fchmodSync(descriptor, 0o600);
-    const bytes =
-      typeof options.yaml === "string" ? Buffer.from(options.yaml, "utf8") : options.yaml;
-    writeComplete(descriptor, bytes);
+    writeComplete(
+      descriptor,
+      typeof options.yaml === "string" ? Buffer.from(options.yaml, "utf8") : options.yaml,
+    );
     fs.fsyncSync(descriptor);
     fs.closeSync(descriptor);
     descriptor = null;
-
-    assertDestinationIsStable(outputPath, expectedDestination);
-    fs.renameSync(temporaryPath, outputPath);
-    fsyncParent(directoryPath);
+    const currentParent = fs.lstatSync(parent.directoryPath);
+    if (!currentParent.isDirectory() || !sameFile(parent.stat, currentParent)) {
+      throw new YamlExportOutputError(
+        "unsafe-output",
+        outputPath,
+        `Refusing to publish because the output parent changed: ${parent.directoryPath}`,
+      );
+    }
+    if (expected === null) publishNew(temporary, destination, outputPath);
+    else publishForced(temporary, destination, moved, expected, outputPath);
+    fs.unlinkSync(temporary);
+    fs.fsyncSync(parent.descriptor);
     return { path: outputPath };
   } finally {
     if (descriptor !== null) fs.closeSync(descriptor);
     try {
-      fs.unlinkSync(temporaryPath);
+      fs.unlinkSync(temporary);
     } catch (error) {
       if (!isErrnoException(error) || error.code !== "ENOENT") {
-        // Cleanup cannot replace the publication result or its original error.
+        /* Preserve the publication result. */
       }
     }
+    fs.closeSync(parent.descriptor);
   }
 }
 
