@@ -325,12 +325,11 @@ export function createCliOpenShellProviderAdapter(
     const result = reconcileCheckedInProviderProfile({
       profilePath: request.profilePath,
       readCheckedInProfile: () => readProfileFile(request.profilePath),
-      probeBeforeImport: false,
       runOpenshell: (args, options) =>
         invoke(args, request, undefined, 2, options?.suppressOutput ?? false),
     });
     if (result.ok) return mutationSuccess();
-    if (result.reason === "profile-unreadable" && result.operation !== "post-import-export") {
+    if (result.reason === "profile-unreadable" && result.operation === undefined) {
       return failure({
         kind: "validation",
         message: "The checked-in OpenShell provider profile is invalid or unreadable.",
@@ -338,7 +337,7 @@ export function createCliOpenShellProviderAdapter(
     }
     if (
       result.reason === "profile-drifted" ||
-      (result.reason === "profile-unreadable" && result.operation === "post-import-export")
+      (result.reason === "profile-unreadable" && result.diagnostic === undefined)
     ) {
       return failure({
         kind: "command",
