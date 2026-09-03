@@ -19,3 +19,6 @@ export function contentSha256(value: unknown): string {
     .update(JSON.stringify(value) ?? "")
     .digest("hex");
 }
+
+export const MCP_DEV_JOB_LOCAL_DOCKERFILE_EXECUTION_CONTEXT_SHA256 =
+  "f1a3da59c7c0f7958b953cd18d283f07969bde74a810318e1f1972537567a082";

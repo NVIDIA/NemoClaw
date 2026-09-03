@@ -9,8 +9,7 @@
  * intentionally probes the runtime helper rather than the scheduler surface.
  */
 
-import path from "node:path";
-
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -27,7 +26,7 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-cron-preflight";
 validateSandboxName(SANDBOX_NAME);
 const MODEL = process.env.NEMOCLAW_CRON_PREFLIGHT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL;
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
-const LIVE_TIMEOUT_MS = 35 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(35 * 60_000);
 const PROBE_SOURCE = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -266,7 +265,7 @@ test(
         cwd: REPO_ROOT,
         env: commandEnv(hosted.env),
         redactionValues: [apiKey],
-        timeoutMs: 20 * 60_000,
+        timeoutMs: execTimeout(20 * 60_000),
       },
     );
     if (install.exitCode === 0) break;

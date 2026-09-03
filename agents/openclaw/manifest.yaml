@@ -45,56 +45,36 @@ config:
   format: json
 
 # ── State directories ──────────────────────────────────────────
-state_lock_plan_in_image: true
 state_dirs:
-  - path: agents
-    shields: read-only
-    writable_subpaths:
-      - "*/sessions"
-  - path: extensions
-    shields: read-only
-  # Legacy layouts can still contain this pre-extensions directory. Preserve
-  # its existing Shields posture without newly treating it as portable state.
+  - agents
+  - extensions
+  # Legacy layouts can still contain this pre-extensions directory. Keep it
+  # outside portable state.
   - path: plugins
     backup: false
-    shields: read-only
-  # OpenClaw may create profile-scoped runtime state. Preserve its existing
-  # Shields boundary without newly treating profile data as portable state.
+  # OpenClaw may create profile-scoped runtime state. Keep it outside portable
+  # state until profile-specific backup semantics are defined.
   - path: profiles
     backup: false
-    shields: read-only
-  - path: workspace
-    shields: read-only
+  - workspace
   # Multi-agent OpenClaw deployments create workspace-<agent> siblings.
   - prefix: workspace-
-    shields: read-only
-  - path: skills
-    shields: read-only
-  - path: hooks
-    shields: read-only
+  - skills
+  - hooks
   # Machine-local gateway auth state is wiped on destroy but never captured.
   # Sanitization removes the identity key and paired-device tokens, so a
   # restored copy cannot authenticate (#6852).
   - path: identity
     backup: false
-    shields: confidential
   - path: devices
     backup: false
-    shields: read-only
-  - path: canvas
-    shields: read-only
-  - path: cron
-    shields: read-only
-  - path: memory
-    shields: read-only
-  - path: telegram
-    shields: read-only
-  - path: wechat
-    shields: read-only
-  - path: whatsapp
-    shields: read-only
-  - path: credentials
-    shields: confidential
+  - canvas
+  - cron
+  - memory
+  - telegram
+  - wechat
+  - whatsapp
+  - credentials
 
 # ── Top-level durable state files ───────────────────────────────
 # openclaw.json holds the core OpenClaw settings the state dirs above do not
