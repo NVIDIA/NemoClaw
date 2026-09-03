@@ -1257,7 +1257,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     managedWorkloadRebuild: import("../workload/rebuild").ManagedWorkloadRebuildHandoff | null,
     tempManagedRuntime: boolean,
     tempManagedRuntimeCatalog: string | null,
-    allowRemovedImmutabilityStateRecord: boolean,
     dashboardPortReservationScope: import("../dashboard-port").DashboardPortReservationScope,
     hermesApiPortReservationScope: import("../../agent/onboard").HermesApiPortReservationScope,
     gpu: ReturnType<typeof import("../../inference/nim").detectGpu>,
@@ -1278,6 +1277,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     createIntent: import("../types").SandboxCreateIntent | null = null,
     runVerifiedSandboxCreateEffects: import("../types").VerifiedSandboxCreateEffects | null = null,
     preparedBuildContext: PreparedSandboxBuildContext | null = null,
+    allowRemovedImmutabilityStateRecord = false,
   ) {
     const portableRuntimeAuthority = portableRuntimeContext?.authority ?? null;
     const {
