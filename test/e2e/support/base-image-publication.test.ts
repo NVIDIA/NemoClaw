@@ -717,13 +717,15 @@ describe("base-image publication evidence", () => {
       workflowRun(),
     ];
     const requests: string[] = [];
+    const requestBudgets: Array<number | undefined> = [];
     const notices: string[] = [];
     let currentTime = 0;
 
     const run = await waitForBaseImagePublication({
       history: history(),
-      request: async (requestPath) => {
+      request: async (requestPath, budgetMs) => {
         requests.push(requestPath);
+        requestBudgets.push(budgetMs);
         return responses.shift();
       },
       waitMs: 100,
@@ -745,6 +747,7 @@ describe("base-image publication evidence", () => {
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
     ]);
+    expect(requestBudgets).toEqual([100, 100, 90, 90, 80, 80, 80]);
     expect(notices).toHaveLength(2);
   });
 
@@ -954,11 +957,11 @@ describe("base-image publication evidence", () => {
     expect(requests).toEqual([
       {
         path: "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
-        budgetMs: undefined,
+        budgetMs: 100,
       },
       {
         path: "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
-        budgetMs: undefined,
+        budgetMs: 100,
       },
       {
         path: `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/2`,

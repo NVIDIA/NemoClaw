@@ -741,12 +741,21 @@ export async function waitForBaseImagePublication(
   }
 
   const deadline = now() + options.waitMs;
+  const request: PublicationWaitOptions["request"] = async (path, requestedBudgetMs) => {
+    const remainingMs = Math.floor(deadline - now());
+    if (remainingMs < 1) {
+      throw new Error(
+        `timed out waiting for base-image publication covering ${options.history.relevantSha}`,
+      );
+    }
+    return options.request(path, Math.min(requestedBudgetMs ?? remainingMs, remainingMs));
+  };
   const workflowId = validateWorkflow(
-    await options.request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
+    await request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
   );
   const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}&event=push&per_page=100`;
   while (true) {
-    const runs = await collectPaginated(options.request, runsPath, "workflow_runs");
+    const runs = await collectPaginated(request, runsPath, "workflow_runs");
     const selection = selectPublicationRun(runs, options.history, workflowId, {
       completedSuccessOnly: options.selectNearestSuccessfulRun === true,
     });
@@ -760,25 +769,25 @@ export async function waitForBaseImagePublication(
       let validatedRun = selection.run;
       try {
         const evidenceRun = await resolveCompletedPublicationAttempt(
-          options.request,
+          request,
           selection.run,
           options.requireWorkflowSuccess === true,
           deadline,
           now,
         );
         const jobsPath = `/repos/${REPOSITORY}/actions/runs/${evidenceRun.id}/attempts/${evidenceRun.attempt}/jobs?per_page=100`;
-        const jobs = await collectPaginated(options.request, jobsPath, "jobs");
+        const jobs = await collectPaginated(request, jobsPath, "jobs");
         publisherState = validatePublisherJobs(jobs, evidenceRun);
         if (publisherState === "ready") {
           const latestBound = validateBoundRun(
-            await options.request(`/repos/${REPOSITORY}/actions/runs/${selection.run.id}`),
+            await request(`/repos/${REPOSITORY}/actions/runs/${selection.run.id}`),
             selection.run,
           );
           const boundRun =
             evidenceRun.attempt === selection.run.attempt
               ? latestBound
               : validateBoundRun(
-                  await options.request(
+                  await request(
                     `/repos/${REPOSITORY}/actions/runs/${evidenceRun.id}/attempts/${evidenceRun.attempt}`,
                   ),
                   evidenceRun,
