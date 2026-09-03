@@ -664,6 +664,20 @@ function bridgeProviderName(sandboxName: string, channelName: string, envKey: st
   return `${sandboxName}-${channelName}-bridge`;
 }
 
+function redactRecoveryProviderName(providerName: string): string {
+  const redacted = redactFullWithUrls(providerName).replace(/\s+/gu, " ").trim().slice(0, 128);
+  return JSON.stringify(redacted || "<redacted-provider-name>");
+}
+
+function redactRecoveryGatewayName(gatewayName: string): string {
+  const redacted = redactFullWithUrls(gatewayName).replace(/\s+/gu, " ").trim().slice(0, 19);
+  return JSON.stringify(redacted || "<redacted-gateway-name>");
+}
+
+function redactRecoveryDiagnostic(diagnostic: string): string {
+  return redactFullWithUrls(diagnostic).replace(/\s+/gu, " ").trim().slice(0, 500);
+}
+
 // Detect whether another sandbox already uses one of this channel's
 // credentials. Mirrors the onboard.ts conflict check. Returns true if the
 // caller should PROCEED with the add, false if it should abort. Never logs
@@ -947,30 +961,25 @@ async function applyChannelAddToGatewayAndRegistry(
       const updatedProviderNames = err.mutatedProviderNames.filter(
         (providerName) => !createdProviders.has(providerName),
       );
-      const originalFailure = redactFullWithUrls(err instanceof Error ? err.message : String(err))
-        .replace(/\s+/gu, " ")
-        .trim()
-        .slice(0, 500);
+      const originalFailure = redactRecoveryDiagnostic(
+        err instanceof Error ? err.message : String(err),
+      );
       if (originalFailure) console.error(`  ${originalFailure}`);
       if (updatedProviderNames.length > 0) {
-        const providerNames = updatedProviderNames.map((name) => JSON.stringify(name)).join(", ");
-        // Provider names are validated identifiers, not credential material.
-        // codeql[js/clear-text-logging]
+        const providerNames = updatedProviderNames.map(redactRecoveryProviderName).join(", ");
         console.error(
           `  ${YW}⚠${R} Provider state may have changed for ${providerNames}; inspect the named provider, correct the gateway failure, then retry the channel add.`,
         );
       }
       if (cleanupFailures.length > 0) {
         for (const { providerName, diagnostic } of cleanupFailures) {
-          // Provider names are validated identifiers; the diagnostic is fully redacted above.
-          // codeql[js/clear-text-logging]
+          const renderedProviderName = redactRecoveryProviderName(providerName);
+          const renderedDiagnostic = redactRecoveryDiagnostic(diagnostic);
           console.error(
-            `  ${YW}⚠${R} Could not remove newly created provider ${JSON.stringify(providerName)}: ${diagnostic}.`,
+            `  ${YW}⚠${R} Could not remove newly created provider ${renderedProviderName}: ${renderedDiagnostic}.`,
           );
-          // Gateway and provider names are validated identifiers, not credential material.
-          // codeql[js/clear-text-logging]
           console.error(
-            `  Run \`openshell provider delete -g ${JSON.stringify(gatewayName)} ${JSON.stringify(providerName)}\`, then retry the channel add.`,
+            `  Run \`openshell provider delete -g ${redactRecoveryGatewayName(gatewayName)} ${renderedProviderName}\`, then retry the channel add.`,
           );
         }
       }

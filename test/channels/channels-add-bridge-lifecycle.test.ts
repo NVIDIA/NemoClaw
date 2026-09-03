@@ -440,6 +440,30 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     );
   });
 
+  it("redacts credential material misclassified as a recovery identifier", async () => {
+    const unsafeExistingProvider = SA_JSON;
+    const unsafeCreatedProvider = `${SA_JSON}\ncreated`;
+    providerDeleteError = "gateway unavailable";
+    providerSpy.mockImplementation(() => {
+      throw Object.assign(new Error("simulated partial mutation"), {
+        code: "NEMOCLAW_MESSAGING_PROVIDER_MUTATION_FAILURE",
+        mutatedProviderNames: [unsafeExistingProvider, unsafeCreatedProvider],
+        createdProviderNames: [unsafeCreatedProvider],
+      });
+    });
+
+    await expect(addSandboxChannel("test-sb", { channel: "googlechat" })).rejects.toMatchObject({
+      code: 1,
+    });
+
+    const diagnostics = printedText();
+    expect(diagnostics).not.toContain(unsafeExistingProvider);
+    expect(diagnostics).not.toContain(unsafeCreatedProvider);
+    expect(diagnostics).not.toContain("fake-test-private-key-material");
+    expect(diagnostics).toContain("Provider state may have changed for");
+    expect(diagnostics).toContain('openshell provider delete -g "nemoclaw"');
+  });
+
   it("reports an uncertain existing provider when refresh status inspection throws", async () => {
     bridgeProfileRegistered = true;
     registeredProviders.add("test-sb-googlechat-bridge");
