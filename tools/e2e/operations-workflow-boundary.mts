@@ -417,6 +417,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$ALLOW_JETSON_DISPATCH" != "true"',
     '"$ALLOW_DGX_SPARK_RUNNER_QUEUE" != "true"',
     '",${TARGETS}," != *",jetson-nvmap-gpu,"*',
+    '",${JOBS}," != *",jetson-nvmap-gpu,"*',
+    '",${TARGETS}," != *",llama-cpp-dgx-spark-qualification,"*',
     '",${JOBS}," != *",llama-cpp-dgx-spark-qualification,"*',
     "exact-base E2E cannot select dedicated hardware jobs",
     `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,

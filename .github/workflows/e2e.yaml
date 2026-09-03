@@ -434,7 +434,10 @@ jobs:
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
           if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]; then
             [[ "$ALLOW_JETSON_DISPATCH" != "true" && "$ALLOW_DGX_SPARK_RUNNER_QUEUE" != "true" ]] || { echo "::error::exact-base E2E cannot launch dedicated hardware dispatches" >&2; exit 1; }
-            [[ ",${TARGETS}," != *",jetson-nvmap-gpu,"* && ",${JOBS}," != *",llama-cpp-dgx-spark-qualification,"* ]] || { echo "::error::exact-base E2E cannot select dedicated hardware jobs" >&2; exit 1; }
+            [[ ",${TARGETS}," != *",jetson-nvmap-gpu,"* &&
+               ",${JOBS}," != *",jetson-nvmap-gpu,"* &&
+               ",${TARGETS}," != *",llama-cpp-dgx-spark-qualification,"* &&
+               ",${JOBS}," != *",llama-cpp-dgx-spark-qualification,"* ]] || { echo "::error::exact-base E2E cannot select dedicated hardware jobs" >&2; exit 1; }
             [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR base repository" >&2; exit 1; }
           else
             [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }

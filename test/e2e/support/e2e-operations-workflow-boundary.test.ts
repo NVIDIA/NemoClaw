@@ -528,30 +528,28 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       0,
       "",
     ],
-    [
-      "an exact-base Jetson target",
-      "NVIDIA/NemoClaw",
-      "b",
-      "b",
-      "c",
-      "refs/heads/main",
-      "",
-      "jetson-nvmap-gpu",
-      1,
-      "::error::exact-base E2E cannot select dedicated hardware jobs\n",
-    ],
-    [
-      "an exact-base DGX Spark job",
-      "NVIDIA/NemoClaw",
-      "b",
-      "b",
-      "c",
-      "refs/heads/main",
-      "llama-cpp-dgx-spark-qualification",
-      "",
-      1,
-      "::error::exact-base E2E cannot select dedicated hardware jobs\n",
-    ],
+    ...(
+      [
+        ["Jetson", "jetson-nvmap-gpu"],
+        ["DGX Spark", "llama-cpp-dgx-spark-qualification"],
+      ] as const
+    ).flatMap(([name, selector]) =>
+      (["job", "target"] as const).map(
+        (channel) =>
+          [
+            `an exact-base ${name} ${channel}`,
+            "NVIDIA/NemoClaw",
+            "b",
+            "b",
+            "c",
+            "refs/heads/main",
+            channel === "job" ? selector : "",
+            channel === "target" ? selector : "",
+            1,
+            "::error::exact-base E2E cannot select dedicated hardware jobs\n",
+          ] as const,
+      ),
+    ),
   ] as const)(
     "handles manual PR authentication for %s",
     (
