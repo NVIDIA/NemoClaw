@@ -206,19 +206,9 @@ else
   fail "iptables not found — sandbox network policies will not be enforced: $OUT"
 fi
 
-# ── Test 12: chattr is available for immutable hardening ─────────
+# ── Test 12: Sandbox user cannot kill gateway-user processes ─────
 
-info "12. chattr is available for shields up immutability"
-OUT=$(run_as_root "command -v chattr 2>/dev/null || true")
-if [ -n "$OUT" ]; then
-  pass "chattr available at $OUT"
-else
-  fail "chattr not found — shields up immutability will not work"
-fi
-
-# ── Test 13: Sandbox user cannot kill gateway-user processes ─────
-
-info "13. Sandbox user cannot kill gateway-user processes"
+info "12. Sandbox user cannot kill gateway-user processes"
 # Start a dummy process as gateway, try to kill it as sandbox
 OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
   /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sleep 60 &
@@ -234,15 +224,14 @@ else
   fail "sandbox CAN kill gateway processes: $OUT"
 fi
 
-# ── Test 13a: Final image enforces the gateway-control boundary ──
+# ── Test 12a: Final image enforces the gateway-control boundary ──
 
-info "13a. Final image keeps gateway control root-only with required group access"
+info "12a. Final image keeps gateway control root-only with required group access"
 # shellcheck disable=SC2016 # The container-side bash expands these expressions.
 ROOT_CONTROL_OUT=$(run_as_root '
   set -eu
   [ "$(stat -c "%U:%G %a" /usr/local/bin/nemoclaw-gateway-control)" = "root:root 700" ]
   [ "$(stat -c "%U:%G %a" /usr/local/lib/nemoclaw/managed-gateway-control.py)" = "root:root 500" ]
-  [ "$(stat -c "%U:%G %a" /usr/local/lib/nemoclaw/state-dir-guard.py)" = "root:root 500" ]
   [ "$(stat -c "%U:%G %a" /usr/local/lib/nemoclaw/openclaw-config-guard.py)" = "root:root 500" ]
   [ "$(stat -c "%U:%G %a" /usr/local/lib/nemoclaw/gateway-supervisor.sh)" = "root:root 444" ]
   [ "$(stat -c "%U:%G %a" /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py)" = "root:root 555" ]
@@ -273,9 +262,9 @@ else
   fail "gateway control boundary mismatch: root=[$ROOT_CONTROL_OUT] sandbox=[$SANDBOX_CONTROL_OUT]"
 fi
 
-# ── Test 14: Dangerous capabilities are dropped by entrypoint ────
+# ── Test 13: Dangerous capabilities are dropped by entrypoint ────
 
-info "14. Entrypoint drops the full issue #3280 dangerous-cap inventory from sandbox-user bounding set"
+info "13. Entrypoint drops the full issue #3280 dangerous-cap inventory from sandbox-user bounding set"
 # Inventory every cap named in issue #3280 against CapBnd of the
 # sandbox-user process AFTER both stages of the entrypoint's privilege
 # step-down: (1) the entrypoint-wide capsh drop in drop_capabilities()
@@ -342,11 +331,11 @@ else
   fi
 fi
 
-# ── Test 13b: Sandbox user cannot write to .nemoclaw parent ───────
+# ── Test 13a: Sandbox user cannot write to .nemoclaw parent ───────
 # Note: /sandbox itself is sandbox-owned and writable in the mutable-default
 # policy. This check only covers the root-owned .nemoclaw parent.
 
-info "13b. Sandbox user cannot create files in /sandbox/.nemoclaw"
+info "13a. Sandbox user cannot create files in /sandbox/.nemoclaw"
 OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/testfile 2>&1 || echo BLOCKED")
 if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
   pass "sandbox cannot create files in .nemoclaw parent (root-owned)"
@@ -354,9 +343,9 @@ else
   fail "sandbox CAN create files in .nemoclaw parent: $OUT"
 fi
 
-# ── Test 14b: Sandbox user cannot modify blueprints ──────────────
+# ── Test 13b: Sandbox user cannot modify blueprints ──────────────
 
-info "14b. Sandbox user cannot modify blueprints"
+info "13b. Sandbox user cannot modify blueprints"
 OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/blueprints/testfile 2>&1 || echo BLOCKED")
 if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
   pass "sandbox cannot write to blueprints (root-owned)"
@@ -364,9 +353,9 @@ else
   fail "sandbox CAN write to blueprints: $OUT"
 fi
 
-# ── Test 15: Sandbox user CAN write to .nemoclaw/state ────────────
+# ── Test 14: Sandbox user CAN write to .nemoclaw/state ────────────
 
-info "15. Sandbox user can write to .nemoclaw/state"
+info "14. Sandbox user can write to .nemoclaw/state"
 OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/state/testfile && echo OK || echo FAILED")
 if echo "$OUT" | grep -q "OK"; then
   pass "sandbox can write to .nemoclaw/state (sandbox-owned)"
@@ -374,9 +363,9 @@ else
   fail "sandbox cannot write to .nemoclaw/state: $OUT"
 fi
 
-# ── Test 16: Sandbox user CAN write to .openclaw ──────────────────
+# ── Test 15: Sandbox user CAN write to .openclaw ──────────────────
 
-info "16. Sandbox user can write to .openclaw"
+info "15. Sandbox user can write to .openclaw"
 OUT=$(run_as_sandbox "touch /sandbox/.openclaw/testfile && rm -f /sandbox/.openclaw/testfile && echo OK || echo FAILED")
 if echo "$OUT" | grep -q "OK"; then
   pass "sandbox can write to .openclaw (sandbox-owned, mutable default)"
@@ -384,9 +373,9 @@ else
   fail "sandbox cannot write to .openclaw: $OUT"
 fi
 
-# ── Test 17: Sandbox user cannot rename/delete blueprints dir ─────
+# ── Test 16: Sandbox user cannot rename/delete blueprints dir ─────
 
-info "17. Sandbox user cannot rename blueprints directory"
+info "16. Sandbox user cannot rename blueprints directory"
 OUT=$(run_as_sandbox "mv /sandbox/.nemoclaw/blueprints /sandbox/.nemoclaw/blueprints-evil 2>&1 || echo BLOCKED")
 if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
   pass "sandbox cannot rename blueprints (parent is root-owned)"
@@ -394,9 +383,9 @@ else
   fail "sandbox CAN rename blueprints: $OUT"
 fi
 
-# ── Test 18: Sandbox user CAN write to .nemoclaw/migration ────────
+# ── Test 17: Sandbox user CAN write to .nemoclaw/migration ────────
 
-info "18. Sandbox user can write to .nemoclaw/migration"
+info "17. Sandbox user can write to .nemoclaw/migration"
 OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/migration/testfile && echo OK || echo FAILED")
 if echo "$OUT" | grep -q "OK"; then
   pass "sandbox can write to .nemoclaw/migration (sandbox-owned)"
@@ -404,9 +393,9 @@ else
   fail "sandbox cannot write to .nemoclaw/migration: $OUT"
 fi
 
-# ── Test 19: Sandbox user CAN write to .nemoclaw/snapshots ────────
+# ── Test 18: Sandbox user CAN write to .nemoclaw/snapshots ────────
 
-info "19. Sandbox user can write to .nemoclaw/snapshots"
+info "18. Sandbox user can write to .nemoclaw/snapshots"
 OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/snapshots/testfile && echo OK || echo FAILED")
 if echo "$OUT" | grep -q "OK"; then
   pass "sandbox can write to .nemoclaw/snapshots (sandbox-owned)"
@@ -414,9 +403,9 @@ else
   fail "sandbox cannot write to .nemoclaw/snapshots: $OUT"
 fi
 
-# ── Test 20: Sandbox user CAN write to .nemoclaw/staging ──────────
+# ── Test 19: Sandbox user CAN write to .nemoclaw/staging ──────────
 
-info "20. Sandbox user can write to .nemoclaw/staging"
+info "19. Sandbox user can write to .nemoclaw/staging"
 OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/staging/testfile && echo OK || echo FAILED")
 if echo "$OUT" | grep -q "OK"; then
   pass "sandbox can write to .nemoclaw/staging (sandbox-owned)"
@@ -424,9 +413,9 @@ else
   fail "sandbox cannot write to .nemoclaw/staging: $OUT"
 fi
 
-# ── Test 21: Sandbox user CAN write to .nemoclaw/config.json ──────
+# ── Test 20: Sandbox user CAN write to .nemoclaw/config.json ──────
 
-info "21. Sandbox user can write to .nemoclaw/config.json"
+info "20. Sandbox user can write to .nemoclaw/config.json"
 OUT=$(run_as_sandbox "echo '{}' > /sandbox/.nemoclaw/config.json && echo OK || echo FAILED")
 if echo "$OUT" | grep -q "OK"; then
   pass "sandbox can write to .nemoclaw/config.json (sandbox-owned)"
@@ -434,9 +423,9 @@ else
   fail "sandbox cannot write to .nemoclaw/config.json: $OUT"
 fi
 
-# ── Test 22: Sandbox user can create new files in .openclaw (mutable default) ──
+# ── Test 21: Sandbox user can create new files in .openclaw (mutable default) ──
 
-info "22. Sandbox user can create new files in .openclaw directory (mutable default)"
+info "21. Sandbox user can create new files in .openclaw directory (mutable default)"
 OUT=$(run_as_sandbox "touch /sandbox/.openclaw/newfile && rm -f /sandbox/.openclaw/newfile && echo OK || echo BLOCKED")
 if echo "$OUT" | grep -q "OK"; then
   pass "sandbox can create new files in .openclaw (mutable default)"
@@ -444,9 +433,9 @@ else
   fail "sandbox cannot create new files in .openclaw — should be writable: $OUT"
 fi
 
-# ── Test 23: .bashrc has no proxy entries ────────────────────────
+# ── Test 22: .bashrc has no proxy entries ────────────────────────
 
-info "23. .bashrc has no proxy entries"
+info "22. .bashrc has no proxy entries"
 OUT=$(run_as_sandbox "if [ ! -f /sandbox/.bashrc ]; then echo MISSING; elif grep -i proxy /sandbox/.bashrc; then echo FOUND; else echo OK; fi")
 if echo "$OUT" | grep -qx "OK"; then
   pass ".bashrc has no proxy entries"
@@ -456,9 +445,9 @@ else
   fail ".bashrc contains proxy entries: $OUT"
 fi
 
-# ── Test 24: .profile has no proxy entries ───────────────────────
+# ── Test 23: .profile has no proxy entries ───────────────────────
 
-info "24. .profile has no proxy entries"
+info "23. .profile has no proxy entries"
 OUT=$(run_as_sandbox "if [ ! -f /sandbox/.profile ]; then echo MISSING; elif grep -i proxy /sandbox/.profile; then echo FOUND; else echo OK; fi")
 if echo "$OUT" | grep -qx "OK"; then
   pass ".profile has no proxy entries"
@@ -468,7 +457,7 @@ else
   fail ".profile contains proxy entries: $OUT"
 fi
 
-# ── Test 25: proxy-env.sh is NOT writable by sandbox user (#2181) ──
+# ── Test 24: proxy-env.sh is NOT writable by sandbox user (#2181) ──
 # The entrypoint writes /tmp/nemoclaw-proxy-env.sh via emit_sandbox_sourced_file()
 # which sets mode 444 and root ownership. The sandbox user must not be able to
 # modify this file, as the system-wide shell hooks source it on every connect.
@@ -476,7 +465,7 @@ fi
 # entrypoint does: create the file as root with mode 444, then verify sandbox
 # cannot modify it.
 
-info "25. proxy-env.sh is not writable by sandbox user"
+info "24. proxy-env.sh is not writable by sandbox user"
 OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
   echo "# proxy config placeholder" > /tmp/nemoclaw-proxy-env.sh
   chown root:root /tmp/nemoclaw-proxy-env.sh
@@ -489,9 +478,9 @@ else
   fail "sandbox user CAN write to proxy-env.sh: $OUT"
 fi
 
-# ── Test 26: proxy-env.sh has correct permissions (#2181) ─────────
+# ── Test 25: proxy-env.sh has correct permissions (#2181) ─────────
 
-info "26. proxy-env.sh is read-only (mode 444, root-owned)"
+info "25. proxy-env.sh is read-only (mode 444, root-owned)"
 OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
   echo "# proxy config placeholder" > /tmp/nemoclaw-proxy-env.sh
   chown root:root /tmp/nemoclaw-proxy-env.sh
@@ -504,13 +493,13 @@ else
   fail "proxy-env.sh has unexpected permissions: $OUT"
 fi
 
-# ── Test 26a: /etc/profile.d/nemoclaw-proxy.sh sources proxy-env (#2704) ──
+# ── Test 25a: /etc/profile.d/nemoclaw-proxy.sh sources proxy-env (#2704) ──
 # Login shells (bash -lc) run /etc/profile, which dot-sources every
 # /etc/profile.d/*.sh.  Without this hook, login shells started as a user
 # whose HOME ≠ /sandbox (root, container exec without --user) silently miss
 # the proxy env even when /tmp/nemoclaw-proxy-env.sh is populated.
 
-info "26a. /etc/profile.d/nemoclaw-proxy.sh sources proxy config"
+info "25a. /etc/profile.d/nemoclaw-proxy.sh sources proxy config"
 OUT=$(run_as_root "cat /etc/profile.d/nemoclaw-proxy.sh 2>/dev/null || echo MISSING")
 if echo "$OUT" | grep -q "/tmp/nemoclaw-proxy-env.sh"; then
   pass "/etc/profile.d/nemoclaw-proxy.sh sources /tmp/nemoclaw-proxy-env.sh"
@@ -520,12 +509,12 @@ else
   fail "/etc/profile.d/nemoclaw-proxy.sh does not source from expected path: $OUT"
 fi
 
-# ── Test 26b: /etc/bash.bashrc prepends the proxy hook (#2704) ────
+# ── Test 25b: /etc/bash.bashrc prepends the proxy hook (#2704) ────
 # Interactive non-login bash (bash -ic) sources /etc/bash.bashrc.  The
 # stock Debian/Ubuntu file has `[ -z "$PS1" ] && return` near the top, so
 # the hook must precede that guard to fire reliably in non-TTY contexts.
 
-info "26b. /etc/bash.bashrc prepends proxy source line ahead of PS1 guard"
+info "25b. /etc/bash.bashrc prepends proxy source line ahead of PS1 guard"
 OUT=$(run_as_root "head -3 /etc/bash.bashrc")
 if echo "$OUT" | head -2 | grep -q "/tmp/nemoclaw-proxy-env.sh"; then
   pass "/etc/bash.bashrc sources /tmp/nemoclaw-proxy-env.sh before the PS1 guard"
@@ -533,13 +522,13 @@ else
   fail "/etc/bash.bashrc does not source the proxy hook in the first 3 lines: $OUT"
 fi
 
-# ── Test 26c: bash -ic and bash -lc both pick up /tmp/nemoclaw-proxy-env.sh (#2704) ──
+# ── Test 25c: bash -ic and bash -lc both pick up /tmp/nemoclaw-proxy-env.sh (#2704) ──
 # End-to-end check: write a sentinel export into the runtime proxy-env
 # file, then verify both interactive (bash -ic) and login (bash -lc)
 # bash modes export it, regardless of which user is running. Mirrors the
 # QA test T5893674.
 
-info "26c. bash -ic and bash -lc export proxy env from /tmp/nemoclaw-proxy-env.sh"
+info "25c. bash -ic and bash -lc export proxy env from /tmp/nemoclaw-proxy-env.sh"
 OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
   printf "export NEMOCLAW_PROXY_PROBE=https://probe.invalid:9999\n" \
     > /tmp/nemoclaw-proxy-env.sh
@@ -559,13 +548,13 @@ else
   fail "proxy env not set in all bash modes (#2704): $OUT"
 fi
 
-# ── Test 27: Non-root mode executes without privilege step-down ───
+# ── Test 26: Non-root mode executes without privilege step-down ───
 # The entrypoint detects uid != 0, skips setpriv, and executes directly.
 # Use the image's actual sandbox uid/gid here: the system-assigned sandbox uid
 # is not guaranteed to be 1000 on every runner, and the non-root fallback is
 # designed to run as that sandbox user.
 
-info "27. Non-root mode executes command without setpriv"
+info "26. Non-root mode executes command without setpriv"
 OUT=$(docker run --rm --user "${SB_UID}:${SB_GID}" "$IMAGE" bash -c 'printf "%s\n" "NON_ROOT_EXEC_OK"; sleep 0.2' 2>&1 || true)
 if echo "$OUT" | grep -q "NON_ROOT_EXEC_OK"; then
   pass "non-root mode executed command directly (no setpriv)"
@@ -573,12 +562,12 @@ else
   fail "non-root command execution failed: $OUT"
 fi
 
-# ── Test 28: Model override patches openclaw.json at startup ─────
+# ── Test 27: Model override patches openclaw.json at startup ─────
 # NEMOCLAW_MODEL_OVERRIDE should patch agents.defaults.model.primary,
 # model id, and model name in openclaw.json before Landlock locks it.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/759
 
-info "28. NEMOCLAW_MODEL_OVERRIDE patches openclaw.json"
+info "27. NEMOCLAW_MODEL_OVERRIDE patches openclaw.json"
 OUT=$(docker run --rm --user root -e NEMOCLAW_MODEL_OVERRIDE="test/override-model" \
   --entrypoint "" "$IMAGE" bash -c '
   # Source the entrypoint function without running the full startup. Keep the
@@ -615,9 +604,9 @@ else
   fail "model override did not patch correctly: $OUT"
 fi
 
-# ── Test 29: Model override is a no-op when env var is unset ─────
+# ── Test 28: Model override is a no-op when env var is unset ─────
 
-info "29. No override when NEMOCLAW_MODEL_OVERRIDE is unset"
+info "28. No override when NEMOCLAW_MODEL_OVERRIDE is unset"
 OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
   APPLY_MODEL_OVERRIDE_SNIPPET=$(sed -n "/^[[:space:]]*apply_model_override[[:space:]]*()[[:space:]]*{/,/^[[:space:]]*}[[:space:]]*$/p" /usr/local/bin/nemoclaw-start)
   if [ -z "$APPLY_MODEL_OVERRIDE_SNIPPET" ]; then
@@ -636,13 +625,13 @@ else
   fail "config changed unexpectedly without override: $OUT"
 fi
 
-# ── Test 30: One-shot cleanup repairs post-Doctor DAC modes ──────
+# ── Test 29: One-shot cleanup repairs post-Doctor DAC modes ──────
 # PID 1 drops CAP_DAC_OVERRIDE, so root cannot traverse a sandbox-owned 0700
 # config directory. Exercise the supervised helper from the built image: a
 # permanently dropped owner child repairs the tree, then transfers its pinned
-# directory descriptor to the root-only baseline lock.
+# directory descriptor to the root-only recovery baseline.
 
-info "30. One-shot cleanup repairs 700/600 without CAP_DAC_OVERRIDE"
+info "29. One-shot cleanup repairs 700/600 without CAP_DAC_OVERRIDE"
 OUT=$(docker run --rm --user root --cap-drop DAC_OVERRIDE --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {
@@ -670,9 +659,9 @@ else
   fail "one-shot DAC repair failed: $OUT"
 fi
 
-# ── Test 30a: Mutable repair rejects a non-sandbox tree owner ─────
+# ── Test 29a: Mutable repair rejects a non-sandbox tree owner ─────
 
-info "30a. One-shot cleanup rejects a mutable tree owned by another UID"
+info "29a. One-shot cleanup rejects a mutable tree owned by another UID"
 OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {
@@ -697,10 +686,10 @@ else
   fail "owner-UID mismatch was not rejected safely: $OUT"
 fi
 
-# ── Test 30b: Baseline lock requires both identity capabilities ──
+# ── Test 29b: Baseline capture requires both identity capabilities ──
 
 for DROPPED_CAPABILITY in SETGID SETUID; do
-  info "30b. One-shot cleanup reports a missing CAP_${DROPPED_CAPABILITY} precondition"
+  info "29b. One-shot cleanup reports a missing CAP_${DROPPED_CAPABILITY} precondition"
   OUT=$(docker run --rm --user 0:0 --cap-drop DAC_OVERRIDE \
     --cap-drop "$DROPPED_CAPABILITY" --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
@@ -727,15 +716,15 @@ PY_ASSERT_GROUP_ABSENT
 ' 2>&1 || true)
   if echo "$OUT" | grep -q "IDENTITY_CAPABILITY_REFUSAL_OK" \
     && echo "$OUT" | grep -q "CAP_${DROPPED_CAPABILITY}"; then
-    pass "baseline lock fails closed with an actionable CAP_${DROPPED_CAPABILITY} diagnostic"
+    pass "baseline capture fails closed with an actionable CAP_${DROPPED_CAPABILITY} diagnostic"
   else
     fail "missing CAP_${DROPPED_CAPABILITY} was not reported safely: $OUT"
   fi
 done
 
-# ── Test 30c: Post-override capture severs hardlink aliases ─────
+# ── Test 29c: Post-override capture severs hardlink aliases ─────
 
-info "30c. Post-override capture freshens a hardlinked recovery baseline"
+info "29c. Post-override capture freshens a hardlinked recovery baseline"
 OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {
@@ -765,9 +754,9 @@ else
   fail "hardlinked baseline was not promoted safely: $OUT"
 fi
 
-# ── Test 30d: Pinned owner descriptor rejects path replacement ──
+# ── Test 29d: Pinned owner descriptor rejects path replacement ──
 
-info "30d. One-shot cleanup rejects replacement after owner normalization"
+info "29d. One-shot cleanup rejects replacement after owner normalization"
 OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   python3 - <<"PY_INJECT_HANDOFF_RACE"
@@ -814,9 +803,9 @@ else
   fail "owner-to-root descriptor handoff accepted a replacement: $OUT"
 fi
 
-# ── Test 30e: Empty-config recovery never follows sandbox links ─
+# ── Test 29e: Empty-config recovery never follows sandbox links ─
 
-info "30e. Empty-config recovery refuses a protected-target symlink"
+info "29e. Empty-config recovery refuses a protected-target symlink"
 OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {
@@ -846,9 +835,9 @@ else
   fail "empty-config recovery followed a sandbox-controlled link: $OUT"
 fi
 
-# ── Test 30f: Root never falls back to an environment helper ────
+# ── Test 29f: Root never falls back to an environment helper ────
 
-info "30f. Root repair rejects an environment-selected helper"
+info "29f. Root repair rejects an environment-selected helper"
 OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   cat >/tmp/untrusted-normalizer.py <<"PY_UNTRUSTED_NORMALIZER"
@@ -876,9 +865,9 @@ else
   fail "root repair executed an environment-selected helper: $OUT"
 fi
 
-# ── Test 30g: Exact root-owned boot recovery is fail-closed ──────
+# ── Test 29g: Exact root-owned boot recovery is fail-closed ──────
 
-info "30g. Boot recovery reclaims only the exact root-owned mutable signature"
+info "29g. Boot recovery reclaims only the exact root-owned mutable signature"
 OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   trap '\''printf "ROOT_BOOT_RECLAIM_FAIL line=%s status=%s\n" "$LINENO" "$?" >&2'\'' ERR
@@ -1003,9 +992,9 @@ else
   fail "root boot recovery contract failed: $OUT"
 fi
 
-# ── Test 30h: Root recovery refuses mounted config trees ─────────
+# ── Test 29h: Root recovery refuses mounted config trees ─────────
 
-info "30h. Boot recovery refuses a mounted .openclaw tree"
+info "29h. Boot recovery refuses a mounted .openclaw tree"
 OUT=$(docker run --rm --user root --tmpfs /sandbox/.openclaw:rw,mode=700,uid=0,gid=0 \
   --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail

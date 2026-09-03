@@ -12,6 +12,9 @@ import {
 } from "./credential-provider-registration";
 import type { MessagingTokenDef } from "./messaging-prep";
 
+const messagingBridgeProvider =
+  require("./messaging-bridge-provider") as typeof import("./messaging-bridge-provider");
+
 const BRAVE_SECRET = "brv-resume-secret";
 const DISCORD_SECRET = "discord-resume-secret";
 const refuseAuthorityChange = (): never => {
@@ -32,6 +35,31 @@ const DISCORD_STATIC_PROFILE = {
   ],
   endpoints: [],
   binaries: [],
+  inference_capable: false,
+};
+
+const BRAVE_PROFILE = {
+  id: "brave",
+  credentials: [
+    {
+      name: "api_key",
+      env_vars: ["BRAVE_API_KEY"],
+      required: true,
+      auth_style: "header",
+      header_name: "x-subscription-token",
+      query_param: "",
+    },
+  ],
+  endpoints: [
+    {
+      host: "api.search.brave.com",
+      port: 443,
+      protocol: "rest",
+      access: "read-write",
+      enforcement: "enforce",
+    },
+  ],
+  binaries: ["/usr/local/bin/node", "/usr/bin/node", "/usr/local/bin/curl", "/usr/bin/curl"],
   inference_capable: false,
 };
 
@@ -88,6 +116,81 @@ function sandboxInput(bindings: ReturnType<typeof requiredBindings>) {
     webSearchConfig: null,
     agent: {},
     requiredBindings: bindings,
+  };
+}
+
+function bridgeRefreshCleanupScenario(deleteStatus: number, deleteError: string) {
+  const session = { stagedCredentialProviders: [] } as unknown as Session;
+  let providerExists = false;
+  const commandHandlers = new Map<string, () => ReturnType<typeof providerMetadata>>([
+    [
+      "get",
+      () =>
+        providerExists
+          ? providerMetadata(
+              "alpha-googlechat-bridge",
+              "google-chat-bridge",
+              "GOOGLE_CHAT_ACCESS_TOKEN",
+            )
+          : {
+              status: 1,
+              stdout: "",
+              stderr:
+                "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
+            },
+    ],
+    [
+      "create",
+      () => {
+        providerExists = true;
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    ],
+    [
+      "delete",
+      () => {
+        providerExists = deleteStatus !== 0;
+        return { status: deleteStatus, stdout: "", stderr: deleteError };
+      },
+    ],
+  ]);
+  const runOpenshell = vi.fn(
+    (args: string[]) =>
+      commandHandlers.get(args[1] ?? "")?.() ?? { status: 0, stdout: "", stderr: "" },
+  );
+  const registration = createCredentialProviderRegistration(
+    registrationDeps(runOpenshell, session),
+  );
+  const tokenDef: MessagingTokenDef = {
+    name: "alpha-googlechat-bridge",
+    envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+    token: messagingBridgeProvider.MESSAGING_BRIDGE_PENDING_VALUE,
+    providerType: "google-chat-bridge",
+  };
+  const ensureProfiles = vi
+    .spyOn(messagingBridgeProvider, "ensureMessagingBridgeProfiles")
+    .mockImplementation(() => undefined);
+  const configureRefreshes = vi
+    .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
+    .mockReturnValue({ ok: false, reason: "token minting failed" });
+  const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+    throw new Error(`exit:${code ?? 0}`);
+  });
+  const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+  return {
+    errorLog,
+    providerExists: () => providerExists,
+    registration,
+    restore: () => {
+      errorLog.mockRestore();
+      exit.mockRestore();
+      configureRefreshes.mockRestore();
+      ensureProfiles.mockRestore();
+    },
+    runOpenshell,
+    session,
+    tokenDef,
   };
 }
 
@@ -380,8 +483,10 @@ describe("credential provider registration", () => {
       ],
     ]);
     const defaultResult = { status: 0, stdout: "", stderr: "" };
-    const runOpenshell = vi.fn(
-      (args: string[]) => commandResults.get(args.join(" ")) ?? defaultResult,
+    const runOpenshell = vi.fn((args: string[]) =>
+      args.includes("profile") && args.includes("export") && args.includes("brave")
+        ? { ...defaultResult, stdout: JSON.stringify(BRAVE_PROFILE) }
+        : (commandResults.get(args.join(" ")) ?? defaultResult),
     );
     const registration = createCredentialProviderRegistration(
       registrationDeps(runOpenshell, session),
@@ -494,14 +599,24 @@ describe("credential provider registration", () => {
 
   it("registers one static Hermes Discord provider from the checkpoint binding", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const missing = { status: 1, stdout: "", stderr: "not found" };
+    const missing = {
+      status: 1,
+      stdout: "",
+      stderr: "provider profile 'discord-hermes-static-v1' not found",
+    };
     const success = { status: 0, stdout: "", stderr: "" };
-    const runOpenshell = vi.fn((args: string[]) =>
-      (args[0] === "provider" && args.includes("profile") && args.includes("export")) ||
-      (args[0] === "provider" && args[1] === "get")
-        ? missing
-        : success,
-    );
+    let profileImported = false;
+    const runOpenshell = vi.fn((args: string[]) => {
+      profileImported ||=
+        args[0] === "provider" && args.includes("profile") && args.includes("import");
+      return args[0] === "provider" && args.includes("profile") && args.includes("export")
+        ? profileImported
+          ? { ...success, stdout: JSON.stringify(DISCORD_STATIC_PROFILE) }
+          : missing
+        : args[0] === "provider" && args[1] === "get"
+          ? missing
+          : success;
+    });
     const registration = createCredentialProviderRegistration(
       registrationDeps(runOpenshell, session),
     );
@@ -904,6 +1019,58 @@ describe("credential provider registration", () => {
         .filter((args) => args[0] === "provider" && args[1] === "create"),
     ).toHaveLength(1);
     expect(session.stagedCredentialProviders).toEqual([]);
+  });
+
+  it("removes a newly created bridge provider when refresh configuration fails", async () => {
+    const scenario = bridgeRefreshCleanupScenario(0, "");
+    try {
+      await expect(
+        scenario.registration.stageSandboxCredentialProviders(
+          sandboxInput(requiredBindings([scenario.tokenDef])),
+          async () => ({ messagingTokenDefs: [scenario.tokenDef] }),
+        ),
+      ).rejects.toThrow("exit:1");
+
+      expect(scenario.runOpenshell).toHaveBeenCalledWith(
+        ["provider", "delete", "-g", "test-gateway", "alpha-googlechat-bridge"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(scenario.session.stagedCredentialProviders).toEqual([]);
+      expect(scenario.providerExists()).toBe(false);
+      expect(scenario.errorLog.mock.calls.flat().join("\n")).not.toContain(
+        "Automatic cleanup could not remove",
+      );
+    } finally {
+      scenario.restore();
+    }
+  });
+
+  it("reports a newly created bridge provider when refresh cleanup fails", async () => {
+    const scenario = bridgeRefreshCleanupScenario(1, "gateway unavailable");
+    try {
+      await expect(
+        scenario.registration.stageSandboxCredentialProviders(
+          sandboxInput(requiredBindings([scenario.tokenDef])),
+          async () => ({ messagingTokenDefs: [scenario.tokenDef] }),
+        ),
+      ).rejects.toThrow("exit:1");
+
+      expect(scenario.runOpenshell).toHaveBeenCalledWith(
+        ["provider", "delete", "-g", "test-gateway", "alpha-googlechat-bridge"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(scenario.session.stagedCredentialProviders).toEqual([]);
+      expect(scenario.providerExists()).toBe(true);
+      const diagnostics = scenario.errorLog.mock.calls.flat().join("\n");
+      expect(diagnostics).toContain("Automatic cleanup could not remove");
+      expect(diagnostics).toContain("alpha-googlechat-bridge");
+      expect(diagnostics).toContain("gateway unavailable");
+      expect(diagnostics).toContain(
+        'openshell provider delete -g "test-gateway" "alpha-googlechat-bridge"',
+      );
+    } finally {
+      scenario.restore();
+    }
   });
 
   it("rechecks before persisting migrated messaging credentials (#9833)", () => {

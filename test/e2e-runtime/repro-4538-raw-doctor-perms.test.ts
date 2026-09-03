@@ -11,7 +11,7 @@
  *
  * `doctor --fix` enforces OpenClaw's single-user 700/600 layout, tightening
  * /sandbox/.openclaw to `700 sandbox:sandbox` and openclaw.json to `600`, even
- * when it exits nonzero (it hits EACCES on the root-locked /sandbox/.bashrc).
+ * when it exits nonzero (it hits EACCES on the root-owned /sandbox/.bashrc).
  * That breaks the NemoClaw mutable contract (2770 dir / 660 config) the gateway
  * UID needs — the gateway is in the sandbox group and can no longer persist
  * config writes.
@@ -77,8 +77,8 @@ function openClawConfigHashMatches(configDir: string): boolean {
   return digest === sha256Hex(configFile) && fileName === "openclaw.json";
 }
 
-// WSL CI can run these snippets as root; force restore-path cases to model a
-// mutable sandbox-owned config tree instead of the shields-up root-owned branch.
+// WSL CI can run these snippets as root; force restore-path cases to model the
+// mutable sandbox-owned config tree.
 function mutableSandboxOwnerStatShim(): string {
   return [
     "stat() {",
@@ -179,7 +179,7 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
     }
   });
 
-  it("restore helper is a no-op when shields are up (config dir owned by root)", () => {
+  it("restore helper is a no-op while a host transaction owns the config directory", () => {
     const { tmpDir, configDir, configFile } = seedTightenedConfigTree();
     try {
       const result = spawnSync(
@@ -188,7 +188,7 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
           "-c",
           [
             "set -uo pipefail",
-            // Pretend the dir is root-owned (shields up); never weaken the lock.
+            // An active host transaction owns the directory; never weaken it.
             'stat() { if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U" ]; then printf "root\\n"; else command stat "$@"; fi; }',
             extractShellFunctionFromSource(src, "_nemoclaw_restore_mutable_config_perms"),
             "_nemoclaw_restore_mutable_config_perms",
@@ -202,7 +202,7 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
       );
 
       expect(result.status).toBe(0);
-      // Untouched: shields-up locking must not be loosened by the guard.
+      // The connect-shell guard must not interrupt the host transaction.
       expect(modeBits(configDir)).toBe(0o700);
       expect(modeBits(configFile)).toBe(0o600);
     } finally {

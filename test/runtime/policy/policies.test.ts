@@ -619,6 +619,7 @@ exit 1
       const resolveSpy = vi
         .spyOn(resolveOpenshellModule, "resolveOpenshell")
         .mockReturnValueOnce(fakeOpenshell)
+        .mockReturnValueOnce(fakeOpenshell)
         .mockReturnValue(null);
       const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -631,8 +632,8 @@ exit 1
       }) as never);
 
       try {
-        expect(() => policies.applyPreset("my-assistant", "npm")).toThrow(/__test_exit__/);
-        expect(exitSpy).toHaveBeenCalledWith(1);
+        expect(policies.applyPreset("my-assistant", "npm", { nonFatal: true })).toBe(false);
+        expect(exitSpy).not.toHaveBeenCalled();
         // No `nemoclaw-policy-*` temp dir should have been created before
         // the resolvability check exited.
         expect(

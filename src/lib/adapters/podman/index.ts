@@ -56,7 +56,6 @@ export interface PodmanContainerEngineOptions {
     | "host-local-inference"
     | "managed-bootstrap"
     | "sandbox-lifecycle"
-    | "state-mutation"
     | "workload-cleanup";
   readonly socketAuthority: PodmanSocketAuthority;
   readonly executable?: string;
@@ -189,22 +188,24 @@ export function createPodmanContainerEngine(
   options: PodmanContainerEngineOptions,
 ): PodmanBoundContainerEngine {
   const assertAuthority = options.assertAuthority ?? assertPodmanSocketAuthority;
-  const protectsRuntimeMutation =
+  const requiresExecutableAuthority =
     options.operation === "host-local-inference" ||
     options.operation === "managed-bootstrap" ||
-    options.operation === "state-mutation" ||
-    options.operation === "workload-cleanup";
+    options.operation === "workload-cleanup" ||
+    options.executableAuthority !== undefined;
   const executable =
     options.executable ??
     options.executableAuthority?.executablePath ??
-    (protectsRuntimeMutation ? resolvePodmanExecutablePath(options.executableSearchEnv) : "podman");
+    (requiresExecutableAuthority
+      ? resolvePodmanExecutablePath(options.executableSearchEnv)
+      : "podman");
   if (options.executableAuthority && executable !== options.executableAuthority.executablePath) {
     throw new Error("Podman executable path disagrees with its recorded authority.");
   }
   if (options.executableAuthority) {
     assertPodmanExecutableAuthority(options.executableAuthority, options.executableAuthorityDeps);
   }
-  const executableAuthority = protectsRuntimeMutation
+  const executableAuthority = requiresExecutableAuthority
     ? (options.executableAuthority ??
       capturePodmanExecutableAuthority(executable, options.executableAuthorityDeps))
     : undefined;
@@ -280,7 +281,7 @@ export function createPodmanContainerEngine(
     endpointAuthorityId,
     assertAuthority: () => assertBoundAuthority(true),
   };
-  if (!protectsRuntimeMutation) return Object.freeze(boundEngine);
+  if (!requiresExecutableAuthority) return Object.freeze(boundEngine);
   const prepareManagedVolumeRoot = (input: {
     readonly path: string;
     readonly uid: number;
