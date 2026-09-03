@@ -136,7 +136,7 @@ function createHermesPortablePodmanOperationCommandAuthority(
   runtimeAuthority: CheckpointPortableRuntimeAuthority,
   operation: Extract<
     ContainerEngineOperationScope,
-    "host-doctor" | "host-local-inference" | "sandbox-lifecycle" | "state-mutation"
+    "host-doctor" | "host-local-inference" | "sandbox-lifecycle"
   >,
   sourceEnv: NodeJS.ProcessEnv = process.env,
   deps: HermesPortablePodmanAuthorityDeps = {},
@@ -173,7 +173,7 @@ function createHermesPortablePodmanOperationCommandAuthority(
   };
   const assertCurrent = (): void => {
     assertTransactionCurrent();
-    if (operation === "state-mutation") qualifyExactMatrix(engine, deps);
+    if (operation === "sandbox-lifecycle") qualifyExactMatrix(engine, deps);
     assertTransactionCurrent();
   };
   return Object.freeze({ engine, assertTransactionCurrent, assertCurrent });
@@ -190,7 +190,7 @@ export function createHermesPortablePodmanCommandAuthority(
     authority,
     socketAuthority,
     runtimeAuthority,
-    "state-mutation",
+    "sandbox-lifecycle",
     sourceEnv,
     deps,
   );
@@ -238,27 +238,17 @@ export function createHermesPortablePodmanOperationEngines(
   const hostDoctor = create("host-doctor");
   const hostLocalInference = create("host-local-inference");
   const sandboxLifecycle = create("sandbox-lifecycle");
-  const matrixAuthority = createHermesPortablePodmanOperationCommandAuthority(
-    authority,
-    socketAuthority,
-    runtimeAuthority,
-    "state-mutation",
-    sourceEnv,
-    deps,
-    executableProof,
-  );
+
   return Object.freeze({
     hostDoctor: hostDoctor.engine,
     hostLocalInference: hostLocalInference.engine,
     sandboxLifecycle: sandboxLifecycle.engine,
     assertTransactionCurrent: () => {
-      matrixAuthority.assertTransactionCurrent();
       hostDoctor.assertTransactionCurrent();
       hostLocalInference.assertTransactionCurrent();
       sandboxLifecycle.assertTransactionCurrent();
     },
     assertCurrent: () => {
-      matrixAuthority.assertCurrent();
       hostDoctor.assertCurrent();
       hostLocalInference.assertCurrent();
       sandboxLifecycle.assertCurrent();

@@ -56,7 +56,6 @@ export interface PodmanContainerEngineOptions {
     | "host-local-inference"
     | "managed-bootstrap"
     | "sandbox-lifecycle"
-    | "state-mutation"
     | "workload-cleanup";
   readonly socketAuthority: PodmanSocketAuthority;
   readonly executable?: string;
@@ -235,15 +234,13 @@ export function createPodmanContainerEngine(
   options: PodmanContainerEngineOptions,
 ): PodmanBoundContainerEngine {
   const assertAuthority = options.assertAuthority ?? assertPodmanSocketAuthority;
-  const protectsRuntimeMutation =
+  const requiresExecutableAuthority =
     options.operation === "host-local-inference" ||
     options.operation === "managed-bootstrap" ||
-    options.operation === "state-mutation" ||
-    options.operation === "workload-cleanup";
-  if (
-    options.executableProof &&
-    !podmanExecutableOperationProofs.has(options.executableProof)
-  ) {
+    options.operation === "workload-cleanup" ||
+    options.executableAuthority !== undefined ||
+    options.executableProof !== undefined;
+  if (options.executableProof && !podmanExecutableOperationProofs.has(options.executableProof)) {
     throw new Error("Podman executable proof was not created by this adapter.");
   }
   if (
@@ -256,7 +253,7 @@ export function createPodmanContainerEngine(
   const executableAuthority =
     options.executableProof?.authority ??
     options.executableAuthority ??
-    (protectsRuntimeMutation
+    (requiresExecutableAuthority
       ? capturePodmanExecutableAuthority(
           options.executable ?? resolvePodmanExecutablePath(options.executableSearchEnv),
           options.executableAuthorityDeps,
@@ -270,7 +267,7 @@ export function createPodmanContainerEngine(
   const executable =
     options.executable ??
     executableProof?.executablePath ??
-    (protectsRuntimeMutation ? resolvePodmanExecutablePath(options.executableSearchEnv) : "podman");
+    (requiresExecutableAuthority ? resolvePodmanExecutablePath(options.executableSearchEnv) : "podman");
   if (executableProof && executable !== executableProof.executablePath) {
     throw new Error("Podman executable path disagrees with its recorded authority.");
   }
@@ -328,7 +325,7 @@ export function createPodmanContainerEngine(
     endpointAuthorityId,
     assertAuthority: () => assertBoundAuthority(true),
   };
-  if (!protectsRuntimeMutation) return Object.freeze(boundEngine);
+  if (!requiresExecutableAuthority) return Object.freeze(boundEngine);
   const prepareManagedVolumeRoot = (input: {
     readonly path: string;
     readonly uid: number;
