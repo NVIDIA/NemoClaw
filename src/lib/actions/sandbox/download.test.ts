@@ -248,6 +248,24 @@ describe("downloadFromSandbox", () => {
     expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
   });
 
+  it("rejects publication when a directory becomes unsafe during download (#10636)", async () => {
+    captureMock
+      .mockReturnValueOnce({ status: 0, output: "dir" })
+      .mockReturnValueOnce({ status: 0, output: "unsafe-member" });
+
+    await expect(
+      downloadFromSandbox({
+        sandboxName: "alpha",
+        sandboxPath: "/sandbox/mydir",
+        hostDest: "/tmp/p",
+      }),
+    ).rejects.toThrow(/source type changed or could not be revalidated after download/);
+    expect(runMock).toHaveBeenCalledOnce();
+    expect(captureMock).toHaveBeenCalledTimes(2);
+    expect(publishMock).not.toHaveBeenCalled();
+    expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
+  });
+
   it("passes the source path as a positional arg to the probe (no shell interpolation)", async () => {
     await downloadFromSandbox({
       sandboxName: "alpha",

@@ -31,6 +31,64 @@ describe("backup-workspace.sh", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  it("removes an incomplete backup when a declared file download fails (#10636)", () => {
+    const calls = path.join(root, "nemoclaw-calls.txt");
+    const openshellCalls = path.join(root, "openshell-calls.txt");
+    const nemoclaw = path.join(bin, "nemoclaw");
+    writeExecutable(
+      nemoclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$NEMOCLAW_TEST_CALLS"
+if [[ "$3" == */SOUL.md ]]; then
+  printf 'NEMOCLAW_TEST_REJECTED_DECLARED_FILE\n' >&2
+  exit 1
+fi
+exit 99
+`,
+    );
+    writeExecutable(
+      path.join(bin, "openshell"),
+      `#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$NEMOCLAW_TEST_OPENSHELL_CALLS"
+exit 99
+`,
+    );
+
+    const env = {
+      ...process.env,
+      HOME: home,
+      NEMOCLAW_CLI_BIN: nemoclaw,
+      NEMOCLAW_TEST_CALLS: calls,
+      NEMOCLAW_TEST_OPENSHELL_CALLS: openshellCalls,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+    };
+    const result = spawnSync("bash", [BACKUP_SCRIPT, "backup", "test-sandbox"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env,
+    });
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("NEMOCLAW_TEST_REJECTED_DECLARED_FILE");
+    expect(result.stderr).toContain("because SOUL.md was not downloaded");
+    expect(fs.readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
+
+    const backupRoot = path.join(home, ".nemoclaw", "backups");
+    expect(fs.readdirSync(backupRoot)).toEqual([]);
+    expect(fs.existsSync(openshellCalls)).toBe(false);
+
+    const restoreResult = spawnSync("bash", [BACKUP_SCRIPT, "restore", "test-sandbox"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env,
+    });
+
+    expect(restoreResult.status, restoreResult.stderr).toBe(1);
+    expect(restoreResult.stderr).toContain(`No backups found in ${backupRoot}/`);
+    expect(fs.existsSync(openshellCalls)).toBe(false);
+  });
+
   it("reports an incomplete backup when a directory is rejected (#10636)", () => {
     const calls = path.join(root, "nemoclaw-calls.txt");
     const openshellCalls = path.join(root, "openshell-calls.txt");

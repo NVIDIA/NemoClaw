@@ -167,6 +167,10 @@ Backing up workspace from sandbox 'my-assistant'...
 Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (6 items)
 ```
 
+If a listed file or the `memory/` directory cannot download, the helper deletes the new timestamped backup and exits.
+Check the reported sandbox path for a missing file, symbolic link, or unsupported file type.
+Correct the path, then run the same backup command again.
+
 Restore the most recent backup or a specific timestamp:
 
 ```bash

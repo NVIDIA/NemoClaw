@@ -103,7 +103,9 @@ do_backup() {
     if "$NEMOCLAW_CLI_BIN" "$sandbox" download "${WORKSPACE_PATH}/${f}" "${dest}/"; then
       count=$((count + 1))
     else
-      warn "Skipped ${f} (not found or download failed)"
+      warn "Failed to download ${f}"
+      rm -rf -- "$dest" || fail "Failed to remove incomplete backup at ${dest}/. Remove it before restore."
+      fail "Removed incomplete backup at ${dest}/ because ${f} was not downloaded. Check ${WORKSPACE_PATH}/${f}, then rerun the backup before restore."
     fi
   done
 
