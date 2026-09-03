@@ -320,6 +320,8 @@ const { resolveSandboxGpuConfig } = require(${modulePath("onboard/sandbox-gpu-mo
     env: {
       ...process.env,
       HOME: tmpDir,
+      XDG_CONFIG_HOME: path.join(tmpDir, ".config"),
+      XDG_RUNTIME_DIR: path.join(tmpDir, "runtime"),
       PATH: `${fakeBin}:${process.env.PATH || ""}`,
       NEMOCLAW_EXPERIMENTAL_PROFILE: mode === "ordinary-resume" ? "default" : "portable",
       NEMOCLAW_NON_INTERACTIVE: "1",
