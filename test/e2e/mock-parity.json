@@ -230,19 +230,23 @@
     },
     {
       "live": "test/e2e/live/network-policy.test.ts",
-      "liveSources": [
-        "test/e2e/live/package-database-read-only.ts",
-        "test/e2e/live/restricted-onboard-helpers.ts",
-        "test/e2e/live/policy-list-state.ts"
-      ],
+      "liveSources": ["test/e2e/live/restricted-onboard-helpers.ts"],
       "fast": [
+        "src/lib/actions/sandbox/exec-policy-hint-detection.test.ts",
         "src/lib/actions/sandbox/policy-channel-add-drift.test.ts",
+        "src/lib/actions/sandbox/policy-channel-policy.test.ts",
+        "src/lib/actions/sandbox/policy-list-render.test.ts",
+        "src/lib/onboard/initial-policy-real-policy.test.ts",
+        "src/lib/policy/preset-allowed-ips.test.ts",
+        "nemoclaw/src/blueprint/ssrf.test.ts",
         "test/channels/channels-add-preset.test.ts",
-        "test/runtime/policy/policy-channel-agent-resolution.test.ts",
-        "test/onboarding/validate-blueprint.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/runtime-provider-fixture.test.ts"
+        "test/e2e/support/runtime-provider-fixture.test.ts",
+        "test/onboarding/validate-blueprint.test.ts",
+        "test/runtime/policy/policies.test.ts",
+        "test/runtime/policy/policy-channel-agent-resolution.test.ts",
+        "test/runtime/policy/policy-tiers-onboard.test.ts"
       ]
     },
     {
