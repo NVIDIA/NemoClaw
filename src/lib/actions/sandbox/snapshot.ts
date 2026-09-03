@@ -93,6 +93,7 @@ import {
   createSnapshotCloneLifecycle,
   confirmSandboxRuntimeRestore,
   fingerprintSandboxLiveIdentity,
+  getMcpProviderInspectionRuntimeSelection,
   isSandboxPolicyCredentialFree,
   type PreparedHostLocalInferenceAuthority,
   type PreparedSandboxRuntimeRestore,
@@ -1556,7 +1557,11 @@ async function runSnapshotRestoreUnlocked(
     }
     if (repairsManagedDeepAgentsProjection) {
       try {
-        restoreDeepAgentsManagedMcpProjection(targetSandbox, managedDeepAgentsEntries);
+        restoreDeepAgentsManagedMcpProjection(
+          targetSandbox,
+          managedDeepAgentsEntries,
+          getMcpProviderInspectionRuntimeSelection(snapshotTarget),
+        );
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         const recoveryCommand = deepAgentsManagedProjectionRecoveryCommand(targetSandbox);
