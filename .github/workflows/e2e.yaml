@@ -4566,7 +4566,7 @@ jobs:
       - name: Validate OpenClaw managed-image security boundary
         shell: bash
         run: >-
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-openclaw-security.test.ts
+          npx vitest run --project integration test/e2e-runtime/managed-image-openclaw-security.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Validate managed-image glibc probe lifecycle
         shell: bash

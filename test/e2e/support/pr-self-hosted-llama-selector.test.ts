@@ -200,7 +200,7 @@ describe("OpenClaw managed-image copied-PR qualification", () => {
       job.steps?.find((step) => step.name === "Validate OpenClaw managed-image security boundary"),
     ).toMatchObject({
       run: expect.stringContaining(
-        "live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-openclaw-security.test.ts",
+        "vitest run --project integration test/e2e-runtime/managed-image-openclaw-security.test.ts",
       ),
     });
     expect(job.steps?.find((step) => step.name === "Validate glibc probe lifecycle")).toMatchObject(

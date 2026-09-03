@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { openclawProtectedImage } from "./managed-image-multiarch-startup-helpers.ts";
-import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { expect, test } from "../fixtures/e2e-test.ts";
+import { openclawProtectedImage } from "./managed-image-openclaw-security.ts";
+import type { HostCliClient } from "../e2e/fixtures/clients/host.ts";
+import { expect, test } from "../e2e/fixtures/e2e-test.ts";
 async function runContainer(
   host: HostCliClient,
   image: string,
@@ -58,6 +58,7 @@ async function runDefaultContainer(
 test(
   "enforces the OpenClaw managed-image sandbox boundary",
   {
+    timeout: 120_000,
     meta: {
       e2ePhases: [
         "verify final image identities and runtime tools",
