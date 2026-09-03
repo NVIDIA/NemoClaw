@@ -9,7 +9,6 @@ namespace Nvidia.NemoClaw.Bootstrapper;
 
 internal static class Program
 {
-    [STAThread]
     private static int Main()
     {
         var startupLog = Path.Combine(

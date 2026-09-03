@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Threading;
@@ -24,6 +25,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
     private IBootstrapperCommand? command;
     private MainWindow? window;
     private Dispatcher? dispatcher;
+    private Exception? dispatcherFailure;
     private bool installed;
     private bool cancelRequested;
     private LaunchAction plannedAction = LaunchAction.Unknown;
@@ -39,25 +41,57 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
 
     protected override void Run()
     {
-        this.dispatcher = Dispatcher.CurrentDispatcher;
         this.SubscribeToEngine();
-
-        if (this.command?.Display is Display.Full or Display.Passive)
+        using var dispatcherReady = new ManualResetEventSlim();
+        var dispatcherThread = new Thread(() => this.RunDispatcher(dispatcherReady))
         {
-            this.window = new MainWindow();
-            this.window.InstallRequested += (_, _) => this.BeginPlan(LaunchAction.Install);
-            this.window.RepairRequested += (_, _) => this.BeginPlan(LaunchAction.Repair);
-            this.window.UninstallRequested += (_, _) => this.BeginPlan(LaunchAction.Uninstall);
-            this.window.CancelRequested += (_, _) => this.cancelRequested = true;
-            this.window.OpenLogRequested += (_, _) => this.OpenBundleLog();
-            this.window.Closed += (_, _) => this.dispatcher.InvokeShutdown();
-            this.window.Show();
+            IsBackground = false,
+            Name = "NemoClaw setup UI",
+        };
+        dispatcherThread.SetApartmentState(ApartmentState.STA);
+        dispatcherThread.Start();
+        dispatcherReady.Wait();
+        if (this.dispatcherFailure is not null)
+        {
+            throw new InvalidOperationException("The NemoClaw setup UI could not initialize.", this.dispatcherFailure);
         }
 
         this.Engine.Log(LogLevel.Standard, "NemoClaw native Windows bootstrapper started.");
         this.Engine.Detect();
-        Dispatcher.Run();
+        dispatcherThread.Join();
+        if (this.dispatcherFailure is not null)
+        {
+            throw new InvalidOperationException("The NemoClaw setup UI failed.", this.dispatcherFailure);
+        }
         this.Engine.Quit(this.NormalizeExitCode(this.result));
+    }
+
+    private void RunDispatcher(ManualResetEventSlim ready)
+    {
+        try
+        {
+            this.dispatcher = Dispatcher.CurrentDispatcher;
+
+            if (this.command?.Display is Display.Full or Display.Passive)
+            {
+                this.window = new MainWindow();
+                this.window.InstallRequested += (_, _) => this.BeginPlan(LaunchAction.Install);
+                this.window.RepairRequested += (_, _) => this.BeginPlan(LaunchAction.Repair);
+                this.window.UninstallRequested += (_, _) => this.BeginPlan(LaunchAction.Uninstall);
+                this.window.CancelRequested += (_, _) => this.cancelRequested = true;
+                this.window.OpenLogRequested += (_, _) => this.OpenBundleLog();
+                this.window.Closed += (_, _) => this.dispatcher.InvokeShutdown();
+                this.window.Show();
+            }
+
+            ready.Set();
+            Dispatcher.Run();
+        }
+        catch (Exception error)
+        {
+            this.dispatcherFailure = error;
+            ready.Set();
+        }
     }
 
     private void SubscribeToEngine()
@@ -142,7 +176,9 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             return;
         }
 
-        var owner = this.window is null ? IntPtr.Zero : new WindowInteropHelper(this.window).Handle;
+        var owner = this.UiValue(
+            () => this.window is null ? IntPtr.Zero : new WindowInteropHelper(this.window).Handle,
+            IntPtr.Zero);
         this.Engine.Apply(owner);
     }
 
@@ -199,7 +235,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         try
         {
             var launcher = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "NVIDIA", "NemoClaw", "bin", "NemoClaw.exe");
-            var selectedAgent = this.window?.SelectedAgent ?? "openclaw";
+            var selectedAgent = this.UiValue(() => this.window?.SelectedAgent ?? "openclaw", "openclaw");
             if (!AllowedAgents.Contains(selectedAgent))
             {
                 selectedAgent = "openclaw";
@@ -249,6 +285,15 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             return;
         }
         _ = this.dispatcher.BeginInvoke(action);
+    }
+
+    private T UiValue<T>(Func<T> action, T fallback)
+    {
+        if (this.dispatcher is null)
+        {
+            return fallback;
+        }
+        return this.dispatcher.CheckAccess() ? action() : this.dispatcher.Invoke(action);
     }
 
     private int NormalizeExitCode(int code)
