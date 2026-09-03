@@ -336,6 +336,7 @@ export interface FindReachableOllamaHostOptions {
   runtime?: ContainerRuntime;
   readTextFile?: ReadTextFile;
   prepareDockerEnvironment?: PrepareDockerEnvironmentFn;
+  revalidate?: boolean;
 }
 
 // Probe each candidate host for a responding Ollama. Returns the first host
@@ -350,6 +351,7 @@ export function findReachableOllamaHost(
   stateRoot: string = resolveSharedLocalAdapterStateRoot(),
   options: FindReachableOllamaHostOptions = {},
 ): string | null {
+  if (options.revalidate) _resolvedOllamaHost = null;
   if (_resolvedOllamaHost !== null) return _resolvedOllamaHost;
   const persistedHost = loadPersistedOllamaHost(stateRoot);
   const capture = runCaptureImpl ?? runCapture;

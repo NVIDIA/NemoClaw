@@ -8,10 +8,13 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  findReachableOllamaHost,
+  loadPersistedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
   persistResolvedOllamaHost,
   prepareOllamaApiExecution,
   resetOllamaHostCache,
+  setResolvedOllamaHost,
 } from "../../../src/lib/inference/local.js";
 import { unloadOllamaModels as unloadOllamaModelsImpl } from "../../../src/lib/inference/ollama/proxy.js";
 
@@ -47,6 +50,14 @@ function fail(stderr = "couldn't connect"): SpawnSyncReturns<string> {
   };
 }
 
+function isolatedDockerEnvironment() {
+  return {
+    env: {},
+    isolatedCredentialConfig: false,
+    cleanup: () => ({ ok: true as const }),
+  };
+}
+
 function withMockedSpawnSync<T>(
   responder: (call: SpawnCall) => SpawnSyncReturns<string>,
   fn: (calls: SpawnCall[], modules: OllamaModules) => T | Promise<T>,
@@ -65,7 +76,7 @@ function withMockedSpawnSync<T>(
   const unloadOllamaModels: typeof unloadOllamaModelsImpl = (onlyModels, options) =>
     unloadOllamaModelsImpl(onlyModels, {
       ...options,
-      getResolvedOllamaHost: () => ollamaHost,
+      findReachableOllamaHost: () => ollamaHost,
       spawnSync,
     });
   return fn(calls, { unloadOllamaModels });
@@ -100,6 +111,16 @@ describe("Ollama GPU cleanup", () => {
   it("restores the persisted Windows-host transport after the process cache is cleared", () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-cleanup-route-"));
     const calls: SpawnCall[] = [];
+    const capture = vi.fn((command: readonly string[]) => {
+      const rendered = command.join(" ");
+      return rendered.includes("Get-NetTCPConnection")
+        ? "127.0.0.1"
+        : command.includes("Host: rebinding.invalid")
+          ? "403"
+          : rendered.includes("host.docker.internal:11434/api/tags")
+            ? JSON.stringify({ models: [] })
+            : "";
+    });
     const respond = respondWithLoadedModels("llama3.2:1b");
     const spawnSync = ((command: string, args: readonly string[]) => {
       const call = { command, args };
@@ -111,6 +132,11 @@ describe("Ollama GPU cleanup", () => {
       persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
       resetOllamaHostCache();
       const result = unloadOllamaModelsImpl(["llama3.2:1b"], {
+        findReachableOllamaHost: (root) =>
+          findReachableOllamaHost(capture, { isWsl: true }, root, {
+            runtime: "docker-desktop",
+            prepareDockerEnvironment: isolatedDockerEnvironment,
+          }),
         ollamaHostStateRoot: stateRoot,
         sleep: () => {},
         spawnSync,
@@ -122,6 +148,9 @@ describe("Ollama GPU cleanup", () => {
         endpoint: "http://host.docker.internal:11434",
       });
       expect(calls).toHaveLength(3);
+      expect(
+        capture.mock.calls.some(([command]) => command.includes("Host: rebinding.invalid")),
+      ).toBe(true);
       calls.forEach(({ command, args }) => {
         expect(command).toBe("docker");
         expect(args).toEqual(
@@ -132,6 +161,49 @@ describe("Ollama GPU cleanup", () => {
           ]),
         );
       });
+    } finally {
+      resetOllamaHostCache();
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not unload through a persisted Windows route when protection fails", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-cleanup-rebinding-"));
+    const spawnSync = vi.fn(() => ok()) as unknown as SpawnSync;
+    const capture = vi.fn((command: readonly string[]) => {
+      const rendered = command.join(" ");
+      return rendered.includes("Get-NetTCPConnection")
+        ? "127.0.0.1"
+        : command.includes("Host: rebinding.invalid")
+          ? "200"
+          : rendered.includes("host.docker.internal:11434/api/tags")
+            ? JSON.stringify({ models: [] })
+            : "";
+    });
+
+    try {
+      persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
+      resetOllamaHostCache();
+      setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+
+      const result = unloadOllamaModelsImpl(["llama3.2:1b"], {
+        findReachableOllamaHost: (root) =>
+          findReachableOllamaHost(capture, { isWsl: true }, root, {
+            runtime: "docker-desktop",
+            prepareDockerEnvironment: isolatedDockerEnvironment,
+            revalidate: true,
+          }),
+        ollamaHostStateRoot: stateRoot,
+        spawnSync,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        outcome: "discovery-failed",
+        requests: [],
+      });
+      expect(spawnSync).not.toHaveBeenCalled();
+      expect(loadPersistedOllamaHost(stateRoot)).toBeNull();
     } finally {
       resetOllamaHostCache();
       rmSync(stateRoot, { recursive: true, force: true });
@@ -172,7 +244,7 @@ describe("Ollama GPU cleanup", () => {
 
   it("retains cleanup recovery when no local Ollama endpoint is reachable", () => {
     const result = unloadOllamaModelsImpl(["llama3.2:1b"], {
-      getResolvedOllamaHost: () => null,
+      findReachableOllamaHost: () => null,
     });
 
     expect(result).toMatchObject({
@@ -203,7 +275,7 @@ describe("Ollama GPU cleanup", () => {
     }) as SpawnSync;
 
     const result = unloadOllamaModelsImpl(["llama3.2:1b"], {
-      getResolvedOllamaHost: () => OLLAMA_HOST_DOCKER_INTERNAL,
+      findReachableOllamaHost: () => OLLAMA_HOST_DOCKER_INTERNAL,
       sleep: () => {},
       spawnSync,
       prepareOllamaApiExecution: (
