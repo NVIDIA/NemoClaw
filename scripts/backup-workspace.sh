@@ -122,7 +122,8 @@ do_backup() {
   fi
 
   if [ -n "$failed_directory" ]; then
-    fail "Backup is incomplete at ${dest}/ because ${failed_directory}/ was not downloaded. Remove unsupported entries from ${WORKSPACE_PATH}/${failed_directory}/ and rerun the backup before restore."
+    rm -rf -- "$dest" || fail "Failed to remove incomplete backup at ${dest}/. Remove it before restore."
+    fail "Removed incomplete backup at ${dest}/ because ${failed_directory}/ was not downloaded. Remove unsupported entries from ${WORKSPACE_PATH}/${failed_directory}/ and rerun the backup before restore."
   fi
 
   info "Backup saved to ${dest}/ (${count} items)"

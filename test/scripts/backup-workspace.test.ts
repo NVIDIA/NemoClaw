@@ -63,18 +63,19 @@ exit 99
 `,
     );
 
+    const env = {
+      ...process.env,
+      HOME: home,
+      NEMOCLAW_CLI_BIN: nemoclaw,
+      NEMOCLAW_TEST_CALLS: calls,
+      NEMOCLAW_TEST_LINKED_MEMBER: linked,
+      NEMOCLAW_TEST_OPENSHELL_CALLS: openshellCalls,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+    };
     const result = spawnSync("bash", [BACKUP_SCRIPT, "backup", "test-sandbox"], {
       cwd: REPO_ROOT,
       encoding: "utf8",
-      env: {
-        ...process.env,
-        HOME: home,
-        NEMOCLAW_CLI_BIN: nemoclaw,
-        NEMOCLAW_TEST_CALLS: calls,
-        NEMOCLAW_TEST_LINKED_MEMBER: linked,
-        NEMOCLAW_TEST_OPENSHELL_CALLS: openshellCalls,
-        PATH: `${bin}:${process.env.PATH ?? ""}`,
-      },
+      env,
     });
 
     expect(result.status, result.stderr).toBe(1);
@@ -88,20 +89,21 @@ exit 99
     );
 
     const backupRoot = path.join(home, ".nemoclaw", "backups");
-    const [backupName] = fs.readdirSync(backupRoot);
-    expect(backupName).toBeTruthy();
-    const backupDir = path.join(backupRoot, backupName!);
-    expect(result.stderr).toContain(
-      `Backup is incomplete at ${backupDir}/ because memory/ was not downloaded.`,
-    );
+    expect(result.stderr).toContain("Removed incomplete backup at ");
+    expect(result.stderr).toContain(" because memory/ was not downloaded.");
     expect(result.stderr).toContain(
       "Remove unsupported entries from /sandbox/.openclaw/workspace/memory/ and rerun the backup before restore.",
     );
-    expect(fs.readFileSync(path.join(backupDir, "SOUL.md"), "utf8")).toBe("saved\n");
-    expect(fs.readFileSync(path.join(backupDir, "USER.md"), "utf8")).toBe("saved\n");
-    expect(fs.readFileSync(path.join(backupDir, "IDENTITY.md"), "utf8")).toBe("saved\n");
-    expect(fs.readFileSync(path.join(backupDir, "AGENTS.md"), "utf8")).toBe("saved\n");
-    expect(fs.readFileSync(path.join(backupDir, "MEMORY.md"), "utf8")).toBe("saved\n");
-    expect(fs.existsSync(path.join(backupDir, "memory"))).toBe(false);
+    expect(fs.readdirSync(backupRoot)).toEqual([]);
+
+    const restoreResult = spawnSync("bash", [BACKUP_SCRIPT, "restore", "test-sandbox"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env,
+    });
+
+    expect(restoreResult.status, restoreResult.stderr).toBe(1);
+    expect(restoreResult.stderr).toContain(`No backups found in ${backupRoot}/`);
+    expect(fs.existsSync(openshellCalls)).toBe(false);
   });
 });
