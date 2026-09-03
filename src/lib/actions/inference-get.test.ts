@@ -119,17 +119,24 @@ describe("runInferenceGet", () => {
     ]);
   });
 
-  it("omits a persisted endpoint when its model differs from the live route (#10784)", async () => {
+  it.each([
+    { label: "direct lookup with a stale model", sandboxName: undefined, persistedModel: "stale/model" },
+    { label: "sandbox lookup with a stale model", sandboxName: "custom", persistedModel: "stale/model" },
+    { label: "direct lookup with missing model metadata", sandboxName: undefined },
+  ])("omits a persisted endpoint for $label (#10784)", async ({ sandboxName, persistedModel }) => {
     const deps = createDeps(
       "Gateway inference:\n  Provider: compatible-endpoint\n  Model: live/model\n",
     );
-    recordRoute(deps, {
-      provider: "compatible-endpoint",
-      model: "stale/model",
-      endpointUrl: "https://stale.example.test/v1",
-    });
+    deps.listSandboxes.mockReturnValue([
+      {
+        name: "custom",
+        provider: "compatible-endpoint",
+        ...(persistedModel === undefined ? {} : { model: persistedModel }),
+        endpointUrl: "https://stale.example.test/v1",
+      },
+    ]);
 
-    await expect(runInferenceGet({ json: true, sandboxName: "custom" }, deps)).resolves.toEqual({
+    await expect(runInferenceGet({ json: true, sandboxName }, deps)).resolves.toEqual({
       provider: "compatible-endpoint",
       model: "live/model",
     });
