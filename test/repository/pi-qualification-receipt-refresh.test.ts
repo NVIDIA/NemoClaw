@@ -96,7 +96,7 @@ describe("Pi qualification receipt refresh", () => {
                 })(),
       receipts: RECEIPTS,
       rootDir,
-      ...(options.headRevision ? { headRevision: options.headRevision } : {}),
+      headRevision: options.headRevision ?? "HEAD",
     });
   }
 
