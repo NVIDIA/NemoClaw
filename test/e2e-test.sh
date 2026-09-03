@@ -157,7 +157,9 @@ info "4b. Verify blueprint runner apply smoke test"
 # Apply runs the full codepath (profile resolution, sandbox creation,
 # provider setup, state save) against a fixture CLI. Policy mutation reads must
 # return the same metadata + YAML shape as OpenShell 0.0.72; an empty successful
-# response is intentionally rejected by the runner.
+# response is intentionally rejected by the runner. Use an independent
+# blueprint so shipped policy endpoints cannot preempt the apply behavior under
+# test.
 FAKE_OPENSHELL_BIN=$(mktemp -d)
 APPLY_BLUEPRINT_DIR=$(mktemp -d)
 APPLY_OUTPUT=$(mktemp)
@@ -224,6 +226,7 @@ cat >"$APPLY_BLUEPRINT_DIR/policies/invalid.yaml" <<'YAML'
 version: invalid
 network_policies: {}
 YAML
+cp /opt/nemoclaw-blueprint/private-networks.yaml "$APPLY_BLUEPRINT_DIR/private-networks.yaml"
 cat >"$FAKE_OPENSHELL_BIN/openshell" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail

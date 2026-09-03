@@ -254,6 +254,17 @@ describe("exact PR managed-image publication", () => {
     expect(fs.existsSync(input.outputPath)).toBe(false);
   });
 
+  it("uses the exact PR base as the base-history cohort", async () => {
+    const input = { ...resolverInput(), candidateSha: BASE_SHA };
+    const download = vi.fn(downloadContract);
+
+    await expect(
+      resolvePrManagedImageCatalog(input, candidateRequest({ imageChanged: true }), download),
+    ).resolves.toBe("base-cohort");
+    expect(download).not.toHaveBeenCalled();
+    expect(fs.existsSync(input.outputPath)).toBe(false);
+  });
+
   it("writes one exact candidate catalog after an immutable image-input change", async () => {
     const input = resolverInput();
 
