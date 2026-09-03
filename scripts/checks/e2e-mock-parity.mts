@@ -92,6 +92,7 @@ export function validateMockParity(options: {
     fileExists = (file) => fs.existsSync(path.join(REPO_ROOT, file)),
   } = options;
   const errors: string[] = [];
+  const changedFileSet = new Set(changedFiles);
 
   if (manifest.version !== 1 || !Array.isArray(manifest.entries)) {
     return ["mock parity manifest must have version 1 and an entries array"];
@@ -147,7 +148,7 @@ export function validateMockParity(options: {
         errors.push(`${entry.live}: ${sourceFile} is not a test/e2e/live/**/*.ts helper file`);
         continue;
       }
-      if (!fileExists(sourceFile)) {
+      if (!fileExists(sourceFile) && !changedFileSet.has(sourceFile)) {
         errors.push(`${entry.live}: live E2E helper does not exist: ${sourceFile}`);
       }
       const owners = sourceOwners.get(sourceFile) ?? [];
@@ -163,7 +164,6 @@ export function validateMockParity(options: {
     }
   }
 
-  const changedFileSet = new Set(changedFiles);
   const requireChangedFastTest = (entry: MockParityEntry, changedSource: string): void => {
     const mappedFastTests = Array.isArray(entry.fast)
       ? entry.fast.filter((fastFile): fastFile is string => typeof fastFile === "string")

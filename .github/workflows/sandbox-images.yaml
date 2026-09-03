@@ -471,6 +471,34 @@ jobs:
         if: always()
         uses: ./.github/actions/upload-e2e-artifacts
 
+  glibc-probe-image-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build-sandbox-images
+    steps:
+      - *checkout
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - *download-isolation-image
+
+      - *load-isolation-image
+
+      - name: Validate glibc probe lifecycle
+        env:
+          NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1"
+          NEMOCLAW_TEST_IMAGE: nemoclaw-production
+        run: >-
+          npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts
+          --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+
   port-override-image-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 10

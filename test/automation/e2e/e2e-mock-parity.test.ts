@@ -205,6 +205,16 @@ describe("changed live E2E mock parity", () => {
     ).toEqual([`${live}: changed live E2E needs an entry in test/e2e/mock-parity.json`]);
   });
 
+  it("accepts deleting a mapped helper when its owning fast test changes", () => {
+    expect(
+      validateMockParity({
+        manifest: manifest([{ live, liveSources: [liveHelper], fast: [fast] }]),
+        changedFiles: [liveHelper, fast],
+        fileExists: (file) => file === live || file === fast,
+      }),
+    ).toEqual([]);
+  });
+
   it("rejects mappings to missing or non-PR tests", () => {
     expect(
       validateMockParity({

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, test } from "vitest";
 
 import {
   readSandboxImagesWorkflow,
@@ -20,6 +20,23 @@ describe("sandbox image workflow boundary", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual([]);
+  });
+
+  test("keeps glibc probe lifecycle evidence in the main image gate", () => {
+    const { imageWorkflow } = readWorkflows();
+    const job = imageWorkflow.jobs["glibc-probe-image-contract"];
+    expect(job).toMatchObject({ needs: "build-sandbox-images", "timeout-minutes": 10 });
+    expect(job.steps?.find((step) => step.name === "Validate glibc probe lifecycle")).toMatchObject(
+      {
+        env: {
+          NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1",
+          NEMOCLAW_TEST_IMAGE: "nemoclaw-production",
+        },
+        run: expect.stringContaining(
+          "test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts",
+        ),
+      },
+    );
   });
 
   it("rejects late sandbox scheduling or omission from the final main gate", () => {

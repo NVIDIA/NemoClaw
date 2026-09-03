@@ -38,7 +38,11 @@ const IMAGE_BUILD_JOBS = [
   MESSAGING_PLAN_IMAGE_BOUNDARY_JOB,
   "build-sandbox-images-arm64",
 ] as const;
-const OPENCLAW_IMAGE_CONSUMER_JOBS = ["runtime-overrides", "port-override-image-contract"] as const;
+const OPENCLAW_IMAGE_CONSUMER_JOBS = [
+  "runtime-overrides",
+  "glibc-probe-image-contract",
+  "port-override-image-contract",
+] as const;
 const DOCKERHUB_SECRETS = ["DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN"] as const;
 const FORBIDDEN_RUNTIME_SECRETS = [
   "NVIDIA_API_KEY",

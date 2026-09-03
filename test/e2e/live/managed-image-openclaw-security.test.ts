@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { openclawProtectedImage } from "./managed-image-openclaw-security-helpers.ts";
+import { openclawProtectedImage } from "./managed-image-multiarch-startup-helpers.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 async function runContainer(
@@ -11,7 +11,7 @@ async function runContainer(
   artifactName: string,
   extraArgs: string[] = [],
 ) {
-  return host.command(
+  const result = await host.command(
     "docker",
     [
       "run",
@@ -28,6 +28,11 @@ async function runContainer(
     ],
     { artifactName, captureLimitBytes: 1024 * 1024, timeoutMs: 120_000 },
   );
+  expect(
+    result.exitCode,
+    `${artifactName} failed:\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  ).toBe(0);
+  return result;
 }
 
 test(
@@ -122,6 +127,98 @@ test(
         '[ "$before" = "$(stat -c \'%u:%g:%a\' /sandbox/.openclaw)" ]',
       ].join("\n"),
       "managed-image-openclaw-config-recovery",
+    );
+
+    await runContainer(
+      host,
+      image,
+      [
+        '{ sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; sed -n "/^recover_openclaw_config_if_empty() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; } >/tmp/normalize.sh',
+        "source /tmp/normalize.sh",
+        "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'printf baseline > /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; chmod 600 /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; : > /sandbox/.openclaw/openclaw.json; chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash; chmod 700 /sandbox/.openclaw'",
+        "normalize_mutable_config_perms",
+        "recover_openclaw_config_if_empty",
+        '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw)" = "2770 sandbox:sandbox" ]',
+        '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw/openclaw.json)" = "660 sandbox:sandbox" ]',
+        '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw/.config-hash)" = "660 sandbox:sandbox" ]',
+        "grep -qx baseline /sandbox/.openclaw/openclaw.json",
+        "/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c 'printf \" \" >>/sandbox/.openclaw/openclaw.json'",
+      ].join("\n"),
+      "managed-image-openclaw-dac-recovery",
+      ["--cap-drop=CAP_DAC_OVERRIDE"],
+    );
+
+    await runContainer(
+      host,
+      image,
+      [
+        "normalizer=/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py",
+        "printf protected >/sandbox/protected-target",
+        "chown root:root /sandbox/protected-target",
+        "chmod 600 /sandbox/protected-target",
+        "rm -f /sandbox/.openclaw/openclaw.json",
+        "ln -s /sandbox/protected-target /sandbox/.openclaw/openclaw.json",
+        "before=\"$(stat -c '%u:%g:%a' /sandbox/protected-target):$(cat /sandbox/protected-target)\"",
+        'if "$normalizer" /sandbox/.openclaw "$(id -u sandbox)" "$(id -g sandbox)"; then exit 31; fi',
+        '[ "$before" = "$(stat -c \'%u:%g:%a\' /sandbox/protected-target):$(cat /sandbox/protected-target)" ]',
+        "[ -L /sandbox/.openclaw/openclaw.json ]",
+        "rm /sandbox/.openclaw/openclaw.json",
+        "printf protected >/sandbox/hardlink-target",
+        "chown sandbox:sandbox /sandbox/hardlink-target",
+        "chmod 600 /sandbox/hardlink-target",
+        "ln /sandbox/hardlink-target /sandbox/.openclaw/openclaw.json",
+        "before=\"$(stat -c '%u:%g:%a:%h' /sandbox/hardlink-target):$(cat /sandbox/hardlink-target)\"",
+        'if "$normalizer" /sandbox/.openclaw "$(id -u sandbox)" "$(id -g sandbox)"; then exit 32; fi',
+        '[ "$before" = "$(stat -c \'%u:%g:%a:%h\' /sandbox/hardlink-target):$(cat /sandbox/hardlink-target)" ]',
+      ].join("\n"),
+      "managed-image-openclaw-link-refusal",
+    );
+
+    await runContainer(
+      host,
+      image,
+      [
+        '{ sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start | sed "s#/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py#/tmp/missing-normalizer.py#"; sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; } >/tmp/normalize.sh',
+        "source /tmp/normalize.sh",
+        'printf \'from pathlib import Path\nPath("/tmp/untrusted-normalizer-ran").write_text("unsafe\\n")\n\' >/tmp/untrusted-normalizer.py',
+        "export NEMOCLAW_MUTABLE_CONFIG_NORMALIZER=/tmp/untrusted-normalizer.py",
+        "rc=0; normalize_mutable_config_perms || rc=$?",
+        '[ "$rc" -eq 1 ]',
+        "[ ! -e /tmp/untrusted-normalizer-ran ]",
+      ].join("\n"),
+      "managed-image-openclaw-helper-refusal",
+    );
+
+    await runContainer(
+      host,
+      image,
+      [
+        "printf '{}\\n' >/sandbox/.openclaw/openclaw.json",
+        "printf 'hash\\n' >/sandbox/.openclaw/.config-hash",
+        "chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash",
+        "before=\"$(stat -c '%u:%g:%a' /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash)\"",
+        'rc=0; /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py /sandbox/.openclaw "$(id -u sandbox)" "$(id -g sandbox)" || rc=$?',
+        '[ "$rc" -ne 0 ]',
+        '[ "$before" = "$(stat -c \'%u:%g:%a\' /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash)" ]',
+      ].join("\n"),
+      "managed-image-openclaw-mounted-tree-refusal",
+      ["--tmpfs", "/sandbox/.openclaw:rw,mode=700,uid=0,gid=0"],
+    );
+
+    await runContainer(
+      host,
+      image,
+      [
+        "printf %s ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCnNvdXJjZSA9IFBhdGgoIi91c3IvbG9jYWwvbGliL25lbW9jbGF3L25vcm1hbGl6ZV9tdXRhYmxlX2NvbmZpZ19wZXJtcy5weSIpLnJlYWRfdGV4dCgpCm5lZWRsZSA9ICIgICAgICAgICAgICByaWdodHNfZmRzID0gW3Jvb3RfZmRdXG4iCnJlcGxhY2VtZW50ID0gIiIiICAgICAgICAgICAgZm9yIHJlcXVpcmVkX25hbWUgaW4gKCJvcGVuY2xhdy5qc29uIiwgIi5jb25maWctaGFzaCIpOgogICAgICAgICAgICAgICAgb3MudW5saW5rKG9zLnBhdGguam9pbihjb25maWdfZGlyLCByZXF1aXJlZF9uYW1lKSkKICAgICAgICAgICAgb3Mucm1kaXIoY29uZmlnX2RpcikKICAgICAgICAgICAgb3MubWtkaXIoY29uZmlnX2RpciwgMG83MDApCiAgICAgICAgICAgIGZvciBuYW1lLCBjb250ZW50IGluICgoIm9wZW5jbGF3Lmpzb24iLCAie31cXG4iKSwgKCIuY29uZmlnLWhhc2giLCAiaGFzaFxcbiIpKToKICAgICAgICAgICAgICAgIHBhdGggPSBvcy5wYXRoLmpvaW4oY29uZmlnX2RpciwgbmFtZSkKICAgICAgICAgICAgICAgIHdpdGggb3BlbihwYXRoLCAidyIsIGVuY29kaW5nPSJ1dGYtOCIpIGFzIHJlcGxhY2VtZW50X2ZpbGU6CiAgICAgICAgICAgICAgICAgICAgcmVwbGFjZW1lbnRfZmlsZS53cml0ZShjb250ZW50KQogICAgICAgICAgICAgICAgb3MuY2htb2QocGF0aCwgMG82MDApCiAgICAgICAgICAgIHJpZ2h0c19mZHMgPSBbcm9vdF9mZF0KIiIiCmlmIHNvdXJjZS5jb3VudChuZWVkbGUpICE9IDE6CiAgICByYWlzZSBTeXN0ZW1FeGl0KCJoYW5kb2ZmIGluamVjdGlvbiBwb2ludCBjaGFuZ2VkIikKUGF0aCgiL3RtcC9ub3JtYWxpemVyLWhhbmRvZmYtcmFjZS5weSIpLndyaXRlX3RleHQoc291cmNlLnJlcGxhY2UobmVlZGxlLCByZXBsYWNlbWVudCkpCg== | base64 -d | python3 -",
+        "find /sandbox/.openclaw -mindepth 1 -delete",
+        '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c \'printf "{}\\n" > /sandbox/.openclaw/openclaw.json; printf "hash\\n" > /sandbox/.openclaw/.config-hash; chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash; chmod 700 /sandbox/.openclaw\'',
+        'rc=0; python3 -I /tmp/normalizer-handoff-race.py /sandbox/.openclaw "$(id -u sandbox)" "$(id -g sandbox)" || rc=$?',
+        '[ "$rc" -ne 0 ]',
+        "[ \"$(stat -c '%a' /sandbox/.openclaw)\" = 700 ]",
+        "[ \"$(stat -c '%a' /sandbox/.openclaw/openclaw.json)\" = 600 ]",
+        "[ ! -e /sandbox/.openclaw/openclaw.json.nemoclaw-baseline ]",
+      ].join("\n"),
+      "managed-image-openclaw-replacement-refusal",
     );
 
     progress.phase("verify post-stepdown capability boundary");
