@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,7 +13,8 @@ const mocks = vi.hoisted(() => ({
   resolveGatewayRebuildAuthority: vi.fn(),
 }));
 
-vi.mock("../../adapters/openshell/runtime", () => ({
+vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/runtime")>()),
   captureOpenshell: mocks.captureOpenshell,
   runOpenshell: vi.fn(),
 }));
@@ -22,6 +24,7 @@ vi.mock("../../onboard/gateway-teardown-authority", async (importOriginal) => ({
   resolveGatewayRebuildAuthority: mocks.resolveGatewayRebuildAuthority,
 }));
 
+import { fingerprintSandboxRecreateValue } from "../../onboard/sandbox-recreate-transaction";
 import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
@@ -32,9 +35,12 @@ import {
   clearRebuildRecoveryBackup,
   findRebuildRecoveryBackup,
   fingerprintRebuildRecreateTargetIntent,
+  isRebuildRecoveryCleanupOnly,
+  markRebuildRecoveryCleanupOnly,
   observeRebuildSandbox,
   openRebuildRecreateJournal,
   recordRebuildRecoveryBackup,
+  retireRebuildRecoveryBackup,
 } from "./rebuild-recreate-journal";
 
 const SANDBOX_ID = "sbx-0d6f4c2a91";
@@ -260,6 +266,9 @@ describe("rebuild replacement journal", () => {
       session = mutator(session) ?? session;
       return session;
     });
+    vi.spyOn(onboardSession, "compareAndSwapSession").mockImplementation((matches, mutator) => {
+      return matches(session) ? ((session = mutator(session) ?? session), "updated") : "mismatch";
+    });
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
@@ -274,9 +283,9 @@ describe("rebuild replacement journal", () => {
     vi.restoreAllMocks();
   });
 
-  function open() {
+  function open(target = NON_DEFAULT_TARGET) {
     return openRebuildRecreateJournal({
-      target: NON_DEFAULT_TARGET,
+      target,
       expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
       agentName: "langchain-deepagents-code",
       targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
@@ -365,10 +374,80 @@ describe("rebuild replacement journal", () => {
     expect(session.checkpoint?.sandboxRecreate?.sourceLiveIdentityFingerprint).toBeNull();
   });
 
+  it("starts a fresh journal when the stranded one no longer owns a replacement (#10473)", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      gatewayName: "nemoclaw-9090",
+      gatewayPort: 9090,
+      lifecycleGeneration: "44444444-4444-4444-8444-444444444444",
+      lifecycleLiveIdentityFingerprint: fingerprintSandboxRecreateValue(SANDBOX_ID),
+    } as registry.SandboxEntry);
+    const stranded = open();
+    onboardSession.updateSession((current) => {
+      const checkpoint = current.checkpoint as NonNullable<Session["checkpoint"]>;
+      const transaction = checkpoint.sandboxRecreate as NonNullable<
+        typeof checkpoint.sandboxRecreate
+      >;
+      current.checkpoint = {
+        ...checkpoint,
+        sandboxRecreate: { ...transaction, phase: "deleted" },
+      };
+      return current;
+    });
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      id: stranded.id,
+      phase: "deleted",
+    });
+
+    const restarted = open();
+
+    expect(restarted.id).not.toBe(stranded.id);
+    expect(restarted.acceptedTarget).toBe(false);
+    expect(restarted.sourceConfirmedAbsent).toBe(false);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      id: restarted.id,
+      phase: "planned",
+      revision: 0,
+    });
+  });
+
+  it("keeps a stranded journal when the matching source is on another gateway (#10473)", () => {
+    mocks.captureOpenshell.mockReturnValue(absentProbe());
+    const stranded = open();
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      id: stranded.id,
+      gatewayName: "nemoclaw-9090",
+      phase: "deleted",
+    });
+
+    // Same sandbox name and same live identity, but the row and the probe now
+    // describe a sandbox on a different gateway. The journal may still own an
+    // unregistered replacement on nemoclaw-9090, so it must survive.
+    mocks.captureOpenshell.mockReturnValue(livePresentProbe());
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      gatewayName: "nemoclaw-7070",
+      gatewayPort: 7070,
+      lifecycleGeneration: "44444444-4444-4444-8444-444444444444",
+      lifecycleLiveIdentityFingerprint: fingerprintSandboxRecreateValue(SANDBOX_ID),
+    } as registry.SandboxEntry);
+
+    expect(() =>
+      open({ sandboxName: "alpha", gatewayName: "nemoclaw-7070", gatewayPort: 7070 }),
+    ).toThrow(/different recreate transaction in progress/);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      id: stranded.id,
+      gatewayName: "nemoclaw-9090",
+      phase: "deleted",
+    });
+  });
+
   it("records the delete boundary before and after the destructive command", () => {
     const journal = open();
 
-    journal.markDeleting();
+    journal.beginDelete();
     expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleting");
 
     mocks.captureOpenshell.mockReturnValue(absentProbe());
@@ -380,14 +459,14 @@ describe("rebuild replacement journal", () => {
     mocks.captureOpenshell.mockReturnValue(absentProbe());
     const journal = open();
 
-    journal.markDeleting();
+    journal.beginDelete();
 
     expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleted");
   });
 
   it("stops before the next mutation when the source outlives its delete", () => {
     const journal = open();
-    journal.markDeleting();
+    journal.beginDelete();
 
     expect(() => journal.confirmDeleted()).toThrow(
       /OpenShell still reports the journaled source after delete/,
@@ -560,6 +639,11 @@ describe("rebuild replacement recovery backup", () => {
     agentName: "openclaw",
     transactionId: selectedTransactionId,
   });
+  const recordedIdentity = (selectedTransactionId = transactionId) => ({
+    ...identity(selectedTransactionId),
+    gatewayName: "nemoclaw-18080",
+    gatewayPort: 18_080,
+  });
 
   beforeEach(() => {
     backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-recovery-test-"));
@@ -587,29 +671,162 @@ describe("rebuild replacement recovery backup", () => {
       ({ ok: true, manifest: value }) as const,
   });
 
+  const prepareUnsafeRecovery = () => {
+    const policy = [
+      "version: 1",
+      "process:",
+      "  environment:",
+      "    SERVICE_API_KEY: opaque-retained-credential",
+      "",
+    ].join("\n");
+    const sha256 = createHash("sha256").update(policy).digest("hex");
+    const file = `rebuild-policy-handoff.${sha256}.yaml`;
+    fs.writeFileSync(path.join(backupPath, file), policy, { mode: 0o600 });
+    manifest = { ...manifest, rebuildPolicyHandoff: { file, sha256 } };
+    recordRebuildRecoveryBackup({ ...recordedIdentity(), backupManifest: manifest }, deps());
+    return {
+      handoffPath: path.join(backupPath, file),
+      recordPath: path.join(backupPath, ".nemoclaw-rebuild-recovery.json"),
+    };
+  };
+
+  const corruptRecoveryRecord = {
+    "malformed JSON": (recordPath: string) => fs.writeFileSync(recordPath, "{", "utf8"),
+    "invalid schema": (recordPath: string) =>
+      fs.writeFileSync(recordPath, '{"schemaVersion":99}\n', "utf8"),
+    "invalid permissions": (recordPath: string) => fs.chmodSync(recordPath, 0o644),
+    "invalid ownership": () => {
+      const currentUid = process.getuid?.();
+      expect(currentUid).toBeTypeOf("number");
+      vi.spyOn(process, "getuid").mockReturnValue(Number(currentUid) + 1);
+    },
+  } satisfies Record<string, (recordPath: string) => void>;
+
   it("binds, resolves, and clears one transaction backup", () => {
-    recordRebuildRecoveryBackup({ ...identity(), backupManifest: manifest }, deps());
+    recordRebuildRecoveryBackup({ ...recordedIdentity(), backupManifest: manifest }, deps());
 
     const recordPath = path.join(backupPath, ".nemoclaw-rebuild-recovery.json");
     expect(fs.statSync(recordPath).mode & 0o777).toBe(0o600);
     expect(findRebuildRecoveryBackup(identity(), deps())).toEqual(
       expect.objectContaining({ backupPath, timestamp: manifest.timestamp }),
     );
+    expect(
+      isRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps()),
+    ).toBe(false);
+
+    markRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps());
+    expect(
+      isRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps()),
+    ).toBe(true);
 
     clearRebuildRecoveryBackup({ ...identity(), backupManifest: manifest }, deps());
     expect(fs.existsSync(recordPath)).toBe(false);
   });
 
   it("rejects another transaction and preserves the original binding", () => {
-    recordRebuildRecoveryBackup({ ...identity(), backupManifest: manifest }, deps());
+    recordRebuildRecoveryBackup({ ...recordedIdentity(), backupManifest: manifest }, deps());
 
     expect(() =>
       recordRebuildRecoveryBackup(
-        { ...identity(otherTransactionId), backupManifest: manifest },
+        { ...recordedIdentity(otherTransactionId), backupManifest: manifest },
         deps(),
       ),
     ).toThrow("already belongs to another transaction");
     expect(findRebuildRecoveryBackup(identity(), deps())).not.toBeNull();
     expect(findRebuildRecoveryBackup(identity(otherTransactionId), deps())).toBeNull();
   });
+
+  it("binds and retires a legacy unsafe handoff with no active journal (#10150)", () => {
+    const { handoffPath, recordPath } = prepareUnsafeRecovery();
+    const observePresence = vi.fn(() => "missing" as const);
+
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        {
+          sandboxName: "alpha",
+          transactionId: otherTransactionId,
+          confirmDataRecovered: true,
+        },
+        { ...deps(), observePresence },
+      ),
+    ).toThrow("No exact rebuild recovery record");
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        { sandboxName: "beta", transactionId, confirmDataRecovered: true },
+        { ...deps(), observePresence },
+      ),
+    ).toThrow("does not match sandbox 'beta'");
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        { sandboxName: "alpha", transactionId, confirmDataRecovered: false },
+        { ...deps(), observePresence },
+      ),
+    ).toThrow("requires --yes");
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+        { ...deps(), observePresence: () => "present" },
+      ),
+    ).toThrow(`Recovery remains at '${backupPath}'`);
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+        { ...deps(), observePresence, clearPolicyHandoff: () => false },
+      ),
+    ).toThrow(`Recovery remains at '${backupPath}'`);
+    expect(fs.existsSync(handoffPath)).toBe(true);
+    expect(fs.existsSync(recordPath)).toBe(true);
+
+    expect(
+      retireRebuildRecoveryBackup(
+        { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+        { ...deps(), observePresence },
+      ),
+    ).toEqual({
+      backupPath,
+      gatewayName: "nemoclaw-18080",
+      transactionId,
+    });
+    expect(observePresence).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw-18080",
+    });
+    expect(fs.existsSync(handoffPath)).toBe(false);
+    expect(fs.existsSync(recordPath)).toBe(false);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(backupPath, "rebuild-manifest.json"), "utf8")),
+    ).not.toHaveProperty("rebuildPolicyHandoff");
+  });
+
+  it.each(Object.entries(corruptRecoveryRecord))(
+    "reports and preserves the exact unsafe backup when its recovery marker has %s",
+    (_condition, corrupt) => {
+      const { handoffPath, recordPath } = prepareUnsafeRecovery();
+      corrupt(recordPath);
+      const observePresence = vi.fn(() => "missing" as const);
+      const clearPolicyHandoff = vi.fn(() => true);
+
+      expect(() =>
+        retireRebuildRecoveryBackup(
+          { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+          { ...deps(), observePresence, clearPolicyHandoff },
+        ),
+      ).toThrow(
+        expect.objectContaining({
+          message: expect.stringContaining(`Recovery remains at '${backupPath}'`),
+        }),
+      );
+
+      expect(() =>
+        retireRebuildRecoveryBackup(
+          { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+          { ...deps(), observePresence, clearPolicyHandoff },
+        ),
+      ).toThrow(/Do not edit or remove the marker or retained policy handoff/);
+      expect(fs.existsSync(handoffPath)).toBe(true);
+      expect(fs.existsSync(recordPath)).toBe(true);
+      expect(observePresence).not.toHaveBeenCalled();
+      expect(clearPolicyHandoff).not.toHaveBeenCalled();
+    },
+  );
 });

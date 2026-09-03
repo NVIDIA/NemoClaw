@@ -5,11 +5,12 @@
 
 import { pathToFileURL } from "node:url";
 
+import { readValidatedArtifactZipEntries } from "../../scripts/lib/read-artifact-zip.mts";
 import {
-  listValidatedArtifactZipEntries,
-  readValidatedArtifactZipEntry,
-} from "../../scripts/scorecard/read-artifact-zip.mts";
-import type { RetryEvidence, RetryFailureClass } from "../../test/e2e/fixtures/retry-policy.ts";
+  RETRY_FAILURE_CLASSES,
+  validateRetryEvidence,
+  type RetryFailureClass,
+} from "./retry-evidence.mts";
 import {
   parseClassificationLine,
   TERMINAL_CLASSIFICATIONS,
@@ -22,19 +23,10 @@ const CONTROLLER_WORKFLOW_PATH = ".github/workflows/e2e-main-retry.yaml";
 const DISPLAY_TITLE_PREFIX = "E2E ";
 const SHA = /^[a-f0-9]{40}$/u;
 const MAX_RUNS = 50;
+export const MAX_RUN_REFERENCES_PER_OUTCOME = 10;
 const MAX_ARTIFACT_BYTES = 2 * 1024 * 1024;
 const MAX_RUN_ARTIFACT_BYTES = 8 * 1024 * 1024;
 
-const RETRY_FAILURE_CLASSES: readonly RetryFailureClass[] = [
-  "authentication",
-  "authorization",
-  "cleanup",
-  "deterministic",
-  "malformed-input",
-  "policy-denial",
-  "transient-external",
-  "ambiguous-mutation",
-];
 const RELIABILITY_FAILURE_CLASSES = new Set<string>([
   ...RETRY_FAILURE_CLASSES,
   ...TERMINAL_CLASSIFICATIONS,
@@ -64,6 +56,22 @@ export interface ReliabilitySample {
   url: string;
 }
 
+export interface ReliabilityRunReference {
+  runId: number;
+  attempt: number;
+  outcome: ReliabilityOutcome;
+  evidence: EvidenceState;
+  failureClassEvidence: EvidenceState;
+  url: string;
+}
+
+export interface ReliabilityRunReferenceGroup {
+  total: number;
+  retained: number;
+  truncated: boolean;
+  references: ReliabilityRunReference[];
+}
+
 export interface ReliabilityGroup {
   candidateSha: string | null;
   source: ReliabilitySource;
@@ -80,6 +88,7 @@ export interface ReliabilityGroup {
   failureClasses: Record<string, number>;
   evidence: Record<EvidenceState, number>;
   failureClassEvidence: Record<EvidenceState, number>;
+  runReferences: Record<ReliabilityOutcome, ReliabilityRunReferenceGroup>;
 }
 
 type WorkflowRun = {
@@ -119,6 +128,21 @@ type ControllerRun = {
 
 type JsonRequest = (path: string) => Promise<unknown>;
 type ArchiveRequest = (artifactId: number, maxBytes: number) => Promise<Buffer>;
+type ArtifactEntries = Map<string, Buffer> | null;
+type ArtifactEntriesReader = (
+  archive: Buffer,
+  options: { maxEntries?: number; maxTotalUncompressedBytes: number },
+) => { name: string; bytes: Buffer }[] | null;
+type ReliabilityServices = {
+  requestJson: JsonRequest;
+  requestArchive: ArchiveRequest;
+  readArtifactEntries?: ArtifactEntriesReader;
+};
+type ArtifactCollection = {
+  artifactsByRun: Map<number, Artifact[] | null>;
+  entriesByArtifact: Map<string, ArtifactEntries>;
+  readEntries: ArtifactEntriesReader;
+};
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -263,41 +287,6 @@ function parseTerminalEvidenceManifest(
   }
 }
 
-function parseRetryEvidence(value: unknown): RetryEvidence | null {
-  const evidence = record(value);
-  if (
-    evidence?.schemaVersion !== 1 ||
-    typeof evidence.operation !== "string" ||
-    !/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(evidence.operation) ||
-    typeof evidence.owner !== "string" ||
-    !/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(evidence.owner) ||
-    !["read-only", "idempotent", "reconciled-mutation"].includes(String(evidence.idempotence)) ||
-    !positiveInteger(evidence.maxAttempts) ||
-    (evidence.maxAttempts as number) > 10 ||
-    !["failed-no-retry", "exhausted", "passed-after-retry", "passed-first-attempt"].includes(
-      String(evidence.outcome),
-    ) ||
-    !Array.isArray(evidence.attempts) ||
-    evidence.attempts.length < 1 ||
-    evidence.attempts.length > (evidence.maxAttempts as number)
-  ) {
-    return null;
-  }
-  for (let index = 0; index < evidence.attempts.length; index += 1) {
-    const attempt = record(evidence.attempts[index]);
-    if (
-      attempt?.attempt !== index + 1 ||
-      (attempt.outcome !== "failed" && attempt.outcome !== "passed") ||
-      typeof attempt.retryScheduled !== "boolean" ||
-      (attempt.failureClass !== undefined &&
-        !RETRY_FAILURE_CLASSES.includes(attempt.failureClass as RetryFailureClass))
-    ) {
-      return null;
-    }
-  }
-  return evidence as unknown as RetryEvidence;
-}
-
 function parseMainRetryEvidence(
   value: unknown,
   run: WorkflowRun,
@@ -333,32 +322,86 @@ function parseMainRetryEvidence(
   return { valid: true, outcome: "unclassified" };
 }
 
+function decodeEntry(bytes: Buffer | undefined, maxBytes: number): string | null {
+  if (bytes === undefined || bytes.length > maxBytes) return null;
+  return bytes.toString("utf8");
+}
+
+function createArtifactCollection(services: ReliabilityServices): ArtifactCollection {
+  return {
+    artifactsByRun: new Map(),
+    entriesByArtifact: new Map(),
+    readEntries: services.readArtifactEntries ?? readValidatedArtifactZipEntries,
+  };
+}
+
+async function collectArtifacts(
+  runId: number,
+  requestJson: JsonRequest,
+  collection: ArtifactCollection,
+): Promise<Artifact[] | null> {
+  if (collection.artifactsByRun.has(runId)) return collection.artifactsByRun.get(runId) ?? null;
+  const artifacts = validateArtifacts(
+    await requestJson(`repos/${REPOSITORY}/actions/runs/${runId}/artifacts?per_page=100`),
+  );
+  collection.artifactsByRun.set(runId, artifacts);
+  return artifacts;
+}
+
+async function collectArtifactEntries(
+  artifact: Artifact,
+  requestArchive: ArchiveRequest,
+  collection: ArtifactCollection,
+): Promise<ArtifactEntries> {
+  const key = `${artifact.id}:${artifact.name}`;
+  const cached = collection.entriesByArtifact.get(key);
+  if (cached !== undefined || collection.entriesByArtifact.has(key)) return cached ?? null;
+  if (artifact.expired || artifact.size_in_bytes > MAX_ARTIFACT_BYTES) {
+    collection.entriesByArtifact.set(key, null);
+    return null;
+  }
+  const archive = await requestArchive(artifact.id, MAX_ARTIFACT_BYTES);
+  const validated = collection.readEntries(archive, {
+    maxEntries: 1000,
+    maxTotalUncompressedBytes: MAX_ARTIFACT_BYTES,
+  });
+  const entries = validated && new Map(validated.map((entry) => [entry.name, entry.bytes]));
+  collection.entriesByArtifact.set(key, entries);
+  return entries;
+}
+
 async function readArtifactEntry(
   artifact: Artifact,
   entry: string,
+  maxBytes: number,
   requestArchive: ArchiveRequest,
+  collection: ArtifactCollection,
 ): Promise<string | null> {
-  if (artifact.expired || artifact.size_in_bytes > MAX_ARTIFACT_BYTES) return null;
-  const archive = await requestArchive(artifact.id, MAX_ARTIFACT_BYTES);
-  return readValidatedArtifactZipEntry(archive, entry, { maxBytes: 64 * 1024 });
+  const entries = await collectArtifactEntries(artifact, requestArchive, collection);
+  return decodeEntry(entries?.get(entry), maxBytes);
 }
 
 async function identifyCandidateSha(
   value: unknown,
-  services: { requestJson: JsonRequest; requestArchive: ArchiveRequest },
+  services: ReliabilityServices,
+  collection: ArtifactCollection,
 ): Promise<string | null> {
   const run = validateRun(value);
   if (run === null) return null;
   if (run.event === "push") return run.head_sha;
-  const artifacts = validateArtifacts(
-    await services.requestJson(`repos/${REPOSITORY}/actions/runs/${run.id}/artifacts?per_page=100`),
-  );
+  const artifacts = await collectArtifacts(run.id, services.requestJson, collection);
   const receipt = artifacts?.find(
     (artifact) => artifact.name === `e2e-dispatch-${run.id}-${run.run_attempt}`,
   );
   return receipt
     ? parseDispatchReceipt(
-        await readArtifactEntry(receipt, "dispatch.json", services.requestArchive),
+        await readArtifactEntry(
+          receipt,
+          "dispatch.json",
+          16_384,
+          services.requestArchive,
+          collection,
+        ),
         run,
       )
     : null;
@@ -369,6 +412,7 @@ async function collectRunEvidence(
   run: WorkflowRun,
   candidateSha: string | null,
   requestArchive: ArchiveRequest,
+  collection: ArtifactCollection,
 ): Promise<{
   classes: ReliabilityFailureClass[];
   failureClassEvidence: EvidenceState;
@@ -388,21 +432,17 @@ async function collectRunEvidence(
       failureClassMalformed = true;
       break;
     }
-    const archive = await requestArchive(artifact.id, MAX_ARTIFACT_BYTES);
-    const entries = listValidatedArtifactZipEntries(archive, {
-      maxEntries: 1000,
-    });
+    const entries = await collectArtifactEntries(artifact, requestArchive, collection);
     if (entries === null) {
       terminalMalformed = true;
       failureClassMalformed = true;
       continue;
     }
-    for (const entry of entries.filter(
-      (name) => name.endsWith("/evidence-manifest.json") || name === "evidence-manifest.json",
-    )) {
-      const text = readValidatedArtifactZipEntry(archive, entry, {
-        maxBytes: 16_384,
-      });
+    for (const [entry, entryBytes] of entries) {
+      if (!entry.endsWith("/evidence-manifest.json") && entry !== "evidence-manifest.json") {
+        continue;
+      }
+      const text = decodeEntry(entryBytes, 16_384);
       const jobStatus =
         candidateSha === null ? null : parseTerminalEvidenceManifest(text, run, candidateSha);
       if (jobStatus === null) {
@@ -411,14 +451,14 @@ async function collectRunEvidence(
         terminalRecords += 1;
       }
     }
-    for (const entry of entries.filter(
-      (name) =>
-        name.endsWith("/runner-pressure-classification.jsonl") ||
-        (name.includes("/retry/") && name.endsWith(".json")),
-    )) {
-      const text = readValidatedArtifactZipEntry(archive, entry, {
-        maxBytes: 64 * 1024,
-      });
+    for (const [entry, entryBytes] of entries) {
+      if (
+        !entry.endsWith("/runner-pressure-classification.jsonl") &&
+        !(entry.includes("/retry/") && entry.endsWith(".json"))
+      ) {
+        continue;
+      }
+      const text = decodeEntry(entryBytes, 64 * 1024);
       if (text === null) {
         failureClassMalformed = true;
         continue;
@@ -428,7 +468,7 @@ async function collectRunEvidence(
           classes.add(parseClassificationLine(text).classification);
           failureClassRecords += 1;
         } else {
-          const evidence = parseRetryEvidence(JSON.parse(text));
+          const evidence = validateRetryEvidence(JSON.parse(text));
           if (evidence === null) {
             failureClassMalformed = true;
             continue;
@@ -496,13 +536,12 @@ function deriveOutcome(run: WorkflowRun): ReliabilityOutcome {
 
 export async function normalizeReliabilityRun(
   value: unknown,
-  services: { requestJson: JsonRequest; requestArchive: ArchiveRequest },
+  services: ReliabilityServices,
+  collection = createArtifactCollection(services),
 ): Promise<ReliabilitySample | null> {
   const run = validateRun(value);
   if (run === null) return null;
-  const artifacts = validateArtifacts(
-    await services.requestJson(`repos/${REPOSITORY}/actions/runs/${run.id}/artifacts?per_page=100`),
-  );
+  const artifacts = await collectArtifacts(run.id, services.requestJson, collection);
   if (artifacts === null) {
     return {
       runId: run.id,
@@ -524,7 +563,13 @@ export async function normalizeReliabilityRun(
     );
     candidateSha = receiptArtifact
       ? parseDispatchReceipt(
-          await readArtifactEntry(receiptArtifact, "dispatch.json", services.requestArchive),
+          await readArtifactEntry(
+            receiptArtifact,
+            "dispatch.json",
+            16_384,
+            services.requestArchive,
+            collection,
+          ),
           run,
         )
       : null;
@@ -550,7 +595,9 @@ export async function normalizeReliabilityRun(
       const text = await readArtifactEntry(
         selected.artifact,
         "e2e-main-retry-evidence.json",
+        64 * 1024,
         services.requestArchive,
+        collection,
       );
       try {
         const parsed =
@@ -565,7 +612,13 @@ export async function normalizeReliabilityRun(
       }
     }
   }
-  const collected = await collectRunEvidence(artifacts, run, candidateSha, services.requestArchive);
+  const collected = await collectRunEvidence(
+    artifacts,
+    run,
+    candidateSha,
+    services.requestArchive,
+    collection,
+  );
   if (run.event === "workflow_dispatch" && candidateSha !== null) {
     evidence = collected.terminalEvidence;
     if (evidence !== "complete") outcome = "unclassified";
@@ -582,6 +635,17 @@ export async function normalizeReliabilityRun(
     failureClassEvidence: collected.failureClassEvidence,
     url: run.html_url,
   };
+}
+
+export async function normalizeMatchingReliabilityRun(
+  value: unknown,
+  candidateSha: string,
+  services: ReliabilityServices,
+  collection = createArtifactCollection(services),
+): Promise<ReliabilitySample | null> {
+  if ((await identifyCandidateSha(value, services, collection)) !== candidateSha) return null;
+  const sample = await normalizeReliabilityRun(value, services, collection);
+  return sample?.candidateSha === candidateSha ? sample : null;
 }
 
 function passState(outcome: ReliabilityOutcome): boolean | null {
@@ -620,6 +684,35 @@ export function summarizeReliability(samples: readonly ReliabilitySample[]): Rel
           classes[failureClass] = (classes[failureClass] ?? 0) + 1;
         }
       }
+      const runReferences = Object.fromEntries(
+        [
+          "exhausted",
+          "failed-first-attempt",
+          "passed-after-retry",
+          "passed-first-attempt",
+          "superseded",
+          "unclassified",
+        ].map((outcome) => {
+          const matching = ordered.filter((sample) => sample.outcome === outcome);
+          const references = matching.slice(0, MAX_RUN_REFERENCES_PER_OUTCOME).map((sample) => ({
+            runId: sample.runId,
+            attempt: sample.runAttempt,
+            outcome: sample.outcome,
+            evidence: sample.evidence,
+            failureClassEvidence: sample.failureClassEvidence,
+            url: sample.url,
+          }));
+          return [
+            outcome,
+            {
+              total: matching.length,
+              retained: references.length,
+              truncated: matching.length > references.length,
+              references,
+            },
+          ];
+        }),
+      ) as Record<ReliabilityOutcome, ReliabilityRunReferenceGroup>;
       const evidence = { complete: 0, malformed: 0, missing: 0 };
       const failureClassEvidence = { complete: 0, malformed: 0, missing: 0 };
       for (const sample of ordered) {
@@ -643,6 +736,7 @@ export function summarizeReliability(samples: readonly ReliabilitySample[]): Rel
         failureClasses: classes,
         evidence,
         failureClassEvidence,
+        runReferences,
       };
     })
     .sort((a, b) => {
@@ -674,6 +768,22 @@ export function formatReliabilityReport(groups: readonly ReliabilityGroup[]): st
       `| ${group.source} | ${group.candidateSha ? `\`${group.candidateSha.slice(0, 12)}\`` : "unclassified"} | ${group.runs} | ${group.passedFirstAttempt} | ${group.passedAfterRetry} | ${group.exhausted} | ${group.failedFirstAttempt} | ${group.superseded} | ${group.unclassified} | ${group.passFailFlips} | ${(group.firstPassRate * 100).toFixed(1)}% | ${group.recoveryRate === null ? "n/a" : `${(group.recoveryRate * 100).toFixed(1)}%`} | ${classes || "none"} | ${formatEvidenceCounts(group.evidence)} | ${formatEvidenceCounts(group.failureClassEvidence)} |`,
     );
   }
+  lines.push("", `### Non-passing run links (maximum ${MAX_RUN_REFERENCES_PER_OUTCOME} per outcome)`);
+  for (const group of groups) {
+    for (const outcome of ["failed-first-attempt", "exhausted", "unclassified"] as const) {
+      const referenceGroup = group.runReferences[outcome];
+      for (const reference of referenceGroup.references) {
+        lines.push(
+          `- [Run ${reference.runId} attempt ${reference.attempt}](${reference.url}) — ${reference.outcome}; outcome evidence: ${reference.evidence}; failure-class evidence: ${reference.failureClassEvidence}`,
+        );
+      }
+      if (referenceGroup.truncated) {
+        lines.push(
+          `- ${outcome}: ${referenceGroup.total - referenceGroup.retained} additional run reference(s) truncated`,
+        );
+      }
+    }
+  }
   return lines.join("\n");
 }
 
@@ -681,36 +791,219 @@ function formatEvidenceCounts(counts: Record<EvidenceState, number>): string {
   return `complete: ${counts.complete}, malformed: ${counts.malformed}, missing: ${counts.missing}`;
 }
 
-async function githubJson(path: string, token: string): Promise<unknown> {
-  const response = await fetch(`https://api.github.com/${path}`, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${token}`,
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-  });
-  if (!response.ok) throw new Error(`GitHub API ${path} failed with ${response.status}`);
-  return response.json();
+const GITHUB_READ_RETRY_POLICY = Object.freeze({
+  operation: "github-http-get",
+  owner: "same-commit-reliability",
+  idempotence: "read-only" as const,
+  maxAttempts: 3,
+  attemptTimeoutMs: 15_000,
+  delayMs: 250,
+  maxJsonBytes: 1024 * 1024,
+  maxReportedAttempts: 100,
+  transientStatuses: new Set([408, 429, 500, 502, 503, 504]),
+});
+
+export type GithubReadAttempt = {
+  path: string;
+  attempt: number;
+  outcome: string;
+};
+
+type GithubReadOptions = {
+  fetch?: typeof fetch;
+  maxAttempts?: number;
+  attemptTimeoutMs?: number;
+  delayMs?: number;
+  maxJsonBytes?: number;
+  attemptEvidence?: GithubReadAttempt[];
+};
+
+type GithubAttemptFailure = {
+  outcome: string;
+  retryable: boolean;
+};
+
+type GithubFailureCategory = "invalid-json" | "too-large" | "transport";
+
+class GithubHttpStatusError extends Error {
+  constructor(readonly status: number) {
+    super("GitHub HTTP status failure");
+  }
 }
 
-async function githubArchive(artifactId: number, maxBytes: number, token: string): Promise<Buffer> {
-  const response = await fetch(
-    `https://api.github.com/repos/${REPOSITORY}/actions/artifacts/${artifactId}/zip`,
-    {
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    },
+class GithubCategorizedError extends Error {
+  constructor(readonly category: GithubFailureCategory) {
+    super(`GitHub HTTP ${category} failure`);
+  }
+}
+
+function githubAttemptFailure(error: unknown, timedOut: boolean): GithubAttemptFailure {
+  if (timedOut) return { outcome: "timeout", retryable: true };
+  if (error instanceof GithubHttpStatusError) {
+    return {
+      outcome: `status:${error.status}`,
+      retryable: GITHUB_READ_RETRY_POLICY.transientStatuses.has(error.status),
+    };
+  }
+  if (error instanceof GithubCategorizedError) {
+    return { outcome: error.category, retryable: error.category === "transport" };
+  }
+  // Treat every residual error as transport failure. In particular, never retain an
+  // arbitrary Error.message because fetch implementations and parsers can include
+  // credentials or untrusted response excerpts in it.
+  return { outcome: "transport", retryable: true };
+}
+
+function recordGithubAttempt(
+  evidence: GithubReadAttempt[] | undefined,
+  path: string,
+  attempt: number,
+  outcome: string,
+): void {
+  if (evidence && evidence.length < GITHUB_READ_RETRY_POLICY.maxReportedAttempts) {
+    evidence.push({ path, attempt, outcome });
+  }
+}
+
+async function cancelResponseBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // The status remains authoritative when a failed response body cannot be cancelled cleanly.
+  }
+}
+
+async function boundedGithubRead<T>(
+  path: string,
+  token: string,
+  consume: (response: Response) => Promise<T>,
+  options: GithubReadOptions = {},
+): Promise<T> {
+  const fetchRequest = options.fetch ?? fetch;
+  const maxAttempts = Math.min(
+    GITHUB_READ_RETRY_POLICY.maxAttempts,
+    Math.max(1, options.maxAttempts ?? GITHUB_READ_RETRY_POLICY.maxAttempts),
   );
-  if (!response.ok) throw new Error(`GitHub artifact ${artifactId} failed with ${response.status}`);
-  const length = Number(response.headers.get("content-length") ?? "0");
-  if (Number.isFinite(length) && length > maxBytes)
-    throw new Error("GitHub artifact exceeds bound");
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.length > maxBytes) throw new Error("GitHub artifact exceeds bound");
-  return bytes;
+  const attemptTimeoutMs = options.attemptTimeoutMs ?? GITHUB_READ_RETRY_POLICY.attemptTimeoutMs;
+  const delayMs = options.delayMs ?? GITHUB_READ_RETRY_POLICY.delayMs;
+  const attempts: string[] = [];
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
+    try {
+      const response = await fetchRequest(`https://api.github.com/${path}`, {
+        method: "GET",
+        signal: controller.signal,
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${token}`,
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+      }).catch((error: unknown) => {
+        if (controller.signal.aborted) throw error;
+        throw new GithubCategorizedError("transport");
+      });
+      if (!response.ok) {
+        await cancelResponseBody(response);
+        throw new GithubHttpStatusError(response.status);
+      }
+      const value = await consume(response);
+      attempts.push(`${attempt}:success`);
+      recordGithubAttempt(options.attemptEvidence, path, attempt, "success");
+      return value;
+    } catch (error) {
+      const failure = githubAttemptFailure(error, controller.signal.aborted);
+      attempts.push(`${attempt}:${failure.outcome}`);
+      recordGithubAttempt(options.attemptEvidence, path, attempt, failure.outcome);
+      if (!failure.retryable || attempt === maxAttempts) {
+        throw new Error(
+          `GitHub GET ${path} failed (${failure.outcome}); attempts [${attempts.join(", ")}]`,
+        );
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+    if (delayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+  }
+  throw new Error(`GitHub GET ${path} exhausted without terminal evidence`);
+}
+
+async function readBoundedResponse(response: Response, maxBytes: number): Promise<Buffer> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    const length = Number(contentLength);
+    if (Number.isFinite(length) && length > maxBytes) {
+      await cancelResponseBody(response);
+      throw new GithubCategorizedError("too-large");
+    }
+  }
+  if (!response.body) throw new GithubCategorizedError("transport");
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let retainedBytes = 0;
+  try {
+    while (true) {
+      let part: { done: boolean; value?: Uint8Array };
+      try {
+        part = await reader.read();
+      } catch {
+        throw new GithubCategorizedError("transport");
+      }
+      if (part.done) return Buffer.concat(chunks, retainedBytes);
+      const value = part.value;
+      if (!value) throw new GithubCategorizedError("transport");
+      if (retainedBytes + value.byteLength > maxBytes) {
+        await reader.cancel();
+        throw new GithubCategorizedError("too-large");
+      }
+      chunks.push(Buffer.from(value));
+      retainedBytes += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export async function githubJson(
+  path: string,
+  token: string,
+  options: GithubReadOptions = {},
+): Promise<unknown> {
+  const maxBytes = Math.min(
+    GITHUB_READ_RETRY_POLICY.maxJsonBytes,
+    Math.max(1, options.maxJsonBytes ?? GITHUB_READ_RETRY_POLICY.maxJsonBytes),
+  );
+  return boundedGithubRead(
+    path,
+    token,
+    async (response) => {
+      const text = (await readBoundedResponse(response, maxBytes)).toString("utf8");
+      try {
+        return JSON.parse(text);
+      } catch {
+        throw new GithubCategorizedError("invalid-json");
+      }
+    },
+    options,
+  );
+}
+
+export async function githubArchive(
+  artifactId: number,
+  maxBytes: number,
+  token: string,
+  options?: GithubReadOptions,
+): Promise<Buffer> {
+  const path = `repos/${REPOSITORY}/actions/artifacts/${artifactId}/zip`;
+  const boundedBytes = Math.min(MAX_ARTIFACT_BYTES, Math.max(1, maxBytes));
+  return boundedGithubRead(
+    path,
+    token,
+    (response) => readBoundedResponse(response, boundedBytes),
+    options,
+  );
 }
 
 function requiredEnvironment(name: string): string {
@@ -723,9 +1016,11 @@ async function main(): Promise<void> {
   const token = requiredEnvironment("GITHUB_TOKEN");
   const currentRunId = Number(requiredEnvironment("SOURCE_RUN_ID"));
   if (!positiveInteger(currentRunId)) throw new Error("SOURCE_RUN_ID must be a positive integer");
-  const requestJson = (path: string) => githubJson(path, token);
+  const httpAttempts: GithubReadAttempt[] = [];
+  const requestOptions = { attemptEvidence: httpAttempts };
+  const requestJson = (path: string) => githubJson(path, token, requestOptions);
   const requestArchive = (artifactId: number, maxBytes: number) =>
-    githubArchive(artifactId, maxBytes, token);
+    githubArchive(artifactId, maxBytes, token, requestOptions);
   const response = record(
     await requestJson(
       `repos/${REPOSITORY}/actions/workflows/e2e.yaml/runs?status=completed&per_page=${MAX_RUNS}`,
@@ -734,26 +1029,22 @@ async function main(): Promise<void> {
   if (!response || !Array.isArray(response.workflow_runs)) {
     throw new Error("GitHub returned no E2E workflow run history");
   }
+  const services = { requestJson, requestArchive };
   const current = response.workflow_runs.find((run) => record(run)?.id === currentRunId);
-  const currentSample = await normalizeReliabilityRun(current, {
-    requestJson,
-    requestArchive,
-  });
+  const currentCollection = createArtifactCollection(services);
+  const currentSample = await normalizeReliabilityRun(current, services, currentCollection);
   const samples: ReliabilitySample[] = [];
   for (const run of response.workflow_runs) {
     if (!currentSample?.candidateSha) break;
-    const candidateSha = await identifyCandidateSha(run, {
-      requestJson,
-      requestArchive,
-    });
-    if (candidateSha !== currentSample.candidateSha) continue;
-    const sample = await normalizeReliabilityRun(run, {
-      requestJson,
-      requestArchive,
-    });
-    if (sample && sample.candidateSha === currentSample.candidateSha) {
-      samples.push(sample);
-    }
+    const collection =
+      record(run)?.id === currentRunId ? currentCollection : createArtifactCollection(services);
+    const sample = await normalizeMatchingReliabilityRun(
+      run,
+      currentSample.candidateSha,
+      services,
+      collection,
+    );
+    if (sample) samples.push(sample);
   }
   if (currentSample && !samples.some((sample) => sample.runId === currentSample.runId)) {
     samples.push(currentSample);
@@ -763,6 +1054,7 @@ async function main(): Promise<void> {
     schemaVersion: 1,
     currentRunId,
     candidateSha: currentSample?.candidateSha ?? null,
+    httpAttempts,
     groups,
   };
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
