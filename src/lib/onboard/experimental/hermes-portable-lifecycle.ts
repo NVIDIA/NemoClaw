@@ -127,6 +127,20 @@ export interface HermesPortableCurrentnessTimingEvidence {
   readonly openshellExecutableCount: number;
   readonly podmanExecutableMs: number;
   readonly podmanExecutableCount: number;
+  readonly podmanPathResolutionMs: number;
+  readonly podmanPathResolutionCount: number;
+  readonly podmanCanonicalRealpathMs: number;
+  readonly podmanCanonicalRealpathCount: number;
+  readonly podmanDirectoryChainMs: number;
+  readonly podmanDirectoryChainCount: number;
+  readonly podmanExecutableMetadataMs: number;
+  readonly podmanExecutableMetadataCount: number;
+  readonly podmanContentReadMs: number;
+  readonly podmanContentReadCount: number;
+  readonly podmanContentHashMs: number;
+  readonly podmanContentHashCount: number;
+  readonly podmanAuthorityCompareMs: number;
+  readonly podmanAuthorityCompareCount: number;
   readonly containerInspectMs: number;
   readonly containerInspectCount: number;
   readonly transactionCompareMs: number;
@@ -208,6 +222,13 @@ type HermesPortableCurrentnessTimingStage =
   | "socketAuthority"
   | "openshellExecutable"
   | "podmanExecutable"
+  | "podmanPathResolution"
+  | "podmanCanonicalRealpath"
+  | "podmanDirectoryChain"
+  | "podmanExecutableMetadata"
+  | "podmanContentRead"
+  | "podmanContentHash"
+  | "podmanAuthorityCompare"
   | "containerInspect"
   | "transactionCompare";
 
@@ -271,6 +292,20 @@ function createHermesPortableCurrentnessTimingRecorder(
             openshellExecutableCount: count("openshellExecutable"),
             podmanExecutableMs: duration("podmanExecutable"),
             podmanExecutableCount: count("podmanExecutable"),
+            podmanPathResolutionMs: duration("podmanPathResolution"),
+            podmanPathResolutionCount: count("podmanPathResolution"),
+            podmanCanonicalRealpathMs: duration("podmanCanonicalRealpath"),
+            podmanCanonicalRealpathCount: count("podmanCanonicalRealpath"),
+            podmanDirectoryChainMs: duration("podmanDirectoryChain"),
+            podmanDirectoryChainCount: count("podmanDirectoryChain"),
+            podmanExecutableMetadataMs: duration("podmanExecutableMetadata"),
+            podmanExecutableMetadataCount: count("podmanExecutableMetadata"),
+            podmanContentReadMs: duration("podmanContentRead"),
+            podmanContentReadCount: count("podmanContentRead"),
+            podmanContentHashMs: duration("podmanContentHash"),
+            podmanContentHashCount: count("podmanContentHash"),
+            podmanAuthorityCompareMs: duration("podmanAuthorityCompare"),
+            podmanAuthorityCompareCount: count("podmanAuthorityCompare"),
             containerInspectMs: duration("containerInspect"),
             containerInspectCount: count("containerInspect"),
             transactionCompareMs: duration("transactionCompare"),
@@ -675,7 +710,12 @@ function qualify(
     snapshot as HermesPortableReceiptSnapshot & {
       readonly receipt: HermesPortableConfiguredReceipt;
     },
-    { ...deps.operatingAuthority, timing: currentnessTiming },
+    {
+      ...deps.operatingAuthority,
+      timing: currentnessTiming,
+      podmanAuthorityDeps:
+        deps.operatingAuthority?.podmanAuthorityDeps ?? deps.podmanAuthorityDeps,
+    },
     options,
   );
   operatingAuthority.assertCurrent();

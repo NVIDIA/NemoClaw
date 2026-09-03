@@ -624,8 +624,8 @@ describe("Podman container engine command adapter", () => {
     const second = engine();
     readFile.mockClear();
 
-    for (let index = 0; index < 32; index += 1) first.capture(["info"]);
-    for (let index = 0; index < 31; index += 1) second.capture(["info"]);
+    Array.from({ length: 32 }).forEach(() => first.capture(["info"]));
+    Array.from({ length: 31 }).forEach(() => second.capture(["info"]));
     expect(readFile).not.toHaveBeenCalled();
     second.capture(["info"]);
     expect(readFile).toHaveBeenCalledOnce();
@@ -654,15 +654,15 @@ describe("Podman container engine command adapter", () => {
     });
     readFile.mockClear();
 
-    for (let index = 0; index < 32; index += 1) first.capture(["info"]);
-    for (let index = 0; index < 31; index += 1) second.capture(["info"]);
+    Array.from({ length: 32 }).forEach(() => first.capture(["info"]));
+    Array.from({ length: 31 }).forEach(() => second.capture(["info"]));
     expect(readFile).not.toHaveBeenCalled();
     second.capture(["info"]);
     expect(readFile).toHaveBeenCalledOnce();
 
-    for (let index = 0; index < 63; index += 1) {
-      (index % 2 === 0 ? first : second).capture(["info"]);
-    }
+    Array.from({ length: 63 }).forEach((_, index) =>
+      (index % 2 === 0 ? first : second).capture(["info"]),
+    );
     expect(readFile).toHaveBeenCalledOnce();
     first.capture(["info"]);
     expect(readFile).toHaveBeenCalledTimes(2);
@@ -693,9 +693,9 @@ describe("Podman container engine command adapter", () => {
     });
     readFile.mockClear();
 
-    for (let index = 0; index < 63; index += 1) {
-      (index % 2 === 0 ? first : second).capture(["info"]);
-    }
+    Array.from({ length: 63 }).forEach((_, index) =>
+      (index % 2 === 0 ? first : second).capture(["info"]),
+    );
     readFile.mockReturnValue(changedBytes);
     expect(() => second.capture(["info"])).toThrow("changed after it was qualified");
     expect(firstCapture.mock.calls.length + secondCapture.mock.calls.length).toBe(63);
@@ -732,7 +732,7 @@ describe("Podman container engine command adapter", () => {
     readFile.mockClear();
 
     expect(() => first.capture(["info"])).toThrow(socketFailure);
-    for (let index = 0; index < 63; index += 1) second.capture(["info"]);
+    Array.from({ length: 63 }).forEach(() => second.capture(["info"]));
     expect(readFile).not.toHaveBeenCalled();
     second.capture(["info"]);
     expect(readFile).toHaveBeenCalledOnce();
@@ -767,7 +767,7 @@ describe("Podman container engine command adapter", () => {
     readFile.mockClear();
 
     expect(() => first.capture(["info"])).toThrow(thrown);
-    for (let index = 0; index < 62; index += 1) second.capture(["info"]);
+    Array.from({ length: 62 }).forEach(() => second.capture(["info"]));
     expect(readFile).not.toHaveBeenCalled();
     second.capture(["info"]);
     expect(readFile).toHaveBeenCalledOnce();
