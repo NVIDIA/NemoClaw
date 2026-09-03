@@ -250,6 +250,7 @@
       "liveSources": ["test/e2e/live/external-gateway-health-helpers.ts"],
       "fast": [
         "test/e2e/support/external-gateway-health-process.test.ts",
+        "test/e2e/support/retry-policy.test.ts",
         "test/install/reviewed-npm-archive.test.ts"
       ]
     },
@@ -396,8 +397,10 @@
     },
     {
       "live": "test/e2e/live/cloud-inference.test.ts",
+      "liveSources": ["test/e2e/live/cloud-inference-provider-skip.ts"],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
     },
@@ -424,6 +427,7 @@
         "src/lib/policy/policy-live-state.test.ts",
         "test/e2e/support/common-egress-agent-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts"
       ]
@@ -515,8 +519,10 @@
     },
     {
       "live": "test/e2e/live/hermes-inference-switch.test.ts",
+      "liveSources": ["test/e2e/live/hermes-inference-switch-helpers.ts"],
       "fast": [
         "src/lib/actions/inference-set-compatible-provider.test.ts",
+        "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -591,6 +597,7 @@
         "test/e2e/support/mcp-bridge-hermes-http.test.ts",
         "test/e2e/support/mcp-bridge-onboard-env.test.ts",
         "test/e2e/support/mcp-bridge-reliability.test.ts",
+        "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/mcp-bridge-sandbox.test.ts",
         "test/e2e/support/mcp-bridge-tool-discovery.test.ts",
         "test/e2e/support/mcp-provider-rewrite-probe.test.ts",
@@ -659,8 +666,10 @@
     },
     {
       "live": "test/e2e/live/openclaw-inference-switch.test.ts",
+      "liveSources": ["test/e2e/live/openclaw-inference-switch-helpers.ts"],
       "fast": [
         "src/lib/actions/inference-set-compatible-provider.test.ts",
+        "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",

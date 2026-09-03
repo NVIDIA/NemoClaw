@@ -6055,6 +6055,7 @@ jobs:
           sparse-checkout: |
             ci/onboard-performance-budget.json
             scripts/audit-test-runtime.mts
+            scripts/lib/read-artifact-zip.mts
             scripts/scorecard
           sparse-checkout-cone-mode: false
 

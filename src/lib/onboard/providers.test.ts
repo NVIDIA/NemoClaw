@@ -1147,18 +1147,17 @@ describe("onboard provider helpers", () => {
     let providerExists = false;
     const run = (command: string[]) => {
       commands.push(command.join(" "));
-      const result =
-        command[1] === "get"
-          ? providerExists
-            ? {
-                status: 0,
-                stdout:
-                  "Name: alpha-googlechat-bridge\nType: google-chat-bridge\nCredential keys: GOOGLE_CHAT_ACCESS_TOKEN\nConfig keys: <none>\n",
-              }
-            : { status: 1, stderr: "provider not found" }
-          : { status: 0, stdout: "", stderr: "" };
-      providerExists = providerExists || command[1] === "create";
-      return result;
+      if (command[1] === "get") {
+        return providerExists
+          ? {
+              status: 0,
+              stdout:
+                "Name: alpha-googlechat-bridge\nType: google-chat-bridge\nCredential keys: GOOGLE_CHAT_ACCESS_TOKEN\nConfig keys: <none>\n",
+            }
+          : { status: 1, stderr: "provider not found" };
+      }
+      if (command[1] === "create") providerExists = true;
+      return { status: 0, stdout: "", stderr: "" };
     };
     const tokenDefs = [
       {

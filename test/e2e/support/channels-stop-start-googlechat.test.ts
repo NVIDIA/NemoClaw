@@ -25,13 +25,6 @@ type FixtureProviderDependencies = {
     },
   ): string[];
 };
-type FixtureLegacyProviderDependencies = {
-  upsertMessagingProviders(
-    tokenDefs: Parameters<FixtureProviderDependencies["upsertMessagingProviders"]>[0],
-    run: FixtureRunner,
-    options?: Parameters<FixtureProviderDependencies["upsertMessagingProviders"]>[2],
-  ): string[];
-};
 
 type FixtureChannelDependencies = Pick<
   (typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts"))["policyChannelDependencies"],
@@ -345,12 +338,6 @@ describe("channels stop/start Google Chat live composition", () => {
       }));
       const run = runMock as unknown as FixtureRunner;
       const revalidateSandboxIdentity = vi.fn();
-      const googlechatTokenDef = {
-        name: `${sandboxName}-googlechat-bridge`,
-        envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-        token: null,
-        providerType,
-      };
 
       const restore = installGooglechatCredentialFixture(sandboxName, agent, {
         ensureProfiles,
@@ -359,7 +346,15 @@ describe("channels stop/start Google Chat live composition", () => {
         run,
       });
       const providerNames = providerDependencies.upsertMessagingProviders(
-        [delegatedTokenDef, googlechatTokenDef],
+        [
+          delegatedTokenDef,
+          {
+            name: `${sandboxName}-googlechat-bridge`,
+            envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+            token: null,
+            providerType,
+          },
+        ],
         run,
         { revalidateSandboxIdentity },
       );
@@ -454,11 +449,11 @@ describe("channels stop/start Google Chat live composition", () => {
   });
 
   it.each([
-    [{}, "update", []],
-    [{ replaceExisting: true }, "create", ["--type", "google-chat-bridge"]],
+    [{}, "update"],
+    [{ replaceExisting: true }, "create"],
   ] as const)(
     "reconciles an existing fixture provider with options %o",
-    (options, expectedMutation, expectedMutationArgs) => {
+    (options, expectedMutation) => {
       const providerDependencies: FixtureProviderDependencies = {
         upsertMessagingProviders: vi.fn(() => []),
       };
@@ -473,6 +468,7 @@ describe("channels stop/start Google Chat live composition", () => {
         root: "/repo",
         run,
       });
+
       providerDependencies.upsertMessagingProviders(
         [
           {
@@ -492,9 +488,13 @@ describe("channels stop/start Google Chat live composition", () => {
           "e2e-oc-ch-cycle-googlechat-bridge",
           "--credential",
           "GOOGLE_CHAT_ACCESS_TOKEN",
-          ...expectedMutationArgs,
         ]),
       );
+      if (expectedMutation === "create") {
+        expect(mutation?.args).toEqual(
+          expect.arrayContaining(["--type", "google-chat-bridge"]),
+        );
+      }
       expect(mutation?.env).toEqual({
         GOOGLE_CHAT_ACCESS_TOKEN: GOOGLECHAT_E2E_ACCESS_TOKEN,
       });

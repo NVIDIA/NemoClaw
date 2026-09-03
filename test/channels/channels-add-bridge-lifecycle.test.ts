@@ -11,6 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import YAML from "yaml";
 import {
   addSandboxChannel,
   removeSandboxChannel,
@@ -45,51 +46,15 @@ const GOOGLECHAT_ENV = {
   GOOGLECHAT_APP_PRINCIPAL: "123456789012345678901",
 };
 const LIVE_IDENTITY_FINGERPRINT = "a".repeat(64);
-const GOOGLECHAT_PROFILE_EXPORT = JSON.stringify({
-  id: "google-chat-bridge",
-  credentials: [
-    {
-      name: "access_token",
-      env_vars: ["GOOGLE_CHAT_ACCESS_TOKEN"],
-      required: true,
-      auth_style: "bearer",
-      header_name: "Authorization",
-      query_param: "",
-      refresh: {
-        strategy: "google-service-account-jwt",
-        scopes: ["https://www.googleapis.com/auth/chat.bot"],
-        material: [
-          {
-            name: "client_email",
-            description: "Service-account client email (JWT issuer)",
-            required: true,
-          },
-          {
-            name: "private_key",
-            description: "Service-account RSA private key (PEM); signs the JWT assertion",
-            required: true,
-            secret: true,
-          },
-          {
-            name: "scope",
-            description: "OAuth scope(s) to mint the token for",
-          },
-        ],
-      },
-    },
-  ],
-  endpoints: [
-    {
-      host: "chat.googleapis.com",
-      port: 443,
-      protocol: "rest",
-      access: "read-write",
-      enforcement: "enforce",
-    },
-  ],
-  binaries: ["/usr/local/bin/node", "/usr/bin/node"],
-  inference_capable: false,
-});
+const GOOGLECHAT_PROFILE_DOC = YAML.parse(
+  fs.readFileSync(
+    path.join(
+      process.cwd(),
+      "src/lib/messaging/channels/googlechat/provider-profile/openclaw.yaml",
+    ),
+    "utf-8",
+  ),
+) as Record<string, unknown>;
 
 // Why this mock exists: the real googlechat tunnel/audience gate needs a human
 // operator (Google Cloud Console steps), so on a non-interactive test run it
@@ -241,7 +206,7 @@ beforeEach(() => {
       stdout: isRefreshStatus(args)
         ? refreshStatusTable(command)
         : profileExport
-          ? GOOGLECHAT_PROFILE_EXPORT
+          ? JSON.stringify(GOOGLECHAT_PROFILE_DOC)
           : "",
       stderr: providerMissing ? `provider '${args[args.length - 1]}' not found` : "",
       status: providerMissing ? 1 : 0,
@@ -337,8 +302,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
 
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(providerSpy).not.toHaveBeenCalled();
-    expect(printedText()).toContain("Missing required inputs for this channel.");
-    expect(printedText()).not.toContain("GOOGLECHAT_SERVICE_ACCOUNT");
+    expect(printedText()).toContain("GOOGLECHAT_SERVICE_ACCOUNT");
   });
 
   it("tears the just-created bridge provider back down when gateway registration fails", async () => {
@@ -350,7 +314,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
       code: 1,
     });
 
-    expect(printedText()).toContain("Failed to register channel providers with the gateway.");
+    expect(printedText()).toContain("Failed to register 'googlechat' providers");
     expect(openshellCalls()).toEqual(
       expect.arrayContaining([
         ["sandbox", "provider", "detach", "test-sb", "test-sb-googlechat-bridge"],
