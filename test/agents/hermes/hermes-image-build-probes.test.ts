@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +13,9 @@ import { dockerfileInstructions } from "../../../src/lib/onboard/dockerfile-tool
 const root = path.join(import.meta.dirname, "../../..");
 const probes = path.join(root, "agents", "hermes", "image-build-probes.py");
 const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
+const a2aNeutralPatch = fs.readFileSync(
+  path.join(root, "agents", "hermes", "a2a-neutral.patch"),
+);
 const probeSource = fs.readFileSync(probes, "utf8");
 const imageProbePath = "/opt/nemoclaw-hermes-config/image-build-probes.py";
 const commands = [
@@ -166,6 +170,22 @@ function runNeutralPlatformProbe(configuration: string) {
 }
 
 describe("Hermes image build probes", () => {
+  it("verifies the A2A neutralization patch before root applies it", () => {
+    const digest = createHash("sha256").update(a2aNeutralPatch).digest("hex");
+    const digestBinding = `ARG NEMOCLAW_HERMES_A2A_NEUTRAL_PATCH_SHA256=${digest}`;
+    const integrityCheck =
+      '"$NEMOCLAW_HERMES_A2A_NEUTRAL_PATCH_SHA256" /opt/nemoclaw-hermes-config/a2a-neutral.patch';
+    const shaCheck = "| sha256sum -c -";
+    const applyCheck = "git -C /opt/hermes apply --check";
+    const integrityCheckIndex = dockerfile.indexOf(integrityCheck);
+    const shaCheckIndex = dockerfile.indexOf(shaCheck, integrityCheckIndex);
+
+    expect(dockerfile).toContain(digestBinding);
+    expect(integrityCheckIndex).toBeGreaterThan(dockerfile.indexOf(digestBinding));
+    expect(shaCheckIndex).toBeGreaterThan(integrityCheckIndex);
+    expect(dockerfile.indexOf(applyCheck, shaCheckIndex)).toBeGreaterThan(shaCheckIndex);
+  });
+
   it("rejects an upgrade that retains the Hermes 0.20.6 adapter", () => {
     const result = runCompatibilityRetirementProbe({ version: "hermes v0.20.0" });
 

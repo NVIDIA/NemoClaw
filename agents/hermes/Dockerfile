@@ -1019,7 +1019,12 @@ RUN /usr/bin/python3 -I \
 
 # A2A has no accepted NVIDIA/NemoClaw product scope. Keep the inbound adapter
 # disabled and remove its outbound tools from every Hermes process.
-RUN git -C /opt/hermes apply --check \
+ARG NEMOCLAW_HERMES_A2A_NEUTRAL_PATCH_SHA256=f265d2023472d0cb375d7b302fb5ca88585766ba6943c519a755a987cfe3f7ce
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_A2A_NEUTRAL_PATCH_SHA256" /opt/nemoclaw-hermes-config/a2a-neutral.patch \
+    | sha256sum -c - \
+    && git -C /opt/hermes apply --check \
         --include=plugins/platforms/a2a/plugin.yaml \
         --include=plugins/platforms/a2a/__init__.py \
         /opt/nemoclaw-hermes-config/a2a-neutral.patch \
