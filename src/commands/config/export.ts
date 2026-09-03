@@ -27,6 +27,7 @@ export default class ConfigExportCommand extends Command {
   ];
   static args = { sandboxName: sandboxNameArg };
   static flags = {
+    help: Flags.help({ char: "h" }),
     output: Flags.string({
       char: "o",
       description: "Write YAML to this path. Use - to write to standard output.",

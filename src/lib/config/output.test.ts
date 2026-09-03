@@ -180,8 +180,83 @@ describe("publishExportFile", () => {
         outputPath,
       }),
     );
-    expect(fs.readFileSync(outputPath, "utf8")).toBe("exchanged");
-    expect(temporaryEntries(root)).toEqual([]);
+    expect(fs.existsSync(outputPath)).toBe(false);
+    const recovery = temporaryEntries(root);
+    expect(recovery).toHaveLength(1);
+    expect(fs.readFileSync(path.join(root, recovery[0]!), "utf8")).toBe("exchanged");
+  });
+
+  it("restores a directory exchanged before a forced move (#10938)", () => {
+    const root = temporaryRoot();
+    const outputPath = path.join(root, "selected.yaml");
+    fs.writeFileSync(outputPath, "validated");
+    const fchmodSync = fs.fchmodSync;
+    vi.spyOn(fs, "fchmodSync").mockImplementationOnce((descriptor, mode) => {
+      fchmodSync(descriptor, mode);
+      fs.rmSync(outputPath);
+      fs.mkdirSync(outputPath);
+    });
+
+    expect(() => publishExportFile(outputPath, "content", true)).toThrowError(
+      expect.objectContaining<Partial<YamlExportOutputError>>({ category: "unsafe-output" }),
+    );
+    expect(fs.existsSync(outputPath)).toBe(false);
+    const recovery = temporaryEntries(root);
+    expect(recovery).toHaveLength(1);
+    expect(fs.lstatSync(path.join(root, recovery[0]!)).isDirectory()).toBe(true);
+  });
+
+  it("rolls back publication when the parent changes after publish (#10938)", () => {
+    const root = temporaryRoot();
+    const outputParent = path.join(root, "output");
+    const movedParent = path.join(root, "moved");
+    const outputPath = path.join(outputParent, "selected.yaml");
+    fs.mkdirSync(outputParent);
+    const linkSync = fs.linkSync;
+    vi.spyOn(fs, "linkSync").mockImplementationOnce((source, destination) => {
+      linkSync(source, destination);
+      fs.renameSync(outputParent, movedParent);
+      fs.mkdirSync(outputParent);
+    });
+
+    expect(() => publishExportFile(outputPath, "content")).toThrowError(
+      expect.objectContaining<Partial<YamlExportOutputError>>({ category: "unsafe-output" }),
+    );
+    expect(fs.existsSync(outputPath)).toBe(false);
+    expect(fs.existsSync(path.join(movedParent, "selected.yaml"))).toBe(false);
+  });
+
+  it("preserves a recovery artifact when forced restoration fails (#10938)", () => {
+    const root = temporaryRoot();
+    const outputPath = path.join(root, "selected.yaml");
+    fs.writeFileSync(outputPath, "validated");
+    vi.spyOn(fs, "linkSync")
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("publish failed"), { code: "EIO" });
+      })
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("restore failed"), { code: "EIO" });
+      });
+
+    expect(() => publishExportFile(outputPath, "content", true)).toThrow(/recoverable at/);
+    expect(temporaryEntries(root).some((entry) => entry.endsWith(".previous"))).toBe(true);
+  });
+
+  it("closes the parent descriptor when its fstat fails (#10938)", () => {
+    const root = temporaryRoot();
+    const outputPath = path.join(root, "selected.yaml");
+    const closeSync = fs.closeSync;
+    const closed: number[] = [];
+    vi.spyOn(fs, "fstatSync").mockImplementationOnce(() => {
+      throw new Error("injected fstat failure");
+    });
+    vi.spyOn(fs, "closeSync").mockImplementation((descriptor) => {
+      closed.push(descriptor);
+      closeSync(descriptor);
+    });
+
+    expect(() => publishExportFile(outputPath, "content")).toThrow("injected fstat failure");
+    expect(closed).toHaveLength(1);
   });
 
   it("fsyncs the temporary file before publication and then fsyncs the parent (#10938)", () => {

@@ -33,6 +33,20 @@ describe("config export command", () => {
     expect(mocks.observeLiveExportSource).not.toHaveBeenCalled();
   });
 
+  it("provides short and long command help without reading source state (#10938)", async () => {
+    await expect(ConfigExportCommand.run(["alpha", "--help"], process.cwd())).rejects.toMatchObject(
+      {
+        code: "EEXIT",
+        oclif: { exit: 0 },
+      },
+    );
+    await expect(ConfigExportCommand.run(["alpha", "-h"], process.cwd())).rejects.toMatchObject({
+      code: "EEXIT",
+      oclif: { exit: 0 },
+    });
+    expect(mocks.observeLiveExportSource).not.toHaveBeenCalled();
+  });
+
   it("declares the required output and safe replacement flags (#10938)", () => {
     expect(ConfigExportCommand.flags).toMatchObject({
       output: { char: "o", required: true },

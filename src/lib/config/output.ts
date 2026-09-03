@@ -124,16 +124,40 @@ function openParent(outputPath: string) {
     directoryPath,
     fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0) | (fs.constants.O_NOFOLLOW ?? 0),
   );
-  const stat = fs.fstatSync(descriptor);
-  if (!stat.isDirectory() || !sameFile(before, stat)) {
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isDirectory() || !sameFile(before, stat)) {
+      throw new YamlExportOutputError(
+        "unsafe-output",
+        outputPath,
+        `Refusing to publish because the output parent changed: ${directoryPath}`,
+      );
+    }
+    return { descriptor, directoryPath, retainedPath: `/proc/self/fd/${descriptor}`, stat };
+  } catch (error) {
     fs.closeSync(descriptor);
+    throw error;
+  }
+}
+
+function assertParentStable(parent: ReturnType<typeof openParent>, outputPath: string): void {
+  let current: fs.Stats;
+  try {
+    current = fs.lstatSync(parent.directoryPath);
+  } catch {
     throw new YamlExportOutputError(
       "unsafe-output",
       outputPath,
-      `Refusing to publish because the output parent changed: ${directoryPath}`,
+      `Refusing to publish because the output parent changed: ${parent.directoryPath}`,
     );
   }
-  return { descriptor, directoryPath, retainedPath: `/proc/self/fd/${descriptor}`, stat };
+  if (!current.isDirectory() || !sameFile(parent.stat, current)) {
+    throw new YamlExportOutputError(
+      "unsafe-output",
+      outputPath,
+      `Refusing to publish because the output parent changed: ${parent.directoryPath}`,
+    );
+  }
 }
 
 function publishNew(temporary: string, destination: string, outputPath: string): void {
@@ -151,9 +175,36 @@ function publishNew(temporary: string, destination: string, outputPath: string):
   }
 }
 
-function restoreMoved(moved: string, destination: string): void {
-  fs.linkSync(moved, destination);
-  fs.unlinkSync(moved);
+function removeIfSame(candidate: string, expected: fs.Stats): void {
+  try {
+    const stat = fs.lstatSync(candidate);
+    if (sameFile(stat, expected)) fs.unlinkSync(candidate);
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
+  }
+}
+
+function preserveRecovery(moved: string, outputPath: string): never {
+  throw new YamlExportOutputError(
+    "unsafe-output",
+    outputPath,
+    `Publication failed and the destination remains recoverable at: ${moved}`,
+  );
+}
+
+function restoreRegularNoReplace(
+  moved: string,
+  destination: string,
+  outputPath: string,
+  originalError: unknown,
+): never {
+  try {
+    fs.linkSync(moved, destination);
+    fs.unlinkSync(moved);
+  } catch {
+    preserveRecovery(moved, outputPath);
+  }
+  throw originalError;
 }
 
 function publishForced(
@@ -162,29 +213,42 @@ function publishForced(
   moved: string,
   expected: fs.Stats,
   outputPath: string,
-): void {
+): fs.Stats {
   fs.renameSync(destination, moved);
-  const movedStat = fs.lstatSync(moved);
-  if (!movedStat.isFile() || !sameFile(expected, movedStat)) {
-    restoreMoved(moved, destination);
+  let movedStat: fs.Stats;
+  try {
+    movedStat = fs.lstatSync(moved);
+  } catch {
     throw new YamlExportOutputError(
       "unsafe-output",
       outputPath,
-      `Refusing to replace an output path that changed during publication: ${outputPath}`,
+      `Could not verify the moved destination; recover it from: ${moved}`,
     );
   }
+  if (!movedStat.isFile() || !sameFile(expected, movedStat)) preserveRecovery(moved, outputPath);
   try {
     publishNew(temporary, destination, outputPath);
   } catch (error) {
-    try {
-      restoreMoved(moved, destination);
-    } catch {
-      // A concurrent destination remains authoritative.
-      fs.unlinkSync(moved);
-    }
-    throw error;
+    restoreRegularNoReplace(moved, destination, outputPath, error);
   }
-  fs.unlinkSync(moved);
+  return fs.lstatSync(destination);
+}
+
+function rollbackPublication(
+  destination: string,
+  published: fs.Stats,
+  moved: string | null,
+  outputPath: string,
+): void {
+  removeIfSame(destination, published);
+  if (moved !== null) {
+    try {
+      fs.linkSync(moved, destination);
+      fs.unlinkSync(moved);
+    } catch {
+      preserveRecovery(moved, outputPath);
+    }
+  }
 }
 
 function publishYamlExport(options: PublishYamlExportOptions): PublishExportFileResult {
@@ -222,17 +286,22 @@ function publishYamlExport(options: PublishYamlExportOptions): PublishExportFile
     fs.fsyncSync(descriptor);
     fs.closeSync(descriptor);
     descriptor = null;
-    const currentParent = fs.lstatSync(parent.directoryPath);
-    if (!currentParent.isDirectory() || !sameFile(parent.stat, currentParent)) {
-      throw new YamlExportOutputError(
-        "unsafe-output",
-        outputPath,
-        `Refusing to publish because the output parent changed: ${parent.directoryPath}`,
-      );
+    assertParentStable(parent, outputPath);
+    let published: fs.Stats;
+    if (expected === null) {
+      publishNew(temporary, destination, outputPath);
+      published = fs.lstatSync(destination);
+    } else {
+      published = publishForced(temporary, destination, moved, expected, outputPath);
     }
-    if (expected === null) publishNew(temporary, destination, outputPath);
-    else publishForced(temporary, destination, moved, expected, outputPath);
+    try {
+      assertParentStable(parent, outputPath);
+    } catch (error) {
+      rollbackPublication(destination, published, expected === null ? null : moved, outputPath);
+      throw error;
+    }
     fs.unlinkSync(temporary);
+    if (expected !== null) fs.unlinkSync(moved);
     fs.fsyncSync(parent.descriptor);
     return { path: outputPath };
   } finally {
