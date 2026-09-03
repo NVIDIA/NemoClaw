@@ -8,6 +8,7 @@
 const { spawn } = require("child_process");
 const { run, runCapture } = require("../../runner");
 const {
+  getWindowsHostOllamaDockerHostValidationArgs,
   getWindowsHostOllamaDockerReachabilityArgs,
   OLLAMA_HOST_DOCKER_INTERNAL,
   probeWindowsHostOllamaRouteProtection,
@@ -243,6 +244,8 @@ function printWindowsOllamaTimeoutDiagnostics(): void {
     '    powershell.exe -Command "Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue"',
   );
   console.error(`    docker ${getWindowsHostOllamaDockerReachabilityArgs().join(" ")}`);
+  console.error(`    docker ${getWindowsHostOllamaDockerHostValidationArgs().join(" ")}`);
+  console.error("      Expected output: 403 (other values mean Host validation is disabled).");
 }
 
 module.exports = {

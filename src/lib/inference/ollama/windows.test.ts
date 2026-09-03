@@ -215,9 +215,7 @@ describe("Windows Ollama helper", () => {
   it("fails repair before stopping Ollama when the persistent loopback setting is rejected", () => {
     const run = vi.fn();
     const runCapture = vi.fn((command: string | string[]) =>
-      commandText(command).includes("SetEnvironmentVariable('OLLAMA_HOST'")
-        ? "0.0.0.0:11434"
-        : "",
+      commandText(command).includes("SetEnvironmentVariable('OLLAMA_HOST'") ? "0.0.0.0:11434" : "",
     );
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
@@ -238,9 +236,7 @@ describe("Windows Ollama helper", () => {
   it("fails fresh installation before spawning when the persistent loopback setting is rejected", async () => {
     const run = vi.fn();
     const runCapture = vi.fn((command: string | string[]) =>
-      commandText(command).includes("SetEnvironmentVariable('OLLAMA_HOST'")
-        ? "0.0.0.0:11434"
-        : "",
+      commandText(command).includes("SetEnvironmentVariable('OLLAMA_HOST'") ? "0.0.0.0:11434" : "",
     );
     const spawn = vi.fn();
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -304,5 +300,34 @@ describe("Windows Ollama helper", () => {
       restore();
       logSpy.mockRestore();
     }
+  });
+
+  it("prints both Docker reachability and Host-validation timeout diagnostics", () => {
+    const run = vi.fn();
+    const runCapture = vi.fn();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
+    let diagnostics: string[] = [];
+
+    try {
+      windows.printWindowsOllamaTimeoutDiagnostics();
+      diagnostics = errorSpy.mock.calls.map(([message]) => String(message));
+    } finally {
+      restore();
+      errorSpy.mockRestore();
+    }
+
+    expect(diagnostics).toContainEqual(
+      expect.stringContaining(
+        `docker run --rm ${require(LOCAL_INFERENCE_PATH).CONTAINER_REACHABILITY_IMAGE} -sf`,
+      ),
+    );
+    expect(diagnostics).toContainEqual(
+      expect.stringContaining(
+        `docker run --rm ${require(LOCAL_INFERENCE_PATH).CONTAINER_REACHABILITY_IMAGE} -sS --output /dev/null --write-out %{http_code}`,
+      ),
+    );
+    expect(diagnostics).toContainEqual(expect.stringContaining(REBINDING_PROBE_HOST_HEADER));
+    expect(diagnostics).toContainEqual(expect.stringContaining("Expected output: 403"));
   });
 });

@@ -192,7 +192,7 @@ describe("buildInferenceProviderMenu", () => {
     });
   });
 
-  it("offers Windows-host Ollama start when detected but not currently selected", () => {
+  it("offers Windows-host Ollama repair when a Docker-reachable route is unprotected", () => {
     const result = buildMenu({
       isWsl: true,
       hasWindowsOllama: true,
