@@ -114,6 +114,7 @@ const NODE_ASSERT_MEMBERS = new Set([
   "ok",
   "rejects",
   "strictEqual",
+  "strict",
   "throws",
 ]);
 const METRIC_KEYS = [
@@ -293,6 +294,19 @@ function literalText(node: ts.Node): string | null {
   return null;
 }
 
+function isNodeAssertRequireCall(node: ts.Expression): node is ts.CallExpression {
+  return (
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "require" &&
+    Boolean(
+      node.arguments[0] &&
+      ts.isStringLiteralLike(node.arguments[0]) &&
+      NODE_ASSERT_MODULES.has(node.arguments[0].text),
+    )
+  );
+}
+
 function nodeAssertionBindings(parsed: ts.SourceFile): {
   readonly functions: ReadonlySet<string>;
   readonly roots: ReadonlySet<string>;
@@ -301,6 +315,10 @@ function nodeAssertionBindings(parsed: ts.SourceFile): {
   const roots = new Set(["assert"]);
 
   function addNamedBinding(local: string, imported: string): void {
+    if (imported === "strict") {
+      roots.add(local);
+      return;
+    }
     if (NODE_ASSERT_MEMBERS.has(imported)) functions.add(local);
   }
 
@@ -323,12 +341,7 @@ function nodeAssertionBindings(parsed: ts.SourceFile): {
     if (
       ts.isVariableDeclaration(node) &&
       node.initializer &&
-      ts.isCallExpression(node.initializer) &&
-      ts.isIdentifier(node.initializer.expression) &&
-      node.initializer.expression.text === "require" &&
-      node.initializer.arguments[0] &&
-      ts.isStringLiteralLike(node.initializer.arguments[0]) &&
-      NODE_ASSERT_MODULES.has(node.initializer.arguments[0].text)
+      isNodeAssertRequireCall(node.initializer)
     ) {
       if (ts.isIdentifier(node.name)) roots.add(node.name.text);
       if (ts.isObjectBindingPattern(node.name)) {
@@ -341,6 +354,16 @@ function nodeAssertionBindings(parsed: ts.SourceFile): {
           addNamedBinding(element.name.text, imported);
         }
       }
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isPropertyAccessExpression(node.initializer) &&
+      node.initializer.name.text === "strict" &&
+      isNodeAssertRequireCall(node.initializer.expression)
+    ) {
+      roots.add(node.name.text);
     }
     ts.forEachChild(node, visit);
   }

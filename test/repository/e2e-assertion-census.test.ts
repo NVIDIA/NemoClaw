@@ -114,17 +114,21 @@ describe("live E2E assertion census (#10934)", () => {
       "test/e2e/live/example.test.ts",
       `
         import verify, { strictEqual as same } from "node:assert/strict";
+        import { strict as strictCheck } from "node:assert";
         import * as check from "node:assert";
         const { deepEqual: equal } = require("assert");
+        const requiredStrict = require("node:assert").strict;
         verify(value);
         same(actual, expected);
+        strictCheck.ok(value);
         check.ok(value);
         equal(actual, expected);
+        requiredStrict.deepEqual(actual, expected);
       `,
     );
 
-    expect(metrics.nodeAssertions).toBe(4);
-    expect(metrics.assertionPoints).toBe(4);
+    expect(metrics.nodeAssertions).toBe(6);
+    expect(metrics.assertionPoints).toBe(6);
   });
 
   test("counts asymmetric expect factories without treating them as assertions", () => {
@@ -220,6 +224,7 @@ describe("live E2E assertion census (#10934)", () => {
     expect(buildE2eAssertionCensus(root)).toMatchObject({
       testFileCount: 1,
       liveFileCount: 1,
+      files: [{ companions: [] }],
     });
   });
 
