@@ -4571,6 +4571,7 @@ jobs:
           npx vitest run --project integration test/e2e-runtime/managed-image-openclaw-security.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Validate managed-image glibc probe lifecycle
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail

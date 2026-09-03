@@ -205,6 +205,7 @@ describe("OpenClaw managed-image copied-PR qualification", () => {
     });
     expect(job.steps?.find((step) => step.name === "Validate glibc probe lifecycle")).toMatchObject(
       {
+        if: "${{ !cancelled() }}",
         env: { NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1" },
         run: expect.stringContaining(
           "test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts",

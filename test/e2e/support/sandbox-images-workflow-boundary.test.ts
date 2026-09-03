@@ -58,14 +58,25 @@ describe("sandbox image workflow boundary", () => {
     const { imageWorkflow } = readWorkflows();
     expect(imageWorkflow.jobs["glibc-probe-image-contract"]).toBeUndefined();
     const job = imageWorkflow.jobs["managed-image-openclaw-security"];
+    expect(job.env).toMatchObject({
+      NEMOCLAW_MANAGED_IMAGE_SECURITY_COHORT:
+        "reusable-${{ github.run_id }}-${{ github.run_attempt }}",
+    });
     expect(job.steps?.find((step) => step.name === "Validate glibc probe lifecycle")).toMatchObject(
       {
+        if: "${{ !cancelled() }}",
         env: { NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1" },
         run: expect.stringContaining(
           "test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts",
         ),
       },
     );
+    expect(
+      job.steps?.find((step) => step.name === "Remove managed-image security resources"),
+    ).toMatchObject({
+      if: "${{ always() }}",
+      run: expect.stringMatching(/managed-image\.cohort[\s\S]*docker rm[\s\S]*docker volume rm/u),
+    });
   });
 
   it("rejects late sandbox scheduling or omission from the final main gate", () => {

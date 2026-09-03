@@ -73,6 +73,7 @@ describe("protected managed-image runtime workflow", () => {
         /if docker container inspect[\s\S]*owner=.*docker container inspect/u,
       ),
     });
+    expect(steps[glibc]).toMatchObject({ if: "${{ !cancelled() }}" });
     expect(steps[cohortCleanup]).toMatchObject({ if: "always()" });
   });
 
