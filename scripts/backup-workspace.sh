@@ -92,13 +92,13 @@ do_backup() {
   mkdir -p "$BACKUP_BASE"
   chmod 0700 "${HOME}/.nemoclaw" "$BACKUP_BASE" \
     || fail "Failed to set secure permissions on ${HOME}/.nemoclaw — check directory ownership."
-  mkdir -p "$dest"
+  mkdir "$dest" \
+    || fail "Failed to create a new backup at ${dest}/. If it already exists, wait one second and retry; otherwise check directory ownership."
   chmod 0700 "$dest"
 
   info "Backing up workspace from sandbox '${sandbox}'..."
 
   local count=0
-  local failed_directory=""
   for f in "${FILES[@]}"; do
     if "$NEMOCLAW_CLI_BIN" "$sandbox" download "${WORKSPACE_PATH}/${f}" "${dest}/"; then
       count=$((count + 1))
@@ -112,18 +112,14 @@ do_backup() {
       count=$((count + 1))
     else
       warn "Skipped ${d}/ (not found or download failed)"
-      failed_directory="$d"
+      rm -rf -- "$dest" || fail "Failed to remove incomplete backup at ${dest}/. Remove it before restore."
+      fail "Removed incomplete backup at ${dest}/ because ${d}/ was not downloaded. Remove unsupported entries from ${WORKSPACE_PATH}/${d}/ and rerun the backup before restore."
     fi
   done
 
   if [ "$count" -eq 0 ]; then
     rmdir "$dest" 2>/dev/null || true
     fail "No files were backed up. Check that the sandbox '${sandbox}' exists and has workspace files."
-  fi
-
-  if [ -n "$failed_directory" ]; then
-    rm -rf -- "$dest" || fail "Failed to remove incomplete backup at ${dest}/. Remove it before restore."
-    fail "Removed incomplete backup at ${dest}/ because ${failed_directory}/ was not downloaded. Remove unsupported entries from ${WORKSPACE_PATH}/${failed_directory}/ and rerun the backup before restore."
   fi
 
   info "Backup saved to ${dest}/ (${count} items)"

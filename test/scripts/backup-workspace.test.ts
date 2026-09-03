@@ -106,4 +106,47 @@ exit 99
     expect(restoreResult.stderr).toContain(`No backups found in ${backupRoot}/`);
     expect(fs.existsSync(openshellCalls)).toBe(false);
   });
+
+  it("preserves an existing backup when the timestamp collides (#10636)", () => {
+    const timestamp = "20260903-010203";
+    const backupRoot = path.join(home, ".nemoclaw", "backups");
+    const existingBackup = path.join(backupRoot, timestamp);
+    const marker = path.join(existingBackup, "preserved.txt");
+    const calls = path.join(root, "nemoclaw-calls.txt");
+    fs.mkdirSync(existingBackup, { recursive: true });
+    fs.writeFileSync(marker, "existing backup\n");
+
+    writeExecutable(
+      path.join(bin, "date"),
+      `#!/usr/bin/env bash
+printf '%s\n' '${timestamp}'
+`,
+    );
+    const nemoclaw = path.join(bin, "nemoclaw");
+    writeExecutable(
+      nemoclaw,
+      `#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$NEMOCLAW_TEST_CALLS"
+exit 99
+`,
+    );
+
+    const result = spawnSync("bash", [BACKUP_SCRIPT, "backup", "test-sandbox"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: home,
+        NEMOCLAW_CLI_BIN: nemoclaw,
+        NEMOCLAW_TEST_CALLS: calls,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain(`Failed to create a new backup at ${existingBackup}/.`);
+    expect(fs.readFileSync(marker, "utf8")).toBe("existing backup\n");
+    expect(fs.readdirSync(existingBackup)).toEqual(["preserved.txt"]);
+    expect(fs.existsSync(calls)).toBe(false);
+  });
 });
