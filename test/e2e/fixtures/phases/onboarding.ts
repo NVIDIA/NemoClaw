@@ -18,6 +18,7 @@ import {
 } from "../hosted-inference.ts";
 import { redactString } from "../redaction.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
+import { execTimeout } from "../../../helpers/timeouts.ts";
 import type { EnvironmentReady } from "./environment.ts";
 
 const ONBOARD_ARGS = [
@@ -26,7 +27,7 @@ const ONBOARD_ARGS = [
   "--yes",
   "--yes-i-accept-third-party-software",
 ];
-const DEFAULT_TIMEOUT_MS = 15 * 60_000;
+const DEFAULT_TIMEOUT_MS = execTimeout(15 * 60_000);
 const OPENCLAW_GATEWAY_URL = "http://127.0.0.1:18789";
 const NEGATIVE_PREFLIGHT_LOG = "negative-preflight.log";
 const DOCKER_MISSING_PATTERNS = [
@@ -207,8 +208,8 @@ export class OnboardingPhaseFixture {
     environment: EnvironmentReady,
     options: OnboardingOptions = {},
   ): Promise<NemoClawInstance> {
-    if (!environment.docker.available) {
-      throw new Error("cloud-openclaw onboarding requires an available Docker runtime.");
+    if (!environment.runtimeProvider.available) {
+      throw new Error("cloud-openclaw onboarding requires an available managed runtime provider.");
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
@@ -250,17 +251,22 @@ export class OnboardingPhaseFixture {
     environment: EnvironmentReady,
     options: OnboardingOptions = {},
   ): Promise<NemoClawInstance> {
-    if (!environment.docker.available) {
+    if (!environment.runtimeProvider.available) {
       throw new Error(
-        "cloud-langchain-deepagents-code onboarding requires an available Docker runtime.",
+        "cloud-langchain-deepagents-code onboarding requires an available managed runtime provider.",
       );
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
-    const baseImageReference = requireDcodeBaseImageReference(
-      options.dcodeBaseImageReference === undefined
-        ? process.env
-        : { [DCODE_BASE_IMAGE_ENV]: options.dcodeBaseImageReference },
-    );
+    const localDockerfile =
+      options.dcodeBaseImageReference === undefined &&
+      process.env.E2E_WORKLOAD_SOURCE === "local-dockerfile";
+    const baseImageReference = localDockerfile
+      ? undefined
+      : requireDcodeBaseImageReference(
+          options.dcodeBaseImageReference === undefined
+            ? process.env
+            : { [DCODE_BASE_IMAGE_ENV]: options.dcodeBaseImageReference },
+        );
     const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
     this.registerSandboxCleanup(sandboxName);
     const result = await this.host.nemoclaw([...ONBOARD_ARGS, "--observability"], {
@@ -282,7 +288,7 @@ export class OnboardingPhaseFixture {
         NEMOCLAW_PREFERRED_API: process.env.NEMOCLAW_PREFERRED_API || "openai-completions",
         NVIDIA_INFERENCE_API_KEY: apiKey,
         [HOSTED_INFERENCE_CREDENTIAL_ENV]: apiKey,
-        [DCODE_BASE_IMAGE_ENV]: baseImageReference,
+        ...(baseImageReference ? { [DCODE_BASE_IMAGE_ENV]: baseImageReference } : {}),
       }),
       redactionValues: [apiKey],
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -303,7 +309,7 @@ export class OnboardingPhaseFixture {
     environment: EnvironmentReady,
     options: OnboardingOptions = {},
   ): Promise<NemoClawInstance> {
-    if (environment.docker.expectation !== "missing") {
+    if (environment.runtimeProvider.expectation !== "missing") {
       throw new Error(
         "cloud-openclaw-no-docker onboarding requires the docker-missing runtime expectation.",
       );
@@ -355,9 +361,9 @@ export class OnboardingPhaseFixture {
     environment: EnvironmentReady,
     options: OnboardingOptions = {},
   ): Promise<NemoClawInstance> {
-    if (!environment.docker.available) {
+    if (!environment.runtimeProvider.available) {
       throw new Error(
-        "cloud-openclaw-policy-custom-missing-presets onboarding requires an available Docker runtime.",
+        "cloud-openclaw-policy-custom-missing-presets onboarding requires an available managed runtime provider.",
       );
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);

@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { expect, type MockInstance, vi } from "vitest";
 import type { SandboxDestroyExecutionResult } from "../../src/lib/actions/sandbox/destroy-execution";
 import type { PreparedManagedLlamaCppRuntimeCleanup } from "../../src/lib/inference/local-model-profile/cleanup";
-import type { ManagedHermesStateVolumeCleanupResult } from "../../src/lib/onboard/managed-workload/hermes-state-volume";
+import type { ManagedAgentStateVolumeCleanupResult } from "../../src/lib/onboard/managed-workload/hermes-state-volume";
 import type { Session } from "../../src/lib/state/onboard-session";
 import type { RetainedSandboxRecoveryRecord } from "../../src/lib/state/onboard-session/retained-sandbox-recovery";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../src/lib/state/registry";
@@ -30,10 +30,10 @@ export type DestroyHarness = {
   errorSpy: MockInstance;
   events: string[];
   executeSandboxDestroySpy: MockInstance;
+  enforceRemovedImmutabilityMigrationBoundarySpy: MockInstance;
   finalizeMcpBridgesAfterSandboxDeleteSpy: MockInstance;
   gatewayPinsAtMcpPrepare: Array<string | undefined>;
   gatewayPinsAtSandboxList: Array<string | undefined>;
-  killTimerSpy: MockInstance;
   killStaleProxySpy: MockInstance;
   lifecycleLockEvents: string[];
   logSpy: MockInstance;
@@ -43,9 +43,10 @@ export type DestroyHarness = {
   cleanupManagedLlamaCppRuntimeForSandboxSpy: MockInstance;
   preparePortableDestroyAuthoritySpy: MockInstance;
   promptSpy: MockInstance;
-  removeManagedHermesStateVolumeSpy: MockInstance;
+  removeManagedAgentStateVolumesSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   resolveRetainedSandboxRecoverySpy: MockInstance;
+  retireRemovedImmutabilityStateRecordSpy: MockInstance;
   retirePortableLifecycleReceiptSpy: MockInstance;
   portableDestroyRevalidateSpy: MockInstance;
   portableDestroyVerifyAbsentSpy: MockInstance;
@@ -62,7 +63,6 @@ export type DestroyHarness = {
   setRegistryEntryPresent: (present: boolean) => void;
   setRetainedRecoveryRecords: (records: RetainedSandboxRecoveryRecord[]) => void;
   setSandboxPresent: (present: boolean) => void;
-  shieldsDownSpy: MockInstance;
   stopAllSpy: MockInstance;
   stopModelRouterForDestroyedSandboxSpy: MockInstance;
   stopNimByNameSpy: MockInstance;
@@ -74,7 +74,6 @@ export type DestroyHarness = {
 };
 
 type DestroyHarnessOptions = {
-  activeTimer?: boolean;
   agent?: "openclaw" | "hermes";
   deleteError?: Error;
   deleteOutput?: string;
@@ -101,10 +100,11 @@ type DestroyHarnessOptions = {
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   liveListOutput?: string;
-  managedHermesStateVolumeCleanupResult?: ManagedHermesStateVolumeCleanupResult;
+  managedAgentStateVolumeCleanupResults?: readonly ManagedAgentStateVolumeCleanupResult[];
   onPrepareManagedLlamaCppRuntimeCleanup?: () => void;
   preparedManagedLlamaCppRuntimeCleanup?: PreparedManagedLlamaCppRuntimeCleanup | null;
   mcpAddState?: "prepared";
+  mcpAdapterScrubSkipped?: true;
   mcpServers?: string[];
   openshellDriver?: string;
   portableCommandError?: string;
@@ -123,8 +123,6 @@ type DestroyHarnessOptions = {
   restoreMcpError?: string;
   sandboxPresent?: boolean;
   sessionRouterPid?: number;
-  shieldsDown?: boolean;
-  shieldsUpError?: Error;
   stopInferenceError?: string;
   workload?: SandboxWorkloadReceipt;
   wipeError?: Error;
@@ -221,6 +219,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     "../../state/mcp-lifecycle-lock.js",
   ) as typeof import("../../src/lib/state/mcp-lifecycle-lock");
   const registry = requireSource("../../state/registry.js");
+  const removedImmutabilityMigration = requireSource(
+    "../../state/migrations/removed-immutability.js",
+  );
   const openShellDockerContainers = requireSource(
     "../../onboard/openshell-docker-sandbox-containers.js",
   );
@@ -237,8 +238,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const destroyCommand = requireSource("../../../commands/sandbox/destroy.js").default;
   const destroyPreflight = requireSource("./destroy-preflight.js");
   const sandboxSession = requireSource("../../state/sandbox-session.js");
-  const shields = requireSource("../../shields/index.js");
-  const timerControl = requireSource("../../shields/timer-control.js");
   const mcpBridge = requireSource("./mcp-bridge.js");
   const dockerRun = requireSource("../../adapters/docker/run.js");
   const portableAgentLifecycle = requireSource(
@@ -265,6 +264,15 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   if (options.executeSandboxDestroyResult) {
     executeSandboxDestroySpy.mockResolvedValue(options.executeSandboxDestroyResult);
   }
+  const enforceRemovedImmutabilityMigrationBoundarySpy = vi
+    .spyOn(removedImmutabilityMigration, "enforceRemovedImmutabilityMigrationBoundary")
+    .mockReturnValue({ stateRecord: null, recoveryArtifacts: [] });
+  const retireRemovedImmutabilityStateRecordSpy = vi
+    .spyOn(removedImmutabilityMigration, "retireRemovedImmutabilityStateRecord")
+    .mockImplementation(() => {
+      events.push("retire-removed-immutability");
+      return true;
+    });
 
   const prepareManagedLlamaCppRuntimeCleanupSpy = vi
     .spyOn(localModelProfileCleanup, "prepareManagedLlamaCppRuntimeCleanupForSandbox")
@@ -487,9 +495,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       return matchedNames.length > 0 ? `${matchedNames.join("\n")}\n` : "";
     });
   let dockerOrphanIds = [...(options.dockerOrphanIds ?? [])];
-  let dockerNameLabeledIds = [
-    ...(options.dockerNameLabeledIds ?? options.dockerOrphanIds ?? []),
-  ];
+  let dockerNameLabeledIds = [...(options.dockerNameLabeledIds ?? options.dockerOrphanIds ?? [])];
   let dockerIdentityResult = options.dockerRunResult;
   const dockerRunSpy = vi.spyOn(dockerRun, "dockerRun").mockImplementation((args: unknown) => {
     const argv = Array.isArray(args) ? args.map(String) : [];
@@ -544,9 +550,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     const sequencedResult = options.dockerRunResultSequence?.[identityProbeCall - 1];
     const exactCleanupResult = {
       status: options.dockerOrphanQueryStatus ?? 0,
-      stdout: dockerNameLabeledIds
-        .map((id) => `${id}\topenshell\tdefault\tsb-alpha`)
-        .join("\n"),
+      stdout: dockerNameLabeledIds.map((id) => `${id}\topenshell\tdefault\tsb-alpha`).join("\n"),
       stderr: "",
     };
     const result =
@@ -569,9 +573,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   vi.spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint").mockImplementation(
     () => undefined,
   );
-  const removeManagedHermesStateVolumeSpy = vi
-    .spyOn(sandboxProviderCleanup, "removeManagedHermesStateVolume")
-    .mockReturnValue(options.managedHermesStateVolumeCleanupResult ?? { status: "not-applicable" });
+  const removeManagedAgentStateVolumesSpy = vi
+    .spyOn(sandboxProviderCleanup, "removeManagedAgentStateVolumes")
+    .mockReturnValue(options.managedAgentStateVolumeCleanupResults ?? []);
   const stopNimByNameSpy = vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => {
     if (options.stopInferenceError !== undefined) {
       throw new Error(options.stopInferenceError);
@@ -585,33 +589,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     .spyOn(ollamaProxy, "unloadOllamaModels")
     .mockImplementation(() => undefined);
   const stopAllSpy = vi.spyOn(tunnelServices, "stopAll").mockImplementation(() => undefined);
-  vi.spyOn(timerControl, "readTimerMarker").mockReturnValue(
-    options.activeTimer
-      ? {
-          pid: 4242,
-          sandboxName: "alpha",
-          snapshotPath: "/tmp/policy.yaml",
-          restoreAt: "2026-06-27T06:00:00.000Z",
-          processToken: "a".repeat(32),
-        }
-      : null,
-  );
-  vi.spyOn(shields, "shieldsUp").mockImplementation(() => {
-    events.push("harden");
-    options.shieldsUpError === undefined
-      ? undefined
-      : (() => {
-          throw options.shieldsUpError;
-        })();
-  });
-  vi.spyOn(shields, "isShieldsDown").mockReturnValue(options.shieldsDown ?? true);
-  const shieldsDownSpy = vi.spyOn(shields, "shieldsDown").mockImplementation(() => {
-    events.push("unlock");
-  });
-  const killTimerSpy = vi.spyOn(timerControl, "killTimer").mockImplementation(() => {
-    events.push("timer-cleanup");
-    return { warnings: [] };
-  });
   const preparedServers = options.mcpAddState === "prepared" ? [] : (options.mcpServers ?? []);
   const mcpPreparation = {
     entries: preparedServers.map((server) => ({ server })),
@@ -619,6 +596,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     scrubbedAdapterEntries: preparedServers.map((server) => ({ server })),
     destroyAlreadyPrepared: false,
     destroyAlreadyPending: false,
+    ...(options.mcpAdapterScrubSkipped ? { adapterScrubSkipped: true as const } : {}),
   };
   const gatewayPinsAtMcpPrepare: Array<string | undefined> = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -672,10 +650,10 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     errorSpy,
     events,
     executeSandboxDestroySpy,
+    enforceRemovedImmutabilityMigrationBoundarySpy,
     finalizeMcpBridgesAfterSandboxDeleteSpy,
     gatewayPinsAtMcpPrepare,
     gatewayPinsAtSandboxList,
-    killTimerSpy,
     killStaleProxySpy,
     lifecycleLockEvents,
     logSpy,
@@ -687,9 +665,10 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     portableDestroyRevalidateSpy,
     portableDestroyVerifyAbsentSpy,
     promptSpy,
-    removeManagedHermesStateVolumeSpy,
+    removeManagedAgentStateVolumesSpy,
     removeSandboxSpy,
     resolveRetainedSandboxRecoverySpy,
+    retireRemovedImmutabilityStateRecordSpy,
     retirePortableLifecycleReceiptSpy,
     revokeHttpsPinRuntimeAdapterRouteSpy,
     restoreMcpBridgesAfterDestroyAbortSpy,
@@ -708,7 +687,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     setSandboxPresent: (present: boolean) => {
       sandboxPresent = present;
     },
-    shieldsDownSpy,
     stopAllSpy,
     stopModelRouterForDestroyedSandboxSpy,
     stopNimByNameSpy,

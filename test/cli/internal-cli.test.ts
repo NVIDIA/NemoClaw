@@ -46,6 +46,37 @@ describe("internal oclif namespace", () => {
     expect(result.stdout).toContain("--yes");
   });
 
+  it("names only port-specific gateway resources when the gateway port is non-default (#10763)", () => {
+    const preview = spawnSync(process.execPath, [CLI, "internal", "uninstall", "plan", "--json"], {
+      encoding: "utf-8",
+      env: { ...process.env, NEMOCLAW_GATEWAY_PORT: "8091" },
+    });
+
+    expect(preview.status).toBe(0);
+    const plan = JSON.parse(preview.stdout) as {
+      gatewayName: string;
+      steps: { actions: { kind: string; name?: string }[] }[];
+    };
+    const actions = plan.steps.flatMap((step) => step.actions);
+    expect(plan.gatewayName).toBe("nemoclaw-8091");
+    expect(actions).toContainEqual({
+      kind: "destroy-openshell-gateway",
+      name: "nemoclaw-8091",
+    });
+    expect(actions).toContainEqual({
+      kind: "delete-docker-volume",
+      name: "openshell-cluster-nemoclaw-8091",
+    });
+    expect(actions).not.toContainEqual({
+      kind: "destroy-openshell-gateway",
+      name: "nemoclaw",
+    });
+    expect(actions).not.toContainEqual({
+      kind: "delete-docker-volume",
+      name: "openshell-cluster-nemoclaw",
+    });
+  });
+
   it("exposes the dev npm-link shim command through oclif routing", () => {
     const result = spawnSync(
       process.execPath,

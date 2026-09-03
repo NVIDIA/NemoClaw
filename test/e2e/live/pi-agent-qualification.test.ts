@@ -331,10 +331,21 @@ test(
     const imageSourcePaths = [
       ...new Set([".dockerignore", ...piDockerfiles, ...copiedSources]),
     ].sort();
+    await host.command(
+      "git",
+      [
+        "fetch",
+        "--no-tags",
+        "--depth=1",
+        "https://github.com/NVIDIA/NemoClaw.git",
+        receipt.contract.source.revision,
+      ],
+      { artifactName: "pi-image-source-fetch", timeoutMs: 60_000 },
+    );
     const sourceParity = await host.command(
       "git",
       ["diff", "--quiet", receipt.contract.source.revision, "HEAD", "--", ...imageSourcePaths],
-      { artifactName: "pi-image-source-parity", env, timeoutMs: 30_000 },
+      { artifactName: "pi-image-source-parity", timeoutMs: 30_000 },
     );
     expect(sourceParity.exitCode, resultText(sourceParity)).toBe(0);
     await preclean(host, lifecycle, sandbox, env);

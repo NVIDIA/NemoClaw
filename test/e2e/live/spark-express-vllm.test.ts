@@ -224,7 +224,7 @@ test("DGX Spark Express option 2 materializes the fixed vLLM profile and routes 
       "prove sandbox inference and unrelated egress denial",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
   validateSandboxName(SANDBOX_NAME);
   assertLocalDockerEnvironment(process.env);
   const plan = vllmProfilePlan();
@@ -255,7 +255,7 @@ test("DGX Spark Express option 2 materializes the fixed vLLM profile and routes 
   });
 
   progress.phase("qualify the physical DGX Spark host");
-  await requireLivePrerequisites(host, skip);
+  await requireLivePrerequisites(host, runtimeProvider);
   const platform = await host.command(
     "bash",
     [

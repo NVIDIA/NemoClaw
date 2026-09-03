@@ -69,10 +69,9 @@ Pi supports a positive `NEMOCLAW_CONTEXT_WINDOW` no larger than `4194304`, a `NE
 
 ## Preserve and Replace State
 
-Finish active Pi work and lower Shields before snapshot creation.
+Finish active Pi work before snapshot creation.
 
 ```bash
-nemoclaw <name> shields down
 nemoclaw <name> snapshot create --name before-change
 nemoclaw <name> snapshot list
 ```
@@ -110,7 +109,6 @@ nemoclaw <name> start
 Create a snapshot before destroy when user state must survive. Destroy does not remove a provider credential from the OpenShell gateway.
 
 ```bash
-nemoclaw <name> shields down
 nemoclaw <name> snapshot create --name before-destroy
 nemoclaw <name> destroy --yes
 ```

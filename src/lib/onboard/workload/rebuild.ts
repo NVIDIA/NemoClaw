@@ -181,10 +181,9 @@ export async function prepareManagedWorkloadRebuildHandoff(
         "live E2E managed-image revision and catalog authority conflict",
       );
     }
-    const qualificationSourceRevision = liveCatalog?.revision ?? qualificationRevision;
     if (
-      qualificationSourceRevision !== null &&
-      qualificationSourceRevision !== authority.receipt.sourceRevision
+      qualificationRevision !== null &&
+      qualificationRevision !== authority.receipt.sourceRevision
     ) {
       throw new ManagedWorkloadRebuildError(
         "the live qualification revision does not match the durable workload receipt",
@@ -199,6 +198,7 @@ export async function prepareManagedWorkloadRebuildHandoff(
         policy: "require-managed",
         ...(liveCatalog
           ? {
+              ...(liveCatalog.catalog ? { catalog: liveCatalog.catalog } : {}),
               catalogPath: liveCatalog.path,
               expectedCatalogRevision: liveCatalog.revision,
             }

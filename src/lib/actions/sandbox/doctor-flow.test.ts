@@ -77,7 +77,7 @@ function createDoctorHarness(
   const gatewayBinding = requireDist("../../onboard/gateway-binding.js");
   const sandboxVerificationExec = requireDist("../../onboard/sandbox-verification-exec.js");
   const sandboxVersion = requireDist("../../sandbox/version.js");
-  const shields = requireDist("../../shields/index.js");
+  const mutableConfigPerms = requireDist("../../sandbox/mutable-config-perms.js");
   const registry = requireDist("../../state/registry.js");
   const statusCommandDeps = requireDist("../../status-command-deps.js");
   const tunnelServices = requireDist("../../tunnel/services.js");
@@ -211,12 +211,8 @@ function createDoctorHarness(
     expectedVersion: "0.2.0",
     isStale: true,
   });
-  vi.spyOn(shields, "getShieldsPosture").mockReturnValue({
-    mode: "temporarily_unlocked",
-    detail: "temporarily unlocked for maintenance",
-  });
   const inspectMutableConfigPermsSpy = vi
-    .spyOn(shields, "inspectMutableConfigPerms")
+    .spyOn(mutableConfigPerms, "inspectMutableConfigPerms")
     .mockReturnValue({
       applies: true,
       ok: true,
@@ -229,7 +225,7 @@ function createDoctorHarness(
       issues: [],
     });
   const repairMutableConfigPermsSpy = vi
-    .spyOn(shields, "repairMutableConfigPerms")
+    .spyOn(mutableConfigPerms, "repairMutableConfigPerms")
     .mockReturnValue({
       applied: true,
       verified: true,
@@ -458,6 +454,13 @@ describe("runSandboxDoctor flow", () => {
       expect(report?.checks).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ group: "Host", label: "Docker daemon", status: "ok" }),
+          // #10223: the documented check line for a resolved gateway binding.
+          expect.objectContaining({
+            group: "Gateway",
+            label: "Registered gateway binding",
+            status: "ok",
+            detail: "resolved to 'nemoclaw-19080'",
+          }),
           expect.objectContaining({ group: "Gateway", label: "OpenShell status", status: "ok" }),
           expect.objectContaining({ group: "Sandbox", label: "Live sandbox", status: "ok" }),
           expect.objectContaining({
@@ -488,6 +491,26 @@ describe("runSandboxDoctor flow", () => {
       expect(harness.logSpy).not.toHaveBeenCalled();
     },
   );
+
+  it("does not report a registered gateway binding for an unregistered sandbox name (#10230)", async () => {
+    const harness = createDoctorHarness("ollama-local", { registryEntry: "missing" });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    // resolveDoctorGatewayName falls back to the ambient default gateway for
+    // an unregistered sandbox name, so the Gateway section still runs — but
+    // it must not claim a registered binding that does not exist.
+    expect(
+      report?.checks.some(
+        (check) => check.group === "Gateway" && check.label === "Registered gateway binding",
+      ),
+    ).toBe(false);
+    expect(report?.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ group: "Gateway", label: "OpenShell status", status: "ok" }),
+      ]),
+    );
+  });
 
   it("fails the JSON host check for an unknown durable runtime provider", async () => {
     const harness = createDoctorHarness();

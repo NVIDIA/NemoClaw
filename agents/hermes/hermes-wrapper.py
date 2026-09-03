@@ -101,6 +101,23 @@ _DASHBOARD_API_SERVER_ENV_PATH = "NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV"
 _API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 _CLI_ADAPTER_DEV_FILENAME = "hermes-cli-adapter-v1.json"
 _HERMES_MAIN_DEV_FILENAME = "hermes-main.py"
+_GATEWAY_LAZY_INSTALL_TARGET = "/run/nemoclaw/hermes-gateway-lazy-packages"
+_MANAGED_BUNDLED_PLUGINS = "/opt/hermes/plugins"
+_MANAGED_HERMES_HOME = "/sandbox/.hermes"
+_MANAGED_HOME = "/sandbox"
+_GATEWAY_PACKAGE_ENV_KEYS = frozenset({"BASH_ENV", "ENV", "PATH", "VIRTUAL_ENV"})
+_GATEWAY_PACKAGE_ENV_PREFIXES = ("DYLD_", "LD_", "UV_", "PIP_", "PYTHON")
+_GATEWAY_PACKAGE_ENV = {
+    "UV_NO_CONFIG": "1",
+    "UV_NO_CACHE": "1",
+    "UV_CACHE_DIR": f"{_GATEWAY_LAZY_INSTALL_TARGET}/.uv-cache",
+    "PIP_CONFIG_FILE": "/dev/null",
+    "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+    "PYTHONSAFEPATH": "1",
+    "PYTHONNOUSERSITE": "1",
+    "PYTHONUTF8": "1",
+    "PATH": "/usr/local/bin:/opt/hermes/.venv/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+}
 # Trusted absolute paths for the python3 interpreter, ordered most-preferred
 # first. The resolver returns the first executable match (first-wins); the
 # same priority is mirrored by `agents/hermes/start.sh:resolve_trusted_python3`
@@ -336,6 +353,15 @@ def _run_gateway_guard(guard_path: str) -> int:
         )
         return 127
     return subprocess.call([python3, "-I", guard_path, "runtime-env"])
+
+
+def _harden_root_separated_gateway_package_env() -> None:
+    """Remove sandbox-controlled installer inputs before gateway exec."""
+
+    for key in tuple(os.environ):
+        if key in _GATEWAY_PACKAGE_ENV_KEYS or key.startswith(_GATEWAY_PACKAGE_ENV_PREFIXES):
+            os.environ.pop(key, None)
+    os.environ.update(_GATEWAY_PACKAGE_ENV)
 
 
 _SUPPORTED_CLI_ADAPTER_VERSION = 1
@@ -750,9 +776,20 @@ def main(argv: list[str]) -> int:
     if argv[:2] == ["config", "show"]:
         return _run_config_show(real_hermes, guard_path, argv)
     if argv[:1] == ["gateway"]:
+        if os.geteuid() == 0:
+            print(
+                "[SECURITY] Refusing hermes gateway as root; managed startup must drop to the gateway identity",
+                file=sys.stderr,
+            )
+            return 1
+        os.environ["HERMES_HOME"] = _MANAGED_HERMES_HOME
+        os.environ["HERMES_BUNDLED_PLUGINS"] = _MANAGED_BUNDLED_PLUGINS
+        os.environ["HOME"] = _MANAGED_HOME
         rc = _run_gateway_guard(guard_path)
         if rc != 0:
             return rc
+        if os.environ.get("HERMES_LAZY_INSTALL_TARGET") == _GATEWAY_LAZY_INSTALL_TARGET:
+            _harden_root_separated_gateway_package_env()
     try:
         adapter = _load_cli_adapter(_resolve_cli_adapter())
         adapter_result, exec_argv = _adapt_cli_argv(argv, adapter)
