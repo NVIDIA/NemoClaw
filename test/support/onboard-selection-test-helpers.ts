@@ -178,6 +178,7 @@ function createIsolatedOnboardEnv(tmpDir: string, provider: string): NodeJS.Proc
   return {
     ...env,
     HOME: tmpDir,
+    PATH: `${tmpDir}${path.delimiter}${env.PATH ?? ""}`,
     NEMOCLAW_MODEL: "qwen3:8b",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_PROVIDER: provider,
@@ -196,6 +197,7 @@ export function runNativeDockerWindowsProviderBoundary(options: {
     path.join(os.tmpdir(), "nemoclaw-onboard-native-docker-windows-provider-"),
   );
   const scriptPath = path.join(tmpDir, "provider-boundary-check.js");
+  const zstdPath = path.join(tmpDir, "zstd");
   const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
   const credentialsPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
@@ -229,7 +231,6 @@ credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : String(command);
   if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("command -v zstd")) return "/usr/bin/zstd";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("docker images")) return "";
   if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) {
@@ -270,6 +271,7 @@ const { setupNim } = require(${onboardPath});
 `;
 
   try {
+    fs.writeFileSync(zstdPath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     fs.writeFileSync(scriptPath, script);
     return spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
