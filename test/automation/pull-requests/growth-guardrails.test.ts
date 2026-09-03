@@ -38,7 +38,8 @@ function fixtureDiff(
   };
 }
 
-describe("codebase growth guardrails", () => {
+/** Register repository-diff assertions that enforce each codebase growth ratchet. */
+function defineCodebaseGrowthGuardrails(): void {
   let diff: GrowthGuardrailDiff;
 
   beforeAll(async () => {
@@ -77,9 +78,12 @@ describe("codebase growth guardrails", () => {
     const violations = await loopGrowthViolations(diff);
     expect(violations, diagnostics.loops(violations)).toEqual([]);
   }, 60_000);
-});
+}
 
-describe("codebase growth guardrail test support", () => {
+describe("codebase growth guardrails", defineCodebaseGrowthGuardrails);
+
+/** Register synthetic cases for the growth guardrail parsers and diagnostics. */
+function defineCodebaseGrowthGuardrailTestSupport(): void {
   it("caches repeated blob reads across guardrail checks", () => {
     const read = vi.fn((file: string) => `${file} content`);
     const cache = new Map<string, string | null>();
@@ -382,4 +386,6 @@ describe("codebase growth guardrail test support", () => {
       "spawn failed",
     );
   });
-});
+}
+
+describe("codebase growth guardrail test support", defineCodebaseGrowthGuardrailTestSupport);
