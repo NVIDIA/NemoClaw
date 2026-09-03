@@ -98,12 +98,14 @@ Assert-Arm64PortableExecutable -Path $gateway -Label 'openshell-gateway.exe payl
 foreach ($requiredPayload in @(
     'bin\node.exe',
     'bin\nemoclaw.cmd',
+    'bin\nemoclaw-ui.cmd',
     'nemoclaw\app\bin\nemoclaw.js',
     'openclaw\node_modules\openclaw\openclaw.mjs',
     'mxc\wxc-exec.exe',
     'mxc\wxc-host-prep.exe',
     'config\mxc-gateway.toml',
     'qualification\run-installed-native-turn.mts',
+    'qualification\run-installed-native-web-ui.mts',
     'OPENSHELL-NODE-UI-COMPATIBILITY.patch',
     'LICENSE.txt',
     'NATIVE-PREVIEW.txt'
@@ -133,6 +135,16 @@ if ($authoringText -match '<\s*CustomAction\b' -or
 }
 if ($authoringText -notmatch '<\s*MajorUpgrade\b[^>]*Schedule="afterInstallInitialize"') {
     Fail-WindowsPackageBuild 'Major-upgrade removal must remain inside MSI rollback protection.'
+}
+foreach ($requiredAsset in @(
+    'packaging\windows\assets\NemoClaw.ico',
+    'packaging\windows\assets\NemoClawLogo.png',
+    'packaging\windows\assets\NemoClawSidebar.png',
+    'packaging\windows\Theme.wxl'
+)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $requiredAsset) -PathType Leaf)) {
+        Fail-WindowsPackageBuild "Required branded setup asset is missing: $requiredAsset"
+    }
 }
 $exePackages = @([regex]::Matches($authoringText, '<\s*ExePackage\b[^>]*/>', 'IgnoreCase, Singleline'))
 $systemDrivePreparation = @($exePackages | Where-Object {

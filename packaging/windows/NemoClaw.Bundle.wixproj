@@ -28,6 +28,10 @@
     <Error Condition="'$(MsiPath)' == ''" Text="MsiPath is required." />
     <Error Condition="!Exists('$(MsiPath)')" Text="The ARM64 MSI input is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-host-prep.exe')" Text="The pinned ARM64 MXC host-preparation input is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\bin\nemoclaw-ui.cmd')" Text="The NemoClaw UI launcher is missing." />
+    <Error Condition="!Exists('$(SourceRoot)\packaging\windows\Theme.wxl')" Text="The NemoClaw setup localization is missing." />
+    <Error Condition="!Exists('$(SourceRoot)\packaging\windows\assets\NemoClawLogo.png')" Text="The NemoClaw setup logo is missing." />
+    <Error Condition="!Exists('$(SourceRoot)\packaging\windows\assets\NemoClawSidebar.png')" Text="The NemoClaw setup sidebar artwork is missing." />
     <Error
       Condition="!Exists('$(BootstrapperApplicationsExtensionPath)')"
       Text="The pinned WiX BootstrapperApplications extension is missing." />

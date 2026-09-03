@@ -26,8 +26,8 @@ $ErrorActionPreference = 'Stop'
 
 $script:OperationTimeoutMilliseconds = 1200000
 $script:ProcessAuditSettleMilliseconds = 3000
-$script:MsiDisplayName = 'NemoClaw Native Windows Candidate'
-$script:BundleDisplayName = 'NemoClaw Native Windows Candidate Setup'
+$script:MsiDisplayName = 'NemoClaw Runtime'
+$script:BundleDisplayName = 'NemoClaw'
 
 function Fail-PackageQualification {
     param([Parameter(Mandatory)][string]$Message)
@@ -437,12 +437,14 @@ foreach ($requiredPayload in @(
     'bin\openshell-gateway.exe',
     'bin\node.exe',
     'bin\nemoclaw.cmd',
+    'bin\nemoclaw-ui.cmd',
     'nemoclaw\app\bin\nemoclaw.js',
     'openclaw\node_modules\openclaw\openclaw.mjs',
     'mxc\wxc-exec.exe',
     'mxc\wxc-host-prep.exe',
     'config\mxc-gateway.toml',
     'qualification\run-installed-native-turn.mts',
+    'qualification\run-installed-native-web-ui.mts',
     'OPENSHELL-NODE-UI-COMPATIBILITY.patch'
 )) {
     if (-not $payloadHashes.ContainsKey($requiredPayload) -or
@@ -468,6 +470,7 @@ $nemoclawEntryPath = Join-Path $installRoot 'nemoclaw\app\bin\nemoclaw.js'
 $openClawEntryPath = Join-Path $installRoot 'openclaw\node_modules\openclaw\openclaw.mjs'
 $wxcExecPath = Join-Path $installRoot 'mxc\wxc-exec.exe'
 $nemoclawLauncherPath = Join-Path $installBin 'nemoclaw.cmd'
+$nemoclawUiLauncherPath = Join-Path $installBin 'nemoclaw-ui.cmd'
 $bundleInstallLog = Join-Path $artifactRoot 'bundle-install.log'
 $msiRepairLog = Join-Path $artifactRoot 'msi-repair.log'
 $msiReinstallLog = Join-Path $artifactRoot 'msi-reinstall.log'
@@ -540,6 +543,45 @@ try {
         Fail-PackageQualification 'Installed NemoClaw native turn receipt is incomplete.'
     }
     Write-Host '[PASS] Installed nemoclaw command created an MXC sandbox and completed an exact CHAT_OK turn'
+    $webUiArtifacts = Join-Path $artifactRoot 'web-ui'
+    Write-Host 'PS> Launch installed NemoClaw OpenClaw web UI and complete three agent turns'
+    & $nemoclawUiLauncherPath --qualification --artifact-directory $webUiArtifacts
+    $webUiExitCode = $LASTEXITCODE
+    if ($webUiExitCode -ne 0) {
+        Fail-PackageQualification "Installed NemoClaw OpenClaw web UI qualification failed with exit code $webUiExitCode."
+    }
+    $webUiReceipts = @(Get-ChildItem -LiteralPath $webUiArtifacts -Filter 'native-windows-web-ui-*.json' -File)
+    if ($webUiReceipts.Count -ne 1) {
+        Fail-PackageQualification 'Installed NemoClaw web UI did not publish exactly one receipt.'
+    }
+    $webUiReceipt = Get-Content -LiteralPath $webUiReceipts[0].FullName -Raw | ConvertFrom-Json
+    $expectedWebUiReplies = @(
+        'NATIVE_WINDOWS_TURN_1_OK',
+        'NATIVE_WINDOWS_TURN_2_OK',
+        'NATIVE_WINDOWS_TURN_3_OK'
+    )
+    if ($webUiReceipt.verdict -cne 'pass' -or
+        $webUiReceipt.backend -cne 'process_container' -or
+        $webUiReceipt.browser -cne 'Microsoft Edge' -or
+        $webUiReceipt.deterministicLocalModel -ne $true -or
+        [int]$webUiReceipt.turnCount -ne 3 -or
+        @($webUiReceipt.turns).Count -ne 3 -or
+        $webUiReceipt.sandboxDeleted -ne $true -or
+        $webUiReceipt.sandboxRegistryAbsent -ne $true -or
+        $webUiReceipt.gatewayStopped -ne $true -or
+        $webUiReceipt.qualificationRootsRemoved -ne $true) {
+        Fail-PackageQualification 'Installed NemoClaw web UI receipt is incomplete.'
+    }
+    for ($index = 0; $index -lt $expectedWebUiReplies.Count; $index++) {
+        if ($webUiReceipt.turns[$index].expected -cne $expectedWebUiReplies[$index] -or
+            $webUiReceipt.turns[$index].visible -ne $true) {
+            Fail-PackageQualification "Installed NemoClaw web UI turn $($index + 1) is not exact."
+        }
+    }
+    if (@(Get-ChildItem -LiteralPath $webUiArtifacts -Filter 'web-ui-turn-*.png' -File).Count -ne 3) {
+        Fail-PackageQualification 'Installed NemoClaw web UI did not capture three turn screenshots.'
+    }
+    Write-Host '[PASS] Installed NemoClaw launched the real OpenClaw Control UI and completed three exact agent turns'
     if ($InteractiveProof) {
         Start-Sleep -Seconds 3
     }
@@ -670,6 +712,7 @@ try {
         nativeExecutions = $nativeEvidence
         applicationExecutions = $applicationEvidence
         nativeTurn = $nativeTurnReceipt
+        webUi = $webUiReceipt
         msiRegistration = $msiArp
         bundleRegistration = $bundleArp
         repairRestoredDigest = $repairRestoredDigest

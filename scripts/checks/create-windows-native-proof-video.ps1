@@ -7,9 +7,9 @@
 
 .DESCRIPTION
     Downloads and launches the real setup, runs the installed NemoClaw turn,
-    and uninstalls it in a real Windows console. Captures the actual console and
-    WiX installer window pixels four times per second, then encodes those live
-    frames to H.264 with Windows Media Foundation.
+    and uninstalls it in a real Windows console. Captures the actual console,
+    WiX installer, and OpenClaw Control UI window pixels four times per second,
+    then encodes those live frames to H.264 with Windows Media Foundation.
 #>
 
 [CmdletBinding()]
@@ -182,18 +182,29 @@ function Save-ActualWindowFrame {
     param(
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)][IntPtr]$ConsoleWindow,
-        [Parameter(Mandatory)][IntPtr]$InstallerWindow
+        [Parameter(Mandatory)][IntPtr]$InstallerWindow,
+        [Parameter(Mandatory)][IntPtr]$BrowserWindow
     )
 
     $consoleBitmap = [NemoClawNativeWindowCapture]::Capture($ConsoleWindow)
     $installerBitmap = $null
     $installerCaptured = $false
+    $browserBitmap = $null
+    $browserCaptured = $false
     if ($InstallerWindow -ne [IntPtr]::Zero) {
         try {
             $installerBitmap = [NemoClawNativeWindowCapture]::Capture($InstallerWindow)
             $installerCaptured = $true
         } catch {
             # Burn can close its progress window between enumeration and capture.
+        }
+    }
+    if ($BrowserWindow -ne [IntPtr]::Zero) {
+        try {
+            $browserBitmap = [NemoClawNativeWindowCapture]::Capture($BrowserWindow)
+            $browserCaptured = $true
+        } catch {
+            # Edge can close a page between enumeration and capture.
         }
     }
     $frame = [Drawing.Bitmap]::new(1280, 720, [Drawing.Imaging.PixelFormat]::Format24bppRgb)
@@ -216,6 +227,15 @@ function Save-ActualWindowFrame {
             $graphics.FillRectangle([Drawing.Brushes]::Black, $installerX - 8, $installerY - 8, $installerWidth + 16, $installerHeight + 16)
             $graphics.DrawImage($installerBitmap, $installerX, $installerY, $installerWidth, $installerHeight)
         }
+        if ($null -ne $browserBitmap) {
+            $browserScale = [Math]::Min(1280 / $browserBitmap.Width, 720 / $browserBitmap.Height)
+            $browserWidth = [int]($browserBitmap.Width * $browserScale)
+            $browserHeight = [int]($browserBitmap.Height * $browserScale)
+            $browserX = [int]((1280 - $browserWidth) / 2)
+            $browserY = [int]((720 - $browserHeight) / 2)
+            $graphics.Clear([Drawing.Color]::Black)
+            $graphics.DrawImage($browserBitmap, $browserX, $browserY, $browserWidth, $browserHeight)
+        }
         $frame.Save($Path, [Drawing.Imaging.ImageFormat]::Png)
     } finally {
         $graphics.Dispose()
@@ -223,9 +243,15 @@ function Save-ActualWindowFrame {
         if ($null -ne $installerBitmap) {
             $installerBitmap.Dispose()
         }
+        if ($null -ne $browserBitmap) {
+            $browserBitmap.Dispose()
+        }
         $consoleBitmap.Dispose()
     }
-    return $installerCaptured
+    return [pscustomobject]@{
+        installer = $installerCaptured
+        browser = $browserCaptured
+    }
 }
 
 if ($ProductVersion -cnotmatch '^[0-9]{1,3}\.[0-9]{1,5}\.[0-9]{1,5}$') {
@@ -308,6 +334,9 @@ if (-not $qualification.repairRestoredDigest -or
     $qualification.nativeTurn.sandboxDeleted -ne $true -or
     $qualification.nativeTurn.sandboxRegistryAbsent -ne $true -or
     $qualification.nativeTurn.qualificationRootsRemoved -ne $true -or
+    $qualification.webUi.verdict -cne 'pass' -or
+    [int]$qualification.webUi.turnCount -ne 3 -or
+    @($qualification.webUi.turns).Count -ne 3 -or
     @($qualification.nativeExecutions).Count -ne 3 -or
     @($qualification.applicationExecutions).Count -ne 2 -or
     @($qualification.packageDescendantProhibitedStarts).Count -ne 0 -or
@@ -368,6 +397,7 @@ try {
     $recordingClock = [Diagnostics.Stopwatch]::StartNew()
     $framePaths = @()
     $installerWindowFrameCount = 0
+    $browserWindowFrameCount = 0
     while (-not $proofProcess.HasExited) {
         if ($recordingClock.ElapsedMilliseconds -gt $script:MaximumRecordingMilliseconds) {
             $proofProcess.Kill()
@@ -375,15 +405,20 @@ try {
             Fail-ProofVideo 'Real console qualification exceeded its recording timeout.'
         }
         $installerWindow = [NemoClawNativeWindowCapture]::FindWindowContaining(
-            'NemoClaw Native Windows Candidate Setup',
+            'NemoClaw Setup',
+            $consoleWindow
+        )
+        $browserWindow = [NemoClawNativeWindowCapture]::FindWindowContaining(
+            'NemoClaw Native Windows · OpenClaw Control UI',
             $consoleWindow
         )
         $framePath = Join-Path $frameRoot ('frame-{0:D5}.png' -f ($framePaths.Count + 1))
         try {
-            $installerCaptured = Save-ActualWindowFrame `
+            $capturedWindows = Save-ActualWindowFrame `
                 -Path $framePath `
                 -ConsoleWindow $consoleWindow `
-                -InstallerWindow $installerWindow
+                -InstallerWindow $installerWindow `
+                -BrowserWindow $browserWindow
         } catch {
             $proofProcess.Refresh()
             if ($proofProcess.HasExited) {
@@ -398,8 +433,11 @@ try {
             }
             continue
         }
-        if ($installerCaptured) {
+        if ($capturedWindows.installer) {
             $installerWindowFrameCount++
+        }
+        if ($capturedWindows.browser) {
+            $browserWindowFrameCount++
         }
         $framePaths += $framePath
         Start-Sleep -Milliseconds $script:FrameDurationMilliseconds
@@ -427,12 +465,18 @@ try {
     if (-not $consoleTranscriptText.Contains('AGENT> CHAT_OK') -or
         -not $consoleTranscriptText.Contains(
             '[PASS] Installed nemoclaw command created an MXC sandbox and completed an exact CHAT_OK turn'
-        )) {
-        Fail-ProofVideo 'The recorded console did not show the installed NemoClaw agent turn.'
+        ) -or
+        -not $consoleTranscriptText.Contains('WEB UI> TURN 1 PASS NATIVE_WINDOWS_TURN_1_OK') -or
+        -not $consoleTranscriptText.Contains('WEB UI> TURN 2 PASS NATIVE_WINDOWS_TURN_2_OK') -or
+        -not $consoleTranscriptText.Contains('WEB UI> TURN 3 PASS NATIVE_WINDOWS_TURN_3_OK')) {
+        Fail-ProofVideo 'The recorded console did not show the installed NemoClaw CLI and web UI turns.'
     }
 
     if ($installerWindowFrameCount -lt 4) {
         Fail-ProofVideo 'The real WiX installer window was not captured for at least one second.'
+    }
+    if ($browserWindowFrameCount -lt 8) {
+        Fail-ProofVideo 'The real OpenClaw Control UI window was not captured for at least two seconds.'
     }
     $frameHashes = @($framePaths | ForEach-Object {
         (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash
@@ -570,6 +614,11 @@ public static class NemoClawConsoleVideoEncoder
         $recordedQualification.nativeTurn.qualificationRootsRemoved -ne $true) {
         Fail-ProofVideo 'The recorded qualification receipt does not prove the installed NemoClaw turn.'
     }
+    if ($recordedQualification.webUi.verdict -cne 'pass' -or
+        [int]$recordedQualification.webUi.turnCount -ne 3 -or
+        @($recordedQualification.webUi.turns).Count -ne 3) {
+        Fail-ProofVideo 'The recorded qualification receipt does not prove three OpenClaw Control UI turns.'
+    }
     $receipt = [pscustomobject]@{
         schemaVersion = 2
         classification = 'native-windows-candidate-preview-actual-window-recording'
@@ -585,7 +634,7 @@ public static class NemoClawConsoleVideoEncoder
             consoleTranscriptSha256 = (Get-FileHash -LiteralPath $consoleTranscript -Algorithm SHA256).Hash.ToLowerInvariant()
         }
         capture = [pscustomobject]@{
-            kind = 'actual PrintWindow capture of real PowerShell console and WiX installer windows'
+            kind = 'actual PrintWindow capture of real PowerShell console, WiX installer, and OpenClaw Control UI windows'
             sourceWidth = 1280
             sourceHeight = 720
             requestedFramesPerSecond = $script:CaptureFramesPerSecond
@@ -593,9 +642,11 @@ public static class NemoClawConsoleVideoEncoder
             frameCount = $framePaths.Count
             uniqueFrameCount = $uniqueFrameCount
             installerWindowFrameCount = $installerWindowFrameCount
+            browserWindowFrameCount = $browserWindowFrameCount
             recordingWallTimeMilliseconds = $recordingClock.ElapsedMilliseconds
             qualificationExitCode = $proofExitCode
             installedNemoClawTurn = 'CHAT_OK'
+            installedWebUiTurns = 3
         }
         video = [pscustomobject]@{
             file = $videoName

@@ -227,6 +227,8 @@ try {
 
     $launcher = "@echo off`r`nset `"NEMOCLAW_NATIVE_INSTALL_ROOT=%~dp0..`"`r`n`"%~dp0node.exe`" `"%~dp0..\nemoclaw\app\bin\nemoclaw.js`" %*`r`n"
     [IO.File]::WriteAllText((Join-Path $binRoot 'nemoclaw.cmd'), $launcher, [Text.ASCIIEncoding]::new())
+    $uiLauncher = "@echo off`r`nset `"NEMOCLAW_NATIVE_INSTALL_ROOT=%~dp0..`"`r`n`"%~dp0node.exe`" --experimental-strip-types --no-warnings `"%~dp0..\qualification\run-installed-native-web-ui.mts`" %*`r`n"
+    [IO.File]::WriteAllText((Join-Path $binRoot 'nemoclaw-ui.cmd'), $uiLauncher, [Text.ASCIIEncoding]::new())
     $openClawLauncher = "@echo off`r`n`"%~dp0node.exe`" `"%~dp0..\openclaw\node_modules\openclaw\openclaw.mjs`" %*`r`n"
     [IO.File]::WriteAllText((Join-Path $binRoot 'openclaw.cmd'), $openClawLauncher, [Text.ASCIIEncoding]::new())
 
@@ -245,6 +247,7 @@ debug = false
     $qualificationRoot = Join-Path $output 'qualification'
     [IO.Directory]::CreateDirectory($qualificationRoot) | Out-Null
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-turn.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-web-ui.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'LICENSE') -Destination (Join-Path $output 'LICENSE.txt')
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\NATIVE-PREVIEW.txt') -Destination (Join-Path $output 'NATIVE-PREVIEW.txt')
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\openshell-2721-node-ui.patch') -Destination (Join-Path $output 'OPENSHELL-NODE-UI-COMPATIBILITY.patch')
@@ -260,10 +263,12 @@ debug = false
     }
     foreach ($required in @(
         'bin\nemoclaw.cmd',
+        'bin\nemoclaw-ui.cmd',
         'nemoclaw\app\bin\nemoclaw.js',
         'openclaw\node_modules\openclaw\openclaw.mjs',
         'config\mxc-gateway.toml',
-        'qualification\run-installed-native-turn.mts'
+        'qualification\run-installed-native-turn.mts',
+        'qualification\run-installed-native-web-ui.mts'
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $output $required) -PathType Leaf)) {
             Fail-PayloadPreparation "Prepared payload is incomplete: $required"

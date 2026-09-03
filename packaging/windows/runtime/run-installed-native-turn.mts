@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const TIMEOUT_MS = 300_000;
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -14,21 +15,21 @@ function fail(message) {
   throw new Error(`Native Windows MXC turn qualification failed: ${message}`);
 }
 
-function requiredFile(file, label) {
+export function requiredFile(file, label) {
   const resolved = path.resolve(file);
   const stat = fs.statSync(resolved, { throwIfNoEntry: false });
   if (!stat?.isFile()) fail(`${label} is missing`);
   return resolved;
 }
 
-function requiredDirectory(directory, label) {
+export function requiredDirectory(directory, label) {
   const resolved = path.resolve(directory);
   const stat = fs.statSync(resolved, { throwIfNoEntry: false });
   if (!stat?.isDirectory()) fail(`${label} is missing`);
   return resolved;
 }
 
-function argumentValue(name) {
+export function argumentValue(name) {
   const index = process.argv.indexOf(name);
   if (index < 0) return null;
   const value = process.argv[index + 1];
@@ -36,7 +37,7 @@ function argumentValue(name) {
   return value;
 }
 
-function allowlistedWindowsEnvironment(extra = {}) {
+export function allowlistedWindowsEnvironment(extra = {}) {
   const allowedNames = new Set(
     [
       "ComSpec",
@@ -61,7 +62,7 @@ function allowlistedWindowsEnvironment(extra = {}) {
   return { ...environment, ...extra };
 }
 
-async function freePort() {
+export async function freePort() {
   return await new Promise((resolve, reject) => {
     const server = net.createServer();
     server.once("error", reject);
@@ -76,10 +77,10 @@ async function freePort() {
   });
 }
 
-async function waitForPort(port, child) {
+export async function waitForPort(port, child, label = "OpenShell gateway") {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) fail("OpenShell gateway exited before readiness");
+    if (child.exitCode !== null) fail(`${label} exited before readiness`);
     const connected = await new Promise((resolve) => {
       const socket = net.createConnection({ host: "127.0.0.1", port });
       socket.setTimeout(500);
@@ -96,10 +97,10 @@ async function waitForPort(port, child) {
     if (connected) return;
     await sleep(500);
   }
-  fail("OpenShell gateway did not become ready");
+  fail(`${label} did not become ready`);
 }
 
-async function run(file, args, environment, label, timeout = TIMEOUT_MS) {
+export async function run(file, args, environment, label, timeout = TIMEOUT_MS) {
   console.log(`NEMOCLAW> ${label}`);
   const child = spawn(file, args, {
     env: environment,
@@ -138,14 +139,14 @@ async function run(file, args, environment, label, timeout = TIMEOUT_MS) {
   });
 }
 
-async function stopChild(child) {
+export async function stopChild(child) {
   if (child.exitCode !== null || child.signalCode !== null) return true;
   const exited = new Promise((resolve) => child.once("exit", () => resolve(true)));
   child.kill();
   return await Promise.race([exited, sleep(5000).then(() => false)]);
 }
 
-async function removeDirectory(directory) {
+export async function removeDirectory(directory) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
       fs.rmSync(directory, { recursive: true, force: true });
@@ -156,7 +157,7 @@ async function removeDirectory(directory) {
   return false;
 }
 
-async function waitForFileText(file, expected, timeout = 30_000) {
+export async function waitForFileText(file, expected, timeout = 30_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     if (fs.existsSync(file) && fs.readFileSync(file, "utf8").includes(expected)) return true;
@@ -165,7 +166,7 @@ async function waitForFileText(file, expected, timeout = 30_000) {
   return false;
 }
 
-function jsonContainsExactValue(value, target) {
+export function jsonContainsExactValue(value, target) {
   if (value === target) return true;
   if (Array.isArray(value)) return value.some((item) => jsonContainsExactValue(item, target));
   if (value !== null && typeof value === "object")
@@ -173,11 +174,11 @@ function jsonContainsExactValue(value, target) {
   return false;
 }
 
-function quoteYamlPath(value) {
+export function quoteYamlPath(value) {
   return JSON.stringify(value.replaceAll("\\", "/"));
 }
 
-function sanitizedDiagnostic(text, replacements) {
+export function sanitizedDiagnostic(text, replacements) {
   let sanitized = text.slice(-64 * 1024);
   for (const [value, replacement] of replacements) {
     if (value) sanitized = sanitized.replaceAll(value, replacement);
@@ -427,7 +428,11 @@ async function main() {
       "--log-level",
       "info",
     ],
-    { env: gatewayEnvironment, stdio: ["ignore", gatewayLog, gatewayError], windowsHide: true },
+    {
+      env: gatewayEnvironment,
+      stdio: ["ignore", gatewayLog, gatewayError],
+      windowsHide: true,
+    },
   );
   let passed = false;
   let result = null;
@@ -617,9 +622,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(
-    error instanceof Error ? error.message : "Native Windows turn qualification failed.",
-  );
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((error) => {
+    console.error(
+      error instanceof Error ? error.message : "Native Windows turn qualification failed.",
+    );
+    process.exitCode = 1;
+  });
+}

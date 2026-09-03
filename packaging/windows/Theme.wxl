@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<WixLocalization Culture="en-us" Language="1033" xmlns="http://wixtoolset.org/schemas/v4/wxl">
+  <String Id="Caption" Value="NemoClaw Setup" />
+  <String Id="Title" Value="NVIDIA NemoClaw" />
+  <String Id="CheckingForUpdatesLabel" Value="Preparing NemoClaw setup" />
+  <String Id="UpdateButton" Value="&amp;Update to version [WixStdBAUpdateAvailable]" />
+  <String Id="InstallHeader" Value="AI agents, isolated on native Windows" />
+  <String Id="InstallMessage" Value="Installs the native ARM64 NemoClaw preview, OpenShell, Microsoft MXC isolation, and pinned agent runtimes. Setup may take 10–20 minutes while Windows publishes more than 40,000 verified files." />
+  <String Id="InstallMessageOptions" Value="Installs the native ARM64 NemoClaw preview, OpenShell, Microsoft MXC isolation, and pinned agent runtimes. Setup may take 10–20 minutes while Windows publishes more than 40,000 verified files." />
+  <String Id="InstallVersion" Value="Native Windows ARM64 preview · version [WixBundleVersion]" />
+  <String Id="ConfirmCancelMessage" Value="Cancel NemoClaw setup? Windows Installer will roll back incomplete changes." />
+  <String Id="ExecuteUpgradeRelatedBundleMessage" Value="Removing the previous NemoClaw version inside the upgrade transaction" />
+  <String Id="HelpHeader" Value="NemoClaw Setup Help" />
+  <String Id="HelpText" Value="Install, repair, and uninstall are managed by Windows Installer. Setup requires elevation because NemoClaw is installed for all users under Program Files. The native preview uses OpenShell with Microsoft MXC ProcessContainer isolation." />
+  <String Id="HelpCloseButton" Value="&amp;Close" />
+  <String Id="InstallLicenseLinkText" Value="Review the NemoClaw &lt;a href=&quot;#&quot;&gt;Apache 2.0 license&lt;/a&gt;." />
+  <String Id="InstallAcceptCheckbox" Value="I &amp;accept the license terms" />
+  <String Id="InstallOptionsButton" Value="&amp;Options" />
+  <String Id="InstallInstallButton" Value="&amp;Install NemoClaw" />
+  <String Id="InstallCancelButton" Value="&amp;Cancel" />
+  <String Id="OptionsHeader" Value="NemoClaw Setup Options" />
+  <String Id="OptionsLocationLabel" Value="Install location:" />
+  <String Id="OptionsBrowseButton" Value="&amp;Browse" />
+  <String Id="OptionsOkButton" Value="&amp;OK" />
+  <String Id="OptionsCancelButton" Value="&amp;Cancel" />
+  <String Id="ProgressHeader" Value="Installing NemoClaw · large runtime stages can take several minutes" />
+  <String Id="ProgressLabel" Value="Current stage:" />
+  <String Id="OverallProgressPackageText" Value="Preparing native Windows isolation and agent runtimes…" />
+  <String Id="ProgressCancelButton" Value="&amp;Cancel" />
+  <String Id="ModifyHeader" Value="Maintain NemoClaw" />
+  <String Id="ModifyRepairButton" Value="&amp;Repair" />
+  <String Id="ModifyUninstallButton" Value="&amp;Uninstall" />
+  <String Id="ModifyCancelButton" Value="&amp;Close" />
+  <String Id="SuccessHeader" Value="NemoClaw is ready" />
+  <String Id="SuccessCacheHeader" Value="NemoClaw setup files are cached" />
+  <String Id="SuccessInstallHeader" Value="NemoClaw is installed and ready to launch" />
+  <String Id="SuccessLayoutHeader" Value="NemoClaw offline layout completed" />
+  <String Id="SuccessModifyHeader" Value="NemoClaw changes completed" />
+  <String Id="SuccessRepairHeader" Value="NemoClaw repair completed" />
+  <String Id="SuccessUninstallHeader" Value="NemoClaw was removed" />
+  <String Id="SuccessUnsafeUninstallHeader" Value="NemoClaw was removed" />
+  <String Id="SuccessLaunchButton" Value="&amp;Launch NemoClaw" />
+  <String Id="SuccessRestartText" Value="Restart Windows before launching NemoClaw." />
+  <String Id="SuccessUninstallRestartText" Value="Restart Windows to finish removing NemoClaw." />
+  <String Id="SuccessRestartButton" Value="&amp;Restart" />
+  <String Id="SuccessCloseButton" Value="&amp;Close" />
+  <String Id="FailureHeader" Value="NemoClaw setup needs attention" />
+  <String Id="FailureCacheHeader" Value="NemoClaw cache failed" />
+  <String Id="FailureInstallHeader" Value="NemoClaw was not installed" />
+  <String Id="FailureLayoutHeader" Value="NemoClaw layout failed" />
+  <String Id="FailureModifyHeader" Value="NemoClaw changes failed" />
+  <String Id="FailureRepairHeader" Value="NemoClaw repair failed" />
+  <String Id="FailureUninstallHeader" Value="NemoClaw removal failed" />
+  <String Id="FailureUnsafeUninstallHeader" Value="NemoClaw removal failed" />
+  <String Id="FailureHyperlinkLogText" Value="Setup could not finish. Open the &lt;a href=&quot;#&quot;&gt;installer log&lt;/a&gt; for the exact failed stage; Windows Installer has rolled back incomplete changes." />
+  <String Id="FailureRestartText" Value="Restart Windows to complete rollback." />
+  <String Id="FailureRestartButton" Value="&amp;Restart" />
+  <String Id="FailureCloseButton" Value="&amp;Close" />
+  <String Id="FilesInUseTitle" Value="NemoClaw files are in use" />
+  <String Id="FilesInUseLabel" Value="Close these applications so setup can continue:" />
+  <String Id="FilesInUseNetfxCloseRadioButton" Value="Close the &amp;applications." />
+  <String Id="FilesInUseCloseRadioButton" Value="Close and attempt to &amp;restart the applications." />
+  <String Id="FilesInUseDontCloseRadioButton" Value="&amp;Keep them open and restart Windows later." />
+  <String Id="FilesInUseRetryButton" Value="&amp;Retry" />
+  <String Id="FilesInUseIgnoreButton" Value="&amp;Ignore" />
+  <String Id="FilesInUseExitButton" Value="E&amp;xit" />
+</WixLocalization>
