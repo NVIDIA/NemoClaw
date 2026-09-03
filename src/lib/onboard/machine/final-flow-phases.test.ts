@@ -25,7 +25,7 @@ describe("final onboard flow phases", () => {
     const finalizationResult = await finalizationPhase.run(policiesResult.context);
     await postVerifyPhase.run(finalizationResult.context);
 
-    expect(order).toEqual(["openclaw", "policies", "set-default", "agent-forward", "verify"]);
+    expect(order).toEqual(["openclaw", "agent-forward", "policies", "set-default", "verify"]);
   });
 
   it("carries merged policy messaging channels into the final flow context", async () => {
