@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getSandbox, type McpBridgeEntry } from "../../state/registry";
+import { assertDeepAgentsMcpMutationRuntimeCapability } from "./mcp-bridge-adapter-deepagents-capability";
 import { runDeepAgentsAdapterCommand } from "./mcp-bridge-adapter-deepagents-command";
 import { inspectDeepAgentsAdapterRegistration } from "./mcp-bridge-adapter-deepagents-inspection";
 import { buildDeepAgentsMcpRollbackRegisterCommand } from "./mcp-bridge-adapter-deepagents-legacy";
@@ -297,6 +298,7 @@ export function restoreDeepAgentsManagedMcpProjection(
   if (runtimeKind !== "v2") {
     throw new McpBridgeError("Could not identify the managed Deep Agents MCP runtime.");
   }
+  assertDeepAgentsMcpMutationRuntimeCapability(sandboxName);
   runDeepAgentsAdapterCommand(
     sandboxName,
     commandEntry,

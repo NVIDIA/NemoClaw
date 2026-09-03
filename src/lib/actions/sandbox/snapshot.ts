@@ -119,8 +119,11 @@ const R = useColor ? "\x1b[0m" : "";
 
 function deepAgentsManagedProjectionRecoveryCommand(sandboxName: string): string {
   const script = [
+    "projection=/sandbox/.deepagents/.nemoclaw-mcp.json",
+    'if [ ! -d "$projection" ] || [ -L "$projection" ]; then printf "Managed MCP projection recovery stopped because %s is no longer a directory. Rerun snapshot restore before using this recovery action.\\n" "$projection" >&2; exit 1; fi',
     "recovery_dir=$(mktemp -d /sandbox/.nemoclaw-mcp.json.recovery.XXXXXX)",
-    'mv -- /sandbox/.deepagents/.nemoclaw-mcp.json "$recovery_dir/projection"',
+    'if [ ! -d "$projection" ] || [ -L "$projection" ]; then rmdir -- "$recovery_dir"; printf "Managed MCP projection recovery stopped because %s changed before it could be moved. Rerun snapshot restore before using this recovery action.\\n" "$projection" >&2; exit 1; fi',
+    'mv -- "$projection" "$recovery_dir/projection"',
     'printf "Moved managed MCP projection to %s\\n" "$recovery_dir/projection"',
   ].join(" && ");
   return `${CLI_NAME} ${shellQuote(sandboxName)} exec -- sh -c ${shellQuote(script)}`;

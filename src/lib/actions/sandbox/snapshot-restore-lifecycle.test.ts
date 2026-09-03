@@ -162,6 +162,16 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             policyName: "mcp-bridge-github",
             addedAt: "2026-06-01T00:00:00.000Z",
           },
+          jira: {
+            server: "jira",
+            agent: "langchain-deepagents-code",
+            adapter: "deepagents-config",
+            url: "https://mcp.atlassian.com/v1/",
+            env: ["JIRA_MCP_TOKEN"],
+            providerName: "alpha-mcp-jira",
+            policyName: "mcp-bridge-jira",
+            addedAt: "2026-06-01T00:00:00.000Z",
+          },
           slack: {
             server: "slack",
             agent: "openclaw",
@@ -194,6 +204,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     expect(f.restoreDeepAgentsManagedMcpProjectionMock).toHaveBeenCalledWith("alpha", [
       expect.objectContaining({ server: "github" }),
+      expect.objectContaining({ server: "jira" }),
     ]);
     expect(f.lifecycleMock.events).toEqual(["restore-mcp-projection", "restore-snapshot-state"]);
   });
@@ -268,6 +279,22 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     const recoveryScript = recoveryArguments[5].replaceAll("/sandbox", sandboxRoot);
     const recoveryScriptPath = path.join(sandboxRoot, "run-recovery-script.sh");
     fs.writeFileSync(recoveryScriptPath, recoveryScript);
+    fs.rmSync(projectionPath, { recursive: true });
+    const validProjection = '{"mcpServers":{}}\n';
+    fs.writeFileSync(projectionPath, validProjection, { mode: 0o600 });
+    const staleRecoveryResult = spawnSync("sh", [recoveryScriptPath], { encoding: "utf8" });
+    expect(staleRecoveryResult.status).toBe(1);
+    expect(staleRecoveryResult.stderr).toContain("is no longer a directory");
+    expect(fs.readFileSync(projectionPath, "utf8")).toBe(validProjection);
+    expect(
+      fs
+        .readdirSync(sandboxRoot)
+        .filter((entry) => entry.startsWith(".nemoclaw-mcp.json.recovery.")),
+    ).toEqual([]);
+
+    fs.rmSync(projectionPath);
+    fs.mkdirSync(projectionPath);
+    fs.writeFileSync(path.join(projectionPath, "managed.json"), '{"managed":true}\n');
     const recoveryResult = spawnSync("sh", [recoveryScriptPath], { encoding: "utf8" });
     expect(recoveryResult.status, recoveryResult.stderr).toBe(0);
     expect(fs.existsSync(projectionPath)).toBe(false);
@@ -286,9 +313,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       `Moved managed MCP projection to ${recoveredProjectionPath}\n`,
     );
     expect(recoveryScript).toContain(`recovery_dir=$(mktemp -d ${occupiedRecoveryPath}.XXXXXX)`);
-    expect(recoveryGuidance).toContain(
-      'mv -- /sandbox/.deepagents/.nemoclaw-mcp.json "$recovery_dir/projection"',
-    );
+    expect(recoveryGuidance).toContain('mv -- "$projection" "$recovery_dir/projection"');
     expect(recoveryGuidance).toContain(
       'printf "Moved managed MCP projection to %s\\n" "$recovery_dir/projection"',
     );

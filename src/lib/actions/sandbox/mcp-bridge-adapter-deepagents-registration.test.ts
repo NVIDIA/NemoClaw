@@ -341,30 +341,41 @@ describe("Deep Agents MCP config adapter registration", () => {
     const entries = [jiraEntry(), baseEntry];
     executeSandboxCommandMock
       .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n",
+        stderr: "",
+      })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: "registered\n", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: "registered\n", stderr: "" });
 
     restoreDeepAgentsManagedMcpProjection("alpha", entries);
 
-    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(4);
+    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(5);
     const commands = executeSandboxCommandMock.mock.calls.map(([, command]) => command);
-    expect(commands[1]).toContain("github");
-    expect(commands[1]).toContain("jira");
+    expect(commands[1]).toBe("/usr/local/bin/deepagents-code --nemoclaw-mcp-capability");
     expect(commands[2]).toContain("github");
-    expect(commands[3]).toContain("jira");
+    expect(commands[2]).toContain("jira");
+    expect(commands[3]).toContain("github");
+    expect(commands[4]).toContain("jira");
     expect(commands.filter((command) => command.includes("allowRevisioned"))).toHaveLength(2);
   });
 
   it("resets the managed v2 projection when the registry has no Deep Agents bridges (#10756)", () => {
     executeSandboxCommandMock
       .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n",
+        stderr: "",
+      })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
 
     restoreDeepAgentsManagedMcpProjection("alpha", []);
 
-    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(2);
-    expect(executeSandboxCommandMock.mock.calls[1]?.[1]).toContain('\\"expectedServers\\":{}');
+    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
+    expect(executeSandboxCommandMock.mock.calls[2]?.[1]).toContain('\\"expectedServers\\":{}');
   });
 
   it("stops after runtime detection returns an unknown kind (#10756)", () => {
@@ -392,6 +403,24 @@ describe("Deep Agents MCP config adapter registration", () => {
     expect(executeSandboxCommandMock).toHaveBeenCalledOnce();
   });
 
+  it("rejects a v2 runtime without the managed MCP mutation capability (#10756)", () => {
+    executeSandboxCommandMock
+      .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=1\n",
+        stderr: "",
+      });
+
+    expect(() => restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry])).toThrow(
+      "does not contain managed MCP capability v2",
+    );
+    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(2);
+    expect(executeSandboxCommandMock.mock.calls[1]?.[1]).toBe(
+      "/usr/local/bin/deepagents-code --nemoclaw-mcp-capability",
+    );
+  });
+
   it("identifies a legacy runtime without changing either MCP config fixture (#10756)", () => {
     const managedConfig = { mcpServers: { managed: { url: "https://managed.invalid" } } };
     const legacyConfig = { mcpServers: { legacy: { url: "https://legacy.invalid" } } };
@@ -412,17 +441,27 @@ describe("Deep Agents MCP config adapter registration", () => {
   it("fails when the managed projection mutation command fails (#10756)", () => {
     executeSandboxCommandMock
       .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n",
+        stderr: "",
+      })
       .mockReturnValueOnce({ status: 2, stdout: "", stderr: "projection is unsafe" });
 
     expect(() => restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry, jiraEntry()])).toThrow(
       "projection is unsafe",
     );
-    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(2);
+    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
   });
 
   it("fails when a repaired registry entry is not registered (#10756)", () => {
     executeSandboxCommandMock
       .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n",
+        stderr: "",
+      })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: "registered\n", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: "mismatch\n", stderr: "" });
