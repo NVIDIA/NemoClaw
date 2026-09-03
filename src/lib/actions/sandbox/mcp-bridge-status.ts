@@ -65,6 +65,8 @@ const UNSUPPORTED_STORED_URL_WARNING =
   "This persisted MCP URL no longer satisfies the authenticated endpoint boundary. Restart and rebuild fail closed for it; remove this server (use --force if cleanup is partial), then add a normal public HTTPS DNS endpoint.";
 const UNSUPPORTED_STORED_CREDENTIAL_WARNING =
   "This persisted MCP credential name no longer satisfies the host-only credential boundary. Restart and rebuild fail closed for it; remove this server, then add it again with a dedicated service credential name.";
+const UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL =
+  "the unsupported legacy credential may still be attached to fresh sandbox children";
 
 function storedUrlWarning(entry: McpBridgeEntry): string | undefined {
   try {
@@ -354,27 +356,20 @@ export async function statusMcpBridge(
       providerAttached: attached,
       providerCredentialReady,
     };
-    const adapterRegistration = unsafeCredentialMayBeAttached
-      ? {
-          registered: null,
-          detail:
-            "Adapter inspection was skipped because the unsupported legacy credential may still be attached to fresh sandbox children.",
-        }
-      : getAdapterRegistration(
-          sandboxName,
-          support.adapter,
-          entry,
-          hermesReconciliation,
-          credentialRevision,
-          observationDetail,
-        );
+    const adapterRegistration = getAdapterRegistration(
+      sandboxName,
+      support.adapter,
+      entry,
+      hermesReconciliation,
+      credentialRevision,
+      unsafeCredentialMayBeAttached ? UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL : observationDetail,
+    );
     const credentialResolution =
       options.probeCredentialResolution && entry
         ? unsafeCredentialMayBeAttached
           ? {
               ok: null,
-              detail:
-                "probe skipped: the unsupported legacy credential may still be attached to fresh sandbox children",
+              detail: `probe skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
             }
           : observationDetail
             ? { ok: null, detail: `probe skipped: ${observationDetail}` }
@@ -404,8 +399,7 @@ export async function statusMcpBridge(
               count: 0,
               tools: [],
               truncated: false,
-              detail:
-                "tool discovery skipped: the unsupported legacy credential may still be attached to fresh sandbox children",
+              detail: `tool discovery skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
             }
           : discoverMcpTools(sandboxName, entry, support.adapter, readiness)
         : undefined;
