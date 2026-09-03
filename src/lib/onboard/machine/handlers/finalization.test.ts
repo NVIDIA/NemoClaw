@@ -541,35 +541,44 @@ describe("finalization handlers", () => {
     expect(calls.reportReadiness).toHaveBeenCalledWith(false);
   });
 
-  it("settles ordinary OpenClaw pairing after recovery and before verification (#9844)", async () => {
-    const { deps, calls } = createDeps();
+  it("settles ordinary OpenClaw pairing after recovery and before verification (#10479)", async () => {
+    let releasePairing!: () => void;
+    const pairingPending = new Promise<void>((resolve) => {
+      releasePairing = resolve;
+    });
+    const events: string[] = [];
+    const settleOrdinaryPairing = vi.fn(async () => {
+      events.push("pairing-started");
+      await pairingPending;
+      events.push("pairing-settled");
+      return { kind: "settled" as const };
+    });
+    const verifyDeployment = vi.fn(async () => {
+      events.push("verify");
+      return { ok: true };
+    });
+    const { deps, calls } = createDeps({
+      settleOrdinaryOpenClawPairing: settleOrdinaryPairing,
+      verifyDeployment,
+    });
 
-    await runFinalizationHandlers(baseOptions(deps));
+    const finalization = runFinalizationHandlers(baseOptions(deps));
+    await vi.waitFor(() => expect(events).toContain("pairing-started"));
+    expect(events).not.toContain("verify");
+    releasePairing();
+    await finalization;
 
-    expect(calls.settleOrdinaryPairing).toHaveBeenCalledExactlyOnceWith("my-assistant");
-    expect(calls.settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeGreaterThan(
+    expect(settleOrdinaryPairing).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeGreaterThan(
       calls.recoverProcesses.mock.invocationCallOrder[0],
     );
-    expect(calls.settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeLessThan(
       calls.recoverProcesses.mock.invocationCallOrder[1],
     );
     expect(calls.recoverProcesses.mock.invocationCallOrder[1]).toBeLessThan(
-      calls.verify.mock.invocationCallOrder[0],
+      verifyDeployment.mock.invocationCallOrder[0],
     );
-  });
-
-  it("does not settle ordinary OpenClaw pairing during an inner rebuild handoff (#9844)", async () => {
-    const { deps, calls } = createDeps();
-
-    const result = await runFinalizationHandlers({
-      ...baseOptions(deps),
-      recreateJournalHandoff: true,
-    });
-
-    expect(result.stateResult.type).toBe("complete");
-    expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
-    expect(calls.ensureAgentDashboard).toHaveBeenCalledWith("my-assistant", null);
-    expect(calls.verify).toHaveBeenCalledOnce();
+    expect(events).toEqual(["pairing-started", "pairing-settled", "verify"]);
   });
 
   it("does not run OpenClaw pairing settlement for Hermes (#9844)", async () => {

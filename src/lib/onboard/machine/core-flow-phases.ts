@@ -372,7 +372,6 @@ export function createSandboxOnboardFlowPhase<
       context: mergeSandboxCreatedContext(context, {
         session: sandboxStateResult.session,
         sandboxName: sandboxStateResult.sandboxName,
-        recreateJournalHandoff: Boolean(options.recreateJournalTargetIntentFingerprint),
         webSearchConfig: sandboxStateResult.webSearchConfig,
         webSearchConfigChanged: sandboxStateResult.webSearchConfigChanged,
         hermesToolGateways: sandboxStateResult.hermesToolGateways,

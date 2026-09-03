@@ -28,7 +28,6 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   webSearchEnabled: boolean;
   webSearchProvider: WebSearchVerifyProvider | null;
   portableProfileSelected?: boolean;
-  recreateJournalHandoff?: boolean;
   deps: {
     ensureAgentDashboardForward(sandboxName: string, agent: Agent): Promise<number> | number;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
@@ -148,6 +147,18 @@ function selectedAgentName(agent: unknown): string | null {
   return typeof name === "string" && name.trim() === name && name ? name : null;
 }
 
+function requiresOrdinaryOpenClawPairing(
+  portableAgent: PortableAgentDisposition,
+  agent: unknown,
+): boolean {
+  // Rebuild recreates the container from the image, which wipes the
+  // machine-local pairing state (`identity` and `devices` are declared
+  // `backup: false` and removed on destroy). Both finalization phases must
+  // therefore apply the same pairing gate to rebuild and fresh onboarding
+  // (#10479).
+  return portableAgent === "ordinary" && selectedAgentName(agent) === "openclaw";
+}
+
 function logTerminalReadyBlock(
   sandboxName: string,
   agent: unknown,
@@ -178,7 +189,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   sandboxName,
   agent,
   portableProfileSelected,
-  recreateJournalHandoff,
   stagedLegacyKeys,
   migratedLegacyKeys,
   deps,
@@ -194,10 +204,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     portableProfileSelected,
     deps.readRegistryAgent,
   );
-  const ordinaryOpenClawPairingRequired =
-    portableAgent === "ordinary" &&
-    selectedAgentName(agent) === "openclaw" &&
-    recreateJournalHandoff !== true;
+  const ordinaryOpenClawPairingRequired = requiresOrdinaryOpenClawPairing(portableAgent, agent);
   // Reaching finalization means the policy-preset step was confirmed, so it is
   // now safe to register this sandbox as the default (#4614).
   deps.setDefaultSandbox(sandboxName);
@@ -251,7 +258,6 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   webSearchEnabled,
   webSearchProvider,
   portableProfileSelected,
-  recreateJournalHandoff,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -265,10 +271,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     portableProfileSelected,
     deps.readRegistryAgent,
   );
-  const ordinaryOpenClawPairingRequired =
-    portableAgent === "ordinary" &&
-    selectedAgentName(agent) === "openclaw" &&
-    recreateJournalHandoff !== true;
+  const ordinaryOpenClawPairingRequired = requiresOrdinaryOpenClawPairing(portableAgent, agent);
   let verificationDiagnostics: string[] = [];
   let deploymentHealthy = true;
   if (portableAgent !== "ordinary") {

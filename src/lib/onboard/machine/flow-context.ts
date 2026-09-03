@@ -10,7 +10,6 @@ import type { OnboardStateHandlerResult } from "./runner";
 export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuConfig = unknown> {
   resume: boolean;
   fresh: boolean;
-  recreateJournalHandoff?: boolean;
   session: Session | null;
   agent: Agent;
   recordedSandboxName: string | null;
@@ -92,7 +91,6 @@ export interface ProviderModelSelectedContextUpdate {
 export interface SandboxCreatedContextUpdate {
   session: Session | null;
   sandboxName: string;
-  recreateJournalHandoff?: boolean;
   webSearchConfig: WebSearchConfig | null;
   webSearchConfigChanged: boolean;
   hermesToolGateways: string[];

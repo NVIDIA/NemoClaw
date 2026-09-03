@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
@@ -20,6 +21,7 @@ import {
   writeJsonFile,
 } from "../fixtures/file-state.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.ts";
 
@@ -752,6 +754,31 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     // Phase 7: state preservation, upgrade, token rotation, backup hygiene, and
     // policy-preset preservation assertions.
     progress.phase("validate upgraded state policy inference and backup hygiene");
+    const agentTurn = await host.nemoclaw(
+      [
+        SANDBOX_NAME,
+        "agent",
+        "--agent",
+        "main",
+        "--json",
+        "--session-id",
+        `e2e-rebuild-oc-${Date.now()}-${process.pid}`,
+        "-m",
+        "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
+      ],
+      {
+        artifactName: "phase-7-agent-inference-after-rebuild",
+        env: cliEnv(apiKey),
+        redactionValues: [apiKey],
+        timeoutMs: 120_000,
+      },
+    );
+    expectExitZero(agentTurn, "OpenClaw agent inference after rebuild");
+    expect(
+      containsAnswer(parseOpenClawAgentText(agentTurn.stdout), "42"),
+      resultText(agentTurn),
+    ).toBe(true);
+
     const markerRead = await sandbox.exec(SANDBOX_NAME, ["cat", MARKER_FILE], {
       artifactName: "phase-7-read-workspace-marker",
       env: dockerContextEnv(),
