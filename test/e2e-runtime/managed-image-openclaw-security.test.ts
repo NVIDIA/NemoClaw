@@ -145,6 +145,10 @@ test(
       host,
       image,
       [
+        "/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sleep 60 &",
+        "gateway_pid=$!",
+        'if /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- kill "$gateway_pid" 2>/dev/null; then exit 20; fi',
+        'kill "$gateway_pid"',
         "printf secret >/tmp/auto-pair.log",
         "chown root:root /tmp/auto-pair.log",
         "chmod 600 /tmp/auto-pair.log",
@@ -391,12 +395,12 @@ test(
         repairVolumeCreated ? ["volume", "rm", "-f", repairVolume] : ["volume", "ls", "--quiet"],
         { artifactName: "managed-image-openclaw-remove-repair-volume" },
       );
-      expect(repairRemoved.exitCode).toBe(0);
       const refusalRemoved = await host.command(
         "docker",
         refusalVolumeCreated ? ["volume", "rm", "-f", refusalVolume] : ["volume", "ls", "--quiet"],
         { artifactName: "managed-image-openclaw-remove-refusal-volume" },
       );
+      expect(repairRemoved.exitCode).toBe(0);
       expect(refusalRemoved.exitCode).toBe(0);
     }
 

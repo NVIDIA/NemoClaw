@@ -4585,18 +4585,20 @@ jobs:
         run: |
           set -euo pipefail
           label="io.nvidia.nemoclaw.managed-image.cohort=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}"
+          cleanup_failed=0
           mapfile -t owned_containers < <(docker ps -aq --filter "label=$label")
-          ((${#owned_containers[@]} > 0)) && docker rm -f "${owned_containers[@]}" >/dev/null
+          ((${#owned_containers[@]} == 0)) || docker rm -f "${owned_containers[@]}" >/dev/null || cleanup_failed=1
           mapfile -t owned_images < <(docker image ls -q --filter "label=$label" | sort -u)
-          ((${#owned_images[@]} > 0)) && docker image rm -f "${owned_images[@]}" >/dev/null
+          ((${#owned_images[@]} == 0)) || docker image rm -f "${owned_images[@]}" >/dev/null || cleanup_failed=1
           mapfile -t owned_volumes < <(docker volume ls -q --filter "label=$label")
-          ((${#owned_volumes[@]} > 0)) && docker volume rm -f "${owned_volumes[@]}" >/dev/null
+          ((${#owned_volumes[@]} == 0)) || docker volume rm -f "${owned_volumes[@]}" >/dev/null || cleanup_failed=1
           if docker ps -aq --filter "label=$label" | grep -q . ||
             docker image ls -q --filter "label=$label" | grep -q . ||
             docker volume ls -q --filter "label=$label" | grep -q .; then
             echo "::error::Protected managed-image cohort resources remained after cleanup" >&2
             exit 1
           fi
+          ((cleanup_failed == 0)) || exit 1
 
       - name: Publish exact amd64 protected runtime build cache
         if: ${{ matrix.platform == 'linux/amd64' }}
