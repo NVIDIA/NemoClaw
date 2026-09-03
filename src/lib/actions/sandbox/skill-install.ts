@@ -9,6 +9,7 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
+import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import * as skillInstall from "../../skill-install";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
 
@@ -182,6 +183,16 @@ export async function removeSandboxSkill(
 
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const paths = skillInstall.resolveSkillPaths(agent, skillName);
+  if (paths.isOpenClaw) {
+    console.error(
+      "  Automatic OpenClaw skill removal is unavailable until NemoClaw can prove native workspace ownership.",
+    );
+    console.error(
+      `  Inspect ${paths.workspaceSkillDir} and remove it only after confirming its provenance.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
   if (paths.uploadDirSharedWithAgent) {
     console.error(
       "  Automatic removal is unavailable for Deep Agents skills because the destination is shared with agent-authored content.",
@@ -390,6 +401,41 @@ export async function installSandboxSkill(
 
   try {
     const ctx = { configFile: tmpSshConfig.file, sandboxName };
+
+    if (paths.isOpenClaw) {
+      const native = await withSandboxMutationLock(sandboxName, () =>
+        skillInstall.installOpenClawSkill(ctx, skillDir, paths, frontmatter.name, {
+          expectedRootIdentity,
+        }),
+      );
+      if (!native.success || !native.contentDigest) {
+        if (native.reason === "destination_exists") {
+          console.error(
+            `  Refusing to replace '${frontmatter.name}': the OpenClaw workspace skill is not proven to be owned by NemoClaw.`,
+          );
+        } else if (native.reason === "native_capability_missing") {
+          console.error(
+            "  The pinned OpenClaw runtime does not expose the reviewed native skill install capability.",
+          );
+        } else if (native.reason === "snapshot_failed") {
+          console.error("  Failed to create an exact regular-file snapshot of the local skill.");
+        } else if (native.reason === "verification_failed") {
+          console.error(
+            "  OpenClaw installed the skill, but native list, info, check, or digest verification failed.",
+          );
+        } else {
+          console.error(
+            "  OpenClaw did not confirm whether the staged native skill install completed.",
+          );
+        }
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`  ${G}✓${R} Skill '${frontmatter.name}' installed through OpenClaw`);
+      console.log(`  ${D}Content digest (SHA-256): ${native.contentDigest}${R}`);
+      console.log(`  ${D}Start a new OpenClaw session to load the skill.${R}`);
+      return;
+    }
 
     if (!canMutateManagedSkill(ctx, paths, frontmatter.name)) return;
 

@@ -9,6 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const captureSandboxSshConfig = vi.hoisted(() => vi.fn());
 const getSessionAgent = vi.hoisted(() => vi.fn());
 const ensureLiveSandboxOrExit = vi.hoisted(() => vi.fn());
+const withSandboxMutationLock = vi.hoisted(() =>
+  vi.fn(async (_sandboxName: string, operation: () => unknown) => await operation()),
+);
 const skillInstall = vi.hoisted(() => ({
   validateSkillName: vi.fn(),
   resolveSkillPaths: vi.fn(),
@@ -20,6 +23,7 @@ const skillInstall = vi.hoisted(() => ({
   collectFiles: vi.fn(),
   uploadDirectory: vi.fn(),
   installFreshSharedSkill: vi.fn(),
+  installOpenClawSkill: vi.fn(),
   postInstall: vi.fn(),
   verifyInstall: vi.fn(),
 }));
@@ -33,6 +37,10 @@ vi.mock("../../agent/runtime", () => ({
 }));
 
 vi.mock("../../skill-install", () => skillInstall);
+
+vi.mock("../../state/mcp-lifecycle-lock", () => ({
+  withSandboxMutationLock,
+}));
 
 vi.mock("./gateway-state", () => ({
   ensureLiveSandboxOrExit,
@@ -52,6 +60,17 @@ const paths = {
 };
 
 const agent = { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } };
+const genericAgent = { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } };
+const genericPaths = {
+  stateDir: "/sandbox/.hermes",
+  uploadDir: "/sandbox/.hermes/skills/demo-skill",
+  mirrorDir: null,
+  workspaceSkillDir: null,
+  uploadDirSharedWithAgent: false,
+  sessionFile: null,
+  reloadsSkillsOnSessionStart: true,
+  isOpenClaw: false,
+};
 const deepAgent = {
   name: "langchain-deepagents-code",
   configPaths: { dir: "/sandbox/.deepagents" },
@@ -95,9 +114,9 @@ describe("sandbox skill action orchestration", () => {
 
     captureSandboxSshConfig.mockReturnValue({ status: 0, output: "Host openshell-alpha\n" });
     ensureLiveSandboxOrExit.mockResolvedValue(undefined);
-    getSessionAgent.mockReturnValue(agent);
+    getSessionAgent.mockReturnValue(genericAgent);
     skillInstall.validateSkillName.mockReturnValue(true);
-    skillInstall.resolveSkillPaths.mockReturnValue(paths);
+    skillInstall.resolveSkillPaths.mockReturnValue(genericPaths);
     skillInstall.checkWorkspaceSkillCollision.mockReturnValue(false);
     skillInstall.checkExisting.mockReturnValue(true);
     skillInstall.removeSkill.mockReturnValue({
@@ -122,6 +141,11 @@ describe("sandbox skill action orchestration", () => {
       unsafePaths: [],
     });
     skillInstall.installFreshSharedSkill.mockReturnValue({
+      success: true,
+      uploaded: 1,
+      contentDigest: "a".repeat(64),
+    });
+    skillInstall.installOpenClawSkill.mockReturnValue({
       success: true,
       uploaded: 1,
       contentDigest: "a".repeat(64),
@@ -192,16 +216,18 @@ describe("sandbox skill action orchestration", () => {
     expect(fs.existsSync(tempConfig)).toBe(false);
   });
 
-  it("refuses removal when an OpenClaw workspace skill shadows the managed skill (#10210)", async () => {
-    skillInstall.checkWorkspaceSkillCollision.mockReturnValue(true);
+  it("refuses OpenClaw removal until native workspace ownership is proven", async () => {
+    getSessionAgent.mockReturnValue(agent);
+    skillInstall.resolveSkillPaths.mockReturnValue(paths);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     await removeSandboxSkill("alpha", { name: "demo-skill" });
 
     expect(process.exitCode).toBe(1);
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("an OpenClaw workspace skill with that name exists"),
+      expect.stringContaining("Automatic OpenClaw skill removal is unavailable"),
     );
+    expect(captureSandboxSshConfig).not.toHaveBeenCalled();
     expect(skillInstall.checkExisting).not.toHaveBeenCalled();
     expect(skillInstall.removeSkill).not.toHaveBeenCalled();
     expect(skillInstall.verifyRemove).not.toHaveBeenCalled();
@@ -226,7 +252,7 @@ describe("sandbox skill action orchestration", () => {
     let tempConfig = "";
     skillInstall.checkExisting.mockImplementation((ctx, resolvedPaths) => {
       tempConfig = ctx.configFile;
-      expect(resolvedPaths).toBe(paths);
+      expect(resolvedPaths).toBe(genericPaths);
       return true;
     });
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -235,14 +261,14 @@ describe("sandbox skill action orchestration", () => {
 
     expect(ensureLiveSandboxOrExit).toHaveBeenCalledWith("alpha");
     expect(getSessionAgent).toHaveBeenCalledWith("alpha");
-    expect(skillInstall.resolveSkillPaths).toHaveBeenCalledWith(agent, "demo-skill");
+    expect(skillInstall.resolveSkillPaths).toHaveBeenCalledWith(genericAgent, "demo-skill");
     expect(skillInstall.removeSkill).toHaveBeenCalledWith(
       expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
-      paths,
+      genericPaths,
     );
     expect(skillInstall.verifyRemove).toHaveBeenCalledWith(
       expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
-      paths,
+      genericPaths,
     );
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Skill 'demo-skill' removed"));
     expect(fs.existsSync(tempConfig)).toBe(false);
@@ -365,11 +391,11 @@ describe("sandbox skill action orchestration", () => {
     expect(skillInstall.uploadDirectory).toHaveBeenCalledWith(
       expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
       skillDir,
-      paths.uploadDir,
+      genericPaths.uploadDir,
     );
     expect(skillInstall.verifyInstall).toHaveBeenCalledWith(
       expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
-      paths,
+      genericPaths,
     );
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Skill 'demo-skill' installed"));
     expect(fs.existsSync(tempConfig)).toBe(false);
@@ -377,10 +403,11 @@ describe("sandbox skill action orchestration", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
-  it("refuses install when a same-named OpenClaw workspace skill would shadow it (#10210)", async () => {
+  it("delegates OpenClaw installation through the lifecycle mutation lock", async () => {
     const skillDir = makeSkillDir();
-    skillInstall.checkWorkspaceSkillCollision.mockReturnValue(true);
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    getSessionAgent.mockReturnValue(agent);
+    skillInstall.resolveSkillPaths.mockReturnValue(paths);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     try {
       await installSandboxSkill("alpha", { command: "install", path: skillDir });
@@ -388,18 +415,30 @@ describe("sandbox skill action orchestration", () => {
       fs.rmSync(skillDir, { recursive: true, force: true });
     }
 
-    expect(process.exitCode).toBe(1);
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("an OpenClaw workspace skill with that name exists"),
+    expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function));
+    expect(skillInstall.installOpenClawSkill).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: "alpha" }),
+      skillDir,
+      paths,
+      "demo-skill",
+      expect.objectContaining({ expectedRootIdentity: expect.any(Object) }),
     );
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("installed through OpenClaw"));
+    expect(process.exitCode).toBeUndefined();
     expect(skillInstall.checkExisting).not.toHaveBeenCalled();
     expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
     expect(skillInstall.postInstall).not.toHaveBeenCalled();
   });
 
-  it("fails closed when the OpenClaw workspace collision probe is inconclusive", async () => {
+  it("fails closed when the pinned OpenClaw installer capability is unavailable", async () => {
     const skillDir = makeSkillDir();
-    skillInstall.checkWorkspaceSkillCollision.mockReturnValue(null);
+    getSessionAgent.mockReturnValue(agent);
+    skillInstall.resolveSkillPaths.mockReturnValue(paths);
+    skillInstall.installOpenClawSkill.mockReturnValue({
+      success: false,
+      uploaded: 0,
+      reason: "native_capability_missing",
+    });
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     try {
@@ -410,8 +449,9 @@ describe("sandbox skill action orchestration", () => {
 
     expect(process.exitCode).toBe(1);
     expect(error).toHaveBeenCalledWith(
-      "  Could not check for an OpenClaw workspace skill named 'demo-skill'.",
+      "  The pinned OpenClaw runtime does not expose the reviewed native skill install capability.",
     );
+    expect(skillInstall.checkWorkspaceSkillCollision).not.toHaveBeenCalled();
     expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
     expect(skillInstall.postInstall).not.toHaveBeenCalled();
   });

@@ -525,7 +525,12 @@ export interface FreshSharedSkillInstallResult {
   success: boolean;
   uploaded: number;
   contentDigest?: string;
-  reason?: "destination_exists" | "snapshot_failed" | "remote_state_unknown";
+  reason?:
+    | "destination_exists"
+    | "native_capability_missing"
+    | "remote_state_unknown"
+    | "snapshot_failed"
+    | "verification_failed";
 }
 
 /**
@@ -599,6 +604,144 @@ export function installFreshSharedSkill(
       result?.status === 2 && result.stdout === "EXISTS"
         ? "destination_exists"
         : "remote_state_unknown",
+  };
+}
+
+function buildOpenClawNativeInstallScript(
+  paths: SkillPaths,
+  skillName: string,
+  expectedDigest: string,
+): string {
+  if (!paths.workspaceSkillDir || !paths.isOpenClaw) {
+    throw new Error("OpenClaw native install requires a workspace skill destination");
+  }
+  const receiptDir = `${paths.stateDir}/.nemoclaw/skill-installs`;
+  const receipt = `${receiptDir}/${skillName}.sha256`;
+  return [
+    "set -eu",
+    "umask 077",
+    `root=${shellQuote(paths.stateDir)}`,
+    `target=${shellQuote(paths.workspaceSkillDir)}`,
+    `receipt_dir=${shellQuote(receiptDir)}`,
+    `receipt=${shellQuote(receipt)}`,
+    `skill=${shellQuote(skillName)}`,
+    `expected=${shellQuote(expectedDigest)}`,
+    'exists() { [ -e "$1" ] || [ -L "$1" ]; }',
+    'safe_tree() { [ -d "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -mindepth 1 ! -type d ! -type f -print -quit)" ]; }',
+    'digest_tree() { tree="$1"; manifest="$2"; find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort > "$manifest.files"; : > "$manifest"; while IFS= read -r rel; do mode="$(stat -c "%a" "$tree/$rel")"; hash="$(sha256sum "$tree/$rel" | cut -d " " -f 1)"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$manifest"; done < "$manifest.files"; sha256sum "$manifest" | cut -d " " -f 1; }',
+    '[ -d "$root" ] && [ ! -L "$root" ]',
+    'stage="$(mktemp -d "$root/.nemoclaw-skill-stage.XXXXXX")"',
+    'chmod 700 "$stage"',
+    'cleanup() { rm -rf -- "$stage"; }',
+    "trap cleanup EXIT HUP INT TERM",
+    'payload="$stage/payload"',
+    'mkdir -- "$payload"',
+    'tar --no-same-owner -xf - -C "$payload"',
+    'safe_tree "$payload"',
+    'find "$payload" -type d -exec chmod 755 {} +',
+    'find "$payload" -type f -perm /111 -exec chmod 755 {} +',
+    'find "$payload" -type f ! -perm /111 -exec chmod 644 {} +',
+    'staged="$(digest_tree "$payload" "$stage/staged.manifest")"',
+    '[ "$staged" = "$expected" ]',
+    'help="$(openclaw skills install --help 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }',
+    'printf "%s" "$help" | grep -q -- "--agent" || { echo CAPABILITY_MISSING; exit 3; }',
+    'printf "%s" "$help" | grep -q -- "--force" || { echo CAPABILITY_MISSING; exit 3; }',
+    'force=""',
+    'if exists "$target"; then safe_tree "$target" || { echo COLLISION; exit 2; }; [ -f "$receipt" ] && [ ! -L "$receipt" ] || { echo COLLISION; exit 2; }; previous="$(cat "$receipt")"; current="$(digest_tree "$target" "$stage/current.manifest")"; [ "$previous" = "$current" ] || { echo COLLISION; exit 2; }; force="--force"; fi',
+    'if [ -n "$force" ]; then openclaw skills install "$payload" --agent main --force; else openclaw skills install "$payload" --agent main; fi',
+    'openclaw skills list --json > "$stage/list.json"',
+    'openclaw skills info "$skill" --json > "$stage/info.json"',
+    'openclaw skills check --json > "$stage/check.json"',
+    'grep -Fq -- "\\"$skill\\"" "$stage/list.json"',
+    'grep -Fq -- "\\"$skill\\"" "$stage/check.json"',
+    'grep -Fq -- "$skill" "$stage/info.json"',
+    'grep -Fq -- "$target" "$stage/info.json"',
+    'safe_tree "$target" || { echo VERIFY_FAILED; exit 4; }',
+    'installed="$(digest_tree "$target" "$stage/installed.manifest")"',
+    '[ "$installed" = "$expected" ] || { echo VERIFY_FAILED; exit 4; }',
+    'mkdir -p -- "$receipt_dir"',
+    'chmod 700 "$receipt_dir"',
+    'printf "%s\\n" "$installed" > "$stage/receipt"',
+    'chmod 600 "$stage/receipt"',
+    'mv -f -- "$stage/receipt" "$receipt"',
+    'if [ -n "$force" ]; then printf "UPDATED %s\\n" "$installed"; else printf "INSTALLED %s\\n" "$installed"; fi',
+  ].join("; ");
+}
+
+/**
+ * Securely stage a host snapshot and delegate OpenClaw workspace publication,
+ * rollback, precedence, and activation to the pinned native installer.
+ */
+export function installOpenClawSkill(
+  ctx: SshContext,
+  localDir: string,
+  paths: SkillPaths,
+  skillName: string,
+  opts: {
+    beforeSnapshotFileRead?: (relativePath: string) => void;
+    beforeSnapshotRootRead?: () => void;
+    expectedRootIdentity?: SkillRootIdentity;
+    sshExecImpl?: typeof sshExec;
+  } = {},
+): FreshSharedSkillInstallResult {
+  let expectedRootIdentity = opts.expectedRootIdentity;
+  if (!expectedRootIdentity) {
+    try {
+      const rootStat = fs.lstatSync(localDir);
+      if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+        return { success: false, uploaded: 0, reason: "snapshot_failed" };
+      }
+      expectedRootIdentity = { dev: rootStat.dev, ino: rootStat.ino };
+    } catch {
+      return { success: false, uploaded: 0, reason: "snapshot_failed" };
+    }
+  }
+  const collected = collectFiles(localDir);
+  if (
+    collected.files.length === 0 ||
+    collected.unsafePaths.length > 0 ||
+    collected.unsupportedPaths.length > 0
+  ) {
+    return { success: false, uploaded: 0, reason: "snapshot_failed" };
+  }
+  const snapshot = createSkillArchiveSnapshot(localDir, collected.files, expectedRootIdentity, {
+    beforeSnapshotFileRead: opts.beforeSnapshotFileRead,
+    beforeSnapshotRootRead: opts.beforeSnapshotRootRead,
+  });
+  if (
+    !snapshot ||
+    snapshot.skillName !== skillName ||
+    !SHA256_RE.test(snapshot.contentDigest)
+  ) {
+    return { success: false, uploaded: 0, reason: "snapshot_failed" };
+  }
+  const result = (opts.sshExecImpl ?? sshExec)(
+    ctx,
+    buildOpenClawNativeInstallScript(paths, skillName, snapshot.contentDigest),
+    { input: snapshot.archive, timeout: 120_000 },
+  );
+  const success =
+    result?.status === 0 &&
+    (result.stdout === `INSTALLED ${snapshot.contentDigest}` ||
+      result.stdout === `UPDATED ${snapshot.contentDigest}`);
+  if (success) {
+    return {
+      success: true,
+      uploaded: snapshot.files.length,
+      contentDigest: snapshot.contentDigest,
+    };
+  }
+  return {
+    success: false,
+    uploaded: 0,
+    reason:
+      result?.status === 2 && result.stdout === "COLLISION"
+        ? "destination_exists"
+        : result?.status === 3 && result.stdout === "CAPABILITY_MISSING"
+          ? "native_capability_missing"
+          : result?.status === 4 && result.stdout === "VERIFY_FAILED"
+            ? "verification_failed"
+            : "remote_state_unknown",
   };
 }
 
