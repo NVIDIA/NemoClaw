@@ -52,9 +52,8 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 60 entries", () => {
-      // 54 visible + 8 hidden (shields×3 + config get/set/rotate-token +
-      // inference get/set).
+    it("returns exactly 59 entries", () => {
+      // 54 visible + 5 hidden (config get/set/rotate-token + inference get/set).
       // 54 visible includes the sessions group (root + list + reset + delete +
       // export), the agents quartet (add + apply + delete + list), the
       // singular `agent` passthrough that forwards to `openclaw agent`, the
@@ -62,7 +61,7 @@ describe("command-registry", () => {
       // container lifecycle pair (#6026), the policy baseline exclude + restore
       // pair, plus five MCP bridge display entries under the `mcp` parent and
       // the gateway restart command under the `gateway` parent.
-      expect(sandboxCommands()).toHaveLength(62);
+      expect(sandboxCommands()).toHaveLength(59);
     });
 
     it.each(sandboxCommands())("$usage has sandbox scope", (cmd) => {
@@ -81,9 +80,9 @@ describe("command-registry", () => {
   });
 
   describe("hidden commands", () => {
-    it("exactly 14 hidden commands: help/version aliases + shields + config + inference", () => {
+    it("keeps exactly 11 help, version, config, and inference aliases hidden", () => {
       const hidden = COMMANDS.filter((c) => c.hidden);
-      expect(hidden).toHaveLength(14);
+      expect(hidden).toHaveLength(11);
       const usages = hidden.map((c) => c.usage).sort();
       expect(usages).toEqual([
         "nemoclaw --help",
@@ -95,9 +94,6 @@ describe("command-registry", () => {
         "nemoclaw <name> config set",
         "nemoclaw <name> inference get",
         "nemoclaw <name> inference set",
-        "nemoclaw <name> shields down",
-        "nemoclaw <name> shields status",
-        "nemoclaw <name> shields up",
         "nemoclaw help",
         "nemoclaw version",
       ]);
@@ -160,7 +156,6 @@ describe("command-registry", () => {
 
     it("excludes hidden commands", () => {
       const list = canonicalUsageList();
-      expect(list).not.toContain("nemoclaw <name> shields down");
       expect(list).not.toContain("nemoclaw <name> config get");
       expect(list).not.toContain("nemoclaw <name> config set");
       expect(list).not.toContain("nemoclaw <name> config rotate-token");
@@ -212,9 +207,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 31 unique action tokens including empty string", () => {
+    it("returns exactly 30 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(31);
+      expect(tokens).toHaveLength(30);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "agent",
@@ -240,7 +235,6 @@ describe("command-registry", () => {
         "recover",
         "snapshot",
         "share",
-        "shields",
         "config",
         "channels",
         "mcp",

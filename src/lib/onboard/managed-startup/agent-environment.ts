@@ -447,7 +447,12 @@ function mapHermesProfile(
     NEMOCLAW_WEB_SEARCH_PROVIDER: profile.agentConfig.webSearch.provider,
   };
 
-  const runtimeEnvironment: MutableEnvironment = { ...configurationEnvironment };
+  const runtimeEnvironment: MutableEnvironment = {
+    ...configurationEnvironment,
+    HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
+    HERMES_HOME: "/sandbox/.hermes",
+    HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
+  };
   delete runtimeEnvironment.NEMOCLAW_MESSAGING_PLAN_B64;
   runtimeEnvironment.NEMOCLAW_DASHBOARD_PORT =
     profile.dashboard.publicPort === null ? "" : String(profile.dashboard.publicPort);

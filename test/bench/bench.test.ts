@@ -412,7 +412,7 @@ describe("trace ingestion", () => {
     );
     expect(metric.status).toBe("unsupported");
     expect(metric.stats).toBeUndefined();
-    expect(metric.reason).toContain("not request-path shield overhead");
+    expect(metric.reason).toContain("not request-path policy enforcement overhead");
     expect(metric.context).toMatchObject({
       provider: "nvidia",
       agent: "openclaw",
@@ -528,7 +528,7 @@ describe("trace ingestion", () => {
 describe("unsupportedTraceMetric", () => {
   it.each([
     "sandbox-cold-start",
-    "policy-shield-overhead",
+    "policy-application-overhead",
   ] as const)("describes %s as unsupported with guidance", (id) => {
     const metric = unsupportedTraceMetric(id);
     expect(metric.id).toBe(id);

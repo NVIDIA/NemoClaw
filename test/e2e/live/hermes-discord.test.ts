@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { HERMES_DISCORD_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";

@@ -36,6 +36,24 @@ KEY_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 HERMES_API_PORT_RANGE_START = 8642
 HERMES_API_PORT_RANGE_END = 8652
+MANAGED_HERMES_HOME = "/sandbox/.hermes"
+MANAGED_BUNDLED_PLUGINS = "/opt/hermes/plugins"
+ENV_FILE_DENIED_CONTROL_KEYS = frozenset(
+    {
+        "BASH_ENV",
+        "ENV",
+        "HERMES_BUNDLED_PLUGINS",
+        "HERMES_CONFIG",
+        "HERMES_ENABLE_PROJECT_PLUGINS",
+        "HERMES_ENV",
+        "HERMES_HOME",
+        "HERMES_LAZY_INSTALL_TARGET",
+        "HOME",
+        "PATH",
+        "VIRTUAL_ENV",
+    }
+)
+ENV_FILE_DENIED_CONTROL_PREFIXES = ("DYLD_", "LD_", "PIP_", "PYTHON", "UV_")
 
 ENV_FILE_ALLOWED_NONSECRET_KEYS = frozenset({"API_SERVER_HOST", "API_SERVER_PORT"})
 # API_SERVER_KEY is the bearer token Hermes' own api_server (Hermes v0.16.0+)
@@ -124,6 +142,20 @@ def _sandbox_identity() -> tuple[int, int] | None:
         return None
 
 
+def _expected_lazy_install_target() -> str:
+    effective_uid = os.geteuid()
+    if effective_uid == 0:
+        return "/run/nemoclaw/hermes-gateway-lazy-packages"
+    try:
+        if effective_uid == pwd.getpwnam("gateway").pw_uid:
+            return "/run/nemoclaw/hermes-gateway-lazy-packages"
+    except KeyError:
+        # Development hosts commonly have no gateway account; their current
+        # user exercises the same-identity sandbox contract.
+        pass
+    return "/sandbox/.hermes/lazy-packages"
+
+
 def _validate_env_file_metadata(path: str, st: os.stat_result) -> None:
     if not stat.S_ISREG(st.st_mode):
         raise UnsafeEnvInputError("Hermes env path is not a regular file")
@@ -191,12 +223,6 @@ def _validate_directory_descriptor(path: str, fd: int) -> tuple[int, int, int, i
                     {
                         (sandbox_uid, sandbox_gid, 0o700),
                         (sandbox_uid, sandbox_gid, 0o3770),
-                        # Shields-up config root: root-owned in the sandbox
-                        # group with set-id/sticky, so Hermes keeps writing its
-                        # top-level runtime state while the sticky bit stops the
-                        # sandbox identity from unlinking the sealed root-owned
-                        # config (#7865). Same shape `/sandbox` uses above.
-                        (0, sandbox_gid, 0o3770),
                     }
                 )
             if (st.st_uid, st.st_gid, mode) not in allowed:
@@ -477,7 +503,9 @@ def validate_env_file(path: str) -> int:
             if len(violations) < MAX_VIOLATIONS:
                 violations.append(f"{key} (line {lineno})")
             continue
-        if key == "HERMES_LAZY_INSTALL_TARGET":
+        if key in ENV_FILE_DENIED_CONTROL_KEYS or key.startswith(
+            ENV_FILE_DENIED_CONTROL_PREFIXES
+        ):
             violation_count += 1
             if len(violations) < MAX_VIOLATIONS:
                 violations.append(f"{key} (line {lineno})")
@@ -499,10 +527,9 @@ def validate_env_file(path: str) -> int:
         return 0
     _emit_violations(
         "[SECURITY] Refusing Hermes startup because /sandbox/.hermes/.env "
-        "contains raw secret-shaped values or OpenShell supervisor-only identity "
-        "variables, or declares HERMES_LAZY_INSTALL_TARGET. Store credentials "
-        "in OpenShell providers, keep the managed lazy-install target outside "
-        "the sealed env file, and keep only "
+        "contains raw secret-shaped values, OpenShell supervisor-only identity "
+        "variables, or interpreter, installer, and plugin path controls. Store credentials "
+        "in OpenShell providers, keep process controls outside the generated env file, and keep only "
         "openshell resolver placeholders in the sandbox.",
         violations,
         violation_count - len(violations),
@@ -514,17 +541,31 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
     source = os.environ if env is None else env
     violations: list[str] = []
     violation_count = 0
-    if source.get("HERMES_LAZY_INSTALL_TARGET") != "/sandbox/.hermes/lazy-packages":
+    expected_lazy_target = _expected_lazy_install_target()
+    if source.get("HERMES_LAZY_INSTALL_TARGET") != expected_lazy_target:
         violation_count += 1
         if len(violations) < MAX_VIOLATIONS:
             violations.append("HERMES_LAZY_INSTALL_TARGET")
+    if source.get("HERMES_HOME") != MANAGED_HERMES_HOME:
+        violation_count += 1
+        if len(violations) < MAX_VIOLATIONS:
+            violations.append("HERMES_HOME")
+    if source.get("HERMES_BUNDLED_PLUGINS") != MANAGED_BUNDLED_PLUGINS:
+        violation_count += 1
+        if len(violations) < MAX_VIOLATIONS:
+            violations.append("HERMES_BUNDLED_PLUGINS")
     for key, value in sorted(source.items()):
         if key in OPENSHELL_SUPERVISOR_ONLY_ENV_KEYS:
             violation_count += 1
             if len(violations) < MAX_VIOLATIONS:
                 violations.append(key)
             continue
-        if key == "HERMES_LAZY_INSTALL_TARGET":
+        if key in {"HERMES_LAZY_INSTALL_TARGET", "HERMES_HOME", "HERMES_BUNDLED_PLUGINS"}:
+            continue
+        if key in {"HERMES_CONFIG", "HERMES_ENABLE_PROJECT_PLUGINS", "HERMES_ENV"}:
+            violation_count += 1
+            if len(violations) < MAX_VIOLATIONS:
+                violations.append(key)
             continue
         if key == "NEMOCLAW_HERMES_API_PORT":
             if is_assigned_hermes_api_port(value):
@@ -553,7 +594,7 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
     _emit_violations(
         "[SECURITY] Refusing Hermes startup because the process environment "
         "contains raw secret-shaped values or OpenShell supervisor-only identity "
-        "variables, or does not use the managed HERMES_LAZY_INSTALL_TARGET. "
+        "variables, path controls, or the identity-specific managed Hermes paths. "
         "Store credentials in OpenShell providers and keep only "
         "openshell resolver placeholders in the sandbox.",
         violations,

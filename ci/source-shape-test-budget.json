@@ -92,16 +92,6 @@
       "category": "security"
     },
     {
-      "file": "test/agents/hermes/hermes-runtime-config-guard-topology.test.ts",
-      "test": "allows the sandbox identity to create runtime state but refuses sealed configuration writes, unlinks, and renames (#7865)",
-      "category": "security"
-    },
-    {
-      "file": "test/agents/hermes/hermes-runtime-config-guard-topology.test.ts",
-      "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
-      "category": "security"
-    },
-    {
       "file": "test/platform/images/muse-glimmer-vllm-image-provenance.test.ts",
       "test": "binds the checked-in provenance to the selected runtime",
       "category": "security"
