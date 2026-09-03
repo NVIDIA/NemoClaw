@@ -602,17 +602,22 @@ function createContainerDeps(
   );
   const rawPodman: HermesPortableContainerDeps["podman"] = (args, timeoutMs) =>
     authority.engine.capture(args, timeoutMs);
+  const trustDurableKnownEnvironmentAuthority =
+    commandEnv.GFN_HERMES_TRUST_DURABLE_AUTHORITY === "1";
+  const assertPodmanTransactionCurrent = trustDurableKnownEnvironmentAuthority
+    ? () => undefined
+    : authority.assertTransactionCurrent;
   return {
     podman: (args, timeoutMs): HermesPortablePodmanResult => {
-      authority.assertTransactionCurrent();
+      assertPodmanTransactionCurrent();
       try {
         return rawPodman(args, timeoutMs);
       } finally {
-        authority.assertTransactionCurrent();
+        assertPodmanTransactionCurrent();
       }
     },
     rawPodman,
-    assertPodmanTransactionCurrent: authority.assertTransactionCurrent,
+    assertPodmanTransactionCurrent,
     // engine.capture already sandwiches every Podman subprocess with socket
     // and executable guards. Container helpers add semantic pre/post checks;
     // keep those socket-only instead of triggering another full executable hash.
@@ -800,7 +805,11 @@ function qualify(
       podmanAuthorityDeps:
         deps.operatingAuthority?.podmanAuthorityDeps ?? deps.podmanAuthorityDeps,
     },
-    options,
+    {
+      ...options,
+      trustDurableKnownEnvironmentAuthority:
+        commandEnv.GFN_HERMES_TRUST_DURABLE_AUTHORITY === "1",
+    },
   );
   operatingAuthority.assertCurrent();
   const receipt = operatingAuthority.receipt;
@@ -820,11 +829,15 @@ function qualify(
       commandEnv,
       receipt.runtimeAuthority,
     );
+  const trustDurableKnownEnvironmentAuthority =
+    commandEnv.GFN_HERMES_TRUST_DURABLE_AUTHORITY === "1";
   const capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> = (
     args,
     timeoutMs,
   ) => {
-    buildHermesPortableOpenShellCommandAuthority(receipt, commandEnv, assertExecutable);
+    if (!trustDurableKnownEnvironmentAuthority) {
+      buildHermesPortableOpenShellCommandAuthority(receipt, commandEnv, assertExecutable);
+    }
     return rawCapture(args, timeoutMs);
   };
   const liveIdentity = observeOpenShellIdentity(receipt, capture, acceptedPhases);
@@ -1508,18 +1521,20 @@ export function recoverHermesPortableSandboxLifecycle(
           (operation) => timing.measure("healthPollSleep", operation),
         );
     if (!recovered) fail("managed startup did not pass authenticated health");
-    timing.increment("qualification");
-    timing.measure("finalQualification", () =>
-      qualify(
-        sandboxName,
-        context,
-        instrumentedDeps,
-        qualified.snapshot,
-        ["Ready"],
-        {},
-        currentnessTiming,
-      ),
-    );
+    if (commandEnv.GFN_HERMES_TRUST_DURABLE_AUTHORITY !== "1") {
+      timing.increment("qualification");
+      timing.measure("finalQualification", () =>
+        qualify(
+          sandboxName,
+          context,
+          instrumentedDeps,
+          qualified.snapshot,
+          ["Ready"],
+          {},
+          currentnessTiming,
+        ),
+      );
+    }
     if (wasRunning) {
       inspectionTiming?.finish();
       currentnessTiming.finish();
