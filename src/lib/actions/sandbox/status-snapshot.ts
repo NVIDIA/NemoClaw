@@ -292,6 +292,7 @@ interface CollectSandboxStatusSnapshotDeps {
   probeSandboxInferenceInvocationImpl?: ProbeSandboxInferenceInvocation;
   delayInferenceRecoveryProbe?: DelayInferenceRecoveryProbe;
   reportInferenceProbeError?: (message: string) => void;
+  reportInferenceProbeRetry?: (message: string) => void;
   probeTerminalRuntimeHealth?: ProbeTerminalRuntimeHealth;
   recoverSandboxProcesses?: RecoverSandboxProcesses;
   reconcile?: ReconcileSandboxGatewayState;
@@ -388,6 +389,33 @@ function reportInferenceProbeError(error: unknown, writer: (message: string) => 
   const detail = sanitizedStatusDetail(error);
   writer(
     `  Warning: the authoritative inference.local probe could not run: ${detail || "unknown error"}`,
+  );
+}
+
+function reportInferenceProbeRetry(
+  gatewayChain: Awaited<ReturnType<ProbeSandboxInferenceGatewayHealth>>,
+  invocation: ReturnType<typeof runSandboxInferenceInvocationProbe> | null,
+  delayMs: number,
+  attempt: number,
+  writer: (message: string) => void,
+): void {
+  let reason = "route probe did not pass";
+  if (gatewayChain?.ok) {
+    reason = "request probe did not pass";
+    if (
+      invocation &&
+      !invocation.ok &&
+      invocation.httpStatus !== null &&
+      (invocation.httpStatus < 200 || invocation.httpStatus >= 300)
+    ) {
+      reason = `request returned HTTP ${invocation.httpStatus}`;
+    }
+  } else if (gatewayChain && gatewayChain.httpStatus > 0) {
+    reason = `route probe returned HTTP ${gatewayChain.httpStatus}`;
+  }
+  writer(
+    `  Inference ${reason}; retrying route and request in ${delayMs / 1_000}s ` +
+      `(attempt ${attempt + 1}/${INFERENCE_PROBE_ATTEMPTS})...`,
   );
 }
 
@@ -637,6 +665,14 @@ export async function collectSandboxStatusSnapshot(
             { length: INFERENCE_PROBE_ATTEMPTS - 1 },
             () => INFERENCE_PROBE_RETRY_DELAY_MS,
           ),
+          onRetry: ({ gatewayChain: chain, invocation: result }, delayMs, attempt) =>
+            reportInferenceProbeRetry(
+              chain,
+              result,
+              delayMs,
+              attempt,
+              opts.deps?.reportInferenceProbeRetry ?? console.error,
+            ),
           sleep: opts.deps?.delayInferenceRecoveryProbe ?? sleep,
         },
       );

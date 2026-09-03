@@ -441,7 +441,7 @@ Run `openshell sandbox list` and inspect the row for `headless-agent`. `NotReady
 
 ### Inference Returns HTTP 5xx
 
-An HTTP status from `500` through `599` makes the authoritative `inference.local` route unhealthy. Check the configured provider and host egress, then run:
+A final HTTP status from `500` through `599` makes the authoritative `inference.local` route unhealthy. HTTP `502`, `503`, and `504` report unhealthy only after all transient attempts fail. Check the configured provider and host egress, then run:
 
 ```bash
 $$nemoclaw headless-agent doctor

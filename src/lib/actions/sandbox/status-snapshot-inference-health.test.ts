@@ -42,6 +42,7 @@ function snapshotDeps(
       probeProviderHealthImpl: () => providerHealth,
       probeSandboxInferenceGatewayHealthImpl: async () => gateway,
       probeSandboxInferenceInvocationImpl: () => invocation,
+      reportInferenceProbeRetry: vi.fn(),
     },
   };
 }
@@ -759,6 +760,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         })
         .mockReturnValueOnce({ ok: true });
       const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+      const reportInferenceProbeRetry = vi.fn();
       const recoverSandboxProcesses = vi.fn(() => ({
         checked: true,
         wasRunning: true,
@@ -773,6 +775,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
           probeSandboxInferenceGatewayHealthImpl,
           probeSandboxInferenceInvocationImpl,
           recoverSandboxProcesses,
+          reportInferenceProbeRetry,
         },
       });
 
@@ -780,6 +783,11 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledTimes(2);
       expect(delayInferenceRecoveryProbe).toHaveBeenCalledOnce();
       expect(delayInferenceRecoveryProbe).toHaveBeenCalledWith(2_000);
+      expect(reportInferenceProbeRetry).toHaveBeenCalledOnce();
+      expect(reportInferenceProbeRetry).toHaveBeenCalledWith(
+        `  Inference request returned HTTP ${httpStatus}; retrying route and request in 2s ` +
+          "(attempt 2/3)...",
+      );
       expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
     },
   );
@@ -816,6 +824,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       httpStatus: 503,
     }));
     const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+    const reportInferenceProbeRetry = vi.fn();
     const recoverSandboxProcesses = vi.fn(() => ({
       checked: true,
       wasRunning: true,
@@ -830,6 +839,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         probeSandboxInferenceGatewayHealthImpl,
         probeSandboxInferenceInvocationImpl,
         recoverSandboxProcesses,
+        reportInferenceProbeRetry,
       },
     });
 
@@ -864,6 +874,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => healthy);
     const probeSandboxInferenceInvocationImpl = vi.fn(() => refused);
     const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+    const reportInferenceProbeRetry = vi.fn();
     const recoverSandboxProcesses = vi.fn(() => ({
       checked: true,
       wasRunning: true,
@@ -878,6 +889,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         probeSandboxInferenceGatewayHealthImpl,
         probeSandboxInferenceInvocationImpl,
         recoverSandboxProcesses,
+        reportInferenceProbeRetry,
       },
     });
 
@@ -885,6 +897,10 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledTimes(3);
     expect(delayInferenceRecoveryProbe).toHaveBeenCalledTimes(2);
     expect(delayInferenceRecoveryProbe).toHaveBeenCalledWith(2_000);
+    expect(reportInferenceProbeRetry.mock.calls).toEqual([
+      ["  Inference request returned HTTP 503; retrying route and request in 2s (attempt 2/3)..."],
+      ["  Inference request returned HTTP 503; retrying route and request in 2s (attempt 3/3)..."],
+    ]);
     expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unhealthy" });
     expect(snapshot.inferenceHealth?.subprobes).toContainEqual(
       expect.objectContaining({ probeLabel: "route reachability", okLabel: "reachable" }),
@@ -961,6 +977,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     });
     const probeSandboxInferenceInvocationImpl = vi.fn(() => testCase.invocation);
     const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+    const reportInferenceProbeRetry = vi.fn();
     const recoverSandboxProcesses = vi.fn(() => ({
       checked: true,
       wasRunning: true,
@@ -974,11 +991,13 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         delayInferenceRecoveryProbe,
         probeSandboxInferenceInvocationImpl,
         recoverSandboxProcesses,
+        reportInferenceProbeRetry,
       },
     });
 
     expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledOnce();
     expect(delayInferenceRecoveryProbe).not.toHaveBeenCalled();
+    expect(reportInferenceProbeRetry).not.toHaveBeenCalled();
     expect(snapshot.inferenceHealth).toMatchObject({
       ok: false,
       failureLabel: testCase.failureLabel,
