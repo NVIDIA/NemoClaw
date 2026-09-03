@@ -401,24 +401,24 @@ function Invoke-NativeCredentialManagerRoundTrip {
         }
     }
 
-    $write = & $invokeHelper @('--credential-write', 'local') $secret
+    $write = & $invokeHelper -Arguments @('--credential-write', 'local') -StandardInput $secret
     if ($write.exitCode -ne 0 -or -not [string]::IsNullOrEmpty($write.stdout) -or
         -not [string]::IsNullOrEmpty($write.stderr)) {
         Fail-PackageQualification 'The native Windows credential helper did not store a test credential.'
     }
     try {
-        $read = & $invokeHelper @('--credential-read', 'local')
+        $read = & $invokeHelper -Arguments @('--credential-read', 'local')
         if ($read.exitCode -ne 0 -or $read.stdout -cne $secret -or
             -not [string]::IsNullOrEmpty($read.stderr)) {
             Fail-PackageQualification 'Windows Credential Manager did not return the exact test credential.'
         }
     } finally {
-        $delete = & $invokeHelper @('--credential-delete', 'local')
+        $delete = & $invokeHelper -Arguments @('--credential-delete', 'local')
         if ($delete.exitCode -ne 0) {
             Fail-PackageQualification 'The native Windows credential helper did not delete its test credential.'
         }
     }
-    $absent = & $invokeHelper @('--credential-read', 'local')
+    $absent = & $invokeHelper -Arguments @('--credential-read', 'local')
     if ($absent.exitCode -eq 0 -or -not [string]::IsNullOrEmpty($absent.stdout)) {
         Fail-PackageQualification 'The native Windows credential helper left its test credential behind.'
     }
