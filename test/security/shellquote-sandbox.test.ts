@@ -90,6 +90,15 @@ process.env.NEMOCLAW_OPENSHELL_BIN = ${JSON.stringify(path.join(fakeBin, "opensh
 const commands = [];
 const asText = (command) => Array.isArray(command) ? command.join(" ") : String(command);
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture();
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+childProcess.spawn = (...args) => {
+  if (!forwardService.recordSpawn(args)) throw new Error("unexpected spawned process");
+  const child = new EventEmitter();
+  child.unref = () => {};
+  return child;
+};
 createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   const text = asText(command);
@@ -117,7 +126,7 @@ runner.runCapture = (command) => {
   const text = asText(command);
   const createdIdentity = createdSandbox.capture(command);
   if (createdIdentity !== null) return createdIdentity;
-  if (text.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (text.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   if (text.includes("sandbox exec") && text.includes("http://localhost:") && text.includes("/health")) return "200";
   if (text === "uname -r") return "6.8.0";
   const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);

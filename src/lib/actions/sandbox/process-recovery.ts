@@ -37,6 +37,7 @@ import { buildSubprocessEnv } from "../../subprocess-env";
 import {
   ensureHermesDashboardPortForwardIfEnabled,
   ensureSandboxPortForward,
+  createHermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryError,
   isSandboxForwardHealthy,
   prepareHermesPortableLaunchForwards,
@@ -44,11 +45,7 @@ import {
   recoverHermesPortableLaunchForwards,
   recoverMessagingHostForward,
   resolveSandboxDashboardPort,
-  resolveSandboxForwardGatewayName,
-  resolveSandboxLaunchForwardPorts,
   resolveSandboxHealthProbeUrl,
-  type SandboxForwardRecoveryFailure,
-  type SandboxForwardRecoveryFailureReason,
   verifyHermesPortableLaunchForwards,
   type HermesPortableForwardRecoveryFailure,
   type HermesPortableForwardRecoveryInput,
@@ -88,14 +85,12 @@ import {
   recoverRegisteredRuntimeProviderSandbox,
   relaunchManagedSupervisorSession,
   usesManagedGatewayController,
+  usesLegacyManagedGatewayRecovery,
 } from "./supervisor-relaunch";
-export type { SandboxForwardHealth, SandboxForwardListEntry } from "./forward-health";
-export {
-  classifyForwardHealthWithReachability,
-  classifySandboxForwardHealth,
-} from "./forward-health";
+export type { SandboxForwardHealth } from "./forward-health";
 export { resolveSandboxDashboardPort, resolveSandboxLaunchForwardPorts } from "./forward-recovery";
 export {
+  createHermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryError,
   prepareHermesPortableLaunchForwards,
   recoverHermesPortableLaunchForwards,
@@ -109,6 +104,7 @@ export type {
   HermesPortableForwardVerificationResult,
   PreparedHermesPortableForwardRecovery,
 };
+
 export type {
   GatewayRestartDeps,
   GatewayRestartFailureLayer,
@@ -164,60 +160,6 @@ function auxiliaryRecoveryFailureDetail(results: AuxiliaryRecoveryResult[]): str
 
 function anyAuxiliaryRecovered(results: AuxiliaryRecoveryResult[]): boolean {
   return results.some((result) => result.recovered === true);
-}
-
-function primaryForwardRecoveryFailureDetail(failure: SandboxForwardRecoveryFailure): string {
-  const target = `the primary dashboard/API host forward for sandbox '${failure.sandboxName}' on port ${failure.port}`;
-  switch (failure.reason) {
-    case "forward-readiness-retry-limit":
-      return `${target} reached the OpenShell readiness retry limit`;
-    case "forward-listener-retry-limit":
-      return `${target} did not recover because the listener did not open within the retry limit`;
-    case "port-ownership-conflict":
-      return `${target} did not recover because another sandbox owns the port`;
-    case "forward-state-unavailable":
-      return `${target} could not be verified because OpenShell forward state became unavailable`;
-    case "forward-ownership-unverified":
-      return `${target} started a listener, but OpenShell did not confirm its ownership`;
-    case "forward-start-failure":
-      return `${target} did not recover because OpenShell rejected the start`;
-  }
-}
-
-export function primaryForwardRecoveryGuidance(
-  sandboxName: string,
-  port: number,
-  reason?: SandboxForwardRecoveryFailureReason,
-): string {
-  const quotedSandboxName = shellQuote(sandboxName);
-  const gatewayName = shellQuote(resolveSandboxForwardGatewayName(sandboxName));
-  const sandboxGetCommand = `\`openshell sandbox get -g ${gatewayName} ${quotedSandboxName}\``;
-  const forwardListCommand = `\`openshell forward list --gateway ${gatewayName}\``;
-  const forwardStartCommand = `\`openshell forward start --background ${port} ${quotedSandboxName} --gateway ${gatewayName}\``;
-  const recoverCommand = `\`nemoclaw ${quotedSandboxName} recover\``;
-  switch (reason) {
-    case "forward-readiness-retry-limit":
-      return `${sandboxGetCommand} can report Ready or Running before forwarding is ready. Run ${forwardListCommand}. If port ${port} has no owner, run ${forwardStartCommand} to read the current OpenShell error. Correct the error, then rerun ${recoverCommand}.`;
-    case "port-ownership-conflict":
-      return `Run ${forwardListCommand} and identify the current owner of port ${port} before you change either sandbox. Then rerun ${recoverCommand}.`;
-    case "forward-state-unavailable":
-      return `Run ${forwardListCommand}. After OpenShell reports forward state, rerun ${recoverCommand}.`;
-    case "forward-ownership-unverified":
-      return `Run ${forwardListCommand} and confirm that '${sandboxName}' owns port ${port}, then rerun ${recoverCommand}.`;
-    case "forward-listener-retry-limit":
-      return `Run ${forwardListCommand}. If port ${port} has no owner, run ${forwardStartCommand}, then rerun ${recoverCommand}.`;
-    case "forward-start-failure":
-      return `Run ${forwardListCommand}. If port ${port} has no owner, run ${forwardStartCommand} to read the OpenShell error. Correct the error, then rerun ${recoverCommand}.`;
-    default:
-      return `Run ${forwardStartCommand} manually and rerun ${recoverCommand}.`;
-  }
-}
-
-export function auxiliaryForwardRecoveryGuidance(sandboxName: string): string {
-  const gatewayName = shellQuote(resolveSandboxForwardGatewayName(sandboxName));
-  const forwardListCommand = `\`openshell forward list --gateway ${gatewayName}\``;
-  const recoverCommand = `\`nemoclaw ${shellQuote(sandboxName)} recover\``;
-  return `Run ${forwardListCommand}. Inspect the failed host forward and correct its error, then rerun ${recoverCommand}.`;
 }
 
 function getSandboxHealthProbeUrl(sandboxName: string): string {
@@ -1432,7 +1374,7 @@ function isHermesAgent(
  * whose OpenClaw processes are not running. Also re-establishes the
  * host-side dashboard port-forward when it has gone dead independently
  * of the gateway. Returns an object describing the outcome:
- * `{ checked, wasRunning, recovered, forwardRecovered, forwardRecoveryFailed?, forwardRecoveryFailureScope?, recoveryFailureDetail?, secretBoundaryRefused?, secretBoundaryReason? }`.
+ * `{ checked, wasRunning, recovered, forwardRecovered, forwardRecoveryFailed?, recoveryFailureDetail?, secretBoundaryRefused?, secretBoundaryReason? }`.
  * `onRecoveryFailureLayer` reports the classified managed-restart failure so a
  * quiet caller (`recover`, `connect --probe-only`) can still explain why
  * recovery is not retryable instead of printing a generic "check the gateway
@@ -1449,7 +1391,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     isSandboxGatewayRunningImpl = isSandboxGatewayRunning,
     waitForRecreatedSandboxOpenShellReadyImpl = waitForRecreatedSandboxOpenShellReady,
     isWsl: isWslOverride,
-    onForwardRecoveryFailure,
     onRecoveryFailureLayer,
     probeTiming,
   }: {
@@ -1460,7 +1401,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     isWsl?: boolean;
-    onForwardRecoveryFailure?: (failure: SandboxForwardRecoveryFailure) => void;
     onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null, detail?: string) => void;
     probeTiming?: ProcessRecoveryProbeTiming;
   } = {},
@@ -1515,15 +1455,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         console.log(`  Dashboard port forward to '${sandboxName}' is missing or dead.`);
         console.log("  Re-establishing...");
       }
-      const primaryForwardFailure: { value?: SandboxForwardRecoveryFailure } = {};
       const forwardRecovered = measure("forward", () =>
-        ensureSandboxPortForward(sandboxName, {
-          isWsl: isWslOverride,
-          onFailure: (failure) => {
-            primaryForwardFailure.value = failure;
-            onForwardRecoveryFailure?.(failure);
-          },
-        }),
+        ensureSandboxPortForward(sandboxName, { isWsl: isWslOverride }),
       );
       const dashboardForwardRecovered = measure("forward", () =>
         ensureHermesDashboardPortForwardIfEnabled(sandboxName),
@@ -1550,9 +1483,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
         } else {
           console.error("  Failed to re-establish the dashboard port forward.");
-          console.error(
-            `  ${primaryForwardRecoveryGuidance(sandboxName, recoveryPort, primaryForwardFailure.value?.reason)}`,
-          );
+          console.error(`  Run \`nemoclaw ${sandboxName} recover\` after resolving the error.`);
         }
       }
       if (!forwardRecovered) {
@@ -1564,8 +1495,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           forwardRecovered: false,
           forwardRecoveryFailed: true,
           forwardRecoveryFailureDetail:
-            (primaryForwardFailure.value &&
-              primaryForwardRecoveryFailureDetail(primaryForwardFailure.value)) ??
             "the primary dashboard/API host forward could not be re-established",
         };
       }
@@ -1579,7 +1508,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           forwardRecovered: false,
           forwardRecoveryFailed: true,
           forwardRecoveryFailureDetail: auxiliaryFailureDetail,
-          forwardRecoveryFailureScope: "auxiliary" as const,
         };
       }
       probeTiming?.setForwardAction("restored");
@@ -1588,45 +1516,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         wasRunning: true,
         recovered: false,
         forwardRecovered: forwardRecovered || anyAuxiliaryRecovered(auxiliaryResults),
-      };
-    }
-    if (forwardHealthy === "occupied") {
-      onForwardRecoveryFailure?.({
-        port: recoveryPort,
-        reason: "port-ownership-conflict",
-        sandboxName,
-      });
-      probeTiming?.setForwardAction("failed");
-      if (!quiet) {
-        console.log("");
-        console.error(`  Dashboard port forward for '${sandboxName}' is owned by another sandbox.`);
-        console.error("  Leaving the existing port forward unchanged.");
-      }
-      return {
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: false,
-        forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail:
-          "the primary dashboard/API host forward is owned by another sandbox",
-      };
-    }
-    if (forwardHealthy === null) {
-      onForwardRecoveryFailure?.({
-        port: recoveryPort,
-        reason: "forward-state-unavailable",
-        sandboxName,
-      });
-      probeTiming?.setForwardAction("failed");
-      return {
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: false,
-        forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail:
-          "the primary dashboard/API host forward could not be verified because OpenShell forward state was unavailable",
       };
     }
     const dashboardForwardRecovered = measure("forward", () =>
@@ -1654,7 +1543,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail: auxiliaryFailureDetail,
-        forwardRecoveryFailureScope: "auxiliary" as const,
       };
     }
     probeTiming?.setForwardAction(
@@ -1868,16 +1756,11 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     }
     const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
     if (mcpRefusal) return mcpRefusal;
-    const primaryForwardFailure: { value?: SandboxForwardRecoveryFailure } = {};
     const forwardRecovered = measure("forward", () =>
       ensureSandboxPortForward(sandboxName, {
         afterSuccess: confirmRelaunchedManagedHealthForForward ?? undefined,
         beforeStart: confirmRelaunchedManagedHealthForForward ?? undefined,
         isWsl: isWslOverride,
-        onFailure: (failure) => {
-          primaryForwardFailure.value = failure;
-          onForwardRecoveryFailure?.(failure);
-        },
       }),
     );
     if (!forwardRecovered && relaunchedManagedHealth.failure) {
@@ -1914,9 +1797,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
       } else {
         console.error("  Failed to re-establish the dashboard port forward.");
-        console.error(
-          `  ${primaryForwardRecoveryGuidance(sandboxName, recoveryPort, primaryForwardFailure.value?.reason)}`,
-        );
+        console.error(`  Run \`nemoclaw ${sandboxName} recover\` after resolving the error.`);
       }
     }
     if (!forwardRecovered) {
@@ -1928,8 +1809,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail:
-          (primaryForwardFailure.value &&
-            primaryForwardRecoveryFailureDetail(primaryForwardFailure.value)) ??
           "the primary dashboard/API host forward could not be re-established",
       });
     }
@@ -1943,7 +1822,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail: auxiliaryFailureDetail,
-        forwardRecoveryFailureScope: "auxiliary" as const,
       });
     }
     probeTiming?.setForwardAction("restored");
@@ -1973,7 +1851,6 @@ export function checkAndRecoverSandboxProcesses(
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     isWsl?: boolean;
-    onForwardRecoveryFailure?: (failure: SandboxForwardRecoveryFailure) => void;
     onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null, detail?: string) => void;
     probeTiming?: ProcessRecoveryProbeTiming;
   } = {},
