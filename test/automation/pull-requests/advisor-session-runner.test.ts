@@ -8,6 +8,8 @@ import path from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { RECORD_ADVISOR_FINDINGS_TOOL } from "../../../tools/pr-review-advisor/finding-ledger.mts";
+
 const sdk = vi.hoisted(() => {
   type Listener = (event: unknown) => void;
   type TerminalResponse =
@@ -337,6 +339,7 @@ async function run(
   promptTurns: AdvisorPromptTurn[],
   prepare?: (directory: string) => void,
   additionalReadRoots: string[] = [],
+  additionalTools: ToolDefinition[] = [],
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-session-runner-"));
   tempDirs.push(dir);
@@ -359,6 +362,7 @@ async function run(
       customTool("turn_action"),
       customTool("draft_action"),
       customTool("repair_action"),
+      ...additionalTools,
     ],
   });
 }
@@ -573,13 +577,24 @@ describe("advisor session runner", () => {
       requireToolsBeforeText: undefined,
     };
 
-    const result = await run([turn], undefined, [contextDirectory]);
+    sdk.state.terminalResponses = ["success"];
+    const result = await run(
+      [turn],
+      undefined,
+      [contextDirectory],
+      [customTool(RECORD_ADVISOR_FINDINGS_TOOL)],
+    );
 
     expect(result.turnErrors).toEqual([]);
     expect(sdk.state.readContents).toContain("prepared specialist diff\n");
 
     await expect(
-      run([{ ...turn, requiredReadPaths: [siblingPath] }], undefined, [contextDirectory]),
+      run(
+        [{ ...turn, requiredReadPaths: [siblingPath] }],
+        undefined,
+        [contextDirectory],
+        [customTool(RECORD_ADVISOR_FINDINGS_TOOL)],
+      ),
     ).rejects.toThrow(`Advisor read-only path is outside the workspace: ${siblingPath}`);
   });
 
