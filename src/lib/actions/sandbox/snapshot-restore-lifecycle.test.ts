@@ -111,7 +111,11 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "langchain-deepagents-code" });
     await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(f.restoreDeepAgentsManagedMcpProjectionMock).toHaveBeenCalledWith("alpha", []);
+    expect(f.restoreDeepAgentsManagedMcpProjectionMock).toHaveBeenCalledWith(
+      "alpha",
+      [],
+      expect.objectContaining({ gatewayName: "nemoclaw", workspace: "default" }),
+    );
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
 
     f.restoreDeepAgentsManagedMcpProjectionMock.mockClear();
@@ -202,10 +206,14 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(f.restoreDeepAgentsManagedMcpProjectionMock).toHaveBeenCalledWith("alpha", [
-      expect.objectContaining({ server: "github" }),
-      expect.objectContaining({ server: "jira" }),
-    ]);
+    expect(f.restoreDeepAgentsManagedMcpProjectionMock).toHaveBeenCalledWith(
+      "alpha",
+      [
+        expect.objectContaining({ server: "github" }),
+        expect.objectContaining({ server: "jira" }),
+      ],
+      expect.objectContaining({ gatewayName: "nemoclaw", workspace: "default" }),
+    );
     expect(f.lifecycleMock.events).toEqual(["restore-mcp-projection", "restore-snapshot-state"]);
   });
 
