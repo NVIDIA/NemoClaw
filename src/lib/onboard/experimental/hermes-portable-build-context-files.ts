@@ -43,6 +43,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/plugin/plugin.yaml", mode: "100644" },
   { path: "agents/hermes/runtime-config-guard.py", mode: "100755" },
   { path: "agents/hermes/runtime-boundaries.patch", mode: "100644" },
+  { path: "agents/hermes/secure-dir-skip-chmod.patch", mode: "100644" },
   { path: "agents/hermes/seed-dashboard-config.py", mode: "100755" },
   { path: "agents/hermes/start.sh", mode: "100755" },
   { path: "agents/hermes/validate-cli-adapter.py", mode: "100755" },
