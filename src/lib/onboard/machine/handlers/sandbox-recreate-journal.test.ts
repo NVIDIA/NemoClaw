@@ -124,7 +124,7 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
   });
 
   expect(createSandbox).toHaveBeenCalledOnce();
-  const createIntent = createSandbox.mock.calls[0]?.at(-1);
+  const createIntent = createSandbox.mock.calls[0]?.at(-2);
   expect(createIntent).toMatchObject({
     recreate: true,
     recreateTransaction: {
@@ -272,7 +272,7 @@ it("does not carry a recorded preset list through post-delete onboard resume", a
     liveIdentityFingerprint: null,
   };
   const createSandbox = vi.fn(async (...args: unknown[]) => {
-    const createIntent = args.at(-1);
+    const createIntent = args.at(-2);
     expect(createIntent).toMatchObject({
       recreate: true,
       recreateJournalTargetIntentFingerprint: targetIntentFingerprint,
@@ -441,7 +441,7 @@ it("removes the journaled source image after resuming a registered replacement",
   await handleSandboxState(options);
 
   expect(createSandbox).toHaveBeenCalledTimes(2);
-  expect(createSandbox.mock.calls[1]?.at(-1)).toMatchObject({
+  expect(createSandbox.mock.calls[1]?.at(-2)).toMatchObject({
     recreateTransaction: {
       id: journal?.id,
       targetGeneration: journal?.targetGeneration,
@@ -768,7 +768,7 @@ it("opens the lifecycle journal for a fresh route reservation before creation (#
   const createSandbox = vi.fn(async (...args: unknown[]) => {
     const transaction = session.checkpoint?.sandboxRecreate;
     expect(transaction).toBeDefined();
-    expect(args.at(-1)).toMatchObject({
+    expect(args.at(-2)).toMatchObject({
       recreate: true,
       recreateTransaction: {
         id: transaction?.id,
