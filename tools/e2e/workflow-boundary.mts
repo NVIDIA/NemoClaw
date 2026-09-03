@@ -1050,6 +1050,77 @@ function requireRunDoesNotContain(
   }
 }
 
+function validateCloudOnboardDockerAbsenceBoundary(
+  errors: string[],
+  steps: readonly WorkflowStep[],
+): void {
+  const hideDockerForPodman = requireJobStep(
+    errors,
+    "cloud-onboard",
+    steps,
+    "Hide Docker CLI from native Podman public install",
+  );
+  const runCloudOnboard = requireJobStep(
+    errors,
+    "cloud-onboard",
+    steps,
+    "Run cloud-onboard live Vitest test",
+  );
+  const restoreDockerAfterPodman = requireJobStep(
+    errors,
+    "cloud-onboard",
+    steps,
+    "Restore Docker CLI after native Podman public install",
+  );
+  if (stringValue(hideDockerForPodman?.if) !== "${{ matrix.runtime_provider == 'podman' }}") {
+    errors.push("cloud-onboard Docker removal must run only for native Podman");
+  }
+  if (
+    stringValue(restoreDockerAfterPodman?.if) !==
+    "${{ always() && matrix.runtime_provider == 'podman' }}"
+  ) {
+    errors.push("cloud-onboard Docker restoration must always run for native Podman");
+  }
+  requireRunContains(errors, hideDockerForPodman, "/usr/bin/docker | /usr/local/bin/docker");
+  const moveDockerCli = 'sudo mv -- "${docker_cli}" "${disabled_path}"';
+  const exportDisabledDockerCli = "NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s";
+  const exportDockerCliRestorePath = "NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH=%s";
+  requireRunContains(errors, hideDockerForPodman, moveDockerCli);
+  requireRunContains(errors, hideDockerForPodman, "if command -v docker >/dev/null 2>&1");
+  requireRunContains(errors, hideDockerForPodman, "dockerClientAvailable: false");
+  requireRunContains(errors, hideDockerForPodman, exportDisabledDockerCli);
+  requireRunContains(errors, hideDockerForPodman, exportDockerCliRestorePath);
+  requireRunFragmentBefore(errors, hideDockerForPodman, exportDisabledDockerCli, moveDockerCli);
+  requireRunFragmentBefore(errors, hideDockerForPodman, exportDockerCliRestorePath, moveDockerCli);
+  requireRunContains(
+    errors,
+    restoreDockerAfterPodman,
+    "${RUNNER_TEMP}/nemoclaw-disabled-docker-cli",
+  );
+  requireRunContains(errors, restoreDockerAfterPodman, "/usr/bin/docker | /usr/local/bin/docker");
+  requireRunContains(
+    errors,
+    restoreDockerAfterPodman,
+    'sudo mv -- "${disabled_path}" "${restore_path}"',
+  );
+  requireRunContains(
+    errors,
+    restoreDockerAfterPodman,
+    'test "$(command -v docker)" = "${restore_path}"',
+  );
+  if (
+    hideDockerForPodman &&
+    runCloudOnboard &&
+    restoreDockerAfterPodman &&
+    !(
+      steps.indexOf(hideDockerForPodman) < steps.indexOf(runCloudOnboard) &&
+      steps.indexOf(runCloudOnboard) < steps.indexOf(restoreDockerAfterPodman)
+    )
+  ) {
+    errors.push("cloud-onboard must hide Docker before the live test and restore it afterward");
+  }
+}
+
 function validateLargerRunnerRouting(
   errors: string[],
   jobs: WorkflowRecord,
@@ -1276,15 +1347,15 @@ function validateFreeStandingJobSelector(
     jobName === "external-gateway-health"
       ? ["generate-matrix", "package-openshell-sdk"]
       : jobName === "mcp-bridge-dev"
-      ? ["base-image-publication", "generate-matrix", "openshell-dev-artifact"]
-      : [
-            "mcp-bridge",
-            "openshell-credential-generation-window",
-            "cloud-onboard",
-            "messaging-providers",
-          ].includes(jobName)
-        ? ["base-image-publication", "generate-matrix"]
-        : "generate-matrix";
+        ? ["base-image-publication", "generate-matrix", "openshell-dev-artifact"]
+        : [
+              "mcp-bridge",
+              "openshell-credential-generation-window",
+              "cloud-onboard",
+              "messaging-providers",
+            ].includes(jobName)
+          ? ["base-image-publication", "generate-matrix"]
+          : "generate-matrix";
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} job must depend on generate-matrix`);
   }
@@ -3293,6 +3364,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   ) {
     errors.push("cloud-onboard DCode TUI host dependencies must precede workspace prep");
   }
+  validateCloudOnboardDockerAbsenceBoundary(errors, cloudOnboardSteps);
 
   validateSharedE2eJob(errors, jobs);
   validateStagingBrevLaunchableJob(errors, jobs);
