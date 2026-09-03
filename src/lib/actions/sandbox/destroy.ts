@@ -6,13 +6,13 @@ import path from "node:path";
 
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
-import { isNonInteractiveEnv } from "../../core/non-interactive";
 import { prompt as askPrompt } from "../../credentials/store";
 import {
   type DestroySandboxOptions,
   normalizeDestroySandboxOptions,
 } from "../../domain/lifecycle/options";
 import {
+  isDestroyNonInteractiveEnv,
   resolveDestroyGatewayCleanupDecision,
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
@@ -23,6 +23,12 @@ import {
 } from "../../inference/https-pin-runtime-adapter";
 import { prepareManagedLlamaCppRuntimeCleanupForSandbox } from "../../inference/local-model-profile/cleanup";
 import {
+  isLocalOllamaRouteOwner,
+  loadPersistedOllamaHost,
+  type OllamaUnloadResult,
+  withOllamaModelOwnershipTransaction,
+} from "../../inference/ollama/proxy";
+import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,
   type RuntimeProviderBundleRegistry,
@@ -31,15 +37,16 @@ import {
 } from "../../onboard/runtime-provider/access";
 import {
   emitProviderDetachResidualHint,
-  removeManagedHermesStateVolume,
+  removeManagedAgentStateVolumes,
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
 import { validateName } from "../../runner";
-import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
+import {
+  enforceRemovedImmutabilityMigrationBoundary,
+  retireRemovedImmutabilityStateRecord,
+} from "../../state/migrations/removed-immutability";
 import * as onboardSession from "../../state/onboard-session";
-import type { RetainedSandboxRecoveryRecord } from "../../state/onboard-session/retained-sandbox-recovery";
-import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import {
   assertSandboxDestroyCommandAvailable,
@@ -89,11 +96,10 @@ type RemoveSandboxRegistryEntryWithReceiptDeps = {
 function selectRetainedSandboxRecoveryAuthority(
   sandboxName: string,
   sandbox: registry.SandboxEntry | null,
-  records: readonly RetainedSandboxRecoveryRecord[],
-): RetainedSandboxRecoveryRecord | null {
+  records: readonly onboardSession.RetainedSandboxRecoveryRecord[],
+): onboardSession.RetainedSandboxRecoveryRecord | null {
   const candidates = records.filter(
-    (record) =>
-      record.sandboxName === sandboxName && record.sandboxIdentityFingerprint !== null,
+    (record) => record.sandboxName === sandboxName && record.sandboxIdentityFingerprint !== null,
   );
   if (!sandbox) {
     // Once resource cleanup has removed the registry row, a retry must still
@@ -110,14 +116,15 @@ function selectRetainedSandboxRecoveryAuthority(
         record.sandboxIdentityFingerprint!,
       );
       return (
-        verdict.status === "recovery" ||
-        (verdict.status === "clear" && verdict.identity !== null)
+        verdict.status === "recovery" || (verdict.status === "clear" && verdict.identity !== null)
       );
     });
     return observedMatches.length === 1 ? observedMatches[0]! : null;
   }
 
-  const matchesRegistryAuthority = (record: RetainedSandboxRecoveryRecord): boolean => {
+  const matchesRegistryAuthority = (
+    record: onboardSession.RetainedSandboxRecoveryRecord,
+  ): boolean => {
     const pending = sandbox.pendingCreateIdentity;
     if (pending) {
       return (
@@ -167,33 +174,30 @@ type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => { status
 
 export type CleanupSandboxServicesDeps = {
   getSandbox?: typeof registry.getSandbox;
-  stopAll?: (opts: { sandboxName: string }) => void;
-  unloadOllamaModels?: () => void;
+  listSandboxes?: typeof registry.listSandboxes;
+  stopAll?: (opts: {
+    sandboxName: string;
+    cleanupOllamaModels?: boolean;
+    unloadOllamaModels?: () => OllamaUnloadResult | void;
+  }) => OllamaUnloadResult | void;
+  unloadOllamaModels?: (onlyModels?: readonly string[]) => OllamaUnloadResult | void;
+  loadPendingOllamaModelCleanup?: (sandboxName: string) => readonly string[];
+  clearPendingOllamaModelCleanup?: (
+    sandboxName: string,
+    releasedModels?: readonly string[],
+  ) => void;
+  loadPersistedOllamaHost?: () => "127.0.0.1" | "host.docker.internal" | null;
+  withOllamaModelOwnershipLock?: <T>(operation: () => T) => T;
+  ollamaModelRefsMatch?: (left: string, right: string) => boolean;
   runOpenshell?: RunOpenshell;
   rmSync?: typeof fs.rmSync;
   stopGooglechatWebhookTunnel?: (sandboxName: string) => string;
   googlechatWebhookTunnelPidDir?: (servicePidDir: string) => string;
 };
 
-type ShieldsTimerNeutralizeResult = {
-  warnings?: string[];
-};
-
-type CleanupShieldsDestroyArtifactsDeps = {
-  killShieldsTimer?: (sandboxName: string) => ShieldsTimerNeutralizeResult | void;
-  rmSync?: typeof fs.rmSync;
-  stateDir?: string;
-  warn?: (message: string) => void;
-};
-
-type RemoveShieldsStateDeps = {
-  rmSync?: typeof fs.rmSync;
-  warn?: (message: string) => void;
-};
-
 async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Promise<boolean> {
   const decision = resolveDestroyGatewayCleanupDecision(options, {
-    nonInteractive: isNonInteractiveEnv(),
+    nonInteractive: isDestroyNonInteractiveEnv(),
     platform: process.platform,
   });
   if (decision === "cleanup") return true;
@@ -225,21 +229,66 @@ export function cleanupSandboxServices(
   const validatedSandboxName = validateName(sandboxName, "sandbox name");
   const servicesPidDir = path.resolve("/tmp", `nemoclaw-services-${validatedSandboxName}`);
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const listSandboxes = deps.listSandboxes ?? registry.listSandboxes;
   const stopAll =
     deps.stopAll ??
-    ((opts: { sandboxName: string }) => {
+    ((opts: {
+      sandboxName: string;
+      cleanupOllamaModels?: boolean;
+      unloadOllamaModels?: () => OllamaUnloadResult | void;
+    }) => {
       const services = require("../../tunnel/services") as {
-        stopAll: (opts: { sandboxName: string }) => void;
+        stopAll: (opts: {
+          sandboxName: string;
+          cleanupOllamaModels?: boolean;
+          unloadOllamaModels?: () => OllamaUnloadResult | void;
+        }) => OllamaUnloadResult | void;
       };
-      services.stopAll(opts);
+      return services.stopAll(opts);
     });
   const unloadOllamaModels =
     deps.unloadOllamaModels ??
-    (() => {
+    ((onlyModels?: readonly string[]) => {
       const { unloadOllamaModels: unload } = require("../../inference/ollama/proxy") as {
-        unloadOllamaModels: () => void;
+        unloadOllamaModels: (onlyModels?: readonly string[]) => OllamaUnloadResult;
       };
-      unload();
+      return unload(onlyModels);
+    });
+  const loadPendingOllamaModelCleanup =
+    deps.loadPendingOllamaModelCleanup ??
+    ((name: string) => {
+      const local = require("../../inference/ollama/proxy") as {
+        loadPendingOllamaModelCleanup(sandboxName: string): readonly string[];
+      };
+      return local.loadPendingOllamaModelCleanup(name);
+    });
+  const clearPendingOllamaModelCleanup =
+    deps.clearPendingOllamaModelCleanup ??
+    ((name: string, releasedModels?: readonly string[]) => {
+      const local = require("../../inference/ollama/proxy") as {
+        clearPendingOllamaModelCleanup(sandboxName: string, models?: readonly string[]): void;
+      };
+      local.clearPendingOllamaModelCleanup(name, releasedModels);
+    });
+  const loadPersistedOllamaHost =
+    deps.loadPersistedOllamaHost ??
+    (require("../../inference/local") as typeof import("../../inference/local"))
+      .loadPersistedOllamaHost;
+  const withOllamaModelOwnershipLock =
+    deps.withOllamaModelOwnershipLock ??
+    (<T>(operation: () => T): T => {
+      const proxy = require("../../inference/ollama/proxy") as {
+        withOllamaModelOwnershipLock<T>(operation: () => T): T;
+      };
+      return proxy.withOllamaModelOwnershipLock(operation);
+    });
+  const ollamaModelRefsMatch =
+    deps.ollamaModelRefsMatch ??
+    ((left: string, right: string) => {
+      const proxy = require("../../inference/ollama/proxy") as {
+        ollamaModelRefsMatch(leftModel: string, rightModel: string): boolean;
+      };
+      return proxy.ollamaModelRefsMatch(left, right);
     });
   const runOpenshell =
     deps.runOpenshell ??
@@ -288,18 +337,79 @@ export function cleanupSandboxServices(
     );
   }
 
+  let ollamaCleanup: OllamaUnloadResult | void = undefined;
   if (stopHostServices) {
-    // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
-    // see src/lib/tunnel/services.ts. Don't double-call here.
-    stopAll({ sandboxName: validatedSandboxName });
+    // `stopAll()` owns the host-wide unload when this sandbox has an Ollama
+    // route or retained cleanup work. Don't probe an unrelated daemon for a
+    // sandbox with no Ollama ownership, and don't double-call cleanup here.
+    try {
+      ollamaCleanup = withOllamaModelOwnershipLock(() => {
+        const sandbox = getSandbox(validatedSandboxName);
+        const pending = loadPendingOllamaModelCleanup(validatedSandboxName);
+        const selectedHost = loadPersistedOllamaHost();
+        const cleanupOllamaModels = Boolean(
+          (sandbox && isLocalOllamaRouteOwner(sandbox, selectedHost)) || pending.length > 0,
+        );
+        return stopAll({
+          sandboxName: validatedSandboxName,
+          cleanupOllamaModels,
+          unloadOllamaModels: () => unloadOllamaModels(),
+        });
+      });
+    } catch (error) {
+      const detail = (error instanceof Error ? error.message : String(error))
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 300);
+      throw new Error(
+        `Host-service cleanup failed after sandbox '${validatedSandboxName}' was deleted: ${detail || "unknown error"}. ` +
+          `The local registry and cleanup state for '${validatedSandboxName}' were retained for recovery; ` +
+          `restore the reported dependency, then retry \`nemoclaw ${validatedSandboxName} destroy\`.`,
+        { cause: error },
+      );
+    }
   } else {
     // No global stop, so `stopAll()` did not run; explicitly free Ollama
     // models for this sandbox if its provider used Ollama. Without this
     // branch a single-sandbox destroy would leave models loaded on the GPU.
-    const sb = getSandbox(validatedSandboxName);
-    if (sb?.provider?.includes("ollama")) {
-      unloadOllamaModels();
-    }
+    withOllamaModelOwnershipLock(() => {
+      const sb = getSandbox(validatedSandboxName);
+      const selectedHost = loadPersistedOllamaHost();
+      const peers = listSandboxes().sandboxes.filter(
+        (candidate) =>
+          candidate.name !== validatedSandboxName &&
+          isLocalOllamaRouteOwner(candidate, selectedHost),
+      );
+      const pending = loadPendingOllamaModelCleanup(validatedSandboxName);
+      const currentModel = String(sb?.model ?? "").trim();
+      const candidates = [
+        ...pending,
+        ...(sb && isLocalOllamaRouteOwner(sb, selectedHost) && currentModel ? [currentModel] : []),
+      ].filter(
+        (model, index, models) =>
+          models.findIndex((candidate) => ollamaModelRefsMatch(candidate, model)) === index &&
+          !peers.some(
+            (candidate) => candidate.model && ollamaModelRefsMatch(model, candidate.model),
+          ),
+      );
+      if (candidates.length === 0) return;
+      ollamaCleanup = unloadOllamaModels(candidates);
+      if (!ollamaCleanup || ollamaCleanup.ok) {
+        clearPendingOllamaModelCleanup(validatedSandboxName, candidates);
+      }
+    });
+  }
+  if (ollamaCleanup && !ollamaCleanup.ok) {
+    const recoveryAction =
+      ollamaCleanup.outcome === "discovery-failed"
+        ? `restore access to ${ollamaCleanup.endpoint}`
+        : ollamaCleanup.outcome === "still-resident"
+          ? `stop the recorded model at ${ollamaCleanup.endpoint}`
+          : `allow the model unload request at ${ollamaCleanup.endpoint}`;
+    throw new Error(
+      `Ollama model cleanup failed at ${ollamaCleanup.endpoint} (${ollamaCleanup.outcome}: ${ollamaCleanup.message ?? "no detail"}). ` +
+        `The sandbox registry and saved route were retained; ${recoveryAction}, then retry destroy.`,
+    );
   }
 
   try {
@@ -330,54 +440,6 @@ export function cleanupSandboxServices(
       ignoreError: true,
       stdio: ["ignore", "ignore", "ignore"],
     });
-  }
-}
-
-/**
- * Remove host-side Shields state and recovery artifacts for a sandbox.
- *
- * Without this cleanup, stale state or an external policy handoff from a
- * previous sandbox can survive destroy → re-onboard under the same name.
- *
- * See: https://github.com/NVIDIA/NemoClaw/issues/3114
- */
-export function removeShieldsState(
-  sandboxName: string,
-  stateDir = resolveNemoclawStateDir(),
-  deps: RemoveShieldsStateDeps = {},
-): void {
-  const rmSync = deps.rmSync ?? fs.rmSync;
-  const warn = deps.warn ?? ((message: string) => console.warn(`  ${YW}⚠${R} ${message}`));
-  const resolvedStateDir = path.resolve(stateDir);
-  const recoveryArtifactName = `shields-external-policy-${sandboxName}.yaml`;
-  const artifactNames = [
-    recoveryArtifactName,
-    `shields-${sandboxName}.json`,
-    `shields-timer-${sandboxName}.json`,
-  ];
-  for (const artifactName of artifactNames) {
-    const filePath = path.resolve(resolvedStateDir, artifactName);
-    if (!filePath.startsWith(`${resolvedStateDir}${path.sep}`)) {
-      // Defense-in-depth: sandbox names are validated to [a-z0-9-] at
-      // all entry points, but reject traversal attempts just in case.
-      continue;
-    }
-    try {
-      rmSync(filePath, { force: true });
-    } catch (error) {
-      // force: true already suppresses ENOENT. A recovery handoff must not
-      // become unbound under a reusable sandbox name, so preserve Shields
-      // state and stop cleanup when that artifact cannot be removed.
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      const message = error instanceof Error ? error.message : String(error);
-      if (artifactName === recoveryArtifactName) {
-        throw new Error(
-          `Could not remove external Shields policy recovery artifact '${filePath}': ${message}. Shields state was preserved for retry.`,
-          { cause: error },
-        );
-      }
-      warn(`Failed to remove Shields cleanup artifact '${filePath}': ${message}`);
-    }
   }
 }
 
@@ -508,25 +570,6 @@ export async function revokeDestroyedSandboxHttpsPinRoute(
   }
 }
 
-export function cleanupShieldsDestroyArtifacts(
-  sandboxName: string,
-  deps: CleanupShieldsDestroyArtifactsDeps = {},
-): void {
-  const killShieldsTimer = deps.killShieldsTimer ?? defaultKillShieldsTimer;
-  const stateDir = deps.stateDir ?? resolveNemoclawStateDir();
-  const warn = deps.warn ?? defaultDestroyWarn;
-
-  const timerResult = killShieldsTimer(sandboxName);
-  for (const warning of timerResult?.warnings ?? []) {
-    warn(warning);
-  }
-
-  removeShieldsState(sandboxName, stateDir, {
-    rmSync: deps.rmSync ?? fs.rmSync,
-    warn,
-  });
-}
-
 export type { WipeSandboxStateDeps };
 // Re-export so existing callers (tests, downstream code) keep working after
 // the wipe was extracted out of the destroy monolith (#5455 PRA-2).
@@ -549,8 +592,16 @@ export async function destroySandbox(
 ): Promise<void> {
   try {
     return await withMcpLifecycleLock(sandboxName, () => {
+      const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
+        sandboxName,
+        { allowStateRecord: true },
+      );
       assertSandboxDestroyCommandAvailable(sandboxName);
-      return destroySandboxUnlocked(sandboxName, options);
+      return destroySandboxUnlocked(
+        sandboxName,
+        options,
+        removedImmutabilityMigration.stateRecord !== null,
+      );
     });
   } catch (error) {
     if (error instanceof SandboxDestroyExitRequest) process.exit(error.exitCode);
@@ -561,6 +612,7 @@ export async function destroySandbox(
 async function destroySandboxUnlocked(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
+  retireRemovedImmutabilityState = false,
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
@@ -601,17 +653,20 @@ async function destroySandboxUnlocked(
     );
   }
 
-  const inspectContainerIdentity = () =>
-    assertUnambiguousDestroyContainerIdentity(sandboxName, {
+  const inspectContainerIdentity = () => {
+    const registeredSandbox = registry.getSandbox(sandboxName);
+    return assertUnambiguousDestroyContainerIdentity(sandboxName, {
       cliName: CLI_NAME,
-      providerId: normalizeRuntimeProviderIdentity(
-        registry.getSandbox(sandboxName)?.openshellDriver,
-      ),
+      providerId: registeredSandbox
+        ? normalizeRuntimeProviderIdentity(registeredSandbox.openshellDriver)
+        : normalizeRuntimeProviderIdentity(null),
       redact: redactDestroyError,
+      sandbox: registeredSandbox,
       ...(retainedSandboxIdentityFingerprint
         ? { retainedSandboxIdentityFingerprint }
         : {}),
     });
+  };
   const initialIdentity = portableContainerAuthority ? null : inspectContainerIdentity();
   if (initialIdentity === false) {
     requestSandboxDestroyExit(1);
@@ -671,7 +726,9 @@ async function destroySandboxUnlocked(
   };
   let destroyPreflight: ReturnType<typeof prepareSandboxDestroy>;
   destroyPreflight = abortPreparedCleanupOnError(() =>
-    prepareSandboxDestroy(sandboxName, retainedRecoveryAuthority?.gatewayName),
+    prepareSandboxDestroy(sandboxName, {
+      retainedRecoveryGatewayName: retainedRecoveryAuthority?.gatewayName,
+    }),
   );
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } = destroyPreflight;
   if (retainedRecoveryAuthority && !sandboxConfirmedAbsent) {
@@ -713,8 +770,6 @@ async function destroySandboxUnlocked(
   let destructiveResult: Awaited<ReturnType<typeof executeSandboxDestroy>>;
   try {
     destructiveResult = await executeSandboxDestroy({
-      cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
-      cliName: CLI_NAME,
       force: normalized.force === true,
       getSandbox: registry.getSandbox,
       listSandboxes: registry.listSandboxes,
@@ -725,6 +780,9 @@ async function destroySandboxUnlocked(
       expectedContainerIdentities: initialContainerIdentities,
       ...(retainedSandboxIdentityFingerprint
         ? { expectedContainerIdentityFingerprint: retainedSandboxIdentityFingerprint }
+        : {}),
+      ...(initialIdentity?.providerIdentity
+        ? { expectedRuntimeProviderIdentity: initialIdentity.providerIdentity }
         : {}),
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
       stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
@@ -754,23 +812,7 @@ async function destroySandboxUnlocked(
       );
     }
     console.error(`  Failed to destroy sandbox '${sandboxName}'.`);
-    const shieldsRecoveryRequired =
-      destructiveResult.shieldsRelockRequiresGateway ||
-      destructiveResult.workspaceTimeoutRequiresShieldsRecovery === true;
-    if (shieldsRecoveryRequired) {
-      if (destructiveResult.shieldsRelockRequiresGateway) {
-        console.error(
-          `  The OpenShell gateway is unreachable and shields could not be re-locked before delete. Local state was preserved so the seven-attempt auto-restore recovery can continue. If recovery is exhausted, durable containment blocks sandbox mutations.`,
-        );
-      } else {
-        console.error(
-          `  The workspace cleanup timeout left an active shields timer authoritative. Local state was preserved so bounded recovery can continue. If recovery is exhausted, durable containment blocks sandbox mutations.`,
-        );
-      }
-      console.error(
-        `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'). Run '${CLI_NAME} ${sandboxName} shields status' to verify recovery or follow its durable containment guidance. Retry destroy only after recovery permits it; --force cannot safely discard a record while shields recovery is unresolved.`,
-      );
-    } else if (destructiveResult.timedOut) {
+    if (destructiveResult.timedOut) {
       console.error(
         `  NemoClaw preserved the local sandbox record because OpenShell did not confirm the remote operation.`,
       );
@@ -858,28 +900,38 @@ async function destroySandboxUnlocked(
     preparedManagedLlamaCppCleanup?.abort();
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
-    const stateVolumeCleanup = abortPreparedCleanupOnError(() =>
-      removeManagedHermesStateVolume({
-        agentName: sandbox.agent,
-        runtimeProviderId: normalizeRuntimeProviderIdentity(sandbox.openshellDriver),
-        sandboxName,
-        workloadKind: sandbox.workload?.kind ?? "",
-      }),
+    const stateVolumeCleanupResults = abortPreparedCleanupOnError(() =>
+      removeManagedAgentStateVolumes(
+        {
+          agentName: sandbox.agent,
+          runtimeProviderId: normalizeRuntimeProviderIdentity(sandbox.openshellDriver),
+          sandboxName,
+          workloadKind: sandbox.workload?.kind ?? "",
+        },
+        {
+          runtimeProviders: CURRENT_RUNTIME_PROVIDER_BUNDLES,
+        },
+      ),
     );
-    if (stateVolumeCleanup.status === "failed") {
+    const failedStateVolumeCleanup = stateVolumeCleanupResults.find(
+      (result) => result.status === "failed",
+    );
+    if (failedStateVolumeCleanup?.status === "failed") {
       console.error(
-        `  Sandbox '${sandboxName}' is gone, but its managed Hermes state volume '${stateVolumeCleanup.volumeName}' could not be removed: ${redactDestroyError(stateVolumeCleanup.detail)}`,
+        `  Sandbox '${sandboxName}' is gone, but its managed agent state volume '${failedStateVolumeCleanup.volumeName}' could not be removed: ${redactDestroyError(failedStateVolumeCleanup.detail)}`,
       );
       console.error("  The sandbox registry entry was preserved so exact cleanup can be retried.");
       preparedManagedLlamaCppCleanup?.abort();
       requestSandboxDestroyExit(1);
     }
-    if (stateVolumeCleanup.status === "not-owned") {
-      console.warn(
-        `  ${YW}⚠${R} Left Docker volume '${stateVolumeCleanup.volumeName}' untouched because ${stateVolumeCleanup.detail}.`,
-      );
-    } else if (stateVolumeCleanup.status === "removed") {
-      console.log(`  Removed managed Hermes state volume for '${sandboxName}'.`);
+    for (const stateVolumeCleanup of stateVolumeCleanupResults) {
+      if (stateVolumeCleanup.status === "not-owned") {
+        console.warn(
+          `  ${YW}⚠${R} Left managed state volume '${stateVolumeCleanup.volumeName}' untouched because ${stateVolumeCleanup.detail}.`,
+        );
+      } else if (stateVolumeCleanup.status === "removed") {
+        console.log(`  Removed managed agent state volume for '${sandboxName}'.`);
+      }
     }
   }
   abortPreparedCleanupOnError(() => {
@@ -929,6 +981,9 @@ async function destroySandboxUnlocked(
    * registry owns authenticated reconciliation that can safely complete cleanup
    * without retaining the local ownership row.
    */
+  if (deleteSucceededOrAlreadyGone && retireRemovedImmutabilityState) {
+    retireRemovedImmutabilityStateRecord(sandboxName, "sandbox-destroyed");
+  }
   const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName);
   const removed = removalOutcome.removed;
   if (removalOutcome.status === "blocked") {
@@ -957,6 +1012,25 @@ async function destroySandboxUnlocked(
       console.warn(
         `  ${YW}⚠${R} Failed to retire portable lifecycle authority for '${sandboxName}': ${redactDestroyError(error)}`,
       );
+    }
+    const localInference = require("../../inference/local") as {
+      clearPersistedOllamaHostIfUnused(
+        routes: readonly { provider?: string | null; endpointUrl?: string | null }[],
+      ): boolean;
+    };
+    if (sandbox && isLocalOllamaRouteOwner(sandbox)) {
+      try {
+        await withOllamaModelOwnershipTransaction(() => {
+          const selectedHost = loadPersistedOllamaHost();
+          if (!isLocalOllamaRouteOwner(sandbox, selectedHost)) return;
+          const remainingSandboxes = registry.listSandboxes().sandboxes;
+          localInference.clearPersistedOllamaHostIfUnused(remainingSandboxes);
+        });
+      } catch (error) {
+        console.warn(
+          `  ${YW}⚠${R} Failed to retire the final local Ollama route receipt: ${redactDestroyError(error)}`,
+        );
+      }
     }
   }
   if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {
@@ -1019,10 +1093,7 @@ async function destroySandboxUnlocked(
       );
     }
   }
-  if (
-    deleteSucceededOrAlreadyGone &&
-    retainedRecoveryAuthority
-  ) {
+  if (deleteSucceededOrAlreadyGone && retainedRecoveryAuthority) {
     let recoveryResolved: boolean;
     try {
       recoveryResolved = onboardSession.resolveRetainedSandboxRecovery(retainedRecoveryAuthority);

@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   executeGatewaySupervisorAction: vi.fn(),
   executeSandboxCommand: vi.fn(),
   executeSandboxExecCommand: vi.fn(),
-  getSandboxPolicy: vi.fn(),
+  captureRecordedSandboxBasePolicy: vi.fn(),
   getLiveSandboxPolicyEntryDigest: vi.fn(),
   getPresetContentGatewayState: vi.fn(),
   recoverNamedGatewayRuntime: vi.fn(),
@@ -34,13 +34,10 @@ vi.mock("../../../src/lib/gateway-runtime-action", () => ({
 vi.mock("../../../src/lib/policy", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../src/lib/policy")>()),
   applyPresetContent: mocks.applyPresetContent,
+  captureRecordedSandboxBasePolicy: mocks.captureRecordedSandboxBasePolicy,
   getLiveSandboxPolicyEntryDigest: mocks.getLiveSandboxPolicyEntryDigest,
   getPresetContentGatewayState: mocks.getPresetContentGatewayState,
   removePreset: mocks.removePreset,
-}));
-
-vi.mock("../../../src/lib/actions/sandbox/policy-get", () => ({
-  getSandboxPolicy: mocks.getSandboxPolicy,
 }));
 
 vi.mock("../../../src/lib/actions/sandbox/process-recovery", () => ({
@@ -188,13 +185,13 @@ beforeEach(() => {
     policyState = "absent";
     return true;
   });
-  mocks.getSandboxPolicy.mockReset().mockImplementation(() => ({
-    raw: "",
-    yaml:
+  mocks.captureRecordedSandboxBasePolicy
+    .mockReset()
+    .mockImplementation(() =>
       policyState === "absent"
         ? "version: 1\nnetwork_policies: {}\n"
         : "version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n",
-  }));
+    );
 
   mocks.executeGatewaySupervisorAction.mockReset();
   mocks.executeSandboxCommand

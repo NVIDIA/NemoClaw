@@ -1,346 +1,207 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
-
-import { dockerCapture } from "../adapters/docker/run";
-import { resolveSandboxContainerOwner } from "../domain/sandbox/container-owner";
-import { resolvePortableDemoPrivilegedExecTarget } from "../onboard/experimental/portable-demo-lifecycle";
+import type {
+  RuntimeProviderPrivilegedSandboxCommandResult,
+  RuntimeProviderPrivilegedSandboxControl,
+  RuntimeProviderPrivilegedSandboxTarget,
+  RuntimeProviderStoppedSandboxStateCleanupResult,
+} from "../onboard/runtime-provider/contract";
+import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../onboard/runtime-provider/current";
 import {
-  createFilePersistedEngineLifecycleStore,
-  hasActivePersistedEngineStateMutationTarget,
-  PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
-} from "../onboard/runtime-provider/persisted-engine-lifecycle";
-import { resolveShieldsStateDir, withShieldsTransitionLock } from "../shields/transition-lock";
+  DirectSandboxFallbackUnavailableError,
+  PinnedSandboxResourceIdentityChangedError,
+} from "../onboard/runtime-provider/privileged-sandbox-control-errors";
+import { requireRuntimeProviderBundleForSandbox } from "../onboard/runtime-provider/selection";
+import {
+  buildStoppedSandboxChannelCleanupScript,
+  validateStoppedSandboxStatePaths,
+} from "../onboard/runtime-provider/stopped-sandbox-state-cleanup";
 import * as registry from "../state/registry";
-import { compareAndSetLegacySandboxLifecycleGeneration } from "../state/registry/lifecycle-generation";
-
-const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
-const OPENSHELL_MANAGED_BY_VALUE = "openshell";
-const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 
 type SandboxEntry = import("../state/registry").SandboxEntry;
 
-type LabeledSandboxContainer = {
-  id: string;
-  name: string;
-};
-
-const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
-const SANITIZED_PRIVILEGED_ENV = [
-  "BASH_ENV=",
-  "ENV=",
-  "GCONV_PATH=",
-  "GLIBC_TUNABLES=",
-  "LD_AUDIT=",
-  "LD_LIBRARY_PATH=",
-  "LD_PRELOAD=",
-  "LOCPATH=",
-  "NODE_OPTIONS=",
-  "PERL5OPT=",
-  "PYTHONHOME=",
-  "PYTHONINSPECT=",
-  "PYTHONNOUSERSITE=1",
-  "PYTHONPATH=",
-  "PYTHONSTARTUP=",
-  "PYTHONUSERBASE=",
-  "RUBYOPT=",
-] as const;
-
-class DirectSandboxFallbackUnavailableError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "DirectSandboxFallbackUnavailableError";
-  }
+export interface PrivilegedSandboxCommandOptions {
+  readonly input?: string | Buffer;
+  readonly sanitizeEnvironment?: boolean;
+  readonly expectedResourceHandle?: string;
+  readonly timeout?: number;
+  readonly maxOutputBytes?: number;
 }
 
-class PinnedSandboxContainerIdentityChangedError extends Error {
-  constructor(sandboxName: string) {
-    super(
-      `OpenShell container identity changed for sandbox '${sandboxName}'; ` +
-        "refusing privileged execution against a different container.",
-    );
-    this.name = "PinnedSandboxContainerIdentityChangedError";
-  }
-}
+const DEFAULT_PRIVILEGED_SANDBOX_COMMAND_TIMEOUT_MS = 15_000;
 
-function normalizeDriver(driver: unknown): string | null {
-  return typeof driver === "string" && driver.trim() ? driver.trim().toLowerCase() : null;
-}
-
-function readSandboxEntry(sandboxName: string): SandboxEntry | null {
-  return registry.getSandbox?.(sandboxName) ?? null;
-}
-
-function registeredSandboxNames(sandboxName: string): string[] {
-  const names = new Set<string>([sandboxName]);
-
-  if (registry.listSandboxes) {
-    const listed = registry.listSandboxes?.();
-    if (Array.isArray(listed?.sandboxes)) {
-      for (const entry of listed.sandboxes) {
-        if (typeof entry.name === "string" && entry.name) names.add(entry.name);
-      }
-    }
-  } else {
-    const loaded = registry.load?.();
-    const sandboxes = loaded?.sandboxes;
-    if (sandboxes && typeof sandboxes === "object") {
-      for (const [key, entry] of Object.entries(sandboxes)) {
-        if (key) names.add(key);
-        if (typeof entry?.name === "string" && entry.name) names.add(entry.name);
-      }
-    }
-  }
-
-  return Array.from(names).sort((a, b) => b.length - a.length || a.localeCompare(b));
-}
-
-function containerNameMatchesSandbox(containerName: string, sandboxName: string): boolean {
-  return resolveSandboxContainerOwner(containerName, sandboxName, [sandboxName]) === containerName;
-}
-
-function owningRegisteredSandboxName(
-  containerName: string,
-  registeredNames: readonly string[],
-): string | null {
-  return registeredNames.find((name) => containerNameMatchesSandbox(containerName, name)) ?? null;
-}
-
-function parseLabeledSandboxContainers(output: string): LabeledSandboxContainer[] {
-  return output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [id, name, ...unexpected] = line.split("\t");
-      if (!id || !name || unexpected.length > 0 || /\s/.test(id)) {
-        throw new Error("Docker returned malformed OpenShell sandbox container metadata.");
-      }
-      return { id, name };
-    });
-}
-
-function selectDirectSandboxContainer(
-  sandboxName: string,
-  labeledContainerRows: string,
-  registeredNames: readonly string[] = [sandboxName],
-): string | null {
-  const names = Array.from(new Set([...registeredNames, sandboxName])).sort(
-    (a, b) => b.length - a.length || a.localeCompare(b),
-  );
-  const candidates = parseLabeledSandboxContainers(labeledContainerRows);
-  if (
-    candidates.some(
-      ({ name }) =>
-        !containerNameMatchesSandbox(name, sandboxName) ||
-        owningRegisteredSandboxName(name, names) !== sandboxName,
-    )
-  ) {
-    throw new Error(
-      `OpenShell container labels and names disagree for sandbox '${sandboxName}'; ` +
-        "refusing lifecycle execution.",
-    );
-  }
-  if (candidates.length > 1) {
-    throw new Error(
-      `Multiple running OpenShell containers are labeled for sandbox '${sandboxName}'; ` +
-        "refusing ambiguous lifecycle execution.",
-    );
-  }
-  return candidates[0]?.id ?? null;
-}
-
-function expectedDirectContainerPattern(sandboxName: string): string {
-  return (
-    `openshell-${sandboxName}, openshell-${sandboxName}-*, or ` +
-    `openshell-default--${sandboxName}-*`
-  );
-}
-
-function findDirectSandboxContainer(sandboxName: string): string | null {
-  const names = registeredSandboxNames(sandboxName);
-  let output: string;
-  try {
-    output = dockerCapture(
-      [
-        "ps",
-        "--no-trunc",
-        "--filter",
-        `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
-        "--filter",
-        `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
-        "--format",
-        "{{.ID}}\t{{.Names}}",
-      ],
-      { timeout: DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS },
-    );
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new DirectSandboxFallbackUnavailableError(
-      `Direct sandbox container discovery failed for '${sandboxName}': ${detail}`,
-      { cause: error },
-    );
-  }
-  return selectDirectSandboxContainer(sandboxName, output, names);
-}
-
-function missingDirectContainerError(sandboxName: string, driver: string | null): Error {
-  const driverLabel = driver ?? "unspecified";
-  return new DirectSandboxFallbackUnavailableError(
-    `No running direct OpenShell sandbox container found for '${sandboxName}' ` +
-      `(driver: ${driverLabel}). Expected one OpenShell-managed container labeled ` +
-      `'${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}' and named ` +
-      `${expectedDirectContainerPattern(sandboxName)}. Is the sandbox running?`,
-  );
-}
-
-function isDirectSandboxFallbackUnavailableError(
-  error: unknown,
-): error is DirectSandboxFallbackUnavailableError {
-  return error instanceof DirectSandboxFallbackUnavailableError;
-}
-
-function isPinnedSandboxContainerIdentityChangedError(
-  error: unknown,
-): error is PinnedSandboxContainerIdentityChangedError {
-  return error instanceof PinnedSandboxContainerIdentityChangedError;
-}
-
-function missingRegistryEntryError(sandboxName: string): Error {
-  return new Error(
+function readSandboxEntry(sandboxName: string): SandboxEntry {
+  const entry = registry.getSandbox?.(sandboxName) ?? null;
+  if (entry) return entry;
+  throw new Error(
     `No NemoClaw registry entry found for '${sandboxName}'; ` +
       "refusing privileged exec without a registered sandbox owner.",
   );
 }
 
-function unsupportedDirectDriverError(sandboxName: string, driver: string): Error {
-  return new Error(
-    `Privileged direct-container control is unavailable for sandbox '${sandboxName}' ` +
-      `(driver: ${driver}); refusing local Docker discovery for a non-direct driver.`,
+function privilegedSandboxControl(sandboxName: string): {
+  readonly sandbox: SandboxEntry;
+  readonly control: RuntimeProviderPrivilegedSandboxControl;
+} {
+  const sandbox = readSandboxEntry(sandboxName);
+  const provider = requireRuntimeProviderBundleForSandbox(
+    sandbox,
+    CURRENT_RUNTIME_PROVIDER_BUNDLES,
   );
-}
-
-function assertNoActiveStateMutationTarget(sandboxName: string): void {
-  const stateDir = resolveShieldsStateDir();
-  const lifecycleDirectory = path.join(stateDir, PERSISTED_ENGINE_LIFECYCLE_DIRECTORY);
-  try {
-    fs.lstatSync(lifecycleDirectory);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
-  const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
-  if (hasActivePersistedEngineStateMutationTarget(lifecycleStore, sandboxName)) {
+  if (provider.lifecycle.supported !== true) {
     throw new Error(
-      `Runtime provider state mutation owns direct-container execution for sandbox '${sandboxName}'; retry after the provider fence is released.`,
+      `Runtime provider '${provider.identity.id}' does not support privileged sandbox control.`,
     );
   }
+  return { sandbox, control: provider.lifecycle.privilegedSandboxControl };
 }
 
-/**
- * Serialize one ordinary direct-container execution against provider fence
- * acquisition. The callback must include both argv resolution and the complete
- * synchronous Docker subprocess lifetime. Taking the lock before checking the
- * durable target claim closes the check/acquire/exec race: an older exec drains
- * before the provider can publish its fence, while a later exec observes the
- * claim and is rejected before it can spawn.
- */
-function withPrivilegedSandboxExecutionLease<T>(
-  sandboxName: string,
-  operation: string,
-  fn: () => T,
-): T {
-  return withShieldsTransitionLock(
-    sandboxName,
-    `privileged direct-container execution: ${operation}`,
-    () => {
-      assertNoActiveStateMutationTarget(sandboxName);
-      return fn();
-    },
+function registeredSandboxNames(sandboxName: string): readonly string[] {
+  const names = new Set<string>([sandboxName]);
+  const listed = registry.listSandboxes?.();
+  if (Array.isArray(listed?.sandboxes)) {
+    for (const entry of listed.sandboxes) {
+      if (typeof entry.name === "string" && entry.name) names.add(entry.name);
+    }
+  }
+  return Array.from(names).sort(
+    (left, right) => right.length - left.length || left.localeCompare(right),
   );
 }
 
-function resolveDirectSandboxContainer(sandboxName: string, driver: string | null): string {
-  const selected = findDirectSandboxContainer(sandboxName);
-  if (selected) return selected;
-  throw missingDirectContainerError(sandboxName, driver);
+/** Preserve the provider-wide callback boundary after retirement of the mutation fence. */
+export function withPrivilegedSandboxExecutionLease<T>(
+  _sandboxName: string,
+  _operation: string,
+  fn: () => T,
+): T {
+  return fn();
 }
 
-function privilegedSandboxExecArgv(
+export function resolvePrivilegedSandboxTarget(
   sandboxName: string,
-  cmd: string[],
+): RuntimeProviderPrivilegedSandboxTarget {
+  const { sandbox, control } = privilegedSandboxControl(sandboxName);
+  return control.resolveTarget({
+    registeredSandboxNames: registeredSandboxNames(sandboxName),
+    sandbox,
+    sandboxName,
+  });
+}
+
+/** Retained name for Docker compatibility code that only needs an opaque runtime handle. */
+export function resolveDirectSandboxContainer(sandboxName: string, _driver: string | null): string {
+  return resolvePrivilegedSandboxTarget(sandboxName).resourceHandle;
+}
+
+export function executePrivilegedSandboxCommand(
+  sandboxName: string,
+  command: readonly string[],
+  options: PrivilegedSandboxCommandOptions = {},
+): RuntimeProviderPrivilegedSandboxCommandResult {
+  const { sandbox, control } = privilegedSandboxControl(sandboxName);
+  const input =
+    options.input === undefined
+      ? undefined
+      : Buffer.isBuffer(options.input)
+        ? Buffer.from(options.input)
+        : Buffer.from(options.input, "utf8");
+  return control.execute({
+    registeredSandboxNames: registeredSandboxNames(sandboxName),
+    sandbox,
+    sandboxName,
+    command,
+    sanitizeEnvironment: options.sanitizeEnvironment === true,
+    timeoutMs: options.timeout ?? DEFAULT_PRIVILEGED_SANDBOX_COMMAND_TIMEOUT_MS,
+    ...(input ? { input } : {}),
+    ...(options.expectedResourceHandle !== undefined
+      ? { expectedResourceHandle: options.expectedResourceHandle }
+      : {}),
+    ...(options.maxOutputBytes ? { maxOutputBytes: options.maxOutputBytes } : {}),
+  });
+}
+
+/** Retained Docker CLI compatibility for portable and Docker-specific probes. */
+export function privilegedSandboxExecArgv(
+  sandboxName: string,
+  command: string[],
   stdin = false,
   sanitizeEnvironment = false,
   expectedContainerId?: string,
 ): string[] {
-  const entry = readSandboxEntry(sandboxName);
-  if (!entry) throw missingRegistryEntryError(sandboxName);
-  const driver = normalizeDriver(entry.openshellDriver);
-  if (driver !== null && driver !== "docker" && driver !== "vm") {
-    throw unsupportedDirectDriverError(sandboxName, driver);
+  const { sandbox, control } = privilegedSandboxControl(sandboxName);
+  if (!control.buildLegacyDockerArgv) {
+    throw new Error(
+      "The selected runtime provider does not expose the retained Docker CLI compatibility path.",
+    );
   }
-  assertNoActiveStateMutationTarget(sandboxName);
-  const portableTarget =
-    driver === "docker"
-      ? resolvePortableDemoPrivilegedExecTarget(sandboxName, {
-          ...(entry.lifecycleGeneration ? { registryGeneration: entry.lifecycleGeneration } : {}),
-          backfillRegistryGeneration: (generation) =>
-            compareAndSetLegacySandboxLifecycleGeneration(entry, generation),
-        })
-      : null;
-  if (portableTarget) {
-    if (expectedContainerId !== undefined && portableTarget.containerId !== expectedContainerId) {
-      throw new PinnedSandboxContainerIdentityChangedError(sandboxName);
-    }
-    const sanitizedEnvArgs = sanitizeEnvironment
-      ? SANITIZED_PRIVILEGED_ENV.flatMap((value) => ["--env", value])
-      : [];
-    portableTarget.assertRuntimeAuthority();
-    return [
-      "--host",
-      portableTarget.dockerHost,
-      "exec",
-      ...(stdin ? ["-i"] : []),
-      ...sanitizedEnvArgs,
-      "--user",
-      "0",
-      portableTarget.containerId,
-      ...cmd,
-    ];
-  }
-  // Docker/direct-container is the only supported privileged mutation path.
-  // Try it even when older registry entries do not record a driver, then fail
-  // clearly if no matching sandbox container is running.
-  const container = findDirectSandboxContainer(sandboxName);
-  if (container) {
-    if (expectedContainerId !== undefined && container !== expectedContainerId) {
-      throw new PinnedSandboxContainerIdentityChangedError(sandboxName);
-    }
-    const sanitizedEnvArgs = sanitizeEnvironment
-      ? SANITIZED_PRIVILEGED_ENV.flatMap((value) => ["--env", value])
-      : [];
-    return [
-      "exec",
-      ...(stdin ? ["-i"] : []),
-      ...sanitizedEnvArgs,
-      "--user",
-      "root",
-      container,
-      ...cmd,
-    ];
-  }
+  return control.buildLegacyDockerArgv({
+    registeredSandboxNames: registeredSandboxNames(sandboxName),
+    sandbox,
+    sandboxName,
+    command,
+    sanitizeEnvironment,
+    ...(stdin ? { input: Buffer.alloc(0) } : {}),
+    ...(expectedContainerId !== undefined ? { expectedResourceHandle: expectedContainerId } : {}),
+  });
+}
 
-  throw missingDirectContainerError(sandboxName, driver);
+export function capturePrivilegedSandboxCommand(
+  sandboxName: string,
+  command: readonly string[],
+  options: PrivilegedSandboxCommandOptions = {},
+): Buffer {
+  const result = executePrivilegedSandboxCommand(sandboxName, command, options);
+  if (result.status !== 0 || result.signal !== null || result.error) {
+    const detail = result.stderr.toString("utf8").replace(/\s+/gu, " ").trim().slice(-500);
+    const reason =
+      result.error?.message ??
+      (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
+    throw new Error(`Privileged sandbox command failed (${reason})${detail ? `: ${detail}` : ""}`);
+  }
+  return result.stdout;
+}
+
+export function clearStoppedSandboxStateRoots(
+  sandboxName: string,
+  paths: readonly string[],
+): RuntimeProviderStoppedSandboxStateCleanupResult {
+  if (!validateStoppedSandboxStatePaths(paths)) {
+    return { cleared: false, failure: "state-paths-invalid" };
+  }
+  const sandbox = registry.getSandbox?.(sandboxName) ?? null;
+  if (!sandbox) return { cleared: false, failure: "sandbox-registry-unavailable" };
+  try {
+    return withPrivilegedSandboxExecutionLease(sandboxName, "offline channel state cleanup", () => {
+      const { control } = privilegedSandboxControl(sandboxName);
+      if (!control.clearStoppedStateRoots)
+        return { cleared: false, failure: "provider-cleanup-unavailable" };
+      return control.clearStoppedStateRoots({
+        registeredSandboxNames: registeredSandboxNames(sandboxName),
+        sandbox,
+        sandboxName,
+        paths,
+      });
+    });
+  } catch {
+    return { cleared: false, failure: "lifecycle-authority-unavailable" };
+  }
 }
 
 export {
-  containerNameMatchesSandbox,
-  isDirectSandboxFallbackUnavailableError,
-  isPinnedSandboxContainerIdentityChangedError,
-  privilegedSandboxExecArgv,
-  resolveDirectSandboxContainer,
-  selectDirectSandboxContainer,
-  withPrivilegedSandboxExecutionLease,
+  buildStoppedSandboxChannelCleanupScript,
+  buildStoppedSandboxChannelCleanupScript as buildStoppedDockerSandboxChannelCleanupScript,
 };
+
+export function isDirectSandboxFallbackUnavailableError(
+  error: unknown,
+): error is DirectSandboxFallbackUnavailableError {
+  return error instanceof DirectSandboxFallbackUnavailableError;
+}
+
+export function isPinnedSandboxContainerIdentityChangedError(
+  error: unknown,
+): error is PinnedSandboxResourceIdentityChangedError {
+  return error instanceof PinnedSandboxResourceIdentityChangedError;
+}

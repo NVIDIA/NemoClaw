@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { testTimeout } from "../../helpers/timeouts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { assertDiscordGatewayCapture } from "./messaging-providers-helpers.ts";
 import {
@@ -19,10 +20,10 @@ import {
   writePairingArtifacts,
 } from "./openclaw-pairing-helpers.ts";
 import {
-  dockerInfo,
   expectExitZero,
   expectSandboxReady,
   installSandboxOrSkipOnRateLimit,
+  requirePhase6RuntimeProvider,
   resultText,
   sandboxSh,
   shellQuote,
@@ -31,7 +32,7 @@ import {
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-disc-pair";
 const DISCORD_TOKEN = process.env.DISCORD_BOT_TOKEN ?? "test-fake-discord-pairing-e2e";
-const LIVE_TIMEOUT_MS = 55 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(55 * 60_000);
 
 test("OpenClaw Discord pairing request is shared with connect-shell approval", {
   timeout: LIVE_TIMEOUT_MS,
@@ -45,7 +46,7 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
       "approve the Discord code through connect-shell",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const env = pairingEnv({
     sandboxName: SANDBOX_NAME,
@@ -81,8 +82,7 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
   );
   await cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "preclean-discord-pairing");
 
-  const docker = await dockerInfo(host, env);
-  expect(docker.exitCode, resultText(docker)).toBe(0);
+  await requirePhase6RuntimeProvider(runtimeProvider, "OpenClaw Discord pairing");
 
   progress.phase("install the Discord-enabled OpenClaw sandbox");
   const install = await installSandboxOrSkipOnRateLimit(

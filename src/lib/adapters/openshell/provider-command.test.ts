@@ -17,6 +17,7 @@ vi.mock("./runtime", () => ({
 }));
 
 import {
+  parseCliOpenShellProviderNames,
   runOpenshellProviderCommand,
   setProviderCommandRuntimeHooksForTest,
 } from "./provider-command";
@@ -65,5 +66,21 @@ describe("OpenShell provider command runtime", () => {
       }),
     );
     expect(result).toEqual({ status: 0 });
+  });
+
+  it("parses valid provider names without blank lines (#9806)", () => {
+    expect(parseCliOpenShellProviderNames("  alpha  \r\n\r\nbeta\n")).toEqual(["alpha", "beta"]);
+  });
+
+  it("returns no provider names for empty CLI output (#9806)", () => {
+    expect(parseCliOpenShellProviderNames("")).toEqual([]);
+  });
+
+  it.each([
+    ["OSC control", "alpha\n\u001b]52;c;YXR0YWNr\u0007"],
+    ["embedded escape", "alpha\u001b[31m"],
+    ["invalid name", "alpha\nbad/name"],
+  ])("rejects the entire provider inventory for an unsafe %s (#9806)", (_case, output) => {
+    expect(parseCliOpenShellProviderNames(output)).toBeNull();
   });
 });

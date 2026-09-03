@@ -62,7 +62,7 @@ function fixture(options: { canonicalSource?: boolean } = {}) {
     requireOpenshellSandboxAbi: process.platform === "linux",
     rootDir: ROOT,
     pinnedRemoteRef,
-    preferPinnedRemoteRef: true,
+    requirePinnedRemoteRef: true,
     validateImage: () => true,
     validationDescription:
       "the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",

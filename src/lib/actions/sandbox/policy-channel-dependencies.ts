@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-state";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 
 type MessagingProviderTokenDefinition = {
@@ -15,6 +15,7 @@ type MessagingProviderUpsertOptions = {
   replaceExisting?: boolean;
   bestEffort?: boolean;
   requireExactBindings?: boolean;
+  gatewayName?: string;
 };
 
 type LegacyOnboardProvidersModule = {
@@ -34,6 +35,7 @@ type LegacyOnboardProvidersModule = {
 };
 
 type RebuildModule = typeof import("./rebuild");
+type PrivilegedExecModule = typeof import("../../sandbox/privileged-exec");
 type SetupInferenceModule = typeof import("../../onboard/setup-inference");
 type SandboxProviderCleanupModule = typeof import("../../onboard/sandbox-provider-cleanup");
 type PolicyModule = typeof import("../../policy");
@@ -64,6 +66,14 @@ function gatewayRunner(gatewayName: string): typeof runOpenshell {
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
+  /** Use stopped Docker cleanup only after both in-sandbox cleanup attempts fail. */
+  clearStoppedSandboxStateRoots(
+    sandboxName: string,
+    paths: readonly string[],
+  ): ReturnType<PrivilegedExecModule["clearStoppedSandboxStateRoots"]> {
+    const cleanup = require("../../sandbox/privileged-exec") as PrivilegedExecModule;
+    return cleanup.clearStoppedSandboxStateRoots(sandboxName, paths);
+  },
   deleteMessagingProviderWithRecovery(
     providerName: string,
     sandboxName: string,
@@ -115,7 +125,10 @@ export const policyChannelDependencies = {
     options?: MessagingProviderUpsertOptions,
   ): string[] {
     const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
-    return providers.upsertMessagingProviders(tokenDefs, gatewayRunner(gatewayName), options);
+    return providers.upsertMessagingProviders(tokenDefs, gatewayRunner(gatewayName), {
+      ...options,
+      gatewayName,
+    });
   },
   rebuildSandbox(
     sandboxName: Parameters<RebuildModule["rebuildSandbox"]>[0],

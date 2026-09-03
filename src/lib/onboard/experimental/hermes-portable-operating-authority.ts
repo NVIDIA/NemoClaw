@@ -4,6 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import {
+  assertHermesPortableOpenShellExecutableFileAuthority,
   captureHermesPortableOpenShellExecutableAuthority,
   buildOpenShellSubprocessEnv,
   type HermesPortableOpenShellExecutableAuthority,
@@ -11,6 +12,7 @@ import {
 import { capturePodmanSocketAuthority, type PodmanSocketAuthority } from "../../adapters/podman";
 import {
   captureHermesPortablePodmanExecutableAuthority,
+  captureHermesPortablePodmanExecutableFileAuthority,
   type HermesPortablePodmanExecutableAuthority,
 } from "./hermes-portable-podman-authority";
 import {
@@ -23,8 +25,16 @@ import {
   type HermesPortableSuccessorReceipt,
 } from "./hermes-portable-receipt";
 
+export interface HermesPortableOperatingAuthorityTiming {
+  readonly measure: <T>(
+    stage: "socketAuthority" | "openshellExecutable" | "podmanExecutable" | "transactionCompare",
+    operation: () => T,
+  ) => T;
+}
+
 export interface HermesPortableOperatingAuthorityDeps {
   readonly env?: NodeJS.ProcessEnv;
+  readonly timing?: HermesPortableOperatingAuthorityTiming;
   readonly captureSocketAuthority?: (socketPath: string, uid: number) => PodmanSocketAuthority;
   readonly captureOpenShellExecutableAuthority?: (
     executablePath: string,
@@ -36,10 +46,20 @@ export interface HermesPortableOperatingAuthorityDeps {
     receipt: HermesPortableConfiguredReceipt,
     env: NodeJS.ProcessEnv,
   ) => HermesPortablePodmanExecutableAuthority;
+  readonly assertOpenShellExecutableFileAuthority?: (
+    expected: HermesPortableOpenShellExecutableAuthority,
+    resolutionEnv: NodeJS.ProcessEnv,
+  ) => string;
+  readonly capturePodmanExecutableFileAuthority?: (
+    socketAuthority: PodmanSocketAuthority,
+    receipt: HermesPortableConfiguredReceipt,
+    env: NodeJS.ProcessEnv,
+  ) => HermesPortablePodmanExecutableAuthority;
 }
 
 export interface QualifiedHermesPortableOperatingAuthority {
   readonly receipt: HermesPortableConfiguredReceipt;
+  readonly assertTransactionCurrent: () => void;
   readonly assertCurrent: () => void;
 }
 
@@ -140,10 +160,13 @@ export function qualifyHermesPortableOperatingAuthority(
   if (!snapshot.successor && options.permitSchema5Requalification !== true) {
     return {
       receipt: snapshot.receipt,
+      assertTransactionCurrent: () =>
+        fail("transaction currentness requires durable successor authority"),
       assertCurrent: () => undefined,
     };
   }
   const env = deps.env ?? process.env;
+  const measure = deps.timing?.measure ?? ((_stage, operation) => operation());
   const expected = snapshot.successor?.receipt ?? createHermesPortableSuccessorReceipt(snapshot);
   const captureSocket =
     deps.captureSocketAuthority ??
@@ -158,20 +181,36 @@ export function qualifyHermesPortableOperatingAuthority(
         receipt.runtimeAuthority,
         sourceEnv,
       ));
+  const assertOpenShellFile =
+    deps.assertOpenShellExecutableFileAuthority ??
+    ((expected: HermesPortableOpenShellExecutableAuthority, resolutionEnv: NodeJS.ProcessEnv) =>
+      assertHermesPortableOpenShellExecutableFileAuthority(expected, resolutionEnv));
+  const capturePodmanFile =
+    deps.capturePodmanExecutableFileAuthority ??
+    ((socketAuthority, receipt, sourceEnv) =>
+      captureHermesPortablePodmanExecutableFileAuthority(socketAuthority, receipt, sourceEnv));
   const capture = () => {
-    const socket = captureSocket(
-      snapshot.receipt.runtimeAuthority.socketPath,
-      snapshot.receipt.runtimeAuthority.uid,
+    const socket = measure("socketAuthority", () =>
+      captureSocket(
+        snapshot.receipt.runtimeAuthority.socketPath,
+        snapshot.receipt.runtimeAuthority.uid,
+      ),
     );
     const childEnv = buildOpenShellSubprocessEnv(env, snapshot.receipt.runtimeAuthority);
-    const openshell = captureOpenShell(
-      expected.openshellExecutableAuthority.executable.executablePath,
-      childEnv,
-      env,
+    const openshell = measure("openshellExecutable", () =>
+      captureOpenShell(
+        expected.openshellExecutableAuthority.executable.executablePath,
+        childEnv,
+        env,
+      ),
     );
     const receiptWithCurrentSocket = { ...snapshot.receipt, socketAuthority: socket };
-    const podman = capturePodman(socket, receiptWithCurrentSocket, env);
-    requireStableAuthority(expected, snapshot.receipt, socket, openshell, podman);
+    const podman = measure("podmanExecutable", () =>
+      capturePodman(socket, receiptWithCurrentSocket, env),
+    );
+    measure("transactionCompare", () =>
+      requireStableAuthority(expected, snapshot.receipt, socket, openshell, podman),
+    );
     return {
       socket,
       openshell,
@@ -185,8 +224,32 @@ export function qualifyHermesPortableOperatingAuthority(
     };
   };
   const initial = capture();
+  const assertTransactionCurrent = (): void => {
+    const socket = measure("socketAuthority", () =>
+      captureSocket(
+        snapshot.receipt.runtimeAuthority.socketPath,
+        snapshot.receipt.runtimeAuthority.uid,
+      ),
+    );
+    buildOpenShellSubprocessEnv(env, snapshot.receipt.runtimeAuthority);
+    measure("openshellExecutable", () => assertOpenShellFile(initial.openshell, env));
+    const receiptWithCurrentSocket = { ...snapshot.receipt, socketAuthority: socket };
+    const podman = measure("podmanExecutable", () =>
+      capturePodmanFile(socket, receiptWithCurrentSocket, env),
+    );
+    measure("transactionCompare", () => {
+      requireStableAuthority(expected, snapshot.receipt, socket, initial.openshell, podman);
+      if (
+        !isDeepStrictEqual(socket, initial.socket) ||
+        !isDeepStrictEqual(podman, initial.podman)
+      ) {
+        fail("operation-local filesystem or runtime identity changed");
+      }
+    });
+  };
   return {
     receipt: initial.receipt,
+    assertTransactionCurrent,
     assertCurrent: () => {
       const current = capture();
       if (

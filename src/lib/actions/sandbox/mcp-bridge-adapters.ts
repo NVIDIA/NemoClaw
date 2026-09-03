@@ -10,7 +10,6 @@ import {
   unregisterDeepAgentsAdapter,
 } from "./mcp-bridge-adapter-deepagents";
 import {
-  assertHermesMcpConfigMutationAllowed,
   assertHermesMcpMutationRuntimeCapability,
   inspectHermesAdapterRegistration,
   registerHermesAdapter,
@@ -80,23 +79,6 @@ export function inspectAgentAdapterRegistration(
   }
 }
 
-/**
- * Refuse an in-sandbox adapter config mutation while Hermes config is locked.
- * This host-side check intentionally runs before provider, policy, attachment,
- * or adapter work; the transaction helper repeats the file-level check to
- * close posture drift between this preflight and the actual config write.
- *
- * Deep Agents and OpenClaw do not use the Hermes shields contract. In
- * particular, teardown of a legacy Deep Agents entry must remain possible on
- * an image that predates the managed launcher capability marker.
- */
-export function assertAgentMcpConfigMutationAllowed(
-  sandboxName: string,
-  adapter: AgentMcpAdapter,
-): void {
-  if (adapter === "hermes-config") assertHermesMcpConfigMutationAllowed(sandboxName);
-}
-
 export function assertAgentMcpMutationRuntimeCapability(
   sandboxName: string,
   adapter: AgentMcpAdapter,
@@ -124,7 +106,6 @@ export function assertAgentMcpTeardownRuntimeCapability(
   sandboxName: string,
   adapter: AgentMcpAdapter,
 ): void {
-  assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
   if (adapter === "hermes-config") {
     assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
   }

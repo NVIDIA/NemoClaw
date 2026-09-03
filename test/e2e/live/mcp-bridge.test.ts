@@ -12,6 +12,8 @@ import {
 } from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { McpBridgeEntry } from "../../../src/lib/state/registry";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
@@ -19,6 +21,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { test as e2eTest, expect } from "../fixtures/e2e-test.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
+import { redactString } from "../fixtures/redaction.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   type McpBridgeShard,
@@ -42,11 +45,9 @@ import {
 import {
   assertHermesConfig,
   assertHermesInspectionRejectsUnmanagedFields,
-  assertHermesManagedAddSurvivesLockedGatewayRestartAndStateLayout,
+  assertHermesManagedAddSurvivesGatewayRestartAndStateLayout,
   assertHermesReloadRollback,
   assertHermesRemovalSurvivesGatewayRestart,
-  lowerHermesShieldsForCleanup,
-  reopenHermesMcpMaintenanceWindow,
 } from "./mcp-bridge-hermes-lifecycle.ts";
 import {
   assertMcpBridgeManagedImageReceipt,
@@ -57,6 +58,7 @@ import {
 } from "./mcp-bridge-onboard-env.ts";
 import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
 import {
+  readConcurrentMcpStatusAndConfirmHermesRegistration,
   restartBridgeWithoutHostSecret,
   retryOpenClawBaselineScopeOnboardFailure,
   retryAfterHermesRestartTransportFailure,
@@ -144,7 +146,7 @@ async function onboardAgent(
       sandboxName: options.sandboxName,
     }),
     redactionValues: [COMPATIBLE_KEY],
-    timeoutMs: 20 * 60_000,
+    timeoutMs: execTimeout(20 * 60_000),
   };
   const result = await retryOpenClawBaselineScopeOnboardFailure({
     agent: options.agent,
@@ -264,6 +266,7 @@ async function addBridgeAndReadStatus(
 async function assertConcurrentAddSerialized(
   host: HostCliClient,
   cleanup: CleanupRegistry,
+  artifacts: ArtifactSink, sandbox: SandboxClient,
   options: {
     sandboxName: string;
     mcpUrl: string;
@@ -304,19 +307,20 @@ async function assertConcurrentAddSerialized(
   const rejected = attempts.filter((result) => result.exitCode !== 0);
   expect(successful).toHaveLength(1);
   expect(rejected).toHaveLength(1);
-  const status = await host.nemoclaw(
-    [options.sandboxName, "mcp", "status", CONCURRENT_SERVER_NAME, "--json"],
-    {
-      artifactName: `${options.artifactPrefix}-mcp-concurrent-add-coherent-status`,
-      env,
-      redactionValues: [HOST_SECRET],
-      timeoutMs: 60_000,
-    },
-  );
+  const statusObservation = await readConcurrentMcpStatusAndConfirmHermesRegistration({
+    clients: { artifacts, host, sandbox },
+    committedAddResult: successful[0]!,
+    credentialEnvName: "FAKE_MCP_SECRET",
+    env,
+    redactionValues: [HOST_SECRET],
+    scenario: options,
+    server: CONCURRENT_SERVER_NAME,
+  });
+  const status = statusObservation.result;
   expectExitZero(status, `${options.artifactPrefix} concurrent add leaves one coherent bridge`);
   expect(JSON.parse(status.stdout)).toMatchObject({
     server: CONCURRENT_SERVER_NAME,
-    url: options.mcpUrl,
+    url: redactString(options.mcpUrl, [HOST_SECRET]),
     support: { adapter: options.expectedAdapter },
     env: { names: ["FAKE_MCP_SECRET"], ready: true, missing: [] },
     provider: {
@@ -326,8 +330,8 @@ async function assertConcurrentAddSerialized(
       credentialReady: true,
     },
     policy: { registryPresent: true, gatewayPresent: true },
-    adapter: { registered: true },
   });
+  expect(statusObservation.registered).toBe(true);
   const duplicateRejection = await retryAfterHermesRestartTransportFailure({
     adapter: options.expectedAdapter,
     committedBridgeVerified: true,
@@ -699,7 +703,7 @@ async function rebuildWithoutMcpHostSecret(
 }
 
 test("mcp-bridge", {
-  timeout: 45 * 60_000,
+  timeout: testTimeout(45 * 60_000),
   meta: { e2ePhases: MCP_BRIDGE_PHASES.openclaw },
 }, async ({ artifacts, cleanup, host, progress, sandbox }) => {
   await artifacts.writeJson("scenario.json", {
@@ -799,7 +803,7 @@ test("mcp-bridge", {
   );
 
   progress.phase("configure bridge and enforce endpoint boundaries");
-  await assertConcurrentAddSerialized(host, cleanup, {
+  await assertConcurrentAddSerialized(host, cleanup, artifacts, sandbox, {
     sandboxName: OPENCLAW_SANDBOX_NAME,
     mcpUrl,
     expectedAdapter: "mcporter",
@@ -1069,7 +1073,7 @@ test("mcp-bridge", {
 mcpBridgeShardTest("hermes")(
   "mcp-bridge-hermes",
   {
-    timeout: 45 * 60_000,
+    timeout: testTimeout(45 * 60_000),
     meta: { e2ePhases: MCP_BRIDGE_PHASES.hermes },
   },
   async ({ artifacts, cleanup, host, progress, sandbox }) => {
@@ -1121,7 +1125,7 @@ mcpBridgeShardTest("hermes")(
       cleanupMcpBridge(host, HERMES_SANDBOX_NAME, SERVER_NAME, "hermes-config"),
     );
     progress.phase("configure and inspect the Hermes MCP bridge");
-    await assertConcurrentAddSerialized(host, cleanup, {
+    await assertConcurrentAddSerialized(host, cleanup, artifacts, sandbox, {
       sandboxName: HERMES_SANDBOX_NAME,
       mcpUrl,
       expectedAdapter: "hermes-config",
@@ -1173,16 +1177,15 @@ mcpBridgeShardTest("hermes")(
         await assertHermesConfig(sandbox, HERMES_SANDBOX_NAME, mcpUrl);
         await assertHermesInspectionRejectsUnmanagedFields(sandbox, HERMES_SANDBOX_NAME);
         await assertSecretAbsentFromSandbox(sandbox, HERMES_SANDBOX_NAME, ["/sandbox/.hermes"]);
-        progress.phase("restore Hermes shields, restart, and prove rollback");
-        await assertHermesManagedAddSurvivesLockedGatewayRestartAndStateLayout(
+        progress.phase("restart Hermes and prove config rollback");
+        await assertHermesManagedAddSurvivesGatewayRestartAndStateLayout(
           host,
           sandbox,
           HERMES_SANDBOX_NAME,
           mcpUrl,
         );
       },
-      runModelTurn: () =>
-        assertHermesToolCall("hermes-real-mcp-tool-call-immediately-after-shields-down"),
+      runModelTurn: () => assertHermesToolCall("hermes-real-mcp-tool-call-after-gateway-restart"),
     });
     await assertHermesReloadRollback(sandbox, HERMES_SANDBOX_NAME, mcpUrl);
     await assertSecretAbsentFromSandbox(
@@ -1237,9 +1240,6 @@ mcpBridgeShardTest("hermes")(
     await captureHermesGatewayIdentity(sandbox, "hermes-gateway-identity-before-rebuild");
     await rebuildWithoutMcpHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     await captureHermesGatewayIdentity(sandbox, "hermes-gateway-identity-after-mcp-restore");
-    cleanup.add("lower Hermes Shields before teardown", async () => {
-      await lowerHermesShieldsForCleanup(host, HERMES_SANDBOX_NAME);
-    });
     cleanup.add("capture Hermes post-rebuild MCP evidence", async () => {
       await artifacts.writeJson(
         "hermes-post-rebuild-mcp-requests.json",
@@ -1251,11 +1251,6 @@ mcpBridgeShardTest("hermes")(
           rpcMethod: request.rpcMethod,
         })),
       );
-      await host.nemoclaw([HERMES_SANDBOX_NAME, "shields", "status"], {
-        artifactName: "hermes-post-rebuild-shields-status",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 60_000,
-      });
       await sandbox.execShell(
         HERMES_SANDBOX_NAME,
         trustedSandboxShellScript(buildHermesMcpRuntimeDiagnosticsScript()),
@@ -1288,7 +1283,6 @@ mcpBridgeShardTest("hermes")(
       artifactName: "hermes-real-mcp-tool-call-after-rebuild",
       expectedSecret: ROTATED_HOST_SECRET,
     });
-    await reopenHermesMcpMaintenanceWindow(host, HERMES_SANDBOX_NAME);
     await removeBridgeAndAssertEmpty(host, sandbox, {
       agent: "hermes",
       adapter: "hermes-config",
@@ -1323,7 +1317,7 @@ mcpBridgeShardTest("hermes")(
 mcpBridgeShardTest("deepagents")(
   "mcp-bridge-deepagents",
   {
-    timeout: 45 * 60_000,
+    timeout: testTimeout(45 * 60_000),
     meta: { e2ePhases: MCP_BRIDGE_PHASES.deepagents },
   },
   async ({ artifacts, cleanup, host, lifecycle, progress, sandbox }) => {
@@ -1377,7 +1371,7 @@ mcpBridgeShardTest("deepagents")(
     );
 
     progress.phase("configure and inspect the Deep Agents MCP bridge");
-    await assertConcurrentAddSerialized(host, cleanup, {
+    await assertConcurrentAddSerialized(host, cleanup, artifacts, sandbox, {
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       mcpUrl,
       expectedAdapter: "deepagents-config",

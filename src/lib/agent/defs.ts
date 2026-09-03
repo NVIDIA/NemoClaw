@@ -31,13 +31,11 @@ import type {
   AgentMcpCapability,
   AgentStateDirectory,
   AgentStateFile,
-  AgentStateLockPlan,
   AgentVersionScheme,
 } from "./definition-types";
 import {
   loadManifestRecord,
   readBoolean,
-  readConfigShieldsFiles,
   readDashboard,
   readDeferredOnboarding,
   readHealthProbe,
@@ -46,7 +44,6 @@ import {
   readObject,
   readPortArray,
   readStateFiles,
-  readStateLockPlanInImage,
   readString,
   readStringArray,
   readStringMap,
@@ -54,12 +51,7 @@ import {
   readVersionScheme,
 } from "./manifest-readers";
 import { type AgentRuntime, readAgentRuntime } from "./runtime-manifest";
-import {
-  buildStateLockPlan,
-  readStateDirectories,
-  stateDirectoryPaths,
-  stateDirectoryPrefixes,
-} from "./state-directory-contract";
+import { readStateDirectories, stateDirectoryPaths, stateDirectoryPrefixes } from "./state-directory-contract";
 import { type AgentWebAuth, readWebAuth } from "./web-auth";
 
 export type {
@@ -77,10 +69,8 @@ export type {
   AgentStateDirectory,
   AgentStateDirectoryPath,
   AgentStateDirectoryPrefix,
-  AgentStateDirectoryShields,
   AgentStateFile,
   AgentStateFileStrategy,
-  AgentStateLockPlan,
   AgentVersionScheme,
   StateFileFreshHeader,
   StateFileKeyAllowlistRestoreOwnership,
@@ -181,7 +171,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
   const webAuth = readWebAuth(raw);
   const healthProbe = readHealthProbe(raw);
   const config = readObject(raw, "config");
-  const configShieldsFiles = readConfigShieldsFiles(config);
   const inference = readInference(raw);
   const mcp = readMcpCapability(raw);
   if (raw.runtime_auth_state_dirs !== undefined) {
@@ -196,8 +185,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
   const backupStateDirPrefixes = stateDirectoryPrefixes(stateDirectories, { backup: true });
   const nonBackupStateDirs = stateDirectoryPaths(stateDirectories, { backup: false });
   const nonBackupStateDirPrefixes = stateDirectoryPrefixes(stateDirectories, { backup: false });
-  const stateLockPlan = buildStateLockPlan(stateDirectories);
-  const stateLockPlanInImage = readStateLockPlanInImage(raw);
   const stateFiles = readStateFiles(raw);
   const userManagedFiles = readUserManagedFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
@@ -224,7 +211,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
     deferred_onboarding: deferredOnboarding,
     inference,
     mcp,
-    state_lock_plan_in_image: stateLockPlanInImage,
     state_files: stateFiles,
     user_managed_files: userManagedFiles,
     _legacy_paths: legacyPathConfig,
@@ -273,7 +259,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
         configFile: readString(config ?? {}, "config_file") ?? "openclaw.json",
         envFile: readString(config ?? {}, "env_file") ?? null,
         format: readString(config ?? {}, "format") ?? "json",
-        shieldsFiles: configShieldsFiles,
       };
     },
 
@@ -311,14 +296,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
 
     get nonBackupStateDirPrefixes(): string[] {
       return nonBackupStateDirPrefixes;
-    },
-
-    get stateLockPlan(): AgentStateLockPlan {
-      return stateLockPlan;
-    },
-
-    get stateLockPlanInImage(): boolean {
-      return stateLockPlanInImage;
     },
 
     get stateFiles(): AgentStateFile[] {
@@ -367,11 +344,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
     get policyAdditionsPath(): string | null {
       const policyAdditionsPath = path.join(agentDir, "policy-additions.yaml");
       return fs.existsSync(policyAdditionsPath) ? policyAdditionsPath : null;
-    },
-
-    get policyPermissivePath(): string | null {
-      const policyPermissivePath = path.join(agentDir, "policy-permissive.yaml");
-      return fs.existsSync(policyPermissivePath) ? policyPermissivePath : null;
     },
 
     get pluginDir(): string | null {

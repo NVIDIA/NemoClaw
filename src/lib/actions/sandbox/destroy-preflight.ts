@@ -27,7 +27,6 @@ import {
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
 } from "./gateway-target";
-import { assertMcpAdapterConfigMutationsAllowed } from "./mcp-bridge-runtime-capabilities";
 
 export type SandboxDestroyPreflight = {
   cleanupGatewayName: string;
@@ -265,7 +264,7 @@ export async function stopModelRouterForDestroyedSandbox(
 
 export function prepareSandboxDestroy(
   sandboxName: string,
-  retainedRecoveryGatewayName?: string,
+  { retainedRecoveryGatewayName }: { retainedRecoveryGatewayName?: string } = {},
 ): SandboxDestroyPreflight {
   const sandbox = registry.getSandbox(sandboxName);
   console.log(`  Deleting sandbox '${sandboxName}'...`);
@@ -301,20 +300,5 @@ export function prepareSandboxDestroy(
     }),
   );
   const sandboxConfirmedAbsent = sandboxPresence === "absent";
-  const mcpEntriesRequiringConfigMutation = Object.values(sandbox?.mcp?.bridges ?? {}).filter(
-    (entry) => entry.addState !== "prepared",
-  );
-  if (
-    !sandboxConfirmedAbsent &&
-    sandbox &&
-    !sandbox.mcp?.destroyPreparedAt &&
-    !sandbox.mcp?.destroyPendingAt &&
-    mcpEntriesRequiringConfigMutation.length > 0
-  ) {
-    // Fail before stopping local services or mutating any MCP resource when
-    // the live adapter config cannot be changed safely.
-    assertMcpAdapterConfigMutationsAllowed(sandboxName, sandbox, mcpEntriesRequiringConfigMutation);
-  }
-
   return { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent };
 }

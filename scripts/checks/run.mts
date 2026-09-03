@@ -54,11 +54,6 @@ export const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/dependency-pins.mts"],
   },
   {
-    name: "pi-candidate-artifacts",
-    command: TSX,
-    args: ["scripts/checks/pi-candidate-artifacts.mts"],
-  },
-  {
     name: "no-defaulted-dependent-flags",
     command: TSX,
     args: ["scripts/checks/no-defaulted-dependent-flags.mts"],
@@ -67,11 +62,6 @@ export const CHECKS: readonly CheckCommand[] = [
     name: "no-coverage-ignore",
     command: TSX,
     args: ["scripts/checks/no-coverage-ignore.mts"],
-  },
-  {
-    name: "openshell-policy-mutation-read",
-    command: TSX,
-    args: ["scripts/checks/openshell-policy-mutation-read.mts"],
   },
   {
     name: "layer-import-boundaries",
@@ -117,6 +107,11 @@ export const CHECKS: readonly CheckCommand[] = [
     name: "optimized-build-context-copy-sources",
     command: TSX,
     args: ["scripts/checks/optimized-build-context-copy-sources.mts"],
+  },
+  {
+    name: "pi-qualification-receipt-refresh",
+    command: TSX,
+    args: ["scripts/checks/pi-qualification-receipt-refresh.mts"],
   },
   {
     name: "test-registration-boundary",
