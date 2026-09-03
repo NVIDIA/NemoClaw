@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../core/ports";
+import { buildChain } from "../dashboard/contract";
 import {
   type DashboardRuntimeAgent,
   getAgentDeclaredForwardPorts,
@@ -15,6 +16,27 @@ import { resolveOnboardHermesApiPort } from "./hermes-api-port";
 // module's "which host port does this agent publish" logic, so onboarding
 // reaches it through the dashboard helpers it already consumes (#9290).
 export { resolveVerifyAgentApiPort } from "./hermes-api-port";
+
+/**
+ * Say so when a non-loopback `CHAT_UI_URL` is what takes the dashboard forward
+ * off the loopback bind. Naming an external browser URL is not a request to
+ * listen on every interface, and the operator opt-in for that is
+ * `NEMOCLAW_DASHBOARD_BIND`, so onboarding has to report the wider surface it
+ * is about to open rather than leave the user to find it with `ss` (#10861).
+ */
+export function discloseDashboardBindWidening(
+  dashboardUrl: string,
+  port: number,
+  warn: (message: string) => void,
+): void {
+  const chain = buildChain({ chatUiUrl: dashboardUrl, port });
+  if (!chain.bindWidenedByChatUiUrl) return;
+  warn(
+    `  ! CHAT_UI_URL is not a loopback address, so the dashboard forward for port ${String(port)} ` +
+      `binds ${chain.bindAddress} instead of 127.0.0.1. Every host that can reach this machine on ` +
+      `that port can reach the dashboard. Unset CHAT_UI_URL to keep the loopback bind.`,
+  );
+}
 
 export type EnsureDashboardForward = (
   sandboxName: string,
@@ -118,6 +140,7 @@ export async function ensureAgentDashboardForward(options: {
       !usesFixedApiPort && chatUiUrl
         ? replaceUrlPort(chatUiUrl, agentDashboardPort)
         : `http://127.0.0.1:${agentDashboardPort}`;
+    discloseDashboardBindWidening(requestedDashboardUrl, agentDashboardPort, warn);
     await beforeForwardPort?.(agentDashboardPort);
     const actualAgentDashboardPort = ensureDashboardForward(sandboxName, requestedDashboardUrl, {
       preserveSandboxPorts: preservePorts,

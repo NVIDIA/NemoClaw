@@ -229,3 +229,36 @@ describe("ensureAgentDashboardForward", () => {
     expect(process.env.CHAT_UI_URL).toBe("https://hermes.example.test:9120/ui");
   });
 });
+
+describe("dashboard bind widening disclosure", () => {
+  it("reports the wider bind when a non-loopback CHAT_UI_URL causes it", async () => {
+    const warn = vi.fn();
+    const ensureDashboardForward = vi.fn(() => 18789);
+
+    await ensureAgentDashboardForward({
+      sandboxName: "hm",
+      agent: { forwardPort: 18789, forward_ports: [18789] },
+      ensureDashboardForward,
+      chatUiUrl: "https://dashboard.example.com:18789",
+      warn,
+    });
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("binds 0.0.0.0 instead of 127.0.0.1"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("CHAT_UI_URL"));
+  });
+
+  it("stays quiet when the dashboard keeps its loopback bind", async () => {
+    const warn = vi.fn();
+    const ensureDashboardForward = vi.fn(() => 18789);
+
+    await ensureAgentDashboardForward({
+      sandboxName: "hm",
+      agent: { forwardPort: 18789, forward_ports: [18789] },
+      ensureDashboardForward,
+      chatUiUrl: "http://127.0.0.1:18789",
+      warn,
+    });
+
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("binds 0.0.0.0"));
+  });
+});
