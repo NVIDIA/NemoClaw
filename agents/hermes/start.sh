@@ -1049,6 +1049,7 @@ import sys
 root = os.environ["NEMOCLAW_HERMES_CONFIG_ROOT"]
 directory_mode = 0o2770
 file_mode = 0o660
+max_repair_depth = 64
 
 def fail(message: str) -> None:
     print(f"[SECURITY] Refusing Hermes log repair because {message}", file=sys.stderr)
@@ -1080,6 +1081,34 @@ def resolve_sandbox_identity() -> tuple[int | None, int | None]:
         fail(f"sandbox account lookup failed: {exc}")
     sandbox_identity = (sandbox_uid, sandbox_gid)
     return sandbox_identity
+
+
+def require_non_root_ownership(current: os.stat_result, path: str) -> None:
+    if os.geteuid() == 0:
+        return
+    if current.st_uid != os.geteuid():
+        fail(f"{path} has unexpected owner uid {current.st_uid}")
+    if current.st_gid != os.getegid():
+        fail(f"{path} has unexpected group gid {current.st_gid}")
+
+
+def enforce_mode(fd: int, path: str, expected_mode: int) -> None:
+    before = os.fstat(fd)
+    require_non_root_ownership(before, path)
+    if os.geteuid() != 0 and stat.S_IMODE(before.st_mode) == expected_mode:
+        return
+    try:
+        os.fchmod(fd, expected_mode)
+    except PermissionError as exc:
+        current = os.fstat(fd)
+        require_non_root_ownership(current, path)
+        if os.geteuid() != 0 and stat.S_IMODE(current.st_mode) == expected_mode:
+            return
+        detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+        fail(f"{path} mode could not be repaired safely: {detail}")
+    except OSError as exc:
+        detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+        fail(f"{path} mode could not be repaired safely: {detail}")
 
 
 def stat_entry(parent_fd: int, name: str, path: str) -> os.stat_result:
@@ -1158,7 +1187,7 @@ def repair_managed_directory(
     sandbox_uid, sandbox_gid = resolve_sandbox_identity()
     if sandbox_uid is not None and sandbox_gid is not None:
         os.fchown(fd, sandbox_uid, sandbox_gid)
-    os.fchmod(fd, directory_mode)
+    enforce_mode(fd, path, directory_mode)
     current = os.fstat(fd)
     if stat.S_IMODE(current.st_mode) != directory_mode:
         fail(
@@ -1169,6 +1198,7 @@ def repair_managed_directory(
         fail(f"{path} has owner uid {current.st_uid}, expected sandbox uid {sandbox_uid}")
     if sandbox_gid is not None and current.st_gid != sandbox_gid:
         fail(f"{path} has group gid {current.st_gid}, expected sandbox gid {sandbox_gid}")
+    require_non_root_ownership(current, path)
     verify_named_inode(parent_fd, name, path, current)
     return fd, current
 
@@ -1202,7 +1232,7 @@ def repair_file(parent_fd: int, name: str, path: str) -> None:
         sandbox_uid, sandbox_gid = resolve_sandbox_identity()
         if sandbox_uid is not None and sandbox_gid is not None:
             os.fchown(fd, sandbox_uid, sandbox_gid)
-        os.fchmod(fd, file_mode)
+        enforce_mode(fd, path, file_mode)
         current = os.fstat(fd)
         if stat.S_IMODE(current.st_mode) != file_mode:
             fail(
@@ -1213,6 +1243,7 @@ def repair_file(parent_fd: int, name: str, path: str) -> None:
             fail(f"{path} has owner uid {current.st_uid}, expected sandbox uid {sandbox_uid}")
         if sandbox_gid is not None and current.st_gid != sandbox_gid:
             fail(f"{path} has group gid {current.st_gid}, expected sandbox gid {sandbox_gid}")
+        require_non_root_ownership(current, path)
         verify_named_inode(parent_fd, name, path, current)
     finally:
         os.close(fd)
@@ -1223,7 +1254,10 @@ def repair_directory(
     display_path: str,
     *,
     skip_names: frozenset[str] = frozenset(),
+    depth: int = 0,
 ) -> None:
+    if depth > max_repair_depth:
+        fail(f"{display_path} exceeds maximum repair depth {max_repair_depth}")
     try:
         names = sorted(os.listdir(directory_fd))
     except OSError as exc:
@@ -1242,7 +1276,7 @@ def repair_directory(
                 os.close(child_fd)
                 fail(f"{path} changed while it was opened")
             try:
-                repair_directory(child_fd, path)
+                repair_directory(child_fd, path, depth=depth + 1)
                 verify_named_inode(directory_fd, name, path, os.fstat(child_fd))
             finally:
                 os.close(child_fd)

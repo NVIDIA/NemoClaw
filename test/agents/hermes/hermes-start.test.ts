@@ -123,7 +123,7 @@ function createLayoutSwapFixture(tmpDir: string, hermesHome: string, target: Mut
     { mode: 0o700 },
   );
   const fingerprint = () => [filesystemFingerprint(externalRoot), filesystemFingerprint(sentinel)];
-  return { fakeBin, before: fingerprint(), fingerprint };
+  return { fakeBin, before: fingerprint(), fingerprint, originalEntry };
 }
 
 function extractRuntimeShellEnvBlock(src: string): string {
@@ -517,6 +517,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   staleLock?: boolean;
   stalePid?: boolean;
   preExistingLogFile?: boolean | "hardlink-to-config" | "hardlink-to-env";
+  deepLogDepth?: number;
   unsafeLog?: "root-symlink" | "nested-symlink" | "fifo";
   swapLayoutDir?: MutableLayoutTarget;
   preExistingHistory?: "regular" | "symlink" | "directory" | "hardlink-to-config";
@@ -560,6 +561,12 @@ function runHermesGatewayRuntimeCleanup(opts: {
         ? (fs.mkdirSync(path.dirname(agentLogPath), { recursive: true }),
           fs.linkSync(envFilePath, agentLogPath))
         : undefined);
+  if (opts.deepLogDepth !== undefined) {
+    let nested = path.join(hermesHome, "logs", "curator");
+    for (let depth = 0; depth < opts.deepLogDepth; depth += 1)
+      nested = path.join(nested, `d${depth}`);
+    fs.mkdirSync(nested, { recursive: true });
+  }
   const unsafeLogFixture = opts.unsafeLog
     ? createHermesUnsafeLogFixture(tmpDir, hermesHome, opts.unsafeLog)
     : undefined;
@@ -768,6 +775,9 @@ function runHermesGatewayRuntimeCleanup(opts: {
       unsafeLogAfter: unsafeLogFixture?.fingerprint(),
       layoutSwapBefore: layoutSwapFixture?.before,
       layoutSwapAfter: layoutSwapFixture?.fingerprint(),
+      layoutSwapOriginalExists: Boolean(
+        layoutSwapFixture && fs.existsSync(layoutSwapFixture.originalEntry),
+      ),
       symlinkTargetContent,
       unsafeStateBefore,
       unsafeStateAfter:
@@ -1324,25 +1334,22 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     ["symlink", "symlink", ".hermes_history is a symlink"],
     ["directory", "directory", ".hermes_history is not a regular file"],
     ["hardlink-to-config", "regular", ".hermes_history has hard-link count"],
-  ] as const)(
-    "refuses unsafe history with kind=%s",
-    (kind, expectedKind, message) => {
-      const run = runHermesGatewayRuntimeCleanup({
-        staleLock: false,
-        stalePid: false,
-        preExistingHistory: kind,
-      });
-      expect(run.result.status).not.toBe(0);
-      expect(run.historyKind).toBe(expectedKind);
-      expect(run.symlinkTargetContent).toBe(kind === "symlink" ? "attacker\n" : "");
-      expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
-      expect(run.result.stderr).toContain(message);
-      expect(run.result.stderr).toContain("Hermes pre-launch layout repair failed at history file");
-      expect(run.result.stderr).toContain(
-        "Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration.",
-      );
-    },
-  );
+  ] as const)("refuses unsafe history with kind=%s", (kind, expectedKind, message) => {
+    const run = runHermesGatewayRuntimeCleanup({
+      staleLock: false,
+      stalePid: false,
+      preExistingHistory: kind,
+    });
+    expect(run.result.status).not.toBe(0);
+    expect(run.historyKind).toBe(expectedKind);
+    expect(run.symlinkTargetContent).toBe(kind === "symlink" ? "attacker\n" : "");
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
+    expect(run.result.stderr).toContain(message);
+    expect(run.result.stderr).toContain("Hermes pre-launch layout repair failed at history file");
+    expect(run.result.stderr).toContain(
+      "Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration.",
+    );
+  });
 
   it.each([".", "hooks", "image_cache", "audio_cache"] as const)(
     "rejects a swapped mutable layout directory %s after validation without mutating its external target",
@@ -1351,10 +1358,20 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       const resource = swapLayoutDir === "." ? "config root" : `${swapLayoutDir} directory`;
       expect(run.result.status).not.toBe(0);
       expect(run.layoutSwapAfter).toEqual(run.layoutSwapBefore);
+      expect(run.layoutSwapOriginalExists).toBe(true);
       expect(run.result.stderr).toContain(`layout repair failed at ${resource}`);
       expect(run.result.stderr).toContain("Restore a trusted snapshot into a recreated sandbox");
     },
   );
+
+  it("refuses a log tree beyond the bounded repair depth", () => {
+    const run = runHermesGatewayRuntimeCleanup({ deepLogDepth: 65 });
+
+    expect(run.result.status).not.toBe(0);
+    expect(run.result.stderr).toContain("[SECURITY] Refusing Hermes log repair because");
+    expect(run.result.stderr).toContain("exceeds maximum repair depth 64");
+    expect(run.result.stderr).not.toContain("RecursionError");
+  });
 
   it("refuses a history path that hard-links the mutable config file", () => {
     const run = runHermesGatewayRuntimeCleanup({
@@ -1425,23 +1442,22 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.result.stderr).toContain(message);
   });
 
-  it.each([undefined, ["/usr/local/bin/hermes.real", "gateway", "run"]])(
-    "preserves runtime state for a live gateway process [case %#]",
-    (liveGatewayArgv) => {
-      const run = runHermesGatewayRuntimeCleanup({
-        liveGateway: true,
-        liveGatewayArgv,
-        orphanSocat: true,
-      });
+  it.each([[undefined], [["/usr/local/bin/hermes.real", "gateway", "run"]]] as [
+    string[] | undefined,
+  ][])("preserves runtime state for a live gateway process [case %#]", (liveGatewayArgv) => {
+    const run = runHermesGatewayRuntimeCleanup({
+      liveGateway: true,
+      liveGatewayArgv,
+      orphanSocat: true,
+    });
 
-      expect(run.result.status).toBe(0);
-      expect(run.runtimePidExists).toBe(true);
-      expect(run.runtimeLockExists).toBe(true);
-      expect(run.legacyPidIsSymlink).toBe(true);
-      expect(run.killLog).toBe("");
-      expect(run.result.stderr).toContain("Existing Hermes gateway process detected");
-    },
-  );
+    expect(run.result.status).toBe(0);
+    expect(run.runtimePidExists).toBe(true);
+    expect(run.runtimeLockExists).toBe(true);
+    expect(run.legacyPidIsSymlink).toBe(true);
+    expect(run.killLog).toBe("");
+    expect(run.result.stderr).toContain("Existing Hermes gateway process detected");
+  });
 });
 
 describe("agents/hermes/start.sh Tirith marker bootstrap", () => {

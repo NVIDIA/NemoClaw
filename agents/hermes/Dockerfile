@@ -1603,6 +1603,15 @@ RUN check_metadata() { \
         { [ ! -e "$path" ] && [ ! -L "$path" ]; } \
             || { echo "ERROR: build-only Hermes path leaked into the final image: $path" >&2; return 1; }; \
     }; \
+    if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
+        hermes_root_metadata='sandbox:sandbox 3777'; \
+        hermes_gateway_state_metadata='gateway:sandbox 2777'; \
+        hermes_log_metadata='sandbox:sandbox 2777'; \
+    else \
+        hermes_root_metadata='sandbox:sandbox 3770'; \
+        hermes_gateway_state_metadata='gateway:sandbox 2770'; \
+        hermes_log_metadata='sandbox:sandbox 2770'; \
+    fi; \
     check_absent /opt/hermes/tests \
     && check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \
     && check_absent /root/.npm \
@@ -1642,10 +1651,10 @@ RUN check_metadata() { \
     && check_metadata /usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py 'root:root 755' \
     && check_metadata /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444' \
-    && check_metadata /sandbox/.hermes 'sandbox:sandbox 3770' \
-    && check_metadata /sandbox/.hermes/sessions 'gateway:sandbox 2770' \
-    && check_metadata /sandbox/.hermes/cron 'gateway:sandbox 2770' \
-    && check_metadata /sandbox/.hermes/logs 'sandbox:sandbox 2770'
+    && check_metadata /sandbox/.hermes "$hermes_root_metadata" \
+    && check_metadata /sandbox/.hermes/sessions "$hermes_gateway_state_metadata" \
+    && check_metadata /sandbox/.hermes/cron "$hermes_gateway_state_metadata" \
+    && check_metadata /sandbox/.hermes/logs "$hermes_log_metadata"
 
 # Verify the immutable security package inventory in the completed image.
 # hadolint ignore=DL4006
