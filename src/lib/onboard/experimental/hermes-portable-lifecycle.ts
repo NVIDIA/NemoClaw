@@ -598,12 +598,16 @@ function createContainerDeps(
 ): HermesPortableLifecycleContainerDeps {
   if (TRUST_DURABLE_GFN_AUTHORITY) {
     const podman = (args: readonly string[], timeoutMs: number): HermesPortablePodmanResult => {
-      const result = spawnSync("/usr/bin/podman", [...args], {
-        env: buildHermesPortablePodmanEnvironment(receipt.runtimeAuthority, commandEnv),
-        maxBuffer: 512 * 1024,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: timeoutMs,
-      });
+      const result = spawnSync(
+        "/usr/bin/podman",
+        ["--url", `unix://${receipt.socketAuthority.socketPath}`, ...args],
+        {
+          env: buildHermesPortablePodmanEnvironment(receipt.runtimeAuthority, commandEnv),
+          maxBuffer: 512 * 1024,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: timeoutMs,
+        },
+      );
       return {
         status: result.status,
         stdout: String(result.stdout ?? ""),
