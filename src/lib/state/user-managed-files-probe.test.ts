@@ -57,7 +57,6 @@ function makeFakeAgent(declared: string[]): ReturnType<DefsModule["loadAgent"]> 
       configFile: "config.toml",
       envFile: null,
       format: "toml",
-      shieldsFiles: [],
     },
     inferenceProviderOptions: [],
     stateDirs: [],
