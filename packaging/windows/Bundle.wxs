@@ -9,7 +9,11 @@
     IconSourceFile="$(var.SourceRoot)\packaging\windows\assets\NemoClaw.ico"
     AboutUrl="https://github.com/NVIDIA/NemoClaw"
     Copyright="Copyright (c) 2026 NVIDIA Corporation and affiliates">
-    <BootstrapperApplication SourceFile="$(var.BootstrapperPath)" />
+    <BootstrapperApplication SourceFile="$(var.BootstrapperPath)">
+      <Payloads Include="$(var.BootstrapperRoot)\**">
+        <Exclude Files="$(var.BootstrapperPath)" />
+      </Payloads>
+    </BootstrapperApplication>
     <Chain>
       <ExePackage
         Id="MxcSystemDrivePreparation"

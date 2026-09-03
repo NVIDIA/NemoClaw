@@ -410,12 +410,26 @@ try {
         Fail-WindowsPackageBuild 'Native ARM64 NemoClaw bootstrapper build failed.'
     }
     Assert-Arm64PortableExecutable -Path $bootstrapperPath -Label 'NemoClaw.Bootstrapper.exe'
+    Assert-Arm64PortableExecutable `
+        -Path (Join-Path $bootstrapperOutput 'mbanative.dll') `
+        -Label 'WiX managed-bootstrapper native bridge'
+    foreach ($bootstrapperDependency in @(
+        'NemoClaw.Bootstrapper.deps.json',
+        'NemoClaw.Bootstrapper.dll',
+        'NemoClaw.Bootstrapper.runtimeconfig.json',
+        'WixToolset.BootstrapperApplicationApi.dll'
+    )) {
+        if (-not (Test-Path -LiteralPath (Join-Path $bootstrapperOutput $bootstrapperDependency) -PathType Leaf)) {
+            Fail-WindowsPackageBuild "Native bootstrapper publish is missing $bootstrapperDependency."
+        }
+    }
     $bootstrapperSha256 = (Get-FileHash -LiteralPath $bootstrapperPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $bootstrapperAuthenticodeStatus = (Get-AuthenticodeSignature -LiteralPath $bootstrapperPath).Status.ToString()
 
     $bundleProperties = $commonProperties + @(
         "-p:MsiPath=$msiPath",
-        "-p:BootstrapperPath=$bootstrapperPath"
+        "-p:BootstrapperPath=$bootstrapperPath",
+        "-p:BootstrapperRoot=$bootstrapperOutput"
     )
     $bundleRestoreArguments = @(
         'restore', $bundleProject,
