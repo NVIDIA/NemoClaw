@@ -236,14 +236,17 @@ function validatePr(
     "pull request base commit",
   );
   exactString(
-    record(pull.head, "pull request source").sha,
-    expected.candidateSha,
-    "pull request source commit",
-  );
-  exactString(
     record(record(pull.base, "pull request base").repo, "pull request base repository").full_name,
     REPOSITORY,
     "pull request base repository",
+  );
+  if (expected.candidateSha === expected.baseSha && expected.candidateRepository === REPOSITORY) {
+    return;
+  }
+  exactString(
+    record(pull.head, "pull request source").sha,
+    expected.candidateSha,
+    "pull request source commit",
   );
   exactString(
     record(record(pull.head, "pull request source").repo, "pull request source repository")

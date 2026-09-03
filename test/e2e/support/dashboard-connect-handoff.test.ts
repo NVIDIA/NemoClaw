@@ -150,6 +150,31 @@ test("reaps interactive connect after missing-forward proof while its detached f
   }
 });
 
+test("accepts direct ForwardTcp ownership proof without parsing legacy CLI output", async ({
+  artifacts,
+  progress,
+}) => {
+  let probes = 0;
+  const script = [
+    "process.on('SIGTERM', () => process.exit(0));",
+    "setInterval(() => undefined, 1000);",
+  ].join("\n");
+  const result = await runDashboardConnectUntilForwardHandoff({
+    artifacts,
+    command: [process.execPath, "-e", script],
+    dashboardPort: DASHBOARD_PORT,
+    env: {},
+    forwardProbe: () => (probes += 1) >= 2,
+    forwardProbeIntervalMs: 10,
+    progress,
+    sandboxName: SANDBOX_NAME,
+    timeoutMs: 2_000,
+  });
+
+  expect(result.proof).toBe("forward-started");
+  expect(probes).toBeGreaterThanOrEqual(2);
+});
+
 test("fails when an attached descendant retains captured stdio after forward proof", async ({
   artifacts,
   progress,

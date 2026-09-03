@@ -106,7 +106,7 @@ describe("detectInferenceProviderHostState", () => {
   it("collects local Ollama and vLLM state into one provider host snapshot", () => {
     const dockerCapture = vi.fn(() => "sha256:cached-image\n");
     const deps = buildDeps({
-      hostCommandExists: vi.fn((command) => command === "ollama"),
+      hostCommandExists: vi.fn((command) => command === "ollama" || command === "docker"),
       findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
       runCapture: vi.fn((command) =>
         command.join(" ").includes(`http://127.0.0.1:8000/v1/models`) ? "{}" : "",
@@ -141,6 +141,7 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.vllmRunning).toBe(true);
     expect(state.hasVllmImage).toBe(true);
     expect(state.vllmEntries.map((entry) => entry.key)).toEqual(["vllm"]);
+    expect(deps.hostCommandExists).toHaveBeenCalledWith("docker");
     expect(state.gpuNimCapable).toBe(true);
     expect(state.ollamaInstallMenu.entry).toBeNull();
     expect(deps.getWindowsHostOllamaDockerRequirement).toHaveBeenCalledWith(null);
@@ -155,6 +156,46 @@ describe("detectInferenceProviderHostState", () => {
         timeout: 10_000,
       }),
     );
+  });
+
+  it("keeps Docker-less hosts out of managed vLLM at the host-state boundary (#10891)", () => {
+    const logs: string[] = [];
+    const deps = buildDeps({
+      detectVllmProfile: vi.fn<DetectInferenceProviderHostStateDeps["detectVllmProfile"]>(
+        () => ({
+          name: "DGX Spark",
+          platform: "spark" as const,
+          image: "nvcr.io/nvidia/vllm:test",
+          imageDownloadSizeBytes: 1,
+          defaultModel: {} as never,
+          containerName: "nemoclaw-vllm",
+          dockerRunFlags: [],
+          pullTimeoutSec: 1,
+          loadTimeoutSec: 1,
+        }),
+      ),
+    });
+    const gpu = { nimCapable: false, type: "nvidia" as const, platform: "spark" as const };
+
+    const interactiveState = detectWithDeps(deps, gpu);
+    const explicitState = detectInferenceProviderHostState({
+      gpu,
+      experimental: true,
+      platform: "linux",
+      env: { NEMOCLAW_PROVIDER: "install-vllm" },
+      log: (message = "") => logs.push(message),
+      installedOllamaVersion: MIN_OLLAMA_VERSION,
+      runningOllamaVersion: MIN_OLLAMA_VERSION,
+      deps,
+    });
+
+    expect(interactiveState.hasVllmImage).toBe(false);
+    expect(interactiveState.vllmEntries).toEqual([]);
+    expect(explicitState.hasVllmImage).toBe(false);
+    expect(explicitState.vllmEntries).toEqual([]);
+    expect(logs).toContain("  Managed vLLM install/start requires Docker on PATH.");
+    expect(deps.hostCommandExists).toHaveBeenCalledWith("docker");
+    expect(deps.dockerCapture).not.toHaveBeenCalled();
   });
 
   it("does not treat curl connection status 000 as a running vLLM", () => {
