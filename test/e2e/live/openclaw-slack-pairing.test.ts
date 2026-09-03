@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 
+import { testTimeout } from "../../helpers/timeouts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   applyFakePolicy,
@@ -30,7 +31,7 @@ import {
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-slack-pair";
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN ?? "xoxb-fake-slack-pairing-e2e";
 const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN ?? "xapp-fake-slack-pairing-e2e";
-const LIVE_TIMEOUT_MS = 55 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(55 * 60_000);
 
 function assertSlackCapture(
   captureFiles: string[],

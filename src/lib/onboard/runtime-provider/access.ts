@@ -22,15 +22,6 @@ export type {
   RuntimeProviderChannelStopTransport,
   RuntimeProviderGatewayLauncher,
   RuntimeProviderManagedImageSupport,
-  RuntimeProviderPreparedStateMutationPlan,
-  RuntimeProviderStateMutationActivationProof,
-  RuntimeProviderStateMutationContext,
-  RuntimeProviderStateMutationFence,
-  RuntimeProviderStateMutationPlan,
-  RuntimeProviderStateMutationProtectionPosture,
-  RuntimeProviderStateMutationSelector,
-  RuntimeProviderStateMutationStateLockPlan,
-  RuntimeProviderStateMutationSurface,
   RuntimeProviderWorkloadCleanupPlan,
   RuntimeProviderWorkloadCleanupResult,
   RuntimeProviderWorkloadProfile,
@@ -40,11 +31,6 @@ export {
   createCurrentRuntimeProviderBundles,
   resolveCurrentRuntimeProviderBundle,
 } from "./current";
-export {
-  createFilePersistedEngineLifecycleStore,
-  hasActivePersistedEngineStateMutationTarget,
-  PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
-} from "./persisted-engine-lifecycle";
 export type { RuntimeProviderDestructiveCleanupAuthority } from "./registry";
 export {
   normalizeRuntimeProviderIdentity,
@@ -55,12 +41,7 @@ export {
   requireRuntimeProviderHostLocalInferenceOperation,
   requireRuntimeProviderMutationAuthority,
   requireRuntimeProviderReadOnlyHostMounts,
-  requireRuntimeProviderStateMutationSurface,
   resolveRuntimeProviderBundle,
   runtimeProviderContainerEngineIdentity,
   runtimeProviderSupportsContainerEngineOperation,
 } from "./registry";
-export {
-  prepareAgentDefinitionProtectionTransitionPlan,
-  prepareRuntimeProviderStateMutationPlan,
-} from "./state-mutation";

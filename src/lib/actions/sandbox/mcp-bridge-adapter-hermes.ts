@@ -4,7 +4,6 @@
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import { getAgentBranding } from "../../cli/branding";
 import { waitUntil } from "../../core/wait";
-import { isShieldsDown } from "../../shields";
 import type { McpBridgeEntry } from "../../state/registry";
 import {
   classifyGatewayRestartFailure,
@@ -109,21 +108,12 @@ function parseLastJsonObject(output: string): Record<string, unknown> | null {
   return null;
 }
 
-/** Refuse an in-sandbox Hermes config mutation while config is locked. */
-export function assertHermesMcpConfigMutationAllowed(sandboxName: string): void {
-  if (isShieldsDown(sandboxName, false)) return;
-  throw new McpBridgeError(
-    `Hermes sandbox '${sandboxName}' has shields up or an unreadable shields posture. Run \`nemohermes ${sandboxName} shields down --timeout 15m --reason "MCP maintenance"\` before changing MCP configuration.`,
-  );
-}
-
 /**
  * Prove the running Hermes sandbox contains the packaged transaction helper
  * and can invoke it through OpenShell current main's ordinary exec path before
  * changing a global provider, policy, attachment, or adapter.
  */
 export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): void {
-  assertHermesMcpConfigMutationAllowed(sandboxName);
   let lastDetail = "";
   const probe = (): boolean => {
     let result: ReturnType<typeof runOpenshellProviderCommand>;

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import { createServer, type Server } from "node:http";
 import path from "node:path";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -20,8 +21,10 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-net-policy";
-const TEST_TIMEOUT_MS = 35 * 60_000;
-const ONBOARD_TIMEOUT_MS = 15 * 60_000;
+const SUPPRESSION_SANDBOX_NAME =
+  process.env.NEMOCLAW_NETWORK_POLICY_SUPPRESSION_SANDBOX_NAME ?? "e2e-net-suppress";
+const TEST_TIMEOUT_MS = testTimeout(35 * 60_000);
+const ONBOARD_TIMEOUT_MS = execTimeout(15 * 60_000);
 const SANDBOX_EXEC_TIMEOUT_MS = 120_000;
 const POLICY_SETTLE_MS =
   process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 5_000 : 3_000;
@@ -29,6 +32,7 @@ type NemoEnv = NodeJS.ProcessEnv;
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 validateSandboxName(SANDBOX_NAME);
+validateSandboxName(SUPPRESSION_SANDBOX_NAME);
 
 function text(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
@@ -71,6 +75,17 @@ async function sandboxBash(
     env: baseEnv(),
     timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
   });
+}
+
+async function readSandboxStartTime(sandbox: SandboxClient, artifactName: string): Promise<string> {
+  const result = await sandboxBash(
+    sandbox,
+    "cat /proc/1/stat 2>/dev/null | awk '{print $22}'",
+    artifactName,
+  );
+  const startTime = result.stdout.trim();
+  expect(startTime, text(result)).not.toBe("");
+  return startTime;
 }
 
 async function probeUrl(
@@ -249,12 +264,7 @@ test(
     const deniedServer = await startMarkerServer(deniedMarker);
     cleanup.trackDisposable("stop the denied host-gateway marker server", deniedServer.close);
 
-    const startTimeBefore = await sandboxBash(
-      sandbox,
-      "cat /proc/1/stat 2>/dev/null | awk '{print $22}'",
-      "network-policy-start-time-before",
-    );
-    expect(startTimeBefore.stdout.trim()).not.toBe("");
+    const startTimeBefore = await readSandboxStartTime(sandbox, "network-policy-start-time-before");
 
     const policyFile = writeHostGatewayPolicy(artifacts, approvedServer.port);
     const policyApply = await runNemoclaw(
@@ -268,12 +278,11 @@ test(
     expect(policyApply.exitCode, text(policyApply)).toBe(0);
     await sleep(POLICY_SETTLE_MS);
 
-    const startTimeAfter = await sandboxBash(
+    const startTimeAfterPolicy = await readSandboxStartTime(
       sandbox,
-      "cat /proc/1/stat 2>/dev/null | awk '{print $22}'",
-      "network-policy-start-time-after",
+      "network-policy-start-time-after-policy",
     );
-    expect(startTimeAfter.stdout.trim()).toBe(startTimeBefore.stdout.trim());
+    expect(startTimeAfterPolicy).toBe(startTimeBefore);
 
     progress.phase("allow the approved host-gateway port and deny another port");
     const approved = await probeUrl(
@@ -283,6 +292,11 @@ test(
     );
     expect(approved).toContain(approvedMarker);
     expect(approved).toContain("STATUS_200");
+    const startTimeAfterAllow = await readSandboxStartTime(
+      sandbox,
+      "network-policy-start-time-after-allow-probe",
+    );
+    expect(startTimeAfterAllow).toBe(startTimeBefore);
 
     const denied = await probeUrl(
       sandbox,
@@ -291,6 +305,11 @@ test(
     );
     expect(denied).not.toContain(deniedMarker);
     expect(denied).toMatch(/\b403\b/);
+    const startTimeAfterDeny = await readSandboxStartTime(
+      sandbox,
+      "network-policy-start-time-after-deny-probe",
+    );
+    expect(startTimeAfterDeny).toBe(startTimeBefore);
 
     await artifacts.target.complete({
       id: "network-policy",
@@ -302,5 +321,106 @@ test(
         deniedHostGatewayPort: true,
       },
     });
+  },
+);
+
+test(
+  "network-policy: default restricted OpenClaw onboard leaves policy-list with zero active presets",
+  {
+    timeout: TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm built CLI selected runtime provider OpenShell and credential",
+        "clear the restricted-policy sandbox",
+        "onboard default restricted OpenClaw",
+        "confirm the restricted tier has zero active presets",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+    await artifacts.writeJson("scenario.json", {
+      id: "restricted-openclaw-policy-suppression",
+      runner: "vitest",
+      boundary: "live-sandbox-network-policy",
+      contracts: ["restricted tier applies zero presets"],
+    });
+
+    expect(
+      fs.existsSync(CLI_DIST_ENTRYPOINT),
+      "run `npm run build:cli` before live repo CLI scenarios",
+    ).toBe(true);
+
+    await ensureConfiguredRuntimeProviderAvailable({
+      artifactName: "prereq-runtime-provider-info-restricted-zero-presets",
+      host,
+      skip,
+      scenarioLabel: "restricted-zero-presets",
+    });
+
+    const openshellVersion = await host.command("openshell", ["--version"], {
+      artifactName: "prereq-openshell-version-restricted-zero-presets",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    expect(openshellVersion.exitCode, text(openshellVersion)).toBe(0);
+
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    cleanup.trackDisposable(`delete OpenShell sandbox ${SUPPRESSION_SANDBOX_NAME}`, () =>
+      sandbox.cleanupSandbox(SUPPRESSION_SANDBOX_NAME, {
+        artifactName: "cleanup-openshell-delete-restricted-zero-presets",
+        env: baseEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 60_000,
+      }),
+    );
+    cleanup.trackSandbox(host, SUPPRESSION_SANDBOX_NAME, {
+      artifactName: "cleanup-nemoclaw-destroy-restricted-zero-presets",
+      env: baseEnv(),
+      redactionValues: [apiKey],
+      timeoutMs: 120_000,
+    });
+
+    progress.phase("clear the restricted-policy sandbox");
+    await runNemoclaw(host, [SUPPRESSION_SANDBOX_NAME, "destroy", "--yes"], {
+      artifactName: "pre-cleanup-nemoclaw-destroy-restricted-zero-presets",
+      env: baseEnv(),
+      timeoutMs: 120_000,
+    });
+
+    progress.phase("onboard default restricted OpenClaw");
+    const onboard = await runRestrictedOnboardWithRetry({
+      host,
+      artifacts,
+      skip,
+      sandboxName: SUPPRESSION_SANDBOX_NAME,
+      apiKey,
+      scenarioLabel: "restricted-zero-presets",
+      scenarioSlug: "restricted-zero-presets",
+      preCleanupArtifactPrefix: "pre-cleanup-nemoclaw-destroy-restricted-zero-presets",
+      onboardArtifactPrefix: "onboard-restricted-zero-presets",
+      onboardTimeoutMs: ONBOARD_TIMEOUT_MS,
+      preCleanupTimeoutMs: 120_000,
+      runNemoclaw,
+      baseEnv,
+    });
+    expect(onboard.exitCode, text(onboard)).toBe(0);
+
+    progress.phase("confirm the restricted tier has zero active presets");
+    const policyListAfterOnboard = await runNemoclaw(
+      host,
+      [SUPPRESSION_SANDBOX_NAME, "policy-list"],
+      {
+        artifactName: "restricted-zero-presets-policy-list-after-onboard",
+        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+      },
+    );
+    expect(policyListAfterOnboard.exitCode, text(policyListAfterOnboard)).toBe(0);
+    const activeBullets = (policyListAfterOnboard.stdout.match(/^[\s]*●[\s]+(\S+)/gm) ?? []).map(
+      (line) => line.replace(/^[\s]*●[\s]+/, "").trim(),
+    );
+    expect(
+      activeBullets,
+      `restricted tier must apply zero presets; got ${JSON.stringify(activeBullets)} from:\n${text(policyListAfterOnboard)}`,
+    ).toEqual([]);
   },
 );

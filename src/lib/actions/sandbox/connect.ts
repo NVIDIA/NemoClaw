@@ -58,7 +58,7 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
-import { runConnectChildWithShieldsRelockNotice } from "./agent/connect-shields-relock-notice";
+import { runSandboxExecChild } from "./exec";
 import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
   exitOnMcpReconciliationRefusal,
@@ -109,7 +109,11 @@ import {
   settlePortableOpenClawPairing,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
-import type { HermesPortableLifecycleRecoveryTimingEvidence } from "../../onboard/experimental/hermes-portable-lifecycle";
+import type {
+  HermesPortableCurrentnessTimingEvidence,
+  HermesPortableLifecycleRecoveryTimingEvidence,
+} from "../../onboard/experimental/hermes-portable-lifecycle";
+import type { HermesPortableContainerInspectionTimingEvidence } from "../../onboard/experimental/hermes-portable-container";
 import {
   checkAndRecoverSandboxProcesses,
   executeSandboxExecCommand,
@@ -254,9 +258,7 @@ export function parseSandboxConnectArgs(
     }
     switch (arg) {
       case "--dangerously-skip-permissions":
-        console.error(
-          "  --dangerously-skip-permissions was removed; use shields commands instead.",
-        );
+        console.error("  --dangerously-skip-permissions is not supported.");
         printSandboxConnectHelp(sandboxName);
         process.exit(1);
         break;
@@ -727,6 +729,22 @@ function writeHermesPortableForwardRecoveryTiming(
 ): void {
   console.log(
     `  Hermes Portable forward recovery timing: list=${String(evidence.listMs)}ms listCount=${String(evidence.listCount)} stop=${String(evidence.stopMs)}ms stopCount=${String(evidence.stopCount)} start=${String(evidence.startMs)}ms startCount=${String(evidence.startCount)} settle=${String(evidence.settleMs)}ms settleCount=${String(evidence.settleCount)} total=${String(evidence.totalMs)}ms result=${evidence.result}`,
+  );
+}
+
+function writeHermesPortableCurrentnessTiming(
+  evidence: HermesPortableCurrentnessTimingEvidence,
+): void {
+  console.log(
+    `  Hermes Portable currentness timing: receiptRead=${String(evidence.receiptReadMs)}ms receiptReadCount=${String(evidence.receiptReadCount)} socketAuthority=${String(evidence.socketAuthorityMs)}ms socketAuthorityCount=${String(evidence.socketAuthorityCount)} openshellExecutable=${String(evidence.openshellExecutableMs)}ms openshellExecutableCount=${String(evidence.openshellExecutableCount)} podmanExecutable=${String(evidence.podmanExecutableMs)}ms podmanExecutableCount=${String(evidence.podmanExecutableCount)} containerInspect=${String(evidence.containerInspectMs)}ms containerInspectCount=${String(evidence.containerInspectCount)} transactionCompare=${String(evidence.transactionCompareMs)}ms transactionCompareCount=${String(evidence.transactionCompareCount)}`,
+  );
+}
+
+function writeHermesPortableInspectionTiming(
+  evidence: HermesPortableContainerInspectionTimingEvidence,
+): void {
+  console.log(
+    `  Hermes Portable inspection timing: preGuard=${String(evidence.preGuardMs)}ms preGuardCount=${String(evidence.preGuardCount)} podmanCapture=${String(evidence.podmanCaptureMs)}ms podmanCaptureCount=${String(evidence.podmanCaptureCount)} postGuard=${String(evidence.postGuardMs)}ms postGuardCount=${String(evidence.postGuardCount)} jsonParse=${String(evidence.jsonParseMs)}ms jsonParseCount=${String(evidence.jsonParseCount)} identityCompare=${String(evidence.identityCompareMs)}ms identityCompareCount=${String(evidence.identityCompareCount)}`,
   );
 }
 
@@ -1929,6 +1947,12 @@ async function runConnectEntryPreflight(
                   hermesPortable && probeTiming
                     ? { onComplete: writeHermesPortableLifecycleRecoveryTiming }
                     : undefined,
+                  hermesPortable && probeTiming
+                    ? { onComplete: writeHermesPortableCurrentnessTiming }
+                    : undefined,
+                  hermesPortable && probeTiming
+                    ? { onComplete: writeHermesPortableInspectionTiming }
+                    : undefined,
                 )
               : hermesPortable && probeTiming
                 ? recoverPortableDemoSandboxLifecycleForConnect(
@@ -1937,6 +1961,8 @@ async function runConnectEntryPreflight(
                     gatewayName,
                     undefined,
                     { onComplete: writeHermesPortableLifecycleRecoveryTiming },
+                    { onComplete: writeHermesPortableCurrentnessTiming },
+                    { onComplete: writeHermesPortableInspectionTiming },
                   )
                 : recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
@@ -2005,6 +2031,8 @@ async function runConnectEntryPreflight(
                   probeTiming
                     ? { onComplete: writeHermesPortableLifecycleRecoveryTiming }
                     : undefined,
+                  probeTiming ? { onComplete: writeHermesPortableCurrentnessTiming } : undefined,
+                  probeTiming ? { onComplete: writeHermesPortableInspectionTiming } : undefined,
                 )
               : hermesPortable && probeTiming
                 ? recoverPortableDemoSandboxLifecycleForConnect(
@@ -2013,6 +2041,8 @@ async function runConnectEntryPreflight(
                     currentGateway,
                     undefined,
                     { onComplete: writeHermesPortableLifecycleRecoveryTiming },
+                    { onComplete: writeHermesPortableCurrentnessTiming },
+                    { onComplete: writeHermesPortableInspectionTiming },
                   )
                 : recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
@@ -2231,16 +2261,11 @@ export async function connectSandbox(
       );
       if (!prepared) return null;
       return {
-        completion: runConnectChildWithShieldsRelockNotice(
-          prepared.binary,
-          prepared.args,
-          {
-            hostCwd: ROOT,
-            stdin: true,
-            ...(prepared.hostEnv ? { hostEnv: prepared.hostEnv } : {}),
-          },
-          sandboxName,
-        ),
+        completion: runSandboxExecChild(prepared.binary, prepared.args, {
+          hostCwd: ROOT,
+          stdin: true,
+          ...(prepared.hostEnv ? { hostEnv: prepared.hostEnv } : {}),
+        }),
       };
     });
     if (!started) {
@@ -2345,6 +2370,8 @@ async function prepareConnectSandboxWithinLifecycleFence(
               resolveSandboxGatewayName(registered),
               undefined,
               { onComplete: writeHermesPortableLifecycleRecoveryTiming },
+              { onComplete: writeHermesPortableCurrentnessTiming },
+              { onComplete: writeHermesPortableInspectionTiming },
             ),
           );
           if (recovery.kind === "not-installed") {

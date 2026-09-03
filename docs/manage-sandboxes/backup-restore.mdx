@@ -102,19 +102,7 @@ $$nemoclaw my-assistant snapshot list
 
 `snapshot list` prints a table of version, name, timestamp, and path. NemoClaw computes versions (`v1`, `v2`, through `vN`) from timestamp order, so `vN` is always the newest snapshot.
 
-`snapshot create` requires shields to be down. Snapshot creation and restore share the per-sandbox transition lock with the shields auto-restore timer.
-
-If a timed shields-down window expires during snapshot work, the deadline gate blocks new mutations and waits for the exact snapshot owner to finish without signaling it. Snapshot work does not bypass recovery for an expired shields-down window.
-
-<AgentOnly variant="openclaw,hermes">
-Follow [Timed Shields Windows](../configure-sandboxes/understand-runtime-changes#timed-shields-windows) to correct state-directory failures or complete generation recovery before you rerun `$$nemoclaw <name> snapshot create`.
-</AgentOnly>
-<AgentOnly variant="deepagents">
-If a state-directory failure prevents gate publication, normal mutation-lock acquisition also fails.
-If recovery reports a state-directory failure, correct it and run `$$nemoclaw <name> shields status`.
-Durable containment or retained gates keep new mutations blocked until you complete generation recovery.
-If the command reports generation recovery guidance, stop all NemoClaw processes for the sandbox and follow that guidance before you rerun `$$nemoclaw <name> snapshot create`.
-</AgentOnly>
+Snapshot creation and restore use the per-sandbox mutation lock so another host operation cannot change the same sandbox state concurrently.
 
 Tag a snapshot with a human-readable label:
 
@@ -193,7 +181,7 @@ If the check fails, the command leaves the destination registered without restor
 Correct the reported supervisor failure, then run `$$nemoclaw <destination> destroy` or rerun the restore with `--force`.
 </AgentOnly>
 
-The force-overwrite path restores and verifies lockdown on a destination with an active shields timer, then revokes that timer before it deletes the destination. It clears the remaining local shields state only after deletion succeeds, before a same-name replacement is created.
+The force-overwrite path revalidates the exact destination before deletion and creates the same-name replacement only after deletion succeeds.
 
 ## Restore Agent Configuration Safely
 
@@ -256,7 +244,9 @@ $$nemoclaw backup-all
 
 `backup-all` walks the sandboxes registered on the host, creates a snapshot for each eligible running or temporarily started sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`. If a registered docker-driver sandbox's container is stopped, `backup-all` starts the container for the duration of the backup and returns it to its stopped state afterward. If the container cannot be returned to the stopped state, the backup run fails and reports that the container was left running. If a sandbox is not running and its container cannot be started this way, start the sandbox or its container and rerun `$$nemoclaw backup-all`.
 
-For each eligible sandbox, `backup-all` holds one lifecycle transaction through the complete backup. Within that transaction, it starts a stopped container when required, opens a 30-minute shields-down window when the sandbox starts with Shields up, copies sandbox state, restores the previous Shields state, and returns any container it started to the stopped state. A sandbox that starts with Shields down remains down. If the timer expires during the transaction, the deadline gate blocks new mutations and waits for the exact backup owner to finish without signaling it. An initial lock or unlock failure marks that sandbox as failed, and `backup-all` continues with the next sandbox. NemoClaw attempts to restore the previous Shields state before it processes the next sandbox, including when the backup fails. If lockdown cannot be restored, `backup-all` stops and does not process the remaining sandboxes. For an ordinary relock failure, correct the reported issue and follow the printed recovery command before rerunning `$$nemoclaw backup-all`. If NemoClaw reports that Backup Shields policy recovery failed, do not retry Shields up from the mutable live policy. Restore a trusted backup, recreate the sandbox, and then rerun `$$nemoclaw backup-all`.
+For each eligible sandbox, `backup-all` holds one lifecycle transaction through the complete backup.
+Within that transaction, it starts a stopped container when required, copies sandbox state, and returns any container it started to the stopped state.
+A backup failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
 
 When a backup fails, NemoClaw identifies the affected state item and reports `permission denied`, `tar read error`, or `absent after extraction` when available. Use `$$nemoclaw <name> snapshot list` and `$$nemoclaw <name> snapshot restore` to inspect or restore one sandbox's bundles later.
 
