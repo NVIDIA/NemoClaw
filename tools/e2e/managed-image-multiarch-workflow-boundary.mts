@@ -292,8 +292,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
 
   const bases = requireStep(errors, steps, "Resolve digest-pinned platform base images");
   requireValues(errors, `${JOB_ID} exact base resolution`, record(bases?.env), {
-    DCODE_BASE_CONTRACT:
-      "${{ needs.base-image-publication.outputs.dcode_base_contract }}",
+    DCODE_BASE_CONTRACT: "${{ needs.base-image-publication.outputs.dcode_base_contract }}",
     PLATFORM: "${{ matrix.platform }}",
   });
   requireFragments(errors, bases, [
@@ -306,7 +305,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "'.platformReferences[$platform]' <<< \"$DCODE_BASE_CONTRACT\"",
     'docker buildx imagetools inspect "$dcode_reference" --raw',
     '"sha256:$(sha256sum "$work_dir/dcode-exact.raw" | awk \'{print $1}\')" == "$dcode_digest"',
-    "printf 'dcode=%s\\n' \"$dcode_reference\" >> \"$GITHUB_OUTPUT\"",
+    'printf \'dcode=%s\\n\' "$dcode_reference" >> "$GITHUB_OUTPUT"',
   ]);
   if (
     text(bases?.run).includes(
@@ -411,9 +410,11 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Start isolated protected managed-image registry",
     "Build exact all-agent protected managed images",
     "Run every exact managed-image contract directly",
-    "Remove isolated protected managed-image registry",
     "Validate protected managed-image evidence",
+    "Validate OpenClaw managed-image security boundary",
+    "Validate managed-image glibc probe lifecycle",
     "Publish exact amd64 protected runtime build cache",
+    "Remove isolated protected managed-image registry",
     "Upload protected managed-image evidence",
     "Clean up Docker auth",
   ]);

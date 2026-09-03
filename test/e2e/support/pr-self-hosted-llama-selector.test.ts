@@ -196,6 +196,14 @@ describe("OpenClaw managed-image copied-PR qualification", () => {
         "live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-openclaw-security.test.ts",
       ),
     });
+    expect(job.steps?.find((step) => step.name === "Validate glibc probe lifecycle")).toMatchObject(
+      {
+        env: { NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1" },
+        run: expect.stringContaining(
+          "test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts",
+        ),
+      },
+    );
     expect(
       job.steps?.find((step) => step.name === "Upload OpenClaw managed-image security evidence"),
     ).toMatchObject({

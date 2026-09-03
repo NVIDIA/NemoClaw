@@ -274,6 +274,13 @@ jobs:
         run: >-
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-openclaw-security.test.ts
 
+      - name: Validate glibc probe lifecycle
+        env:
+          NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1"
+        run: >-
+          npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts
+          --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+
       - name: Upload OpenClaw managed-image security evidence
         if: ${{ always() }}
         uses: ./.github/actions/upload-e2e-artifacts

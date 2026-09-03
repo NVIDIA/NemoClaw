@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import YAML from "yaml";
 
 import { validateManagedImageMultiarchWorkflow } from "../../../tools/e2e/managed-image-multiarch-workflow-boundary.mts";
@@ -52,6 +52,19 @@ function namedMultiarchStep(value: WorkflowRecord, name: string): Record<string,
 describe("protected managed-image runtime workflow", () => {
   it("accepts the checked-in protected runtime job", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
+  });
+
+  // source-shape-contract: security -- The isolated registry must remain available through every immutable contract-image consumer and still clean up on failure
+  test("keeps the protected registry until every contract-image consumer finishes", () => {
+    const steps = multiarchJob(workflow()).steps as Array<Record<string, unknown>>;
+    const names = steps.map((step) => String(step.name));
+    const cleanup = names.indexOf("Remove isolated protected managed-image registry");
+    expect(cleanup).toBeGreaterThan(names.indexOf("Validate protected managed-image evidence"));
+    expect(cleanup).toBeGreaterThan(
+      names.indexOf("Validate OpenClaw managed-image security boundary"),
+    );
+    expect(cleanup).toBeGreaterThan(names.indexOf("Validate managed-image glibc probe lifecycle"));
+    expect(steps[cleanup]).toMatchObject({ if: "always()" });
   });
 
   it("accepts the hosted build-cache handoff to the protected runtime job", () => {
