@@ -244,7 +244,7 @@ try {
   if (/E2E_FAIL_DENIED_PORT_|SsrFBlockedError|Blocked hostname|private\/internal\/special-use/i.test(detail)) {
     throw error;
   }
-  if (!/Web fetch failed \(403\)|\b403\b|policy|denied|forbidden|fetch failed|ECONN|UND_ERR|proxy/i.test(detail)) {
+  if (!/Web fetch failed \(403\)|\b403\b/i.test(detail)) {
     throw error;
   }
   console.log("E2E_WEB_FETCH_DENIED_OK " + detail.split("\n")[0].slice(0, 300));

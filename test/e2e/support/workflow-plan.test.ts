@@ -288,7 +288,7 @@ describe("E2E workflow plan", () => {
           host_packages: "",
           install_non_interactive: true,
           shard: "live-probes",
-          timeout_minutes: 45,
+          timeout_minutes: 90,
         }),
         expect.objectContaining({
           id: "openclaw-tui-chat-correlation",
