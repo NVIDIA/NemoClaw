@@ -93,6 +93,12 @@ test(
     expect(gatewayUid).toMatch(/^[0-9]+$/u);
     expect(sandboxUid).toMatch(/^[0-9]+$/u);
     expect(gatewayUid).not.toBe(sandboxUid);
+    await runContainer(
+      host,
+      image,
+      `printf %s aW1wb3J0IGZzIGZyb20gIm5vZGU6ZnMiOwppbXBvcnQgb3MgZnJvbSAibm9kZTpvcyI7CmltcG9ydCBwYXRoIGZyb20gIm5vZGU6cGF0aCI7CmltcG9ydCB7IGNyZWF0ZVJlcXVpcmUgfSBmcm9tICJub2RlOm1vZHVsZSI7CmNvbnN0IHJlcXVpcmUgPSBjcmVhdGVSZXF1aXJlKCIvb3B0L25lbW9jbGF3LyIpOwpjb25zdCBZQU1MID0gcmVxdWlyZSgieWFtbCIpOwpjb25zdCBibHVlcHJpbnQgPSBZQU1MLnBhcnNlKGZzLnJlYWRGaWxlU3luYygiL29wdC9uZW1vY2xhdy1ibHVlcHJpbnQvYmx1ZXByaW50LnlhbWwiLCAidXRmOCIpKTsKaWYgKGJsdWVwcmludC52ZXJzaW9uICE9PSAiMC4xLjAiKSB0aHJvdyBuZXcgRXJyb3IoInVuZXhwZWN0ZWQgYmx1ZXByaW50IHZlcnNpb24iKTsKY29uc3QgcHJvZmlsZXMgPSBibHVlcHJpbnQuY29tcG9uZW50cz8uaW5mZXJlbmNlPy5wcm9maWxlcyA/PyB7fTsKZm9yIChjb25zdCBuYW1lIG9mIGJsdWVwcmludC5wcm9maWxlcyA/PyBbXSkgaWYgKCFwcm9maWxlc1tuYW1lXSkgdGhyb3cgbmV3IEVycm9yKGBtaXNzaW5nIHByb2ZpbGU6ICR7bmFtZX1gKTsKY29uc3QgcG9saWN5ID0gWUFNTC5wYXJzZShmcy5yZWFkRmlsZVN5bmMoIi9vcHQvbmVtb2NsYXctYmx1ZXByaW50L3BvbGljaWVzL29wZW5jbGF3LXNhbmRib3gueWFtbCIsICJ1dGY4IikpOwppZiAoIXBvbGljeS52ZXJzaW9uIHx8ICFwb2xpY3kubmV0d29ya19wb2xpY2llcykgdGhyb3cgbmV3IEVycm9yKCJpbnZhbGlkIHBhY2thZ2VkIHBvbGljeSIpOwpjb25zdCBmaXh0dXJlID0gZnMubWtkdGVtcFN5bmMocGF0aC5qb2luKG9zLnRtcGRpcigpLCAiYmx1ZXByaW50LXBsYW4tIikpOwpmcy53cml0ZUZpbGVTeW5jKHBhdGguam9pbihmaXh0dXJlLCAiYmx1ZXByaW50LnlhbWwiKSwgImNvbXBvbmVudHM6XG4gIGluZmVyZW5jZTpcbiAgICBwcm9maWxlczpcbiAgICAgIGRlZmF1bHQ6IHt9XG4iKTsKcHJvY2Vzcy5lbnYuTkVNT0NMQVdfQkxVRVBSSU5UX1BBVEggPSBmaXh0dXJlOwpjb25zdCB7IG1haW4gfSA9IGF3YWl0IGltcG9ydCgiL29wdC9uZW1vY2xhdy9kaXN0L2JsdWVwcmludC9ydW5uZXIuanMiKTsKbGV0IGV4cGVjdGVkRmFpbHVyZSA9IGZhbHNlOwp0cnkgeyBhd2FpdCBtYWluKFsicGxhbiIsICItLXByb2ZpbGUiLCAiZGVmYXVsdCIsICItLWRyeS1ydW4iXSk7IH0gY2F0Y2ggKGVycm9yKSB7CiAgZXhwZWN0ZWRGYWlsdXJlID0gU3RyaW5nKGVycm9yPy5tZXNzYWdlKS5pbmNsdWRlcygib3BlbnNoZWxsIENMSSBub3QgZm91bmQiKTsKfQppZiAoIWV4cGVjdGVkRmFpbHVyZSkgdGhyb3cgbmV3IEVycm9yKCJwYWNrYWdlZCBydW5uZXIgZGlkIG5vdCByZWFjaCBleHBlY3RlZCBPcGVuU2hlbGwgcHJlcmVxdWlzaXRlIik7CmNvbnN0IGhvbWUgPSBmcy5ta2R0ZW1wU3luYyhwYXRoLmpvaW4ob3MudG1wZGlyKCksICJzbmFwc2hvdC1ob21lLSIpKTsKcHJvY2Vzcy5lbnYuSE9NRSA9IGhvbWU7CmNvbnN0IHN0YXRlID0gcGF0aC5qb2luKGhvbWUsICIub3BlbmNsYXciKTsKZnMubWtkaXJTeW5jKHN0YXRlLCB7IHJlY3Vyc2l2ZTogdHJ1ZSB9KTsKZnMud3JpdGVGaWxlU3luYyhwYXRoLmpvaW4oc3RhdGUsICJvcGVuY2xhdy5qc29uIiksICd7ImZpeHR1cmUiOnRydWV9XG4nKTsKY29uc3QgeyBjcmVhdGVTbmFwc2hvdCwgbGlzdFNuYXBzaG90cywgcm9sbGJhY2tGcm9tU25hcHNob3QgfSA9IGF3YWl0IGltcG9ydCgiL29wdC9uZW1vY2xhdy9kaXN0L2JsdWVwcmludC9zbmFwc2hvdC5qcyIpOwpjb25zdCBzbmFwc2hvdCA9IGNyZWF0ZVNuYXBzaG90KCk7CmlmICghc25hcHNob3QgfHwgbGlzdFNuYXBzaG90cygpLmxlbmd0aCAhPT0gMSkgdGhyb3cgbmV3IEVycm9yKCJwYWNrYWdlZCBzbmFwc2hvdCBjcmVhdGlvbiBmYWlsZWQiKTsKZnMud3JpdGVGaWxlU3luYyhwYXRoLmpvaW4oc3RhdGUsICJvcGVuY2xhdy5qc29uIiksICd7ImNvcnJ1cHRlZCI6dHJ1ZX1cbicpOwppZiAoIXJvbGxiYWNrRnJvbVNuYXBzaG90KHNuYXBzaG90KSkgdGhyb3cgbmV3IEVycm9yKCJwYWNrYWdlZCBzbmFwc2hvdCByb2xsYmFjayBmYWlsZWQiKTsKaWYgKEpTT04ucGFyc2UoZnMucmVhZEZpbGVTeW5jKHBhdGguam9pbihzdGF0ZSwgIm9wZW5jbGF3Lmpzb24iKSwgInV0ZjgiKSkuZml4dHVyZSAhPT0gdHJ1ZSkgdGhyb3cgbmV3IEVycm9yKCJzbmFwc2hvdCBjb250ZW50IHdhcyBub3QgcmVzdG9yZWQiKTsK | base64 -d >/tmp/packaged-image-contract.mjs; node /tmp/packaged-image-contract.mjs`,
+      "managed-image-openclaw-packaged-blueprint-contract",
+    );
 
     progress.phase("verify cross-user process and filesystem isolation");
     await runContainer(
@@ -259,19 +265,23 @@ test(
     const cohort = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT ?? `local-${process.pid}`;
     const repairVolume = `nemoclaw-entrypoint-repair-${process.pid}`;
     const refusalVolume = `nemoclaw-entrypoint-refusal-${process.pid}`;
-    const repairVolumeCreated = await host.command(
-      "docker",
-      ["volume", "create", "--label", `io.nvidia.nemoclaw.e2e-owner=${cohort}`, repairVolume],
-      { artifactName: "managed-image-openclaw-create-repair-volume" },
-    );
-    expect(repairVolumeCreated.exitCode).toBe(0);
-    const refusalVolumeCreated = await host.command(
-      "docker",
-      ["volume", "create", "--label", `io.nvidia.nemoclaw.e2e-owner=${cohort}`, refusalVolume],
-      { artifactName: "managed-image-openclaw-create-refusal-volume" },
-    );
-    expect(refusalVolumeCreated.exitCode).toBe(0);
+    let repairVolumeCreated = false;
+    let refusalVolumeCreated = false;
     try {
+      const repairCreate = await host.command(
+        "docker",
+        ["volume", "create", "--label", `io.nvidia.nemoclaw.e2e-owner=${cohort}`, repairVolume],
+        { artifactName: "managed-image-openclaw-create-repair-volume" },
+      );
+      expect(repairCreate.exitCode).toBe(0);
+      repairVolumeCreated = true;
+      const refusalCreate = await host.command(
+        "docker",
+        ["volume", "create", "--label", `io.nvidia.nemoclaw.e2e-owner=${cohort}`, refusalVolume],
+        { artifactName: "managed-image-openclaw-create-refusal-volume" },
+      );
+      expect(refusalCreate.exitCode).toBe(0);
+      refusalVolumeCreated = true;
       await runContainer(
         host,
         image,
@@ -332,13 +342,13 @@ test(
         ["--volume", `${refusalVolume}:/sandbox/.openclaw`],
       );
     } finally {
-      const removed = await host.command(
-        "docker",
-        ["volume", "rm", "-f", repairVolume, refusalVolume],
-        {
-          artifactName: "managed-image-openclaw-remove-entrypoint-volumes",
-        },
-      );
+      const createdVolumes = [
+        ...(repairVolumeCreated ? [repairVolume] : []),
+        ...(refusalVolumeCreated ? [refusalVolume] : []),
+      ];
+      const removed = await host.command("docker", ["volume", "rm", "-f", ...createdVolumes], {
+        artifactName: "managed-image-openclaw-remove-entrypoint-volumes",
+      });
       expect(removed.exitCode).toBe(0);
     }
 

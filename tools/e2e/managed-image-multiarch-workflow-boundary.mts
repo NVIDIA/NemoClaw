@@ -414,11 +414,11 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Start isolated protected managed-image registry",
     "Build exact all-agent protected managed images",
     "Run every exact managed-image contract directly",
+    "Remove isolated protected managed-image registry",
     "Validate protected managed-image evidence",
     "Validate OpenClaw managed-image security boundary",
     "Validate managed-image glibc probe lifecycle",
     "Publish exact amd64 protected runtime build cache",
-    "Remove isolated protected managed-image registry",
     "Upload protected managed-image evidence",
     "Clean up Docker auth",
   ]);

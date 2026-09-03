@@ -29,9 +29,15 @@ describe("sandbox image workflow boundary", () => {
       needs: "build-sandbox-images",
       env: {
         E2E_TARGET_ID: "managed-image-openclaw-security",
+        NEMOCLAW_E2E_SHARD: "default",
         NEMOCLAW_RUN_LIVE_E2E: "1",
         NEMOCLAW_TEST_IMAGE: "nemoclaw-production",
       },
+    });
+    expect(
+      job.steps?.find((step) => step.name === "Bind managed-image risk signal identity"),
+    ).toMatchObject({
+      run: expect.stringMatching(/NEMOCLAW_E2E_EXPECTED_SHA[\s\S]*NEMOCLAW_E2E_CORRELATION_ID/u),
     });
     expect(
       job.steps?.find((step) => step.name === "Validate OpenClaw managed-image security boundary"),
@@ -47,7 +53,16 @@ describe("sandbox image workflow boundary", () => {
   test("keeps glibc probe lifecycle evidence in the main image gate", () => {
     const { imageWorkflow } = readWorkflows();
     const job = imageWorkflow.jobs["glibc-probe-image-contract"];
-    expect(job).toMatchObject({ needs: "build-sandbox-images", "timeout-minutes": 10 });
+    expect(job).toMatchObject({
+      needs: "build-sandbox-images",
+      "timeout-minutes": 10,
+      env: { NEMOCLAW_E2E_SHARD: "default" },
+    });
+    expect(
+      job.steps?.find((step) => step.name === "Bind managed-image risk signal identity"),
+    ).toMatchObject({
+      run: expect.stringMatching(/NEMOCLAW_E2E_EXPECTED_SHA[\s\S]*NEMOCLAW_E2E_CORRELATION_ID/u),
+    });
     expect(job.steps?.find((step) => step.name === "Validate glibc probe lifecycle")).toMatchObject(
       {
         env: {

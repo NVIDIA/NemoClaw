@@ -253,7 +253,7 @@
     },
     {
       "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
-      "test": "keeps the protected registry until every contract-image consumer finishes",
+      "test": "cleans the protected registry before passing risk evidence",
       "category": "security"
     },
     {

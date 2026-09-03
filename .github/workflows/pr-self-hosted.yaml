@@ -244,6 +244,7 @@ jobs:
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-openclaw-security
       E2E_TARGET_ID: managed-image-openclaw-security
+      NEMOCLAW_E2E_SHARD: default
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_TEST_IMAGE: nemoclaw-production
     steps:
@@ -251,6 +252,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Bind managed-image risk signal identity
+        run: |
+          set -euo pipefail
+          echo "NEMOCLAW_E2E_EXPECTED_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "NEMOCLAW_E2E_CORRELATION_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')" >> "$GITHUB_ENV"
 
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

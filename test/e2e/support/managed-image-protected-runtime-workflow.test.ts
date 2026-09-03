@@ -54,16 +54,16 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
   });
 
-  // source-shape-contract: security -- The isolated registry must remain available through every immutable contract-image consumer and still clean up on failure
-  test("keeps the protected registry until every contract-image consumer finishes", () => {
+  // source-shape-contract: security -- The isolated registry must be gone before reporter-backed validations can publish passing risk evidence
+  test("cleans the protected registry before passing risk evidence", () => {
     const steps = multiarchJob(workflow()).steps as Array<Record<string, unknown>>;
     const names = steps.map((step) => String(step.name));
     const cleanup = names.indexOf("Remove isolated protected managed-image registry");
-    expect(cleanup).toBeGreaterThan(names.indexOf("Validate protected managed-image evidence"));
-    expect(cleanup).toBeGreaterThan(
+    expect(cleanup).toBeLessThan(names.indexOf("Validate protected managed-image evidence"));
+    expect(cleanup).toBeLessThan(
       names.indexOf("Validate OpenClaw managed-image security boundary"),
     );
-    expect(cleanup).toBeGreaterThan(names.indexOf("Validate managed-image glibc probe lifecycle"));
+    expect(cleanup).toBeLessThan(names.indexOf("Validate managed-image glibc probe lifecycle"));
     expect(steps[cleanup]).toMatchObject({ if: "always()" });
   });
 
