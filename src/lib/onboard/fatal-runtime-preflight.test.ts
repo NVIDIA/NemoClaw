@@ -6,8 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   preparePortableExperimentalHost: vi.fn(),
   prepareRuntimeHost: vi.fn(({ environment }: { environment: NodeJS.ProcessEnv }) => ({
-    sandboxHostAddress:
-      environment.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "169.254.2.2" : null,
+    sandboxHostAddress: environment.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "169.254.2.2" : null,
   })),
 }));
 
@@ -16,9 +15,14 @@ vi.mock("./experimental/portable-host-preparation", () => ({
 }));
 
 vi.mock("./runtime-provider/selection", () => ({
-  resolveConfiguredRuntimeProvider: () => ({
+  resolveConfiguredRuntimeProvider: (
+    _platform: NodeJS.Platform,
+    _architecture: NodeJS.Architecture,
+    environment: NodeJS.ProcessEnv,
+  ) => ({
     gateway: {
       supported: true,
+      ownsHostReadiness: environment.NEMOCLAW_GATEWAY_RUNTIME === "podman",
       prepareHostRuntime: mocks.prepareRuntimeHost,
     },
   }),

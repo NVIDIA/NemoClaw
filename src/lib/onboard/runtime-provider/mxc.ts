@@ -182,6 +182,7 @@ export function createMxcRuntimeProviderBundle({
       supported: true,
       launcher: "openshell",
       inspectLegacyContainer: false,
+      ownsHostReadiness: false,
       prepareHostRuntime: () => {
         throw new Error("OpenShell MXC does not launch a host-managed gateway.");
       },

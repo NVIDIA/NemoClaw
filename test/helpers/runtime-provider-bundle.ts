@@ -116,6 +116,7 @@ export function createInMemoryRuntimeProviderBundle({
       supported: true,
       launcher: gatewayLauncher,
       inspectLegacyContainer: false,
+      ownsHostReadiness: false,
       prepareHostRuntime: () => ({
         providerId,
         openShellDriver: "memory",

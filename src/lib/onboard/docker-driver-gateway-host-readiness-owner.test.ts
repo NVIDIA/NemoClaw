@@ -4,15 +4,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  prepareHostRuntime: vi.fn(({ environment }: { environment: NodeJS.ProcessEnv }) => ({
-    sandboxHostAddress: environment.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "169.254.2.2" : null,
-  })),
+  prepareHostRuntime: vi.fn(() => ({ sandboxHostAddress: "169.254.2.2" })),
 }));
 
 vi.mock("./runtime-provider/selection", () => ({
-  resolveConfiguredRuntimeProvider: () => ({
+  resolveConfiguredRuntimeProvider: (
+    _platform: NodeJS.Platform,
+    _architecture: NodeJS.Architecture,
+    environment: NodeJS.ProcessEnv,
+  ) => ({
     gateway: {
       supported: true,
+      ownsHostReadiness: environment.NEMOCLAW_GATEWAY_RUNTIME === "podman",
       prepareHostRuntime: mocks.prepareHostRuntime,
     },
   }),
@@ -37,6 +40,15 @@ describe("configured runtime provider host readiness", () => {
     expect(mocks.prepareHostRuntime).toHaveBeenCalledWith(
       expect.objectContaining({ environment, platform: "linux" }),
     );
+  });
+
+  it("does not infer ownership from a non-null sandbox host address", () => {
+    const environment = { NEMOCLAW_GATEWAY_RUNTIME: "docker" };
+
+    expect(configuredRuntimeProviderOwnsHostReadiness({ environment, platform: "linux" })).toBe(
+      false,
+    );
+    expect(mocks.prepareHostRuntime).toHaveReturnedWith({ sandboxHostAddress: "169.254.2.2" });
   });
 
   it("keeps portable Podman compatibility on standard Docker readiness", () => {

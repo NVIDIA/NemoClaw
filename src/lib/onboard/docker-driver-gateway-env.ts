@@ -39,7 +39,10 @@ import {
   PORTABLE_HOST_GATEWAY_IP,
   resolveDockerDriverNetworkName,
 } from "./docker-driver-platform";
-import type { RuntimeProviderGatewayHostRuntime } from "./runtime-provider/contract";
+import type {
+  RuntimeProviderGatewayHostRuntime,
+  RuntimeProviderGatewaySurface,
+} from "./runtime-provider/contract";
 import { resolveConfiguredRuntimeProvider } from "./runtime-provider/selection";
 
 export { getGatewayHttpsEndpoint, startPackageManagedDockerDriverGateway };
@@ -184,6 +187,20 @@ export interface PrepareConfiguredGatewayHostRuntimeOptions {
   socketPath?: string;
 }
 
+type SupportedRuntimeProviderGateway = Extract<RuntimeProviderGatewaySurface, { supported: true }>;
+
+function requireConfiguredRuntimeProviderGateway(
+  platform: NodeJS.Platform,
+  architecture: NodeJS.Architecture,
+  environment: NodeJS.ProcessEnv,
+): SupportedRuntimeProviderGateway {
+  const gateway = resolveConfiguredRuntimeProvider(platform, architecture, environment).gateway;
+  if (!gateway.supported) {
+    throw new Error("The selected runtime provider does not support a host-managed gateway.");
+  }
+  return gateway;
+}
+
 export function prepareConfiguredGatewayHostRuntime(
   options: PrepareConfiguredGatewayHostRuntimeOptions = {},
 ): RuntimeProviderGatewayHostRuntime {
@@ -193,11 +210,11 @@ export function prepareConfiguredGatewayHostRuntime(
   if (isPortableExperimentalProfile(environment)) {
     return preparePortableGatewayHostRuntime(options.socketPath, platform);
   }
-  const provider = resolveConfiguredRuntimeProvider(platform, architecture, environment);
-  if (!provider.gateway.supported) {
-    throw new Error("The selected runtime provider does not support a host-managed gateway.");
-  }
-  return provider.gateway.prepareHostRuntime({
+  return requireConfiguredRuntimeProviderGateway(
+    platform,
+    architecture,
+    environment,
+  ).prepareHostRuntime({
     environment,
     platform,
     socketPath: options.socketPath,
@@ -209,9 +226,18 @@ export function configuredRuntimeProviderOwnsHostReadiness(
 ): boolean {
   const environment = options.environment ?? process.env;
   if (isPortableExperimentalProfile(environment)) return false;
-  return (
-    prepareConfiguredGatewayHostRuntime({ ...options, environment }).sandboxHostAddress !== null
+  const platform = options.platform ?? process.platform;
+  const gateway = requireConfiguredRuntimeProviderGateway(
+    platform,
+    options.architecture ?? process.arch,
+    environment,
   );
+  gateway.prepareHostRuntime({
+    environment,
+    platform,
+    socketPath: options.socketPath,
+  });
+  return gateway.ownsHostReadiness;
 }
 
 export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
