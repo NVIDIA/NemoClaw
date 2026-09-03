@@ -74,6 +74,7 @@ describe("local inference helpers", () => {
 
   beforeEach(() => {
     vi.stubEnv("DOCKER_CONTEXT", "default");
+    vi.stubEnv("DOCKER_HOST", "");
   });
 
   beforeAll(() => {

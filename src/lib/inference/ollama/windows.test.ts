@@ -87,6 +87,7 @@ describe("Windows Ollama listener classification", () => {
 describe("Windows Ollama helper", () => {
   beforeEach(() => {
     vi.stubEnv("DOCKER_CONTEXT", "default");
+    vi.stubEnv("DOCKER_HOST", "");
   });
 
   afterEach(() => {
