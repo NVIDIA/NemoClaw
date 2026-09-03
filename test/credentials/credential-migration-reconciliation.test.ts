@@ -30,7 +30,7 @@ const REGISTRATION_SCENARIOS = [
     label: "keeps plaintext after gateway registration fails",
     registrationStatus: 1,
     settle: async (attempt: RegistrationAttempt) => {
-      await expect(attempt).rejects.toThrow("gateway registration exited 1");
+      await expect(attempt).rejects.toThrow("legacy-openai: registration failed");
     },
     expectedFilePresent: true,
     expectedMigrated: false,
@@ -127,11 +127,18 @@ describe("legacy credential reconciliation", () => {
           );
           const migratedLegacyKeys = new Set<string>();
           const session = { stagedCredentialProviders: [] } as unknown as Session;
-          const runOpenshell = vi.fn((args: string[], _options?: unknown) => ({
-            status: args.slice(0, 2).join(" ") === "provider get" ? 1 : scenario.registrationStatus,
-            stdout: "",
-            stderr: scenario.registrationStatus === 0 ? "" : "registration failed",
-          }));
+          const runOpenshell = vi.fn((args: string[], _options?: unknown) => {
+            const providerMissing = args.slice(0, 2).join(" ") === "provider get";
+            return {
+              status: providerMissing ? 1 : scenario.registrationStatus,
+              stdout: "",
+              stderr: providerMissing
+                ? "provider not found"
+                : scenario.registrationStatus === 0
+                  ? ""
+                  : "registration failed",
+            };
+          });
           const deps: CredentialProviderRegistrationDeps = {
             root: path.join(import.meta.dirname, "../.."),
             runOpenshell:
@@ -188,7 +195,7 @@ describe("legacy credential reconciliation", () => {
             JSON.stringify(runOpenshell.mock.calls),
             "tampered non-credential fields must not reach gateway registration",
           ).not.toMatch(/tampered-gateway|tampered\.js/);
-          expect(exit).toHaveBeenCalledTimes(scenario.registrationStatus);
+          expect(exit).not.toHaveBeenCalled();
           expect(
             fs.existsSync(legacyFile),
             scenario.expectedFilePresent

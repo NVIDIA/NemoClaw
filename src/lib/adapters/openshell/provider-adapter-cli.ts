@@ -220,8 +220,15 @@ function commandError(
       message: "The selected OpenShell gateway identity does not match the recorded identity.",
     };
   }
+  if (/\b(?:connection reset|connection aborted|connection closed)\b/iu.test(output)) {
+    return {
+      kind: "transport",
+      reason: "connection_loss",
+      message: "The OpenShell provider connection closed before the outcome was confirmed.",
+    };
+  }
   if (
-    /\b(?:connection refused|client error \(connect\)|tcp connect error|transport error|connection reset|connection aborted|connection closed|no active gateway|no gateway configured)\b/iu.test(
+    /\b(?:connection refused|client error \(connect\)|tcp connect error|transport error|no active gateway|no gateway configured)\b/iu.test(
       output,
     )
   ) {

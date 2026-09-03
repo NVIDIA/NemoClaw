@@ -161,6 +161,39 @@ describe("messaging OpenShell provider application", () => {
     },
   );
 
+  it("rejects an incomplete required batch before profile or provider mutation (#9806)", async () => {
+    const first = definition();
+    const second = definition({
+      channelId: "discord",
+      credentialId: "DISCORD_BOT_TOKEN",
+      providerName: "alpha-discord-bridge",
+      credentials: [{ name: "DISCORD_BOT_TOKEN", value: null }],
+    });
+    const adapter = providerAdapter({
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>().mockResolvedValue({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "provider not found" },
+      }),
+    });
+
+    const failure = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [first, second],
+      requireCompleteBindings: true,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      createdProviderNames: [],
+      mutatedProviderNames: [],
+      replacedProviderNames: [],
+    });
+    expect(adapter.getProvider).toHaveBeenCalledTimes(2);
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+    expect(adapter.updateProvider).not.toHaveBeenCalled();
+  });
+
   it("rejects replacement when any attachment is outside the authorized sandbox (#9806)", async () => {
     const expected = definition();
     const adapter = providerAdapter({
@@ -244,9 +277,80 @@ describe("messaging OpenShell provider application", () => {
       providerName: expected.providerName,
       sandboxName: "alpha",
     });
-    expect(revalidateSandboxIdentity).toHaveBeenCalledTimes(6);
     expect(result.providerNames).toEqual([expected.providerName]);
   });
+
+  it.each([
+    { checkpoint: 1, deletes: 0, detaches: 0, creates: 0, attaches: 0, mutated: false },
+    { checkpoint: 2, deletes: 1, detaches: 0, creates: 0, attaches: 0, mutated: false },
+    { checkpoint: 3, deletes: 1, detaches: 1, creates: 0, attaches: 0, mutated: true },
+    { checkpoint: 4, deletes: 1, detaches: 1, creates: 0, attaches: 0, mutated: true },
+    { checkpoint: 5, deletes: 2, detaches: 1, creates: 1, attaches: 0, mutated: true },
+    { checkpoint: 6, deletes: 2, detaches: 1, creates: 1, attaches: 1, mutated: true },
+  ])(
+    "returns exact evidence when identity changes at replacement checkpoint $checkpoint (#9806)",
+    async ({ checkpoint, deletes, detaches, creates, attaches, mutated }) => {
+      const expected = definition();
+      const adapter = providerAdapter({
+        getProvider: vi
+          .fn<OpenShellProviderAdapter["getProvider"]>()
+          .mockResolvedValueOnce({
+            ok: true,
+            value: { ...metadata(expected), type: "generic" },
+          })
+          .mockResolvedValueOnce({ ok: true, value: metadata(expected) }),
+        deleteProvider: vi
+          .fn<OpenShellProviderAdapter["deleteProvider"]>()
+          .mockResolvedValueOnce({
+            ok: false,
+            error: {
+              kind: "command",
+              reason: "attached",
+              message: "provider is attached",
+              attachedSandboxes: ["alpha"],
+            },
+          })
+          .mockResolvedValueOnce({ ok: true }),
+      });
+      const passIdentityCheck = () => undefined;
+      const identityChecks = [
+        passIdentityCheck,
+        passIdentityCheck,
+        passIdentityCheck,
+        passIdentityCheck,
+        passIdentityCheck,
+        passIdentityCheck,
+      ];
+      identityChecks[checkpoint - 1] = () => {
+        throw new Error("sandbox identity changed");
+      };
+      let identityCheck = 0;
+      const revalidateSandboxIdentity = vi.fn();
+      revalidateSandboxIdentity.mockImplementation(() => identityChecks[identityCheck++]());
+
+      const failure = await applyCredentialsAtOpenShell(plan, {
+        providerAdapter: adapter,
+        target,
+        definitions: [expected],
+        replaceExisting: true,
+        allowedSandboxes: ["alpha"],
+        attachToSandbox: "alpha",
+        revalidateSandboxIdentity,
+      }).catch((error: unknown) => error);
+
+      expect(isMessagingProviderMutationFailure(failure)).toBe(true);
+      expect(failure).toMatchObject({
+        message: "sandbox identity changed",
+        mutatedProviderNames: mutated ? [expected.providerName] : [],
+        createdProviderNames: creates > 0 ? [expected.providerName] : [],
+        replacedProviderNames: creates > 0 ? [expected.providerName] : [],
+      });
+      expect(adapter.deleteProvider).toHaveBeenCalledTimes(deletes);
+      expect(adapter.detachProvider).toHaveBeenCalledTimes(detaches);
+      expect(adapter.createProvider).toHaveBeenCalledTimes(creates);
+      expect(adapter.attachProvider).toHaveBeenCalledTimes(attaches);
+    },
+  );
 
   it("returns created-provider evidence when attachment fails (#9806)", async () => {
     const expected = definition();
@@ -383,7 +487,7 @@ describe("messaging OpenShell provider application", () => {
     });
   });
 
-  it.each(["command uncertainty", "timeout"])(
+  it.each(["command uncertainty", "connection loss", "timeout"])(
     "marks an uncertain create as a cleanup candidate after %s (#9806)",
     async (failureKind) => {
       const expected = definition();
@@ -392,11 +496,17 @@ describe("messaging OpenShell provider application", () => {
         error:
           failureKind === "timeout"
             ? { kind: "timeout", message: "provider create timed out" }
-            : {
-                kind: "command",
-                reason: "uncertain",
-                message: "provider create outcome is unknown",
-              },
+            : failureKind === "connection loss"
+              ? {
+                  kind: "transport",
+                  reason: "connection_loss",
+                  message: "provider connection closed",
+                }
+              : {
+                  kind: "command",
+                  reason: "uncertain",
+                  message: "provider create outcome is unknown",
+                },
       });
       const adapter = providerAdapter({ createProvider });
 

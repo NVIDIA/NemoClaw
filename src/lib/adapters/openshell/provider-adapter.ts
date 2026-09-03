@@ -13,6 +13,7 @@ export type OpenShellProviderCommandReason =
   | "uncertain";
 
 export type OpenShellProviderTransportReason =
+  | "connection_loss"
   | "identity_mismatch"
   | "process_start"
   | "unreachable";

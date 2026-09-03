@@ -132,6 +132,7 @@ function cleanupCreatedMessagingProvidersAfterRefreshFailure(
     [...updatedProviderNames, ...cleanupFailureNames],
     cleanupFailureNames,
   );
+  failure.cleanupAttemptedProviderNames = [...createdProviderNames];
   if (cleanupFailures.length > 0) {
     const gatewayArg = gatewayName ? ` -g ${JSON.stringify(gatewayName)}` : "";
     const recovery = cleanupFailures

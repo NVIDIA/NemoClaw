@@ -1200,6 +1200,12 @@ describe("CLI OpenShell provider adapter", () => {
       "unreachable",
     ],
     [
+      "transport",
+      captured(1, "", "provider connection reset by peer"),
+      "The OpenShell provider connection closed before the outcome was confirmed.",
+      "connection_loss",
+    ],
+    [
       "timeout",
       captured(
         null,

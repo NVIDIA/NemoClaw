@@ -128,6 +128,19 @@ export async function applyCredentialsAtOpenShell(
     }
   }
 
+  if (
+    options.requireCompleteBindings &&
+    definitions.some(
+      (definition) =>
+        states.get(definition.providerName) === "missing" &&
+        definition.credentials.every(({ value }) => !value),
+    )
+  ) {
+    throw new MessagingProviderApplyError({
+      message: "A required messaging provider is missing and has no credential material.",
+    });
+  }
+
   await prepareProfiles(definitions, target, providerAdapter);
 
   const upserted: MessagingCredentialApplyEntry[] = [];
@@ -594,8 +607,14 @@ async function deleteProviderForReplacement(
       throw withMutationEvidence(error, detached ? [providerName] : [], []);
     }
   }
-  options.revalidateSandboxIdentity?.(`delete messaging provider ${JSON.stringify(providerName)}`);
-  result = await providerAdapter.deleteProvider({ target, providerName });
+  try {
+    options.revalidateSandboxIdentity?.(
+      `delete messaging provider ${JSON.stringify(providerName)}`,
+    );
+    result = await providerAdapter.deleteProvider({ target, providerName });
+  } catch (error) {
+    throw withMutationEvidence(error, detached ? [providerName] : [], []);
+  }
   if (!result.ok) {
     throw new MessagingProviderApplyError({
       message: `Could not replace messaging provider '${providerName}': ${providerErrorMessage(result.error)}`,
@@ -607,7 +626,9 @@ async function deleteProviderForReplacement(
 
 function mutationOutcomeUncertain(error: OpenShellProviderError): boolean {
   return (
-    error.kind === "timeout" || (error.kind === "command" && error.reason === "uncertain")
+    error.kind === "timeout" ||
+    (error.kind === "transport" && error.reason === "connection_loss") ||
+    (error.kind === "command" && error.reason === "uncertain")
   );
 }
 

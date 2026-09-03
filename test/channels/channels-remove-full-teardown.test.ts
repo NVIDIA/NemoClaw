@@ -176,6 +176,9 @@ const registryUpdates = [];
 registry.getSandbox = () => ({
   name: "test-sb",
   agent: ${JSON.stringify(sandboxAgent)},
+  gatewayName: "nemoclaw",
+  lifecycleGeneration: "generation-1",
+  lifecycleLiveIdentityFingerprint: "fingerprint-1",
   messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral()} },
 });
 registry.updateSandbox = (name, updates) => {
@@ -195,6 +198,8 @@ policies.removePreset = (sandboxName, presetName) => {
 const callOrder = [];
 const stoppedDockerCleanupCalls = [];
 const policyChannelDeps = require(${j("actions/sandbox/policy-channel-dependencies.js")});
+policyChannelDeps.policyChannelDependencies.inspectMessagingProviderAttachmentTarget = () =>
+  "fingerprint-1";
 policyChannelDeps.policyChannelDependencies.clearStoppedSandboxStateRoots = (sandboxName, paths) => {
   stoppedDockerCleanupCalls.push({ sandboxName, paths });
   return ${JSON.stringify(stoppedDockerCleanupResult)};

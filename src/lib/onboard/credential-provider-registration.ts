@@ -112,23 +112,60 @@ async function rethrowAfterCreatedProviderCleanup(
     readonly gatewayName: string;
     readonly allowedSandboxes?: readonly string[];
     readonly revalidateSandboxIdentity?: (operation: string) => void;
+    readonly createdProviderNames?: readonly string[];
+    readonly replacedProviderNames?: readonly string[];
   },
 ): Promise<never> {
-  if (!isMessagingProviderMutationFailure(error) || error.createdProviderNames.length === 0) {
-    throw error;
-  }
-  const cleanup = await MessagingSetupApplier.cleanupProvidersAtOpenShell(
-    error.createdProviderNames,
-    {
-      providerAdapter: input.providerAdapter,
-      target: namedOpenShellGateway(input.gatewayName),
-      allowedSandboxes: input.allowedSandboxes,
-      revalidateSandboxIdentity: input.revalidateSandboxIdentity,
-    },
+  const existingCreatedProviderNames = providerMutationNames(error, "createdProviderNames");
+  const existingMutatedProviderNames = providerMutationNames(error, "mutatedProviderNames");
+  const existingReplacedProviderNames = providerMutationNames(error, "replacedProviderNames");
+  const cleanupAttemptedProviderNames = new Set(
+    providerMutationNames(error, "cleanupAttemptedProviderNames"),
   );
-  const createdProviders = new Set(error.createdProviderNames);
-  const replacedProviders = new Set(error.replacedProviderNames);
-  const residualProviderNames = cleanup.residualProviders.map(({ providerName }) => providerName);
+  const createdProviderNames = uniqueProviderNames([
+    ...existingCreatedProviderNames,
+    ...(input.createdProviderNames ?? []),
+  ]);
+  if (createdProviderNames.length === 0) throw error;
+  const replacedProviderNames = uniqueProviderNames([
+    ...existingReplacedProviderNames,
+    ...(input.replacedProviderNames ?? []),
+  ]);
+  const mutationError = new MessagingProviderApplyError({
+    message: error instanceof Error ? error.message : "Provider registration failed.",
+    mutatedProviderNames: uniqueProviderNames([
+      ...existingMutatedProviderNames,
+      ...createdProviderNames,
+    ]),
+    createdProviderNames,
+    replacedProviderNames,
+    cause: error,
+  });
+  const cleanupCandidates = createdProviderNames.filter(
+    (providerName) => !cleanupAttemptedProviderNames.has(providerName),
+  );
+  const cleanup =
+    cleanupCandidates.length > 0
+      ? await MessagingSetupApplier.cleanupProvidersAtOpenShell(cleanupCandidates, {
+          providerAdapter: input.providerAdapter,
+          target: namedOpenShellGateway(input.gatewayName),
+          allowedSandboxes: input.allowedSandboxes,
+          revalidateSandboxIdentity: input.revalidateSandboxIdentity,
+        })
+      : {
+          removedProviderNames: [],
+          absentProviderNames: [],
+          detachedAttachments: [],
+          residualProviders: [],
+        };
+  const createdProviders = new Set(createdProviderNames);
+  const replacedProviders = new Set(replacedProviderNames);
+  const residualProviderNames = uniqueProviderNames([
+    ...existingCreatedProviderNames.filter((providerName) =>
+      cleanupAttemptedProviderNames.has(providerName),
+    ),
+    ...cleanup.residualProviders.map(({ providerName }) => providerName),
+  ]);
   const residualMessage = cleanup.residualProviders
     .map(
       ({ providerName, error: cleanupError }) =>
@@ -137,18 +174,77 @@ async function rethrowAfterCreatedProviderCleanup(
     )
     .join(" ");
   throw new MessagingProviderApplyError({
-    message: [error.message, residualMessage].filter(Boolean).join(" "),
+    message: [mutationError.message, residualMessage].filter(Boolean).join(" "),
     mutatedProviderNames: [
-      ...error.mutatedProviderNames.filter(
+      ...mutationError.mutatedProviderNames.filter(
         (providerName) =>
           !createdProviders.has(providerName) || replacedProviders.has(providerName),
       ),
       ...residualProviderNames,
     ],
     createdProviderNames: residualProviderNames,
-    replacedProviderNames: error.replacedProviderNames,
+    replacedProviderNames,
     cause: error,
   });
+}
+
+function providerMutationNames(
+  error: unknown,
+  field:
+    | "cleanupAttemptedProviderNames"
+    | "createdProviderNames"
+    | "mutatedProviderNames"
+    | "replacedProviderNames",
+): string[] {
+  if (
+    !(error instanceof Error) ||
+    (field !== "cleanupAttemptedProviderNames" && !isMessagingProviderMutationFailure(error))
+  ) {
+    return [];
+  }
+  const value = Reflect.get(error, field);
+  return Array.isArray(value)
+    ? value.filter((name): name is string => typeof name === "string" && name.length > 0)
+    : [];
+}
+
+function uniqueProviderNames(names: readonly string[]): string[] {
+  return [...new Set(names)];
+}
+
+function trackSuccessfulProviderReplacements(
+  providerAdapter: ReturnType<typeof createCliOpenShellProviderAdapter>,
+  replacedProviderNames: Set<string>,
+): ReturnType<typeof createCliOpenShellProviderAdapter> {
+  return {
+    ...providerAdapter,
+    async deleteProvider(request) {
+      const result = await providerAdapter.deleteProvider(request);
+      if (result.ok) replacedProviderNames.add(request.providerName);
+      return result;
+    },
+  };
+}
+
+function trackSuccessfulProviderCreations(
+  runOpenshell: OpenshellCliHelpers["runOpenshell"],
+  createdProviderNames: Set<string>,
+): OpenshellCliHelpers["runOpenshell"] {
+  return (args, options) => {
+    const result = runOpenshell(args, options);
+    const nameIndex = args.indexOf("--name");
+    const providerName = nameIndex >= 0 ? args[nameIndex + 1] : undefined;
+    if (
+      result.status === 0 &&
+      args[0] === "provider" &&
+      args[1] === "create" &&
+      typeof providerName === "string" &&
+      providerName.length > 0
+    ) {
+      createdProviderNames.add(providerName);
+    }
+    return result;
+  };
 }
 
 function isCanonicalBinding(binding: CheckpointProviderBinding): boolean {
@@ -232,24 +328,6 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     return result;
   }
 
-  function upsertMessagingProviders(
-    tokenDefs: MessagingTokenDef[],
-    options: MessagingProviderRegistrationOptions = {},
-    runOpenshell: OpenshellCliHelpers["runOpenshell"] = gatewayRunner(),
-  ): string[] {
-    const upserted = providers.upsertMessagingProviders(tokenDefs, runOpenshell, {
-      ...options,
-      gatewayName: deps.getGatewayName(),
-    }) as string[];
-    recordMigratedLegacyMessagingCredentials(
-      tokenDefs,
-      upserted,
-      deps,
-      options.revalidateSandboxIdentity,
-    );
-    return upserted;
-  }
-
   async function applyMessagingProviders(
     tokenDefs: MessagingTokenDef[],
     options: MessagingProviderRegistrationOptions = {},
@@ -267,47 +345,69 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
         channelIdForProvider(applicationPlan, envKey, providerName),
     });
     const gatewayName = deps.getGatewayName();
-    const providerAdapter = createCliOpenShellProviderAdapter({ run: runOpenshell });
-    const typedResult = await MessagingSetupApplier.applyCredentialsAtOpenShell(
-      applicationPlan,
-      {
-        providerAdapter,
-        target: namedOpenShellGateway(gatewayName),
-        definitions: application.definitions,
-        refreshes: application.refreshes,
-        replaceExisting: options.replaceExisting,
-        allowedSandboxes: options.allowedSandboxes,
-        revalidateSandboxIdentity: options.revalidateSandboxIdentity,
-        log: (message) => console.error(`  ${message}`),
-      },
-    ).catch((error: unknown) =>
+    const cleanupProviderAdapter = createCliOpenShellProviderAdapter({ run: runOpenshell });
+    const replacedProviderNames = new Set<string>();
+    const providerAdapter = trackSuccessfulProviderReplacements(
+      cleanupProviderAdapter,
+      replacedProviderNames,
+    );
+    const typedResult = await MessagingSetupApplier.applyCredentialsAtOpenShell(applicationPlan, {
+      providerAdapter,
+      target: namedOpenShellGateway(gatewayName),
+      definitions: application.definitions,
+      refreshes: application.refreshes,
+      requireCompleteBindings: true,
+      replaceExisting: options.replaceExisting,
+      allowedSandboxes: options.allowedSandboxes,
+      revalidateSandboxIdentity: options.revalidateSandboxIdentity,
+      log: (message) => console.error(`  ${message}`),
+    }).catch((error: unknown) =>
       rethrowAfterCreatedProviderCleanup(error, {
-        providerAdapter,
+        providerAdapter: cleanupProviderAdapter,
         gatewayName,
         allowedSandboxes: options.allowedSandboxes,
         revalidateSandboxIdentity: options.revalidateSandboxIdentity,
       }),
     );
-    if (typedResult.missing.length > 0) throw new Error(MISSING_BINDING_ERROR);
-    const otherProviderNames =
-      application.otherTokenDefs.length > 0
-        ? (providers.upsertMessagingProviders(
-            application.otherTokenDefs,
-            createGatewayScopedOpenshellRunner(runOpenshell, deps.getGatewayName()),
-            { ...options, gatewayName: deps.getGatewayName() },
-          ) as string[])
-        : [];
-    const appliedNames = new Set([...otherProviderNames, ...typedResult.providerNames]);
-    const applied = tokenDefs
-      .map(({ name }) => name)
-      .filter((name) => appliedNames.has(name));
-    recordMigratedLegacyMessagingCredentials(
-      tokenDefs,
-      applied,
-      deps,
-      options.revalidateSandboxIdentity,
+    const typedCreatedProviderNames = typedResult.upserted
+      .filter(({ action }) => action === "create")
+      .map(({ providerName }) => providerName);
+    const typedReplacedProviderNames = typedCreatedProviderNames.filter((providerName) =>
+      replacedProviderNames.has(providerName),
     );
-    return applied;
+    const legacyCreatedProviderNames = new Set<string>();
+    try {
+      if (typedResult.missing.length > 0) throw new Error(MISSING_BINDING_ERROR);
+      const otherProviderNames =
+        application.otherTokenDefs.length > 0
+          ? (providers.upsertMessagingProviders(
+              application.otherTokenDefs,
+              trackSuccessfulProviderCreations(
+                createGatewayScopedOpenshellRunner(runOpenshell, gatewayName),
+                legacyCreatedProviderNames,
+              ),
+              { ...options, bestEffort: true, gatewayName },
+            ) as string[])
+          : [];
+      const appliedNames = new Set([...otherProviderNames, ...typedResult.providerNames]);
+      const applied = tokenDefs.map(({ name }) => name).filter((name) => appliedNames.has(name));
+      recordMigratedLegacyMessagingCredentials(
+        tokenDefs,
+        applied,
+        deps,
+        options.revalidateSandboxIdentity,
+      );
+      return applied;
+    } catch (error) {
+      return rethrowAfterCreatedProviderCleanup(error, {
+        providerAdapter: cleanupProviderAdapter,
+        gatewayName,
+        allowedSandboxes: options.allowedSandboxes,
+        revalidateSandboxIdentity: options.revalidateSandboxIdentity,
+        createdProviderNames: [...typedCreatedProviderNames, ...legacyCreatedProviderNames],
+        replacedProviderNames: typedReplacedProviderNames,
+      });
+    }
   }
 
   function credentialBindingMatchesGateway(
@@ -446,7 +546,6 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     applyMessagingProviders,
     stageSandboxCredentialProviders,
     upsertProvider,
-    upsertMessagingProviders,
   };
 }
 
