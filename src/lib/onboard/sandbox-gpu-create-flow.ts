@@ -55,10 +55,7 @@ import type {
   RuntimeProviderManagedImageBootstrapSurface,
 } from "./runtime-provider/contract";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
-import {
-  createSandboxGpuCreateAttemptRunner,
-  verifySelectedSandboxBridgeReachability,
-} from "./sandbox-gpu-create-run-attempt";
+import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
 import { managedBootstrapCreateArgs } from "./sandbox-create-launch";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
@@ -262,8 +259,6 @@ export interface SandboxGpuCreateFlowInput {
     readonly request: ManagedStartupRootApplyRequest;
     readonly image: ManagedBootstrapImageIdentity;
     readonly agentIdentity: ManagedBootstrapAgentIdentity;
-    readonly workspaceRoot: import("./managed-startup/state-roots").ManagedStartupWorkspaceRoot;
-    readonly managedStateRoots: readonly import("./managed-startup/state-roots").ManagedStartupStateRoot[];
     readonly intendedWorkloadArgv: readonly string[];
     readonly expectedSupervisorArgv: readonly string[];
   } | null;
@@ -414,7 +409,6 @@ export async function runSandboxGpuCreateFlow(
           installPortableDemoLifecycle: () => input.lifecycleGeneration!,
         }
       : deps,
-    () => verifySelectedSandboxBridgeReachability(input),
   );
   const gpuCreateOutcome = await (input.resumeVerifiedCreate
     ? attemptRunner.runAttempt(input.resumeVerifiedCreate.route)
@@ -521,7 +515,6 @@ export async function runSandboxGpuCreateFlow(
               selectedRoute: "compatibility",
               gatewayPort: input.gatewayPort,
               log: console.log,
-              reverifyBridgeReachability: () => verifySelectedSandboxBridgeReachability(input),
             },
           );
         }

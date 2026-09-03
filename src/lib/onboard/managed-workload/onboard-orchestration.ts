@@ -14,10 +14,6 @@ import type { OpenShellComputePlan } from "../compute/plan";
 import { resolveCorporateCa } from "../corporate-ca";
 import { enforceDockerGpuPatchPreserveNetwork } from "../docker-gpu-local-inference";
 import {
-  isSandboxBridgeGatewayReachable,
-  verifySandboxBridgeGatewayReachableOrExit,
-} from "../gateway-sandbox-reachability";
-import {
   initialDockerGpuRoute,
   renderSandboxCreateArgsForGpuRoute,
   type SelectedDockerGpuRoute,
@@ -31,11 +27,7 @@ import {
   type ManagedStartupOnboardProfileInput,
 } from "../managed-startup/onboard-profile";
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
-import {
-  managedStartupStateRoots,
-  managedStartupWorkspaceRoot,
-} from "../managed-startup/state-roots";
-import { getChannelsFromPlan, getMessagingChannelConfigFromPlan } from "../messaging-plan-session";
+import { getChannelsFromPlan } from "../messaging-plan-session";
 import type { MessagingTokenDef } from "../messaging-prep";
 import { resolveSandboxBuildContext, resolveSandboxBuildPatch } from "../prepared-dcode-rebuild";
 import {
@@ -75,17 +67,11 @@ import {
 } from "../workload/rebuild";
 import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
 import {
-  prepareManagedStateVolumes,
-  removeManagedStateVolumes,
-  type ManagedStateVolumeDeps,
-} from "./managed-state-volumes";
-
-export {
-  managedStartupStateRoots,
-  managedStartupWorkspaceRoot,
-  prepareManagedStateVolumes,
-  removeManagedStateVolumes,
-};
+  prepareManagedHermesStateVolume,
+  removeManagedHermesStateVolume,
+  type ManagedHermesStateVolumeContext,
+  type ManagedHermesStateVolumeDeps,
+} from "./hermes-state-volume";
 
 type ManagedProfileInput = Omit<
   ManagedStartupOnboardProfileInput,
@@ -97,10 +83,9 @@ type BootstrapProvider = RuntimeProviderBundle & {
   readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
 };
 
-export { normalizeRuntimeProviderIdentity };
+export { normalizeRuntimeProviderIdentity, removeManagedHermesStateVolume };
 
-export type ManagedStateVolumeOnboardLifecycle = {
-  readonly roots: readonly import("../managed-startup/state-roots").ManagedStartupStateRoot[];
+export type ManagedHermesStateVolumeOnboardLifecycle = {
   materializeSandboxCreatePlan(
     input: MaterializeSandboxCreatePlanInput,
     materialize: (input: MaterializeSandboxCreatePlanInput) => SandboxCreatePlan,
@@ -108,34 +93,24 @@ export type ManagedStateVolumeOnboardLifecycle = {
   commit(): void;
 };
 
-export function createManagedStateVolumeOnboardLifecycle(
-  input: {
-    readonly roots: readonly import("../managed-startup/state-roots").ManagedStartupStateRoot[];
+export function createManagedHermesStateVolumeOnboardLifecycle(
+  input: Omit<ManagedHermesStateVolumeContext, "runtimeProviderId"> & {
     readonly runtimeProvider: RuntimeProviderBundle | null;
   },
-  deps: ManagedStateVolumeDeps = {},
-): ManagedStateVolumeOnboardLifecycle {
-  const scope = prepareManagedStateVolumes(
-    { roots: input.roots },
+  deps: ManagedHermesStateVolumeDeps = {},
+): ManagedHermesStateVolumeOnboardLifecycle {
+  const scope = prepareManagedHermesStateVolume(
     {
-      ...deps,
-      ...(input.runtimeProvider ? { runtimeProvider: input.runtimeProvider } : {}),
+      agentName: input.agentName,
+      runtimeProviderId: input.runtimeProvider?.identity.id,
+      sandboxName: input.sandboxName,
+      workloadKind: input.workloadKind,
     },
+    deps,
   );
-  const managedStateMountDriverId = scope
-    ? input.runtimeProvider?.workload.managedStateMountDriverId
-    : undefined;
-  if (scope && !managedStateMountDriverId) {
-    throw new Error("Managed state volumes require provider-owned mount projection.");
-  }
   return {
-    roots: input.roots,
     materializeSandboxCreatePlan(input, materialize) {
-      return materialize({
-        ...input,
-        managedStateMounts: scope?.mounts,
-        managedStateMountDriverId,
-      });
+      return materialize({ ...input, managedStateMount: scope?.mount });
     },
     commit() {
       scope?.commit();
@@ -392,7 +367,6 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
     readonly intent: SandboxCreateIntent;
     readonly policylessCreate?: boolean;
     readonly deferSandboxEffectsUntilIdentityVerification?: boolean;
-    readonly skipProviderEffects?: boolean;
     readonly rebindMessagingTokenDefs: () => Promise<readonly MessagingTokenDef[]>;
     readonly runProviderPreDeleteCleanup: MaterializeSandboxCreatePlanInput["runProviderPreDeleteCleanup"];
     readonly upsertMessagingProviders: MaterializeSandboxCreatePlanInput["upsertMessagingProviders"];
@@ -404,7 +378,6 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
     "createArgs" | "managedStartupRootApplyRequest"
   > & { readonly sandboxName: string };
   readonly plannedMessagingPlan: SandboxMessagingPlan | null;
-  readonly messagingConfig?: MaterializeSandboxCreatePlanInput["messagingConfig"];
   readonly gpu: {
     readonly provider: string;
     readonly config: SandboxGpuConfig;
@@ -469,10 +442,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     policylessCreate: input.plan.policylessCreate,
     deferSandboxEffectsUntilIdentityVerification:
       input.plan.deferSandboxEffectsUntilIdentityVerification,
-    skipProviderEffects: input.plan.skipProviderEffects,
     messagingTokenDefs: [...messagingTokenDefs],
-    messagingConfig:
-      input.messagingConfig ?? getMessagingChannelConfigFromPlan(input.plannedMessagingPlan),
     runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
     upsertMessagingProviders: input.plan.upsertMessagingProviders,
     getHermesToolGatewayProviderName: input.plan.getHermesToolGatewayProviderName,
@@ -503,23 +473,11 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   let dashboardRemoteBindPrepared = false;
   let launch: SandboxCreateLaunchWithPrebuild;
   if (input.workload.source.kind === "managed-image") {
-    const runtimeProvider = requireBootstrapProvider(input.runtime.runtimeProvider);
-    const gatewayRuntime = runtimeProvider.gateway.prepareHostRuntime({
-      environment: process.env,
-      platform: process.platform,
-    });
     await enforceDockerGpuPatchPreserveNetwork(input.gpu.provider, input.gpu.config, {
       dockerDriverGateway: input.gpu.dockerDriverGateway,
       selectedRoute: initialGpuRoute,
       gatewayPort: input.gpu.gatewayPort,
       log,
-      reverifyBridgeReachability: () =>
-        verifySandboxBridgeGatewayReachableOrExit(true, {
-          skip: false,
-          port: input.gpu.gatewayPort,
-          reachabilityImpl: (options) =>
-            isSandboxBridgeGatewayReachable({ ...options, gatewayRuntime }),
-        }),
     });
     const profile = input.runtime.ensurePreparedProfile(input.workload);
     if (!profile) throw new Error("Managed sandbox workload is missing its startup profile.");
@@ -621,7 +579,6 @@ export async function prepareSelectedOnboardSandboxWorkloadLaunch(
 export function resolveOnboardManagedBootstrapLaunch(input: {
   readonly runtime: ManagedWorkloadOnboardRuntime;
   readonly workload: PreparedSandboxWorkloadSource;
-  readonly sandboxName: string;
   readonly stateRoot: string;
   readonly bootstrapIdentity: string | null;
   readonly request: import("../managed-startup/root-apply").ManagedStartupRootApplyRequest | null;
@@ -634,7 +591,6 @@ export function resolveOnboardManagedBootstrapLaunch(input: {
       "Managed image onboarding is missing its identity-bound bootstrap launch contract.",
     );
   }
-  const agentIdentity = managedImageRuntimeIdentity(input.workload.source.contract.agent);
   return {
     bootstrapIdentity: input.bootstrapIdentity,
     stateRoot: input.stateRoot,
@@ -645,16 +601,7 @@ export function resolveOnboardManagedBootstrapLaunch(input: {
       repository: input.workload.source.contract.image,
       manifestDigest: input.workload.source.contract.digest,
     },
-    agentIdentity,
-    workspaceRoot: managedStartupWorkspaceRoot({
-      agent: input.workload.source.contract.agent,
-      agentIdentity,
-    }),
-    managedStateRoots: managedStartupStateRoots({
-      agent: input.workload.source.contract.agent,
-      sandboxName: input.sandboxName,
-      agentIdentity,
-    }),
+    agentIdentity: managedImageRuntimeIdentity(input.workload.source.contract.agent),
     intendedWorkloadArgv: input.intendedWorkloadArgv,
     expectedSupervisorArgv: OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
   } as const;

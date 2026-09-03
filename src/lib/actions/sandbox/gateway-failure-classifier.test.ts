@@ -10,11 +10,7 @@ vi.mock("../../state/registry", () => ({
   listSandboxes: vi.fn(() => ({ sandboxes: [] })),
 }));
 
-import {
-  classifyGatewayFailure,
-  classifyObservedSandboxContainerFailure,
-  type GatewayFailureRunners,
-} from "./gateway-failure-classifier";
+import { classifyGatewayFailure, type GatewayFailureRunners } from "./gateway-failure-classifier";
 
 function runners(overrides: Partial<GatewayFailureRunners> = {}): GatewayFailureRunners {
   return {
@@ -95,19 +91,5 @@ describe("classifyGatewayFailure (#7348)", () => {
 
     expect(result.layer).toBe("docker_unreachable");
     expect(getSandboxMock).not.toHaveBeenCalled();
-  });
-});
-
-describe("classifyObservedSandboxContainerFailure", () => {
-  it("classifies a provider-observed stopped sandbox without naming its runtime", async () => {
-    await expect(
-      classifyObservedSandboxContainerFailure("alpha", "stopped", 18789, async () => false),
-    ).resolves.toMatchObject({ layer: "sandbox_container_stopped" });
-  });
-
-  it("does not duplicate running provider observations", async () => {
-    await expect(
-      classifyObservedSandboxContainerFailure("alpha", "running", 18789),
-    ).resolves.toBeNull();
   });
 });

@@ -99,6 +99,10 @@ export type StatusFlowHarnessOptions = {
         dashboardRemoteBindPrepared?: boolean;
       })
     | null;
+  shieldsPosture?: {
+    mode: "locked" | "mutable_default" | "mutable";
+    detail: string;
+  };
   versionCheck?: {
     sandboxVersion?: string | null;
     expectedVersion?: string | null;
@@ -134,6 +138,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
   const nim = requireDist("../../src/lib/inference/nim.js");
   const policy = requireDist("../../src/lib/policy/index.js");
   const sandboxVersion = requireDist("../../src/lib/sandbox/version.js");
+  const shields = requireDist("../../src/lib/shields/index.js");
   const registry = requireDist("../../src/lib/state/registry.js");
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
 
@@ -275,6 +280,12 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
       expectedVersion: "0.2.0",
       isStale: true,
       detectionMethod: "runtime",
+    },
+  );
+  vi.spyOn(shields, "getShieldsPosture").mockReturnValue(
+    options.shieldsPosture ?? {
+      mode: "mutable_default",
+      detail: "mutable default",
     },
   );
   const getActiveSandboxSessionsSpy = vi

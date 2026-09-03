@@ -1151,12 +1151,7 @@ describe("runInferenceSet compatible providers", () => {
         // rewriteConfigUrlsWithDnsPinning, so its real SSRF preflight is
         // exercised here too, with the same injected DNS lookup.
         ensureHttpsPinRuntimeAdapter: (adapterOptions) =>
-          realEnsureHttpsPinRuntimeAdapter({
-            ...adapterOptions,
-            lookup,
-            discoverAllowedSourceCidrs:
-              adapterOptions.discoverAllowedSourceCidrs ?? (() => ["172.18.0.0/16"]),
-          }),
+          realEnsureHttpsPinRuntimeAdapter({ ...adapterOptions, lookup }),
       });
 
       await expect(

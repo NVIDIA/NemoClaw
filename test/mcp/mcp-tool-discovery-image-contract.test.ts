@@ -12,11 +12,6 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 const runtimeRoot = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
-const managedStartupRuntimeBundle = "managed-startup-image-runtime.bundle";
-const reviewedRuntimeHashOverrides: Readonly<Record<string, string>> = {
-  [managedStartupRuntimeBundle]:
-    "ad20bb9d5a40e91829a62ebca2942687b847dccc67e2cb13ea1f62cbdab25035",
-};
 const dockerfiles = [
   "Dockerfile",
   "agents/hermes/Dockerfile",
@@ -209,7 +204,7 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
-      expectedHash: "0c07b731d2f32a9419605bae4f84329c8d7440528eed2ac6dbcd5835724961e9",
+      expectedHash: "985c61659ae075a1ce455d6ebff6e7b4e9e08bceb50683c815857a840d4b013b",
       relativePath: "managed-startup-image-runtime.bundle",
     },
     {
@@ -233,7 +228,7 @@ describe("MCP tool discovery image contract", () => {
       .createHash("sha256")
       .update(fs.readFileSync(path.join(bundleRoot, relativePath)))
       .digest("hex");
-    expect(actualHash, relativePath).toBe(reviewedRuntimeHashOverrides[relativePath] ?? expectedHash);
+    expect(actualHash, relativePath).toBe(expectedHash);
   });
 
   it("executes the reviewed MCP discovery runtime artifact", () => {

@@ -8,7 +8,6 @@ import type { McpBridgeEntry } from "../../state/registry";
 import { registerAgentAdapterAtCurrentCredentialRevision } from "./mcp-bridge-adapters";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
-import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
 import { applyGeneratedPolicy, assertGeneratedPolicyMutationSafe } from "./mcp-bridge-policy";
 import {
   assertMcpProviderRecoverable,
@@ -27,6 +26,7 @@ import {
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import {
+  assertMcpAdapterConfigMutationsAllowed,
   assertMcpAdapterMutationRuntimeCapabilities,
   assertMcpAdapterTeardownRuntimeCapabilities,
 } from "./mcp-bridge-runtime-capabilities";
@@ -40,7 +40,6 @@ import {
   nowIso,
   writeBridgeEntry,
 } from "./mcp-bridge-state";
-import { statusMcpBridge } from "./mcp-bridge-status";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
@@ -48,20 +47,6 @@ import {
   resolveCredentialEnv,
   validateSandboxName,
 } from "./mcp-bridge-validation";
-
-const MCP_RESTART_STATUS_DETAIL_MAX_LENGTH = 240;
-
-function restartStatusDetailForDisplay(
-  detail: string,
-  entry: McpBridgeEntry,
-  fallback: string,
-): string {
-  return (
-    redactBridgeFailureForDisplay(detail, entry)
-      .trim()
-      .slice(0, MCP_RESTART_STATUS_DETAIL_MAX_LENGTH) || fallback
-  );
-}
 
 function resolvedTargetPins(
   resolvedByServer: ReadonlyMap<string, McpBridgeTargetValidation>,
@@ -74,34 +59,6 @@ function resolvedTargetPins(
     );
   }
   return target;
-}
-
-async function assertRestartCredentialsAvailable(
-  sandboxName: string,
-  entries: readonly McpBridgeEntry[],
-): Promise<void> {
-  for (const entry of entries) {
-    const exported = resolveCredentialEnv(entry.env.map((name) => ({ name })));
-    if (Object.keys(exported).length > 0) continue;
-    let detail = "wire-level credential verification did not return a result";
-    try {
-      const [status] = await statusMcpBridge(sandboxName, entry.server, {
-        probeCredentialResolution: true,
-      });
-      const probe = status?.provider.credentialResolution;
-      if (probe?.ok === true) continue;
-      if (probe?.detail) detail = restartStatusDetailForDisplay(probe.detail, entry, detail);
-    } catch (error) {
-      detail = restartStatusDetailForDisplay(
-        error instanceof Error ? error.message : String(error),
-        entry,
-        "stored credential status inspection failed",
-      );
-    }
-    throw new McpBridgeError(
-      `MCP server '${entry.server}' cannot reuse its stored credential: ${detail}. Export host environment variable '${entry.env[0]}' and run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` to replace it.`,
-    );
-  }
 }
 
 export async function restartMcpBridge(sandboxName: string, server?: string): Promise<void> {
@@ -138,13 +95,12 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   const targetEntries = targets
     .map(([, entry]) => entry)
     .filter((entry): entry is McpBridgeEntry => !!entry);
+  // Hermes shields posture is host-visible. Refuse before DNS, gateway
+  // recovery/selection, provider inspection, or any lifecycle mutation.
+  assertMcpAdapterConfigMutationsAllowed(sandboxName, sandbox, targetEntries);
   const resolvedByServer = await preflightMcpEntryTargets(targetEntries);
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName);
-  // A hostless restart may reuse an attached stored credential only after the
-  // existing wire probe verifies it. Check every target before policy or
-  // provider mutation so a multi-server restart cannot half-apply (#10750).
-  await assertRestartCredentialsAvailable(sandboxName, targetEntries);
   // Validate every generated policy name before inspecting or updating any provider.
   for (const entry of targetEntries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const providerInspectionByServer = new Map<string, McpProviderInspection>();

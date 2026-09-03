@@ -239,9 +239,7 @@ function createPhases(
       note: vi.fn(),
 
       cliName: () => "nemoclaw",
-      loadSession: () => createSession(),
       updateSession: vi.fn((mutator) => mutator(createSession()) ?? createSession()),
-      compareAndSwapSession: vi.fn(() => "mismatch" as const),
       getStoredMessagingChannelConfig: () => null,
       hydrateMessagingChannelConfig: (config) => config,
       messagingChannelConfigsEqual: () => true,
@@ -270,6 +268,7 @@ function createPhases(
       stageSandboxCredentialProviders: vi.fn(async () => []),
       promptValidatedSandboxName: vi.fn(async () => "my-sandbox"),
       selectResourceProfileForSandbox: vi.fn(async () => null),
+      stopStaleDashboardListenersForSandbox: vi.fn(),
       listRegistrySandboxes: () => ({ sandboxes: [] }),
       planRegisteredExtraProviders: vi.fn(() => ({
         extraProviders: [],
@@ -318,8 +317,6 @@ function createPhases(
         throw new Error(`exit ${code}`);
       }) as (code: number) => never,
       ...overrides.sandboxDeps,
-      inspectGatewayCredential:
-        overrides.sandboxDeps?.inspectGatewayCredential ?? (() => ({ kind: "missing" as const })),
       checkGatewayRouteCompatibility:
         overrides.sandboxDeps?.checkGatewayRouteCompatibility ?? (() => ({ ok: true })),
       withGatewayRouteMutationLock:
@@ -646,7 +643,9 @@ describe("core onboard flow phases", () => {
         resolved?: { policy?: { basePolicyPath?: string } };
       };
       const runVerifiedEffects = args[16] as
-        | ((context: { revalidateSandboxIdentity: (operation: string) => void }) => Promise<void>)
+        | ((context: {
+            revalidateSandboxIdentity: (operation: string) => void;
+          }) => Promise<void>)
         | undefined;
       expect(createIntent).toMatchObject({
         resolved: { policy: { basePolicyPath: "/repo/policy.yaml" } },

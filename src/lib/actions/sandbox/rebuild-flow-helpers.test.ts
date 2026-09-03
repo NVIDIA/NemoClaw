@@ -655,7 +655,14 @@ describe("backupSandboxStateForRebuild failure safety", () => {
       manifest: null,
     });
     expect(() =>
-      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+      backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        () => true,
+        makeBail(),
+      ),
     ).toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
@@ -683,10 +690,20 @@ describe("backupSandboxStateForRebuild failure safety", () => {
       // that claims otherwise.
       manifest: null,
     });
+    const relockShieldsIfNeeded = vi.fn(() => true);
 
     expect(() =>
-      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+      backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        relockShieldsIfNeeded,
+        makeBail(),
+      ),
     ).toThrow("bail: Failed to back up sandbox state.");
+    expect(relockShieldsIfNeeded).toHaveBeenCalledOnce();
+    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(
@@ -723,7 +740,14 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     });
 
     expect(() =>
-      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+      backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        () => true,
+        makeBail(),
+      ),
     ).toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
@@ -746,7 +770,14 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     });
 
     expect(() =>
-      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+      backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        () => true,
+        makeBail(),
+      ),
     ).toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
@@ -756,6 +787,7 @@ describe("backupSandboxStateForRebuild failure safety", () => {
   });
 
   it("aborts when one state directory fails after other state was preserved", () => {
+    const relockShieldsIfNeeded = vi.fn(() => true);
     backupSpy.mockReturnValue({
       success: false,
       backedUpDirs: ["memories", "sessions"],
@@ -771,12 +803,15 @@ describe("backupSandboxStateForRebuild failure safety", () => {
         makeSandboxEntry(),
         false,
         () => undefined,
+        relockShieldsIfNeeded,
         makeBail(),
       ),
     ).toThrow("bail: Failed to back up sandbox state.");
+    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
   });
 
   it("aborts before rebuild when the workspace backup fails (#10639)", () => {
+    const relockShieldsIfNeeded = vi.fn(() => true);
     backupSpy.mockReturnValue({
       success: false,
       backedUpDirs: ["extensions"],
@@ -792,10 +827,12 @@ describe("backupSandboxStateForRebuild failure safety", () => {
         makeSandboxEntry(),
         false,
         () => undefined,
+        relockShieldsIfNeeded,
         makeBail(),
       ),
     ).toThrow("bail: Failed to back up sandbox state.");
 
+    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(errorLines.some((line: string) => line.includes("workspace"))).toBe(true);
     expect(
@@ -885,6 +922,7 @@ describe("warnUnpreservedUserManagedFiles", () => {
       makeSandboxEntry(),
       true,
       () => undefined,
+      () => true,
       makeBail(),
     );
 
@@ -899,6 +937,7 @@ describe("warnUnpreservedUserManagedFiles", () => {
       makeSandboxEntry(),
       false,
       () => undefined,
+      () => true,
       makeBail(),
     );
 
@@ -938,7 +977,14 @@ describe("warnUnpreservedUserManagedFiles", () => {
     });
 
     expect(() =>
-      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+      backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        () => true,
+        makeBail(),
+      ),
     ).toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));

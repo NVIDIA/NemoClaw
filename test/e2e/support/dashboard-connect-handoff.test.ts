@@ -5,7 +5,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { runDashboardConnectUntilForwardHandoff } from "../live/dashboard-connect-handoff.ts";
 
@@ -52,11 +51,10 @@ test("accepts a normally completed connect with the local Dockerfile workload", 
     ],
     dashboardPort: DASHBOARD_PORT,
     env: {
-      ...buildAvailabilityProbeEnv(),
+      ...process.env,
       E2E_TARGET_ID: "dashboard-remote-bind",
       E2E_WORKLOAD_SOURCE: "local-dockerfile",
       NEMOCLAW_AGENT: "openclaw",
-      NEMOCLAW_FROM_DOCKERFILE: path.resolve("Dockerfile"),
     },
     progress,
     sandboxName: SANDBOX_NAME,
@@ -78,7 +76,7 @@ test("rejects invalid handoff budgets before spawning connect", async ({ artifac
       marker,
     ] as const,
     dashboardPort: DASHBOARD_PORT,
-    env: buildAvailabilityProbeEnv(),
+    env: process.env,
     progress,
     sandboxName: SANDBOX_NAME,
   };
@@ -124,7 +122,7 @@ test("reaps interactive connect after missing-forward proof while its detached f
       artifacts,
       command: [process.execPath, "-e", script, pidFile],
       dashboardPort: DASHBOARD_PORT,
-      env: buildAvailabilityProbeEnv(),
+      env: process.env,
       progress,
       sandboxName: SANDBOX_NAME,
       timeoutMs: 2_000,
@@ -150,31 +148,6 @@ test("reaps interactive connect after missing-forward proof while its detached f
   }
 });
 
-test("accepts direct ForwardTcp ownership proof without parsing legacy CLI output", async ({
-  artifacts,
-  progress,
-}) => {
-  let probes = 0;
-  const script = [
-    "process.on('SIGTERM', () => process.exit(0));",
-    "setInterval(() => undefined, 1000);",
-  ].join("\n");
-  const result = await runDashboardConnectUntilForwardHandoff({
-    artifacts,
-    command: [process.execPath, "-e", script],
-    dashboardPort: DASHBOARD_PORT,
-    env: {},
-    forwardProbe: () => (probes += 1) >= 2,
-    forwardProbeIntervalMs: 10,
-    progress,
-    sandboxName: SANDBOX_NAME,
-    timeoutMs: 2_000,
-  });
-
-  expect(result.proof).toBe("forward-started");
-  expect(probes).toBeGreaterThanOrEqual(2);
-});
-
 test("fails when an attached descendant retains captured stdio after forward proof", async ({
   artifacts,
   progress,
@@ -194,7 +167,7 @@ test("fails when an attached descendant retains captured stdio after forward pro
       artifacts,
       command: [process.execPath, "-e", script],
       dashboardPort: DASHBOARD_PORT,
-      env: buildAvailabilityProbeEnv(),
+      env: process.env,
       progress,
       sandboxName: SANDBOX_NAME,
       stopGraceMs: 100,
@@ -212,7 +185,7 @@ test("fails within budget and reaps a connect process that never proves handoff"
       artifacts,
       command: [process.execPath, "-e", "setInterval(() => undefined, 1000)"],
       dashboardPort: DASHBOARD_PORT,
-      env: buildAvailabilityProbeEnv(),
+      env: process.env,
       progress,
       sandboxName: SANDBOX_NAME,
       stopGraceMs: 100,

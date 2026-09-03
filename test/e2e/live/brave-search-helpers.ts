@@ -12,13 +12,11 @@ import {
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { execTimeout } from "../../helpers/timeouts.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-brave-search";
 validateSandboxName(SANDBOX_NAME);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
-const ONBOARD_TIMEOUT_MS = execTimeout(20 * 60_000);
 const PLACEHOLDER_PATTERN = /^openshell:resolve:env:(?:v[0-9]+_)?BRAVE_API_KEY$/;
 
 export function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -126,7 +124,7 @@ export async function onboardBrave(
           NVIDIA_INFERENCE_API_KEY: inferenceKey,
         }),
         redactionValues,
-        timeoutMs: ONBOARD_TIMEOUT_MS,
+        timeoutMs: 20 * 60_000,
       },
     );
     const retry =
@@ -162,7 +160,7 @@ export async function reuseBraveSandboxWithWebSearchDisabled(
         NVIDIA_INFERENCE_API_KEY: inferenceKey,
       }),
       redactionValues: [inferenceKey],
-      timeoutMs: ONBOARD_TIMEOUT_MS,
+      timeoutMs: 20 * 60_000,
     },
   );
 }

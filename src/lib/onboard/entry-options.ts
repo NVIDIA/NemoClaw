@@ -3,7 +3,6 @@
 
 import { isNonInteractiveEnv } from "../core/non-interactive";
 import { getNameValidationGuidance } from "../name-validation";
-export { enforceRemovedImmutabilityMigrationBoundary } from "../state/migrations/removed-immutability";
 import { cliDisplayName } from "./branding";
 import {
   canonicalPlaceholderKeys,

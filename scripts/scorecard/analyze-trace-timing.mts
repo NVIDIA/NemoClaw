@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
-import { readValidatedArtifactZipEntries } from "../lib/read-artifact-zip.mts";
+import { readValidatedArtifactZipEntry } from "./read-artifact-zip.mts";
 
 type SemverTag = { name: string; major: number; minor: number; patch: number; sha?: string };
 type Threshold = { minDeltaMs: number; minPercent: number };
@@ -524,11 +525,25 @@ async function findLatestCompletedE2eRunForReleaseTag(
 // production-shape multi-entry regression test is the removal guard; retire
 // this parser if GitHub provides a verified single-file artifact API.
 function readValidatedTraceSummaryArchive(archive: Buffer): string | null {
-  const entries = readValidatedArtifactZipEntries(archive, {
+  return readValidatedArtifactZipEntry(archive, TRACE_SUMMARY_FILE, {
+    maxBytes: MAX_TRACE_SUMMARY_BYTES,
     maxEntries: MAX_TRACE_ARCHIVE_ENTRIES,
-    maxTotalUncompressedBytes: MAX_TRACE_SUMMARY_BYTES,
   });
-  return entries?.find(({ name }) => name === TRACE_SUMMARY_FILE)?.bytes.toString("utf8") ?? null;
+}
+
+function readValidatedTraceSummaryZip(
+  zipPath: string,
+  warn?: (message: string) => void,
+): string | null {
+  let summary: string | null = null;
+  try {
+    summary = readValidatedTraceSummaryArchive(fs.readFileSync(zipPath));
+  } catch {
+    // Treat parser and filesystem failures identically so untrusted archive
+    // details never cross into the workflow log.
+  }
+  if (summary === null) warn?.(TRACE_ARCHIVE_REJECTION_WARNING);
+  return summary;
 }
 
 async function readTraceSummaryFromRun(
@@ -552,14 +567,18 @@ async function readTraceSummaryFromRun(
     artifact_id: artifact.id,
     archive_format: "zip",
   });
-  let summaryText: string | null = null;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trace-artifact-"));
   try {
-    summaryText = readValidatedTraceSummaryArchive(Buffer.from(download.data));
-  } catch {
-    // Keep untrusted archive details out of the workflow log.
+    const zipPath = path.join(tempDir, `${TRACE_ARTIFACT_NAME}.zip`);
+    fs.writeFileSync(zipPath, Buffer.from(download.data), { mode: 0o600 });
+
+    const summaryText = readValidatedTraceSummaryZip(zipPath, (message) =>
+      core?.warning?.(message),
+    );
+    return summaryText === null ? null : selectOnboardTrace([summaryText]);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
-  if (summaryText === null) core?.warning?.(TRACE_ARCHIVE_REJECTION_WARNING);
-  return summaryText === null ? null : selectOnboardTrace([summaryText]);
 }
 
 async function buildTraceTimingResult(
@@ -687,7 +706,7 @@ export {
   ONBOARD_PHASE_ORDER,
   readOnboardPerformanceBudget,
   readTraceSummaryFromRun,
-  readValidatedTraceSummaryArchive,
+  readValidatedTraceSummaryZip,
   redactSensitiveTraceText,
   resolvePriorReleaseTag,
   sanitizeTraceTimingError,

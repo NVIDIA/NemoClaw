@@ -8,7 +8,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it, onTestFinished } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 
 import { SNAPSHOT_DATA_PREFIX } from "../live/bedrock-runtime-compatible-anthropic-leaks.ts";
@@ -73,7 +72,7 @@ describe("Bedrock raw-command progress", () => {
         artifactName: "bedrock-progress-output",
         artifacts,
         env: {
-          ...buildAvailabilityProbeEnv(),
+          ...process.env,
           BEDROCK_TEST_SECRET: secret,
           E2E_TARGET_ID: "bedrock-runtime-compatible-anthropic",
           E2E_WORKLOAD_SOURCE: "local-dockerfile",

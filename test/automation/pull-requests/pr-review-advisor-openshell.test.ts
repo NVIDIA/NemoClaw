@@ -37,6 +37,7 @@ import {
   runAdvisorSpecialistCommand,
   type AdvisorSpecialistLifecycle,
 } from "../../../tools/pr-review-advisor/specialist-lifecycle.mts";
+import { ADVISOR_INTERESTS } from "../../../tools/pr-review-advisor/specialists.mts";
 
 const temporaryDirectories: string[] = [];
 
@@ -274,37 +275,6 @@ describe("PR review advisor specialist lifecycle", () => {
     );
 
     expect(calls).toEqual(["create", "run", "download", "remove"]);
-  });
-
-  it("reports deterministic specialist lifecycle phase durations", async () => {
-    const timingLines: string[] = [];
-    const timestamps = [0, 11, 11, 34, 34, 71, 71, 76, 76, 83];
-    const lifecycle: AdvisorSpecialistLifecycle = {
-      prepare: async () => undefined,
-      startGateway: () => ({ configure: Promise.resolve() }),
-      create: () => undefined,
-      run: () => undefined,
-      download: () => undefined,
-      remove: () => undefined,
-    };
-
-    await runAdvisorSpecialist({
-      env: {},
-      lifecycle,
-      validate: () => undefined,
-      timing: {
-        now: () => timestamps.shift() as number,
-        write: (line) => timingLines.push(line),
-      },
-    });
-
-    expect(timingLines).toEqual([
-      "PR Review Advisor timing: phase=configure duration_ms=11",
-      "PR Review Advisor timing: phase=sandbox-create-readiness duration_ms=23",
-      "PR Review Advisor timing: phase=pi-run duration_ms=37",
-      "PR Review Advisor timing: phase=artifact-download-validation duration_ms=5",
-      "PR Review Advisor timing: phase=cleanup duration_ms=7",
-    ]);
   });
 
   it.each([
@@ -568,13 +538,8 @@ describe("PR review advisor OpenShell wrapper", () => {
     ).toThrow("must use an approved advisor inference endpoint");
   });
 
-  it("registers the selected advisor model", () => {
-    const selectedModel = "openai/openai/gpt-5.6-terra";
-    const config = openAiAdvisorProviderConfig(
-      "PR_REVIEW_ADVISOR_API_KEY",
-      ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
-      selectedModel,
-    ) as {
+  it("preserves hosted provider compatibility", () => {
+    const config = openAiAdvisorProviderConfig("PR_REVIEW_ADVISOR_API_KEY") as {
       apiKey: string;
       baseUrl: string;
       models: Array<{ id: string; compat?: Record<string, unknown>; reasoning: boolean }>;
@@ -584,7 +549,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(config.baseUrl).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
     expect(config.models).toContainEqual(
       expect.objectContaining({
-        id: selectedModel,
+        id: DEFAULT_ADVISOR_MODEL,
         reasoning: false,
         compat: expect.objectContaining({
           supportsDeveloperRole: false,
@@ -999,7 +964,8 @@ describe("PR review advisor OpenShell wrapper", () => {
         "advisor",
         "--model",
         DEFAULT_ADVISOR_MODEL,
-        "--no-verify",
+        "--timeout",
+        "900",
       ],
       expect.anything(),
     ]);
@@ -1010,7 +976,8 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(providerCalls).toHaveLength(1);
     expect(providerCalls[0]?.[2].env.OPENAI_API_KEY).toBe("model-host-secret");
     expect(providerCalls[0]?.[2].timeout).toBeGreaterThan(0);
-    expect(calls.filter(([, args]) => args.slice(0, 2).join(" ") === "inference set")).toHaveLength(1);
+    const inferenceCall = calls.find(([, args]) => args.slice(0, 2).join(" ") === "inference set");
+    expect(inferenceCall?.[2].timeout).toBeGreaterThan(900_000);
     calls.forEach(([command, args, options]) => {
       expect(options.env.GH_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.GITHUB_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();

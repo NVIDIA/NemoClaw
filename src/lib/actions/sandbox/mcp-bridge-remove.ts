@@ -6,6 +6,7 @@ import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpBridgeEntry } from "../../state/registry";
 import {
+  assertAgentMcpConfigMutationAllowed,
   assertAgentMcpTeardownRuntimeCapability,
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
@@ -203,6 +204,11 @@ async function removeMcpBridgeUnlocked(
   const detachBeforeAdapterCleanup = entry.providerName
     ? requiresProviderDetachBeforeAdapterCleanup(entry)
     : false;
+  // Teardown must remain available for a backward-compatible Deep Agents MCP
+  // entry on an image that predates the managed launcher marker. Hermes still
+  // performs its host-side shields preflight here, before any provider, policy,
+  // attachment, or adapter side effect.
+  assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
   await ensureSandboxGatewaySelected(sandboxName);
   assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const failures: string[] = [];
@@ -415,9 +421,7 @@ async function removeMcpBridgeUnlocked(
     }
   }
   if (failures.length > 0) {
-    console.warn(
-      `  MCP force cleanup reported ${failures.length} warning(s); inspect redacted diagnostics.`,
-    );
+    console.warn(`  MCP force cleanup warnings:\n${failures.join("\n")}`);
     if (!options.allowResidual) {
       throw new McpBridgeError(
         `MCP force cleanup left residual resources for '${server}'. The registry entry was preserved so cleanup can be retried.`,

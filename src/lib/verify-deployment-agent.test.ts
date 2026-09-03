@@ -15,6 +15,7 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       stderr: "",
     }),
     probeHostPort: (_port: number, _path: string) => 200,
+    captureForwardList: () => "my-sandbox  127.0.0.1  18789  12345  running",
     getMessagingChannels: (_name: string) => [] as string[],
     providerExistsInGateway: (_name: string) => true,
     ...overrides,
@@ -98,7 +99,7 @@ describe("verifyDeployment agent OpenAI-compatible API host forward (#9290)", ()
     expect(result.verification.dashboardReachable).toBe(true);
     const api = result.diagnostics.find((d) => d.link === "api");
     expect(api?.status).toBe("fail");
-    expect(api?.hint).toContain("nemoclaw my-sandbox recover");
+    expect(api?.hint).toContain("openshell forward start --background 8642 my-sandbox");
   });
 
   it("fails verification when the API host forward answers with a server error", async () => {

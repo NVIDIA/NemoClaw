@@ -52,17 +52,14 @@ ${prompt}
 `;
 }
 
-export function generateStarterPromptSnippet(
-  sourcePath: string = path.join(REPO_ROOT, STARTER_PROMPT_SOURCE_PATH),
-): string {
-  const source = readFileSync(sourcePath, "utf8");
-  const prompt = extractStarterPromptMarkdown(source, sourcePath);
+export function generateStarterPromptSnippet(): string {
+  const source = readFileSync(path.join(REPO_ROOT, STARTER_PROMPT_SOURCE_PATH), "utf8");
+  const prompt = extractStarterPromptMarkdown(source, STARTER_PROMPT_SOURCE_PATH);
   return renderStarterPromptSnippet(prompt);
 }
 
 type StarterPromptGeneratorOptions = {
   args?: string[];
-  sourcePath?: string;
   generatedPath?: string;
   log?: (message: string) => void;
   reportError?: (message: string) => void;
@@ -79,7 +76,6 @@ function readGeneratedSnippet(generatedPath: string): string {
 
 export function runStarterPromptGenerator({
   args = process.argv.slice(2),
-  sourcePath = path.join(REPO_ROOT, STARTER_PROMPT_SOURCE_PATH),
   generatedPath = path.join(REPO_ROOT, STARTER_PROMPT_GENERATED_PATH),
   log = console.log,
   reportError = console.error,
@@ -89,7 +85,7 @@ export function runStarterPromptGenerator({
     throw new Error(`Unknown arguments: ${unexpectedArgs.join(", ")}`);
   }
 
-  const expected = generateStarterPromptSnippet(sourcePath);
+  const expected = generateStarterPromptSnippet();
 
   if (args.includes("--check")) {
     const actual = readGeneratedSnippet(generatedPath);

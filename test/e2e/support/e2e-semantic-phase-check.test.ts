@@ -108,9 +108,6 @@ describe("semantic E2E phase checker", () => {
         testMatrix: [
           {
             id: "vllm-docker-storage",
-            execution_id: "vllm-docker-storage-docker",
-            runtime_provider: "docker",
-            coverage_variant: "docker",
             file: "test/platform/images/vllm-docker-storage.test.ts",
             project: "integration",
           },

@@ -17,7 +17,6 @@ vi.mock("../adapters/docker/exec", async (importOriginal) => ({
 
 import {
   dockerBuildSubprocessEnv,
-  dockerContextIsDefaultFromBuild,
   mergeIsolatedDockerClientEnv,
   prepareDockerBuildEnvironment,
 } from "../adapters/docker/client-isolation";
@@ -49,39 +48,6 @@ function createBuildContext(
 }
 
 describe("sandbox BuildKit prebuild", () => {
-  it("rejects every explicit Docker host before resolving a context", () => {
-    const showContext = vi.fn(() => "default");
-
-    expect(
-      dockerContextIsDefaultFromBuild(
-        { DOCKER_HOST: "unix:///run/user/1001/docker.sock" },
-        showContext,
-      ),
-    ).toBe(false);
-    expect(showContext).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["remote-builder", false],
-    ["default", true],
-  ] as const)("classifies an explicit %s context without invoking Docker", (context, expected) => {
-    const showContext = vi.fn(() => "default");
-
-    expect(dockerContextIsDefaultFromBuild({ DOCKER_CONTEXT: context }, showContext)).toBe(expected);
-    expect(showContext).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["persisted remote context", {}, "remote-builder", false],
-    ["unreadable context", {}, null, false],
-    ["default context", {}, "default", true],
-  ] as const)(
-    "classifies the %s at the Docker client boundary",
-    (_case, env, context, expected) => {
-      expect(dockerContextIsDefaultFromBuild(env, () => context)).toBe(expected);
-    },
-  );
-
   afterEach(() => {
     mocks.dockerSpawn.mockReset();
     vi.unstubAllEnvs();

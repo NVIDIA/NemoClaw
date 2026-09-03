@@ -20,6 +20,7 @@ const TARGET: AgentConfigTarget = {
   configDir: "/sandbox/.hermes",
   format: "yaml",
   configFile: "config.yaml",
+  stateLockPlanInImage: true,
 };
 const PYTHON = "/opt/hermes/.venv/bin/python3";
 const SEEDER = "/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py";

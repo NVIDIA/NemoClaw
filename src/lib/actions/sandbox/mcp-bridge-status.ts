@@ -10,7 +10,6 @@ import {
   DEFAULT_OPENCLAW_CONFIG_DIR,
   openClawMcporterRoot,
 } from "./mcp-bridge-adapters";
-import { parseUnsafeDeepAgentsMcpProjectionResult } from "./mcp-bridge-adapter-status";
 import { isAgentMcpAdapter, McpBridgeError, type McpBridgeStatus } from "./mcp-bridge-contracts";
 import {
   type HermesMcpReconciliationResult,
@@ -65,8 +64,6 @@ const UNSUPPORTED_STORED_URL_WARNING =
   "This persisted MCP URL no longer satisfies the authenticated endpoint boundary. Restart and rebuild fail closed for it; remove this server (use --force if cleanup is partial), then add a normal public HTTPS DNS endpoint.";
 const UNSUPPORTED_STORED_CREDENTIAL_WARNING =
   "This persisted MCP credential name no longer satisfies the host-only credential boundary. Restart and rebuild fail closed for it; remove this server, then add it again with a dedicated service credential name.";
-const UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL =
-  "the unsupported legacy credential may still be attached to fresh sandbox children";
 
 function storedUrlWarning(entry: McpBridgeEntry): string | undefined {
   try {
@@ -99,14 +96,12 @@ function getAdapterRegistration(
 ): McpBridgeStatus["adapter"] {
   if (!entry) return { registered: null };
   if (!adapter) return { registered: null, detail: "MCP adapter is not declared" };
-  const credentialInspectionFailure = credentialObservationDetail
-    ? {
-        registered: null,
-        detail: `Adapter inspection was skipped because ${credentialObservationDetail}.`,
-      }
-    : undefined;
-  if (credentialInspectionFailure && adapter !== "deepagents-config")
-    return credentialInspectionFailure;
+  if (credentialObservationDetail) {
+    return {
+      registered: null,
+      detail: `Adapter inspection was skipped because ${credentialObservationDetail}.`,
+    };
+  }
   if (adapter === "hermes-config" && hermesReconciliation) {
     return hermesReconciliation.ok
       ? { registered: true }
@@ -124,19 +119,7 @@ function getAdapterRegistration(
         ? buildHermesMcpStatusCommand(entry, credentialRevision)
         : buildDeepAgentsMcpStatusCommand(entry, credentialRevision);
   const result = executeSandboxCommand(sandboxName, command);
-  if (!result)
-    return credentialInspectionFailure ?? { registered: null, detail: "sandbox unreachable" };
-  const unsafeProjection =
-    adapter === "deepagents-config" ? parseUnsafeDeepAgentsMcpProjectionResult(result) : null;
-  if (unsafeProjection) {
-    const redactedPath = redactBridgeSecretsForDisplay(
-      unsafeProjection.path,
-      entry,
-      resolvePersistedCredentialEnvForRedaction(entry.env),
-    ).trim();
-    throw new McpBridgeError(`${unsafeProjection.messagePrefix}${redactedPath}`, 2);
-  }
-  if (credentialInspectionFailure) return credentialInspectionFailure;
+  if (!result) return { registered: null, detail: "sandbox unreachable" };
   if (result.status === 0) {
     const output = result.stdout.trim();
     if (output === "registered") return { registered: true };
@@ -356,20 +339,27 @@ export async function statusMcpBridge(
       providerAttached: attached,
       providerCredentialReady,
     };
-    const adapterRegistration = getAdapterRegistration(
-      sandboxName,
-      support.adapter,
-      entry,
-      hermesReconciliation,
-      credentialRevision,
-      unsafeCredentialMayBeAttached ? UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL : observationDetail,
-    );
+    const adapterRegistration = unsafeCredentialMayBeAttached
+      ? {
+          registered: null,
+          detail:
+            "Adapter inspection was skipped because the unsupported legacy credential may still be attached to fresh sandbox children.",
+        }
+      : getAdapterRegistration(
+          sandboxName,
+          support.adapter,
+          entry,
+          hermesReconciliation,
+          credentialRevision,
+          observationDetail,
+        );
     const credentialResolution =
       options.probeCredentialResolution && entry
         ? unsafeCredentialMayBeAttached
           ? {
               ok: null,
-              detail: `probe skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
+              detail:
+                "probe skipped: the unsupported legacy credential may still be attached to fresh sandbox children",
             }
           : observationDetail
             ? { ok: null, detail: `probe skipped: ${observationDetail}` }
@@ -399,7 +389,8 @@ export async function statusMcpBridge(
               count: 0,
               tools: [],
               truncated: false,
-              detail: `tool discovery skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
+              detail:
+                "tool discovery skipped: the unsupported legacy credential may still be attached to fresh sandbox children",
             }
           : discoverMcpTools(sandboxName, entry, support.adapter, readiness)
         : undefined;

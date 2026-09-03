@@ -11,7 +11,7 @@ import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-a
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
-} from "../../../../test/helpers/rebuild-flow-generic-harness";
+} from "../../../../test/helpers/rebuild-flow-dcode-harness";
 import { revalidateDcodeReplacementAtMutationEdge } from "./rebuild-dcode-preflight";
 
 describe("rebuildSandbox DCode flow: pre-delete drift", () => {
@@ -121,7 +121,7 @@ describe("rebuildSandbox DCode flow: pre-delete drift", () => {
     expect(verify).not.toHaveBeenCalled();
   });
 
-  it("rejects registry drift during the final DCode preflight before backup (#6195)", async () => {
+  it("rejects registry drift during the final DCode preflight before shields and backup (#6195)", async () => {
     const originalEntry = makeDcodeSandboxEntry();
     const driftedEntry = { ...originalEntry, model: "nvidia/changed-during-preflight" };
     const harness = createRebuildFlowHarness({
@@ -193,10 +193,12 @@ describe("rebuildSandbox DCode flow: pre-delete drift", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("the recorded sandbox target changed during preflight");
 
+    expect(harness.openShieldsSpy).toHaveBeenCalledOnce();
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
     expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
       harness.preparedDcodeBuildContext,
     );
@@ -218,10 +220,12 @@ describe("rebuildSandbox DCode flow: pre-delete drift", () => {
     ).rejects.toThrow("Recorded inference route smoke check failed");
 
     expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledTimes(3);
+    expect(harness.openShieldsSpy).toHaveBeenCalledOnce();
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
     expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
       harness.preparedDcodeBuildContext,
     );

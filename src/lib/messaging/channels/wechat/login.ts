@@ -17,10 +17,7 @@ import {
   type WechatQrStatusResponse,
   WechatQrError,
   WECHAT_ILINK_BOOTSTRAP_BASE_URL,
-  WECHAT_QR_BOOTSTRAP_TIMEOUT_MS,
-  WECHAT_QR_POLL_TIMEOUT_MS,
 } from "./qr";
-import { normalizeWechatIlinkBaseUrl, redactWechatIlinkDiagnostic } from "./ilink-base-url";
 
 /** Total deadline for a single login attempt. 8 minutes is long enough to
  *  cover a slow human + IDC redirects and short enough that a forgotten
@@ -141,26 +138,15 @@ export async function runWechatHostQrLogin(
 ): Promise<WechatLoginResult> {
   const opts = resolveOptions(options);
   if (opts.signal?.aborted) return { kind: "aborted" };
-  const deadline = opts.now() + opts.totalTimeoutMs;
-  const remainingRequestTimeout = (ceilingMs: number): number =>
-    Math.min(ceilingMs, Math.max(0, deadline - opts.now()));
-  const sleepBeforeNextPoll = (): Promise<void> =>
-    opts.sleep(Math.min(opts.pollIntervalMs, Math.max(0, deadline - opts.now())));
 
-  const bootstrapTimeoutMs = remainingRequestTimeout(WECHAT_QR_BOOTSTRAP_TIMEOUT_MS);
-  if (bootstrapTimeoutMs === 0) return { kind: "timeout" };
   let session: WechatQrSession;
   try {
     session = await fetchWechatQrSession({
       fetch: opts.fetch,
       bootstrapBaseUrl: opts.bootstrapBaseUrl,
-      signal: opts.signal,
-      timeoutMs: bootstrapTimeoutMs,
     });
   } catch (err) {
-    if (opts.signal?.aborted) return { kind: "aborted" };
-    if (opts.now() >= deadline) return { kind: "timeout" };
-    return { kind: "error", message: safeWechatLoginErrorMessage(err) };
+    return { kind: "error", message: errorMessage(err) };
   }
 
   emitQr(session, opts);
@@ -170,6 +156,7 @@ export async function runWechatHostQrLogin(
   // increment-then-compare guard at "case expired" allowing exactly that many.
   let qrRefreshCount = 0;
   let currentBaseUrl = opts.bootstrapBaseUrl;
+  const deadline = opts.now() + opts.totalTimeoutMs;
   let lastStatus: string | undefined;
   // Diagnostic sink — visible by default while the WeChat path is new so
   // operators can self-diagnose IDC redirects and silently-swallowed
@@ -179,12 +166,10 @@ export async function runWechatHostQrLogin(
     process.env.NEMOCLAW_WECHAT_QUIET === "1"
       ? (_msg: string) => {}
       : (msg: string) => opts.log(`  [wechat] ${msg}`);
-  debug("polling bootstrap iLink origin");
+  debug(`polling ${currentBaseUrl}`);
 
   while (opts.now() < deadline) {
     if (opts.signal?.aborted) return { kind: "aborted" };
-    const pollTimeoutMs = remainingRequestTimeout(WECHAT_QR_POLL_TIMEOUT_MS);
-    if (pollTimeoutMs === 0) return { kind: "timeout" };
 
     let status: WechatQrStatusResponse;
     try {
@@ -193,26 +178,25 @@ export async function runWechatHostQrLogin(
         qrcode: session.qrcode,
         fetch: opts.fetch,
         signal: opts.signal,
-        timeoutMs: pollTimeoutMs,
         onDebug: debug,
       });
     } catch (err) {
       // pollWechatQrStatus already swallows abort + gateway timeouts; any
       // error escaping here is a real protocol/HTTP failure we can't recover
       // from without restarting the login.
-      if (opts.now() >= deadline) return { kind: "timeout" };
-      const message = safeWechatLoginErrorMessage(err);
-      debug(`poll fatal: ${message}`);
-      return { kind: "error", message };
+      debug(`poll fatal: ${errorMessage(err)}`);
+      return { kind: "error", message: errorMessage(err) };
     }
     if (status.status !== lastStatus) {
-      debug(`status=${status.status}${status.redirect_host ? " redirect_host=present" : ""}`);
+      debug(
+        `status=${status.status}${status.redirect_host ? ` redirect_host=${status.redirect_host}` : ""}`,
+      );
       lastStatus = status.status;
     }
 
     switch (status.status) {
       case "wait":
-        await sleepBeforeNextPoll();
+        await opts.sleep(opts.pollIntervalMs);
         continue;
 
       case "scaned":
@@ -220,23 +204,16 @@ export async function runWechatHostQrLogin(
           opts.log("  ✓ QR scanned. Confirm the login on your phone to continue…");
           scannedAnnounced = true;
         }
-        await sleepBeforeNextPoll();
+        await opts.sleep(opts.pollIntervalMs);
         continue;
 
       case "scaned_but_redirect": {
         if (status.redirect_host) {
-          try {
-            currentBaseUrl = requireWechatIlinkBaseUrl(`https://${status.redirect_host}`);
-          } catch {
-            return {
-              kind: "error",
-              message: "WeChat login returned an invalid IDC redirect host.",
-            };
-          }
-          opts.log("  → IDC redirect — continuing on the validated WeChat host");
-          debug("polling validated IDC origin");
+          currentBaseUrl = `https://${status.redirect_host}`;
+          opts.log(`  → IDC redirect — continuing on ${status.redirect_host}`);
+          debug(`polling ${currentBaseUrl}`);
         }
-        await sleepBeforeNextPoll();
+        await opts.sleep(opts.pollIntervalMs);
         continue;
       }
 
@@ -246,37 +223,23 @@ export async function runWechatHostQrLogin(
           return { kind: "expired", reason: "max_refresh_exceeded" };
         }
         opts.log(`  ⏳ QR expired — refreshing (${qrRefreshCount}/${MAX_QR_REFRESH_COUNT})…`);
-        const refreshTimeoutMs = remainingRequestTimeout(WECHAT_QR_BOOTSTRAP_TIMEOUT_MS);
-        if (refreshTimeoutMs === 0) return { kind: "timeout" };
         try {
           session = await fetchWechatQrSession({
             fetch: opts.fetch,
             bootstrapBaseUrl: opts.bootstrapBaseUrl,
-            signal: opts.signal,
-            timeoutMs: refreshTimeoutMs,
           });
         } catch (err) {
-          if (opts.signal?.aborted) return { kind: "aborted" };
-          if (opts.now() >= deadline) return { kind: "timeout" };
-          return { kind: "error", message: safeWechatLoginErrorMessage(err) };
+          return { kind: "error", message: errorMessage(err) };
         }
         currentBaseUrl = opts.bootstrapBaseUrl;
         scannedAnnounced = false;
         emitQr(session, opts);
-        await sleepBeforeNextPoll();
+        await opts.sleep(opts.pollIntervalMs);
         continue;
       }
 
       case "confirmed": {
-        let credentials: WechatLoginCredentials | null;
-        try {
-          credentials = extractCredentials(status);
-        } catch {
-          return {
-            kind: "error",
-            message: "WeChat login returned an invalid iLink origin.",
-          };
-        }
+        const credentials = extractCredentials(status);
         if (!credentials) {
           return {
             kind: "error",
@@ -304,15 +267,9 @@ function extractCredentials(status: WechatQrStatusResponse): WechatLoginCredenti
   return {
     token: status.bot_token,
     accountId: normalizeWeixinAccountId(status.ilink_bot_id),
-    baseUrl: requireWechatIlinkBaseUrl(status.baseurl),
+    baseUrl: status.baseurl,
     userId: status.ilink_user_id,
   };
-}
-
-function requireWechatIlinkBaseUrl(value: unknown): string {
-  const normalized = normalizeWechatIlinkBaseUrl(value);
-  if (!normalized) throw new Error("WeChat iLink origin is missing.");
-  return normalized;
 }
 
 /** Mirrors `normalizeAccountId` from `openclaw/plugin-sdk/account-id`, which
@@ -325,8 +282,8 @@ export function normalizeWeixinAccountId(rawId: string): string {
   return rawId.replace(/[@.]/g, "-");
 }
 
-function safeWechatLoginErrorMessage(err: unknown): string {
-  return err instanceof WechatQrError
-    ? `${err.kind}: ${redactWechatIlinkDiagnostic(err.message)}`
-    : "WeChat QR login failed.";
+function errorMessage(err: unknown): string {
+  if (err instanceof WechatQrError) return `${err.kind}: ${err.message}`;
+  if (err instanceof Error) return err.message;
+  return String(err);
 }

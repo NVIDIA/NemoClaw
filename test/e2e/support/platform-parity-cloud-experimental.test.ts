@@ -149,7 +149,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
         "-c",
         "pass",
       ],
-      { workdir: undefined, tty: false, timeoutSeconds: undefined },
+      { workdir: undefined, tty: null, timeoutSeconds: undefined },
     );
   });
 

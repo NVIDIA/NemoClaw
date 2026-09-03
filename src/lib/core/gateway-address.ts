@@ -13,9 +13,8 @@ export type GatewayBindAddress =
 export function parseGatewayBindAddress(
   envVar = "NEMOCLAW_GATEWAY_BIND_ADDRESS",
   fallback: GatewayBindAddress = DEFAULT_GATEWAY_BIND_ADDRESS,
-  environment: NodeJS.ProcessEnv = process.env,
 ): GatewayBindAddress {
-  const raw = environment[envVar];
+  const raw = process.env[envVar];
   if (raw === undefined || raw === "") return fallback;
   const trimmed = String(raw).trim();
   if (trimmed === DEFAULT_GATEWAY_BIND_ADDRESS) return DEFAULT_GATEWAY_BIND_ADDRESS;

@@ -249,12 +249,7 @@ function observeHost(
         gpu,
         (
           options.collectPlatformIdentity ??
-          (() =>
-            collectPlatformIdentity({
-              ...options.platformIdentityOptions,
-              isWsl: assessment.isWsl,
-              runCaptureImpl,
-            }))
+          (() => collectPlatformIdentity(options.platformIdentityOptions))
         )(),
         wslDockerDesktopGpuProofPassed,
       ),
@@ -346,7 +341,6 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.platform.wsl_native_docker",
     "host.platform.wsl_runtime_available",
     "host.platform.wsl_gpu_passthrough",
-    "host.platform.n1x_wsl",
     "host.platform.dgx_spark",
     "host.platform.n1x",
     "host.platform.dgx_station",

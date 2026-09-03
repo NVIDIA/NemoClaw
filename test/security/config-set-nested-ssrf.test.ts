@@ -8,17 +8,13 @@ const require = createRequire(import.meta.url);
 const requireCache: Record<string, unknown> = require.cache as any;
 
 type MockGuardRestore = (() => void) & {
-  auditSpy: ReturnType<typeof vi.fn>;
   guardSpy: ReturnType<typeof vi.fn>;
   validatorSpy: ReturnType<typeof vi.fn>;
 };
 
 function restoreCachedModule(modulePath: string, previous: unknown): void {
   Reflect.deleteProperty(requireCache, modulePath);
-  Object.assign(
-    requireCache,
-    previous === undefined ? {} : { [modulePath]: previous },
-  );
+  Object.assign(requireCache, previous === undefined ? {} : { [modulePath]: previous });
 }
 
 function installMockPrivilegedExec(
@@ -27,14 +23,9 @@ function installMockPrivilegedExec(
   events?: string[],
 ): MockGuardRestore {
   const priorPrivilegedExec = require.cache[privilegedExecPath];
-  const mutationLockPath =
-    require.resolve("../../src/lib/state/mcp-lifecycle-lock");
-  const priorMutationLock = require.cache[mutationLockPath];
-  const operationalAuditPath =
-    require.resolve("../../src/lib/state/audit/operational");
-  const priorOperationalAudit = require.cache[operationalAuditPath];
-  const openClawConfigLockPath =
-    require.resolve("../../src/lib/sandbox/openclaw-config-guard");
+  const timerBoundLockPath = require.resolve("../../src/lib/shields/timer-bound-lock");
+  const priorTimerBoundLock = require.cache[timerBoundLockPath];
+  const openClawConfigLockPath = require.resolve("../../src/lib/shields/openclaw-config-lock");
   const priorOpenClawConfigLock = require.cache[openClawConfigLockPath];
   requireCache[privilegedExecPath] = {
     id: privilegedExecPath,
@@ -43,46 +34,51 @@ function installMockPrivilegedExec(
     exports: {
       // Routing is covered by privileged-exec tests; this suite exercises
       // config validation and write behavior without requiring real Docker.
-      capturePrivilegedSandboxCommand: () => Buffer.alloc(0),
-      executePrivilegedSandboxCommand: () => ({
-        status: 0,
-        signal: null,
-        stdout: Buffer.alloc(0),
-        stderr: Buffer.alloc(0),
-      }),
-      resolvePrivilegedSandboxTarget: () => ({ resourceHandle: "container-id" }),
+      privilegedSandboxExecArgv: (_sandboxName: string, cmd: readonly string[]) => [...cmd],
+      resolveDirectSandboxContainer: () => "container-id",
       withPrivilegedSandboxExecutionLease: <T>(
         _sandboxName: string,
-        cmd: readonly string[],
-      ) => [...cmd],
-      resolveDirectSandboxContainer: () => "container-id",
+        _operation: string,
+        fn: () => T,
+      ): T => fn(),
     },
   } as any;
-  requireCache[mutationLockPath] = {
-    id: mutationLockPath,
-    filename: mutationLockPath,
+  requireCache[timerBoundLockPath] = {
+    id: timerBoundLockPath,
+    filename: timerBoundLockPath,
     loaded: true,
     exports: {
-      withSandboxMutationLock: async (
+      // Transition-lock behavior has dedicated coverage. Keep this SSRF suite
+      // independent from host process-identity discovery while it mocks ps.
+      // configSet holds the lifecycle lock before entering this boundary.
+      isMcpLifecycleLockHeld: () => true,
+      withTimerBoundShieldsMutationLock: (
         _sandboxName: string,
-        callback: () => Promise<unknown> | unknown,
+        _command: string,
+        callback: () => unknown,
+      ) => {
+        events?.push("lock-enter");
+        try {
+          return callback();
+        } finally {
+          events?.push("lock-exit");
+        }
+      },
+      withTimerBoundShieldsMutationLockAsync: async (
+        _sandboxName: string,
+        _command: string,
+        callback: () => Promise<unknown>,
       ) => callback(),
     },
   } as any;
-  const auditSpy = vi.fn();
-  requireCache[operationalAuditPath] = {
-    id: operationalAuditPath,
-    filename: operationalAuditPath,
-    loaded: true,
-    exports: { appendAuditEntry: auditSpy },
-  } as any;
-  const guardSpy = vi.fn((_privileged: unknown, input: string) => {
+  const guardSpy = vi.fn((_privileged: unknown, _action: string, options: { input?: string }) => {
     events?.push("write");
     return {
       issues: [],
+      chattrApplied: true,
       configSha256: require("node:crypto")
         .createHash("sha256")
-        .update(input)
+        .update(options.input ?? "")
         .digest("hex"),
     };
   });
@@ -97,18 +93,16 @@ function installMockPrivilegedExec(
     exports: {
       // Config-guard protocol and transaction behavior have dedicated tests.
       // This suite only needs a successful digest-bound write boundary.
-      writeOpenClawConfigCandidate: guardSpy,
+      runOpenClawConfigGuard: guardSpy,
       validateOpenClawConfigCandidate: validatorSpy,
     },
   } as any;
 
   const restore = (() => {
     restoreCachedModule(privilegedExecPath, priorPrivilegedExec);
-    restoreCachedModule(mutationLockPath, priorMutationLock);
-    restoreCachedModule(operationalAuditPath, priorOperationalAudit);
+    restoreCachedModule(timerBoundLockPath, priorTimerBoundLock);
     restoreCachedModule(openClawConfigLockPath, priorOpenClawConfigLock);
   }) as MockGuardRestore;
-  restore.auditSpy = auditSpy;
   restore.guardSpy = guardSpy;
   restore.validatorSpy = validatorSpy;
   return restore;
@@ -117,13 +111,13 @@ function installMockPrivilegedExec(
 describe("config set nested URL SSRF enforcement", () => {
   it("rejects nested object/array URL values that target private hosts", async () => {
     const sandboxConfigPath = require.resolve("../../src/lib/sandbox/config");
-    const openshellPath =
-      require.resolve("../../src/lib/adapters/openshell/client");
-    const privilegedExecPath =
-      require.resolve("../../src/lib/sandbox/privileged-exec");
+    const openshellPath = require.resolve("../../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../../src/lib/sandbox/privileged-exec");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
+    const priorShieldsAudit = require.cache[shieldsAuditPath];
     const restorePrivilegedExec = installMockPrivilegedExec(privilegedExecPath);
 
     const childProcess = require("node:child_process");
@@ -146,6 +140,12 @@ describe("config set nested URL SSRF enforcement", () => {
         runOpenshellCommand: () => ({ status: 0 }),
       },
     } as any;
+    requireCache[shieldsAuditPath] = {
+      id: shieldsAuditPath,
+      filename: shieldsAuditPath,
+      loaded: true,
+      exports: { appendAuditEntry: () => {} },
+    } as any;
 
     const exitSpy = vi
       .spyOn(process, "exit")
@@ -159,10 +159,7 @@ describe("config set nested URL SSRF enforcement", () => {
       const { configSet } = require("../../src/lib/sandbox/config");
       const nestedValue = JSON.stringify({
         primary: "https://api.nvidia.com/v1",
-        fallback: [
-          "https://example.com/v1",
-          { internal: "http://localhost:8080/internal" },
-        ],
+        fallback: ["https://example.com/v1", { internal: "http://localhost:8080/internal" }],
       });
 
       await expect(
@@ -180,12 +177,14 @@ describe("config set nested URL SSRF enforcement", () => {
       logSpy.mockRestore();
       childProcess.execFileSync = originalExecFileSync;
 
-      if (priorSandboxConfig)
-        requireCache[sandboxConfigPath] = priorSandboxConfig;
+      if (priorSandboxConfig) requireCache[sandboxConfigPath] = priorSandboxConfig;
       else delete requireCache[sandboxConfigPath];
 
       if (priorOpenshell) requireCache[openshellPath] = priorOpenshell;
       else delete requireCache[openshellPath];
+
+      if (priorShieldsAudit) requireCache[shieldsAuditPath] = priorShieldsAudit;
+      else delete requireCache[shieldsAuditPath];
 
       restorePrivilegedExec();
     }
@@ -193,13 +192,13 @@ describe("config set nested URL SSRF enforcement", () => {
 
   it("validates the key before doing URL or DNS validation", async () => {
     const sandboxConfigPath = require.resolve("../../src/lib/sandbox/config");
-    const openshellPath =
-      require.resolve("../../src/lib/adapters/openshell/client");
-    const privilegedExecPath =
-      require.resolve("../../src/lib/sandbox/privileged-exec");
+    const openshellPath = require.resolve("../../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../../src/lib/sandbox/privileged-exec");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
+    const priorShieldsAudit = require.cache[shieldsAuditPath];
     const restorePrivilegedExec = installMockPrivilegedExec(privilegedExecPath);
 
     const childProcess = require("node:child_process");
@@ -207,9 +206,7 @@ describe("config set nested URL SSRF enforcement", () => {
     const originalExecFileSync = childProcess.execFileSync;
     const originalLookup = dns.promises.lookup;
     const execSpy = vi.fn();
-    const lookupSpy = vi.fn(async () => [
-      { address: "93.184.216.34", family: 4 },
-    ]);
+    const lookupSpy = vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]);
     childProcess.execFileSync = execSpy;
     dns.promises.lookup = lookupSpy;
 
@@ -227,6 +224,12 @@ describe("config set nested URL SSRF enforcement", () => {
         }),
         runOpenshellCommand: () => ({ status: 0 }),
       },
+    } as any;
+    requireCache[shieldsAuditPath] = {
+      id: shieldsAuditPath,
+      filename: shieldsAuditPath,
+      loaded: true,
+      exports: { appendAuditEntry: () => {} },
     } as any;
 
     const exitSpy = vi
@@ -257,12 +260,14 @@ describe("config set nested URL SSRF enforcement", () => {
       childProcess.execFileSync = originalExecFileSync;
       dns.promises.lookup = originalLookup;
 
-      if (priorSandboxConfig)
-        requireCache[sandboxConfigPath] = priorSandboxConfig;
+      if (priorSandboxConfig) requireCache[sandboxConfigPath] = priorSandboxConfig;
       else delete requireCache[sandboxConfigPath];
 
       if (priorOpenshell) requireCache[openshellPath] = priorOpenshell;
       else delete requireCache[openshellPath];
+
+      if (priorShieldsAudit) requireCache[shieldsAuditPath] = priorShieldsAudit;
+      else delete requireCache[shieldsAuditPath];
 
       restorePrivilegedExec();
     }
@@ -270,19 +275,15 @@ describe("config set nested URL SSRF enforcement", () => {
 
   it("accepts nested object/array URL values when all are public", async () => {
     const sandboxConfigPath = require.resolve("../../src/lib/sandbox/config");
-    const openshellPath =
-      require.resolve("../../src/lib/adapters/openshell/client");
-    const privilegedExecPath =
-      require.resolve("../../src/lib/sandbox/privileged-exec");
+    const openshellPath = require.resolve("../../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../../src/lib/sandbox/privileged-exec");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
+    const priorShieldsAudit = require.cache[shieldsAuditPath];
     const events: string[] = [];
-    const restorePrivilegedExec = installMockPrivilegedExec(
-      privilegedExecPath,
-      [],
-      events,
-    );
+    const restorePrivilegedExec = installMockPrivilegedExec(privilegedExecPath, [], events);
 
     const childProcess = require("node:child_process");
     const originalExecFileSync = childProcess.execFileSync;
@@ -304,6 +305,13 @@ describe("config set nested URL SSRF enforcement", () => {
         runOpenshellCommand: () => ({ status: 0 }),
       },
     } as any;
+    const appendAuditEntry = vi.fn();
+    requireCache[shieldsAuditPath] = {
+      id: shieldsAuditPath,
+      filename: shieldsAuditPath,
+      loaded: true,
+      exports: { appendAuditEntry },
+    } as any;
 
     const exitSpy = vi
       .spyOn(process, "exit")
@@ -317,10 +325,7 @@ describe("config set nested URL SSRF enforcement", () => {
       const { configSet } = require("../../src/lib/sandbox/config");
       const nestedValue = JSON.stringify({
         primary: "https://93.184.216.34/v1",
-        fallback: [
-          "http://93.184.216.35/v1",
-          { backup: "https://93.184.216.36/v2" },
-        ],
+        fallback: ["http://93.184.216.35/v1", { backup: "https://93.184.216.36/v2" }],
       });
 
       await expect(
@@ -333,39 +338,38 @@ describe("config set nested URL SSRF enforcement", () => {
       expect(errorSpy).not.toHaveBeenCalled();
       expect(restorePrivilegedExec.guardSpy).toHaveBeenCalledWith(
         expect.anything(),
-        expect.any(String),
-        expect.stringMatching(/^[0-9a-f]{64}$/),
+        "write-config",
+        expect.objectContaining({ input: expect.any(String) }),
       );
       expect(restorePrivilegedExec.validatorSpy).toHaveBeenCalledWith(
         expect.anything(),
         expect.any(String),
       );
       expect(restorePrivilegedExec.validatorSpy.mock.calls[0]?.[1]).toBe(
-        restorePrivilegedExec.guardSpy.mock.calls[0]?.[1],
+        restorePrivilegedExec.guardSpy.mock.calls[0]?.[2].input,
       );
-      expect(events).toEqual(["validate", "write"]);
-      expect(restorePrivilegedExec.auditSpy).toHaveBeenCalledWith(
+      expect(events).toEqual(["validate", "lock-enter", "write", "lock-exit"]);
+      expect(appendAuditEntry).toHaveBeenCalledWith(
         expect.objectContaining({
           action: "config_set",
           sandbox: "sandbox-ssrf-test",
           reason: "config set openclaw:inference.endpoints",
         }),
       );
-      expect(
-        JSON.stringify(restorePrivilegedExec.auditSpy.mock.calls),
-      ).not.toContain("93.184.216.34");
     } finally {
       exitSpy.mockRestore();
       errorSpy.mockRestore();
       logSpy.mockRestore();
       childProcess.execFileSync = originalExecFileSync;
 
-      if (priorSandboxConfig)
-        requireCache[sandboxConfigPath] = priorSandboxConfig;
+      if (priorSandboxConfig) requireCache[sandboxConfigPath] = priorSandboxConfig;
       else delete requireCache[sandboxConfigPath];
 
       if (priorOpenshell) requireCache[openshellPath] = priorOpenshell;
       else delete requireCache[openshellPath];
+
+      if (priorShieldsAudit) requireCache[shieldsAuditPath] = priorShieldsAudit;
+      else delete requireCache[shieldsAuditPath];
 
       restorePrivilegedExec();
     }
@@ -373,19 +377,15 @@ describe("config set nested URL SSRF enforcement", () => {
 
   it("writes an OpenShell bridge URL in an OpenClaw provider baseUrl (#7453)", async () => {
     const sandboxConfigPath = require.resolve("../../src/lib/sandbox/config");
-    const openshellPath =
-      require.resolve("../../src/lib/adapters/openshell/client");
-    const privilegedExecPath =
-      require.resolve("../../src/lib/sandbox/privileged-exec");
+    const openshellPath = require.resolve("../../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../../src/lib/sandbox/privileged-exec");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
+    const priorShieldsAudit = require.cache[shieldsAuditPath];
     const events: string[] = [];
-    const restorePrivilegedExec = installMockPrivilegedExec(
-      privilegedExecPath,
-      [],
-      events,
-    );
+    const restorePrivilegedExec = installMockPrivilegedExec(privilegedExecPath, [], events);
 
     delete require.cache[sandboxConfigPath];
     requireCache[openshellPath] = {
@@ -402,6 +402,13 @@ describe("config set nested URL SSRF enforcement", () => {
         }),
         runOpenshellCommand: () => ({ status: 0 }),
       },
+    } as any;
+    const appendAuditEntry = vi.fn();
+    requireCache[shieldsAuditPath] = {
+      id: shieldsAuditPath,
+      filename: shieldsAuditPath,
+      loaded: true,
+      exports: { appendAuditEntry },
     } as any;
 
     const exitSpy = vi
@@ -429,12 +436,17 @@ describe("config set nested URL SSRF enforcement", () => {
         }),
       ).resolves.toBeUndefined();
 
-      const writtenBody = restorePrivilegedExec.guardSpy.mock.calls[0]?.[1];
-      expect(JSON.parse(writtenBody).models.providers["ollama-mem"]).toEqual(
-        provider,
-      );
+      const writtenBody = restorePrivilegedExec.guardSpy.mock.calls[0]?.[2].input;
+      expect(JSON.parse(writtenBody).models.providers["ollama-mem"]).toEqual(provider);
       expect(errorSpy).not.toHaveBeenCalled();
-      expect(events).toEqual(["validate", "write"]);
+      expect(events).toEqual(["validate", "lock-enter", "write", "lock-exit"]);
+      expect(appendAuditEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "config_set",
+          sandbox: "sandbox-ssrf-test",
+          reason: "config set openclaw:models.providers.ollama-mem",
+        }),
+      );
     } finally {
       exitSpy.mockRestore();
       errorSpy.mockRestore();
@@ -442,18 +454,19 @@ describe("config set nested URL SSRF enforcement", () => {
 
       restoreCachedModule(sandboxConfigPath, priorSandboxConfig);
       restoreCachedModule(openshellPath, priorOpenshell);
+      restoreCachedModule(shieldsAuditPath, priorShieldsAudit);
       restorePrivilegedExec();
     }
   });
 
   it("surfaces an OpenClaw schema rejection as clean SandboxConfigError lines", async () => {
     const sandboxConfigPath = require.resolve("../../src/lib/sandbox/config");
-    const openshellPath =
-      require.resolve("../../src/lib/adapters/openshell/client");
-    const privilegedExecPath =
-      require.resolve("../../src/lib/sandbox/privileged-exec");
+    const openshellPath = require.resolve("../../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../../src/lib/sandbox/privileged-exec");
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
+    const priorShieldsAudit = require.cache[shieldsAuditPath];
     const rejection =
       "OpenClaw config schema rejected the candidate at <root>; existing config was not changed";
     const events: string[] = [];
@@ -471,19 +484,21 @@ describe("config set nested URL SSRF enforcement", () => {
       exports: {
         captureOpenshellCommand: () => ({
           status: 0,
-          output: JSON.stringify({
-            agents: { defaults: { timeoutSeconds: 300 } },
-          }),
+          output: JSON.stringify({ agents: { defaults: { timeoutSeconds: 300 } } }),
         }),
         runOpenshellCommand: () => ({ status: 0 }),
       },
     } as any;
+    const appendAuditEntry = vi.fn();
+    requireCache[shieldsAuditPath] = {
+      id: shieldsAuditPath,
+      filename: shieldsAuditPath,
+      loaded: true,
+      exports: { appendAuditEntry },
+    } as any;
 
     try {
-      const {
-        configSet,
-        SandboxConfigError,
-      } = require("../../src/lib/sandbox/config");
+      const { configSet, SandboxConfigError } = require("../../src/lib/sandbox/config");
       let thrown: unknown;
       try {
         await configSet("sandbox-schema-test", {
@@ -502,22 +517,24 @@ describe("config set nested URL SSRF enforcement", () => {
       // post-write gateway restart requested above is never reached.
       expect(events).toEqual(["validate"]);
       expect(restorePrivilegedExec.guardSpy).not.toHaveBeenCalled();
+      expect(appendAuditEntry).not.toHaveBeenCalled();
     } finally {
       restoreCachedModule(sandboxConfigPath, priorSandboxConfig);
       restoreCachedModule(openshellPath, priorOpenshell);
+      restoreCachedModule(shieldsAuditPath, priorShieldsAudit);
       restorePrivilegedExec();
     }
   });
 
   it("ignores nested non-http URL-like strings and does not crash", async () => {
     const sandboxConfigPath = require.resolve("../../src/lib/sandbox/config");
-    const openshellPath =
-      require.resolve("../../src/lib/adapters/openshell/client");
-    const privilegedExecPath =
-      require.resolve("../../src/lib/sandbox/privileged-exec");
+    const openshellPath = require.resolve("../../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../../src/lib/sandbox/privileged-exec");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
+    const priorShieldsAudit = require.cache[shieldsAuditPath];
     const restorePrivilegedExec = installMockPrivilegedExec(privilegedExecPath);
 
     const childProcess = require("node:child_process");
@@ -539,6 +556,12 @@ describe("config set nested URL SSRF enforcement", () => {
         }),
         runOpenshellCommand: () => ({ status: 0 }),
       },
+    } as any;
+    requireCache[shieldsAuditPath] = {
+      id: shieldsAuditPath,
+      filename: shieldsAuditPath,
+      loaded: true,
+      exports: { appendAuditEntry: () => {} },
     } as any;
 
     const exitSpy = vi
@@ -567,8 +590,8 @@ describe("config set nested URL SSRF enforcement", () => {
       expect(errorSpy).not.toHaveBeenCalled();
       expect(restorePrivilegedExec.guardSpy).toHaveBeenCalledWith(
         expect.anything(),
-        expect.any(String),
-        expect.stringMatching(/^[0-9a-f]{64}$/),
+        "write-config",
+        expect.objectContaining({ input: expect.any(String) }),
       );
     } finally {
       exitSpy.mockRestore();
@@ -576,12 +599,14 @@ describe("config set nested URL SSRF enforcement", () => {
       logSpy.mockRestore();
       childProcess.execFileSync = originalExecFileSync;
 
-      if (priorSandboxConfig)
-        requireCache[sandboxConfigPath] = priorSandboxConfig;
+      if (priorSandboxConfig) requireCache[sandboxConfigPath] = priorSandboxConfig;
       else delete requireCache[sandboxConfigPath];
 
       if (priorOpenshell) requireCache[openshellPath] = priorOpenshell;
       else delete requireCache[openshellPath];
+
+      if (priorShieldsAudit) requireCache[shieldsAuditPath] = priorShieldsAudit;
+      else delete requireCache[shieldsAuditPath];
 
       restorePrivilegedExec();
     }
@@ -589,13 +614,13 @@ describe("config set nested URL SSRF enforcement", () => {
 
   it("recognizes mixed-case http and https schemes in nested values", async () => {
     const sandboxConfigPath = require.resolve("../../src/lib/sandbox/config");
-    const openshellPath =
-      require.resolve("../../src/lib/adapters/openshell/client");
-    const privilegedExecPath =
-      require.resolve("../../src/lib/sandbox/privileged-exec");
+    const openshellPath = require.resolve("../../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../../src/lib/sandbox/privileged-exec");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
+    const priorShieldsAudit = require.cache[shieldsAuditPath];
     const restorePrivilegedExec = installMockPrivilegedExec(privilegedExecPath);
 
     const childProcess = require("node:child_process");
@@ -617,6 +642,12 @@ describe("config set nested URL SSRF enforcement", () => {
         }),
         runOpenshellCommand: () => ({ status: 0 }),
       },
+    } as any;
+    requireCache[shieldsAuditPath] = {
+      id: shieldsAuditPath,
+      filename: shieldsAuditPath,
+      loaded: true,
+      exports: { appendAuditEntry: () => {} },
     } as any;
 
     const exitSpy = vi
@@ -631,10 +662,7 @@ describe("config set nested URL SSRF enforcement", () => {
       const { configSet } = require("../../src/lib/sandbox/config");
       const nestedValue = JSON.stringify({
         primary: "HTTP://93.184.216.34/v1",
-        fallback: [
-          "HtTpS://93.184.216.35/v2",
-          { backup: "hTtP://93.184.216.36/v3" },
-        ],
+        fallback: ["HtTpS://93.184.216.35/v2", { backup: "hTtP://93.184.216.36/v3" }],
       });
 
       await expect(
@@ -647,8 +675,8 @@ describe("config set nested URL SSRF enforcement", () => {
       expect(errorSpy).not.toHaveBeenCalled();
       expect(restorePrivilegedExec.guardSpy).toHaveBeenCalledWith(
         expect.anything(),
-        expect.any(String),
-        expect.stringMatching(/^[0-9a-f]{64}$/),
+        "write-config",
+        expect.objectContaining({ input: expect.any(String) }),
       );
     } finally {
       exitSpy.mockRestore();
@@ -656,12 +684,14 @@ describe("config set nested URL SSRF enforcement", () => {
       logSpy.mockRestore();
       childProcess.execFileSync = originalExecFileSync;
 
-      if (priorSandboxConfig)
-        requireCache[sandboxConfigPath] = priorSandboxConfig;
+      if (priorSandboxConfig) requireCache[sandboxConfigPath] = priorSandboxConfig;
       else delete requireCache[sandboxConfigPath];
 
       if (priorOpenshell) requireCache[openshellPath] = priorOpenshell;
       else delete requireCache[openshellPath];
+
+      if (priorShieldsAudit) requireCache[shieldsAuditPath] = priorShieldsAudit;
+      else delete requireCache[shieldsAuditPath];
 
       restorePrivilegedExec();
     }
@@ -669,13 +699,13 @@ describe("config set nested URL SSRF enforcement", () => {
 
   it("redacts credentials, query strings, and fragments in validation errors", async () => {
     const sandboxConfigPath = require.resolve("../../src/lib/sandbox/config");
-    const openshellPath =
-      require.resolve("../../src/lib/adapters/openshell/client");
-    const privilegedExecPath =
-      require.resolve("../../src/lib/sandbox/privileged-exec");
+    const openshellPath = require.resolve("../../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../../src/lib/sandbox/privileged-exec");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
+    const priorShieldsAudit = require.cache[shieldsAuditPath];
     const restorePrivilegedExec = installMockPrivilegedExec(privilegedExecPath);
 
     const childProcess = require("node:child_process");
@@ -698,6 +728,12 @@ describe("config set nested URL SSRF enforcement", () => {
         runOpenshellCommand: () => ({ status: 0 }),
       },
     } as any;
+    requireCache[shieldsAuditPath] = {
+      id: shieldsAuditPath,
+      filename: shieldsAuditPath,
+      loaded: true,
+      exports: { appendAuditEntry: () => {} },
+    } as any;
 
     const exitSpy = vi
       .spyOn(process, "exit")
@@ -710,8 +746,7 @@ describe("config set nested URL SSRF enforcement", () => {
     try {
       const { configSet } = require("../../src/lib/sandbox/config");
       const nestedValue = JSON.stringify({
-        primary:
-          "http://user:pass@127.0.0.1:8080/private/path?token=secret#frag",
+        primary: "http://user:pass@127.0.0.1:8080/private/path?token=secret#frag",
       });
 
       let thrown = "";
@@ -724,9 +759,7 @@ describe("config set nested URL SSRF enforcement", () => {
         thrown = error instanceof Error ? error.message : String(error);
       }
 
-      expect(thrown).toContain(
-        "URL validation failed for http://127.0.0.1:8080/private/path",
-      );
+      expect(thrown).toContain("URL validation failed for http://127.0.0.1:8080/private/path");
       expect(thrown).not.toContain("user:pass");
       expect(thrown).not.toContain("token=secret");
       expect(thrown).not.toContain("#frag");
@@ -744,29 +777,29 @@ describe("config set nested URL SSRF enforcement", () => {
       logSpy.mockRestore();
       childProcess.execFileSync = originalExecFileSync;
 
-      if (priorSandboxConfig)
-        requireCache[sandboxConfigPath] = priorSandboxConfig;
+      if (priorSandboxConfig) requireCache[sandboxConfigPath] = priorSandboxConfig;
       else delete requireCache[sandboxConfigPath];
 
       if (priorOpenshell) requireCache[openshellPath] = priorOpenshell;
       else delete requireCache[openshellPath];
 
+      if (priorShieldsAudit) requireCache[shieldsAuditPath] = priorShieldsAudit;
+      else delete requireCache[shieldsAuditPath];
+
       restorePrivilegedExec();
     }
   });
 
-  it("rotates the configured provider credential without logging the secret", async () => {
+  it("records the config rotate-token audit action as rotate_token (not shields_down)", async () => {
     const sandboxConfigPath = require.resolve("../../src/lib/sandbox/config");
-    const openshellPath =
-      require.resolve("../../src/lib/adapters/openshell/client");
-    const operationalAuditPath =
-      require.resolve("../../src/lib/state/audit/operational");
+    const openshellPath = require.resolve("../../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../../src/lib/shields/audit");
     const sessionPath = require.resolve("../../src/lib/state/onboard-session");
     const credStorePath = require.resolve("../../src/lib/credentials/store");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
-    const priorOperationalAudit = require.cache[operationalAuditPath];
+    const priorShieldsAudit = require.cache[shieldsAuditPath];
     const priorSession = require.cache[sessionPath];
     const priorCredStore = require.cache[credStorePath];
 
@@ -793,9 +826,9 @@ describe("config set nested URL SSRF enforcement", () => {
     } as any;
 
     const appendAuditEntry = vi.fn();
-    requireCache[operationalAuditPath] = {
-      id: operationalAuditPath,
-      filename: operationalAuditPath,
+    requireCache[shieldsAuditPath] = {
+      id: shieldsAuditPath,
+      filename: shieldsAuditPath,
       loaded: true,
       exports: { appendAuditEntry },
     } as any;
@@ -845,9 +878,9 @@ describe("config set nested URL SSRF enforcement", () => {
         "NVIDIA_INFERENCE_API_KEY",
         "nvapi-rotated-value",
       );
-      expect(logSpy.mock.calls.flat().join("\n")).not.toContain(
-        "nvapi-rotated-value",
-      );
+      // Credential rotation is not a shields operation; its audit entry must
+      // use the rotate_token action so it does not inflate shields_down counts
+      // in the forensics log.
       expect(appendAuditEntry).toHaveBeenCalledWith(
         expect.objectContaining({
           action: "rotate_token",
@@ -855,7 +888,10 @@ describe("config set nested URL SSRF enforcement", () => {
           reason: "rotate-token openclaw:NVIDIA_INFERENCE_API_KEY",
         }),
       );
-      expect(JSON.stringify(appendAuditEntry.mock.calls)).not.toContain(
+      expect(appendAuditEntry).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "shields_down" }),
+      );
+      expect(JSON.stringify(appendAuditEntry.mock.calls[0]?.[0])).not.toContain(
         "nvapi-rotated-value",
       );
     } finally {
@@ -865,12 +901,12 @@ describe("config set nested URL SSRF enforcement", () => {
       if (priorToken === undefined) delete process.env.ROTATE_NEW_TOKEN;
       else process.env.ROTATE_NEW_TOKEN = priorToken;
 
-      if (priorSandboxConfig)
-        requireCache[sandboxConfigPath] = priorSandboxConfig;
+      if (priorSandboxConfig) requireCache[sandboxConfigPath] = priorSandboxConfig;
       else delete requireCache[sandboxConfigPath];
       if (priorOpenshell) requireCache[openshellPath] = priorOpenshell;
       else delete requireCache[openshellPath];
-      restoreCachedModule(operationalAuditPath, priorOperationalAudit);
+      if (priorShieldsAudit) requireCache[shieldsAuditPath] = priorShieldsAudit;
+      else delete requireCache[shieldsAuditPath];
       if (priorSession) requireCache[sessionPath] = priorSession;
       else delete requireCache[sessionPath];
       if (priorCredStore) requireCache[credStorePath] = priorCredStore;

@@ -175,7 +175,7 @@ class ControlError(RuntimeError):
 
 @contextmanager
 def _control_stage(stage: str) -> Iterator[None]:
-    """Attach one fixed lifecycle stage to a managed-control failure."""
+    """Attach one fixed lifecycle stage to health or supervisor loss."""
 
     if stage not in CONTROL_STAGES:
         raise AssertionError(f"unknown managed-control stage: {stage}")
@@ -183,14 +183,11 @@ def _control_stage(stage: str) -> Iterator[None]:
         yield
     except ControlError as error:
         if (
-            error.code
-            in ("GATEWAY_FAILED", "GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_UNAVAILABLE")
+            error.code in ("GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_UNAVAILABLE")
             and error.stage is None
         ):
             error.stage = stage
         raise
-    except (OSError, subprocess.SubprocessError) as error:
-        raise ControlError("GATEWAY_FAILED", stage=stage) from error
 
 
 @dataclass(frozen=True)
@@ -1420,17 +1417,8 @@ def _http_healthy(
         return False
     finally:
         if response is not None:
-            try:
-                response.close()
-            except OSError:
-                # The response has already been bounded and fully read. A
-                # transport-close race must not escape the health probe and
-                # abort the entire managed restart as a generic failure.
-                pass
-        try:
-            connection.close()
-        except OSError:
-            pass
+            response.close()
+        connection.close()
 
 
 def _http_healthy_in_gateway_namespace(
@@ -1466,16 +1454,6 @@ def _http_healthy_in_gateway_namespace(
             return False
         if _recovery_deadline_reached(recovery_deadline):
             return False
-        current_namespace_stat = os.fstat(current_namespace)
-        target_namespace_stat = os.fstat(target_namespace)
-        if (
-            current_namespace_stat.st_dev == target_namespace_stat.st_dev
-            and current_namespace_stat.st_ino == target_namespace_stat.st_ino
-        ):
-            return bool(
-                _http_healthy(port, path, recovery_deadline)
-                and not _recovery_deadline_reached(recovery_deadline)
-            )
         setns(target_namespace, getattr(os, "CLONE_NEWNET", 0x40000000))
         switched = True
         healthy = _http_healthy(port, path, recovery_deadline)
@@ -2274,11 +2252,7 @@ def main(argv: list[str]) -> int:
         print(error.code, file=sys.stderr)
         if error.stage is not None:
             print(f"NEMOCLAW_CONTROL_STAGE={error.stage}", file=sys.stderr)
-            if error.code in (
-                "GATEWAY_FAILED",
-                "GATEWAY_HEALTH_TIMEOUT",
-                "SUPERVISOR_UNAVAILABLE",
-            ):
+            if error.code in ("GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_UNAVAILABLE"):
                 try:
                     diagnostics = _managed_failure_diagnostics()
                 except Exception:  # diagnostics must not hide the original failure

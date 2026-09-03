@@ -5,14 +5,11 @@ import fs from "node:fs";
 
 import { ADVISOR_SPECIALISTS } from "./specialist-catalog.mts";
 
-const configuredModel = process.env.PR_REVIEW_ADVISOR_MODEL?.trim();
-const models = configuredModel
-  ? [configuredModel]
-  : ["openai/openai/gpt-5.6-terra", "azure/openai/gpt-5.6-terra"];
-const matrix = ADVISOR_SPECIALISTS.map(({ interest, label }, index) => ({
+const model = process.env.PR_REVIEW_ADVISOR_MODEL?.trim() || "azure/openai/gpt-5.6-terra";
+const matrix = ADVISOR_SPECIALISTS.map(({ interest, label }) => ({
   interest,
   label,
-  model: models[index % models.length],
+  model,
   artifact_dir: `pr-review-specialist-${interest}`,
   artifact_name: `pr-review-specialist-${interest}`,
 }));

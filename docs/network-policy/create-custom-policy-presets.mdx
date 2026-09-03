@@ -48,11 +48,7 @@ Replace `/path/to/requesting-binary` with the exact executable path reported for
   `/opt/venv/bin/python3*`. Authorize only the process that needs the reviewed endpoint.
 </AgentOnly>
 
-The top-level `preset.name` must be a lowercase RFC 1123 label with letters, digits, and hyphens.
-It must not collide with a maintained preset name such as `slack` or `pypi`.
-Rename `preset.name` if NemoClaw reports a collision.
-Custom preset `network_policies` entries must not use `npm_yarn` or `personal_open_internet`.
-NemoClaw reserves those keys for maintained presets and rejects the file before preview or application.
+The top-level `preset.name` must be a lowercase RFC 1123 label with letters, digits, and hyphens. It must not collide with a maintained preset name such as `slack` or `pypi`. Rename `preset.name` if NemoClaw reports a collision. Custom preset `network_policies` entries must not use `npm_yarn`. NemoClaw reserves that key for the maintained `npm` preset and rejects the file before applying it.
 
 Each endpoint must name a specific host or a scoped subdomain wildcard such as `*.example.com`. NemoClaw rejects catch-all destinations, including `*`, `0.0.0.0`, `0.0.0.0/0`, `::`, and `::/0`. Rule matchers must match the endpoint protocol.
 
@@ -86,7 +82,7 @@ $$nemoclaw my-assistant policy add \
   --dry-run
 ```
 
-The option is invalid for a built-in preset because maintained presets own their reviewed destinations. NemoClaw validates every custom-preset endpoint, even when you provide no private-host declaration. It rejects untrusted private, loopback, link-local, metadata, unspecified, multicast, documentation, translation, benchmarking, and other reserved destinations. It also rejects unused, unrelated, wildcard, suffix, CIDR, URL-shaped, duplicate, or malformed `--trusted-private-host` declarations.
+The option is invalid for a built-in preset because maintained presets own their reviewed destinations. NemoClaw rejects unused, unrelated, wildcard, suffix, CIDR, URL-shaped, duplicate, or malformed `--trusted-private-host` declarations. It also rejects loopback, link-local, metadata, unspecified, multicast, documentation, translation, benchmarking, and other reserved ranges.
 
 As an alternative, set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hosts for the current command. NemoClaw combines the environment list with any `--trusted-private-host` options. It normalizes and deduplicates environment entries and ignores entries unrelated to the custom preset batch.
 

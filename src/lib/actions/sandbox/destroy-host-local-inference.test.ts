@@ -219,6 +219,7 @@ async function runDestroy(
     );
   });
   const result = await executeSandboxDestroy({
+    cleanupShieldsArtifacts: () => runtimeProvider.events.push("cleanup"),
     force: options.force ?? false,
     ...(options.includeRegistryReaders === false ? {} : { getSandbox, listSandboxes }),
     runOpenshell,
@@ -236,6 +237,7 @@ async function runDestroy(
             inspectOpenShellSandboxIdentityFingerprint: options.inspectSandboxIdentityFingerprint,
           }
         : {}),
+      readTimerMarker: () => null,
       wipeSandboxState: () => undefined,
     },
   });
@@ -325,6 +327,7 @@ describe("sandbox destroy host-local inference transaction", () => {
     const stopInferenceResources = vi.fn();
 
     const result = await executeSandboxDestroy({
+      cleanupShieldsArtifacts: vi.fn(),
       force: false,
       getSandbox,
       listSandboxes: () => ({ sandboxes: [entry] }),
@@ -336,6 +339,7 @@ describe("sandbox destroy host-local inference transaction", () => {
       runtimeProviders: { mxc: runtimeProvider.bundle },
       deps: {
         inspectOpenShellSandboxIdentityFingerprint: () => SANDBOX_FINGERPRINT,
+        readTimerMarker: () => null,
         wipeSandboxState: () => undefined,
       },
     });
@@ -438,6 +442,7 @@ describe("sandbox destroy host-local inference transaction", () => {
     let current: SandboxEntry | null = entry;
     const stopInferenceResources = vi.fn();
     const result = await executeSandboxDestroy({
+      cleanupShieldsArtifacts: vi.fn(),
       force: false,
       getSandbox: () => current,
       listSandboxes: () => ({ sandboxes: current ? [current] : [] }),
@@ -451,6 +456,7 @@ describe("sandbox destroy host-local inference transaction", () => {
         hostLocalInferenceLifecycleOptions: {
           createLlamaCppAdapter: runtimeProvider.createLlamaCppAdapter,
         },
+        readTimerMarker: () => null,
         wipeSandboxState: () => undefined,
       },
     });
@@ -469,6 +475,7 @@ describe("sandbox destroy host-local inference transaction", () => {
     const entry = explicitLlamaSandbox();
     const stopInferenceResources = vi.fn();
     const result = await executeSandboxDestroy({
+      cleanupShieldsArtifacts: vi.fn(),
       force: false,
       getSandbox: () => entry,
       listSandboxes: () => ({ sandboxes: [entry] }),
@@ -482,6 +489,7 @@ describe("sandbox destroy host-local inference transaction", () => {
         hostLocalInferenceLifecycleOptions: {
           createLlamaCppAdapter: runtimeProvider.createLlamaCppAdapter,
         },
+        readTimerMarker: () => null,
         wipeSandboxState: () => undefined,
       },
     });

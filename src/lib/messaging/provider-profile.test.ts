@@ -10,8 +10,14 @@ import {
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
   messagingCredentialProviderProfilePath,
 } from "./provider-profile";
+import * as providerProfileModule from "./provider-profile";
 
 describe("messaging credential provider profile", () => {
+  it("exports only the messaging-specific profile surface (#10155)", () => {
+    expect(providerProfileModule).not.toHaveProperty("endpointlessProviderProfilePath");
+    expect(providerProfileModule).not.toHaveProperty("ensureEndpointlessProviderProfile");
+  });
+
   it("resolves the checked-in profile from the source repository root (#9875)", () => {
     expect(messagingCredentialProviderProfilePath(REPOSITORY_ROOT)).toBe(
       path.join(REPOSITORY_ROOT, "nemoclaw-blueprint", "provider-profiles", "nemoclaw-mcp-v1.yaml"),
@@ -22,19 +28,9 @@ describe("messaging credential provider profile", () => {
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({ status: 1, stderr: "provider profile not found" })
-      .mockReturnValueOnce({ status: 0 })
-      .mockReturnValueOnce({
-        status: 0,
-        stdout: JSON.stringify({
-          id: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-          credentials: [],
-          endpoints: [],
-          binaries: [],
-          inference_capable: false,
-        }),
-      });
+      .mockReturnValueOnce({ status: 0 });
 
-    ensureMessagingCredentialProviderProfile({ root: REPOSITORY_ROOT, runOpenshell });
+    ensureMessagingCredentialProviderProfile({ root: "/repo", runOpenshell });
 
     expect(runOpenshell).toHaveBeenNthCalledWith(
       2,
@@ -43,23 +39,8 @@ describe("messaging credential provider profile", () => {
         "profile",
         "import",
         "--file",
-        path.join(
-          REPOSITORY_ROOT,
-          "nemoclaw-blueprint",
-          "provider-profiles",
-          "nemoclaw-mcp-v1.yaml",
-        ),
+        "/repo/nemoclaw-blueprint/provider-profiles/nemoclaw-mcp-v1.yaml",
       ],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: 30_000,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    expect(runOpenshell).toHaveBeenNthCalledWith(
-      3,
-      ["provider", "profile", "export", MESSAGING_CREDENTIAL_PROVIDER_TYPE, "--output", "json"],
       {
         ignoreError: true,
         suppressOutput: true,
@@ -78,17 +59,9 @@ describe("messaging credential provider profile", () => {
         stderr: "request failed with discord-credential-must-not-leak",
       });
 
-    let thrown: unknown;
-    try {
-      ensureMessagingCredentialProviderProfile({ root: REPOSITORY_ROOT, runOpenshell });
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(Error);
-    expect((thrown as Error).message).toBe(
-      "Could not import the OpenShell messaging credential profile.",
-    );
-    expect((thrown as Error).message).not.toContain("discord-credential-must-not-leak");
+    expect(() =>
+      ensureMessagingCredentialProviderProfile({ root: "/repo", runOpenshell }),
+    ).toThrow("Could not import the OpenShell messaging credential profile.");
   });
 
   it("reports a messaging-specific export failure (#10155)", () => {
@@ -98,7 +71,7 @@ describe("messaging credential provider profile", () => {
     });
 
     expect(() =>
-      ensureMessagingCredentialProviderProfile({ root: REPOSITORY_ROOT, runOpenshell }),
+      ensureMessagingCredentialProviderProfile({ root: "/repo", runOpenshell }),
     ).toThrow(
       `OpenShell provider profile '${MESSAGING_CREDENTIAL_PROVIDER_TYPE}' could not be exported for validation.`,
     );
@@ -117,7 +90,7 @@ describe("messaging credential provider profile", () => {
     });
 
     expect(() =>
-      ensureMessagingCredentialProviderProfile({ root: REPOSITORY_ROOT, runOpenshell }),
+      ensureMessagingCredentialProviderProfile({ root: "/repo", runOpenshell }),
     ).toThrow(/does not match NemoClaw's endpointless messaging credential contract/u);
   });
 });

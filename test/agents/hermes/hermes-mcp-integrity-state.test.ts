@@ -611,15 +611,10 @@ spec.loader.exec_module(module)
 module.HERMES_DIR = "/tmp/.hermes"
 module.CONFIG_PATH = "/tmp/.hermes/config.yaml"
 module.os.geteuid = lambda: 1000
-module.os.environ["SAFE_MCP_TOKEN"] = "openshell:resolve:env:v12_SAFE_MCP_TOKEN"
 candidate = module._managed_candidate({
     "url": "https://mcp.example.test/mcp",
     "headers": {"Authorization": "Bearer openshell:resolve:env:SAFE_MCP_TOKEN"},
 })
-runtime_candidate = {
-    **candidate,
-    "headers": {"Authorization": "Bearer openshell:resolve:env:v12_SAFE_MCP_TOKEN"},
-}
 payload = {"present": {"safe": candidate}, "absent": []}
 outcomes = {}
 for integrity_state in ("current", "pending"):
@@ -627,7 +622,7 @@ for integrity_state in ("current", "pending"):
         inspect_mcp_integrity_snapshot=lambda *_args: types.SimpleNamespace(
             state=state,
             config_text=yaml.safe_dump(
-                {"mcp_servers": {"safe": runtime_candidate}}, sort_keys=False
+                {"mcp_servers": {"safe": candidate}}, sort_keys=False
             ),
         ),
         assert_mcp_integrity_snapshot_current=lambda *_args: None,
@@ -678,12 +673,8 @@ candidate = transaction._managed_candidate({
     "url": "https://mcp.example.test/mcp",
     "headers": {"Authorization": "Bearer openshell:resolve:env:SAFE_MCP_TOKEN"},
 })
-runtime_candidate = {
-    **candidate,
-    "headers": {"Authorization": "Bearer openshell:resolve:env:v12_SAFE_MCP_TOKEN"},
-}
 with open(config, "w", encoding="utf-8") as handle:
-    handle.write(yaml.safe_dump({"mcp_servers": {"safe": runtime_candidate}}, sort_keys=False))
+    handle.write(yaml.safe_dump({"mcp_servers": {"safe": candidate}}, sort_keys=False))
 with open(env, "w", encoding="utf-8") as handle:
     handle.write("SAFE=1\n")
 hash_text, _config_snapshot, _env_snapshot = guard._hash_text(config, env)
@@ -694,7 +685,6 @@ transaction.HERMES_DIR = hermes
 transaction.CONFIG_PATH = config
 transaction.STRICT_HASH_PATH = strict
 transaction.os.geteuid = lambda: 0
-transaction.os.environ["SAFE_MCP_TOKEN"] = "openshell:resolve:env:v12_SAFE_MCP_TOKEN"
 transaction._load_guard = lambda: guard
 try:
     transaction.inspect_managed_config({"present": {"safe": candidate}, "absent": []})
@@ -704,7 +694,7 @@ guard._write_hash(compat, hash_text)
 original_inspect = guard.inspect_mcp_integrity_snapshot
 def race_after_authentication(*args):
     inspection = original_inspect(*args)
-    changed = {**runtime_candidate, "url": "https://attacker.example.test/mcp"}
+    changed = {**candidate, "url": "https://attacker.example.test/mcp"}
     with open(config, "w", encoding="utf-8") as handle:
         handle.write(yaml.safe_dump({"mcp_servers": {"safe": changed}}, sort_keys=False))
     return inspection

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { listMessagingCredentialMetadata } from "../messaging/channels/metadata";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
@@ -140,23 +139,17 @@ export function requiredWebSearchProviderType(
     : provider;
 }
 
-/** Collect every active credential binding, including multiple keys owned by one provider. */
-export function collectRequiredMessagingProviderBindings(
+export function requiredMessagingProviderBindings(
   sandboxName: string,
   plan: SandboxMessagingPlan | null,
-  channelIds?: ReadonlySet<string>,
 ): CheckpointProviderBinding[] {
   if (!plan) return [];
-  const activeChannels = new Set(
-    getActiveChannelIdsFromPlan(plan).filter(
-      (channelId) => channelIds === undefined || channelIds.has(channelId),
-    ),
-  );
+  const activeChannels = new Set(getActiveChannelIdsFromPlan(plan));
   const profiles = messagingBridgeProfilesForAgent(plan.agent, listMessagingBridgeProfiles());
-  const bindings: CheckpointProviderBinding[] = [];
+  const bindings = new Map<string, CheckpointProviderBinding>();
   for (const binding of plan.credentialBindings) {
     if (!activeChannels.has(binding.channelId)) continue;
-    bindings.push({
+    bindings.set(binding.providerName, {
       name: binding.providerName,
       type:
         staticMessagingProviderTypeForChannel(binding.channelId, plan.agent, profiles) ??
@@ -167,67 +160,13 @@ export function collectRequiredMessagingProviderBindings(
   for (const profile of profiles) {
     if (!activeChannels.has(profile.channelId)) continue;
     const name = `${sandboxName}-${profile.channelId}-bridge`;
-    if (bindings.some((binding) => binding.name === name)) continue;
-    bindings.push({ name, type: profile.profileId, credentialEnv: profile.credentialKey });
-  }
-  return bindings;
-}
-
-/** Replace proven legacy provider names with the current manifest-owned names. */
-export function normalizeMessagingProviderBindings(
-  sandboxName: string,
-  plan: SandboxMessagingPlan,
-): SandboxMessagingPlan {
-  const providerNamesByCredential = new Map(
-    listMessagingCredentialMetadata({ agent: plan.agent }).map((credential) => [
-      `${credential.channelId}\0${credential.providerEnvKey}`,
-      credential.providerNameTemplate.replaceAll("{sandboxName}", sandboxName),
-    ]),
-  );
-  const currentProviderCredentialEnvs = new Map<string, Set<string>>();
-  for (const binding of plan.credentialBindings) {
-    const providerName = providerNamesByCredential.get(
-      `${binding.channelId}\0${binding.providerEnvKey}`,
+    const existing = bindings.get(name);
+    bindings.set(
+      name,
+      existing
+        ? { ...existing, type: profile.profileId }
+        : { name, type: profile.profileId, credentialEnv: profile.credentialKey },
     );
-    if (providerName !== binding.providerName) continue;
-    const key = `${binding.channelId}\0${binding.providerName}`;
-    const credentialEnvs = currentProviderCredentialEnvs.get(key) ?? new Set<string>();
-    credentialEnvs.add(binding.providerEnvKey);
-    currentProviderCredentialEnvs.set(key, credentialEnvs);
-  }
-  let changed = false;
-  const credentialBindings = plan.credentialBindings.map((binding) => {
-    const currentProviderName = providerNamesByCredential.get(
-      `${binding.channelId}\0${binding.providerEnvKey}`,
-    );
-    if (!currentProviderName || currentProviderName === binding.providerName) return binding;
-    const siblingCredentialEnvs = currentProviderCredentialEnvs.get(
-      `${binding.channelId}\0${binding.providerName}`,
-    );
-    const hasCurrentSibling = [...(siblingCredentialEnvs ?? [])].some(
-      (providerEnvKey) => providerEnvKey !== binding.providerEnvKey,
-    );
-    if (!hasCurrentSibling) return binding;
-    changed = true;
-    return { ...binding, providerName: currentProviderName };
-  });
-  return changed ? { ...plan, credentialBindings } : plan;
-}
-
-export function requiredMessagingProviderBindings(
-  sandboxName: string,
-  plan: SandboxMessagingPlan | null,
-  channelIds?: ReadonlySet<string>,
-): CheckpointProviderBinding[] {
-  if (!plan) return [];
-  const registrationPlan = normalizeMessagingProviderBindings(sandboxName, plan);
-  const bindings = new Map<string, CheckpointProviderBinding>();
-  for (const binding of collectRequiredMessagingProviderBindings(
-    sandboxName,
-    registrationPlan,
-    channelIds,
-  )) {
-    bindings.set(binding.name, binding);
   }
   return [...bindings.values()];
 }

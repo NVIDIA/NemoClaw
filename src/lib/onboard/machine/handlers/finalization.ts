@@ -30,6 +30,8 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   portableProfileSelected?: boolean;
   recreateJournalHandoff?: boolean;
   deps: {
+    ensureAgentDashboardForward(sandboxName: string, agent: Agent): Promise<number> | number;
+    persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
      * a cancel at the policy-preset step never leaves an unconfigured sandbox
@@ -175,6 +177,8 @@ function logTerminalReadyBlock(
 export async function handleFinalizationState<Agent, VerifyChain, VerificationResult>({
   sandboxName,
   agent,
+  portableProfileSelected,
+  recreateJournalHandoff,
   stagedLegacyKeys,
   migratedLegacyKeys,
   deps,
@@ -184,6 +188,16 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   VerificationResult
 >): Promise<FinalizationStateResult> {
   const manageDashboard = shouldManageDashboardForAgent(agent as DashboardRuntimeAgent);
+  const portableAgent = portableAgentDisposition(
+    sandboxName,
+    agent,
+    portableProfileSelected,
+    deps.readRegistryAgent,
+  );
+  const ordinaryOpenClawPairingRequired =
+    portableAgent === "ordinary" &&
+    selectedAgentName(agent) === "openclaw" &&
+    recreateJournalHandoff !== true;
   // Reaching finalization means the policy-preset step was confirmed, so it is
   // now safe to register this sandbox as the default (#4614).
   deps.setDefaultSandbox(sandboxName);
@@ -207,6 +221,17 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   if (manageDashboard) {
     // Policy application can restart the sandbox; recover OpenClaw before verification (#3573).
     deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+  }
+
+  if (manageDashboard && !ordinaryOpenClawPairingRequired) {
+    // Recheck the gateway and forward before verification, restarting only when needed.
+    deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+    // Reconcile after the final recovery because any restart above can
+    // invalidate the forward created earlier in onboarding.
+    const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, agent);
+    if (dashboardPort > 0) {
+      deps.persistDashboardPort(sandboxName, dashboardPort);
+    }
   }
 
   return {
@@ -303,6 +328,10 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     // Recheck the gateway and forward before deployment verification.
     if (manageDashboard) {
       deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+      const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, agent);
+      if (dashboardPort > 0) {
+        deps.persistDashboardPort(sandboxName, dashboardPort);
+      }
     }
   }
   if (manageDashboard) {

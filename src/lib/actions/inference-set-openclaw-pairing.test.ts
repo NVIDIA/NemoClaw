@@ -40,9 +40,7 @@ describe("settleInferenceSetOpenClawPairing", () => {
   it("accepts exact settled scope state without publishing a request (#9527)", () => {
     const deps = pairingDeps();
 
-    expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({
-      ok: true,
-    });
+    expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({ ok: true });
     expect(deps.publishScopeRequest).not.toHaveBeenCalled();
     expect(deps.approveScopeRequest).not.toHaveBeenCalled();
   });
@@ -61,9 +59,7 @@ describe("settleInferenceSetOpenClawPairing", () => {
       return "approved";
     });
 
-    expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({
-      ok: true,
-    });
+    expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({ ok: true });
     expect(deps.publishScopeRequest).toHaveBeenCalledWith(TARGET);
     expect(deps.approveScopeRequest).toHaveBeenCalledWith(TARGET, DEVICE_IDENTITY_SHA256);
     expect(order).toEqual(["observe", "publish", "approve", "observe"]);
@@ -78,9 +74,7 @@ describe("settleInferenceSetOpenClawPairing", () => {
       approval: "ambiguous",
     });
 
-    expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({
-      ok: true,
-    });
+    expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({ ok: true });
   });
 
   it("rejects an ambiguous approval when final state stays pairing-only (#9527)", () => {
@@ -104,10 +98,7 @@ describe("settleInferenceSetOpenClawPairing", () => {
 
     const result = settleInferenceSetOpenClawPairing(TARGET, deps);
 
-    expect(result).toEqual({
-      ok: false,
-      failureLayer: "initial-state-unavailable",
-    });
+    expect(result).toEqual({ ok: false, failureLayer: "initial-state-unavailable" });
     expect(JSON.stringify(result)).not.toContain("do-not-report");
     expect(deps.publishScopeRequest).not.toHaveBeenCalled();
     expect(deps.approveScopeRequest).not.toHaveBeenCalled();
@@ -146,10 +137,7 @@ describe("settleInferenceSetOpenClawPairing", () => {
 
     const result = settleInferenceSetOpenClawPairing(TARGET, deps);
 
-    expect(result).toEqual({
-      ok: false,
-      failureLayer: "pairing-operation-failed",
-    });
+    expect(result).toEqual({ ok: false, failureLayer: "pairing-operation-failed" });
     expect(JSON.stringify(result)).not.toContain("do-not-report");
     expect(deps.approveScopeRequest).not.toHaveBeenCalled();
   });
@@ -210,13 +198,8 @@ describe("settleInferenceSetOpenClawPairing", () => {
     ).toThrow("OpenClaw gateway pairing did not converge (pairing-target-unavailable)");
     expect(settleOpenClawPairing).not.toHaveBeenCalled();
     expect(log.mock.calls.flat().join("\n")).not.toContain("Inference route synced");
-    expect(appendAuditEntry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "inference_set",
-        sandbox: "alpha",
-        reason: "inference set openclaw:nvidia-prod:nvidia/model-b (pairing convergence pending)",
-      }),
+    expect(appendAuditEntry.mock.calls.map(([entry]) => String(entry.reason))).toContain(
+      "inference set openclaw:nvidia-prod:nvidia/model-b (config committed; pairing convergence failed: pairing-target-unavailable)",
     );
-    expect(JSON.stringify(appendAuditEntry.mock.calls)).not.toContain("credential=");
   });
 });

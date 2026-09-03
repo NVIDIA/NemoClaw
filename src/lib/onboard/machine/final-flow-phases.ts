@@ -40,11 +40,10 @@ export interface FinalOnboardFlowPhaseOptions<
     webSearchEnabled(webSearchConfig: WebSearchConfig | null): boolean;
     webSearchProvider(webSearchConfig: WebSearchConfig): WebSearchProvider;
   };
-  finalizationDeps: FinalizationStateOptions<
-    Context["agent"],
-    VerifyChain,
-    VerificationResult
-  >["deps"];
+  finalizationDeps: Omit<
+    FinalizationStateOptions<Context["agent"], VerifyChain, VerificationResult>["deps"],
+    "persistDashboardPort"
+  >;
 }
 
 export function createFinalOnboardFlowPhases<
@@ -59,7 +58,10 @@ export function createFinalOnboardFlowPhases<
   OnboardSequencePhase<Context>,
   OnboardSequencePhase<Context>,
 ] {
-  const finalizationDeps = options.finalizationDeps;
+  const finalizationDeps = {
+    ...options.finalizationDeps,
+    persistDashboardPort: options.agentSetupDeps.persistDashboardPort,
+  };
   const createBranchPhase =
     options.branchState === "agent_setup" ? createAgentSetupPhase : createOpenclawSetupPhase;
   const branchSetupPhase = createBranchPhase<Context>(async (context) => {

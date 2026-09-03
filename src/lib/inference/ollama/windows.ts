@@ -6,9 +6,9 @@
 // Detection lives in onboard.ts; this module owns the action side.
 
 const { spawn } = require("child_process");
+const { dockerCapture } = require("../../adapters/docker/command");
 const { run, runCapture } = require("../../runner");
 const {
-  createOllamaApiCapture,
   getWindowsHostOllamaDockerReachabilityArgs,
   isValidOllamaTagsResponseBody,
   OLLAMA_HOST_DOCKER_INTERNAL,
@@ -120,30 +120,13 @@ function killWindowsOllamaProcesses(): void {
   );
 }
 
-function awaitWindowsOllamaReady(
-  opts: { prepareDockerEnvironment?: () => unknown; delay?: (seconds: number) => void } = {},
-): boolean {
+function awaitWindowsOllamaReady(): boolean {
   console.log("  Waiting for Ollama to respond on host.docker.internal...");
-  const delay = opts.delay ?? sleep;
-  const capture = createOllamaApiCapture(
-    runCapture,
-    OLLAMA_HOST_DOCKER_INTERNAL,
-    opts.prepareDockerEnvironment,
-  );
   for (let attempt = 0; attempt < 15; attempt++) {
-    delay(2);
-    const probe = capture(
-      [
-        "curl",
-        "-sf",
-        "--connect-timeout",
-        "2",
-        "--max-time",
-        "5",
-        `http://${OLLAMA_HOST_DOCKER_INTERNAL}:${OLLAMA_PORT}/api/tags`,
-      ],
-      { ignoreError: true },
-    );
+    sleep(2);
+    const probe = dockerCapture(getWindowsHostOllamaDockerReachabilityArgs(), {
+      ignoreError: true,
+    });
     if (isValidOllamaTagsResponseBody(probe)) {
       setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
       return true;
@@ -156,10 +139,9 @@ function awaitWindowsOllamaReady(
 // watcher's auto-restart survive; fall back through the verified installed
 // path and finally refreshed PATH because stale watcher paths are possible.
 function launchAndAwaitWindowsOllama(
-  opts: { watcherPath?: string; installedPath?: string; delay?: (seconds: number) => void } = {},
+  opts: { watcherPath?: string; installedPath?: string } = {},
 ): boolean {
   console.log("  Starting Ollama on Windows host via WSL interop...");
-  const delay = opts.delay ?? sleep;
   const watcherPath = typeof opts.watcherPath === "string" ? opts.watcherPath.trim() : "";
   const installedPath = typeof opts.installedPath === "string" ? opts.installedPath.trim() : "";
   const launchAttempts: Array<{ label: string; script: string }> = [];
@@ -192,7 +174,7 @@ function launchAndAwaitWindowsOllama(
       ignoreError: true,
       suppressOutput: true,
     });
-    if (result.status === 0 && awaitWindowsOllamaReady({ delay })) {
+    if (result.status === 0 && awaitWindowsOllamaReady()) {
       return true;
     }
 
@@ -205,7 +187,7 @@ function launchAndAwaitWindowsOllama(
     console.error(`  PowerShell launch via ${attempt.label} failed: ${detail}`);
     if (i < launchAttempts.length - 1) {
       killWindowsOllamaProcesses();
-      delay(1);
+      sleep(1);
     }
   }
   return false;
@@ -215,24 +197,18 @@ function launchAndAwaitWindowsOllama(
 // installed Ollama. Fresh install fallback passes installedPath to avoid
 // relying on a newly-mutated Windows PATH from this process.
 function setupWindowsOllamaWith0000Binding(
-  opts: {
-    announceStop?: boolean;
-    installedPath?: string;
-    delay?: (seconds: number) => void;
-  } = {},
+  opts: { announceStop?: boolean; installedPath?: string } = {},
 ): boolean {
-  const delay = opts.delay ?? sleep;
   const watcherPath = captureWindowsOllamaWatcherPath();
   persistOllamaHostEnvVar();
   if (opts.announceStop) {
     console.log("  Stopping existing Ollama on Windows host...");
   }
   killWindowsOllamaProcesses();
-  delay(1);
+  sleep(1);
   return launchAndAwaitWindowsOllama({
     watcherPath: watcherPath || undefined,
     installedPath: opts.installedPath,
-    delay,
   });
 }
 

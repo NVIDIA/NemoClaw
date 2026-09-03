@@ -36,6 +36,7 @@ export async function prepareMcpForRebuild(
   sandboxName: string,
   staleRecovery: boolean,
   force: boolean,
+  relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean,
   bail: RebuildBail,
 ): Promise<McpRebuildPreparation | null> {
   // invalidState: OpenShell still reports a live sandbox, but the
@@ -55,6 +56,7 @@ export async function prepareMcpForRebuild(
     try {
       return await prepareMcpBridgesForExecUnavailableRebuild(sandboxName);
     } catch (error) {
+      relockShieldsIfNeeded(true);
       bail(
         `Failed to preserve MCP bridges before rebuild (--force host-side recovery): ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -67,6 +69,7 @@ export async function prepareMcpForRebuild(
       ? prepareMcpBridgesForAbsentSandboxRebuild(sandboxName)
       : prepareMcpBridgesForRebuild(sandboxName));
   } catch (error) {
+    relockShieldsIfNeeded(!staleRecovery);
     bail(
       `Failed to preserve MCP bridges before rebuild: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -154,8 +157,10 @@ export async function restoreMcpAfterRebuild(
     await restoreMcpBridgesAfterRebuild(sandboxName, entries);
     console.log(`  ${G}✓${R} MCP bridges restored`);
     return true;
-  } catch {
-    console.error(`  ${YW}⚠${R} MCP bridge restore incomplete; inspect redacted diagnostics.`);
+  } catch (error) {
+    console.error(
+      `  ${YW}⚠${R} MCP bridge restore incomplete: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return false;
   }
 }

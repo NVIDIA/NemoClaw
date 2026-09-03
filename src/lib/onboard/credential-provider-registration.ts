@@ -12,6 +12,83 @@ import { createGatewayScopedOpenshellRunner } from "./setup-inference";
 
 const providers = require("./providers");
 
+type CredentialProviderRegistrationUpsert = (
+  tokenDefs: MessagingTokenDef[],
+  runOpenshell: OpenshellCliHelpers["runOpenshell"],
+  options: MessagingProviderRegistrationOptions,
+) => string[];
+
+type LiveE2eCredentialProviderOverride = {
+  readonly expectedName: string;
+  readonly expectedType: string;
+  readonly upsert: CredentialProviderRegistrationUpsert;
+};
+
+const LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY =
+  "__nemoclawLiveE2eCredentialProviderRegistrationOverride" as const;
+
+function liveE2eCredentialProviderOverride(): LiveE2eCredentialProviderOverride | null {
+  const state = globalThis as typeof globalThis & {
+    [LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY]?: LiveE2eCredentialProviderOverride;
+  };
+  return state[LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY] ?? null;
+}
+
+/** Install the exact Google Chat fake-mint boundary used by the destructive live E2E. */
+export function installLiveE2eCredentialProviderRegistrationOverride(input: {
+  readonly expectedName: string;
+  readonly expectedType: "google-chat-bridge" | "google-chat-hermes-bridge";
+  readonly upsert: CredentialProviderRegistrationUpsert;
+}): () => void {
+  if (
+    process.env.NEMOCLAW_RUN_LIVE_E2E !== "1" ||
+    !/^e2e-(?:oc|hm)-ch-[a-z0-9-]+-googlechat-bridge$/u.test(input.expectedName)
+  ) {
+    throw new Error("Google Chat provider override is restricted to its destructive live E2E.");
+  }
+  const state = globalThis as typeof globalThis & {
+    [LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY]?: LiveE2eCredentialProviderOverride;
+  };
+  if (state[LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY]) {
+    throw new Error("A live E2E credential provider override is already installed.");
+  }
+  const installed = { ...input };
+  state[LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY] = installed;
+  let restored = false;
+  return () => {
+    if (restored) return;
+    if (state[LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY] !== installed) {
+      throw new Error("The live E2E credential provider override changed before cleanup.");
+    }
+    delete state[LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY];
+    restored = true;
+  };
+}
+
+/** Late-bound provider upsert seam used by live credential fixtures. */
+export const credentialProviderRegistrationDependencies = {
+  upsertMessagingProviders(
+    tokenDefs: MessagingTokenDef[],
+    runOpenshell: OpenshellCliHelpers["runOpenshell"],
+    options: MessagingProviderRegistrationOptions,
+  ): string[] {
+    const override = liveE2eCredentialProviderOverride();
+    if (override) {
+      const expected = tokenDefs.filter(
+        ({ envKey, name, providerType }) =>
+          envKey === "GOOGLE_CHAT_ACCESS_TOKEN" &&
+          name === override.expectedName &&
+          providerType === override.expectedType,
+      );
+      if (expected.length !== 1) {
+        throw new Error("Google Chat live E2E provider override received an unexpected plan.");
+      }
+      return override.upsert(tokenDefs, runOpenshell, options);
+    }
+    return providers.upsertMessagingProviders(tokenDefs, runOpenshell, options) as string[];
+  },
+};
+
 export interface StageSandboxCredentialProvidersInput<Agent> {
   sandboxName: string;
   enabledChannels: readonly string[];
@@ -175,17 +252,16 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     return result;
   }
 
-  function upsertMessagingProvidersAtGateway(
+  function upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
-    options: MessagingProviderRegistrationOptions,
-    gatewayName: string,
-    runOpenshell: OpenshellCliHelpers["runOpenshell"] = gatewayRunner(gatewayName),
+    options: MessagingProviderRegistrationOptions = {},
+    runOpenshell: OpenshellCliHelpers["runOpenshell"] = deps.runOpenshell,
   ): string[] {
-    const upserted = providers.upsertMessagingProviders(
+    const upserted = credentialProviderRegistrationDependencies.upsertMessagingProviders(
       tokenDefs,
       runOpenshell,
-      { ...options, gatewayName },
-    ) as string[];
+      options,
+    );
     recordMigratedLegacyMessagingCredentials(
       tokenDefs,
       upserted,
@@ -195,46 +271,23 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     return upserted;
   }
 
-  function upsertMessagingProviders(
-    tokenDefs: MessagingTokenDef[],
-    options: MessagingProviderRegistrationOptions = {},
-  ): string[] {
-    const gatewayName = deps.getGatewayName();
-    return upsertMessagingProvidersAtGateway(tokenDefs, options, gatewayName);
-  }
-
   function credentialBindingMatchesGateway(
     binding: CheckpointProviderBinding,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
   ): boolean {
-    return inspectGatewayCredentialBinding(binding, runOpenshell).kind === "exact";
-  }
-
-  function inspectGatewayCredentialBinding(
-    binding: CheckpointProviderBinding,
-    runOpenshell: OpenshellCliHelpers["runOpenshell"],
-  ): gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection {
-    const profileMatches = messagingBridgeProvider.matchesRegisteredMessagingBridgeProfile(
+    const staticProfileMatches = messagingBridgeProvider.matchesRegisteredStaticMessagingProfile(
       binding.type,
       { root: deps.root, runOpenshell },
     );
-    if (profileMatches === false) return { kind: "indeterminate" };
-    return gatewayProviderMetadata.inspectGatewayCredentialFamilyProviderBinding(
+    if (staticProfileMatches === false) return false;
+    return gatewayProviderMetadata.matchesGatewayCredentialFamilyProviderBinding(
+      providers.readGatewayProviderMetadata(binding.name, runOpenshell, deps.getGatewayName()),
       {
         name: binding.name,
         type: binding.type,
         credentialKey: binding.credentialEnv,
       },
-      runOpenshell,
     );
-  }
-
-  function inspectGatewayCredential(
-    name: string,
-    type: string,
-    credentialEnv: string,
-  ): gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection {
-    return inspectGatewayCredentialBinding({ name, type, credentialEnv }, gatewayRunner());
   }
 
   function providerMatchesGatewayCredential(
@@ -283,8 +336,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       messaging.messagingTokenDefs.map((tokenDef) => [tokenDef.name, tokenDef]),
     );
     const tokenDefs = messaging.messagingTokenDefs.filter(hasConfiguredMessagingCredential);
-    const gatewayName = deps.getGatewayName();
-    const runOpenshell = gatewayRunner(gatewayName);
+    const runOpenshell = gatewayRunner();
     preflightRequiredCredentialProviderBindings(
       input.requiredBindings,
       plannedTokenDefs,
@@ -297,14 +349,13 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       false,
       deps,
     );
-    const registered = upsertMessagingProvidersAtGateway(
+    const registered = upsertMessagingProviders(
       tokenDefs,
       {
         replaceExisting: input.replaceExisting === true,
         allowedSandboxes: input.replaceExisting === true ? [input.sandboxName] : undefined,
         revalidateSandboxIdentity: input.revalidateSandboxIdentity,
       },
-      gatewayName,
       runOpenshell,
     );
     input.revalidateSandboxIdentity?.("record staged credential provider receipts");
@@ -317,7 +368,6 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
   }
 
   return {
-    inspectGatewayCredential,
     providerMatchesGatewayCredential,
     stageSandboxCredentialProviders,
     upsertProvider,

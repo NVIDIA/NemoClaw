@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -19,7 +18,7 @@ const CATALOG_INPUT_WRITERS = {
   symlink: (catalog: string) => fs.symlinkSync("missing-catalog.json", catalog),
 } satisfies Record<CatalogInput, (catalog: string) => void>;
 
-function runCliArtifactPackaging(catalogInput: CatalogInput, trustedCatalog = false) {
+function runCliArtifactPackaging(catalogInput: CatalogInput) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-package-"));
   const workspace = path.join(root, "workspace");
   const runnerTemp = path.join(root, "runner-temp");
@@ -96,12 +95,6 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
 
   const catalog = path.join(dist, "e2e-managed-image-catalog.json");
   CATALOG_INPUT_WRITERS[catalogInput](catalog);
-  const trustedCatalogPath = path.join(runnerTemp, "pr-managed-image-catalog.json");
-  const trustedCatalogJson = '{"trusted":true}';
-  trustedCatalog && fs.writeFileSync(trustedCatalogPath, `${trustedCatalogJson}\n`);
-  const trustedCatalogSha256 = trustedCatalog
-    ? createHash("sha256").update(fs.readFileSync(trustedCatalogPath)).digest("hex")
-    : "";
 
   const result = spawnSync("bash", [path.resolve(CLI_ARTIFACT_PACKAGE_SCRIPT)], {
     cwd: workspace,
@@ -111,8 +104,6 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
       CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
       CANDIDATE_SHA: candidateSha,
       GITHUB_OUTPUT: path.join(root, "github-output"),
-      MANAGED_IMAGE_CATALOG: trustedCatalog ? trustedCatalogJson : "",
-      MANAGED_IMAGE_CATALOG_SHA256: trustedCatalogSha256,
       PATH: `${toolDirectory}:${process.env.PATH ?? ""}`,
       RUN_ATTEMPT: "1",
       RUN_ID: "12345",
@@ -124,7 +115,6 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
   });
   return {
     artifactExists: fs.existsSync(path.join(runnerTemp, "nemoclaw-cli-artifact")),
-    artifactPayload: path.join(runnerTemp, "nemoclaw-cli-artifact", "nemoclaw-cli.tar"),
     cleanup: () => fs.rmSync(root, { force: true, recursive: true }),
     output: `${result.stdout}${result.stderr}`,
     result,
@@ -137,18 +127,6 @@ describe("CLI artifact packaging", () => {
     try {
       expect(fixture.result.status, fixture.output).toBe(0);
       expect(fixture.artifactExists).toBe(true);
-    } finally {
-      fixture.cleanup();
-    }
-  });
-
-  it("seals a trusted managed-image catalog into the exact candidate artifact", () => {
-    const fixture = runCliArtifactPackaging("absent", true);
-    try {
-      expect(fixture.result.status, fixture.output).toBe(0);
-      expect(
-        execFileSync("tar", ["-tf", fixture.artifactPayload], { encoding: "utf8" }).split("\n"),
-      ).toContain("dist/e2e-managed-image-catalog.json");
     } finally {
       fixture.cleanup();
     }

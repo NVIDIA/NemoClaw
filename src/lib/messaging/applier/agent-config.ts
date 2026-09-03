@@ -232,6 +232,7 @@ function readHermesRuntimeAliasRender(
     const expectedPattern = `^openshell:resolve:env:v[0-9]+_${sourceKey}$`;
     const expectedValue = `openshell:resolve:env:${sourceKey}`;
     if (alias.match !== expectedPattern || alias.value !== expectedValue) return [];
+
     const result = runOpenshell(
       [
         "sandbox",
@@ -528,7 +529,6 @@ function applyEnvLines(
   plan: SandboxMessagingPlan,
   existing: string | undefined,
   render: readonly SandboxMessagingEnvLinesRenderPlan[],
-  additionalLines: readonly string[] = [],
 ): string {
   const desired = new Map<string, string>();
   const rawDesiredLines: string[] = [];
@@ -541,11 +541,6 @@ function applyEnvLines(
         rawDesiredLines.push(line);
       }
     }
-  }
-  for (const line of additionalLines) {
-    const key = readEnvLineKey(line);
-    if (!key) throw new Error("Messaging runtime credential alias line is invalid.");
-    desired.set(key, line);
   }
   const stale = staleCredentialEnvKeys(plan, new Set(desired.keys()));
 

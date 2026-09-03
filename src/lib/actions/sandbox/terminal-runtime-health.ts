@@ -4,10 +4,6 @@
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
-import {
-  registeredRuntimeProviderSupportsContainerEngineOperation,
-  resolveRegisteredRuntimeProvider,
-} from "../../onboard/runtime-provider/selection";
 import { load as loadRegistry } from "../../state/registry/persistence";
 
 /**
@@ -117,35 +113,12 @@ const defaultDeps: TerminalRuntimeOomProbeDeps = {
     }),
 };
 
-function hasLegacyContainerHealthProbe(driverName: string | null | undefined): boolean {
-  const normalized = driverName?.trim().toLowerCase();
-  if (!normalized) return false;
-  const provider = resolveRegisteredRuntimeProvider(normalized);
-  if (
-    !provider ||
-    provider.identity.id !== normalized ||
-    !registeredRuntimeProviderSupportsContainerEngineOperation(normalized, "gateway-inspection")
-  ) {
-    return false;
-  }
-  try {
-    return (
-      provider.gateway.prepareHostRuntime({
-        environment: process.env,
-        platform: process.platform,
-      }).socketPath === null
-    );
-  } catch {
-    return false;
-  }
-}
-
 export function probeTerminalRuntimeCgroupOom(
   sandboxName: string,
   depsOverride: Partial<TerminalRuntimeOomProbeDeps> = {},
 ): TerminalRuntimeOomProbeResult {
   const deps: TerminalRuntimeOomProbeDeps = { ...defaultDeps, ...depsOverride };
-  if (!hasLegacyContainerHealthProbe(deps.getSandboxDriver(sandboxName))) {
+  if (deps.getSandboxDriver(sandboxName) !== "docker") {
     return { kind: "unavailable", detail: "cgroup OOM probe requires the docker driver" };
   }
   // Reading the wrong container's counter would report a degraded sandbox that

@@ -20,7 +20,7 @@ import { assertHermesSlackApiProof } from "./hermes-slack-proof.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
   CLI,
-  requirePhase6RuntimeProvider,
+  dockerInfo,
   expectExitZero,
   installSandboxOrSkipOnRateLimit,
   phase6Env,
@@ -51,6 +51,7 @@ const SLACK_CREDENTIAL_FINGERPRINTS = hermesSlackCredentialFingerprints([
   SLACK_APP_TOKEN,
 ]);
 export const LIVE_TIMEOUT_MS = 70 * 60_000;
+const INSTALL_TIMEOUT_MS = 60 * 60_000;
 const HERMES_HEALTH_URL = "http://localhost:8642/health";
 
 function isFakeSlackToken(value: string): boolean {
@@ -329,7 +330,6 @@ export async function runHermesSlackE2E({
   cleanup,
   host,
   progress,
-  runtimeProvider,
   sandbox,
   secrets,
   skip,
@@ -356,7 +356,14 @@ export async function runHermesSlackE2E({
     providerNames: [`${SANDBOX_NAME}-slack-bridge`, `${SANDBOX_NAME}-slack-app`],
   });
 
-  await requirePhase6RuntimeProvider(runtimeProvider, "Hermes Slack");
+  const docker = await dockerInfo(host, env);
+  if (docker.exitCode !== 0) {
+    if (process.env.GITHUB_ACTIONS === "true") {
+      throw new Error(`Docker is required for Hermes Slack E2E: ${resultText(docker)}`);
+    }
+    skip("Docker is required for Hermes Slack E2E");
+    return;
+  }
 
   await precleanHermesSlack({ host, apiKey, artifactPrefix: "preclean-hermes-slack" });
   await precleanSandbox(host, SANDBOX_NAME, env, redactionValues, "preclean-hermes-slack-cli");
@@ -800,7 +807,7 @@ PY`,
       "bash",
       [
         "-lc",
-        'test ! -f "$HOME/.nemoclaw/sandboxes.json" || ! grep -Fq "\\\"$SANDBOX_NAME\\\"" "$HOME/.nemoclaw/sandboxes.json"',
+        'test ! -f "$HOME/.nemoclaw/sandboxes.json" || ! grep -Fq "\\\"${SANDBOX_NAME}\\\"" "$HOME/.nemoclaw/sandboxes.json"',
       ],
       {
         artifactName: "phase-7-registry-removed",

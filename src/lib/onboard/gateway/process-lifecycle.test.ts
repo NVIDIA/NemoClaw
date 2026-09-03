@@ -12,6 +12,7 @@ function dependencies(
 ): GatewayProcessLifecycleDeps {
   return {
     gatewayName: () => "nemoclaw",
+    dashboardPort: () => 18789,
     runOpenshell: () => ({ status: 0 }),
     runCaptureOpenshell: () => "",
     dockerInspect: () => ({ status: 1 }),

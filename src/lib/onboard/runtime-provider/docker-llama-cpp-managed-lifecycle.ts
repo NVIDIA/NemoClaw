@@ -22,7 +22,7 @@ import {
   type LlamaCppHostLocalLaunchContract,
   type LlamaCppHostLocalRuntimeBindings,
 } from "../../inference/llama-cpp/host-local-runtime";
-import { formatHostServiceUnreachableMessage } from "../reachability/host-service-message";
+import { formatHostServiceUnreachableMessage } from "../host-service-reachability";
 import { validateUfwRuleOperands } from "../ufw-auto-apply";
 import {
   createDockerLlamaCppPrivateBridgeController,

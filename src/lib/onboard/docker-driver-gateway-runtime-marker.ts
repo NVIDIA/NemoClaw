@@ -3,36 +3,14 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
-import { DEFAULT_GATEWAY_PORT, resolveGatewayStateDirForPort } from "./gateway/state-dir";
-
 export const DOCKER_DRIVER_GATEWAY_RUNTIME_MARKER_VERSION = 1;
-
-export function resolveDockerDriverGatewayStateDir(
-  env: NodeJS.ProcessEnv = process.env,
-  homeDir: string = env.HOME || os.homedir(),
-  gatewayPort: number = DEFAULT_GATEWAY_PORT,
-): string {
-  return resolveGatewayStateDirForPort({
-    configured: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
-    home: homeDir,
-    port: gatewayPort,
-  });
-}
-
-export function resolveDockerDriverGatewayPidFile(
-  env: NodeJS.ProcessEnv = process.env,
-  homeDir: string = env.HOME || os.homedir(),
-): string {
-  return path.join(resolveDockerDriverGatewayStateDir(env, homeDir), "openshell-gateway.pid");
-}
 
 export type DockerDriverGatewayRuntimeMarker = {
   version: typeof DOCKER_DRIVER_GATEWAY_RUNTIME_MARKER_VERSION;
   pid: number;
-  driver: string;
+  driver: "docker";
   platform: NodeJS.Platform;
   arch: NodeJS.Architecture;
   endpoint: string;
@@ -53,7 +31,6 @@ export type DockerDriverGatewayRuntimeMarkerInput = {
   platform?: NodeJS.Platform;
   arch?: NodeJS.Architecture;
   createdAt?: string;
-  runtimeProviderId?: string;
 };
 
 export type DockerDriverGatewayRuntimeMarkerDrift = { reason: string };
@@ -90,16 +67,11 @@ export function buildDockerDriverGatewayRuntimeMarker({
   platform = process.platform,
   arch = process.arch,
   createdAt = new Date().toISOString(),
-  runtimeProviderId = desiredEnv.NEMOCLAW_RUNTIME_PROVIDER_ID ?? "docker",
 }: DockerDriverGatewayRuntimeMarkerInput): DockerDriverGatewayRuntimeMarker {
-  const driver = runtimeProviderId.trim().toLowerCase();
-  if (!/^[a-z][a-z0-9-]{0,63}$/u.test(driver)) {
-    throw new Error("Gateway runtime provider identity is invalid.");
-  }
   return {
     version: DOCKER_DRIVER_GATEWAY_RUNTIME_MARKER_VERSION,
     pid,
-    driver,
+    driver: "docker",
     platform,
     arch,
     endpoint,
@@ -116,8 +88,7 @@ function isRuntimeMarker(value: unknown): value is DockerDriverGatewayRuntimeMar
   const marker = value as Partial<DockerDriverGatewayRuntimeMarker>;
   return (
     marker.version === DOCKER_DRIVER_GATEWAY_RUNTIME_MARKER_VERSION &&
-    typeof marker.driver === "string" &&
-    /^[a-z][a-z0-9-]{0,63}$/u.test(marker.driver) &&
+    marker.driver === "docker" &&
     Number.isInteger(marker.pid) &&
     typeof marker.platform === "string" &&
     typeof marker.arch === "string" &&
@@ -202,11 +173,7 @@ export function getDockerDriverGatewayRuntimeMarkerDrift(
   const desired = buildDockerDriverGatewayRuntimeMarker(expected);
   if (marker.pid !== desired.pid)
     return { reason: `runtime marker pid=${marker.pid} (expected ${desired.pid})` };
-  if (marker.driver !== desired.driver) {
-    return {
-      reason: `runtime marker provider=${marker.driver} (expected ${desired.driver})`,
-    };
-  }
+  if (marker.driver !== "docker") return { reason: `runtime marker driver=${marker.driver}` };
   if (marker.platform !== desired.platform) {
     return { reason: `runtime marker platform=${marker.platform} (expected ${desired.platform})` };
   }

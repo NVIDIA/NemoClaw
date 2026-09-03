@@ -516,15 +516,6 @@ function llamaCppReadinessComparisonMatches(
   actual: ServingReadinessComparison,
   expected: ServingReadinessComparison,
 ): boolean {
-  if (
-    role === "container-runtime" &&
-    actual.operator === "equals" &&
-    actual.value === "docker-desktop" &&
-    expected.operator === "equals" &&
-    expected.value === "docker"
-  ) {
-    return true;
-  }
   if (role !== "architecture" || actual.operator !== "equals") {
     return (
       canonicalReadinessComparison(actual) ===

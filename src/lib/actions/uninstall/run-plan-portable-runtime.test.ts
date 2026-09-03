@@ -392,7 +392,6 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
           HOME: scope.homeDir,
         },
         hasPortableRuntimeCleanup: () => true,
-        withSandboxMutationLock: async (_sandboxName, operation) => await operation(),
         withPortableHostFence: async (_home, operation) => {
           hostFenceHeld = true;
           try {

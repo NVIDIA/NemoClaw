@@ -19,8 +19,6 @@ import {
 } from "./podman-bootstrap-journal";
 import {
   PODMAN_MANAGED_LABEL,
-  PODMAN_OPENSHELL_MANAGED_BY_LABEL,
-  PODMAN_OPENSHELL_MANAGED_BY_VALUE,
   PODMAN_SANDBOX_CONTAINER_PREFIX,
   PODMAN_SANDBOX_ID_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
@@ -47,7 +45,6 @@ const MAX_ARGUMENTS = 512;
 const MAX_ARGUMENT_BYTES = 16 * 1024;
 const MAX_ENVIRONMENT_BYTES = 256 * 1024;
 const CREATE_TIMEOUT_MS = 300_000;
-const STOP_TIMEOUT_MS = 60_000;
 
 const FORBIDDEN_RUNTIME_FLAGS = new Set([
   "--cidfile",
@@ -147,7 +144,6 @@ interface NormalizedReplacementPlan extends PodmanBootstrapReplacementPlan {
   readonly entrypointArgv: readonly string[];
   readonly commandArgv: readonly string[];
   readonly replacementImageContentId: string;
-  readonly replacementLabels: Readonly<Record<string, string>>;
   readonly replacementStagingName: string;
   readonly replacementStateVolumeName: string;
   readonly replacementStateVolumeLabels: Readonly<Record<string, string>>;
@@ -280,15 +276,6 @@ function canonicalLabels(
     return failure("Podman replacement labels do not match exact OpenShell ownership.", false);
   }
   return labels;
-}
-
-function replacementLabels(
-  labels: Readonly<Record<string, string>>,
-): Readonly<Record<string, string>> {
-  return Object.freeze({
-    ...labels,
-    [PODMAN_OPENSHELL_MANAGED_BY_LABEL]: PODMAN_OPENSHELL_MANAGED_BY_VALUE,
-  });
 }
 
 function environmentEntries(
@@ -451,7 +438,6 @@ function normalizePlan(plan: PodmanBootstrapReplacementPlan): NormalizedReplacem
     "Podman held-workload image content ID",
   );
   const labels = canonicalLabels(held);
-  const managedReplacementLabels = replacementLabels(labels);
   const originalContainerName = safeString(
     held.containerName,
     "Podman held-workload container name",
@@ -495,7 +481,6 @@ function normalizePlan(plan: PodmanBootstrapReplacementPlan): NormalizedReplacem
     entrypointArgv,
     commandArgv,
     replacementImageContentId,
-    replacementLabels: managedReplacementLabels,
     replacementStagingName,
     replacementStateVolumeName,
     replacementStateVolumeLabels,
@@ -510,7 +495,7 @@ function normalizePlan(plan: PodmanBootstrapReplacementPlan): NormalizedReplacem
     replacementSpecFingerprint: stableHash({
       replacementStagingName,
       replacementImageContentId,
-      labels: managedReplacementLabels,
+      labels,
       runtimeArgs,
       environment,
       entrypointArgv,
@@ -530,20 +515,19 @@ function assertAuthority(authority: PodmanBootstrapReplacementAuthority): void {
     failure("Podman bootstrap requires one authority-bound managed-bootstrap engine.", false);
   }
   if (
-    (authority.watcherLease.record.phase !== "stopped" &&
-      authority.watcherLease.record.phase !== "observing") ||
-    typeof authority.watcherLease.assertStillHeld !== "function"
+    authority.watcherLease.record.phase !== "stopped" ||
+    typeof authority.watcherLease.assertStillStopped !== "function"
   ) {
-    failure("Podman bootstrap requires one durable watcher transaction lease.", false);
+    failure("Podman bootstrap requires one durable stopped-watcher lease.", false);
   }
 }
 
-function captureWhileWatcherHeld(
+function captureWhileWatcherStopped(
   authority: PodmanBootstrapReplacementAuthority,
   args: readonly string[],
   timeoutMs?: number,
 ): ContainerEngineCommandResult {
-  authority.watcherLease.assertStillHeld();
+  authority.watcherLease.assertStillStopped();
   let result: ContainerEngineCommandResult | undefined;
   let commandFailure: unknown;
   try {
@@ -552,7 +536,7 @@ function captureWhileWatcherHeld(
     commandFailure = error;
   }
   try {
-    authority.watcherLease.assertStillHeld();
+    authority.watcherLease.assertStillStopped();
   } catch (error) {
     if (commandFailure === undefined) commandFailure = error;
   }
@@ -600,7 +584,7 @@ function sameMap(
 }
 
 function volumeExists(authority: PodmanBootstrapReplacementAuthority, volumeName: string): boolean {
-  const result = captureWhileWatcherHeld(authority, ["volume", "exists", volumeName]);
+  const result = captureWhileWatcherStopped(authority, ["volume", "exists", volumeName]);
   if (result.status === 0) return true;
   if (result.status === 1) return false;
   requireZero(result, "Podman bootstrap state-volume existence check");
@@ -611,7 +595,7 @@ function inspectExactStateVolume(
   authority: PodmanBootstrapReplacementAuthority,
   expected: ExactStateVolumeExpectation,
 ): ExactStateVolumeObservation {
-  const result = captureWhileWatcherHeld(authority, ["volume", "inspect", expected.name]);
+  const result = captureWhileWatcherStopped(authority, ["volume", "inspect", expected.name]);
   requireZero(result, "Podman bootstrap state-volume inspect");
   const entries = parseJson(result.stdout, "Podman bootstrap state-volume inspect");
   if (!Array.isArray(entries) || entries.length !== 1) {
@@ -705,7 +689,7 @@ function inspectExactContainer(
   expected: ExactContainerExpectation,
 ): ExactContainerObservation {
   const runtimeId = fullRuntimeId(expected.runtimeId, "Expected Podman runtime ID");
-  const result = captureWhileWatcherHeld(authority, ["container", "inspect", runtimeId]);
+  const result = captureWhileWatcherStopped(authority, ["container", "inspect", runtimeId]);
   requireZero(result, "Podman bootstrap container inspect");
   const entries = parseJson(result.stdout, "Podman bootstrap container inspect");
   if (!Array.isArray(entries) || entries.length !== 1) {
@@ -834,13 +818,13 @@ function createArgs(plan: NormalizedReplacementPlan, environmentFile: string): r
     "--env-file",
     environmentFile,
   ];
-  for (const [key, value] of Object.entries(plan.replacementLabels)) {
+  for (const [key, value] of Object.entries(plan.heldWorkload.labels)) {
     args.push("--label", `${key}=${value}`);
   }
   args.push(
     ...plan.runtimeArgs,
-    "--volume",
-    `${plan.replacementStateVolumeName}:${PODMAN_BOOTSTRAP_STATE_DIRECTORY}:rw,z,copy`,
+    "--mount",
+    `type=volume,source=${plan.replacementStateVolumeName},destination=${PODMAN_BOOTSTRAP_STATE_DIRECTORY},readonly=false,relabel=shared`,
     "--entrypoint",
     JSON.stringify(plan.entrypointArgv),
     plan.replacementImageContentId,
@@ -946,7 +930,7 @@ function expectedReplacement(
     runtimeId,
     name: plan.replacementStagingName,
     imageContentId: plan.replacementImageContentId,
-    labels: plan.replacementLabels,
+    labels: plan.heldWorkload.labels,
     running: false,
     entrypointArgv: plan.entrypointArgv,
     commandArgv: plan.commandArgv,
@@ -965,7 +949,7 @@ function replacementExpectationFromJournal(
     runtimeId,
     name: journal.replacementStagingName,
     imageContentId: journal.replacementImageContentId,
-    labels: replacementLabels(canonicalLabels(held)),
+    labels: held.labels,
     running: false,
     stateVolume,
   };
@@ -988,7 +972,7 @@ function listStagingRuntimeIds(
   authority: PodmanBootstrapReplacementAuthority,
   stagingContainerName: string,
 ): readonly string[] {
-  const result = captureWhileWatcherHeld(authority, [
+  const result = captureWhileWatcherStopped(authority, [
     "container",
     "ls",
     "--all",
@@ -1015,7 +999,7 @@ function containerExists(
   authority: PodmanBootstrapReplacementAuthority,
   runtimeId: string,
 ): boolean {
-  const result = captureWhileWatcherHeld(authority, ["container", "exists", runtimeId]);
+  const result = captureWhileWatcherStopped(authority, ["container", "exists", runtimeId]);
   if (result.status === 0) return true;
   if (result.status === 1) return false;
   requireZero(result, "Podman bootstrap container existence check");
@@ -1039,12 +1023,12 @@ export function prepareStoppedPodmanBootstrapReplacement(
 ): PodmanBootstrapPreparedReplacement {
   assertAuthority(input);
   const plan = normalizePlan(input.plan);
-  input.watcherLease.assertStillHeld();
+  input.watcherLease.assertStillStopped();
   if (volumeExists(input, plan.replacementStateVolumeName)) {
     failure("Podman bootstrap state-volume name is already in use.", false);
   }
   input.journalStore.create(createJournal(input, plan));
-  const volumeCreate = captureWhileWatcherHeld(input, createStateVolumeArgs(plan));
+  const volumeCreate = captureWhileWatcherStopped(input, createStateVolumeArgs(plan));
   requireZero(volumeCreate, "Podman bootstrap state-volume creation");
   parseCreatedStateVolumeName(volumeCreate.stdout, plan.replacementStateVolumeName);
   const stateVolume = inspectStableStateVolume(input, {
@@ -1053,7 +1037,7 @@ export function prepareStoppedPodmanBootstrapReplacement(
   });
   input.journalStore.recordStateVolume(plan.bootstrapIdentity, stateVolume.mountpoint);
   const result = privateEnvironmentFile(plan.environment, (environmentFile) =>
-    captureWhileWatcherHeld(input, createArgs(plan, environmentFile), CREATE_TIMEOUT_MS),
+    captureWhileWatcherStopped(input, createArgs(plan, environmentFile), CREATE_TIMEOUT_MS),
   );
   requireZero(result, "Podman stopped bootstrap replacement creation");
   const replacementRuntimeId = parseCreatedRuntimeId(result.stdout);
@@ -1108,11 +1092,7 @@ export function stopExactPodmanBootstrapOriginal(
       stateVolume,
     ),
   );
-  const stop = captureWhileWatcherHeld(
-    input,
-    ["container", "stop", journal.originalRuntimeId],
-    STOP_TIMEOUT_MS,
-  );
+  const stop = captureWhileWatcherStopped(input, ["container", "stop", journal.originalRuntimeId]);
   requireZero(stop, "Podman bootstrap original-container stop");
   inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload, false));
   inspectStableContainer(
@@ -1181,7 +1161,7 @@ export function rollbackPodmanBootstrapBeforeCommit(
         stateVolume,
       ),
     );
-    const remove = captureWhileWatcherHeld(input, ["container", "rm", replacementRuntimeId]);
+    const remove = captureWhileWatcherStopped(input, ["container", "rm", replacementRuntimeId]);
     requireZero(remove, "Podman bootstrap replacement rollback removal");
     if (containerExists(input, replacementRuntimeId)) {
       failure("Podman bootstrap replacement remained after exact rollback removal.");
@@ -1194,7 +1174,7 @@ export function rollbackPodmanBootstrapBeforeCommit(
 
   let replacementStateVolumeRemoved = false;
   if (stateVolume) {
-    const removeVolume = captureWhileWatcherHeld(input, ["volume", "rm", stateVolume.name]);
+    const removeVolume = captureWhileWatcherStopped(input, ["volume", "rm", stateVolume.name]);
     requireZero(removeVolume, "Podman bootstrap state-volume rollback removal");
     if (volumeExists(input, stateVolume.name)) {
       failure("Podman bootstrap state volume remained after exact rollback removal.");
@@ -1208,7 +1188,11 @@ export function rollbackPodmanBootstrapBeforeCommit(
   ).running;
   let originalStarted = false;
   if (!originalWasRunning) {
-    const start = captureWhileWatcherHeld(input, ["container", "start", journal.originalRuntimeId]);
+    const start = captureWhileWatcherStopped(input, [
+      "container",
+      "start",
+      journal.originalRuntimeId,
+    ]);
     requireZero(start, "Podman bootstrap original-container rollback start");
     originalStarted = true;
   }

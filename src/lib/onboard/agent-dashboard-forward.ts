@@ -20,8 +20,10 @@ export type EnsureDashboardForward = (
   sandboxName: string,
   chatUiUrl?: string,
   options?: {
+    preserveSandboxPorts?: Array<number | string>;
     allowPortReallocation?: boolean;
     revalidateSandboxIdentity?: (operation: string) => void;
+    onForwardStarted?: (port: number) => void;
   },
 ) => number;
 
@@ -38,8 +40,10 @@ export async function ensureAgentDashboardForward(options: {
   controlUiPort?: number;
   /** Host port allocated to this sandbox's OpenAI-compatible API, when it has one. */
   hermesApiPort?: number | null;
+  preserveForwardPorts?: readonly (number | null | undefined)[];
   beforeForwardPort?: (port: number) => Promise<void> | void;
   revalidateSandboxIdentity?: (operation: string) => void;
+  compensateDashboardForward?: (port: number) => void;
   warn?: (message: string) => void;
 }): Promise<number> {
   const {
@@ -49,14 +53,22 @@ export async function ensureAgentDashboardForward(options: {
     chatUiUrl,
     controlUiPort,
     hermesApiPort,
+    preserveForwardPorts = [],
     beforeForwardPort,
     revalidateSandboxIdentity,
+    compensateDashboardForward,
     warn = (message: string) => console.warn(message),
   } = options;
   if (!shouldManageDashboardForAgent(agent)) {
     return 0;
   }
   const previousChatUiUrl = process.env.CHAT_UI_URL;
+  const startedForwardPorts: number[] = [];
+  const recordStartedForward = (port: number): void => {
+    if (!startedForwardPorts.includes(port)) startedForwardPorts.push(port);
+  };
+  const startedForwardCallback =
+    revalidateSandboxIdentity && compensateDashboardForward ? recordStartedForward : undefined;
   const restoreChatUiUrl = (): void => {
     if (previousChatUiUrl === undefined) delete process.env.CHAT_UI_URL;
     else process.env.CHAT_UI_URL = previousChatUiUrl;
@@ -99,6 +111,7 @@ export async function ensureAgentDashboardForward(options: {
         agentDashboardPort,
         ...declaredPorts,
         optionalDashboardPort,
+        ...preserveForwardPorts,
       ]),
     ].filter(isValidForwardPort);
     const requestedDashboardUrl =
@@ -107,7 +120,8 @@ export async function ensureAgentDashboardForward(options: {
         : `http://127.0.0.1:${agentDashboardPort}`;
     await beforeForwardPort?.(agentDashboardPort);
     const actualAgentDashboardPort = ensureDashboardForward(sandboxName, requestedDashboardUrl, {
-      allowPortReallocation: false,
+      preserveSandboxPorts: preservePorts,
+      ...(startedForwardCallback ? { onForwardStarted: startedForwardCallback } : {}),
       ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
     });
     if (!usesFixedApiPort) {
@@ -115,6 +129,7 @@ export async function ensureAgentDashboardForward(options: {
       process.env.CHAT_UI_URL = replaceUrlPort(requestedDashboardUrl, actualAgentDashboardPort);
     }
 
+    const portsToPreserve = [...new Set([...preservePorts, actualAgentDashboardPort])];
     for (const port of preservePorts) {
       if (port === agentDashboardPort) continue;
       try {
@@ -124,7 +139,9 @@ export async function ensureAgentDashboardForward(options: {
             ? replaceUrlPort(chatUiUrl, port)
             : `http://127.0.0.1:${port}`;
         ensureDashboardForward(sandboxName, forwardUrl, {
+          preserveSandboxPorts: portsToPreserve,
           allowPortReallocation: false,
+          ...(startedForwardCallback ? { onForwardStarted: startedForwardCallback } : {}),
           ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
         });
       } catch (err) {
@@ -142,6 +159,17 @@ export async function ensureAgentDashboardForward(options: {
   } catch (error) {
     if (error === identityFailure) {
       restoreChatUiUrl();
+      for (const port of [...startedForwardPorts].reverse()) {
+        try {
+          compensateDashboardForward?.(port);
+        } catch (cleanupError) {
+          warn(
+            `  ! Could not stop dashboard forward ${String(port)} after identity verification failure: ${
+              cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+            }`,
+          );
+        }
+      }
     }
     throw error;
   }

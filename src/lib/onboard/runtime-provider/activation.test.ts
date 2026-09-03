@@ -35,6 +35,7 @@ import {
 import {
   RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
+  RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
   type RuntimeProviderBundle,
 } from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES, createCurrentRuntimeProviderBundles } from "./current";
@@ -108,6 +109,18 @@ function completeBundle(providerId: string): RuntimeProviderBundle {
   });
   return {
     ...base,
+    stateMutation: {
+      providerId,
+      supported: true,
+      contractVersion: RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
+      acquire: unreachable,
+      assertFenced: unreachable,
+      publish: unreachable,
+      rollback: unreachable,
+      activate: unreachable,
+      release: unreachable,
+      recover: unreachable,
+    },
     bootstrap: {
       providerId,
       supported: true,
@@ -139,7 +152,6 @@ function completeBundle(providerId: string): RuntimeProviderBundle {
         engineId: "contract-fixture",
         displayName: "Contract fixture",
       })),
-      capture: () => ({ status: 0, stdout: "", stderr: "" }),
     },
   };
 }
@@ -179,6 +191,17 @@ function registration(
 }
 
 const INCOMPLETE_SURFACES = [
+  [
+    "stateMutation",
+    (bundle: RuntimeProviderBundle) => ({
+      ...bundle,
+      stateMutation: {
+        providerId: bundle.identity.id,
+        supported: false as const,
+        reason: "incomplete fixture",
+      },
+    }),
+  ],
   [
     "bootstrap",
     (bundle: RuntimeProviderBundle) => ({
@@ -253,36 +276,11 @@ describe("runtime provider activation catalog", () => {
     ).toEqual([true, true, true]);
   });
 
-  it("registers qualified Podman without changing the established providers", () => {
-    expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual([
-      "docker",
-      "kubernetes",
-      "podman",
-    ]);
-    expect(Object.keys(createCurrentRuntimeProviderBundles())).toEqual([
-      "docker",
-      "kubernetes",
-      "podman",
-    ]);
-    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.identity.id).toBe("podman");
+  it("leaves Docker and Kubernetes unchanged with no production candidate registration", () => {
+    expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual(["docker", "kubernetes"]);
+    expect(Object.keys(createCurrentRuntimeProviderBundles())).toEqual(["docker", "kubernetes"]);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("mxc");
-  });
-
-  it("exposes one stable read-only view of the lazily constructed current registry", () => {
-    const firstPodman = CURRENT_RUNTIME_PROVIDER_BUNDLES.podman;
-
-    expect(firstPodman).toBeDefined();
-    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman).toBe(firstPodman);
-    expect(() => {
-      (CURRENT_RUNTIME_PROVIDER_BUNDLES as Record<string, RuntimeProviderBundle>).podman =
-        CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!;
-    }).toThrow(TypeError);
-    expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual([
-      "docker",
-      "kubernetes",
-      "podman",
-    ]);
-    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman).toBe(firstPodman);
   });
 
   it("rejects native-artifact bootstrap from production activation (#8178)", () => {

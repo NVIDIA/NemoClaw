@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { checkOpenAiInferenceProviderProfile } from "../adapters/openshell/provider-profile-registration";
+import { checkOpenAiInferenceProviderProfile } from "../adapters/openshell/provider-profile";
 import type { Session } from "../state/onboard-session";
 
 export interface RotateTokenOpts {
@@ -22,7 +22,7 @@ export function loadRotateTokenSession(): RotateTokenSession | null {
 }
 
 export type RotateTokenDeps = {
-  readonly appendAuditEntry: typeof import("../state/audit/operational").appendAuditEntry;
+  readonly appendAuditEntry: typeof import("../shields/audit").appendAuditEntry;
   readonly captureOpenshellCommand: typeof import("../adapters/openshell/client").captureOpenshellCommand;
   readonly fail: RotateTokenFailure;
   readonly loadSession: () => RotateTokenSession | null;

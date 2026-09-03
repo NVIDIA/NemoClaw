@@ -22,7 +22,11 @@ export type WipeSandboxStateDeps = {
   getSandbox?: typeof registry.getSandbox;
   loadAgent?: (name: string) => AgentStateInfo;
   runOpenshell?: RunOpenshell;
-  /** Optional warning sink. Defaults to `console.warn`. */
+  /**
+   * Optional warning sink. Defaults to `console.warn`. Matches the
+   * `removeShieldsState` pattern so tests can capture warnings without
+   * spying on the console global (#5455 Ultra PRA-2).
+   */
   warn?: (message: string) => void;
 };
 
@@ -62,7 +66,8 @@ export class SandboxWorkspaceCleanupTimeoutError extends Error {}
  *   move into the manifest loader.
  *
  * Best-effort: a stopped sandbox (e.g. gateway down) makes the exec fail; we
- * warn and let destroy proceed rather than block teardown.
+ * warn and let destroy proceed rather than block teardown. Mirrors the
+ * `removeShieldsState` pattern.
  *
  * Must be called AFTER `selectGatewayForSandboxDestroy()` so the exec runs
  * against the sandbox's recorded gateway, not whichever gateway happened to

@@ -4,7 +4,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
-import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import {
@@ -48,7 +47,7 @@ const VERIFY_SKILL_SCRIPT = path.join(
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-skill-agent";
 validateSandboxName(SANDBOX_NAME);
 const SKILL_ID = "skill-smoke-fixture";
-const ONBOARD_TIMEOUT_MS = execTimeout(20 * 60_000);
+const ONBOARD_TIMEOUT_MS = 20 * 60_000;
 const AGENT_VERIFY_TIMEOUT_MS = 4 * 60_000;
 const MAX_ATTEMPTS = Number.parseInt(process.env.E2E_SKILL_AGENT_MAX_ATTEMPTS ?? "3", 10);
 const RETRY_SLEEP_MS =
@@ -106,10 +105,10 @@ async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
 test(
   "skill-agent: injected sandbox skill is read by a real OpenClaw agent turn",
   {
-    timeout: testTimeout(30 * 60_000),
+    timeout: 30 * 60_000,
     meta: {
       e2ePhases: [
-        "confirm the selected runtime and skill tooling",
+        "confirm Docker and skill tooling",
         "onboard the OpenClaw skill sandbox",
         "inject and confirm the skill fixture",
         "ask the agent to consume the skill",
@@ -117,7 +116,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",
@@ -130,10 +129,17 @@ test(
       `missing skill verify helper: ${VERIFY_SKILL_SCRIPT}`,
     ).toBe(true);
 
-    await runtimeProvider.requireAvailable({
-      artifactName: "prereq-runtime-info-skill-agent",
-      scenarioLabel: "skill-agent",
+    const docker = await host.command("docker", ["info"], {
+      artifactName: "prereq-docker-info-skill-agent",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
     });
+    if (docker.exitCode !== 0) {
+      if (process.env.GITHUB_ACTIONS === "true") {
+        throw new Error(`Docker is required for skill-agent E2E: ${resultText(docker)}`);
+      }
+      skip("Docker is required for skill-agent E2E");
+    }
 
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
@@ -142,7 +148,7 @@ test(
       id: "skill-agent",
       boundary: "direct-cli-onboard-sandbox-skill-and-agent-turn",
       contract: [
-        "the selected runtime is available before onboarding",
+        "Docker is available before onboarding",
         "NVIDIA_INFERENCE_API_KEY is staged as the compatible endpoint credential",
         "nemoclaw onboard creates/recreates a real OpenClaw sandbox",
         "skill-smoke-fixture is injected into sandbox and home skill roots",
@@ -376,7 +382,7 @@ test(
       id: "skill-agent",
       status: "passed",
       assertions: {
-        runtimeProviderAvailable: true,
+        dockerRunning: docker.exitCode === 0,
         onboardCompleted: onboard.exitCode === 0,
         skillInjected: addSkill.exitCode === 0,
         agentReturnedVerificationToken: agentOk,

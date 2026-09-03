@@ -15,7 +15,6 @@ import { encodeMessagingPlan, makeMessagingPlan } from "../helpers/messaging-pla
 
 beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
-  vi.stubEnv("NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE", "1");
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
 
@@ -264,8 +263,6 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: cmd, env: opts.env || null });
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  const providerResult = require(${onboardScriptMocksPath}).mockNvidiaProviderGetRun(command, "nemoclaw-18080");
-  if (providerResult !== null) return providerResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") {
     createdSandbox.delete();
   }
@@ -308,7 +305,7 @@ runner.run = (command, opts = {}) => {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 	const retainedRegistryEntry = recoveryReentry && fs.existsSync(${JSON.stringify(payloadPath)})

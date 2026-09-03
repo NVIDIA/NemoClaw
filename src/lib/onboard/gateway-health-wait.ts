@@ -1,13 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { WaitUntilOptions } from "../core/wait";
+import { type WaitUntilOptions, waitUntilAsync } from "../core/wait";
 import { envInt } from "./env";
-import {
-  createReadinessWaitOptions,
-  getLegacyPollDeadlineBudgetMs,
-  waitUntilAsync,
-} from "./readiness-wait";
+import { createReadinessWaitOptions, getLegacyPollDeadlineBudgetMs } from "./readiness-wait";
 
 type RunCaptureOpenshell = (args: string[], opts?: { ignoreError?: boolean }) => string;
 

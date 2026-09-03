@@ -36,7 +36,6 @@ import { spawnSync } from "child_process";
 
 import {
   captureSandboxSshConfigCommand,
-  isOpenShellSandboxPolicyCredentialFree,
   resolveOpenshellSandboxSshHost,
 } from "../adapters/openshell/client.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
@@ -2526,24 +2525,12 @@ function readBoundRebuildPolicyHandoff(filePath: string): string | null {
   try {
     descriptor = openSync(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
     const before = fstatSync(descriptor, { bigint: true });
-    const uid = process.getuid?.();
-    if (
-      !before.isFile() ||
-      before.nlink !== 1n ||
-      (uid !== undefined && before.uid !== BigInt(uid)) ||
-      (before.mode & 0o777n) !== 0o600n ||
-      before.size > 8n * 1024n * 1024n
-    ) {
-      return null;
-    }
+    if (!before.isFile() || before.size > 8n * 1024n * 1024n) return null;
     const content = readFileSync(descriptor, "utf8");
     const after = fstatSync(descriptor, { bigint: true });
     if (
       before.dev !== after.dev ||
       before.ino !== after.ino ||
-      before.uid !== after.uid ||
-      before.mode !== after.mode ||
-      before.nlink !== after.nlink ||
       before.size !== after.size ||
       before.mtimeNs !== after.mtimeNs ||
       before.ctimeNs !== after.ctimeNs
@@ -2564,9 +2551,6 @@ export function writeRebuildPolicyHandoff(
   policyDocument: string,
 ): RebuildManifest {
   if (!policyDocument.trim()) throw new Error("Cannot persist an empty rebuild policy handoff");
-  if (!isOpenShellSandboxPolicyCredentialFree(policyDocument)) {
-    throw new Error("Cannot persist a credential-bearing rebuild policy handoff");
-  }
   const sha256 = createHash("sha256").update(policyDocument).digest("hex");
   const file = `rebuild-policy-handoff.${sha256}.yaml`;
   const filePath = path.join(manifest.backupPath, file);
@@ -2619,7 +2603,6 @@ export function clearRebuildPolicyHandoff(
   ops: {
     write?: typeof writeManifest;
     remove?: typeof rmSync;
-    retainRetirement?: boolean;
   } = {},
 ): boolean {
   const handoff = manifest.rebuildPolicyHandoff;
@@ -2640,7 +2623,6 @@ export function clearRebuildPolicyHandoff(
   } catch {
     return false;
   }
-  if (ops.retainRetirement === true) return true;
   const cleared = { ...manifest };
   delete cleared.rebuildPolicyHandoff;
   try {

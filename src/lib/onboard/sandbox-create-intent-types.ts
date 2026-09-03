@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxHostMount } from "../state/registry/types";
-import type { MessagingChannelConfig } from "../messaging-channel-config";
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
 import type { InitialSandboxPolicy } from "./initial-policy";
-import type { ManagedStateVolumeMount } from "./managed-workload/managed-state-volumes";
+import type { ManagedHermesStateVolumeMount } from "./managed-workload/hermes-state-volume";
 import type { MessagingTokenDef } from "./messaging-prep";
 import type { MessagingChannel } from "./messaging-state";
 import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
@@ -93,17 +92,11 @@ export type ResolveSandboxCreateIntentInput = {
 export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
   fromRef: string;
-  managedStateMounts?: readonly ManagedStateVolumeMount[];
-  /** Opaque provider-owned OpenShell driver-config key for the managed state mount. */
-  managedStateMountDriverId?: string | null;
   policylessCreate?: boolean;
   /** Keep provider mutations and attachments behind the exact post-create identity gate. */
   deferSandboxEffectsUntilIdentityVerification?: boolean;
-  /** A verified create resume must rebuild its plan without replaying provider mutations. */
-  skipProviderEffects?: boolean;
+  managedStateMount?: ManagedHermesStateVolumeMount | null;
   messagingTokenDefs: MessagingTokenDef[];
-  /** Non-secret config captured in the messaging plan that owns exact policy endpoints. */
-  messagingConfig?: MessagingChannelConfig | null;
   runProviderPreDeleteCleanup(revalidateSandboxIdentity?: (operation: string) => void): void;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],

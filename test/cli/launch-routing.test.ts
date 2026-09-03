@@ -6,10 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
-import {
-  LAUNCH_READINESS_FIXTURE_POLICY,
-  launchReadinessRegistryFixture,
-} from "../helpers/launch-readiness-fixture";
+import { launchReadinessRegistryFixture } from "../helpers/launch-readiness-fixture";
 import { run, runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
 const CALL_SEPARATOR = "--- openshell call ---";
@@ -97,10 +94,6 @@ function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
       "  done",
       "  echo 'sandbox not found' >&2",
       "  exit 1",
-      "fi",
-      'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
-      `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
-      "  exit 0",
       "fi",
       'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
       // The interactive agent exec is the only exec that requests a TTY.

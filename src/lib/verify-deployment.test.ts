@@ -28,6 +28,7 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       stderr: "",
     }),
     probeHostPort: (_port: number, _path: string) => 200,
+    captureForwardList: () => "my-sandbox  127.0.0.1  18789  12345  running",
     getMessagingChannels: (_name: string) => [] as string[],
     providerExistsInGateway: (_name: string) => true,
     ...overrides,
@@ -133,7 +134,7 @@ describe("verifyDeployment", () => {
     const gateway = result.diagnostics.find((diagnostic) => diagnostic.link === "gateway");
     const dashboard = result.diagnostics.find((diagnostic) => diagnostic.link === "dashboard");
     expect(gateway?.hint).toContain("nemoclaw my-sandbox logs");
-    expect(dashboard?.hint).toContain("nemoclaw my-sandbox recover");
+    expect(dashboard?.hint).toContain("openshell forward start");
   });
 
   it.each([
@@ -149,7 +150,7 @@ describe("verifyDeployment", () => {
     const gateway = result.diagnostics.find((diagnostic) => diagnostic.link === "gateway");
     const dashboard = result.diagnostics.find((diagnostic) => diagnostic.link === "dashboard");
     expect(gateway?.hint).toContain("nemoclaw my-sandbox logs");
-    expect(dashboard?.hint).toContain("nemoclaw my-sandbox recover");
+    expect(dashboard?.hint).toContain("openshell forward start");
   });
 
   it("keeps generic guidance when the custom sandbox is unreachable", async () => {
@@ -161,7 +162,7 @@ describe("verifyDeployment", () => {
     const gateway = result.diagnostics.find((diagnostic) => diagnostic.link === "gateway");
     const dashboard = result.diagnostics.find((diagnostic) => diagnostic.link === "dashboard");
     expect(gateway?.hint).toContain("openshell-gateway.log");
-    expect(dashboard?.hint).toContain("nemoclaw my-sandbox recover");
+    expect(dashboard?.hint).toContain("openshell forward start");
   });
 
   it("does not probe the custom runtime contract when diagnosis is disabled", async () => {

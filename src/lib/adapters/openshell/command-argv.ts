@@ -4,16 +4,8 @@
 // Namespace access keeps the resolver replaceable in focused command tests.
 import * as openshellResolveModule from "./resolve";
 
-export function tryResolveOpenshellBinary(): string | null {
-  return openshellResolveModule.resolveOpenshell();
-}
-
-export function openshellNotFoundDiagnosticLines(): string[] {
-  return openshellResolveModule.openshellNotFoundDiagnosticLines();
-}
-
 export function resolveOpenshellBinary(): string {
-  return tryResolveOpenshellBinary() ?? "openshell";
+  return openshellResolveModule.resolveOpenshell() ?? "openshell";
 }
 
 export function buildOpenshellCommand(args: readonly string[]): string[] {

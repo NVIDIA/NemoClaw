@@ -6,7 +6,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { LAUNCH_READINESS_FIXTURE_POLICY } from "../../helpers/launch-readiness-fixture";
 import { execTimeout, testTimeoutOptions } from "../../helpers/timeouts";
 
 const tmpFixtures: string[] = [];
@@ -75,8 +74,7 @@ if (args[0] === "sandbox" && args[1] === "exec") {
 }
 
 if (args[0] === "policy" && args[1] === "get") {
-  process.stdout.write(${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)});
-  process.exit(0);
+  process.exit(1);
 }
 
 if (args[0] === "inference" && args[1] === "get") {

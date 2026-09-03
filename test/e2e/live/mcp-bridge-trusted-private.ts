@@ -22,7 +22,6 @@ import {
 } from "./mcp-bridge-sandbox.ts";
 import { startFakeMcpHttpsServer } from "./mcp-bridge-servers.ts";
 import { assertAuthenticatedMcpToolDiscovery } from "./mcp-bridge-tool-discovery.ts";
-import { startRoutedPrivateRelay } from "../fixtures/routed-private-relay.ts";
 
 const SERVER_POLICY_KEY = "mcp_bridge_fake";
 const REBIND_SERVER_NAME = "rebind";
@@ -67,15 +66,7 @@ export async function assertTrustedPrivateMcpRebindingDenied(
   cleanup.add(`remove ${options.artifactPrefix} trusted-private MCP bridge`, () =>
     options.cleanupBridge(host, options.sandboxName, REBIND_SERVER_NAME, options.adapter),
   );
-  const upstreamHost = await hostPrivateAddressForSandbox(host);
-  const relay = await startRoutedPrivateRelay({
-    host,
-    sandboxName: options.sandboxName,
-    upstreamHost,
-    upstreamPort: rebindMcp.port,
-  });
-  cleanup.add(`stop ${options.artifactPrefix} trusted-private MCP relay`, relay.close);
-  const rebindMcpUrl = `https://${REBIND_HOSTNAME}:${String(relay.port)}/mcp`;
+  const rebindMcpUrl = `https://${REBIND_HOSTNAME}:${rebindMcp.port}/mcp`;
   const hostsFixture = await setupDnsRebindingHostsFixture(
     host,
     options.sandboxName,
@@ -92,7 +83,7 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     url: options.survivingMcpUrl,
   });
   const survivingPolicyBeforeAdd = survivingPolicyBeforeAddResult.policy;
-  const trustedPrivateAddress = relay.address;
+  const trustedPrivateAddress = await hostPrivateAddressForSandbox(host);
   expect(trustedPrivateAddress).not.toBe(REBIND_PUBLIC_IP);
   await remapDnsRebindingHostname(
     host,

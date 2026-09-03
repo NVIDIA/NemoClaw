@@ -22,7 +22,7 @@ import {
   type ManagedLlamaCppSelectionChoice,
   type ManagedLlamaCppSelectionResult,
   listManagedLlamaCppSelectionChoices,
-  resolveManagedLlamaCppSelectionForGpu,
+  resolveManagedLlamaCppSelection,
 } from "../inference/llama-cpp/managed-selection";
 import { getOllamaContextWindowFloorForAgent } from "../inference/ollama-runtime-context";
 import {
@@ -170,10 +170,7 @@ export interface SetupNimFlowDeps {
   exitProcess(code: number): never;
   abortNonInteractive(message: string): never;
   localModelProfileIntegration?: ReturnType<typeof createLocalModelProfileIntegration>;
-  resolveManagedLlamaCppSelection?(
-    env?: NodeJS.ProcessEnv,
-    gpu?: SetupNimGpu,
-  ): ManagedLlamaCppSelectionResult;
+  resolveManagedLlamaCppSelection?(env?: NodeJS.ProcessEnv): ManagedLlamaCppSelectionResult;
   listManagedLlamaCppSelectionChoices?(): readonly ManagedLlamaCppSelectionChoice[];
   installManagedLlamaCpp?: typeof installManagedLlamaCpp;
   handleRemoteProviderSelection(
@@ -302,7 +299,7 @@ function assertVllmGpuProviderSelection(
   recoveredFromSandbox: boolean,
   deps: Pick<
     SetupNimFlowDeps,
-    "abortNonInteractive" | "error" | "exitProcess" | "isNonInteractive" | "vllmPort"
+    "abortNonInteractive" | "error" | "exitProcess" | "isNonInteractive"
   >,
 ): void {
   const requestedDevice = String(process.env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim();
@@ -310,13 +307,8 @@ function assertVllmGpuProviderSelection(
   if (!requestedDevice || selected.key === "install-vllm" || resumedManagedVllm) return;
 
   const message =
-    selected.key === "vllm"
-      ? `vLLM is already running on localhost:${deps.vllmPort}, so --vllm-gpu-device cannot change its GPU. ` +
-        `Omit --vllm-gpu-device and rerun with NEMOCLAW_PROVIDER=vllm to reuse that server. ` +
-        `To select a different GPU, stop the server only if no other gateway or distributed deployment uses it. ` +
-        `Otherwise, keep it running and set NEMOCLAW_VLLM_PORT to an unused port before rerunning managed onboarding.`
-      : `--vllm-gpu-device applies only when NemoClaw installs managed vLLM; ` +
-        `the selected provider is '${selected.key}'.`;
+    `--vllm-gpu-device applies only when NemoClaw installs managed vLLM; ` +
+    `the selected provider is '${selected.key}'.`;
   deps.error(`  ${message}`);
   if (deps.isNonInteractive()) deps.abortNonInteractive(message);
   deps.exitProcess(1);
@@ -434,12 +426,9 @@ function prepareEndpointProviderPolicyRoute(
 function resolveManagedLlamaCppSafely(
   deps: SetupNimFlowDeps,
   env?: NodeJS.ProcessEnv,
-  gpu: SetupNimGpu = null,
 ): ManagedLlamaCppSelectionResult {
   try {
-    return deps.resolveManagedLlamaCppSelection
-      ? deps.resolveManagedLlamaCppSelection(env, gpu)
-      : resolveManagedLlamaCppSelectionForGpu(env, gpu);
+    return (deps.resolveManagedLlamaCppSelection ?? resolveManagedLlamaCppSelection)(env);
   } catch (error) {
     return {
       kind: "rejected",
@@ -494,14 +483,13 @@ function buildManagedLlamaCppOptions(input: {
 
 function prepareManagedLlamaCppMenu(input: {
   deps: SetupNimFlowDeps;
-  gpu: SetupNimGpu;
+  platform: InferenceProviderHostGpu["platform"] | undefined;
   requestedProvider: string | null;
 }): {
   resolution: ManagedLlamaCppSelectionResult | null;
   options: ProviderMenuChoice[];
 } {
-  const { deps, gpu, requestedProvider } = input;
-  const platform = gpu?.platform;
+  const { deps, platform, requestedProvider } = input;
   const candidate = platform === "spark" || requestedProvider === "install-llama-cpp";
   const resolution = candidate
     ? resolveManagedLlamaCppSafely(
@@ -509,7 +497,6 @@ function prepareManagedLlamaCppMenu(input: {
         !deps.isNonInteractive() && !requestedProvider
           ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: "" }
           : undefined,
-        gpu,
       )
     : null;
   return {
@@ -520,16 +507,15 @@ function prepareManagedLlamaCppMenu(input: {
 
 function resolveSelectedManagedLlamaCpp(input: {
   deps: SetupNimFlowDeps;
-  gpu: SetupNimGpu;
   selectedFromInteractiveMenu: boolean;
   selectedRecipeId: string | undefined;
 }): ManagedLlamaCppSelectionResult {
-  const { deps, gpu, selectedFromInteractiveMenu, selectedRecipeId } = input;
+  const { deps, selectedFromInteractiveMenu, selectedRecipeId } = input;
   const env =
     selectedFromInteractiveMenu && selectedRecipeId
       ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId }
       : undefined;
-  return resolveManagedLlamaCppSafely(deps, env, gpu);
+  return resolveManagedLlamaCppSafely(deps, env);
 }
 
 async function runDedicatedLocalModelProfile(input: {
@@ -627,15 +613,11 @@ async function handleEndpointProviderSelection(input: {
 function vllmPortConflictMessage(
   platform: InferenceProviderHostGpu["platform"],
   port: number,
-  hasGpuSelection: boolean,
 ): string {
   if (platform === "n1x") {
-    return `The N1x Deferred preview requires managed vLLM, but vLLM is already running on localhost:${port}. Stop the server only if no other gateway or distributed deployment uses it. Otherwise, keep it running and set NEMOCLAW_VLLM_PORT to an unused port. Then rerun with NEMOCLAW_PROVIDER=install-vllm.`;
+    return `The N1x Deferred preview requires managed vLLM, but vLLM is already running on localhost:${port}. Stop the existing server, then rerun with NEMOCLAW_PROVIDER=install-vllm.`;
   }
-  const reuseAction = hasGpuSelection
-    ? "Omit --vllm-gpu-device and rerun with NEMOCLAW_PROVIDER=vllm to reuse it."
-    : "Rerun with NEMOCLAW_PROVIDER=vllm to reuse it.";
-  return `vLLM is already running on localhost:${port}. ${reuseAction} To change its GPU or port, stop the server only if no other gateway or distributed deployment uses it. Otherwise, keep it running and set NEMOCLAW_VLLM_PORT to an unused port before rerunning managed onboarding.`;
+  return "vLLM is already running on this host. Select Local vLLM, or stop the existing server before selecting the managed install path.";
 }
 
 /**
@@ -935,7 +917,7 @@ export function createSetupNim(
     const agentProviderOptions = deps.getAgentInferenceProviderOptions(agent);
     const { options: managedLlamaCppOptions } = prepareManagedLlamaCppMenu({
       deps,
-      gpu,
+      platform: gpu?.platform,
       requestedProvider,
     });
 
@@ -1120,7 +1102,6 @@ export function createSetupNim(
           const selectedRecipeId = selected.managedLlamaCppRecipeId;
           const resolved = resolveSelectedManagedLlamaCpp({
             deps,
-            gpu,
             selectedFromInteractiveMenu,
             selectedRecipeId,
           });
@@ -1256,13 +1237,7 @@ export function createSetupNim(
             continue selectionLoop;
           }
           if (vllmRunning) {
-            const hasGpuSelection =
-              String(process.env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim() !== "";
-            const message = vllmPortConflictMessage(
-              gpu?.platform,
-              deps.vllmPort,
-              hasGpuSelection,
-            );
+            const message = vllmPortConflictMessage(gpu?.platform, deps.vllmPort);
             deps.error(`  ${message}`);
             if (deps.isNonInteractive()) {
               deps.abortNonInteractive(message);

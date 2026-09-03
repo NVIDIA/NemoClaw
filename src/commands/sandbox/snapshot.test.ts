@@ -4,14 +4,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const runSandboxSnapshot = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-const enforceRemovedImmutabilityMigrationBoundary = vi.hoisted(() => vi.fn());
+const hasShieldsTimerRecoveryArtifact = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock("../../lib/actions/sandbox/snapshot", () => ({
   runSandboxSnapshot,
 }));
-vi.mock("../../lib/state/migrations/removed-immutability", () => ({
-  enforceRemovedImmutabilityMigrationBoundary,
-  reportRemovedImmutabilityUpgrade: vi.fn(),
+
+vi.mock("../../lib/state/mcp-lifecycle-lock/shields-timer-authority", async (importOriginal) => ({
+  ...(await importOriginal()),
+  hasShieldsTimerRecoveryArtifact,
 }));
 
 import SnapshotCommand from "./snapshot";
@@ -24,7 +25,7 @@ const rootDir = process.cwd();
 describe("snapshot oclif commands", () => {
   beforeEach(() => {
     runSandboxSnapshot.mockClear();
-    enforceRemovedImmutabilityMigrationBoundary.mockClear();
+    hasShieldsTimerRecoveryArtifact.mockClear();
   });
 
   it("shows parent snapshot usage through the action", { timeout: 30_000 }, async () => {
@@ -55,8 +56,19 @@ describe("snapshot oclif commands", () => {
       force: undefined,
       yes: undefined,
     });
-    expect(enforceRemovedImmutabilityMigrationBoundary).toHaveBeenCalledWith("alpha");
-    expect(enforceRemovedImmutabilityMigrationBoundary).toHaveBeenCalledWith("beta");
+  });
+
+  it("leaves multi-sandbox recovery entirely to the snapshot action", async () => {
+    await SnapshotRestoreCommand.run(["alpha", "--to", "beta"], rootDir);
+
+    expect(hasShieldsTimerRecoveryArtifact).not.toHaveBeenCalled();
+    expect(runSandboxSnapshot).toHaveBeenCalledWith("alpha", {
+      kind: "restore",
+      selector: undefined,
+      to: "beta",
+      force: undefined,
+      yes: undefined,
+    });
   });
 
   it("threads --force and --yes into the typed restore action (#3756)", async () => {
@@ -69,18 +81,6 @@ describe("snapshot oclif commands", () => {
       force: true,
       yes: true,
     });
-  });
-
-  it("does not clone a legacy-state source image into a replacement sandbox", async () => {
-    enforceRemovedImmutabilityMigrationBoundary.mockImplementationOnce(() => {
-      throw new Error("legacy mutable posture cannot be proven");
-    });
-
-    await expect(
-      SnapshotRestoreCommand.run(["alpha", "v2", "--to", "beta"], rootDir),
-    ).rejects.toThrow("legacy mutable posture cannot be proven");
-
-    expect(runSandboxSnapshot).not.toHaveBeenCalled();
   });
 
   it("runs snapshot create with an optional label", async () => {

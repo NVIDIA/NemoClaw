@@ -7,10 +7,7 @@ import path from "node:path";
 import type { AnySchemaObject, ErrorObject, ValidateFunction } from "ajv";
 import Ajv from "ajv/dist/2020.js";
 
-import {
-  isOpenShellSandboxPolicyCredentialFree,
-  parseOpenShellPolicy,
-} from "../adapters/openshell/policy-boundary";
+import { parseOpenShellPolicy } from "./merge";
 
 const PACKAGE_ROOT = path.resolve(__dirname, "..", "..", "..");
 const NETWORK_POLICY_SCHEMA_PATH = path.join(PACKAGE_ROOT, "schemas", "network-policy.schema.json");
@@ -20,11 +17,6 @@ const MAX_SCHEMA_ERROR_MESSAGE_CHARS = 120;
 const MAX_SCHEMA_ERROR_SUMMARY_CHARS = 500;
 
 let cachedSandboxPolicyValidator: ValidateFunction<unknown> | null = null;
-
-/** Prove a live policy can cross a credential-free host handoff. */
-export function isSandboxPolicyCredentialFree(content: string): boolean {
-  return isOpenShellSandboxPolicyCredentialFree(content);
-}
 
 function loadSandboxPolicyValidator(): ValidateFunction<unknown> {
   if (cachedSandboxPolicyValidator) return cachedSandboxPolicyValidator;

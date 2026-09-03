@@ -7,7 +7,7 @@
 // accepted while echoed or embedded tokens are rejected, without gating on
 // NEMOCLAW_RUN_LIVE_E2E=1.
 
-import type { RetryFailureClass } from "../../../tools/e2e/retry-evidence.mts";
+import type { RetryFailureClass } from "../fixtures/retry-policy.ts";
 
 export interface OpenClawPostSwitchInferenceAttempt {
   exitCode: number | null;

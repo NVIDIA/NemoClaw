@@ -585,14 +585,14 @@ export function qualifyPodmanHost(
   });
 }
 
-/** Qualify the exact socket-bound Podman client and service used for sandbox lifecycle. */
+/** Qualify one exact socket-bound Podman client and service for schema-specific authority. */
 export function qualifyPodmanEndpointHost(
   engine: ContainerEngine,
   options: PodmanEndpointHostQualificationOptions,
 ): PodmanHostPreflightReceipt {
-  if (engine.operation !== "sandbox-lifecycle" || engine.engineId !== "podman") {
+  if (engine.operation !== "state-mutation" || engine.engineId !== "podman") {
     throw new PodmanHostPreflightError(
-      "endpoint qualification requires a Podman sandbox-lifecycle engine",
+      "endpoint qualification requires a Podman state-mutation engine",
     );
   }
   requireSupportedHostPlatform(options);

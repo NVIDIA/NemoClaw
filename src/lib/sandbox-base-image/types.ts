@@ -51,7 +51,7 @@ export type ResolveBaseImageOptions = {
   rootDir?: string;
   env?: NodeJS.ProcessEnv;
   pinnedRemoteRef?: string;
-  requirePinnedRemoteRef?: boolean;
+  preferPinnedRemoteRef?: boolean;
   validateImage?: (imageRef: string) => boolean;
   validationDescription?: string;
   resolutionHint?: SandboxBaseImageResolutionMetadata | null;

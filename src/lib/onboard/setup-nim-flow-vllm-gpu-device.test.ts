@@ -3,7 +3,6 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { VllmProfile } from "../inference/vllm";
 import { NEMOCLAW_VLLM_GPU_DEVICE_ENV } from "../inference/vllm-models";
 import { makeDeps, makeHostState } from "./__test-helpers__/setup-nim-flow";
 import type { SetupNimFlowDeps } from "./setup-nim-flow";
@@ -45,7 +44,6 @@ describe("managed vLLM GPU provider selection", () => {
       makeDeps({
         isNonInteractive: () => true,
         getNonInteractiveProvider: () => "vllm",
-        vllmPort: 18000,
         detectInferenceProviderHostState: () =>
           makeHostState({
             vllmRunning: true,
@@ -56,57 +54,13 @@ describe("managed vLLM GPU provider selection", () => {
       }),
     );
 
-    await expect(setupNim(null)).rejects.toThrow("vLLM is already running on localhost:18000");
-    expect(abortNonInteractive).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "Omit --vllm-gpu-device and rerun with NEMOCLAW_PROVIDER=vllm",
-      ),
+    await expect(setupNim(null)).rejects.toThrow(
+      "applies only when NemoClaw installs managed vLLM",
     );
     expect(abortNonInteractive).toHaveBeenCalledWith(
-      expect.stringContaining("only if no other gateway or distributed deployment uses it"),
-    );
-    expect(abortNonInteractive).toHaveBeenCalledWith(
-      expect.stringContaining("NEMOCLAW_VLLM_PORT"),
+      expect.stringContaining("selected provider is 'vllm'"),
     );
     expect(handleVllmSelection).not.toHaveBeenCalled();
-  });
-
-  it("preserves managed intent and explains how to resolve a running-server conflict", async () => {
-    vi.stubEnv(NEMOCLAW_VLLM_GPU_DEVICE_ENV, "2");
-    const abortNonInteractive = vi.fn((message: string): never => {
-      throw new Error(message);
-    });
-    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>();
-    const profile = { name: "DGX Station" } as VllmProfile;
-    const setupNim = createSetupNim(
-      makeDeps({
-        isNonInteractive: () => true,
-        getNonInteractiveProvider: () => "install-vllm",
-        vllmPort: 18000,
-        detectInferenceProviderHostState: () =>
-          makeHostState({
-            vllmRunning: true,
-            vllmProfile: profile,
-            vllmEntries: [{ key: "install-vllm", label: "Start vLLM (DGX Station)" }],
-          }),
-        abortNonInteractive,
-        installVllm,
-      }),
-    );
-
-    await expect(setupNim(null)).rejects.toThrow("vLLM is already running on localhost:18000");
-    expect(abortNonInteractive).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "Omit --vllm-gpu-device and rerun with NEMOCLAW_PROVIDER=vllm",
-      ),
-    );
-    expect(abortNonInteractive).toHaveBeenCalledWith(
-      expect.stringContaining("only if no other gateway or distributed deployment uses it"),
-    );
-    expect(abortNonInteractive).toHaveBeenCalledWith(
-      expect.stringContaining("NEMOCLAW_VLLM_PORT"),
-    );
-    expect(installVllm).not.toHaveBeenCalled();
   });
 
   it("allows the persisted device when resuming its managed vLLM provider", async () => {

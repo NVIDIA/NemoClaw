@@ -24,9 +24,7 @@ const {
   hermesCompatHashRecoveryError,
   isHermesCompatHashRecoveryError,
 } = require("../../src/lib/sandbox/config");
-const {
-  selectDockerPrivilegedSandboxTarget: selectDirectSandboxContainer,
-} = require("../../src/lib/onboard/runtime-provider/docker-privileged-sandbox-identity");
+const { selectDirectSandboxContainer } = require("../../src/lib/sandbox/privileged-exec");
 
 type MutableScalar = string | number | boolean | null | undefined;
 type MutableValue = MutableScalar | MutableMap | MutableValue[];

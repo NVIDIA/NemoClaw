@@ -4,6 +4,7 @@
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import { getAgentBranding } from "../../cli/branding";
 import { waitUntil } from "../../core/wait";
+import { isShieldsDown } from "../../shields";
 import type { McpBridgeEntry } from "../../state/registry";
 import {
   classifyGatewayRestartFailure,
@@ -19,12 +20,9 @@ import {
   entryHeaders,
   HERMES_MCP_TRANSACTION_HELPER,
 } from "./mcp-bridge-adapter-status";
-import {
-  type McpAttachedCredentialRevision,
-  observeMcpCredentialRevision,
-} from "./mcp-bridge-provider-readiness";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import { executeGatewaySupervisorAction } from "./process-recovery";
 
 const HERMES_MCP_EXEC_TIMEOUT_SECONDS = 620;
@@ -108,12 +106,21 @@ function parseLastJsonObject(output: string): Record<string, unknown> | null {
   return null;
 }
 
+/** Refuse an in-sandbox Hermes config mutation while config is locked. */
+export function assertHermesMcpConfigMutationAllowed(sandboxName: string): void {
+  if (isShieldsDown(sandboxName, false)) return;
+  throw new McpBridgeError(
+    `Hermes sandbox '${sandboxName}' has shields up or an unreadable shields posture. Run \`nemohermes ${sandboxName} shields down --timeout 15m --reason "MCP maintenance"\` before changing MCP configuration.`,
+  );
+}
+
 /**
  * Prove the running Hermes sandbox contains the packaged transaction helper
  * and can invoke it through OpenShell current main's ordinary exec path before
  * changing a global provider, policy, attachment, or adapter.
  */
 export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): void {
+  assertHermesMcpConfigMutationAllowed(sandboxName);
   let lastDetail = "";
   const probe = (): boolean => {
     let result: ReturnType<typeof runOpenshellProviderCommand>;
@@ -299,27 +306,6 @@ export function registerHermesAdapter(
     { envValues, requireReload: true },
   );
   verifyHermesAdapterRegistration(sandboxName, entry, credentialRevision);
-  if (credentialRevision === undefined) return;
-  const afterReloadRevision = observeMcpCredentialRevision(sandboxName, entry);
-  if (afterReloadRevision === credentialRevision) return;
-  if (afterReloadRevision === "absent" || afterReloadRevision === "canonical") {
-    throw new McpBridgeError(
-      `Hermes MCP credential revision was unavailable after reloading '${entry.server}'.`,
-    );
-  }
-  runHermesAdapterCommand(
-    sandboxName,
-    entry,
-    buildHermesMcpRegisterCommand(entry, true, afterReloadRevision),
-    `Hermes MCP config convergence failed for '${entry.server}'.`,
-    { envValues, requireReload: true },
-  );
-  verifyHermesAdapterRegistration(sandboxName, entry, afterReloadRevision);
-  if (observeMcpCredentialRevision(sandboxName, entry) !== afterReloadRevision) {
-    throw new McpBridgeError(
-      `Hermes MCP credential revision did not converge after reloading '${entry.server}'.`,
-    );
-  }
 }
 
 export function unregisterHermesAdapter(

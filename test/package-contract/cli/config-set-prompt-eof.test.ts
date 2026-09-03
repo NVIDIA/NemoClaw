@@ -15,14 +15,18 @@ const OPENSHELL_PATH = JSON.stringify(
   path.join(REPO_ROOT, "dist", "lib", "adapters", "openshell", "client.js"),
 );
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"));
+const SHIELDS_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "shields", "index.js"));
+const SHIELDS_AUDIT_PATH = JSON.stringify(
+  path.join(REPO_ROOT, "dist", "lib", "shields", "audit.js"),
+);
+const TIMER_BOUND_LOCK_PATH = JSON.stringify(
+  path.join(REPO_ROOT, "dist", "lib", "shields", "timer-bound-lock.js"),
+);
 const LIFECYCLE_LOCK_PATH = JSON.stringify(
   path.join(REPO_ROOT, "dist", "lib", "state", "mcp-lifecycle-lock.js"),
 );
-const LIFECYCLE_LOCK_ACQUISITION_PATH = JSON.stringify(
-  path.join(REPO_ROOT, "dist", "lib", "state", "mcp-lifecycle-lock-acquisition.js"),
-);
 const CONFIG_LOCK_PATH = JSON.stringify(
-  path.join(REPO_ROOT, "dist", "lib", "sandbox", "openclaw-config-guard.js"),
+  path.join(REPO_ROOT, "dist", "lib", "shields", "openclaw-config-lock.js"),
 );
 const PRIVILEGED_EXEC_PATH = JSON.stringify(
   path.join(REPO_ROOT, "dist", "lib", "sandbox", "privileged-exec.js"),
@@ -55,35 +59,32 @@ function runConfigSetWithInput(input: string) {
     "  }),",
     "  runOpenshellCommand: () => ({ status: 0 }),",
     "});",
-    "install(" + LIFECYCLE_LOCK_PATH + ", {",
-    "  withMcpLifecycleLock: async (_sandboxName, callback) => callback(),",
-    "  withSandboxMutationLock: (_sandboxName, callback) => callback(),",
+    "install(" + SHIELDS_PATH + ", {",
+    "  isShieldsDown: () => true,",
     "});",
-    "install(" + LIFECYCLE_LOCK_ACQUISITION_PATH + ", {",
-    "  isMcpLifecycleLockHeld: () => true,",
-    "  withMcpLifecycleLock: async (_sandboxName, callback) => callback(),",
-    "  withMcpLifecycleLockSync: (_sandboxName, callback) => callback(),",
+    "install(" + SHIELDS_AUDIT_PATH + ", {",
+    "  appendAuditEntry: () => undefined,",
+    "});",
+    "install(" + TIMER_BOUND_LOCK_PATH + ", {",
+    "  withTimerBoundShieldsMutationLock: (_sandboxName, _command, callback) => callback(),",
+    "});",
+    "install(" + LIFECYCLE_LOCK_PATH + ", {",
+    "  withSandboxMutationLock: (_sandboxName, callback) => callback(),",
     "});",
     "install(" + CONFIG_LOCK_PATH + ", {",
     "  validateOpenClawConfigCandidate: () => [],",
-    "  writeOpenClawConfigCandidate: (_privileged, input) => ({",
+    "  runOpenClawConfigGuard: (_privileged, _action, options) => ({",
     "    issues: [],",
+    "    chattrApplied: true,",
     '    configSha256: require("node:crypto")',
     '      .createHash("sha256")',
-    '      .update(input || "")',
+    '      .update(options.input || "")',
     '      .digest("hex"),',
     "  }),",
     "});",
     "install(" + PRIVILEGED_EXEC_PATH + ", {",
-    "  capturePrivilegedSandboxCommand: () => Buffer.alloc(0),",
-    "  executePrivilegedSandboxCommand: () => ({",
-    "    status: 0,",
-    "    signal: null,",
-    "    stdout: Buffer.alloc(0),",
-    "    stderr: Buffer.alloc(0),",
-    "  }),",
+    '  privilegedSandboxExecArgv: () => ["docker", "exec", "container-id"],',
     '  resolveDirectSandboxContainer: () => "container-id",',
-    '  resolvePrivilegedSandboxTarget: () => ({ resourceHandle: "container-id" }),',
     "  withPrivilegedSandboxExecutionLease: (_sandboxName, _operation, callback) => callback(),",
     "});",
     "",
@@ -161,10 +162,7 @@ describe("config set new-key prompt", () => {
     expect(result.stderr).toContain("Write this new key? [y/N]");
     expect(result.stderr).not.toContain("Aborted.");
     expect(result.stderr).not.toContain("No input available on stdin");
-    expect(
-      result.stdout,
-      `status=${String(result.status)} stderr=${String(result.stderr)}`,
-    ).toContain("Writing config to sandbox");
+    expect(result.stdout).toContain("Writing config to sandbox");
     expect(result.stdout).toContain("config updated");
     expect(result.status).toBe(0);
   }, 45_000);

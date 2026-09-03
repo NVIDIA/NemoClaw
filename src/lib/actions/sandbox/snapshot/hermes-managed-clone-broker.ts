@@ -3,7 +3,7 @@
 
 import { randomBytes } from "node:crypto";
 
-import { checkOpenAiInferenceProviderProfile } from "../../../adapters/openshell/provider-profile-registration";
+import { checkOpenAiInferenceProviderProfile } from "../../../adapters/openshell/provider-profile";
 import { cloneAndDeepFreeze } from "../../../core/immutable";
 import {
   getHermesToolGatewayCloneBroker,

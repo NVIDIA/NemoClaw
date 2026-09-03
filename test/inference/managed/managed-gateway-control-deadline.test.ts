@@ -332,10 +332,9 @@ def advance(duration, timeout=None):
 
 
 class ScriptedSocket:
-    def __init__(self, chunks, request_delay, close_error=False):
+    def __init__(self, chunks, request_delay):
         self.chunks = list(chunks)
         self.request_delay = request_delay
-        self.close_error = close_error
         self.timeout = None
         self.closed = False
 
@@ -358,8 +357,6 @@ class ScriptedSocket:
 
     def close(self):
         self.closed = True
-        if self.close_error:
-            raise OSError("transport already closed")
 
 
 class ScriptedConnection(real_connection):
@@ -368,7 +365,6 @@ class ScriptedConnection(real_connection):
         self.sock = ScriptedSocket(
             active["chunks"],
             active["request_delay"],
-            active.get("close_error", False),
         )
 
 
@@ -396,12 +392,6 @@ results = {
         "connect_delay": 0.0,
         "request_delay": 0.0,
         "chunks": [(0.0, complete)],
-    }),
-    "healthy_close_race": check({
-        "connect_delay": 0.0,
-        "request_delay": 0.0,
-        "chunks": [(0.0, complete)],
-        "close_error": True,
     }),
     "unauthorized": check({
         "connect_delay": 0.0,
@@ -465,7 +455,6 @@ describe("managed gateway recovery deadline", () => {
   it("applies one recovery deadline to every HTTP health check phase (#8262)", () => {
     expect(runHarness(HTTP_DEADLINE_HARNESS)).toEqual({
       healthy: true,
-      healthy_close_race: true,
       slow_body: false,
       slow_connect: false,
       slow_headers: false,

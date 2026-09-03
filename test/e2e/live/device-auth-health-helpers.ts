@@ -3,7 +3,6 @@
 
 import fs from "node:fs";
 
-import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -125,7 +124,7 @@ export async function installDeviceAuthSandbox(
       cwd: REPO_ROOT,
       env: commandEnv(inference),
       redactionValues: [inference.apiKey],
-      timeoutMs: execTimeout(20 * 60_000),
+      timeoutMs: 20 * 60_000,
     });
     fs.writeFileSync(installLog, resultText(install));
     const shouldRetry =

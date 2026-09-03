@@ -16,7 +16,6 @@ import {
   captureHermesPortablePodmanExecutableFileAuthority,
   createHermesPortablePodmanCommandAuthority,
   createHermesPortablePodmanInferenceInspectionAuthority,
-  createHermesPortablePodmanOperationEngines,
   type HermesPortablePodmanAuthorityDeps,
 } from "./hermes-portable-podman-authority";
 
@@ -213,35 +212,6 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
   it("recaptures exact executable identity without querying Podman for read-only proof", () => {
     const generation = { executableInode: 10n, parentInode: 20n };
     const capture = successfulCapture();
-    const executableAuthorityDeps = executableDeps(generation);
-    const readFile = vi.spyOn(executableAuthorityDeps, "readFile");
-    const deps = authorityDeps(capture, executableAuthorityDeps);
-    const runtime = runtimeAuthority();
-    const sourceEnv = { PATH: "/usr/bin", HOME: "/home/test" };
-    const recorded = captureHermesPortablePodmanExecutableAuthority(
-      socketAuthority(),
-      runtime,
-      sourceEnv,
-      deps,
-    );
-    capture.mockClear();
-    readFile.mockClear();
-
-    expect(
-      captureHermesPortablePodmanExecutableFileAuthority(
-        socketAuthority(),
-        { runtimeAuthority: runtime, podmanExecutableAuthority: recorded },
-        sourceEnv,
-        deps,
-      ),
-    ).toEqual(recorded);
-    expect(capture).not.toHaveBeenCalled();
-    expect(readFile).not.toHaveBeenCalled();
-  });
-
-  it("rejects retained file proof when Podman executable metadata drifts", () => {
-    const generation = { executableInode: 10n, parentInode: 20n };
-    const capture = successfulCapture();
     const deps = authorityDeps(capture, executableDeps(generation));
     const runtime = runtimeAuthority();
     const sourceEnv = { PATH: "/usr/bin", HOME: "/home/test" };
@@ -252,16 +222,15 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
       deps,
     );
     capture.mockClear();
-    generation.executableInode = 11n;
 
-    expect(() =>
+    expect(
       captureHermesPortablePodmanExecutableFileAuthority(
         socketAuthority(),
         { runtimeAuthority: runtime, podmanExecutableAuthority: recorded },
         sourceEnv,
         deps,
       ),
-    ).toThrow("changed after it was qualified");
+    ).toEqual(recorded);
     expect(capture).not.toHaveBeenCalled();
   });
 
@@ -300,39 +269,7 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
     ]);
   });
 
-  it("performs one full executable assertion at each adjacent authority boundary", () => {
-    const generation = { executableInode: 10n, parentInode: 20n };
-    const capture = successfulCapture();
-    const executableAuthorityDeps = executableDeps(generation);
-    const readFile = vi.fn(executableAuthorityDeps.readFile!);
-    const deps = authorityDeps(capture, { ...executableAuthorityDeps, readFile });
-    const runtime = runtimeAuthority();
-    const socket = socketAuthority();
-    const sourceEnv = { PATH: "/usr/bin", HOME: "/home/test" };
-    const authority = captureHermesPortablePodmanExecutableAuthority(
-      socket,
-      runtime,
-      sourceEnv,
-      deps,
-    );
-    readFile.mockClear();
-
-    const command = createHermesPortablePodmanCommandAuthority(
-      authority,
-      socket,
-      runtime,
-      sourceEnv,
-      deps,
-    );
-    expect(readFile).toHaveBeenCalledTimes(1);
-    readFile.mockClear();
-
-    command.assertTransactionCurrent();
-
-    expect(readFile).toHaveBeenCalledTimes(1);
-  });
-
-  it("latches wrapper assertion failure across operation engines", () => {
+  it("checks transaction currentness without repeating the Podman behavior matrix", () => {
     const generation = { executableInode: 10n, parentInode: 20n };
     const capture = successfulCapture();
     const deps = authorityDeps(capture, executableDeps(generation));
@@ -345,7 +282,7 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
       sourceEnv,
       deps,
     );
-    const engines = createHermesPortablePodmanOperationEngines(
+    const command = createHermesPortablePodmanCommandAuthority(
       authority,
       socket,
       runtime,
@@ -353,14 +290,16 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
       deps,
     );
     capture.mockClear();
-    generation.executableInode = 11n;
 
-    expect(() => engines.assertTransactionCurrent()).toThrow("changed after it was qualified");
-    generation.executableInode = 10n;
-    expect(() => engines.sandboxLifecycle.capture(["info"])).toThrow(
-      "changed after it was qualified",
-    );
+    command.assertTransactionCurrent();
+
     expect(capture).not.toHaveBeenCalled();
+    generation.executableInode = 11n;
+    expect(() => command.assertTransactionCurrent()).toThrow("changed after it was qualified");
+    expect(capture).not.toHaveBeenCalled();
+    generation.executableInode = 10n;
+    command.assertCurrent();
+    expect(capture).toHaveBeenCalled();
   });
 
   it.each([

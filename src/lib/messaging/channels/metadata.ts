@@ -58,7 +58,6 @@ export interface MessagingPolicyPresetMetadata {
   readonly agentPolicyKeys: Partial<Record<MessagingAgentId, readonly string[]>>;
   readonly requiredAtCreate: boolean;
   readonly validationWarningLines: readonly string[];
-  readonly validationWarningLinesByAgent: Partial<Record<MessagingAgentId, readonly string[]>>;
 }
 
 export interface OpenClawRuntimeChannelMetadata {
@@ -268,7 +267,6 @@ export function listMessagingPolicyPresetMetadata(
         agentPolicyKeys: normalized.agentPolicyKeys ?? {},
         requiredAtCreate: normalized.requiredAtCreate === true,
         validationWarningLines: normalized.validationWarningLines ?? [],
-        validationWarningLinesByAgent: normalized.validationWarningLinesByAgent ?? {},
       };
     }),
   );
@@ -343,14 +341,10 @@ export function getMessagingPolicyPresetValidationWarnings(
 ): Readonly<Record<string, readonly string[]>> {
   const result: Record<string, string[]> = {};
   for (const preset of listMessagingPolicyPresetMetadata(options)) {
-    const agentLines = options.agent
-      ? (preset.validationWarningLinesByAgent[options.agent] ?? [])
-      : Object.values(preset.validationWarningLinesByAgent).flatMap((lines) => lines ?? []);
-    const warningLines = [...preset.validationWarningLines, ...agentLines];
-    if (warningLines.length === 0) continue;
+    if (preset.validationWarningLines.length === 0) continue;
     result[preset.presetName] = uniqueStrings([
       ...(result[preset.presetName] ?? []),
-      ...warningLines,
+      ...preset.validationWarningLines,
     ]);
   }
   return result;

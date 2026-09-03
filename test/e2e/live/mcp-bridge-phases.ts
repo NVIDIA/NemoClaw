@@ -12,7 +12,7 @@ export const MCP_BRIDGE_PHASES = {
     "start Hermes inference and MCP endpoints",
     "onboard the Hermes MCP sandbox",
     "configure and inspect the Hermes MCP bridge",
-    "restart Hermes and prove config rollback",
+    "restore Hermes shields, restart, and prove rollback",
     "exercise lifecycle and confirm Hermes bridge removal",
   ],
   deepagents: [

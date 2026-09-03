@@ -15,14 +15,13 @@ export interface PreflightGatewaySequenceDeps {
   isDockerDriverGatewayEnabled: boolean;
   gatewayName: string;
   cliDisplayName: string;
-  dashboardPort?: number;
+  dashboardPort: number;
   verifyGatewayContainerRunning(name: string): GatewayContainerState;
   recoverGatewayRuntime(): Promise<boolean>;
   waitForGatewayHttpReady(): Promise<boolean>;
   getGatewayLocalEndpoint(): string;
   stopDashboardForward(): void;
   stopAllDashboardForwards(): void;
-  runOpenshell?(args: string[], options: { ignoreError: true }): unknown;
   getGatewayClusterImageDrift(): { currentVersion: string; expectedVersion: string } | null;
   exitProcess(code: number): never;
   destroyGateway(): boolean;
@@ -31,6 +30,7 @@ export interface PreflightGatewaySequenceDeps {
     successMessage: string,
     failureMessage: string,
   ): GatewayReuseState;
+  runOpenshell(args: string[], options: { ignoreError: true }): unknown;
   dockerInspect(
     args: string[],
     opts: { ignoreError: true; suppressOutput: true },
@@ -84,9 +84,10 @@ export async function runPreflightGatewaySequence(
     isDockerDriverGatewayEnabled: deps.isDockerDriverGatewayEnabled,
     externallySupervised: deps.externallySupervised,
     cliDisplayName: deps.cliDisplayName,
+    dashboardPort: deps.dashboardPort,
     log: deps.log,
     warn: deps.warn,
-    stopAllDashboardForwards: deps.stopAllDashboardForwards,
+    runOpenshell: deps.runOpenshell,
     destroyGateway: deps.destroyGateway,
     destroyGatewayForReuse: deps.destroyGatewayForReuse,
   });

@@ -92,6 +92,7 @@ describe("rebuild filesystem restore", () => {
       configPath: "/sandbox/.hermes/config.yaml",
       configFile: "config.yaml",
       format: "yaml",
+      stateLockPlanInImage: true,
     } as const;
     vi.spyOn(sandboxConfig, "resolveAgentConfig").mockReturnValue(target);
     const migrate = vi
@@ -128,6 +129,7 @@ describe("rebuild filesystem restore", () => {
       configPath: "/sandbox/.openclaw/openclaw.json",
       configFile: "openclaw.json",
       format: "json",
+      stateLockPlanInImage: true,
     });
     const migrate = vi.spyOn(sandboxConfig, "restoreHermesDashboardConfig");
 

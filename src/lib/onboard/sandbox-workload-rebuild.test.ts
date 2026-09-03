@@ -243,19 +243,15 @@ function provider(
 function replacement(
   agent: ShippedManagedImageAgent,
   platform: ManagedImagePlatform = "linux/amd64",
-  revision?: string,
 ) {
   const image = managedContract(agent, "new", platform);
-  const contract = revision
-    ? { ...image, source: { ...image.source, revision } }
-    : image;
   return {
     source: {
       kind: "managed-image" as const,
-      reference: contract.reference,
-      contract,
+      reference: image.reference,
+      contract: image,
     },
-    release: contract.source.release,
+    release: image.source.release,
     fallbackDiagnostic: null,
   };
 }
@@ -386,10 +382,8 @@ describe("managed workload rebuild preflight", () => {
     expect(prepare).not.toHaveBeenCalled();
   });
 
-  it("accepts an exact PR replacement catalog newer than durable authority (#9464)", async () => {
-    const prepare = vi.fn(async () =>
-      replacement("openclaw", "linux/amd64", "c".repeat(40)),
-    );
+  it("rejects a PR catalog revision that conflicts with durable authority (#9464)", async () => {
+    const prepare = vi.fn(async () => replacement("openclaw"));
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
     const catalogPath = path.join(fixtureRoot, "catalog.json");
     fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
@@ -400,23 +394,14 @@ describe("managed workload rebuild preflight", () => {
     vi.stubEnv("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG", catalogPath);
 
     try {
-      const handoff = await prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
-        runtime: runtime(),
-        provider: provider(),
-        version: "0.0.100",
-      });
-
-      expect(handoff?.previousReceipt.sourceRevision).toBe("a".repeat(40));
-      expect(handoff?.replacement.source.contract.source.revision).toBe("c".repeat(40));
-      expect(prepare).toHaveBeenCalledExactlyOnceWith({
-        agentName: "openclaw",
-        legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
-        runtime: runtime(),
-        version: "0.0.100",
-        policy: "require-managed",
-        catalogPath,
-        expectedCatalogRevision: "c".repeat(40),
-      });
+      await expect(
+        prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
+          runtime: runtime(),
+          provider: provider(),
+          version: "0.0.100",
+        }),
+      ).rejects.toThrow("live qualification revision does not match the durable workload receipt");
+      expect(prepare).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }

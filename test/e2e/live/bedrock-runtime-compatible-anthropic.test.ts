@@ -9,8 +9,8 @@ import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupAcquiredResource,
   cleanupExistingPath,
@@ -71,8 +71,8 @@ const COMPATIBLE_KEY =
 const AGENT = process.env.NEMOCLAW_AGENT ?? "openclaw";
 const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ?? (AGENT === "hermes" ? "e2e-hm-bedrock" : "e2e-oc-bedrock");
-const ONBOARD_TIMEOUT_MS = execTimeout(30 * 60_000);
-const TEST_TIMEOUT_MS = testTimeout(60 * 60_000);
+const ONBOARD_TIMEOUT_MS = 30 * 60_000;
+const TEST_TIMEOUT_MS = 60 * 60_000;
 const SANDBOX_TIMEOUT_MS = 180_000;
 
 type AgentName = "openclaw" | "hermes";
@@ -1115,9 +1115,7 @@ async function assertNoBedrockLeaks(options: {
   expect(leaks).toEqual([]);
 }
 
-test(
-  "bedrock runtime compatible Anthropic endpoint routes through managed inference.local",
-  {
+test("bedrock runtime compatible Anthropic endpoint routes through managed inference.local", {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -1128,8 +1126,7 @@ test(
       "audit Bedrock traffic and secret isolation",
     ],
   },
-  },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   assertAgent(AGENT);
   const shard =
     process.env.GITHUB_ACTIONS === "true"
@@ -1191,7 +1188,7 @@ test(
     sandboxName: SANDBOX_NAME,
     boundary: "host-bedrock-mock-source-cli-onboard-and-sandbox-exec",
     contracts: [
-      "the selected runtime, python3, source CLI, and OpenShell are available",
+      "Docker, python3, source CLI, and OpenShell are available",
       "bedrock-runtime.us-east-1.amazonaws.com maps to the host fake endpoint",
       "non-interactive anthropicCompatible onboarding selects compatible-anthropic-endpoint",
       "OpenShell owns the hidden Bedrock adapter token while sandbox config uses inference.local",
@@ -1202,10 +1199,19 @@ test(
     ],
   });
 
-    await runtimeProvider.requireAvailable({
-    artifactName: "prereq-runtime-info-bedrock-runtime",
-      scenarioLabel: "Bedrock Runtime compatible Anthropic",
+  const docker = await host.command("docker", ["info"], {
+    artifactName: "prereq-docker-info-bedrock-runtime",
+    env: testEnv(home),
+    timeoutMs: 30_000,
   });
+  if (docker.exitCode !== 0) {
+    if (process.env.GITHUB_ACTIONS === "true") {
+      throw new Error(
+        `Docker is required for Bedrock Runtime compatible Anthropic E2E: ${resultText(docker)}`,
+      );
+    }
+    skip("Docker is required for Bedrock Runtime compatible Anthropic E2E");
+  }
   expectExitZero(
     await host.command("python3", ["--version"], {
       artifactName: "prereq-python-version-bedrock-runtime",
@@ -1307,5 +1313,4 @@ test(
       leakScanPassed: true,
     },
   });
-  },
-);
+});

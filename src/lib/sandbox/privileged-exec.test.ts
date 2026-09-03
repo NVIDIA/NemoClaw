@@ -8,28 +8,25 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import {
-  dockerContainerNameMatchesSandbox as containerNameMatchesSandbox,
-  selectDockerPrivilegedSandboxTarget as selectDirectSandboxContainer,
-} from "../onboard/runtime-provider/docker-privileged-sandbox-identity";
+import { createPersistedLifecycleStoreOrThrow } from "../../../test/helpers/privileged-exec-test-helpers";
 
 // The shared source hook preserves the writable CommonJS cache used by these mocks.
 const require = createRequire(import.meta.url);
 const requireCache: Record<string, unknown> = require.cache as any;
 const helperPath = require.resolve("./privileged-exec");
-const currentRuntimeProvidersPath = require.resolve("../onboard/runtime-provider/current");
-const runtimeProviderRegistryPath = require.resolve("../onboard/runtime-provider/registry");
-const runtimeProviderSelectionPath = require.resolve("../onboard/runtime-provider/selection");
-const dockerControlPath =
-  require.resolve("../onboard/runtime-provider/docker-privileged-sandbox-control");
-const dockerOperationAuthorityPath =
-  require.resolve("../onboard/runtime-provider/docker-operation-authority");
 const dockerRunPath = require.resolve("../adapters/docker/run");
 const portableLifecyclePath = require.resolve("../onboard/experimental/portable-demo-lifecycle");
 const registryPath = require.resolve("../state/registry");
 const lifecycleGenerationPath = require.resolve("../state/registry/lifecycle-generation");
-const lifecycleGenerationCasPath = require.resolve("../state/registry/lifecycle-generation-cas");
-const { buildStoppedDockerSandboxChannelCleanupScript } = require(helperPath);
+const persistedLifecyclePath =
+  require.resolve("../onboard/runtime-provider/persisted-engine-lifecycle");
+const statePathsPath = require.resolve("../state/paths");
+const transitionLockPath = require.resolve("../shields/transition-lock");
+const {
+  buildStoppedDockerSandboxChannelCleanupScript,
+  containerNameMatchesSandbox,
+  selectDirectSandboxContainer,
+} = require(helperPath);
 const PINNED_CLEANUP_IMAGE =
   "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
 const EXPECTED_WECHAT_STATE_PATHS = [
@@ -69,48 +66,25 @@ function withPrivilegedExecMocks<T>(
         registryGeneration?: string;
       },
     ) => { assertRuntimeAuthority: () => void; containerId: string; dockerHost: string } | null;
+    stateMutationGate?: {
+      readonly active: boolean;
+      readonly stateDir: string;
+      readonly storeError?: Error;
+    };
+    withShieldsTransitionLock?: <T>(sandboxName: string, operation: string, fn: () => T) => T;
   },
   run: (helper: typeof import("./privileged-exec")) => T,
 ): T {
   const priorHelper = require.cache[helperPath];
-  const priorCurrentRuntimeProviders = require.cache[currentRuntimeProvidersPath];
-  const priorRuntimeProviderRegistry = require.cache[runtimeProviderRegistryPath];
-  const priorRuntimeProviderSelection = require.cache[runtimeProviderSelectionPath];
-  const priorDockerControl = require.cache[dockerControlPath];
-  const priorDockerOperationAuthority = require.cache[dockerOperationAuthorityPath];
   const priorDockerRun = require.cache[dockerRunPath];
   const priorPortableLifecycle = require.cache[portableLifecyclePath];
   const priorRegistry = require.cache[registryPath];
   const priorLifecycleGeneration = require.cache[lifecycleGenerationPath];
-  const priorLifecycleGenerationCas = require.cache[lifecycleGenerationCasPath];
+  const priorPersistedLifecycle = require.cache[persistedLifecyclePath];
+  const priorStatePaths = require.cache[statePathsPath];
+  const priorTransitionLock = require.cache[transitionLockPath];
 
   delete require.cache[helperPath];
-  delete require.cache[dockerControlPath];
-  delete require.cache[runtimeProviderSelectionPath];
-  requireCache[dockerOperationAuthorityPath] = {
-    id: dockerOperationAuthorityPath,
-    filename: dockerOperationAuthorityPath,
-    loaded: true,
-    exports: {
-      createDockerOperationAuthority: () => ({
-        engine: {
-          capture: (args: readonly string[], timeout = 30_000) =>
-            args[0] === "ps"
-              ? {
-                  status: 0,
-                  stdout: deps.dockerCapture(args, { timeout }),
-                  stderr: "",
-                }
-              : (deps.dockerRun?.(args, { timeout }) ?? {
-                  status: 0,
-                  stdout: "",
-                  stderr: "",
-                  error: null,
-                }),
-        },
-      }),
-    },
-  } as any;
   requireCache[dockerRunPath] = {
     id: dockerRunPath,
     filename: dockerRunPath,
@@ -148,61 +122,48 @@ function withPrivilegedExecMocks<T>(
         deps.compareAndSetLegacySandboxLifecycleGeneration ?? (() => false),
     },
   } as any;
-  requireCache[lifecycleGenerationCasPath] = {
-    id: lifecycleGenerationCasPath,
-    filename: lifecycleGenerationCasPath,
+  requireCache[persistedLifecyclePath] = {
+    id: persistedLifecyclePath,
+    filename: persistedLifecyclePath,
     loaded: true,
     exports: {
-      compareAndSetSandboxLifecycleGeneration:
-        deps.compareAndSetLegacySandboxLifecycleGeneration ?? (() => false),
+      PERSISTED_ENGINE_LIFECYCLE_DIRECTORY: "runtime-provider-lifecycle",
+      createFilePersistedEngineLifecycleStore: () =>
+        createPersistedLifecycleStoreOrThrow(deps.stateMutationGate),
+      hasActivePersistedEngineStateMutationTarget: () => deps.stateMutationGate?.active ?? false,
     },
   } as any;
-  const dockerControl = require(dockerControlPath).createDockerPrivilegedSandboxControl();
-  requireCache[currentRuntimeProvidersPath] = {
-    id: currentRuntimeProvidersPath,
-    filename: currentRuntimeProvidersPath,
+  requireCache[statePathsPath] = {
+    id: statePathsPath,
+    filename: statePathsPath,
     loaded: true,
-    exports: { CURRENT_RUNTIME_PROVIDER_BUNDLES: {} },
+    exports: {
+      resolveNemoclawStateDir: () => deps.stateMutationGate?.stateDir ?? "/nonexistent",
+    },
   } as any;
-  const requireRuntimeProviderBundleForSandbox = (sandbox: { openshellDriver?: string | null }) => {
-    const providerId =
-      !sandbox.openshellDriver || sandbox.openshellDriver === "vm"
-        ? "docker"
-        : sandbox.openshellDriver;
-    return providerId === "docker"
-      ? {
-          identity: { id: "docker" },
-          lifecycle: { supported: true, privilegedSandboxControl: dockerControl },
-        }
-      : { identity: { id: providerId }, lifecycle: { supported: false } };
-  };
-  requireCache[runtimeProviderRegistryPath] = {
-    id: runtimeProviderRegistryPath,
-    filename: runtimeProviderRegistryPath,
+  requireCache[transitionLockPath] = {
+    id: transitionLockPath,
+    filename: transitionLockPath,
     loaded: true,
-    exports: { requireRuntimeProviderBundleForSandbox },
-  } as any;
-  requireCache[runtimeProviderSelectionPath] = {
-    id: runtimeProviderSelectionPath,
-    filename: runtimeProviderSelectionPath,
-    loaded: true,
-    exports: { requireRuntimeProviderBundleForSandbox },
+    exports: {
+      resolveShieldsStateDir: () => deps.stateMutationGate?.stateDir ?? "/nonexistent",
+      withShieldsTransitionLock:
+        deps.withShieldsTransitionLock ??
+        (<T>(_sandboxName: string, _operation: string, fn: () => T): T => fn()),
+    },
   } as any;
 
   try {
     return run(require(helperPath));
   } finally {
     restoreRequireCacheEntry(helperPath, priorHelper);
-    restoreRequireCacheEntry(currentRuntimeProvidersPath, priorCurrentRuntimeProviders);
-    restoreRequireCacheEntry(runtimeProviderRegistryPath, priorRuntimeProviderRegistry);
-    restoreRequireCacheEntry(runtimeProviderSelectionPath, priorRuntimeProviderSelection);
-    restoreRequireCacheEntry(dockerControlPath, priorDockerControl);
-    restoreRequireCacheEntry(dockerOperationAuthorityPath, priorDockerOperationAuthority);
     restoreRequireCacheEntry(dockerRunPath, priorDockerRun);
     restoreRequireCacheEntry(portableLifecyclePath, priorPortableLifecycle);
     restoreRequireCacheEntry(registryPath, priorRegistry);
     restoreRequireCacheEntry(lifecycleGenerationPath, priorLifecycleGeneration);
-    restoreRequireCacheEntry(lifecycleGenerationCasPath, priorLifecycleGenerationCas);
+    restoreRequireCacheEntry(persistedLifecyclePath, priorPersistedLifecycle);
+    restoreRequireCacheEntry(statePathsPath, priorStatePaths);
+    restoreRequireCacheEntry(transitionLockPath, priorTransitionLock);
   }
 }
 
@@ -235,13 +196,7 @@ describe("privileged sandbox exec routing", () => {
     const mounts = JSON.stringify([
       {
         Type: "volume",
-        Name: "nemoclaw-openclaw-state-v1-alpha",
-        Destination: "/sandbox/.openclaw",
-        RW: true,
-      },
-      {
-        Type: "bind",
-        Source: "/var/lib/openshell/sandboxes/alpha",
+        Name: "nemoclaw-alpha-state",
         Destination: "/sandbox",
         RW: true,
       },
@@ -269,12 +224,6 @@ describe("privileged sandbox exec routing", () => {
         status: 1,
         stdout: "",
         stderr: "Error: No such object: cleanup-helper",
-        error: null,
-      },
-      {
-        status: 0,
-        stdout: `${containerId}\tfalse\t${mounts}\n`,
-        stderr: "",
         error: null,
       },
       {
@@ -309,15 +258,15 @@ describe("privileged sandbox exec routing", () => {
         getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
-      ({ clearStoppedSandboxStateRoots }) => {
-        expect(clearStoppedSandboxStateRoots("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual({
-          cleared: true,
-        });
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          { cleared: true },
+        );
       },
     );
 
-    const helperArgv = runDocker.mock.calls[4]?.[0];
-    expect(runDocker).toHaveBeenCalledTimes(9);
+    const helperArgv = runDocker.mock.calls[3]?.[0];
+    expect(runDocker).toHaveBeenCalledTimes(8);
     expect(helperArgv).toEqual(
       expect.arrayContaining([
         "create",
@@ -329,7 +278,7 @@ describe("privileged sandbox exec routing", () => {
         "--cap-add",
         "DAC_OVERRIDE",
         "--mount",
-        "type=volume,src=nemoclaw-openclaw-state-v1-alpha,dst=/sandbox/.openclaw,volume-nocopy",
+        "type=volume,src=nemoclaw-alpha-state,dst=/sandbox,volume-nocopy",
         PINNED_CLEANUP_IMAGE,
       ]),
     );
@@ -338,10 +287,9 @@ describe("privileged sandbox exec routing", () => {
     expect(helperArgv?.join("\0")).not.toContain("/sandbox/project");
     expect(helperArgv).not.toContain("/bin/sh");
     expect(helperArgv?.join("\0")).not.toContain("rm -rf");
-    expect(helperArgv?.at(-2)).toBe(JSON.stringify(EXPECTED_WECHAT_STATE_PATHS));
-    expect(helperArgv?.at(-1)).toBe("/sandbox/.openclaw");
-    expect(runDocker.mock.calls[5]?.[0]).toEqual(["start", "--attach", helperId]);
-    expect(runDocker.mock.calls[6]?.[0]).toEqual(["rm", "-f", helperId]);
+    expect(helperArgv?.at(-1)).toBe(JSON.stringify(EXPECTED_WECHAT_STATE_PATHS));
+    expect(runDocker.mock.calls[4]?.[0]).toEqual(["start", "--attach", helperId]);
+    expect(runDocker.mock.calls[5]?.[0]).toEqual(["rm", "-f", helperId]);
   });
 
   it("deletes only the exact stopped-channel directories", () => {
@@ -404,17 +352,16 @@ describe("privileged sandbox exec routing", () => {
         getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
-      ({ clearStoppedSandboxStateRoots }) => {
-        expect(clearStoppedSandboxStateRoots("alpha", ["/sandbox/.openclaw/../project"])).toEqual({
-          cleared: false,
-          failure: "state-paths-invalid",
-        });
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(
+          clearStoppedDockerSandboxChannelState("alpha", ["/sandbox/.openclaw/../project"]),
+        ).toEqual({ cleared: false, failure: "state-paths-invalid" });
       },
     );
     expect(captureDocker).not.toHaveBeenCalled();
   });
 
-  it("retains legacy VM cleanup through the registered Docker provider", () => {
+  it("refuses stopped cleanup for a non-Docker sandbox before Docker discovery", () => {
     const captureDocker = vi.fn(() => "");
     const runDocker = vi.fn((_args: readonly string[]) => {
       return { status: 0, stdout: "", stderr: "", error: null } as const;
@@ -427,15 +374,17 @@ describe("privileged sandbox exec routing", () => {
         getSandbox: () => ({ name: "alpha", openshellDriver: "vm" }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
-      ({ clearStoppedSandboxStateRoots }) => {
-        expect(clearStoppedSandboxStateRoots("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual({
-          cleared: false,
-          failure: "no-eligible-stopped-runtime",
-        });
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "driver-not-docker",
+          },
+        );
       },
     );
 
-    expect(captureDocker).toHaveBeenCalledOnce();
+    expect(captureDocker).not.toHaveBeenCalled();
     expect(runDocker).not.toHaveBeenCalled();
   });
 
@@ -457,11 +406,13 @@ describe("privileged sandbox exec routing", () => {
         getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
-      ({ clearStoppedSandboxStateRoots }) => {
-        expect(clearStoppedSandboxStateRoots("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual({
-          cleared: false,
-          failure: "state-resource-unavailable",
-        });
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "sandbox-volume-unavailable",
+          },
+        );
       },
     );
 
@@ -477,11 +428,13 @@ describe("privileged sandbox exec routing", () => {
         getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
-      ({ clearStoppedSandboxStateRoots }) => {
-        expect(clearStoppedSandboxStateRoots("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual({
-          cleared: false,
-          failure: "runtime-discovery-failed",
-        });
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "docker-discovery-failed",
+          },
+        );
       },
     );
   });
@@ -493,11 +446,13 @@ describe("privileged sandbox exec routing", () => {
         getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
-      ({ clearStoppedSandboxStateRoots }) => {
-        expect(clearStoppedSandboxStateRoots("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual({
-          cleared: false,
-          failure: "no-eligible-stopped-runtime",
-        });
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "no-eligible-stopped-container",
+          },
+        );
       },
     );
   });
@@ -509,11 +464,13 @@ describe("privileged sandbox exec routing", () => {
         getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
-      ({ clearStoppedSandboxStateRoots }) => {
-        expect(clearStoppedSandboxStateRoots("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual({
-          cleared: false,
-          failure: "runtime-ownership-invalid",
-        });
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "container-ownership-invalid",
+          },
+        );
       },
     );
   });
@@ -539,11 +496,13 @@ describe("privileged sandbox exec routing", () => {
         getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
-      ({ clearStoppedSandboxStateRoots }) => {
-        expect(clearStoppedSandboxStateRoots("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual({
-          cleared: false,
-          failure: "cleanup-helper-image-unavailable",
-        });
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "cleanup-helper-image-unavailable",
+          },
+        );
       },
     );
   });
@@ -553,9 +512,7 @@ describe("privileged sandbox exec routing", () => {
     const helperId = "d".repeat(64);
     const sandboxVolume = "nemoclaw-alpha-state";
     const ownerIdentity = createHash("sha256").update("alpha").digest("hex");
-    const volumeIdentity = createHash("sha256")
-      .update(JSON.stringify({ type: "volume", source: sandboxVolume, target: "/sandbox" }))
-      .digest("hex");
+    const volumeIdentity = createHash("sha256").update(sandboxVolume).digest("hex");
     const helperName = `nemoclaw-channel-cleanup-${ownerIdentity.slice(0, 24)}`;
     const mounts = JSON.stringify([
       { Type: "volume", Name: sandboxVolume, Destination: "/sandbox", RW: true },
@@ -624,11 +581,10 @@ describe("privileged sandbox exec routing", () => {
         getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
-      ({ clearStoppedSandboxStateRoots }) => {
-        expect(clearStoppedSandboxStateRoots("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual({
-          cleared: false,
-          failure: "cleanup-helper-failed",
-        });
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          { cleared: false, failure: "cleanup-helper-failed" },
+        );
       },
     );
 
@@ -670,12 +626,6 @@ describe("privileged sandbox exec routing", () => {
           stderr: "Error: No such object: cleanup-helper",
           error: null,
         },
-        {
-          status: 0,
-          stdout: `${containerId}\tfalse\t${mounts}\n`,
-          stderr: "",
-          error: null,
-        },
         { status: 0, stdout: `${helperId}\n`, stderr: "", error: null },
         { status: startStatus, stdout: "", stderr: "private helper detail", error: null },
         { status: 0, stdout: helperId, stderr: "", error: null },
@@ -697,17 +647,16 @@ describe("privileged sandbox exec routing", () => {
           getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
           listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
         },
-        ({ clearStoppedSandboxStateRoots }) => {
-          expect(clearStoppedSandboxStateRoots("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual({
-            cleared: false,
-            failure: expectedFailure,
-          });
+        ({ clearStoppedDockerSandboxChannelState }) => {
+          expect(
+            clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS),
+          ).toEqual({ cleared: false, failure: expectedFailure });
         },
       );
 
-      expect(runDocker.mock.calls[5]?.[0]).toEqual(["start", "--attach", helperId]);
-      expect(runDocker.mock.calls[6]?.[0]).toEqual(["rm", "-f", helperId]);
-      expect(runDocker).toHaveBeenCalledTimes(8);
+      expect(runDocker.mock.calls[4]?.[0]).toEqual(["start", "--attach", helperId]);
+      expect(runDocker.mock.calls[5]?.[0]).toEqual(["rm", "-f", helperId]);
+      expect(runDocker).toHaveBeenCalledTimes(7);
     },
   );
 
@@ -773,6 +722,109 @@ describe("privileged sandbox exec routing", () => {
         ]);
       },
     );
+  });
+
+  it("rejects every ordinary direct exec while a provider target claim is active", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-direct-exec-gate-"));
+    fs.mkdirSync(path.join(stateDir, "runtime-provider-lifecycle"));
+    let dockerPsCalls = 0;
+    try {
+      withPrivilegedExecMocks(
+        {
+          getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+          listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+          dockerCapture: () => {
+            dockerPsCalls += 1;
+            return "immutable-alpha-id\topenshell-alpha\n";
+          },
+          stateMutationGate: { active: true, stateDir },
+        },
+        ({ privilegedSandboxExecArgv }) => {
+          expect(() => privilegedSandboxExecArgv("alpha", ["sh", "-c", "write"])).toThrow(
+            /state mutation owns direct-container execution.*provider fence is released/i,
+          );
+        },
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+    expect(dockerPsCalls).toBe(0);
+  });
+
+  it("fails closed when a present lifecycle ledger cannot be validated", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-direct-exec-invalid-gate-"));
+    fs.symlinkSync(
+      path.join(stateDir, "missing-ledger-target"),
+      path.join(stateDir, "runtime-provider-lifecycle"),
+    );
+    let dockerPsCalls = 0;
+    try {
+      withPrivilegedExecMocks(
+        {
+          getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+          listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+          dockerCapture: () => {
+            dockerPsCalls += 1;
+            return "immutable-alpha-id\topenshell-alpha\n";
+          },
+          stateMutationGate: {
+            active: false,
+            stateDir,
+            storeError: new Error("lifecycle ledger is present but invalid"),
+          },
+        },
+        ({ privilegedSandboxExecArgv }) => {
+          expect(() => privilegedSandboxExecArgv("alpha", ["id"])).toThrow(
+            /lifecycle ledger is present but invalid/u,
+          );
+        },
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+    expect(dockerPsCalls).toBe(0);
+  });
+
+  it("holds the shared exclusion across target check and the complete exec callback", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-direct-exec-lease-"));
+    fs.mkdirSync(path.join(stateDir, "runtime-provider-lifecycle"));
+    const events: string[] = [];
+    let lockHeld = false;
+    try {
+      withPrivilegedExecMocks(
+        {
+          getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+          listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+          dockerCapture: () => "immutable-alpha-id\topenshell-alpha\n",
+          stateMutationGate: { active: false, stateDir },
+          withShieldsTransitionLock: (sandboxName, operation, fn) => {
+            events.push(`lock:${sandboxName}:${operation}`);
+            lockHeld = true;
+            try {
+              return fn();
+            } finally {
+              events.push("unlock");
+              lockHeld = false;
+            }
+          },
+        },
+        ({ withPrivilegedSandboxExecutionLease }) => {
+          const result = withPrivilegedSandboxExecutionLease("alpha", "test subprocess", () => {
+            expect(lockHeld).toBe(true);
+            events.push("spawn-and-wait");
+            return "complete";
+          });
+          expect(result).toBe("complete");
+        },
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+    expect(events).toEqual([
+      "lock:alpha:privileged direct-container execution: test subprocess",
+      "spawn-and-wait",
+      "unlock",
+    ]);
   });
 
   it("uses numeric container UID 0 on the receipt-owned portable target (#9054)", () => {
@@ -905,7 +957,7 @@ describe("privileged sandbox exec routing", () => {
       },
       ({ privilegedSandboxExecArgv }) => {
         expect(() => privilegedSandboxExecArgv("alpha", ["id"])).toThrow(
-          "Runtime provider 'kubernetes' does not support privileged sandbox control.",
+          "refusing local Docker discovery for a non-direct driver",
         );
       },
     );
@@ -1066,7 +1118,7 @@ describe("privileged sandbox exec routing", () => {
       },
       ({ privilegedSandboxExecArgv }) => {
         expect(() => privilegedSandboxExecArgv("alpha", ["id"])).toThrow(
-          "Runtime provider 'kubernetes' does not support privileged sandbox control.",
+          /driver: kubernetes.*refusing local Docker discovery/i,
         );
       },
     );

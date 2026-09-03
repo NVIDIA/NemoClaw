@@ -108,7 +108,6 @@ export function buildWechatSeedOpenClawAccountOutputs(
           },
           channels: {
             [WECHAT_PLUGIN_ID]: {
-              enabled: true,
               channelConfigUpdatedAt: savedAt,
               accounts: {
                 [accountId]: {

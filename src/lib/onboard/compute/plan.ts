@@ -23,11 +23,6 @@ export interface OpenShellComputePlan {
   readonly gatewayLauncher: OpenShellGatewayLauncher;
 }
 
-export interface CurrentOpenShellRuntimeSelection {
-  readonly plan: OpenShellComputePlan;
-  readonly provider: RuntimeProviderBundle;
-}
-
 export function projectRuntimeProviderComputePlan(
   bundle: RuntimeProviderBundle,
 ): OpenShellComputePlan {
@@ -44,27 +39,11 @@ export function projectRuntimeProviderComputePlan(
 export function resolveCurrentOpenShellComputePlan(
   platform: NodeJS.Platform = process.platform,
   arch: NodeJS.Architecture = process.arch,
-  env: NodeJS.ProcessEnv = process.env,
 ): OpenShellComputePlan {
-  return resolveCurrentOpenShellRuntimeSelection(platform, arch, env).plan;
+  return projectRuntimeProviderComputePlan(resolveCurrentRuntimeProviderBundle(platform, arch));
 }
 
-/** Resolve the configured provider once and project every central selection from that bundle. */
-export function resolveCurrentOpenShellRuntimeSelection(
-  platform: NodeJS.Platform = process.platform,
-  arch: NodeJS.Architecture = process.arch,
-  env: NodeJS.ProcessEnv = process.env,
-): CurrentOpenShellRuntimeSelection {
-  const provider = resolveCurrentRuntimeProviderBundle(
-    platform,
-    arch,
-    CURRENT_RUNTIME_PROVIDER_BUNDLES,
-    env,
-  );
-  return { plan: projectRuntimeProviderComputePlan(provider), provider };
-}
-
-export function usesManagedLocalGateway(
+export function usesManagedDockerGateway(
   plan: Pick<OpenShellComputePlan, "driverName" | "gatewayLauncher">,
   providers: RuntimeProviderBundleRegistry = CURRENT_RUNTIME_PROVIDER_BUNDLES,
 ): boolean {
@@ -75,6 +54,6 @@ export function usesManagedLocalGateway(
   return (
     bundle?.gateway.launcher === plan.gatewayLauncher &&
     plan.gatewayLauncher === "nemoclaw" &&
-    engine !== null
+    engine?.engineId === "docker"
   );
 }

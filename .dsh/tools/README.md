@@ -72,16 +72,6 @@ const report = await tools.e2e_investigation_report({
 
 Add `relevantPaths` to each failure before correlation when repository knowledge identifies the owning source paths. Without those paths, a single-failure no-overlap result has low confidence. The report marks the investigation as incomplete when the commit or changed-file list is truncated. Do not claim causal completeness or absence of path overlap from a truncated range.
 
-## CI failure classification
-
-The CI failure classifier moved to the user-invocable `nemoclaw-maintainer-classify-ci-failure` skill. Its standalone Node script uses authenticated GitHub reads and performs no GitHub writes. Load the skill for usage, bounds, ZIP security, redaction, and output behavior.
-
-## CI performance analysis
-
-The CLI timing and base-image publication analyzers moved to the lazily loaded `nemoclaw-maintainer-analyze-ci-performance` skill. Load that skill for the standalone Node commands, bounds, output contracts, and retained-artifact requirements.
-
-The scripts are under `.agents/skills/nemoclaw-maintainer-analyze-ci-performance/scripts/`. They use authenticated GitHub reads and perform no GitHub writes.
-
 ## Pull request value stream
 
 The pull request value-stream analyzer moved to the lazily loaded `nemoclaw-maintainer-analyze-pr-value-stream` skill. Load that skill for the standalone Node command, comparison options, output contract, artifact validation, and caveats.

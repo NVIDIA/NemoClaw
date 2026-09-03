@@ -5,15 +5,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 
-import { sanitizeReadinessText } from "../../readiness/sanitize";
-
 const OFFICIAL_OLLAMA_EXECUTABLE_PATH = "/usr/local/bin/ollama";
 const METADATA_TIMEOUT_MS = 5_000;
-const EXECUTION_PROOF_TIMEOUT_SECONDS = 15;
-const EXECUTION_PROOF_TIMEOUT_MS = EXECUTION_PROOF_TIMEOUT_SECONDS * 1_000;
-const EXECUTION_PROOF_SUPERVISOR_TIMEOUT_MS = EXECUTION_PROOF_TIMEOUT_MS + 2_000;
-const EXECUTION_FAILURE_DETAIL_LIMIT = 240;
-const SYSTEMD_RUN_TIMEOUT_RESULT = /^\s*Finished with result: timeout\s*$/mu;
+const EXECUTION_PROOF_TIMEOUT_MS = 15_000;
 const MAX_PROGRAM_HEADERS = 1_024;
 const MAX_PROGRAM_HEADER_SIZE = 1_024;
 const MAX_INTERPRETER_PATH_BYTES = 4_096;
@@ -375,32 +369,17 @@ function runServiceUserProof(
   executablePath: string,
   options: OllamaSystemdExecutableProofOptions,
 ): OllamaExecutableCaptureResult {
-  // The transient service owns the complete proof cgroup. RuntimeMaxSec stops
-  // every descendant before the outer synchronous runner can release its caller.
-  const result = options.runCaptureExImpl(
+  return options.runCaptureExImpl(
     [
       ...commandPrefix(options.sudoPrefix),
-      "/usr/bin/env",
-      "LC_ALL=C",
-      "/usr/bin/systemd-run",
-      "--wait",
-      "--pipe",
-      "--collect",
-      "--service-type=exec",
-      `--uid=${serviceUser}`,
-      "--property=KillMode=control-group",
-      `--property=RuntimeMaxSec=${String(EXECUTION_PROOF_TIMEOUT_SECONDS)}s`,
-      "--property=TimeoutStopSec=250ms",
-      "--property=SendSIGKILL=yes",
+      "-u",
+      sudoServiceUserArgument(serviceUser),
+      "--",
       executablePath,
       "--version",
     ],
-    { timeout: EXECUTION_PROOF_SUPERVISOR_TIMEOUT_MS },
+    { timeout: EXECUTION_PROOF_TIMEOUT_MS },
   );
-  return {
-    ...result,
-    timedOut: result.timedOut || SYSTEMD_RUN_TIMEOUT_RESULT.test(result.stderr ?? ""),
-  };
 }
 
 function runServiceUserPathAccessProof(
@@ -430,13 +409,6 @@ function serviceUserPathAccessOutcome(
   if (result.exitCode !== 0 && result.exitCode !== 1) return "invalid";
   if (result.stdout.trim() !== `${SERVICE_USER_ACCESS_MARKER}:${result.exitCode}`) return "invalid";
   return result.exitCode === 0 ? "accessible" : "inaccessible";
-}
-
-function systemdRunFailureDetail(result: OllamaExecutableCaptureResult): string {
-  const detail = sanitizeReadinessText(result.stderr ?? "", EXECUTION_FAILURE_DETAIL_LIMIT)
-    .replace(/\s+/gu, " ")
-    .trim();
-  return detail ? ` systemd-run detail: ${detail}` : "";
 }
 
 /** Prove that systemd's configured Ollama user can execute the exact binary and PT_INTERP. */
@@ -505,10 +477,9 @@ export function proveOllamaSystemdServiceExecutable(
   if (initialProof.timedOut) {
     return failed(
       "execution-timeout",
-      `Ollama ExecStart did not complete '--version' as systemd User '${metadata.serviceUser}' within ${String(EXECUTION_PROOF_TIMEOUT_SECONDS)} seconds`,
+      `Ollama ExecStart did not complete '--version' as systemd User '${metadata.serviceUser}' within 15 seconds`,
     );
   }
-  const executionFailureDetail = systemdRunFailureDetail(initialProof);
 
   const executableAccessResult = runServiceUserPathAccessProof(
     metadata.serviceUser,
@@ -525,7 +496,7 @@ export function proveOllamaSystemdServiceExecutable(
   if (executableAccess === "invalid") {
     return failed(
       "execution-failed",
-      `Ollama ExecStart failed as systemd User '${metadata.serviceUser}', and the execute-access check returned no confirmed result from that user.${executionFailureDetail}`,
+      `Ollama ExecStart failed as systemd User '${metadata.serviceUser}', and the execute-access check returned no confirmed result from that user`,
     );
   }
 
@@ -544,7 +515,7 @@ export function proveOllamaSystemdServiceExecutable(
   if (interpreterAccess === "invalid") {
     return failed(
       "execution-failed",
-      `Ollama ExecStart failed as systemd User '${metadata.serviceUser}', and the PT_INTERP execute-access check returned no confirmed result from that user.${executionFailureDetail}`,
+      `Ollama ExecStart failed as systemd User '${metadata.serviceUser}', and the PT_INTERP execute-access check returned no confirmed result from that user`,
     );
   }
   if (interpreterAccess === "inaccessible") {
@@ -564,7 +535,7 @@ export function proveOllamaSystemdServiceExecutable(
         : "the execute-access check did not confirm missing execute access";
     return failed(
       "execution-failed",
-      `Ollama ExecStart '--version' ${proofOutcome} as systemd User '${metadata.serviceUser}', and ${accessOutcome}.${executionFailureDetail}`,
+      `Ollama ExecStart '--version' ${proofOutcome} as systemd User '${metadata.serviceUser}', and ${accessOutcome}`,
     );
   }
 

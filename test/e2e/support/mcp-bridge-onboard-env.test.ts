@@ -256,7 +256,6 @@ describe("MCP bridge onboarding environment", () => {
       expect(() =>
         assertMcpBridgeManagedImageReceipt({
           environment: {
-            E2E_MANAGED_IMAGE_REVISION: "",
             GITHUB_ACTIONS: "true",
             NEMOCLAW_E2E_EXPECTED_SHA: revision,
             NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,

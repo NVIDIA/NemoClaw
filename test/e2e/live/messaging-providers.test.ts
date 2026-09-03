@@ -12,13 +12,12 @@
 import fs from "node:fs";
 
 import { testTimeoutOptions } from "../../helpers/timeouts";
-import { test } from "../fixtures/e2e-test.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import {
   accountBool,
   accountString,
   applyRestRewritePolicy,
-  applyWebSocketRewritePolicy,
   CLI_ENTRYPOINT,
   channelAccount,
   channelEnabled,
@@ -40,7 +39,6 @@ import {
   rawTokenSurfaceProbe,
   readOpenClawConfig,
   runHost,
-  runDiscordGatewayClient,
   runSandboxShell,
   runSecondaryCleanup,
   runSlackApiRequest,
@@ -70,12 +68,11 @@ test(
         "inspect providers placeholders and credential isolation",
         "probe Telegram and Discord policy rewrites",
         "exercise installed Slack, Telegram, and WeChat runtimes",
-        "prove Discord websocket credential rewrite",
         "inspect gateway health and optional live sends",
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
+  async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
     if (!process.env.NVIDIA_INFERENCE_API_KEY) {
       skip("NVIDIA_INFERENCE_API_KEY is required for live messaging-provider E2E");
       return;
@@ -142,10 +139,13 @@ test(
       }),
     );
 
-    await runtimeProvider.requireAvailable({
-      artifactName: "prereq-runtime-provider-info-messaging-providers",
-      scenarioLabel: "messaging providers",
+    const dockerInfo = await runHost(host, "docker", ["info"], {
+      artifactName: "prereq-docker-info-messaging-providers",
+      env: state.env,
+      redactionValues,
+      timeoutMs: 30_000,
     });
+    expectExitZero(dockerInfo, "Docker must be running");
 
     progress.phase("install the all-channel OpenClaw sandbox");
     const install = await runHost(host, "bash", ["install.sh", "--non-interactive"], {
@@ -489,6 +489,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       /^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN_AGENT_B$/u.test(extraB),
       "X4b: TELEGRAM_BOT_TOKEN_AGENT_B is a revision-scoped resolve placeholder",
     );
+    check(extraA !== extraB, "X4b: extension keys resolve to distinct placeholders");
 
     const startLog = await sandboxOutput(
       sandbox,
@@ -504,14 +505,12 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     );
 
     const config = await readOpenClawConfig(sandbox, redactionValues);
-    (
-      [
-        ["M6a", "telegram", "telegram"],
-        ["M6b", "discord", "discord"],
-        ["M6c", "slack", "slack"],
-        ["M6d", "whatsapp", "whatsapp"],
-      ] as const
-    ).forEach(([assertionId, channel, plugin]) => {
+    ([
+      ["M6a", "telegram", "telegram"],
+      ["M6b", "discord", "discord"],
+      ["M6c", "slack", "slack"],
+      ["M6d", "whatsapp", "whatsapp"],
+    ] as const).forEach(([assertionId, channel, plugin]) => {
       check(channelEnabled(config, channel), `${assertionId}: channels.${channel}.enabled is true`);
       check(
         pluginEnabled(config, plugin),
@@ -578,8 +577,8 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     check(
       Boolean(
         whatsappHealth &&
-        typeof whatsappHealth === "object" &&
-        (whatsappHealth as Record<string, unknown>).enabled === false,
+          typeof whatsappHealth === "object" &&
+          (whatsappHealth as Record<string, unknown>).enabled === false,
       ),
       "M-WA8a: WhatsApp health monitor is disabled for unpaired QR session",
     );
@@ -636,14 +635,12 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const parsedRuntime = JSON.parse(runtimeChannels) as {
       chat?: Record<string, { installed?: unknown; origin?: unknown; accounts?: unknown }>;
     };
-    (
-      [
-        ["M6e", "telegram", "default"],
-        ["M6f", "discord", "default"],
-        ["M6g", "slack", "default"],
-        ["M6i", "openclaw-weixin", state.wechatAccount],
-      ] as const
-    ).forEach(([assertionId, channel, accountId]) => {
+    ([
+      ["M6e", "telegram", "default"],
+      ["M6f", "discord", "default"],
+      ["M6g", "slack", "default"],
+      ["M6i", "openclaw-weixin", state.wechatAccount],
+    ] as const).forEach(([assertionId, channel, accountId]) => {
       const entry = parsedRuntime.chat?.[channel];
       check(
         entry?.installed === true &&
@@ -873,24 +870,10 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     }
 
     progress.phase("exercise installed Slack, Telegram, and WeChat runtimes");
-    const fakeSlackBot = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
-      kind: "slack-bot",
+    const fakeSlack = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
+      kind: "slack",
       imageScript: "fake-slack-api.cjs",
-      containerPrefix: "nemoclaw-fake-slack-bot",
-      portEnv: "FAKE_SLACK_API_PORT",
-      portFileEnv: "FAKE_SLACK_API_PORT_FILE",
-      captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
-      expectedEnv: {
-        FAKE_SLACK_API_EXPECTED_BOT_TOKEN: state.tokens.slackBot,
-        FAKE_SLACK_API_EXPECTED_APP_TOKEN: state.tokens.slackApp,
-      },
-      env: state.env,
-      redactionValues,
-    });
-    const fakeSlackApp = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
-      kind: "slack-app",
-      imageScript: "fake-slack-api.cjs",
-      containerPrefix: "nemoclaw-fake-slack-app",
+      containerPrefix: "nemoclaw-fake-slack",
       portEnv: "FAKE_SLACK_API_PORT",
       captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
       expectedEnv: {
@@ -902,19 +885,25 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     });
     await applyRestRewritePolicy(
       host,
-      fakeSlackBot,
-      `${SANDBOX_NAME}-slack-bridge`,
-      "SLACK_BOT_TOKEN",
+      fakeSlack,
       state.env,
       redactionValues,
+      `${SANDBOX_NAME}-slack-bridge`,
     );
+    expect(
+      fakeSlack.alternatePort,
+      "fake Slack API must publish an independent app-token port",
+    ).toMatch(/^[1-9][0-9]*$/u);
+    const fakeSlackApp = {
+      ...fakeSlack,
+      port: fakeSlack.alternatePort!,
+    };
     await applyRestRewritePolicy(
       host,
       fakeSlackApp,
-      `${SANDBOX_NAME}-slack-app`,
-      "SLACK_APP_TOKEN",
       state.env,
       redactionValues,
+      `${SANDBOX_NAME}-slack-app`,
     );
 
     const slackBotPlaceholder = await sandboxOutput(
@@ -937,7 +926,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
 
     const slackAuth = await runSlackApiRequest(
       sandbox,
-      fakeSlackBot.port,
+      fakeSlack.port,
       "/api/auth.test",
       `Bearer ${slackBotPlaceholder}`,
       redactionValues,
@@ -947,7 +936,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       `M-S15: Slack auth.test exercised revision-scoped placeholder rewrite (${slackAuth.slice(0, 200)})`,
     );
     const slackAuthCapture = lastJsonLine(
-      fakeSlackBot.captureFile,
+      fakeSlack.captureFile,
       (row) => row.event === "request" && row.path === "/api/auth.test",
     );
     check(
@@ -961,7 +950,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
 
     const slackUnset = await runSlackApiRequest(
       sandbox,
-      fakeSlackBot.port,
+      fakeSlack.port,
       "/api/auth.test",
       "Bearer openshell:resolve:env:DEFINITELY_NOT_SET_XYZ",
       redactionValues,
@@ -985,7 +974,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       "M-S16: Slack Socket Mode HTTPS leg exercised revision-scoped placeholder rewrite",
     );
     const slackAppCapture = lastJsonLine(
-      fakeSlackApp.captureFile,
+      fakeSlack.captureFile,
       (row) => row.event === "request" && row.path === "/api/apps.connections.open",
     );
     check(
@@ -1002,7 +991,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     check(Boolean(allowedSlackUser), "M-S17: Slack allowlist has a user for the runtime proof");
     const installedSlackProof = await runInstalledSlackRuntimeProof(
       sandbox,
-      fakeSlackBot,
+      fakeSlack,
       allowedSlackUser ?? "U0AR85ATALW",
       redactionValues,
     );
@@ -1021,7 +1010,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       `M-S17c: OpenClaw 2026.7.1 Slack proof used the reviewed pipeline/runtime exports (${installedSlackProof.proof})`,
     );
     const slackRuntimeCapture = lastJsonLine(
-      fakeSlackBot.captureFile,
+      fakeSlack.captureFile,
       (row) => row.event === "request" && row.path === "/api/chat.postMessage",
     );
     check(
@@ -1050,10 +1039,9 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     await applyRestRewritePolicy(
       host,
       fakeTelegram,
-      `${SANDBOX_NAME}-telegram-bridge`,
-      "TELEGRAM_BOT_TOKEN",
       state.env,
       redactionValues,
+      `${SANDBOX_NAME}-telegram-bridge`,
     );
     const telegramMockTarget = "42424242";
     const telegramMockText = "NemoClaw OpenClaw Telegram plugin mock E2E";
@@ -1107,10 +1095,9 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     await applyRestRewritePolicy(
       host,
       fakeWechat,
-      `${SANDBOX_NAME}-wechat-bridge`,
-      "WECHAT_BOT_TOKEN",
       state.env,
       redactionValues,
+      `${SANDBOX_NAME}-wechat-bridge`,
     );
     const installedWechatProof = await runInstalledWechatRuntimeProof(
       sandbox,
@@ -1149,58 +1136,6 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       wechat: installedWechatProof,
     });
 
-    progress.phase("prove Discord websocket credential rewrite");
-    const fakeGateway = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
-      kind: "discord-gateway",
-      imageScript: "fake-discord-gateway.cjs",
-      containerPrefix: "nemoclaw-fake-discord-gateway",
-      portEnv: "FAKE_DISCORD_GATEWAY_PORT",
-      portFileEnv: "FAKE_DISCORD_GATEWAY_PORT_FILE",
-      captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
-      expectedEnv: {
-        FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: state.tokens.discord,
-      },
-      env: state.env,
-      redactionValues,
-    });
-    await applyWebSocketRewritePolicy(
-      host,
-      fakeGateway,
-      `${SANDBOX_NAME}-discord-bridge`,
-      "DISCORD_BOT_TOKEN",
-      state.env,
-      redactionValues,
-    );
-    const gatewayProof = await runDiscordGatewayClient(sandbox, {
-      port: fakeGateway.port,
-      identifyToken: { kind: "revisioned-discord-env" },
-      redactionValues,
-    });
-    check(
-      gatewayProof.includes("UPGRADE"),
-      "M13d: native WebSocket upgrade reached fake Discord Gateway",
-    );
-    check(
-      gatewayProof.includes("HELLO") &&
-        gatewayProof.includes("IDENTIFY_SENT_PLACEHOLDER") &&
-        gatewayProof.includes("READY") &&
-        gatewayProof.includes("HEARTBEAT_ACK"),
-      "M13e: Discord HELLO, placeholder IDENTIFY, READY, heartbeat ACK completed",
-    );
-    const gatewayIdentify = lastJsonLine(
-      fakeGateway.captureFile,
-      (row) => row.event === "identify",
-    );
-    check(fs.existsSync(fakeGateway.captureFile), "M13f: fake Gateway capture file exists");
-    const gatewayCaptureText = fs.readFileSync(fakeGateway.captureFile, "utf8");
-    check(
-      gatewayIdentify?.tokenMatchesExpected === true &&
-        gatewayIdentify?.tokenLooksPlaceholder === false &&
-        !Object.prototype.hasOwnProperty.call(gatewayIdentify, "token") &&
-        !gatewayCaptureText.includes(state.tokens.discord) &&
-        !gatewayCaptureText.includes("openshell:resolve:env:"),
-      "M13f: fake Gateway proved placeholder-to-token rewrite without logging the raw token",
-    );
     const gatewayPort = await sandboxOutput(
       sandbox,
       `node -e '

@@ -52,7 +52,8 @@ export function hasDockerDriverGatewayEnvironment(
 ): boolean {
   if (!env) return false;
   return (
-    Boolean(env.OPENSHELL_DRIVERS?.trim()) ||
+    env.OPENSHELL_DRIVERS === "docker" ||
+    env.OPENSHELL_DRIVERS === "podman" ||
     Boolean(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) ||
     env.OPENSHELL_GRPC_ENDPOINT === expectedEndpoint
   );

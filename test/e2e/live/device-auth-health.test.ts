@@ -8,13 +8,13 @@
  * device-auth 401 responses must not be misreported as Health Offline.
  */
 
-import { testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import {
+  assertDockerAvailable,
   cleanupDeviceAuthSandbox,
   commandEnv,
   DASHBOARD_PORT,
@@ -25,7 +25,7 @@ import {
   waitForRecoveryArtifact,
 } from "./device-auth-health-helpers.ts";
 
-const LIVE_TIMEOUT_MS = testTimeout(30 * 60_000);
+const LIVE_TIMEOUT_MS = 30 * 60_000;
 const INFERENCE_API_KEY = "device-auth-health-fixture-credential";
 const INFERENCE_MODEL = "device-auth-health-model";
 
@@ -35,9 +35,7 @@ function assertStatusNotOffline(output: string, context: string): void {
   );
 }
 
-test(
-  "device auth health probes treat 401 as live instead of offline (#2342)",
-  {
+test("device auth health probes treat 401 as live instead of offline (#2342)", {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -47,8 +45,7 @@ test(
       "recover stopped OpenClaw gateway",
     ],
   },
-  },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   const installLog = artifacts.pathFor("phase-1-install-device-auth-health.log");
   // The sandbox cannot reach runner loopback, so expose the fixture through
   // OpenShell's host bridge while keeping readiness checks local to the runner.
@@ -85,10 +82,12 @@ test(
     ],
   });
 
-    await runtimeProvider.requireAvailable({
-    artifactName: "phase-0-runtime-info",
-      scenarioLabel: "device auth health",
+  const dockerInfo = await host.command("docker", ["info"], {
+    artifactName: "phase-0-docker-info",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
   });
+  assertDockerAvailable(dockerInfo, skip);
 
   const cleanupEnv = commandEnv();
   cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
@@ -225,5 +224,4 @@ test(
   expect(recoveryStatus.exitCode, resultText(recoveryStatus)).toBe(0);
   assertStatusNotOffline(resultText(recoveryStatus), "recovery status");
   await waitForRecoveryArtifact(artifacts, sandbox);
-  },
-);
+});

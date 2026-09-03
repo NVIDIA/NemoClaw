@@ -30,25 +30,24 @@ import {
   printSandboxListFailureWithRecoveryContext,
 } from "../../openshell-sandbox-list";
 import {
-  formatBuildFailureDiagnostics,
   parseContentAddressedSandboxBaseImageId,
   type SandboxBaseImageResolutionMetadata,
   type TrustedLocalBaseImageOverride,
 } from "../../sandbox-base-image";
+import * as shields from "../../shields";
 import type { SandboxEntry } from "../../state/registry";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
-import { removeStaleRebuildDockerOrphan } from "../../onboard/openshell-docker-sandbox-containers";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
   getReconciledSandboxGatewayState,
   printSandboxGatewayStateHint,
   printWrongGatewayActiveGuidance,
-  usesLegacyRuntimeLifecycleCompatibility,
 } from "./gateway-state";
+import { openRebuildShieldsWindow, type RebuildShieldsWindow } from "./rebuild-shields";
 import * as snapshotBackup from "./snapshot/backup-authority";
 
-export { removeStaleRebuildDockerOrphan };
+export { removeStaleRebuildDockerOrphan } from "../../onboard/openshell-docker-sandbox-containers";
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
@@ -211,16 +210,6 @@ export async function resolveRebuildLiveState(
 
   if (reconciled.state === "missing") {
     if (options.authoritativeRecoveryPolicyAvailable === true) {
-      if (usesLegacyRuntimeLifecycleCompatibility(sb)) {
-        try {
-          removeStaleRebuildDockerOrphan(sandboxName, sb.openshellDriver, log);
-        } catch (error) {
-          bail(
-            `Stale-recovery Docker orphan cleanup failed: ${error instanceof Error ? error.message : String(error)}.`,
-          );
-          return null;
-        }
-      }
       log(
         "Stale-sandbox recovery: the sandbox is absent, but its transaction-bound policy handoff is intact",
       );
@@ -265,6 +254,22 @@ export async function resolveRebuildLiveState(
   }
   bail(`Could not confirm live state of '${sandboxName}' (gateway not in a known-good state).`);
   return null;
+}
+
+export function openRebuildShieldsWindowForState(
+  sandboxName: string,
+  recoveryRecreate: boolean,
+): { rebuildShieldsWindow: RebuildShieldsWindow | null; staleSandboxWasLocked: boolean } {
+  if (recoveryRecreate) {
+    return {
+      staleSandboxWasLocked: !shields.isShieldsDown(sandboxName),
+      rebuildShieldsWindow: { relocked: false, wasLocked: false },
+    };
+  }
+  return {
+    staleSandboxWasLocked: false,
+    rebuildShieldsWindow: openRebuildShieldsWindow(sandboxName, CLI_NAME),
+  };
 }
 
 export function ensureRebuildAgentBaseImage(
@@ -403,14 +408,13 @@ export function ensureRebuildAgentBaseImage(
         : {}),
     };
   } catch (err) {
-    const safeMessage =
-      formatBuildFailureDiagnostics({ error: err }) || "Agent base image preparation failed.";
+    const message = err instanceof Error ? err.message : String(err);
     console.error("");
     console.error(`  ${_RD}Rebuild preflight failed:${R} agent base image could not be built.`);
-    console.error("  Inspect the redacted rebuild diagnostics for details.");
+    console.error(`  ${message}`);
     console.error("");
     console.error("  Sandbox is untouched — no data was lost.");
-    bail(safeMessage);
+    bail(message);
     return { ok: false, imageRef: null, overrideEnvVar: null };
   }
 }
@@ -453,6 +457,7 @@ export function backupSandboxStateForRebuild(
   sb: RebuildSandboxEntry,
   staleRecovery: boolean,
   log: (msg: string) => void,
+  relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean,
   bail: (msg: string, code?: number) => never,
 ): sandboxState.RebuildManifest | null | undefined {
   if (staleRecovery) return null;
@@ -471,7 +476,8 @@ export function backupSandboxStateForRebuild(
   );
   if (!backup.success) {
     console.error("  Failed to back up sandbox state.");
-    const allStateDirsFailed = backup.backedUpDirs.length === 0 && backup.failedDirs.length > 0;
+    const allStateDirsFailed =
+      backup.backedUpDirs.length === 0 && backup.failedDirs.length > 0;
     if (allStateDirsFailed && backup.backedUpFiles.length > 0) {
       const dirCount = backup.failedDirs.length;
       const fileCount = backup.backedUpFiles.length;
@@ -513,6 +519,7 @@ export function backupSandboxStateForRebuild(
       console.error("  It is excluded from snapshot restore selection.");
     }
     console.error("  Aborting rebuild to prevent data loss.");
+    relockShieldsIfNeeded(true);
     bail("Failed to back up sandbox state.");
     return undefined;
   }
@@ -520,6 +527,7 @@ export function backupSandboxStateForRebuild(
   if (!backupManifest) {
     console.error("  Failed to record backup metadata.");
     console.error("  Aborting rebuild to prevent data loss.");
+    relockShieldsIfNeeded(true);
     bail("Failed to record backup metadata.");
     return undefined;
   }

@@ -4,9 +4,7 @@
 import { CLI_NAME } from "../../cli/branding";
 import {
   decideOllamaModelOwnership,
-  isLocalOllamaRouteOwner,
   matchingOllamaModelPeers,
-  type OllamaHostRoute,
 } from "../../inference/ollama/model-ownership";
 import type { OllamaUnloadResult } from "../../inference/ollama/proxy";
 import {
@@ -33,11 +31,7 @@ function teardownDashboardForwardBestEffort(
   warn: (message: string) => void,
 ): void {
   try {
-    if (teardown(sandboxName) === false) {
-      warn(
-        `  Warning: a ForwardTcp port for '${sandboxName}' did not release. Retry '${CLI_NAME} ${sandboxName} stop'.`,
-      );
-    }
+    teardown(sandboxName);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     warn(`  Warning: could not release the dashboard port-forward: ${detail}`);
@@ -145,19 +139,16 @@ function releaseStoppedSandboxOllamaModel(
   deps: SandboxStopDeps,
   log: (message: string) => void,
 ): OllamaStopReleaseResult {
-  if (!isLocalOllamaRouteOwner(sandbox)) return { ok: true };
+  if (!sandbox.provider?.includes("ollama")) return { ok: true };
 
   try {
-    const proxy = require("../../inference/ollama/proxy") as typeof import("../../inference/ollama/proxy");
     const withOwnershipLock =
-      deps.withOllamaModelOwnershipLock ?? proxy.withOllamaModelOwnershipLock;
-    const loadPersistedOllamaHost =
-      deps.loadPersistedOllamaHost ?? proxy.loadPersistedOllamaHost;
+      deps.withOllamaModelOwnershipLock ??
+      (require("../../inference/ollama/proxy") as typeof import("../../inference/ollama/proxy"))
+        .withOllamaModelOwnershipLock;
     return withOwnershipLock(() => {
-      const selectedHost = loadPersistedOllamaHost();
-      if (!isLocalOllamaRouteOwner(sandbox, selectedHost)) return { ok: true };
       const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
-      const matchingPeers = matchingOllamaModelPeers(sandbox, sandboxes, selectedHost);
+      const matchingPeers = matchingOllamaModelPeers(sandbox, sandboxes);
       const discovery = (
         deps.discoverActiveOllamaSandboxNames ?? discoverActiveOllamaSandboxNames
       )(matchingPeers, deps.environment ?? process.env);
@@ -175,7 +166,6 @@ function releaseStoppedSandboxOllamaModel(
         sandbox,
         sandboxes,
         discovery.activeSandboxNames,
-        selectedHost,
       );
       if (ownership.kind === "missing-model") {
         log("  Ollama model release skipped: the sandbox registry has no model.");
@@ -248,7 +238,6 @@ export interface SandboxStopDeps {
   ) => OllamaActiveOwnershipDiscovery;
   unloadOllamaModels?: (onlyModels: readonly string[]) => OllamaUnloadResult;
   decideOllamaModelOwnership?: typeof decideOllamaModelOwnership;
-  loadPersistedOllamaHost?: () => OllamaHostRoute | null;
   withOllamaModelOwnershipLock?: typeof import("../../inference/ollama/proxy").withOllamaModelOwnershipLock;
   withLifecycleLockSync?: typeof withSandboxLifecycleLockSync;
   log?: (message: string) => void;

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -26,14 +27,12 @@ import {
 
 const TIMEOUT_MS = 40 * 60_000;
 
-test(
-  "Kimi-compatible endpoint config enables plugin wiring and managed inference route",
-  {
+test("Kimi-compatible endpoint config enables plugin wiring and managed inference route", {
   timeout: TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "select the Kimi endpoint mode and credentials",
-      "confirm the selected runtime and clear the Kimi sandbox",
+      "confirm Docker and clear the Kimi sandbox",
       "onboard the Kimi-compatible endpoint",
       "inspect the generated Kimi OpenClaw configuration",
       "probe the managed inference models route",
@@ -41,8 +40,7 @@ test(
       "confirm Kimi upstream traffic",
     ],
   },
-  },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets }) => {
   const mode = resolveKimiInferenceMode();
   const apiKey =
     mode === "public-nvidia"
@@ -76,11 +74,13 @@ test(
     model: KIMI_MODEL,
   });
 
-  progress.phase("confirm the selected runtime and clear the Kimi sandbox");
-    await runtimeProvider.requireAvailable({
-    artifactName: "runtime-info",
-      scenarioLabel: "Kimi inference compatibility",
+  progress.phase("confirm Docker and clear the Kimi sandbox");
+  const docker = await host.command("docker", ["info"], {
+    artifactName: "docker-info",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
   });
+  expect(docker.exitCode, resultText(docker)).toBe(0);
 
   await cleanupKimi(host, sandbox);
 
@@ -152,5 +152,4 @@ test(
   await assertTrajectory(sandbox, mode);
   progress.phase("confirm Kimi upstream traffic");
   await assertKimiUpstreamTraffic({ fake, host, mode, apiKey });
-  },
-);
+});

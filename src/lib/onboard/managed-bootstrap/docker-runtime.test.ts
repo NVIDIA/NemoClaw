@@ -94,18 +94,11 @@ function compatibilityLifecycleInput(
   temporaryStateRoots.push(stateRoot);
   return {
     providerId: "docker",
-    environment: {},
     stateRoot,
     bootstrapIdentity: IDENTITY,
     request: seed.request,
     image: seed.plan.image,
     agentIdentity: seed.plan.agentIdentity,
-    workspaceRoot: {
-      uid: seed.plan.agentIdentity.uid,
-      gid: seed.plan.agentIdentity.gid,
-      mode: 0o755,
-    },
-    managedStateRoots: seed.plan.managedStateRoots,
     intendedWorkloadArgv: seed.plan.intendedWorkloadArgv,
     expectedSupervisorArgv: seed.plan.expectedSupervisorArgv,
     launchArgv: ["openshell", "sandbox", "create", "--name", "alpha"],
@@ -134,7 +127,6 @@ function compatibilityLifecycleInput(
       inferenceProvider: "openai",
       gatewayUsesContainerBridge: true,
       gatewayPort: 8080,
-      reverifyBridgeReachability: vi.fn(),
     },
     dependencies,
   };
@@ -522,18 +514,11 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
     });
     const lifecycle = createDockerManagedBootstrapSurface().createLifecycle({
       providerId: "docker",
-      environment: {},
       stateRoot,
       bootstrapIdentity: IDENTITY,
       request: seed.request,
       image: seed.plan.image,
       agentIdentity: seed.plan.agentIdentity,
-      workspaceRoot: {
-        uid: seed.plan.agentIdentity.uid,
-        gid: seed.plan.agentIdentity.gid,
-        mode: 0o755,
-      },
-      managedStateRoots: seed.plan.managedStateRoots,
       intendedWorkloadArgv: seed.plan.intendedWorkloadArgv,
       expectedSupervisorArgv: seed.plan.expectedSupervisorArgv,
       launchArgv: ["openshell", "sandbox", "create", "--name", "alpha"],
@@ -559,7 +544,6 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
         inferenceProvider: "openai",
         gatewayUsesContainerBridge: false,
         gatewayPort: 0,
-        reverifyBridgeReachability: () => undefined,
       },
       dependencies: {},
     });
@@ -628,18 +612,11 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
     });
     const lifecycle = createDockerManagedBootstrapSurface().createLifecycle({
       providerId: "docker",
-      environment: {},
       stateRoot,
       bootstrapIdentity: IDENTITY,
       request: seed.request,
       image: seed.plan.image,
       agentIdentity: seed.plan.agentIdentity,
-      workspaceRoot: {
-        uid: seed.plan.agentIdentity.uid,
-        gid: seed.plan.agentIdentity.gid,
-        mode: 0o755,
-      },
-      managedStateRoots: seed.plan.managedStateRoots,
       intendedWorkloadArgv: seed.plan.intendedWorkloadArgv,
       expectedSupervisorArgv: seed.plan.expectedSupervisorArgv,
       launchArgv: ["openshell", "sandbox", "create", "--name", "alpha"],
@@ -666,7 +643,6 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
         inferenceProvider: "openai",
         gatewayUsesContainerBridge: false,
         gatewayPort: 0,
-        reverifyBridgeReachability: () => undefined,
       },
       dependencies: {},
     });

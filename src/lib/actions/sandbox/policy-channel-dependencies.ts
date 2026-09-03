@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-state";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 
 type MessagingProviderTokenDefinition = {
@@ -15,7 +15,6 @@ type MessagingProviderUpsertOptions = {
   replaceExisting?: boolean;
   bestEffort?: boolean;
   requireExactBindings?: boolean;
-  gatewayName?: string;
 };
 
 type LegacyOnboardProvidersModule = {
@@ -67,12 +66,12 @@ function gatewayRunner(gatewayName: string): typeof runOpenshell {
  */
 export const policyChannelDependencies = {
   /** Use stopped Docker cleanup only after both in-sandbox cleanup attempts fail. */
-  clearStoppedSandboxStateRoots(
+  clearStoppedDockerSandboxChannelState(
     sandboxName: string,
     paths: readonly string[],
-  ): ReturnType<PrivilegedExecModule["clearStoppedSandboxStateRoots"]> {
+  ): ReturnType<PrivilegedExecModule["clearStoppedDockerSandboxChannelState"]> {
     const cleanup = require("../../sandbox/privileged-exec") as PrivilegedExecModule;
-    return cleanup.clearStoppedSandboxStateRoots(sandboxName, paths);
+    return cleanup.clearStoppedDockerSandboxChannelState(sandboxName, paths);
   },
   deleteMessagingProviderWithRecovery(
     providerName: string,
@@ -125,10 +124,7 @@ export const policyChannelDependencies = {
     options?: MessagingProviderUpsertOptions,
   ): string[] {
     const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
-    return providers.upsertMessagingProviders(tokenDefs, gatewayRunner(gatewayName), {
-      ...options,
-      gatewayName,
-    });
+    return providers.upsertMessagingProviders(tokenDefs, gatewayRunner(gatewayName), options);
   },
   rebuildSandbox(
     sandboxName: Parameters<RebuildModule["rebuildSandbox"]>[0],

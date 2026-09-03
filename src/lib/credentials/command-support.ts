@@ -34,14 +34,10 @@ export function credentialsGatewayRecoveryFailureLines(kind: "query" | "reach"):
   ];
 }
 
-export function credentialsGatewayAuthorityFailureLines(
-  error: unknown,
-  operation: "mutation" | "query" = "mutation",
-): string[] {
+export function credentialsGatewayAuthorityFailureLines(error: unknown): string[] {
   const detail = error instanceof Error ? error.message : String(error);
-  const action = operation === "query" ? "query" : "change";
   return [
-    `  Refusing to ${action} provider credentials because the gateway lifecycle authority could not be revalidated.`,
+    "  Refusing to change provider credentials because the gateway lifecycle authority could not be revalidated.",
     `  ${detail}`,
     `  Run '${CLI_NAME} onboard' to bind the current gateway authority before retrying.`,
   ];
@@ -59,26 +55,20 @@ export async function recoverGatewayOrExit(
   return false;
 }
 
-export type CredentialGatewayTarget = Readonly<{ kind: "named"; gatewayName: string }>;
-
-export async function recoverCredentialGatewayTargetOrExit(
-  operation: "mutation" | "query",
+export async function recoverGatewayForCredentialMutationOrExit(
   reportFailure: (lines: readonly string[]) => void = (lines) =>
     lines.forEach((line) => console.error(line)),
-): Promise<CredentialGatewayTarget | null> {
-  if (!(await recoverGatewayOrExit(operation === "query" ? "query" : "reach", reportFailure))) {
-    return null;
-  }
+): Promise<boolean> {
+  if (!(await recoverGatewayOrExit("reach", reportFailure))) return false;
 
-  const gatewayName = resolveGatewayName(GATEWAY_PORT);
   try {
     resolveGatewayCredentialMutationAuthority({
-      gatewayName,
+      gatewayName: resolveGatewayName(GATEWAY_PORT),
       gatewayPort: GATEWAY_PORT,
     });
-    return { kind: "named", gatewayName };
+    return true;
   } catch (error) {
-    reportFailure(credentialsGatewayAuthorityFailureLines(error, operation));
-    return null;
+    reportFailure(credentialsGatewayAuthorityFailureLines(error));
+    return false;
   }
 }

@@ -9,9 +9,10 @@ import type { AddSandboxChannelDependencies } from "../../../src/lib/actions/san
 import * as policyChannelDependenciesModule from "../../../src/lib/actions/sandbox/policy-channel-dependencies.ts";
 import * as policyChannelModule from "../../../src/lib/actions/sandbox/policy-channel.ts";
 import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/runtime.ts";
+import * as credentialProviderRegistrationModule from "../../../src/lib/onboard/credential-provider-registration.ts";
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
 import * as legacyProvidersModule from "../../../src/lib/onboard/providers.ts";
-import { clearStoppedSandboxStateRoots } from "../../../src/lib/sandbox/privileged-exec.ts";
+import { clearStoppedDockerSandboxChannelState } from "../../../src/lib/sandbox/privileged-exec.ts";
 import * as statePathsModule from "../../../src/lib/state/paths.ts";
 import {
   assertCleanupSucceededOrAbsent,
@@ -38,7 +39,7 @@ import {
   type AgentKind,
   runSecondaryCleanup as bestEffortPreclean,
   CLI,
-  requirePhase6RuntimeProvider,
+  dockerInfo,
   expectExitZero,
   expectSandboxReady,
   installSandboxOrSkipOnRateLimit,
@@ -56,6 +57,11 @@ type PolicyChannelModule = typeof import("../../../src/lib/actions/sandbox/polic
 type PolicyChannelDependenciesModule =
   typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts");
 type OpenshellRuntimeModule = typeof import("../../../src/lib/adapters/openshell/runtime.ts");
+type CredentialProviderRegistrationModule =
+  typeof import("../../../src/lib/onboard/credential-provider-registration.ts");
+type LiveE2eCredentialProviderOverrideInput = Parameters<
+  CredentialProviderRegistrationModule["installLiveE2eCredentialProviderRegistrationOverride"]
+>[0];
 type MessagingBridgeProviderModule =
   typeof import("../../../src/lib/onboard/messaging-bridge-provider.ts");
 type StatePathsModule = typeof import("../../../src/lib/state/paths.ts");
@@ -91,6 +97,13 @@ const messagingBridgeProvider = (
     : messagingBridgeProviderModule
 ) as MessagingBridgeProviderModule;
 const { ensureMessagingBridgeProfiles } = messagingBridgeProvider;
+const credentialProviderRegistration = (
+  "default" in credentialProviderRegistrationModule
+    ? credentialProviderRegistrationModule.default
+    : credentialProviderRegistrationModule
+) as CredentialProviderRegistrationModule;
+const credentialProviderRegistrationDependencies =
+  credentialProviderRegistration.credentialProviderRegistrationDependencies as ProviderDependencies;
 const legacyProviderDependencies = (
   "default" in legacyProvidersModule ? legacyProvidersModule.default : legacyProvidersModule
 ) as ProviderDependencies;
@@ -184,6 +197,7 @@ export function installGooglechatCredentialFixture(
     ensureProfiles(fixtureTokenDefs, {
       root: dependencies.root ?? ROOT,
       runOpenshell: effectiveRun,
+      redact: (value) => value.replaceAll(GOOGLECHAT_E2E_ACCESS_TOKEN, "[redacted]"),
     });
     const existing = effectiveRun(["provider", "get", expectedName], {
       ignoreError: true,
@@ -223,16 +237,16 @@ export function installGooglechatCredentialFixture(
     const registered = new Set([...delegatedProviderNames, expectedName]);
     return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
   };
-  const providerDependencies = dependencies.providerDependencies ?? legacyProviderDependencies;
+  const providerDependencies =
+    dependencies.providerDependencies ?? credentialProviderRegistrationDependencies;
+  const injectedProviderDependencies = dependencies.providerDependencies !== undefined;
   const effectiveLegacyProviderDependencies =
-    dependencies.legacyProviderDependencies ?? providerDependencies;
+    dependencies.legacyProviderDependencies ??
+    (injectedProviderDependencies ? providerDependencies : legacyProviderDependencies);
   const root = dependencies.root ?? ROOT;
   const run = dependencies.run ?? runOpenshell;
   const originalRegistrationUpsert = providerDependencies.upsertMessagingProviders;
   const originalLegacyUpsert = effectiveLegacyProviderDependencies.upsertMessagingProviders;
-  const delegatedUpsert = dependencies.legacyProviderDependencies
-    ? originalLegacyUpsert
-    : originalRegistrationUpsert;
 
   const fixtureUpsert: ProviderDependencies["upsertMessagingProviders"] = (
     tokenDefs,
@@ -253,7 +267,7 @@ export function installGooglechatCredentialFixture(
     const delegatedProviderNames =
       delegatedTokenDefs.length === 0
         ? []
-        : delegatedUpsert(delegatedTokenDefs, providerRun, options);
+        : originalLegacyUpsert(delegatedTokenDefs, providerRun, options);
     const baseRun = providerRun ?? run;
     const revalidate = () =>
       options.revalidateSandboxIdentity?.(
@@ -266,6 +280,7 @@ export function installGooglechatCredentialFixture(
     ensureProfiles(fixtureTokenDefs, {
       root,
       runOpenshell: effectiveRun,
+      redact: (value) => value.replaceAll(GOOGLECHAT_E2E_ACCESS_TOKEN, "[redacted]"),
     });
     const existing = effectiveRun(["provider", "get", expectedName], {
       ignoreError: true,
@@ -305,12 +320,21 @@ export function installGooglechatCredentialFixture(
     const registered = new Set([...delegatedProviderNames, expectedName]);
     return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
   };
-  providerDependencies.upsertMessagingProviders = fixtureUpsert;
-  effectiveLegacyProviderDependencies.upsertMessagingProviders = fixtureUpsert;
-  const restore = () => {
-    providerDependencies.upsertMessagingProviders = originalRegistrationUpsert;
-    effectiveLegacyProviderDependencies.upsertMessagingProviders = originalLegacyUpsert;
-  };
+  let restore: () => void;
+  if (injectedProviderDependencies) {
+    providerDependencies.upsertMessagingProviders = fixtureUpsert;
+    effectiveLegacyProviderDependencies.upsertMessagingProviders = fixtureUpsert;
+    restore = () => {
+      providerDependencies.upsertMessagingProviders = originalRegistrationUpsert;
+      effectiveLegacyProviderDependencies.upsertMessagingProviders = originalLegacyUpsert;
+    };
+  } else {
+    restore = credentialProviderRegistration.installLiveE2eCredentialProviderRegistrationOverride({
+      expectedName,
+      expectedType,
+      upsert: fixtureUpsert as LiveE2eCredentialProviderOverrideInput["upsert"],
+    });
+  }
   return Object.assign(restore, { upsertMessagingProviders: directUpsert });
 }
 
@@ -1044,7 +1068,7 @@ async function removeChannelsAndRebuild(
     expectExitZero(stop, "stop OpenClaw before WeChat cleanup");
 
     const cleanupResult = await withLiveE2eEnvironment(env, async () =>
-      clearStoppedSandboxStateRoots(SANDBOX_NAME, [
+      clearStoppedDockerSandboxChannelState(SANDBOX_NAME, [
         "/sandbox/.openclaw/wechat",
         "/sandbox/.openclaw/openclaw-weixin",
       ]),
@@ -1179,7 +1203,6 @@ export async function runChannelsStopStartTarget({
   cleanup,
   host,
   progress,
-  runtimeProvider,
   sandbox,
   secrets,
   skip,
@@ -1229,7 +1252,8 @@ export async function runChannelsStopStartTarget({
   );
   await precleanProviders(host, env, redactions, `preclean-channels-stop-start-${AGENT}`);
 
-  await requirePhase6RuntimeProvider(runtimeProvider, `${AGENT} channels stop/start`);
+  const docker = await dockerInfo(host, env);
+  expect(docker.exitCode, resultText(docker)).toBe(0);
   progress.phase("onboard sandbox with all messaging channels");
   const onboardingEnv = withoutGooglechatOnboardInputs(env);
   const install = await installSandboxOrSkipOnRateLimit(

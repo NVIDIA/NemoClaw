@@ -112,7 +112,7 @@ describe("commands/config-show", () => {
     expect(result.text).toContain("not configured");
   });
 
-  it("points to the sandbox-first host config command", () => {
+  it("notes that config is host-only modifiable", () => {
     const config: NemoClawOnboardConfig = {
       endpointType: "build",
       endpointUrl: "https://integrate.api.nvidia.com/v1",
@@ -127,7 +127,6 @@ describe("commands/config-show", () => {
     mockedDescribeOnboardProvider.mockReturnValue("NVIDIA");
 
     const result = slashConfigShow();
-    expect(result.text).toContain("Use `nemoclaw <sandbox> config get`");
-    expect(result.text).not.toContain("only be modified");
+    expect(result.text).toContain("host CLI");
   });
 });

@@ -29,13 +29,6 @@ const captureOpenshellMock = vi.fn((args: string[]) => ({
       ? "version: 1\nnetwork_policies: {}\n"
       : "alpha Ready\nbeta Ready\nId: beta-runtime-id\n",
 }));
-const readSandboxPolicyMock = vi.fn(() => ({
-  ok: true as const,
-  value: {
-    document: "version: 1\nnetwork_policies: {}\n",
-    appliedRevision: null,
-  },
-}));
 const getSandboxMock = vi.fn((name?: string) => harness.entries.get(name ?? "") ?? null);
 const registerSandboxMock = vi.fn(
   (
@@ -150,19 +143,9 @@ vi.mock("../../adapters/docker", () => ({
   dockerRunDetached: vi.fn(),
 }));
 vi.mock("../../adapters/openshell/runtime", () => ({
-  buildOpenShellSubprocessEnv: vi.fn(() => ({})),
   captureOpenshell: captureOpenshellMock,
-  captureResolvedOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: vi.fn(() => ({ status: 0, output: "" })),
-}));
-vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
-  syncCliOpenShellSandboxPolicyReader: {
-    inspectSandboxPolicy: vi.fn(),
-    readSandboxPolicy: readSandboxPolicyMock,
-    readSandboxPolicyRevision: vi.fn(),
-  },
 }));
 vi.mock("../../credentials/store", () => ({
   deleteCredential: vi.fn(),
@@ -213,8 +196,21 @@ vi.mock("../../runtime-recovery", () => ({
   parseLiveSandboxNames: vi.fn(() => new Set(["alpha"])),
 }));
 vi.mock("../../sandbox/create-stream", () => ({ streamSandboxCreate: streamSandboxCreateMock }));
-vi.mock("../../sandbox/mutable-config-perms", () => ({
+vi.mock("../../shields", () => ({
+  get isShieldsDown() {
+    return true;
+  },
+  recoverCompletedAutoRestoreBeforeCommand: vi.fn(),
   repairMutableConfigPerms: vi.fn(() => ({ applied: true, verified: true, errors: [] })),
+  shieldsUp: vi.fn(),
+}));
+vi.mock("../../shields/timer-bound-lock", () => ({
+  withTimerBoundShieldsMutationLock: vi.fn((_sandbox, _command, fn) => fn()),
+}));
+vi.mock("../../shields/timer-control", () => ({
+  isProcessAlive: vi.fn(() => true),
+  readProcessStartIdentity: vi.fn(() => "snapshot-test-process-start"),
+  readTimerMarker: vi.fn(() => null),
 }));
 vi.mock("../../state/gateway", () => ({
   isGatewayHealthy: vi.fn(() => true),
@@ -250,6 +246,7 @@ vi.mock("../../state/sandbox", () => ({
   restoreSandboxState: restoreSandboxStateMock,
 }));
 vi.mock("./destroy", () => ({
+  cleanupShieldsDestroyArtifacts: vi.fn(),
   removeSandboxRegistryEntryOutcome: removeSandboxRegistryEntryOutcomeMock,
   requireSandboxDestructiveCleanupAuthority: vi.fn(() => ({ provider: runtimeProvider })),
 }));

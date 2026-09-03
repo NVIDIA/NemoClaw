@@ -58,9 +58,26 @@ export type OpenShellUpload = {
   destination: string;
 };
 
+const INFERENCE_CONFIGURATION_ATTEMPTS = 6;
 const PROVIDER_CONFIGURATION_TIMEOUT_MS = 60_000;
+const INFERENCE_CONFIGURATION_TIMEOUT_MS = 930_000;
 const PROCESS_TERMINATION_GRACE_MS = 250;
 const PROCESS_KILL_TIMEOUT_MS = 5_000;
+
+function inferenceConfigurationRetryDelay(
+  env: NodeJS.ProcessEnv,
+  input: OpenShellInferenceOptions,
+  attempt: number,
+): number {
+  const identity = [
+    input.modelId,
+    env.PR_REVIEW_ADVISOR_INTEREST ?? "primary",
+    env.SANDBOX_NAME ?? input.gatewayId,
+  ].join(":");
+  let hash = 0;
+  for (const character of identity) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return 2000 * 2 ** attempt + (hash % 8000);
+}
 
 export type CreateOpenShellSandboxOptions = {
   command: readonly string[];
@@ -345,9 +362,22 @@ function startOpenShellInference(
         input.providerName,
         "--model",
         input.modelId,
-        "--no-verify",
+        "--timeout",
+        "900",
       ] as const;
-      tools.run("openshell", inferenceArgs, { env: commandEnv });
+      for (let attempt = 0; attempt < INFERENCE_CONFIGURATION_ATTEMPTS; attempt += 1) {
+        try {
+          tools.run("openshell", inferenceArgs, {
+            env: commandEnv,
+            timeout: INFERENCE_CONFIGURATION_TIMEOUT_MS,
+          });
+          return;
+        } catch (error) {
+          if (attempt === INFERENCE_CONFIGURATION_ATTEMPTS - 1) throw error;
+          await tools.wait(inferenceConfigurationRetryDelay(env, input, attempt));
+        }
+      }
+      throw new OpenShellAgentError("OpenShell inference configuration did not complete");
     } catch (error) {
       if (input.ownGateway) {
         try {

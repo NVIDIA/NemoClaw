@@ -52,7 +52,6 @@ describe("ordinary OpenClaw pairing target", () => {
 
     expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toEqual({
       gatewayName: GATEWAY_NAME,
-      openshellDriver: "docker",
       lifecycleGeneration: "generation-1",
       lifecycleLiveIdentityFingerprint: FINGERPRINT,
       stateDirectory: "/sandbox/.openclaw",
@@ -67,7 +66,6 @@ describe("ordinary OpenClaw pairing target", () => {
 
     expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toEqual({
       gatewayName: GATEWAY_NAME,
-      openshellDriver: "docker",
       lifecycleGeneration: "generation-1",
       lifecycleLiveIdentityFingerprint: FINGERPRINT,
       stateDirectory: "/sandbox/.openclaw",
@@ -83,7 +81,6 @@ describe("ordinary OpenClaw pairing target", () => {
 
     expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toEqual({
       gatewayName: GATEWAY_NAME,
-      openshellDriver: "docker",
       lifecycleGeneration: "generation-1",
       lifecycleLiveIdentityFingerprint: FINGERPRINT,
       stateDirectory: "/sandbox/.openclaw",
@@ -113,7 +110,6 @@ describe("ordinary OpenClaw pairing target", () => {
 
     expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toEqual({
       gatewayName: GATEWAY_NAME,
-      openshellDriver: "docker",
       lifecycleGeneration: "generation-1",
       lifecycleLiveIdentityFingerprint: FINGERPRINT,
       stateDirectory: "/sandbox/.openclaw",

@@ -26,7 +26,10 @@ describe("live workflow sandbox name boundary", () => {
   it("rejects overlong and unresolved optional-lane sandbox identities (#8497)", () => {
     const workflow = readYaml<Workflow>(".github/workflows/e2e.yaml");
     workflow.jobs["hermes-gpu-startup"]!.strategy!.matrix = {
-      scenario: ["e2e-overlong-optional-lane", {}],
+      include: [
+        { agent: "openclaw", sandbox_name: "e2e-overlong-optional-lane" },
+        { agent: "hermes" },
+      ],
     };
 
     expect(validateWorkflowSandboxNames(workflow)).toEqual(

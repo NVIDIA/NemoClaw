@@ -152,8 +152,6 @@ describe("handleAgentSetupState", () => {
         model: "model",
       }),
     );
-    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", null);
-    expect(calls.persistDashboardPort).toHaveBeenCalledWith("my-assistant", 18789);
     expect(calls.skipped).toHaveBeenCalledWith("agent_setup");
     expect(result.stateResult).toEqual({
       type: "transition",

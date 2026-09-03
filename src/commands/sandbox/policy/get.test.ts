@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getSandboxPolicy: vi.fn(async () => ({ raw: "", yaml: "" })),
+  getSandboxPolicy: vi.fn(() => ({ raw: "", yaml: "" })),
 }));
 
 vi.mock("../../../lib/actions/sandbox/policy-get", () => ({
@@ -21,38 +21,34 @@ describe("sandbox:policy:get command", () => {
   });
 
   it("outputs parsed base-policy YAML by default", async () => {
-    const credential = "opaque-live-policy-credential";
-    mocks.getSandboxPolicy.mockResolvedValue({
-      raw: "Version: 1\nHash: abc\nStatus: active\n---\nversion: 1\nSERVICE_API_KEY: '[STRIPPED_BY_MIGRATION]'",
-      yaml: "version: 1\nSERVICE_API_KEY: '[STRIPPED_BY_MIGRATION]'",
+    mocks.getSandboxPolicy.mockReturnValue({
+      raw: "Version: 1\nHash: abc\nStatus: active\n---\nversion: 1\nnetwork_policies: []",
+      yaml: "version: 1\nnetwork_policies: []",
     });
 
     const logSpy = vi.spyOn(SandboxPolicyGetCommand.prototype, "log");
     await SandboxPolicyGetCommand.run(["alpha"], rootDir);
 
     expect(mocks.getSandboxPolicy).toHaveBeenCalledWith("alpha");
-    expect(logSpy).toHaveBeenCalledWith("version: 1\nSERVICE_API_KEY: '[STRIPPED_BY_MIGRATION]'");
-    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining(credential));
+    expect(logSpy).toHaveBeenCalledWith("version: 1\nnetwork_policies: []");
   });
 
-  it("outputs the credential-redacted response with --raw", async () => {
-    const credential = "opaque-live-policy-credential";
+  it("outputs the unparsed base-policy response with --raw", async () => {
     const rawOutput =
-      "Version: 1\nHash: abc\nStatus: active\n---\nversion: 1\nSERVICE_API_KEY: '[STRIPPED_BY_MIGRATION]'";
-    mocks.getSandboxPolicy.mockResolvedValue({
+      "Version: 1\nHash: abc\nStatus: active\n---\nversion: 1\nnetwork_policies: []";
+    mocks.getSandboxPolicy.mockReturnValue({
       raw: rawOutput,
-      yaml: "version: 1\nSERVICE_API_KEY: '[STRIPPED_BY_MIGRATION]'",
+      yaml: "version: 1\nnetwork_policies: []",
     });
 
     const logSpy = vi.spyOn(SandboxPolicyGetCommand.prototype, "log");
     await SandboxPolicyGetCommand.run(["alpha", "--raw"], rootDir);
 
     expect(logSpy).toHaveBeenCalledWith(rawOutput);
-    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining(credential));
   });
 
   it("exits with error when the base policy is empty", async () => {
-    mocks.getSandboxPolicy.mockResolvedValue({ raw: "", yaml: "" });
+    mocks.getSandboxPolicy.mockReturnValue({ raw: "", yaml: "" });
 
     await expect(SandboxPolicyGetCommand.run(["alpha"], rootDir)).rejects.toThrow(
       /Failed to retrieve base policy/,
@@ -60,7 +56,7 @@ describe("sandbox:policy:get command", () => {
   });
 
   it("exits with error when base-policy YAML cannot be parsed", async () => {
-    mocks.getSandboxPolicy.mockResolvedValue({ raw: "some output", yaml: "" });
+    mocks.getSandboxPolicy.mockReturnValue({ raw: "some output", yaml: "" });
 
     await expect(SandboxPolicyGetCommand.run(["alpha"], rootDir)).rejects.toThrow(
       /Failed to parse base policy YAML/,
@@ -68,9 +64,9 @@ describe("sandbox:policy:get command", () => {
   });
 
   it("propagates OpenShell retrieval failures", async () => {
-    mocks.getSandboxPolicy.mockRejectedValueOnce(
-      new Error("Failed to retrieve base policy for sandbox 'alpha'."),
-    );
+    mocks.getSandboxPolicy.mockImplementationOnce(() => {
+      throw new Error("Failed to retrieve base policy for sandbox 'alpha'.");
+    });
 
     await expect(SandboxPolicyGetCommand.run(["alpha"], rootDir)).rejects.toThrow(
       /Failed to retrieve base policy for sandbox 'alpha'/,

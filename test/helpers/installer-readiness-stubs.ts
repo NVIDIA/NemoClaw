@@ -99,10 +99,6 @@ export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
     `${experimentalDir}/portable-profile.js`,
     `exports.isPortableExperimentalProfile = (env = process.env) => env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable";\n`,
   );
-  fs.writeFileSync(
-    `${onboardDir}/docker-driver-gateway-env.js`,
-    `exports.configuredRuntimeProviderOwnsHostReadiness = () => false;\n`,
-  );
 }
 
 export function runStorageRemediationInstallerPreflight({

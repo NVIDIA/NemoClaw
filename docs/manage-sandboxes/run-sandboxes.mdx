@@ -17,13 +17,15 @@ Use these workflows to keep existing sandboxes reachable and control the resourc
 
 ## Manage Dashboard Ports
 
-If a managed forward stopped or the URL does not load, restore its identity-bound lifecycle through NemoClaw.
+If the forward stopped, or the installer reported that no active forward was found and the URL does not load, restart the forward manually with the port from the install summary.
 
 ```bash
-nemoclaw my-gpt-claw recover
+openshell forward start --background <dashboard-port> my-gpt-claw
 ```
 
-For lower-level diagnostics, list OpenShell's legacy and user-managed forwards separately. Receipt-owned ForwardTcp services are verified by `nemoclaw <name> status` and `recover`.
+On WSL, use `0.0.0.0:<dashboard-port>` as the forward target so the Windows host can continue to reach the dashboard.
+
+To list active forwards across all sandboxes, run the following command.
 
 ```bash
 openshell forward list
@@ -133,6 +135,9 @@ $$nemoclaw <sandbox-name> start
 <AgentOnly variant="openclaw,hermes">
 After Docker reports the existing container as running, NemoClaw waits for OpenShell to report the sandbox in the `Ready` or `Running` state.
 NemoClaw recovers missing agent processes and host forwards only after that phase, so a slow sandbox start does not need a separate `recover` command.
+</AgentOnly>
+<AgentOnly variant="openclaw">
+NemoClaw restores locked startup access before that wait when Shields are up.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 After Docker reports the existing container as running, NemoClaw waits for OpenShell to report the sandbox in the `Ready` or `Running` state, then verifies the managed terminal runtime before the command reports success.

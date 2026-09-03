@@ -9,7 +9,7 @@ import { getSandboxAgentRegistryFields } from "./sandbox-agent";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 export interface SandboxRegistryMetadataDeps {
-  getCurrentRuntimeProviderId(): string;
+  getOpenShellComputeDriverName(): string;
   getInstalledOpenshellVersion(versionOutput?: string | null): string | null;
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
 }
@@ -83,9 +83,9 @@ export function createSandboxRegistryMetadataHelpers(
       // Only persist a proof when this run produced one; omit on reuse/update
       // paths so a prior proof result is preserved rather than nulled out.
       ...(config.sandboxGpuProof ? { sandboxGpuProof: config.sandboxGpuProof } : {}),
-      // Persist the selected managed provider identity. The provider may use
-      // compatibility compute plumbing internally without becoming Docker.
-      openshellDriver: deps.getCurrentRuntimeProviderId(),
+      // Driver identity comes from the resolved compute plan, not the host
+      // gateway launcher; those layers may differ (#7744).
+      openshellDriver: deps.getOpenShellComputeDriverName(),
       openshellVersion: deps.getInstalledOpenshellVersion(
         deps.runCaptureOpenshell(["--version"], { ignoreError: true }),
       ),

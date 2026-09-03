@@ -5,12 +5,7 @@ import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
-import {
-  parseOpenShellPolicy,
-  stripProviderComposedPolicies,
-} from "../../adapters/openshell/policy-boundary";
-import { isReviewedMessagingChannelPolicyUpgrade } from "../../messaging/channels/policy";
-import { reconcileTeamsOutlookLoginCredentialBinding } from "../../policy/microsoft-login-credential-binding";
+import { parseOpenShellPolicy } from "../../policy/merge";
 import { getCredentialBindingProviders, type InitialSandboxPolicy } from "../initial-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../temp-files";
 
@@ -160,7 +155,6 @@ function mergeRequestedReplacementNetworkPolicies(
           policyMapping(replacement.network_policies, "replacement network_policies"),
         );
   if (required.size > 0) {
-    const requiredPolicies: PolicyMapping = {};
     for (const source of requiredPolicySources) {
       let parsed: unknown;
       try {
@@ -177,16 +171,15 @@ function mergeRequestedReplacementNetworkPolicies(
       );
       for (const [key, value] of Object.entries(policies)) {
         if (!required.has(key)) continue;
-        const existing = requiredPolicies[key];
+        const existing = replacementPolicies[key];
         if (existing !== undefined && !isDeepStrictEqual(existing, value)) {
           throw new Error(
             `Cannot prepare rebuild policy handoff: required network policy '${key}' has conflicting replacement sources.`,
           );
         }
-        requiredPolicies[key] = structuredClone(value);
+        replacementPolicies[key] = structuredClone(value);
       }
     }
-    Object.assign(replacementPolicies, requiredPolicies);
   }
   const livePolicies =
     live.network_policies === undefined
@@ -207,13 +200,6 @@ function mergeRequestedReplacementNetworkPolicies(
     }
     if (Object.hasOwn(livePolicies, key)) {
       if (!isDeepStrictEqual(livePolicies[key], replacementPolicies[key])) {
-        if (
-          isReviewedMessagingChannelPolicyUpgrade(key, livePolicies[key], replacementPolicies[key])
-        ) {
-          livePolicies[key] = structuredClone(replacementPolicies[key]);
-          changed = true;
-          continue;
-        }
         throw new Error(
           `Cannot prepare rebuild policy handoff: live network policy '${key}' does not match the enabled channel requirement.`,
         );
@@ -243,25 +229,8 @@ export function mergeReplacementPolicyAccess(
   requiredNetworkPolicyKeys: readonly string[] = [],
   removedNetworkPolicyKeys: readonly string[] = [],
   requiredNetworkPolicySources: readonly string[] = [],
-  sandboxName?: string,
 ): { readonly changed: boolean; readonly source: string } {
-  const providerNormalizedLivePolicySource = stripProviderComposedPolicies(livePolicySource);
-  const teamsActive = requiredNetworkPolicyKeys.includes("teams")
-    ? true
-    : removedNetworkPolicyKeys.includes("teams")
-      ? false
-      : null;
-  const normalizedLivePolicySource =
-    teamsActive !== null
-      ? reconcileTeamsOutlookLoginCredentialBinding(
-          providerNormalizedLivePolicySource,
-          sandboxName,
-          teamsActive,
-        )
-      : providerNormalizedLivePolicySource;
-  const live = structuredClone(
-    parseOpenShellPolicy(normalizedLivePolicySource).policy,
-  ) as PolicyMapping;
+  const live = structuredClone(parseOpenShellPolicy(livePolicySource).policy) as PolicyMapping;
   const replacement = parseOpenShellPolicy(replacementPolicySource).policy as PolicyMapping;
   const processChanged = mergeMissingReplacementProcessIdentity(live, replacement);
   const filesystemChanged = mergeReplacementFilesystemAccess(live, replacement);
@@ -272,19 +241,14 @@ export function mergeReplacementPolicyAccess(
     removedNetworkPolicyKeys,
     requiredNetworkPolicySources,
   );
-  const changed =
-    normalizedLivePolicySource !== livePolicySource ||
-    processChanged ||
-    filesystemChanged ||
-    networkChanged;
+  const changed = processChanged || filesystemChanged || networkChanged;
   return changed
     ? { changed: true, source: YAML.stringify(live) }
-    : { changed: false, source: normalizedLivePolicySource };
+    : { changed: false, source: livePolicySource };
 }
 
 /** Materialize the single ephemeral policy input consumed by an explicit rebuild. */
 export function materializeRebuildPolicyHandoff(input: {
-  readonly sandboxName?: string;
   readonly livePolicyPath: string;
   readonly replacementPolicy: InitialSandboxPolicy;
   readonly requiredNetworkPolicyKeys?: readonly string[];
@@ -302,7 +266,6 @@ export function materializeRebuildPolicyHandoff(input: {
     input.requiredNetworkPolicyKeys,
     input.removedNetworkPolicyKeys,
     input.requiredNetworkPolicySources,
-    input.sandboxName,
   );
   if (!merged.changed) {
     return {

@@ -88,6 +88,7 @@ function deps(overrides: Partial<AuthoritativeRebuildTargetDeps> = {}) {
     assertGatewayReadiness: vi.fn(),
     inferenceRouteState: vi.fn((): InferenceRouteState => "matched"),
     captureForwardList: vi.fn(() => "alpha 127.0.0.1 18789 42 active"),
+    checkPort: vi.fn(async () => ({ ok: true })),
     ...overrides,
   } satisfies AuthoritativeRebuildTargetDeps;
 }
@@ -293,6 +294,7 @@ describe("authoritative rebuild target preflight", () => {
   it("pins the requested gateway for route and forward checks, then restores it", async () => {
     process.env.OPENSHELL_GATEWAY = "before";
     const seen: string[] = [];
+    const checkPort = vi.fn();
     await preflightAuthoritativeRebuildTarget(
       target,
       deps({
@@ -304,10 +306,12 @@ describe("authoritative rebuild target preflight", () => {
           seen.push(`forward:${process.env.OPENSHELL_GATEWAY}`);
           return "alpha 127.0.0.1 18789 42 active";
         }),
+        checkPort,
       }),
     );
 
     expect(seen).toEqual(["route:nemoclaw-12345", "forward:nemoclaw-12345"]);
+    expect(checkPort).not.toHaveBeenCalled();
     expect(process.env.OPENSHELL_GATEWAY).toBe("before");
   });
 
@@ -356,15 +360,16 @@ describe("authoritative rebuild target preflight", () => {
     ).rejects.toThrow("belongs to sandbox 'beta'");
   });
 
-  it("defers an unlisted port collision until the post-delete ForwardTcp launch", async () => {
+  it("rejects an occupied dashboard port with no OpenShell owner", async () => {
     await expect(
       preflightAuthoritativeRebuildTarget(
         target,
         deps({
           captureForwardList: vi.fn(() => ""),
+          checkPort: vi.fn(async () => ({ ok: false, process: "node", pid: 99, reason: "" })),
         }),
       ),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("occupied by node (PID 99)");
   });
 
   it("restores gateway scope when a fatal runtime check throws", async () => {

@@ -354,9 +354,7 @@ describe("portable uninstall retirement state", () => {
             get(current, property) {
               const value = Reflect.get(current, property, current) as unknown;
               return property === "uid"
-                ? typeof current.uid === "bigint"
-                  ? current.uid + 1n
-                  : current.uid + 1
+                ? current.uid + 1n
                 : typeof value === "function"
                   ? value.bind(current)
                   : value;

@@ -49,11 +49,12 @@ describe("forced rebuild MCP preparation", () => {
 
   it("uses host-side recovery when OpenShell exec fails even while SSH is healthy (#7062)", async () => {
     mocks.executeSandboxExecCommand.mockReturnValue(null);
+    const relock = vi.fn(() => true);
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
     });
 
-    await expect(prepareMcpForRebuild("alpha", false, true, bail)).resolves.toEqual(
+    await expect(prepareMcpForRebuild("alpha", false, true, relock, bail)).resolves.toEqual(
       emptyPreparation,
     );
 
@@ -64,15 +65,17 @@ describe("forced rebuild MCP preparation", () => {
     expect(mocks.prepareExecUnavailable).toHaveBeenCalledWith("alpha");
     expect(mocks.prepareAbsent).not.toHaveBeenCalled();
     expect(mocks.prepareLive).not.toHaveBeenCalled();
+    expect(relock).not.toHaveBeenCalled();
   });
 
   it("uses host-side recovery when SSH fails even while OpenShell exec is healthy (#7062)", async () => {
     mocks.executeSandboxCommand.mockReturnValue(null);
+    const relock = vi.fn(() => true);
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
     });
 
-    await expect(prepareMcpForRebuild("alpha", false, true, bail)).resolves.toEqual(
+    await expect(prepareMcpForRebuild("alpha", false, true, relock, bail)).resolves.toEqual(
       emptyPreparation,
     );
 
@@ -83,6 +86,7 @@ describe("forced rebuild MCP preparation", () => {
     expect(mocks.prepareExecUnavailable).toHaveBeenCalledWith("alpha");
     expect(mocks.prepareLive).not.toHaveBeenCalled();
     expect(mocks.prepareAbsent).not.toHaveBeenCalled();
+    expect(relock).not.toHaveBeenCalled();
   });
 
   it("uses host-side recovery when SSH exits nonzero even while OpenShell exec is healthy (#7062)", async () => {
@@ -91,11 +95,12 @@ describe("forced rebuild MCP preparation", () => {
       stdout: "",
       stderr: "relay EOF",
     });
+    const relock = vi.fn(() => true);
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
     });
 
-    await expect(prepareMcpForRebuild("alpha", false, true, bail)).resolves.toEqual(
+    await expect(prepareMcpForRebuild("alpha", false, true, relock, bail)).resolves.toEqual(
       emptyPreparation,
     );
 
@@ -104,37 +109,40 @@ describe("forced rebuild MCP preparation", () => {
     });
     expect(mocks.prepareExecUnavailable).toHaveBeenCalledWith("alpha");
     expect(mocks.prepareLive).not.toHaveBeenCalled();
+    expect(relock).not.toHaveBeenCalled();
   });
 
-  it.each([1, 64, 126, 127, 255])(
-    "routes every nonzero exec result (%i) through explicit force recovery (#7062)",
-    async (status) => {
-      mocks.executeSandboxExecCommand.mockReturnValue({
-        status,
-        stdout: "",
-        stderr: "exec failed",
-      });
-      const bail = vi.fn((message: string): never => {
-        throw new Error(message);
-      });
-
-      await expect(prepareMcpForRebuild("alpha", false, true, bail)).resolves.toEqual(
-        emptyPreparation,
-      );
-
-      expect(mocks.prepareExecUnavailable).toHaveBeenCalledWith("alpha");
-      expect(mocks.prepareLive).not.toHaveBeenCalled();
-      expect(mocks.prepareAbsent).not.toHaveBeenCalled();
-    },
-  );
-
-  it("does not mask a live-path safety failure after a successful exec probe (#7062)", async () => {
-    mocks.prepareLive.mockRejectedValue(new Error("generated policy drifted"));
+  it.each([
+    1, 64, 126, 127, 255,
+  ])("routes every nonzero exec result (%i) through explicit force recovery (#7062)", async (status) => {
+    mocks.executeSandboxExecCommand.mockReturnValue({
+      status,
+      stdout: "",
+      stderr: "exec failed",
+    });
+    const relock = vi.fn(() => true);
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
     });
 
-    await expect(prepareMcpForRebuild("alpha", false, true, bail)).rejects.toThrow(
+    await expect(prepareMcpForRebuild("alpha", false, true, relock, bail)).resolves.toEqual(
+      emptyPreparation,
+    );
+
+    expect(mocks.prepareExecUnavailable).toHaveBeenCalledWith("alpha");
+    expect(mocks.prepareLive).not.toHaveBeenCalled();
+    expect(mocks.prepareAbsent).not.toHaveBeenCalled();
+    expect(relock).not.toHaveBeenCalled();
+  });
+
+  it("does not mask a live-path safety failure after a successful exec probe (#7062)", async () => {
+    mocks.prepareLive.mockRejectedValue(new Error("generated policy drifted"));
+    const relock = vi.fn(() => true);
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+
+    await expect(prepareMcpForRebuild("alpha", false, true, relock, bail)).rejects.toThrow(
       "Failed to preserve MCP bridges before rebuild: generated policy drifted",
     );
 
@@ -144,6 +152,7 @@ describe("forced rebuild MCP preparation", () => {
       allowLocalDockerFallback: false,
     });
     expect(mocks.prepareAbsent).not.toHaveBeenCalled();
+    expect(relock).toHaveBeenCalledWith(true);
   });
 
   it("fails closed when host-side recovery cannot prove durable ownership (#7062)", async () => {
@@ -153,24 +162,27 @@ describe("forced rebuild MCP preparation", () => {
       stderr: "relay EOF",
     });
     mocks.prepareExecUnavailable.mockRejectedValue(new Error("provider ownership is ambiguous"));
+    const relock = vi.fn(() => true);
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
     });
 
-    await expect(prepareMcpForRebuild("alpha", false, true, bail)).rejects.toThrow(
+    await expect(prepareMcpForRebuild("alpha", false, true, relock, bail)).rejects.toThrow(
       "Failed to preserve MCP bridges before rebuild (--force host-side recovery): provider ownership is ambiguous",
     );
 
     expect(mocks.prepareLive).not.toHaveBeenCalled();
     expect(mocks.prepareAbsent).not.toHaveBeenCalled();
+    expect(relock).toHaveBeenCalledWith(true);
   });
 
   it("does not probe or use host-side recovery without explicit force (#7062)", async () => {
+    const relock = vi.fn(() => true);
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
     });
 
-    await expect(prepareMcpForRebuild("alpha", false, false, bail)).resolves.toEqual(
+    await expect(prepareMcpForRebuild("alpha", false, false, relock, bail)).resolves.toEqual(
       emptyPreparation,
     );
 
@@ -182,11 +194,12 @@ describe("forced rebuild MCP preparation", () => {
   });
 
   it("keeps already-absent stale recovery on its established host-side path (#7062)", async () => {
+    const relock = vi.fn(() => true);
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
     });
 
-    await expect(prepareMcpForRebuild("alpha", true, true, bail)).resolves.toEqual(
+    await expect(prepareMcpForRebuild("alpha", true, true, relock, bail)).resolves.toEqual(
       emptyPreparation,
     );
 
@@ -264,21 +277,21 @@ describe("MCP rebuild retry guidance", () => {
     expect(command).not.toContain("--no-observability");
   });
 
-  it.each(["disabled", "thread-opt-in"] as const)(
-    "preserves an explicit DCode auto-approval=%s override",
-    (mode) => {
-      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  it.each([
+    "disabled",
+    "thread-opt-in",
+  ] as const)("preserves an explicit DCode auto-approval=%s override", (mode) => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-      printMcpRebuildRetryCommand("alpha", [{} as never], "progressive", undefined, {
-        mode,
-        requestedExplicitly: true,
-      });
+    printMcpRebuildRetryCommand("alpha", [{} as never], "progressive", undefined, {
+      mode,
+      requestedExplicitly: true,
+    });
 
-      expect(error.mock.calls.flat().join("\n")).toContain(
-        `nemoclaw alpha rebuild --yes --tool-disclosure progressive --dcode-auto-approval ${mode}`,
-      );
-    },
-  );
+    expect(error.mock.calls.flat().join("\n")).toContain(
+      `nemoclaw alpha rebuild --yes --tool-disclosure progressive --dcode-auto-approval ${mode}`,
+    );
+  });
 
   it("keeps inherited DCode auto-approval state implicit on retry", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);

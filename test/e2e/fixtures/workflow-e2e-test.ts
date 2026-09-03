@@ -9,7 +9,7 @@ import { createArtifactSink } from "./artifacts.ts";
 import { type ProgressPhaseOutcome, startTestProgress, type TestProgress } from "./progress.ts";
 import { SecretStore } from "./secrets.ts";
 
-declare module "vitest" {
+declare module "@vitest/runner" {
   interface TaskMeta {
     e2ePhases?: readonly string[];
   }

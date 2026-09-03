@@ -15,16 +15,14 @@
  *       entirely and the dispatcher emitted the generic "Requested provider
  *       'install-vllm' is not available in this environment." error.
  *
- * When Docker is available, buildVllmMenuEntries always emits the install-vllm
- * entry for an explicit NEMOCLAW_PROVIDER=install-vllm request, even when the
- * profile is null, so the dispatcher can emit the precise "No vLLM install
- * profile available for this host." message. Without Docker, it reports the
- * requirement and omits managed install/start before provider effects. It also
- * lets the caller surface managed vLLM by default for known DGX platforms while
- * generic Linux stays gated, and logs a note when running-vLLM takes precedence
- * over the env-var opt-in. N1x and explicit managed GPU selection keep the
- * managed selection so the provider flow can report the running-server conflict
- * without changing the user's intent.
+ * buildVllmMenuEntries always emits the install-vllm entry when the user
+ * explicitly opts in via NEMOCLAW_PROVIDER=install-vllm, even when the profile
+ * is null, so the dispatcher can emit the precise "No vLLM install profile
+ * available for this host." message. It also lets the caller surface managed
+ * vLLM by default for known DGX platforms while generic Linux stays gated, and
+ * logs a note when running-vLLM takes precedence over the env-var opt-in. N1x
+ * keeps the managed selection because its readiness exception is limited to
+ * the managed-vLLM preview.
  */
 
 import { VLLM_PORT } from "../core/ports";
@@ -55,8 +53,6 @@ export interface BuildVllmMenuOptions {
   experimental: boolean;
   platform?: NvidiaPlatform;
   hasVllmImage: boolean;
-  /** Managed install/start remains Docker-backed; running-server attachment does not. */
-  dockerAvailable?: boolean;
   /** Defaults to process.env so tests can inject a clean environment. */
   env?: NodeJS.ProcessEnv;
   log?: (message: string) => void;
@@ -70,11 +66,8 @@ export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[
   const env = opts.env ?? process.env;
   const userChoseManagedVllm =
     (env.NEMOCLAW_PROVIDER || "").trim().toLowerCase() === MANAGED_VLLM_PROVIDER_KEY;
-  const hasManagedVllmGpuSelection =
-    String(env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim() !== "";
-  const preserveManagedVllmIntent =
-    userChoseManagedVllm && (opts.platform === "n1x" || hasManagedVllmGpuSelection);
-  if (opts.vllmRunning && !preserveManagedVllmIntent) {
+  const keepN1xManagedPreview = userChoseManagedVllm && opts.platform === "n1x";
+  if (opts.vllmRunning && !keepN1xManagedPreview) {
     if (userChoseManagedVllm) {
       log(
         `  Note: NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:${VLLM_PORT} — selecting the running instance.`,
@@ -89,12 +82,6 @@ export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[
         }`,
       },
     ];
-  }
-  if (opts.dockerAvailable === false) {
-    if (userChoseManagedVllm) {
-      log("  Managed vLLM install/start requires Docker on PATH.");
-    }
-    return [];
   }
   if (
     userChoseManagedVllm ||

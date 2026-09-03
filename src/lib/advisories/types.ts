@@ -13,7 +13,8 @@ export type AdvisoryPhase =
   | "onboard.credentials"
   | "onboard.inference"
   | "runtime.rebuild"
-  | "runtime.destroy";
+  | "runtime.destroy"
+  | "runtime.shields";
 
 /** Remediation interaction required from an operator. */
 export type AdvisoryKind = "manual" | "sudo" | "info";

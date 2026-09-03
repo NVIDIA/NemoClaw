@@ -3,7 +3,6 @@
 
 import fs from "node:fs";
 
-import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -18,7 +17,7 @@ import {
 // completion semantics, not a new target registry entry.
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-model-router";
-const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
+const ONBOARD_TIMEOUT_MS = 25 * 60_000;
 const HEALTH_ATTEMPTS = 20;
 const COMPLETION_ATTEMPTS = 3;
 
@@ -71,9 +70,7 @@ function routedPongReason(raw: string): "ok" | string {
   return "ok";
 }
 
-test(
-  "model-router provider-routed onboard returns routed inference.local PONG",
-  {
+test("model-router provider-routed onboard returns routed inference.local PONG", {
   meta: {
     e2ePhases: [
       "confirm routed-provider prerequisites",
@@ -84,17 +81,25 @@ test(
       "record the routed inference contract result",
     ],
   },
-  },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   expect(
     fs.existsSync(CLI_ENTRYPOINT),
     "run `npm run build:cli` before live repo CLI targets",
   ).toBe(true);
 
-    await runtimeProvider.requireAvailable({
-    artifactName: "prereq-runtime-info-model-router-provider-routed",
-      scenarioLabel: "provider-routed Model Router onboarding",
+  const docker = await host.command("docker", ["info"], {
+    artifactName: "prereq-docker-info-model-router-provider-routed",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
   });
+  if (docker.exitCode !== 0) {
+    if (process.env.GITHUB_ACTIONS === "true") {
+      throw new Error(
+        `Docker is required for provider-routed Model Router onboarding: ${resultText(docker)}`,
+      );
+    }
+    skip("Docker is required for provider-routed Model Router onboarding");
+  }
 
   const apiKey = requireModelRouterPublicKey(secrets);
 
@@ -102,7 +107,7 @@ test(
     id: "model-router-provider-routed-inference",
     boundary: "direct-cli-onboard-and-sandbox-exec",
     contract: [
-      "the selected runtime is available before onboarding",
+      "Docker is available before onboarding",
       "NVIDIA_API_KEY is present and nvapi-prefixed, then staged for the router's NVIDIA_INFERENCE_API_KEY credential",
       "nemoclaw onboard --fresh completes with NEMOCLAW_PROVIDER=routed",
       "host model-router health reports at least one healthy endpoint",
@@ -215,11 +220,10 @@ test(
   await artifacts.target.complete({
     id: "model-router-provider-routed-inference",
     assertions: {
-        runtimeProviderAvailable: true,
+      dockerRunning: docker.exitCode === 0,
       onboardCompleted: onboard.exitCode === 0,
       modelRouterHealthy: hasHealthyEndpoint(lastHealth),
       routedPongCompletion: completionReason === "ok",
     },
   });
-  },
-);
+});

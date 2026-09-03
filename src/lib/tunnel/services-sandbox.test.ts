@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as agentForwardStop from "./agent-forward-stop";
 import * as gatewayStop from "./gateway-stop";
 import * as sandboxGatewayStop from "./sandbox-gateway-stop";
 import { stopAll } from "./services";
@@ -18,10 +19,6 @@ function restoreSandboxEnv(saved: Record<(typeof SANDBOX_ENV_NAMES)[number], str
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
   }
-}
-
-function stopAllWithoutOllama(opts: Parameters<typeof stopAll>[0] = {}) {
-  return stopAll({ ...opts, cleanupOllamaModels: false });
 }
 
 describe("stopAll with sandbox channels", () => {
@@ -49,7 +46,7 @@ describe("stopAll with sandbox channels", () => {
   it("stops in-sandbox channels when sandboxName is provided", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    stopAllWithoutOllama({ pidDir, sandboxName: "test-sb" });
+    stopAll({ pidDir, sandboxName: "test-sb" });
 
     expect(stopSandboxChannels).toHaveBeenCalledWith("test-sb", {
       info: expect.any(Function),
@@ -61,7 +58,7 @@ describe("stopAll with sandbox channels", () => {
   it("warns when no sandbox name is available", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    stopAllWithoutOllama({ pidDir });
+    stopAll({ pidDir });
 
     expect(stopSandboxChannels).not.toHaveBeenCalled();
     const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
@@ -72,7 +69,7 @@ describe("stopAll with sandbox channels", () => {
   it("still stops cloudflared when in-sandbox shutdown cannot stop a process", () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
 
-    stopAllWithoutOllama({ pidDir, sandboxName: "test-sb" });
+    stopAll({ pidDir, sandboxName: "test-sb" });
 
     expect(stopSandboxChannels).toHaveBeenCalledTimes(1);
     expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
@@ -81,7 +78,7 @@ describe("stopAll with sandbox channels", () => {
   it("reads sandbox name from NEMOCLAW_SANDBOX env when not in opts", () => {
     process.env.NEMOCLAW_SANDBOX = "env-sandbox";
 
-    stopAllWithoutOllama({ pidDir });
+    stopAll({ pidDir });
 
     expect(stopSandboxChannels).toHaveBeenCalledWith("env-sandbox", expect.any(Object));
   });
@@ -89,7 +86,7 @@ describe("stopAll with sandbox channels", () => {
   it("reads sandbox name from NEMOCLAW_SANDBOX_NAME when NEMOCLAW_SANDBOX is unset", () => {
     process.env.NEMOCLAW_SANDBOX_NAME = "named-sandbox";
 
-    stopAllWithoutOllama({ pidDir });
+    stopAll({ pidDir });
 
     expect(stopSandboxChannels).toHaveBeenCalledWith("named-sandbox", expect.any(Object));
   });
@@ -98,7 +95,7 @@ describe("stopAll with sandbox channels", () => {
     process.env.NEMOCLAW_SANDBOX_NAME = "name-sandbox";
     process.env.NEMOCLAW_SANDBOX = "other-sandbox";
 
-    stopAllWithoutOllama({ pidDir });
+    stopAll({ pidDir });
 
     expect(stopSandboxChannels).toHaveBeenCalledWith("name-sandbox", expect.any(Object));
   });
@@ -115,7 +112,7 @@ describe("stopAll with sandbox channels", () => {
     process.env.NEMOCLAW_SANDBOX = "other-sandbox";
 
     try {
-      stopAllWithoutOllama({ pidDir: effectivePidDir });
+      stopAll({ pidDir: effectivePidDir });
 
       expect(stopSandboxChannels).toHaveBeenCalledWith("name-sandbox", expect.any(Object));
       expect(existsSync(join(effectivePidDir, "cloudflared.pid"))).toBe(false);
@@ -125,31 +122,35 @@ describe("stopAll with sandbox channels", () => {
     }
   });
 
-  it.each(["bad name", "../../etc/passwd"])(
-    "rejects malformed env sandbox name %j before in-sandbox shutdown",
-    (invalidName) => {
-      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-      process.env.NEMOCLAW_SANDBOX_NAME = invalidName;
+  it.each([
+    "bad name",
+    "../../etc/passwd",
+  ])("rejects malformed env sandbox name %j before in-sandbox shutdown", (invalidName) => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    process.env.NEMOCLAW_SANDBOX_NAME = invalidName;
 
-      stopAllWithoutOllama({ pidDir });
+    stopAll({ pidDir });
 
-      expect(stopSandboxChannels).not.toHaveBeenCalled();
-      expect(logSpy.mock.calls.map((call) => call[0]).join("\n")).toContain("Invalid sandbox name");
-    },
-  );
+    expect(stopSandboxChannels).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.map((call) => call[0]).join("\n")).toContain("Invalid sandbox name");
+  });
 
   it("keeps host cleanup running for a malformed explicit sandbox name", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const stopAgentForwards = vi
+      .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
+      .mockImplementation(() => {});
     const releaseGateway = vi
       .spyOn(gatewayStop, "releaseGatewayPortForStop")
       .mockImplementation(() => "attempted");
     writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
 
     expect(() =>
-      stopAllWithoutOllama({ pidDir, sandboxName: "bad name", releaseGatewayPort: true }),
+      stopAll({ pidDir, sandboxName: "bad name", releaseGatewayPort: true }),
     ).not.toThrow();
 
     expect(stopSandboxChannels).not.toHaveBeenCalled();
+    expect(stopAgentForwards).not.toHaveBeenCalled();
     expect(releaseGateway).not.toHaveBeenCalled();
     expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
     const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
@@ -160,7 +161,7 @@ describe("stopAll with sandbox channels", () => {
   it("does not stop default cloudflared for a malformed sandbox name without an explicit pidDir", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    expect(() => stopAllWithoutOllama({ sandboxName: "bad name" })).not.toThrow();
+    expect(() => stopAll({ sandboxName: "bad name" })).not.toThrow();
 
     expect(stopSandboxChannels).not.toHaveBeenCalled();
     const output = logSpy.mock.calls.map((call) => call[0]).join("\n");

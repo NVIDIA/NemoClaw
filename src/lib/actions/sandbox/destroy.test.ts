@@ -4,11 +4,7 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import type { SandboxEntry } from "../../state/registry";
-import {
-  assertUnambiguousDestroyContainerIdentity,
-  cleanupSandboxServices,
-} from "./destroy";
+import { assertUnambiguousDestroyContainerIdentity, cleanupSandboxServices } from "./destroy";
 
 const SANDBOX = "mybox";
 const mainPidDir = path.resolve("/tmp", `nemoclaw-services-${SANDBOX}`);
@@ -75,41 +71,6 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
   });
 });
 
-describe("cleanupSandboxServices Ollama ownership", () => {
-  it("keeps a model shared through a compatible endpoint at the same local daemon", () => {
-    const own = {
-      name: SANDBOX,
-      provider: "ollama-local",
-      model: "llama3",
-    } as SandboxEntry;
-    const peer = {
-      name: "peer",
-      provider: "compatible-endpoint",
-      endpointUrl: "http://127.0.0.1:11434/v1",
-      model: "llama3:latest",
-    } as SandboxEntry;
-    const unloadOllamaModels = vi.fn();
-
-    cleanupSandboxServices(
-      SANDBOX,
-      { stopHostServices: false },
-      {
-        getSandbox: () => own,
-        listSandboxes: () => ({ sandboxes: [own, peer], defaultSandbox: null }),
-        loadPersistedOllamaHost: () => "127.0.0.1",
-        unloadOllamaModels,
-        withOllamaModelOwnershipLock: (operation) => operation(),
-        rmSync: vi.fn(),
-        runOpenshell: vi.fn(() => ({ status: 0 })),
-        stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
-        googlechatWebhookTunnelPidDir: vi.fn(() => googlechatPidDir),
-      },
-    );
-
-    expect(unloadOllamaModels).not.toHaveBeenCalled();
-  });
-});
-
 describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
   const dockerSandbox = { openshellDriver: "docker" } as { openshellDriver: string | null };
 
@@ -155,57 +116,11 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
   it("does not probe or block a non-Docker runtime provider", () => {
     const classify = vi.fn();
     const proceed = assertUnambiguousDestroyContainerIdentity("destroytest", {
-      providerId: "unregistered-provider",
+      providerId: "podman",
       redact: String,
       classify: classify as never,
     });
     expect(proceed).toEqual({});
-    expect(classify).not.toHaveBeenCalled();
-  });
-
-  it("uses provider-owned identity before registry finalization", () => {
-    const classify = vi.fn();
-    const providerIdentity = {
-      schemaVersion: 1 as const,
-      providerId: "podman",
-      resourceHandle: "a".repeat(64),
-      ownershipSha256: "b".repeat(64),
-    };
-    const captureProviderIdentityByName = vi.fn(() => providerIdentity);
-
-    expect(
-      assertUnambiguousDestroyContainerIdentity("destroytest", {
-        providerId: "podman",
-        redact: String,
-        captureProviderIdentityByName,
-        classify: classify as never,
-      }),
-    ).toEqual({ identity: undefined, providerIdentity });
-    expect(captureProviderIdentityByName).toHaveBeenCalledWith("destroytest");
-    expect(classify).not.toHaveBeenCalled();
-  });
-
-  it("uses a provider-owned destroy identity without the Docker classifier", () => {
-    const classify = vi.fn();
-    const providerIdentity = {
-      schemaVersion: 1 as const,
-      providerId: "podman",
-      resourceHandle: "a".repeat(64),
-      ownershipSha256: "b".repeat(64),
-    };
-    const captureProviderIdentity = vi.fn(() => providerIdentity);
-    const sandbox = { name: "destroytest", agent: "openclaw" as const, openshellDriver: "podman" };
-
-    expect(
-      assertUnambiguousDestroyContainerIdentity("destroytest", {
-        providerId: "podman",
-        redact: String,
-        sandbox,
-        captureProviderIdentity,
-        classify: classify as never,
-      }),
-    ).toEqual({ identity: undefined, providerIdentity });
-    expect(captureProviderIdentity).toHaveBeenCalledWith(sandbox, "destroytest");
     expect(classify).not.toHaveBeenCalled();
   });
 

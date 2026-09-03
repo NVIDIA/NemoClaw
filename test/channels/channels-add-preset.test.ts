@@ -391,14 +391,6 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     async (channel) => {
       await addSandboxChannel("test-sb", { channel });
 
-      const messagingConfig =
-        channel === "telegram"
-          ? {
-              TELEGRAM_GROUP_POLICY: "open",
-              TELEGRAM_REQUIRE_MENTION: "1",
-            }
-          : null;
-
       expect(applyPresetSpy.mock.calls).toEqual([
         [
           "test-sb",
@@ -406,7 +398,6 @@ describe("channels add applies a matching policy preset (#3437)", () => {
           {
             disclosedPresetState: "absent",
             includeMessagingCredentialBindings: false,
-            messagingConfig,
           },
         ],
         [
@@ -415,13 +406,10 @@ describe("channels add applies a matching policy preset (#3437)", () => {
           {
             disclosedPresetState: "absent",
             includeMessagingCredentialBindings: true,
-            messagingConfig,
           },
         ],
       ]);
-      expect(loadPresetForSandboxSpy).toHaveBeenCalledWith("test-sb", channel, {
-        messagingConfig: undefined,
-      });
+      expect(loadPresetForSandboxSpy).toHaveBeenCalledWith("test-sb", channel);
       const presetCallIndexes = callOrder.flatMap((entry, index) =>
         entry === `applyPreset:${channel}` ? [index] : [],
       );
@@ -463,7 +451,6 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "whatsapp", {
       disclosedPresetState: "absent",
       includeMessagingCredentialBindings: true,
-      messagingConfig: { WHATSAPP_MODE: "self-chat" },
     });
     expect(callOrder.indexOf("scopeDisclosure")).toBeLessThan(callOrder.indexOf("updateSandbox"));
     expect(callOrder.indexOf("applyPreset:whatsapp")).toBeLessThan(
@@ -483,7 +470,6 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "whatsapp", {
       disclosedPresetState: "absent",
       includeMessagingCredentialBindings: true,
-      messagingConfig: { WHATSAPP_MODE: "self-chat" },
     });
     expect(callOrder).not.toContain("promptAndRebuild");
   });
@@ -591,10 +577,6 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "telegram", {
       disclosedPresetState: "absent",
       includeMessagingCredentialBindings: true,
-      messagingConfig: {
-        TELEGRAM_GROUP_POLICY: "open",
-        TELEGRAM_REQUIRE_MENTION: "1",
-      },
     });
     expect(updateSandboxSpy).not.toHaveBeenCalled();
     expect(deleteCredentialSpy).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");

@@ -7,7 +7,6 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { isPortableExperimentalProfile, PORTABLE_HOST_GATEWAY_IP } from "./docker-driver-platform";
-import { resolveConfiguredRuntimeProvider } from "./runtime-provider/selection";
 
 // See docs/security/gateway-authentication-controls.mdx for the public compatibility boundary.
 export const DOCKER_DRIVER_GATEWAY_LOCAL_TLS_DIR_NAME = "tls";
@@ -28,7 +27,6 @@ export type DockerDriverGatewayLocalTlsBundle = {
 export interface EnsureDockerDriverGatewayLocalTlsBundleOptions {
   env?: NodeJS.ProcessEnv;
   gatewayBin: string;
-  platform?: NodeJS.Platform;
   spawnSyncImpl?: typeof spawnSync;
   stateDir: string;
 }
@@ -192,25 +190,13 @@ function normalizeDockerDriverGatewayLocalTlsBundlePermissions(
 export function ensureDockerDriverGatewayLocalTlsBundle({
   env = process.env,
   gatewayBin,
-  platform = process.platform,
   spawnSyncImpl = spawnSync,
   stateDir,
 }: EnsureDockerDriverGatewayLocalTlsBundleOptions): DockerDriverGatewayLocalTlsBundle {
   const bundle = getDockerDriverGatewayLocalTlsBundle(stateDir);
-  const portable = isPortableExperimentalProfile(env);
-  const requiredProviderIpSans = portable
-    ? [PORTABLE_HOST_GATEWAY_IP]
-    : (() => {
-        const provider = resolveConfiguredRuntimeProvider(platform, process.arch, env);
-        if (!provider.gateway.supported) {
-          throw new Error("The selected runtime provider does not support a host-managed gateway.");
-        }
-        return provider.gateway.prepareHostRuntime({
-          environment: env,
-          platform,
-        }).requiredServerIpSans;
-      })();
-  const requiredServerIpSans = [...REQUIRED_SERVER_IP_SANS, ...requiredProviderIpSans];
+  const requiredServerIpSans = isPortableExperimentalProfile(env)
+    ? [...REQUIRED_SERVER_IP_SANS, PORTABLE_HOST_GATEWAY_IP]
+    : REQUIRED_SERVER_IP_SANS;
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   fs.chmodSync(stateDir, 0o700);
   if (dockerDriverGatewayLocalTlsBundleIsComplete(stateDir, requiredServerIpSans)) {
@@ -230,7 +216,7 @@ export function ensureDockerDriverGatewayLocalTlsBundle({
       "localhost",
       "--server-san",
       "127.0.0.1",
-      ...requiredProviderIpSans.flatMap((ipAddress) => ["--server-san", ipAddress]),
+      ...(isPortableExperimentalProfile(env) ? ["--server-san", PORTABLE_HOST_GATEWAY_IP] : []),
     ],
     {
       encoding: "utf-8",

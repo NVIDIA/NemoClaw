@@ -254,6 +254,10 @@ export function createPhases(
       webSearchProvider: (config) => (config.provider === "tavily" ? "tavily" : "brave"),
     },
     finalizationDeps: {
+      ensureAgentDashboardForward: vi.fn(() => {
+        order.push("agent-forward");
+        return 45123;
+      }),
       setDefaultSandbox: vi.fn(() => {
         order.push("set-default");
       }),

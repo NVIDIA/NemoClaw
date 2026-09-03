@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   dockerRemoveVolumesByPrefix: vi.fn(),
   resolveGatewayTeardownAuthority: vi.fn(),
   stopHostGatewayProcesses: vi.fn(),
+  stopStaleDashboardListeners: vi.fn(),
   GatewayAuthorityError: class GatewayAuthorityError extends Error {},
 }));
 
@@ -26,6 +27,10 @@ vi.mock("../../onboard/gateway-teardown-authority", () => ({
     `  Refusing ${operation}: ${String((error as Error).message)}`,
   ],
 }));
+vi.mock("../../onboard/stale-gateway-cleanup", () => ({
+  stopStaleDashboardListeners: mocks.stopStaleDashboardListeners,
+}));
+
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 
 function packagedServiceOwner({
@@ -125,6 +130,7 @@ describe("cleanupGatewayAfterLastSandbox", () => {
       { gatewayName: "nemoclaw", gatewayPort: 8080 },
       { env: process.env },
     );
+    expect(mocks.stopStaleDashboardListeners).toHaveBeenCalledOnce();
     expect(mocks.stopHostGatewayProcesses).not.toHaveBeenCalled();
     expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
       ignoreError: true,
@@ -152,6 +158,7 @@ describe("cleanupGatewayAfterLastSandbox", () => {
       "authority drift",
     );
     expect(runOpenshell).not.toHaveBeenCalled();
+    expect(mocks.stopStaleDashboardListeners).not.toHaveBeenCalled();
     expect(mocks.stopHostGatewayProcesses).not.toHaveBeenCalled();
     expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
   });
@@ -172,6 +179,7 @@ describe("cleanupGatewayAfterLastSandbox", () => {
       expect.stringContaining("authority changed since onboarding"),
     );
     expect(runOpenshell).not.toHaveBeenCalled();
+    expect(mocks.stopStaleDashboardListeners).not.toHaveBeenCalled();
     expect(mocks.stopHostGatewayProcesses).not.toHaveBeenCalled();
     expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
   });
@@ -196,6 +204,7 @@ describe("cleanupGatewayAfterLastSandbox", () => {
 
     cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell);
 
+    expect(mocks.stopStaleDashboardListeners).toHaveBeenCalledOnce();
     expect(mocks.stopHostGatewayProcesses).toHaveBeenCalledWith(
       {},
       {
@@ -517,9 +526,11 @@ describe("cleanupGatewayAfterLastSandbox", () => {
     [
       "gateway remove",
       (runOpenshell: ReturnType<typeof vi.fn>) =>
-        runOpenshell.mockImplementationOnce(() => {
-          throw new Error("injected gateway remove failure");
-        }),
+        runOpenshell
+          .mockImplementationOnce(() => ({ status: 0, stdout: "", stderr: "" }))
+          .mockImplementationOnce(() => {
+            throw new Error("injected gateway remove failure");
+          }),
     ],
     [
       "volume cleanup",

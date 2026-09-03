@@ -3,8 +3,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { testTimeoutOptions } from "../../helpers/timeouts";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
-import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupWhenCommandAvailable,
@@ -26,8 +26,8 @@ const REGISTRY_FILE = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "sandbo
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-tok-${process.pid}`;
 validateSandboxName(SANDBOX_NAME);
 
-const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
-const PHASE_TIMEOUT_MS = testTimeout(40 * 60_000);
+const ONBOARD_TIMEOUT_MS = 25 * 60_000;
+const PHASE_TIMEOUT_MS = 40 * 60_000;
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
@@ -282,17 +282,17 @@ async function destroyGatewayIfOpenshellExists(
 test(
   "messaging token rotation rebuilds only the changed provider and reuses unchanged credentials",
   {
-    timeout: PHASE_TIMEOUT_MS,
+    ...testTimeoutOptions(PHASE_TIMEOUT_MS),
     meta: {
       e2ePhases: [
-        "confirm the selected runtime and start hermetic inference",
+        "confirm Docker and start hermetic inference",
         "install the sandbox and confirm provider hashes",
         "rotate only the Telegram provider",
         "reuse the sandbox and record rotation evidence",
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+  async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",
@@ -300,10 +300,17 @@ test(
 
     assertTokenPairsDiffer();
 
-    await runtimeProvider.requireAvailable({
-      artifactName: "prereq-runtime-info-token-rotation",
-      scenarioLabel: "token rotation",
+    const docker = await host.command("docker", ["info"], {
+      artifactName: "prereq-docker-info-token-rotation",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
     });
+    if (docker.exitCode !== 0) {
+      if (process.env.GITHUB_ACTIONS === "true") {
+        throw new Error(`Docker is required for token rotation live E2E: ${resultText(docker)}`);
+      }
+      skip("Docker is required for token rotation live E2E");
+    }
 
     const fakeOpenAI = await startFakeOpenAiCompatibleServer({
       chatContent: "OK",
@@ -432,7 +439,8 @@ test(
     // OpenClaw/plugin layers for the retained rotation; token values remain in
     // gateway providers and are never baked into this image.
     const cacheImageTag = `nemoclaw-token-rotation-cache:${process.pid}`;
-    const retainBuildCache = await runtimeProvider.command(
+    const retainBuildCache = await host.command(
+      "docker",
       ["image", "tag", sandboxImageTag(), cacheImageTag],
       {
         artifactName: "phase-1-retain-build-cache",
@@ -442,7 +450,7 @@ test(
     );
     expect(retainBuildCache.exitCode, resultText(retainBuildCache)).toBe(0);
     cleanup.trackDisposable("remove token-rotation build cache tag", async () => {
-      const remove = await runtimeProvider.command(["image", "rm", cacheImageTag], {
+      const remove = await host.command("docker", ["image", "rm", cacheImageTag], {
         artifactName: "cleanup-token-rotation-build-cache",
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 30_000,

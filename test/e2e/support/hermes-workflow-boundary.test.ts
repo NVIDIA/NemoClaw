@@ -10,9 +10,11 @@ import YAML from "yaml";
 
 import { validateHermesGpuStartupWorkflowBoundary } from "../../../tools/e2e/hermes-gpu-startup-workflow-boundary.mts";
 import {
+  HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
   HERMES_TIMEOUT_CONTRACTS,
   HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
 } from "../../../tools/e2e/hermes-timeout-contract.mts";
+import { DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS } from "../../../src/lib/onboard/runtime-provider/docker-state-mutation.ts";
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 import { readRepoText, readWorkflow } from "../../helpers/e2e-workflow-contract";
 
@@ -148,7 +150,7 @@ describe("Hermes GPU boundary", () => {
       const job = workflow.jobs[GPU];
       job["runs-on"] = "ubuntu-latest";
       job.if = "${{ always() }}";
-      job.strategy["max-parallel"] = 9;
+      job.strategy["max-parallel"] = 2;
       job.strategy.matrix.include = [{ scenario: "native" }];
       job.env.UNRELATED_SECRET = KEY;
       const run = step(job, "Run Hermes GPU startup live Vitest test");
@@ -157,16 +159,8 @@ describe("Hermes GPU boundary", () => {
       step(job, "Upload Hermes GPU startup artifacts").with.path = "wrong";
     }, validateE2eWorkflowBoundary);
 
-    expect(errors).toEqual(
-      expect.arrayContaining([
-        "hermes-gpu-startup job must run on the native RTX PRO 6000 GPU runner",
-        "hermes-gpu-startup job must use the trusted execution plan behind generate-matrix",
-        "hermes-gpu-startup must expand reviewed GPU scenarios by supported runtime",
-        "hermes-gpu-startup job env must not consume repository secrets",
-        "hermes-gpu-startup step 'Run Hermes GPU startup live Vitest test' must not run the hosted Hermes E2E test",
-        "hermes-gpu-startup upload needs a scenario artifact path",
-        "hermes-gpu-startup job must enable hosted-compatible inference mode",
-      ]),
+    expect(errors.join("\n")).toMatch(
+      /GPU runner.*generate-matrix.*serialize.*secrets.*hosted Hermes.*artifact path.*hosted-compatible/s,
     );
   });
 
@@ -197,24 +191,32 @@ describe("Hermes GPU boundary", () => {
     }),
   );
 
-  it.each(hermesTimeoutBoundaries)(
-    "requires 15-30 minutes of outer headroom for $jobName",
-    ({ jobName, maximumTimeoutMinutes, message, minimumTimeoutMinutes }) => {
-      const insufficient = wfErrors((workflow) => {
-        workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes - 1;
-      }, validateE2eWorkflowBoundary);
-      const additional = wfErrors((workflow) => {
-        workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes + 1;
-      }, validateE2eWorkflowBoundary);
-      const excessive = wfErrors((workflow) => {
-        workflow.jobs[jobName]["timeout-minutes"] = maximumTimeoutMinutes + 1;
-      }, validateE2eWorkflowBoundary);
+  it("lets an owned Hermes Shields mutation finish before the live client can terminate it (#10155)", () => {
+    expect(HERMES_SHIELDS_COMMAND_TIMEOUT_MS).toBeGreaterThan(
+      DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS,
+    );
+  });
 
-      expect(insufficient).toContain(message);
-      expect(additional).toEqual([]);
-      expect(excessive).toContain(message);
-    },
-  );
+  it.each(hermesTimeoutBoundaries)("requires 15-30 minutes of outer headroom for $jobName", ({
+    jobName,
+    maximumTimeoutMinutes,
+    message,
+    minimumTimeoutMinutes,
+  }) => {
+    const insufficient = wfErrors((workflow) => {
+      workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes - 1;
+    }, validateE2eWorkflowBoundary);
+    const additional = wfErrors((workflow) => {
+      workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes + 1;
+    }, validateE2eWorkflowBoundary);
+    const excessive = wfErrors((workflow) => {
+      workflow.jobs[jobName]["timeout-minutes"] = maximumTimeoutMinutes + 1;
+    }, validateE2eWorkflowBoundary);
+
+    expect(insufficient).toContain(message);
+    expect(additional).toEqual([]);
+    expect(excessive).toContain(message);
+  });
 
   it("rejects unconditional live secret in hermes-e2e mock run step", () => {
     const errors = wfErrors((workflow) => {

@@ -17,17 +17,6 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   let getSandboxSpy: MockInstance;
   let recoverNamedGatewayRuntimeSpy: MockInstance;
 
-  function mockSandboxPhase(phase: string): void {
-    captureOpenshellSpy.mockImplementation((args: string[]) =>
-      args[0] === "policy"
-        ? { status: 0, output: "version: 1\nnetwork_policies: {}" }
-        : {
-            status: 0,
-            output: `Sandbox:\n  Name: instance-a\n  Phase: ${phase}`,
-          },
-    );
-  }
-
   beforeEach(async () => {
     const gatewayStatePath = requireDist.resolve("./gateway-state.js");
     delete require.cache[gatewayStatePath];
@@ -39,8 +28,10 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     const gatewaySelect = requireDist("./gateway-select.js");
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
-    captureOpenshellSpy = vi.spyOn(openshellRuntime, "captureOpenshell");
-    mockSandboxPhase("Ready");
+    captureOpenshellSpy = vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output: "Sandbox:\n  Name: instance-a\n  Phase: Ready",
+    });
     getNamedGatewayLifecycleStateSpy = vi
       .spyOn(gatewayRuntime, "getNamedGatewayLifecycleState")
       .mockReturnValue({ state: "healthy_named", status: "Gateway: nemoclaw" });
@@ -204,7 +195,10 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   });
 
   it("reports a stopped container without crash guidance (#8695)", async () => {
-    mockSandboxPhase("Error");
+    captureOpenshellSpy.mockReturnValue({
+      status: 0,
+      output: "Sandbox:\n  Name: instance-a\n  Phase: Error",
+    });
     getSandboxDockerRuntimeSpy.mockReturnValue({
       health: "none",
       paused: false,
@@ -234,7 +228,10 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   });
 
   it("steers a non-paused Error sandbox to the workspace-preserving start path (#7222)", async () => {
-    mockSandboxPhase("Error");
+    captureOpenshellSpy.mockReturnValue({
+      status: 0,
+      output: "Sandbox:\n  Name: instance-a\n  Phase: Error",
+    });
     const lines: string[] = [];
     vi.spyOn(console, "error").mockImplementation((line = "") => {
       lines.push(String(line));
@@ -256,7 +253,10 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   });
 
   it("keeps rebuild guidance when an Error sandbox has no recoverable container", async () => {
-    mockSandboxPhase("Error");
+    captureOpenshellSpy.mockReturnValue({
+      status: 0,
+      output: "Sandbox:\n  Name: instance-a\n  Phase: Error",
+    });
     getSandboxDockerRuntimeSpy.mockReturnValue({
       health: "none",
       paused: false,
@@ -282,7 +282,10 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   });
 
   it("keeps rebuild guidance for a paused container in a terminal phase other than Error", async () => {
-    mockSandboxPhase("Failed");
+    captureOpenshellSpy.mockReturnValue({
+      status: 0,
+      output: "Sandbox:\n  Name: instance-a\n  Phase: Failed",
+    });
     getSandboxDockerRuntimeSpy.mockReturnValue({
       health: "none",
       paused: true,
@@ -310,7 +313,10 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   });
 
   it("preserves docker-unpause recovery for a paused Error sandbox (#4495)", async () => {
-    mockSandboxPhase("Error");
+    captureOpenshellSpy.mockReturnValue({
+      status: 0,
+      output: "Sandbox:\n  Name: instance-a\n  Phase: Error",
+    });
     getSandboxDockerRuntimeSpy.mockReturnValue({
       health: "none",
       paused: true,

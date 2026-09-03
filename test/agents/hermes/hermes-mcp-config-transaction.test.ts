@@ -22,15 +22,8 @@ const TRANSACTION = path.resolve(
 const GUARD = path.resolve(import.meta.dirname, "../../..", "agents/hermes/runtime-config-guard.py");
 
 function runPython(source: string, args: string[] = []) {
-  const canonicalEnvironment = Object.fromEntries(
-    [...source.matchAll(/openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]*)/gu)].map(([, name]) => [
-      name!,
-      `openshell:resolve:env:${name!}`,
-    ]),
-  );
   return spawnSync("python3", ["-c", source, TRANSACTION, GUARD, ...args], {
     encoding: "utf8",
-    env: { ...process.env, ...canonicalEnvironment },
   });
 }
 
@@ -510,7 +503,7 @@ print(json.dumps([
     },
   );
 
-  it("refuses a non-writable config snapshot", () => {
+  it("refuses a locked config snapshot", () => {
     const result = runPython(`
 import importlib.util, sys, types
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
@@ -527,7 +520,7 @@ else:
 `);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("not writable");
+    expect(result.stdout).toContain("locked");
   });
 
   it("blocks symlink, hardlink, permission, inode-race, and atomic-write guard bypasses", () => {

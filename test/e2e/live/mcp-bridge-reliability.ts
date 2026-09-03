@@ -11,7 +11,7 @@ import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
-import { runBoundedRetry, type RetryEvidence } from "../../../tools/e2e/retry-evidence.mts";
+import { runBoundedRetry, type RetryEvidence } from "../fixtures/retry-policy.ts";
 import {
   type HermesMcpCommandResult,
   isHermesGatewayDrainingResponse,
@@ -40,6 +40,7 @@ const HERMES_RESTART_SUCCESS_PREFIX = new RegExp(
     String.raw`Removed preset: mcp-bridge-concurrent`,
     String.raw`✓ Policy version (?<cleanupVersion>\d+) submitted \(hash: [0-9a-f]+\)`,
     String.raw`✓ Policy version \k<cleanupVersion> loaded \(active version: \k<cleanupVersion>\)`,
+    String.raw`Preset not found: mcp-bridge-concurrent`,
     String.raw`✓ Policy version (?<commitVersion>\d+) submitted \(hash: [0-9a-f]+\)`,
     String.raw`✓ Policy version \k<commitVersion> loaded \(active version: \k<commitVersion>\)`,
   ].join("\n")}$`,

@@ -6,17 +6,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // Most tests inject deps, so these mocks replace the real inference stack under
 // vitest. The default-deps suite below calls through to them.
 vi.mock("./local", () => ({
-  createOllamaApiCaptureEx: vi.fn((capture) => capture),
   getOllamaProbeCommand: vi.fn(() => ["curl", "ollama-probe"]),
   resolveOllamaRuntimeContextWindow: vi.fn(() => null),
 }));
 vi.mock("./vllm-runtime-context", () => ({ resolveVllmContextWindowFromModels: vi.fn() }));
 
-import {
-  createOllamaApiCaptureEx,
-  getOllamaProbeCommand,
-  resolveOllamaRuntimeContextWindow,
-} from "./local";
+import { getOllamaProbeCommand, resolveOllamaRuntimeContextWindow } from "./local";
 import { type ContextWindowDeps, resolveContextWindowForModel } from "./context-window";
 
 // The default dependencies reach ../runner through a lazy CJS require, so swap the
@@ -24,7 +19,7 @@ import { type ContextWindowDeps, resolveContextWindowForModel } from "./context-
 type CaptureStub = { stdout: string; exitCode: number | null; timedOut: boolean };
 
 const runner = require("../runner") as {
-  runCaptureEx: (cmd: readonly string[], options?: { env?: NodeJS.ProcessEnv }) => CaptureStub;
+  runCaptureEx: (cmd: readonly string[]) => CaptureStub;
 };
 
 function captured(timedOut = false): CaptureStub {
@@ -106,7 +101,6 @@ describe("resolveContextWindowForModel default dependencies (#8974)", () => {
 
   afterEach(() => {
     runner.runCaptureEx = originalRunCaptureEx;
-    vi.mocked(createOllamaApiCaptureEx).mockImplementation((capture) => capture!);
   });
 
   it("ollama-local: runs the blocking probe command, not a backgrounded warm-up", () => {
@@ -138,37 +132,6 @@ describe("resolveContextWindowForModel default dependencies (#8974)", () => {
     expect(resolveContextWindowForModel("ollama-local", "qwen3.5:9b")).toBe(16384);
     expect(attempts).toBe(2);
     expect(getOllamaProbeCommand).toHaveBeenLastCalledWith("qwen3.5:9b", 300);
-  });
-
-  it("ollama-local: isolates Docker credentials for the initial and retry probes", () => {
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    const cleanup = vi.fn();
-    const environments: Array<NodeJS.ProcessEnv | undefined> = [];
-    let attempts = 0;
-    runner.runCaptureEx = (_command, options) => {
-      environments.push(options?.env);
-      attempts += 1;
-      return captured(attempts === 1);
-    };
-    vi.mocked(createOllamaApiCaptureEx).mockImplementation((capture) => (command, options) => {
-      try {
-        return capture!(command, {
-          ...options,
-          env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
-        });
-      } finally {
-        cleanup();
-      }
-    });
-    vi.mocked(getOllamaProbeCommand).mockReturnValue(["docker", "run", "ollama-probe"]);
-    vi.mocked(resolveOllamaRuntimeContextWindow).mockReturnValue(16384);
-
-    expect(resolveContextWindowForModel("ollama-local", "qwen3.5:9b")).toBe(16384);
-    expect(environments).toEqual([
-      { DOCKER_CONFIG: "/tmp/credential-free-docker" },
-      { DOCKER_CONFIG: "/tmp/credential-free-docker" },
-    ]);
-    expect(cleanup).toHaveBeenCalledTimes(2);
   });
 
   it("ollama-local: does not retry when the first probe fails without timing out", () => {

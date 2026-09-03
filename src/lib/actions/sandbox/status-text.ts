@@ -13,6 +13,7 @@ import { getEffectiveReasoningEffort } from "../../inference/selection";
 import { buildSshForwardHintLines } from "../../onboard/ssh-forward-hint";
 import { getGatewayPresets } from "../../policy";
 import * as sandboxVersion from "../../sandbox/version";
+import * as shields from "../../shields";
 import type { SandboxEntry, SandboxGpuProofResult } from "../../state/registry";
 import {
   createSystemDeps as createSessionDeps,
@@ -224,6 +225,16 @@ function printActiveSessions(sandboxName: string): void {
   }
 }
 
+function printShieldsPosture(sandboxName: string): void {
+  const posture = shields.getShieldsPosture(sandboxName, false);
+  if (posture.mode === "locked") return;
+  const detail =
+    posture.mode === "mutable_default"
+      ? posture.detail
+      : `${posture.detail} (check \`shields status\` for details)`;
+  console.log(`    Permissions: ${detail}`);
+}
+
 function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEntry): void {
   try {
     const { lookup, sandboxName, statusAgent } = context;
@@ -326,6 +337,7 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   );
   const agentExitCode = printAgentHarness(context);
   printActiveSessions(sandboxName);
+  printShieldsPosture(sandboxName);
   printAgentVersion(context, sb);
   return { exitCode: inferenceExitCode ?? agentExitCode };
 }

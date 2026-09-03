@@ -46,10 +46,7 @@ function reportRecovery(
       return;
     }
     proc.stderr.write(
-      `  Ollama warm-up for '${model}' at ${result.endpoint} ${describeWarmFailure(result.reason)} ` +
-        `(${result.detail}). OpenClaw dispatch will continue. To retry the warm-up, restore ` +
-        `Ollama access to ${result.endpoint} and confirm that it serves '${model}', then rerun ` +
-        `this command.\n`,
+      `  Ollama warm-up for '${model}' ${describeWarmFailure(result.reason)}; continuing to OpenClaw dispatch.\n`,
     );
     return;
   }
@@ -74,7 +71,7 @@ function reportRecovery(
       break;
     case "unreachable":
       proc.stderr.write(
-        "  Ollama was unreachable during the model check; continuing to OpenClaw dispatch.\n",
+        "  Ollama was unreachable during the restart check; continuing to OpenClaw dispatch.\n",
       );
       break;
     case "missing-model":
@@ -97,7 +94,7 @@ export function runOllamaRestartRecovery(
   proc: OllamaRestartRecoveryProcess,
   recoverOllama: OllamaRestartRecoveryFn = maybeWarmOllamaAfterDaemonRestart,
 ): void {
-  proc.stderr.write("  Checking whether the Ollama model is loaded...\n");
+  proc.stderr.write("  Checking Ollama model readiness after daemon restart...\n");
   try {
     reportRecovery(route, recoverOllama(route), proc);
   } catch {

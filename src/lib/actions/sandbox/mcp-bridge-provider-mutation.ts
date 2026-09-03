@@ -16,11 +16,11 @@
  */
 
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
-import { endpointlessProviderProfilePath } from "../../adapters/openshell/provider-profile";
 import {
   checkOpenAiInferenceProviderProfile,
-  registerCheckedInProviderProfile,
-} from "../../adapters/openshell/provider-profile-registration";
+  endpointlessProviderProfilePath,
+  ensureEndpointlessProviderProfile,
+} from "../../adapters/openshell/provider-profile";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError, type ParsedEnvReference } from "./mcp-bridge-contracts";
@@ -79,18 +79,20 @@ function ensureOpenAiGatewayProviderProfile(): void {
 /** Ensure the endpointless profile required by OpenShell static credential binding. */
 export function ensureMcpBridgeProviderProfile(): void {
   ensureOpenAiGatewayProviderProfile();
-  const result = registerCheckedInProviderProfile({
+  const result = ensureEndpointlessProviderProfile({
+    profileId: MCP_BRIDGE_PROVIDER_TYPE,
+    inferenceCapable: false,
     profilePath: endpointlessProviderProfilePath(REPOSITORY_ROOT, MCP_BRIDGE_PROVIDER_TYPE),
     runOpenshell: (args, options) =>
       runOpenshellProviderCommand(args, options) as OpenShellCommandResult,
   });
   if (result.ok) return;
-  if (result.operation === "import") {
+  if (result.reason === "import-failed") {
     throw new McpBridgeError(
       `Could not import OpenShell provider profile '${MCP_BRIDGE_PROVIDER_TYPE}'.`,
     );
   }
-  if (!(result.error.kind === "command" && result.error.reason === "profile_incompatible")) {
+  if (result.reason === "export-failed") {
     throw new McpBridgeError(
       `OpenShell provider profile '${MCP_BRIDGE_PROVIDER_TYPE}' could not be exported for validation. Refusing to attach MCP credentials to it.`,
     );

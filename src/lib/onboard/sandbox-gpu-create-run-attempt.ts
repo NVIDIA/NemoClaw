@@ -20,6 +20,7 @@ import {
 import { printSandboxCreateRecoveryHints } from "../build-context";
 import { streamSandboxCreate, type StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
+import { isSandboxReady } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
 import {
@@ -28,10 +29,6 @@ import {
 } from "./created-sandbox-failure";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
-import {
-  isSandboxBridgeGatewayReachable,
-  verifySandboxBridgeGatewayReachableOrExit,
-} from "./gateway-sandbox-reachability";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
 import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
 import { enforceManagedBootstrapRecoveryForSandbox } from "./managed-bootstrap/adapter";
@@ -229,7 +226,6 @@ function probeExactOpenShellSandboxId(
     suppressOutput: true,
     timeout,
     killSignal: "SIGKILL",
-    killProcessTreeOnTimeout: true,
   });
   if (result.status === 0 && !result.error) {
     const sandboxId = parseOpenShellSandboxId(String(result.stdout ?? ""));
@@ -368,7 +364,6 @@ function checkSandboxExecutableReadiness(
       suppressOutput: true,
       timeout,
       killSignal: "SIGKILL",
-      killProcessTreeOnTimeout: true,
     },
   );
   if (result.status === 0 && !result.error) return "ready";
@@ -386,58 +381,9 @@ class ManagedBootstrapCreateStreamFailure extends Error {
   }
 }
 
-export async function verifySelectedSandboxBridgeReachability(
-  input: SandboxGpuCreateFlowInput,
-): Promise<void> {
-  const managedBootstrap = input.managedBootstrap;
-  const reachabilityImpl = managedBootstrap
-    ? (options: Parameters<typeof isSandboxBridgeGatewayReachable>[0]) => {
-        const gatewayRuntime = managedBootstrap.runtimeProvider.gateway.prepareHostRuntime({
-          environment: input.hostEnv ?? process.env,
-          platform: process.platform,
-        });
-        return isSandboxBridgeGatewayReachable({ ...options, gatewayRuntime });
-      }
-    : undefined;
-  await verifySandboxBridgeGatewayReachableOrExit(true, {
-    skip: false,
-    port: input.gatewayPort,
-    ...(reachabilityImpl ? { reachabilityImpl } : {}),
-  });
-}
-
-async function verifyActivatedManagedCreateBeforeEffects(input: {
-  readonly sandboxId: string | null;
-  readonly createAttemptNonce: string;
-  readonly route: SelectedDockerGpuRoute;
-  readonly flow: SandboxGpuCreateFlowInput;
-  readonly lifecycle: ManagedBootstrapRuntimeCreateLifecycle;
-  readonly deferPostCreateEffects: boolean;
-  readonly waitForCreatedSandboxPublication: (sandboxId: string) => void;
-  readonly revalidatePostCreateEffect: (operation: string) => void;
-}): Promise<void> {
-  if (!input.sandboxId) {
-    throw new Error("Managed bootstrap create returned without one exact sandbox identity.");
-  }
-  input.waitForCreatedSandboxPublication(input.sandboxId);
-  await verifyCreatedSandboxBeforeEffects(
-    input.sandboxId,
-    input.createAttemptNonce,
-    input.route,
-    input.flow,
-  );
-  if (input.deferPostCreateEffects) {
-    input.revalidatePostCreateEffect(
-      `activate managed sandbox network for '${input.flow.sandboxName}'`,
-    );
-    await input.lifecycle.prepareNetwork();
-  }
-}
-
 export function createSandboxGpuCreateAttemptRunner(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
-  reverifyManagedBridgeReachability: () => Promise<void>,
 ) {
   const portableLifecycle = input.portableLifecycle === true;
   const printCreateFailureDiagnostics =
@@ -475,15 +421,6 @@ export function createSandboxGpuCreateAttemptRunner(
     }
     revalidate(operation);
   };
-  const captureSandboxReadiness: SandboxGpuCreateFlowDeps["runCaptureOpenshell"] = (
-    args,
-    options = {},
-  ) =>
-    deps.runCaptureOpenshell(args, {
-      ...options,
-      killProcessTreeOnTimeout: true,
-      timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
-    });
   const managedRouting = input.managedBootstrap?.runtimeProvider.bootstrap.createOnboardRouting({
     sandboxName: input.sandboxName,
     openshellArgv: deps.openshellArgv,
@@ -590,14 +527,11 @@ export function createSandboxGpuCreateAttemptRunner(
     const managedLifecycle = managedBootstrap
       ? managedBootstrap.runtimeProvider.bootstrap.createLifecycle({
           providerId: managedBootstrap.runtimeProvider.identity.id,
-          environment: input.hostEnv ?? process.env,
           stateRoot: managedBootstrap.stateRoot,
           bootstrapIdentity: attemptBootstrapIdentity ?? managedBootstrap.bootstrapIdentity,
           request: managedBootstrap.request,
           image: managedBootstrap.image,
           agentIdentity: managedBootstrap.agentIdentity,
-          workspaceRoot: managedBootstrap.workspaceRoot,
-          managedStateRoots: managedBootstrap.managedStateRoots,
           intendedWorkloadArgv: managedBootstrap.intendedWorkloadArgv,
           expectedSupervisorArgv: managedBootstrap.expectedSupervisorArgv,
           launchArgv: attemptArgv,
@@ -617,7 +551,6 @@ export function createSandboxGpuCreateAttemptRunner(
             inferenceProvider: input.provider,
             gatewayUsesContainerBridge: input.dockerDriverGateway,
             gatewayPort: input.gatewayPort,
-            reverifyBridgeReachability: reverifyManagedBridgeReachability,
           },
           dependencies: {
             runCaptureOpenshell: deps.runCaptureOpenshell,
@@ -709,17 +642,16 @@ export function createSandboxGpuCreateAttemptRunner(
             readyCheck: () => {
               const list = deps.runCaptureOpenshell(["sandbox", "list", "-g", input.gatewayName], {
                 ignoreError: true,
-                killProcessTreeOnTimeout: true,
                 timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
               });
-              const ready = sandboxGpuCreateAttempt.isSandboxReady(list, input.sandboxName);
+              const ready = isSandboxReady(list, input.sandboxName);
               if (!ready || !createAttemptNonce) return ready;
               const observation = observeCreatedOpenShellSandboxId(
                 {
                   sandboxName: input.sandboxName,
                   gatewayName: input.gatewayName,
                   createAttemptNonce,
-                  runCaptureOpenshell: captureSandboxReadiness,
+                  runCaptureOpenshell: deps.runCaptureOpenshell,
                 },
                 SANDBOX_READY_PROBE_TIMEOUT_MS,
               );
@@ -781,7 +713,6 @@ export function createSandboxGpuCreateAttemptRunner(
     };
     let createResult: Awaited<ReturnType<typeof streamSandboxCreate>> | null = null;
     let resumedSandboxId: string | null = null;
-    let managedCreatedSandboxId: string | null = null;
     let managedIncompleteCreateRecovered = false;
     let createdSandboxVerified = false;
     const failAfterCreatedSandboxVerification = (message: string, status: number): never => {
@@ -899,7 +830,15 @@ export function createSandboxGpuCreateAttemptRunner(
                 { cause: error },
               );
             }
-            managedCreatedSandboxId = sandboxId;
+            waitForCreatedSandboxPublication(sandboxId);
+            await verifyCreatedSandboxBeforeEffects(sandboxId, createAttemptNonce!, route, input);
+            createdSandboxVerified = true;
+            if (deferPostCreateEffects) {
+              revalidatePostCreateEffect(
+                `activate managed sandbox network for '${input.sandboxName}'`,
+              );
+              await managedLifecycle.prepareNetwork();
+            }
             managedIncompleteCreateRecovered = createFailure?.kind === "sandbox_create_incomplete";
             return {
               value: result,
@@ -915,17 +854,6 @@ export function createSandboxGpuCreateAttemptRunner(
             };
           },
         );
-        await verifyActivatedManagedCreateBeforeEffects({
-          sandboxId: managedCreatedSandboxId,
-          createAttemptNonce: createAttemptNonce!,
-          route,
-          flow: input,
-          lifecycle: managedLifecycle,
-          deferPostCreateEffects,
-          waitForCreatedSandboxPublication,
-          revalidatePostCreateEffect,
-        });
-        createdSandboxVerified = true;
       } catch (error) {
         if (!(error instanceof ManagedBootstrapCreateStreamFailure)) throw error;
         createResult = error.result;

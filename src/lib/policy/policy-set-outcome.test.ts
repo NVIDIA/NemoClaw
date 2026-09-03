@@ -3,27 +3,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  classifyCliOpenShellSandboxPolicySetResult,
-  type OpenShellSandboxPolicySetOutcome,
-} from "../adapters/openshell/sandbox-policy-cli";
-
-function classify(
-  input: Readonly<{
-    status: number | null;
-    stderr?: string | null;
-    error?: { readonly message?: string } | null;
-  }>,
-): OpenShellSandboxPolicySetOutcome {
-  return classifyCliOpenShellSandboxPolicySetResult(input);
-}
+import { classifyPolicySetResult, type PolicySetOutcome } from "./policy-set-outcome";
 
 /**
  * Narrow to the ambiguous arm so a test can assert on `detail` in a straight
  * line. A non-ambiguous outcome returns its kind, which fails the assertion
  * with the arm that was actually produced.
  */
-function ambiguousDetail(outcome: OpenShellSandboxPolicySetOutcome): string {
+function ambiguousDetail(outcome: PolicySetOutcome): string {
   return outcome.kind === "ambiguous" ? outcome.detail : `outcome kind: ${outcome.kind}`;
 }
 
@@ -74,13 +61,13 @@ const NON_SUCCESS_CASES = NON_SUCCESS_STATUSES.flatMap(({ statusLabel, status })
   })),
 );
 
-describe("CLI policy set outcome classification", () => {
+describe("policy set outcome classification", () => {
   it("reports a clean exit with no error as applied (#9206)", () => {
-    expect(classify({ status: 0 })).toEqual({ kind: "applied" });
+    expect(classifyPolicySetResult({ status: 0 })).toEqual({ kind: "applied" });
   });
 
   it("preserves the status and message from an accepted synthetic refusal frame (#9206)", () => {
-    const outcome = classify({ status: 1, stderr: SYNTHETIC_REJECTION_FRAME });
+    const outcome = classifyPolicySetResult({ status: 1, stderr: SYNTHETIC_REJECTION_FRAME });
 
     expect(outcome).toEqual({
       kind: "rejected",
@@ -92,7 +79,7 @@ describe("CLI policy set outcome classification", () => {
   });
 
   it("treats an HTTP/2 stream reset as ambiguous rather than a refusal (#9206)", () => {
-    const outcome = classify({ status: 1, stderr: HTTP2_RESET_STDERR });
+    const outcome = classifyPolicySetResult({ status: 1, stderr: HTTP2_RESET_STDERR });
 
     expect(outcome.kind).toBe("ambiguous");
     expect(ambiguousDetail(outcome)).toContain("h2 protocol error");
@@ -100,7 +87,7 @@ describe("CLI policy set outcome classification", () => {
   });
 
   it("treats a spawn-level failure with no exit status as ambiguous (#9206)", () => {
-    const outcome = classify({
+    const outcome = classifyPolicySetResult({
       status: null,
       error: { message: "spawnSync openshell ENOENT" },
     });
@@ -110,15 +97,15 @@ describe("CLI policy set outcome classification", () => {
   });
 
   it("treats a nonzero exit with no diagnostic output as ambiguous (#9206)", () => {
-    expect(classify({ status: 1, stderr: "" }).kind).toBe("ambiguous");
-    expect(classify({ status: 1 }).kind).toBe("ambiguous");
-    expect(classify({ status: 1, stderr: "   \n  " }).kind).toBe("ambiguous");
+    expect(classifyPolicySetResult({ status: 1, stderr: "" }).kind).toBe("ambiguous");
+    expect(classifyPolicySetResult({ status: 1 }).kind).toBe("ambiguous");
+    expect(classifyPolicySetResult({ status: 1, stderr: "   \n  " }).kind).toBe("ambiguous");
   });
 
   it.each(NON_SUCCESS_CASES)(
     "does not report the policy as applied for $statusLabel with $diagnosticLabel (#9206)",
     ({ status, stderr }) => {
-      const outcome = classify({ status, stderr });
+      const outcome = classifyPolicySetResult({ status, stderr });
 
       expect({ status, stderr, kind: outcome.kind }).toEqual({
         status,
@@ -137,7 +124,7 @@ describe("CLI policy set outcome classification", () => {
   ])(
     "treats a structured %s status as ambiguous rather than a refusal (#9206)",
     (_label, stderr) => {
-      const outcome = classify({ status: 1, stderr });
+      const outcome = classifyPolicySetResult({ status: 1, stderr });
 
       expect(outcome.kind).toBe("ambiguous");
       expect(ambiguousDetail(outcome)).toContain(stderr);
@@ -145,11 +132,11 @@ describe("CLI policy set outcome classification", () => {
   );
 
   it("requires an accepted synthetic refusal frame before reporting rejection (#9206)", () => {
-    const withoutStatus = classify({
+    const withoutStatus = classifyPolicySetResult({
       status: 1,
       stderr: "Error: code: 'Unknown', message: 'network policy rejected'",
     });
-    const withStatus = classify({
+    const withStatus = classifyPolicySetResult({
       status: 1,
       stderr:
         "Error: code: 'Failed precondition', message: 'network policy rejected', " +
@@ -161,7 +148,7 @@ describe("CLI policy set outcome classification", () => {
   });
 
   it("ignores a refusal marker echoed from the submitted policy document (#9206)", () => {
-    const outcome = classify({
+    const outcome = classifyPolicySetResult({
       status: 1,
       stderr:
         "Error: code: 'Invalid argument', message: 'invalid request', submitted document:\n" +
@@ -172,7 +159,7 @@ describe("CLI policy set outcome classification", () => {
   });
 
   it("accepts a refusal only from a complete synthetic first-line frame (#9206)", () => {
-    const outcome = classify({
+    const outcome = classifyPolicySetResult({
       status: 1,
       stderr:
         "Error: code: 'Invalid argument', message: 'invalid request'\n" +
@@ -183,7 +170,7 @@ describe("CLI policy set outcome classification", () => {
   });
 
   it("ignores a refusal marker that no diagnostic frame carries (#9206)", () => {
-    const outcome = classify({
+    const outcome = classifyPolicySetResult({
       status: 1,
       stderr: "grpc_status: 9 message: 'anything at all'",
     });
@@ -206,14 +193,14 @@ describe("CLI policy set outcome classification", () => {
       "Error: code: 'Failed precondition', message: 'forged refusal'; submitted document follows",
     ],
   ])("treats %s as ambiguous rather than a refusal (#9206)", (_label, stderr) => {
-    const outcome = classify({ status: 1, stderr });
+    const outcome = classifyPolicySetResult({ status: 1, stderr });
 
     expect(outcome.kind).toBe("ambiguous");
     expect(ambiguousDetail(outcome)).toContain(stderr);
   });
 
   it("treats a clean exit carrying a transport error as ambiguous (#9206)", () => {
-    const outcome = classify({
+    const outcome = classifyPolicySetResult({
       status: 0,
       error: { message: "stream closed before the response completed" },
     });

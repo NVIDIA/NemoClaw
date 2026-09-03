@@ -22,6 +22,7 @@ export async function setupOllamaLocalInference(
     validateLocalProvider,
     getLocalProviderBaseUrl,
     applyLocalInferenceRoute,
+    getOllamaWarmupCommand,
     run,
     shouldFrontOllamaWithProxy,
     ensureOllamaAuthProxy,
@@ -94,61 +95,22 @@ export async function setupOllamaLocalInference(
       await persistAndProbeOllamaProxy(proxyToken);
     }
   }
-  let rollbackPersistedOllamaHost: () => void;
-  try {
-    rollbackPersistedOllamaHost = localInference.persistResolvedOllamaHost();
-  } catch (persistError) {
-    error(
-      `  Could not stage the selected local Ollama route for later stop/destroy cleanup: ${
-        persistError instanceof Error ? persistError.message : String(persistError)
-      }`,
-    );
-    return exitProcess(1);
-  }
-  const rollbackCleanupRoute = (): boolean => {
-    try {
-      rollbackPersistedOllamaHost();
-      return true;
-    } catch (rollbackError) {
-      error(
-        `  Could not restore the prior local Ollama cleanup route: ${
-          rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
-        }`,
-      );
-      return false;
-    }
-  };
   // Use a dedicated internal credential env (NEMOCLAW_OLLAMA_PROXY_TOKEN)
   // so the gateway never reads the user's host OPENAI_API_KEY for local
   // Ollama. GH #2519: a stale host OPENAI_API_KEY was leaking into the
   // inference path and producing 401s.
-  let providerResult: ReturnType<typeof upsertProvider>;
-  try {
-    providerResult = upsertProvider(
-      "ollama-local",
-      "openai",
-      OLLAMA_PROXY_CREDENTIAL_ENV,
-      baseUrl,
-      { [OLLAMA_PROXY_CREDENTIAL_ENV]: ollamaCredential },
-    );
-  } catch (providerError) {
-    rollbackCleanupRoute();
-    throw providerError;
-  }
+  const providerResult = upsertProvider(
+    "ollama-local",
+    "openai",
+    OLLAMA_PROXY_CREDENTIAL_ENV,
+    baseUrl,
+    { [OLLAMA_PROXY_CREDENTIAL_ENV]: ollamaCredential },
+  );
   if (!providerResult.ok) {
-    rollbackCleanupRoute();
     error(`  ${providerResult.message}`);
     return exitProcess(providerResult.status || 1);
   }
-  let retrySelection: boolean;
-  try {
-    retrySelection = await applyLocalInferenceRoute("ollama-local", model);
-  } catch (routeError) {
-    rollbackCleanupRoute();
-    throw routeError;
-  }
-  if (retrySelection) {
-    if (!rollbackCleanupRoute()) return exitProcess(1);
+  if (await applyLocalInferenceRoute("ollama-local", model)) {
     return { done: true, result: { retry: "selection" } };
   }
   if (providerOwnedInferenceProof) {
@@ -157,22 +119,17 @@ export async function setupOllamaLocalInference(
       providerOwnedInferenceProof.model !== normalizeHostLocalOllamaModelRef(model) ||
       providerOwnedInferenceProof.toolCallingRequired !== !allowToolsIncompatible
     ) {
-      rollbackCleanupRoute();
       error("  Provider-owned Ollama proof does not match the accepted model capability request.");
       return exitProcess(1);
     }
   } else {
-    let probe: ReturnType<typeof localInference.validateOllamaModelWithToolsOverride>;
-    try {
-      log(`  Priming Ollama model: ${model}`);
-      localInference.runOllamaWarmup(model, run);
-      probe = localInference.validateOllamaModelWithToolsOverride(model, allowToolsIncompatible);
-    } catch (probeError) {
-      rollbackCleanupRoute();
-      throw probeError;
-    }
+    log(`  Priming Ollama model: ${model}`);
+    run(getOllamaWarmupCommand(model), { ignoreError: true });
+    const probe = localInference.validateOllamaModelWithToolsOverride(
+      model,
+      allowToolsIncompatible,
+    );
     if (!probe.ok) {
-      rollbackCleanupRoute();
       error(`  ${probe.message}`);
       return exitProcess(1);
     }

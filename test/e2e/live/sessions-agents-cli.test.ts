@@ -13,7 +13,6 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { registerSandboxCleanupUnlessKept } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -27,10 +26,10 @@ import { parseJsonFromText } from "./json-envelope.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-sessions-cli";
 const TEST_AGENT_ID = process.env.NEMOCLAW_E2E_AGENT_ID ?? "work";
-const ONBOARD_TIMEOUT_MS = execTimeout(40 * 60_000);
+const ONBOARD_TIMEOUT_MS = 40 * 60_000;
 const AGENT_TURN_TIMEOUT_MS = 5 * 60_000;
 const GATEWAY_RPC_TIMEOUT_MS = 120_000;
-const TEST_TIMEOUT_MS = testTimeout(60 * 60_000);
+const TEST_TIMEOUT_MS = 60 * 60_000;
 const SCOPE_RETRY_ATTEMPTS = 5;
 const SCOPE_RETRY_DELAY_MS = 4_000;
 const SCOPE_PENDING_PATTERN =
@@ -299,13 +298,11 @@ async function expectJsonCommand(
   return parseJsonEnvelope(result, args.join(" "));
 }
 
-test(
-  "sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
-  {
+test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes", {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
-      "confirm CLI, selected runtime, and OpenShell prerequisites",
+      "confirm CLI Docker and OpenShell prerequisites",
       "onboard the sessions and agents sandbox",
       "exercise main-agent session JSON and reset",
       "add and list the secondary agent",
@@ -313,8 +310,7 @@ test(
       "delete the secondary agent and confirm absence",
     ],
   },
-  },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   expect(fs.existsSync(CLI_ENTRYPOINT), "bin/nemoclaw.js missing").toBe(true);
   expect(
     fs.existsSync(CLI_DIST_ENTRYPOINT),
@@ -336,10 +332,14 @@ test(
     ],
   });
 
-    await runtimeProvider.requireAvailable({
-    artifactName: "prereq-runtime-info-sessions-agents-cli",
-      scenarioLabel: "sessions and agents CLI",
+  const docker = await host.command("docker", ["info"], {
+    artifactName: "prereq-docker-info-sessions-agents-cli",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
   });
+  expect(docker.exitCode, `Docker is required for sessions/agents E2E\n${resultText(docker)}`).toBe(
+    0,
+  );
 
   const hosted = requireHostedInferenceConfig(secrets);
   await ensureOpenshellAvailable(host);
@@ -547,5 +547,4 @@ test(
     agentEntries(agentsAfterDelete).some((entry) => entry.id === TEST_AGENT_ID),
     `agent '${TEST_AGENT_ID}' still visible after delete`,
   ).toBe(false);
-  },
-);
+});

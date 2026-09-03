@@ -120,25 +120,18 @@ function dockerDesktopCredentialHelperRespondsFromBuild(
   });
 }
 
-export function dockerContextIsDefaultFromBuild(
-  env: NodeJS.ProcessEnv,
-  showContext: (env: NodeJS.ProcessEnv) => string | null = (sourceEnv) => {
-    const result = dockerSpawnSync(["context", "show"], {
-      encoding: "utf-8",
-      env: dockerBuildSubprocessEnv(sourceEnv),
-      shell: false,
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 5_000,
-    });
-    return result.error || result.status !== 0 ? null : String(result.stdout).trim();
-  },
-): boolean {
+function dockerContextIsDefaultFromBuild(env: NodeJS.ProcessEnv): boolean {
   // Any explicit endpoint owns daemon authority, including alternate Unix
   // sockets. Preserve its client configuration and registry credentials.
   if (env.DOCKER_HOST) return false;
-  const explicitContext = String(env.DOCKER_CONTEXT ?? "").trim();
-  if (explicitContext) return explicitContext === "default";
-  return showContext(env) === "default";
+  const result = dockerSpawnSync(["context", "show"], {
+    encoding: "utf-8",
+    env: dockerBuildSubprocessEnv(env),
+    shell: false,
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 5_000,
+  });
+  return !result.error && result.status === 0 && String(result.stdout).trim() === "default";
 }
 
 /**

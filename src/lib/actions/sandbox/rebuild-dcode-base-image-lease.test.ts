@@ -10,7 +10,7 @@ import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
   snapshotEnv,
-} from "../../../../test/helpers/rebuild-flow-generic-harness";
+} from "../../../../test/helpers/rebuild-flow-dcode-harness";
 import {
   SANDBOX_BASE_RESOLUTION_LABEL,
   type SandboxBaseImageResolutionMetadata,

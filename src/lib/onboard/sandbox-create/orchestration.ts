@@ -10,14 +10,9 @@ import { createCliOpenShellSandboxObserverFromRunner } from "../../adapters/open
 import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../adapters/openshell/sandbox-identity";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
-import {
-  getMessagingPolicyKeysByChannel,
-  listMessagingPolicyPresetMetadata,
-} from "../../messaging/channels/metadata";
+import { getMessagingPolicyKeysByChannel } from "../../messaging/channels/metadata";
 import { loadMessagingChannelPolicyPreset } from "../../messaging/channels/policy";
-import { normalizeWechatIlinkBaseUrl } from "../../messaging/channels/wechat/ilink-base-url";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
-import type { MessagingChannelConfig } from "../../messaging-channel-config";
 import {
   isDcodeAgent,
   OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
@@ -31,30 +26,14 @@ import type {
   QualifiedPendingSandboxCreateReservation,
 } from "../../state/registry";
 import type { HermesAuthMethod } from "../hermes-auth";
-import {
-  getMessagingChannelConfigFromPlan,
-  getStoredMessagingChannelConfig,
-} from "../messaging-config";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
-import {
-  assertProviderlessInterceptorEnvironment,
-  enforceRemovedImmutabilityMigrationBoundary,
-} from "../entry-options";
+import { assertProviderlessInterceptorEnvironment } from "../entry-options";
 import type {
   ManagedHermesStateVolumeCleanupResult,
   ManagedHermesStateVolumeContext,
 } from "../managed-workload/hermes-state-volume";
-import { removeManagedHermesStateVolume } from "../managed-workload/hermes-state-volume";
-import {
-  createOnboardRecreateGatewayAuthorityRevalidator,
-  type OwnedSandboxRecreateRuntime,
-} from "../onboard-recreate-journal";
-import { managedImageRuntimeIdentity } from "../managed-image/agents";
-import {
-  managedStartupStateRoots,
-  MANAGED_HERMES_STATE_ROOT,
-} from "../managed-startup/state-roots";
+import type { OwnedSandboxRecreateRuntime } from "../onboard-recreate-journal";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import { cliName } from "../branding";
 import type {
@@ -74,11 +53,11 @@ import {
   sandboxCreateBoundaryFromPendingIdentity,
 } from "./identity-boundary";
 import {
+  attachProvidersAfterSandboxCreation,
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
 import { materializeRebuildPolicyHandoff } from "./rebuild-policy-handoff";
-
 function cancelRecoveryIdentity(
   liveExists: boolean,
   requireVerifiedCreateBoundary: () => VerifiedSandboxCreateBoundary,
@@ -146,52 +125,20 @@ export function resolveRebuildPolicyProviderAuthority(input: {
   return [...providers];
 }
 
-function asMessagingAgentId(
-  agent: string | null | undefined,
-): SandboxMessagingPlan["agent"] | null {
-  return agent === "openclaw" || agent === "hermes" ? agent : null;
-}
-
 export function resolveRebuildMessagingPolicyDeltas(
   plan:
     | Pick<SandboxMessagingPlan, "agent" | "disabledChannels" | "networkPolicy">
     | null
     | undefined,
-  fallback?: {
-    readonly agent?: SandboxMessagingPlan["agent"] | null;
-    readonly messagingConfig?: MessagingChannelConfig | null;
-  },
 ): {
   readonly requiredNetworkPolicyKeys: readonly string[];
   readonly requiredNetworkPolicyPresetNames: readonly string[];
   readonly removedNetworkPolicyKeys: readonly string[];
 } {
   if (!plan) {
-    const wechatIlinkOrigin = normalizeWechatIlinkBaseUrl(
-      fallback?.messagingConfig?.WECHAT_BASE_URL,
-    );
-    if (!wechatIlinkOrigin) {
-      return {
-        requiredNetworkPolicyKeys: [],
-        requiredNetworkPolicyPresetNames: [],
-        removedNetworkPolicyKeys: [],
-      };
-    }
-    const fallbackAgent = fallback?.agent;
-    const wechatPolicy = fallbackAgent
-      ? listMessagingPolicyPresetMetadata({ agent: fallbackAgent }).find(
-          ({ channelId }) => channelId === "wechat",
-        )
-      : undefined;
-    if (!fallbackAgent || !wechatPolicy) {
-      throw new Error(
-        "Cannot prepare a legacy WeChat rebuild policy without manifest metadata for the effective agent.",
-      );
-    }
     return {
-      requiredNetworkPolicyKeys:
-        wechatPolicy.agentPolicyKeys[fallbackAgent] ?? wechatPolicy.policyKeys,
-      requiredNetworkPolicyPresetNames: [wechatPolicy.presetName],
+      requiredNetworkPolicyKeys: [],
+      requiredNetworkPolicyPresetNames: [],
       removedNetworkPolicyKeys: [],
     };
   }
@@ -245,22 +192,20 @@ export function resolveRebuildObservabilityPolicyDelta(input: {
 }
 
 /** Preserve OpenShell's live policy plus bounded requirements for this explicit create. */
-export function selectRebuildCreatePolicy(
+function selectRebuildCreatePolicy(
   policySourcePath: string,
   generatedPolicy: import("../initial-policy").InitialSandboxPolicy,
   requiredNetworkPolicyKeys: readonly string[],
   removedNetworkPolicyKeys: readonly string[],
   requiredNetworkPolicyPresetNames: readonly string[],
-  messagingAgent: string | null | undefined,
-  messagingConfig: MessagingChannelConfig | null | undefined,
+  messagingPlan: SandboxMessagingPlan | null | undefined,
   sandboxName: string,
   authorizedCredentialBindingProviders: readonly string[],
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
-      agent: messagingAgent,
+      agent: messagingPlan?.agent,
       sandboxName,
-      messagingConfig,
     });
     if (!source) {
       throw new Error(
@@ -270,7 +215,6 @@ export function selectRebuildCreatePolicy(
     return source;
   });
   return materializeRebuildPolicyHandoff({
-    sandboxName,
     livePolicyPath: policySourcePath,
     replacementPolicy: generatedPolicy,
     requiredNetworkPolicyKeys,
@@ -992,8 +936,8 @@ type ProviderPreparationDeps = Parameters<
 >[1];
 
 type ProviderEffectBoundary = {
-  readonly validateBeforeCreate: () => Promise<void>;
-  readonly publishBeforeCreate: () => Promise<void>;
+  readonly validateBeforeCreate: () => void;
+  readonly publishBeforeCreate: () => void;
   readonly runAfterVerifiedCreate:
     | ((context: VerifiedSandboxCreateEffectsContext) => Promise<void>)
     | undefined;
@@ -1011,12 +955,12 @@ export function createProviderEffectBoundary(input: {
     | null;
   readonly revalidateSandboxIdentityBeforeCreate: () => void;
 }): ProviderEffectBoundary {
-  const validate = async () =>
+  const validate = () =>
     validateAttachedMessagingProvidersBeforeSandboxCreation(
       input.preparationInput,
       input.preparationDeps,
     );
-  const publish = async () =>
+  const publish = () =>
     publishAttachedProvidersBeforeDockerSandboxCreation(
       input.preparationInput,
       input.preparationDeps,
@@ -1024,16 +968,16 @@ export function createProviderEffectBoundary(input: {
   if (!input.deferred) {
     return {
       validateBeforeCreate: validate,
-      publishBeforeCreate: async () => {
+      publishBeforeCreate: () => {
         input.revalidateSandboxIdentityBeforeCreate();
-        await publish();
+        publish();
       },
       runAfterVerifiedCreate: undefined,
     };
   }
   return {
-    validateBeforeCreate: async () => undefined,
-    publishBeforeCreate: async () => undefined,
+    validateBeforeCreate: () => undefined,
+    publishBeforeCreate: () => undefined,
     runAfterVerifiedCreate: async (context) => {
       context.revalidateSandboxIdentity(
         `starting deferred provider effects for sandbox '${input.sandboxName}'`,
@@ -1044,21 +988,19 @@ export function createProviderEffectBoundary(input: {
       );
       const providerNames =
         input.activateDeferredProviderEffects?.(context.revalidateSandboxIdentity) ?? [];
-      await validate();
+      validate();
       context.revalidateSandboxIdentity(
         `publishing deferred providers for sandbox '${input.sandboxName}'`,
       );
-      await publish();
+      publish();
       context.revalidateSandboxIdentity(
         `attaching deferred providers to sandbox '${input.sandboxName}'`,
       );
-      if (providerNames.length === 0) return;
-      throw new Error(
-        `OpenShell cannot attach providers to the immutable identity of sandbox '${input.sandboxName}'. ` +
-          `NemoClaw retained the incomplete sandbox on gateway '${input.gatewayName}'. ` +
-          `Do not delete it by mutable sandbox name. Ask an OpenShell administrator to remove the retained sandbox through an identity-bound procedure. ` +
-          `After OpenShell confirms the retained sandbox is absent, run '${cliName()} ${input.sandboxName} destroy --yes' to reconcile its verified Docker containers and recovery record.`,
-      );
+      attachProvidersAfterSandboxCreation({
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        providerNames,
+      });
     },
   };
 }
@@ -1178,29 +1120,6 @@ function runForNewSandboxCreate(resuming: boolean, operation: () => void): void 
   if (!resuming) operation();
 }
 
-async function runForNewSandboxCreateAsync(
-  resuming: boolean,
-  operation: () => Promise<void>,
-): Promise<void> {
-  if (!resuming) await operation();
-}
-
-export async function runSandboxCreateWithProviderEffects<T>(input: {
-  readonly resumingVerifiedCreate: boolean;
-  readonly providerEffectBoundary: Pick<
-    ProviderEffectBoundary,
-    "publishBeforeCreate" | "runAfterVerifiedCreate"
-  >;
-  readonly create: (
-    runAfterVerifiedCreate: ProviderEffectBoundary["runAfterVerifiedCreate"],
-  ) => Promise<T>;
-}): Promise<T> {
-  await runForNewSandboxCreateAsync(input.resumingVerifiedCreate, () =>
-    input.providerEffectBoundary.publishBeforeCreate(),
-  );
-  return input.create(input.providerEffectBoundary.runAfterVerifiedCreate);
-}
-
 function assertCreateLifecycleJournal(input: {
   readonly portableLifecycle: boolean;
   readonly runtimeGeneration: string | null;
@@ -1243,35 +1162,6 @@ function readHermesPortableLifecycleGeneration(input: {
     : undefined;
 }
 
-function selectRecreateGatewayAuthority(
-  requested: boolean,
-  target: { sandboxName: string; gatewayName: string; gatewayPort: number },
-) {
-  return requested ? createOnboardRecreateGatewayAuthorityRevalidator(target) : undefined;
-}
-
-function deleteJournaledRecreateSource(input: {
-  readonly runtime: Pick<
-    import("../sandbox-recreate-transaction").SandboxRecreateRuntime,
-    "beginDelete" | "journaledGatewayName"
-  >;
-  readonly sandboxName: string;
-  readonly gatewayName: string;
-  readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
-}): void {
-  if (input.runtime.beginDelete() !== "source") return;
-  input.runOpenshell(
-    [
-      "sandbox",
-      "delete",
-      "-g",
-      input.runtime.journaledGatewayName ?? input.gatewayName,
-      input.sandboxName,
-    ],
-    { ignoreError: true },
-  );
-}
-
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
   const postCreateRecoveryRetryOwner = installPostCreateRecoveryRetryOwner();
   return async function createSandboxWithBaseImageResolution(
@@ -1301,7 +1191,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     createIntent: import("../types").SandboxCreateIntent | null = null,
     runVerifiedSandboxCreateEffects: import("../types").VerifiedSandboxCreateEffects | null = null,
     preparedBuildContext: PreparedSandboxBuildContext | null = null,
-    allowRemovedImmutabilityStateRecord = false,
   ) {
     const portableRuntimeAuthority = portableRuntimeContext?.authority ?? null;
     const {
@@ -1425,9 +1314,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxNameOverride ?? (await promptValidatedSandboxName(agent)),
       "sandbox name",
     );
-    enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
-      allowStateRecord: allowRemovedImmutabilityStateRecord,
-    });
     preparedDcodeRebuild.assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
     const effectiveAgent = sandboxAgent.getEffectiveSandboxAgent(agent);
     const requestedAgentName = getRequestedSandboxAgentName(effectiveAgent);
@@ -1601,22 +1487,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             managedWorkloadRuntime,
             sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
           );
-    const prepareManagedStateVolumeLifecycle = (
+    const prepareHermesStateVolumeLifecycle = (
       workload: Awaited<ReturnType<typeof ensurePreparedSandboxWorkload>>,
-    ) => {
-      const managedStateRoots =
-        workload.source.kind === "managed-image"
-          ? managedStartupStateRoots({
-              agent: workload.source.contract.agent,
-              sandboxName,
-              agentIdentity: managedImageRuntimeIdentity(workload.source.contract.agent),
-            })
-          : [];
-      return managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle({
-        roots: managedStateRoots,
+    ) =>
+      managedWorkloadOnboard.createManagedHermesStateVolumeOnboardLifecycle({
+        agentName: requestedAgentName,
         runtimeProvider: managedWorkloadRuntime.runtimeProvider,
+        sandboxName,
+        workloadKind: workload.source.kind,
       });
-    };
     const finalizeRecreatedSourceHermesVolume = (
       sourceConfirmedAbsent: boolean,
       sourceEntry: SandboxEntry | null,
@@ -1631,10 +1510,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         },
         {
           normalizeRuntimeProviderIdentity: managedWorkloadOnboard.normalizeRuntimeProviderIdentity,
-          removeManagedHermesStateVolume: (context) =>
-            removeManagedHermesStateVolume(context, {
-              runtimeProvider: managedWorkloadRuntime.runtimeProvider ?? undefined,
-            }),
+          removeManagedHermesStateVolume: managedWorkloadOnboard.removeManagedHermesStateVolume,
           removeSourceRegistryEntry: sandboxLifecycle.removeSandboxUnlessSessionReservation,
           note,
           warn: (message) => console.warn(message),
@@ -1652,10 +1528,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     let admittedCreateReservation: QualifiedPendingSandboxCreateReservation | null = null;
     let createEffectsFinalized = false;
     const createCheckpointSession = onboardSession.loadSession();
-    const effectiveMessagingConfig =
-      getMessagingChannelConfigFromPlan(plannedMessagingState?.plan) ??
-      getStoredMessagingChannelConfig(sandboxName, createCheckpointSession);
-    const effectiveMessagingAgent = plannedMessagingState?.plan?.agent ?? effectiveAgent.name;
     const openingPendingCreateIdentity = pendingVerifiedCreateCheckpointForSession({
       sandboxName,
       gatewayName: GATEWAY_NAME,
@@ -1675,10 +1547,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       existingEntry,
       readRegistry: registry.getSandbox,
     });
-    const recreateGatewayAuthority = selectRecreateGatewayAuthority(
-      Boolean(createIntent?.recreateTransaction),
-      { sandboxName, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT },
-    );
     let recreateRuntime:
       | import("../sandbox-recreate-transaction").SandboxRecreateRuntime
       | OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(
@@ -1689,8 +1557,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       recreateRegistryEntry,
       getSandboxRecreateObservation,
       note,
-      () => registry.getSandbox(sandboxName),
-      recreateGatewayAuthority?.revalidate,
     );
     const acceptedTargetPendingIdentity = readAcceptedPendingVerifiedCreate({
       acceptedTarget: recreateRuntime.acceptedTarget,
@@ -1760,7 +1626,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
     let pendingStateRestoreBackupPath: string | null = null,
       preparedSandboxWorkload!: Awaited<ReturnType<typeof ensurePreparedSandboxWorkload>>,
-      managedStateVolumeLifecycle!: ReturnType<typeof prepareManagedStateVolumeLifecycle>;
+      hermesStateVolumeLifecycle!: ReturnType<typeof prepareHermesStateVolumeLifecycle>;
     if (!liveExists && existingEntry)
       ({ runtime: recreateRuntime, backupPath: pendingStateRestoreBackupPath } =
         recreateProtection.selectJournalBoundPreUpgradeBackup({
@@ -2050,7 +1916,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         pendingStateRestore = result.backup;
       }
 
-      managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
+      hermesStateVolumeLifecycle = prepareHermesStateVolumeLifecycle(preparedSandboxWorkload);
       note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
       revalidateSandboxIdentity(true, `recreating sandbox '${sandboxName}'`);
@@ -2063,12 +1929,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           redact,
         });
         revalidateSandboxIdentity(true, `deleting sandbox '${sandboxName}'`);
-        deleteJournaledRecreateSource({
-          runtime: recreateRuntime,
-          sandboxName,
-          gatewayName: GATEWAY_NAME,
-          runOpenshell,
-        });
+        runOpenshell(
+          [
+            "sandbox",
+            "delete",
+            "-g",
+            recreateRuntime.journaledGatewayName ?? GATEWAY_NAME,
+            sandboxName,
+          ],
+          { ignoreError: true },
+        );
         if (
           !waitForSandboxRecreateDeleteAbsence(
             sandboxName,
@@ -2081,13 +1951,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           );
       }
       recreateRuntime.confirmDeleted();
-      finalizeRecreatedSourceHermesVolume(
-        true,
-        previousEntry,
-        managedStateVolumeLifecycle.roots.some(
-          (root) => root.mountTarget === MANAGED_HERMES_STATE_ROOT,
-        ),
-      );
+      finalizeRecreatedSourceHermesVolume(true, previousEntry, hermesStateVolumeLifecycle !== null);
       await hermesApiPortReservationScope.rebindAfterOwnedForwardDelete(
         hermesApiPortReservationInput,
       );
@@ -2095,19 +1959,17 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     if (resumingVerifiedCreate) {
       await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
-      managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
+      hermesStateVolumeLifecycle = prepareHermesStateVolumeLifecycle(preparedSandboxWorkload);
     } else if (!liveExists || agentCreateInput.hermesPortableLifecycle) {
       if (!agentCreateInput.hermesPortableLifecycle) {
         await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
       }
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
-      managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
+      hermesStateVolumeLifecycle = prepareHermesStateVolumeLifecycle(preparedSandboxWorkload);
       finalizeRecreatedSourceHermesVolume(
         !liveExists,
         existingEntry,
-        managedStateVolumeLifecycle.roots.some(
-          (root) => root.mountTarget === MANAGED_HERMES_STATE_ROOT,
-        ),
+        hermesStateVolumeLifecycle !== null,
       );
     }
     runForNewSandboxCreate(resumingVerifiedCreate, () => {
@@ -2192,7 +2054,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               policylessCreate: apfInterceptorRequested,
               deferSandboxEffectsUntilIdentityVerification:
                 createIntent?.deferSandboxEffectsUntilIdentityVerification === true,
-              skipProviderEffects: resumingVerifiedCreate,
               rebindMessagingTokenDefs: async () => {
                 revalidateSandboxIdentity(
                   false,
@@ -2260,7 +2121,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               openshellArgv,
             },
             plannedMessagingPlan: plannedMessagingState?.plan ?? null,
-            messagingConfig: effectiveMessagingConfig,
             gpu: {
               provider,
               config: effectiveSandboxGpuConfig,
@@ -2269,10 +2129,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             },
             dependencies: {
               materializeSandboxCreatePlan: (input) =>
-                managedStateVolumeLifecycle.materializeSandboxCreatePlan(
-                  input,
-                  sandboxCreatePlanMaterialization.materializeSandboxCreatePlan,
-                ),
+                hermesStateVolumeLifecycle
+                  ? hermesStateVolumeLifecycle.materializeSandboxCreatePlan(
+                      input,
+                      sandboxCreatePlanMaterialization.materializeSandboxCreatePlan,
+                    )
+                  : sandboxCreatePlanMaterialization.materializeSandboxCreatePlan(input),
               prepareSandboxBuildPatchConfig:
                 sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig,
             },
@@ -2301,10 +2163,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     } = preparedOnboardLaunch;
     const rebuildMessagingPolicyDeltas = resolveRebuildMessagingPolicyDeltas(
       plannedMessagingState?.plan,
-      {
-        agent: asMessagingAgentId(effectiveMessagingAgent),
-        messagingConfig: effectiveMessagingConfig,
-      },
     );
     const rebuildObservabilityPolicyDelta = resolveRebuildObservabilityPolicyDelta({
       agent: agent?.name,
@@ -2331,8 +2189,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             ...rebuildObservabilityPolicyDelta.removedNetworkPolicyKeys,
           ],
           rebuildMessagingPolicyDeltas.requiredNetworkPolicyPresetNames,
-          effectiveMessagingAgent,
-          effectiveMessagingConfig,
+          plannedMessagingState?.plan,
           sandboxName,
           rebuildPolicyProviderAuthority,
         )
@@ -2354,7 +2211,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch({
       runtime: managedWorkloadRuntime,
       workload: preparedSandboxWorkload,
-      sandboxName,
       stateRoot: getDockerDriverGatewayStateDir(),
       bootstrapIdentity: managedBootstrapIdentity,
       request: managedStartupRootApplyRequest,
@@ -2800,8 +2656,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       chatUiUrl,
       hermesDashboardState,
       dashboardPortReservationScope.release,
+      ensureDashboardForward,
       getDashboardForwardPort,
       hermesDashboardForwarding.resolveStateForPort,
+      hermesDashboardForwarding.ensureForState,
       managedWorkloadRuntime,
       preparedSandboxWorkload,
       note,
@@ -2837,8 +2695,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       gatewayName: GATEWAY_NAME,
     };
     const providerPreparationDeps = {
+      providerExistsInGateway,
       runOpenshell,
-      cleanupCreateSources: cleanupSandboxCreateSources,
+      cleanupCreateSources: () => {
+        cleanupInitialCreateSource();
+        cleanupBuildContext();
+      },
     };
     const providerEffectBoundary = createProviderEffectBoundary({
       deferred: createIntent?.deferSandboxEffectsUntilIdentityVerification === true,
@@ -2854,7 +2716,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           `publishing providers before creating sandbox gateway '${GATEWAY_NAME}'`,
         ),
     });
-    await providerEffectBoundary.validateBeforeCreate();
+    providerEffectBoundary.validateBeforeCreate();
 
     if (hermesPortableAuthority) {
       if (!portableRuntimeContext?.environmentScope) {
@@ -2899,19 +2761,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           buildContextPath,
           effectivePolicySourcePath,
         ) =>
-          runSandboxCreateWithProviderEffects({
-            resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
-            providerEffectBoundary,
-            create: (runAfterVerifiedCreate) =>
-              runCreateFlow(
-                [...attemptArgv],
-                readyCapture,
-                readyRunner,
-                buildContextPath,
-                effectivePolicySourcePath,
-                runAfterVerifiedCreate,
-              ),
-          }),
+          runCreateFlow(
+            [...attemptArgv],
+            readyCapture,
+            readyRunner,
+            buildContextPath,
+            effectivePolicySourcePath,
+          ),
         readRegistry: () => registry.getSandbox(sandboxName),
         revalidatePendingCreateRegistry: () =>
           revalidateVerifiedCreateIdentity(
@@ -2950,19 +2806,17 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
       cleanupBuildContext();
     } else {
-      const created = await runSandboxCreateWithProviderEffects({
-        resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
-        providerEffectBoundary,
-        create: (runAfterVerifiedCreate) =>
-          runCreateFlow(
-            createArgv,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            runAfterVerifiedCreate,
-          ),
-      });
+      runForNewSandboxCreate(Boolean(resumeVerifiedCreateInput), () =>
+        providerEffectBoundary.publishBeforeCreate(),
+      );
+      const created = await runCreateFlow(
+        createArgv,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        providerEffectBoundary.runAfterVerifiedCreate,
+      );
       try {
         await finalizeCreatedSandboxBeforeHermesCredentialReconciliation(
           async () => {
@@ -2992,7 +2846,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     }
     return runWithPostCreateRecovery(
       () => {
-        managedStateVolumeLifecycle.commit();
+        hermesStateVolumeLifecycle?.commit();
         if ("complete" in recreateRuntime) recreateRuntime.complete();
         if (agentCreateInput.hermesPortableLifecycle) return sandboxName;
         return completeOrdinaryOnboardSandboxCreation(

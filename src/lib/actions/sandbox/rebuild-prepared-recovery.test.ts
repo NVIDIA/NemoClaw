@@ -7,7 +7,7 @@ import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
   makePreparedRecoveryManifest,
-} from "../../../../test/helpers/rebuild-flow-generic-harness";
+} from "../../../../test/helpers/rebuild-flow-dcode-harness";
 
 describe("prepared rebuild recovery", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });

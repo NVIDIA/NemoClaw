@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
-import { testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -30,7 +29,7 @@ import {
   waitHermesHealth,
 } from "./agent-turn-latency-helpers.ts";
 
-const TIMEOUT_MS = testTimeout(90 * 60_000);
+const TIMEOUT_MS = 90 * 60_000;
 
 // A real latency measurement needs a real hosted endpoint; the shared
 // adapter's hermetic `mock` mode would just measure a loopback round trip
@@ -57,7 +56,7 @@ runAgentTurnLatencyTest(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, inference, progress, runtimeProvider, sandbox }) => {
+  async ({ artifacts, cleanup, host, inference, progress, sandbox }) => {
     const results: Record<string, unknown> = {
       model: inference.model,
       maxTurnSeconds: MAX_TURN_SECONDS,
@@ -107,10 +106,13 @@ runAgentTurnLatencyTest(
       await cleanupTurnSandbox(host, OPENCLAW_SANDBOX, "openclaw", inference, progress);
     });
 
-    await runtimeProvider.requireAvailable({
-      artifactName: "runtime-info",
-      scenarioLabel: "agent-turn latency",
+    const docker = await host.command("docker", ["info"], {
+      artifactName: "docker-info",
+      env: buildAvailabilityProbeEnv(),
+      onOutput: progress.onOutput,
+      timeoutMs: 30_000,
     });
+    expect(docker.exitCode, resultText(docker)).toBe(0);
 
     const cleanBeforeRetry = () => cleanupTurnSandboxes(host, sandbox, inference, progress);
     await cleanupTurnSandboxes(host, sandbox, inference, progress);

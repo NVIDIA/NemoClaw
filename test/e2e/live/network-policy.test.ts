@@ -15,7 +15,6 @@ import path from "node:path";
 
 import { isPrivateIp } from "../../../nemoclaw/src/blueprint/private-networks.ts";
 import { listPresets } from "../../../src/lib/policy/index.ts";
-import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -26,7 +25,6 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { pollDeniedReasonLog } from "./network-policy-denied-log.ts";
 import { requireInferenceLocalCompletionText } from "./network-policy-inference.ts";
@@ -34,20 +32,23 @@ import { runInteractivePolicyAdd } from "./network-policy-interactive.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 import { parseVerifiedActivePolicyPresets } from "./policy-list-state.ts";
-import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
+import {
+  ensureDockerAvailable,
+  runRestrictedOnboardWithRetry,
+} from "./restricted-onboard-helpers.ts";
 
-const BASELINE_POLICY = path.join(
+const PERMISSIVE_POLICY = path.join(
   REPO_ROOT,
   "nemoclaw-blueprint",
   "policies",
-  "openclaw-sandbox.yaml",
+  "openclaw-sandbox-permissive.yaml",
 );
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-net-policy";
 const SUPPRESSION_SANDBOX_NAME =
   process.env.NEMOCLAW_NETWORK_POLICY_SUPPRESSION_SANDBOX_NAME ?? "e2e-net-suppress";
 
-const TEST_TIMEOUT_MS = testTimeout(65 * 60_000);
-const ONBOARD_TIMEOUT_MS = execTimeout(15 * 60_000);
+const TEST_TIMEOUT_MS = 65 * 60_000;
+const ONBOARD_TIMEOUT_MS = 15 * 60_000;
 const SANDBOX_EXEC_TIMEOUT_MS = 120_000;
 const PACKAGE_MANAGER_TIMEOUT_MS = 5 * 60_000;
 const POLICY_SETTLE_MS =
@@ -206,7 +207,7 @@ async function expectEncodedSlashConfinedToClawHub(
   const clawhubStatus = await fetchStatus(
     sandbox,
     `https://clawhub.ai${encodedPath}`,
-    "tc-net-baseline-clawhub-encoded-slash",
+    "tc-net-permissive-clawhub-encoded-slash",
   );
   expect(clawhubStatus, `ClawHub encoded slash probe must reach the upstream service`).toMatch(
     /STATUS_[1-5][0-9][0-9]/,
@@ -218,7 +219,7 @@ async function expectEncodedSlashConfinedToClawHub(
   const nonClawhubStatus = await fetchStatus(
     sandbox,
     `https://openclaw.ai${encodedPath}`,
-    "tc-net-baseline-non-clawhub-encoded-slash",
+    "tc-net-permissive-non-clawhub-encoded-slash",
   );
   // Undici can report the same denied CONNECT as `UND_ERR_SOCKET` or `fetch failed`.
   // The OpenShell gateway log below provides the authoritative denial evidence.
@@ -228,7 +229,7 @@ async function expectEncodedSlashConfinedToClawHub(
   const denial = await waitForDeniedReasonLog(host, {
     endpoint: ENCODED_SLASH_DENIED_ENDPOINT,
     reasonIncludes: ENCODED_SLASH_DENIED_REASON,
-    artifactPrefix: "tc-net-baseline-non-clawhub-encoded-slash-logs-tail-50",
+    artifactPrefix: "tc-net-permissive-non-clawhub-encoded-slash-logs-tail-50",
   });
   expect(denial.line).toContain("NET:OPEN");
   expect(denial.line).toContain("DENIED");
@@ -497,7 +498,7 @@ test(
     timeout: TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "confirm built CLI selected runtime provider OpenShell and credential",
+        "confirm built CLI Docker OpenShell and credential",
         "clear the sandbox and onboard restricted policy",
         "prove zero active presets, read-only package metadata, default denial, and the weather allowlist",
         "exercise package and SaaS policy presets",
@@ -505,11 +506,11 @@ test(
         "verify hot reload inference exemption and SSRF guards",
         "exercise scoped host-gateway web fetch policy",
         "prove per-binary Jira approval after NemoClaw policy mutations",
-        "restore baseline policy through OpenShell and record the contract",
+        "switch to permissive policy and record the contract",
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
     await artifacts.target.declare({
       id: "network-policy",
       boundary: "live-sandbox-network-policy",
@@ -526,8 +527,8 @@ test(
         "inference.local exemption with direct-provider denial",
         "SSRF private-address rejection",
         "OpenClaw web_fetch host-gateway policy allow/deny",
-        "scoped ClawHub plugins install and load while encoded paths remain ClawHub-only under the baseline policy",
-        "direct OpenShell baseline policy replacement",
+        "scoped ClawHub plugins install and load under restricted policy while encoded paths remain ClawHub-only under permissive policy",
+        "permissive policy mode",
       ],
     });
 
@@ -536,12 +537,17 @@ test(
       "run `npm run build:cli` before live repo CLI targets",
     ).toBe(true);
 
-    await ensureConfiguredRuntimeProviderAvailable({
-      artifactName: "prereq-runtime-provider-info-network-policy",
-      host,
-      scenarioLabel: "network-policy",
-      skip,
+    const docker = await host.command("docker", ["info"], {
+      artifactName: "prereq-docker-info-network-policy",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
     });
+    if (docker.exitCode !== 0) {
+      if (process.env.GITHUB_ACTIONS === "true") {
+        throw new Error(`Docker is required for network-policy live E2E: ${text(docker)}`);
+      }
+      skip("Docker is required for network-policy live E2E");
+    }
 
     const openshellVersion = await host.command("openshell", ["--version"], {
       artifactName: "prereq-openshell-version-network-policy",
@@ -657,7 +663,7 @@ test(
     await expectPackageDatabaseReadOnly({
       artifactPrefix: "tc-net",
       env: baseEnv(),
-      runtimeProvider,
+      host,
       sandbox,
       sandboxName: SANDBOX_NAME,
       timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
@@ -1051,17 +1057,21 @@ printf '\n'
     expect(policyAfterNemoclawMutation.stdout).toContain("api.atlassian.com");
     expect(policyAfterNemoclawMutation.stdout).toMatch(/github|api\.github\.com/i);
 
-    progress.phase("restore baseline policy through OpenShell and record the contract");
-    const baselineApply = await sandbox.openshell(
-      ["policy", "set", "--policy", BASELINE_POLICY, "--wait", SANDBOX_NAME],
+    progress.phase("switch to permissive policy and record the contract");
+    const permissiveApply = await sandbox.openshell(
+      ["policy", "set", "--policy", PERMISSIVE_POLICY, "--wait", SANDBOX_NAME],
       {
-        artifactName: "tc-net-06-apply-baseline-policy",
+        artifactName: "tc-net-06-apply-permissive-policy",
         env: baseEnv(),
         timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
       },
     );
-    expect(baselineApply.exitCode, text(baselineApply)).toBe(0);
+    expect(permissiveApply.exitCode, text(permissiveApply)).toBe(0);
     await sleep(POLICY_SETTLE_MS);
+    const npmPing = await sandboxBash(sandbox, "npm ping 2>&1 && echo NPM_OK || echo NPM_FAIL", {
+      artifactName: "tc-net-06-npm-ping-permissive",
+    });
+    expect(text(npmPing)).toContain("NPM_OK");
     await expectEncodedSlashConfinedToClawHub(host, sandbox);
 
     await artifacts.target.complete({
@@ -1083,7 +1093,7 @@ printf '\n'
         hostGatewayWebFetch: true,
         scopedClawHubPluginLifecycle: true,
         encodedSlashClawHubOnly: true,
-        baselinePolicyRestored: true,
+        permissiveMode: true,
       },
     });
   },
@@ -1118,7 +1128,7 @@ test(
     timeout: TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "confirm built CLI selected runtime provider OpenShell and credential",
+        "confirm built CLI Docker OpenShell and credential",
         "clear the restricted-policy sandbox",
         "onboard default restricted OpenClaw",
         "confirm the restricted tier has zero active presets",
@@ -1138,9 +1148,9 @@ test(
       "run `npm run build:cli` before live repo CLI scenarios",
     ).toBe(true);
 
-    await ensureConfiguredRuntimeProviderAvailable({
-      artifactName: "prereq-runtime-provider-info-restricted-zero-presets",
+    await ensureDockerAvailable({
       host,
+      artifactName: "prereq-docker-info-restricted-zero-presets",
       skip,
       scenarioLabel: "restricted-zero-presets",
     });

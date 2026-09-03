@@ -97,8 +97,9 @@ describe("addSandboxChannel agent gate", () => {
     const errorText = (errSpy.mock.calls as unknown[][])
       .map((call) => call.map(String).join(" "))
       .join("\n");
-    expect(errorText).toContain("This channel does not support the configured agent.");
-    expect(errorText).not.toContain("custom-agent");
+    expect(errorText).toMatch(/Channel 'discord' does not support agent 'custom-agent'/);
+    expect(errorText).toMatch(/Channel-supported agents: openclaw, hermes/);
+    expect(errorText).toMatch(/Channels supported by agent 'custom-agent': \(none\)/);
 
     expect(loadPresetForSandboxMock).not.toHaveBeenCalled();
     expect(applyPresetMock).not.toHaveBeenCalled();
@@ -177,8 +178,9 @@ describe("channel lifecycle agent gate", () => {
     const errorText = (errSpy.mock.calls as unknown[][])
       .map((call) => call.map(String).join(" "))
       .join("\n");
-    expect(errorText).toContain("This channel does not support the configured agent.");
-    expect(errorText).not.toContain("custom-agent");
+    expect(errorText).toMatch(/Channel 'googlechat' does not support agent 'custom-agent'/);
+    expect(errorText).toMatch(/Channel-supported agents: openclaw, hermes/);
+    expect(errorText).toMatch(/Channels supported by agent 'custom-agent': \(none\)/);
 
     expect(configuredChannelsMock).not.toHaveBeenCalled();
     expect(disabledChannelsMock).not.toHaveBeenCalled();

@@ -30,11 +30,10 @@ export interface PreflightGatewayCleanupDeps {
   isDockerDriverGatewayEnabled: boolean;
   externallySupervised?: boolean;
   cliDisplayName: string;
-  dashboardPort?: number;
+  dashboardPort: number;
   log: (line: string) => void;
   warn: (line: string) => void;
-  runOpenshell?: (args: string[], options: { ignoreError: true }) => unknown;
-  stopAllDashboardForwards?: () => void;
+  runOpenshell: (args: string[], options: { ignoreError: true }) => unknown;
   destroyGateway: () => boolean;
   destroyGatewayForReuse: (
     destroy: () => boolean,
@@ -55,10 +54,7 @@ export function applyPreflightGatewayCleanup(deps: PreflightGatewayCleanupDeps):
   }
   if (action === "destroy-legacy") {
     deps.log(`  Cleaning up previous ${deps.cliDisplayName} session...`);
-    if (!deps.stopAllDashboardForwards) {
-      throw new Error("ForwardTcp cleanup authority is unavailable");
-    }
-    deps.stopAllDashboardForwards();
+    deps.runOpenshell(["forward", "stop", String(deps.dashboardPort)], { ignoreError: true });
     return deps.destroyGatewayForReuse(
       deps.destroyGateway,
       "  ✓ Previous session cleaned up",

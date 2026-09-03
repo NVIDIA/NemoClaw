@@ -16,7 +16,6 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
@@ -47,7 +46,7 @@ import {
 } from "../fixtures/inference-switch-retry.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
-import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
+import { runBoundedRetry } from "../fixtures/retry-policy.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   agentReplyContainsToken,
@@ -69,8 +68,8 @@ const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_M
 const SWITCH_INFERENCE_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
 const SWITCH_MOCK_ANTHROPIC = process.env.NEMOCLAW_SWITCH_MOCK_ANTHROPIC ?? "0";
 const SWITCH_MOCK_PORT = parsePortEnv("NEMOCLAW_SWITCH_MOCK_PORT", 0);
-const TEST_TIMEOUT_MS = testTimeout(75 * 60_000);
-const INSTALL_TIMEOUT_MS = execTimeout(30 * 60_000);
+const TEST_TIMEOUT_MS = 75 * 60_000;
+const INSTALL_TIMEOUT_MS = 30 * 60_000;
 const COMMAND_TIMEOUT_MS = 120_000;
 const INFERENCE_TIMEOUT_MS = 150_000;
 const AGENT_TIMEOUT_MS = 150_000;
@@ -856,9 +855,11 @@ async function runOpenClawInferenceSetWithRetry(
   return runInferenceSetWithRetry({
     attempts,
     onEvidence: (evidence) => writeInferenceSwitchRetryEvidence(artifacts, evidence),
-    run: (attempt) =>
-      runNemoclaw(host, home, args, {
-        artifactName: `nemoclaw-inference-set-${attempt}`,
+    run: (attempt, verify) =>
+      runNemoclaw(host, home, verify ? args : [...args, "--no-verify"], {
+        artifactName: verify
+          ? `nemoclaw-inference-set-${attempt}`
+          : "nemoclaw-inference-set-no-verify-after-transient-failures",
         env: compatibleAnthropicSwitchEnv(switchBinding),
         redactionValues,
         timeoutMs: COMMAND_TIMEOUT_MS,
@@ -866,13 +867,11 @@ async function runOpenClawInferenceSetWithRetry(
   });
 }
 
-test(
-  "openclaw-inference-switch: switches route and preserves live OpenClaw behavior",
-  {
+test("openclaw-inference-switch: switches route and preserves live OpenClaw behavior", {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
-      "confirm the selected runtime and choose the baseline provider",
+      "confirm Docker and choose the baseline provider",
       "clear existing inference-switch state",
       "install and onboard baseline OpenClaw",
       "prepare the switched provider and endpoint",
@@ -882,8 +881,7 @@ test(
       "apply sandbox retention and record the result",
     ],
   },
-  },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   await artifacts.target.declare({
     id: "openclaw-inference-switch",
     boundary: "install-sh-openclaw-inference-set-and-live-agent-turn",
@@ -892,7 +890,7 @@ test(
     switchModel: SWITCH_MODEL,
     switchInferenceApi: SWITCH_INFERENCE_API,
     contracts: [
-      "the selected runtime is available and an authenticated compatible baseline endpoint is staged",
+      "Docker is running and an authenticated compatible baseline endpoint is staged",
       "install.sh --non-interactive onboards an OpenClaw sandbox",
       "when selected, the mock baseline route completes one explicit authenticated fixture request",
       "nemoclaw inference set switches the running sandbox route",
@@ -910,10 +908,19 @@ test(
     "run `npm run build:cli` before live repo CLI targets",
   ).toBe(true);
 
-    await runtimeProvider.requireAvailable({
-    artifactName: "prereq-runtime-info-openclaw-inference-switch",
-      scenarioLabel: "OpenClaw inference switch",
+  const docker = await host.command("docker", ["info"], {
+    artifactName: "prereq-docker-info-openclaw-inference-switch",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
   });
+  if (docker.exitCode !== 0) {
+    if (process.env.GITHUB_ACTIONS === "true") {
+      throw new Error(
+        `Docker is required for OpenClaw inference switch E2E: ${resultText(docker)}`,
+      );
+    }
+    skip("Docker is required for OpenClaw inference switch E2E");
+  }
 
   const useMockBaseline =
     SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1";
@@ -943,12 +950,9 @@ test(
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
   let mockProvider: MockAnthropicProvider | undefined;
-    cleanup.trackDisposable(
-      `remove OpenClaw inference switch test home for ${SANDBOX_NAME}`,
-      () => {
+  cleanup.trackDisposable(`remove OpenClaw inference switch test home for ${SANDBOX_NAME}`, () => {
     fs.rmSync(home, { recursive: true, force: true });
-      },
-    );
+  });
   cleanup.trackDisposable("close switched Anthropic provider", async () => {
     await mockProvider?.close();
   });
@@ -1098,7 +1102,7 @@ test(
     id: "openclaw-inference-switch",
     status: "passed",
     assertions: {
-        runtimeProviderAvailable: true,
+      dockerRunning: docker.exitCode === 0,
       installCompleted: install.exitCode === 0,
       inferenceSetCompleted: switchResult.exitCode === 0,
       gatewayRestartExpected,
@@ -1111,5 +1115,4 @@ test(
       openClawAgentPong: true,
     },
   });
-  },
-);
+});

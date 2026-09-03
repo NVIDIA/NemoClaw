@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, it, vi } from "vitest";
+import { afterEach, describe, it } from "vitest";
 
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
@@ -16,10 +16,6 @@ const onboardScriptMocksPath = JSON.stringify(
 );
 const ONBOARD_SUBPROCESS_TIMEOUT_MS = 30_000;
 const createdTmpDirs: string[] = [];
-
-beforeEach(() => {
-  vi.stubEnv("NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE", "1");
-});
 
 function makeTmpDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -79,7 +75,7 @@ createdSandbox.installRuntimeObservation();
 runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
-  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command, "nemoclaw");
+  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete")) {
     createdSandbox.delete();
@@ -94,7 +90,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
-  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
+  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -341,7 +337,7 @@ runner.runCapture = (command) => {
   if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
   if (normalized.includes("sandbox list")) return "";
   if (normalized.includes("forward list")) {
-    return "SANDBOX BIND PORT PID STATUS";
+    return "my-assistant 127.0.0.1 18789 12345 running";
   }
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
     defaultCurlOutput: "ok",
@@ -459,7 +455,7 @@ runner.runCapture = (command) => {
   // Keep dashboard allocation inside this restore-intent fixture; host port
   // occupancy is unrelated to the not-ready decision under test.
   if (normalized.includes("forward list")) {
-    return "SANDBOX BIND PORT PID STATUS";
+    return "my-assistant 127.0.0.1 18789 12345 running";
   }
   return "";
 };

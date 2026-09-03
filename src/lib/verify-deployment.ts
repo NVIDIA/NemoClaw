@@ -98,6 +98,9 @@ export interface VerifyDeploymentDeps {
   /** Probe an HTTP endpoint on the host. Returns the HTTP status code or 0 on failure. */
   probeHostPort: (port: number, path: string) => number;
 
+  /** List active port forwards. Returns raw output from `openshell forward list`. */
+  captureForwardList: () => string | null;
+
   /** Get the list of configured messaging channels for a sandbox. */
   getMessagingChannels: (name: string) => string[];
 
@@ -598,7 +601,7 @@ export async function verifyDeployment(
     hint: dashboard.reachable
       ? ""
       : (customRuntimeHints?.dashboard ??
-        `Port forward on ${chain.port} is not working. Run: nemoclaw ${sandboxName} recover`),
+        `Port forward on ${chain.port} is not working. Run: openshell forward start ${chain.forwardTarget} ${sandboxName}`),
   });
 
   // 3b. Agent OpenAI-compatible API reachable from the host (second port
@@ -617,7 +620,7 @@ export async function verifyDeployment(
       hint: agentApi.reachable
         ? ""
         : `The OpenAI-compatible API on port ${chain.gatewayPort} is not reachable from the host. ` +
-          `Run: nemoclaw ${sandboxName} recover`,
+          `Run: openshell forward start --background ${chain.gatewayPort} ${sandboxName}`,
     });
   }
 

@@ -30,26 +30,24 @@ function restoreOwnProperty(
 
 async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
   const configPath = require.resolve("../../src/lib/sandbox/config");
-  const openshellPath =
-    require.resolve("../../src/lib/adapters/openshell/client");
+  const openshellPath = require.resolve("../../src/lib/adapters/openshell/client");
   const registryPath = require.resolve("../../src/lib/state/registry");
-  const operationalAuditPath =
-    require.resolve("../../src/lib/state/audit/operational");
-  const lifecycleLockPath =
-    require.resolve("../../src/lib/state/mcp-lifecycle-lock");
-  const configGuardPath =
-    require.resolve("../../src/lib/sandbox/openclaw-config-guard");
-  const privilegedExecPath =
-    require.resolve("../../src/lib/sandbox/privileged-exec");
-  const credentialStorePath =
-    require.resolve("../../src/lib/credentials/store");
+  const shieldsPath = require.resolve("../../src/lib/shields");
+  const shieldsAuditPath = require.resolve("../../src/lib/shields/audit");
+  const timerBoundLockPath = require.resolve("../../src/lib/shields/timer-bound-lock");
+  const lifecycleLockPath = require.resolve("../../src/lib/state/mcp-lifecycle-lock");
+  const configLockPath = require.resolve("../../src/lib/shields/openclaw-config-lock");
+  const privilegedExecPath = require.resolve("../../src/lib/sandbox/privileged-exec");
+  const credentialStorePath = require.resolve("../../src/lib/credentials/store");
   const modulePaths = [
     configPath,
     openshellPath,
     registryPath,
-    operationalAuditPath,
+    shieldsPath,
+    shieldsAuditPath,
+    timerBoundLockPath,
     lifecycleLockPath,
-    configGuardPath,
+    configLockPath,
     privilegedExecPath,
     credentialStorePath,
   ];
@@ -59,14 +57,17 @@ async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
       Object.getOwnPropertyDescriptor(requireCache, modulePath),
     ]),
   );
-  const stdinTtyDescriptor = Object.getOwnPropertyDescriptor(
-    process.stdin,
-    "isTTY",
+  const stdinTtyDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  const configWrite = vi.fn(
+    (_privileged: unknown, _action: string, options: { input?: string }) => ({
+      issues: [],
+      chattrApplied: true,
+      configSha256: createHash("sha256")
+        .update(options.input ?? "")
+        .digest("hex"),
+    }),
   );
-  const configWrite = vi.fn((_privileged: unknown, input: string) => ({
-    issues: [],
-    configSha256: createHash("sha256").update(input).digest("hex"),
-  }));
+  const auditWrite = vi.fn();
   let error: unknown;
 
   try {
@@ -82,26 +83,25 @@ async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
       runOpenshellCommand: vi.fn(),
     });
     installMock(registryPath, { getSandbox: () => null });
-    installMock(operationalAuditPath, { appendAuditEntry: vi.fn() });
-    installMock(lifecycleLockPath, {
-      withSandboxMutationLock: (
+    installMock(shieldsPath, { isShieldsDown: () => true });
+    installMock(shieldsAuditPath, { appendAuditEntry: auditWrite });
+    installMock(timerBoundLockPath, {
+      withTimerBoundShieldsMutationLock: (
         _sandboxName: string,
+        _command: string,
         callback: () => unknown,
       ) => callback(),
     });
-    installMock(configGuardPath, {
-      writeOpenClawConfigCandidate: configWrite,
+    installMock(lifecycleLockPath, {
+      withSandboxMutationLock: (_sandboxName: string, callback: () => unknown) => callback(),
+    });
+    installMock(configLockPath, {
+      runOpenClawConfigGuard: configWrite,
       validateOpenClawConfigCandidate: () => [],
     });
     installMock(privilegedExecPath, {
-      capturePrivilegedSandboxCommand: () => Buffer.alloc(0),
-      executePrivilegedSandboxCommand: () => ({
-        status: 0,
-        signal: null,
-        stdout: Buffer.alloc(0),
-        stderr: Buffer.alloc(0),
-      }),
-      resolvePrivilegedSandboxTarget: () => ({ resourceHandle: "container-id" }),
+      privilegedSandboxExecArgv: () => ["docker", "exec", "container-id"],
+      resolveDirectSandboxContainer: () => "container-id",
       withPrivilegedSandboxExecutionLease: <T>(
         _sandboxName: string,
         _operation: string,
@@ -109,10 +109,7 @@ async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
       ): T => callback(),
     });
     installMock(credentialStorePath, { prompt });
-    Object.defineProperty(process.stdin, "isTTY", {
-      configurable: true,
-      value: true,
-    });
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
     vi.stubEnv("NEMOCLAW_CONFIG_ACCEPT_NEW_PATH", undefined);
     vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", undefined);
 
@@ -122,7 +119,7 @@ async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
     } catch (caught) {
       error = caught;
     }
-    return { configWrite, error };
+    return { auditWrite, configWrite, error };
   } finally {
     restoreOwnProperty(process.stdin, "isTTY", stdinTtyDescriptor);
     vi.unstubAllEnvs();
@@ -134,9 +131,7 @@ async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
 
 describe("config set prompt answers", () => {
   it("reports EOF guidance without writing config", async () => {
-    const promptError = Object.assign(new Error("prompt closed"), {
-      code: "EOF",
-    });
+    const promptError = Object.assign(new Error("prompt closed"), { code: "EOF" });
     const prompt = vi.fn(async () => {
       throw promptError;
     });
@@ -150,12 +145,11 @@ describe("config set prompt answers", () => {
     });
     expect(prompt).toHaveBeenCalledWith("  Write this new key? [y/N] ");
     expect(result.configWrite).not.toHaveBeenCalled();
+    expect(result.auditWrite).not.toHaveBeenCalled();
   });
 
   it("rethrows non-EOF prompt errors without writing config", async () => {
-    const promptError = Object.assign(new Error("prompt interrupted"), {
-      code: "SIGINT",
-    });
+    const promptError = Object.assign(new Error("prompt interrupted"), { code: "SIGINT" });
     const prompt = vi.fn(async () => {
       throw promptError;
     });
@@ -164,6 +158,7 @@ describe("config set prompt answers", () => {
     expect(result.error).toBe(promptError);
     expect(prompt).toHaveBeenCalledWith("  Write this new key? [y/N] ");
     expect(result.configWrite).not.toHaveBeenCalled();
+    expect(result.auditWrite).not.toHaveBeenCalled();
   });
 
   it("writes a new key after an affirmative answer", async () => {
@@ -173,6 +168,9 @@ describe("config set prompt answers", () => {
     expect(result.error).toBeUndefined();
     expect(prompt).toHaveBeenCalledWith("  Write this new key? [y/N] ");
     expect(result.configWrite).toHaveBeenCalledOnce();
+    expect(result.auditWrite).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "config_set", sandbox: "prompt-test" }),
+    );
   });
 
   it("aborts without writing after a negative answer", async () => {
@@ -182,5 +180,6 @@ describe("config set prompt answers", () => {
     expect(result.error).toMatchObject({ message: "  Aborted." });
     expect(prompt).toHaveBeenCalledWith("  Write this new key? [y/N] ");
     expect(result.configWrite).not.toHaveBeenCalled();
+    expect(result.auditWrite).not.toHaveBeenCalled();
   });
 });

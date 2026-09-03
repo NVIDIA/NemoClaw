@@ -32,7 +32,7 @@ function loadProxyWithMocks(setup: MockSetup): {
   const childProcess = require(CHILD_PROCESS_DIST) as typeof import("node:child_process");
   const runner = require(RUNNER_DIST);
   const originalGetOllamaModelOptions = local.getOllamaModelOptions;
-  const originalRunOllamaWarmup = local.runOllamaWarmup;
+  const originalGetOllamaWarmupCommand = local.getOllamaWarmupCommand;
   const originalPrompt = creds.prompt;
   const originalProbeOllamaModelCapabilities = local.probeOllamaModelCapabilities;
   const originalRun = runner.run;
@@ -68,9 +68,9 @@ function loadProxyWithMocks(setup: MockSetup): {
     capabilities: ["tools"],
     supportsTools: true,
   });
-  local.runOllamaWarmup = (model: string, runImpl: typeof runner.run) => {
+  local.getOllamaWarmupCommand = (model: string) => {
     warmupModels.push(model);
-    runImpl(["warmup", model], { ignoreError: true });
+    return ["warmup", model];
   };
   local.validateOllamaModel = (...args: unknown[]) => {
     validateCalls.push(args);
@@ -95,7 +95,7 @@ function loadProxyWithMocks(setup: MockSetup): {
     restore() {
       delete require.cache[PROXY_DIST];
       local.getOllamaModelOptions = originalGetOllamaModelOptions;
-      local.runOllamaWarmup = originalRunOllamaWarmup;
+      local.getOllamaWarmupCommand = originalGetOllamaWarmupCommand;
       creds.prompt = originalPrompt;
       local.probeOllamaModelCapabilities = originalProbeOllamaModelCapabilities;
       runner.run = originalRun;
@@ -163,7 +163,7 @@ describe("promptOllamaModel installed-model fit filter", () => {
     expect(setup.promptArgs).toEqual(["  Choose model [2]: "]);
   });
 
-  it("prefers the largest registered fitting model over an unregistered tag when the requested default is not shown (#10103)", async () => {
+  it("keeps the memory-based default when a requested model is not shown", async () => {
     const setup = loadProxyWithMocks({
       installed: ["qwen2.5:0.5b", "qwen3.5:9b"],
       promptValues: [""],
@@ -177,12 +177,8 @@ describe("promptOllamaModel installed-model fit filter", () => {
       },
       { defaultModel: "qwen3.6:35b" },
     );
-    // qwen2.5:0.5b is not in the registry, so it cannot outrank the known,
-    // larger qwen3.5:9b — the menu still lists both in installed order, but
-    // the default selection is the registered model, not whichever listed
-    // first.
-    expect(result).toBe("qwen3.5:9b");
-    expect(setup.promptArgs).toEqual(["  Choose model [2]: "]);
+    expect(result).toBe("qwen2.5:0.5b");
+    expect(setup.promptArgs).toEqual(["  Choose model [1]: "]);
   });
 
   it("respects unknown installed tags (not in the registry) even when nothing else fits", async () => {
@@ -382,17 +378,13 @@ describe("pullOllamaModel CLI-vs-HTTP dispatch", () => {
     host: string;
     hasLocalCli: boolean;
     httpCloseCode?: number;
-    isolatedDockerConfig?: string;
   }) {
     const local = require(LOCAL_DIST);
     const runner = require(RUNNER_DIST);
     const childProcess = require(CHILD_PROCESS_DIST) as typeof import("node:child_process");
     const originalRunCapture = runner.runCapture;
-    const originalPrepareOllamaApiExecution = local.prepareOllamaApiExecution;
     const cliCommands: string[][] = [];
     const httpCommands: string[][] = [];
-    const httpEnvs: NodeJS.ProcessEnv[] = [];
-    let cleanupCalls = 0;
 
     runner.runCapture = () => (setup.hasLocalCli ? "/usr/bin/ollama" : "");
 
@@ -402,42 +394,23 @@ describe("pullOllamaModel CLI-vs-HTTP dispatch", () => {
         cliCommands.push([String(file), ...(((args as string[]) ?? []) as string[]).map(String)]);
         return { status: 0, signal: null, output: [], pid: 1, stdout: "", stderr: "" } as never;
       });
-    local.prepareOllamaApiExecution = (
-      command: readonly string[],
-      host: string,
-      options: NonNullable<Parameters<typeof originalPrepareOllamaApiExecution>[2]>,
-    ) =>
-      originalPrepareOllamaApiExecution(command, host, {
-        ...options,
-        prepareDockerEnvironment: () => ({
-          env: { DOCKER_CONFIG: setup.isolatedDockerConfig ?? "/tmp/test-docker-config" },
-          isolatedCredentialConfig: true,
-          cleanup: () => {
-            cleanupCalls += 1;
-            return { ok: true };
-          },
-        }),
-      });
-    const spawn = vi
-      .spyOn(childProcess, "spawn")
-      .mockImplementation((file: unknown, args, options) => {
-        httpCommands.push([String(file), ...(((args as string[]) ?? []) as string[]).map(String)]);
-        httpEnvs.push((options?.env ?? {}) as NodeJS.ProcessEnv);
-        const child = new EventEmitter() as EventEmitter & {
-          stdout: PassThrough;
-          stderr: PassThrough;
-        };
-        child.stdout = new PassThrough();
-        child.stderr = new PassThrough();
-        process.nextTick(() => {
-          const closeCode = setup.httpCloseCode ?? 0;
-          const output = closeCode === 0 ? '{"status":"success"}\n' : "";
-          child.stdout.end(output, () => {
-            setImmediate(() => child.emit("close", closeCode));
-          });
+    const spawn = vi.spyOn(childProcess, "spawn").mockImplementation((file: unknown, args) => {
+      httpCommands.push([String(file), ...(((args as string[]) ?? []) as string[]).map(String)]);
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: PassThrough;
+        stderr: PassThrough;
+      };
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      process.nextTick(() => {
+        const closeCode = setup.httpCloseCode ?? 0;
+        const output = closeCode === 0 ? '{"status":"success"}\n' : "";
+        child.stdout.end(output, () => {
+          setImmediate(() => child.emit("close", closeCode));
         });
-        return child as never;
       });
+      return child as never;
+    });
 
     local.setResolvedOllamaHost(setup.host);
     delete require.cache[PROXY_DIST];
@@ -446,14 +419,9 @@ describe("pullOllamaModel CLI-vs-HTTP dispatch", () => {
       proxy,
       cliCommands,
       httpCommands,
-      httpEnvs,
-      get cleanupCalls() {
-        return cleanupCalls;
-      },
       restore() {
         delete require.cache[PROXY_DIST];
         runner.runCapture = originalRunCapture;
-        local.prepareOllamaApiExecution = originalPrepareOllamaApiExecution;
         spawnSync.mockRestore();
         spawn.mockRestore();
         local.setResolvedOllamaHost(null);
@@ -470,37 +438,14 @@ describe("pullOllamaModel CLI-vs-HTTP dispatch", () => {
     vi.restoreAllMocks();
   });
 
-  it("pulls through Docker when the daemon resolves on the Windows host (#10553)", async () => {
+  it("pulls over HTTP when the daemon resolves on the Windows host", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
-    active = loadProxyForDispatch({
-      host: "host.docker.internal",
-      hasLocalCli: true,
-      isolatedDockerConfig: "/tmp/credential-free-docker",
-    });
+    active = loadProxyForDispatch({ host: "host.docker.internal", hasLocalCli: true });
 
-    const result = await active.proxy.pullOllamaModel("qwen3.5:9b");
+    await active.proxy.pullOllamaModel("qwen3.5:9b");
 
-    expect(result).toBe(true);
-    expect(active.httpCommands.map((command) => command[0])).toContain("docker");
-    const request = active.httpCommands[0];
-    expect(request).toEqual(
-      expect.arrayContaining([
-        "run",
-        "--rm",
-        "docker.io/curlimages/curl@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b",
-        "-X",
-        "POST",
-        "Content-Type: application/json",
-        "http://host.docker.internal:11434/api/pull",
-      ]),
-    );
-    expect(JSON.parse(request[request.indexOf("-d") + 1])).toEqual({
-      model: "qwen3.5:9b",
-      stream: true,
-    });
+    expect(active.httpCommands.map((command) => command[0])).toContain("curl");
     expect(active.cliCommands.map((command) => command[0])).not.toContain("bash");
-    expect(active.httpEnvs[0]?.DOCKER_CONFIG).toBe("/tmp/credential-free-docker");
-    expect(active.cleanupCalls).toBe(1);
   });
 
   it("pulls over HTTP when a loopback daemon has no local ollama binary (#7472)", async () => {

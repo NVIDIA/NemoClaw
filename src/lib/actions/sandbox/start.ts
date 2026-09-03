@@ -36,6 +36,12 @@ function restoreProcessState(sandboxName: string): SandboxStartupRecoveryResult 
   return restoreSandboxStartupState(sandboxName);
 }
 
+function restoreLockedStartupAccess(sandboxName: string): void {
+  const { restoreLockedStateDirStartupAccess } =
+    require("../../shields") as typeof import("../../shields");
+  restoreLockedStateDirStartupAccess(sandboxName);
+}
+
 /** Wait for a just-started sandbox while tolerating its bounded transient Error phase. */
 async function waitForSandboxReady(
   sandboxName: string,
@@ -54,6 +60,8 @@ async function waitForSandboxReady(
 }
 
 export interface SandboxStartupStateDeps {
+  agent?: SandboxEntry["agent"];
+  restoreLockedStartupAccess?: (sandboxName: string) => void;
   waitForSandboxReady?: (sandboxName: string) => void | Promise<void>;
   restoreProcessState?: (sandboxName: string) => SandboxStartupRecoveryResult;
 }
@@ -62,6 +70,9 @@ export async function restoreStoppedSandboxStartupState(
   sandboxName: string,
   deps: SandboxStartupStateDeps = {},
 ): Promise<SandboxStartupRecoveryResult> {
+  if ((deps.agent ?? "openclaw") === "openclaw") {
+    (deps.restoreLockedStartupAccess ?? restoreLockedStartupAccess)(sandboxName);
+  }
   await (deps.waitForSandboxReady ?? waitForSandboxReady)(sandboxName);
   return (deps.restoreProcessState ?? restoreProcessState)(sandboxName);
 }
@@ -71,6 +82,7 @@ export interface SandboxStartDeps {
   observer?: OpenShellSandboxObserver;
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
+  restoreLockedStartupAccess?: (sandboxName: string) => void;
   restoreProcessState?: (sandboxName: string) => SandboxStartupRecoveryResult;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   restoreStartupState?: (
@@ -205,6 +217,8 @@ async function startSandboxWithinLifecycleFence(
       deps.restoreStartupState ??
       ((sandboxNameToRestore: string) =>
         restoreStoppedSandboxStartupState(sandboxNameToRestore, {
+          agent: resolved.sandbox.agent,
+          restoreLockedStartupAccess: deps.restoreLockedStartupAccess,
           restoreProcessState: deps.restoreProcessState,
           waitForSandboxReady: (readyName) =>
             waitForSandboxReady(readyName, deps.observer, deps.allowDockerRuntimeInspection),

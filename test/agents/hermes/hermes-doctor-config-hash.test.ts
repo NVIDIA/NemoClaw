@@ -141,7 +141,7 @@ describe("Hermes doctor and config hash boundary", () => {
     const doctorAndGenerateCommand = dockerRunCommandBetween(
       dockerfile,
       "# Run Hermes' upstream repair",
-      "# Install the generated policy manifest outside the mutable Hermes home",
+      "# Install NemoClaw plugin into Hermes",
     )
       .replaceAll("/sandbox", sandboxRoot)
       .replaceAll("/usr/local/bin/hermes", fakeHermes)
@@ -157,7 +157,7 @@ describe("Hermes doctor and config hash boundary", () => {
     const hashCommand = dockerRunCommandBetween(
       dockerfile,
       "# Pin config hash at build time",
-      "# Publish the mutable in-tree compatibility hash",
+      "# Backward-compatible marker",
     )
       .replaceAll("/etc/nemoclaw", etcDir)
       .replaceAll("/opt/hermes/.venv/bin/python", JSON.stringify(hermesPython))
@@ -171,8 +171,8 @@ describe("Hermes doctor and config hash boundary", () => {
       );
     const compatHashCommand = dockerRunCommandBetween(
       dockerfile,
-      "# Publish the mutable in-tree compatibility hash",
-      "# Keep the shared NemoClaw state root",
+      "# Backward-compatible marker",
+      "# OpenShell's macOS VM backend",
     ).replaceAll("/etc/nemoclaw", etcDir);
 
     try {

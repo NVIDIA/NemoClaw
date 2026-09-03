@@ -19,9 +19,6 @@ const onboardPath = JSON.stringify(path.join(testRepoRoot, "src", "lib", "onboar
 const runnerPath = JSON.stringify(path.join(testRepoRoot, "src", "lib", "runner.ts"));
 const registryPath = JSON.stringify(path.join(testRepoRoot, "src", "lib", "state", "registry.ts"));
 const defsPath = JSON.stringify(path.join(testRepoRoot, "src", "lib", "agent", "defs.ts"));
-const bridgeProviderPath = JSON.stringify(
-  path.join(testRepoRoot, "src", "lib", "onboard", "messaging-bridge-provider.ts"),
-);
 
 describe("onboard sandbox create intent boundary", () => {
   it(
@@ -159,7 +156,6 @@ const resolved = {
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const defs = require(${defsPath});
-const bridgeProvider = require(${bridgeProviderPath});
 const childProcess = require("node:child_process");
 const record = (text) => { console.log("CMD " + text); return text; };
 
@@ -183,9 +179,6 @@ runner.runCapture = (command) => {
   const text = record(Array.isArray(command) ? command.join(" ") : String(command));
   return text.includes("provider get") && text.includes("googlechat-bridge") ? staleBinding : "";
 };
-// Profile-boundary matching is covered at its owning unit boundary. This test
-// isolates the later provider-binding mismatch that must precede deletion.
-bridgeProvider.matchesRegisteredMessagingBridgeProfile = () => true;
 registry.getSandbox = (name) => ({ name, agent: "openclaw" });
 registry.removeSandbox = (name) => { record("registry remove " + name); };
 registry.updateSandbox = (name) => { record("registry update " + name); };

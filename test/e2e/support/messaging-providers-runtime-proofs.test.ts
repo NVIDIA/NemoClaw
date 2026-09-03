@@ -13,7 +13,6 @@ import { describe, expect, it } from "vitest";
 
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { applyFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
 import {
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
@@ -75,22 +74,6 @@ function failedCommand(stderr: string) {
   return { ...successfulCommand(), exitCode: 1, stderr };
 }
 
-function fakeEndpointPolicy(
-  port: number,
-  protocol: "rest" | "websocket",
-  binaries: readonly string[],
-): string {
-  return JSON.stringify({
-    version: 1,
-    network_policies: {
-      fixture: {
-        endpoints: [{ host: "host.openshell.internal", port, protocol }],
-        binaries: binaries.map((binaryPath) => ({ path: binaryPath })),
-      },
-    },
-  });
-}
-
 function optionValues(args: string[], option: string): string[] {
   return args.flatMap((argument, index) => (argument === option ? [args[index + 1]!] : []));
 }
@@ -145,7 +128,6 @@ function fakeDockerInspect(
     missingProxyControl?: MissingProxyControl;
     proxyEnvironment: readonly string[];
     publishedAddress?: string;
-    runtimeProviderId: "docker" | "podman";
   },
 ): string {
   const [apiRun, proxyRun] = calls.filter((call) => call[0] === "run") as [string[], string[]];
@@ -155,19 +137,12 @@ function fakeDockerInspect(
   const connectedProxyNetworks = calls
     .filter((call) => call[0] === "network" && call[1] === "connect" && call[3] === proxyContainer)
     .map((call) => call[2]!);
-  const proxyNetworks = [optionValue(proxyRun, "--network"), ...connectedProxyNetworks]
-    .filter(
-      (network) => options.missingProxyControl !== "internal-network" || network !== apiNetwork,
-    )
-    .map((network) =>
-      options.runtimeProviderId === "podman" && network === "bridge" ? "podman" : network,
-    );
-  const proxyDropsAllCapabilities = options.missingProxyControl !== "--cap-drop";
-  const inspectName = (name: string): string =>
-    options.runtimeProviderId === "podman" ? name : `/${name}`;
+  const proxyNetworks = [optionValue(proxyRun, "--network"), ...connectedProxyNetworks].filter(
+    (network) => options.missingProxyControl !== "internal-network" || network !== apiNetwork,
+  );
   return JSON.stringify([
     {
-      Name: inspectName(apiContainer),
+      Name: "/" + apiContainer,
       HostConfig: {},
       NetworkSettings: {
         Networks: { [apiNetwork]: {} },
@@ -178,31 +153,13 @@ function fakeDockerInspect(
       },
     },
     {
-      BoundingCaps:
-        options.runtimeProviderId === "podman"
-          ? proxyDropsAllCapabilities
-            ? null
-            : ["CAP_CHOWN"]
-          : undefined,
       Config: {
         Env: [...optionValues(proxyRun, "-e"), ...options.proxyEnvironment],
       },
-      EffectiveCaps:
-        options.runtimeProviderId === "podman"
-          ? proxyDropsAllCapabilities
-            ? null
-            : ["CAP_CHOWN"]
-          : undefined,
-      Name: inspectName(proxyContainer),
+      Name: "/" + proxyContainer,
       HostConfig: {
         CapDrop:
-          options.runtimeProviderId === "podman"
-            ? proxyDropsAllCapabilities
-              ? ["CAP_CHOWN"]
-              : []
-            : proxyDropsAllCapabilities
-              ? optionValues(proxyRun, "--cap-drop")
-              : [],
+          options.missingProxyControl === "--cap-drop" ? [] : optionValues(proxyRun, "--cap-drop"),
         PidsLimit:
           options.missingProxyControl === "--pids-limit"
             ? undefined
@@ -246,7 +203,6 @@ function fakeDockerHost(
   const containers = new Set<string>();
   const networks = new Set<string>();
   const networkInspect = options.networkInspect ?? OPENSHELL_NETWORK_INSPECT;
-  let runtimeProviderId: "docker" | "podman" = "docker";
   let proxyRunning = options.proxyRunning !== false;
   const dockerCommand = (args: string[]) => {
     const executedArgs = [...args];
@@ -263,15 +219,7 @@ function fakeDockerHost(
               executedArgs[2] === "openshell-docker"
                 ? networkInspect
                 : JSON.stringify([
-                    runtimeProviderId === "podman"
-                      ? {
-                          driver: "bridge",
-                          internal: createdNetwork?.includes("--internal") === true,
-                        }
-                      : {
-                          Driver: "bridge",
-                          Internal: createdNetwork?.includes("--internal") === true,
-                        },
+                    { Driver: "bridge", Internal: createdNetwork?.includes("--internal") === true },
                   ]),
             );
           }
@@ -302,7 +250,6 @@ function fakeDockerHost(
                   missingProxyControl: options.missingProxyControl,
                   proxyEnvironment: options.proxyEnvironment ?? [],
                   publishedAddress: options.publishedAddress,
-                  runtimeProviderId,
                 }),
               )
             : executedArgs[2] === "{{json .State}}"
@@ -343,16 +290,13 @@ function fakeDockerHost(
       commandOptions?: { artifactName?: string },
     ) => {
       commands.push({ command, args: [...args] });
-      expect(["docker", "node", "podman"]).toContain(command);
-      runtimeProviderId =
-        command === "podman" ? "podman" : command === "docker" ? "docker" : runtimeProviderId;
-      const runtimeArgs = command === "podman" && args[0] === "--url" ? args.slice(2) : args;
+      expect(["docker", "node"]).toContain(command);
       const result =
         command === "node"
           ? options.proxyReady === false
             ? failedCommand("proxy could not reach the upstream API")
             : successfulCommand()
-          : dockerCommand(runtimeArgs);
+          : dockerCommand(args);
       const artifactNames =
         commandOptions?.artifactName === undefined ? [] : [commandOptions.artifactName];
       for (const artifactName of artifactNames) {
@@ -397,11 +341,7 @@ function expectFakeDiscordDiagnosticArtifacts(artifacts: Map<string, string>): v
   expect(artifacts.get("diagnose-fake-discord-gateway-api-logs")).toContain("api diagnostic logs");
 }
 
-function startFakeDiscordApi(
-  host: HostCliClient,
-  cleanup: CleanupAction[],
-  env: NodeJS.ProcessEnv = {},
-) {
+function startFakeDiscordApi(host: HostCliClient, cleanup: CleanupAction[]) {
   return startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
     kind: "discord-gateway",
     imageScript: "fake-discord-gateway.cjs",
@@ -410,7 +350,7 @@ function startFakeDiscordApi(
     captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
     expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: "fixture-discord-token" },
     redactionValues: ["fixture-discord-token"],
-    env,
+    env: {},
   });
 }
 
@@ -448,157 +388,6 @@ async function tcpRequest(host: string, port: number, payload: string): Promise<
 }
 
 describe("messaging provider installed-runtime proofs", () => {
-  it("propagates caller-selected binaries through fake policy application", async () => {
-    const commands: Array<{ command: string; args: string[] }> = [];
-    const providerName = "e2e-hermes-discord-discord-bridge";
-    const allowedBinaries = ["/opt/hermes/.venv/bin/python3", "/opt/hermes/.venv/bin/python"];
-    const host = {
-      openshellCommandPath: "/usr/local/bin/openshell",
-      command: async (command: string, args: string[]) => {
-        commands.push({ command, args });
-        return args[0] === "sandbox"
-          ? successfulCommand(providerName)
-          : args[0] === "policy" && args[1] === "get"
-            ? successfulCommand(fakeEndpointPolicy(43_117, "websocket", allowedBinaries))
-            : successfulCommand();
-      },
-    } as unknown as HostCliClient;
-
-    await applyFixtureProviderPolicyEndpoint(host, "e2e-hermes-discord", {
-      endpoint: { port: "43117" },
-      protocol: "websocket",
-      rewrite: "websocket-credential-rewrite",
-      providerName,
-      env: { DISCORD_BOT_TOKEN: "test-fixture-token" },
-      redactionValues: ["test-fixture-token"],
-      artifactName: "apply-hermes-fake-discord-gateway-policy",
-      allowedBinaries,
-    });
-
-    expect(commands).toHaveLength(4);
-    expect(commands[0]?.args).toEqual([
-      "sandbox",
-      "provider",
-      "list",
-      "-g",
-      "nemoclaw",
-      "e2e-hermes-discord",
-    ]);
-    expect(commands[1]?.args).toEqual([
-      "policy",
-      "update",
-      "e2e-hermes-discord",
-      "--add-endpoint",
-      "host.openshell.internal:43117:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
-      "--add-allow",
-      "host.openshell.internal:43117:GET:/**",
-      "--add-allow",
-      "host.openshell.internal:43117:WEBSOCKET_TEXT:/**",
-      "--binary",
-      allowedBinaries[0],
-      "--binary",
-      allowedBinaries[1],
-      "--wait",
-    ]);
-    expect(commands[2]?.args).toEqual(["policy", "get", "--base", "e2e-hermes-discord"]);
-    expect(commands[3]?.args).toEqual([
-      "policy",
-      "set",
-      "--policy",
-      expect.any(String),
-      "--wait",
-      "e2e-hermes-discord",
-    ]);
-  });
-
-  it("binds the fake Discord REST proof to Hermes Python and excludes Node", async () => {
-    const commands: Array<{ command: string; args: string[] }> = [];
-    const providerName = "e2e-hermes-discord-discord-bridge";
-    const allowedBinaries = ["/opt/hermes/.venv/bin/python"];
-    const host = {
-      openshellCommandPath: "/usr/local/bin/openshell",
-      command: async (command: string, args: string[]) => {
-        commands.push({ command, args });
-        return args[0] === "sandbox"
-          ? successfulCommand(providerName)
-          : args[0] === "policy" && args[1] === "get"
-            ? successfulCommand(fakeEndpointPolicy(43_118, "rest", allowedBinaries))
-            : successfulCommand();
-      },
-    } as unknown as HostCliClient;
-
-    await applyFixtureProviderPolicyEndpoint(host, "e2e-hermes-discord", {
-      endpoint: { port: "43118" },
-      protocol: "rest",
-      rewrite: "request-body-credential-rewrite",
-      providerName,
-      env: { DISCORD_BOT_TOKEN: "test-fixture-token" },
-      redactionValues: ["test-fixture-token"],
-      artifactName: "apply-hermes-fake-discord-rest-policy",
-      allowedBinaries,
-    });
-
-    expect(commands[0]?.args).toEqual([
-      "sandbox",
-      "provider",
-      "list",
-      "-g",
-      "nemoclaw",
-      "e2e-hermes-discord",
-    ]);
-    expect(commands[1]?.args).toEqual([
-      "policy",
-      "update",
-      "e2e-hermes-discord",
-      "--add-endpoint",
-      "host.openshell.internal:43118:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
-      "--add-allow",
-      "host.openshell.internal:43118:GET:/**",
-      "--add-allow",
-      "host.openshell.internal:43118:POST:/**",
-      "--binary",
-      allowedBinaries[0],
-      "--wait",
-    ]);
-    expect(commands[1]?.args).not.toContain("/usr/local/bin/node");
-    expect(commands[2]?.args).toEqual(["policy", "get", "--base", "e2e-hermes-discord"]);
-    expect(commands[3]?.args).toEqual([
-      "policy",
-      "set",
-      "--policy",
-      expect.any(String),
-      "--wait",
-      "e2e-hermes-discord",
-    ]);
-  });
-
-  it("rejects fake endpoint policy mutation when the provider is not attached", async () => {
-    const commands: Array<{ command: string; args: string[] }> = [];
-    const host = {
-      openshellCommandPath: "/usr/local/bin/openshell",
-      command: async (command: string, args: string[]) => {
-        commands.push({ command, args });
-        return successfulCommand("another-provider");
-      },
-    } as unknown as HostCliClient;
-
-    await expect(
-      applyFixtureProviderPolicyEndpoint(host, "e2e-hermes-discord", {
-        endpoint: { port: "43118" },
-        protocol: "rest",
-        rewrite: "request-body-credential-rewrite",
-        providerName: "e2e-hermes-discord-discord-bridge",
-        env: { DISCORD_BOT_TOKEN: "test-fixture-token" },
-        redactionValues: ["test-fixture-token"],
-        artifactName: "apply-hermes-fake-discord-rest-policy",
-        allowedBinaries: ["/opt/hermes/.venv/bin/python"],
-      }),
-    ).rejects.toThrow("is not attached to sandbox e2e-hermes-discord");
-    expect(commands.map(({ args }) => args)).toEqual([
-      ["sandbox", "provider", "list", "-g", "nemoclaw", "e2e-hermes-discord"],
-    ]);
-  });
-
   it("rejects Docker state that publishes the credential-bearing fake API", async () => {
     const { host } = fakeDockerHost({ apiPublished: true });
     const cleanup: CleanupAction[] = [];
@@ -753,49 +542,6 @@ describe("messaging provider installed-runtime proofs", () => {
       await expect(startFakeDiscordApi(host, cleanup)).rejects.toThrow(
         /Docker topology did not preserve isolation/u,
       );
-    } finally {
-      await runCleanup(cleanup);
-    }
-  });
-
-  it("publishes the isolated proxy through rootless Podman without binding its bridge gateway", async () => {
-    const { calls, host } = fakeDockerHost({ networkInspect: "[]" });
-    const cleanup: CleanupAction[] = [];
-
-    try {
-      const api = await startFakeDiscordApi(host, cleanup, {
-        NEMOCLAW_GATEWAY_RUNTIME: "podman",
-        OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
-      });
-      const proxyRun = calls.filter((args) => args[0] === "run").at(-1)!;
-      const publications = optionValues(proxyRun, "-p");
-
-      expect(publications).toContain("0.0.0.0::8080");
-      expect(publications).toContain(`0.0.0.0::${String(FAKE_API_PROXY_READINESS_PORT)}`);
-      expect(publications.some((entry) => entry.startsWith(`${OPENSHELL_BRIDGE_ADDRESS}::`))).toBe(
-        false,
-      );
-      expect(calls).not.toContainEqual(["network", "inspect", "openshell-docker"]);
-      expect(api.port).toBe("32100");
-    } finally {
-      await runCleanup(cleanup);
-    }
-  });
-
-  it("rejects effective proxy capabilities reported by rootless Podman", async () => {
-    const { host } = fakeDockerHost({
-      missingProxyControl: "--cap-drop",
-      networkInspect: "[]",
-    });
-    const cleanup: CleanupAction[] = [];
-
-    try {
-      await expect(
-        startFakeDiscordApi(host, cleanup, {
-          NEMOCLAW_GATEWAY_RUNTIME: "podman",
-          OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
-        }),
-      ).rejects.toThrow(/Podman topology did not preserve isolation/u);
     } finally {
       await runCleanup(cleanup);
     }
