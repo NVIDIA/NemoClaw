@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { buildDockerSubprocessEnv } from "./subprocess-env";
+import { buildDockerSubprocessEnv } from "./subprocess-env.js";
 
 const source = {
   PATH: "/usr/bin",
