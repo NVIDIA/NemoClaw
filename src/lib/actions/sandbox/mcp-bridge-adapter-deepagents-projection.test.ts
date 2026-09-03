@@ -11,8 +11,15 @@ import {
   buildDeepAgentsMcpRegisterCommand,
   buildDeepAgentsMcpRemoveCommand,
 } from "./mcp-bridge-adapter-deepagents";
-import { DEEPAGENTS_MCP_MAX_SERVERS } from "./mcp-bridge-adapter-deepagents-projection";
-import { buildDeepAgentsMcpStatusCommand } from "./mcp-bridge-adapter-status";
+import {
+  DEEPAGENTS_MCP_MAX_SERVERS,
+  DEEPAGENTS_UNSAFE_MCP_PROJECTION_TYPES,
+} from "./mcp-bridge-adapter-deepagents-projection";
+import {
+  buildDeepAgentsMcpStatusCommand,
+  parseUnsafeDeepAgentsMcpProjectionResult,
+  UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX,
+} from "./mcp-bridge-adapter-status";
 
 const emptyProjection = { mcpServers: {} };
 const duplicateProjection = '{"mcpServers":{},"mcpServers":{"shadow":{}}}\n';
@@ -52,6 +59,19 @@ describe("Deep Agents managed MCP projection safety", () => {
     expect(sizeCheckIndex).toBeLessThan(truncateIndex);
   });
 
+  it.each(DEEPAGENTS_UNSAFE_MCP_PROJECTION_TYPES)(
+    "uses the shared %s classification in the command and result parser",
+    (type) => {
+      const path = "/sandbox/.deepagents/.nemoclaw-mcp.json";
+      const detail = `${UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX}: ${type} at ${path}`;
+
+      expect(buildDeepAgentsMcpStatusCommand(baseEntry)).toContain(JSON.stringify(type));
+      expect(
+        parseUnsafeDeepAgentsMcpProjectionResult({ status: 2, stdout: "", stderr: detail }),
+      ).toEqual({ messagePrefix: `${UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX}: ${type} at `, path });
+    },
+  );
+
   it("applies the shared server cap before normal and rollback v2 publication", () => {
     const entries = Array.from(
       { length: DEEPAGENTS_MCP_MAX_SERVERS + 1 },
@@ -74,29 +94,49 @@ describe("Deep Agents managed MCP projection safety", () => {
     );
   });
 
-  it("fails status inspection closed without following hostile projection paths", () => {
+  it.each([
+    {
+      name: "a dangling symbolic link",
+      config: undefined,
+      options: { symlink: true },
+      type: "symbolic link",
+      targetText: null,
+    },
+    {
+      name: "a symbolic link to valid content",
+      config: emptyProjection,
+      options: { symlink: true },
+      type: "symbolic link",
+      targetText: `${JSON.stringify(emptyProjection, null, 2)}\n`,
+    },
+    {
+      name: "a FIFO",
+      config: undefined,
+      options: { fifo: true },
+      type: "FIFO",
+      targetText: null,
+    },
+    {
+      name: "a directory",
+      config: undefined,
+      options: { directory: true },
+      type: "non-regular file",
+      targetText: null,
+    },
+  ])("rejects $name during status inspection (#10754)", ({ config, options, type, targetText }) => {
     const statusCommand = buildDeepAgentsMcpStatusCommand(baseEntry);
-    expect(statusCommand).toContain("os.O_NONBLOCK | os.O_NOFOLLOW");
-    expect(statusCommand).not.toContain("config_path.read_text");
-    const symlink = runDeepAgentsConfigCommand(
+    const result = runDeepAgentsConfigCommand(
       statusCommand,
-      emptyProjection,
+      config,
       "v2",
       undefined,
       0o600,
-      { symlink: true },
+      options,
     );
-    expect(symlink.status).toBe(2);
-    expect(symlink.stdout.trim()).toBe("");
-    expect(symlink.stderr).toContain("Could not inspect managed Deep Agents MCP state");
-    expect(symlink.managedSymlinkTargetText).toBe(`${JSON.stringify(emptyProjection, null, 2)}\n`);
-
-    const fifo = runDeepAgentsConfigCommand(statusCommand, undefined, "v2", undefined, 0o600, {
-      fifo: true,
-    });
-    expect(fifo.status).toBe(2);
-    expect(fifo.stdout.trim()).toBe("");
-    expect(fifo.stderr).toContain("Could not inspect managed Deep Agents MCP state");
+    expect(result.status).toBe(2);
+    expect(result.stdout.trim()).toBe("");
+    expect(result.stderr).toContain(`Unsafe managed Deep Agents MCP projection path: ${type}`);
+    expect(result.managedSymlinkTargetText).toBe(targetText);
   });
 
   it.each([

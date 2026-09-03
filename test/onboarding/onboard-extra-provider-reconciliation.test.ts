@@ -80,6 +80,8 @@ runner.run = (command, opts = {}) => {
   }
   const sandboxResult = createdSandbox?.run(command) ?? null;
   if (sandboxResult !== null) return sandboxResult;
+  const providerResult = require(${onboardScriptMocksPath}).mockNvidiaProviderGetRun(command, "nemoclaw");
+  if (providerResult !== null) return providerResult;
   if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get -g nemoclaw tavily-search")) {
     const stderr = Buffer.from("Error: provider 'tavily-search' not found");

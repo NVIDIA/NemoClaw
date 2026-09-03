@@ -115,20 +115,20 @@ function publicInstallRef(): string {
 test(
   "cloud onboard: public installer creates healthy sandbox with security checks",
   {
-  timeout: LIVE_TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "check cloud onboarding prerequisites",
-      "stage legacy plaintext credential",
-      "install and onboard cloud sandbox",
-      "verify migrated gateway credential",
-      "validate installed CLI and corporate CA trust",
-      "verify compatible endpoint reasoning propagation",
-      "collect scoped diagnostics from onboarded sandbox",
-      "run cloud inference and security checks",
-      "remove cloud sandbox",
-    ],
-  },
+    timeout: LIVE_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "check cloud onboarding prerequisites",
+        "stage legacy plaintext credential",
+        "install and onboard cloud sandbox",
+        "verify migrated gateway credential",
+        "validate installed CLI and corporate CA trust",
+        "verify compatible endpoint reasoning propagation",
+        "collect scoped diagnostics from onboarded sandbox",
+        "run cloud inference and security checks",
+        "remove cloud sandbox",
+      ],
+    },
   },
   async ({
     artifacts,
@@ -139,241 +139,241 @@ test(
     sandbox,
     secrets,
   }) => {
-  const hosted = requireHostedInferenceConfig(secrets);
-  const ref = publicInstallRef();
-  const installUrl =
-    process.env.NEMOCLAW_INSTALL_SCRIPT_URL ??
-    `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${ref}/install.sh`;
-  const installCwd = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-install-"));
-  const testHome = path.join(installCwd, "home");
-  const legacyDir = path.join(testHome, ".nemoclaw");
-  const legacyFile = path.join(legacyDir, "credentials.json");
-  const testEnv = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv =>
-    env({ HOME: testHome, ...extra });
-  const hostedEnvWithoutCredentials = { ...hosted.env };
-  delete hostedEnvWithoutCredentials[hosted.sourceSecretName];
-  delete hostedEnvWithoutCredentials[hosted.credentialEnv];
-  fs.mkdirSync(testHome, { recursive: true, mode: 0o700 });
-  const corporateCa = createCorporateCaFixture("explicit", "nemoclaw-cloud-corporate-ca-");
-  cleanupRegistry.trackDisposable("remove public installer workspace", () =>
-    fs.rmSync(installCwd, { recursive: true, force: true }),
-  );
-  cleanupRegistry.trackDisposable("remove corporate CA fixture", () =>
-    cleanupCorporateCaFixture(corporateCa),
-  );
-  const redactionValues = [hosted.apiKey];
+    const hosted = requireHostedInferenceConfig(secrets);
+    const ref = publicInstallRef();
+    const installUrl =
+      process.env.NEMOCLAW_INSTALL_SCRIPT_URL ??
+      `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${ref}/install.sh`;
+    const installCwd = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-install-"));
+    const testHome = path.join(installCwd, "home");
+    const legacyDir = path.join(testHome, ".nemoclaw");
+    const legacyFile = path.join(legacyDir, "credentials.json");
+    const testEnv = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv =>
+      env({ HOME: testHome, ...extra });
+    const hostedEnvWithoutCredentials = { ...hosted.env };
+    delete hostedEnvWithoutCredentials[hosted.sourceSecretName];
+    delete hostedEnvWithoutCredentials[hosted.credentialEnv];
+    fs.mkdirSync(testHome, { recursive: true, mode: 0o700 });
+    const corporateCa = createCorporateCaFixture("explicit", "nemoclaw-cloud-corporate-ca-");
+    cleanupRegistry.trackDisposable("remove public installer workspace", () =>
+      fs.rmSync(installCwd, { recursive: true, force: true }),
+    );
+    cleanupRegistry.trackDisposable("remove corporate CA fixture", () =>
+      cleanupCorporateCaFixture(corporateCa),
+    );
+    const redactionValues = [hosted.apiKey];
 
-  await artifacts.target.declare({
-    id: "cloud-onboard",
-    sandboxName: SANDBOX_NAME,
-    installUrl,
-    installRef: ref,
-    checksDir: CHECKS_DIR,
-    corporateCaSource: corporateCa.sourceLabel,
-    contracts: [
-      "public curl installer uses GitHub clone path for the requested ref",
-      ...(runtimeProvider.id === "podman"
-        ? ["public installer leaves Docker unavailable during native Podman onboarding"]
-        : []),
-      "ordinary cloud onboard migrates an allowlisted legacy credential through the real gateway",
-      "tampered non-credential legacy fields do not become gateway providers",
-      "successful onboard removes plaintext credentials.json",
-      "sandbox appears healthy after cloud onboarding",
-      "explicit corporate CA source is baked and merged with OpenShell trust inside the sandbox",
-      "validated compatible-endpoint reasoning reaches the authenticated runtime handoff and OpenClaw model metadata",
-      "installed CLI creates a non-empty diagnostics archive for the registered sandbox",
-      "cloud split checks cover inference.local, security leak checks, and Landlock/read-only behavior",
-      "cleanup verifies sandbox removal",
-    ],
-  });
+    await artifacts.target.declare({
+      id: "cloud-onboard",
+      sandboxName: SANDBOX_NAME,
+      installUrl,
+      installRef: ref,
+      checksDir: CHECKS_DIR,
+      corporateCaSource: corporateCa.sourceLabel,
+      contracts: [
+        "public curl installer uses GitHub clone path for the requested ref",
+        ...(runtimeProvider.id === "podman"
+          ? ["public installer leaves Docker unavailable during native Podman onboarding"]
+          : []),
+        "ordinary cloud onboard migrates an allowlisted legacy credential through the real gateway",
+        "tampered non-credential legacy fields do not become gateway providers",
+        "successful onboard removes plaintext credentials.json",
+        "sandbox appears healthy after cloud onboarding",
+        "explicit corporate CA source is baked and merged with OpenShell trust inside the sandbox",
+        "validated compatible-endpoint reasoning reaches the authenticated runtime handoff and OpenClaw model metadata",
+        "installed CLI creates a non-empty diagnostics archive for the registered sandbox",
+        "cloud split checks cover inference.local, security leak checks, and Landlock/read-only behavior",
+        "cleanup verifies sandbox removal",
+      ],
+    });
 
     await runtimeProvider.requireAvailable({
-    artifactName: "phase-0-docker-info",
+      artifactName: "phase-0-docker-info",
       scenarioLabel: "cloud onboarding",
-  });
+    });
 
-  cleanupRegistry.trackDisposable("remove cloud-onboard sandbox", () =>
-    cleanup(host, sandbox, { home: testHome, label: "cleanup", verify: true }),
-  );
-  await cleanup(host, sandbox, { home: testHome, label: "pre-cleanup", verify: false });
+    cleanupRegistry.trackDisposable("remove cloud-onboard sandbox", () =>
+      cleanup(host, sandbox, { home: testHome, label: "cleanup", verify: true }),
+    );
+    await cleanup(host, sandbox, { home: testHome, label: "pre-cleanup", verify: false });
 
-  progress.phase("stage legacy plaintext credential");
-  fs.mkdirSync(legacyDir, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(
-    legacyFile,
-    JSON.stringify(
+    progress.phase("stage legacy plaintext credential");
+    fs.mkdirSync(legacyDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      legacyFile,
+      JSON.stringify(
+        {
+          [hosted.credentialEnv]: hosted.apiKey,
+          OPENSHELL_GATEWAY: "evil-gw-from-tampered-file",
+          NODE_OPTIONS: "--require=/tmp/evil.js",
+        },
+        null,
+        2,
+      ),
+      { mode: 0o600 },
+    );
+
+    progress.phase("install and onboard cloud sandbox");
+    const install = await host.command(
+      "bash",
+      [
+        "-lc",
+        `cd ${shellQuote(installCwd)} && curl -fsSL ${shellQuote(installUrl)} | bash && ${runtimeProvider.id === "docker" ? "command -v docker >/dev/null" : "! command -v docker >/dev/null"}`,
+      ],
       {
-        [hosted.credentialEnv]: hosted.apiKey,
-        OPENSHELL_GATEWAY: "evil-gw-from-tampered-file",
-        NODE_OPTIONS: "--require=/tmp/evil.js",
+        artifactName: "phase-1-public-install",
+        env: testEnv({
+          ...hostedEnvWithoutCredentials,
+          ...corporateCa.env,
+          NEMOCLAW_INSTALL_REF: ref,
+          NEMOCLAW_INSTALL_TAG: ref,
+          NEMOCLAW_INSTALL_SCRIPT_URL: installUrl,
+          NEMOCLAW_REASONING: "true",
+        }),
+        redactionValues,
+        timeoutMs: execTimeout(25 * 60_000),
       },
-      null,
-      2,
-    ),
-    { mode: 0o600 },
-  );
+    );
+    expect(install.exitCode, resultText(install)).toBe(0);
+    assertStockManagedImageReceipt({
+      environment: testEnv(),
+      expectedAgent: "openclaw",
+      sandboxName: SANDBOX_NAME,
+    });
+    expect(resultText(install)).toContain("Installing NemoClaw from GitHub");
+    expect(resultText(install)).toContain("Cloning NemoClaw source");
+    expect(resultText(install)).toContain(
+      "Staged 1 legacy credential(s) for migration to the OpenShell gateway.",
+    );
+    if (ref !== "main") expect(resultText(install)).toContain(`Resolved install ref: ${ref}`);
 
-  progress.phase("install and onboard cloud sandbox");
-  const install = await host.command(
-    "bash",
-    [
-      "-lc",
-      `cd ${shellQuote(installCwd)} && curl -fsSL ${shellQuote(installUrl)} | bash && ${runtimeProvider.id === "docker" ? "command -v docker >/dev/null" : "! command -v docker >/dev/null"}`,
-    ],
-    {
-      artifactName: "phase-1-public-install",
-      env: testEnv({
-        ...hostedEnvWithoutCredentials,
-        ...corporateCa.env,
-        NEMOCLAW_INSTALL_REF: ref,
-        NEMOCLAW_INSTALL_TAG: ref,
-        NEMOCLAW_INSTALL_SCRIPT_URL: installUrl,
-        NEMOCLAW_REASONING: "true",
-      }),
-      redactionValues,
-      timeoutMs: execTimeout(25 * 60_000),
-    },
-  );
-  expect(install.exitCode, resultText(install)).toBe(0);
-  assertStockManagedImageReceipt({
-    environment: testEnv(),
-    expectedAgent: "openclaw",
-    sandboxName: SANDBOX_NAME,
-  });
-  expect(resultText(install)).toContain("Installing NemoClaw from GitHub");
-  expect(resultText(install)).toContain("Cloning NemoClaw source");
-  expect(resultText(install)).toContain(
-    "Staged 1 legacy credential(s) for migration to the OpenShell gateway.",
-  );
-  if (ref !== "main") expect(resultText(install)).toContain(`Resolved install ref: ${ref}`);
-
-  progress.phase("verify migrated gateway credential");
+    progress.phase("verify migrated gateway credential");
     expect(
       fs.existsSync(legacyFile),
       "successful onboard must remove legacy credentials.json",
     ).toBe(false);
-  const providers = await host.command(
-    "openshell",
-    ["-g", "nemoclaw", "provider", "list", "--names"],
-    {
-      artifactName: "phase-2-gateway-provider-list",
+    const providers = await host.command(
+      "openshell",
+      ["-g", "nemoclaw", "provider", "list", "--names"],
+      {
+        artifactName: "phase-2-gateway-provider-list",
+        env: testEnv(),
+        timeoutMs: 60_000,
+      },
+    );
+    expect(providers.exitCode, resultText(providers)).toBe(0);
+    const providerNames = providers.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(line));
+    expect(providerNames).toContain(hosted.providerName);
+    expect(providerNames).not.toContain("OPENSHELL_GATEWAY");
+    expect(providerNames).not.toContain("NODE_OPTIONS");
+
+    progress.phase("validate installed CLI and corporate CA trust");
+    const cliProbe = await host.command(
+      "bash",
+      [
+        "-lc",
+        'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"; command -v nemoclaw; command -v openshell; nemoclaw --help >/dev/null',
+      ],
+      { artifactName: "phase-2-cli-path-probe", env: testEnv(), timeoutMs: 60_000 },
+    );
+    expect(cliProbe.exitCode, resultText(cliProbe)).toBe(0);
+
+    const list = await host.command("bash", ["-lc", "nemoclaw list"], {
+      artifactName: "phase-2-nemoclaw-list",
       env: testEnv(),
       timeoutMs: 60_000,
-    },
-  );
-  expect(providers.exitCode, resultText(providers)).toBe(0);
-  const providerNames = providers.stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(line));
-  expect(providerNames).toContain(hosted.providerName);
-  expect(providerNames).not.toContain("OPENSHELL_GATEWAY");
-  expect(providerNames).not.toContain("NODE_OPTIONS");
-
-  progress.phase("validate installed CLI and corporate CA trust");
-  const cliProbe = await host.command(
-    "bash",
-    [
-      "-lc",
-      'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"; command -v nemoclaw; command -v openshell; nemoclaw --help >/dev/null',
-    ],
-    { artifactName: "phase-2-cli-path-probe", env: testEnv(), timeoutMs: 60_000 },
-  );
-  expect(cliProbe.exitCode, resultText(cliProbe)).toBe(0);
-
-  const list = await host.command("bash", ["-lc", "nemoclaw list"], {
-    artifactName: "phase-2-nemoclaw-list",
-    env: testEnv(),
-    timeoutMs: 60_000,
-  });
-  expect(list.exitCode, resultText(list)).toBe(0);
-  expect(list.stdout).toContain(SANDBOX_NAME);
-
-  const corporateCaProbe = await sandbox.execShell(
-    SANDBOX_NAME,
-    corporateCaMergeProbeScript(registeredCorporateCaWorkloadKind(SANDBOX_NAME, testHome)),
-    {
-      artifactName: "phase-2-corporate-ca-merge-probe",
-      env: testEnv(),
-      timeoutMs: 60_000,
-    },
-  );
-  expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
-
-  progress.phase("verify compatible endpoint reasoning propagation");
-  const reasoningProbe = await sandbox.exec(
-    SANDBOX_NAME,
-    ["node", "-e", REASONING_PROPAGATION_PROBE, hosted.model],
-    {
-      artifactName: "phase-2-compatible-endpoint-reasoning",
-      env: testEnv(),
-      timeoutMs: 60_000,
-    },
-  );
-  expect(reasoningProbe.exitCode, resultText(reasoningProbe)).toBe(0);
-  const reasoningEvidence = JSON.parse(reasoningProbe.stdout.trim()) as {
-    runtimeReasoning: string;
-    modelReasoning: boolean;
-  };
-  expect(reasoningEvidence).toEqual({ runtimeReasoning: "true", modelReasoning: true });
-  await artifacts.writeJson("compatible-endpoint-reasoning.json", reasoningEvidence);
-
-  progress.phase("collect scoped diagnostics from onboarded sandbox");
-  const diagnosticsArchive = path.join(installCwd, "cloud-onboard-debug.tar.gz");
-  const diagnostics = await host.command(
-    "bash",
-    [
-      "-lc",
-      `nemoclaw debug --quick --sandbox ${shellQuote(SANDBOX_NAME)} --output ${shellQuote(diagnosticsArchive)}`,
-    ],
-    {
-      artifactName: "phase-3-scoped-diagnostics",
-      env: testEnv(),
-      timeoutMs: 60_000,
-    },
-  );
-  expect(diagnostics.exitCode, resultText(diagnostics)).toBe(0);
-  expect(fs.existsSync(diagnosticsArchive), "scoped diagnostics archive must exist").toBe(true);
-  expect(
-    fs.statSync(diagnosticsArchive).size,
-    "scoped diagnostics archive must be non-empty",
-  ).toBeGreaterThan(0);
-
-  progress.phase("run cloud inference and security checks");
-  const checkScripts = fs
-    .readdirSync(CHECKS_DIR)
-    .filter((name) => name.endsWith(".sh"))
-    .sort();
-  expect(checkScripts.length).toBeGreaterThan(0);
-  for (const scriptName of checkScripts) {
-    const result = await host.command("bash", [path.join(CHECKS_DIR, scriptName)], {
-      artifactName: `phase-4-check-${scriptName.replace(/\.sh$/, "")}`,
-      cwd: REPO_ROOT,
-      env: testEnv({
-        ...hosted.env,
-        CLOUD_EXPERIMENTAL_MODEL: hosted.model,
-        COMPATIBLE_API_KEY: hosted.apiKey,
-        NEMOCLAW_E2E_CLOUD_API_KEY_ENV: "COMPATIBLE_API_KEY",
-        REPO: REPO_ROOT,
-        SANDBOX_NAME,
-      }),
-      redactionValues,
-      timeoutMs: 180_000,
     });
-    expect(result.exitCode, `${scriptName}: ${resultText(result)}`).toBe(0);
-  }
+    expect(list.exitCode, resultText(list)).toBe(0);
+    expect(list.stdout).toContain(SANDBOX_NAME);
 
-  progress.phase("remove cloud sandbox");
-  await cleanup(host, sandbox, { home: testHome, label: "final-cleanup", verify: true });
-  await artifacts.target.complete({
-    id: "cloud-onboard",
-    status: "passed",
-    credentialMigration: {
-      legacyFileRemoved: !fs.existsSync(legacyFile),
-      migratedProviderRegistered: providerNames.includes(hosted.providerName),
-      tamperedKeysExcluded:
-        !providerNames.includes("OPENSHELL_GATEWAY") && !providerNames.includes("NODE_OPTIONS"),
-    },
-  });
+    const corporateCaProbe = await sandbox.execShell(
+      SANDBOX_NAME,
+      corporateCaMergeProbeScript(registeredCorporateCaWorkloadKind(SANDBOX_NAME, testHome)),
+      {
+        artifactName: "phase-2-corporate-ca-merge-probe",
+        env: testEnv(),
+        timeoutMs: 60_000,
+      },
+    );
+    expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
+
+    progress.phase("verify compatible endpoint reasoning propagation");
+    const reasoningProbe = await sandbox.exec(
+      SANDBOX_NAME,
+      ["node", "-e", REASONING_PROPAGATION_PROBE, hosted.model],
+      {
+        artifactName: "phase-2-compatible-endpoint-reasoning",
+        env: testEnv(),
+        timeoutMs: 60_000,
+      },
+    );
+    expect(reasoningProbe.exitCode, resultText(reasoningProbe)).toBe(0);
+    const reasoningEvidence = JSON.parse(reasoningProbe.stdout.trim()) as {
+      runtimeReasoning: string;
+      modelReasoning: boolean;
+    };
+    expect(reasoningEvidence).toEqual({ runtimeReasoning: "true", modelReasoning: true });
+    await artifacts.writeJson("compatible-endpoint-reasoning.json", reasoningEvidence);
+
+    progress.phase("collect scoped diagnostics from onboarded sandbox");
+    const diagnosticsArchive = path.join(installCwd, "cloud-onboard-debug.tar.gz");
+    const diagnostics = await host.command(
+      "bash",
+      [
+        "-lc",
+        `nemoclaw debug --quick --sandbox ${shellQuote(SANDBOX_NAME)} --output ${shellQuote(diagnosticsArchive)}`,
+      ],
+      {
+        artifactName: "phase-3-scoped-diagnostics",
+        env: testEnv(),
+        timeoutMs: 60_000,
+      },
+    );
+    expect(diagnostics.exitCode, resultText(diagnostics)).toBe(0);
+    expect(fs.existsSync(diagnosticsArchive), "scoped diagnostics archive must exist").toBe(true);
+    expect(
+      fs.statSync(diagnosticsArchive).size,
+      "scoped diagnostics archive must be non-empty",
+    ).toBeGreaterThan(0);
+
+    progress.phase("run cloud inference and security checks");
+    const checkScripts = fs
+      .readdirSync(CHECKS_DIR)
+      .filter((name) => name.endsWith(".sh"))
+      .sort();
+    expect(checkScripts.length).toBeGreaterThan(0);
+    for (const scriptName of checkScripts) {
+      const result = await host.command("bash", [path.join(CHECKS_DIR, scriptName)], {
+        artifactName: `phase-4-check-${scriptName.replace(/\.sh$/, "")}`,
+        cwd: REPO_ROOT,
+        env: testEnv({
+          ...hosted.env,
+          CLOUD_EXPERIMENTAL_MODEL: hosted.model,
+          COMPATIBLE_API_KEY: hosted.apiKey,
+          NEMOCLAW_E2E_CLOUD_API_KEY_ENV: "COMPATIBLE_API_KEY",
+          REPO: REPO_ROOT,
+          SANDBOX_NAME,
+        }),
+        redactionValues,
+        timeoutMs: 180_000,
+      });
+      expect(result.exitCode, `${scriptName}: ${resultText(result)}`).toBe(0);
+    }
+
+    progress.phase("remove cloud sandbox");
+    await cleanup(host, sandbox, { home: testHome, label: "final-cleanup", verify: true });
+    await artifacts.target.complete({
+      id: "cloud-onboard",
+      status: "passed",
+      credentialMigration: {
+        legacyFileRemoved: !fs.existsSync(legacyFile),
+        migratedProviderRegistered: providerNames.includes(hosted.providerName),
+        tamperedKeysExcluded:
+          !providerNames.includes("OPENSHELL_GATEWAY") && !providerNames.includes("NODE_OPTIONS"),
+      },
+    });
   },
 );

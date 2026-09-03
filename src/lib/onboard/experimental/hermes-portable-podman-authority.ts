@@ -148,7 +148,6 @@ function createHermesPortablePodmanOperationCommandAuthority(
   requireRuntimeAuthority(runtimeAuthority, socketAuthority, deps);
   const commandEnvironment = buildHermesPortablePodmanEnvironment(runtimeAuthority, sourceEnv);
   requireResolvedExecutable(authority, sourceEnv, deps);
-  executableProof.assertContentAuthority();
   const engine = createPodmanContainerEngine({
     operation,
     socketAuthority,
@@ -167,7 +166,6 @@ function createHermesPortablePodmanOperationCommandAuthority(
     requireRuntimeAuthority(runtimeAuthority, socketAuthority, deps);
     buildHermesPortablePodmanEnvironment(runtimeAuthority, sourceEnv);
     requireResolvedExecutable(authority, sourceEnv, deps);
-    executableProof.assertContentAuthority();
     engine.assertAuthority();
   };
   const assertCurrent = (): void => {
