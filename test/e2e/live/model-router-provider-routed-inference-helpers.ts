@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import YAML from "yaml";
 
-export const EXPECTED_MODEL_ROUTER_SELECTED_MODEL = "gpt-oss-20b-high";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 
 export function modelRouterSelectedModel(responseBody: string): string | null {
   try {
@@ -13,6 +13,18 @@ export function modelRouterSelectedModel(responseBody: string): string | null {
     return typeof selectedModel === "string" && selectedModel.trim() ? selectedModel : null;
   } catch {
     return null;
+  }
+}
+
+export function modelRouterPoolModelNames(poolConfig: string): readonly string[] {
+  try {
+    const parsed = YAML.parse(poolConfig) as { models?: readonly { name?: unknown }[] };
+    if (!Array.isArray(parsed?.models)) return [];
+    return parsed.models
+      .map((model) => model?.name)
+      .filter((name): name is string => typeof name === "string" && Boolean(name.trim()));
+  } catch {
+    return [];
   }
 }
 

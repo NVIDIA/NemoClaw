@@ -168,7 +168,6 @@ describe("runtime phase fixture", () => {
       maxTokens: 12,
       model: "default",
       prompt: "Reply with ok",
-      routingModels: ["gpt-oss-20b-high"],
     });
 
     const call = runner.calls[0];
@@ -195,18 +194,8 @@ describe("runtime phase fixture", () => {
       model: "default",
       messages: [{ role: "user", content: "Reply with ok" }],
       max_tokens: 12,
-      metadata: { models: ["gpt-oss-20b-high"] },
     });
     expect(call?.options?.artifactName).toBe("custom-chat");
-  });
-
-  it("rejects an empty routed model set before runtime probe execution", async () => {
-    const runner = new FakeRunner();
-
-    await expect(
-      fixture(runner).expectInferenceLocalChatCompletion(instance(), { routingModels: [] }),
-    ).rejects.toThrow("inference routing models must contain at least one non-empty value");
-    expect(runner.calls).toEqual([]);
   });
 
   it("retries inference.local PONG chat completions and accepts reasoning content", async () => {

@@ -260,12 +260,6 @@ function activeModelEntries(activeModel: string): ModelProviderEntry[] {
         contextWindow: 131072,
         maxOutput: 4096,
       },
-      {
-        id: "nvidia/nemotron-3-nano-30b-a3b",
-        label: "Nemotron 3 Nano 30B",
-        contextWindow: 131072,
-        maxOutput: 4096,
-      },
     ];
   }
 

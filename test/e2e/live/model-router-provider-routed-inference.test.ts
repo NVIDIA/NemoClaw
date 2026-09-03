@@ -1,23 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requirePublicNvidiaInferenceKey } from "../fixtures/inference-adapter.ts";
-import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   buildProviderRoutedEnv,
-  EXPECTED_MODEL_ROUTER_SELECTED_MODEL,
+  modelRouterPoolModelNames,
   modelRouterSelectedModel,
 } from "./model-router-provider-routed-inference-helpers.ts";
 
 // Focused direct CLI/sandbox test: the contract is the real provider-routed
-// onboard boundary plus a valid sandbox inference.local completion constrained
-// to a model scored by the pinned router checkpoint.
+// onboard boundary plus an ordinary sandbox inference.local completion selected
+// from the active checked-in pool by the pinned router checkpoint.
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-model-router";
 const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
+const MODEL_ROUTER_POOL_CONFIG = path.join(
+  REPO_ROOT,
+  "nemoclaw-blueprint",
+  "router",
+  "pool-config.yaml",
+);
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
@@ -50,7 +59,7 @@ test(
         "the selected runtime is available before onboarding",
         "NVIDIA_API_KEY is present and nvapi-prefixed, then staged for the router's NVIDIA_INFERENCE_API_KEY credential",
         "nemoclaw onboard --fresh completes with NEMOCLAW_PROVIDER=routed",
-        "sandbox inference.local returns a valid chat completion routed only to gpt-oss-20b-high",
+        "sandbox inference.local returns a valid chat completion selected from the active checked-in router pool",
       ],
     });
 
@@ -97,14 +106,14 @@ test(
         model: "nvidia-routed",
         prompt: "Reply with a short greeting.",
         redactionValues: [apiKey],
-        routingModels: [EXPECTED_MODEL_ROUTER_SELECTED_MODEL],
         timeoutMs: 120_000,
       },
     );
     const selectedModel = modelRouterSelectedModel(completion.result.stdout);
-    expect(onboard.exitCode === 0 ? selectedModel : null).toBe(
-      EXPECTED_MODEL_ROUTER_SELECTED_MODEL,
+    const configuredModels = modelRouterPoolModelNames(
+      readFileSync(MODEL_ROUTER_POOL_CONFIG, "utf8"),
     );
+    expect(onboard.exitCode === 0 ? configuredModels : []).toContain(selectedModel);
 
     progress.phase("record the routed inference contract result");
     await artifacts.target.complete({

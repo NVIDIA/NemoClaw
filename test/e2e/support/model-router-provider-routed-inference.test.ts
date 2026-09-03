@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildProviderRoutedEnv,
-  EXPECTED_MODEL_ROUTER_SELECTED_MODEL,
+  modelRouterPoolModelNames,
   modelRouterSelectedModel,
 } from "../live/model-router-provider-routed-inference-helpers.ts";
 
@@ -21,15 +21,28 @@ describe("Model Router provider-routed live support", () => {
   });
 
   it("reads the router-produced selected model without inventing missing evidence (#10969)", () => {
+    const selectedModel = "selected-model";
     expect(
       modelRouterSelectedModel(
         JSON.stringify({
           choices: [{ message: { content: "Hello" } }],
-          model: EXPECTED_MODEL_ROUTER_SELECTED_MODEL,
+          model: selectedModel,
         }),
       ),
-    ).toBe(EXPECTED_MODEL_ROUTER_SELECTED_MODEL);
+    ).toBe(selectedModel);
     expect(modelRouterSelectedModel('{"choices":[]}')).toBeNull();
     expect(modelRouterSelectedModel("not-json-with-sensitive-response-data")).toBeNull();
+  });
+
+  it("parses configured logical model names for routed-selection evidence (#10969)", () => {
+    expect(
+      modelRouterPoolModelNames(`
+models:
+  - name: first-model
+  - name: second-model
+`),
+    ).toEqual(["first-model", "second-model"]);
+    expect(modelRouterPoolModelNames("models: invalid")).toEqual([]);
+    expect(modelRouterPoolModelNames("not: [valid")).toEqual([]);
   });
 });

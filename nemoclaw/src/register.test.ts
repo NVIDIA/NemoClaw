@@ -211,7 +211,6 @@ describe("plugin registration", () => {
       expect.objectContaining({ id: "nvidia/nemotron-3-super-120b-a12b" }),
       expect.objectContaining({ id: "nvidia/llama-3.1-nemotron-ultra-253b-v1" }),
       expect.objectContaining({ id: "nvidia/llama-3.3-nemotron-super-49b-v1.5" }),
-      expect.objectContaining({ id: "nvidia/nemotron-3-nano-30b-a3b" }),
     ]);
 
     const stderr = stderrOutput();
