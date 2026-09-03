@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  redact,
   redactForLog,
   redactFull,
   redactFullWithUrls,
@@ -36,6 +37,21 @@ describe("redactFullWithUrls", () => {
     ],
   ])("fully redacts URL credentials for %s", (_case, value, expected) => {
     expect(redactFullWithUrls(value)).toBe(expected);
+  });
+});
+
+describe("redact", () => {
+  it.each(["'", '"'])("partially redacts URL userinfo split by %s", (quote) => {
+    const username = "service-user";
+    const password = "service-password";
+
+    const result = redact(
+      `failed at https://${username}:${password}${quote}opaque@example.com/path`,
+    );
+
+    expect(result).toBe("failed at https://****:****@example.com/path");
+    expect(result).not.toContain(username);
+    expect(result).not.toContain(password);
   });
 });
 
