@@ -102,6 +102,7 @@ type RegistrationSeed = Omit<
   | "openclawImagePluginInstalls"
   | "hermesDashboardState"
   | "dashboardPort"
+  | "dashboardBindAddress"
   | "lifecycleGeneration"
   | "lifecycleLiveIdentityFingerprint"
   | "inferenceRouteReservation"
@@ -361,6 +362,10 @@ export function createCreatedSandboxCompletionActions(
 ): CreatedSandboxCompletionActions {
   let chatUiUrl = options.dashboard.chatUiUrl;
   let dashboardPort = 0;
+  // Captured from the URL the forward is actually started with. Below, a
+  // reallocated port rewrites chatUiUrl to loopback, so reading it at
+  // registration time would record 127.0.0.1 for a forward bound wide.
+  let dashboardBindAddress: string | null = null;
   let hermesDashboardState = options.dashboard.initialHermesState;
   async function verifyCreatedProviderGpu(created: SandboxGpuCreateFlowResult): Promise<void> {
     await dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady(
@@ -391,6 +396,7 @@ export function createCreatedSandboxCompletionActions(
     deps.revalidateSandboxIdentity?.(
       `configuring dashboard capability for sandbox '${options.finalization.sandboxName}'`,
     );
+    dashboardBindAddress = buildDashboardChain(chatUiUrl).bindAddress;
     dashboardPort = options.dashboard.ensureForward(options.finalization.sandboxName, chatUiUrl, {
       rollbackSandboxOnFailure: true,
       preservedSiblingForwards: options.dashboard.preservedSiblingForwards,
@@ -509,6 +515,7 @@ export function createCreatedSandboxCompletionActions(
               openclawImagePluginInstalls,
               hermesDashboardState,
               dashboardPort,
+              dashboardBindAddress,
               ...finalLifecycle,
               inferenceRouteReservation: verifiedInferenceRouteReservation,
               verifiedCreate,
@@ -691,10 +698,6 @@ export function createOnboardCreatedSandboxCompletion(
           fromDockerfile,
           creation.hermesAuthMethod,
           preparedPolicy.dashboardRemoteBindPrepared,
-          // Record the address this run actually bound. CHAT_UI_URL and
-          // NEMOCLAW_DASHBOARD_BIND decide it and are usually absent from
-          // later commands, so only onboarding can answer truthfully (#10861).
-          buildDashboardChain(chatUiUrl).bindAddress,
         ),
         ...messaging,
         hermesApiPort,

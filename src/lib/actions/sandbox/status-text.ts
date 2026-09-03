@@ -354,12 +354,11 @@ function printDashboardRemoteAccessHint(context: SandboxStatusTextContext): void
   // environment reports a loopback bind for a sandbox exposed on every
   // interface (#10861). Rows written before that field fall back as before.
   const recordedBindAddress = sb?.dashboardBindAddress;
-  const accessUrl =
-    sb?.dashboardRemoteBindPrepared || recordedBindAddress === "0.0.0.0"
+  const accessUrl = recordedBindAddress
+    ? `http://${recordedBindAddress}:${dashboardPort}`
+    : sb?.dashboardRemoteBindPrepared
       ? `http://0.0.0.0:${dashboardPort}`
-      : recordedBindAddress === "127.0.0.1"
-        ? `http://127.0.0.1:${dashboardPort}`
-        : process.env.CHAT_UI_URL;
+      : process.env.CHAT_UI_URL;
   if (!buildSshForwardHintLines({ port: dashboardPort, accessUrl })) return;
   console.log(
     `      Remote access: run \`${CLI_NAME} ${shellQuote(sandboxName)} dashboard-url\` for SSH port forward instructions.`,

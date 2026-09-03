@@ -88,6 +88,8 @@ export interface CreatedSandboxRegistryEntryInput {
   /** True only when schema-5 receipt authority owns this Hermes registration. */
   hermesPortableLifecycle?: boolean;
   dashboardPort: number;
+  /** Address the dashboard forward was bound to at creation (#10861). */
+  dashboardBindAddress?: string | null;
   dashboardRemoteBindPrepared?: boolean;
   lifecycleGeneration?: string;
   lifecycleLiveIdentityFingerprint?: string;
@@ -118,7 +120,6 @@ export function creationFidelity(
   fromDockerfile: string | null,
   hermesAuthMethod: "oauth" | "api_key" | null,
   dashboardRemoteBindPrepared?: boolean,
-  dashboardBindAddress?: string | null,
 ): Pick<
   SandboxEntry,
   | "webSearchEnabled"
@@ -126,7 +127,6 @@ export function creationFidelity(
   | "fromDockerfile"
   | "hermesAuthMethod"
   | "dashboardRemoteBindPrepared"
-  | "dashboardBindAddress"
 > {
   return {
     webSearchEnabled: webSearchConfig?.fetchEnabled === true,
@@ -134,7 +134,6 @@ export function creationFidelity(
     fromDockerfile,
     hermesAuthMethod,
     dashboardRemoteBindPrepared: dashboardRemoteBindPrepared === true,
-    dashboardBindAddress: dashboardBindAddress ?? null,
   };
 }
 
@@ -278,6 +277,7 @@ export function buildCreatedSandboxRegistryEntry(
             }))
         : undefined,
     dashboardPort: input.dashboardPort,
+    dashboardBindAddress: input.dashboardBindAddress ?? null,
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,

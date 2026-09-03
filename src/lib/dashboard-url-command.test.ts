@@ -90,6 +90,29 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toEqual(["http://0.0.0.0:19000/#token=secret-token"]);
   });
 
+  it("prefers the recorded bind in the session-auth branch too", () => {
+    const sinks = makeSinks();
+
+    runDashboardUrlCommand(
+      "alpha",
+      { quiet: true },
+      {
+        fetchToken: () => "secret-token",
+        getSandbox: () => ({
+          agent: "hermes",
+          dashboardPort: 18790,
+          dashboardBindAddress: "0.0.0.0",
+        }),
+        getAgentDashboardAuth: () => "session",
+        getAccessUrl: () => "http://127.0.0.1:18790",
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(sinks.out).toEqual(["http://0.0.0.0:18790/"]);
+  });
+
   it("keeps the recomputed access URL for a row with no recorded bind", () => {
     const sinks = makeSinks();
 
