@@ -11,6 +11,7 @@ vi.mock("../inference/local", () => ({
   findReachableOllamaHost: vi.fn(),
   getOllamaContainerPort: vi.fn(),
   isLocalProviderHostHealthy: vi.fn(),
+  loadPersistedOllamaHost: vi.fn(),
   OLLAMA_HOST_DOCKER_INTERNAL: "host.docker.internal",
   OLLAMA_PORT: 11434,
   validateOllamaModel: vi.fn(),
@@ -26,6 +27,7 @@ import {
   applyOllamaRuntimeContextWindow,
   findReachableOllamaHost,
   getOllamaContainerPort,
+  loadPersistedOllamaHost,
   OLLAMA_PORT,
   validateOllamaModel,
 } from "../inference/local";
@@ -44,6 +46,7 @@ import { ensureOllamaLoopbackSystemdOverride } from "./ollama-systemd";
 const mockedApplyRuntimeContext = vi.mocked(applyOllamaRuntimeContextWindow);
 const mockedFindReachableHost = vi.mocked(findReachableOllamaHost);
 const mockedGetOllamaContainerPort = vi.mocked(getOllamaContainerPort);
+const mockedLoadPersistedHost = vi.mocked(loadPersistedOllamaHost);
 const mockedValidateModel = vi.mocked(validateOllamaModel);
 const mockedEnsureSystemdOverride = vi.mocked(ensureOllamaLoopbackSystemdOverride);
 
@@ -52,6 +55,7 @@ beforeEach(() => {
   mockedEnsureSystemdOverride.mockReturnValue("ready");
   mockedFindReachableHost.mockReturnValue("127.0.0.1");
   mockedGetOllamaContainerPort.mockReturnValue(OLLAMA_PORT + 1);
+  mockedLoadPersistedHost.mockReturnValue(null);
   mockedValidateModel.mockReturnValue({ ok: true });
   mockedApplyRuntimeContext.mockReturnValue({ ok: true });
 });
@@ -241,6 +245,21 @@ describe("repairLocalInferenceSystemdOverrideOrExit (#6760)", () => {
       isNonInteractive,
       contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
     });
+  });
+
+  it("rejects a stale recorded Windows route before starting a WSL Ollama service", () => {
+    mockedLoadPersistedHost.mockReturnValue("host.docker.internal");
+    mockedFindReachableHost.mockReturnValue("127.0.0.1");
+    const message =
+      "Recorded Windows-host Ollama no longer passes its loopback listener, local Docker " +
+      "Desktop route, and Host-header validation checks. Repair the Windows-host Ollama " +
+      "route, then run `nemoclaw onboard --resume` again.";
+
+    expectFailure(repairHermesResume, message);
+
+    expect(mockedEnsureSystemdOverride).not.toHaveBeenCalled();
+    expect(mockedValidateModel).not.toHaveBeenCalled();
+    expect(mockedApplyRuntimeContext).not.toHaveBeenCalled();
   });
 
   it("rejects a strict resume when the recorded model is missing", () => {

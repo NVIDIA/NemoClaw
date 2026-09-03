@@ -7,6 +7,7 @@ import {
   findReachableOllamaHost,
   getOllamaContainerPort,
   isLocalProviderHostHealthy,
+  loadPersistedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
   OLLAMA_PORT,
   validateOllamaModel,
@@ -180,12 +181,21 @@ export function repairLocalInferenceSystemdOverrideOrExit(
   const { provider, model, isNonInteractive } = options;
   if (provider !== "ollama-local") return;
   const contextWindowFloor = resolveOllamaContextWindowFloor(options.contextWindowFloor);
+  const recordedWindowsHost = loadPersistedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL;
   // A Windows-host Ollama daemon reached at host.docker.internal is not a Linux
   // systemd service, so the override restarts an unrelated ollama.service and
   // exits 1. Provider selection already skips it, but it records the same
   // "ollama-local" provider for both topologies, so resume carries no Windows
   // marker and has to re-derive the distinction here (#8596).
-  if (!protectedWindowsHostOllamaIsReachable()) {
+  const windowsHostReachable = protectedWindowsHostOllamaIsReachable();
+  if (!windowsHostReachable && recordedWindowsHost) {
+    failOllamaResumeRepair(
+      "Recorded Windows-host Ollama no longer passes its loopback listener, local Docker " +
+        "Desktop route, and Host-header validation checks. Repair the Windows-host Ollama " +
+        "route, then run `nemoclaw onboard --resume` again.",
+    );
+  }
+  if (!windowsHostReachable) {
     const state = ensureOllamaLoopbackSystemdOverride({ isNonInteractive, contextWindowFloor });
     if (state === "failed") {
       failOllamaResumeRepair(
