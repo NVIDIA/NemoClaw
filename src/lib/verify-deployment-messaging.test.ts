@@ -16,7 +16,6 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       stderr: "",
     }),
     probeHostPort: (_port: number, _path: string) => 200,
-    captureForwardList: () => "my-sandbox  127.0.0.1  18789  12345  running",
     getMessagingChannels: (_name: string) => [] as string[],
     providerExistsInGateway: (_name: string) => true,
     ...overrides,

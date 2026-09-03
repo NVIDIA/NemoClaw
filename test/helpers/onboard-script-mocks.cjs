@@ -7,6 +7,47 @@
 const Module = require("node:module");
 const path = require("node:path");
 
+if (process.env.NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE === "1") {
+  let detachedForwardReady = false;
+  const childProcess = require("node:child_process");
+  let fixtureSpawn = childProcess.spawn;
+  const forwardAwareSpawn = (...args) => {
+    const argv = Array.isArray(args[1]) ? args[1] : [];
+    const forwardIndex = argv.indexOf("forward");
+    if (forwardIndex >= 0 && argv[forwardIndex + 1] === "service") detachedForwardReady = true;
+    return fixtureSpawn(...args);
+  };
+  Object.defineProperty(childProcess, "spawn", {
+    configurable: true,
+    get: () => forwardAwareSpawn,
+    set: (value) => {
+      fixtureSpawn = value;
+    },
+  });
+
+  const originalModuleLoad = Module._load;
+  Module._load = function loadForwardFixture(request, parent, isMain) {
+    const loaded = originalModuleLoad.call(this, request, parent, isMain);
+    let resolved = "";
+    try {
+      resolved = Module._resolveFilename(request, parent, isMain);
+    } catch {
+      return loaded;
+    }
+    if (
+      resolved.includes(`${path.sep}adapters${path.sep}openshell${path.sep}local-forward-listener.`) &&
+      typeof loaded?.probeLocalForwardListener === "function"
+    ) {
+      loaded.probeLocalForwardListener = () => {
+        const ready = detachedForwardReady;
+        detachedForwardReady = false;
+        return ready;
+      };
+    }
+    return loaded;
+  };
+}
+
 function registerSourceRequire() {
   const fs = require("node:fs");
   const ts = require("typescript");
@@ -41,6 +82,26 @@ function registerSourceRequire() {
     targetModule._compile(outputText, filename);
   };
   require(sourceLoader);
+}
+
+function installForwardServiceReachabilityFixture(initiallyReachable = false) {
+  const listener = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/local-forward-listener.ts"),
+  );
+  let reachable = initiallyReachable;
+  listener.probeLocalForwardListener = () => reachable;
+  return {
+    recordSpawn(args) {
+      const argv = Array.isArray(args[1]) ? args[1] : [];
+      const forwardIndex = argv.indexOf("forward");
+      if (forwardIndex < 0 || argv[forwardIndex + 1] !== "service") return false;
+      reachable = true;
+      return true;
+    },
+    release() {
+      reachable = false;
+    },
+  };
 }
 
 // Most Vitest workers use native source imports and never need the CommonJS
@@ -99,6 +160,43 @@ function providerNameAfterAction(args, providerIndex) {
   return args[firstArgument] === "-g" ? args[firstArgument + 2] : args[firstArgument];
 }
 
+function parseNamedProviderGet(command, gatewayName) {
+  const args = normalizeCommand(command).split(/\s+/);
+  const providerIndex = args.indexOf("provider");
+  if (providerIndex < 0 || args[providerIndex + 1] !== "get") return null;
+  const getArgs = args.slice(providerIndex + 2);
+  if (getArgs.length !== 3 || getArgs[0] !== "-g" || getArgs[1] !== gatewayName) {
+    return {
+      error: { status: 1, stderr: `provider get must target named gateway '${gatewayName}'` },
+    };
+  }
+  return { providerName: getArgs[2] };
+}
+
+function mockNvidiaProviderGetRun(command, gatewayName) {
+  const request = parseNamedProviderGet(command, gatewayName);
+  if (request === null) return null;
+  if (request.error) return request.error;
+  if (request.providerName !== "nvidia-prod") return null;
+  return {
+    status: 0,
+    stdout:
+      "Name: nvidia-prod\nType: nvidia\nCredential keys: NVIDIA_INFERENCE_API_KEY\nConfig keys: <none>\n",
+  };
+}
+
+function mockNvidiaOrMissingProviderGetRun(command, gatewayName) {
+  const request = parseNamedProviderGet(command, gatewayName);
+  if (request === null) return null;
+  if (request.error) return request.error;
+  return (
+    mockNvidiaProviderGetRun(command, gatewayName) ?? {
+      status: 1,
+      stderr: `provider '${request.providerName}' not found`,
+    }
+  );
+}
+
 function mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable) {
   const args = normalizeCommand(command).split(/\s+/);
   const providerIndex = args.indexOf("provider");
@@ -137,6 +235,20 @@ function mockManagedEndpointlessProviderProfileRun(command) {
   return (
     mockEndpointlessProviderProfileRun(command, "openai", true) ??
     mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false)
+  );
+}
+
+function mockProviderPreparationRun(command, gatewayName, profileId, inferenceCapable) {
+  return (
+    mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable) ??
+    mockNvidiaOrMissingProviderGetRun(command, gatewayName)
+  );
+}
+
+function mockManagedProviderPreparationRun(command, gatewayName) {
+  return (
+    mockManagedEndpointlessProviderProfileRun(command) ??
+    mockNvidiaOrMissingProviderGetRun(command, gatewayName)
   );
 }
 
@@ -1291,8 +1403,13 @@ if (process.env.NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG === "1") {
 }
 
 module.exports = {
+  installForwardServiceReachabilityFixture,
   mockEndpointlessProviderProfileRun,
   mockManagedEndpointlessProviderProfileRun,
+  mockManagedProviderPreparationRun,
+  mockNvidiaProviderGetRun,
+  mockNvidiaOrMissingProviderGetRun,
+  mockProviderPreparationRun,
   createStatefulMessagingProviderRunner,
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,

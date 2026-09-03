@@ -10,12 +10,15 @@ import {
 import {
   DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS,
   DEEPAGENTS_STRICT_JSON_HELPERS,
+  DEEPAGENTS_UNSAFE_MCP_PROJECTION_TYPES,
 } from "./mcp-bridge-adapter-deepagents-projection";
 
 // NemoClaw owns this dedicated projection. Deep Agents Code's user/project
 // `.mcp.json` discovery is disabled in the managed image so user-authored MCP
 // state can never be layered over the validated registry projection.
 export const DEEPAGENTS_MCP_CONFIG_PATH = "/sandbox/.deepagents/.nemoclaw-mcp.json";
+export const UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX =
+  "Unsafe managed Deep Agents MCP projection path";
 export const DEFAULT_OPENCLAW_CONFIG_DIR = "/sandbox/.openclaw";
 export const HERMES_MCP_TRANSACTION_HELPER =
   "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
@@ -27,6 +30,30 @@ export function openClawMcporterRoot(configDir = DEFAULT_OPENCLAW_CONFIG_DIR): s
 export const OPENCLAW_MCPORTER_ROOT = openClawMcporterRoot();
 const DEFAULT_AUTH_HEADER = "Authorization";
 const DEFAULT_AUTH_SCHEME = "Bearer";
+
+export interface UnsafeDeepAgentsMcpProjectionResult {
+  messagePrefix: string;
+  path: string;
+}
+
+/** Parse only the unsafe-projection result emitted by the Deep Agents status adapter. */
+export function parseUnsafeDeepAgentsMcpProjectionResult(result: {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}): UnsafeDeepAgentsMcpProjectionResult | null {
+  if (result.status === 0) return null;
+  const detail = (result.stderr || result.stdout || "not found").trim();
+  for (const type of DEEPAGENTS_UNSAFE_MCP_PROJECTION_TYPES) {
+    const messagePrefix = `${UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX}: ${type} at `;
+    if (!detail.startsWith(messagePrefix)) continue;
+    const projectionPath = detail.slice(messagePrefix.length);
+    return projectionPath && !/[\r\n]/u.test(projectionPath)
+      ? { messagePrefix, path: projectionPath }
+      : null;
+  }
+  return null;
+}
 
 function authPlaceholder(
   entry: Pick<McpBridgeEntry, "env">,
@@ -260,6 +287,9 @@ export function buildDeepAgentsMcpStatusCommand(
     "config_path = managed_path if is_v2 else legacy_path",
     "try:",
     "    data = read_managed_projection(config_path)[0] if is_v2 else read_legacy_config(config_path)[0]",
+    "except UnsafeManagedProjectionError as exc:",
+    `    print(f'${UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX}: {exc} at {config_path}', file=sys.stderr)`,
+    "    raise SystemExit(2)",
     "except FileNotFoundError:",
     "    data = {}",
     "except (OSError, UnicodeDecodeError, ValueError) as exc:",
