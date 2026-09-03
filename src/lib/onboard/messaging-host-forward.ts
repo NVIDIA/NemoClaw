@@ -10,21 +10,41 @@ import { hydrateDerivedSandboxMessagingPlanFields } from "../messaging/hydration
 import type { SandboxMessagingHostForwardPlan } from "../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import * as registry from "../state/registry";
+import { retireProductionLegacySandboxForwards } from "./forward-service-migration";
 
-type RunOpenshell = (
-  args: string[],
-  options: { ignoreError: true },
-) => { readonly status?: number | null };
+type GatewayBinding =
+  | {
+      gatewayName?: string | null;
+      gatewayPort?: number | null;
+    }
+  | null
+  | undefined;
+
+export function resolveProductionForwardServiceGatewayName(sandbox: GatewayBinding): string {
+  if (sandbox?.gatewayPort !== undefined && sandbox.gatewayPort !== null) {
+    const port = sandbox.gatewayPort;
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) return "invalid";
+    return port === 8_080 ? "nemoclaw" : `nemoclaw-${String(port)}`;
+  }
+  if (sandbox?.gatewayName !== undefined && sandbox.gatewayName !== null) {
+    return typeof sandbox.gatewayName === "string" ? sandbox.gatewayName : "invalid";
+  }
+  return "nemoclaw";
+}
+
+/** Bind production dashboard forwarding without widening the onboarding entry point. */
+export function productionForwardServiceRegistryContext() {
+  return {
+    getSandbox: registry.getSandbox,
+    listSandboxes: registry.listSandboxes,
+    resolveGatewayName: resolveProductionForwardServiceGatewayName,
+    retireLegacy: retireProductionLegacySandboxForwards,
+  };
+}
 
 export interface MessagingHostForwardRollbackOptions {
-  readonly runOpenshell: RunOpenshell;
-  readonly buildRollbackMessage: (
-    sandboxName: string,
-    err: unknown,
-  ) => readonly string[];
+  readonly buildRollbackMessage: (sandboxName: string, err: unknown) => readonly string[];
   readonly cliName: () => string;
-  readonly forwardPortsToStop?: readonly (number | string | null | undefined)[];
-  readonly beforeMutation?: (operation: string) => void;
   readonly error?: (message?: string) => void;
   readonly exit?: (code: number) => never;
 }
@@ -104,20 +124,6 @@ function abortMessagingHostForwardFailure({
   readonly forward: SandboxMessagingHostForwardPlan;
   readonly rollback: MessagingHostForwardRollbackOptions;
 }): never {
-  const portsToStop = new Set<string>();
-  for (const port of rollback.forwardPortsToStop ?? []) {
-    if (port !== null && port !== undefined && String(port).trim() !== "") {
-      portsToStop.add(String(port));
-    }
-  }
-  portsToStop.add(String(forward.port));
-
-  for (const port of portsToStop) {
-    rollback.beforeMutation?.(
-      `stop messaging forward ${port} for sandbox '${sandboxName}' after dashboard failure`,
-    );
-    rollback.runOpenshell(["forward", "stop", port, sandboxName], { ignoreError: true });
-  }
   const error = new Error(
     `Failed to start ${forward.label} forward on port ${forward.port}. Free the port and ` +
       `re-run \`${rollback.cliName()} onboard\`, or choose a different messaging channel port.`,
