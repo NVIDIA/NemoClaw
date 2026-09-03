@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { shellQuote } from "../../../core/shell-quote";
 import { DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES } from "../../../domain/docker-host";
 import type { HostAssessment, PackageManager } from "../../../onboard/preflight";
 import type { AdvisoryCheck } from "../../types";
@@ -117,7 +118,7 @@ export const dockerInfoTimeout: AdvisoryCheck<HostAssessment> = {
         "This usually means the configured Docker authority accepted the connection but never returned a response. " +
         "Retry after confirming Docker is healthy, or correct DOCKER_HOST if it points at a stalled socket or proxy.",
       commands: [
-        "echo \"DOCKER_HOST=${DOCKER_HOST:-<unset>}\"",
+        `printf 'DOCKER_HOST=%s\\n' ${shellQuote(host.dockerHostAuthority ?? "<unset>")}`,
         "docker info",
         "nemoclaw onboard",
       ],

@@ -50,6 +50,8 @@ describe("assessHost docker info timeout (#10645)", () => {
     }
 
     expect(lines.join("\n")).toContain("docker_info_timeout");
-    expect(lines.join("\n")).toContain("DOCKER_HOST");
+    expect(lines.join("\n")).toContain(
+      "printf 'DOCKER_HOST=%s\\n' 'unix:///var/run/docker.sock'",
+    );
   });
 });
