@@ -1032,7 +1032,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installNonInteractive: true,
     restoreCli: true,
     exposeCliBin: true,
-    selector: "^network-policy:.+probes$",
+    selector: "^network-policy:",
     shard: "live-probes",
     owningPaths: [
       "test/e2e/live/network-policy-transient-provider.ts",

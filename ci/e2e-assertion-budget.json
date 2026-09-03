@@ -15,28 +15,28 @@
     "testFileCount": 86,
     "liveFileCount": 222,
     "direct": {
-      "expectCalls": 1898,
-      "matcherAssertions": 1867,
+      "expectCalls": 1901,
+      "matcherAssertions": 1870,
       "nodeAssertions": 100,
       "namedAssertionHelpers": 633,
       "failCalls": 8,
       "throwGuards": 87,
       "objectFieldAssertions": 245,
-      "assertionPoints": 2940,
-      "generatedProbeBlocks": 136,
-      "generatedProbeConditions": 345
+      "assertionPoints": 2943,
+      "generatedProbeBlocks": 137,
+      "generatedProbeConditions": 354
     },
     "unique": {
-      "expectCalls": 2390,
-      "matcherAssertions": 2354,
+      "expectCalls": 2393,
+      "matcherAssertions": 2357,
       "nodeAssertions": 119,
       "namedAssertionHelpers": 938,
       "failCalls": 38,
       "throwGuards": 648,
       "objectFieldAssertions": 348,
-      "assertionPoints": 4445,
-      "generatedProbeBlocks": 291,
-      "generatedProbeConditions": 972
+      "assertionPoints": 4448,
+      "generatedProbeBlocks": 292,
+      "generatedProbeConditions": 981
     },
     "fileMetricOrder": [
       "directExpectCalls",
@@ -93,7 +93,7 @@
       "test/e2e/live/messaging-providers.test.ts": [0,11,6,51,12],
       "test/e2e/live/model-router-provider-routed-inference.test.ts": [4,4,4,5,0],
       "test/e2e/live/native-runtime-qualification-case.test.ts": [0,0,15,93,0],
-      "test/e2e/live/network-policy.test.ts": [18,19,18,19,0],
+      "test/e2e/live/network-policy.test.ts": [21,22,21,22,1],
       "test/e2e/live/ollama-auth-proxy.test.ts": [21,29,21,29,0],
       "test/e2e/live/onboard-policy-preset-sequencing.test.ts": [7,7,7,7,1],
       "test/e2e/live/onboard-repair.test.ts": [21,25,21,25,0],

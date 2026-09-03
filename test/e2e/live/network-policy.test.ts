@@ -160,10 +160,96 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/curl }
       - { path: /usr/bin/curl }
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
 `,
     "utf8",
   );
   return target;
+}
+
+function buildWebFetchProbeScript(): string {
+  return String.raw`
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const [approvedUrl, deniedUrl, approvedMarker, deniedMarker] = process.argv.slice(2);
+function fail(detail) {
+  throw new Error(detail);
+}
+
+const configPath = process.env.OPENCLAW_CONFIG_PATH || "/sandbox/.openclaw/openclaw.json";
+const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+if (config?.tools?.web?.fetch?.useTrustedEnvProxy !== true) {
+  fail("tools.web.fetch.useTrustedEnvProxy must be enabled");
+}
+
+const distDir = "/usr/local/lib/node_modules/openclaw/dist";
+const candidates = fs
+  .readdirSync(distDir)
+  .filter((name) => /^openclaw-tools-(?!serve-config-).+\.js$/.test(name))
+  .sort();
+if (candidates.length !== 1) {
+  fail("expected one OpenClaw tools module, found " + candidates.join(", "));
+}
+
+const mod = await import(pathToFileURL(path.join(distDir, candidates[0])).href);
+const createOpenClawTools = mod.t || mod.createOpenClawTools;
+if (typeof createOpenClawTools !== "function") {
+  fail("OpenClaw tools export is missing");
+}
+const tools = createOpenClawTools({
+  config,
+  sandboxed: true,
+  workspaceDir: "/sandbox/.openclaw/workspace-main",
+  wrapBeforeToolCallHook: false,
+  disablePluginTools: true,
+  disableMessageTool: true,
+});
+const webFetch = tools.find((tool) => tool?.name === "web_fetch");
+if (!webFetch || typeof webFetch.execute !== "function") {
+  fail("installed OpenClaw web_fetch tool is missing");
+}
+
+function summary(value) {
+  return JSON.stringify(value).slice(0, 2000);
+}
+
+const approved = await webFetch.execute("e2e-approved-host-gateway", {
+  url: approvedUrl,
+  extractMode: "text",
+  maxChars: 2000,
+});
+const approvedText = summary(approved);
+if (!approvedText.includes(approvedMarker)) {
+  fail("approved marker missing: " + approvedText);
+}
+console.log("E2E_WEB_FETCH_APPROVED_OK");
+
+try {
+  const denied = await webFetch.execute("e2e-denied-host-gateway", {
+    url: deniedUrl,
+    extractMode: "text",
+    maxChars: 2000,
+  });
+  const deniedText = summary(denied);
+  if (deniedText.includes(deniedMarker)) {
+    fail("E2E_FAIL_DENIED_PORT_REACHED: " + deniedText);
+  }
+  fail("E2E_FAIL_DENIED_PORT_UNEXPECTED_SUCCESS: " + deniedText);
+} catch (error) {
+  const detail = String(error && (error.stack || error.message) ? error.stack || error.message : error);
+  if (/E2E_FAIL_DENIED_PORT_|SsrFBlockedError|Blocked hostname|private\/internal\/special-use/i.test(detail)) {
+    throw error;
+  }
+  if (!/Web fetch failed \(403\)|\b403\b|policy|denied|forbidden|fetch failed|ECONN|UND_ERR|proxy/i.test(detail)) {
+    throw error;
+  }
+  console.log("E2E_WEB_FETCH_DENIED_OK " + detail.split("\n")[0].slice(0, 300));
+}
+`;
 }
 
 test(
@@ -176,6 +262,7 @@ test(
         "clear the sandbox and onboard restricted policy",
         "deny default egress and hot-reload one host-gateway port",
         "allow the approved host-gateway port and deny another port",
+        "prove the installed OpenClaw web_fetch path obeys the host-gateway policy",
       ],
     },
   },
@@ -187,6 +274,7 @@ test(
         "restricted policy denies undeclared egress",
         "a live policy update does not restart the sandbox",
         "a host-gateway policy allows only its declared port",
+        "installed OpenClaw web_fetch uses the same host-gateway port boundary",
       ],
     });
 
@@ -305,6 +393,19 @@ test(
     );
     expect(denied).not.toContain(deniedMarker);
     expect(denied).toMatch(/\b403\b/);
+
+    progress.phase("prove the installed OpenClaw web_fetch path obeys the host-gateway policy");
+    const webFetch = await sandboxBash(
+      sandbox,
+      `nemoclaw-start node --input-type=module - 'http://host.openshell.internal:${approvedServer.port}/' 'http://host.openshell.internal:${deniedServer.port}/' '${approvedMarker}' '${deniedMarker}' <<'NEMOCLAW_WEB_FETCH_PROBE'
+${buildWebFetchProbeScript()}
+NEMOCLAW_WEB_FETCH_PROBE`,
+      "network-policy-openclaw-web-fetch",
+    );
+    const webFetchText = text(webFetch);
+    expect(webFetch.exitCode, webFetchText).toBe(0);
+    expect(webFetchText).toContain("E2E_WEB_FETCH_APPROVED_OK");
+    expect(webFetchText).toContain("E2E_WEB_FETCH_DENIED_OK");
     const startTimeAfterDeny = await readSandboxStartTime(
       sandbox,
       "network-policy-start-time-after-deny-probe",
@@ -319,6 +420,8 @@ test(
         hotReloadWithoutRestart: true,
         approvedHostGatewayPort: true,
         deniedHostGatewayPort: true,
+        installedWebFetchApprovedHostGatewayPort: true,
+        installedWebFetchDeniedUndeclaredPort: true,
       },
     });
   },

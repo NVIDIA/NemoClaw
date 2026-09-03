@@ -311,6 +311,7 @@ describe("E2E workflow plan", () => {
       "catalogue-nvidia-inference",
       "catalogue-standard",
     ]);
+    expect(catalogueTarget("network-policy").selector).toBe("^network-policy:");
     const migratedTargetIds = ["hermes-slack", "openclaw-inference-switch", "sandbox-operations"];
     const retainedMigratedJobs = readFreeStandingJobsInventory().allowedJobs.filter((id) =>
       migratedTargetIds.includes(id),
