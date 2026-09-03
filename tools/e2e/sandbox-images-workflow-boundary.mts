@@ -819,6 +819,64 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
   ) {
     errors.push("runtime overrides image handoff and artifact upload steps are out of order");
   }
+  const securityName = "managed-image-openclaw-security";
+  const securityJob = workflow.jobs[securityName] ?? {};
+  const securityStep = requireStep(
+    errors,
+    securityName,
+    securityJob,
+    "Validate OpenClaw managed-image security boundary",
+  );
+  const securityRun = securityStep.run ?? "";
+  for (const fragment of [
+    "npx vitest run --project integration",
+    "test/e2e-runtime/managed-image-openclaw-security.test.ts",
+    "--reporter=test/e2e/risk-signal-reporter.ts",
+  ]) {
+    if (!securityRun.includes(fragment))
+      errors.push(`${securityName} test must include ${fragment}`);
+  }
+  if (securityStep["continue-on-error"] !== undefined) {
+    errors.push(`${securityName} test must not continue on error`);
+  }
+  const cleanup = requireStep(
+    errors,
+    securityName,
+    securityJob,
+    "Remove managed-image security resources",
+  );
+  const cleanupRun = cleanup.run ?? "";
+  if (cleanup.if !== "${{ always() }}" || cleanup["continue-on-error"] !== undefined) {
+    errors.push(`${securityName} cleanup must always run and fail on residual resources`);
+  }
+  for (const fragment of [
+    "docker ps -aq",
+    "docker rm -f",
+    "docker volume rm -f",
+    "cleanup_failed",
+  ]) {
+    if (!cleanupRun.includes(fragment))
+      errors.push(`${securityName} cleanup must include ${fragment}`);
+  }
+  const securityUpload = requireStep(
+    errors,
+    securityName,
+    securityJob,
+    "Upload OpenClaw managed-image security evidence",
+  );
+  if (
+    securityUpload.if !== "${{ always() }}" ||
+    securityUpload.uses !== "./.github/actions/upload-e2e-artifacts" ||
+    securityUpload["continue-on-error"] !== undefined
+  ) {
+    errors.push(`${securityName} must always upload evidence with the shared action`);
+  }
+  if (
+    stepIndex(securityJob, securityStep.name ?? "") >= stepIndex(securityJob, cleanup.name ?? "") ||
+    stepIndex(securityJob, cleanup.name ?? "") >= stepIndex(securityJob, securityUpload.name ?? "")
+  ) {
+    errors.push(`${securityName} test, cleanup, and evidence upload are out of order`);
+  }
 }
 
 function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkflow): void {

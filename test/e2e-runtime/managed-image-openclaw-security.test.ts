@@ -382,6 +382,12 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
     await runContainer(
       host,
       image,
+      ROOT_BOOT_RECOVERY_PROBE,
+      "managed-image-openclaw-root-boot-recovery",
+    );
+    await runContainer(
+      host,
+      image,
       [
         '{ sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; } >/tmp/normalize.sh',
         "source /tmp/normalize.sh",

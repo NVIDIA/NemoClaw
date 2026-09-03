@@ -54,6 +54,23 @@ describe("sandbox image workflow boundary", () => {
     });
   });
 
+  it.each([
+    ["Validate OpenClaw managed-image security boundary", "run", "true"],
+    ["Validate OpenClaw managed-image security boundary", "continue-on-error", true],
+    ["Remove managed-image security resources", "run", "true"],
+    ["Remove managed-image security resources", "if", "success()"],
+    ["Upload OpenClaw managed-image security evidence", "if", "success()"],
+  ] as const)("rejects weakened reusable security step %s %s", (name, key, value) => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const step = imageWorkflow.jobs["managed-image-openclaw-security"].steps?.find(
+      (candidate) => candidate.name === name,
+    );
+    expect(step).toBeDefined();
+    step![key] = value;
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).not.toEqual([]);
+  });
+
   test("keeps glibc probe lifecycle evidence in the main image gate", () => {
     const { imageWorkflow } = readWorkflows();
     expect(imageWorkflow.jobs["glibc-probe-image-contract"]).toBeUndefined();
