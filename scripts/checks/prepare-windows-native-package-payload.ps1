@@ -199,6 +199,12 @@ try {
     Copy-Item -LiteralPath (Join-Path $candidate 'agents\openclaw\openclaw-runtime\package-lock.json') -Destination $openClawRoot
     Invoke-Checked -FilePath $npm -Arguments @('ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund') -Label 'OpenClaw production runtime restore' -WorkingDirectory $openClawRoot
 
+    $piRoot = Join-Path $output 'pi'
+    [IO.Directory]::CreateDirectory($piRoot) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $candidate 'agents\pi\pi-runtime\package.json') -Destination $piRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'agents\pi\pi-runtime\package-lock.json') -Destination $piRoot
+    Invoke-Checked -FilePath $npm -Arguments @('ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund') -Label 'Pi production runtime restore' -WorkingDirectory $piRoot
+
     $nodeArchivePath = Join-Path $workRoot $script:NodeArchive
     Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/v$($script:NodeVersion)/$($script:NodeArchive)" -OutFile $nodeArchivePath
     Assert-Sha256 -Path $nodeArchivePath -Expected $script:NodeArchiveSha256 -Label 'Node.js ARM64 archive'
@@ -273,6 +279,7 @@ debug = false
     [IO.Directory]::CreateDirectory($qualificationRoot) | Out-Null
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-turn.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-web-ui.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-pi.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'LICENSE') -Destination (Join-Path $output 'LICENSE.txt')
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\NATIVE-PREVIEW.txt') -Destination (Join-Path $output 'NATIVE-PREVIEW.txt')
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\agent-support.json') -Destination (Join-Path $output 'agent-support.json')
@@ -292,12 +299,14 @@ debug = false
         'bin\nemoclaw.cmd',
         'nemoclaw\app\bin\nemoclaw.js',
         'openclaw\node_modules\openclaw\openclaw.mjs',
+        'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js',
         'onboarding\index.html',
         'onboarding\styles.css',
         'onboarding\app.ts',
         'config\mxc-gateway.toml',
         'qualification\run-installed-native-turn.mts',
         'qualification\run-installed-native-web-ui.mts',
+        'qualification\run-installed-native-pi.mts',
         'agent-support.json'
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $output $required) -PathType Leaf)) {
@@ -315,6 +324,10 @@ debug = false
             sha256 = (Get-FileHash -LiteralPath (Join-Path $output 'bin\NemoClaw.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
         }
         openClaw = [pscustomobject]@{ version = '2026.7.1' }
+        pi = [pscustomobject]@{
+            version = '0.84.1'
+            lockSha256 = (Get-FileHash -LiteralPath (Join-Path $candidate 'agents\pi\pi-runtime\package-lock.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
         agentSupportSha256 = (Get-FileHash -LiteralPath (Join-Path $output 'agent-support.json') -Algorithm SHA256).Hash.ToLowerInvariant()
         openShell = [pscustomobject]@{ pullRequest = 'NVIDIA/OpenShell#2721'; revision = $script:OpenShellRevision }
         openShellCompatibilityPatchSha256 = (Get-FileHash -LiteralPath (Join-Path $output 'OPENSHELL-NODE-UI-COMPATIBILITY.patch') -Algorithm SHA256).Hash.ToLowerInvariant()

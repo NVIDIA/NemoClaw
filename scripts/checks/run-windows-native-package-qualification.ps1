@@ -440,6 +440,7 @@ foreach ($requiredPayload in @(
     'bin\nemoclaw.cmd',
     'nemoclaw\app\bin\nemoclaw.js',
     'openclaw\node_modules\openclaw\openclaw.mjs',
+    'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js',
     'onboarding\index.html',
     'onboarding\styles.css',
     'onboarding\app.ts',
@@ -448,6 +449,8 @@ foreach ($requiredPayload in @(
     'config\mxc-gateway.toml',
     'qualification\run-installed-native-turn.mts',
     'qualification\run-installed-native-web-ui.mts',
+    'qualification\run-installed-native-pi.mts',
+    'agent-support.json',
     'OPENSHELL-NODE-UI-COMPATIBILITY.patch'
 )) {
     if (-not $payloadHashes.ContainsKey($requiredPayload) -or
@@ -468,6 +471,8 @@ $installRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolde
 $installBin = Join-Path $installRoot 'bin'
 $openshellPath = Join-Path $installBin 'openshell.exe'
 $gatewayPath = Join-Path $installBin 'openshell-gateway.exe'
+$piEntryPath = Join-Path $installRoot 'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js'
+$piQualificationPath = Join-Path $installRoot 'qualification\run-installed-native-pi.mts'
 $nodePath = Join-Path $installBin 'node.exe'
 $nemoclawEntryPath = Join-Path $installRoot 'nemoclaw\app\bin\nemoclaw.js'
 $openClawEntryPath = Join-Path $installRoot 'openclaw\node_modules\openclaw\openclaw.mjs'
@@ -520,6 +525,7 @@ try {
     $applicationEvidence = @(
         Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $nemoclawEntryPath -ExpectedVersion $ProductVersion -Label 'Installed NemoClaw CLI'
         Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $openClawEntryPath -ExpectedVersion '2026.7.1' -Label 'Installed OpenClaw runtime'
+        Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $piEntryPath -ExpectedVersion '0.84.1' -Label 'Installed Pi runtime'
     )
     $nativeTurnArtifacts = Join-Path $artifactRoot 'native-turn'
     Write-Host "PS> Installed NemoClaw native MXC agent turn :: nemoclaw debug --native-windows-turn"
@@ -609,6 +615,32 @@ try {
         Fail-PackageQualification 'Installed NemoClaw did not capture all four graphical onboarding steps.'
     }
     Write-Host '[PASS] Graphical onboarding selected OpenClaw and completed three exact Control UI agent turns'
+    $piArtifacts = Join-Path $artifactRoot 'pi'
+    Write-Host 'PS> Launch installed Pi runtime and complete three native MXC agent turns'
+    Invoke-BoundedProcess `
+        -FilePath $nodePath `
+        -Arguments @('--experimental-strip-types', '--no-warnings', $piQualificationPath, '--qualification', '--artifact-directory', $piArtifacts) `
+        -Label 'Installed native Windows Pi qualification' `
+        -AllowedExitCodes @(0) | Out-Null
+    $piReceipts = @(Get-ChildItem -LiteralPath $piArtifacts -Filter 'native-windows-pi-*.json' -File -ErrorAction SilentlyContinue)
+    if ($piReceipts.Count -ne 1) {
+        Fail-PackageQualification 'Installed Pi runtime did not publish exactly one receipt.'
+    }
+    $piReceipt = Get-Content -LiteralPath $piReceipts[0].FullName -Raw | ConvertFrom-Json
+    if ($piReceipt.verdict -cne 'pass' -or
+        $piReceipt.piVersion -cne '0.84.1' -or
+        $piReceipt.backend -cne 'process_container' -or
+        $piReceipt.interface -cne 'Pi terminal print mode' -or
+        [int]$piReceipt.turnCount -ne 3 -or
+        @($piReceipt.turns).Count -ne 3 -or
+        $piReceipt.createWatcherStopped -ne $true -or
+        $piReceipt.sandboxDeleted -ne $true -or
+        $piReceipt.sandboxRegistryAbsent -ne $true -or
+        $piReceipt.gatewayStopped -ne $true -or
+        $piReceipt.qualificationRootsRemoved -ne $true) {
+        Fail-PackageQualification 'Installed Pi qualification receipt is incomplete.'
+    }
+    Write-Host '[PASS] Installed Pi completed three real terminal agent turns inside native MXC'
     if ($InteractiveProof) {
         Start-Sleep -Seconds 3
     }
@@ -740,6 +772,7 @@ try {
         applicationExecutions = $applicationEvidence
         nativeTurn = $nativeTurnReceipt
         webUi = $webUiReceipt
+        pi = $piReceipt
         msiRegistration = $msiArp
         bundleRegistration = $bundleArp
         repairRestoredDigest = $repairRestoredDigest

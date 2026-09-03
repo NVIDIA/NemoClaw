@@ -31,12 +31,14 @@
     <Error Condition="!Exists('$(PayloadRoot)\bin\nemoclaw.cmd')" Text="The NemoClaw launcher is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\nemoclaw\app\bin\nemoclaw.js')" Text="The NemoClaw CLI package is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\openclaw\node_modules\openclaw\openclaw.mjs')" Text="The OpenClaw runtime package is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js')" Text="The Pi runtime package is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\onboarding\index.html')" Text="The NemoClaw graphical onboarder is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-exec.exe')" Text="The MXC executor is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-host-prep.exe')" Text="The MXC host preparation utility is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\config\mxc-gateway.toml')" Text="The OpenShell MXC gateway configuration is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-turn.mts')" Text="The installed native turn qualification entrypoint is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-web-ui.mts')" Text="The installed native web UI entrypoint is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-pi.mts')" Text="The installed native Pi entrypoint is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\agent-support.json')" Text="The native Windows agent support catalog is missing." />
     <Error Condition="!Exists('$(SourceRoot)\packaging\windows\assets\NemoClaw.ico')" Text="The NemoClaw product icon is missing." />
   </Target>
