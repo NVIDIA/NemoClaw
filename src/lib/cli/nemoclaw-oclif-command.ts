@@ -12,14 +12,15 @@ import {
 import { hasHermesPortableReceiptCandidate } from "../onboard/experimental/hermes-portable-receipt";
 import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
 import { redactForLog } from "../security/redact";
-import { isDeferredShieldsExit } from "../shields/deferred-exit";
-import { resolveShieldsStateDir } from "../shields/transition-lock";
-import { hasShieldsTimerRecoveryArtifact } from "../state/mcp-lifecycle-lock/shields-timer-authority";
 import {
   assertNoHermesPortableHostAuthority,
   withCurrentPortableHostFence,
 } from "../state/portable-uninstall-retirement";
-import { withMcpLifecycleLock } from "../state/mcp-lifecycle-lock-acquisition";
+import { withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
+import {
+  enforceRemovedImmutabilityMigrationBoundary,
+  reportRemovedImmutabilityUpgrade,
+} from "../state/migrations/removed-immutability";
 import { log } from "./logger";
 
 export type CommandExitResult = {
@@ -32,6 +33,17 @@ export { HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE };
 export { assertHermesPortableCommandUnavailable };
 export const withSandboxCommandLifecycleLock = withMcpLifecycleLock;
 export { HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE };
+
+const REMOVED_IMMUTABILITY_REMEDIATION_COMMANDS = new Set([
+  "sandbox:destroy",
+  "sandbox:logs",
+  "sandbox:rebuild",
+  "sandbox:snapshot",
+  "sandbox:snapshot:create",
+  "sandbox:snapshot:list",
+  "sandbox:status",
+  "sandbox:stop",
+]);
 
 /**
  * Shared oclif base for NemoClaw commands.
@@ -68,6 +80,13 @@ export abstract class NemoClawCommand extends Command {
 
   protected override async init(): Promise<void> {
     await super.init();
+    try {
+      reportRemovedImmutabilityUpgrade();
+    } catch (error) {
+      console.warn(
+        `Shields has been retired from NemoClaw, but legacy upgrade state could not be inspected safely: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     // Every invocation starts from the current environment. Raw-argv
     // passthrough commands intentionally stop here: only environment-based
     // logging configuration applies to them.
@@ -80,7 +99,6 @@ export abstract class NemoClawCommand extends Command {
       typeof commandId === "string" &&
       sandboxName &&
       (commandId === "launch" || commandId.startsWith("sandbox:")) &&
-      !portablePolicy?.ownsLifecycleFence &&
       !portablePolicy?.helpRequested
     ) {
       assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
@@ -104,32 +122,28 @@ export abstract class NemoClawCommand extends Command {
         return super._run<T>();
       });
     }
-    if (portablePolicy?.ownsLifecycleFence) return await super._run<T>();
     const sandboxName = await this.resolveLifecycleSandboxName(portablePolicy);
     if (!sandboxName) return await super._run<T>();
-    const recoverCompletedAutoRestore = async () => {
-      if (hasShieldsTimerRecoveryArtifact(sandboxName, resolveShieldsStateDir())) {
-        const { recoverCompletedAutoRestoreBeforeCommand } = await import("../shields");
-        recoverCompletedAutoRestoreBeforeCommand(sandboxName);
-      }
-    };
+    const allowRemovedImmutabilityStateRecord =
+      (typeof commandId === "string" && REMOVED_IMMUTABILITY_REMEDIATION_COMMANDS.has(commandId)) ||
+      (commandId === "sandbox:doctor" && this.lifecycleParserOutput?.flags["fix"] !== true);
+    enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
+      allowStateRecord: allowRemovedImmutabilityStateRecord,
+    });
     if (this.isInteractiveConnect(commandId)) {
-      await recoverCompletedAutoRestore();
       return await super._run<T>();
     }
     const runLocked = () => {
+      enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
+        allowStateRecord: allowRemovedImmutabilityStateRecord,
+      });
       if (typeof commandId === "string" && portablePolicy?.rawSandboxName) {
         assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
       }
       return super._run<T>();
     };
     const runWithLifecycleFence = async () => {
-      await recoverCompletedAutoRestore();
-      return await (commandId === "sandbox:destroy"
-        ? withMcpLifecycleLock(sandboxName, runLocked, {
-            recoverAbandonedExpiredTimer: true,
-          })
-        : withMcpLifecycleLock(sandboxName, runLocked));
+      return await withMcpLifecycleLock(sandboxName, runLocked);
     };
     if (
       this.isProbeOnlyConnect(commandId) &&
@@ -194,14 +208,11 @@ export abstract class NemoClawCommand extends Command {
     this.lifecycleParserOutput = null;
 
     const commandId = this.id;
-    const portablePolicy =
-      typeof commandId === "string" ? classifyHermesPortableCommand(commandId, this.argv) : null;
     const parsedSandboxName = (parsed.args as Record<string, unknown>).sandboxName;
     if (
       typeof commandId === "string" &&
       typeof parsedSandboxName === "string" &&
-      (commandId === "launch" || commandId.startsWith("sandbox:")) &&
-      !portablePolicy?.ownsLifecycleFence
+      (commandId === "launch" || commandId.startsWith("sandbox:"))
     ) {
       assertHermesPortableCommandSupported(commandId, parsedSandboxName, this.argv);
     }
@@ -217,19 +228,6 @@ export abstract class NemoClawCommand extends Command {
     });
 
     return parsed;
-  }
-
-  protected override async catch(error: unknown): Promise<unknown> {
-    // Shields transitions defer process.exit through a sentinel so an exit
-    // cannot strand the transition lock (see failShieldsCommand). By the time
-    // oclif routes the rejection here every lock has been released, and the
-    // failure lines were already printed at the throw site, so only the exit
-    // code remains to record. Everything else keeps oclif's default handling.
-    if (isDeferredShieldsExit(error)) {
-      this.setExitCode(error.exitCode);
-      return;
-    }
-    return super.catch(error as Error & { exitCode?: number });
   }
 
   protected logJson(json: unknown): void {

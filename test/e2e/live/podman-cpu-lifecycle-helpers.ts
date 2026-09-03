@@ -17,6 +17,7 @@ import {
   PODMAN_SANDBOX_WORKSPACE_LABEL,
 } from "../../../src/lib/onboard/runtime-provider/podman-lifecycle";
 import { redactFull } from "../../../src/lib/security/redact";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -109,7 +110,7 @@ export async function runCommand(
       }),
       {
         artifactName: options.artifactName,
-        env: options.env ?? process.env,
+        env: options.env ?? buildAvailabilityProbeEnv(),
         timeoutMs: options.timeoutMs ?? 60_000,
       },
     );

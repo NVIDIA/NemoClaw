@@ -51,9 +51,6 @@ const PROVIDER_NEUTRAL_MANAGED_RUNTIME_MODULES = [
   "src/lib/adapters/sandbox/command-transport.ts",
   "src/lib/sandbox/config.ts",
   "src/lib/sandbox/privileged-exec.ts",
-  "src/lib/shields/hermes-runtime-state-mutation.ts",
-  "src/lib/shields/index.ts",
-  "src/lib/shields/mutable-config-repair.ts",
   "src/lib/state/registry/lifecycle-generation.ts",
 ] as const;
 const MANAGED_STATE_ROOT_PROVIDER_MODULES = [
