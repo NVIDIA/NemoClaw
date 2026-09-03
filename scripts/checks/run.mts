@@ -109,6 +109,11 @@ export const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/optimized-build-context-copy-sources.mts"],
   },
   {
+    name: "pi-qualification-receipt-refresh",
+    command: TSX,
+    args: ["scripts/checks/pi-qualification-receipt-refresh.mts"],
+  },
+  {
     name: "test-registration-boundary",
     command: TSX,
     args: ["scripts/checks/test-registration-boundary.mts"],
