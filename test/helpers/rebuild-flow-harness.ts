@@ -26,7 +26,6 @@ delete require.cache[requireDist.resolve(rebuildModulePath)];
 export const agentDefs = requireDist("../../agent/defs.js");
 export const agentOnboard = requireDist("../../agent/onboard.js");
 export const agentRuntime = requireDist("../../agent/runtime.js");
-export const agentForwardStop = requireDist("../../tunnel/agent-forward-stop.js");
 export const buildContextFingerprint = requireDist(
   "../../adapters/fs/build-context-fingerprint.js",
 );
@@ -36,6 +35,7 @@ export const dockerInspect = requireDist("../../adapters/docker/inspect.js");
 export const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
 export const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
 export const gatewayState = requireDist("./gateway-state.js");
+export const forwardRecovery = requireDist("./forward-recovery.js");
 export const gatewayTeardownAuthority = requireDist(
   "../../onboard/gateway-teardown-authority.js",
 ) as typeof import("../../src/lib/onboard/gateway-teardown-authority");
