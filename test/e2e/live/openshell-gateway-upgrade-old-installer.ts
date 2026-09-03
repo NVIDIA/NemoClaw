@@ -23,27 +23,6 @@ type ReviewedOldInstallerProfile = OldInstallerFixtureIdentity &
 
 const REVIEWED_OLD_OPENCLAW_ARCHIVES: Readonly<Record<string, ReviewedOldOpenClawArchive>> =
   Object.freeze({
-    "2026.4.24": {
-      expectedIntegrity:
-        "sha512-W6u4XeIIP4+uG4DYV9G3JeS6QNuKwfhQIej1GIoL4BdcnUFgrnB8kHYNXL3MxiHRKuhZB9OYwUMGs8jKFZR/Vg==",
-      label: "historical fixture OpenClaw 2026.4.24",
-      packageSpec: "openclaw@2026.4.24",
-      tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.4.24.tgz",
-    },
-    "2026.5.22": {
-      expectedIntegrity:
-        "sha512-m+zgBELGbCHjWB1IWF5WSWNPr480cMKOMff2OF72c8A0AMD4hC/9+qwYtzjYmGkETcffnB711JymlVsQnh2Tow==",
-      label: "historical fixture OpenClaw 2026.5.22",
-      packageSpec: "openclaw@2026.5.22",
-      tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.5.22.tgz",
-    },
-    "2026.5.27": {
-      expectedIntegrity:
-        "sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==",
-      label: "historical fixture OpenClaw 2026.5.27",
-      packageSpec: "openclaw@2026.5.27",
-      tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.5.27.tgz",
-    },
     "2026.6.10": {
       expectedIntegrity:
         "sha512-LcooND2tBQw8A+kc1Ujltu3lg30bJ0w7XaeRy7eYzobb8BBdcW6DOGbwJL4vpj1vl9+gjRceOtlh5nh9OARcug==",
@@ -62,24 +41,6 @@ export const OLD_INSTALLER_ARCHIVE_CONTEXT_PATH = "nemoclaw/src/.nemoclaw-e2e-ol
 
 const REVIEWED_OLD_INSTALLER_PROFILES: Readonly<Record<string, ReviewedOldInstallerProfile>> =
   Object.freeze({
-    "v0.0.36": Object.freeze({
-      expectedAdvisoryAuditCount: 0,
-      nemoclawCommit: "3351fbdd4eb7d9b80ec471545083956327da2b10",
-      nemoclawRef: "v0.0.36",
-      openclawVersion: "2026.4.24",
-    }),
-    "v0.0.55": Object.freeze({
-      expectedAdvisoryAuditCount: 0,
-      nemoclawCommit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
-      nemoclawRef: "v0.0.55",
-      openclawVersion: "2026.5.22",
-    }),
-    "v0.0.74": Object.freeze({
-      expectedAdvisoryAuditCount: 1,
-      nemoclawCommit: "3a05b54e8ec3e1d5550ec5c728de54af872bffe3",
-      nemoclawRef: "v0.0.74",
-      openclawVersion: "2026.5.27",
-    }),
     "v0.0.89": Object.freeze({
       expectedAdvisoryAuditCount: 1,
       nemoclawCommit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e",

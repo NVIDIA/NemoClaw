@@ -729,11 +729,26 @@
     },
     {
       "live": "test/e2e/live/openshell-gateway-upgrade.test.ts",
+      "liveSources": [
+        "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
+        "test/e2e/live/openshell-gateway-upgrade-old-installer.ts"
+      ],
       "fast": [
+        "src/lib/actions/upgrade-sandboxes-recovery.test.ts",
+        "src/lib/onboard/dockerfile-patch.test.ts",
+        "src/lib/state/openclaw-plugin-restore.test.ts",
+        "test/agents/openclaw/openclaw-2026-7-startup-compat.test.ts",
+        "test/install/install-preexisting-sandbox-recovery.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/openclaw-agent-output.test.ts"
+        "test/e2e/support/openclaw-agent-output.test.ts",
+        "test/e2e/support/openshell-gateway-upgrade-old-installer.test.ts",
+        "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
+        "test/install/installer-hash-check.test.ts",
+        "test/installer-integration/install-openshell-version-check.test.ts",
+        "test/process-recovery/rebuild-stale-recovery.test.ts",
+        "test/state/snapshot-recovery-validation.test.ts"
       ]
     },
     {
