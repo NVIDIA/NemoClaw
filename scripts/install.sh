@@ -516,7 +516,7 @@ resolve_hermes_api_port() {
 }
 
 restore_onboard_forward_after_post_checks() {
-  local sandbox_name agent_name agent_display port openshell_bin openshell_dir attempt selected_state_dir state_dir pid_file watcher_script watcher_pid start_diagnostic diagnostic_file
+  local sandbox_name agent_name agent_display port selected_state_dir state_dir pid_file cli_runner
   sandbox_name="$(resolve_default_sandbox_name)"
   agent_name="$(resolve_onboarded_agent)"
   agent_display="$(agent_display_name "$agent_name")"
@@ -530,20 +530,6 @@ restore_onboard_forward_after_post_checks() {
     *) return 0 ;;
   esac
 
-  if [[ -n "${NEMOCLAW_OPENSHELL_BIN:-}" && -x "$NEMOCLAW_OPENSHELL_BIN" ]]; then
-    openshell_bin="$NEMOCLAW_OPENSHELL_BIN"
-  elif command_exists openshell; then
-    openshell_bin="$(command -v openshell)"
-  else
-    return 0
-  fi
-  if [[ "$openshell_bin" != /* ]]; then
-    openshell_dir="${openshell_bin%/*}"
-    [[ "$openshell_dir" == "$openshell_bin" ]] && openshell_dir="."
-    openshell_dir="$(cd -- "$openshell_dir" && pwd -P)" || return 1
-    openshell_bin="${openshell_dir}/${openshell_bin##*/}"
-  fi
-
   selected_state_dir="$(ensure_nemoclaw_state_dir)" || return 1
   state_dir="${selected_state_dir}/state"
   assert_nemoclaw_state_path_safe "$state_dir"
@@ -554,178 +540,50 @@ restore_onboard_forward_after_post_checks() {
     || error "Could not secure gateway-scoped runtime state directory: ${state_dir}"
   pid_file="${state_dir}/${agent_name}-${sandbox_name}-${port}.forward.pid"
   if [[ -f "$pid_file" ]]; then
-    local old_pid expected_watcher_script current_uid old_uid old_args
+    local old_pid expected_watcher_script current_uid old_uid old_args node_bin openshell_bin expected_args
     old_pid="$(cat "$pid_file" 2>/dev/null || true)"
     expected_watcher_script="${pid_file}.js"
     current_uid="$(id -u)"
     if [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" >/dev/null 2>&1; then
       old_uid="$(ps -p "$old_pid" -o uid= 2>/dev/null | tr -d '[:space:]' || true)"
       old_args="$(ps -p "$old_pid" -o args= 2>/dev/null || true)"
-      if [[ "$old_uid" == "$current_uid" && "$old_args" == *"$expected_watcher_script"* ]]; then
-        kill "$old_pid" >/dev/null 2>&1 || true
+      node_bin="$(command -v node 2>/dev/null || true)"
+      if [[ -n "${NEMOCLAW_OPENSHELL_BIN:-}" && -x "$NEMOCLAW_OPENSHELL_BIN" ]]; then
+        openshell_bin="$NEMOCLAW_OPENSHELL_BIN"
+      else
+        openshell_bin="$(command -v openshell 2>/dev/null || true)"
       fi
-    fi
-    rm -f "$pid_file"
-  fi
-
-  redact_forward_start_diagnostic() {
-    local redactor
-    redactor="$(resolve_repo_root)/dist/lib/security/redact.js"
-    if command_exists node && [[ -f "$redactor" ]] \
-      && node -e '
-        const fs = require("fs");
-        const { redactFull } = require(process.argv[1]);
-        process.stdout.write(redactFull(fs.readFileSync(0, "utf8")));
-      ' "$redactor" 2>/dev/null; then
-      return 0
-    fi
-    printf "<REDACTED>"
-  }
-
-  sanitize_forward_start_diagnostic() {
-    if command_exists node && node -e '
-      const fs = require("fs");
-      const encoded = fs.readFileSync(0).toString("latin1")
-        .replace(/\x1B\][\s\S]*?(?:\x07|\x1B\\|$)/g, "")
-        .replace(/\x9D[\s\S]*?(?:\x07|\x1B\\|\x9C|$)/g, "")
-        .replace(/(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~]/g, "")
-        .replace(/\x1B[@-_]/g, "");
-      const diagnostic = Buffer.from(encoded, "latin1").toString("utf8")
-        .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ");
-      process.stdout.write(diagnostic);
-    ' 2>/dev/null; then
-      return 0
-    fi
-    printf "<REDACTED>"
-  }
-
-  stop_agent_forward_if_owned() {
-    local forward_list owner status
-    "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 && return 0
-    forward_list="$("$openshell_bin" forward list 2>/dev/null || true)"
-    owner="$(awk -v sandbox="$sandbox_name" -v port="$port" '
-      $1 == sandbox && $3 == port {
-        print $1
-        exit
-      }
-    ' <<<"$forward_list")"
-    status="$(awk -v sandbox="$sandbox_name" -v port="$port" '
-      $1 == sandbox && $3 == port {
-        print tolower($5)
-        exit
-      }
-    ' <<<"$forward_list")"
-    if [[ "$owner" == "$sandbox_name" && ("$status" == "running" || "$status" == "active") ]]; then
-      "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 || true
-    fi
-  }
-
-  start_diagnostic=""
-  diagnostic_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-forward-start-XXXXXX" 2>/dev/null)" \
-    || diagnostic_file=""
-
-  for attempt in 1 2 3; do
-    stop_agent_forward_if_owned
-    if [ "$attempt" -gt 1 ]; then
-      sleep 2
-    fi
-    if [[ -n "$diagnostic_file" ]]; then
-      "$openshell_bin" forward start --background "$port" "$sandbox_name" \
-        >"$diagnostic_file" 2>&1 || true
-      start_diagnostic="$(sanitize_forward_start_diagnostic <"$diagnostic_file" | awk '
-        {
-          gsub(/[[:space:]]+/, " ")
-          sub(/^ /, "")
-          sub(/ $/, "")
-          if ($0 != "") joined = (joined == "" ? $0 : joined "; " $0)
+      expected_args="${node_bin} ${expected_watcher_script} ${openshell_bin} ${port} ${sandbox_name}"
+      if [[ -z "$node_bin" || -z "$openshell_bin" || "$old_uid" != "$current_uid" || "$old_args" != "$expected_args" ]]; then
+        warn "Could not authenticate the legacy ${agent_display} forward watcher; leaving it untouched."
+        return 1
+      fi
+      kill "$old_pid" >/dev/null 2>&1 \
+        || {
+          warn "Could not stop the authenticated legacy ${agent_display} forward watcher."
+          return 1
         }
-        END { printf "%s", joined }
-      ' 2>/dev/null || true)"
-      start_diagnostic="$(
-        printf "%s" "$start_diagnostic" | redact_forward_start_diagnostic
-      )"
-      if [[ "${#start_diagnostic}" -gt 300 ]]; then
-        start_diagnostic="${start_diagnostic:0:300} [truncated]"
-      fi
-    else
-      "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || true
     fi
-    watcher_pid=""
-    if [[ "${NEMOCLAW_SKIP_FORWARD_WATCHER:-}" != "1" ]] && command_exists node; then
-      watcher_script="${pid_file}.js"
-      cat >"$watcher_script" <<'NODE'
-const { spawnSync } = require("child_process");
-const [openshellBin, port, sandboxName] = process.argv.slice(2);
-function run(args) {
-  spawnSync(openshellBin, args, { stdio: "ignore" });
-}
-function healthy() {
-  return spawnSync("curl", ["-sf", "--max-time", "3", `http://127.0.0.1:${port}/health`], {
-    stdio: "ignore",
-  }).status === 0;
-}
-function listedStatus() {
-  const listed = spawnSync(openshellBin, ["forward", "list"], { encoding: "utf-8" });
-  if (listed.status !== 0 || typeof listed.stdout !== "string") return null;
-  for (const line of listed.stdout.split("\n")) {
-    const columns = line.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "").trim().split(/\s+/);
-    if (columns[0] === sandboxName && columns[2] === port) {
-      return (columns[4] || "").toLowerCase();
-    }
-  }
-  return "";
-}
-function tick() {
-  if (healthy()) return;
-  const status = listedStatus();
-  if (status === null) return;
-  if (status === "dead") {
-    run(["forward", "stop", port, sandboxName]);
-    run(["forward", "start", "--background", port, sandboxName]);
-    return;
-  }
-  if (status === "") run(["forward", "start", "--background", port, sandboxName]);
-}
-tick();
-setInterval(tick, 10_000);
-NODE
-      node -e '
-        const { spawn } = require("child_process");
-        const fs = require("fs");
-        const [script, openshellBin, port, sandboxName, pidFile] = process.argv.slice(1);
-        const child = spawn(process.execPath, [script, openshellBin, port, sandboxName], {
-          detached: true,
-          stdio: "ignore",
-        });
-        fs.writeFileSync(pidFile, String(child.pid) + "\n");
-        child.unref();
-      ' "$watcher_script" "$openshell_bin" "$port" "$sandbox_name" "$pid_file" \
-        >/dev/null 2>&1 || true
-    fi
-    sleep 4
-    if command_exists curl \
-      && curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
-      [[ -n "$diagnostic_file" ]] && rm -f "$diagnostic_file"
-      return 0
-    fi
-    watcher_pid="$(cat "$pid_file" 2>/dev/null || true)"
-    if ! command_exists curl && [[ -n "$watcher_pid" ]] && kill -0 "$watcher_pid" >/dev/null 2>&1; then
-      [[ -n "$diagnostic_file" ]] && rm -f "$diagnostic_file"
-      return 0
-    fi
-    if [[ -n "$watcher_pid" ]]; then
-      kill "$watcher_pid" >/dev/null 2>&1 || true
-    fi
-    rm -f "$pid_file"
-  done
-  [[ -n "$diagnostic_file" ]] && rm -f "$diagnostic_file"
-
-  warn "Could not restore ${agent_display} host forward on port ${port}."
-  if [[ -n "$start_diagnostic" ]]; then
-    warn "OpenShell reported: ${start_diagnostic}"
+    rm -f "$pid_file" "$expected_watcher_script"
   fi
-  warn "Run: openshell forward start --background ${port} ${sandbox_name}"
-  return 1
+
+  cli_runner="${_CLI_PATH:-$_CLI_BIN}"
+  if ! [[ -x "$cli_runner" ]] && ! command_exists "$cli_runner"; then
+    warn "Could not restore ${agent_display} ForwardTcp service: ${_CLI_BIN} is unavailable."
+    return 1
+  fi
+  if ! "$cli_runner" "$sandbox_name" recover; then
+    warn "Could not restore ${agent_display} ForwardTcp service on port ${port}."
+    warn "Run: ${_CLI_BIN} ${sandbox_name} recover"
+    return 1
+  fi
+  if command_exists curl \
+    && ! curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+    warn "${agent_display} recovery completed, but its host forward on port ${port} is unhealthy."
+    warn "Run: ${_CLI_BIN} ${sandbox_name} status"
+    return 1
+  fi
+  return 0
 }
 
 # step N "Description" — numbered section header
@@ -3409,7 +3267,7 @@ stop_legacy_openshell_gateway_process() {
     fi
     kill -KILL "$pid" 2>/dev/null \
       || error "Could not terminate the recorded legacy OpenShell gateway process ${pid}."
-    for attempt in {1..10}; do
+    for ((attempt = 0; attempt < 10; attempt++)); do
       kill -0 "$pid" 2>/dev/null || break
       sleep 0.1
     done
