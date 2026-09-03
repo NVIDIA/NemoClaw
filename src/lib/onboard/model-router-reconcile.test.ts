@@ -202,6 +202,34 @@ describe("model router reconciliation", () => {
     expect(holder.reachabilityProbes).toBe(0);
   });
 
+  it("preserves a healthy recorded router when the replacement model is retired (#10969)", async () => {
+    holder.snapshotBody = JSON.stringify({
+      healthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
+      unhealthy_endpoints: [],
+    });
+    const realReadFile = fs.readFileSync.bind(fs);
+    vi.spyOn(fs, "readFileSync").mockImplementation(((file, ...args) =>
+      String(file).endsWith("router/pool-config.yaml")
+        ? `routing:
+  checkpoint: llm-router/checkpoints/prefill_router_qwen08b.pt
+models:
+  - name: nemotron-3-nano-reasoning
+`
+        : realReadFile(file, ...args)) as typeof fs.readFileSync);
+    const prepareRouter = vi.fn(() => PREPARED_ROUTER);
+    const startRouter = vi.fn(async () => 9876);
+
+    await expect(reconcileModelRouter({ prepareRouter, startRouter })).rejects.toThrow(
+      /configured model\(s\) retired from NVIDIA Endpoints: nemotron-3-nano-reasoning.*did not change the router process/,
+    );
+
+    expect(prepareRouter).not.toHaveBeenCalled();
+    expect(startRouter).not.toHaveBeenCalled();
+    expect(holder.stopped).toEqual([]);
+    expect(holder.updatedSession).toBeNull();
+    expect(holder.reachabilityProbes).toBe(0);
+  });
+
   it("preserves a healthy recorded router when proxy-config rejects a YAML-valid pool", async () => {
     holder.snapshotBody = JSON.stringify({
       healthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],

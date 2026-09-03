@@ -14,6 +14,7 @@ import {
   hashModelRouterRecoveryIdentity,
   isManagedModelRouterCurrent,
   modelRouterPoolCheckpointError,
+  modelRouterPoolRetirementError,
   poolTargetsOnlyNvidiaEndpoints,
   startModelRouter,
 } from "../../src/lib/onboard/model-router";
@@ -157,7 +158,7 @@ function findCommand(commands: DirectCommandEntry[], pattern: RegExp): DirectCom
 }
 
 describe("onboard Model Router setup", () => {
-  it("accepts only models scored by the shipped prefill checkpoint", () => {
+  it("accepts only active models scored by the shipped prefill checkpoint (#10969)", () => {
     const config = (models: readonly string[]) => `
 routing:
   checkpoint: llm-router/checkpoints/prefill_router_qwen08b.pt
@@ -170,8 +171,20 @@ ${models.map((name) => `  - name: ${name}`).join("\n")}
       null,
     );
     assert.equal(
-      modelRouterPoolCheckpointError(config(["retired-model"])),
-      "checkpoint 'llm-router/checkpoints/prefill_router_qwen08b.pt' does not score configured model(s): retired-model",
+      modelRouterPoolRetirementError(config(["gpt-oss-20b-high", "nemotron-3-super"])),
+      null,
+    );
+    assert.equal(
+      modelRouterPoolCheckpointError(config(["nemotron-3-nano-reasoning"])),
+      null,
+    );
+    assert.equal(
+      modelRouterPoolRetirementError(config(["nemotron-3-nano-reasoning"])),
+      "configured model(s) retired from NVIDIA Endpoints: nemotron-3-nano-reasoning",
+    );
+    assert.equal(
+      modelRouterPoolCheckpointError(config(["unscored-model"])),
+      "checkpoint 'llm-router/checkpoints/prefill_router_qwen08b.pt' does not score configured model(s): unscored-model",
     );
   });
 

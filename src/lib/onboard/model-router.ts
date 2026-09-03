@@ -131,6 +131,14 @@ export function hashModelRouterRecoveryIdentity(
   }
 }
 
+// Checkpoint support does not prove that the backing NVIDIA Endpoints route is
+// still live. Keep retired logical names here until a deliberate product change
+// confirms that the route is available again or a retrained checkpoint names a
+// live successor.
+const RETIRED_MODEL_ROUTER_MODELS: ReadonlySet<string> = new Set([
+  "nemotron-3-nano-reasoning", // Route retired on 2026-09-01 (#10969).
+]);
+
 // The pinned upstream config and LFS checkpoint own this nine-model scoring space.
 // Update this compatibility map together with the llm-router gitlink and checkpoint.
 const MODEL_ROUTER_CHECKPOINT_MODELS: Readonly<Record<string, ReadonlySet<string>>> = Object.freeze(
@@ -148,6 +156,27 @@ const MODEL_ROUTER_CHECKPOINT_MODELS: Readonly<Record<string, ReadonlySet<string
     ]),
   },
 );
+
+/** Return a diagnostic when the configured pool includes a retired logical model. */
+export function modelRouterPoolRetirementError(poolConfig: string | null): string | null {
+  if (!poolConfig) return null;
+  try {
+    const YAML = require("yaml");
+    const parsed = YAML.parse(poolConfig) as { models?: readonly { name?: unknown }[] };
+    if (!Array.isArray(parsed?.models)) return null;
+    const retired = parsed.models
+      .map((model) => model?.name)
+      .filter(
+        (name): name is string =>
+          typeof name === "string" && RETIRED_MODEL_ROUTER_MODELS.has(name),
+      );
+    return retired.length > 0
+      ? `configured model(s) retired from NVIDIA Endpoints: ${retired.join(", ")}`
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Return a diagnostic when a known checkpoint cannot score a configured model. */
 export function modelRouterPoolCheckpointError(poolConfig: string | null): string | null {
@@ -171,6 +200,12 @@ export function modelRouterPoolCheckpointError(poolConfig: string | null): strin
   } catch {
     return null;
   }
+}
+
+function modelRouterPoolCompatibilityError(poolConfig: string | null): string | null {
+  return (
+    modelRouterPoolRetirementError(poolConfig) ?? modelRouterPoolCheckpointError(poolConfig)
+  );
 }
 
 type ModelRouterProxyConfigResult = {
@@ -425,9 +460,9 @@ function prepareModelRouterStart(
   const blueprintDir = path.join(deps.rootDir, "nemoclaw-blueprint");
   const poolConfigPath = modelRouterPoolConfigPath(routerCfg, deps.rootDir);
   const poolConfig = deps.readPoolConfig(poolConfigPath);
-  const checkpointError = modelRouterPoolCheckpointError(poolConfig);
-  if (checkpointError) {
-    throw new Error(`Model Router pool configuration is incompatible: ${checkpointError}.`);
+  const compatibilityError = modelRouterPoolCompatibilityError(poolConfig);
+  if (compatibilityError) {
+    throw new Error(`Model Router pool configuration is incompatible: ${compatibilityError}.`);
   }
   const routerCommand = deps.ensureModelRouterCommand();
   const stateDir = path.join(nemoclawStateRoot(deps.homeDir, GATEWAY_PORT), "state");
@@ -766,10 +801,10 @@ export async function reconcileModelRouter(
       `Cannot read or parse Model Router pool configuration at ${poolConfigPath}. Repair the file and rerun onboarding. NemoClaw did not change the router process.`,
     );
   }
-  const checkpointError = modelRouterPoolCheckpointError(poolConfig);
-  if (checkpointError) {
+  const compatibilityError = modelRouterPoolCompatibilityError(poolConfig);
+  if (compatibilityError) {
     throw new Error(
-      `Model Router pool configuration is incompatible: ${checkpointError}. NemoClaw did not change the router process.`,
+      `Model Router pool configuration is incompatible: ${compatibilityError}. NemoClaw did not change the router process.`,
     );
   }
   const session = onboardSession.loadSession();

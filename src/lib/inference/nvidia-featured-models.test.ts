@@ -28,7 +28,7 @@ describe("NVIDIA featured model catalog", () => {
     ).toEqual([{ id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" }]);
   });
 
-  it("filters models whose catalogs outlive their NVIDIA Endpoints routes", () => {
+  it("filters models whose catalogs outlive their NVIDIA Endpoints routes (#10969)", () => {
     expect(
       parseNvidiaFeaturedModels(
         JSON.stringify({
@@ -36,6 +36,10 @@ describe("NVIDIA featured model catalog", () => {
             { model: "z-ai/glm-5.1", "model-name": "GLM 5.1" },
             { model: "z-ai/glm-5.2", "model-name": "GLM 5.2" },
             { model: "moonshotai/kimi-k2.6", "model-name": "Kimi K2.6" },
+            {
+              model: "nemotron-3-nano-30b-a3b",
+              "model-name": "Nemotron 3 Nano 30B",
+            },
             {
               model: "nvidia/nemotron-3-super-120b-a12b",
               "model-name": "Nemotron 3 Super 120B",
