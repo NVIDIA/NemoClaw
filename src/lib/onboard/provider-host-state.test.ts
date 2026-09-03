@@ -324,9 +324,9 @@ describe("detectInferenceProviderHostState", () => {
     const state = detectWithDeps(deps);
 
     expect(state.windowsOllamaReachable).toBe(false);
-    expect(
-      runCapture.mock.calls.some(([command]) => command.includes(WINDOWS_OLLAMA_TAGS_URL)),
-    ).toBe(false);
+    expect(runCapture.mock.calls.flatMap(([command]) => command)).not.toContain(
+      WINDOWS_OLLAMA_TAGS_URL,
+    );
   });
 
   it("passes injected platform and env through WSL detection", () => {
