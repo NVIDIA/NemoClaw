@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { captureOpenshell } from "../../adapters/openshell/runtime";
+import { supportsBoundedOpenshellProcessTree } from "../../adapters/openshell/process-tree-timeout";
 import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
 import {
   buildEnableSandboxAuditLogsArgs,
@@ -97,6 +98,9 @@ function defaultProbeLogs(sandboxName: string, gatewayName?: string): string {
 }
 
 function defaultProbePendingDevices(sandboxName: string, gatewayName?: string): string {
+  if (!supportsBoundedOpenshellProcessTree()) {
+    throw new Error("pending-device probe requires bounded process-tree cleanup");
+  }
   // Built inline rather than through buildOpenshellExecArgs so this optional
   // probe does not create an emission -> exec import cycle. The runtime-env
   // wrapper is imported directly from its own module for the same reason.
@@ -113,14 +117,9 @@ function defaultProbePendingDevices(sandboxName: string, gatewayName?: string): 
   // OPENCLAW_GATEWAY_TOKEN after sourcing, so this probe gains routing
   // metadata and never the credential.
   argv.push("--no-tty", "--", ...wrapExecCommandWithRuntimeEnv(PENDING_DEVICES_PROBE_COMMAND));
-  // killProcessTreeOnTimeout only builds a true process-group timeout on
-  // Linux with /usr/bin/timeout present (processTreeBoundedOpenshellInvocation,
-  // #10238); elsewhere it silently falls back to a SIGKILL of the direct
-  // OpenShell process only, same as every other caller of this option. That
-  // is a pre-existing, documented limit of the shared primitive, not a gap
-  // this probe introduces — gating the probe on platform would leave the
-  // hint permanently silent on those hosts instead of best-effort on a rare
-  // timeout, which is the worse outcome for #10070.
+  // This probe starts nested Bash and OpenClaw processes. The support check
+  // above keeps the optional hint silent where the adapter cannot guarantee
+  // that timeout cleanup reaches the complete process tree (#10238).
   const result = captureOpenshell(argv, {
     ignoreError: true,
     includeStderr: false,

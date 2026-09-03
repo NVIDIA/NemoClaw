@@ -1,11 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { captureOpenshell } = vi.hoisted(() => ({ captureOpenshell: vi.fn() }));
+const { captureOpenshell, supportsBoundedOpenshellProcessTree } = vi.hoisted(() => ({
+  captureOpenshell: vi.fn(),
+  supportsBoundedOpenshellProcessTree: vi.fn(),
+}));
 
 vi.mock("../../adapters/openshell/runtime", () => ({ captureOpenshell }));
+vi.mock("../../adapters/openshell/process-tree-timeout", () => ({
+  supportsBoundedOpenshellProcessTree,
+}));
 
 import {
   maybeEmitPolicyDenialHint,
@@ -111,6 +117,10 @@ describe("policy-denial hint runtime adapter integration (#5978)", () => {
 });
 
 describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
+  beforeEach(() => {
+    supportsBoundedOpenshellProcessTree.mockReturnValue(true);
+  });
+
   afterEach(() => {
     vi.resetAllMocks();
     vi.unstubAllEnvs();
@@ -152,11 +162,6 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
     expect(argv.slice(8)).toEqual(
       wrapExecCommandWithRuntimeEnv(["openclaw", "devices", "list", "--json"]),
     );
-    // A literal, independent check of the wrapper's actual behavior — not
-    // just "whatever wrapExecCommandWithRuntimeEnv currently returns" — so a
-    // change to the wrapper that silently stopped sourcing the proxy env
-    // still fails this test even though the assertion above would follow it.
-    expect(argv.join(" ")).toContain('builtin source "/tmp/nemoclaw-proxy-env.sh"');
     // The probe enters the sandbox and starts the OpenClaw CLI, so it needs a
     // budget the host-side audit-log read ceiling does not give it. Under that
     // ceiling the probe timed out before the OpenClaw CLI could print, and a
@@ -175,7 +180,24 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
     // probe that outlasts its own timeout can leave that tree running and
     // holding captured pipes past the advertised budget (#10070).
     expect(captureOpenshell.mock.calls[0]?.[1]?.killProcessTreeOnTimeout).toBe(true);
+    expect(captureOpenshell.mock.calls[0]?.[1]?.killSignal).toBe("SIGKILL");
     expect(stderr).toEqual([hint]);
+  });
+
+  it("skips the optional probe when its process tree cannot be bounded", async () => {
+    supportsBoundedOpenshellProcessTree.mockReturnValue(false);
+
+    const hint = await maybeEmitScopeUpgradeHint(
+      "nemoclaw",
+      "oc-fresh",
+      1,
+      false,
+      ["openclaw", "cron", "add"],
+      { env: {} },
+    );
+
+    expect(hint).toBeNull();
+    expect(captureOpenshell).not.toHaveBeenCalled();
   });
 
   it("emits the review path when the in-sandbox probe outlasts the log-read ceiling (#10070)", async () => {

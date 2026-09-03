@@ -4,7 +4,7 @@
 import type { SpawnSyncOptions } from "node:child_process";
 import fs from "node:fs";
 
-type ProcessTreeTimeoutDeps = {
+export type ProcessTreeTimeoutDeps = {
   platform?: NodeJS.Platform;
   timeoutExecutableExists?: (pathname: string) => boolean;
 };
@@ -14,6 +14,12 @@ export type ProcessTreeTimeoutOptions = {
   killSignal?: SpawnSyncOptions["killSignal"];
   timeout?: number;
 };
+
+export function supportsBoundedOpenshellProcessTree(deps: ProcessTreeTimeoutDeps = {}): boolean {
+  const platform = deps.platform ?? process.platform;
+  const timeoutExecutableExists = deps.timeoutExecutableExists ?? fs.existsSync;
+  return platform === "linux" && timeoutExecutableExists("/usr/bin/timeout");
+}
 
 /**
  * #10238 ownership decision: NemoClaw owns the wall-clock bound at its
@@ -32,14 +38,7 @@ export function processTreeBoundedOpenshellInvocation(
     return { binary, args: [...args], killSignal: opts.killSignal };
   }
   const timeoutMs = Number(opts.timeout);
-  const platform = deps.platform ?? process.platform;
-  const timeoutExecutableExists = deps.timeoutExecutableExists ?? fs.existsSync;
-  if (
-    platform !== "linux" ||
-    !timeoutExecutableExists("/usr/bin/timeout") ||
-    !Number.isFinite(timeoutMs) ||
-    timeoutMs <= 0
-  ) {
+  if (!supportsBoundedOpenshellProcessTree(deps) || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return { binary, args: [...args], killSignal: "SIGKILL" };
   }
   const groupTimeoutSeconds = Math.max(1, Math.floor(timeoutMs) - 250) / 1000;

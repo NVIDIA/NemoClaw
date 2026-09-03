@@ -17,7 +17,10 @@ import {
   stripAnsi,
   versionGte,
 } from "./client";
-import { processTreeBoundedOpenshellInvocation } from "./process-tree-timeout";
+import {
+  processTreeBoundedOpenshellInvocation,
+  supportsBoundedOpenshellProcessTree,
+} from "./process-tree-timeout";
 
 interface SpawnResultSpec {
   status: number | null;
@@ -52,6 +55,27 @@ function exitWithCode(code: number): never {
 }
 
 describe("openshell helpers", () => {
+  it("reports whether the host can enforce a process-tree timeout (#10238)", () => {
+    expect(
+      supportsBoundedOpenshellProcessTree({
+        platform: "linux",
+        timeoutExecutableExists: () => true,
+      }),
+    ).toBe(true);
+    expect(
+      supportsBoundedOpenshellProcessTree({
+        platform: "darwin",
+        timeoutExecutableExists: () => true,
+      }),
+    ).toBe(false);
+    expect(
+      supportsBoundedOpenshellProcessTree({
+        platform: "linux",
+        timeoutExecutableExists: () => false,
+      }),
+    ).toBe(false);
+  });
+
   it("wraps a synchronous Linux probe in a process-group timeout (#10238)", () => {
     expect(
       processTreeBoundedOpenshellInvocation(
