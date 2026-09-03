@@ -19,6 +19,7 @@ import {
   testOnly as diffTestOnly,
 } from "../../helpers/growth-guardrail-diff";
 
+/** Build an in-memory PR diff so guardrail tests do not read repository files. */
 function fixtureDiff(
   files: GrowthGuardrailDiff["files"],
   base: Readonly<Record<string, string>>,
@@ -26,9 +27,11 @@ function fixtureDiff(
 ): GrowthGuardrailDiff {
   return {
     files,
+    /** Return each requested base file or the missing-file marker. */
     async readBase(paths) {
       return new Map(paths.map((file) => [file, base[file] ?? null]));
     },
+    /** Return each requested candidate file or the missing-file marker. */
     async readHead(paths) {
       return new Map(paths.map((file) => [file, head[file] ?? null]));
     },
