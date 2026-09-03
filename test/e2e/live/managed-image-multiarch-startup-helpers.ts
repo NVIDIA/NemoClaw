@@ -8,8 +8,23 @@ import {
   PROTECTED_MANAGED_IMAGE_COHORT_PATTERN,
   PROTECTED_MANAGED_IMAGE_PLATFORMS,
   PROTECTED_MANAGED_IMAGE_SHA_PATTERN,
+  parseProtectedManagedImageContracts,
   type ProtectedManagedImagePlatform,
 } from "../../../scripts/checks/protected-managed-image-contract.ts";
+
+export function openclawProtectedImage(): string {
+  const directImage = process.env.NEMOCLAW_TEST_IMAGE;
+  if (directImage) return directImage;
+
+  const dispatch = protectedManagedImageDispatchEnvironment();
+  const contracts = parseProtectedManagedImageContracts(
+    JSON.parse(fs.readFileSync(dispatch.contractFile, "utf8")),
+    dispatch.platform,
+  );
+  const openclaw = contracts.find(({ agent }) => agent === "openclaw");
+  if (!openclaw) throw new Error("protected managed-image contract has no OpenClaw image");
+  return openclaw.reference;
+}
 
 export interface ProtectedManagedImageDispatchEnvironment {
   artifactDirectory: string;

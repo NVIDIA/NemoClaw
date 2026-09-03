@@ -252,6 +252,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "runs the typed security test against the produced image and uploads evidence",
+      "category": "security"
+    },
+    {
       "file": "test/runtime/gateway/gateway-health-honest.test.ts",
       "test": "reports a crashed Docker-driver gateway instead of reporting it healthy (#3111)",
       "category": "compatibility"

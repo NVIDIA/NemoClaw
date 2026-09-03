@@ -24,6 +24,7 @@ type WorkflowJob = {
   outputs?: Record<string, string>;
   permissions?: Record<string, string>;
   steps?: WorkflowStep[];
+  needs?: string;
 };
 
 type Workflow = {
@@ -173,5 +174,33 @@ describe("generic NVIDIA GPU PR selection", () => {
     expect(value.jobs["llama-cpp-generic-gpu"]?.env?.E2E_MANAGED_IMAGE_REVISION).toBe(
       "${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_revision }}",
     );
+  });
+});
+
+describe("OpenClaw managed-image copied-PR qualification", () => {
+  // source-shape-contract: security -- Copied PR qualification must run the exact typed final-image security test and retain its evidence
+  it("runs the typed security test against the produced image and uploads evidence", () => {
+    const job = workflow().jobs["managed-image-openclaw-security"];
+    expect(job).toMatchObject({
+      env: {
+        E2E_TARGET_ID: "managed-image-openclaw-security",
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_TEST_IMAGE: "nemoclaw-production",
+      },
+      needs: "build-sandbox-images",
+    });
+    expect(
+      job.steps?.find((step) => step.name === "Validate OpenClaw managed-image security boundary"),
+    ).toMatchObject({
+      run: expect.stringContaining(
+        "live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-openclaw-security.test.ts",
+      ),
+    });
+    expect(
+      job.steps?.find((step) => step.name === "Upload OpenClaw managed-image security evidence"),
+    ).toMatchObject({
+      if: "${{ always() }}",
+      uses: "./.github/actions/upload-e2e-artifacts",
+    });
   });
 });

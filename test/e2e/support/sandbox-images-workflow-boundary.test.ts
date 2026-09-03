@@ -585,11 +585,8 @@ describe("sandbox image workflow boundary", () => {
       const swap = job.steps!.find((step) => step.name === "Add swap for Hermes image export")!;
       swap.run = swap.run!.replace('sudo swapon "$swap_file"', 'echo "swap omitted"');
 
-      expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
-        expect.arrayContaining([
-          'build-hermes-sandbox-image Hermes export swap must include sudo swapon "$swap_file"',
-          'messaging-plan-image-boundary Hermes export swap must include sudo swapon "$swap_file"',
-        ]),
+      expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+        `${jobName} Hermes export swap must include sudo swapon "$swap_file"`,
       );
     },
   );
