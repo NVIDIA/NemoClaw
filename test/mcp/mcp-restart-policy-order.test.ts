@@ -482,7 +482,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
     expect(payload).toEqual({
       outcome: "rejected",
       message:
-        "MCP server 'example' cannot reuse its stored credential: the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401). Export host environment variable 'MCP_TOKEN' and run `nemoclaw alpha mcp restart example` to replace it.",
+        "MCP server 'example' cannot reuse its stored credential because the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401). Export host environment variable 'MCP_TOKEN' and run `nemoclaw alpha mcp restart example` to replace it.",
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],
@@ -512,7 +512,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
 
     expect(payload).toEqual({
       outcome: "rejected",
-      message: `MCP server 'example' cannot reuse its stored credential: ${boundedRedactedProbeDetail}. Export host environment variable 'MCP_TOKEN' and run \`nemoclaw alpha mcp restart example\` to replace it.`,
+      message: `MCP server 'example' cannot reuse its stored credential because ${boundedRedactedProbeDetail}. Export host environment variable 'MCP_TOKEN' and run \`nemoclaw alpha mcp restart example\` to replace it.`,
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],
@@ -559,7 +559,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
     expect(payload).toEqual({
       outcome: "rejected",
       message:
-        "MCP server 'example' cannot reuse its stored credential: sandbox transport https://example.com/ failed; MCP_TOKEN=<REDACTED>. Export host environment variable 'MCP_TOKEN' and run `nemoclaw alpha mcp restart example` to replace it.",
+        "MCP server 'example' cannot reuse its stored credential because sandbox transport https://example.com/ failed; MCP_TOKEN=<REDACTED>. Export host environment variable 'MCP_TOKEN' and run `nemoclaw alpha mcp restart example` to replace it.",
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],
@@ -591,7 +591,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
     expect(payload).toMatchObject({
       outcome: "rejected",
       message:
-        "MCP server 'later' cannot reuse its stored credential: the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401). Export host environment variable 'LATER_TOKEN' and run `nemoclaw alpha mcp restart later` to replace it.",
+        "MCP server 'later' cannot reuse its stored credential because the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401). Export host environment variable 'LATER_TOKEN' and run `nemoclaw alpha mcp restart later` to replace it.",
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],

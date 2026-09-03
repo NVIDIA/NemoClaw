@@ -99,7 +99,7 @@ async function assertRestartCredentialsAvailable(
       );
     }
     throw new McpBridgeError(
-      `MCP server '${entry.server}' cannot reuse its stored credential: ${detail}. Export host environment variable '${entry.env[0]}' and run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` to replace it.`,
+      `MCP server '${entry.server}' cannot reuse its stored credential because ${detail}. Export host environment variable '${entry.env[0]}' and run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` to replace it.`,
     );
   }
 }

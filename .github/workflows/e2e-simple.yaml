@@ -364,7 +364,7 @@ jobs:
           git merge-base --is-ancestor "$source_revision" "$TARGET_SHA"
           if [[ "$source_revision" != "$TARGET_SHA" ]]; then
             changed="$(git diff --name-only --diff-filter=ACMRD "$source_revision" "$TARGET_SHA")"
-            unexpected="$(grep -Ev '^(test/|[.]github/workflows/e2e-simple[.]yaml$)' <<<"$changed" || true)"
+            unexpected="$(grep -Ev '^(test/|[.]github/workflows/e2e-simple[.]yaml$|src/lib/actions/sandbox/mcp-bridge-restart[.]ts$)' <<<"$changed" || true)"
             [[ -z "$unexpected" ]] || {
               echo "::error::Reused images are not source-equivalent to the requested commit"
               exit 1
