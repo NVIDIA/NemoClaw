@@ -675,18 +675,20 @@ follows:
 
 Installed-base coverage is the `v0.0.89-x86_64` row in the
 `openshell-gateway-upgrade` E2E matrix. It installs the immutable v0.0.89
-release with OpenClaw `2026.6.10`, seeds its legacy Memory Core SQLite and
-update-check state plus a durable marker in the per-agent database materialized
-by the legacy CLI, then upgrades through the current installer. The row proves
-the per-agent database survives intact, the global database remains healthy,
-the legacy sidecar migration and `2026.7.1` startup checkpoint complete, and
-the restored `apiKey: "unused"` config still receives its gateway-held
-credential only at the OpenShell boundary.
-This custom route supplies `COMPATIBLE_API_KEY` only to the frozen v0.0.89
-install, then deliberately withholds it from the current installer so the
-post-upgrade turn proves the existing gateway-held credential was reused. The
-frozen runtime intentionally creates no NVIDIA auth-profile key reference; the
-E2E preserves any references that do exist without inventing one for this route.
+release with OpenClaw `2026.6.10`, upgrades through the current installer, and
+proves that the surviving sandbox becomes ready, preserves a workspace marker,
+keeps the raw gateway credential out of the sandbox environment,
+`openclaw.json`, and recursive `auth-profiles.json` files, and completes
+authenticated agent turns before and after the upgrade.
+
+Deterministic tests own the implementation details. Legacy `update-check.json`
+cleanup and unsafe-file rejection live in
+`test/agents/openclaw/openclaw-2026-7-startup-compat.test.ts`. OpenClaw's
+shared and per-agent SQLite permission patches, update-check migration bypass,
+and SQLite sidecar permission handling live in
+`test/agents/openclaw/openclaw-shared-state-permissions-patch.test.ts`. The live
+test does not assert database schemas, third-party migration checkpoints, or
+installer and platform identity beyond the pinned fixture inputs.
 
 During image assembly, the shared-state repair rejects symbolic links,
 non-regular entries, and multiply linked files before it changes the ownership

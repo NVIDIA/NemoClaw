@@ -358,7 +358,7 @@ describe("E2E fixture primitives", () => {
     ).toThrow(/argument cannot contain NUL bytes/);
   });
 
-  it("shell probe enforces options.redactionValues even when the injected redactor ignores extra values", async () => {
+  it("shell probe and retained logs enforce options.redactionValues", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-probe-enforce-"));
     try {
       const artifacts = new ArtifactSink(tmp);
@@ -394,6 +394,11 @@ describe("E2E fixture primitives", () => {
       expect(result.stderr).toContain("[REDACTED]");
       expect(result.stdout).not.toContain(secret);
       expect(result.stderr).not.toContain(secret);
+      artifacts.addRedactionValues([secret]);
+      await artifacts.writeText("retained-install.log", `${result.stdout}\n${result.stderr}\n${secret}`);
+      const retained = fs.readFileSync(artifacts.pathFor("retained-install.log"), "utf8");
+      expect(retained).toContain("[REDACTED]");
+      expect(retained).not.toContain(secret);
       const written = fs.readFileSync(
         artifacts.pathFor("shell/options-redaction-enforced.result.json"),
         "utf8",

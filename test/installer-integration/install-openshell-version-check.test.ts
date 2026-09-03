@@ -146,7 +146,7 @@ exit 1`,
       path.join(fakeBin, "curl"),
       options.homebrewFormulaDownload
         ? `#!/usr/bin/env bash
-out=""
+printf '%s\n' "$*" >&2; out=""
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "-o" ]; then shift; out="$1"; fi
   shift || true
@@ -402,17 +402,20 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     }
   });
 
-  it("triggers reinstall when the required OpenShell is missing Docker-driver binaries", () => {
+  it("selects the Darwin gateway instead of the VM driver", () => {
     const result = runWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},
-      { driverBins: false, os: "Linux" },
+      {
+        arch: "arm64",
+        driverBins: false,
+        homebrewAvailable: false,
+        homebrewFormulaDownload: true,
+        os: "Darwin",
+      },
     );
-    expect(result.status).not.toBe(0);
-    expect(result.stdout).toMatch(/missing Docker-driver binaries/);
-    expect(result.stdout).toContain(
-      `Installing OpenShell from release 'v${REQUIRED_OPENSHELL_VERSION}'`,
-    );
+    expect(result.stderr).toContain("openshell-gateway-aarch64-apple-darwin.tar.gz");
+    expect(result.stderr).not.toContain("openshell-driver-vm-aarch64-apple-darwin.tar.gz");
   });
 
   it("fails closed when the required OpenShell lacks required messaging rewrite support", () => {

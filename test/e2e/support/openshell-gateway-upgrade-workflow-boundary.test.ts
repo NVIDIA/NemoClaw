@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   catalogueTarget,
+  E2E_TARGET_CATALOGUE,
   validateE2eTargetCatalogue,
 } from "../../../tools/e2e/target-catalogue.mts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
@@ -25,6 +26,12 @@ import {
 
 describe("OpenShell gateway upgrade boundary", () => {
   it("pins the retained gateway-upgrade fixture in the catalogue (#10517)", () => {
+    expect(
+      E2E_TARGET_CATALOGUE.filter(
+        (entry) => entry.targetId === "openshell-gateway-upgrade",
+      ).map((entry) => entry.id),
+    ).toEqual(["openshell-gateway-upgrade-v0-0-89-x86-64"]);
+
     const { environment, runner, shard } = catalogueTarget(
       "openshell-gateway-upgrade-v0-0-89-x86-64",
     );

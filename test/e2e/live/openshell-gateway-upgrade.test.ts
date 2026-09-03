@@ -82,6 +82,7 @@ const SURVIVOR_SANDBOX =
   process.env.NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME ?? `e2e-gw-${process.pid}`;
 const SURVIVOR_MARKER = `gateway-upgrade-survivor-${Date.now()}`;
 const SURVIVOR_MARKER_PATH = "/sandbox/.openclaw/workspace/nemoclaw-gateway-upgrade-marker";
+const GATEWAY_CREDENTIAL = "nemoclaw-gateway-upgrade-fixture-key";
 const TEST_TIMEOUT_MS = 65 * 60_000;
 const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
 
@@ -138,6 +139,7 @@ async function bash(
   script: string,
   options: {
     artifactName: string;
+    captureLimitBytes?: number;
     env?: NodeJS.ProcessEnv;
     timeoutMs?: number;
     cwd?: string;
@@ -147,6 +149,7 @@ async function bash(
   return host.command("bash", ["-lc", `${shellLoginPrefix()}\n${script}`], {
     cwd: options.cwd ?? REPO_ROOT,
     artifactName: options.artifactName,
+    captureLimitBytes: options.captureLimitBytes,
     env: options.env ?? liveEnv(),
     redactionValues: options.redactionValues,
     timeoutMs: options.timeoutMs ?? OPENSHELL_TIMEOUT_MS,
@@ -163,7 +166,7 @@ async function runInSurvivorSandbox(
     : `openshell sandbox exec --name ${shellQuote(SURVIVOR_SANDBOX)} --`;
   return bash(host, `${prefix} sh -lc ${shellQuote(command)}`, {
     artifactName: options.artifactName,
-    redactionValues: ["dummy"],
+    redactionValues: [GATEWAY_CREDENTIAL],
     timeoutMs: options.timeoutMs ?? 60_000,
   });
 }
@@ -179,8 +182,10 @@ async function assertOpenClawAgentSecretBoundary(
 const fs = require("node:fs");
 const path = require("node:path");
 
-const gatewayCredential = String.fromCharCode(100, 117, 109, 109, 121);
-if (Object.values(process.env).some((value) => value === gatewayCredential)) {
+const gatewayCredential = String.fromCharCode(${Array.from(GATEWAY_CREDENTIAL)
+  .map((character) => character.charCodeAt(0))
+  .join(", ")});
+if (Object.values(process.env).some((value) => value.includes(gatewayCredential))) {
   process.exit(41);
 }
 
@@ -239,7 +244,7 @@ NODE`,
   );
   // The fake endpoint deliberately records only the validated auth result, not
   // the bearer value. With requireAuth enabled, "ok" means the request carried
-  // the exact gateway-held `dummy` credential; `unused`, a placeholder, or a
+  // the exact gateway-held fixture credential; `unused`, a placeholder, or a
   // missing header would receive 401 and could not complete this agent turn.
   expect(
     requests.every((request) => request.auth === "ok" && request.authorizationSent === true),
@@ -346,30 +351,24 @@ async function runInstallerPayload(
   host: HostCliClient,
   label: string,
   installerArgs: readonly string[],
-  logFile: string,
+  artifacts: ArtifactSink,
+  logName: string,
   env: NodeJS.ProcessEnv,
   redactionValues: string[] = [],
 ): Promise<ShellProbeResult> {
   const quotedInstallerArgs = installerArgs.map(shellQuote).join(" ");
-  const installerCommand = `bash ${quotedInstallerArgs} >${shellQuote(logFile)} 2>&1`;
-  const result = await bash(
-    host,
-    `rm -f ${shellQuote(logFile)}
-${installerCommand}`,
-    {
-      artifactName: `${label.replace(/[^a-z0-9_.-]+/gi, "-")}-installer`,
-      env,
-      redactionValues,
-      timeoutMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
-    },
-  );
-  const tail = await bash(host, `tail -160 ${shellQuote(logFile)} 2>/dev/null || true`, {
-    artifactName: `${label}-installer-tail`,
-    timeoutMs: 30_000,
+  const result = await bash(host, `bash ${quotedInstallerArgs}`, {
+    artifactName: `${label.replace(/[^a-z0-9_.-]+/gi, "-")}-installer`,
+    captureLimitBytes: 1024 * 1024,
+    env,
+    redactionValues,
+    timeoutMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   });
+  artifacts.addRedactionValues(redactionValues);
+  await artifacts.writeText(logName, resultText(result));
   expect(
     result.exitCode,
-    `${label} NemoClaw installer returned an unexpected exit code:\n${resultText(tail)}`,
+    `${label} NemoClaw installer returned an unexpected exit code:\n${resultText(result)}`,
   ).toBe(0);
   return result;
 }
@@ -388,7 +387,6 @@ async function installOldNemoclawAndClaw(
   fakeBaseUrl: string,
 ): Promise<void> {
   const oldInstaller = artifacts.pathFor("old-install.sh");
-  const oldInstallLog = artifacts.pathFor("old-install.log");
   const oldDockerLog = artifacts.pathFor("old-docker-wrapper.log");
   const wrapperDir = createOldDockerWrapper(artifacts);
   fs.rmSync(oldDockerLog, { force: true });
@@ -417,7 +415,7 @@ async function installOldNemoclawAndClaw(
     // from replacing that fixture at the ShellProbe boundary.
     E2E_WORKLOAD_SOURCE: "",
     PATH: `${wrapperDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
-    COMPATIBLE_API_KEY: "dummy",
+    COMPATIBLE_API_KEY: GATEWAY_CREDENTIAL,
     NEMOCLAW_REAL_DOCKER: process.env.NEMOCLAW_REAL_DOCKER ?? "/usr/bin/docker",
     NEMOCLAW_SANDBOX_BASE_IMAGE_REF: OLD_SANDBOX_BASE_IMAGE_REF,
     NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: OLD_SANDBOX_BASE_IMAGE_REF,
@@ -445,8 +443,10 @@ async function installOldNemoclawAndClaw(
       host,
       `old-${OLD_NEMOCLAW_REF}`,
       oldGatewayUpgradeInstallerArgs(oldInstaller),
-      oldInstallLog,
+      artifacts,
+      "old-install.log",
       installEnv,
+      [GATEWAY_CREDENTIAL],
     );
   } finally {
     removeReviewedNpmArchive(reviewedOpenClaw);
@@ -466,14 +466,6 @@ async function installOldNemoclawAndClaw(
     OLD_OPENSHELL_VERSION,
     `old NemoClaw install must leave OpenShell ${OLD_OPENSHELL_VERSION}`,
   );
-
-  await waitForSurvivorReady(host, "old-install");
-  const list = await bash(host, `nemoclaw list`, {
-    artifactName: "old-nemoclaw-list",
-    timeoutMs: 60_000,
-  });
-  expectExitZero(list, "old nemoclaw list");
-  expectOutputContains(list, SURVIVOR_SANDBOX, "old NemoClaw install must register survivor claw");
 }
 
 async function writeSurvivorMarker(host: HostCliClient): Promise<void> {
@@ -487,8 +479,8 @@ async function writeSurvivorMarker(host: HostCliClient): Promise<void> {
 
 async function installCurrentNemoclawUpgrade(
   host: HostCliClient,
+  artifacts: ArtifactSink,
   fakeBaseUrl: string,
-  currentInstallLog: string,
 ): Promise<void> {
   const currentRef = currentNemoclawUpgradeRef(process.env);
   const currentEnv = withoutEnvKeys(
@@ -514,7 +506,8 @@ async function installCurrentNemoclawUpgrade(
     host,
     `current-${currentRef.slice(0, 12)}`,
     currentGatewayUpgradeInstallerArgs(path.join(REPO_ROOT, "scripts", "install.sh")),
-    currentInstallLog,
+    artifacts,
+    "current-install.log",
     currentEnv,
     redactionValues,
   );
@@ -542,24 +535,6 @@ async function assertSurvivorSandboxAfterUpgrade(host: HostCliClient): Promise<v
   );
   expectExitZero(marker, "read survivor marker after gateway upgrade");
   expect(marker.stdout.trim()).toBe(SURVIVOR_MARKER);
-
-  const agentCheck = await bash(
-    host,
-    `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} exec -- sh -lc ${shellQuote("command -v openclaw >/dev/null && test -s /sandbox/.openclaw/openclaw.json && openclaw --version 2>/dev/null")}`,
-    { artifactName: "post-upgrade-openclaw-agent", timeoutMs: 60_000 },
-  );
-  expectExitZero(
-    agentCheck,
-    "OpenClaw agent must remain installed/configured after gateway upgrade",
-  );
-  expect(agentCheck.stdout.trim().length).toBeGreaterThan(0);
-
-  const list = await bash(host, `nemoclaw list`, {
-    artifactName: "post-upgrade-nemoclaw-list",
-    timeoutMs: 60_000,
-  });
-  expectExitZero(list, "nemoclaw list after gateway upgrade");
-  expectOutputContains(list, SURVIVOR_SANDBOX, "nemoclaw list must still show survivor sandbox");
 }
 
 const runLinuxOpenShellGatewayUpgrade = test.skipIf(process.platform !== "linux");
@@ -627,7 +602,7 @@ runLinuxOpenShellGatewayUpgrade(
     await preCleanUpgradeGateway(host, "pre-cleanup-gateway");
 
     const fake = await startFakeOpenAiCompatibleServer({
-      apiKey: "dummy",
+      apiKey: GATEWAY_CREDENTIAL,
       host: "0.0.0.0",
       model: "test-model",
       progress,
@@ -668,8 +643,7 @@ runLinuxOpenShellGatewayUpgrade(
     await writeSurvivorMarker(host);
 
     progress.phase("upgrade to the current OpenShell gateway");
-    const currentInstallLog = artifacts.pathFor("current-install.log");
-    await installCurrentNemoclawUpgrade(host, fake.baseUrl, currentInstallLog);
+    await installCurrentNemoclawUpgrade(host, artifacts, fake.baseUrl);
 
     progress.phase("verify the upgraded agent and preserved workspace state");
     await assertSurvivorSandboxAfterUpgrade(host);

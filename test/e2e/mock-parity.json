@@ -738,6 +738,7 @@
         "src/lib/onboard/dockerfile-patch.test.ts",
         "src/lib/state/openclaw-plugin-restore.test.ts",
         "test/agents/openclaw/openclaw-2026-7-startup-compat.test.ts",
+        "test/agents/openclaw/openclaw-shared-state-permissions-patch.test.ts",
         "test/install/install-preexisting-sandbox-recovery.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
