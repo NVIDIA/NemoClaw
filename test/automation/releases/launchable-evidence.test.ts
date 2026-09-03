@@ -246,6 +246,32 @@ describe("Launchable evidence inspection", () => {
       inspectLaunchableEvidence({ candidate: SHA }, reader(undefined, undefined, artifact)),
     ).toThrow("workspace=nclaw-e2e-10-2 id=ws-1 status=PRESENT");
   });
+  it("distinguishes missing full evidence after confirmed cleanup (#10798)", () => {
+    const artifact: ArtifactFiles = {
+      "workspace-recovery.json": JSON.stringify({
+        schemaVersion: 1,
+        candidateSha: SHA,
+        runId: "10",
+        runAttempt: "2",
+        workspace: { name: "nclaw-e2e-10-2", id: "ws-1" },
+      }),
+      "launchable-e2e.json": "{}",
+      "cleanup.json": JSON.stringify({
+        workspaceName: "nclaw-e2e-10-2",
+        workspaceId: "ws-1",
+        status: "ABSENT",
+        verifiedAt: "2026-06-01T01:00:00Z",
+      }),
+    };
+    expect(() =>
+      inspectLaunchableEvidence({ candidate: SHA }, reader(undefined, undefined, artifact)),
+    ).toThrow(
+      "full evidence missing after confirmed cleanup: run=10 attempt=2 job=20 artifact=staging-brev-launchable-",
+    );
+    expect(() =>
+      inspectLaunchableEvidence({ candidate: SHA }, reader(undefined, undefined, artifact)),
+    ).not.toThrow("cleanup incomplete");
+  });
   it("reports recovery identity from a failed cleanup job (#10798)", () => {
     const artifact = files({
       "cleanup.json": JSON.stringify({

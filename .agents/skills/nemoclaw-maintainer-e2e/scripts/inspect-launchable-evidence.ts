@@ -284,6 +284,20 @@ function earlyRecovery(
         : "<missing>";
   if (cleanup.workspaceName !== name || cleanup.workspaceId !== id)
     fail("workspace recovery cleanup identity does not match the early receipt");
+  if (status === "ABSENT") {
+    let verifiedAt: string;
+    try {
+      verifiedAt = utcTimestamp(
+        text(cleanup.verifiedAt, "cleanup.verifiedAt"),
+        "cleanup.verifiedAt",
+      );
+    } catch {
+      fail("confirmed cleanup timestamp is missing or invalid before full evidence");
+    }
+    fail(
+      `full evidence missing after confirmed cleanup: run=${selection.run.id} attempt=${selection.run.run_attempt} job=${selection.job.id} artifact=${artifactName} workspace=${name} id=${id} status=${status} verifiedAt=${verifiedAt}`,
+    );
+  }
   fail(
     `cleanup incomplete before full evidence: run=${selection.run.id} attempt=${selection.run.run_attempt} job=${selection.job.id} artifact=${artifactName} workspace=${name} id=${id} status=${status} checkedAt=${checkedAt}`,
   );
