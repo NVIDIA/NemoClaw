@@ -310,7 +310,15 @@ describe("OpenAI-compatible inference probes", () => {
   });
 
   it("sends the Nemotron 3 Super validation request parameters (#10880)", () => {
-    expect(getChatCompletionsProbePayload("nvidia/nemotron-3-super-120b-a12b")).toEqual({
+    const args = getChatCompletionsProbeCurlArgs({
+      credentialArgs: FAKE_CREDENTIAL_ARGS,
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      url: "https://integrate.api.nvidia.com/v1/chat/completions",
+      isWsl: false,
+    });
+
+    expect(args).toContain("-d");
+    expect(JSON.parse(args[args.indexOf("-d") + 1])).toEqual({
       model: "nvidia/nemotron-3-super-120b-a12b",
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
       max_tokens: 16,
