@@ -308,7 +308,11 @@ function lifecycleDeps(
   });
   const liveIdentityFingerprint = fingerprintOpenShellSandboxLiveIdentity(LIVE)!;
   const captureOpenShell = vi.fn((args: readonly string[]) => {
-    const sandboxExecOutput = args.includes("python3") ? "200\n" : "";
+    const sandboxExecOutput = args.includes(hermesPortableLifecycleInternals.healthWaitProgram)
+      ? "schema=1 result=ready attempts=1 notReady=0 timeouts=0 errors=0 lastFailure=none probeMs=0 sleepMs=0\n"
+      : args.includes("python3")
+        ? "200\n"
+        : "";
     const responses = {
       "policy:get": { status: 0, stdout: options.livePolicy ?? POLICY, stderr: "" },
       "sandbox:list": {
@@ -804,11 +808,16 @@ describe("Hermes portable lifecycle", () => {
         "--no-tty",
         "--",
         "python3",
+        "-I",
         "-c",
-        hermesPortableContainerInternals.authenticatedHealthScript,
+        hermesPortableLifecycleInternals.healthWaitProgram,
+        "8642",
+        "18000",
+        "100",
       ],
-      40_000,
+      20_000,
     );
+    expect(captureOpenShell.mock.calls.flat(2)).toContain(hermesPortableContainerInternals.authenticatedHealthScript);
   });
 
   it("starts through the exact OpenShell Stopped phase before proving Ready health (#9203)", () => {
@@ -864,14 +873,16 @@ describe("Hermes portable lifecycle", () => {
       return {
         status: 0,
         stdout:
-          healthAttempts >= 2 && launchOpenShell.mock.calls.length === 1
-            ? "200\n"
+          launchOpenShell.mock.calls.length === 1
+            ? "schema=1 result=ready attempts=2 notReady=1 timeouts=0 errors=0 lastFailure=not-ready probeMs=10 sleepMs=100\n"
             : "unavailable\n",
         stderr: "",
       };
     };
     captureOpenShell.mockImplementation((args: readonly string[]) =>
-      args.includes("python3") ? observeHealth() : defaultCapture(args),
+      args.includes(hermesPortableLifecycleInternals.healthWaitProgram)
+        ? observeHealth()
+        : defaultCapture(args),
     );
     const result = withMcpLifecycleLockSync(
       SANDBOX,
@@ -890,17 +901,10 @@ describe("Hermes portable lifecycle", () => {
       ([args]) => args[0] === "container" && args[1] === "inspect",
     );
     expect(result).toEqual({ kind: "recovered" });
-    expect(healthAttempts).toBe(2);
-    expect(healthRunInspects).toHaveLength(11);
-    expect(healthBoundaries).toHaveLength(2);
-    expect(healthBoundaries[0]).toBeGreaterThan(0);
-    expect(healthBoundaries[1]).toBeGreaterThan(healthBoundaries[0]! + 1);
-    expect(healthRunInspects.length).toBeGreaterThan(healthBoundaries[1]!);
-    expect(sleepBoundaries).toEqual([
-      { inspectsBefore: healthBoundaries[0]! + 1, milliseconds: 1_000 },
-    ]);
-    expect(healthBoundaries[1]).toBeGreaterThan(sleepBoundaries[0]!.inspectsBefore);
-    expect(launchOpenShell).toHaveBeenCalledTimes(1);
+    expect(healthAttempts).toBe(1);
+    expect(healthBoundaries).toHaveLength(1);
+    expect(healthRunInspects.length).toBeGreaterThan(healthBoundaries[0]!);
+    expect(sleepBoundaries).toEqual([]); expect(launchOpenShell).toHaveBeenCalledTimes(1);
     expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
   });
 
@@ -941,10 +945,13 @@ describe("Hermes portable lifecycle", () => {
         .slice(1)
         .every(
           (command) =>
-            command.length === 3 &&
+            command.length === 7 &&
             command[0] === "python3" &&
-            command[1] === "-c" &&
-            command[2] === hermesPortableContainerInternals.authenticatedHealthScript,
+            command[1] === "-I" &&
+            command[2] === "-c" &&
+            command[3] === hermesPortableLifecycleInternals.healthWaitProgram &&
+            command[4] === "8642" &&
+            command[6] === "100",
         ),
     ).toBe(true);
     expect(execCommands.flat()).not.toContain(receipt.startup.argv.at(-1));
