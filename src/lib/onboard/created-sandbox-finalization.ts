@@ -24,13 +24,7 @@ import {
 } from "../state/sandbox";
 import { createDcodeSelectionDriftReader } from "./dcode-selection-drift";
 import { restoreDefaultAfterRecreate } from "./default-preservation";
-import {
-  captureLiveSiblingDashboardForwards,
-  type DashboardForwardOptions,
-  type PreservedDashboardForward,
-} from "./dashboard-forward-control";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
-import { shouldManageDashboardForAgent } from "./dashboard-runtime";
 import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import { warnIfLandlockUnsupported } from "./landlock-warning";
@@ -54,6 +48,7 @@ import {
 import type { SelectionDrift } from "./selection-drift";
 import type { VerifiedSandboxCreateBoundary } from "./types";
 import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
+import { OnboardRestoreSnapshotDriftError } from "./session-bootstrap";
 
 export type CreatedSandboxFinalizationOptions = {
   sandboxName: string;
@@ -147,24 +142,9 @@ export interface CreatedSandboxCompletionOptions {
   readonly dashboard: {
     readonly chatUiUrl: string;
     readonly initialHermesState: HermesDashboardOnboardState;
-    readonly preservedSiblingForwards: readonly PreservedDashboardForward[];
     readonly releasePort: () => Promise<void>;
-    readonly ensureForward: (
-      sandboxName: string,
-      chatUiUrl: string,
-      options: Pick<
-        DashboardForwardOptions,
-        "rollbackSandboxOnFailure" | "preservedSiblingForwards" | "revalidateSandboxIdentity"
-      > & { rollbackSandboxOnFailure: true },
-    ) => number;
     readonly getForwardPort: (chatUiUrl: string) => string;
     readonly resolveHermesState: (port: number) => HermesDashboardOnboardState;
-    readonly ensureHermesForward: (
-      state: HermesDashboardOnboardState,
-      sandboxName: string,
-      rollback: true,
-      revalidateSandboxIdentity?: (operation: string) => void,
-    ) => void;
   };
   readonly workload: Omit<
     WorkloadResolutionInput,
@@ -172,11 +152,10 @@ export interface CreatedSandboxCompletionOptions {
   >;
 }
 
-export interface CreatedSandboxCompletionDeps
-  extends Omit<
-    CreatedSandboxFinalizationDeps,
-    "prepareRegistration" | "register" | "revalidatePreparedRegistration"
-  > {
+export interface CreatedSandboxCompletionDeps extends Omit<
+  CreatedSandboxFinalizationDeps,
+  "prepareRegistration" | "register" | "revalidatePreparedRegistration"
+> {
   readonly prepareCreatedSandboxRegistration?: typeof prepareCreatedSandboxRegistration;
   readonly registerCreatedSandbox?: typeof registerCreatedSandbox;
   readonly registerPreparedCreatedSandbox?: typeof registerPreparedCreatedSandbox;
@@ -405,30 +384,16 @@ export function createCreatedSandboxCompletionActions(
   async function finalizeDashboard(): Promise<void> {
     await options.dashboard.releasePort();
     deps.revalidateSandboxIdentity?.(
-      `configuring dashboard capability for sandbox '${options.finalization.sandboxName}'`,
+      `recording dashboard capability for sandbox '${options.finalization.sandboxName}'`,
     );
-    dashboardPort = options.dashboard.ensureForward(options.finalization.sandboxName, chatUiUrl, {
-      rollbackSandboxOnFailure: true,
-      preservedSiblingForwards: options.dashboard.preservedSiblingForwards,
-      revalidateSandboxIdentity: deps.revalidateSandboxIdentity,
-    });
-    deps.revalidateSandboxIdentity?.(
-      `configuring dashboard capability for sandbox '${options.finalization.sandboxName}'`,
-    );
-    if (dashboardPort !== Number(options.dashboard.getForwardPort(chatUiUrl))) {
-      chatUiUrl = `http://127.0.0.1:${dashboardPort}`;
+    dashboardPort = Number(options.dashboard.getForwardPort(chatUiUrl));
+    if (!Number.isInteger(dashboardPort) || dashboardPort < 1 || dashboardPort > 65_535) {
+      throw new Error(
+        `Reserved dashboard port is invalid for sandbox '${options.finalization.sandboxName}'.`,
+      );
     }
     process.env.CHAT_UI_URL = chatUiUrl;
     hermesDashboardState = options.dashboard.resolveHermesState(dashboardPort);
-    deps.revalidateSandboxIdentity?.(
-      `configuring Hermes dashboard capability for sandbox '${options.finalization.sandboxName}'`,
-    );
-    options.dashboard.ensureHermesForward(
-      hermesDashboardState,
-      options.finalization.sandboxName,
-      true,
-      deps.revalidateSandboxIdentity,
-    );
     deps.revalidateSandboxIdentity?.(
       `recording Hermes dashboard capability for sandbox '${options.finalization.sandboxName}'`,
     );
@@ -540,7 +505,10 @@ export function createCreatedSandboxCompletionActions(
         };
       };
       return finalizeCreatedSandbox(
-        { ...options.finalization, gatewayName: options.registration.gatewayName },
+        {
+          ...options.finalization,
+          gatewayName: options.registration.gatewayName,
+        },
         {
           ...deps,
           prepareRegistration: (openclawImagePluginInstalls) =>
@@ -649,6 +617,44 @@ type OnboardPreparedPolicy = Pick<
   readonly revalidateSandboxIdentity: (operation: string) => void;
 };
 
+type CurrentRestoreSnapshotDependencies = {
+  getLatestBackup: typeof sandboxState.getLatestBackup;
+  restoreManaged: typeof restoreRecreatedSandboxStateWithManagedAuthority;
+  restore: typeof sandboxState.restoreRecreatedSandboxState;
+};
+
+const currentRestoreSnapshotDependencies: CurrentRestoreSnapshotDependencies = {
+  getLatestBackup: (...args) => sandboxState.getLatestBackup(...args),
+  restoreManaged: (...args) => restoreRecreatedSandboxStateWithManagedAuthority(...args),
+  restore: (...args) => sandboxState.restoreRecreatedSandboxState(...args),
+};
+
+/** Re-read latest snapshot authority at the state-restoration boundary. */
+export function restoreSelectedOnboardSnapshot(
+  sandboxName: string,
+  backupPath: string,
+  restoreOptions: RecreatedSandboxRestoreOptions,
+  resolveTarget?: () => SandboxEntry,
+  dependencies: CurrentRestoreSnapshotDependencies = currentRestoreSnapshotDependencies,
+): RestoreResult {
+  const latest = dependencies.getLatestBackup(sandboxName);
+  if (latest?.backupPath !== backupPath) {
+    return {
+      success: false,
+      restoredDirs: [],
+      failedDirs: [],
+      restoredFiles: [],
+      failedFiles: [],
+      error: `Selected restore snapshot for '${sandboxName}' changed before state restoration. Retry the upgrade so it can bind current snapshot authority.`,
+    };
+  }
+  return resolveTarget
+    ? dependencies.restoreManaged(sandboxName, latest, restoreOptions, {
+        getSandbox: (requestedName) => (requestedName === sandboxName ? resolveTarget() : null),
+      })
+    : dependencies.restore(sandboxName, backupPath, restoreOptions);
+}
+
 /** Assemble the exact post-Ready owners without adding an onboarding decision. */
 export function createOnboardCreatedSandboxCompletion(
   sandboxName: string,
@@ -676,33 +682,22 @@ export function createOnboardCreatedSandboxCompletion(
   chatUiUrl: string,
   initialHermesDashboardState: HermesDashboardOnboardState,
   releaseDashboardPort: CreatedSandboxCompletionOptions["dashboard"]["releasePort"],
-  ensureDashboardForward: CreatedSandboxCompletionOptions["dashboard"]["ensureForward"],
   getDashboardForwardPort: CreatedSandboxCompletionOptions["dashboard"]["getForwardPort"],
   resolveHermesDashboardState: CreatedSandboxCompletionOptions["dashboard"]["resolveHermesState"],
-  ensureHermesDashboardForward: CreatedSandboxCompletionOptions["dashboard"]["ensureHermesForward"],
   workloadRuntime: WorkloadResolutionInput["runtime"],
   workload: WorkloadResolutionInput["workload"],
   note: (message: string) => void,
 ): CreatedSandboxCompletionActions {
   const { provider, model, preferredInferenceApi, endpointUrl } = inference;
   const { createIntent, resolvedCreateIntent } = createContext;
-  const restoreManifest = restoreBackupPath ? sandboxState.getLatestBackup(sandboxName) : null;
-  if (restoreBackupPath && restoreManifest?.backupPath !== restoreBackupPath) {
-    throw new Error(
+  const selectedRestoreManifest = restoreBackupPath
+    ? sandboxState.getLatestBackup(sandboxName)
+    : null;
+  if (restoreBackupPath && selectedRestoreManifest?.backupPath !== restoreBackupPath) {
+    throw new OnboardRestoreSnapshotDriftError(
       `Selected restore snapshot for '${sandboxName}' changed before sandbox creation. Retry the upgrade so it can bind current snapshot authority.`,
     );
   }
-  // This constructor runs before the potentially long create/build operation.
-  // Preserve only siblings proven live now; finalization may safely restore
-  // those exact forwards if their SSH processes die while the target builds.
-  // Portable lifecycle keeps its separate forwarding behavior unchanged.
-  const preservedSiblingForwards =
-    portableLifecycle || !shouldManageDashboardForAgent(agent ?? null)
-      ? []
-      : captureLiveSiblingDashboardForwards(
-          runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
-          sandboxName,
-        );
   return createCreatedSandboxCompletionActions(
     {
       finalization: {
@@ -734,7 +729,9 @@ export function createOnboardCreatedSandboxCompletion(
         toolDisclosure: sandboxRegistrationOptions.toolDisclosure,
         observabilityEnabled: createIntent?.observabilityEnabled === true,
         ...(agentFlags.isManagedDcodeAgent
-          ? { dcodeAutoApprovalMode: sandboxRegistrationOptions.dcodeAutoApprovalMode }
+          ? {
+              dcodeAutoApprovalMode: sandboxRegistrationOptions.dcodeAutoApprovalMode,
+            }
           : {}),
         ...creationFidelity(
           creation.webSearchConfig,
@@ -764,12 +761,9 @@ export function createOnboardCreatedSandboxCompletion(
       dashboard: {
         chatUiUrl,
         initialHermesState: initialHermesDashboardState,
-        preservedSiblingForwards,
         releasePort: releaseDashboardPort,
-        ensureForward: ensureDashboardForward,
         getForwardPort: getDashboardForwardPort,
         resolveHermesState: resolveHermesDashboardState,
-        ensureHermesForward: ensureHermesDashboardForward,
       },
       workload: {
         runtime: workloadRuntime,
@@ -788,16 +782,7 @@ export function createOnboardCreatedSandboxCompletion(
           agent?.configPaths.dir,
         ),
       restoreRecreatedSandboxState: (name, backupPath, restoreOptions, resolveTarget) =>
-        restoreManifest && resolveTarget
-          ? restoreRecreatedSandboxStateWithManagedAuthority(
-              name,
-              restoreManifest,
-              restoreOptions,
-              {
-                getSandbox: (requestedName) => (requestedName === name ? resolveTarget() : null),
-              },
-            )
-          : sandboxState.restoreRecreatedSandboxState(name, backupPath, restoreOptions),
+        restoreSelectedOnboardSnapshot(name, backupPath, restoreOptions, resolveTarget),
       getDcodeSelectionDrift: createDcodeSelectionDriftReader(
         runCaptureOpenshell,
         () => gateway.gatewayName,
@@ -845,7 +830,16 @@ export function finalizeCreatedSandbox(
         : "  Restoring workspace state from pre-recreate backup...",
     );
     deps.revalidateSandboxIdentity?.(`restoring files for sandbox '${options.sandboxName}'`);
-    preparedRegistration = deps.prepareRegistration?.(freshOpenClawImagePluginInstalls);
+    if (!deps.prepareRegistration || !deps.revalidatePreparedRegistration) {
+      deps.error(
+        `  Managed snapshot restore has no prepared registration authority for sandbox '${options.sandboxName}'.`,
+      );
+      deps.error("  State was not restored and registry metadata was not updated.");
+      reportUnregisteredSandboxRecovery();
+      deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
+      return deps.exitProcess(1);
+    }
+    preparedRegistration = deps.prepareRegistration(freshOpenClawImagePluginInstalls);
     const restoreOptions = {
       targetAgentType: options.targetAgentType,
       ...(options.customImage ? { allowCustomImageWholeStateFileRestore: true } : {}),
@@ -853,25 +847,14 @@ export function finalizeCreatedSandbox(
         ? { freshOpenClawImagePluginInstalls }
         : {}),
     } satisfies RecreatedSandboxRestoreOptions;
-    const resolveTarget = preparedRegistration
-      ? () =>
-          deps.revalidatePreparedRegistration?.(
-            preparedRegistration!,
-            freshOpenClawImagePluginInstalls,
-          ) ?? preparedRegistration!
-      : undefined;
-    const restore = resolveTarget
-      ? deps.restoreRecreatedSandboxState(
-          options.sandboxName,
-          options.restoreBackupPath,
-          restoreOptions,
-          resolveTarget,
-        )
-      : deps.restoreRecreatedSandboxState(
-          options.sandboxName,
-          options.restoreBackupPath,
-          restoreOptions,
-        );
+    const resolveTarget = () =>
+      deps.revalidatePreparedRegistration!(preparedRegistration!, freshOpenClawImagePluginInstalls);
+    const restore = deps.restoreRecreatedSandboxState(
+      options.sandboxName,
+      options.restoreBackupPath,
+      restoreOptions,
+      resolveTarget,
+    );
     deps.revalidateSandboxIdentity?.(
       `reporting restored state for sandbox '${options.sandboxName}'`,
     );
