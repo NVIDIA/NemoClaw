@@ -118,15 +118,6 @@ export function printPluginInstallHint(): void {
   );
 }
 
-function printSkillUploadFailureHint(sandboxName: string): void {
-  console.error(
-    "  Skill uploads write to the agent skills directory, which is locked while shields are up.",
-  );
-  console.error(
-    `  If shields are up, run \`${CLI_NAME} ${sandboxName} shields down\` before installing skills.`,
-  );
-}
-
 /** Report an agent-owned workspace collision without mutating either skill location. */
 function refuseWorkspaceSkillCollision(skillName: string, workspaceSkillDir: string): void {
   console.error(
