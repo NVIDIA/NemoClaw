@@ -251,7 +251,7 @@ export function checkGatewayRouteCompatibility(
   }
   if (
     CUSTOM_ROUTE_PROVIDERS.has(requested.provider) &&
-    (!canonicalEndpoint(request.route.endpointUrl, endpointFlavor(requested.provider)) ||
+    (!canonicalGatewayRouteEndpoint(requested.provider, request.route.endpointUrl) ||
       !normalizedInferenceApi(request.route.preferredInferenceApi))
   ) {
     return {
@@ -297,7 +297,7 @@ export function checkGatewayRouteCompatibility(
 
     if (
       CUSTOM_ROUTE_PROVIDERS.has(recorded.provider) &&
-      (!canonicalEndpoint(sandbox.endpointUrl, endpointFlavor(recorded.provider)) ||
+      (!canonicalGatewayRouteEndpoint(recorded.provider, sandbox.endpointUrl) ||
         !normalizedInferenceApi(sandbox.preferredInferenceApi))
     ) {
       conflicts.push({

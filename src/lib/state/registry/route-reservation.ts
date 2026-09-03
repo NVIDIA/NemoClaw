@@ -182,8 +182,17 @@ export function isPublishedSandboxRegistration(entry: { pendingRouteReservation?
 export function isSharedGatewayRouteParticipant(entry: {
   pendingRouteReservation?: true;
   createdAt?: string;
+  provider?: string | null;
+  model?: string | null;
 }): boolean {
-  return isPublishedSandboxRegistration(entry) || isRouteOnlySandboxReservation(entry);
+  if (isPublishedSandboxRegistration(entry)) return true;
+  return (
+    isRouteOnlySandboxReservation(entry) &&
+    typeof entry.provider === "string" &&
+    entry.provider.trim().length > 0 &&
+    typeof entry.model === "string" &&
+    entry.model.trim().length > 0
+  );
 }
 
 /** Return true only when the pending inference route reservation belongs to the exact onboarding session. */
