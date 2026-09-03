@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { requireValue } from "../core/require-value";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
@@ -14,10 +14,6 @@ import {
   resolveCompatibleEndpointSelection,
   type SetupNimSelectionState,
 } from "./setup-nim-selection";
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
 
 function makeState(): SetupNimSelectionState {
   return {
@@ -73,80 +69,103 @@ describe("setupNim selection state helpers", () => {
 });
 
 describe("resolveCompatibleEndpointSelection", () => {
-  it("rejects an unsafe endpoint at the onboarding selection boundary", async () => {
+  it("rejects an unsafe non-interactive endpoint before prompting or selecting it", async () => {
+    const prompt = vi.fn(async () => "https://later.example.test/v1");
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit:${String(code)}`);
+    }) as typeof process.exit);
+
+    try {
+      await expect(
+        resolveCompatibleEndpointSelection({
+          kind: "openai",
+          envUrl: "ftp://unsafe.example.test/v1",
+          recoveredEndpointUrl: null,
+          nonInteractive: true,
+          prompt,
+        }),
+      ).rejects.toThrow("process.exit:1");
+      expect(prompt).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith("  Endpoint URL must use HTTP or HTTPS.");
+    } finally {
+      exit.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it("selects and normalizes a safe non-interactive custom endpoint", async () => {
+    const prompt = vi.fn(async () => "https://unused.example.test/v1");
 
     await expect(
       resolveCompatibleEndpointSelection({
         kind: "openai",
-        envUrl: null,
+        envUrl: " https://custom.example.test/v1/ ",
         recoveredEndpointUrl: null,
-        nonInteractive: false,
-        prompt: async () => "https://operator:secret@inference.example.test/v1",
+        nonInteractive: true,
+        prompt,
       }),
-    ).resolves.toEqual({ action: "retry-selection" });
-
-    expect(error).toHaveBeenCalledWith(
-      "  Endpoint URL must not contain userinfo, query, or fragment components.",
-    );
-    expect([...error.mock.calls, ...log.mock.calls].flat().join("\n")).not.toContain("secret");
+    ).resolves.toEqual({
+      action: "selected",
+      endpointUrl: "https://custom.example.test/v1",
+    });
+    expect(prompt).not.toHaveBeenCalled();
   });
 });
 
 describe("createRemoteModelValidator", () => {
-  it.each([
-    "openai-completions",
-    "anthropic-messages",
-  ] as const)("uses the intended %s runtime API when validating custom Anthropic selections (#6289)", async (expectedApi) => {
-    const state = makeState();
-    state.provider = "compatible-anthropic-endpoint";
-    state.endpointUrl = "https://compatible.example";
-    state.model = "custom-model";
-    let validatedApi: string | undefined;
-    const { validateSelectedRemoteModel } = createRemoteModelValidator({
-      OPENAI_ENDPOINT_URL: "https://default-openai.example/v1",
-      ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
-      requireValue,
-      isBackToSelection: (_value): _value is never => false,
-      validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
-      validateCustomAnthropicSelection: async (
-        _label,
-        _endpointUrl,
-        _model,
-        _credentialEnv,
-        _helpUrl,
-        options,
-      ) => {
-        validatedApi = options?.intendedApi;
-        return { ok: true, api: validatedApi ?? null };
-      },
-      validateAnthropicSelectionWithRetryMessage: async () => ({
-        ok: false,
-        retry: "selection",
-      }),
-      validateOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
-      shouldRequireResponsesToolCalling: () => false,
-      shouldSkipResponsesProbe: () => false,
-      getProbeAuthMode: () => undefined,
-    });
+  it.each(["openai-completions", "anthropic-messages"] as const)(
+    "uses the intended %s runtime API when validating custom Anthropic selections (#6289)",
+    async (expectedApi) => {
+      const state = makeState();
+      state.provider = "compatible-anthropic-endpoint";
+      state.endpointUrl = "https://compatible.example";
+      state.model = "custom-model";
+      let validatedApi: string | undefined;
+      const { validateSelectedRemoteModel } = createRemoteModelValidator({
+        OPENAI_ENDPOINT_URL: "https://default-openai.example/v1",
+        ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
+        requireValue,
+        isBackToSelection: (_value): _value is never => false,
+        validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+        validateCustomAnthropicSelection: async (
+          _label,
+          _endpointUrl,
+          _model,
+          _credentialEnv,
+          _helpUrl,
+          options,
+        ) => {
+          validatedApi = options?.intendedApi;
+          return { ok: true, api: validatedApi ?? null };
+        },
+        validateAnthropicSelectionWithRetryMessage: async () => ({
+          ok: false,
+          retry: "selection",
+        }),
+        validateOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+        shouldRequireResponsesToolCalling: () => false,
+        shouldSkipResponsesProbe: () => false,
+        getProbeAuthMode: () => undefined,
+      });
 
-    const result = await validateSelectedRemoteModel({
-      selected: { key: "anthropicCompatible" },
-      remoteConfig: {
-        label: "Other Anthropic-compatible endpoint",
-        endpointUrl: "https://compatible.example",
-        helpUrl: null,
-      },
-      state,
-      selectedCredentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-      intendedInferenceApi: expectedApi,
-    });
+      const result = await validateSelectedRemoteModel({
+        selected: { key: "anthropicCompatible" },
+        remoteConfig: {
+          label: "Other Anthropic-compatible endpoint",
+          endpointUrl: "https://compatible.example",
+          helpUrl: null,
+        },
+        state,
+        selectedCredentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        intendedInferenceApi: expectedApi,
+      });
 
-    assert.equal(result, "selected");
-    assert.equal(validatedApi, expectedApi);
-    assert.equal(state.preferredInferenceApi, expectedApi);
-  });
+      assert.equal(result, "selected");
+      assert.equal(validatedApi, expectedApi);
+      assert.equal(state.preferredInferenceApi, expectedApi);
+    },
+  );
 
   it("forces custom compatible endpoints to chat completions unless the API is explicit", async () => {
     const state = makeState();

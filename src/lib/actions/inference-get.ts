@@ -4,8 +4,8 @@
 import { captureOpenshell } from "../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
-import { canonicalEndpoint, type EndpointFlavor } from "../core/url-utils";
 import { sanitizeRouteValueForDisplay } from "../inference/config";
+import { canonicalGatewayRouteEndpoint } from "../inference/gateway-route-compatibility";
 import { getLiveGatewayInference } from "../inference/live";
 import { isPublishedSandboxRegistration } from "../state/registry/route-reservation";
 import {
@@ -58,7 +58,7 @@ const COMPATIBLE_CUSTOM_PROVIDERS = new Set([
   "compatible-anthropic-endpoint",
 ]);
 
-/** Select one safe endpoint from the route-participating rows on the live gateway. */
+/** Select one safe endpoint from published rows on the live gateway. */
 function getPersistedEndpointUrl(
   provider: string | null,
   gatewayName: string,
@@ -78,45 +78,43 @@ function getPersistedEndpointUrl(
     );
   }
 
-  const flavor: EndpointFlavor =
-    provider === "compatible-anthropic-endpoint" ? "anthropic" : "openai";
-  const matchingEndpoints: { endpointUrl: string; identity: string }[] = [];
-  let hasIncompleteMetadata = false;
+  const matchingEndpoints: { canonical: string; display: string }[] = [];
+  let incompleteMatchingMetadata = false;
   for (const sandbox of sandboxes) {
     if (!isPublishedSandboxRegistration(sandbox)) continue;
     if (sandboxName && sandbox.name !== sandboxName) continue;
     if (sandbox.provider !== provider) continue;
     try {
-      if (getPersistedSandboxTargetGatewayName(sandbox) !== gatewayName)
-        continue;
+      if (getPersistedSandboxTargetGatewayName(sandbox) !== gatewayName) continue;
     } catch {
-      hasIncompleteMetadata = true;
+      // A matching row with an invalid binding could belong to this gateway.
+      // Omit the endpoint unless every participating row can be scoped safely.
+      incompleteMatchingMetadata = true;
       continue;
     }
-    if (
-      typeof sandbox.endpointUrl !== "string" ||
-      !sandbox.endpointUrl.trim()
-    ) {
-      hasIncompleteMetadata = true;
+    if (typeof sandbox.endpointUrl !== "string" || !sandbox.endpointUrl.trim()) {
+      incompleteMatchingMetadata = true;
       continue;
     }
-    const endpointUrl = sandbox.endpointUrl.trim();
-    const identity = canonicalEndpoint(endpointUrl, flavor);
-    if (unsafeEndpointUrlViolation(endpointUrl) || !identity) {
-      hasIncompleteMetadata = true;
+    if (unsafeEndpointUrlViolation(sandbox.endpointUrl)) {
+      incompleteMatchingMetadata = true;
       continue;
     }
-    matchingEndpoints.push({ endpointUrl, identity });
+    const display = sandbox.endpointUrl.trim();
+    const canonical = canonicalGatewayRouteEndpoint(provider, display);
+    if (!canonical) {
+      incompleteMatchingMetadata = true;
+      continue;
+    }
+    matchingEndpoints.push({ canonical, display });
   }
-
-  if (
-    hasIncompleteMetadata ||
-    matchingEndpoints.length === 0 ||
-    new Set(matchingEndpoints.map(({ identity }) => identity)).size !== 1
-  ) {
+  if (incompleteMatchingMetadata || matchingEndpoints.length === 0) {
     return null;
   }
-  return matchingEndpoints[0].endpointUrl;
+  const selected = matchingEndpoints[0];
+  return matchingEndpoints.some((candidate) => candidate.canonical !== selected.canonical)
+    ? null
+    : selected.display;
 }
 
 /** Read the live route and add safe persisted endpoint evidence when applicable. */
@@ -128,9 +126,7 @@ export async function runInferenceGet(
   try {
     gatewayName = deps.getSandboxTargetGatewayName(options.sandboxName);
   } catch {
-    throw new InferenceGetError(
-      "NemoClaw could not resolve the sandbox's recorded gateway.",
-    );
+    throw new InferenceGetError("NemoClaw could not resolve the sandbox's recorded gateway.");
   }
   const result = getLiveGatewayInference(deps.captureOpenshell, {
     gatewayName,

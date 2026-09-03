@@ -46,7 +46,7 @@ Expected output:
 }
 ```
 
-For `compatible-endpoint` and `compatible-anthropic-endpoint`, the text output adds `Endpoint` when every matching registry row for the selected gateway records the same bounded, credential-free HTTP(S) endpoint identity.
+For `compatible-endpoint` and `compatible-anthropic-endpoint`, the text output adds `Endpoint` when every matching published registry row for the selected gateway records the same canonical credential-free HTTP(S) URL.
 The JSON output adds `endpointUrl` under the same condition.
 For example:
 
@@ -68,6 +68,7 @@ Managed providers keep the existing provider-and-model output.
 Unpublished sandbox rows do not participate in endpoint selection.
 Equivalent stored URL forms, such as a trailing slash difference, count as the same endpoint identity.
 NemoClaw omits the endpoint when participating registry metadata is absent, conflicting, invalid, too long, or contains userinfo, a query, a fragment, or control characters.
+In that case, both formats retain the provider and model without adding endpoint details.
 If the registry cannot be read for a compatible custom route, the command exits non-zero without exposing the underlying registry error.
 
 The command exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no configured inference route.

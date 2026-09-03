@@ -3110,7 +3110,7 @@ JSON output adds `endpointUrl` under the same condition.
 Managed providers keep the existing provider-and-model output.
 Unpublished sandbox rows do not participate in endpoint selection.
 Equivalent stored URL forms, such as a trailing slash difference, count as the same endpoint identity.
-When participating metadata is missing, invalid, conflicting, too long, or has an invalid gateway binding, the endpoint is omitted.
+When participating metadata is missing, invalid, conflicting, too long, or has an invalid gateway binding, both formats retain the provider and model without adding endpoint details.
 If the registry cannot be read for a compatible custom route, the command exits non-zero without exposing the underlying registry error.
 
 For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
