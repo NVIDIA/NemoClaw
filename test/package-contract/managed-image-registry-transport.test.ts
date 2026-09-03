@@ -40,6 +40,7 @@ describe("managed image registry transport package contract", () => {
     const fixtureRoot = createPackageFixture({
       prefix: "nemoclaw-managed-registry-pack-",
       entries: ["dist"],
+      omitOptionalDependencies: true,
     });
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-registry-package-"));
     try {
