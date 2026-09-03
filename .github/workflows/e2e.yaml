@@ -4568,7 +4568,7 @@ jobs:
       - name: Validate OpenClaw managed-image security boundary
         shell: bash
         run: >-
-          npx vitest run --project integration test/e2e-runtime/managed-image-openclaw-security.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN npx vitest run --project integration test/e2e-runtime/managed-image-openclaw-security.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Validate managed-image glibc probe lifecycle
         if: ${{ !cancelled() }}
@@ -4578,7 +4578,7 @@ jobs:
           export NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E=1
           NEMOCLAW_TEST_IMAGE="$(jq -er '.[] | select(.agent == "openclaw") | .reference' "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT")"
           export NEMOCLAW_TEST_IMAGE
-          npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Remove protected managed-image cohort resources
         if: always()

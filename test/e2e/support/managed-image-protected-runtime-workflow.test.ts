@@ -73,7 +73,13 @@ describe("protected managed-image runtime workflow", () => {
         /if docker container inspect[\s\S]*owner=.*docker container inspect/u,
       ),
     });
-    expect(steps[glibc]).toMatchObject({ if: "${{ !cancelled() }}" });
+    expect(steps[security]).toMatchObject({
+      run: expect.stringContaining("env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN"),
+    });
+    expect(steps[glibc]).toMatchObject({
+      if: "${{ !cancelled() }}",
+      run: expect.stringContaining("env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN"),
+    });
     expect(steps[cohortCleanup]).toMatchObject({ if: "always()" });
   });
 

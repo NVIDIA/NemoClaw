@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
+
 import { openclawProtectedImage } from "./managed-image-openclaw-security.ts";
 import type { HostCliClient } from "../e2e/fixtures/clients/host.ts";
 import { expect, test } from "../e2e/fixtures/e2e-test.ts";
@@ -187,6 +189,7 @@ test(
         "grep -qx SUPERVISOR_UNAVAILABLE /tmp/gateway-control.out",
         '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c \'printf " " >>/sandbox/.openclaw/openclaw.json; printf " " >>/sandbox/.openclaw/.config-hash\'',
         'for directory in /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging; do /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c \'probe="$1/.nemoclaw-write-probe"; : >"$probe"; rm -f "$probe"\' sh "$directory"; done',
+        `/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'original=$(cat /sandbox/.nemoclaw/config.json); printf "{}\n" >/sandbox/.nemoclaw/config.json; printf "%s" "$original" >/sandbox/.nemoclaw/config.json'`,
         'for path in /sandbox/.nemoclaw /sandbox/.nemoclaw/blueprints /usr/local/bin/nemoclaw-gateway-control; do ! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- test -w "$path"; done',
         "! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- test -x /usr/local/bin/nemoclaw-gateway-control",
       ].join("\n"),
@@ -314,8 +317,9 @@ test(
     );
 
     const cohort = managedImageCohort();
-    const repairVolume = `nemoclaw-entrypoint-repair-${process.pid}`;
-    const refusalVolume = `nemoclaw-entrypoint-refusal-${process.pid}`;
+    const uniqueSuffix = randomUUID();
+    const repairVolume = `nemoclaw-entrypoint-repair-${cohort}-${uniqueSuffix}`;
+    const refusalVolume = `nemoclaw-entrypoint-refusal-${cohort}-${uniqueSuffix}`;
     let repairVolumeCreated = false;
     let refusalVolumeCreated = false;
     try {
@@ -331,6 +335,18 @@ test(
         { artifactName: "managed-image-openclaw-create-repair-volume" },
       );
       expect(repairCreate.exitCode).toBe(0);
+      const repairLabel = await host.command(
+        "docker",
+        [
+          "volume",
+          "inspect",
+          "--format",
+          '{{ index .Labels "io.nvidia.nemoclaw.managed-image.cohort" }}',
+          repairVolume,
+        ],
+        { artifactName: "managed-image-openclaw-inspect-repair-volume" },
+      );
+      expect(repairLabel.stdout.trim()).toBe(cohort);
       repairVolumeCreated = true;
       const refusalCreate = await host.command(
         "docker",
@@ -344,6 +360,18 @@ test(
         { artifactName: "managed-image-openclaw-create-refusal-volume" },
       );
       expect(refusalCreate.exitCode).toBe(0);
+      const refusalLabel = await host.command(
+        "docker",
+        [
+          "volume",
+          "inspect",
+          "--format",
+          '{{ index .Labels "io.nvidia.nemoclaw.managed-image.cohort" }}',
+          refusalVolume,
+        ],
+        { artifactName: "managed-image-openclaw-inspect-refusal-volume" },
+      );
+      expect(refusalLabel.stdout.trim()).toBe(cohort);
       refusalVolumeCreated = true;
       await runContainer(
         host,

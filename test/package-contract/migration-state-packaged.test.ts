@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import {
   createSnapshotBundle,
   detectHostOpenClaw,
@@ -12,9 +12,10 @@ import {
 } from "../../nemoclaw/dist/commands/migration-state.js";
 
 const homes: string[] = [];
-afterEach(() =>
-  homes.splice(0).forEach((home) => fs.rmSync(home, { recursive: true, force: true })),
-);
+afterEach(() => {
+  vi.unstubAllEnvs();
+  homes.splice(0).forEach((home) => fs.rmSync(home, { recursive: true, force: true }));
+});
 
 test("packaged migration converts and restores external OpenClaw state", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "migration-home-"));
@@ -29,11 +30,9 @@ test("packaged migration converts and restores external OpenClaw state", () => {
   fs.writeFileSync(path.join(workspace, "workspace-marker"), "before");
   fs.symlinkSync("workspace-marker", path.join(workspace, "workspace-link"));
   fs.writeFileSync(config, JSON.stringify({ agents: { defaults: { workspace } } }));
-  Object.assign(process.env, {
-    HOME: home,
-    OPENCLAW_STATE_DIR: state,
-    OPENCLAW_CONFIG_PATH: config,
-  });
+  vi.stubEnv("HOME", home);
+  vi.stubEnv("OPENCLAW_STATE_DIR", state);
+  vi.stubEnv("OPENCLAW_CONFIG_PATH", config);
   const messages: string[] = [];
   const logger = {
     debug: (message: string) => messages.push(message),
