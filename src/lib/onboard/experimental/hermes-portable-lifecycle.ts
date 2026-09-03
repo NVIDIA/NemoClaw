@@ -33,6 +33,7 @@ import {
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import {
   assertCurrentHermesPortableContainer,
+  buildHermesPortablePodmanEnvironment,
   createHermesPortableContainerInspectionTiming,
   observeHermesPortableAuthenticatedHealth,
   startHermesPortableContainer,
@@ -595,6 +596,28 @@ function createContainerDeps(
   commandEnv: NodeJS.ProcessEnv,
   authorityDeps?: HermesPortablePodmanAuthorityDeps,
 ): HermesPortableLifecycleContainerDeps {
+  if (TRUST_DURABLE_GFN_AUTHORITY) {
+    const podman = (args: readonly string[], timeoutMs: number): HermesPortablePodmanResult => {
+      const result = spawnSync("/usr/bin/podman", [...args], {
+        env: buildHermesPortablePodmanEnvironment(receipt.runtimeAuthority, commandEnv),
+        maxBuffer: 512 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: timeoutMs,
+      });
+      return {
+        status: result.status,
+        stdout: String(result.stdout ?? ""),
+        stderr: String(result.stderr ?? ""),
+        ...(result.error ? { error: result.error } : {}),
+      };
+    };
+    return {
+      podman,
+      rawPodman: podman,
+      assertPodmanTransactionCurrent: () => undefined,
+      assertSocketAuthority: () => undefined,
+    };
+  }
   const authority = createHermesPortablePodmanCommandAuthority(
     receipt.podmanExecutableAuthority,
     receipt.socketAuthority,
