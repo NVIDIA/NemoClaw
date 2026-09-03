@@ -134,9 +134,11 @@ To change a direct compatible provider's custom endpoint or credential binding, 
 A rebuild reuses the recorded endpoint and cannot change it.
 
 DNS-backed HTTPS routes use an HTTPS Pin Runtime binding.
-If that binding update fails after OpenShell selects the new route, NemoClaw attempts to restore the previously recorded provider and model.
-The command still exits nonzero because the binding might be partially updated.
-If NemoClaw cannot restore the previous selection, do not use the route until you re-run onboarding.
+Provider updates occur after OpenShell selects the new route.
+If an update fails, NemoClaw attempts to restore the previously recorded provider and model.
+A definite failure leaves the provider binding unchanged.
+If the error says that provider state may be partial, rerun onboarding to reconcile the provider before using the route or rerunning `inference set`.
+If NemoClaw cannot restore the previous selection, do not use the route until you rerun onboarding.
 
 </AgentOnly>
 
