@@ -212,7 +212,9 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
   it("recaptures exact executable identity without querying Podman for read-only proof", () => {
     const generation = { executableInode: 10n, parentInode: 20n };
     const capture = successfulCapture();
-    const deps = authorityDeps(capture, executableDeps(generation));
+    const executableAuthorityDeps = executableDeps(generation);
+    const readFile = vi.spyOn(executableAuthorityDeps, "readFile");
+    const deps = authorityDeps(capture, executableAuthorityDeps);
     const runtime = runtimeAuthority();
     const sourceEnv = { PATH: "/usr/bin", HOME: "/home/test" };
     const recorded = captureHermesPortablePodmanExecutableAuthority(
@@ -222,6 +224,7 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
       deps,
     );
     capture.mockClear();
+    readFile.mockClear();
 
     expect(
       captureHermesPortablePodmanExecutableFileAuthority(
@@ -232,6 +235,7 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
       ),
     ).toEqual(recorded);
     expect(capture).not.toHaveBeenCalled();
+    expect(readFile).not.toHaveBeenCalled();
   });
 
   it("rejects retained file proof when Podman executable metadata drifts", () => {

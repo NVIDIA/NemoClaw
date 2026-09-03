@@ -104,7 +104,8 @@ export function createPodmanExecutableOperationProof(
           if (shouldRehash) assertContentAuthority();
           else assertMetadataAuthority();
         } catch (error) {
-          failure = error ?? new Error("Podman executable authority check failed without evidence.");
+          failure =
+            error ?? new Error("Podman executable authority check failed without evidence.");
         }
       }
       if (phase === "after") {
@@ -267,7 +268,9 @@ export function createPodmanContainerEngine(
   const executable =
     options.executable ??
     executableProof?.executablePath ??
-    (requiresExecutableAuthority ? resolvePodmanExecutablePath(options.executableSearchEnv) : "podman");
+    (requiresExecutableAuthority
+      ? resolvePodmanExecutablePath(options.executableSearchEnv)
+      : "podman");
   if (executableProof && executable !== executableProof.executablePath) {
     throw new Error("Podman executable path disagrees with its recorded authority.");
   }
