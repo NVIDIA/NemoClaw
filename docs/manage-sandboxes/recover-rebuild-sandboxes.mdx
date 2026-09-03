@@ -316,6 +316,15 @@ If `rebuild` stops after recording the journal, rerun the command with the same 
 - It continues deletion when the live sandbox still has the journaled source identity.
 - It continues creation when the recorded OpenShell gateway explicitly reports the source sandbox as absent.
 - It accepts an existing replacement only when its live identity and sandbox registry generation match the journal.
+- It starts a new replacement when the journaled replacement provably never took effect.
+
+NemoClaw treats a journaled replacement as void when the sandbox registry row and the live same-name sandbox report the same OpenShell identity on the journaled gateway, and that identity is not the journaled replacement.
+A registry row or a live sandbox on any other gateway leaves the journal in place, because that journal may still own an unregistered replacement on its own gateway.
+The rerun atomically replaces the void journal with a fresh journal against that live source, without leaving an unjournaled interval. It then reports `Replaced the void replacement journal for '<name>'; its source sandbox is registered and live.`
+A journal whose replacement never took therefore stops blocking `rebuild` for the rest of the session.
+
+The journal binds the durable source registry row, so it does not resume after a command that rewrites that row.
+Messaging channel state is exempt: `channels add`, `channels stop`, `channels start`, and `channels remove` rewrite the recorded messaging plan, and the journal ignores that field.
 
 <Warning title="Recover an Unsafe Retained Policy Handoff">
 Do not retry rebuild when a retained policy handoff contains a literal credential. Recover any required data from the backup before deletion, and keep the backup and handoff until that recovery is complete. Restore or select the recorded gateway and confirm `openshell status` is healthy. Only then use the ordinary fail-closed destroy flow and confirm OpenShell reports the sandbox deleted:

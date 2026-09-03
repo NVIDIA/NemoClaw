@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AdvisorPromptTurn } from "../advisors/session.mts";
+import { RECORD_ADVISOR_FINDINGS_TOOL } from "./finding-ledger.mts";
 import { buildInvestigateTurn, type InvestigateTurnContext } from "./investigate-turn.mts";
 import {
   ADVISOR_INTERESTS,
@@ -11,8 +12,7 @@ import {
   type AdvisorInterest,
   type AdvisorSpecialist,
 } from "./specialist-catalog.mts";
-import { RECORD_ADVISOR_FINDINGS_TOOL } from "./finding-ledger.mts";
-import { TERMINOLOGY_TRACE_TOOL } from "./terminology.mts";
+import { specialistToolNames } from "./specialist-tools.mts";
 
 export {
   ADVISOR_INTERESTS,
@@ -98,17 +98,15 @@ export function buildSpecialistInvestigateTurn(
 ): AdvisorPromptTurn {
   const specialist = advisorSpecialist(interest);
   const fullTurn = chunkSpecialistContext(buildInvestigateTurn(context));
-  const activeToolNames = ["read", "grep", "find", "ls", RECORD_ADVISOR_FINDINGS_TOOL];
-  if (interest === "documentation") activeToolNames.push(TERMINOLOGY_TRACE_TOOL);
-
   return {
     ...fullTurn,
     name: `investigate-${interest}`,
-    activeToolNames,
+    activeToolNames: [...specialistToolNames(interest), RECORD_ADVISOR_FINDINGS_TOOL],
+    requiredReadPaths: [context.diffPath],
     terminalSubmitToolName: RECORD_ADVISOR_FINDINGS_TOOL,
     terminalSubmitRepairPrompt:
       `Commit the complete blocker ledger now by calling ${RECORD_ADVISOR_FINDINGS_TOOL}. ` +
-      "Do not emit more prose. If there are no P0/P1 blockers, submit an empty finding list and a concrete noFindingsReason.",
+      "Do not emit more prose. If there are no P0/P1 blockers, submit an empty finding list and a concrete noFindingsReason."
     prompt: `Review the ${specialist.label} area.
 
 ${COMMON_PROMPT}

@@ -20,11 +20,12 @@ import { writeSpecialistDiff } from "../../../tools/pr-review-advisor/specialist
 import type { RunAdvisorResult, RunReadOnlyAdvisorOptions } from "../../../tools/advisors/session.mts";
 import {
   ADVISOR_INTERESTS,
-  buildSpecialistInvestigateTurn,
+  ADVISOR_SPECIALISTS,
   parseAdvisorInterest,
   readAdvisorSpecialists,
   type AdvisorInterest,
-} from "../../../tools/pr-review-advisor/specialists.mts";
+} from "../../../tools/pr-review-advisor/specialist-catalog.mts";
+import { buildSpecialistInvestigateTurn } from "../../../tools/pr-review-advisor/specialists.mts";
 import type { InvestigateTurnContext } from "../../../tools/pr-review-advisor/investigate-turn.mts";
 
 type CallableTool = ToolDefinition & {
@@ -145,14 +146,16 @@ describe("PR review advisor specialist prompts", () => {
       ["--experimental-strip-types", "render-specialist-matrix.mts"],
       { cwd: directory, encoding: "utf8", env: { PATH: process.env.PATH } },
     );
-    const matrix = JSON.parse(output) as Array<{ interest: string; model: string }>;
+    const matrix = JSON.parse(output) as Array<Record<string, unknown>>;
+    const expected = ADVISOR_SPECIALISTS.map(({ interest, label }, index) => ({
+      interest,
+      label,
+      model: index % 2 === 0 ? "openai/openai/gpt-5.6-terra" : "azure/openai/gpt-5.6-terra",
+      artifact_dir: `pr-review-specialist-${interest}`,
+      artifact_name: `pr-review-specialist-${interest}`,
+    }));
 
-    expect(matrix.map(({ interest }) => interest)).toEqual(ADVISOR_INTERESTS);
-    expect(matrix.map(({ model }) => model)).toEqual(
-      ADVISOR_INTERESTS.map((_, index) =>
-        index % 2 === 0 ? "openai/openai/gpt-5.6-terra" : "azure/openai/gpt-5.6-terra",
-      ),
-    );
+    expect(matrix).toEqual(expected);
     expect(matrix.every((entry) => !("sandbox_name" in entry))).toBe(true);
   });
 
@@ -205,6 +208,7 @@ describe("PR review advisor specialist prompts", () => {
       expect(turn.requiredToolNames).toEqual(contextToolNames);
       expect(turn.requireToolsBeforeText).toEqual(contextToolNames);
       expect(turn.requireAssistantText).toBe(true);
+      expect(turn.requiredReadPaths).toEqual([context.diffPath]);
       expect(turn.atomicTerminalToolName).toBeUndefined();
       expect(turn.terminalSubmitToolName).toBe(RECORD_ADVISOR_FINDINGS_TOOL);
       expect(turn.terminalSubmitRepairPrompt).toContain(RECORD_ADVISOR_FINDINGS_TOOL);
@@ -213,7 +217,7 @@ describe("PR review advisor specialist prompts", () => {
 
   it("keeps large specialist context in ordinary-read-sized Pi trace lines (#9986)", () => {
     const largeWords = "word\n".repeat(20_000) + "a".repeat(16_376) + "🦀";
-    const turn = buildSpecialistInvestigateTurn("behavior", {
+    const turn = buildSpecialistInvestigateTurn("customer-value-behavior", {
       ...context,
       controlledWords: largeWords,
     });
@@ -241,13 +245,13 @@ describe("PR review advisor specialist prompts", () => {
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
     const artifact = writeSpecialistSummary(
       directory,
-      "design-architecture",
+      "architecture-standard-work",
       "## Findings\n\nConcrete reduction.",
     );
 
     const expected = fs.readFileSync(artifact, "utf8");
-    expect(path.basename(artifact)).toBe("pr-review-design-architecture-summary.md");
-    expect(expected).toContain("PR Review Advisor — Design / Architecture specialist");
+    expect(path.basename(artifact)).toBe("pr-review-architecture-standard-work-summary.md");
+    expect(expected).toContain("PR Review Advisor — Architecture ownership specialist");
     expect(expected).toContain("Complete specialist review for maintainers and review agents.");
     expect(expected).toContain("Concrete reduction.");
   });
@@ -307,14 +311,14 @@ describe("PR review advisor specialist prompts", () => {
       Object.fromEntries(
         ADVISOR_INTERESTS.map((interest) => [
           interest,
-          interest === "documentation"
+          interest === "documentation-standard-work"
             ? [TERMINOLOGY_TRACE_TOOL, RECORD_ADVISOR_FINDINGS_TOOL]
             : [RECORD_ADVISOR_FINDINGS_TOOL],
         ]),
       ),
     );
     const documentationTools =
-      captured.find(([interest]) => interest === "documentation")?.[1] ?? [];
+      captured.find(([interest]) => interest === "documentation-standard-work")?.[1] ?? [];
     const trace = documentationTools.find(({ name }) => name === TERMINOLOGY_TRACE_TOOL) as CallableTool;
     const evidence = await trace.execute(
       "trace-1",
@@ -332,15 +336,8 @@ describe("PR review advisor specialist prompts", () => {
     (interest) => {
       const turn = buildSpecialistInvestigateTurn(interest, context);
       const expected =
-        interest === "documentation"
-          ? [
-              "read",
-              "grep",
-              "find",
-              "ls",
-              RECORD_ADVISOR_FINDINGS_TOOL,
-              TERMINOLOGY_TRACE_TOOL,
-            ]
+        interest === "documentation-standard-work"
+          ? ["read", "grep", "find", "ls", TERMINOLOGY_TRACE_TOOL, RECORD_ADVISOR_FINDINGS_TOOL]
           : ["read", "grep", "find", "ls", RECORD_ADVISOR_FINDINGS_TOOL];
 
       expect(turn.activeToolNames).toEqual(expected);

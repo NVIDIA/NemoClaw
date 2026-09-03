@@ -57,6 +57,20 @@ describe("checks runner", () => {
     });
   });
 
+  it("runs the Pi qualification receipt refresh check", () => {
+    const spawn = vi.fn((_command: string, _args: string[], _options: SpawnSyncOptions) =>
+      successfulSpawn(),
+    );
+
+    runChecks({ platform: "linux", spawn });
+
+    expect(spawn).toHaveBeenCalledWith(
+      "tsx",
+      ["scripts/checks/pi-qualification-receipt-refresh.mts"],
+      expect.objectContaining({ stdio: "inherit" }),
+    );
+  });
+
   it("runs Windows command shims through cmd.exe", () => {
     expect(
       buildCheckSpawnInvocation(sampleCheck, "win32", {
