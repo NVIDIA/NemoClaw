@@ -208,10 +208,10 @@ export function detectInferenceProviderHostState(
       : deps.probeWindowsHostOllamaRouteProtection(deps.runCapture, {
           runtime: containerRuntime ?? "unknown",
           wslDetection: { isWsl },
-          loopbackOnly: winOllamaState.loopbackOnly,
+          loopbackOnly: hasWindowsOllama ? winOllamaState.loopbackOnly : undefined,
         });
   const windowsOllamaReachable = windowsOllamaProtection.reachable;
-  const windowsOllamaRouteProtected = hasWindowsOllama && windowsOllamaProtection.protected;
+  const windowsOllamaRouteProtected = windowsOllamaProtection.protected;
   const directlyResolvedWindowsHostOllama = discoveredOllamaHost === OLLAMA_HOST_DOCKER_INTERNAL;
   const wslNetworkingMode =
     isWsl && discoveredOllamaHost === "127.0.0.1" && windowsOllamaReachable
@@ -225,7 +225,6 @@ export function detectInferenceProviderHostState(
   const couldBeMirroredWindowsHostOllama =
     discoveredOllamaHost === "127.0.0.1" &&
     wslNetworkingMode === "mirrored" &&
-    hasWindowsOllama &&
     windowsOllamaReachable &&
     hasWslLocalOllamaListener !== true;
   // Never pass an unprotected Windows daemon into the generic running-Ollama

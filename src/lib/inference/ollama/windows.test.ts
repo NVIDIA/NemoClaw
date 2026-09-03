@@ -18,16 +18,20 @@ function commandText(command: string | string[]): string {
 function loadWindowsOllamaWithMocks(
   run: ReturnType<typeof vi.fn>,
   runCapture: ReturnType<typeof vi.fn>,
+  spawnImpl?: ReturnType<typeof vi.fn>,
 ) {
   const runner = require(RUNNER_PATH);
+  const childProcess = require("child_process");
   const originalRun = runner.run;
   const originalRunCapture = runner.runCapture;
+  const originalSpawn = childProcess.spawn;
   // Stub the blocking wait so this test does not spend time on retry delays.
   const atomicsWaitStub = vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
 
   delete require.cache[WINDOWS_DIST_PATH];
   runner.run = run;
   runner.runCapture = runCapture;
+  childProcess.spawn = spawnImpl ?? originalSpawn;
 
   return {
     windows: require(WINDOWS_DIST_PATH),
@@ -35,6 +39,7 @@ function loadWindowsOllamaWithMocks(
       delete require.cache[WINDOWS_DIST_PATH];
       runner.run = originalRun;
       runner.runCapture = originalRunCapture;
+      childProcess.spawn = originalSpawn;
       atomicsWaitStub.mockRestore();
     },
   };
@@ -147,7 +152,7 @@ describe("Windows Ollama helper", () => {
           return "";
         case cmd.includes("SetEnvironmentVariable('OLLAMA_HOST'"):
           persistedHostCommands.push(cmd);
-          return "";
+          return "127.0.0.1:11434";
         case cmd.includes("Get-NetTCPConnection"):
           return "127.0.0.1";
         case Array.isArray(command) && command.includes(REBINDING_PROBE_HOST_HEADER):
@@ -186,6 +191,7 @@ describe("Windows Ollama helper", () => {
     expect(stopCommands[0]).toContain("Get-Process 'ollama app'");
     expect(stopCommands[1]).toContain("Get-Process ollama");
     expect(persistedHostCommands).toEqual([expect.stringContaining("'127.0.0.1:11434'")]);
+    expect(persistedHostCommands[0]).toContain("GetEnvironmentVariable('OLLAMA_HOST','User')");
     expect(persistedHostCommands[0]).not.toContain("0.0.0.0:11434");
     expect(runCapture).toHaveBeenCalledWith(
       [
@@ -204,6 +210,52 @@ describe("Windows Ollama helper", () => {
     );
     expect(delay).toHaveBeenCalled();
     expect(delay.mock.calls.every(([seconds]) => seconds > 0 && seconds <= 2)).toBe(true);
+  });
+
+  it("fails repair before stopping Ollama when the persistent loopback setting is rejected", () => {
+    const run = vi.fn();
+    const runCapture = vi.fn((command: string | string[]) =>
+      commandText(command).includes("SetEnvironmentVariable('OLLAMA_HOST'")
+        ? "0.0.0.0:11434"
+        : "",
+    );
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
+
+    try {
+      expect(windows.setupWindowsOllamaLoopbackBinding()).toBe(false);
+    } finally {
+      restore();
+      errorSpy.mockRestore();
+    }
+
+    expect(run).not.toHaveBeenCalled();
+    expect(
+      runCapture.mock.calls.some(([command]) => commandText(command).includes("Stop-Process")),
+    ).toBe(false);
+  });
+
+  it("fails fresh installation before spawning when the persistent loopback setting is rejected", async () => {
+    const run = vi.fn();
+    const runCapture = vi.fn((command: string | string[]) =>
+      commandText(command).includes("SetEnvironmentVariable('OLLAMA_HOST'")
+        ? "0.0.0.0:11434"
+        : "",
+    );
+    const spawn = vi.fn();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture, spawn);
+
+    try {
+      await expect(windows.installOllamaOnWindowsHost()).resolves.toEqual({ ok: false, path: "" });
+    } finally {
+      restore();
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it("isolates Docker credentials while waiting for the Windows-host daemon", () => {

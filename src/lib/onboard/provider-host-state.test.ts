@@ -547,6 +547,38 @@ describe("detectInferenceProviderHostState", () => {
     expect(probeWindowsHostOllamaRouteProtection).toHaveBeenCalledOnce();
   });
 
+  it("reuses a protected Windows route when its executable path is unavailable", () => {
+    const probeWindowsHostOllamaRouteProtection = vi.fn(() =>
+      windowsRouteProtection({
+        loopbackOnly: true,
+        reachable: true,
+        hostValidationEnabled: true,
+        protected: true,
+      }),
+    );
+    const deps = buildDeps({
+      isWsl: vi.fn(() => true),
+      findReachableOllamaHost: vi.fn(() => "host.docker.internal"),
+      detectWindowsHostOllama: vi.fn(() => ({
+        installed: false,
+        installedPath: "",
+        loopbackOnly: false,
+      })),
+      probeWindowsHostOllamaRouteProtection,
+    });
+
+    const state = detectWithDeps(deps);
+
+    expect(state.hasWindowsOllama).toBe(false);
+    expect(state.isWindowsHostOllama).toBe(true);
+    expect(state.ollamaHost).toBe("host.docker.internal");
+    expect(state.ollamaInstallMenu.entry).toBeNull();
+    expect(probeWindowsHostOllamaRouteProtection).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ loopbackOnly: undefined }),
+    );
+  });
+
   it("rejects a wildcard-bound Windows-host Ollama route even when Docker can reach it", () => {
     const resetOllamaHostCache = vi.fn();
     const deps = buildDeps({

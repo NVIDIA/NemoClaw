@@ -18,6 +18,7 @@ const {
 // Native Windows activation remains gated by #8178.
 const sleepBuffer = new SharedArrayBuffer(4);
 const sleepArray = new Int32Array(sleepBuffer);
+const OLLAMA_LOOPBACK_HOST = "127.0.0.1:11434";
 
 function sleep(seconds: number): void {
   if (seconds <= 0) return;
@@ -41,12 +42,16 @@ function psSingleQuote(value: string): string {
 async function installOllamaOnWindowsHost(): Promise<{ ok: boolean; path: string }> {
   console.log("  Installing Ollama on Windows host...");
   console.log("  This can take several minutes. Output may pause silently");
+  if (!persistOllamaLoopbackHostEnvVar()) {
+    console.error("  Failed to persist the Windows Ollama loopback binding.");
+    return { ok: false, path: "" };
+  }
   await new Promise<void>((resolve) => {
     const child = spawn(
       "powershell.exe",
       [
         "-Command",
-        "[Environment]::SetEnvironmentVariable('OLLAMA_HOST','127.0.0.1:11434','User'); $env:OLLAMA_HOST='127.0.0.1:11434'; irm https://ollama.com/install.ps1 | iex",
+        `$env:OLLAMA_HOST='${OLLAMA_LOOPBACK_HOST}'; irm https://ollama.com/install.ps1 | iex`,
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
@@ -88,15 +93,17 @@ function captureWindowsOllamaWatcherPath(): string {
 
 // User-scope so the next login-time tray launch remains loopback-only without
 // NemoClaw being involved. This also replaces legacy wildcard configuration.
-function persistOllamaLoopbackHostEnvVar(): void {
-  runCapture(
+function persistOllamaLoopbackHostEnvVar(): boolean {
+  const persistedHost = runCapture(
     [
       "powershell.exe",
       "-Command",
-      "[Environment]::SetEnvironmentVariable('OLLAMA_HOST','127.0.0.1:11434','User')",
+      `[Environment]::SetEnvironmentVariable('OLLAMA_HOST','${OLLAMA_LOOPBACK_HOST}','User'); ` +
+        "[Environment]::GetEnvironmentVariable('OLLAMA_HOST','User')",
     ],
     { ignoreError: true },
-  );
+  ).trim();
+  return persistedHost === OLLAMA_LOOPBACK_HOST;
 }
 
 // Order matters: kill 'ollama app' (the tray watcher) before 'ollama'
@@ -210,7 +217,10 @@ function setupWindowsOllamaLoopbackBinding(
 ): boolean {
   const delay = opts.delay ?? sleep;
   const watcherPath = captureWindowsOllamaWatcherPath();
-  persistOllamaLoopbackHostEnvVar();
+  if (!persistOllamaLoopbackHostEnvVar()) {
+    console.error("  Failed to persist the Windows Ollama loopback binding.");
+    return false;
+  }
   if (opts.announceStop) {
     console.log("  Stopping existing Ollama on Windows host...");
   }
