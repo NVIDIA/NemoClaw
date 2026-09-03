@@ -37,13 +37,19 @@ import {
 } from "../messaging-config";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
-import { assertProviderlessInterceptorEnvironment } from "../entry-options";
+import {
+  assertProviderlessInterceptorEnvironment,
+  enforceRemovedImmutabilityMigrationBoundary,
+} from "../entry-options";
 import type {
   ManagedHermesStateVolumeCleanupResult,
   ManagedHermesStateVolumeContext,
 } from "../managed-workload/hermes-state-volume";
 import { removeManagedHermesStateVolume } from "../managed-workload/hermes-state-volume";
-import type { OwnedSandboxRecreateRuntime } from "../onboard-recreate-journal";
+import {
+  createOnboardRecreateGatewayAuthorityRevalidator,
+  type OwnedSandboxRecreateRuntime,
+} from "../onboard-recreate-journal";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
 import {
   managedStartupStateRoots,
@@ -73,6 +79,7 @@ import {
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
 import { materializeRebuildPolicyHandoff } from "./rebuild-policy-handoff";
+
 function cancelRecoveryIdentity(
   liveExists: boolean,
   requireVerifiedCreateBoundary: () => VerifiedSandboxCreateBoundary,
@@ -1212,6 +1219,35 @@ function readHermesPortableLifecycleGeneration(input: {
     : undefined;
 }
 
+function selectRecreateGatewayAuthority(
+  requested: boolean,
+  target: { sandboxName: string; gatewayName: string; gatewayPort: number },
+) {
+  return requested ? createOnboardRecreateGatewayAuthorityRevalidator(target) : undefined;
+}
+
+function deleteJournaledRecreateSource(input: {
+  readonly runtime: Pick<
+    import("../sandbox-recreate-transaction").SandboxRecreateRuntime,
+    "beginDelete" | "journaledGatewayName"
+  >;
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
+}): void {
+  if (input.runtime.beginDelete() !== "source") return;
+  input.runOpenshell(
+    [
+      "sandbox",
+      "delete",
+      "-g",
+      input.runtime.journaledGatewayName ?? input.gatewayName,
+      input.sandboxName,
+    ],
+    { ignoreError: true },
+  );
+}
+
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
   const postCreateRecoveryRetryOwner = installPostCreateRecoveryRetryOwner();
   return async function createSandboxWithBaseImageResolution(
@@ -1241,6 +1277,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     createIntent: import("../types").SandboxCreateIntent | null = null,
     runVerifiedSandboxCreateEffects: import("../types").VerifiedSandboxCreateEffects | null = null,
     preparedBuildContext: PreparedSandboxBuildContext | null = null,
+    allowRemovedImmutabilityStateRecord = false,
   ) {
     const portableRuntimeAuthority = portableRuntimeContext?.authority ?? null;
     const {
@@ -1364,6 +1401,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxNameOverride ?? (await promptValidatedSandboxName(agent)),
       "sandbox name",
     );
+    enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
+      allowStateRecord: allowRemovedImmutabilityStateRecord,
+    });
     preparedDcodeRebuild.assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
     const effectiveAgent = sandboxAgent.getEffectiveSandboxAgent(agent);
     const requestedAgentName = getRequestedSandboxAgentName(effectiveAgent);
@@ -1611,6 +1651,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       existingEntry,
       readRegistry: registry.getSandbox,
     });
+    const recreateGatewayAuthority = selectRecreateGatewayAuthority(
+      Boolean(createIntent?.recreateTransaction),
+      { sandboxName, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT },
+    );
     let recreateRuntime:
       | import("../sandbox-recreate-transaction").SandboxRecreateRuntime
       | OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(
@@ -1621,6 +1665,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       recreateRegistryEntry,
       getSandboxRecreateObservation,
       note,
+      () => registry.getSandbox(sandboxName),
+      recreateGatewayAuthority?.revalidate,
     );
     const acceptedTargetPendingIdentity = readAcceptedPendingVerifiedCreate({
       acceptedTarget: recreateRuntime.acceptedTarget,
@@ -1993,16 +2039,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           redact,
         });
         revalidateSandboxIdentity(true, `deleting sandbox '${sandboxName}'`);
-        runOpenshell(
-          [
-            "sandbox",
-            "delete",
-            "-g",
-            recreateRuntime.journaledGatewayName ?? GATEWAY_NAME,
-            sandboxName,
-          ],
-          { ignoreError: true },
-        );
+        deleteJournaledRecreateSource({
+          runtime: recreateRuntime,
+          sandboxName,
+          gatewayName: GATEWAY_NAME,
+          runOpenshell,
+        });
         if (
           !waitForSandboxRecreateDeleteAbsence(
             sandboxName,

@@ -15,6 +15,7 @@ type MessagingProviderUpsertOptions = {
   replaceExisting?: boolean;
   bestEffort?: boolean;
   requireExactBindings?: boolean;
+  gatewayName?: string;
 };
 
 type LegacyOnboardProvidersModule = {
@@ -124,7 +125,10 @@ export const policyChannelDependencies = {
     options?: MessagingProviderUpsertOptions,
   ): string[] {
     const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
-    return providers.upsertMessagingProviders(tokenDefs, gatewayRunner(gatewayName), options);
+    return providers.upsertMessagingProviders(tokenDefs, gatewayRunner(gatewayName), {
+      ...options,
+      gatewayName,
+    });
   },
   rebuildSandbox(
     sandboxName: Parameters<RebuildModule["rebuildSandbox"]>[0],

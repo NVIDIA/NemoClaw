@@ -15,6 +15,10 @@ import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
 import { withPortableOnboardRetirementBoundary } from "../../onboard/portable-retirement-authority";
 import { cleanupTempDir } from "../../onboard/temp-files";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
+import {
+  enforceRemovedImmutabilityMigrationBoundary,
+  retireRemovedImmutabilityStateRecord,
+} from "../../state/migrations/removed-immutability";
 import * as onboardSession from "../../state/onboard-session";
 import { load as loadRegistry, REGISTRY_FILE } from "../../state/registry/persistence";
 import {
@@ -72,7 +76,6 @@ import {
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
 import { createRebuildRegistryRollback } from "./rebuild-registry-rollback";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
-import { runRebuildShieldsPhase } from "./rebuild-shields-phase";
 
 export { buildRefreshMutableOpenClawConfigHashCommand, stageMessagingManifestPlanForRebuild };
 
@@ -110,6 +113,10 @@ export async function rebuildSandbox(
     },
     () =>
       withMcpLifecycleLock(sandboxName, async () => {
+        const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
+          sandboxName,
+          { allowStateRecord: true },
+        );
         assertSandboxRebuildCommandAvailable(sandboxName);
         const scopedEnvKeys = [
           BRAVE_API_KEY_ENV,
@@ -122,7 +129,12 @@ export async function rebuildSandbox(
         ];
         const savedEnv = scopedEnvKeys.map((key) => [key, process.env[key]] as const);
         try {
-          await rebuildSandboxUnlocked(sandboxName, options, opts);
+          await rebuildSandboxUnlocked(
+            sandboxName,
+            options,
+            opts,
+            removedImmutabilityMigration.stateRecord !== null,
+          );
         } finally {
           for (const key of scopedEnvKeys) delete process.env[key];
           Object.assign(
@@ -141,6 +153,7 @@ async function rebuildSandboxUnlocked(
   sandboxName: string,
   options: string[] | RebuildSandboxOptions,
   opts: RebuildSandboxExecutionOptions,
+  retireRemovedImmutabilityState: boolean,
 ): Promise<void> {
   let executionOptions = opts;
   if (!executionOptions.recoveryManifest) {
@@ -209,20 +222,6 @@ async function rebuildSandboxUnlocked(
       getRecoveryRegistrySnapshot: () => recoveryRegistrySnapshot,
       log,
     });
-    const shieldsPhase = runRebuildShieldsPhase(
-      sandboxName,
-      recoveryRecreate,
-      releaseOnboardLock,
-      bail,
-    );
-    if (!shieldsPhase) return;
-    const {
-      window: rebuildShieldsWindow,
-      staleSandboxWasLocked,
-      relock: relockShieldsIfNeeded,
-    } = shieldsPhase;
-    let sandboxStillExists = true;
-    let sandboxExistenceAmbiguous = false;
     let retainPolicyHandoffForRecovery = false;
 
     try {
@@ -384,7 +383,6 @@ async function rebuildSandboxUnlocked(
         webSearchConfig: durableConfig.webSearchConfig,
         log,
         bail,
-        relockShieldsIfNeeded,
       });
       if (!backup) return;
       rebuildPolicySourcePath = backup.policySourcePath;
@@ -575,23 +573,26 @@ async function rebuildSandboxUnlocked(
           backupManifest: recoveryBackup,
           log,
         });
-        await runRebuildPostRestorePhase({
+        const postRestoreVerification = await runRebuildPostRestorePhase({
           sandboxName,
-          sandboxEntry,
           targetAgentName: rebuildAgent || "openclaw",
           messagingPlan,
           backupManifest: recoveryBackup,
           mcpEntries: Object.values(sandboxEntry.mcp?.bridges ?? {}),
           restoreSucceeded: restored.restoreSucceeded,
-          staleRecovery: false,
-          recoveryRecreate: true,
           preparedBackupRecovery: true,
-          staleSandboxWasLocked,
           versionCheck,
-          relockShieldsIfNeeded,
           log,
           bail,
         });
+        if (retireRemovedImmutabilityState) {
+          if (!postRestoreVerification?.mutableConfigPermissionsVerified) {
+            return bail(
+              "Removed Shields state was retained because the rebuilt sandbox's mutable config posture was not verified.",
+            );
+          }
+          retireRemovedImmutabilityStateRecord(sandboxName, "mutable-rebuild");
+        }
         if (!completePolicyHandoffCleanup(recreateJournal.id, recoveryBackup)) return;
         if (!clearRecoveryMarker(recreateJournal.id, recoveryBackup)) return;
         recreateJournal.completeAcceptedTarget();
@@ -614,7 +615,6 @@ async function rebuildSandboxUnlocked(
         force: normalized.force,
         log,
         bail,
-        relockShieldsIfNeeded,
         validateAfterMcpPreparation: async (preparation) => {
           if (preparation.policyHandoff !== undefined) {
             try {
@@ -696,11 +696,9 @@ async function rebuildSandboxUnlocked(
         cleanupDockerOrphanAfterDelete: () =>
           removeStaleRebuildDockerOrphan(sandboxName, sandboxEntry.openshellDriver, log),
         onDeleted: () => {
-          sandboxStillExists = false;
           retainPolicyHandoffForRecovery = true;
         },
         onDeleteStateAmbiguous: () => {
-          sandboxExistenceAmbiguous = true;
           retainPolicyHandoffForRecovery = true;
         },
       });
@@ -729,14 +727,10 @@ async function rebuildSandboxUnlocked(
           credentialEnv,
           baseImagePreflight,
           recoveryRecreate,
+          preparedBackupRecovery,
           registryRollback,
           backupManifest: backup.backupManifest,
           mcpEntries: mcpPreparation.entries,
-          rebuildShieldsWindow,
-          relockShieldsIfNeeded,
-          onCreated: () => {
-            sandboxStillExists = true;
-          },
           log,
           bail,
         });
@@ -781,24 +775,27 @@ async function rebuildSandboxUnlocked(
             }
           })()
         : restore();
-      await runRebuildPostRestorePhase({
+      const postRestoreVerification = await runRebuildPostRestorePhase({
         sandboxName,
-        sandboxEntry,
         targetAgentName: rebuildAgent || "openclaw",
         messagingPlan,
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,
         restoreSucceeded: restored.restoreSucceeded,
         hermesCronRestoreIdentity,
-        staleRecovery,
-        recoveryRecreate,
         preparedBackupRecovery,
-        staleSandboxWasLocked,
         versionCheck,
-        relockShieldsIfNeeded,
         log,
         bail,
       });
+      if (retireRemovedImmutabilityState) {
+        if (!postRestoreVerification?.mutableConfigPermissionsVerified) {
+          return bail(
+            "Removed Shields state was retained because the rebuilt sandbox's mutable config posture was not verified.",
+          );
+        }
+        retireRemovedImmutabilityStateRecord(sandboxName, "mutable-rebuild");
+      }
       if (backup.backupManifest) {
         if (!completePolicyHandoffCleanup(recreateJournal.id, backup.backupManifest)) return;
         if (!clearRecoveryMarker(recreateJournal.id, backup.backupManifest)) return;
@@ -817,9 +814,6 @@ async function rebuildSandboxUnlocked(
           () => cleanupTempDir(retainedPolicySourcePath, "nemoclaw-rebuild-policy"),
           `  Warning: temporary rebuild policy handoff could not be removed. Remove ${retainedPolicySourcePath} before retrying.`,
         );
-      }
-      if (!rebuildShieldsWindow.relocked && !sandboxExistenceAmbiguous) {
-        relockShieldsIfNeeded(sandboxStillExists);
       }
     }
   } finally {

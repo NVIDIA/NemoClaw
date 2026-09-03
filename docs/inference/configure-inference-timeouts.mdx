@@ -51,10 +51,9 @@ Each key bounds a different deadline.
 `models.providers.<provider-id>.timeoutSeconds` bounds one provider request, and no flag overrides it.
 Raise the provider key when a turn times out while waiting for the model server, because a longer `--timeout` does not extend the provider request.
 
-To change a deadline on an existing sandbox instead of recreating it, lower shields first and write the key directly.
+To change a deadline on an existing sandbox instead of recreating it, write the key directly.
 
 ```bash
-$$nemoclaw <sandbox-name> shields down
 $$nemoclaw <sandbox-name> config set --key agents.defaults.timeoutSeconds --value 1800 --restart
 ```
 

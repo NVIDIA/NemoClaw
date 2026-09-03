@@ -7,7 +7,6 @@ import {
   RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
-  RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   type RuntimeProviderChannelStopTransport,
@@ -37,7 +36,6 @@ const BUNDLE_SURFACES = [
   "hostLocalInference",
   "lifecycle",
   "mutationAuthority",
-  "stateMutation",
   "bootstrap",
   "snapshot",
   "recovery",
@@ -93,7 +91,6 @@ const CONTAINER_ENGINE_OPERATIONS = new Set<RuntimeProviderContainerEngineOperat
   "gateway-inspection",
   "host-local-inference",
   "sandbox-lifecycle",
-  "state-mutation",
   "workload-cleanup",
 ]);
 const HOST_LOCAL_INFERENCE_SERVICES = new Set<HostLocalInferenceService>([
@@ -462,26 +459,6 @@ function validateMutationAuthoritySurface(
   }
 }
 
-function validateStateMutationSurface(providerId: string, surface: Record<string, unknown>): void {
-  if (surface.supported !== true) return;
-  if (surface.contractVersion !== RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION) {
-    throw new RuntimeProviderRegistrationError(
-      `stateMutation for '${providerId}' has an unsupported contract version`,
-    );
-  }
-  for (const operation of [
-    "acquire",
-    "assertFenced",
-    "publish",
-    "rollback",
-    "activate",
-    "release",
-    "recover",
-  ] as const) {
-    requireFunction(surface, operation, "stateMutation");
-  }
-}
-
 function validateBootstrapSurface(surface: Record<string, unknown>): void {
   if (surface.supported !== true) return;
   if (surface.bootstrapKind === "managed-image") {
@@ -598,7 +575,6 @@ function validateSupportedSurfaceSchemas(
   validateHostLocalInferenceSurface(providerId, surfaces.hostLocalInference);
   validateLifecycleSurface(providerId, surfaces.lifecycle);
   validateMutationAuthoritySurface(providerId, surfaces.mutationAuthority);
-  validateStateMutationSurface(providerId, surfaces.stateMutation);
   validateBootstrapSurface(surfaces.bootstrap);
   validateSnapshotSurface(providerId, surfaces.snapshot);
   validateRecoverySurface(surfaces.recovery);
@@ -735,18 +711,6 @@ export function requireRuntimeProviderMutationAuthority(
   }
 }
 
-export function requireRuntimeProviderStateMutationSurface(
-  bundle: RuntimeProviderBundle,
-): Extract<RuntimeProviderBundle["stateMutation"], { readonly supported: true }> {
-  const surface = bundle.stateMutation;
-  if (surface.supported !== true) {
-    throw new RuntimeProviderSelectionError(
-      `Runtime provider '${bundle.identity.id}' has no state-mutation implementation: ${surface.reason}`,
-    );
-  }
-  return surface;
-}
-
 export type RuntimeProviderDestructiveCleanupAuthority = {
   readonly provider: RuntimeProviderBundle & {
     readonly cleanup: Extract<RuntimeProviderBundle["cleanup"], { readonly supported: true }>;
@@ -768,7 +732,7 @@ export type RuntimeProviderDestructiveCleanupAuthority = {
  * receipts, and a provider may use a CLI, socket, API, or no container engine.
  * Regression proof: snapshot-restore-lifecycle.test.ts rejects unknown
  * providers and mismatched legacy workload receipts before any delete,
- * provider cleanup, shields cleanup, or replacement creation.
+ * provider cleanup or replacement creation.
  * Removal condition: this guard may be replaced only by a provider-native
  * atomic replace operation that returns authenticated rollback/cleanup
  * receipts for the exact prior runtime.
