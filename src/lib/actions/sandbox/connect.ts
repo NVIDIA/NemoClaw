@@ -1345,12 +1345,12 @@ function verifyLocalInferenceRouteDependencies(
   { quiet = false }: { quiet?: boolean } = {},
 ): boolean {
   const isOllamaLocal = provider === "ollama-local";
-  const frontOllamaWithProxy = isOllamaLocal && shouldFrontOllamaWithProxy();
   if (isOllamaLocal) {
     findReachableOllamaHost(undefined, {}, undefined, { revalidate: true });
-    if (frontOllamaWithProxy) {
-      ensureOllamaAuthProxy();
-    }
+  }
+  const frontOllamaWithProxy = isOllamaLocal && shouldFrontOllamaWithProxy();
+  if (frontOllamaWithProxy) {
+    ensureOllamaAuthProxy();
   }
   const localHealth = probeLocalProviderHealth(provider, {
     skipOllamaAuthProxySubprobe: isOllamaLocal,

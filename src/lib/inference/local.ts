@@ -89,22 +89,14 @@ import { getDualStationManagedVllmBaseUrl } from "./vllm-station-cluster-lifecyc
 export type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 
 /**
- * Port containers use to reach Ollama. Returns the raw Ollama port when the
- * container can reach the host's 127.0.0.1 directly through a local Docker
- * Desktop target on WSL, and the auth proxy port otherwise.
- * Memoised — call resetOllamaContainerPortCache() in tests.
+ * Port containers use to reach Ollama. The accepted, revalidated daemon route
+ * owns this choice: Windows-host Ollama uses its qualified raw route, while
+ * WSL-local and other host-local daemons use the auth proxy.
  */
-let _ollamaContainerPort: number | null = null;
 export function getOllamaContainerPort(): number {
-  if (_ollamaContainerPort !== null) return _ollamaContainerPort;
-  const runtime = detectContainerRuntimeFromDockerInfo();
-  _ollamaContainerPort = windowsHostOllamaRawRouteSupported(runtime)
+  return getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL
     ? OLLAMA_PORT
     : OLLAMA_PROXY_PORT;
-  return _ollamaContainerPort;
-}
-export function resetOllamaContainerPortCache(): void {
-  _ollamaContainerPort = null;
 }
 
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
@@ -1559,17 +1551,14 @@ export function getLocalProviderContainerReachabilityCheck(
       ];
     }
     case "ollama-local": {
-      // Check the host port reachable from containers: raw Ollama when host
-      // loopback is reachable, otherwise the auth proxy.
+      // Check the port owned by the accepted daemon route: raw Ollama for the
+      // qualified Windows-host route, otherwise the auth proxy.
       // Use -w %{http_code} (instead of -sf) so an authenticated-but-401
       // response still proves the network path works — the proxy now
       // requires a Bearer token on every endpoint (#3338) and the ephemeral
       // probe container doesn't carry one, but the goal here is connectivity
       // not authorisation.
-      const containerPort =
-        getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL
-          ? OLLAMA_PORT
-          : getOllamaContainerPort();
+      const containerPort = getOllamaContainerPort();
       if (responseMode === "body" && containerPort !== OLLAMA_PORT) return null;
       return [
         "docker",

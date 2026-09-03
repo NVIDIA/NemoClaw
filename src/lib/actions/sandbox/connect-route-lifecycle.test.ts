@@ -122,6 +122,9 @@ describe("connectSandbox route lifecycle", () => {
     expect(harness.findReachableOllamaHostSpy).toHaveBeenCalledWith(undefined, {}, undefined, {
       revalidate: true,
     });
+    expect(harness.findReachableOllamaHostSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.shouldFrontOllamaWithProxySpy.mock.invocationCallOrder[0],
+    );
     expect(harness.ensureOllamaAuthProxySpy).toHaveBeenCalled();
     expect(harness.probeOllamaAuthProxyHealthSpy).toHaveBeenCalled();
   });

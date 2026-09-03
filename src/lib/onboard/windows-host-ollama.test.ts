@@ -17,8 +17,47 @@ vi.mock("../platform", async (importOriginal) => ({
   isWsl: vi.fn(() => true),
 }));
 
-import { isWsl } from "../platform";
+import { isWsl, windowsProcessListensOnlyOnLoopback } from "../platform";
 import { detectWindowsHostOllama } from "./windows-host-ollama";
+
+describe("windowsProcessListensOnlyOnLoopback", () => {
+  const probe = { processName: "ollama", port: 11434, timeoutMs: 5_000 };
+
+  it("accepts only Ollama-owned IPv4 and IPv6 loopback listeners", () => {
+    const capture = vi.fn(() => "127.0.0.1\r\n::1\r\n");
+
+    expect(windowsProcessListensOnlyOnLoopback(capture, probe)).toBe(true);
+    expect(capture).toHaveBeenCalledWith(
+      [
+        "powershell.exe",
+        "-Command",
+        expect.stringMatching(
+          /Get-Process 'ollama'.*Get-NetTCPConnection -LocalPort 11434.*\$processPids -contains \$_\.OwningProcess/,
+        ),
+      ],
+      { ignoreError: true, timeout: 5_000 },
+    );
+  });
+
+  it.each(["0.0.0.0", "192.168.1.10", "127.0.0.1\n0.0.0.0", ""])(
+    "rejects unsafe or absent Windows listener output: %j",
+    (addresses) => {
+      expect(windowsProcessListensOnlyOnLoopback(() => addresses, probe)).toBe(false);
+    },
+  );
+
+  it.each([
+    { processName: "", port: 11434, timeoutMs: 5_000 },
+    { processName: "ollama", port: 0, timeoutMs: 5_000 },
+    { processName: "ollama", port: 65_536, timeoutMs: 5_000 },
+    { processName: "ollama", port: 1.5, timeoutMs: 5_000 },
+  ])("rejects a malformed Windows listener probe: %j", (invalidProbe) => {
+    const capture = vi.fn(() => "127.0.0.1");
+
+    expect(windowsProcessListensOnlyOnLoopback(capture, invalidProbe)).toBe(false);
+    expect(capture).not.toHaveBeenCalled();
+  });
+});
 
 describe("detectWindowsHostOllama", () => {
   afterEach(() => {

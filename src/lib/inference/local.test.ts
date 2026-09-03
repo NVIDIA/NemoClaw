@@ -61,7 +61,6 @@ import {
   probeLocalProviderHealth,
   probeOllamaAuthProxyHealth,
   QWEN3_6_OLLAMA_MODEL,
-  resetOllamaContainerPortCache,
   resetOllamaHostCache,
   setResolvedOllamaHost,
   validateLocalProvider,
@@ -90,7 +89,6 @@ describe("local inference helpers", () => {
     );
     chmodSync(fakeDockerPath, 0o755);
     process.env.PATH = `${fakeDockerDir}${path.delimiter}${originalPath ?? ""}`;
-    resetOllamaContainerPortCache();
   });
 
   afterAll(() => {
@@ -102,7 +100,6 @@ describe("local inference helpers", () => {
     if (fakeDockerDir) {
       rmSync(fakeDockerDir, { recursive: true, force: true });
     }
-    resetOllamaContainerPortCache();
   });
 
   afterEach(() => {
