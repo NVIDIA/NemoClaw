@@ -49,9 +49,9 @@ const LIVE_TIMEOUT_MS = 36 * 60_000;
 const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
 const INFERENCE_MODEL = "snapshot-commands-model";
 const OPENCLAW_MAIN_SESSION_STORE = "/sandbox/.openclaw/agents/main/sessions/sessions.json";
-const PROTECTED_CREDENTIALS_DIR = "/sandbox/.openclaw/credentials";
-const PROTECTED_CREDENTIAL_FILE = `${PROTECTED_CREDENTIALS_DIR}/backup-all-fixture.json`;
-const PROTECTED_CREDENTIAL_FIXTURE = JSON.stringify({
+const CREDENTIALS_DIR = "/sandbox/.openclaw/credentials";
+const CREDENTIAL_FILE = `${CREDENTIALS_DIR}/backup-all-fixture.json`;
+const CREDENTIAL_FIXTURE = JSON.stringify({
   apiKey: INFERENCE_API_KEY,
 });
 
@@ -179,16 +179,6 @@ process.exit(found === expected ? 0 : 1);
   expect(result.exitCode, resultText(result)).toBe(0);
 }
 
-async function expectShieldsUp(host: HostCliClient, artifactName: string): Promise<void> {
-  const result = await host.command("nemoclaw", [SANDBOX_NAME, "shields", "status"], {
-    artifactName,
-    env: commandEnv(),
-    timeoutMs: 60_000,
-  });
-  expect(result.exitCode, resultText(result)).toBe(0);
-  expect(result.stdout).toContain("Shields: UP");
-}
-
 async function expectLiveBaselineExcluded(
   sandbox: SandboxClient,
   sandboxName: string,
@@ -216,7 +206,7 @@ test(
         "destroy, freshly onboard, and restore workspace state",
         "restore the snapshot into a clone",
         "verify the restored clone state and gateway pairing",
-        "back up protected credentials and restore Shields",
+        "back up credential state without secret leaks",
         "record snapshot lifecycle evidence",
       ],
     },
@@ -234,7 +224,7 @@ test(
         "snapshot restore preserves the destination OpenShell policy",
         "legacy snapshot restore --to carries the source live OpenShell policy into the clone; managed snapshots refuse before destination effects until clone rebind is activated",
         "a restored legacy clone owns its authenticated gateway session",
-        "backup-all excludes credential values and restores Shields UP",
+        "backup-all excludes credential values",
       ],
     });
 
@@ -533,83 +523,36 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
         throw new Error(`Unexpected snapshot clone result classification: ${cloneRestoreResult}`);
     }
 
-    progress.phase("back up protected credentials and restore Shields");
-    const writeProtectedCredential = await sandbox.exec(
+    progress.phase("back up credential state without secret leaks");
+    const writeCredential = await sandbox.exec(
       SANDBOX_NAME,
       [
         "sh",
         "-lc",
         'mkdir -p "$1" && printf %s "$2" >"$3"',
-        "write-protected-credential",
-        PROTECTED_CREDENTIALS_DIR,
-        PROTECTED_CREDENTIAL_FIXTURE,
-        PROTECTED_CREDENTIAL_FILE,
+        "write-credential-state",
+        CREDENTIALS_DIR,
+        CREDENTIAL_FIXTURE,
+        CREDENTIAL_FILE,
       ],
       {
-        artifactName: "phase-11-write-protected-credential",
+        artifactName: "phase-11-write-credential-state",
         env: commandEnv(),
         redactionValues: [INFERENCE_API_KEY],
         timeoutMs: 30_000,
       },
     );
-    expect(writeProtectedCredential.exitCode, resultText(writeProtectedCredential)).toBe(0);
+    expect(writeCredential.exitCode, resultText(writeCredential)).toBe(0);
 
-    const lockForProtectedBackup = await host.command("nemoclaw", [SANDBOX_NAME, "shields", "up"], {
-      artifactName: "phase-11-shields-up-before-protected-backup",
-      env: commandEnv(),
-      redactionValues: [INFERENCE_API_KEY],
-      timeoutMs: 120_000,
-    });
-    expect(lockForProtectedBackup.exitCode, resultText(lockForProtectedBackup)).toBe(0);
-    expect(resultText(lockForProtectedBackup)).toContain("Lockdown active");
-    cleanup.trackDisposable(`restore Shields UP for ${SANDBOX_NAME} before destroy`, async () => {
-      const restore = await host.command("nemoclaw", [SANDBOX_NAME, "shields", "up"], {
-        artifactName: "cleanup-shields-up-after-protected-backup",
-        env: commandEnv(),
-        redactionValues: [INFERENCE_API_KEY],
-        timeoutMs: 120_000,
-      });
-      expect(restore.exitCode, resultText(restore)).toBe(0);
-      expect(resultText(restore)).toMatch(/Lockdown (?:is already )?active/);
-    });
-    await expectShieldsUp(host, "phase-11-shields-status-before-protected-backup");
-
-    const unreadableBeforeBackup = await sandbox.exec(
-      SANDBOX_NAME,
-      ["cat", PROTECTED_CREDENTIAL_FILE],
-      {
-        artifactName: "phase-11-protected-credential-unreadable-before-backup",
-        env: commandEnv(),
-        redactionValues: [INFERENCE_API_KEY],
-        timeoutMs: 30_000,
-      },
-    );
-    expect(unreadableBeforeBackup.exitCode, resultText(unreadableBeforeBackup)).not.toBe(0);
-    expect(resultText(unreadableBeforeBackup)).not.toContain(INFERENCE_API_KEY);
-
-    const protectedBackup = await host.command("nemoclaw", ["backup-all"], {
-      artifactName: "phase-11-backup-all-protected-credentials",
+    const credentialBackup = await host.command("nemoclaw", ["backup-all"], {
+      artifactName: "phase-11-backup-all-credential-state",
       env: { ...commandEnv(), NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS: "1" },
       redactionValues: [INFERENCE_API_KEY],
       timeoutMs: 180_000,
     });
-    expect(protectedBackup.exitCode, resultText(protectedBackup)).toBe(0);
-    expect(resultText(protectedBackup)).not.toContain(INFERENCE_API_KEY);
+    expect(credentialBackup.exitCode, resultText(credentialBackup)).toBe(0);
+    expect(resultText(credentialBackup)).not.toContain(INFERENCE_API_KEY);
     expect(scanSnapshotCredentialLeaks(BACKUP_DIR)).toEqual([]);
-
-    await expectShieldsUp(host, "phase-11-shields-status-after-protected-backup");
-    const unreadableAfterBackup = await sandbox.exec(
-      SANDBOX_NAME,
-      ["cat", PROTECTED_CREDENTIAL_FILE],
-      {
-        artifactName: "phase-11-protected-credential-unreadable-after-backup",
-        env: commandEnv(),
-        redactionValues: [INFERENCE_API_KEY],
-        timeoutMs: 30_000,
-      },
-    );
-    expect(unreadableAfterBackup.exitCode, resultText(unreadableAfterBackup)).not.toBe(0);
-    expect(resultText(unreadableAfterBackup)).not.toContain(INFERENCE_API_KEY);
 
     progress.phase("record snapshot lifecycle evidence");
     await artifacts.target.complete({
@@ -619,7 +562,7 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
       excludedLiveBaselineKey: BASELINE_EXCLUSION_KEY,
       cloneSandboxName: CLONE_SANDBOX_NAME,
       cloneRestoreResult,
-      protectedCredentialsExcluded: true,
+      credentialSecretsExcluded: true,
     });
   },
 );

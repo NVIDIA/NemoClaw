@@ -6,6 +6,7 @@ import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { testTimeout } from "../../helpers/timeouts.ts";
 import {
   assertBraveConfig,
   assertBraveResponse,
@@ -20,7 +21,7 @@ import {
   sandboxShell,
 } from "./brave-search-helpers.ts";
 
-const LIVE_TIMEOUT_MS = 35 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(35 * 60_000);
 
 test(
   "Brave search preset wires policy/config, performs real searches, and survives disabled-search reuse (#2687, #10404)",
