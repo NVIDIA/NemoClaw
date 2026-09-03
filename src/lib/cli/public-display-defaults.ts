@@ -447,28 +447,6 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[local-mount-point]",
     },
   ],
-  "sandbox:shields:down": [
-    {
-      group: "Sandbox Management",
-      order: 25,
-      flags: "[--timeout 5m] [--reason <text>] [--policy permissive]",
-      hidden: true,
-    },
-  ],
-  "sandbox:shields:status": [
-    {
-      group: "Sandbox Management",
-      order: 27,
-      hidden: true,
-    },
-  ],
-  "sandbox:shields:up": [
-    {
-      group: "Sandbox Management",
-      order: 26,
-      hidden: true,
-    },
-  ],
   "sandbox:skill:install": [
     {
       group: "Skills",

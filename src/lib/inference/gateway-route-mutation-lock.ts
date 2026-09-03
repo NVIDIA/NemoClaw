@@ -18,6 +18,17 @@ export function resolveCurrentUserModelRouterLockStateDir(homeDir: string = os.h
   return path.join(resolveSharedLocalAdapterStateRoot(homeDir), "state");
 }
 
+/** Resolve Model Router lock options without touching the filesystem. */
+export function resolveModelRouterPortLifecycleLockOptions(
+  options: McpLifecycleLockOptions = {},
+  homeDir?: string,
+): McpLifecycleLockOptions & { stateDir: string } {
+  return {
+    ...options,
+    stateDir: options.stateDir ?? resolveCurrentUserModelRouterLockStateDir(homeDir),
+  };
+}
+
 /**
  * Serializes host-side reads and writes of OpenShell's one-route-per-gateway
  * inference state. The non-sandbox prefix keeps this lock namespace disjoint
@@ -60,9 +71,5 @@ export function withModelRouterPortLifecycleLock<T>(
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("Model Router port must be an integer from 1 to 65535.");
   }
-  const stateDir = options.stateDir ?? resolveCurrentUserModelRouterLockStateDir();
-  return withMcpLifecycleLock(`${MODEL_ROUTER_PORT_LOCK_PREFIX}${String(port)}`, operation, {
-    ...options,
-    stateDir,
-  });
+  return withMcpLifecycleLock(`${MODEL_ROUTER_PORT_LOCK_PREFIX}${String(port)}`, operation, resolveModelRouterPortLifecycleLockOptions(options));
 }
