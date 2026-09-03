@@ -363,7 +363,7 @@ export interface SandboxStateOptions<
       hermesAuthMethod: HermesAuthMethod | null,
       inferenceRouteReservationAuthority: InferenceRouteReservationAuthority | null,
       createIntent: CompleteSandboxCreateIntent,
-      runVerifiedSandboxCreateEffects?: import("../../types").VerifiedSandboxCreateEffects,
+      runVerifiedSandboxCreateEffects?: import("../../types").VerifiedSandboxCreateEffects | null,
     ): Promise<string>;
     finalizeSandboxRouteReservation(sandboxName: string, sessionId: string): boolean;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
@@ -2183,18 +2183,16 @@ class SandboxStateFlow<
                   }
                 : null,
               effectiveCreateIntent,
-              ...(activateVerifiedCredentialProviders
-                ? [
-                    async (
-                      verifiedContext: import("../../types").VerifiedSandboxCreateEffectsContext,
-                    ) => {
-                      state = await activateVerifiedCredentialProviders(
-                        state,
-                        verifiedContext.revalidateSandboxIdentity,
-                      );
-                    },
-                  ]
-                : []),
+              activateVerifiedCredentialProviders
+                ? async (
+                    verifiedContext: import("../../types").VerifiedSandboxCreateEffectsContext,
+                  ) => {
+                    state = await activateVerifiedCredentialProviders(
+                      state,
+                      verifiedContext.revalidateSandboxIdentity,
+                    );
+                  }
+                : null,
             ),
         );
       } catch (error) {

@@ -95,6 +95,11 @@ HERMES_MCP_STATE_RE = re.compile(
     r"# nemoclaw-hermes-mcp-state-v1 "
     r"intended=[0-9a-f]{64} applied=[0-9a-f]{64}\Z"
 )
+HERMES_SANDBOX_RUNTIME_ENVIRONMENT = {
+    "HERMES_HOME": "/sandbox/.hermes",
+    "HERMES_LAZY_INSTALL_TARGET": "/sandbox/.hermes/lazy-packages",
+    "HERMES_BUNDLED_PLUGINS": "/opt/hermes/plugins",
+}
 CONTROL_STAGES = frozenset(
     {
         "detect-agent",
@@ -1589,7 +1594,12 @@ def _run_fixed_validator(
         raise ControlError("SECRET_BOUNDARY_REFUSED")
 
 
-def _validate_runtime_environment(script: str, environment: dict[str, str]) -> None:
+def _validate_runtime_environment(
+    script: str,
+    environment: dict[str, str],
+    *,
+    managed_identity: str | None = None,
+) -> None:
     """Validate runtime values without execing a root process under them."""
 
     _validate_trusted_regular(script)
@@ -1602,7 +1612,7 @@ def _validate_runtime_environment(script: str, environment: dict[str, str]) -> N
     try:
         spec.loader.exec_module(module)
         validator = getattr(module, "validate_runtime_env")
-        result = validator(environment)
+        result = validator(environment, managed_identity=managed_identity)
     except (AttributeError, ImportError, OSError, RuntimeError) as exc:
         raise ControlError("SECRET_BOUNDARY_REFUSED") from exc
     if result != 0:
@@ -1722,7 +1732,18 @@ def _hermes_preflight(
         MAX_ENV_BYTES,
         recovery_deadline,
     )
-    _validate_runtime_environment(validator, _parse_environment(raw_environment))
+    runtime_environment = _parse_environment(raw_environment)
+    # The proven supervisor always runs as the sandbox identity, and its trusted
+    # launcher overwrites these values on the gateway child. /proc environ
+    # exposes the supervisor's initial exec environment, not later shell exports,
+    # so validate the exact child environment while retaining every other value
+    # for secret-boundary inspection.
+    runtime_environment.update(HERMES_SANDBOX_RUNTIME_ENVIRONMENT)
+    _validate_runtime_environment(
+        validator,
+        runtime_environment,
+        managed_identity="sandbox",
+    )
     _require_recovery_time(recovery_deadline)
     _verify_locked_hermes_hash()
     _require_recovery_time(recovery_deadline)

@@ -38,6 +38,8 @@ HERMES_API_PORT_RANGE_START = 8642
 HERMES_API_PORT_RANGE_END = 8652
 MANAGED_HERMES_HOME = "/sandbox/.hermes"
 MANAGED_BUNDLED_PLUGINS = "/opt/hermes/plugins"
+MANAGED_SANDBOX_LAZY_INSTALL_TARGET = "/sandbox/.hermes/lazy-packages"
+MANAGED_GATEWAY_LAZY_INSTALL_TARGET = "/run/nemoclaw/hermes-gateway-lazy-packages"
 ENV_FILE_DENIED_CONTROL_KEYS = frozenset(
     {
         "BASH_ENV",
@@ -145,15 +147,15 @@ def _sandbox_identity() -> tuple[int, int] | None:
 def _expected_lazy_install_target() -> str:
     effective_uid = os.geteuid()
     if effective_uid == 0:
-        return "/run/nemoclaw/hermes-gateway-lazy-packages"
+        return MANAGED_GATEWAY_LAZY_INSTALL_TARGET
     try:
         if effective_uid == pwd.getpwnam("gateway").pw_uid:
-            return "/run/nemoclaw/hermes-gateway-lazy-packages"
+            return MANAGED_GATEWAY_LAZY_INSTALL_TARGET
     except KeyError:
         # Development hosts commonly have no gateway account; their current
         # user exercises the same-identity sandbox contract.
         pass
-    return "/sandbox/.hermes/lazy-packages"
+    return MANAGED_SANDBOX_LAZY_INSTALL_TARGET
 
 
 def _validate_env_file_metadata(path: str, st: os.stat_result) -> None:
@@ -537,11 +539,20 @@ def validate_env_file(path: str) -> int:
     return 1
 
 
-def validate_runtime_env(env: dict[str, str] | None = None) -> int:
+def validate_runtime_env(
+    env: dict[str, str] | None = None,
+    *,
+    managed_identity: str | None = None,
+) -> int:
     source = os.environ if env is None else env
     violations: list[str] = []
     violation_count = 0
-    expected_lazy_target = _expected_lazy_install_target()
+    if managed_identity is None:
+        expected_lazy_target = _expected_lazy_install_target()
+    elif managed_identity == "sandbox":
+        expected_lazy_target = MANAGED_SANDBOX_LAZY_INSTALL_TARGET
+    else:
+        raise ValueError("unsupported managed Hermes runtime identity")
     if source.get("HERMES_LAZY_INSTALL_TARGET") != expected_lazy_target:
         violation_count += 1
         if len(violations) < MAX_VIOLATIONS:

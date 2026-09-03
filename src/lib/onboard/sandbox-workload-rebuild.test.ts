@@ -370,20 +370,33 @@ describe("managed workload rebuild preflight", () => {
     }
   });
 
-  it("rejects a qualification revision that conflicts with durable authority (#9385)", async () => {
-    const prepare = vi.fn(async () => replacement("langchain-deepagents-code"));
+  it("uses the qualification revision for a replacement newer than durable authority (#9385)", async () => {
+    const prepare = vi.fn(async () =>
+      replacement("langchain-deepagents-code", "linux/amd64", "c".repeat(40)),
+    );
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
     vi.stubEnv("GITHUB_ACTIONS", "true");
     vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", "c".repeat(40));
 
-    await expect(
-      prepareManagedWorkloadRebuildHandoff(entry("langchain-deepagents-code"), {
+    const handoff = await prepareManagedWorkloadRebuildHandoff(
+      entry("langchain-deepagents-code"),
+      {
         runtime: runtime(),
         provider: provider(),
         version: "0.0.100",
-      }),
-    ).rejects.toThrow("live qualification revision does not match the durable workload receipt");
-    expect(prepare).not.toHaveBeenCalled();
+      },
+    );
+
+    expect(handoff?.previousReceipt.sourceRevision).toBe("a".repeat(40));
+    expect(handoff?.replacement.source.contract.source.revision).toBe("c".repeat(40));
+    expect(prepare).toHaveBeenCalledExactlyOnceWith({
+      agentName: "langchain-deepagents-code",
+      legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
+      runtime: runtime(),
+      version: "0.0.100",
+      policy: "require-managed",
+      catalogRevision: "c".repeat(40),
+    });
   });
 
   it("accepts an exact PR replacement catalog newer than durable authority (#9464)", async () => {
