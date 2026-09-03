@@ -368,6 +368,8 @@ debug = false
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-turn.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-web-ui.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-pi.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-nemocua.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\nemocua') -Destination (Join-Path $output 'nemocua') -Recurse
     Copy-Item -LiteralPath (Join-Path $candidate 'LICENSE') -Destination (Join-Path $output 'LICENSE.txt')
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\NATIVE-PREVIEW.txt') -Destination (Join-Path $output 'NATIVE-PREVIEW.txt')
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\agent-support.json') -Destination (Join-Path $output 'agent-support.json')
@@ -391,6 +393,7 @@ debug = false
         'python\python.exe',
         'hermes\site-packages\hermes_cli\main.py',
         'deepagents\site-packages\deepagents_code\main.py',
+        'nemocua\run_with_harness.py',
         'onboarding\index.html',
         'onboarding\styles.css',
         'onboarding\app.ts',
@@ -398,6 +401,7 @@ debug = false
         'qualification\run-installed-native-turn.mts',
         'qualification\run-installed-native-web-ui.mts',
         'qualification\run-installed-native-pi.mts',
+        'qualification\run-installed-native-nemocua.mts',
         'agent-support.json'
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $output $required) -PathType Leaf)) {
@@ -445,6 +449,11 @@ debug = false
                 'tiktoken==0.13.0',
                 'uvloop==0.22.1'
             )
+        }
+        nemoCua = [pscustomobject]@{
+            version = '0.1.0-windows-experimental'
+            entrypointSha256 = (Get-FileHash -LiteralPath (Join-Path $output 'nemocua\run_with_harness.py') -Algorithm SHA256).Hash.ToLowerInvariant()
+            source = 'NVIDIA/NemoClaw exact candidate commit'
         }
         agentSupportSha256 = (Get-FileHash -LiteralPath (Join-Path $output 'agent-support.json') -Algorithm SHA256).Hash.ToLowerInvariant()
         openShell = [pscustomobject]@{ pullRequest = 'NVIDIA/OpenShell#2721'; revision = $script:OpenShellRevision }

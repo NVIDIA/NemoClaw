@@ -274,6 +274,64 @@ function Invoke-PythonDistributionVersionProbe {
     }
 }
 
+function Invoke-PythonScriptVersionProbe {
+    param(
+        [Parameter(Mandatory)][string]$PythonPath,
+        [Parameter(Mandatory)][string]$ScriptPath,
+        [Parameter(Mandatory)][string]$ExpectedVersion,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    Assert-Arm64PortableExecutable -Path $PythonPath -Label 'Installed python.exe'
+    if (-not (Test-Path -LiteralPath $ScriptPath -PathType Leaf)) {
+        Fail-PackageQualification "$Label entrypoint is missing."
+    }
+    Write-Host "PS> $Label :: python.exe $(Split-Path -Leaf $ScriptPath) --version"
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $PythonPath
+    $startInfo.Arguments = (@($ScriptPath, '--version') | ForEach-Object {
+        ConvertTo-NativeArgument -Value $_
+    }) -join ' '
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.Environment['PYTHONDONTWRITEBYTECODE'] = '1'
+    $startInfo.Environment['PYTHONNOUSERSITE'] = '1'
+    $startInfo.Environment['PYTHONUTF8'] = '1'
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) {
+            Fail-PackageQualification "$Label could not start."
+        }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(30000)) {
+            $process.Kill()
+            $process.WaitForExit()
+            Fail-PackageQualification "$Label exceeded its version-probe timeout."
+        }
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
+        $stdout = $stdoutTask.GetAwaiter().GetResult().Trim()
+        $stderr = $stderrTask.GetAwaiter().GetResult().Trim()
+    } finally {
+        $process.Dispose()
+    }
+    if ($exitCode -ne 0 -or $stdout -cne $ExpectedVersion -or $stderr.Length -ne 0) {
+        Fail-PackageQualification "$Label did not report expected version $ExpectedVersion."
+    }
+    Write-Host "OUTPUT> $stdout"
+    Write-Host "[PASS] $Label exit=$exitCode"
+    return [pscustomobject]@{
+        file = $ScriptPath.Substring($installRoot.Length + 1)
+        exitCode = $exitCode
+        output = $stdout
+        sha256 = (Get-FileHash -LiteralPath $ScriptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+}
+
 function Get-ArpEntries {
     param([Parameter(Mandatory)][string]$DisplayName)
 
@@ -505,6 +563,7 @@ foreach ($requiredPayload in @(
     'python\python.exe',
     'hermes\site-packages\hermes_cli\main.py',
     'deepagents\site-packages\deepagents_code\main.py',
+    'nemocua\run_with_harness.py',
     'onboarding\index.html',
     'onboarding\styles.css',
     'onboarding\app.ts',
@@ -514,6 +573,7 @@ foreach ($requiredPayload in @(
     'qualification\run-installed-native-turn.mts',
     'qualification\run-installed-native-web-ui.mts',
     'qualification\run-installed-native-pi.mts',
+    'qualification\run-installed-native-nemocua.mts',
     'agent-support.json',
     'OPENSHELL-NODE-UI-COMPATIBILITY.patch'
 )) {
@@ -538,6 +598,8 @@ $gatewayPath = Join-Path $installBin 'openshell-gateway.exe'
 $pythonPath = Join-Path $installRoot 'python\python.exe'
 $hermesSitePackages = Join-Path $installRoot 'hermes\site-packages'
 $deepAgentsSitePackages = Join-Path $installRoot 'deepagents\site-packages'
+$nemoCuaEntryPath = Join-Path $installRoot 'nemocua\run_with_harness.py'
+$nemoCuaQualificationPath = Join-Path $installRoot 'qualification\run-installed-native-nemocua.mts'
 $piEntryPath = Join-Path $installRoot 'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js'
 $piQualificationPath = Join-Path $installRoot 'qualification\run-installed-native-pi.mts'
 $nodePath = Join-Path $installBin 'node.exe'
@@ -596,6 +658,7 @@ try {
         Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $piEntryPath -ExpectedVersion '0.84.1' -Label 'Installed Pi runtime'
         Invoke-PythonDistributionVersionProbe -PythonPath $pythonPath -SitePackages $hermesSitePackages -Distribution 'hermes-agent' -ExpectedVersion '0.19.0' -EntryRelativePath 'hermes_cli\main.py' -Label 'Installed Hermes Agent runtime'
         Invoke-PythonDistributionVersionProbe -PythonPath $pythonPath -SitePackages $deepAgentsSitePackages -Distribution 'deepagents-code' -ExpectedVersion '0.1.55' -EntryRelativePath 'deepagents_code\main.py' -Label 'Installed Deep Agents Code runtime'
+        Invoke-PythonScriptVersionProbe -PythonPath $pythonPath -ScriptPath $nemoCuaEntryPath -ExpectedVersion '0.1.0-windows-experimental' -Label 'Installed NemoCUA runtime'
     )
     $nativeTurnArtifacts = Join-Path $artifactRoot 'native-turn'
     Write-Host "PS> Installed NemoClaw native MXC agent turn :: nemoclaw debug --native-windows-turn"
@@ -763,6 +826,35 @@ try {
         Fail-PackageQualification 'Installed Deep Agents Code qualification receipt is incomplete.'
     }
     Write-Host '[PASS] Installed Deep Agents Code completed three real terminal agent turns inside native MXC'
+    $nemoCuaArtifacts = Join-Path $artifactRoot 'nemocua'
+    Write-Host 'PS> Launch installed NemoCUA runtime and complete three model-driven native MXC browser turns'
+    Invoke-BoundedProcess `
+        -FilePath $nodePath `
+        -Arguments @('--experimental-strip-types', '--no-warnings', $nemoCuaQualificationPath, '--qualification', '--artifact-directory', $nemoCuaArtifacts) `
+        -Label 'Installed native Windows NemoCUA qualification' `
+        -AllowedExitCodes @(0) | Out-Null
+    $nemoCuaReceipts = @(Get-ChildItem -LiteralPath $nemoCuaArtifacts -Filter 'native-windows-nemocua-*.json' -File -ErrorAction SilentlyContinue)
+    if ($nemoCuaReceipts.Count -ne 1) {
+        Fail-PackageQualification 'Installed NemoCUA runtime did not publish exactly one receipt.'
+    }
+    $nemoCuaReceipt = Get-Content -LiteralPath $nemoCuaReceipts[0].FullName -Raw | ConvertFrom-Json
+    if ($nemoCuaReceipt.verdict -cne 'pass' -or
+        $nemoCuaReceipt.nemocuaVersion -cne '0.1.0-windows-experimental' -or
+        $nemoCuaReceipt.backend -cne 'process_container' -or
+        $nemoCuaReceipt.interface -cne 'NemoCUA visible browser task' -or
+        $nemoCuaReceipt.browser -cne 'Microsoft Edge' -or
+        [int]$nemoCuaReceipt.turnCount -ne 3 -or
+        @($nemoCuaReceipt.turns).Count -ne 3 -or
+        $nemoCuaReceipt.visiblePostcondition.inputValue -cne 'NEMOCUA_NATIVE_WINDOWS' -or
+        $nemoCuaReceipt.visiblePostcondition.completed -ne $true -or
+        $nemoCuaReceipt.createWatcherStopped -ne $true -or
+        $nemoCuaReceipt.sandboxDeleted -ne $true -or
+        $nemoCuaReceipt.sandboxRegistryAbsent -ne $true -or
+        $nemoCuaReceipt.gatewayStopped -ne $true -or
+        $nemoCuaReceipt.qualificationRootsRemoved -ne $true) {
+        Fail-PackageQualification 'Installed NemoCUA qualification receipt is incomplete.'
+    }
+    Write-Host '[PASS] Installed NemoCUA completed three real model-driven browser actions inside native MXC'
     if ($InteractiveProof) {
         Start-Sleep -Seconds 3
     }
@@ -897,6 +989,7 @@ try {
         pi = $piReceipt
         hermes = $hermesReceipt
         deepAgentsCode = $deepAgentsReceipt
+        nemoCua = $nemoCuaReceipt
         msiRegistration = $msiArp
         bundleRegistration = $bundleArp
         repairRestoredDigest = $repairRestoredDigest

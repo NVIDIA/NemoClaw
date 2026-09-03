@@ -35,6 +35,7 @@
     <Error Condition="!Exists('$(PayloadRoot)\python\python.exe')" Text="The native ARM64 Python runtime is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\hermes\site-packages\hermes_cli\main.py')" Text="The Hermes Agent runtime is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\deepagents\site-packages\deepagents_code\main.py')" Text="The Deep Agents Code runtime is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\nemocua\run_with_harness.py')" Text="The experimental NemoCUA runtime is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\onboarding\index.html')" Text="The NemoClaw graphical onboarder is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-exec.exe')" Text="The MXC executor is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-host-prep.exe')" Text="The MXC host preparation utility is missing." />
@@ -42,6 +43,7 @@
     <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-turn.mts')" Text="The installed native turn qualification entrypoint is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-web-ui.mts')" Text="The installed native web UI entrypoint is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-pi.mts')" Text="The installed native Pi entrypoint is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-nemocua.mts')" Text="The installed native NemoCUA entrypoint is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\agent-support.json')" Text="The native Windows agent support catalog is missing." />
     <Error Condition="!Exists('$(SourceRoot)\packaging\windows\assets\NemoClaw.ico')" Text="The NemoClaw product icon is missing." />
   </Target>

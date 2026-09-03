@@ -349,8 +349,10 @@ if ($null -ne $qualification -and (-not $qualification.repairRestoredDigest -or
     [int]$qualification.hermes.turnCount -ne 3 -or
     $qualification.deepAgentsCode.verdict -cne 'pass' -or
     [int]$qualification.deepAgentsCode.turnCount -ne 3 -or
+    $qualification.nemoCua.verdict -cne 'pass' -or
+    [int]$qualification.nemoCua.turnCount -ne 3 -or
     @($qualification.nativeExecutions).Count -ne 4 -or
-    @($qualification.applicationExecutions).Count -ne 5 -or
+    @($qualification.applicationExecutions).Count -ne 6 -or
     @($qualification.packageDescendantProhibitedStarts).Count -ne 0 -or
     @($qualification.newPackageDescendantProhibitedProcesses).Count -ne 0)) {
     Fail-ProofVideo 'Initial package qualification receipt is not a complete passing lifecycle.'
@@ -487,8 +489,12 @@ try {
         ) -or
         -not $consoleTranscriptText.Contains('WEB UI> TURN 1 PASS NATIVE_WINDOWS_TURN_1_OK') -or
         -not $consoleTranscriptText.Contains('WEB UI> TURN 2 PASS NATIVE_WINDOWS_TURN_2_OK') -or
-        -not $consoleTranscriptText.Contains('WEB UI> TURN 3 PASS NATIVE_WINDOWS_TURN_3_OK')) {
-        $captureFailures.Add('The recorded console did not show the installed NemoClaw CLI and web UI turns.')
+        -not $consoleTranscriptText.Contains('WEB UI> TURN 3 PASS NATIVE_WINDOWS_TURN_3_OK') -or
+        -not $consoleTranscriptText.Contains('PI> TURN 3 PASS NATIVE_PI_TURN_3_OK') -or
+        -not $consoleTranscriptText.Contains('HERMES> TURN 3 PASS NATIVE_HERMES_TURN_3_OK') -or
+        -not $consoleTranscriptText.Contains('DEEP AGENTS> TURN 3 PASS NATIVE_DEEP_AGENTS_TURN_3_OK') -or
+        -not $consoleTranscriptText.Contains('NEMOCUA> TURN 3 PASS NATIVE_NEMOCUA_TURN_3_OK')) {
+        $captureFailures.Add('The recorded console did not show every installed native agent turn.')
     }
 
     if ($installerWindowFrameCount -lt 4) {
@@ -661,6 +667,11 @@ public static class NemoClawConsoleVideoEncoder
         [int]$recordedQualification.deepAgentsCode.turnCount -ne 3 -or
         @($recordedQualification.deepAgentsCode.turns).Count -ne 3)) {
         $captureFailures.Add('The recorded qualification receipt does not prove three real Deep Agents Code terminal turns.')
+    }
+    if ($null -ne $recordedQualification -and ($recordedQualification.nemoCua.verdict -cne 'pass' -or
+        [int]$recordedQualification.nemoCua.turnCount -ne 3 -or
+        @($recordedQualification.nemoCua.turns).Count -ne 3)) {
+        $captureFailures.Add('The recorded qualification receipt does not prove three real NemoCUA browser turns.')
     }
     $initialQualificationHash = if (Test-Path -LiteralPath $qualificationPath -PathType Leaf) {
         (Get-FileHash -LiteralPath $qualificationPath -Algorithm SHA256).Hash.ToLowerInvariant()
