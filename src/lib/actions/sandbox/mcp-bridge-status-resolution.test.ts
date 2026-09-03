@@ -360,7 +360,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     },
     {
       name: "unsupported persisted credential",
-      env: "LD_PRELOAD",
+      env: "v1_TOKEN",
       observation: "v11",
     },
   ];
@@ -503,7 +503,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
   current.agent = "langchain-deepagents-code";
   current.mcp.bridges.github.agent = "langchain-deepagents-code";
   current.mcp.bridges.github.adapter = "deepagents-config";
-  current.mcp.bridges.github.env = ["LD_PRELOAD"];
+  current.mcp.bridges.github.env = ["v1_TOKEN"];
   registry.updateSandbox("alpha", current);
   let inspected = false;
   processRecovery.executeSandboxCommand = (_sandboxName, command) => {
