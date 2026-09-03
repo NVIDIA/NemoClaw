@@ -34,6 +34,7 @@ const commands = [
   "session-preview",
   "session-state-create",
   "session-state-reopen",
+  "secure-directory-modes",
 ] as const;
 
 function writeExecutable(target: string, source: string): void {

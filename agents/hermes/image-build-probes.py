@@ -494,6 +494,35 @@ def verify_cron_create() -> None:
     assert created["status"] == "claimed"
 
 
+def verify_secure_directory_modes() -> None:
+    import stat
+
+    from hermes_cli.config import _secure_dir
+
+    assert os.environ.get("HERMES_SKIP_CHMOD") == "1"
+    expected_modes = {
+        Path("/sandbox/.hermes"): 0o3770,
+        Path("/sandbox/.hermes/runtime"): 0o2770,
+    }
+    for path, expected_mode in expected_modes.items():
+        before = path.stat()
+        assert stat.S_IMODE(before.st_mode) == expected_mode, (
+            path,
+            oct(before.st_mode),
+        )
+        _secure_dir(path)
+        after = path.stat()
+        assert (after.st_uid, after.st_gid) == (before.st_uid, before.st_gid), (
+            path,
+            before,
+            after,
+        )
+        assert stat.S_IMODE(after.st_mode) == expected_mode, (
+            path,
+            oct(after.st_mode),
+        )
+
+
 def verify_cron_backup() -> None:
     import os
     import sqlite3
@@ -668,6 +697,7 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "session-preview": verify_session_preview,
     "session-state-create": verify_session_state_create,
     "session-state-reopen": verify_session_state_reopen,
+    "secure-directory-modes": verify_secure_directory_modes,
 }
 
 

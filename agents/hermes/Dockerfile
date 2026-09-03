@@ -78,6 +78,7 @@ COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 COPY agents/hermes/runtime-boundaries.patch /scripts/hermes-runtime-boundaries.patch
 COPY agents/hermes/dashboard-external-host.patch /scripts/hermes-dashboard-external-host.patch
+COPY agents/hermes/secure-dir-skip-chmod.patch /scripts/hermes-secure-dir-skip-chmod.patch
 
 FROM scratch AS hermes-agent-payload
 
@@ -209,6 +210,7 @@ FROM ${BASE_IMAGE}
 # Keep the stock-image lazy dependency target when a published base image lags
 # Dockerfile.base. The final stage also creates and verifies the directory.
 ENV HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
+ENV HERMES_SKIP_CHMOD=1
 
 # Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
 # onboard detects an operator-supplied corporate CA on the host it bakes it
@@ -217,6 +219,9 @@ ENV HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
 # certificate, not a secret, so baking it into an image layer is acceptable.
 ARG NEMOCLAW_CORPORATE_CA_B64
 ARG NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256=820563cc3450de582663c8137670001bb9974ac8a5584901880982f6509747b8
+ARG NEMOCLAW_HERMES_SECURE_DIR_SOURCE_SHA256=ffae3271120cf53eb8a7f574f76758eac3ea172f9ddc22c1056277e37d8d392c
+ARG NEMOCLAW_HERMES_SECURE_DIR_PATCH_SHA256=1c1a898226bc67b123ec72847d4dcda7abbab1e95958c9e019790d9425e15d69
+ARG NEMOCLAW_HERMES_SECURE_DIR_OUTPUT_SHA256=130cf4e76d6f4f16b85517cf8d3d81dfe294aff63d6c561b979971c401f78761
 
 # Decode the host corporate-proxy CA (#6210) to a root-owned, read-only file
 # when onboard baked one in. No-op when NEMOCLAW_CORPORATE_CA_B64 is empty. The
@@ -279,6 +284,23 @@ RUN grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/
     && grep -Fqx '_NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV = "_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST"' /opt/hermes/hermes_cli/web_server.py \
     && grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py \
     && rm /scripts/hermes-dashboard-external-host.patch \
+    && printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_SECURE_DIR_PATCH_SHA256" /scripts/hermes-secure-dir-skip-chmod.patch \
+    | sha256sum -c - \
+    || { echo "ERROR: Hermes secure-directory patch identity mismatch" >&2; exit 1; } \
+    && secure_dir_source_sha="$(sha256sum /opt/hermes/hermes_cli/config.py | awk '{print $1}')" \
+    && if [ "$secure_dir_source_sha" = "$NEMOCLAW_HERMES_SECURE_DIR_SOURCE_SHA256" ]; then \
+        git -C /opt/hermes apply --check /scripts/hermes-secure-dir-skip-chmod.patch; \
+        git -C /opt/hermes apply /scripts/hermes-secure-dir-skip-chmod.patch; \
+    elif [ "$secure_dir_source_sha" != "$NEMOCLAW_HERMES_SECURE_DIR_OUTPUT_SHA256" ]; then \
+        echo "ERROR: Hermes secure-directory source identity mismatch" >&2; \
+        exit 1; \
+    fi \
+    && printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_SECURE_DIR_OUTPUT_SHA256" /opt/hermes/hermes_cli/config.py \
+    | sha256sum -c - \
+    || { echo "ERROR: Hermes secure-directory patched output identity mismatch" >&2; exit 1; } \
+    && rm /scripts/hermes-secure-dir-skip-chmod.patch \
     && printf '%s  %s\n' "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /scripts/hermes-runtime-boundaries.patch | sha256sum -c - \
     && if ! grep -Fq 'def nemoclaw_managed_gateway_plugins_only()' /opt/hermes/hermes_constants.py; then \
         git -C /opt/hermes apply --check \
@@ -431,7 +453,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=70f6097fa2eb49a601f7c5453f4acdf8cb57beafbcc34b56ddc7caa60b696ae8
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=7c74c3f190845fef222e3aac1bd7074d58968447e78221114344545c149595c2
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -459,7 +481,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
 # same-version wheel selected by its lazy installer. Bind that production
 # boundary to NVIDIA/NemoClaw's reviewed wheel hashes.
 ARG NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256=5c619477c10e0b76cffd7adc214cbccf3beb77e7a1121f394c443502d9e0b736
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=70f6097fa2eb49a601f7c5453f4acdf8cb57beafbcc34b56ddc7caa60b696ae8
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=7c74c3f190845fef222e3aac1bd7074d58968447e78221114344545c149595c2
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256" /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
@@ -1456,6 +1478,10 @@ RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 277
     && test ! -e /sandbox/.hermes/runtime/state.db \
     && test ! -L /sandbox/.hermes/runtime/state.db \
     && test ! -e /sandbox/.hermes/cron/executions.db \
+    && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py secure-directory-modes \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "sandbox:sandbox 3770" \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 2770" \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py cron-create \
