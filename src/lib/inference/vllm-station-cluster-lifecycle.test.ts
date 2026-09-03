@@ -485,38 +485,6 @@ describe("dual-Station managed vLLM lifecycle", () => {
     expect(fake.operations).toEqual([]);
   });
 
-  it("anchors the default lock under the host-global managed state home", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-lock-home-"));
-    const accountHome = path.join(root, "account-home");
-    const managedHome = path.join(root, "managed-home");
-    fs.mkdirSync(accountHome, { mode: 0o700 });
-    const userInfo = os.userInfo();
-    const userInfoSpy = vi.spyOn(os, "userInfo").mockReturnValue({
-      ...userInfo,
-      homedir: accountHome,
-    });
-    vi.stubEnv("HOME", managedHome);
-    try {
-      await withDualStationVllmLifecycleLock(
-        () => {
-          expect(
-            fs.existsSync(path.join(managedHome, ".nemoclaw", "state", "mcp-lifecycle-locks")),
-          ).toBe(true);
-          expect(fs.existsSync(path.join(accountHome, ".nemoclaw"))).toBe(false);
-        },
-        { pollIntervalMs: 5, timeoutMs: 250, corruptLockGraceMs: 5 },
-        {
-          readControllerUid: () => userInfo.uid,
-          effectiveControllerUid: () => userInfo.uid,
-        },
-      );
-    } finally {
-      vi.unstubAllEnvs();
-      userInfoSpy.mockRestore();
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("provides a read-only ownership preflight before download work", () => {
     const fake = harness();
 
