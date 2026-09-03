@@ -390,29 +390,33 @@ describe("createRemoteModelValidator", () => {
     const model = "nvidia/nemotron-3-super-120b-a12b";
 
     try {
-      for (const [selectedKey, provider] of [
-        ["build", "nvidia-prod"],
-        ["openai", "openai-api"],
-      ] as const) {
-        const state = makeState();
-        state.provider = provider;
-        state.endpointUrl = endpointUrl;
-        state.model = model;
-        assert.equal(
-          await validateSelectedRemoteModel({
-            selected: { key: selectedKey },
-            remoteConfig: {
-              label: provider === "nvidia-prod" ? "NVIDIA Endpoints" : "OpenAI",
-              endpointUrl,
-              helpUrl: null,
-            },
-            state,
-            selectedCredentialEnv:
-              provider === "nvidia-prod" ? "NVIDIA_INFERENCE_API_KEY" : "OPENAI_API_KEY",
-          }),
-          "selected",
-        );
-      }
+      const nvidiaState = makeState();
+      nvidiaState.provider = "nvidia-prod";
+      nvidiaState.endpointUrl = endpointUrl;
+      nvidiaState.model = model;
+      assert.equal(
+        await validateSelectedRemoteModel({
+          selected: { key: "build" },
+          remoteConfig: { label: "NVIDIA Endpoints", endpointUrl, helpUrl: null },
+          state: nvidiaState,
+          selectedCredentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        }),
+        "selected",
+      );
+
+      const openAiState = makeState();
+      openAiState.provider = "openai-api";
+      openAiState.endpointUrl = endpointUrl;
+      openAiState.model = model;
+      assert.equal(
+        await validateSelectedRemoteModel({
+          selected: { key: "openai" },
+          remoteConfig: { label: "OpenAI", endpointUrl, helpUrl: null },
+          state: openAiState,
+          selectedCredentialEnv: "OPENAI_API_KEY",
+        }),
+        "selected",
+      );
     } finally {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) =>

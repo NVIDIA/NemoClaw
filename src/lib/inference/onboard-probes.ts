@@ -35,7 +35,11 @@ const {
   getHostDockerInternalProbeFailure,
   isHijackedDockerInternalUrl,
 } = require("./onboard-host-docker-internal");
-const { isNvcfFunctionNotFoundForAccount, nvcfFunctionNotFoundMessage } = require("../validation");
+const {
+  isNvcfFunctionNotFoundForAccount,
+  nvcfFunctionNotFoundMessage,
+  shouldSkipResponsesProbe,
+} = require("../validation");
 const { isPrivateHostname, isPrivateIp, isLoopbackHostname } = require("../private-networks");
 const { buildResolvePinArgs, isOperatorTrustablePrivateIp } = require("./endpoint-ssrf-preflight");
 const {
@@ -260,6 +264,16 @@ function shouldRequireResponsesToolCalling(provider) {
 // probes default to Bearer auth and Gemini onboarding succeeds.
 function getProbeAuthMode(_provider) {
   return undefined;
+}
+
+function getRemoteValidationProbeOptions(provider) {
+  return {
+    provider,
+    useNvidiaEndpointProbePayload: usesNvidiaEndpointProbePayload(provider),
+    requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
+    skipResponsesProbe: shouldSkipResponsesProbe(provider),
+    authMode: getProbeAuthMode(provider),
+  };
 }
 
 export function getProbeExtraHeaders(provider) {
@@ -1131,6 +1145,7 @@ module.exports = {
   hasChatCompletionsToolCallLeak,
   shouldRequireResponsesToolCalling,
   getProbeAuthMode,
+  getRemoteValidationProbeOptions,
   getProbeExtraHeaders,
   getValidationProbeCurlArgs,
   getDeepSeekV4ProValidationProbeCurlArgs,
