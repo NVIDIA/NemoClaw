@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Native Windows ARM64 subset of the exact Hermes Agent 0.19.0 runtime graph.
+# The terminal one-shot surface does not load the unavailable pywinpty 2.x or
+# cryptography 46.0.7 paths. Every included dependency remains version-pinned.
+
+certifi==2026.5.20
+croniter==6.0.0
+fastapi==0.133.1
+fire==0.7.1
+httpx[socks]==0.28.1
+jinja2==3.1.6
+Markdown==3.10.2
+openai==2.24.0
+packaging==26.0
+pathspec==1.1.1
+Pillow==12.2.0
+prompt_toolkit==3.0.52
+psutil==7.2.2
+pydantic==2.13.4
+PyJWT==2.13.0
+python-dotenv==1.2.2
+python-multipart==0.0.27
+PyYAML==6.0.3
+requests==2.33.0
+rich==14.3.3
+tenacity==9.1.4
+tzdata==2025.3
+urllib3==2.7.0
+uvicorn==0.41.0
+websockets==15.0.1

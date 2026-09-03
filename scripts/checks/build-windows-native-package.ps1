@@ -102,6 +102,8 @@ foreach ($requiredPayload in @(
     'nemoclaw\app\bin\nemoclaw.js',
     'openclaw\node_modules\openclaw\openclaw.mjs',
     'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js',
+    'python\python.exe',
+    'hermes\site-packages\hermes_cli\main.py',
     'onboarding\index.html',
     'onboarding\styles.css',
     'onboarding\app.ts',
@@ -129,6 +131,7 @@ if (@(Compare-Object @('wxc-exec.exe', 'wxc-host-prep.exe') $mxcPayloadFiles).Co
 }
 Assert-Arm64PortableExecutable -Path (Join-Path $payload 'bin\node.exe') -Label 'node.exe payload'
 Assert-Arm64PortableExecutable -Path (Join-Path $payload 'bin\NemoClaw.exe') -Label 'NemoClaw.exe payload'
+Assert-Arm64PortableExecutable -Path (Join-Path $payload 'python\python.exe') -Label 'python.exe payload'
 Assert-Arm64PortableExecutable -Path (Join-Path $payload 'mxc\wxc-exec.exe') -Label 'wxc-exec.exe payload'
 Assert-Arm64PortableExecutable -Path (Join-Path $payload 'mxc\wxc-host-prep.exe') -Label 'wxc-host-prep.exe payload'
 

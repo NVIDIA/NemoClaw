@@ -213,6 +213,66 @@ function Invoke-NodeCliVersionProbe {
     }
 }
 
+function Invoke-PythonDistributionVersionProbe {
+    param(
+        [Parameter(Mandatory)][string]$PythonPath,
+        [Parameter(Mandatory)][string]$SitePackages,
+        [Parameter(Mandatory)][string]$Distribution,
+        [Parameter(Mandatory)][string]$ExpectedVersion,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    Assert-Arm64PortableExecutable -Path $PythonPath -Label 'Installed python.exe'
+    if (-not (Test-Path -LiteralPath $SitePackages -PathType Container)) {
+        Fail-PackageQualification "$Label site-packages directory is missing."
+    }
+    $program = "import sys;sys.path.insert(0,sys.argv[1]);from importlib.metadata import version;print(version(sys.argv[2]))"
+    Write-Host "PS> $Label :: python.exe -c importlib.metadata.version('$Distribution')"
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $PythonPath
+    $startInfo.Arguments = (@('-c', $program, $SitePackages, $Distribution) | ForEach-Object {
+        ConvertTo-NativeArgument -Value $_
+    }) -join ' '
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.Environment['PYTHONDONTWRITEBYTECODE'] = '1'
+    $startInfo.Environment['PYTHONNOUSERSITE'] = '1'
+    $startInfo.Environment['PYTHONUTF8'] = '1'
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) {
+            Fail-PackageQualification "$Label could not start."
+        }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(30000)) {
+            $process.Kill()
+            $process.WaitForExit()
+            Fail-PackageQualification "$Label exceeded its version-probe timeout."
+        }
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
+        $stdout = $stdoutTask.GetAwaiter().GetResult().Trim()
+        $stderr = $stderrTask.GetAwaiter().GetResult().Trim()
+    } finally {
+        $process.Dispose()
+    }
+    if ($exitCode -ne 0 -or $stdout -cne $ExpectedVersion -or $stderr.Length -ne 0) {
+        Fail-PackageQualification "$Label did not report expected version $ExpectedVersion."
+    }
+    Write-Host "OUTPUT> $stdout"
+    Write-Host "[PASS] $Label exit=$exitCode"
+    return [pscustomobject]@{
+        file = $SitePackages.Substring($installRoot.Length + 1)
+        exitCode = $exitCode
+        output = $stdout
+        sha256 = (Get-FileHash -LiteralPath (Join-Path $SitePackages 'hermes_cli\main.py') -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+}
+
 function Get-ArpEntries {
     param([Parameter(Mandatory)][string]$DisplayName)
 
@@ -441,6 +501,8 @@ foreach ($requiredPayload in @(
     'nemoclaw\app\bin\nemoclaw.js',
     'openclaw\node_modules\openclaw\openclaw.mjs',
     'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js',
+    'python\python.exe',
+    'hermes\site-packages\hermes_cli\main.py',
     'onboarding\index.html',
     'onboarding\styles.css',
     'onboarding\app.ts',
@@ -471,6 +533,8 @@ $installRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolde
 $installBin = Join-Path $installRoot 'bin'
 $openshellPath = Join-Path $installBin 'openshell.exe'
 $gatewayPath = Join-Path $installBin 'openshell-gateway.exe'
+$pythonPath = Join-Path $installRoot 'python\python.exe'
+$hermesSitePackages = Join-Path $installRoot 'hermes\site-packages'
 $piEntryPath = Join-Path $installRoot 'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js'
 $piQualificationPath = Join-Path $installRoot 'qualification\run-installed-native-pi.mts'
 $nodePath = Join-Path $installBin 'node.exe'
@@ -521,11 +585,13 @@ try {
         Invoke-NativeVersionProbe -Path $openshellPath -Label 'Installed openshell.exe'
         Invoke-NativeVersionProbe -Path $gatewayPath -Label 'Installed openshell-gateway.exe'
         Invoke-NativeVersionProbe -Path $nodePath -Label 'Installed node.exe'
+        Invoke-NativeVersionProbe -Path $pythonPath -Label 'Installed python.exe'
     )
     $applicationEvidence = @(
         Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $nemoclawEntryPath -ExpectedVersion $ProductVersion -Label 'Installed NemoClaw CLI'
         Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $openClawEntryPath -ExpectedVersion '2026.7.1' -Label 'Installed OpenClaw runtime'
         Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $piEntryPath -ExpectedVersion '0.84.1' -Label 'Installed Pi runtime'
+        Invoke-PythonDistributionVersionProbe -PythonPath $pythonPath -SitePackages $hermesSitePackages -Distribution 'hermes-agent' -ExpectedVersion '0.19.0' -Label 'Installed Hermes Agent runtime'
     )
     $nativeTurnArtifacts = Join-Path $artifactRoot 'native-turn'
     Write-Host "PS> Installed NemoClaw native MXC agent turn :: nemoclaw debug --native-windows-turn"
@@ -630,7 +696,7 @@ try {
     if ($piReceipt.verdict -cne 'pass' -or
         $piReceipt.piVersion -cne '0.84.1' -or
         $piReceipt.backend -cne 'process_container' -or
-        $piReceipt.interface -cne 'Pi terminal print mode' -or
+        $piReceipt.interface -cne 'Pi terminal one-shot mode' -or
         [int]$piReceipt.turnCount -ne 3 -or
         @($piReceipt.turns).Count -ne 3 -or
         $piReceipt.createWatcherStopped -ne $true -or
@@ -641,6 +707,32 @@ try {
         Fail-PackageQualification 'Installed Pi qualification receipt is incomplete.'
     }
     Write-Host '[PASS] Installed Pi completed three real terminal agent turns inside native MXC'
+    $hermesArtifacts = Join-Path $artifactRoot 'hermes'
+    Write-Host 'PS> Launch installed Hermes Agent runtime and complete three native MXC agent turns'
+    Invoke-BoundedProcess `
+        -FilePath $nodePath `
+        -Arguments @('--experimental-strip-types', '--no-warnings', $piQualificationPath, '--qualification', '--agent', 'hermes', '--artifact-directory', $hermesArtifacts) `
+        -Label 'Installed native Windows Hermes qualification' `
+        -AllowedExitCodes @(0) | Out-Null
+    $hermesReceipts = @(Get-ChildItem -LiteralPath $hermesArtifacts -Filter 'native-windows-hermes-*.json' -File -ErrorAction SilentlyContinue)
+    if ($hermesReceipts.Count -ne 1) {
+        Fail-PackageQualification 'Installed Hermes runtime did not publish exactly one receipt.'
+    }
+    $hermesReceipt = Get-Content -LiteralPath $hermesReceipts[0].FullName -Raw | ConvertFrom-Json
+    if ($hermesReceipt.verdict -cne 'pass' -or
+        $hermesReceipt.hermesVersion -cne '0.19.0' -or
+        $hermesReceipt.backend -cne 'process_container' -or
+        $hermesReceipt.interface -cne 'Hermes terminal one-shot mode' -or
+        [int]$hermesReceipt.turnCount -ne 3 -or
+        @($hermesReceipt.turns).Count -ne 3 -or
+        $hermesReceipt.createWatcherStopped -ne $true -or
+        $hermesReceipt.sandboxDeleted -ne $true -or
+        $hermesReceipt.sandboxRegistryAbsent -ne $true -or
+        $hermesReceipt.gatewayStopped -ne $true -or
+        $hermesReceipt.qualificationRootsRemoved -ne $true) {
+        Fail-PackageQualification 'Installed Hermes qualification receipt is incomplete.'
+    }
+    Write-Host '[PASS] Installed Hermes completed three real terminal agent turns inside native MXC'
     if ($InteractiveProof) {
         Start-Sleep -Seconds 3
     }
@@ -773,6 +865,7 @@ try {
         nativeTurn = $nativeTurnReceipt
         webUi = $webUiReceipt
         pi = $piReceipt
+        hermes = $hermesReceipt
         msiRegistration = $msiArp
         bundleRegistration = $bundleArp
         repairRestoredDigest = $repairRestoredDigest

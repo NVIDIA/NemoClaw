@@ -345,8 +345,10 @@ if ($null -ne $qualification -and (-not $qualification.repairRestoredDigest -or
     @($qualification.webUi.turns).Count -ne 3 -or
     $qualification.pi.verdict -cne 'pass' -or
     [int]$qualification.pi.turnCount -ne 3 -or
-    @($qualification.nativeExecutions).Count -ne 3 -or
-    @($qualification.applicationExecutions).Count -ne 3 -or
+    $qualification.hermes.verdict -cne 'pass' -or
+    [int]$qualification.hermes.turnCount -ne 3 -or
+    @($qualification.nativeExecutions).Count -ne 4 -or
+    @($qualification.applicationExecutions).Count -ne 4 -or
     @($qualification.packageDescendantProhibitedStarts).Count -ne 0 -or
     @($qualification.newPackageDescendantProhibitedProcesses).Count -ne 0)) {
     Fail-ProofVideo 'Initial package qualification receipt is not a complete passing lifecycle.'
@@ -647,6 +649,11 @@ public static class NemoClawConsoleVideoEncoder
         [int]$recordedQualification.pi.turnCount -ne 3 -or
         @($recordedQualification.pi.turns).Count -ne 3)) {
         $captureFailures.Add('The recorded qualification receipt does not prove three real Pi terminal turns.')
+    }
+    if ($null -ne $recordedQualification -and ($recordedQualification.hermes.verdict -cne 'pass' -or
+        [int]$recordedQualification.hermes.turnCount -ne 3 -or
+        @($recordedQualification.hermes.turns).Count -ne 3)) {
+        $captureFailures.Add('The recorded qualification receipt does not prove three real Hermes terminal turns.')
     }
     $initialQualificationHash = if (Test-Path -LiteralPath $qualificationPath -PathType Leaf) {
         (Get-FileHash -LiteralPath $qualificationPath -Algorithm SHA256).Hash.ToLowerInvariant()

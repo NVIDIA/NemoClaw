@@ -22,17 +22,23 @@ import {
   waitForPort,
 } from "./run-installed-native-turn.mts";
 
-const TURN_PROOFS = [
+const PI_TURN_PROOFS = [
   ["Reply exactly with NATIVE_PI_TURN_1_OK", "NATIVE_PI_TURN_1_OK"],
   ["Reply exactly with NATIVE_PI_TURN_2_OK", "NATIVE_PI_TURN_2_OK"],
   ["Reply exactly with NATIVE_PI_TURN_3_OK", "NATIVE_PI_TURN_3_OK"],
 ];
 
+const HERMES_TURN_PROOFS = [
+  ["Reply exactly with NATIVE_HERMES_TURN_1_OK", "NATIVE_HERMES_TURN_1_OK"],
+  ["Reply exactly with NATIVE_HERMES_TURN_2_OK", "NATIVE_HERMES_TURN_2_OK"],
+  ["Reply exactly with NATIVE_HERMES_TURN_3_OK", "NATIVE_HERMES_TURN_3_OK"],
+];
+
 function fail(message) {
-  throw new Error(`Native Windows Pi qualification failed: ${message}`);
+  throw new Error(`Native Windows terminal-agent qualification failed: ${message}`);
 }
 
-function workloadSource() {
+function piWorkloadSource() {
   return String.raw`import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -197,11 +203,180 @@ try {
 `;
 }
 
+function hermesWorkloadSource() {
+  return String.raw`import { spawn } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { join } from "node:path";
+
+const required = (name) => {
+  const value = process.env[name];
+  if (!value) throw new Error(name + " is required");
+  return value;
+};
+const home = required("NEMOCLAW_HERMES_HOME_ROOT");
+const hermesHome = join(home, ".hermes");
+const python = required("NEMOCLAW_HERMES_PYTHON");
+const sitePackages = required("NEMOCLAW_HERMES_SITE_PACKAGES");
+const modelPort = Number(required("NEMOCLAW_HERMES_MODEL_PORT"));
+const resultPath = required("NEMOCLAW_HERMES_RESULT");
+const turnProofs = [
+  ["Reply exactly with NATIVE_HERMES_TURN_1_OK", "NATIVE_HERMES_TURN_1_OK"],
+  ["Reply exactly with NATIVE_HERMES_TURN_2_OK", "NATIVE_HERMES_TURN_2_OK"],
+  ["Reply exactly with NATIVE_HERMES_TURN_3_OK", "NATIVE_HERMES_TURN_3_OK"],
+];
+const bodyText = async (request) => {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  return Buffer.concat(chunks).toString("utf8");
+};
+const messageText = (content) => {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => typeof part === "string" ? part : part?.text ?? "").join(" ");
+};
+const model = createServer(async (request, response) => {
+  if (request.method === "GET" && request.url === "/v1/models") {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ object: "list", data: [{ id: "native-preview", object: "model" }] }));
+    return;
+  }
+  if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: { message: "not found" } }));
+    return;
+  }
+  const body = JSON.parse(await bodyText(request));
+  const prompt = (body.messages ?? []).map((entry) => messageText(entry?.content)).join("\n");
+  const expected = turnProofs.find(([, token]) => prompt.includes(token))?.[1] ?? "NATIVE_HERMES_OK";
+  const id = "chatcmpl-nemoclaw-native-hermes";
+  const created = Math.floor(Date.now() / 1000);
+  if (body.stream === true) {
+    response.writeHead(200, { "cache-control": "no-cache", connection: "keep-alive", "content-type": "text/event-stream" });
+    for (const chunk of [
+      { id, object: "chat.completion.chunk", created, model: "native-preview", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
+      { id, object: "chat.completion.chunk", created, model: "native-preview", choices: [{ index: 0, delta: { content: expected }, finish_reason: null }] },
+      { id, object: "chat.completion.chunk", created, model: "native-preview", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+    ]) response.write("data: " + JSON.stringify(chunk) + "\n\n");
+    response.end("data: [DONE]\n\n");
+    return;
+  }
+  response.writeHead(200, { "content-type": "application/json" });
+  response.end(JSON.stringify({
+    id,
+    object: "chat.completion",
+    created,
+    model: "native-preview",
+    choices: [{ index: 0, message: { role: "assistant", content: expected }, finish_reason: "stop" }],
+  }));
+});
+await new Promise((resolve, reject) => {
+  model.once("error", reject);
+  model.listen(modelPort, "127.0.0.1", resolve);
+});
+mkdirSync(hermesHome, { recursive: true });
+writeFileSync(join(hermesHome, "config.yaml"), [
+  "model:",
+  "  default: native-preview",
+  "  provider: custom",
+  "  base_url: http://127.0.0.1:" + modelPort + "/v1",
+  "  api_key: sk-native-qualification",
+  "  context_length: 131072",
+  "agent:",
+  "  max_turns: 3",
+  "memory:",
+  "  memory_enabled: false",
+  "  user_profile_enabled: false",
+  "display:",
+  "  compact: true",
+  "  show_reasoning: false",
+  "updates:",
+  "  pre_update_backup: false",
+  "  refresh_cua_driver: false",
+  "",
+].join("\n"), "utf8");
+writeFileSync(join(hermesHome, ".env"), "\n", "utf8");
+const runner = join(home, "run-hermes.py");
+writeFileSync(runner, [
+  "import os",
+  "import sys",
+  "sys.path.insert(0, os.environ['NEMOCLAW_HERMES_SITE_PACKAGES'])",
+  "from hermes_cli.main import main",
+  "main()",
+  "",
+].join("\n"), "utf8");
+
+const execute = (prompt) => new Promise((resolve, reject) => {
+  const child = spawn(python, [
+    runner,
+    "--oneshot", prompt,
+    "--provider", "custom",
+    "--model", "native-preview",
+  ], {
+    cwd: home,
+    env: {
+      ...process.env,
+      HERMES_HOME: hermesHome,
+      HOME: home,
+      PYTHONDONTWRITEBYTECODE: "1",
+      PYTHONNOUSERSITE: "1",
+      PYTHONUTF8: "1",
+      USERPROFILE: home,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString("utf8");
+    process.stdout.write(chunk);
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString("utf8");
+    process.stderr.write(chunk);
+  });
+  child.once("error", reject);
+  child.once("close", (code) => code === 0 ? resolve({ stdout, stderr }) : reject(new Error("Hermes exited " + code + ": " + stderr)));
+});
+
+const turns = [];
+try {
+  for (let index = 0; index < turnProofs.length; index += 1) {
+    const [prompt, expected] = turnProofs[index];
+    console.log("HERMES> TURN " + (index + 1) + " running through the real Hermes CLI");
+    const result = await execute(prompt);
+    const output = result.stdout.trim();
+    if (!output.includes(expected)) throw new Error("Hermes output did not contain exact token " + expected);
+    console.log("HERMES> TURN " + (index + 1) + " PASS " + expected);
+    turns.push({ prompt, expected, output });
+  }
+  writeFileSync(resultPath, JSON.stringify({
+    schemaVersion: 1,
+    classification: "native-windows-hermes-agent-result",
+    hermesVersion: "0.19.0",
+    turnCount: turns.length,
+    turns,
+    verdict: "pass",
+  }, null, 2) + "\n", "utf8");
+} finally {
+  await new Promise((resolve) => model.close(() => resolve()));
+}
+`;
+}
+
 async function main() {
   if (process.platform !== "win32" || process.arch !== "arm64")
     fail("native Windows ARM64 is required");
   if (!process.argv.includes("--qualification"))
-    fail("the current Pi entrypoint requires a completed graphical configuration");
+    fail("the current terminal-agent entrypoint requires a completed graphical configuration");
+  const agentId = argumentValue("--agent") ?? "pi";
+  if (agentId !== "pi" && agentId !== "hermes") fail(`unsupported terminal agent: ${agentId}`);
+  const isHermes = agentId === "hermes";
+  const agentLabel = isHermes ? "Hermes" : "Pi";
+  const agentVersion = isHermes ? "0.19.0" : "0.84.1";
+  const turnProofs = isHermes ? HERMES_TURN_PROOFS : PI_TURN_PROOFS;
+  const finalToken = turnProofs[2][1];
 
   const installRoot = requiredDirectory(
     process.env.NEMOCLAW_NATIVE_INSTALL_ROOT ?? "",
@@ -214,7 +389,13 @@ async function main() {
     path.join(binRoot, "openshell-gateway.exe"),
     "OpenShell gateway",
   );
-  const installedPiRoot = requiredDirectory(path.join(installRoot, "pi"), "Pi runtime");
+  const installedAgentRoot = requiredDirectory(
+    path.join(installRoot, isHermes ? "hermes" : "pi"),
+    `${agentLabel} runtime`,
+  );
+  const installedPythonRoot = isHermes
+    ? requiredDirectory(path.join(installRoot, "python"), "Python runtime")
+    : null;
   const gatewayConfig = requiredFile(
     path.join(installRoot, "config", "mxc-gateway.toml"),
     "MXC gateway configuration",
@@ -225,29 +406,68 @@ async function main() {
   if (!systemDrive || !/^[A-Za-z]:$/u.test(systemDrive)) fail("SystemDrive is invalid");
   const systemRoot = requiredDirectory(process.env.SystemRoot ?? "", "Windows system root");
   const runId = randomBytes(5).toString("hex");
-  const runRoot = path.join(`${systemDrive}\\`, `NemoClawNativePi-${runId}`);
-  const shareRoot = path.join(`${systemDrive}\\`, `NemoClawNativePiShare-${runId}`);
-  const runtimeRoot = path.join(`${systemDrive}\\`, `NemoClawNativePiRuntime-${runId}`);
+  const runRoot = path.join(`${systemDrive}\\`, `NemoClawNativeAgent-${agentId}-${runId}`);
+  const shareRoot = path.join(`${systemDrive}\\`, `NemoClawNativeAgentShare-${agentId}-${runId}`);
+  const runtimeRoot = path.join(
+    `${systemDrive}\\`,
+    `NemoClawNativeAgentRuntime-${agentId}-${runId}`,
+  );
   for (const directory of [runRoot, shareRoot, runtimeRoot]) {
     if (fs.existsSync(directory)) fail("qualification root already exists");
     fs.mkdirSync(directory);
   }
   const evidenceRoot = path.resolve(
     argumentValue("--artifact-directory") ??
-      path.join(process.env.LOCALAPPDATA ?? runRoot, "NVIDIA", "NemoClaw", "evidence", "pi"),
+      path.join(process.env.LOCALAPPDATA ?? runRoot, "NVIDIA", "NemoClaw", "evidence", agentId),
   );
   fs.mkdirSync(evidenceRoot, { recursive: true });
   const node = path.join(runtimeRoot, "node.exe");
-  const piRoot = path.join(runtimeRoot, "pi");
   fs.copyFileSync(installedNode, node);
-  fs.cpSync(installedPiRoot, piRoot, { recursive: true });
-  const piCli = requiredFile(
-    path.join(piRoot, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js"),
-    "staged Pi CLI",
-  );
-  const workload = path.join(shareRoot, "pi-native-qualification.mjs");
-  fs.writeFileSync(workload, workloadSource(), "utf8");
-  const resultPath = path.join(shareRoot, "pi-result.json");
+  const stagedAgentRoot = path.join(runtimeRoot, agentId);
+  fs.cpSync(installedAgentRoot, stagedAgentRoot, { recursive: true });
+  let agentEnvironment;
+  let workloadText;
+  if (isHermes) {
+    const stagedPythonRoot = path.join(runtimeRoot, "python");
+    fs.cpSync(installedPythonRoot, stagedPythonRoot, { recursive: true });
+    agentEnvironment = {
+      NEMOCLAW_HERMES_HOME_ROOT: path.join(shareRoot, "home"),
+      NEMOCLAW_HERMES_MODEL_PORT: "",
+      NEMOCLAW_HERMES_PYTHON: requiredFile(
+        path.join(stagedPythonRoot, "python.exe"),
+        "staged Python runtime",
+      ),
+      NEMOCLAW_HERMES_RESULT: path.join(shareRoot, "hermes-result.json"),
+      NEMOCLAW_HERMES_SITE_PACKAGES: requiredDirectory(
+        path.join(stagedAgentRoot, "site-packages"),
+        "staged Hermes site-packages",
+      ),
+    };
+    workloadText = hermesWorkloadSource();
+  } else {
+    agentEnvironment = {
+      NEMOCLAW_PI_ENTRY: requiredFile(
+        path.join(
+          stagedAgentRoot,
+          "node_modules",
+          "@earendil-works",
+          "pi-coding-agent",
+          "dist",
+          "cli.js",
+        ),
+        "staged Pi CLI",
+      ),
+      NEMOCLAW_PI_HOME: path.join(shareRoot, "home"),
+      NEMOCLAW_PI_MODEL_PORT: "",
+      NEMOCLAW_PI_RESULT: path.join(shareRoot, "pi-result.json"),
+    };
+    workloadText = piWorkloadSource();
+  }
+  const workload = path.join(shareRoot, `${agentId}-native-qualification.mjs`);
+  fs.writeFileSync(workload, workloadText, "utf8");
+  const resultPath = isHermes
+    ? agentEnvironment.NEMOCLAW_HERMES_RESULT
+    : agentEnvironment.NEMOCLAW_PI_RESULT;
   const policyPath = path.join(runRoot, "policy.yaml");
   fs.writeFileSync(
     policyPath,
@@ -272,8 +492,10 @@ async function main() {
     fs.mkdirSync(directory, { recursive: true });
   const openShellPort = await freePort();
   const modelPort = await freePort();
-  const sandboxName = `nc-pi-${runId}`;
-  const gatewayName = `nemoclaw-pi-${runId}`;
+  if (isHermes) agentEnvironment.NEMOCLAW_HERMES_MODEL_PORT = String(modelPort);
+  else agentEnvironment.NEMOCLAW_PI_MODEL_PORT = String(modelPort);
+  const sandboxName = `nc-${agentId}-${runId}`;
+  const gatewayName = `nemoclaw-${agentId}-${runId}`;
   const gatewayLogPath = path.join(runRoot, "openshell-gateway.log");
   const gatewayErrorPath = path.join(runRoot, "openshell-gateway.err.log");
   const gatewayLog = fs.openSync(gatewayLogPath, "w");
@@ -308,7 +530,7 @@ async function main() {
   let passed = false;
   let logsClosed = false;
   try {
-    console.log("PI> Starting the installed OpenShell MXC gateway");
+    console.log(`${agentLabel.toUpperCase()}> Starting the installed OpenShell MXC gateway`);
     await waitForPort(openShellPort, gateway);
     cliEnvironment = allowlistedWindowsEnvironment({
       ...gatewayEnvironment,
@@ -318,21 +540,18 @@ async function main() {
       openshell,
       ["gateway", "add", `http://127.0.0.1:${openShellPort}`, "--local", "--name", gatewayName],
       cliEnvironment,
-      "Registering the native Pi gateway",
+      `Registering the native ${agentLabel} gateway`,
     );
     await run(
       openshell,
       ["gateway", "select", gatewayName],
       cliEnvironment,
-      "Selecting the native Pi gateway",
+      `Selecting the native ${agentLabel} gateway`,
     );
     const sandboxEnvironment = {
       HOME: home,
       LOCALAPPDATA: home,
-      NEMOCLAW_PI_ENTRY: piCli,
-      NEMOCLAW_PI_HOME: home,
-      NEMOCLAW_PI_MODEL_PORT: String(modelPort),
-      NEMOCLAW_PI_RESULT: resultPath,
+      ...agentEnvironment,
       NODE_DISABLE_COMPILE_CACHE: "1",
       NUMBER_OF_PROCESSORS: process.env.NUMBER_OF_PROCESSORS ?? "1",
       OS: "Windows_NT",
@@ -359,7 +578,9 @@ async function main() {
     ];
     for (const [name, value] of Object.entries(sandboxEnvironment))
       createArgs.push("--env", `${name}=${value}`);
-    console.log("PI> Launching the real Pi runtime inside native MXC");
+    console.log(
+      `${agentLabel.toUpperCase()}> Launching the real ${agentLabel} runtime inside native MXC`,
+    );
     create = spawn(openshell, createArgs, {
       env: cliEnvironment,
       stdio: ["ignore", "pipe", "pipe"],
@@ -375,31 +596,32 @@ async function main() {
       createError = `${createError}${text}`.slice(-128 * 1024);
       process.stderr.write(text);
     });
-    await waitForFileText(resultPath, "NATIVE_PI_TURN_3_OK", 360_000);
+    await waitForFileText(resultPath, finalToken, 360_000);
     const agentResult = JSON.parse(fs.readFileSync(resultPath, "utf8"));
+    const reportedVersion = isHermes ? agentResult.hermesVersion : agentResult.piVersion;
     if (
       agentResult.verdict !== "pass" ||
-      agentResult.piVersion !== "0.84.1" ||
+      reportedVersion !== agentVersion ||
       agentResult.turnCount !== 3 ||
-      !TURN_PROOFS.every(([, expected], index) => agentResult.turns?.[index]?.expected === expected)
+      !turnProofs.every(([, expected], index) => agentResult.turns?.[index]?.expected === expected)
     )
-      fail("Pi result receipt is incomplete");
+      fail(`${agentLabel} result receipt is incomplete`);
     await run(
       openshell,
       ["sandbox", "delete", sandboxName],
       cliEnvironment,
-      "Deleting the native Pi sandbox",
+      `Deleting the native ${agentLabel} sandbox`,
     );
     if (create !== null && !(await stopChild(create)))
-      fail("Pi sandbox request watcher did not stop");
+      fail(`${agentLabel} sandbox request watcher did not stop`);
     const sandboxList = await run(
       openshell,
       ["sandbox", "list", "-o", "json"],
       cliEnvironment,
-      "Verifying native Pi sandbox cleanup",
+      `Verifying native ${agentLabel} sandbox cleanup`,
     );
     if (jsonContainsExactValue(JSON.parse(sandboxList.stdout.trim()), sandboxName))
-      fail("Pi sandbox remained registered after deletion");
+      fail(`${agentLabel} sandbox remained registered after deletion`);
     if (!(await stopChild(gateway))) fail("OpenShell MXC gateway did not stop");
     fs.closeSync(gatewayLog);
     fs.closeSync(gatewayError);
@@ -410,10 +632,10 @@ async function main() {
     }
     const receipt = {
       ...agentResult,
-      classification: "installed-nemoclaw-native-windows-pi",
+      classification: `installed-nemoclaw-native-windows-${agentId}`,
       architecture: "arm64",
       backend: "process_container",
-      interface: "Pi terminal print mode",
+      interface: `${agentLabel} terminal one-shot mode`,
       deterministicLocalModel: true,
       createWatcherStopped: true,
       sandboxDeleted: true,
@@ -422,13 +644,15 @@ async function main() {
       qualificationRootsRemoved: true,
     };
     fs.writeFileSync(
-      path.join(evidenceRoot, `native-windows-pi-${runId}.json`),
+      path.join(evidenceRoot, `native-windows-${agentId}-${runId}.json`),
       `${JSON.stringify(receipt, null, 2)}\n`,
       "utf8",
     );
     await removeDirectory(shareRoot);
     passed = true;
-    console.log("PI> PASS three real Pi agent turns inside native MXC");
+    console.log(
+      `${agentLabel.toUpperCase()}> PASS three real ${agentLabel} agent turns inside native MXC`,
+    );
   } finally {
     if (create !== null) await stopChild(create);
     if (!passed) {
@@ -437,7 +661,7 @@ async function main() {
           openshell,
           ["sandbox", "delete", sandboxName],
           cliEnvironment,
-          "Failure cleanup native Pi sandbox",
+          `Failure cleanup native ${agentLabel} sandbox`,
           30_000,
         );
       } catch {}
@@ -461,11 +685,11 @@ async function main() {
       ]);
       if (diagnostic) {
         fs.writeFileSync(
-          path.join(evidenceRoot, `native-windows-pi-diagnostic-${runId}.log`),
+          path.join(evidenceRoot, `native-windows-${agentId}-diagnostic-${runId}.log`),
           diagnostic,
           "utf8",
         );
-        console.error(`PI> Sanitized failure diagnostic\n${diagnostic}`);
+        console.error(`${agentLabel.toUpperCase()}> Sanitized failure diagnostic\n${diagnostic}`);
       }
     }
     for (const directory of [runRoot, shareRoot, runtimeRoot]) await removeDirectory(directory);
@@ -473,6 +697,8 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : "Native Windows Pi qualification failed.");
+  console.error(
+    error instanceof Error ? error.message : "Native Windows terminal-agent qualification failed.",
+  );
   process.exitCode = 1;
 });

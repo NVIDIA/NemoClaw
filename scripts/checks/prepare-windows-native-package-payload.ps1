@@ -26,6 +26,12 @@ $PSNativeCommandUseErrorActionPreference = $false
 $script:NodeVersion = '22.22.3'
 $script:NodeArchive = "node-v$($script:NodeVersion)-win-arm64.zip"
 $script:NodeArchiveSha256 = '00be129a09e8872cd52d3bb8bba12412c5733d2224123a482a2dca4a6fbf2586'
+$script:PythonVersion = '3.13.13'
+$script:PythonEmbedArchive = "python-$($script:PythonVersion)-embed-arm64.zip"
+$script:PythonEmbedArchiveSha256 = '1230310118a6330cd6385cfc04de48bc77c7d18c240fd5fa23d054e50b1ebb85'
+$script:HermesVersion = '0.19.0'
+$script:HermesWheelSha256 = 'bd0bac012aee38a60894781f4597dc29ee7bedb3448540249921f10d3bef327f'
+$script:RuamelYamlWheelSha256 = '9c8ba9eb3e793efdf924b60d521820869d5bf0cb9c6f1b82d82de8295e290b9d'
 $script:RustVersion = '1.95.0'
 $script:MxcSdkVersion = '0.8.0'
 $script:MxcSdkArchiveSha256 = '06bb2399d7e98ab1907acf851e12a4e44748dd467b79d3e53c2f2fbf569da14e'
@@ -114,6 +120,7 @@ $npm = (Get-Command npm.cmd -ErrorAction Stop).Source
 $npx = (Get-Command npx.cmd -ErrorAction Stop).Source
 $tar = (Get-Command tar.exe -ErrorAction Stop).Source
 $rustup = (Get-Command rustup.exe -ErrorAction Stop).Source
+$pythonBuilder = (Get-Command python.exe -ErrorAction Stop).Source
 $reportedNodeVersion = (& $node --version).Trim()
 if ($LASTEXITCODE -ne 0 -or $reportedNodeVersion -cne "v$($script:NodeVersion)") {
     Fail-PayloadPreparation "Node.js $($script:NodeVersion) is required to build the payload."
@@ -122,6 +129,11 @@ $reportedRustVersion = (& $rustup run $script:RustVersion rustc --version).Trim(
 if ($LASTEXITCODE -ne 0 -or -not $reportedRustVersion.StartsWith("rustc $($script:RustVersion) ", [StringComparison]::Ordinal)) {
     Fail-PayloadPreparation "Rust $($script:RustVersion) is required to build the native launcher."
 }
+$reportedPythonVersion = (& $pythonBuilder --version).Trim()
+if ($LASTEXITCODE -ne 0 -or $reportedPythonVersion -cne "Python $($script:PythonVersion)") {
+    Fail-PayloadPreparation "Python $($script:PythonVersion) is required to build the native agent payloads."
+}
+Assert-Arm64PortableExecutable -Path $pythonBuilder -Label 'Python agent payload builder'
 
 $workRoot = Join-Path $env:RUNNER_TEMP ('nemoclaw-native-payload-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($workRoot) | Out-Null
@@ -204,6 +216,54 @@ try {
     Copy-Item -LiteralPath (Join-Path $candidate 'agents\pi\pi-runtime\package.json') -Destination $piRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'agents\pi\pi-runtime\package-lock.json') -Destination $piRoot
     Invoke-Checked -FilePath $npm -Arguments @('ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund') -Label 'Pi production runtime restore' -WorkingDirectory $piRoot
+
+    $pythonArchivePath = Join-Path $workRoot $script:PythonEmbedArchive
+    Invoke-WebRequest -UseBasicParsing -Uri "https://www.python.org/ftp/python/$($script:PythonVersion)/$($script:PythonEmbedArchive)" -OutFile $pythonArchivePath
+    Assert-Sha256 -Path $pythonArchivePath -Expected $script:PythonEmbedArchiveSha256 -Label 'Python ARM64 embeddable archive'
+    $pythonRoot = Join-Path $output 'python'
+    Expand-Archive -LiteralPath $pythonArchivePath -DestinationPath $pythonRoot
+    Assert-Arm64PortableExecutable -Path (Join-Path $pythonRoot 'python.exe') -Label 'Packaged Python runtime'
+    [IO.File]::WriteAllText(
+        (Join-Path $pythonRoot 'python313._pth'),
+        "python313.zip`r`n.`r`nimport site`r`n",
+        [Text.ASCIIEncoding]::new()
+    )
+
+    $hermesRoot = Join-Path $output 'hermes'
+    $hermesSitePackages = Join-Path $hermesRoot 'site-packages'
+    [IO.Directory]::CreateDirectory($hermesSitePackages) | Out-Null
+    $hermesLock = Join-Path $candidate 'packaging\windows\python\hermes-windows-arm64.lock'
+    Invoke-Checked `
+        -FilePath $pythonBuilder `
+        -Arguments @(
+            '-m', 'pip', 'install',
+            '--disable-pip-version-check',
+            '--require-hashes',
+            '--only-binary=:all:',
+            '--no-compile',
+            '--target', $hermesSitePackages,
+            '--requirement', $hermesLock
+        ) `
+        -Label 'Hermes native ARM64 dependency restore'
+    $hermesWheel = Join-Path $workRoot "hermes_agent-$($script:HermesVersion)-py3-none-any.whl"
+    Invoke-WebRequest -UseBasicParsing -Uri 'https://files.pythonhosted.org/packages/e5/30/c85be8290e9565dc3c7a9720e93f3e59e09b1b163487be4946c3aa848f80/hermes_agent-0.19.0-py3-none-any.whl' -OutFile $hermesWheel
+    Assert-Sha256 -Path $hermesWheel -Expected $script:HermesWheelSha256 -Label 'Hermes Agent wheel'
+    $ruamelWheel = Join-Path $workRoot 'ruamel_yaml-0.18.17-py3-none-any.whl'
+    Invoke-WebRequest -UseBasicParsing -Uri 'https://files.pythonhosted.org/packages/af/fe/b6045c782f1fd1ae317d2a6ca1884857ce5c20f59befe6ab25a8603c43a7/ruamel_yaml-0.18.17-py3-none-any.whl' -OutFile $ruamelWheel
+    Assert-Sha256 -Path $ruamelWheel -Expected $script:RuamelYamlWheelSha256 -Label 'ruamel.yaml wheel'
+    Invoke-Checked `
+        -FilePath $pythonBuilder `
+        -Arguments @(
+            '-m', 'pip', 'install',
+            '--disable-pip-version-check',
+            '--no-deps',
+            '--no-index',
+            '--no-compile',
+            '--target', $hermesSitePackages,
+            $ruamelWheel,
+            $hermesWheel
+        ) `
+        -Label 'Hermes Agent runtime restore'
 
     $nodeArchivePath = Join-Path $workRoot $script:NodeArchive
     Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/v$($script:NodeVersion)/$($script:NodeArchive)" -OutFile $nodeArchivePath
@@ -300,6 +360,8 @@ debug = false
         'nemoclaw\app\bin\nemoclaw.js',
         'openclaw\node_modules\openclaw\openclaw.mjs',
         'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js',
+        'python\python.exe',
+        'hermes\site-packages\hermes_cli\main.py',
         'onboarding\index.html',
         'onboarding\styles.css',
         'onboarding\app.ts',
@@ -327,6 +389,16 @@ debug = false
         pi = [pscustomobject]@{
             version = '0.84.1'
             lockSha256 = (Get-FileHash -LiteralPath (Join-Path $candidate 'agents\pi\pi-runtime\package-lock.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        python = [pscustomobject]@{
+            version = $script:PythonVersion
+            archiveSha256 = $script:PythonEmbedArchiveSha256
+        }
+        hermes = [pscustomobject]@{
+            version = $script:HermesVersion
+            wheelSha256 = $script:HermesWheelSha256
+            dependencyLockSha256 = (Get-FileHash -LiteralPath $hermesLock -Algorithm SHA256).Hash.ToLowerInvariant()
+            omittedUnqualifiedNativeExtensions = @('cryptography==46.0.7', 'pywinpty==2.0.15')
         }
         agentSupportSha256 = (Get-FileHash -LiteralPath (Join-Path $output 'agent-support.json') -Algorithm SHA256).Hash.ToLowerInvariant()
         openShell = [pscustomobject]@{ pullRequest = 'NVIDIA/OpenShell#2721'; revision = $script:OpenShellRevision }

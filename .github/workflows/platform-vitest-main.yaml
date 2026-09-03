@@ -277,6 +277,15 @@ jobs:
             candidate/package-lock.json
             candidate/agents/openclaw/openclaw-runtime/package-lock.json
 
+      - name: Set up pinned native ARM64 Python for agent payloads
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.1.0
+        with:
+          python-version: 3.13.13
+          architecture: arm64
+          cache: pip
+          cache-dependency-path: |
+            candidate/packaging/windows/python/*.lock
+
       - name: Build the pinned NVIDIA/OpenShell#2721 candidate
         working-directory: openshell
         shell: powershell
