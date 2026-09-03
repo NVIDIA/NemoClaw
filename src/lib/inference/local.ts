@@ -547,6 +547,7 @@ export function prepareOllamaApiExecution(
   host: string = getResolvedOllamaHost(),
   options: {
     dockerContextIsDefault?: typeof dockerContextIsDefaultFromBuild;
+    detached?: boolean;
     env?: NodeJS.ProcessEnv;
     operation?: string;
     prepareDockerEnvironment?: PrepareDockerEnvironmentFn;
@@ -554,7 +555,10 @@ export function prepareOllamaApiExecution(
   } = {},
 ): PreparedOllamaApiExecution {
   const [executable, ...args] = command;
-  const translated = executable === "curl" ? getOllamaApiCommand(args, host) : [...command];
+  let translated = executable === "curl" ? getOllamaApiCommand(args, host) : [...command];
+  if (options.detached === true && translated[0] === "docker" && translated[1] === "run") {
+    translated = [...translated.slice(0, 3), "-d", ...translated.slice(3)];
+  }
   if (translated[0] !== "docker") {
     return { command: translated, env: options.env, cleanup: () => {} };
   }
@@ -1278,7 +1282,7 @@ export function getLocalProviderHealthCheck(provider: string): string[] | null {
   }
   if (!endpoint) return null;
   const curlArgs = buildValidatedCurlCommandArgs(["-sf", endpoint]);
-  return provider === "ollama-local" ? getOllamaApiCommand(curlArgs) : ["curl", ...curlArgs];
+  return ["curl", ...curlArgs];
 }
 
 /**
@@ -2308,6 +2312,7 @@ export function runOllamaWarmup(
   let execution: PreparedOllamaApiExecution;
   try {
     execution = prepareOllamaApiExecution(command, getResolvedOllamaHost(), {
+      detached: windowsHost,
       prepareDockerEnvironment,
       operation: `Windows-host Ollama warm-up for '${model}'`,
       runCaptureImpl: routeProtectionCapture,
@@ -2338,10 +2343,10 @@ export function getOllamaProbeCommand(
     keep_alive: keepAlive,
     options: { num_predict: 16 },
   });
-  const host = getResolvedOllamaHost();
-  const endpoint = `http://${host}:${OLLAMA_PORT}/api/generate`;
-  return getOllamaApiCommand(
-    buildValidatedCurlCommandArgs([
+  const endpoint = `http://${getResolvedOllamaHost()}:${OLLAMA_PORT}/api/generate`;
+  return [
+    "curl",
+    ...buildValidatedCurlCommandArgs([
       "-sS",
       "--max-time",
       String(timeoutSeconds),
@@ -2351,8 +2356,7 @@ export function getOllamaProbeCommand(
       payload,
       endpoint,
     ]),
-    host,
-  );
+  ];
 }
 
 export function validateOllamaModel(
@@ -2387,12 +2391,16 @@ export function validateOllamaModel(
     timedOut = retryResult.timedOut;
   }
   if (!output) {
+    const localDaemon = getResolvedOllamaHost() === OLLAMA_LOCALHOST;
+    const failure =
+      timedOut === true
+        ? `Selected Ollama model '${model}' did not answer the local probe in time. It may still be loading, too large for the host, or otherwise unhealthy.`
+        : `Selected Ollama model '${model}' failed the local probe without a response. Check that Ollama is running and the model is available.`;
     return {
       ok: false,
       message:
-        `Selected Ollama model '${model}' did not answer the local probe in time. ` +
-        "It may still be loading, too large for the host, or otherwise unhealthy." +
-        (timedOut
+        failure +
+        (timedOut && localDaemon
           ? " Stale runner processes from a previous model may be holding GPU memory. " +
             "Run 'sudo systemctl restart ollama' and rerun onboarding."
           : ""),
