@@ -8,7 +8,7 @@
  * the mutation class, sandbox, timestamp, and a redacted non-secret reason.
  */
 
-import { appendFileSync, closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
+import { appendFileSync, closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 
 import { redactFull } from "../../security/redact";
@@ -50,9 +50,16 @@ export function readStableOperationalAudit(filePath = OPERATIONAL_AUDIT_FILE): s
     if (before.size > BigInt(MAX_OPERATIONAL_AUDIT_READ_BYTES)) {
       throw new Error("config audit exceeds the bounded 8 MiB rebuild capture limit");
     }
-    const text = readFileSync(descriptor, "utf8");
+    const buffer = Buffer.alloc(Number(before.size));
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const count = readSync(descriptor, buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+      if (count === 0) break;
+      bytesRead += count;
+    }
     const after = fstatSync(descriptor, { bigint: true });
     if (
+      bytesRead !== Number(before.size) ||
       before.dev !== after.dev ||
       before.ino !== after.ino ||
       before.size !== after.size ||
@@ -61,7 +68,7 @@ export function readStableOperationalAudit(filePath = OPERATIONAL_AUDIT_FILE): s
     ) {
       throw new Error("config audit changed during rebuild capture");
     }
-    return text;
+    return buffer.toString("utf8", 0, bytesRead);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
     throw error;

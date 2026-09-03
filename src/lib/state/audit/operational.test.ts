@@ -17,6 +17,7 @@ describe("operational audit", () => {
   });
 
   afterEach(() => {
+    vi.doUnmock("node:fs");
     vi.unstubAllEnvs();
     vi.resetModules();
     fs.rmSync(homeDir, { force: true, recursive: true });
@@ -76,5 +77,37 @@ describe("operational audit", () => {
     expect(readStableOperationalAudit(auditFile)).toBe('{"action":"config_set"}\n');
     expect(() => readStableOperationalAudit(linkedFile)).toThrow();
     expect(readStableOperationalAudit(path.join(homeDir, "missing.jsonl"))).toBe("");
+  });
+
+  it("bounds a descriptor read to the size validated before the file grows", async () => {
+    const auditFile = path.join(homeDir, "growing-audit.jsonl");
+    fs.writeFileSync(auditFile, "x", { mode: 0o600 });
+
+    const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    let requestedReadLength: number | undefined;
+    const readSync = vi.fn(
+      (descriptor: number, buffer: Buffer, offset: number, length: number, position: number) => {
+        requestedReadLength = length;
+        return actualFs.readSync(descriptor, buffer, offset, length, position);
+      },
+    );
+    const afterFstat = [() => actualFs.appendFileSync(auditFile, Buffer.alloc(8 * 1024 * 1024))];
+    let fstatCalls = 0;
+    vi.doMock("node:fs", () => ({
+      ...actualFs,
+      fstatSync: (descriptor: number, options: { bigint: true }) => {
+        const stat = actualFs.fstatSync(descriptor, options);
+        afterFstat[fstatCalls++]?.();
+        return stat;
+      },
+      readSync,
+    }));
+    const { readStableOperationalAudit } = await import("./operational");
+
+    expect(() => readStableOperationalAudit(auditFile)).toThrow(
+      "config audit changed during rebuild capture",
+    );
+    expect(readSync).toHaveBeenCalledTimes(1);
+    expect(requestedReadLength).toBe(1);
   });
 });
