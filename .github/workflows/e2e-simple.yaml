@@ -36,6 +36,8 @@ jobs:
       - id: package
         name: Package the exact candidate CLI
         env:
+          MANAGED_IMAGE_CATALOG: ""
+          MANAGED_IMAGE_CATALOG_SHA256: ""
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
