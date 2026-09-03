@@ -19,7 +19,7 @@ const PACKAGE_SPEC = "openclaw@2026.7.1";
 const INTEGRITY =
   "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==";
 const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
-const LOCK_SHA256 = "60f816dcff6f35179b1c48b4c06db9473497760d45ca1831252c27e8b1d2d665";
+const LOCK_SHA256 = "248d881ca125bb83da293c4b3f40b46d057095a9fe90b5165255da0de78af9f9";
 const MCPORTER_PACKAGE_SPEC = "mcporter@0.7.3";
 const MCP_TOOL_DISCOVERY_PACKAGE_SPEC = "@modelcontextprotocol/sdk@1.30.0";
 const MCP_TOOL_DISCOVERY_LOCK_SHA256 =
@@ -177,7 +177,9 @@ describe("locked OpenClaw production installation (#5896)", () => {
     expect(verified).toHaveLength(307);
     expect(verified).toContain(PACKAGE_SPEC);
     expect(verified).toContain("brace-expansion@5.0.9");
-    expect(verified).toContain("fast-uri@3.1.5");
+    expect(verified).toContain("fast-uri@3.1.6");
+
+    expect(verified).not.toContain("fast-uri@3.1.5");
     expect(verified).toContain("hono@4.12.34");
     expect(verified).toContain("ip-address@10.3.1");
     expect(verified).toContain("tar@7.5.21");

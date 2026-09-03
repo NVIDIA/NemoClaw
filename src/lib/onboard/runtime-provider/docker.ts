@@ -52,7 +52,6 @@ import {
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
 import { createDockerLlamaCppHostLocalOperation } from "./docker-llama-cpp-operation";
-import { createDockerStateMutationSurface } from "./docker-state-mutation";
 import { createDockerPrivilegedSandboxControl } from "./docker-privileged-sandbox-control";
 import { createDockerRuntimeProviderSnapshotSurface } from "./snapshot";
 
@@ -539,6 +538,7 @@ export function createDockerRuntimeProviderBundle(
       supported: true,
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
+      ownsHostReadiness: false,
       prepareHostRuntime: (input) => {
         const bindAddress = parseGatewayBindAddress(
           "NEMOCLAW_GATEWAY_BIND_ADDRESS",
@@ -620,7 +620,6 @@ export function createDockerRuntimeProviderBundle(
         "workload-cleanup",
       ],
     },
-    stateMutation: createDockerStateMutationSurface(),
     bootstrap: createDockerManagedBootstrapSurface(providerId),
     snapshot: createDockerRuntimeProviderSnapshotSurface(providerId, {
       captureHostCommand: deps.captureHostCommand,
@@ -706,6 +705,7 @@ export function createKubernetesRuntimeProviderBundle(
       supported: true,
       launcher: "openshell",
       inspectLegacyContainer: true,
+      ownsHostReadiness: false,
       prepareHostRuntime: () => {
         throw new Error("The Kubernetes provider does not launch a host-managed gateway.");
       },
@@ -736,7 +736,6 @@ export function createKubernetesRuntimeProviderBundle(
         "workload-cleanup",
       ],
     },
-    stateMutation: unsupported(providerId, futureReason),
     bootstrap: unsupported(providerId, futureReason),
     snapshot: unsupported(providerId, futureReason),
     recovery: unsupported(providerId, futureReason),
