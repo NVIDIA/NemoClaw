@@ -6,7 +6,7 @@ import {
   applyOllamaRuntimeContextWindow,
   findReachableOllamaHost,
   isLocalProviderHostHealthy,
-  OLLAMA_LOCALHOST,
+  OLLAMA_HOST_DOCKER_INTERNAL,
   validateOllamaModel,
 } from "../inference/local";
 import { ensureOllamaAuthProxy, isProxyHealthy } from "../inference/ollama/proxy";
@@ -162,11 +162,13 @@ function failOllamaResumeRepair(message: string): never {
   throw new Error(message);
 }
 
-// True when Ollama answers on a non-loopback host, which on WSL means the
-// already-qualified Windows-host daemon reached through host.docker.internal.
-function respondingOllamaIsWindowsHost(): boolean {
+// Discovery returns host.docker.internal only after revalidating the Windows
+// listener, Docker Desktop route, Ollama response, and hostile Host rejection.
+// Under mirrored networking it also distinguishes a Windows-forwarded loopback
+// response from a Linux-owned listener before returning that qualified route.
+function protectedWindowsHostOllamaIsReachable(): boolean {
   const host = findReachableOllamaHost();
-  return host !== null && host !== OLLAMA_LOCALHOST;
+  return host === OLLAMA_HOST_DOCKER_INTERNAL;
 }
 
 // Repair the Ollama systemd loopback override for recorded ollama-local
@@ -184,7 +186,7 @@ export function repairLocalInferenceSystemdOverrideOrExit(
   // exits 1. Provider selection already skips it, but it records the same
   // "ollama-local" provider for both topologies, so resume carries no Windows
   // marker and has to re-derive the distinction here (#8596).
-  if (!respondingOllamaIsWindowsHost()) {
+  if (!protectedWindowsHostOllamaIsReachable()) {
     const state = ensureOllamaLoopbackSystemdOverride({ isNonInteractive, contextWindowFloor });
     if (state === "failed") {
       failOllamaResumeRepair(

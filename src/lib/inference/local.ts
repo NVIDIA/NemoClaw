@@ -26,7 +26,13 @@ import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 
 import { retryUntil } from "../core/retry";
 import { sleepSeconds } from "../core/wait";
-import { containerCanReachHostLoopback, isWsl, type WslDetectionOptions } from "../platform";
+import {
+  type ContainerRuntime,
+  containerCanReachHostLoopback,
+  isWsl,
+  windowsProcessListensOnlyOnLoopback,
+  type WslDetectionOptions,
+} from "../platform";
 import { type CaptureResult, run, runCapture, runCaptureEx, shellQuote } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
 
@@ -122,9 +128,10 @@ export const QWEN3_6_OLLAMA_MODEL = assertRegistryTag("qwen3.6:35b");
 
 export type RunCaptureFn = (
   cmd: readonly string[],
-  opts?: { ignoreError?: boolean; env?: NodeJS.ProcessEnv },
+  opts?: Parameters<typeof runCapture>[1],
 ) => string;
 type PrepareDockerEnvironmentFn = () => PreparedDockerBuildEnvironment;
+type ReadTextFile = (filePath: string) => string | null;
 
 export {
   getInstalledOllamaVersion,
@@ -145,6 +152,7 @@ export {
 } from "./local-adapter-lifecycle";
 
 const OLLAMA_REBINDING_PROBE_HOST = "rebinding.invalid";
+const WINDOWS_HOST_OLLAMA_PROBE_TIMEOUT_MS = 5_000;
 
 /** Build a probe that must be rejected when Ollama validates the HTTP Host header. */
 export function getWindowsHostOllamaHostValidationCurlArgs(): string[] {
@@ -166,6 +174,115 @@ export function getWindowsHostOllamaHostValidationCurlArgs(): string[] {
 
 export function isOllamaHostValidationEnabled(probeOutput: string): boolean {
   return probeOutput.trim() === "403";
+}
+
+function readTextFileOrNull(filePath: string): string | null {
+  try {
+    return fs.readFileSync(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** Return whether Linux owns a listening TCP socket, or null when procfs is inconclusive. */
+export function detectLocalTcpListener(
+  port: number,
+  readTextFile: ReadTextFile = readTextFileOrNull,
+): boolean | null {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  const expectedPort = port.toString(16).toUpperCase().padStart(4, "0");
+  for (const filePath of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    const table = readTextFile(filePath);
+    if (table === null) return null;
+    const lines = table.trimEnd().split(/\r?\n/);
+    const header = lines.shift();
+    if (!header?.includes("local_address") || !header.includes("st")) return null;
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const columns = line.trim().split(/\s+/);
+      const localAddress = columns[1];
+      const state = columns[3];
+      const portMatch = /:([0-9A-Fa-f]{4})$/.exec(localAddress ?? "");
+      if (!portMatch || typeof state !== "string") return null;
+      if (state.toUpperCase() === "0A" && portMatch[1].toUpperCase() === expectedPort) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export interface WindowsHostOllamaRouteProtection {
+  loopbackOnly: boolean;
+  reachable: boolean;
+  hostValidationEnabled: boolean;
+  protected: boolean;
+}
+
+export interface WindowsHostOllamaRouteProtectionOptions {
+  runtime?: ContainerRuntime;
+  wslDetection?: WslDetectionOptions;
+  loopbackOnly?: boolean;
+  prepareDockerEnvironment?: PrepareDockerEnvironmentFn;
+}
+
+function probeWindowsHostOllamaLoopbackOnly(runCaptureImpl: RunCaptureFn): boolean {
+  return windowsProcessListensOnlyOnLoopback(runCaptureImpl, {
+    processName: "ollama",
+    port: OLLAMA_PORT,
+    timeoutMs: WINDOWS_HOST_OLLAMA_PROBE_TIMEOUT_MS,
+  });
+}
+
+/** Revalidate every control before a Windows-host Ollama route is accepted. */
+export function probeWindowsHostOllamaRouteProtection(
+  runCaptureImpl: RunCaptureFn = runCapture,
+  options: WindowsHostOllamaRouteProtectionOptions = {},
+): WindowsHostOllamaRouteProtection {
+  const wslDetection = options.wslDetection ?? {};
+  const runtime = options.runtime ?? detectContainerRuntimeFromDockerInfo();
+  const supported = containerCanReachHostLoopback(runtime, wslDetection);
+  if (!supported) {
+    return {
+      loopbackOnly: false,
+      reachable: false,
+      hostValidationEnabled: false,
+      protected: false,
+    };
+  }
+  const loopbackOnly = options.loopbackOnly ?? probeWindowsHostOllamaLoopbackOnly(runCaptureImpl);
+
+  const capture = createOllamaApiCapture(
+    runCaptureImpl,
+    OLLAMA_HOST_DOCKER_INTERNAL,
+    options.prepareDockerEnvironment,
+  );
+  const body = capture(
+    [
+      "curl",
+      "-sf",
+      "--connect-timeout",
+      "2",
+      "--max-time",
+      "5",
+      `http://${OLLAMA_HOST_DOCKER_INTERNAL}:${OLLAMA_PORT}/api/tags`,
+    ],
+    { ignoreError: true },
+  );
+  const reachable = isValidOllamaTagsResponseBody(body);
+  const hostValidationEnabled =
+    reachable &&
+    isOllamaHostValidationEnabled(
+      capture(["curl", ...getWindowsHostOllamaHostValidationCurlArgs()], {
+        ignoreError: true,
+      }),
+    );
+  return {
+    loopbackOnly,
+    reachable,
+    hostValidationEnabled,
+    protected: loopbackOnly && reachable && hostValidationEnabled,
+  };
 }
 
 /** Build the credential-free Docker Desktop reachability probe for Windows-host Ollama. */
@@ -215,6 +332,12 @@ function ollamaCandidateHosts(wslDetection: WslDetectionOptions = {}): string[] 
   return isWsl(wslDetection) ? [OLLAMA_LOCALHOST, OLLAMA_HOST_DOCKER_INTERNAL] : [OLLAMA_LOCALHOST];
 }
 
+export interface FindReachableOllamaHostOptions {
+  runtime?: ContainerRuntime;
+  readTextFile?: ReadTextFile;
+  prepareDockerEnvironment?: PrepareDockerEnvironmentFn;
+}
+
 // Probe each candidate host for a responding Ollama. Returns the first host
 // whose `/api/tags` succeeds, or null if none responds. Result is cached for
 // the rest of the onboard run; call resetOllamaHostCache() in tests.
@@ -225,15 +348,34 @@ export function findReachableOllamaHost(
   runCaptureImpl?: RunCaptureFn,
   wslDetection: WslDetectionOptions = {},
   stateRoot: string = resolveSharedLocalAdapterStateRoot(),
+  options: FindReachableOllamaHostOptions = {},
 ): string | null {
   if (_resolvedOllamaHost !== null) return _resolvedOllamaHost;
   const persistedHost = loadPersistedOllamaHost(stateRoot);
   const capture = runCaptureImpl ?? runCapture;
+  const runningOnWsl = isWsl(wslDetection);
+  let windowsProtection: WindowsHostOllamaRouteProtection | null = null;
+  const getWindowsProtection = (): WindowsHostOllamaRouteProtection => {
+    windowsProtection ??= probeWindowsHostOllamaRouteProtection(capture, {
+      runtime: options.runtime,
+      wslDetection,
+      prepareDockerEnvironment: options.prepareDockerEnvironment,
+    });
+    return windowsProtection;
+  };
   const candidates = [
     ...(persistedHost ? [persistedHost] : []),
     ...ollamaCandidateHosts(wslDetection).filter((host) => host !== persistedHost),
   ];
   for (const host of candidates) {
+    if (host === OLLAMA_HOST_DOCKER_INTERNAL) {
+      if (getWindowsProtection().protected) {
+        _resolvedOllamaHost = host;
+        return host;
+      }
+      if (host === persistedHost) clearPersistedOllamaHost(stateRoot);
+      continue;
+    }
     // Explicit timeouts: a blackholed host (e.g., firewalled host.docker.internal)
     // would otherwise stall the synchronous onboard probe for the OS connect
     // timeout (~75-130s on Linux). Matches the convention used in
@@ -251,6 +393,28 @@ export function findReachableOllamaHost(
       { ignoreError: true },
     );
     if (result) {
+      if (runningOnWsl) {
+        const networkingMode = capture(["wslinfo", "--networking-mode"], {
+          ignoreError: true,
+        })
+          .trim()
+          .toLowerCase();
+        if (networkingMode === "mirrored") {
+          const hasLocalListener = detectLocalTcpListener(OLLAMA_PORT, options.readTextFile);
+          if (hasLocalListener === null) {
+            if (host === persistedHost) clearPersistedOllamaHost(stateRoot);
+            return null;
+          }
+          if (!hasLocalListener) {
+            if (getWindowsProtection().protected) {
+              _resolvedOllamaHost = OLLAMA_HOST_DOCKER_INTERNAL;
+              return OLLAMA_HOST_DOCKER_INTERNAL;
+            }
+            if (host === persistedHost) clearPersistedOllamaHost(stateRoot);
+            continue;
+          }
+        }
+      }
       _resolvedOllamaHost = host;
       return host;
     }

@@ -229,6 +229,7 @@ credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : String(command);
   if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("command -v zstd")) return "/usr/bin/zstd";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("docker images")) return "";
   if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) {

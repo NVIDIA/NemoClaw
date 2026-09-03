@@ -10,7 +10,7 @@ vi.mock("../inference/local", () => ({
   applyOllamaRuntimeContextWindow: vi.fn(),
   findReachableOllamaHost: vi.fn(),
   isLocalProviderHostHealthy: vi.fn(),
-  OLLAMA_LOCALHOST: "127.0.0.1",
+  OLLAMA_HOST_DOCKER_INTERNAL: "host.docker.internal",
   validateOllamaModel: vi.fn(),
 }));
 vi.mock("../inference/ollama/proxy", () => ({

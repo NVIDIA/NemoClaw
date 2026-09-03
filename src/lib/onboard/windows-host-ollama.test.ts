@@ -12,7 +12,8 @@ vi.mock("../runner", () => ({
   ) => runCapture(cmd, options),
 }));
 
-vi.mock("../platform", () => ({
+vi.mock("../platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../platform")>()),
   isWsl: vi.fn(() => true),
 }));
 
@@ -73,7 +74,7 @@ describe("detectWindowsHostOllama", () => {
 
   it("continues when the Windows-host port probe does not respond (#9604)", () => {
     const installedPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe";
-    const outputs = [installedPath, "42", ""];
+    const outputs = [installedPath, ""];
     runCapture.mockImplementation(() => outputs.shift() ?? "");
 
     expect(detectWindowsHostOllama()).toEqual({
@@ -81,11 +82,61 @@ describe("detectWindowsHostOllama", () => {
       installedPath,
       loopbackOnly: false,
     });
-    expect(runCapture).toHaveBeenCalledTimes(3);
+    expect(runCapture).toHaveBeenCalledTimes(2);
     expect(runCapture.mock.calls.map(([, options]) => options)).toEqual([
       { ignoreError: true, timeout: 5_000 },
       { ignoreError: true, timeout: 5_000 },
-      { ignoreError: true, timeout: 5_000 },
     ]);
+  });
+
+  it("accepts only loopback listeners owned by an Ollama process", () => {
+    const installedPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe";
+    runCapture.mockImplementation((command) => {
+      const script = command.join(" ");
+      return script.includes("Get-Command ollama.exe")
+        ? installedPath
+        : script.includes("Get-NetTCPConnection")
+          ? "127.0.0.1\n::1"
+          : "";
+    });
+
+    expect(detectWindowsHostOllama()).toEqual({
+      installed: true,
+      installedPath,
+      loopbackOnly: true,
+    });
+    const listenerCommand = runCapture.mock.calls.find(([command]) =>
+      command.join(" ").includes("Get-NetTCPConnection"),
+    )?.[0];
+    expect(listenerCommand).toEqual(
+      expect.arrayContaining([expect.stringContaining("$processPids -contains $_.OwningProcess")]),
+    );
+  });
+
+  it.each(["127.0.0.1\n192.168.1.10", "127.0.0.1\n203.0.113.10"])(
+    "rejects an Ollama listener set that includes a non-loopback address: %j",
+    (listenerAddresses) => {
+      const installedPath = "C:\\Ollama\\ollama.exe";
+      runCapture.mockImplementation((command) => {
+        const script = command.join(" ");
+        return script.includes("Get-Command ollama.exe")
+          ? installedPath
+          : script.includes("Get-NetTCPConnection")
+            ? listenerAddresses
+            : "";
+      });
+
+      expect(detectWindowsHostOllama().loopbackOnly).toBe(false);
+    },
+  );
+
+  it("rejects a loopback listener that is not owned by an Ollama process", () => {
+    const installedPath = "C:\\Ollama\\ollama.exe";
+    runCapture.mockImplementation((command) => {
+      const script = command.join(" ");
+      return script.includes("Get-Command ollama.exe") ? installedPath : "";
+    });
+
+    expect(detectWindowsHostOllama().loopbackOnly).toBe(false);
   });
 });

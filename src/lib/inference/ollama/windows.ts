@@ -8,16 +8,11 @@
 const { spawn } = require("child_process");
 const { run, runCapture } = require("../../runner");
 const {
-  createOllamaApiCapture,
-  getWindowsHostOllamaHostValidationCurlArgs,
   getWindowsHostOllamaDockerReachabilityArgs,
-  isOllamaHostValidationEnabled,
-  isValidOllamaTagsResponseBody,
   OLLAMA_HOST_DOCKER_INTERNAL,
+  probeWindowsHostOllamaRouteProtection,
   setResolvedOllamaHost,
 } = require("../local");
-const { OLLAMA_PORT } = require("../../core/ports");
-
 // Avoid starting a subprocess for each fixed readiness delay.
 // The supported Windows-host Ollama path runs through WSL PowerShell interop.
 // Native Windows activation remains gated by #8178.
@@ -129,31 +124,14 @@ function awaitWindowsOllamaReady(
 ): boolean {
   console.log("  Waiting for Ollama to respond on host.docker.internal...");
   const delay = opts.delay ?? sleep;
-  const capture = createOllamaApiCapture(
-    runCapture,
-    OLLAMA_HOST_DOCKER_INTERNAL,
-    opts.prepareDockerEnvironment,
-  );
   for (let attempt = 0; attempt < 15; attempt++) {
     delay(2);
-    const probe = capture(
-      [
-        "curl",
-        "-sf",
-        "--connect-timeout",
-        "2",
-        "--max-time",
-        "5",
-        `http://${OLLAMA_HOST_DOCKER_INTERNAL}:${OLLAMA_PORT}/api/tags`,
-      ],
-      { ignoreError: true },
-    );
-    if (isValidOllamaTagsResponseBody(probe)) {
-      const hostValidationProbe = capture(
-        ["curl", ...getWindowsHostOllamaHostValidationCurlArgs()],
-        { ignoreError: true },
-      );
-      if (!isOllamaHostValidationEnabled(hostValidationProbe)) continue;
+    const protection = probeWindowsHostOllamaRouteProtection(runCapture, {
+      runtime: "docker-desktop",
+      wslDetection: { isWsl: true },
+      prepareDockerEnvironment: opts.prepareDockerEnvironment,
+    });
+    if (protection.protected) {
       setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
       return true;
     }

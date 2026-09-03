@@ -154,35 +154,6 @@ describe("local inference helpers", () => {
     ]);
   });
 
-  it("probes WSL loopback before Windows-host Ollama", () => {
-    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
-    const commands: string[][] = [];
-    const endpoints: string[] = [];
-
-    const host = findReachableOllamaHost(
-      (command) => {
-        commands.push([...command]);
-        const endpoint = command.at(-1) ?? "";
-        endpoints.push(endpoint);
-        return endpoint.includes("host.docker.internal") ? "ollama" : "";
-      },
-      // Pin the WSL decision: isWsl answers false off Linux before it reads
-      // WSL_DISTRO_NAME, so the stub above cannot reach the WSL candidate order.
-      { isWsl: true },
-    );
-
-    expect(host).toBe("host.docker.internal");
-    expect(endpoints).toEqual([
-      "http://127.0.0.1:11434/api/tags",
-      "http://host.docker.internal:11434/api/tags",
-    ]);
-    expect(commands.map((command) => command[0])).toEqual(["curl", "docker"]);
-    expect(commands[0]).toEqual(expect.arrayContaining(["--connect-timeout", "3", "--max-time", "5"]));
-    expect(commands[1]).toEqual(
-      expect.arrayContaining([CONTAINER_REACHABILITY_IMAGE, "--connect-timeout", "3", "--max-time", "5"]),
-    );
-  });
-
   it("returns the expected base URL for vllm-local", () => {
     expect(getLocalProviderBaseUrl("vllm-local")).toBe("http://host.openshell.internal:8000/v1");
   });

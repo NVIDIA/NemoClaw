@@ -45,6 +45,7 @@ describe("Windows Ollama helper", () => {
     const run = vi.fn();
     const localInference = require(LOCAL_INFERENCE_PATH);
     const runCapture = vi.fn((command: string | string[]) => {
+      if (commandText(command).includes("Get-NetTCPConnection")) return "127.0.0.1";
       expect(command).toEqual(
         expect.arrayContaining([
           "docker",
@@ -90,13 +91,14 @@ describe("Windows Ollama helper", () => {
   it("rejects a reachable daemon that accepts a rebinding Host header", () => {
     const run = vi.fn();
     const localInference = require(LOCAL_INFERENCE_PATH);
-    const runCapture = vi.fn((command: string | string[]) =>
-      Array.isArray(command) && command.includes(REBINDING_PROBE_HOST_HEADER)
+    const runCapture = vi.fn((command: string | string[]) => {
+      if (commandText(command).includes("Get-NetTCPConnection")) return "127.0.0.1";
+      return Array.isArray(command) && command.includes(REBINDING_PROBE_HOST_HEADER)
         ? "200"
         : Array.isArray(command) && command.at(-1) === WINDOWS_OLLAMA_TAGS_URL
           ? JSON.stringify({ models: [] })
-          : "",
-    );
+          : "";
+    });
     localInference.resetOllamaHostCache();
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
@@ -146,6 +148,8 @@ describe("Windows Ollama helper", () => {
         case cmd.includes("SetEnvironmentVariable('OLLAMA_HOST'"):
           persistedHostCommands.push(cmd);
           return "";
+        case cmd.includes("Get-NetTCPConnection"):
+          return "127.0.0.1";
         case Array.isArray(command) && command.includes(REBINDING_PROBE_HOST_HEADER):
           return "403";
         case Array.isArray(command) && command.at(-1) === WINDOWS_OLLAMA_TAGS_URL:
@@ -205,16 +209,19 @@ describe("Windows Ollama helper", () => {
   it("isolates Docker credentials while waiting for the Windows-host daemon", () => {
     const run = vi.fn();
     const cleanup = vi.fn(() => ({ ok: true as const }));
-    const runCapture = vi.fn((command: string | string[], options?: { env?: NodeJS.ProcessEnv }) =>
-      Array.isArray(command) &&
-      command[0] === "docker" &&
-      options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
-        ? command.includes(REBINDING_PROBE_HOST_HEADER)
-          ? "403"
-          : command.at(-1) === WINDOWS_OLLAMA_TAGS_URL
-            ? JSON.stringify({ models: [] })
-            : ""
-        : "",
+    const runCapture = vi.fn(
+      (command: string | string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        if (commandText(command).includes("Get-NetTCPConnection")) return "127.0.0.1";
+        return Array.isArray(command) &&
+          command[0] === "docker" &&
+          options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
+          ? command.includes(REBINDING_PROBE_HOST_HEADER)
+            ? "403"
+            : command.at(-1) === WINDOWS_OLLAMA_TAGS_URL
+              ? JSON.stringify({ models: [] })
+              : ""
+          : "";
+      },
     );
     const localInference = require(LOCAL_INFERENCE_PATH);
     localInference.resetOllamaHostCache();

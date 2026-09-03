@@ -42,6 +42,14 @@ function respondsOnlyThroughDockerDesktop(apiPath: string, response: string) {
   });
 }
 
+function isolatedDockerEnvironment() {
+  return {
+    env: {},
+    isolatedCredentialConfig: false,
+    cleanup: () => ({ ok: true as const }),
+  };
+}
+
 describe("Windows-host Ollama transport", () => {
   afterEach(() => {
     resetOllamaHostCache();
@@ -207,7 +215,7 @@ describe("Windows-host Ollama transport", () => {
     }
   });
 
-  it("re-probes a stale persisted route before fresh-process connect discovery", () => {
+  it("clears a stale persisted route before fresh-process connect discovery", () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-connect-"));
     try {
       persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
@@ -218,16 +226,135 @@ describe("Windows-host Ollama transport", () => {
           : "",
       );
 
-      expect(findReachableOllamaHost(capture, { isWsl: true }, stateRoot)).toBe("127.0.0.1");
-      expect(capture).toHaveBeenCalledTimes(2);
-      expect(capture.mock.calls[0]?.[0]).toEqual(
-        expect.arrayContaining(["docker", "run", "http://host.docker.internal:11434/api/tags"]),
-      );
-      expect(capture.mock.calls[1]?.[0]).toEqual(
-        expect.arrayContaining(["curl", "http://127.0.0.1:11434/api/tags"]),
+      expect(
+        findReachableOllamaHost(capture, { isWsl: true }, stateRoot, {
+          runtime: "docker-desktop",
+          prepareDockerEnvironment: isolatedDockerEnvironment,
+        }),
+      ).toBe("127.0.0.1");
+      expect(capture.mock.calls.map(([command]) => command)).toEqual(
+        expect.arrayContaining([
+          expect.arrayContaining(["docker", "run", "http://host.docker.internal:11434/api/tags"]),
+          expect.arrayContaining(["curl", "http://127.0.0.1:11434/api/tags"]),
+        ]),
       );
       expect(loadPersistedOllamaHost(stateRoot)).toBeNull();
       expect(getResolvedOllamaHost()).toBe("127.0.0.1");
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects and clears a persisted Windows route without Host validation", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-rebinding-"));
+    try {
+      persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
+      resetOllamaHostCache();
+      const capture = vi.fn((command: readonly string[]) => {
+        const rendered = command.join(" ");
+        return rendered.includes("Get-NetTCPConnection")
+          ? "127.0.0.1"
+          : command.includes("Host: rebinding.invalid")
+            ? "200"
+            : rendered.includes("host.docker.internal:11434/api/tags")
+              ? JSON.stringify({ models: [] })
+              : "";
+      });
+
+      expect(
+        findReachableOllamaHost(capture, { isWsl: true }, stateRoot, {
+          runtime: "docker-desktop",
+          prepareDockerEnvironment: isolatedDockerEnvironment,
+        }),
+      ).toBeNull();
+      expect(
+        capture.mock.calls.some(([command]) => command.includes("Host: rebinding.invalid")),
+      ).toBe(true);
+      expect(loadPersistedOllamaHost(stateRoot)).toBeNull();
+      expect(getResolvedOllamaHost()).toBe("127.0.0.1");
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects and clears a Windows route with a non-loopback Ollama listener", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-listener-"));
+    try {
+      persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
+      resetOllamaHostCache();
+      const capture = vi.fn((command: readonly string[]) => {
+        const rendered = command.join(" ");
+        return rendered.includes("Get-NetTCPConnection")
+          ? "127.0.0.1\n192.168.1.10"
+          : command.includes("Host: rebinding.invalid")
+            ? "403"
+            : rendered.includes("host.docker.internal:11434/api/tags")
+              ? JSON.stringify({ models: [] })
+              : "";
+      });
+
+      expect(
+        findReachableOllamaHost(capture, { isWsl: true }, stateRoot, {
+          runtime: "docker-desktop",
+          prepareDockerEnvironment: isolatedDockerEnvironment,
+        }),
+      ).toBeNull();
+      expect(loadPersistedOllamaHost(stateRoot)).toBeNull();
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies a mirrored-loopback response as a protected Windows route", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-mirrored-"));
+    try {
+      const capture = vi.fn((command: readonly string[]) => {
+        const rendered = command.join(" ");
+        return command[0] === "wslinfo"
+          ? "mirrored"
+          : rendered.includes("Get-NetTCPConnection")
+            ? "127.0.0.1"
+            : command.includes("Host: rebinding.invalid")
+              ? "403"
+              : rendered.includes("11434/api/tags")
+                ? JSON.stringify({ models: [] })
+                : "";
+      });
+
+      expect(
+        findReachableOllamaHost(capture, { isWsl: true }, stateRoot, {
+          runtime: "docker-desktop",
+          readTextFile: () => "sl local_address rem_address st\n",
+          prepareDockerEnvironment: isolatedDockerEnvironment,
+        }),
+      ).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+      expect(
+        capture.mock.calls.some(([command]) => command.includes("Host: rebinding.invalid")),
+      ).toBe(true);
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when mirrored-loopback ownership is indeterminate", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-ambiguous-"));
+    try {
+      const capture = vi.fn((command: readonly string[]) =>
+        command[0] === "wslinfo"
+          ? "mirrored"
+          : command.some((argument) => argument === "http://127.0.0.1:11434/api/tags")
+            ? JSON.stringify({ models: [] })
+            : "",
+      );
+
+      expect(
+        findReachableOllamaHost(capture, { isWsl: true }, stateRoot, {
+          runtime: "docker-desktop",
+          readTextFile: () => null,
+          prepareDockerEnvironment: isolatedDockerEnvironment,
+        }),
+      ).toBeNull();
+      expect(capture.mock.calls.some(([command]) => command[0] === "powershell.exe")).toBe(false);
     } finally {
       rmSync(stateRoot, { recursive: true, force: true });
     }
