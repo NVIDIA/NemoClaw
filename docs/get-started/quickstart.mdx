@@ -170,13 +170,19 @@ Use these details when your first-run path needs more control.
     Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling them.
   </Accordion>
 
-  <Accordion title="Use Docker and supported platforms">
-    Review [Prerequisites](prerequisites) for Docker requirements and the setup-oriented platform table.
+  <Accordion title="Use a container runtime and supported platforms">
+    Review [Prerequisites](prerequisites) for container-runtime requirements and the setup-oriented platform table.
+    Docker is the default runtime provider and primary path.
     On Linux, the installer can install Docker.
     If it prints a `newgrp docker` command, run that command before you retry the installer.
     On macOS, start Docker Desktop or Colima first.
 
-    When a coding agent reports that its execution sandbox blocked Docker, use its command-scoped approval flow, if available.
+    On a qualified Linux host, you can instead select native rootless Podman explicitly with `NEMOCLAW_GATEWAY_RUNTIME=podman`.
+    The native Podman gateway path does not require the Docker CLI or daemon.
+    Managed local vLLM remains Docker-backed; without Docker, attach an existing local vLLM server instead.
+    Review the native Podman requirements and limitations in [Platform Support](../reference/platform-support#deployment-paths) and [Troubleshooting](../reference/troubleshooting#podman) before onboarding.
+
+    When using the Docker path, if a coding agent reports that its execution sandbox blocked Docker, use its command-scoped approval flow, if available.
     Approve only the Docker-dependent command that the coding agent requests to rerun outside the sandbox.
     Do not change Docker socket permissions or grant broad host access only to bypass the restriction.
     If your organization blocks command-scoped approval, stop the coding-agent setup and contact the administrator who manages coding-agent permissions.

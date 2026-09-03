@@ -33,6 +33,8 @@ $$nemoclaw my-sandbox mcp status github --json
 
 The per-server `warnings` array reports unsupported stored boundaries, trusted-private DNS pin changes, and credential-resolution findings. The `env.missing` field lists recorded host variable names that are currently unset.
 
+For Deep Agents, `mcp status` exits with status `2` when the managed projection path is a symbolic link, FIFO, or another non-regular file. It prints the unsafe type and no healthy server status.
+
 An existing valid provider can remain ready when a host variable is unset because OpenShell retains the credential. The JSON value `support.mode: "bridge"` identifies the agent's config-adapter capability, not a host-side traffic bridge.
 
 For a trusted private server, status resolves the endpoint without changing managed state. Text output reports `private address pins: match`, `drift`, or `unresolved`. JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins. Status never adds a new address to the policy.
