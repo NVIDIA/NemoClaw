@@ -309,7 +309,7 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
-  it("uses the required NVIDIA Endpoints request shape for Nemotron 3 Super (#10880)", () => {
+  it("sends the Nemotron 3 Super validation request parameters (#10880)", () => {
     expect(getChatCompletionsProbePayload("nvidia/nemotron-3-super-120b-a12b")).toEqual({
       model: "nvidia/nemotron-3-super-120b-a12b",
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
