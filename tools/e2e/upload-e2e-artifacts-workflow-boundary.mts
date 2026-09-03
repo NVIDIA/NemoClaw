@@ -53,17 +53,6 @@ const NATIVE_RUNTIME_AGGREGATE_UPLOAD_CONTRACT: WorkflowStep = {
     "compression-level": 9,
   },
 };
-export const NATIVE_RUNTIME_CLEANUP_RECEIPT_UPLOAD_CONTRACT: WorkflowStep = {
-  name: "Upload the qualification cleanup recovery receipt",
-  if: "always()",
-  uses: UPLOAD_ARTIFACT_ACTION,
-  with: {
-    name: "cleanup-${{ matrix.artifactName }}",
-    path: "${{ runner.temp }}/native-runtime-cleanup/receipt.json",
-    "if-no-files-found": "error",
-    "retention-days": 14,
-  },
-};
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
 const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
@@ -117,17 +106,6 @@ function isExactNativeRuntimeAggregateUpload(jobName: string, step: WorkflowStep
   return (
     jobName === "native-runtime-qualification-producer-aggregate" &&
     isDeepStrictEqual(step, NATIVE_RUNTIME_AGGREGATE_UPLOAD_CONTRACT)
-  );
-}
-
-export function isExactNativeRuntimeCleanupReceiptUpload(
-  jobName: string,
-  stepValue: unknown,
-): boolean {
-  const step = record(stepValue);
-  return (
-    jobName === "native-runtime-qualification-producer" &&
-    isDeepStrictEqual(step, NATIVE_RUNTIME_CLEANUP_RECEIPT_UPLOAD_CONTRACT)
   );
 }
 
@@ -534,8 +512,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         !isExactCommitCliArtifactUpload &&
         !isExactManagedImageBuildCacheUpload(jobName, step) &&
         !isExactOpenShellSdkE2ePackageUpload(jobName, step) &&
-        !isExactNativeRuntimeAggregateUpload(jobName, step) &&
-        !isExactNativeRuntimeCleanupReceiptUpload(jobName, step)
+        !isExactNativeRuntimeAggregateUpload(jobName, step)
       ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
       }

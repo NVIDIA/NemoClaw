@@ -15,13 +15,7 @@ import {
 
 const DOCKERFILE = path.join(import.meta.dirname, "..", "..", "Dockerfile");
 const DOCKERFILE_BASE = path.join(import.meta.dirname, "..", "..", "Dockerfile.base");
-const BLUEPRINT = path.join(
-  import.meta.dirname,
-  "..",
-  "..",
-  "nemoclaw-blueprint",
-  "blueprint.yaml",
-);
+const BLUEPRINT = path.join(import.meta.dirname, "..", "..", "nemoclaw-blueprint", "blueprint.yaml");
 const REVIEWED_NPM_AUDIT_HELPER = path.join(
   import.meta.dirname,
   "..",
@@ -39,6 +33,19 @@ const REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS = [
 ] as const;
 const EXPECTED_OPENCLAW_INTEGRITY =
   "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==";
+const REVIEWED_OPENCLAW_2026_7_1_WEB_FETCH_SHAPE = [
+  "async function fetchWithWebToolsNetworkGuard(params) {",
+  "  const { timeoutSeconds, useEnvProxy, ...rest } = params;",
+  "  const resolved = {",
+  "    ...rest,",
+  "    timeoutMs: resolveTimeoutMs({",
+  "      timeoutMs: rest.timeoutMs,",
+  "      timeoutSeconds",
+  "    })",
+  "  };",
+  "  return fetchWithSsrFGuard(useEnvProxy ? withTrustedEnvProxyGuardedFetchMode(resolved) : withStrictGuardedFetchMode(resolved));",
+  "}",
+].join("\n");
 const REVIEWED_OPENCLAW_2026_7_1_MANAGED_PROXY_SHAPE =
   "const isStrictManagedProxyActive = mode === GUARDED_FETCH_MODE.STRICT && isManagedProxyActive();";
 function readRequiredMatch(file: string, pattern: RegExp, description: string): string {
@@ -224,6 +231,13 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     "  fi",
     '  if [ "${2:-}" = "/scripts/lib/reviewed-npm-archive.mts" ]; then',
     '    if [ "${3:-}" = "--verify-lock" ] || [ "${3:-}" = "--verify-installed-lock" ]; then return 0; fi',
+    '    if [ "${3:-}" = "--verify-only" ]; then',
+    '      [ "$#" -eq 11 ] && [ "${4:-}" = "--package-spec" ] && [ "${5:-}" = "mcporter@${MCPORTER_VERSION}" ] || return 91;',
+    '      [ "${6:-}" = "--integrity" ] && [ "${7:-}" = "$MCPORTER_0_7_3_INTEGRITY" ] || return 92;',
+    '      [ "${8:-}" = "--tarball-url" ] && [ "${9:-}" = "$MCPORTER_0_7_3_TARBALL" ] || return 93;',
+    '      [ "${10:-}" = "--label" ] && [ "${11:-}" = "mcporter ${MCPORTER_VERSION}" ] || return 94;',
+    "      return 0;",
+    "    fi",
     '    [ "$#" -eq 10 ] && [ "${3:-}" = "--package-spec" ] && [ "${4:-}" = "openclaw@${OPENCLAW_VERSION}" ] || return 95;',
     '    [ "${5:-}" = "--integrity" ] && [ "${6:-}" = "$OPENCLAW_2026_7_1_INTEGRITY" ] || return 96;',
     '    [ "${7:-}" = "--tarball-url" ] && [ "${8:-}" = "$OPENCLAW_2026_7_1_TARBALL" ] || return 97;',
@@ -310,6 +324,15 @@ function webGuardedFetchFixtureSource(): string {
 }
 
 describe("fetch-guard patch regression guard", () => {
+  it("anchors web_fetch proxy mode to the reviewed OpenClaw 2026.7.1 contract", () => {
+    expect(REVIEWED_OPENCLAW_2026_7_1_WEB_FETCH_SHAPE).toContain(
+      "function fetchWithWebToolsNetworkGuard(params)",
+    );
+    expect(REVIEWED_OPENCLAW_2026_7_1_WEB_FETCH_SHAPE).toContain(
+      "withTrustedEnvProxyGuardedFetchMode(resolved)",
+    );
+  });
+
   it("fails the image build when the NemoClaw OpenClaw plugin cannot install", () => {
     const command = dockerRunCommandBetween(
       "# Install NemoClaw plugin into OpenClaw",

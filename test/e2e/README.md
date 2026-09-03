@@ -51,8 +51,9 @@ It builds the CLI from the trusted workflow checkout and never executes or resto
 
 #### Artifact Identity
 
-For a pull request (PR) run, `checkout_sha` identifies the source commit under test. It is the
-current PR head when `revision=candidate` and the exact current PR base when `revision=base`.
+For a pull request (PR) run, `checkout_sha` identifies the selected head or exact base source
+commit. A base replay sets `checkout_sha` equal to `base_sha` and keeps the same trusted workflow
+SHA and selectors as the failed head run.
 The trusted workflow runs from `github.workflow_sha`.
 A push or manual run uses `github.sha` when `checkout_sha` is empty.
 
@@ -1453,13 +1454,20 @@ Dispatch a new run after recovery.
 If a case fails, use the GitHub Actions job log.
 Inspect a case artifact only when its upload step completed.
 
-For a manual PR run, provide these inputs:
+For the initial manual PR run, provide these inputs:
 
 - The current PR number.
-- `revision=candidate` and the lowercase 40-character SHA of the latest PR commit.
+- The lowercase 40-character SHA of the latest PR commit.
 - The PR source repository.
 - The lowercase 40-character PR base SHA.
 - The SHA of the trusted workflow commit on `main`.
+
+If the head run fails, use the read-only CI failure classifier when it is available. Stop without a
+base replay when it identifies known infrastructure failure. Only an unresolved candidate failure
+may be replayed with the same selectors against the exact PR base: set `checkout_sha` to the
+recorded base SHA and `checkout_repository` to `NVIDIA/NemoClaw`, while leaving `base_sha` and
+`workflow_sha` unchanged. The workflow run is the evidence; do not publish a separate commit status
+or automatically replay the base.
 
 For the default NVIDIA-owned PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
 Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
@@ -1475,23 +1483,15 @@ For this producer run, the executing workflow SHA, `workflow_sha` input, and PR 
 Confirm that the PR comes from `NVIDIA/NemoClaw`, the required ephemeral runner variables are configured, and the workflow has not been rerun.
 A trusted `main` workflow pre-checkout step validates the open PR and records whether its source repository has API-confirmed `NVIDIA` organization ownership.
 That ownership authorizes the full ordinary plan and credential profiles; external sources retain the bounded controller plan.
-A second validation after checkout rejects a changed candidate commit, base commit, PR source repository, or NVIDIA ownership before preparation.
+A second validation after checkout rejects a changed selected commit, base commit, repository, or
+NVIDIA ownership before preparation.
 Candidate runs cannot publish release qualification.
 
-An exact-base run is a failure-triggered comparison, not a second qualification system. First run
-the selected E2E job against the candidate and classify known infrastructure failures from the
-GitHub run without writing to the PR. Only an unresolved candidate failure justifies another manual
-run with the same nonempty selector, `revision=base`, `checkout_sha` equal to the current PR base,
-and `checkout_repository=NVIDIA/NemoClaw`. Exact-base mode accepts only same-repository PRs and the
-trusted `main` workflow. It rejects Launchable, Jetson, DGX Spark, and the candidate-only native
-runtime evidence producer. The candidate and base GitHub run URLs and tested SHAs are the evidence
-record: candidate fail/base pass is a candidate regression; the same product failure on both is a
-broken base; a known runner or service signature is infrastructure; otherwise the result is
-unresolved. The workflow does not dispatch the base automatically or publish a comparison status.
-
 The Actions run is advisory for the pull request and is not a required merge context.
-Treat it as passing evidence only when the `E2E` workflow concludes with `success` for the recorded PR number, PR source repository, candidate commit SHA, base commit SHA, and executing workflow SHA.
-A changed PR source repository, candidate commit SHA, or base commit SHA invalidates the evidence and requires a new manual run.
+Treat a head or base run as passing evidence only when the `E2E` workflow concludes with `success`
+for the recorded PR number, selected repository, selected commit SHA, base commit SHA, and executing
+workflow SHA. A changed PR source repository, head commit SHA, or base commit SHA invalidates a
+head-to-base comparison.
 
 The platform-evidence workflow runs on configured pushes to `main` and supports manual dispatch for branch diagnosis.
 The experimental portable-profile workflow can run for pull requests, matching `main` pushes, and manual dispatch.

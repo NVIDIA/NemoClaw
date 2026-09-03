@@ -228,9 +228,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("The peer address is not recorded.");
     expect(review).toContain("The `mcp-session-id` value is never emitted.");
     expect(review).toContain("inert unless `OPENSHELL_SANDBOX=1`");
-    expect(review).toContain(
-      "test/agents/openclaw/openclaw-managed-transport-diagnostics-patch.test.ts",
-    );
+    expect(review).toContain("test/agents/openclaw/openclaw-managed-transport-diagnostics-patch.test.ts");
     expect(review).toContain("executes that exact helper");
     expect(review).toContain("local 32-character hexadecimal `diagnostic_id`");
     expect(review).toContain("not a distributed trace identifier");
@@ -529,9 +527,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("fails closed on unknown or ambiguous formatter shapes");
     expect(review).toContain('OPENCLAW_VERSION="${OPENCLAW_VERSION}"');
     expect(review).toContain("test/runtime/messaging/messaging-build-applier-integrity.test.ts");
-    expect(review).toContain(
-      "test/runtime/messaging/messaging-build-applier-render-safety.test.ts",
-    );
+    expect(review).toContain("test/runtime/messaging/messaging-build-applier-render-safety.test.ts");
     expect(review).toContain("test/onboarding/onboard-resume-provider-recovery.test.ts");
   });
 

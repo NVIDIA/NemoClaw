@@ -508,6 +508,8 @@ describe("native runtime qualification producer workflow", () => {
     expect(cleanup.run).toContain('apparmor_parser -R "$apparmor_profile"');
     expect(cleanup.run).toContain('apparmor_parser -R "$pasta_apparmor_profile"');
     expect(cleanup.run).toContain('sudo rm -f -- "$apparmor_profile"');
+    expect(cleanup.run).toContain('sudo unlink "$storage_config_directory/containers.conf"');
+    expect(cleanup.run).toContain('sudo rm -f -- "$storage_config_directory/storage.conf"');
     expect(cleanup.run).toContain('sudo rm -f -- "$podman_executable"');
     expect(cleanup.run).toContain('sudo test -e "$model_directory"');
     expect(cleanup.run).toContain("sudo stat -c '%u:%g:%a' -- \"$model_directory\"");

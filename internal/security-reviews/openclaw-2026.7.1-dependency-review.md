@@ -22,11 +22,6 @@ archives. Retain supported `openclaw@2026.7.1`, apply the existing fail-closed
 archive remediation to select `tar@7.5.21`, and select the same first patched
 release in both committed production locks. Do not add an audit exception.
 
-On September 2, 2026, advisory drift exposed four high-severity `fast-uri`
-findings in every active graph that selected `3.1.5`. Select first-patched
-`3.1.6` in the root, OpenClaw, mcporter, and MCP discovery locks. Regenerate
-the reviewed MCP bundle and use no audit exception.
-
 The production OpenClaw install uses the authoritative committed lock at
 `agents/openclaw/openclaw-runtime/package-lock.json`, with SHA-256
 `248d881ca125bb83da293c4b3f40b46d057095a9fe90b5165255da0de78af9f9`.
@@ -107,7 +102,6 @@ whose amd64 config reports Node `22.23.1`.
   - `sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==`
   - `https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz`
   - `BSD-3-Clause`; no dependencies
-  - source commit: `6f970b2951fd896aa0f3a7ff28eeb6640c137d33`
 - `undici@8.10.0` (OpenClaw core and Discord remediation)
   - `sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==`
   - `https://registry.npmjs.org/undici/-/undici-8.10.0.tgz`
@@ -151,13 +145,6 @@ All three post-remediation boundaries report `0` high and `0` critical
 findings.
 Lower-severity findings remain visible below the configured `high`
 threshold.
-
-The September 2 package-lock re-audit with npm `10.9.4` reports `0` high and
-`0` critical findings in all four changed graphs. The root graph has no known
-vulnerabilities, OpenClaw has three moderate findings, and mcporter and MCP
-discovery each have one moderate finding. The exact `fast-uri@3.1.6` registry
-signature verifies in both the mcporter and MCP discovery graphs. The
-remediated OpenClaw archive reproduces the recorded tree integrity.
 
 The independently installed `nemoclaw/` plugin graph reports `0`
 vulnerabilities after resolving its direct `tar` dependency to `7.5.21`.

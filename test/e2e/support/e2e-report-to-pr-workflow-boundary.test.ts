@@ -57,12 +57,7 @@ function trustedControllerMatrixScript(): string {
 function executeTrustedControllerMatrix(targets: string) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-controller-matrix-"));
   const outputPath = path.join(directory, "github-output");
-  const stagedBoundary = path.join(directory, "manual-pr-dispatch.sh");
   try {
-    fs.copyFileSync(
-      path.join(process.cwd(), "scripts/e2e/manual-pr-dispatch.sh"),
-      stagedBoundary,
-    );
     const result = spawnSync("bash", ["-c", trustedControllerMatrixScript()], {
       cwd: process.cwd(),
       encoding: "utf8",
@@ -70,7 +65,6 @@ function executeTrustedControllerMatrix(targets: string) {
         ...process.env,
         GITHUB_OUTPUT: outputPath,
         JOBS: "",
-        RUNNER_TEMP: directory,
         TARGETS: targets,
       },
       timeout: 30_000,

@@ -235,6 +235,7 @@ describe("MCP tool discovery image contract", () => {
       .digest("hex");
     expect(actualHash, relativePath).toBe(reviewedRuntimeHashOverrides[relativePath] ?? expectedHash);
   });
+
   it("executes the reviewed MCP discovery runtime artifact", () => {
     const bundleRoot = path.join(
       repoRoot,

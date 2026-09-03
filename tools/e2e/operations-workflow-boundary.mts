@@ -11,7 +11,6 @@ import YAML from "yaml";
 import { RISK_RULES } from "../advisors/risk-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
 import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
-import { isExactNativeRuntimeCleanupReceiptUpload } from "./upload-e2e-artifacts-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -36,7 +35,7 @@ const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifact
 const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const MANAGED_SOURCE_CONDITION =
-  "${{ inputs.pr_number == '' || inputs.revision == 'base' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
+  "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
 const PR_MANAGED_IMAGE_RESOLVER_SCRIPT =
   [
     "set -euo pipefail",
@@ -76,6 +75,33 @@ const PR_MANAGED_IMAGE_RESOLVER_SCRIPT =
     '  *) echo "::error::PR managed-image selection is invalid" >&2; exit 1 ;;',
     "esac",
     'printf \'selection=%s\\n\' "$selection" >>"$GITHUB_OUTPUT"',
+  ].join("\n") + "\n";
+const PUBLICATION_CLASSIFIER_SCRIPT =
+  [
+    "set -euo pipefail",
+    'case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in',
+    "  NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
+    '    expected_sha="$WORKFLOW_SHA"',
+    "    allow_non_head=0",
+    "    select_nearest_successful=0",
+    "    ;;",
+    "  NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)",
+    '    [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {',
+    '      echo "::error::manual PR publication selection requires an exact base SHA" >&2',
+    "      exit 1",
+    "    }",
+    '    expected_sha="$BASE_SHA"',
+    "    allow_non_head=1",
+    "    select_nearest_successful=1",
+    "    ;;",
+    "  *)",
+    '    echo "::error::base-image publication mode is not trusted" >&2',
+    "    exit 1",
+    "    ;;",
+    "esac",
+    'printf \'allow_non_head=%s\\n\' "${allow_non_head}" >> "${GITHUB_OUTPUT}"',
+    'printf \'expected_sha=%s\\n\' "${expected_sha}" >> "${GITHUB_OUTPUT}"',
+    'printf \'select_nearest_successful=%s\\n\' "${select_nearest_successful}" >> "${GITHUB_OUTPUT}"',
   ].join("\n") + "\n";
 const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
 const ISSUE_MUTATION_BEYOND_COMMENT =
@@ -136,29 +162,6 @@ export type OperationsWorkflow = {
     };
   };
 };
-
-export const NATIVE_RUNTIME_CLEANUP_RECEIPT_TARGET_BINDINGS = [
-  'ACCOUNT_HOME="$account_home"',
-  'APPARMOR_PROFILE="$apparmor_profile"',
-  'CONTAINERS_CONFIG="$containers_config"',
-  'HELPER_DIRECTORY="$helper_directory"',
-  'MODEL_DIRECTORY="$model_directory"',
-  'OWNERSHIP_MARKER="$ownership_marker"',
-  'PASTA_APPARMOR_PROFILE="$pasta_apparmor_profile"',
-  'PASTA_EXECUTABLE="$pasta_executable"',
-  'PODMAN_EXECUTABLE="$podman_executable"',
-  'REGISTRY_AUTH_DIRECTORY="$registry_auth_directory"',
-  'REGISTRY_AUTH_FILE="$registry_auth_file"',
-  'RESOURCE_DIRECTORY="$resource_directory"',
-  'RUNNER_CONTRACT="$runner_contract"',
-  'RUNTIME_DIRECTORY="$runtime_dir"',
-  'RUNTIME_DIRECTORY_UNIT="$runtime_directory_unit"',
-  'STORAGE_CONFIG="$storage_config"',
-  'STORAGE_CONFIG_DIRECTORY="$storage_config_directory"',
-  'USER_MANAGER_DROPIN="$user_manager_dropin"',
-  'USER_MANAGER_DROPIN_DIRECTORY="$user_manager_dropin_directory"',
-  'USER_MANAGER_UNIT="$user_manager_unit"',
-] as const;
 
 export function readE2eOperationsWorkflow(path = DEFAULT_WORKFLOW_PATH): OperationsWorkflow {
   return YAML.parse(readFileSync(path, "utf8")) as OperationsWorkflow;
@@ -291,14 +294,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       errors.push(`workflow_dispatch ${name} must be an optional string with an empty default`);
     }
   }
-  const revision = inputs.revision;
-  if (
-    revision?.type !== "choice" ||
-    revision.default !== "candidate" ||
-    !isDeepStrictEqual(revision.options, ["candidate", "base"])
-  ) {
-    errors.push("workflow_dispatch revision must be the candidate/base choice");
-  }
   const expectedEnvironment = {
     NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.correlation_id }}",
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
@@ -308,15 +303,18 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     if (workflow.env?.[name] !== value) errors.push(`E2E workflow must bind ${name}`);
   }
   const runName = String(workflow["run-name"] ?? "");
-  for (const fragment of ["inputs.checkout_sha", "inputs.pr_number", "inputs.revision"]) {
+  for (const fragment of ["inputs.checkout_sha", "inputs.base_sha", "inputs.pr_number"]) {
     if (!runName.includes(fragment)) errors.push(`Manual PR E2E run name must include ${fragment}`);
   }
-
+  for (const fragment of ["format('E2E PR #{0} base ({1})'", "format('E2E PR #{0} head ({1})'"]) {
+    if (!runName.includes(fragment))
+      errors.push(`Manual PR E2E run name must distinguish ${fragment}`);
+  }
   const concurrencyGroup = String(workflow.concurrency?.group ?? "");
   if (
     !concurrencyGroup.includes("inputs.checkout_sha") ||
+    !concurrencyGroup.includes("inputs.base_sha") ||
     !concurrencyGroup.includes("inputs.pr_number") ||
-    !concurrencyGroup.includes("inputs.revision") ||
     !concurrencyGroup.includes("manual-pr")
   ) {
     errors.push("Manual PR E2E concurrency must be scoped to its pull request");
@@ -332,12 +330,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
 
   const matrixJob = workflow.jobs["generate-matrix"] ?? {};
   const steps = matrixJob.steps ?? [];
-  const trustedPlannerIndex = steps.findIndex(
-    (step) => step.name === "Check out trusted E2E planner",
-  );
-  const stageBoundaryIndex = steps.findIndex(
-    (step) => step.name === "Stage trusted manual PR dispatch boundary",
-  );
   const authenticationIndex = steps.findIndex(
     (step) => step.name === "Authenticate manual PR dispatch",
   );
@@ -349,32 +341,17 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
   const packageIndex = steps.findIndex((step) => step.name === "Package exact-commit CLI");
   if (
-    trustedPlannerIndex < 0 ||
-    stageBoundaryIndex < 0 ||
     authenticationIndex < 0 ||
     checkoutIndex < 0 ||
     validationIndex < 0 ||
     credentialAuthorizationIndex < 0 ||
     prepareIndex < 0 ||
-    trustedPlannerIndex >= stageBoundaryIndex ||
-    stageBoundaryIndex >= authenticationIndex ||
     authenticationIndex >= checkoutIndex ||
     checkoutIndex >= validationIndex ||
     validationIndex >= credentialAuthorizationIndex ||
     credentialAuthorizationIndex >= prepareIndex
   ) {
-    errors.push(
-      "Manual PR authorization and validation must use the trusted boundary around checkout before preparation",
-    );
-  }
-
-  const stageBoundary = stageBoundaryIndex >= 0 ? steps[stageBoundaryIndex] : {};
-  if (
-    stageBoundary.shell !== "bash" ||
-    stageBoundary.run !==
-      'install -m 0555 scripts/e2e/manual-pr-dispatch.sh "${RUNNER_TEMP}/manual-pr-dispatch.sh"'
-  ) {
-    errors.push("Manual PR dispatch must stage the trusted executable boundary");
+    errors.push("Manual PR authorization and validation must surround checkout before preparation");
   }
 
   if (
@@ -413,12 +390,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
-    CORRELATION_ID: "${{ inputs.correlation_id }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
     INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     JOBS: "${{ inputs.jobs }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
-    REVISION: "${{ inputs.revision }}",
     TARGETS: "${{ inputs.targets }}",
     WORKFLOW_EVENT: "${{ github.event_name }}",
     WORKFLOW_REF: "${{ github.ref }}",
@@ -432,35 +407,49 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   if (authentication.env?.GITHUB_TOKEN !== undefined || authSource.includes("Authorization:")) {
     errors.push("Manual PR authentication must use the public PR metadata endpoint");
   }
-  if (
-    !authSource.includes(
-      "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
-    ) ||
-    !authSource.includes(
-      'PULL_JSON="$pull_json" bash "${RUNNER_TEMP}/manual-pr-dispatch.sh" authenticate',
-    )
-  ) {
-    errors.push("Manual PR authentication must execute the trusted boundary with public metadata");
+  for (const fragment of [
+    '"$WORKFLOW_EVENT" == "workflow_dispatch"',
+    '"$WORKFLOW_REF" == refs/heads/*',
+    '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
+    '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
+    '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
+    '"$BASE_SHA" =~ ^[a-f0-9]{40}$',
+    '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
+    "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
+    `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]]`,
+    `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
+    'if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]',
+    '"$ALLOW_JETSON_DISPATCH" != "true"',
+    '"$ALLOW_DGX_SPARK_RUNNER_QUEUE" != "true"',
+    '",${TARGETS}," != *",jetson-nvmap-gpu,"*',
+    '",${JOBS}," != *",llama-cpp-dgx-spark-qualification,"*',
+    "exact-base E2E cannot select dedicated hardware jobs",
+    `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
+    `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
+    `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
+    `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
+    '"$INCLUDE_LAUNCHABLE" == "true"',
+    '",${JOBS}," == *",staging-brev-launchable,"*',
+    '",${JOBS}," == *",staging-brev-launchable-identity,"*',
+    "Launchable identity smoke runs only against trusted main",
+    '"$nvidia_owned" == "true"',
+    "Launchable PR E2E requires an NVIDIA-owned source repository",
+    '"$CHECKOUT_REPOSITORY" == "NVIDIA/NemoClaw"',
+    "Launchable PR E2E requires a branch in NVIDIA/NemoClaw",
+    `"$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA"`,
+    `"$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization"`,
+    "nvidia_owned=false",
+    "nvidia_owned=true",
+    `printf 'nvidia_owned=%s\\n' "$nvidia_owned" >> "$GITHUB_OUTPUT"`,
+  ]) {
+    if (!authSource.includes(fragment))
+      errors.push(`Manual PR authentication must retain ${fragment}`);
   }
   if (
     authSource.includes("Authorization: Bearer") ||
     Object.hasOwn(authentication.env ?? {}, "GITHUB_TOKEN")
   ) {
     errors.push("Manual PR authentication must use public PR metadata without a job token");
-  }
-
-  const controllerMatrix = findStep(matrixJob, "Build trusted controller target matrix");
-  if (
-    controllerMatrix.if !==
-      "${{ inputs.checkout_sha != '' && steps.candidate_authorization.outputs.nvidia_owned != 'true' }}" ||
-    !isDeepStrictEqual(controllerMatrix.env, {
-      JOBS: "${{ inputs.jobs }}",
-      TARGETS: "${{ inputs.targets }}",
-    }) ||
-    controllerMatrix.shell !== "bash" ||
-    controllerMatrix.run !== 'bash "${RUNNER_TEMP}/manual-pr-dispatch.sh" controller-matrix'
-  ) {
-    errors.push("External PR target selection must execute the trusted controller boundary");
   }
 
   const qualificationPlanName = "native-runtime-qualification-producer-plan";
@@ -501,19 +490,26 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   ) {
     errors.push("Manual PR checkout validation must bind authenticated NVIDIA ownership");
   }
-  if (
-    [
-      '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
-      "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
-      '"$NVIDIA_OWNED" == "true"',
-      '[[ -n "$GITHUB_TOKEN" ]]',
-      'auth_args=(--header "Authorization: Bearer ${GITHUB_TOKEN}")',
-      '"${auth_args[@]}"',
-      'CHECKED_OUT_SHA="$(git rev-parse --verify HEAD)"',
-      'bash "${RUNNER_TEMP}/manual-pr-dispatch.sh" validate-checkout',
-    ].some((fragment) => !validationSource.includes(fragment))
-  ) {
-    errors.push("Manual PR checkout validation must execute the trusted boundary");
+  for (const fragment of [
+    '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
+    "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
+    "pull request must still be open",
+    "pull request base repository changed before execution",
+    "pull request base branch changed before execution",
+    "base_sha changed before execution",
+    'if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]',
+    `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
+    `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
+    `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
+    '"$NVIDIA_OWNED" == "true"',
+    '[[ -n "$GITHUB_TOKEN" ]]',
+    'auth_args=(--header "Authorization: Bearer ${GITHUB_TOKEN}")',
+    '"${auth_args[@]}"',
+    "PR source repository ownership changed before execution",
+  ]) {
+    if (!validationSource.includes(fragment)) {
+      errors.push(`Manual PR checkout validation must retain ${fragment}`);
+    }
   }
   const credentialAuthorization =
     credentialAuthorizationIndex >= 0 ? steps[credentialAuthorizationIndex] : {};
@@ -542,13 +538,22 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     );
   }
   const authorizationSource = String(credentialAuthorization.run ?? "");
-  if (
-    !authorizationSource.includes('CHECKED_OUT_SHA="$(git rev-parse --verify HEAD)"') ||
-    !authorizationSource.includes(
-      'bash "${RUNNER_TEMP}/manual-pr-dispatch.sh" authorize-credentials',
-    )
-  ) {
-    errors.push("Manual PR credential authorization must execute the trusted boundary");
+  for (const fragment of [
+    '"$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
+    '"$NVIDIA_OWNED" == "true"',
+    '"$EVENT_NAME" == "workflow_dispatch"',
+    '"$REF" == refs/heads/*',
+    '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
+    '"$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$',
+    '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
+    '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
+    "credentials_allowed=false",
+    "credentials_allowed=true",
+    'printf \'allowed=%s\\n\' "$credentials_allowed" >> "$GITHUB_OUTPUT"',
+  ]) {
+    if (!authorizationSource.includes(fragment)) {
+      errors.push(`Manual PR credential authorization must retain ${fragment}`);
+    }
   }
 
   for (const [jobName, job] of Object.entries(workflow.jobs)) {
@@ -711,15 +716,6 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     },
     steps: [
       {
-        name: "Check out trusted E2E workflow",
-        uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-        with: {
-          ref: "${{ github.workflow_sha }}",
-          "fetch-depth": 0,
-          "persist-credentials": false,
-        },
-      },
-      {
         id: "publication_mode",
         name: "Classify base-image publication requirement",
         env: {
@@ -731,7 +727,16 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           WORKFLOW_SHA: "${{ github.workflow_sha }}",
         },
         shell: "bash",
-        run: "bash scripts/e2e/base-image-publication-mode.sh",
+        run: PUBLICATION_CLASSIFIER_SCRIPT,
+      },
+      {
+        name: "Check out trusted E2E workflow",
+        uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        with: {
+          ref: "${{ github.workflow_sha }}",
+          "fetch-depth": 0,
+          "persist-credentials": false,
+        },
       },
       {
         name: "Set up Node for publication verification",
@@ -743,7 +748,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         id: "select_pr_source",
         name: "Resolve exact PR managed-image publication",
-        if: "${{ inputs.pr_number != '' && inputs.revision != 'base' }}",
+        if: "${{ inputs.pr_number != '' }}",
         env: {
           BASE_SHA: "${{ inputs.base_sha }}",
           CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
@@ -1572,51 +1577,6 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
   }
 }
 
-export function validateNativeQualificationCleanupRecovery(
-  workflow: OperationsWorkflow,
-): string[] {
-  const errors: string[] = [];
-  const job = workflow.jobs["native-runtime-qualification-producer"] ?? {};
-  const checkout = findStep(job, "Check out the trusted qualification harness");
-  const sparseCheckout = String(checkout.with?.["sparse-checkout"] ?? "");
-  if (!sparseCheckout.split("\n").includes("scripts/e2e/native-runtime-cleanup-receipt.sh")) {
-    errors.push("Native qualification must check out its trusted cleanup receipt writer");
-  }
-
-  const cleanup = findStep(job, "Remove qualification resources");
-  const cleanupSource = String(cleanup.run ?? "");
-  if (
-    cleanup.if !== "always()" ||
-    cleanup.env?.ACCOUNT_GID !== "${{ steps.boundary.outputs.gid }}" ||
-    cleanup.env?.ACCOUNT_UID !== "${{ steps.boundary.outputs.uid }}" ||
-    cleanup.env?.CLEANUP_RECEIPT_PATH !==
-      "${{ runner.temp }}/native-runtime-cleanup/receipt.json" ||
-    !cleanupSource.includes("write_cleanup_receipt in-progress") ||
-    !cleanupSource.includes('write_cleanup_receipt failed "$cleanup_stage"') ||
-    !cleanupSource.includes("write_cleanup_receipt success") ||
-    !cleanupSource.includes("complete_cleanup_stage")
-  ) {
-    errors.push(
-      "Native qualification cleanup must retain staged progress and the first failed cleanup stage",
-    );
-  }
-  if (
-    NATIVE_RUNTIME_CLEANUP_RECEIPT_TARGET_BINDINGS.some(
-      (binding) => !cleanupSource.includes(binding),
-    )
-  ) {
-    errors.push(
-      "Native qualification cleanup must pass every resolved recovery target to its receipt writer",
-    );
-  }
-
-  const upload = findStep(job, "Upload the qualification cleanup recovery receipt");
-  if (!isExactNativeRuntimeCleanupReceiptUpload("native-runtime-qualification-producer", upload)) {
-    errors.push("Native qualification must always upload its cleanup recovery receipt");
-  }
-  return errors;
-}
-
 export function validateE2eOperationsWorkflow(
   workflow: OperationsWorkflow,
   advisorPath = DEFAULT_ADVISOR_PATH,
@@ -1626,7 +1586,6 @@ export function validateE2eOperationsWorkflow(
   );
   errors.push(...validateBaseImagePublicationGate(workflow));
   errors.push(...validateStockOnboardingPublicationBoundary(workflow));
-  errors.push(...validateNativeQualificationCleanupRecovery(workflow));
   validateManualPrDispatch(errors, workflow);
   validatePrGateEvidenceProducers(errors, workflow);
   validateAggregation(errors, workflow);

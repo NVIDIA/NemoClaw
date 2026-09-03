@@ -4,8 +4,9 @@
 # Manual PR E2E
 
 Use this mode when a maintainer requests E2E for a pull request. The trusted workflow stays on
-`main` and checks out either the latest PR commit or, after an unresolved candidate failure, the
-exact PR base. The result is advisory and does not create a required PR check.
+`main` and first checks out the latest PR commit. Replay the same selector against the exact PR base
+only after a candidate failure remains unresolved. The result is advisory and does not create a
+required PR check.
 
 ## Credential Boundary
 
@@ -48,6 +49,7 @@ test "$(jq -r .base.ref <<<"$PR_JSON")" = main
 HEAD_SHA="$(jq -r .head.sha <<<"$PR_JSON")"
 BASE_SHA="$(jq -r .base.sha <<<"$PR_JSON")"
 HEAD_REPOSITORY="$(jq -r .head.repo.full_name <<<"$PR_JSON")"
+BASE_REPOSITORY="$(jq -r .base.repo.full_name <<<"$PR_JSON")"
 HEAD_OWNER="$(jq -r .head.repo.owner.login <<<"$PR_JSON")"
 HEAD_OWNER_TYPE="$(jq -r .head.repo.owner.type <<<"$PR_JSON")"
 [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
@@ -61,43 +63,37 @@ Choose the selection from the source owner:
   every default-enabled E2E. Any supported job or target selector is allowed.
 - An external PR keeps the credential-free controller selection. Empty selectors run the trusted
   default PR selection. The controller also permits `jobs=inference-routing`,
-  `jobs=managed-image-protected-runtime`, `targets=ubuntu-repo-cloud-langchain-deepagents-code`, or
-  `targets=ubuntu-repo-docker-post-reboot-recovery`. The two target selectors may be combined in
-  that order as a comma-separated value.
-
-`jobs=native-runtime-qualification-producer` requires an NVIDIA-owned branch in
-`NVIDIA/NemoClaw`; it is not available for external PRs.
+  `jobs=managed-image-protected-runtime`, `jobs=native-runtime-qualification-producer`, or the
+  documented credential-free target selectors.
 
 Jetson and Launchable runs require a branch in `NVIDIA/NemoClaw`. Jetson also requires
 `allow_jetson_dispatch=true` and the reviewed service configuration in
 [Jetson Dispatch Controller](../../../../test/e2e/docs/jetson-dispatch.md).
 
-Set the requested selectors and flags, or leave them empty:
+Set the requested selectors and flags, or leave them empty. Record them once so an exact-base replay
+cannot silently change the selected behavior:
 
 ```bash
 E2E_JOBS="${E2E_JOBS:-}"
 E2E_TARGETS="${E2E_TARGETS:-}"
-E2E_GATEWAY_RUNTIMES="${E2E_GATEWAY_RUNTIMES:-docker}"
 ALLOW_JETSON_DISPATCH="${ALLOW_JETSON_DISPATCH:-false}"
 INCLUDE_STAGING_BREV_LAUNCHABLE="${INCLUDE_STAGING_BREV_LAUNCHABLE:-false}"
-CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+HEAD_CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 gh workflow run .github/workflows/e2e.yaml \
   --repo NVIDIA/NemoClaw \
   --ref main \
   -f "targets=${E2E_TARGETS}" \
   -f "jobs=${E2E_JOBS}" \
-  -f "gateway_runtimes=${E2E_GATEWAY_RUNTIMES}" \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
   -f "allow_jetson_dispatch=${ALLOW_JETSON_DISPATCH}" \
   -f allow_dgx_spark_runner_queue=false \
   -f "pr_number=${PR_NUMBER}" \
-  -f revision=candidate \
   -f "checkout_sha=${HEAD_SHA}" \
   -f "checkout_repository=${HEAD_REPOSITORY}" \
   -f "base_sha=${BASE_SHA}" \
   -f "workflow_sha=${WORKFLOW_SHA}" \
-  -f "correlation_id=${CORRELATION_ID}"
+  -f "correlation_id=${HEAD_CORRELATION_ID}"
 ```
 
 GitHub's permission to dispatch the workflow authorizes the actor. The workflow does not repeat that
@@ -106,7 +102,7 @@ repository-role check. The trusted pre-checkout step validates:
 - the open PR;
 - the target repository and branch;
 - the source repository and owner;
-- the latest PR commit SHA;
+- the selected latest PR commit or exact PR base SHA;
 - the base SHA;
 - the workflow SHA; and
 - whether the source can receive the selected jobs and credentials.
@@ -115,11 +111,11 @@ It then records and uploads the immutable `nemoclaw-e2e-dispatch-v2` receipt bef
 execution. The matrix planner and its dependencies come from the trusted workflow commit. A second
 validation after checkout rejects changed PR identity or ownership.
 
-## Find and Verify the Run
+## Find and Verify the Head Run
 
 ```bash
 set -euo pipefail
-RUN_TITLE="E2E PR #${PR_NUMBER} candidate (${CORRELATION_ID})"
+RUN_TITLE="E2E PR #${PR_NUMBER} head (${HEAD_CORRELATION_ID})"
 MATCHES='[]'
 for POLL_INDEX in $(seq 1 30); do
   RUNS="$(gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
@@ -154,53 +150,45 @@ test "$(jq -r .head.repo.owner.type <<<"$CURRENT_PR")" = "$HEAD_OWNER_TYPE"
 If the run is not visible after bounded polling, do not dispatch again. Inspect GitHub Actions for
 the correlation ID. Clean up resources from any matching run.
 
-If `HEAD_CONCLUSION` is `success`, return:
+If the head run succeeds, report it and stop. If it fails, inspect the failed job with the read-only
+`nemoclaw-maintainer-classify-ci-failure` skill when that skill is available. Pass the workflow and
+job evidence the skill requests. Do not recreate its signature list or classification logic here.
+If it classifies a known infrastructure failure, report `infrastructure` and stop without a base
+replay. If the skill is unavailable or returns `unclassified`, the candidate failure remains
+unresolved and may proceed to the exact-base replay below.
 
-- the PR number;
-- the source repository;
-- the source repository owner;
-- the latest PR commit SHA;
-- the base SHA;
-- the workflow SHA;
-- the correlation ID;
-- the selectors;
-- `HEAD_RUN_URL`; and
-- the result.
+## Replay an Unresolved Failure Against the Exact Base
 
-Then stop. A changed source repository, owner, latest PR commit SHA, or base SHA invalidates the run
-claim.
+Before dispatch, prove that the PR still has the head and base captured for the failed head run.
+Use the same trusted workflow SHA, eligible jobs and targets, and inference mode. The selected source
+changes from the PR head repository and SHA to the PR base repository and SHA.
 
-## Compare an Unresolved Candidate Failure
-
-First inspect the failed candidate run with the read-only CI classifier. If it matches a known
-runner, service, capacity, or network failure, report an infrastructure failure and do not spend a
-second E2E run on the base.
-
-For any remaining candidate failure, dispatch the exact same selector against the exact PR base.
-At least one of `jobs` and `targets` must be nonempty. The PR must use a same-repository
-`NVIDIA/NemoClaw` branch.
-Keep the same inference and gateway inputs. Use a new correlation ID, set `revision=base`,
-`checkout_sha=$BASE_SHA`, and `checkout_repository=NVIDIA/NemoClaw`. Base comparison does not allow
-Launchable, Jetson, DGX Spark, or the candidate-only native-runtime evidence producer.
+Do not use an exact-base replay for Jetson or DGX Spark. Those selectors need dedicated hardware and
+cannot provide a trustworthy base comparison with their opt-in flags disabled.
 
 ```bash
-test -n "$E2E_JOBS" || test -n "$E2E_TARGETS"
-test "$HEAD_REPOSITORY" = NVIDIA/NemoClaw
+set -euo pipefail
+CURRENT_PR="$(gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}")"
+test "$(jq -r .state <<<"$CURRENT_PR")" = open
+test "$(jq -r .head.sha <<<"$CURRENT_PR")" = "$HEAD_SHA"
+test "$(jq -r .base.sha <<<"$CURRENT_PR")" = "$BASE_SHA"
+test "$(jq -r .head.repo.full_name <<<"$CURRENT_PR")" = "$HEAD_REPOSITORY"
+test "$(jq -r .base.repo.full_name <<<"$CURRENT_PR")" = "$BASE_REPOSITORY"
+test "$BASE_REPOSITORY" = NVIDIA/NemoClaw
+
 BASE_CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 gh workflow run .github/workflows/e2e.yaml \
   --repo NVIDIA/NemoClaw \
   --ref main \
   -f "targets=${E2E_TARGETS}" \
   -f "jobs=${E2E_JOBS}" \
-  -f "gateway_runtimes=${E2E_GATEWAY_RUNTIMES}" \
   -f inference_mode=mock \
-  -f include_staging_brev_launchable=false \
+  -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
   -f allow_jetson_dispatch=false \
   -f allow_dgx_spark_runner_queue=false \
   -f "pr_number=${PR_NUMBER}" \
-  -f revision=base \
   -f "checkout_sha=${BASE_SHA}" \
-  -f checkout_repository=NVIDIA/NemoClaw \
+  -f "checkout_repository=${BASE_REPOSITORY}" \
   -f "base_sha=${BASE_SHA}" \
   -f "workflow_sha=${WORKFLOW_SHA}" \
   -f "correlation_id=${BASE_CORRELATION_ID}"
@@ -210,47 +198,37 @@ Find the base run with the same bounded lookup used above and this exact title:
 
 ```bash
 RUN_TITLE="E2E PR #${PR_NUMBER} base (${BASE_CORRELATION_ID})"
-MATCHES='[]'
-for POLL_INDEX in $(seq 1 30); do
-  RUNS="$(gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
-    --event workflow_dispatch --branch main --limit 50 \
-    --json databaseId,displayTitle,url)"
-  MATCHES="$(jq -c --arg title "$RUN_TITLE" \
-    '[.[] | select(.displayTitle == $title)]' <<<"$RUNS")"
-  test "$(jq 'length' <<<"$MATCHES")" -le 1
-  test "$(jq 'length' <<<"$MATCHES")" -eq 0 || break
-  sleep 10
-done
-test "$(jq 'length' <<<"$MATCHES")" -eq 1
-BASE_RUN_ID="$(jq -r '.[0].databaseId' <<<"$MATCHES")"
-gh run watch "$BASE_RUN_ID" --repo NVIDIA/NemoClaw --exit-status || true
-BASE_RUN_JSON="$(gh api "repos/NVIDIA/NemoClaw/actions/runs/${BASE_RUN_ID}")"
-jq -e --arg sha "$WORKFLOW_SHA" '
-  .run_attempt >= 1 and .head_sha == $sha and
-  .status == "completed" and (.conclusion | type == "string")
-' <<<"$BASE_RUN_JSON" >/dev/null
-BASE_RUN_URL="$(jq -r .html_url <<<"$BASE_RUN_JSON")"
-BASE_CONCLUSION="$(jq -r .conclusion <<<"$BASE_RUN_JSON")"
-CURRENT_PR="$(gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}")"
-test "$(jq -r .state <<<"$CURRENT_PR")" = open
-test "$(jq -r .head.sha <<<"$CURRENT_PR")" = "$HEAD_SHA"
-test "$(jq -r .base.sha <<<"$CURRENT_PR")" = "$BASE_SHA"
-test "$(jq -r .head.repo.full_name <<<"$CURRENT_PR")" = "$HEAD_REPOSITORY"
 ```
 
-The workflow re-reads the open PR before and after checkout. It requires the tested commit to equal
-the current PR base, preserves the current PR head in the dispatch receipt, and uses the same trusted
-workflow revision as the candidate run. Candidate and base have separate concurrency keys, so both
-GitHub run records remain available.
+Verify that its Actions run `head_sha` is the same `WORKFLOW_SHA`. Record its run ID, URL, and
+conclusion as `BASE_RUN_ID`, `BASE_RUN_URL`, and `BASE_CONCLUSION`. Re-read the PR and require that
+its state, head SHA, base SHA, head repository, and base repository still match the captured values.
+Classify a failed base job with the same read-only CI classification skill when available.
 
-Classify the two runs without writing to the PR. Report exactly one outcome:
+Report exactly one outcome:
 
-- Candidate passes: no base run is needed.
-- Candidate has a known infrastructure failure: `infrastructure failure`.
-- Candidate fails and the identical base selector passes: `candidate regression`.
-- Candidate and base fail with the same product signature: `base already broken`.
-- Evidence is missing, signatures differ, or attribution remains unclear: `unresolved`.
+- `candidate regression`: the unresolved head run failed and the exact-base run passed.
+- `base already broken`: both runs show the same reproducible product failure.
+- `infrastructure`: the read-only classifier identifies a known infrastructure failure in either
+  run.
+- `unresolved`: the base run fails differently, a run or identity is incomplete, or the available
+  evidence does not support one of the outcomes above.
 
-Report the candidate and base tested SHAs, selectors, conclusions, and GitHub run URLs. GitHub runs
-are the evidence record; do not create a second receipt, status, publication, or automatic replay
-system.
+The report must include both workflow URLs, `HEAD_SHA`, `BASE_SHA`, `WORKFLOW_SHA`, the identical
+selectors, and the classifier result. Do not automatically dispatch the base run, retry either run,
+or publish a custom commit status.
+
+Return:
+
+- the PR number;
+- the source repository;
+- the source repository owner;
+- the tested head and, when replayed, base commit SHAs;
+- the base SHA;
+- the workflow SHA;
+- the head and, when replayed, base correlation IDs;
+- the selectors;
+- the head and, when replayed, base workflow URLs; and
+- the result or comparison outcome.
+
+A changed source repository, owner, latest PR commit SHA, or base SHA invalidates the run claim.

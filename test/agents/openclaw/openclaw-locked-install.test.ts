@@ -23,7 +23,7 @@ const LOCK_SHA256 = "248d881ca125bb83da293c4b3f40b46d057095a9fe90b5165255da0de78
 const MCPORTER_PACKAGE_SPEC = "mcporter@0.7.3";
 const MCP_TOOL_DISCOVERY_PACKAGE_SPEC = "@modelcontextprotocol/sdk@1.30.0";
 const MCP_TOOL_DISCOVERY_LOCK_SHA256 =
-  "0697681f948bda0b59fc1ff2e4c6dbe2693cc89eec64b11b5be604160643c6e5";
+  "bc7e34d9eb1f72cf3016c8b88c72d3b7682a4f234903cb93b9476b10d7e954eb";
 const roots: string[] = [];
 
 function sha256(file: string): string {
@@ -309,4 +309,5 @@ describe("locked OpenClaw production installation (#5896)", () => {
   it("allows npm to omit an incompatible optional package", () => {
     expect(verifyInstalledNpmLock(installedFixture({ omit: true, optional: true }))).toEqual([]);
   });
+
 });
