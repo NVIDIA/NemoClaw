@@ -19,12 +19,16 @@ export function inspectAuthorization(
   expectedToken: string,
 ): DiscordAuthorizationInspection {
   const raw = value ?? "";
-  const match = /^Bot[\t ]+(.+)$/iu.exec(raw);
-  const token = match?.[1] ?? "";
+  let tokenStart = 3;
+  const hasBotScheme = raw.slice(0, tokenStart).toLowerCase() === "bot";
+  const separatorStart = tokenStart;
+  while (raw[tokenStart] === " " || raw[tokenStart] === "\t") tokenStart += 1;
+  const schemeValid = hasBotScheme && tokenStart > separatorStart && tokenStart < raw.length;
+  const token = schemeValid ? raw.slice(tokenStart) : "";
   return {
     authorizationPresent: raw.length > 0,
     authorizationRedacted: true,
-    authorizationSchemeValid: match !== null,
+    authorizationSchemeValid: schemeValid,
     tokenLooksPlaceholder: token.includes("openshell:resolve:env:"),
     tokenMatchesExpected: token === expectedToken,
   };

@@ -38,6 +38,19 @@ describe("fake Discord message API", () => {
     });
   });
 
+  it("parses long malformed Bot authorization input in one pass", () => {
+    expect(inspectAuthorization(`Bot${"\t".repeat(100_000)}`, "fixture-token")).toMatchObject({
+      authorizationPresent: true,
+      authorizationSchemeValid: false,
+      tokenMatchesExpected: false,
+      tokenLooksPlaceholder: false,
+    });
+    expect(inspectAuthorization("bOt \t fixture-token", "fixture-token")).toMatchObject({
+      authorizationSchemeValid: true,
+      tokenMatchesExpected: true,
+    });
+  });
+
   it("accepts users/@me only after the expected non-placeholder token reaches it", async () => {
     const captures: Array<Record<string, unknown>> = [];
     const server = createDiscordMessageApi("fixture-token", (event) => captures.push(event));
