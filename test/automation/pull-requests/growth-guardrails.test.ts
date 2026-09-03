@@ -52,10 +52,13 @@ describe("codebase growth guardrails", () => {
     expect(violations, diagnostics.onboard(violations)).toEqual([]);
   });
 
-  it("keeps the root Dockerfile within its ratcheted budget", async () => {
+  /** Active managed-image production does not exempt the deprecated host-build recipe. */
+  async function enforceCurrentDockerfileBudget(): Promise<void> {
     const violations = await dockerfileBudgetGrowthViolations(diff);
     expect(violations, diagnostics.dockerfileBudget(violations)).toEqual([]);
-  });
+  }
+
+  it("keeps the root Dockerfile within its ratcheted budget", enforceCurrentDockerfileBudget);
 
   it("keeps changed test files within the size budget", async () => {
     const violations = await testSizeViolations(diff);
@@ -109,7 +112,8 @@ describe("codebase growth guardrail test support", () => {
     expect(await onboardGrowthViolations(diff)).toEqual(["src/lib/onboard.ts grew by 1 line(s)"]);
   });
 
-  it("rejects root Dockerfile line and byte growth", async () => {
+  /** Separate failures identify both the visible and byte-level budget increases. */
+  async function rejectDockerfileLineAndByteGrowth(): Promise<void> {
     const diff = fixtureDiff(
       [{ filename: "Dockerfile", status: "modified" }],
       { Dockerfile: "FROM scratch\nRUN true\n" },
@@ -119,9 +123,12 @@ describe("codebase growth guardrail test support", () => {
       "Dockerfile line budget increased from 2 to 4",
       "Dockerfile byte budget increased from 22 to 51",
     ]);
-  });
+  }
 
-  it("rejects root Dockerfile growth within an existing line", async () => {
+  it("rejects root Dockerfile line and byte growth", rejectDockerfileLineAndByteGrowth);
+
+  /** Byte growth closes the bypass left by instruction and physical-line counters. */
+  async function rejectDockerfileSameLineGrowth(): Promise<void> {
     const diff = fixtureDiff(
       [{ filename: "Dockerfile", status: "modified" }],
       { Dockerfile: "FROM scratch\nRUN true\n" },
@@ -130,9 +137,12 @@ describe("codebase growth guardrail test support", () => {
     expect(await dockerfileBudgetGrowthViolations(diff)).toEqual([
       "Dockerfile byte budget increased from 22 to 32",
     ]);
-  });
+  }
 
-  it("rejects documentation-only root Dockerfile growth", async () => {
+  it("rejects root Dockerfile growth within an existing line", rejectDockerfileSameLineGrowth);
+
+  /** Comments share the budget because the ratchet applies to the complete producer file. */
+  async function rejectDockerfileDocumentationGrowth(): Promise<void> {
     const diff = fixtureDiff(
       [{ filename: "Dockerfile", status: "modified" }],
       { Dockerfile: "FROM scratch\n" },
@@ -142,23 +152,34 @@ describe("codebase growth guardrail test support", () => {
       "Dockerfile line budget increased from 1 to 2",
       "Dockerfile byte budget increased from 13 to 36",
     ]);
-  });
+  }
 
-  it("allows the root Dockerfile budget to shrink", async () => {
+  it("rejects documentation-only root Dockerfile growth", rejectDockerfileDocumentationGrowth);
+
+  /** The ratchet permits simplification without a maintainer override. */
+  async function allowDockerfileBudgetShrinkage(): Promise<void> {
     const diff = fixtureDiff(
       [{ filename: "Dockerfile", status: "modified" }],
       { Dockerfile: "FROM scratch\nRUN true\n" },
       { Dockerfile: "FROM scratch\n" },
     );
     expect(await dockerfileBudgetGrowthViolations(diff)).toEqual([]);
-  });
+  }
 
-  it("requires a maintainer decision to increase the root Dockerfile budget", () => {
+  it("allows the root Dockerfile budget to shrink", allowDockerfileBudgetShrinkage);
+
+  /** The remediation text records the escalation path for intentional growth. */
+  function requireDockerfileBudgetDecision(): void {
     const message = diagnostics.dockerfileBudget(["Dockerfile byte budget increased"]);
     expect(message).toContain("Host-side stock Dockerfile onboarding is deprecated");
     expect(message).toContain("managed-image startup profile, bootstrap, or runtime-provider path");
     expect(message).toContain("record a maintainer decision before increasing this budget");
-  });
+  }
+
+  it(
+    "requires a maintainer decision to increase the root Dockerfile budget",
+    requireDockerfileBudgetDecision,
+  );
 
   it("rejects a larger default test file budget", async () => {
     const diff = fixtureDiff(
