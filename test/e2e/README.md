@@ -135,6 +135,11 @@ local image, removes registry credentials, validates the anonymously pullable di
 qualification receipts may consume these candidate contracts only when the recorded image-source
 paths are unchanged through the receipt commit.
 
+Pi full lifecycle qualification runs on Linux AMD64. Linux ARM64 remains release-gated by its native
+managed-image build, startup, publication, and checked-in receipt. The receipt refresh check requires
+the Linux AMD64 and Linux ARM64 receipts to identify one source revision, release, and publication
+cohort.
+
 #### Timing Baseline
 
 The pre-change baseline uses GitHub Actions `Build CLI` step timings from these workflow runs:
