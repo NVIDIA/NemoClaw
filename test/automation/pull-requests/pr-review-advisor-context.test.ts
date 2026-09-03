@@ -6,7 +6,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { githubGraphql, upsertStickyComment } from "../../../tools/advisors/github.mts";
-import { collectStaticTestInventory } from "../../../tools/pr-review-advisor/deterministic-context.mts";
+import {
+  classifyTestDepth,
+  collectStaticTestInventory,
+} from "../../../tools/pr-review-advisor/deterministic-context.mts";
 import {
   declaresReplacement,
   extractIssueRefs,
@@ -61,11 +64,41 @@ describe("PR review advisor", () => {
   });
 
   it("collects static test inventory from changed test files", () => {
-    const inventory = collectStaticTestInventory(["test/automation/pull-requests/pr-review-advisor-context.test.ts"]);
+    const inventory = collectStaticTestInventory([
+      "test/automation/pull-requests/pr-review-advisor-context.test.ts",
+    ]);
 
-    expect(inventory.changedTestFiles).toContain("test/automation/pull-requests/pr-review-advisor-context.test.ts");
+    expect(inventory.changedTestFiles).toContain(
+      "test/automation/pull-requests/pr-review-advisor-context.test.ts",
+    );
     expect(inventory.nearbyTestNames.some((name) => name.includes("PR review advisor"))).toBe(true);
     expect(inventory.candidateExistingCoverage.join("\n")).toContain("named test block");
+  });
+
+  it("requires test ownership evidence before recommending more coverage", () => {
+    const prompt = buildSystemPrompt();
+
+    expect(prompt).toContain(
+      "Prefer, in order: cite existing coverage unchanged; extend an existing owner with one missing case; add a new test only when no existing owner can express the behavior; or state why automated coverage does not apply.",
+    );
+    expect(prompt).toContain(
+      "Selecting existing E2E coverage validates the PR; it does not authorize adding or modifying E2E tests, assertions, fixtures, selectors, matrix entries, jobs, or workflow fan-out.",
+    );
+    expect(prompt).toContain("regressionEvidence with exactly one decision");
+    expect(prompt).not.toContain("missingRegressionTest");
+  });
+
+  it("treats test-depth signals as investigation prompts, not proof of a gap", () => {
+    const hints = [
+      ...classifyTestDepth(["src/lib/example-sandbox.ts"]).suggestedTests,
+      ...classifyTestDepth(["src/lib/example-provider.ts"]).suggestedTests,
+      ...collectStaticTestInventory(["tools/pr-review-advisor/context-tests.mts"])
+        .candidateExistingCoverage,
+    ].join("\n");
+
+    expect(hints).toContain("nearest existing");
+    expect(hints).toContain("does not establish missing regression coverage");
+    expect(hints).not.toContain("Add or");
   });
 
   it("recognizes issue relations used by the PR template and common PR prose (#6446)", () => {

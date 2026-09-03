@@ -75,7 +75,7 @@ export function classifyTestDepth(
       verdict: "runtime_validation_recommended",
       rationale: `Runtime/sandbox/infrastructure paths need behavioral runtime validation: ${e2eSignals.slice(0, 8).join(", ")}.`,
       suggestedTests: [
-        "Add or identify targeted runtime/integration validation for the changed behavior; do not report external E2E job pass/fail here.",
+        "Identify the nearest existing runtime or integration validation for the changed behavior. Treat absence as a gap only after verifying that no existing test owns the boundary; do not report external E2E job pass/fail here.",
       ],
     };
   }
@@ -85,7 +85,7 @@ export function classifyTestDepth(
       verdict: "runtime_validation_recommended",
       rationale: `Changed runtime code adds a process or container boundary: ${runtimeBoundaryFiles.join(", ")}.`,
       suggestedTests: [
-        "Add or identify a targeted integration test for the changed process or container behavior.",
+        "Identify the nearest existing integration test for the changed process or container behavior, and extend it only for a concrete missing case.",
       ],
     };
   }
@@ -97,7 +97,7 @@ export function classifyTestDepth(
       verdict: "mocks_recommended",
       rationale: `Changed code has I/O, state, credentials, provider, or config behavior that should be covered with behavioral mocks: ${mockSignals.slice(0, 8).join(", ")}.`,
       suggestedTests: [
-        "Add or confirm behavioral tests with mocked filesystem/network/process boundaries.",
+        "Identify the nearest existing behavioral test with mocked filesystem, network, or process boundaries, and extend it only for a concrete missing case.",
       ],
     };
   }
@@ -138,7 +138,7 @@ export function collectStaticTestInventory(
     );
   if (sourceFiles.length > 0 && changedTestFiles.length === 0)
     candidateExistingCoverage.push(
-      `No changed test files were detected for changed source files: ${sourceFiles.slice(0, 8).join(", ")}.`,
+      `No changed test files were detected for changed source files: ${sourceFiles.slice(0, 8).join(", ")}. This does not establish missing regression coverage; search existing tests for the nearest semantic owner.`,
     );
   return {
     changedTestFiles,
