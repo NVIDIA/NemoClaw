@@ -535,7 +535,9 @@ describe("base-image publication evidence", () => {
         history(),
         WORKFLOW_ID,
       ),
-    ).toThrow(/name must be one of Images \/ Publish Base and Managed Images, Images \/ Base Images/u);
+    ).toThrow(
+      /name must be one of Images \/ Publish Base and Managed Images, Images \/ Base Images/u,
+    );
   });
 
   it("selects an in-progress trusted publication run (#9549)", () => {
@@ -846,6 +848,44 @@ describe("base-image publication evidence", () => {
         pollMs: 10,
       }),
     ).rejects.toThrow(/managed-image publication workflow did not complete successfully/u);
+  });
+
+  it("uses the latest successful attempt after a newer rerun is cancelled", async () => {
+    const cancelledRun = workflowRun({
+      run_attempt: 3,
+      conclusion: "cancelled",
+    });
+    const successfulAttempt = workflowRun({ run_attempt: 2 });
+    const responses = [
+      workflowMetadata(),
+      runsPayload([cancelledRun]),
+      successfulAttempt,
+      { total_count: 3, jobs: successfulJobs({ runAttempt: 2 }) },
+      cancelledRun,
+      successfulAttempt,
+    ];
+    const requests: string[] = [];
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async (requestPath) => {
+          requests.push(requestPath);
+          return responses.shift();
+        },
+        requireWorkflowSuccess: true,
+        waitMs: 100,
+        pollMs: 10,
+      }),
+    ).resolves.toMatchObject({ id: RUN_ID, attempt: 2, conclusion: "success" });
+    expect(requests).toEqual([
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/2`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/2/jobs?per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/2`,
+    ]);
   });
 
   it.each(["failure", "cancelled"] as const)(

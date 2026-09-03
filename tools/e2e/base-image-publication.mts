@@ -22,6 +22,7 @@ const PAGE_SIZE = 100;
 const MAX_API_PAGES = 10;
 const MAX_CHANGED_PATHS = 6_000;
 const PAGINATION_ATTEMPTS = 3;
+const MAX_PREVIOUS_RUN_ATTEMPTS = 10;
 const REQUEST_ATTEMPTS = 3;
 const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_RETRY_DELAY_MS = 10_000;
@@ -686,6 +687,33 @@ function publicationEvidenceError(error: unknown, run: PublicationRun): Error {
   return new Error([message, ...context].join("; "));
 }
 
+async function resolveCompletedPublicationAttempt(
+  request: (path: string) => Promise<unknown>,
+  latest: PublicationRun,
+  requireWorkflowSuccess: boolean,
+): Promise<PublicationRun> {
+  if (
+    !requireWorkflowSuccess ||
+    latest.status !== "completed" ||
+    latest.conclusion !== "cancelled" ||
+    latest.attempt === 1
+  ) {
+    return latest;
+  }
+
+  const oldestAttempt = Math.max(1, latest.attempt - MAX_PREVIOUS_RUN_ATTEMPTS);
+  for (let attempt = latest.attempt - 1; attempt >= oldestAttempt; attempt -= 1) {
+    const previous = validateBoundRun(
+      await request(`/repos/${REPOSITORY}/actions/runs/${latest.id}/attempts/${attempt}`),
+      { ...latest, attempt },
+    );
+    if (previous.status === "completed" && previous.conclusion === "success") {
+      return previous;
+    }
+  }
+  return latest;
+}
+
 export async function waitForBaseImagePublication(
   options: PublicationWaitOptions,
 ): Promise<PublicationRun> {
@@ -712,7 +740,6 @@ export async function waitForBaseImagePublication(
       completedSuccessOnly: options.selectNearestSuccessfulRun === true,
     });
     if (selection.state === "selected") {
-      const jobsPath = `/repos/${REPOSITORY}/actions/runs/${selection.run.id}/attempts/${selection.run.attempt}/jobs?per_page=100`;
       if (now() > deadline) {
         throw new Error(
           `timed out validating base-image publication for ${selection.run.headSha}; ${selection.run.url}`,
@@ -721,13 +748,28 @@ export async function waitForBaseImagePublication(
       let publisherState: "pending" | "ready";
       let validatedRun = selection.run;
       try {
+        const evidenceRun = await resolveCompletedPublicationAttempt(
+          options.request,
+          selection.run,
+          options.requireWorkflowSuccess === true,
+        );
+        const jobsPath = `/repos/${REPOSITORY}/actions/runs/${evidenceRun.id}/attempts/${evidenceRun.attempt}/jobs?per_page=100`;
         const jobs = await collectPaginated(options.request, jobsPath, "jobs");
-        publisherState = validatePublisherJobs(jobs, selection.run);
+        publisherState = validatePublisherJobs(jobs, evidenceRun);
         if (publisherState === "ready") {
-          const boundRun = validateBoundRun(
+          const latestBound = validateBoundRun(
             await options.request(`/repos/${REPOSITORY}/actions/runs/${selection.run.id}`),
             selection.run,
           );
+          const boundRun =
+            evidenceRun.attempt === selection.run.attempt
+              ? latestBound
+              : validateBoundRun(
+                  await options.request(
+                    `/repos/${REPOSITORY}/actions/runs/${evidenceRun.id}/attempts/${evidenceRun.attempt}`,
+                  ),
+                  evidenceRun,
+                );
           validatedRun = boundRun;
           if (options.requireWorkflowSuccess === true) {
             if (boundRun.status !== "completed") {
