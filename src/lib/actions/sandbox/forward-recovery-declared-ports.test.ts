@@ -133,7 +133,7 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
     mocks.captureOpenshell.mockReturnValue(forwardList([]));
     const runtimeSelection = {
       gatewayName: "nemoclaw-19080",
-      workspace: "default",
+      workspace: "review-workspace",
       localTlsDir: "/authority/tls",
     };
     const selectedOptions = expect.objectContaining({
@@ -157,6 +157,7 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
         localPort: 8643,
         sandboxName: "beta",
         targetPort: 8643,
+        workspace: runtimeSelection.workspace,
       }),
       {
         sourceEnvironment: expect.objectContaining({

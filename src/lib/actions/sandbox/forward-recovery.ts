@@ -181,11 +181,12 @@ function forwardServiceTarget(
   sandboxName: string,
   port: number,
   expectedBind = "127.0.0.1",
+  workspace = "default",
 ): ForwardServiceTarget {
   return {
     executable,
     gatewayName,
-    workspace: "default",
+    workspace,
     sandboxName,
     localHost: expectedBind === "0.0.0.0" ? ("0.0.0.0" as const) : ("127.0.0.1" as const),
     localPort: port,
@@ -432,6 +433,7 @@ export function ensureSandboxPortForwardForPort(
         sandboxName,
         port,
         expectedBind ?? (forwardTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1"),
+        runtimeSelection?.workspace ?? "default",
       ),
       runtimeSelection
         ? { sourceEnvironment: buildSelectedOpenShellSubprocessEnv(runtimeSelection) }
