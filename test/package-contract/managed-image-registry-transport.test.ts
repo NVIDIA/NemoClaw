@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -52,9 +52,13 @@ describe("managed image registry transport package contract", () => {
       expect(packed.status, `${packed.stdout}${packed.stderr}`).toBe(0);
       const archives = fs.readdirSync(tempDir).filter((entry) => entry.endsWith(".tgz"));
       expect(archives).toHaveLength(1);
-      execFileSync("tar", ["-xzf", path.join(tempDir, archives[0]!), "-C", tempDir]);
 
-      const installedRoot = path.join(tempDir, "package");
+      const consumerRoot = path.join(tempDir, "consumer");
+      fs.mkdirSync(consumerRoot);
+      fs.writeFileSync(
+        path.join(consumerRoot, "package.json"),
+        `${JSON.stringify({ name: "managed-registry-consumer", private: true })}\n`,
+      );
       const installed = spawnSync(
         "npm",
         [
@@ -65,10 +69,12 @@ describe("managed image registry transport package contract", () => {
           "--no-audit",
           "--no-fund",
           "--no-package-lock",
+          "--no-save",
           "--prefer-offline",
+          path.join(tempDir, archives[0]!),
         ],
         {
-          cwd: installedRoot,
+          cwd: consumerRoot,
           encoding: "utf8",
           timeout: 120_000,
           env: { ...process.env, npm_config_update_notifier: "false" },
@@ -79,17 +85,20 @@ describe("managed image registry transport package contract", () => {
       const installedProductionTree = spawnSync(
         "npm",
         ["ls", "undici", "--omit=dev", "--all", "--json"],
-        { cwd: installedRoot, encoding: "utf8" },
+        { cwd: consumerRoot, encoding: "utf8" },
       );
       expect(
         installedProductionTree.status,
         `${installedProductionTree.stdout}${installedProductionTree.stderr}`,
       ).toBe(0);
       const installedProductionDependencies = JSON.parse(installedProductionTree.stdout) as {
-        dependencies?: { undici?: { version?: string } };
+        dependencies?: { nemoclaw?: { dependencies?: { undici?: { version?: string } } } };
       };
-      expect(installedProductionDependencies.dependencies?.undici?.version).toBe("8.10.0");
+      expect(
+        installedProductionDependencies.dependencies?.nemoclaw?.dependencies?.undici?.version,
+      ).toBe("8.10.0");
 
+      const installedRoot = path.join(consumerRoot, "node_modules", "nemoclaw");
       const probe = spawnSync(
         process.execPath,
         [
