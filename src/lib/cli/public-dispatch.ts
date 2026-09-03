@@ -436,6 +436,25 @@ async function dispatchNormalizedArgv(normalized: NormalizedArgv, argv: string[]
 }
 
 async function dispatchGlobalArgv(normalized: NormalizedGlobalArgv): Promise<void> {
+  if (
+    normalized.command === "doctor" &&
+    normalized.args[0] &&
+    isKnownSandboxAction(normalized.args[0])
+  ) {
+    const [action, ...actionArgs] = normalized.args;
+    await dispatchSandboxArgv(
+      {
+        kind: "sandbox",
+        sandboxName: "doctor",
+        action,
+        actionArgs,
+        connectHelpRequested:
+          action === "connect" && actionArgs.some((arg) => arg === "--help" || arg === "-h"),
+      },
+      [normalized.command, ...normalized.args],
+    );
+    return;
+  }
   if (normalized.command === "status") {
     const sandboxName = findGlobalStatusSandboxArgument(normalized.args);
     if (sandboxName) printGlobalStatusScopeHint(sandboxName, normalized.args);

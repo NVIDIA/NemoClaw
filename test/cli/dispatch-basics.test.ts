@@ -647,17 +647,48 @@ describe("CLI dispatch", () => {
     );
   });
 
+  it("dispatches the global doctor without a sandbox name (#10212)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, stderr }) => {
+        await dispatchCli(["doctor"]);
+
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "doctor",
+          [],
+          expect.objectContaining({ rootDir: process.cwd() }),
+        );
+        expect(recoverRegistryEntries).not.toHaveBeenCalled();
+        expect(stderr).toEqual([]);
+      },
+    );
+  });
+
+  it("dispatches global doctor flags without reading sandbox state (#10212)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById }) => {
+        await dispatchCli(["doctor", "--json"]);
+
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "doctor",
+          ["--json"],
+          expect.objectContaining({ rootDir: process.cwd() }),
+        );
+        expect(recoverRegistryEntries).not.toHaveBeenCalled();
+      },
+    );
+  });
+
   it("reports the sandbox-first grammar without recovering a bare action (#10212)", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, exitSpy, recoverRegistryEntries, stderr }) => {
-        await expect(dispatchCli(["doctor"])).rejects.toThrow("process.exit:1");
+        await expect(dispatchCli(["destroy"])).rejects.toThrow("process.exit:1");
 
         const output = stderr.join("\n");
         expect(recoverRegistryEntries).not.toHaveBeenCalled();
-        expect(output).toContain("'doctor' is a sandbox command. It needs a sandbox name.");
-        expect(output).toContain("Run: nemoclaw <name> doctor");
+        expect(output).toContain("'destroy' is a sandbox command. It needs a sandbox name.");
+        expect(output).toContain("Run: nemoclaw <name> destroy");
         expect(output).toContain("Run 'nemoclaw onboard' to create one.");
-        expect(output).not.toContain("Sandbox 'doctor' does not exist.");
+        expect(output).not.toContain("Sandbox 'destroy' does not exist.");
         expect(exitSpy).toHaveBeenCalledWith(1);
       },
     );
@@ -666,9 +697,9 @@ describe("CLI dispatch", () => {
   it.each([
     {
       input: "flag argument",
-      argv: ["doctor", "--json"],
-      route: "doctor",
-      forbidden: /--json/,
+      argv: ["logs", "--follow"],
+      route: "logs",
+      forbidden: /--follow/,
     },
     {
       input: "credential-bearing argument",
@@ -740,7 +771,7 @@ describe("CLI dispatch", () => {
   it("lists registered sandboxes in the sandbox-first grammar hint (#10212)", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, stderr }) => {
-        await expect(dispatchCli(["doctor"])).rejects.toThrow("process.exit:1");
+        await expect(dispatchCli(["destroy"])).rejects.toThrow("process.exit:1");
 
         const output = stderr.join("\n");
         expect(output).toContain("Registered sandboxes: alpha, beta");
@@ -753,7 +784,7 @@ describe("CLI dispatch", () => {
   it("reports pending setup instead of new onboarding for a bare sandbox action (#10212)", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, stderr }) => {
-        await expect(dispatchCli(["doctor"])).rejects.toThrow("process.exit:1");
+        await expect(dispatchCli(["destroy"])).rejects.toThrow("process.exit:1");
 
         const output = stderr.join("\n");
         expect(output).toContain("Sandbox setup is still pending: alpha");

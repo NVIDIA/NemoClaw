@@ -3,9 +3,11 @@
 
 import { Args, Flags } from "@oclif/core";
 import { runSandboxDoctor } from "../../lib/actions/sandbox/doctor";
+import {
+  redactForLog,
+  withStdoutRedirectedToStderr,
+} from "../../lib/cli/doctor-command-support";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
-import { withStdoutRedirectedToStderr } from "../../lib/cli/stdout-guard";
-import { redactForLog } from "../../lib/security/redact";
 
 export default class SandboxDoctorCliCommand extends NemoClawCommand {
   static id = "sandbox:doctor";

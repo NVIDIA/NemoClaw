@@ -25,6 +25,10 @@ import type { DoctorCheck } from "./doctor-report";
 
 export const withSandboxDoctorLifecycleLock = withMcpLifecycleLock;
 
+export function gatewayDoctorStartHint(gatewayName: string): string {
+  return `${gatewayStartGuidance(gatewayName)} Then retry this command.`;
+}
+
 export function inspectSandboxDoctorPortableAuthority(
   sandboxName: string,
   readRegistry: (sandboxName: string) => SandboxEntry | null,
