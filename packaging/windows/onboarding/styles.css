@@ -132,14 +132,14 @@ h1 {
 
 .agent-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 .agent-card {
   display: flex;
-  gap: 16px;
-  min-height: 116px;
-  padding: 16px;
+  gap: 13px;
+  min-height: 108px;
+  padding: 14px;
   text-align: left;
   background: #fff;
   border: 1px solid var(--line);
@@ -164,15 +164,15 @@ h1 {
 .agent-mark {
   display: grid;
   place-items: center;
-  flex: 0 0 62px;
-  height: 62px;
+  flex: 0 0 54px;
+  height: 54px;
   overflow: hidden;
   border-radius: 12px;
   background: #f3f3f3;
 }
 .agent-mark img {
-  max-width: 52px;
-  max-height: 52px;
+  max-width: 46px;
+  max-height: 46px;
   object-fit: contain;
 }
 .agent-mark.openclaw {
@@ -182,14 +182,14 @@ h1 {
   background: #1c1c1c;
 }
 .agent-mark.hermes img {
-  max-width: 58px;
-  max-height: 40px;
+  max-width: 50px;
+  max-height: 36px;
 }
 .agent-mark.deepagents img {
-  width: 56px;
+  width: 48px;
 }
 .agent-mark.pi img {
-  width: 48px;
+  width: 42px;
 }
 .agent-mark.nemocua {
   background: #f2f7e9;
@@ -209,7 +209,7 @@ h1 {
   font-size: 12px;
 }
 .description {
-  margin-top: 8px;
+  margin-top: 6px;
   color: #555;
   font-size: 13px;
   line-height: 1.38;
@@ -386,5 +386,11 @@ h1 {
   .agent-grid,
   .choice-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 981px) and (max-width: 1180px) {
+  .agent-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

@@ -567,12 +567,20 @@ try {
         'NATIVE_WINDOWS_TURN_2_OK',
         'NATIVE_WINDOWS_TURN_3_OK'
     )
+    $expectedAgentChoices = @(
+        'hermes',
+        'langchain-deepagents-code',
+        'pi',
+        'nemocua',
+        'openclaw'
+    )
     if ($webUiReceipt.verdict -cne 'pass' -or
         $webUiReceipt.backend -cne 'process_container' -or
         $webUiReceipt.browser -cne 'Microsoft Edge' -or
         $webUiReceipt.deterministicLocalModel -ne $true -or
         $webUiReceipt.onboardingSelection.agent -cne 'openclaw' -or
         $webUiReceipt.onboardingSelection.inference -cne 'nvidia' -or
+        @($webUiReceipt.demonstratedAgentChoices).Count -ne $expectedAgentChoices.Count -or
         [int]$webUiReceipt.turnCount -ne 3 -or
         @($webUiReceipt.turns).Count -ne 3 -or
         $webUiReceipt.sandboxDeleted -ne $true -or
@@ -580,6 +588,11 @@ try {
         $webUiReceipt.gatewayStopped -ne $true -or
         $webUiReceipt.qualificationRootsRemoved -ne $true) {
         Fail-PackageQualification 'Installed NemoClaw web UI receipt is incomplete.'
+    }
+    for ($index = 0; $index -lt $expectedAgentChoices.Count; $index++) {
+        if ($webUiReceipt.demonstratedAgentChoices[$index] -cne $expectedAgentChoices[$index]) {
+            Fail-PackageQualification "Installed NemoClaw onboarding did not visibly demonstrate agent choice $($index + 1)."
+        }
     }
     for ($index = 0; $index -lt $expectedWebUiReplies.Count; $index++) {
         if ($webUiReceipt.turns[$index].expected -cne $expectedWebUiReplies[$index] -or

@@ -340,6 +340,7 @@ if ($null -ne $qualification -and (-not $qualification.repairRestoredDigest -or
     $qualification.webUi.verdict -cne 'pass' -or
     [int]$qualification.webUi.turnCount -ne 3 -or
     $qualification.webUi.onboardingSelection.agent -cne 'openclaw' -or
+    (@($qualification.webUi.demonstratedAgentChoices) -join ',') -cne 'hermes,langchain-deepagents-code,pi,nemocua,openclaw' -or
     @($qualification.webUi.turns).Count -ne 3 -or
     @($qualification.nativeExecutions).Count -ne 3 -or
     @($qualification.applicationExecutions).Count -ne 2 -or
@@ -634,8 +635,9 @@ public static class NemoClawConsoleVideoEncoder
     if ($null -ne $recordedQualification -and ($recordedQualification.webUi.verdict -cne 'pass' -or
         [int]$recordedQualification.webUi.turnCount -ne 3 -or
         $recordedQualification.webUi.onboardingSelection.agent -cne 'openclaw' -or
+        (@($recordedQualification.webUi.demonstratedAgentChoices) -join ',') -cne 'hermes,langchain-deepagents-code,pi,nemocua,openclaw' -or
         @($recordedQualification.webUi.turns).Count -ne 3)) {
-        $captureFailures.Add('The recorded qualification receipt does not prove three OpenClaw Control UI turns.')
+        $captureFailures.Add('The recorded qualification receipt does not prove visible agent choices and three OpenClaw Control UI turns.')
     }
     $initialQualificationHash = if (Test-Path -LiteralPath $qualificationPath -PathType Leaf) {
         (Get-FileHash -LiteralPath $qualificationPath -Algorithm SHA256).Hash.ToLowerInvariant()

@@ -21,7 +21,12 @@ adds the installed `bin` directory to the machine PATH.
 The workflow first builds and qualifies the unmodified NVIDIA/OpenShell#2721
 merge commit, then applies the checked-in Node compatibility patch and rebuilds
 the packaged derivative. The patch and its exact hash are installed with the
-product; it sets `ui.disable=false` so the contained Node process can initialize.
+product. It sets `ui.disable=false` so the contained Node process can initialize,
+and adds an explicit per-sandbox `host_loopback` opt-in. Only the Control UI
+workload uses that opt-in; it selects MXC schema 0.8 directional networking with
+deny-default egress and host-loopback ingress so the host browser can reach the
+contained local listener. Other NVIDIA/OpenShell#2721 workloads retain the
+original network posture.
 The qualification turn executes OpenClaw in a worker inside that same contained
 Node process, avoiding an unsupported nested-process assumption while retaining
 MXC filesystem containment. The package does not bypass OpenShell or call MXC

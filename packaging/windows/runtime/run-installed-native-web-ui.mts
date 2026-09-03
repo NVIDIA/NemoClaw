@@ -29,6 +29,8 @@ const TURN_PROOFS = [
   ["Reply exactly with NATIVE_WINDOWS_TURN_3_OK", "NATIVE_WINDOWS_TURN_3_OK"],
 ];
 
+const AGENT_CHOICE_PROOF = ["hermes", "langchain-deepagents-code", "pi", "nemocua", "openclaw"];
+
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 function fail(message) {
@@ -110,6 +112,7 @@ await new Promise((resolve, reject) => {
 });
 const configDirectory = join(home, ".openclaw");
 mkdirSync(configDirectory, { recursive: true });
+mkdirSync(join(configDirectory, "agents", "main", "agent"), { recursive: true });
 writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
   gateway: {
     mode: "local",
@@ -265,13 +268,18 @@ async function driveBrowser(openClawRoot, onboardingUrl, openClawUrl, evidenceRo
   const browser = await chromium.launch({
     executablePath: resolveEdge(),
     headless: false,
-    args: ["--no-first-run", "--no-default-browser-check", "--start-maximized"],
+    args: [
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--window-position=20,10",
+      "--window-size=1240,700",
+    ],
   });
   let browserVersion = "unknown";
   try {
     browserVersion = browser.version();
     const context = await browser.newContext({
-      viewport: { width: 1280, height: 720 },
+      viewport: { width: 1200, height: 630 },
     });
     const page = await context.newPage();
     await page.goto(onboardingUrl, {
@@ -282,27 +290,47 @@ async function driveBrowser(openClawRoot, onboardingUrl, openClawUrl, evidenceRo
       state: "visible",
       timeout: 30_000,
     });
-    await page.screenshot({
-      path: path.join(evidenceRoot, "onboarding-agent.png"),
-    });
     if (!qualification) {
+      await page.screenshot({
+        path: path.join(evidenceRoot, "onboarding-agent.png"),
+      });
       console.log(`WEB UI> READY ${onboardingUrl}`);
       await new Promise((resolve) => browser.once("disconnected", resolve));
-      return { browserVersion, turns: [] };
+      return { browserVersion, demonstratedAgentChoices: [], turns: [] };
     }
-    await page.locator("[data-agent='openclaw']").click();
+    const demonstratedAgentChoices = [];
+    console.log("WEB UI> Showing every available agent choice in graphical onboarding");
+    await sleep(3000);
+    for (const agent of AGENT_CHOICE_PROOF) {
+      const card = page.locator(`[data-agent='${agent}']`);
+      await card.click();
+      if ((await card.getAttribute("aria-checked")) !== "true")
+        fail(`graphical onboarding did not select ${agent}`);
+      demonstratedAgentChoices.push(agent);
+      console.log(`WEB UI> AGENT CHOICE selected ${agent}`);
+      await sleep(1500);
+    }
+    await page.screenshot({
+      path: path.join(evidenceRoot, "onboarding-agent.png"),
+      fullPage: false,
+    });
+    await sleep(2500);
     await page.locator("#next").click();
+    await sleep(3000);
     await page.screenshot({
       path: path.join(evidenceRoot, "onboarding-inference.png"),
     });
     await page.locator("#next").click();
+    await sleep(3000);
     await page.screenshot({
       path: path.join(evidenceRoot, "onboarding-experience.png"),
     });
     await page.locator("#next").click();
+    await sleep(3000);
     await page.screenshot({
       path: path.join(evidenceRoot, "onboarding-review.png"),
     });
+    await sleep(2500);
     await page.locator("#launch").click();
     await page.waitForURL(`${openClawUrl}/chat`, { timeout: 30_000 });
     const composer = page.locator(".agent-chat__composer-combobox > textarea").first();
@@ -342,7 +370,7 @@ async function driveBrowser(openClawRoot, onboardingUrl, openClawUrl, evidenceRo
       await sleep(2000);
     }
     await sleep(3000);
-    return { browserVersion, turns };
+    return { browserVersion, demonstratedAgentChoices, turns };
   } finally {
     if (browser.isConnected()) await browser.close();
   }
@@ -514,7 +542,7 @@ async function main() {
       policyPath,
       "--driver-config-json",
       JSON.stringify({
-        mxc: { command: [node, gatewayScript], cwd: shareRoot },
+        mxc: { command: [node, gatewayScript], cwd: shareRoot, host_loopback: true },
       }),
       "--no-tty",
     ];
@@ -584,6 +612,7 @@ async function main() {
       browserVersion: browserProof.browserVersion,
       deterministicLocalModel: qualification,
       onboardingSelection,
+      demonstratedAgentChoices: browserProof.demonstratedAgentChoices,
       turnCount: browserProof.turns.length,
       turns: browserProof.turns,
       sandboxDeleted: true,
