@@ -4,7 +4,11 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { isErrnoException } from "../core/errno";
+type ErrnoException = Error & { code?: string };
+
+function isErrnoException(error: unknown): error is ErrnoException {
+  return error instanceof Error && "code" in error;
+}
 
 export type YamlExportFailureKind = "output-conflict" | "unsafe-output";
 
