@@ -116,16 +116,6 @@ uid_line=next(line for line in rows[0][1].splitlines() if line.startswith("Uid:"
 assert uid_line.split()[1:] == [expected_uid] * 4, uid_line
 print("MANAGED_SUPERVISOR=" + rows[0][0] + ":PPID1")`;
 
-const OPENCLAW_STATE_LOCK_PLAN_PROBE = String.raw`import json, os
-path="/usr/local/share/nemoclaw/state-lock-plan.json"
-metadata=os.stat(path, follow_symlinks=False)
-assert metadata.st_uid == 0 and metadata.st_gid == 0, metadata
-assert metadata.st_mode & 0o022 == 0, oct(metadata.st_mode)
-plan=json.load(open(path, encoding="utf-8"))
-assert "workspace" in plan["readOnlyRoots"], plan
-assert "workspace-" in plan["readOnlyPrefixes"], plan
-print("OPENCLAW_STATE_LOCK_PLAN=installed")`;
-
 const CONTAINER_GATEWAY_PROCESS_STATE_SCRIPT = String.raw`from pathlib import Path
 import pwd, sys
 pid=sys.argv[1]
@@ -495,14 +485,6 @@ test(
     expect(trustedRecovery.timedOut, "trusted recovery should complete before timeout").toBe(false);
     expect(trustedRecovery.exitCode, "trusted recovery should exit successfully").toBe(0);
     expectManagedGatewayState(restartManagedState);
-    const restartStateLockPlan = await sandbox.exec(
-      instance.sandboxName,
-      ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],
-      { artifactName: "restart-installed-state-lock-plan", env: buildAvailabilityProbeEnv() },
-    );
-    expect(restartStateLockPlan.exitCode, resultText(restartStateLockPlan)).toBe(0);
-    expect(restartStateLockPlan.stdout).toContain("OPENCLAW_STATE_LOCK_PLAN=installed");
-
     const recoveredContainerId = await findSandboxContainer(host, "restart-container-after");
     expect(recoveredContainerId).toBe(originalContainerId);
     const recoveredStartupCommand = await inspectStartupCommand(
@@ -639,17 +621,6 @@ test(
     expect(legacyRecovery.timedOut, "legacy recovery should complete before timeout").toBe(false);
     expect(legacyRecovery.exitCode, "legacy recovery should exit successfully").toBe(0);
     expectManagedGatewayState(legacyManagedState);
-    const legacyStateLockPlan = await sandbox.exec(
-      instance.sandboxName,
-      ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],
-      {
-        artifactName: "legacy-restart-installed-state-lock-plan",
-        env: buildAvailabilityProbeEnv(),
-      },
-    );
-    expect(legacyStateLockPlan.exitCode, resultText(legacyStateLockPlan)).toBe(0);
-    expect(legacyStateLockPlan.stdout).toContain("OPENCLAW_STATE_LOCK_PLAN=installed");
-
     expect(legacyRecoveredContainerId).not.toBe(legacyContainerId);
     const legacyRecoveredStartupCommand = await inspectStartupCommand(
       host,

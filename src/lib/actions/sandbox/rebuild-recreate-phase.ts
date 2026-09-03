@@ -10,7 +10,6 @@ import { gatewayOwnerFromCheckpoint } from "../../onboard/gateway-authority-chec
 import { sameGatewayOwner } from "../../onboard/gateway-ownership";
 import { applyReasoningEffortEnv } from "../../onboard/reasoning-mode";
 import { isOnboardDeferredExitError } from "../../onboard/session-bootstrap";
-import * as shields from "../../shields";
 import { decisionSelected, isDecisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
 import type { Session } from "../../state/onboard-session";
@@ -39,7 +38,6 @@ import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
 import type { RebuildRegistryRollback } from "./rebuild-registry-rollback";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
-import type { RebuildShieldsWindow } from "./rebuild-shields";
 
 export interface RebuildRecreatePhaseInput {
   sandboxName: string;
@@ -60,12 +58,10 @@ export interface RebuildRecreatePhaseInput {
   credentialEnv: string | null;
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   recoveryRecreate: boolean;
+  preparedBackupRecovery?: boolean;
   registryRollback: RebuildRegistryRollback;
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
-  rebuildShieldsWindow: RebuildShieldsWindow;
-  relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
-  onCreated: () => void;
   log: RebuildLog;
   bail: RebuildBail;
 }
@@ -105,12 +101,10 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     credentialEnv: rebuildCredentialEnv,
     baseImagePreflight: rebuildBaseImagePreflight,
     recoveryRecreate,
+    preparedBackupRecovery = false,
     registryRollback,
     backupManifest,
     mcpEntries: rebuildMcpEntries,
-    rebuildShieldsWindow,
-    relockShieldsIfNeeded,
-    onCreated,
     log,
     bail,
   } = input;
@@ -249,6 +243,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
   const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
+  const previousRestoreLatestBackup = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
   process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
   // The outer rebuild already made its sole backup before the destroy phase deleted
   // the sandbox without tearing down the gateway/session needed by onboard --resume.
@@ -256,6 +251,9 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   // where a second backup is impossible after deletion. Keep the bypass scoped to
   // this call; remove it when onboard accepts an explicit outer-backup handoff.
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
+  // The outer rebuild owns and has already validated this backup. Inner onboard
+  // must publish the replacement before the outer restore phase applies it.
+  delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
   if (rebuildMessagingPlan) MessagingSetupApplier.writePlanToEnv(rebuildMessagingPlan);
   // Isolation removed the ambient reasoning inputs so an unrelated onboard
   // cannot steer this recreate (#5735). The recreate still has to reapply the
@@ -275,6 +273,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   try {
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
+      ...(preparedBackupRecovery ? { allowRemovedImmutabilityStateRecord: true } : {}),
       rebuildGatewayAuthority,
       rebuildPolicySourcePath,
       ...(rebuildsHermesSandbox && backupManifest?.preservedEnv
@@ -319,9 +318,13 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     } else {
       process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = previousRecreateWithoutBackup;
     }
+    if (previousRestoreLatestBackup === undefined) {
+      delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
+    } else {
+      process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = previousRestoreLatestBackup;
+    }
   }
 
-  if (!onboardFailed) onCreated();
   if (onboardFailed) {
     try {
       markLastStartedStepFailed(onboardSession, "Rebuild recreate failed");
@@ -364,12 +367,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         `       ${CLI_NAME} ${sandboxName} snapshot restore "${backupManifest.timestamp}"`,
       );
     }
-    if (rebuildShieldsWindow.wasLocked) {
-      console.error(`    ${backupManifest ? 4 : 3}. Restore shields lockdown:`);
-      console.error(`       ${CLI_NAME} ${sandboxName} shields up`);
-    }
     console.error("");
-    relockShieldsIfNeeded(false);
     bail(
       backupManifest
         ? `Recreate failed (sandbox destroyed). Backup: ${backupManifest.backupPath}`
@@ -379,7 +377,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     return false;
   }
 
-  if (recoveryRecreate) shields.clearShieldsState(sandboxName);
   const preservedRegistryFields = {
     ...(hasRebuildHermesToolGateways ? { hermesToolGateways: [...rebuildHermesToolGateways] } : {}),
   };
