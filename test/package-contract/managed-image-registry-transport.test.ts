@@ -13,7 +13,7 @@ import { createPackageFixture } from "./helpers/package-fixture";
 const repoRoot = path.join(import.meta.dirname, "..", "..");
 
 describe("managed image registry transport package contract", () => {
-  it("loads from the packed CLI after an omit-dev install (#7744)", { timeout: 240_000 }, () => {
+  it("loads required registry transport from the packed CLI (#7744)", { timeout: 240_000 }, () => {
     const compiledTransport = path.join(
       repoRoot,
       "dist",
@@ -60,6 +60,7 @@ describe("managed image registry transport package contract", () => {
           "install",
           "--ignore-scripts",
           "--omit=dev",
+          "--omit=optional",
           "--no-audit",
           "--no-fund",
           "--no-package-lock",

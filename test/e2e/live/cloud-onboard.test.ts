@@ -240,6 +240,7 @@ test(
       expectedAgent: "openclaw",
       sandboxName: SANDBOX_NAME,
     });
+    expect(resultText(install)).toContain("Installing NemoClaw from GitHub");
     expect(resultText(install)).toContain("Cloning NemoClaw source");
     expect(resultText(install)).toContain(
       "Staged 1 legacy credential(s) for migration to the OpenShell gateway.",
