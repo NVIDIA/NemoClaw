@@ -15,6 +15,7 @@ import {
   getMessagingCredentialEnvKeysByChannel,
   getMessagingPolicyKeyAliases,
   getMessagingPolicyKeysByChannel,
+  getMessagingPolicyPresetValidationWarnings,
   getMessagingProviderSuffixesByChannel,
   listAvailableMessagingChannelIds,
   listBuiltInMessagingChannelManifests,
@@ -187,6 +188,23 @@ describe("built-in messaging channel metadata", () => {
       "slack",
       "teams",
     ]);
+    expect(getMessagingPolicyPresetValidationWarnings().discord).toContain(
+      "Any HTTP response confirms reachability. A transport error or OpenShell policy",
+    );
+    const openClawDiscordWarning = getMessagingPolicyPresetValidationWarnings({
+      agent: "openclaw",
+    }).discord;
+    expect(openClawDiscordWarning).toContain("OpenClaw validation uses its Node runtime:");
+    expect(openClawDiscordWarning).not.toContain(
+      "Hermes validation uses its virtual-environment Python runtime:",
+    );
+    const hermesDiscordWarning = getMessagingPolicyPresetValidationWarnings({
+      agent: "hermes",
+    }).discord;
+    expect(hermesDiscordWarning).toContain(
+      "Hermes validation uses its virtual-environment Python runtime:",
+    );
+    expect(hermesDiscordWarning).not.toContain("OpenClaw validation uses its Node runtime:");
     expect(listOpenClawManagedChannelNames()).toEqual([
       "telegram",
       "discord",
@@ -319,10 +337,14 @@ describe("built-in messaging channel metadata", () => {
         name: "shared",
         policyKeys: ["alpha_key"],
         agentPolicyKeys: { hermes: ["alpha_hermes"] },
+        validationWarningLines: ["alpha warning"],
+        validationWarningLinesByAgent: { hermes: ["alpha Hermes warning"] },
       }),
       manifestWithPreset("beta", {
         name: "shared",
         policyKeys: ["beta_key"],
+        validationWarningLines: ["beta warning"],
+        validationWarningLinesByAgent: { openclaw: ["beta OpenClaw warning"] },
       }),
     ];
 
@@ -331,6 +353,15 @@ describe("built-in messaging channel metadata", () => {
       "alpha_hermes",
       "beta_key",
     ]);
+    expect(getMessagingPolicyPresetValidationWarnings({ manifests }).shared).toEqual([
+      "alpha warning",
+      "alpha Hermes warning",
+      "beta warning",
+      "beta OpenClaw warning",
+    ]);
+    expect(
+      getMessagingPolicyPresetValidationWarnings({ agent: "hermes", manifests }).shared,
+    ).toEqual(["alpha warning", "alpha Hermes warning", "beta warning"]);
   });
 
   it("derives OpenClaw managed channel names from explicit runtime metadata", () => {

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { HERMES_DISCORD_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
@@ -12,11 +13,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import {
-  hermesDiscordHttpProxyWebSocketUrl,
-  HERMES_DISCORD_REST_PROOF_SOURCE,
-  verifyDiscordRestBoundary,
-} from "./hermes-discord-proxy.ts";
+import { hermesDiscordHttpProxyWebSocketUrl } from "./hermes-discord-proxy.ts";
 import {
   assertDiscordGatewayCapture,
   type FakeDockerApi,
@@ -327,6 +324,58 @@ NODE`,
     [],
     { artifactName: "hermes-node-discord-policy-denial", redactionValues, timeoutMs: 30_000 },
   );
+}
+
+async function runHermesNodeDiscordRestDenial(
+  sandbox: SandboxClient,
+  port: string,
+  redactionValues: string[],
+): Promise<ShellProbeResult> {
+  return sandboxShWithArgs(
+    sandbox,
+    SANDBOX_NAME,
+    String.raw`FAKE_DISCORD_REST_PORT=${port} /usr/local/bin/node <<'NODE'
+const http = require("node:http");
+const token = process.env.DISCORD_BOT_TOKEN ?? "";
+if (!/^openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN$/.test(token)) {
+  console.log("invalid Discord token placeholder");
+  process.exit(5);
+}
+const request = http.request({
+  host: "${FAKE_DISCORD_HOST}",
+  port: Number(process.env.FAKE_DISCORD_REST_PORT),
+  path: "/api/v10/users/@me",
+  method: "GET",
+  headers: { Authorization: "Bot " + token },
+}, (response) => {
+  let body = "";
+  response.setEncoding("utf8");
+  response.on("data", (chunk) => { body += chunk; });
+  response.on("end", () => {
+    console.log("response " + response.statusCode + " " + body.slice(0, 200));
+    process.exitCode = 3;
+  });
+});
+request.setTimeout(20000, () => request.destroy(new Error("timeout")));
+request.on("error", (error) => {
+  console.log("error " + error.message);
+  process.exitCode = 2;
+});
+request.end();
+NODE`,
+    [],
+    { artifactName: "hermes-node-discord-rest-policy-denial", redactionValues, timeoutMs: 30_000 },
+  );
+}
+
+function readDiscordRestRequests(captureFile: string): Array<Record<string, unknown>> {
+  return fs
+    .readFileSync(captureFile, "utf8")
+    .trim()
+    .split(/\n+/u)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .filter((row) => row.event === "request");
 }
 
 async function rawTokenSurfaceProbe(
@@ -671,10 +720,70 @@ PY`,
     expectExitZero(filesystemSurface, "sandbox filesystem token isolation");
     expect(filesystemSurface.stdout.trim()).toBe("ABSENT");
 
+    const fakeRest = await startFakeDockerApi(host, cleanup.trackDisposable.bind(cleanup), {
+      kind: "discord-message",
+      imageScript: "fake-discord-message-api.mts",
+      nodeArgs: ["--experimental-strip-types"],
+      containerPrefix: "nemoclaw-fake-discord-rest-hermes",
+      portEnv: "FAKE_DISCORD_MESSAGE_API_PORT",
+      captureFileEnv: "FAKE_DISCORD_MESSAGE_API_CAPTURE_FILE",
+      expectedEnv: { FAKE_DISCORD_MESSAGE_API_EXPECTED_TOKEN: DISCORD_TOKEN },
+      env,
+      redactionValues,
+    });
+    await applyFakePolicy({
+      host,
+      sandboxName: SANDBOX_NAME,
+      api: fakeRest,
+      protocol: "rest",
+      rewrite: "request-body-credential-rewrite",
+      providerName: `${SANDBOX_NAME}-discord-bridge`,
+      env,
+      redactions: redactionValues,
+      artifactName: "apply-hermes-fake-discord-rest-policy",
+      allowedBinaries: [
+        "/opt/hermes/.venv/bin/python3",
+        "/opt/hermes/.venv/bin/python",
+        "/usr/bin/python3",
+        "/usr/bin/python3.13",
+      ],
+    });
+
+    expect(readDiscordRestRequests(fakeRest.captureFile)).toEqual([]);
+    const deniedNodeRest = await runHermesNodeDiscordRestDenial(
+      sandbox,
+      fakeRest.port,
+      redactionValues,
+    );
+    expect(deniedNodeRest.exitCode, resultText(deniedNodeRest)).not.toBe(0);
+    expect(resultText(deniedNodeRest)).toMatch(
+      /response 403|policy[_ ]denied|not allowed by any policy/iu,
+    );
+    expect(
+      readDiscordRestRequests(fakeRest.captureFile),
+      "denied Node REST request changed the fake Discord capture",
+    ).toEqual([]);
+
     const discordApi = await sandboxShWithArgs(
       sandbox,
       SANDBOX_NAME,
-      `/opt/hermes/.venv/bin/python - <<'PY'\n${HERMES_DISCORD_REST_PROOF_SOURCE}\nPY\n`,
+      `FAKE_DISCORD_REST_PORT=${shellQuote(fakeRest.port)} /opt/hermes/.venv/bin/python - <<'PY'
+import os
+import re
+import urllib.request
+
+token = os.environ.get("DISCORD_BOT_TOKEN", "")
+if not re.fullmatch(r"openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN", token):
+    raise SystemExit("invalid Discord token placeholder")
+request = urllib.request.Request(
+    f"http://${FAKE_DISCORD_HOST}:{os.environ['FAKE_DISCORD_REST_PORT']}/api/v10/users/@me",
+    headers={"Authorization": f"Bot {token}"},
+    method="GET",
+)
+with urllib.request.urlopen(request, timeout=20) as response:
+    if response.status != 200:
+        raise SystemExit(f"unexpected status {response.status}")
+PY`,
       [],
       {
         artifactName: "phase-6-discord-users-me",
@@ -682,10 +791,21 @@ PY`,
         timeoutMs: 30_000,
       },
     );
-    expectExitZero(discordApi, "Discord REST users/@me probe command");
-    await verifyDiscordRestBoundary(discordApi.stdout, (reason) =>
-      artifacts.writeJson("phase-6-discord-users-me-skip.json", { reason }),
-    );
+    expectExitZero(discordApi, "Hermes Python Discord REST users/@me rewrite proof");
+    const restRequests = readDiscordRestRequests(fakeRest.captureFile);
+    expect(restRequests).toEqual([
+      expect.objectContaining({
+        event: "request",
+        method: "GET",
+        path: "/api/v10/users/@me",
+        authorizationPresent: true,
+        authorizationRedacted: true,
+        authorizationSchemeValid: true,
+        tokenMatchesExpected: true,
+        tokenLooksPlaceholder: false,
+      }),
+    ]);
+    expect(JSON.stringify(restRequests)).not.toContain(DISCORD_TOKEN);
 
     const bridgeResidue = await sandboxShWithArgs(
       sandbox,
@@ -767,7 +887,8 @@ done`,
         nodeDiscordGatewayDenied: true,
         nativePythonDiscordGatewayRewrite: true,
         rawTokenAbsentFromConfigEnvProcessAndFilesystem: true,
-        discordRestBoundaryReachedOrExternallyUnavailable: true,
+        nativePythonDiscordRestRewrite: true,
+        nodeDiscordRestDeniedWithoutCapture: true,
         noLocalDiscordBridgeResidue: true,
         cleanupVerified: process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1",
       },

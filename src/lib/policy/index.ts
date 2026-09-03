@@ -27,6 +27,7 @@ import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
 import { CLI_NAME } from "../cli/branding";
 import {
   getMessagingPolicyKeyAliases,
+  getMessagingPolicyPresetValidationWarnings,
   isMessagingChannelPolicyPreset,
   listBuiltInMessagingChannelManifests,
   listMessagingChannelPolicyPresets,
@@ -507,33 +508,10 @@ function getPresetValidationWarning(
     "configuration are wired up at onboard time and are not added by applying",
     "this preset alone.",
   ];
-  if (presetName === "discord") {
-    const openClawLines = [
-      "OpenClaw validation uses its Node runtime:",
-      `node -e "require('node:https').get('https://discord.com/api/v10/gateway',r=>console.log(r.statusCode)).on('error',e=>{console.error(e.message);process.exitCode=1})"`,
-    ];
-    const hermesLines = [
-      "Hermes validation uses its virtual-environment Python runtime:",
-      `nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c "import urllib.error, urllib.request; u='https://discord.com/api/v10/gateway';\ntry: print(urllib.request.urlopen(u, timeout=20).status)\nexcept urllib.error.HTTPError as error: print(error.code)"`,
-    ];
-    const agentLines =
-      options.agent === "openclaw"
-        ? openClawLines
-        : options.agent === "hermes"
-          ? hermesLines
-          : [...openClawLines, ...hermesLines];
-    lines.push(
-      "For Discord preset validation, do not use curl as the success signal:",
-      "curl is not in the preset binary allowlist, so curl probes can fail even",
-      "when the policy is working. Validate the configured messaging bridge/gateway path.",
-      'DNS-only checks such as dns.resolve("gateway.discord.gg")',
-      "can also be inconclusive behind a proxy.",
-      "The agent-specific gateway probe prints an HTTP status when it reaches Discord.",
-      "Any HTTP response confirms reachability. A transport error or OpenShell policy",
-      "denial means validation failed.",
-      ...agentLines,
-    );
-  }
+  const validationWarningLines = getMessagingPolicyPresetValidationWarnings({
+    agent: options.agent,
+  });
+  lines.push(...(validationWarningLines[presetName] ?? []));
 
   return lines.join("\n  ");
 }

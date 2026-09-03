@@ -488,6 +488,60 @@ describe("messaging provider installed-runtime proofs", () => {
     ]);
   });
 
+  it("binds the fake Discord REST proof to Hermes Python and excludes Node", async () => {
+    const commands: Array<{ command: string; args: string[] }> = [];
+    const host = {
+      openshellCommandPath: "/usr/local/bin/openshell",
+      command: async (command: string, args: string[]) => {
+        commands.push({ command, args });
+        return successfulCommand();
+      },
+    } as unknown as HostCliClient;
+    const allowedBinaries = ["/opt/hermes/.venv/bin/python"];
+
+    await applyFakePolicy({
+      host,
+      sandboxName: "e2e-hermes-discord",
+      api: { kind: "discord-message", port: "43118", captureFile: "/tmp/capture.jsonl" },
+      protocol: "rest",
+      rewrite: "request-body-credential-rewrite",
+      providerName: "e2e-hermes-discord-discord-bridge",
+      env: { DISCORD_BOT_TOKEN: "test-fixture-token" },
+      redactions: ["test-fixture-token"],
+      artifactName: "apply-hermes-fake-discord-rest-policy",
+      allowedBinaries,
+    });
+
+    expect(commands[0]?.args).toEqual([
+      "policy",
+      "update",
+      "e2e-hermes-discord",
+      "--add-endpoint",
+      "host.openshell.internal:43118:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
+      "--add-allow",
+      "host.openshell.internal:43118:GET:/**",
+      "--add-allow",
+      "host.openshell.internal:43118:POST:/**",
+      "--binary",
+      allowedBinaries[0],
+      "--wait",
+    ]);
+    expect(commands[0]?.args).not.toContain("/usr/local/bin/node");
+    expect(commands[1]?.args).toEqual([
+      "-lc",
+      expect.stringContaining("--assert-binaries"),
+      "bind-fake-rest-policy",
+      "/usr/local/bin/openshell",
+      "e2e-hermes-discord",
+      "e2e-hermes-discord-discord-bridge",
+      "host.openshell.internal",
+      "43118",
+      "rest",
+      expect.stringMatching(/test\/e2e\/fixtures\/hermes-discord-policy-binding\.ts$/u),
+      ...allowedBinaries,
+    ]);
+  });
+
   it("rejects Docker state that publishes the credential-bearing fake API", async () => {
     const { host } = fakeDockerHost({ apiPublished: true });
     const cleanup: CleanupAction[] = [];
