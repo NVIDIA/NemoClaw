@@ -27,8 +27,6 @@ For WeChat, the cached-token shortcut applies. Remove WeChat first when you inte
 
 For Google Chat, re-add the channel and paste the replacement service-account JSON. NemoClaw updates the gateway-side refresh material. The sandbox keeps only the OpenShell credential placeholder. OpenShell keeps refreshed access tokens at the gateway and substitutes them at approved egress boundaries.
 
-Before NemoClaw reuses a bridge provider, it verifies the recorded provider binding and the checked-in OpenShell provider-profile boundary. If either check fails, NemoClaw stops before it changes the provider. If replacement-token minting fails for an existing refresh bridge, the provider retains its working credential and the command exits nonzero.
-
 <AgentOnly variant="hermes">
   Re-adding Google Chat prompts again for the project ID, complete Pub/Sub subscription name, and
   email sender allowlist. It does not create a public webhook endpoint.

@@ -21,7 +21,7 @@ import {
   DEFAULT_ADVISOR_MODEL,
   DEFAULT_ADVISOR_PROVIDER,
 } from "./provider-constants.mts";
-import { canonicalRepoReadPath, createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
+import { createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
 import {
   assistantTextRepairErrors,
   assistantTextRepairPrompt,
@@ -36,8 +36,6 @@ import {
   normalizedToolNames,
   promptWithRequiredContextTools,
   READ_ONLY_TOOLS,
-  requiredReadPreparationErrors,
-  requiredReadPreparationPrompt,
   repairableAssistantText,
   repairableAtomicTerminalToolName,
   repairableTerminalSubmitToolName,
@@ -355,7 +353,6 @@ export async function runReadOnlyAdvisor(
   }
 
   const promptTurns = normalizePromptTurns(options.promptTurns);
-  await canonicalizeRequiredReadPaths(promptTurns, options.cwd, options.additionalReadRoots);
   const contextTools = createAdvisorContextToolRuntime(promptTurns);
   let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
   const customTools = [
@@ -579,28 +576,6 @@ export async function runReadOnlyAdvisor(
             await Promise.race([session.prompt(prompt), timeoutPromise]);
             await Promise.race([agentEndPromise, timeoutPromise]);
           };
-          if ((tools.requiredReadPaths?.length ?? 0) > 0) {
-            contextTools.deactivate();
-            session.setActiveToolsByName(["read"]);
-            currentTurnFlow = [];
-            raw.append(`\n[${options.logPrefix}] required_read_preparation_start ${turn.name}\n`);
-            for (const requiredPath of tools.requiredReadPaths!) {
-              const preparationTurn = { ...turn, requiredReadPaths: [requiredPath] };
-              const eventOffset = currentTurnFlow.length;
-              await promptAndWait(requiredReadPreparationPrompt(preparationTurn));
-              const preparationErrors = requiredReadPreparationErrors(
-                turn.name,
-                currentTurnFlow.slice(eventOffset),
-                { ...tools, requiredReadPaths: [requiredPath] },
-              );
-              if (preparationErrors.length > 0) throw new Error(preparationErrors.join("; "));
-            }
-            const preparationFlow = currentTurnFlow;
-            raw.append(`[${options.logPrefix}] required_read_preparation_end ${turn.name} ok\n`);
-            contextTools.activateTurn(turn);
-            session.setActiveToolsByName([READ_ONLY_TOOLS, tools.activeToolNames].flat());
-            currentTurnFlow = preparationFlow;
-          }
           await promptAndWait(promptWithRequiredContextTools(turn.prompt, contextToolNames));
           const initialFlow = currentTurnFlow;
           if (
@@ -804,24 +779,6 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function canonicalizeRequiredReadPaths(
-  promptTurns: AdvisorPromptTurn[],
-  cwd: string,
-  additionalReadRoots: string[] = [],
-): Promise<void> {
-  await Promise.all(
-    promptTurns.map(async (turn) => {
-      if (turn.requiredReadPaths === undefined) return;
-      const canonicalPaths = await Promise.all(
-        [...new Set(turn.requiredReadPaths)].map((candidate) =>
-          canonicalRepoReadPath(cwd, candidate, additionalReadRoots),
-        ),
-      );
-      turn.requiredReadPaths = [...new Set(canonicalPaths)];
-    }),
-  );
-}
-
 function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTurn[] {
   return promptTurns.map((turn, index) => ({
     name: sanitizeTurnName(turn.name || `turn-${index + 1}`),
@@ -830,7 +787,6 @@ function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTu
     activeToolNames: normalizedToolNames(turn.activeToolNames),
     requiredToolNames: normalizedToolNames(turn.requiredToolNames),
     requireToolsBeforeText: normalizedToolNames(turn.requireToolsBeforeText),
-    requiredReadPaths: turn.requiredReadPaths,
     requiredReadOneOfPaths: turn.requiredReadOneOfPaths,
     requireAssistantText: turn.requireAssistantText === true,
     assistantTextRepairPrompt:

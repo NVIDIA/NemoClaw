@@ -195,7 +195,14 @@ Lease acceptance and publication are currently Linux-only and require a secure, 
 
 On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease. `connect --probe-only` also runs the complete preflight, including recovery and probes. After a successful probe and recovery, it prints a note that launch-readiness evidence is unavailable on this platform and exits zero. On Linux, the publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
 
-Infrastructure must run `connect --probe-only` as the same final numeric user that later runs `launch`. Run it after the final durable home and state volume is mounted and after policy and network provisioning is complete. On completion, `connect --probe-only` writes one credential-free `Probe timing:` line with elapsed milliseconds for readiness, authority, lifecycle, gateway, processes, forward, inference, pairing, and publication stages. The line also reports the lifecycle and forward actions, the result, and the failed stage when the probe fails. Timing output is diagnostic only and does not change probe success or failure. NemoClaw rejects evidence after a bound sandbox, configuration, policy, or network identity changes. Deployment ordering remains responsible for external changes that OpenShell and NemoClaw cannot observe.
+Infrastructure must run `connect --probe-only` as the same final numeric user that later runs `launch`.
+Run it after the final durable home and state volume is mounted and after policy and network provisioning is complete.
+On completion, `connect --probe-only` writes one credential-free `Probe timing:` line with elapsed milliseconds for readiness, authority, lifecycle, gateway, processes, forward, inference, pairing, and publication stages.
+The line also reports the lifecycle and forward actions, the result, and the failed stage when the probe fails.
+Portable Hermes probes can also print currentness, container-inspection, and lifecycle-recovery timing lines.
+Timing output is diagnostic only and does not change probe success or failure.
+NemoClaw rejects evidence after a bound sandbox, configuration, policy, or network identity changes.
+Deployment ordering remains responsible for external changes that OpenShell and NemoClaw cannot observe.
 
 <AgentOnly variant="openclaw,hermes">
 ### Host OpenShell Gateway Versus In-Sandbox Agent Recovery
@@ -290,7 +297,7 @@ A gateway that reports no live inference route does not stop the rebuild. Replac
 <AgentOnly variant="hermes">
 The rebuild command preserves Hermes state, the complete current OpenShell policy, and managed MCP configuration while recreating the container.
 For that one replacement create, NemoClaw adds baseline fields required by the current replacement image when they are absent from the live policy. Existing values, network keys, and same-name live network entries win, so host changes are not overwritten. NemoClaw does not save a desired-policy copy or enforce that handoff after OpenShell creates the sandbox.
-It reuses a messaging provider only when its exact type and credential keys match the recorded channel binding and its checked-in OpenShell provider-profile boundary.
+It reuses a messaging provider only when its exact type and credential keys match the recorded channel binding.
 A stopped channel remains inactive and contributes no token upsert, rendered runtime configuration, channel startup effect, or inactive built-in messaging preset.
 Custom and host-edited policy entries are preserved as part of that one OpenShell policy handoff, not by a separate replay system.
 A policy-required provider attachment is the narrow exception: when a preserved custom policy still credential-binds stopped Hermes Discord, rebuild attaches its exact validated static provider without starting Discord.
