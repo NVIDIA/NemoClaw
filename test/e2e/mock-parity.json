@@ -52,6 +52,16 @@
       ]
     },
     {
+      "live": "test/e2e/live/managed-image-openclaw-security.test.ts",
+      "liveSources": ["test/e2e/live/managed-image-openclaw-security-helpers.ts"],
+      "fast": [
+        "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+        "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
+        "test/runtime/sandbox/sandbox-provisioning.test.ts",
+        "test/platform/images/protected-managed-image-contract.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/managed-image-protected-runtime.test.ts",
       "fast": [
         "src/lib/inference/nim.test.ts",
