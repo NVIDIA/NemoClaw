@@ -84,17 +84,25 @@ const HEALTH_WAIT_MAX_ATTEMPTS = 9_999;
 const HEALTH_WAIT_RECEIPT_ROUNDING_TOLERANCE_MS = 1;
 const HEALTH_WAIT_PROGRAM = [
   "import http.client",
+  "import pathlib",
+  "import re",
   "import sys",
   "import time",
   "",
   "try:",
   "    port = int(sys.argv[1])",
-  "    timeout_ms = int(sys.argv[2])",
-  "    interval_ms = int(sys.argv[3])",
+  "    success_status = int(sys.argv[2])",
+  "    timeout_ms = int(sys.argv[3])",
+  "    interval_ms = int(sys.argv[4])",
   "except (IndexError, ValueError):",
   "    raise SystemExit(64)",
-  "if not (1 <= port <= 65535 and 1 <= timeout_ms <= 18000 and 10 <= interval_ms <= 1000):",
+  "if not (1 <= port <= 65535 and 100 <= success_status <= 599 and 1 <= timeout_ms <= 18000 and 10 <= interval_ms <= 1000):",
   "    raise SystemExit(64)",
+  "text = pathlib.Path('/sandbox/.hermes/.env').read_text(encoding='utf-8')",
+  "matches = re.findall(r'^(?:export\\s+)?API_SERVER_KEY=([0-9a-f]{64})$', text, re.MULTILINE)",
+  "if len(matches) != 1:",
+  "    raise SystemExit(64)",
+  "authorization = 'Bearer ' + matches[0]",
   "deadline = time.monotonic() + timeout_ms / 1000",
   "attempts = 0",
   "not_ready = 0",
@@ -120,11 +128,12 @@ const HEALTH_WAIT_PROGRAM = [
   "    probe_started = time.monotonic()",
   "    try:",
   '        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=min(3, remaining))',
-  '        connection.request("GET", "/health")',
+  '        connection.request("GET", "/health", headers={"Authorization": authorization})',
   "        response = connection.getresponse()",
   "        status = response.status",
+  "        location = response.getheader('Location')",
   "        response.close()",
-  "        if status == 200:",
+  "        if status == success_status and location is None:",
   "            ready = True",
   "        else:",
   "            not_ready += 1",
@@ -797,8 +806,7 @@ function qualify(
     {
       ...deps.operatingAuthority,
       timing: currentnessTiming,
-      podmanAuthorityDeps:
-        deps.operatingAuthority?.podmanAuthorityDeps ?? deps.podmanAuthorityDeps,
+      podmanAuthorityDeps: deps.operatingAuthority?.podmanAuthorityDeps ?? deps.podmanAuthorityDeps,
     },
     options,
   );
@@ -1174,6 +1182,7 @@ function waitForHermesReadiness(
         "-c",
         HEALTH_WAIT_PROGRAM,
         String(qualified.receipt.startup.health.port),
+        String(qualified.receipt.startup.health.successStatus),
         String(waiterTimeoutMs),
         String(HEALTH_WAIT_POLL_INTERVAL_MS),
       ]),
@@ -1195,7 +1204,12 @@ function waitForHermesReadiness(
     if (accepted && receipt.result === "ready") return qualified;
     if (now() >= deadline) return null;
     timing.measure("healthPollSleep", () =>
-      sleep(Math.min(accepted ? HEALTH_WAIT_POLL_INTERVAL_MS : HEALTH_WAIT_RETRY_INTERVAL_MS, deadline - now())),
+      sleep(
+        Math.min(
+          accepted ? HEALTH_WAIT_POLL_INTERVAL_MS : HEALTH_WAIT_RETRY_INTERVAL_MS,
+          deadline - now(),
+        ),
+      ),
     );
   } while (now() < deadline);
   return null;
@@ -1303,11 +1317,16 @@ export function recoverHermesPortableSandboxLifecycle(
         throw startError;
       }
       qualified = timing.measure("postStartCurrentness", () =>
-        refreshLifecycleCurrentness(sandboxName, context, instrumentedDeps, qualified, timing, true, [
-          "Ready",
-          "Error",
-          "Stopped",
-        ], currentnessTiming),
+        refreshLifecycleCurrentness(
+          sandboxName,
+          context,
+          instrumentedDeps,
+          qualified,
+          timing,
+          true,
+          ["Ready", "Error", "Stopped"],
+          currentnessTiming,
+        ),
       );
     }
     const commandEnv = deps.env ?? process.env;
@@ -1323,28 +1342,34 @@ export function recoverHermesPortableSandboxLifecycle(
         args.includes("python3") ? "healthOpenShellCommand" : undefined,
       );
     const execReady = timing.measure("execReady", () =>
-      waitFor(EXEC_READY_TIMEOUT_MS, deps, (remainingMs) => {
-        timing.increment("execReadyAttempt");
-        if (qualified.hasTransactionAuthority) {
-          timing.measure("execReadyCurrentness", () =>
-            assertLifecycleTransactionCurrent(qualified, timing, true, currentnessTiming),
+      waitFor(
+        EXEC_READY_TIMEOUT_MS,
+        deps,
+        (remainingMs) => {
+          timing.increment("execReadyAttempt");
+          if (qualified.hasTransactionAuthority) {
+            timing.measure("execReadyCurrentness", () =>
+              assertLifecycleTransactionCurrent(qualified, timing, true, currentnessTiming),
+            );
+          }
+          const result = captureRetainedLifecycleCommand(
+            qualified,
+            timing,
+            openshellExecArgs(qualified.receipt, ["true"]),
+            Math.min(COMMAND_TIMEOUT_MS, remainingMs),
+            "execReadyCommand",
+            "execReadyCurrentness",
           );
-        }
-        const result = captureRetainedLifecycleCommand(
-          qualified,
-          timing,
-          openshellExecArgs(qualified.receipt, ["true"]),
-          Math.min(COMMAND_TIMEOUT_MS, remainingMs),
-          "execReadyCommand",
-          "execReadyCurrentness",
-        );
-        if (qualified.hasTransactionAuthority) {
-          timing.measure("execReadyCurrentness", () =>
-            assertLifecycleTransactionCurrent(qualified, timing, true, currentnessTiming),
-          );
-        }
-        return result.status === 0 && !result.error;
-      }, (operation) => timing.measure("execReadySleep", operation), EXEC_READY_POLL_INTERVAL_MS),
+          if (qualified.hasTransactionAuthority) {
+            timing.measure("execReadyCurrentness", () =>
+              assertLifecycleTransactionCurrent(qualified, timing, true, currentnessTiming),
+            );
+          }
+          return result.status === 0 && !result.error;
+        },
+        (operation) => timing.measure("execReadySleep", operation),
+        EXEC_READY_POLL_INTERVAL_MS,
+      ),
     );
     if (!execReady) fail("did not reconnect to the selected OpenShell gateway");
     qualified = timing.measure("preHealthCurrentness", () =>
@@ -1404,15 +1429,15 @@ export function recoverHermesPortableSandboxLifecycle(
     if (startedByRecovery) {
       qualified = timing.measure("healthPollCurrentness", () =>
         refreshLifecycleCurrentness(
-        sandboxName,
-        context,
-        instrumentedDeps,
-        qualified,
-        timing,
-        true,
-        ["Ready"],
-        currentnessTiming,
-      ),
+          sandboxName,
+          context,
+          instrumentedDeps,
+          qualified,
+          timing,
+          true,
+          ["Ready"],
+          currentnessTiming,
+        ),
       );
       const assertExecutable =
         deps.assertOpenShellExecutableAuthority ?? assertHermesPortableOpenShellExecutableAuthority;
@@ -1439,13 +1464,7 @@ export function recoverHermesPortableSandboxLifecycle(
       }
     }
     const readyQualification = startedByRecovery
-      ? waitForHermesReadiness(
-          qualified,
-          context,
-          instrumentedDeps,
-          timing,
-          currentnessTiming,
-        )
+      ? waitForHermesReadiness(qualified, context, instrumentedDeps, timing, currentnessTiming)
       : null;
     if (startedByRecovery && !readyQualification) {
       fail("managed startup did not pass authenticated health");
@@ -1461,10 +1480,7 @@ export function recoverHermesPortableSandboxLifecycle(
           timing.increment("authenticatedHealth");
           return (
             timing.measure("authenticatedHealth", () =>
-              observeHermesPortableAuthenticatedHealth(
-                qualified.receipt,
-                currentContainerDeps,
-              ),
+              observeHermesPortableAuthenticatedHealth(qualified.receipt, currentContainerDeps),
             ) === "ready"
           );
         })()
