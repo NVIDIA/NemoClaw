@@ -74,7 +74,9 @@ An E2E assertion reduction must classify each removed assertion as already cover
 moved to a lower test, covered by another retained behavior test, or unnecessary because it has no
 distinct quality value. Do not move assertions into helpers, aggregate objects, or generated probes.
 After a valid reduction, run `npm run e2e:assertions:update` and include the lower baseline in the
-same change. The ratchet rejects growth and stale baselines.
+same change. The ratchet rejects growth and stale baselines. If merged changes leave the baseline
+stale, a budget-only repair may reconcile it to the exact current census; the repository check still
+rejects a value above or below that census.
 
 New test files must use TypeScript. Each plugin test must execute at least one Vitest `expect`
 assertion. The repository test configuration owns automatic mock and environment cleanup; restore
