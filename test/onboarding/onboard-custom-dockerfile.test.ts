@@ -238,6 +238,13 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: normalized, env: opts.env || null });
   const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
+  if (normalized.endsWith("provider get -g nemoclaw openai-api")) {
+    return {
+      status: 1,
+      stdout: "",
+      stderr: "provider 'openai-api' not found",
+    };
+  }
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
 };

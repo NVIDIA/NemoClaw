@@ -2241,11 +2241,11 @@ In that case:
 
 ### Discord preset validation behind a proxy
 
-The built-in Discord policy preset intentionally allows the Node binaries used by the messaging runtime and does not allow `curl`. As a result, `curl -s https://discord.com` failing, hanging, or printing no output is not proof that the Discord preset is broken.
+The built-in Discord policy preset allows the OpenClaw Node.js runtime and does not allow `curl`. As a result, `curl -s https://discord.com` failing, hanging, or printing no output is not proof that the Discord preset is broken.
 
 Behind the OpenShell proxy, direct DNS-only checks can also be the wrong signal. For example, `dns.resolve("gateway.discord.gg")` can fail even when HTTPS requests routed through the proxy are healthy.
 
-Use Node HTTPS as the manual REST probe:
+Use the OpenClaw Node.js runtime for the manual REST probe:
 
 ```bash
 node - <<'NODE'
@@ -2281,7 +2281,7 @@ https
 NODE
 ```
 
-Any HTTP status from these probes means the Node process reached the endpoint; the exact status can vary by unauthenticated path. If the Node REST probe works but the Discord channel is still unhealthy, investigate the native gateway path instead of widening the preset. Check the gateway logs and blocked-request output with `openshell term`, and look for `gateway.discord.gg` connection or WebSocket upgrade failures.
+Any HTTP status from these probes means the Node.js process reached the endpoint; the exact status can vary by unauthenticated path. A transport error or OpenShell policy denial means the probe failed. If the REST probe works but the Discord channel is still unhealthy, investigate the native gateway path instead of widening the preset. Check the gateway logs and blocked-request output with `openshell term`, and look for `gateway.discord.gg` connection or WebSocket upgrade failures.
 
 ### Messaging bridge appears running but no messages arrive
 
@@ -4298,6 +4298,28 @@ Continue only when onboarding no longer reports that the Podman service or OpenS
 ## Hermes
 
 The issues below are common problems you may encounter when running Hermes through `nemohermes`. For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart).
+
+### Discord preset validation behind a proxy
+
+The Hermes Discord policy allows its virtual-environment Python interpreter and the concrete system paths to which that interpreter resolves. It does not grant Node.js or `curl` Discord egress. A Node.js or `curl` failure is therefore not proof that the Discord preset is broken.
+
+Use the Hermes virtual-environment Python runtime inside the affected sandbox for the manual REST probe:
+
+```bash
+nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c 'import urllib.error, urllib.request; u="https://discord.com/api/v10/gateway";
+try: print(urllib.request.urlopen(u, timeout=20).status)
+except urllib.error.HTTPError as error: print(error.code)'
+```
+
+To check Discord CDN egress, use the same sandbox-qualified Python runtime:
+
+```bash
+nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c 'import urllib.error, urllib.request; u="https://cdn.discordapp.com/";
+try: print(urllib.request.urlopen(u, timeout=20).status)
+except urllib.error.HTTPError as error: print(error.code)'
+```
+
+Any HTTP status means the Python process reached the endpoint; the exact status can vary by unauthenticated path. A transport error or OpenShell policy denial means the probe failed. If the REST probe works but the Discord channel is still unhealthy, inspect the gateway logs and blocked-request output with `openshell term`. Look for `gateway.discord.gg` connection or WebSocket upgrade failures instead of widening the preset.
 
 ### Hermes dashboard config did not converge
 
