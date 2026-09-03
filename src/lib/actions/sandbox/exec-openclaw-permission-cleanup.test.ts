@@ -118,31 +118,6 @@ describe("runSandboxExecCommand mutable OpenClaw cleanup (#6047)", () => {
     );
   });
 
-  it("treats an active shields lock as a benign cleanup skip", async () => {
-    const inspect = vi.fn(() => ({
-      applies: false as const,
-      skipReason: "locked" as const,
-      reason: "shields up (config intentionally locked)",
-    }));
-    const repair = vi.fn(() => ({
-      applied: false as const,
-      skipReason: "locked" as const,
-      reason: "shields are up (config is locked); refusing to weaken permissions",
-    }));
-
-    const completion = await runSandboxExecCommand(
-      "openshell",
-      "alpha",
-      ["true"],
-      {},
-      () => ({ status: 0 }),
-      cleanupDeps({ inspectMutableConfigPerms: inspect, repairMutableConfigPerms: repair }),
-    );
-
-    expect(completion).toEqual({ code: 0, commandCode: 0 });
-    expect(repair).toHaveBeenCalledOnce();
-  });
-
   it.each([
     ["Hermes", { agent: "hermes" }],
     ["a custom agent", { agent: "langchain-deepagents-code" }],
@@ -317,28 +292,5 @@ describe("runSandboxExecCommand mutable OpenClaw cleanup (#6047)", () => {
 
     expect(completion).toMatchObject({ code: 1, commandCode: 0 });
     expect(completion.cleanupError).toContain("post-repair permission verification unavailable");
-  });
-
-  it("accepts shields becoming locked between repair and re-inspection", async () => {
-    const inspect = vi
-      .fn<SandboxExecCleanupDeps["inspectMutableConfigPerms"]>()
-      .mockReturnValueOnce(TIGHTENED_MUTABLE_CONFIG)
-      .mockReturnValueOnce({
-        applies: false,
-        skipReason: "locked",
-        reason: "shields up (config intentionally locked)",
-      });
-
-    const completion = await runSandboxExecCommand(
-      "openshell",
-      "alpha",
-      ["false"],
-      {},
-      () => ({ status: 42 }),
-      cleanupDeps({ inspectMutableConfigPerms: inspect }),
-    );
-
-    expect(completion).toEqual({ code: 42, commandCode: 42 });
-    expect(inspect).toHaveBeenCalledTimes(2);
   });
 });

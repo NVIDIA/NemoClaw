@@ -209,7 +209,6 @@ describe("Hermes cross-UID ledger permissions", () => {
     expect(startScript).toContain("os.fchown(gateway_fd, gateway_uid, sandbox_gid)");
     expect(startScript).toContain("os.fchmod(gateway_fd, desired_mode)");
     const repairStart = startScript.indexOf("repair_hermes_startup_layout() {");
-    const lockedBranch = startScript.indexOf("if hermes_config_root_is_locked; then", repairStart);
     const gatewayRepair = startScript.indexOf(
       "if ! ensure_hermes_cross_uid_state_dir gateway; then",
       repairStart,
@@ -218,14 +217,11 @@ describe("Hermes cross-UID ledger permissions", () => {
       "if ! ensure_hermes_cross_uid_state_dir runtime; then",
       repairStart,
     );
+    const configRootRepair = startScript.indexOf("ensure_hermes_config_root_mode", repairStart);
     expect(repairStart).toBeGreaterThanOrEqual(0);
-    expect(lockedBranch).toBeGreaterThan(repairStart);
     expect(gatewayRepair).toBeGreaterThan(repairStart);
-    expect(gatewayRepair).toBeLessThan(
-      startScript.indexOf("if hermes_config_root_is_locked; then", repairStart),
-    );
     expect(runtimeRepair).toBeGreaterThan(gatewayRepair);
-    expect(runtimeRepair).toBeLessThan(lockedBranch);
+    expect(runtimeRepair).toBeLessThan(configRootRepair);
     expect(startScript).not.toContain("ensure_hermes_cross_uid_state_dir cron");
   });
 

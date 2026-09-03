@@ -3,6 +3,25 @@
 
 export const DEEPAGENTS_MCP_MAX_SERVERS = 64;
 
+const DEEPAGENTS_UNSAFE_MCP_PROJECTION_CLASSIFIERS = [
+  { predicate: "stat.S_ISLNK(metadata.st_mode)", type: "symbolic link" },
+  { predicate: "stat.S_ISFIFO(metadata.st_mode)", type: "FIFO" },
+] as const;
+const DEEPAGENTS_UNSAFE_MCP_PROJECTION_FALLBACK_TYPE = "non-regular file";
+export const DEEPAGENTS_UNSAFE_MCP_PROJECTION_TYPES = [
+  ...DEEPAGENTS_UNSAFE_MCP_PROJECTION_CLASSIFIERS.map(({ type }) => type),
+  DEEPAGENTS_UNSAFE_MCP_PROJECTION_FALLBACK_TYPE,
+] as const;
+
+const DEEPAGENTS_MANAGED_PROJECTION_TYPE_HELPERS = [
+  "def describe_managed_projection_type(metadata):",
+  ...DEEPAGENTS_UNSAFE_MCP_PROJECTION_CLASSIFIERS.flatMap(({ predicate, type }) => [
+    `    if ${predicate}:`,
+    `        return ${JSON.stringify(type)}`,
+  ]),
+  `    return ${JSON.stringify(DEEPAGENTS_UNSAFE_MCP_PROJECTION_FALLBACK_TYPE)}`,
+];
+
 export const DEEPAGENTS_STRICT_JSON_HELPERS = [
   "def reject_duplicate_keys(pairs):",
   "    result = {}",
@@ -19,6 +38,9 @@ export const DEEPAGENTS_STRICT_JSON_HELPERS = [
 
 export const DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS = [
   "MANAGED_MCP_MAX_BYTES = 262144",
+  "class UnsafeManagedProjectionError(ValueError):",
+  "    pass",
+  ...DEEPAGENTS_MANAGED_PROJECTION_TYPE_HELPERS,
   "def managed_fingerprint(metadata):",
   "    return (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns, metadata.st_mode, metadata.st_nlink, metadata.st_uid)",
   "def managed_path_identity(path):",
@@ -37,7 +59,10 @@ export const DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS = [
   "def validate_managed_descriptor_path(path, descriptor):",
   "    opened = os.fstat(descriptor)",
   "    linked = os.stat(path, follow_symlinks=False)",
-  "    safe = (stat.S_ISREG(opened.st_mode) and opened.st_uid == os.getuid() and stat.S_IMODE(opened.st_mode) == 0o600 and opened.st_nlink == 1 and (opened.st_dev, opened.st_ino) == (linked.st_dev, linked.st_ino))",
+  "    for metadata in (opened, linked):",
+  "        if not stat.S_ISREG(metadata.st_mode):",
+  "            raise UnsafeManagedProjectionError(describe_managed_projection_type(metadata))",
+  "    safe = (opened.st_uid == os.getuid() and stat.S_IMODE(opened.st_mode) == 0o600 and opened.st_nlink == 1 and (opened.st_dev, opened.st_ino) == (linked.st_dev, linked.st_ino))",
   "    if not safe:",
   "        raise ValueError('managed MCP projection has unsafe ownership, mode, type, links, or path identity')",
   "    return managed_fingerprint(opened)",
@@ -49,6 +74,11 @@ export const DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS = [
   "    except FileNotFoundError:",
   "        assert_managed_source_stable(path, None)",
   "        return b'', None, None",
+  "    except OSError:",
+  "        linked = os.stat(path, follow_symlinks=False)",
+  "        if not stat.S_ISREG(linked.st_mode):",
+  "            raise UnsafeManagedProjectionError(describe_managed_projection_type(linked)) from None",
+  "        raise",
   "    try:",
   "        before = os.fstat(descriptor)",
   "        validate_managed_descriptor_path(path, descriptor)",
