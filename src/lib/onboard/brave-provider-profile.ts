@@ -71,7 +71,7 @@ function webSearchFailureMessages(
     return [
       `\n  ✗ The '${provider}' OpenShell provider profile already registered in the selected OpenShell gateway does not match the profile this NemoClaw checkout ships.`,
       `    Its endpoints, binaries, credential rules, or inference capability differ from ${profilePath}.`,
-      "    Find the selected gateway with 'openshell gateway info', then remove the conflicting profile from that gateway and re-run onboarding. Other sandboxes may share it, so confirm the effect first.",
+      `    Onboarding remains stopped. Run 'openshell gateway info' to identify the selected gateway. Confirm with its administrator which sandboxes use '${provider}' before changing the shared profile. If replacement is approved, run 'openshell provider profile -g <gateway-name> delete ${provider}', then re-run onboarding.`,
     ];
   }
   if (result.reason === "profile-unreadable") {

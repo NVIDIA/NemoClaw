@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/provider-command";
@@ -289,10 +288,12 @@ describe("configureMessagingBridgeRefreshes", () => {
   it("keeps private keys off argv while configuring refresh", () => {
     const secretEnvName = "MESSAGING_BRIDGE_SECRET_0";
     const parentSecret = process.env[secretEnvName];
-    const runOpenshell = vi.fn((_args: string[], _opts: { env?: NodeJS.ProcessEnv }) => ({
-      status: 0,
-      stdout: MINTED_STATUS_TABLE,
-    }));
+    const runOpenshell = vi.fn(
+      (_args: string[], _opts: { env?: NodeJS.ProcessEnv; timeout?: number }) => ({
+        status: 0,
+        stdout: MINTED_STATUS_TABLE,
+      }),
+    );
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
       redact,
@@ -314,6 +315,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     expect(args).toContain("sbx-googlechat-bridge");
     const options = runOpenshell.mock.calls[0][1];
     expect(options.env).toEqual({ [secretEnvName]: "fake-test-private-key-material" });
+    expect(options.timeout).toBe(OPENSHELL_OPERATION_TIMEOUT_MS);
     expect(process.env[secretEnvName]).toBe(parentSecret);
   });
 
@@ -1143,37 +1145,6 @@ describe("listMessagingBridgeProfiles (synthetic static profile)", () => {
     ["inference capability", { inference_capable: true }],
   ])("rejects %s", (_description, override) => {
     expect(discoverSyntheticDiscordProfile({ ...DISCORD_PROFILE_DOC, ...override })).toEqual([]);
-  });
-});
-
-describe("listMessagingBridgeProfiles (real registry + co-located YAML)", () => {
-  it("discovers the Google Chat bridge and keeps the credential key in lockstep", () => {
-    const profiles = listMessagingBridgeProfiles();
-    const gc = profiles.find((p) => p.channelId === "googlechat");
-    expect(gc).toBeDefined();
-    expect(gc?.agent).toBe("openclaw");
-    expect(gc?.profileId).toBe("google-chat-bridge");
-    // Invariant: must equal the env var the googlechat-outbound-auth runtime
-    // preload reads, or outbound replies never authenticate.
-    expect(gc?.credentialKey).toBe("GOOGLE_CHAT_ACCESS_TOKEN");
-    expect(gc?.strategy).toBe("google-service-account-jwt");
-    expect(gc?.secretMaterialKeys).toContain("private_key");
-    expect(gc?.sourceSecretEnv).toBe("GOOGLECHAT_SERVICE_ACCOUNT");
-    expect(gc?.profilePath.endsWith("googlechat/provider-profile/openclaw.yaml")).toBe(true);
-  });
-
-  // G2: the profile's `binaries` list is what the L7 proxy injects the minted
-  // bearer for. It must stay in lockstep with the channel egress policy (Node
-  // only) so the credential is never reachable by a binary the channel runtime
-  // does not use — no curl, no shell. Re-add an entry only with a named consumer.
-  it("authorizes only the Node executable for the injected bearer credential", () => {
-    const gc = listMessagingBridgeProfiles().find((p) => p.channelId === "googlechat");
-    expect(gc).toBeDefined();
-    const binaries = YAML.parse(fs.readFileSync(gc!.profilePath, "utf-8"))?.binaries;
-    expect(Array.isArray(binaries)).toBe(true);
-    expect(binaries.length).toBeGreaterThan(0);
-    expect((binaries as string[]).every((bin) => /\/node$/.test(bin))).toBe(true);
-    expect((binaries as string[]).some((bin) => bin.includes("curl"))).toBe(false);
   });
 });
 

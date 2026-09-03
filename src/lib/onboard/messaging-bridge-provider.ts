@@ -512,7 +512,7 @@ function messagingProfileFailureMessages(
   if (result.reason === "profile-drifted") {
     return [
       `\n  ✗ OpenShell provider profile '${profile.profileId}' does not match NemoClaw's checked-in ${profile.channelId} credential contract.`,
-      "    Remove the conflicting profile from the selected gateway and re-run onboarding. Other sandboxes may share it, so confirm the effect first.",
+      `    Onboarding remains stopped. Run 'openshell gateway info' to identify the selected gateway. Confirm with its administrator which sandboxes use '${profile.profileId}' before changing the shared profile. If replacement is approved, run 'openshell provider profile -g <gateway-name> delete ${profile.profileId}', then re-run onboarding.`,
     ];
   }
   if (result.reason === "profile-unreadable") {
@@ -730,6 +730,7 @@ export function configureMessagingBridgeRefreshes(
         env: secretMaterialEnv,
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
       },
     );
     if (result.status === 0) {
