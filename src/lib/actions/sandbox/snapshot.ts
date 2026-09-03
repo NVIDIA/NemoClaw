@@ -1472,10 +1472,14 @@ async function runSnapshotRestoreUnlocked(
   }
   withMcpLifecycleLockSync(targetSandbox, () => {
     const snapshotTarget = registry.getSandbox(targetSandbox);
-    const managedDeepAgentsEntries =
-      snapshotTarget?.agent === "langchain-deepagents-code"
-        ? Object.values(snapshotTarget.mcp?.bridges ?? {})
-        : [];
+    const repairsManagedDeepAgentsProjection =
+      snapshotTarget?.agent === "langchain-deepagents-code" && !snapshotTarget.fromDockerfile;
+    const managedDeepAgentsEntries = repairsManagedDeepAgentsProjection
+      ? Object.values(snapshotTarget.mcp?.bridges ?? {}).filter(
+          (entry) =>
+            entry.agent === "langchain-deepagents-code" && entry.adapter === "deepagents-config",
+        )
+      : [];
     const validateProviderRestoreBeforeMutation =
       preparedRuntimeRestore || preparedHostLocalInferenceRestore
         ? () => {
@@ -1524,7 +1528,7 @@ async function runSnapshotRestoreUnlocked(
       snapshotExit(1);
     }
     if (
-      managedDeepAgentsEntries.length > 0 &&
+      repairsManagedDeepAgentsProjection &&
       snapshotRestoreAuthority &&
       validateProviderRestoreBeforeMutation
     ) {
@@ -1538,7 +1542,7 @@ async function runSnapshotRestoreUnlocked(
         snapshotExit(1);
       }
     }
-    if (managedDeepAgentsEntries.length > 0) {
+    if (repairsManagedDeepAgentsProjection) {
       try {
         restoreDeepAgentsManagedMcpProjection(targetSandbox, managedDeepAgentsEntries);
       } catch (error) {

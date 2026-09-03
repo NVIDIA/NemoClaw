@@ -217,6 +217,47 @@ describe("Deep Agents MCP config adapter registration", () => {
     expect(registration.managedDirectoryEntries).toEqual(["preserved.txt"]);
   });
 
+  it.each([
+    { label: "symbolic link", managedOptions: { symlink: true } },
+    { label: "FIFO", managedOptions: { fifo: true } },
+  ])(
+    "replaces an unsafe $label with an empty managed projection when the registry is empty (#10756)",
+    ({ managedOptions }) => {
+      const initialConfig = { mcpServers: { unmanaged: { command: "unmanaged" } } };
+      const registration = runDeepAgentsConfigCommand(
+        buildDeepAgentsMcpRegisterCommand(undefined, true, [], false, undefined, {
+          resetManagedProjection: true,
+        }),
+        initialConfig,
+        "v2",
+        undefined,
+        0o600,
+        managedOptions,
+      );
+
+      expect(registration.status, registration.stderr).toBe(0);
+      expect(registration.configIsRegularFile).toBe(true);
+      expect(registration.config).toEqual({ mcpServers: {} });
+    },
+  );
+
+  it("preserves a directory when the empty registry requires projection reset (#10756)", () => {
+    const registration = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRegisterCommand(undefined, true, [], false, undefined, {
+        resetManagedProjection: true,
+      }),
+      undefined,
+      "v2",
+      undefined,
+      0o600,
+      { directory: true },
+    );
+
+    expect(registration.status).toBe(2);
+    expect(registration.stderr).toContain("managed MCP projection path is a directory");
+    expect(registration.managedDirectoryEntries).toEqual(["preserved.txt"]);
+  });
+
   it("preserves a sibling revision while revising the target server", () => {
     const jiraEntry: McpBridgeEntry = {
       ...baseEntry,
@@ -313,6 +354,30 @@ describe("Deep Agents MCP config adapter registration", () => {
     expect(commands[2]).toContain("github");
     expect(commands[3]).toContain("jira");
     expect(commands.filter((command) => command.includes("allowRevisioned"))).toHaveLength(2);
+  });
+
+  it("resets the managed v2 projection when the registry has no Deep Agents bridges (#10756)", () => {
+    executeSandboxCommandMock
+      .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
+
+    restoreDeepAgentsManagedMcpProjection("alpha", []);
+
+    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(2);
+    expect(executeSandboxCommandMock.mock.calls[1]?.[1]).toContain('\\"expectedServers\\":{}');
+  });
+
+  it("stops after runtime detection returns an unknown kind (#10756)", () => {
+    executeSandboxCommandMock.mockReturnValueOnce({
+      status: 0,
+      stdout: "unknown\n",
+      stderr: "",
+    });
+
+    expect(() => restoreDeepAgentsManagedMcpProjection("alpha", [])).toThrow(
+      "Could not identify the managed Deep Agents MCP runtime.",
+    );
+    expect(executeSandboxCommandMock).toHaveBeenCalledOnce();
   });
 
   it("leaves the v2 projection unchanged for a legacy Deep Agents runtime (#10756)", () => {

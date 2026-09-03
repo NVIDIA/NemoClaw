@@ -10,8 +10,45 @@ import {
   buildDeepAgentsMcpRegisterCommand,
   buildDeepAgentsMcpRemoveCommand,
 } from "./mcp-bridge-adapter-deepagents";
+import { buildDeepAgentsMcpRuntimeKindCommand } from "./mcp-bridge-adapter-status";
 
 describe("Deep Agents MCP config adapter runtime guards", () => {
+  it.each([
+    {
+      runtimeKind: "v2" as const,
+      expectedManaged: { mcpServers: {} },
+      expectedLegacy: { mcpServers: { github: { type: "http", url: baseEntry.url } } },
+    },
+    {
+      runtimeKind: "legacy" as const,
+      expectedManaged: { mcpServers: { github: { type: "http", url: baseEntry.url } } },
+      expectedLegacy: null,
+    },
+  ])(
+    "uses the same $runtimeKind runtime classification for repair probes and adaptive teardown (#10756)",
+    ({ runtimeKind, expectedManaged, expectedLegacy }) => {
+      const config = { mcpServers: { github: { type: "http", url: baseEntry.url } } };
+      const detection = runDeepAgentsConfigCommand(
+        buildDeepAgentsMcpRuntimeKindCommand(),
+        config,
+        runtimeKind,
+        config,
+      );
+      const removal = runDeepAgentsConfigCommand(
+        buildDeepAgentsMcpRemoveCommand(baseEntry, true, true),
+        config,
+        runtimeKind,
+        config,
+      );
+
+      expect(detection.status, detection.stderr).toBe(0);
+      expect(detection.stdout.trim()).toBe(runtimeKind);
+      expect(removal.status, removal.stderr).toBe(0);
+      expect(removal.config).toEqual(expectedManaged);
+      expect(removal.legacyConfig).toEqual(expectedLegacy);
+    },
+  );
+
   it.each(
     Array.from(
       [

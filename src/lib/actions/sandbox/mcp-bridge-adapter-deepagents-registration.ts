@@ -21,9 +21,9 @@ import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readin
 import { McpBridgeError } from "./mcp-bridge-contracts";
 
 export function buildDeepAgentsMcpRegisterCommand(
-  entry: McpBridgeEntry,
+  entry: McpBridgeEntry | undefined,
   replaceExisting = false,
-  managedEntries: readonly McpBridgeEntry[] = [entry],
+  managedEntries: readonly McpBridgeEntry[] = entry ? [entry] : [],
   teardownRollback = false,
   credentialRevision?: McpAttachedCredentialRevision,
   options: { resetManagedProjection?: boolean } = {},
@@ -34,6 +34,9 @@ export function buildDeepAgentsMcpRegisterCommand(
       "Deep Agents managed MCP projection reset requires an ordinary replacement mutation.",
     );
   }
+  if (!entry && !resetManagedProjection) {
+    throw new McpBridgeError("Deep Agents MCP registration requires a registry entry.");
+  }
   const expectedServers = Object.fromEntries(
     managedEntries
       .map((managedEntry): [string, Record<string, unknown>] => [
@@ -42,7 +45,9 @@ export function buildDeepAgentsMcpRegisterCommand(
       ])
       .sort(([left], [right]) => left.localeCompare(right)),
   );
-  expectedServers[entry.server] = deepAgentsManagedServerConfig(entry, credentialRevision);
+  if (entry) {
+    expectedServers[entry.server] = deepAgentsManagedServerConfig(entry, credentialRevision);
+  }
   const expectedServerCount = Object.keys(expectedServers).length;
   if (!teardownRollback && expectedServerCount > DEEPAGENTS_MCP_MAX_SERVERS) {
     throw new McpBridgeError(
@@ -50,11 +55,14 @@ export function buildDeepAgentsMcpRegisterCommand(
     );
   }
   if (teardownRollback) {
+    if (!entry) {
+      throw new McpBridgeError("Deep Agents MCP rollback requires a registry entry.");
+    }
     return buildDeepAgentsMcpRollbackRegisterCommand(entry, expectedServers);
   }
   const payload = {
-    server: entry.server,
-    expected: deepAgentsManagedServerConfig(entry, credentialRevision),
+    server: entry?.server ?? null,
+    expected: entry ? deepAgentsManagedServerConfig(entry, credentialRevision) : null,
     expectedServers,
     replaceExisting,
     resetManagedProjection,
@@ -261,7 +269,6 @@ export function restoreDeepAgentsManagedMcpProjection(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
 ): void {
-  if (entries.length === 0) return;
   const managedEntries = [...entries].sort((left, right) =>
     left.server.localeCompare(right.server),
   );
@@ -276,9 +283,10 @@ export function restoreDeepAgentsManagedMcpProjection(
     );
   }
   const entry = managedEntries[0];
+  const commandEntry: Pick<McpBridgeEntry, "env"> = entry ?? { env: [] };
   const runtimeKind = runDeepAgentsAdapterCommand(
     sandboxName,
-    entry,
+    commandEntry,
     buildDeepAgentsMcpRuntimeKindCommand(),
     "Could not identify the managed Deep Agents MCP runtime.",
   )
@@ -291,7 +299,7 @@ export function restoreDeepAgentsManagedMcpProjection(
   }
   runDeepAgentsAdapterCommand(
     sandboxName,
-    entry,
+    commandEntry,
     buildDeepAgentsMcpRegisterCommand(entry, true, managedEntries, false, undefined, {
       resetManagedProjection: true,
     }),

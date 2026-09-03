@@ -99,7 +99,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(output).toContain("Restored 1 directories, 1 files");
   });
 
-  it("delegates managed and custom-image snapshot restores to the state layer", async () => {
+  it("repairs an empty managed projection but leaves custom-image MCP state to the image (#10756)", async () => {
     f.getLatestBackupMock.mockReturnValue({
       snapshotVersion: 4,
       name: "stable",
@@ -110,14 +110,31 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "langchain-deepagents-code" });
     await runSandboxSnapshot("alpha", { kind: "restore" });
+    expect(f.restoreDeepAgentsManagedMcpProjectionMock).toHaveBeenCalledWith("alpha", []);
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
 
+    f.restoreDeepAgentsManagedMcpProjectionMock.mockClear();
     f.getSandboxMock.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
       fromDockerfile: "/tmp/Dockerfile",
+      mcp: {
+        bridges: {
+          github: {
+            server: "github",
+            agent: "langchain-deepagents-code",
+            adapter: "deepagents-config",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["GITHUB_TOKEN"],
+            providerName: "alpha-mcp-github",
+            policyName: "mcp-bridge-github",
+            addedAt: "2026-06-01T00:00:00.000Z",
+          },
+        },
+      },
     });
     await runSandboxSnapshot("alpha", { kind: "restore" });
+    expect(f.restoreDeepAgentsManagedMcpProjectionMock).not.toHaveBeenCalled();
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
     expect(f.restoreSandboxStateMock).toHaveBeenCalledTimes(2);
   });
@@ -142,6 +159,16 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             env: ["GITHUB_TOKEN"],
             providerName: "alpha-mcp-github",
             policyName: "mcp-bridge-github",
+            addedAt: "2026-06-01T00:00:00.000Z",
+          },
+          slack: {
+            server: "slack",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://mcp.slack.com/v1/",
+            env: ["SLACK_MCP_TOKEN"],
+            providerName: "alpha-mcp-slack",
+            policyName: "mcp-bridge-slack",
             addedAt: "2026-06-01T00:00:00.000Z",
           },
         },
