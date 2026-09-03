@@ -1977,9 +1977,9 @@ export function captureSnapshotRestoreAuthority(
   }
 }
 
-function validateSnapshotRestoreMutation(
+export function validateSnapshotRestoreMutation(
   backupPath: string,
-  options: Pick<InternalRestoreOptions, "authority" | "validateBeforeMutation">,
+  options: Pick<SnapshotRestoreOptions, "authority" | "validateBeforeMutation">,
 ): string | null {
   if (options.authority) {
     const current = captureSnapshotRestoreAuthority(backupPath);
