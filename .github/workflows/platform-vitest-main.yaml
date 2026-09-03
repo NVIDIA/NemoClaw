@@ -415,6 +415,7 @@ jobs:
             -ArtifactDirectory "$packageRoot\qualification"
 
       - name: Upload installer for the recorded GitHub download
+        if: ${{ always() && steps.windows-package.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-native-download-source-${{ github.sha }}
@@ -426,6 +427,7 @@ jobs:
           retention-days: 14
 
       - name: Create native Windows proof-of-life video
+        if: ${{ always() && steps.windows-package.outcome == 'success' }}
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}

@@ -4,6 +4,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -150,7 +151,110 @@ function resolveEdge() {
   fail("Microsoft Edge is required for the visible Control UI proof");
 }
 
-async function driveBrowser(openClawRoot, url, evidenceRoot, qualification) {
+async function startOnboardingServer(installRoot, openClawUrl, evidenceRoot) {
+  const onboardingRoot = requiredDirectory(
+    path.join(installRoot, "onboarding"),
+    "NemoClaw graphical onboarder",
+  );
+  const files = new Map([
+    ["/", ["index.html", "text/html; charset=utf-8"]],
+    ["/index.html", ["index.html", "text/html; charset=utf-8"]],
+    ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
+    ["/app.ts", ["app.ts", "text/javascript; charset=utf-8"]],
+    ["/assets/nvidia.svg", ["assets/nvidia.svg", "image/svg+xml"]],
+    ["/assets/openclaw.png", ["assets/openclaw.png", "image/png"]],
+    ["/assets/hermes.png", ["assets/hermes.png", "image/png"]],
+    ["/assets/deepagents.png", ["assets/deepagents.png", "image/png"]],
+    ["/assets/pi.svg", ["assets/pi.svg", "image/svg+xml"]],
+    ["/assets/nemocua.png", ["assets/nemocua.png", "image/png"]],
+  ]);
+  let selection = null;
+  const server = createServer(async (request, response) => {
+    try {
+      const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+      if (request.method === "POST" && pathname === "/api/configure") {
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of request) {
+          size += chunk.length;
+          if (size > 64 * 1024) throw new Error("onboarding request is too large");
+          chunks.push(chunk);
+        }
+        const submitted = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        const agents = new Set([
+          "openclaw",
+          "hermes",
+          "langchain-deepagents-code",
+          "pi",
+          "nemocua",
+        ]);
+        const inference = new Set(["nvidia", "openrouter", "compatible", "local"]);
+        if (!agents.has(submitted?.agent) || !inference.has(submitted?.inference))
+          throw new Error("onboarding selection is invalid");
+        if (submitted.agent !== "openclaw") {
+          response.writeHead(409, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({
+              message:
+                "This agent is visible for native Windows planning, but its pinned ARM64 runtime has not passed qualification yet. Choose OpenClaw for this candidate.",
+            }),
+          );
+          return;
+        }
+        selection = {
+          schemaVersion: 1,
+          agent: submitted.agent,
+          inference: submitted.inference,
+          options: submitted.options ?? {},
+        };
+        fs.writeFileSync(
+          path.join(evidenceRoot, "onboarding-selection.json"),
+          `${JSON.stringify(selection, null, 2)}\n`,
+          "utf8",
+        );
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ redirect: `${openClawUrl}/chat` }));
+        return;
+      }
+      const file = files.get(pathname);
+      if (request.method !== "GET" || !file) {
+        response.writeHead(404, {
+          "content-type": "text/plain; charset=utf-8",
+        });
+        response.end("Not found");
+        return;
+      }
+      const [relative, contentType] = file;
+      response.writeHead(200, {
+        "cache-control": "no-store",
+        "content-security-policy":
+          "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'",
+        "content-type": contentType,
+        "x-content-type-options": "nosniff",
+      });
+      response.end(fs.readFileSync(requiredFile(path.join(onboardingRoot, relative), relative)));
+    } catch (error) {
+      response.writeHead(400, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          message: error instanceof Error ? error.message : "Invalid request",
+        }),
+      );
+    }
+  });
+  const port = await freePort();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", resolve);
+  });
+  return {
+    server,
+    url: `http://127.0.0.1:${port}`,
+    selection: () => selection,
+  };
+}
+
+async function driveBrowser(openClawRoot, onboardingUrl, openClawUrl, evidenceRoot, qualification) {
   const playwrightRoot = requiredDirectory(
     path.join(openClawRoot, "node_modules", "openclaw", "node_modules", "playwright-core"),
     "installed Playwright browser driver",
@@ -169,13 +273,37 @@ async function driveBrowser(openClawRoot, url, evidenceRoot, qualification) {
       viewport: { width: 1280, height: 720 },
     });
     const page = await context.newPage();
-    await page.goto(`${url}/chat`, {
+    await page.goto(onboardingUrl, {
       waitUntil: "domcontentloaded",
       timeout: 90_000,
     });
-    await page.evaluate(() => {
-      document.title = "NemoClaw Native Windows · OpenClaw Control UI";
+    await page.locator("[data-agent='openclaw']").waitFor({
+      state: "visible",
+      timeout: 30_000,
     });
+    await page.screenshot({
+      path: path.join(evidenceRoot, "onboarding-agent.png"),
+    });
+    if (!qualification) {
+      console.log(`WEB UI> READY ${onboardingUrl}`);
+      await new Promise((resolve) => browser.once("disconnected", resolve));
+      return { browserVersion, turns: [] };
+    }
+    await page.locator("[data-agent='openclaw']").click();
+    await page.locator("#next").click();
+    await page.screenshot({
+      path: path.join(evidenceRoot, "onboarding-inference.png"),
+    });
+    await page.locator("#next").click();
+    await page.screenshot({
+      path: path.join(evidenceRoot, "onboarding-experience.png"),
+    });
+    await page.locator("#next").click();
+    await page.screenshot({
+      path: path.join(evidenceRoot, "onboarding-review.png"),
+    });
+    await page.locator("#launch").click();
+    await page.waitForURL(`${openClawUrl}/chat`, { timeout: 30_000 });
     const composer = page.locator(".agent-chat__composer-combobox > textarea").first();
     await composer.waitFor({ state: "visible", timeout: 90_000 });
     await page.waitForFunction(
@@ -192,11 +320,6 @@ async function driveBrowser(openClawRoot, url, evidenceRoot, qualification) {
     await page.screenshot({
       path: path.join(evidenceRoot, "web-ui-ready.png"),
     });
-    if (!qualification) {
-      console.log(`WEB UI> READY ${url}/chat`);
-      await new Promise((resolve) => browser.once("disconnected", resolve));
-      return { browserVersion, turns: [] };
-    }
     const turns = [];
     for (let index = 0; index < TURN_PROOFS.length; index += 1) {
       const [prompt, expected] = TURN_PROOFS[index];
@@ -338,6 +461,7 @@ async function main() {
   );
   let cliEnvironment = gatewayEnvironment;
   let create = null;
+  let onboarding = null;
   let passed = false;
   let logsClosed = false;
   try {
@@ -402,8 +526,22 @@ async function main() {
     console.log("WEB UI> Waiting for the real OpenClaw Control UI");
     await waitForPort(uiPort, create, "OpenClaw Control UI");
     const uiUrl = `http://127.0.0.1:${uiPort}`;
-    console.log(`WEB UI> Launching Microsoft Edge at ${uiUrl}/chat`);
-    const browserProof = await driveBrowser(openClawRoot, uiUrl, evidenceRoot, qualification);
+    onboarding = await startOnboardingServer(installRoot, uiUrl, evidenceRoot);
+    console.log(`WEB UI> Launching the NemoClaw graphical onboarder at ${onboarding.url}`);
+    const browserProof = await driveBrowser(
+      openClawRoot,
+      onboarding.url,
+      uiUrl,
+      evidenceRoot,
+      qualification,
+    );
+    const onboardingSelection = onboarding.selection();
+    await new Promise((resolve, reject) => {
+      onboarding.server.close((error) => (error ? reject(error) : resolve()));
+    });
+    onboarding = null;
+    if (qualification && onboardingSelection?.agent !== "openclaw")
+      fail("graphical onboarding did not select OpenClaw");
     await run(
       openshell,
       ["sandbox", "delete", sandboxName],
@@ -436,6 +574,7 @@ async function main() {
       browser: "Microsoft Edge",
       browserVersion: browserProof.browserVersion,
       deterministicLocalModel: qualification,
+      onboardingSelection,
       turnCount: browserProof.turns.length,
       turns: browserProof.turns,
       sandboxDeleted: true,
@@ -456,6 +595,9 @@ async function main() {
         : "WEB UI> NemoClaw preview session closed cleanly",
     );
   } finally {
+    if (onboarding !== null) {
+      await new Promise((resolve) => onboarding.server.close(() => resolve()));
+    }
     if (create !== null) await stopChild(create);
     if (!passed) {
       try {

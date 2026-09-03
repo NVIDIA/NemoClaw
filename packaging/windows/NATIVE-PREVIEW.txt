@@ -16,6 +16,16 @@ The pinned OpenShell create watcher does not return after the one-shot workload
 completes. NemoClaw stops that client-side watcher after receiving the exact
 workload result, then deletes the sandbox through OpenShell.
 
+The NVIDIA-branded setup installs a native ARM64 NemoClaw GUI launcher and a
+graphical first-run experience. The interface names OpenClaw, Hermes Agent,
+LangChain Deep Agents Code, Pi, and NemoCUA, with Pi and NemoCUA explicitly
+marked experimental. Only OpenClaw activation is qualified in this package
+slice; other selections fail closed until their exact native payloads pass.
+
+CI drives three deterministic turns through the real OpenClaw Control UI and
+MXC-contained gateway. The deterministic loopback model proves transport and
+runtime wiring without a pull-request secret; it is not production inference.
+
 The setup executable applies Microsoft MXC's elevated prepare-system-drive and
 prepare-null-device host prerequisites before installing the MSI. Windows
 resets the null-device prerequisite at reboot; persistent production lifecycle

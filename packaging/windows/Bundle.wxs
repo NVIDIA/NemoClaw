@@ -18,7 +18,7 @@
         LogoFile="$(var.SourceRoot)\packaging\windows\assets\NemoClawLogo.png"
         LogoSideFile="$(var.SourceRoot)\packaging\windows\assets\NemoClawSidebar.png"
         LocalizationFile="$(var.SourceRoot)\packaging\windows\Theme.wxl"
-        LaunchTarget="[ProgramFiles6432Folder]NVIDIA\NemoClaw\bin\nemoclaw-ui.cmd"
+        LaunchTarget="[ProgramFiles6432Folder]NVIDIA\NemoClaw\bin\NemoClaw.exe"
         LaunchWorkingFolder="[ProgramFiles6432Folder]NVIDIA\NemoClaw"
         LaunchHidden="yes"
         ShowVersion="yes"

@@ -19,7 +19,7 @@
       DowngradeErrorMessage="A newer NemoClaw native Windows candidate is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
-    <Property Id="ARPCOMMENTS" Value="NemoClaw native Windows ARM64 preview with pinned OpenShell, MXC, Node.js, and agent runtimes. Host qualification and production activation remain required." />
+    <Property Id="ARPCOMMENTS" Value="NemoClaw native Windows ARM64 preview with pinned OpenShell, MXC, Node.js, and OpenClaw runtime. Host qualification and production activation remain required." />
     <Property Id="ARPCONTACT" Value="NVIDIA Corporation" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/NVIDIA/NemoClaw" />
     <Property Id="ARPPRODUCTICON" Value="NemoClawIcon" />
@@ -51,14 +51,14 @@
       </Directory>
     </StandardDirectory>
 
-    <StandardDirectory Id="CommonProgramsFolder">
+    <StandardDirectory Id="ProgramMenuFolder">
       <Directory Id="NvidiaStartMenuFolder" Name="NVIDIA">
         <Component Id="StartMenuShortcutComponent" Guid="2C1A57AA-1529-4ED5-9E66-7FEB069790DA" Bitness="always64">
           <Shortcut
             Id="NemoClawStartMenuShortcut"
             Name="NemoClaw"
             Description="Launch NemoClaw"
-            Target="[BinFolder]nemoclaw-ui.cmd"
+            Target="[BinFolder]NemoClaw.exe"
             WorkingDirectory="INSTALLFOLDER"
             Icon="NemoClawIcon" />
           <RemoveFolder Id="RemoveNvidiaStartMenuFolder" On="uninstall" />

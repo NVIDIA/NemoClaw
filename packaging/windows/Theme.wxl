@@ -7,8 +7,8 @@
   <String Id="CheckingForUpdatesLabel" Value="Preparing NemoClaw setup" />
   <String Id="UpdateButton" Value="&amp;Update to version [WixStdBAUpdateAvailable]" />
   <String Id="InstallHeader" Value="AI agents, isolated on native Windows" />
-  <String Id="InstallMessage" Value="Installs the native ARM64 NemoClaw preview, OpenShell, Microsoft MXC isolation, and pinned agent runtimes. Setup may take 10–20 minutes while Windows publishes more than 40,000 verified files." />
-  <String Id="InstallMessageOptions" Value="Installs the native ARM64 NemoClaw preview, OpenShell, Microsoft MXC isolation, and pinned agent runtimes. Setup may take 10–20 minutes while Windows publishes more than 40,000 verified files." />
+  <String Id="InstallMessage" Value="Installs the native ARM64 NemoClaw preview, OpenShell, Microsoft MXC isolation, and the pinned OpenClaw runtime. Setup may take 10–20 minutes while Windows publishes more than 40,000 verified files." />
+  <String Id="InstallMessageOptions" Value="Installs the native ARM64 NemoClaw preview, OpenShell, Microsoft MXC isolation, and the pinned OpenClaw runtime. Setup may take 10–20 minutes while Windows publishes more than 40,000 verified files." />
   <String Id="InstallVersion" Value="Native Windows ARM64 preview · version [WixBundleVersion]" />
   <String Id="ConfirmCancelMessage" Value="Cancel NemoClaw setup? Windows Installer will roll back incomplete changes." />
   <String Id="ExecuteUpgradeRelatedBundleMessage" Value="Removing the previous NemoClaw version inside the upgrade transaction" />

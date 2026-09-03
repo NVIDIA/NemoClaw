@@ -26,6 +26,7 @@ $PSNativeCommandUseErrorActionPreference = $false
 $script:NodeVersion = '22.22.3'
 $script:NodeArchive = "node-v$($script:NodeVersion)-win-arm64.zip"
 $script:NodeArchiveSha256 = '00be129a09e8872cd52d3bb8bba12412c5733d2224123a482a2dca4a6fbf2586'
+$script:RustVersion = '1.95.0'
 $script:MxcSdkVersion = '0.8.0'
 $script:MxcSdkArchiveSha256 = '06bb2399d7e98ab1907acf851e12a4e44748dd467b79d3e53c2f2fbf569da14e'
 $script:OpenShellRevision = 'bcd517bbe08cc80860c9be57699390cd32e8445f'
@@ -112,9 +113,15 @@ $node = (Get-Command node.exe -ErrorAction Stop).Source
 $npm = (Get-Command npm.cmd -ErrorAction Stop).Source
 $npx = (Get-Command npx.cmd -ErrorAction Stop).Source
 $tar = (Get-Command tar.exe -ErrorAction Stop).Source
+$cargo = (Get-Command cargo.exe -ErrorAction Stop).Source
+$rustc = (Get-Command rustc.exe -ErrorAction Stop).Source
 $reportedNodeVersion = (& $node --version).Trim()
 if ($LASTEXITCODE -ne 0 -or $reportedNodeVersion -cne "v$($script:NodeVersion)") {
     Fail-PayloadPreparation "Node.js $($script:NodeVersion) is required to build the payload."
+}
+$reportedRustVersion = (& $rustc --version).Trim()
+if ($LASTEXITCODE -ne 0 -or $reportedRustVersion -cnotmatch "^rustc $([regex]::Escape($script:RustVersion)) ") {
+    Fail-PayloadPreparation "Rust $($script:RustVersion) is required to build the native launcher."
 }
 
 $workRoot = Join-Path $env:RUNNER_TEMP ('nemoclaw-native-payload-' + [guid]::NewGuid().ToString('N'))
@@ -202,6 +209,21 @@ try {
 
     $binRoot = Join-Path $output 'bin'
     [IO.Directory]::CreateDirectory($binRoot) | Out-Null
+    $launcherTarget = Join-Path $workRoot 'launcher-target'
+    Invoke-Checked `
+        -FilePath $cargo `
+        -Arguments @(
+            'build',
+            '--locked',
+            '--release',
+            '--target', 'aarch64-pc-windows-msvc',
+            '--manifest-path', (Join-Path $candidate 'packaging\windows\launcher\Cargo.toml'),
+            '--target-dir', $launcherTarget
+        ) `
+        -Label 'NemoClaw native Windows launcher build'
+    Copy-Item `
+        -LiteralPath (Join-Path $launcherTarget 'aarch64-pc-windows-msvc\release\NemoClaw.exe') `
+        -Destination (Join-Path $binRoot 'NemoClaw.exe')
     Copy-Item -LiteralPath (Join-Path $nodeDistributionRoot 'node.exe') -Destination (Join-Path $binRoot 'node.exe')
     Copy-Item -LiteralPath (Join-Path $nodeDistributionRoot 'LICENSE') -Destination (Join-Path $output 'NODE-LICENSE.txt')
     Copy-Item -LiteralPath (Join-Path $openShellPayload 'openshell.exe') -Destination (Join-Path $binRoot 'openshell.exe')
@@ -227,10 +249,13 @@ try {
 
     $launcher = "@echo off`r`nset `"NEMOCLAW_NATIVE_INSTALL_ROOT=%~dp0..`"`r`n`"%~dp0node.exe`" `"%~dp0..\nemoclaw\app\bin\nemoclaw.js`" %*`r`n"
     [IO.File]::WriteAllText((Join-Path $binRoot 'nemoclaw.cmd'), $launcher, [Text.ASCIIEncoding]::new())
-    $uiLauncher = "@echo off`r`nset `"NEMOCLAW_NATIVE_INSTALL_ROOT=%~dp0..`"`r`n`"%~dp0node.exe`" --experimental-strip-types --no-warnings `"%~dp0..\qualification\run-installed-native-web-ui.mts`" %*`r`n"
-    [IO.File]::WriteAllText((Join-Path $binRoot 'nemoclaw-ui.cmd'), $uiLauncher, [Text.ASCIIEncoding]::new())
     $openClawLauncher = "@echo off`r`n`"%~dp0node.exe`" `"%~dp0..\openclaw\node_modules\openclaw\openclaw.mjs`" %*`r`n"
     [IO.File]::WriteAllText((Join-Path $binRoot 'openclaw.cmd'), $openClawLauncher, [Text.ASCIIEncoding]::new())
+
+    Copy-Item `
+        -LiteralPath (Join-Path $candidate 'packaging\windows\onboarding') `
+        -Destination (Join-Path $output 'onboarding') `
+        -Recurse
 
     $configRoot = Join-Path $output 'config'
     [IO.Directory]::CreateDirectory($configRoot) | Out-Null
@@ -254,6 +279,7 @@ debug = false
 
     foreach ($portableExecutable in @(
         'bin\node.exe',
+        'bin\NemoClaw.exe',
         'bin\openshell.exe',
         'bin\openshell-gateway.exe',
         'mxc\wxc-exec.exe',
@@ -263,9 +289,11 @@ debug = false
     }
     foreach ($required in @(
         'bin\nemoclaw.cmd',
-        'bin\nemoclaw-ui.cmd',
         'nemoclaw\app\bin\nemoclaw.js',
         'openclaw\node_modules\openclaw\openclaw.mjs',
+        'onboarding\index.html',
+        'onboarding\styles.css',
+        'onboarding\app.ts',
         'config\mxc-gateway.toml',
         'qualification\run-installed-native-turn.mts',
         'qualification\run-installed-native-web-ui.mts'
@@ -280,6 +308,10 @@ debug = false
         classification = 'nemoclaw-native-windows-arm64-runtime-payload'
         nemoclaw = [pscustomobject]@{ version = $candidateVersion; revision = $candidateRevision }
         node = [pscustomobject]@{ version = $script:NodeVersion; archiveSha256 = $script:NodeArchiveSha256 }
+        launcher = [pscustomobject]@{
+            rustVersion = $script:RustVersion
+            sha256 = (Get-FileHash -LiteralPath (Join-Path $output 'bin\NemoClaw.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
         openClaw = [pscustomobject]@{ version = '2026.7.1' }
         openShell = [pscustomobject]@{ pullRequest = 'NVIDIA/OpenShell#2721'; revision = $script:OpenShellRevision }
         openShellCompatibilityPatchSha256 = (Get-FileHash -LiteralPath (Join-Path $output 'OPENSHELL-NODE-UI-COMPATIBILITY.patch') -Algorithm SHA256).Hash.ToLowerInvariant()

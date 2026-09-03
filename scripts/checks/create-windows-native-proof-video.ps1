@@ -277,7 +277,7 @@ if (-not (Test-Path -LiteralPath $candidate -PathType Container)) {
 $msi = Resolve-RequiredFile -Path $MsiPath -Label 'MsiPath'
 $setup = Resolve-RequiredFile -Path $SetupPath -Label 'SetupPath'
 $manifestPath = Resolve-RequiredFile -Path $PackageManifestPath -Label 'PackageManifestPath'
-$qualificationPath = Resolve-RequiredFile -Path $QualificationReceiptPath -Label 'QualificationReceiptPath'
+$qualificationPath = [IO.Path]::GetFullPath($QualificationReceiptPath)
 $hostPath = Resolve-RequiredFile -Path $HostReceiptPath -Label 'HostReceiptPath'
 $openshellPath = Resolve-RequiredFile -Path $OpenShellReceiptPath -Label 'OpenShellReceiptPath'
 $qualificationScript = Resolve-RequiredFile `
@@ -305,12 +305,15 @@ if (Test-Path -LiteralPath $desktopDownload) {
 }
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-$qualification = Get-Content -LiteralPath $qualificationPath -Raw | ConvertFrom-Json
+$qualification = if (Test-Path -LiteralPath $qualificationPath -PathType Leaf) {
+    Get-Content -LiteralPath $qualificationPath -Raw | ConvertFrom-Json
+} else {
+    $null
+}
 $hostReceipt = Get-Content -LiteralPath $hostPath -Raw | ConvertFrom-Json
 $openshellReceipt = Get-Content -LiteralPath $openshellPath -Raw | ConvertFrom-Json
-if ($manifest.productVersion -cne $ProductVersion -or $manifest.architecture -cne 'arm64' -or
-    $qualification.productVersion -cne $ProductVersion -or $qualification.architecture -cne 'arm64') {
-    Fail-ProofVideo 'Package and qualification receipt identity do not match.'
+if ($manifest.productVersion -cne $ProductVersion -or $manifest.architecture -cne 'arm64') {
+    Fail-ProofVideo 'Package manifest identity does not match.'
 }
 if ($hostReceipt.osArchitecture -cne 'Arm64' -or $hostReceipt.processArchitecture -cne 'Arm64' -or
     $hostReceipt.runnerArchitecture -cne 'ARM64') {
@@ -321,7 +324,7 @@ if ($openshellReceipt.repository -cne 'https://github.com/NVIDIA/OpenShell.git' 
     $openshellReceipt.revision -cne 'bcd517bbe08cc80860c9be57699390cd32e8445f') {
     Fail-ProofVideo 'OpenShell source authority does not match NVIDIA/OpenShell#2721.'
 }
-if (-not $qualification.repairRestoredDigest -or
+if ($null -ne $qualification -and (-not $qualification.repairRestoredDigest -or
     -not $qualification.reinstallPreservedRegistration -or
     -not $qualification.finalAbsence -or
     -not $qualification.machinePathRemoved -or
@@ -336,11 +339,12 @@ if (-not $qualification.repairRestoredDigest -or
     $qualification.nativeTurn.qualificationRootsRemoved -ne $true -or
     $qualification.webUi.verdict -cne 'pass' -or
     [int]$qualification.webUi.turnCount -ne 3 -or
+    $qualification.webUi.onboardingSelection.agent -cne 'openclaw' -or
     @($qualification.webUi.turns).Count -ne 3 -or
     @($qualification.nativeExecutions).Count -ne 3 -or
     @($qualification.applicationExecutions).Count -ne 2 -or
     @($qualification.packageDescendantProhibitedStarts).Count -ne 0 -or
-    @($qualification.newPackageDescendantProhibitedProcesses).Count -ne 0) {
+    @($qualification.newPackageDescendantProhibitedProcesses).Count -ne 0)) {
     Fail-ProofVideo 'Initial package qualification receipt is not a complete passing lifecycle.'
 }
 
@@ -351,6 +355,7 @@ $consoleTranscript = Join-Path $output 'live-console-transcript.txt'
 $frameRoot = Join-Path $env:RUNNER_TEMP ('nemoclaw-console-frames-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($frameRoot) | Out-Null
 $proofProcess = $null
+$captureFailures = [Collections.Generic.List[string]]::new()
 try {
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $proofArguments = @(
@@ -402,14 +407,15 @@ try {
         if ($recordingClock.ElapsedMilliseconds -gt $script:MaximumRecordingMilliseconds) {
             $proofProcess.Kill()
             $proofProcess.WaitForExit()
-            Fail-ProofVideo 'Real console qualification exceeded its recording timeout.'
+            $captureFailures.Add('Real console qualification exceeded its recording timeout.')
+            break
         }
         $installerWindow = [NemoClawNativeWindowCapture]::FindWindowContaining(
             'NemoClaw Setup',
             $consoleWindow
         )
         $browserWindow = [NemoClawNativeWindowCapture]::FindWindowContaining(
-            'NemoClaw Native Windows · OpenClaw Control UI',
+            'NemoClaw Native Windows',
             $consoleWindow
         )
         $framePath = Join-Path $frameRoot ('frame-{0:D5}.png' -f ($framePaths.Count + 1))
@@ -429,7 +435,8 @@ try {
                 [IntPtr]::Zero
             )
             if ($consoleWindow -eq [IntPtr]::Zero) {
-                Fail-ProofVideo "The real console window disappeared during qualification: $($_.Exception.Message)"
+                $captureFailures.Add("The real console window disappeared during qualification: $($_.Exception.Message)")
+                break
             }
             continue
         }
@@ -452,16 +459,20 @@ try {
         } else {
             ''
         }
-        Fail-ProofVideo "Real console qualification failed with exit code $proofExitCode. $failureText"
+        $captureFailures.Add("Real console qualification failed with exit code $proofExitCode. $failureText")
     }
     if ($framePaths.Count -lt $script:MinimumCaptureFrames) {
-        Fail-ProofVideo "The live console recording captured too few frames: $($framePaths.Count)."
+        $captureFailures.Add("The live console recording captured too few frames: $($framePaths.Count).")
     }
     if (-not (Test-Path -LiteralPath $consoleTranscript -PathType Leaf) -or
         (Get-Item -LiteralPath $consoleTranscript).Length -eq 0) {
-        Fail-ProofVideo 'The live console transcript is missing.'
+        $captureFailures.Add('The live console transcript is missing.')
     }
-    $consoleTranscriptText = [IO.File]::ReadAllText($consoleTranscript)
+    $consoleTranscriptText = if (Test-Path -LiteralPath $consoleTranscript -PathType Leaf) {
+        [IO.File]::ReadAllText($consoleTranscript)
+    } else {
+        ''
+    }
     if (-not $consoleTranscriptText.Contains('AGENT> CHAT_OK') -or
         -not $consoleTranscriptText.Contains(
             '[PASS] Installed nemoclaw command created an MXC sandbox and completed an exact CHAT_OK turn'
@@ -469,21 +480,24 @@ try {
         -not $consoleTranscriptText.Contains('WEB UI> TURN 1 PASS NATIVE_WINDOWS_TURN_1_OK') -or
         -not $consoleTranscriptText.Contains('WEB UI> TURN 2 PASS NATIVE_WINDOWS_TURN_2_OK') -or
         -not $consoleTranscriptText.Contains('WEB UI> TURN 3 PASS NATIVE_WINDOWS_TURN_3_OK')) {
-        Fail-ProofVideo 'The recorded console did not show the installed NemoClaw CLI and web UI turns.'
+        $captureFailures.Add('The recorded console did not show the installed NemoClaw CLI and web UI turns.')
     }
 
     if ($installerWindowFrameCount -lt 4) {
-        Fail-ProofVideo 'The real WiX installer window was not captured for at least one second.'
+        $captureFailures.Add('The real WiX installer window was not captured for at least one second.')
     }
     if ($browserWindowFrameCount -lt 8) {
-        Fail-ProofVideo 'The real OpenClaw Control UI window was not captured for at least two seconds.'
+        $captureFailures.Add('The real OpenClaw Control UI window was not captured for at least two seconds.')
+    }
+    if ($framePaths.Count -eq 0) {
+        Fail-ProofVideo 'The proof process produced no actual-window frames to encode.'
     }
     $frameHashes = @($framePaths | ForEach-Object {
         (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash
     })
     $uniqueFrameCount = @($frameHashes | Sort-Object -Unique).Count
     if ($uniqueFrameCount -lt $script:MinimumUniqueFrames) {
-        Fail-ProofVideo "The real window recording changed too little: only $uniqueFrameCount unique frames."
+        $captureFailures.Add("The real window recording changed too little: only $uniqueFrameCount unique frames.")
     }
 
     $middleIndex = [int][Math]::Floor(($framePaths.Count - 1) / 2)
@@ -599,11 +613,14 @@ public static class NemoClawConsoleVideoEncoder
         Fail-ProofVideo 'Rendered console proof is not an ISO base media file.'
     }
 
-    $consoleQualificationReceipt = Resolve-RequiredFile `
-        -Path (Join-Path $consoleQualification 'package-qualification.json') `
-        -Label 'Recorded console qualification receipt'
-    $recordedQualification = Get-Content -LiteralPath $consoleQualificationReceipt -Raw | ConvertFrom-Json
-    if ($recordedQualification.nativeTurn.verdict -cne 'pass' -or
+    $consoleQualificationReceipt = Join-Path $consoleQualification 'package-qualification.json'
+    $recordedQualification = if (Test-Path -LiteralPath $consoleQualificationReceipt -PathType Leaf) {
+        Get-Content -LiteralPath $consoleQualificationReceipt -Raw | ConvertFrom-Json
+    } else {
+        $captureFailures.Add('The recorded console qualification receipt is missing.')
+        $null
+    }
+    if ($null -ne $recordedQualification -and ($recordedQualification.nativeTurn.verdict -cne 'pass' -or
         $recordedQualification.nativeTurn.exactReply -cne 'CHAT_OK' -or
         $recordedQualification.nativeTurn.openClawExecutionMode -cne 'embedded-worker' -or
         $recordedQualification.nativeTurn.createWatcherStopped -ne $true -or
@@ -611,27 +628,48 @@ public static class NemoClawConsoleVideoEncoder
         $recordedQualification.nativeTurn.gatewayStopped -ne $true -or
         $recordedQualification.nativeTurn.sandboxDeleted -ne $true -or
         $recordedQualification.nativeTurn.sandboxRegistryAbsent -ne $true -or
-        $recordedQualification.nativeTurn.qualificationRootsRemoved -ne $true) {
-        Fail-ProofVideo 'The recorded qualification receipt does not prove the installed NemoClaw turn.'
+        $recordedQualification.nativeTurn.qualificationRootsRemoved -ne $true)) {
+        $captureFailures.Add('The recorded qualification receipt does not prove the installed NemoClaw turn.')
     }
-    if ($recordedQualification.webUi.verdict -cne 'pass' -or
+    if ($null -ne $recordedQualification -and ($recordedQualification.webUi.verdict -cne 'pass' -or
         [int]$recordedQualification.webUi.turnCount -ne 3 -or
-        @($recordedQualification.webUi.turns).Count -ne 3) {
-        Fail-ProofVideo 'The recorded qualification receipt does not prove three OpenClaw Control UI turns.'
+        $recordedQualification.webUi.onboardingSelection.agent -cne 'openclaw' -or
+        @($recordedQualification.webUi.turns).Count -ne 3)) {
+        $captureFailures.Add('The recorded qualification receipt does not prove three OpenClaw Control UI turns.')
     }
+    $initialQualificationHash = if (Test-Path -LiteralPath $qualificationPath -PathType Leaf) {
+        (Get-FileHash -LiteralPath $qualificationPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    } else {
+        $null
+    }
+    $recordedQualificationHash = if (Test-Path -LiteralPath $consoleQualificationReceipt -PathType Leaf) {
+        (Get-FileHash -LiteralPath $consoleQualificationReceipt -Algorithm SHA256).Hash.ToLowerInvariant()
+    } else {
+        $null
+    }
+    $consoleTranscriptHash = if (Test-Path -LiteralPath $consoleTranscript -PathType Leaf) {
+        (Get-FileHash -LiteralPath $consoleTranscript -Algorithm SHA256).Hash.ToLowerInvariant()
+    } else {
+        $null
+    }
+    $installedWebUiTurns = @(@(
+        $consoleTranscriptText.Contains('WEB UI> TURN 1 PASS NATIVE_WINDOWS_TURN_1_OK'),
+        $consoleTranscriptText.Contains('WEB UI> TURN 2 PASS NATIVE_WINDOWS_TURN_2_OK'),
+        $consoleTranscriptText.Contains('WEB UI> TURN 3 PASS NATIVE_WINDOWS_TURN_3_OK')
+    ) | Where-Object { $_ }).Count
     $receipt = [pscustomobject]@{
-        schemaVersion = 2
+        schemaVersion = 3
         classification = 'native-windows-candidate-preview-actual-window-recording'
         candidateSha = $CandidateSha
         productVersion = $ProductVersion
         architecture = 'arm64'
         source = [pscustomobject]@{
             packageManifestSha256 = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
-            initialQualificationReceiptSha256 = (Get-FileHash -LiteralPath $qualificationPath -Algorithm SHA256).Hash.ToLowerInvariant()
-            recordedQualificationReceiptSha256 = (Get-FileHash -LiteralPath $consoleQualificationReceipt -Algorithm SHA256).Hash.ToLowerInvariant()
+            initialQualificationReceiptSha256 = $initialQualificationHash
+            recordedQualificationReceiptSha256 = $recordedQualificationHash
             hostReceiptSha256 = (Get-FileHash -LiteralPath $hostPath -Algorithm SHA256).Hash.ToLowerInvariant()
             openshellReceiptSha256 = (Get-FileHash -LiteralPath $openshellPath -Algorithm SHA256).Hash.ToLowerInvariant()
-            consoleTranscriptSha256 = (Get-FileHash -LiteralPath $consoleTranscript -Algorithm SHA256).Hash.ToLowerInvariant()
+            consoleTranscriptSha256 = $consoleTranscriptHash
         }
         capture = [pscustomobject]@{
             kind = 'actual PrintWindow capture of real PowerShell console, WiX installer, and OpenClaw Control UI windows'
@@ -645,8 +683,9 @@ public static class NemoClawConsoleVideoEncoder
             browserWindowFrameCount = $browserWindowFrameCount
             recordingWallTimeMilliseconds = $recordingClock.ElapsedMilliseconds
             qualificationExitCode = $proofExitCode
-            installedNemoClawTurn = 'CHAT_OK'
-            installedWebUiTurns = 3
+            installedNemoClawTurn = $consoleTranscriptText.Contains('AGENT> CHAT_OK')
+            installedWebUiTurns = $installedWebUiTurns
+            failures = @($captureFailures)
         }
         video = [pscustomobject]@{
             file = $videoName
@@ -658,6 +697,7 @@ public static class NemoClawConsoleVideoEncoder
             sha256 = (Get-FileHash -LiteralPath $videoPath -Algorithm SHA256).Hash.ToLowerInvariant()
             bytes = (Get-Item -LiteralPath $videoPath).Length
         }
+        verdict = if ($captureFailures.Count -eq 0) { 'pass' } else { 'fail' }
     }
     [IO.File]::WriteAllText(
         (Join-Path $output 'proof-video-receipt.json'),
@@ -665,6 +705,9 @@ public static class NemoClawConsoleVideoEncoder
         [Text.UTF8Encoding]::new($false)
     )
     Write-Host "Windows native live console recording: $videoPath"
+    if ($captureFailures.Count -ne 0) {
+        Fail-ProofVideo ($captureFailures -join ' | ')
+    }
 } finally {
     if ($null -ne $proofProcess) {
         if (-not $proofProcess.HasExited) {

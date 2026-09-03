@@ -37,6 +37,22 @@ custom actions. System-drive preparation supplies shallow-root traversal; the
 null-device setting is required for AppContainer process initialization and
 resets when Windows reboots.
 
-The package is a preview distribution boundary. Host qualification, supported
-onboarding, managed inference, service registration, production activation, and
-production signing remain separate gates.
+The setup uses a restrained NVIDIA-branded WiX interface and installs a native
+ARM64 `NemoClaw.exe` GUI launcher. Launching NemoClaw opens the local graphical
+onboarder without PowerShell or a visible console. The onboarder presents the
+three supported agent identities (OpenClaw, Hermes Agent, and LangChain Deep
+Agents Code) plus explicitly experimental Pi and NemoCUA choices. This slice
+activates only the pinned OpenClaw runtime; the other selections fail closed
+with a native-qualification explanation until their ARM64 payloads land.
+
+Package qualification launches Microsoft Edge through the installed GUI
+launcher, walks all four graphical onboarding screens, and submits three turns
+through the real OpenClaw Control UI to the MXC-contained OpenClaw gateway. A
+deterministic loopback model endpoint makes the transport assertion repeatable
+without exposing a PR credential; it is evidence for UI/gateway/runtime wiring,
+not production inference quality. The workflow always attempts to upload the
+raw actual-window recording so a failed UI run retains visual diagnostics.
+
+The package is a preview distribution boundary. Host qualification,
+credential-backed onboarding parity, managed inference, service registration,
+production activation, and production signing remain separate gates.

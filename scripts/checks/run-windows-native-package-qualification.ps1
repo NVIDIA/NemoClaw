@@ -436,10 +436,13 @@ foreach ($requiredPayload in @(
     'bin\openshell.exe',
     'bin\openshell-gateway.exe',
     'bin\node.exe',
+    'bin\NemoClaw.exe',
     'bin\nemoclaw.cmd',
-    'bin\nemoclaw-ui.cmd',
     'nemoclaw\app\bin\nemoclaw.js',
     'openclaw\node_modules\openclaw\openclaw.mjs',
+    'onboarding\index.html',
+    'onboarding\styles.css',
+    'onboarding\app.ts',
     'mxc\wxc-exec.exe',
     'mxc\wxc-host-prep.exe',
     'config\mxc-gateway.toml',
@@ -470,7 +473,7 @@ $nemoclawEntryPath = Join-Path $installRoot 'nemoclaw\app\bin\nemoclaw.js'
 $openClawEntryPath = Join-Path $installRoot 'openclaw\node_modules\openclaw\openclaw.mjs'
 $wxcExecPath = Join-Path $installRoot 'mxc\wxc-exec.exe'
 $nemoclawLauncherPath = Join-Path $installBin 'nemoclaw.cmd'
-$nemoclawUiLauncherPath = Join-Path $installBin 'nemoclaw-ui.cmd'
+$nemoclawUiLauncherPath = Join-Path $installBin 'NemoClaw.exe'
 $bundleInstallLog = Join-Path $artifactRoot 'bundle-install.log'
 $msiRepairLog = Join-Path $artifactRoot 'msi-repair.log'
 $msiReinstallLog = Join-Path $artifactRoot 'msi-reinstall.log'
@@ -545,7 +548,7 @@ try {
     Write-Host '[PASS] Installed nemoclaw command created an MXC sandbox and completed an exact CHAT_OK turn'
     $webUiArtifacts = Join-Path $artifactRoot 'web-ui'
     Write-Host 'PS> Launch installed NemoClaw OpenClaw web UI and complete three agent turns'
-    & $nemoclawUiLauncherPath --qualification --artifact-directory $webUiArtifacts
+    & $nemoclawUiLauncherPath --wait --qualification --artifact-directory $webUiArtifacts
     $webUiExitCode = $LASTEXITCODE
     if ($webUiExitCode -ne 0) {
         Fail-PackageQualification "Installed NemoClaw OpenClaw web UI qualification failed with exit code $webUiExitCode."
@@ -564,6 +567,8 @@ try {
         $webUiReceipt.backend -cne 'process_container' -or
         $webUiReceipt.browser -cne 'Microsoft Edge' -or
         $webUiReceipt.deterministicLocalModel -ne $true -or
+        $webUiReceipt.onboardingSelection.agent -cne 'openclaw' -or
+        $webUiReceipt.onboardingSelection.inference -cne 'nvidia' -or
         [int]$webUiReceipt.turnCount -ne 3 -or
         @($webUiReceipt.turns).Count -ne 3 -or
         $webUiReceipt.sandboxDeleted -ne $true -or
@@ -581,7 +586,10 @@ try {
     if (@(Get-ChildItem -LiteralPath $webUiArtifacts -Filter 'web-ui-turn-*.png' -File).Count -ne 3) {
         Fail-PackageQualification 'Installed NemoClaw web UI did not capture three turn screenshots.'
     }
-    Write-Host '[PASS] Installed NemoClaw launched the real OpenClaw Control UI and completed three exact agent turns'
+    if (@(Get-ChildItem -LiteralPath $webUiArtifacts -Filter 'onboarding-*.png' -File).Count -ne 4) {
+        Fail-PackageQualification 'Installed NemoClaw did not capture all four graphical onboarding steps.'
+    }
+    Write-Host '[PASS] Graphical onboarding selected OpenClaw and completed three exact Control UI agent turns'
     if ($InteractiveProof) {
         Start-Sleep -Seconds 3
     }
