@@ -90,7 +90,7 @@ function webSearchFailureMessages(
   if (diagnostic) messages.push(`    ${diagnostic.slice(0, 500)}`);
   messages.push(
     result.reason === "import-failed"
-      ? "    Fix the error. If OpenShell requires an update, rerun the NemoClaw installer, then onboarding."
+      ? "    Resolve the reported OpenShell provider-profile import error, then re-run onboarding."
       : "    Confirm the OpenShell gateway is reachable and this account is authorized, then re-run onboarding.",
   );
   return messages;

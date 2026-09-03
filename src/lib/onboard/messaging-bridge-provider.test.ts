@@ -474,11 +474,9 @@ describe("configureMessagingBridgeRefreshes", () => {
       now: () => clock,
     });
     expect(result.ok).toBe(false);
-    // Six probes at a minute each cross the five-minute deadline well before
+    // Five probes at a minute each reach the five-minute deadline before
     // the fifty-attempt cap.
-    expect(runOpenshell.mock.calls.filter((call) => call[0][2] === "status").length).toBeLessThan(
-      10,
-    );
+    expect(runOpenshell.mock.calls.filter((call) => call[0][2] === "status")).toHaveLength(5);
   });
 
   it("bounds each status probe with a command timeout", () => {

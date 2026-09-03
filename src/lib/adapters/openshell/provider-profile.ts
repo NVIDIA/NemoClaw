@@ -234,17 +234,19 @@ const PROFILE_COMMAND_OPTIONS = {
 
 /** Import a checked-in profile when absent, or validate and reuse the registered profile. */
 export function reconcileCheckedInProviderProfile(input: {
-  readonly profileId: string;
+  readonly profileId?: string;
   readonly profilePath: string;
   readonly readCheckedInProfile: () => string;
   readonly runOpenshell: EndpointlessProviderProfileRunner;
+  readonly probeBeforeImport?: boolean;
 }): CheckedInProviderProfileResult {
   const expected = parseCheckedInProviderProfileContractSafely(input);
   if (!expected) return { ok: false, reason: "profile-unreadable" };
+  const profileId = input.profileId ?? expected.profileId;
 
   const exportProfile = () =>
     input.runOpenshell(
-      ["provider", "profile", "export", input.profileId, "--output", "json"],
+      ["provider", "profile", "export", profileId, "--output", "json"],
       PROFILE_COMMAND_OPTIONS,
     );
   const validateExport = (
@@ -264,24 +266,27 @@ export function reconcileCheckedInProviderProfile(input: {
       return {
         ok: false,
         reason: comparison === "mismatch" ? "profile-drifted" : "profile-unreadable",
+        operation: action === "imported" ? "post-import-export" : "profile-export",
       };
     }
     return { ok: true, action };
   };
 
-  const exported = exportProfile();
-  if (exported.status === 0) return validateExport(exported, "reused");
-  const exportDiagnostic = openshellResultDiagnostic(exported);
-  if (
-    !Number.isInteger(exported.status) ||
-    !isMissingProviderProfile(exportDiagnostic, input.profileId)
-  ) {
-    return {
-      ok: false,
-      reason: "probe-failed",
-      operation: "profile-export",
-      diagnostic: exportDiagnostic,
-    };
+  if (input.probeBeforeImport !== false) {
+    const exported = exportProfile();
+    if (exported.status === 0) return validateExport(exported, "reused");
+    const exportDiagnostic = openshellResultDiagnostic(exported);
+    if (
+      !Number.isInteger(exported.status) ||
+      !isMissingProviderProfile(exportDiagnostic, profileId)
+    ) {
+      return {
+        ok: false,
+        reason: "probe-failed",
+        operation: "profile-export",
+        diagnostic: exportDiagnostic,
+      };
+    }
   }
 
   const imported = input.runOpenshell(
@@ -305,12 +310,14 @@ export function reconcileCheckedInProviderProfile(input: {
 }
 
 function parseCheckedInProviderProfileContractSafely(input: {
-  readonly profileId: string;
+  readonly profileId?: string;
   readonly readCheckedInProfile: () => string;
 }): CheckedInProviderProfileContract | null {
   try {
     const expected = parseCheckedInProviderProfileContract(input.readCheckedInProfile());
-    return expected?.profileId === input.profileId ? expected : null;
+    return expected && (!input.profileId || expected.profileId === input.profileId)
+      ? expected
+      : null;
   } catch {
     return null;
   }
