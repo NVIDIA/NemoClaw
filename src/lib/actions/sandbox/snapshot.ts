@@ -117,6 +117,15 @@ const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
 
+function deepAgentsManagedProjectionRecoveryCommand(sandboxName: string): string {
+  const script = [
+    "recovery_dir=$(mktemp -d /sandbox/.nemoclaw-mcp.json.recovery.XXXXXX)",
+    'mv -- /sandbox/.deepagents/.nemoclaw-mcp.json "$recovery_dir/projection"',
+    'printf "Moved managed MCP projection to %s\\n" "$recovery_dir/projection"',
+  ].join(" && ");
+  return `${CLI_NAME} ${sandboxName} exec -- sh -c ${shellQuote(script)}`;
+}
+
 export type SnapshotRequest =
   | { kind: "help" }
   | { kind: "create"; name?: string }
@@ -1547,10 +1556,11 @@ async function runSnapshotRestoreUnlocked(
         restoreDeepAgentsManagedMcpProjection(targetSandbox, managedDeepAgentsEntries);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
+        const recoveryCommand = deepAgentsManagedProjectionRecoveryCommand(targetSandbox);
         throw new SnapshotCommandError([
           `Snapshot files were not restored into '${targetSandbox}'.`,
           `The managed Deep Agents MCP projection at '/sandbox/.deepagents/.nemoclaw-mcp.json' could not be repaired: ${detail}`,
-          `Inspect that path in '${targetSandbox}'. If it is a directory, run \`${CLI_NAME} ${targetSandbox} exec -- mv -- /sandbox/.deepagents/.nemoclaw-mcp.json /sandbox/.nemoclaw-mcp.json.recovery\`, then rerun the snapshot restore command.`,
+          `Inspect that path in '${targetSandbox}'. If it is a directory, run \`${recoveryCommand}\`. The command prints the unused recovery location. Then rerun the snapshot restore command.`,
         ]);
       }
     }

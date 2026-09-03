@@ -197,7 +197,8 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.lifecycleMock.events).toEqual(["restore-mcp-projection", "restore-snapshot-state"]);
   });
 
-  it("reports a safe recovery action before snapshot files change when the projection is a directory (#10756)", async () => {
+  it("preserves an occupied recovery path and reports an unused location before retry (#10756)", async () => {
+    const occupiedRecoveryPath = "/sandbox/.nemoclaw-mcp.json.recovery";
     f.getLatestBackupMock.mockReturnValue({
       snapshotVersion: 4,
       name: "stable",
@@ -222,22 +223,43 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
         },
       },
     });
-    f.restoreDeepAgentsManagedMcpProjectionMock.mockImplementation(() => {
-      throw new Error("managed MCP projection path is a directory");
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
+    f.restoreDeepAgentsManagedMcpProjectionMock
+      .mockImplementationOnce(() => {
+        throw new Error("managed MCP projection path is a directory");
+      })
+      .mockImplementationOnce(() => {});
+    const { runSandboxSnapshot, SnapshotCommandError } = await import("./snapshot");
 
-    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+    const failure = await runSandboxSnapshot("alpha", { kind: "restore" }).catch(
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(SnapshotCommandError);
+    expect(failure).toMatchObject({
       exitCode: 1,
       lines: [
         "Snapshot files were not restored into 'alpha'.",
         expect.stringContaining("managed MCP projection path is a directory"),
-        expect.stringContaining(
-          "nemoclaw alpha exec -- mv -- /sandbox/.deepagents/.nemoclaw-mcp.json /sandbox/.nemoclaw-mcp.json.recovery",
-        ),
+        expect.any(String),
       ],
     });
+    const recoveryAction = (failure as InstanceType<typeof SnapshotCommandError>).lines[2];
+    expect(recoveryAction).toContain(
+      `recovery_dir=$(mktemp -d ${occupiedRecoveryPath}.XXXXXX)`,
+    );
+    expect(recoveryAction).toContain(
+      'mv -- /sandbox/.deepagents/.nemoclaw-mcp.json "$recovery_dir/projection"',
+    );
+    expect(recoveryAction).toContain(
+      'printf "Moved managed MCP projection to %s\\n" "$recovery_dir/projection"',
+    );
+    expect(recoveryAction).not.toContain(
+      `mv -- /sandbox/.deepagents/.nemoclaw-mcp.json ${occupiedRecoveryPath}`,
+    );
     expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+
+    await runSandboxSnapshot("alpha", { kind: "restore" });
+
+    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
   });
 
   it("repairs mutable permissions after restoring OpenClaw config", async () => {
