@@ -127,6 +127,72 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     detail: `probe returned ${httpStatus}`,
   });
 
+  it("names the request that failed, not the models route (#10879)", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(200),
+      null,
+      {
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 404",
+        httpStatus: 404,
+        endpoint: "https://inference.local/v1/chat/completions",
+      },
+      { agentName: "openclaw", provider: "nvidia-prod" },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.endpoint).toBe("https://inference.local/v1/chat/completions");
+    expect(result.subprobes?.[0]).toMatchObject({
+      probeLabel: "route reachability",
+      endpoint: "https://inference.local/v1/models",
+    });
+  });
+
+  it("falls back to the models route when the invocation reports no endpoint", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(200),
+      null,
+      { ok: false, detail: "probe was unavailable", httpStatus: null },
+      { agentName: "openclaw", provider: "nvidia-prod" },
+    );
+
+    expect(result.endpoint).toBe("https://inference.local/v1/models");
+  });
+
+  it.each([404, 401, 403])(
+    "carries the models route status into the reachability hop for HTTP %s (#10879)",
+    (httpStatus) => {
+      const result = buildSandboxInferenceRouteHealth(
+        gateway(httpStatus),
+        null,
+        {
+          ok: false,
+          detail: "sandbox inference invocation probe returned HTTP 404",
+          httpStatus: 404,
+          endpoint: "https://inference.local/v1/chat/completions",
+        },
+        { agentName: "openclaw", provider: "nvidia-prod" },
+      );
+
+      expect(result.subprobes?.[0]).toMatchObject({
+        probeLabel: "route reachability",
+        ok: true,
+        okLabel: `reachable (HTTP ${httpStatus})`,
+      });
+    },
+  );
+
+  it("keeps the plain reachable label for a 2xx models route (#6846)", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(200),
+      null,
+      { ok: true },
+      { agentName: "openclaw", provider: "nvidia-prod" },
+    );
+
+    expect(result.subprobes?.[0]).toMatchObject({ ok: true, okLabel: "reachable" });
+  });
+
   it("fails closed for a non-DCode agent when the route 404s, even if invocation succeeds", () => {
     const result = buildSandboxInferenceRouteHealth(
       gateway(404),

@@ -37,9 +37,12 @@ When the live provider differs, `status` does not carry the recorded API family 
 The row reports `healthy` only when the route returns a structurally valid result for the selected API family.
 An empty body, malformed JSON, provider-error envelope, or wrong response shape reports `unhealthy`, even with a 2xx status.
 Status diagnostics do not include the response body.
+A failing row names the endpoint the inference request used, not the models route.
 An HTTP `401` or `403` response reports `unauthorized`.
 Correct the stored provider credential.
+An HTTP `404` for a model that is in the NVIDIA Build catalog but is not deployed for your account names that cause and the model to reselect.
 The route-reachability and upstream provider subprobes remain available to identify the failing hop.
+The route-reachability subprobe reads `reachable` for a 2xx models route and reports the status the models route returned for any other answer.
 The provider, model, and endpoint appear with the rest of the sandbox state.
 This path includes the OpenShell proxy and its authentication rewrite.
 When onboarding prints a dashboard summary, use it to verify that NemoClaw ran the same route-reachability probe from inside the sandbox.

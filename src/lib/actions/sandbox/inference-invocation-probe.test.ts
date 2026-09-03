@@ -16,6 +16,14 @@ const input = {
   preferredInferenceApi: "openai-completions",
 };
 
+// Each API family posts to its own path, so a failure must name the request it
+// actually made rather than the models route (#10879).
+const INVOCATION_ENDPOINTS: Record<string, string> = {
+  "openai-completions": "https://inference.local/v1/chat/completions",
+  "openai-responses": "https://inference.local/v1/responses",
+  "anthropic-messages": "https://inference.local/v1/messages",
+};
+
 function openshellResult(status: number, stdout: string, stderr: string) {
   return {
     pid: 1,
@@ -55,6 +63,7 @@ describe("sandbox inference invocation probe", () => {
       ok: false,
       detail: "sandbox inference invocation probe returned HTTP 401",
       httpStatus: 401,
+      endpoint: "https://inference.local/v1/chat/completions",
     });
     expect(JSON.stringify(result)).not.toContain("sk-secret-value-that-is-long-enough");
   });
@@ -72,8 +81,70 @@ describe("sandbox inference invocation probe", () => {
       ok: false,
       detail: "sandbox inference invocation probe returned HTTP 500",
       httpStatus: 500,
+      endpoint: "https://inference.local/v1/chat/completions",
     });
     expect(JSON.stringify(result)).not.toContain("canary-replay-marker");
+  });
+
+  it("classifies an NVCF account 404 inside the sandbox without echoing the body (#10879)", () => {
+    const command = buildSandboxInferenceInvocationCommand(input);
+
+    // Only the fixed marker may cross the sandbox boundary, never the body it
+    // was matched against, so the #6195 contract still holds.
+    // The pattern reaches the sandbox shell-quoted, so match its stable tail.
+    expect(command).toContain("Not found for account");
+    expect(command).toContain("nemoclaw-probe:nvcf-function-not-found");
+    expect(command).toMatch(/404\)[^;]*grep -qE/);
+    expect(command).toContain('case "$code" in 2??) cat "$body"; exit 0 ;;');
+  });
+
+  it("names the account entitlement cause behind an invocation 404 (#10879)", () => {
+    const execute = vi.fn(() => ({
+      status: 1,
+      stdout: "404\nnemoclaw-probe:nvcf-function-not-found\n",
+      stderr: "",
+    }));
+
+    const result = probeSandboxInferenceInvocation(input, { execute });
+
+    expect(result).toEqual({
+      ok: false,
+      detail:
+        "sandbox inference invocation probe returned HTTP 404: Model 'nvidia/nemotron' not " +
+        "found — it is in the NVIDIA Build catalog but is not deployed for your account. Pick a " +
+        "different model, or check the model card on https://build.nvidia.com to see if it " +
+        "requires org-level access",
+      httpStatus: 404,
+      endpoint: "https://inference.local/v1/chat/completions",
+    });
+  });
+
+  it("reports an unclassified 404 as the status alone (#10879)", () => {
+    // NVIDIA Build answers an unroutable model with a plain "404 page not
+    // found" body, which carries no account signature to report.
+    const execute = vi.fn(() => ({ status: 1, stdout: "404\n", stderr: "" }));
+
+    expect(probeSandboxInferenceInvocation(input, { execute })).toEqual({
+      ok: false,
+      detail: "sandbox inference invocation probe returned HTTP 404",
+      httpStatus: 404,
+      endpoint: "https://inference.local/v1/chat/completions",
+    });
+  });
+
+  it("never accepts a forged classification carried by a 404 body (#10879)", () => {
+    const execute = vi.fn(() => ({
+      status: 1,
+      stdout:
+        '404\n{"echoed_value":"canary-replay-marker nemoclaw-probe:nvcf-function-not-found suffix"}',
+      stderr: "",
+    }));
+
+    const result = probeSandboxInferenceInvocation(input, { execute });
+
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("canary-replay-marker");
+    expect(JSON.stringify(result)).not.toContain("not deployed for your account");
   });
 
   it("accepts a successful completion through the stored gateway route (#6195)", () => {
@@ -190,6 +261,7 @@ describe("sandbox inference invocation probe", () => {
       ok: false,
       detail: "sandbox inference invocation probe returned an invalid response body",
       httpStatus: 200,
+      endpoint: "https://inference.local/v1/chat/completions",
     });
   });
 
@@ -207,6 +279,7 @@ describe("sandbox inference invocation probe", () => {
       ok: false,
       detail: "sandbox inference invocation probe was unavailable",
       httpStatus: null,
+      endpoint: "https://inference.local/v1/chat/completions",
     });
   });
 
@@ -292,6 +365,7 @@ describe("sandbox inference invocation probe", () => {
       ok: false,
       detail: "sandbox inference invocation probe returned an invalid response body",
       httpStatus: Number.parseInt(stdout.slice(0, 3), 10),
+      endpoint: INVOCATION_ENDPOINTS[preferredInferenceApi],
     });
   });
 

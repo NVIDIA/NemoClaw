@@ -12,6 +12,15 @@ describe("Hermes onboard smoke verification", () => {
     expect(shouldSmokeOpenAiLikeOnboardRoute("openai-api")).toBe(true);
   });
 
+  it("host-smokes every NVIDIA Endpoints route like its siblings (#10879)", () => {
+    // nvidia-prod registers as OpenShell provider type "nvidia", which the
+    // providerType allowlist does not match, so it used to onboard without a
+    // single Chat Completions request and first failed at `status`.
+    expect(shouldSmokeOpenAiLikeOnboardRoute("nvidia-prod")).toBe(true);
+    expect(shouldSmokeOpenAiLikeOnboardRoute("nvidia-nim")).toBe(true);
+    expect(shouldSmokeOpenAiLikeOnboardRoute("nvidia-router")).toBe(true);
+  });
+
   it("skips only the Hermes OAuth smoke path in the runtime verifier", async () => {
     const calls = await runVerifyOnboardSmokeHarness([
       { credentialEnv: "OPENAI_API_KEY" },

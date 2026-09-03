@@ -162,6 +162,12 @@ function reachableRouteSubprobe(
   gateway: SandboxInferenceRouteHealth,
   endpoint: string,
 ): ProviderHealthStatus {
+  // The probe grades any final HTTP 200-499 as reachable, and the renderer
+  // prints an ok probe's label without its detail, so a bare "reachable" hid
+  // the status the models route actually returned — including a 404 catalog
+  // that validated nothing (#10879). Keep the hop green, because the route did
+  // answer, but carry the code in the label for any non-2xx answer.
+  const answered2xx = gateway.httpStatus >= 200 && gateway.httpStatus < 300;
   return {
     ok: true,
     probed: true,
@@ -169,7 +175,7 @@ function reachableRouteSubprobe(
     probeLabel: "route reachability",
     endpoint,
     detail: gateway.detail,
-    okLabel: "reachable",
+    okLabel: answered2xx ? "reachable" : `reachable (HTTP ${gateway.httpStatus})`,
   };
 }
 
@@ -198,7 +204,10 @@ function buildInvokedRouteHealth(
     ok: false,
     probed: true,
     providerLabel: "Inference route",
-    endpoint,
+    // The invocation is a POST to the selected API family's path, not the
+    // models route. Reporting the models endpoint here told operators the
+    // wrong request had failed (#10879).
+    endpoint: invocation.endpoint ?? endpoint,
     detail: `Inference gateway did not serve an inference request: ${invocation.detail}.`,
     failureLabel: classifyInferenceInvocationFailureLabel(invocation.httpStatus),
     subprobes: [reachableRouteSubprobe(gateway, endpoint)],
