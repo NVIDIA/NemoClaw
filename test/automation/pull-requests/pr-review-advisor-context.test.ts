@@ -84,21 +84,35 @@ describe("PR review advisor", () => {
     expect(prompt).toContain(
       "Selecting existing E2E coverage validates the PR; it does not authorize adding or modifying E2E tests, assertions, fixtures, selectors, matrix entries, jobs, or workflow fan-out.",
     );
-    expect(prompt).toContain("regressionEvidence with exactly one decision");
-    expect(prompt).not.toContain("missingRegressionTest");
+    expect(prompt).toContain("missingRegressionTest with exactly one decision");
   });
 
-  it("treats test-depth signals as investigation prompts, not proof of a gap", () => {
-    const hints = [
-      ...classifyTestDepth(["src/lib/example-sandbox.ts"]).suggestedTests,
-      ...classifyTestDepth(["src/lib/example-provider.ts"]).suggestedTests,
-      ...collectStaticTestInventory(["tools/pr-review-advisor/context-tests.mts"])
-        .candidateExistingCoverage,
-    ].join("\n");
+  it("keeps test-depth outputs factual while the prompt owns coverage decisions", () => {
+    const runtimeBoundaryDiff = `diff --git a/src/lib/example.ts b/src/lib/example.ts
++++ b/src/lib/example.ts
++spawn("command");`;
 
-    expect(hints).toContain("nearest existing");
-    expect(hints).toContain("does not establish missing regression coverage");
-    expect(hints).not.toContain("Add or");
+    expect({
+      runtimePath: classifyTestDepth(["src/lib/example-sandbox.ts"]).suggestedTests,
+      runtimeBoundary: classifyTestDepth(["src/lib/example.ts"], undefined, runtimeBoundaryDiff)
+        .suggestedTests,
+      mockedBoundary: classifyTestDepth(["src/lib/example-provider.ts"]).suggestedTests,
+      unchangedTests: collectStaticTestInventory(["tools/pr-review-advisor/context-tests.mts"])
+        .candidateExistingCoverage,
+    }).toEqual({
+      runtimePath: [
+        "Runtime or integration validation candidate for the changed behavior; external E2E job results are outside this context.",
+      ],
+      runtimeBoundary: [
+        "Integration validation candidate for the changed process or container behavior.",
+      ],
+      mockedBoundary: [
+        "Behavioral validation candidate with mocked filesystem, network, or process boundaries.",
+      ],
+      unchangedTests: [
+        "No changed test files were detected for changed source files: tools/pr-review-advisor/context-tests.mts.",
+      ],
+    });
   });
 
   it("recognizes issue relations used by the PR template and common PR prose (#6446)", () => {
