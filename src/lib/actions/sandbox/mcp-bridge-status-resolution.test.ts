@@ -361,7 +361,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
   const cases = [
     { name: "dangling symbolic link", config: undefined, options: { symlink: true } },
     { name: "symbolic link", config: { mcpServers: {} }, options: { symlink: true } },
-    { name: "FIFO", config: undefined, options: { fifo: true } },
+    { name: "FIFO", config: undefined, options: { fifo: true, mode: 0o000 } },
   ];
   const outcomes = [];
   for (const fixture of cases) {
