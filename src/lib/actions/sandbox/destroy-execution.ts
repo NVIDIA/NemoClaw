@@ -85,6 +85,7 @@ type SandboxDestroyExecutionInput = {
     readonly sandboxIdentityFingerprint: string;
   };
   portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
+  verifyForwardPortsReleased?: () => boolean;
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
@@ -202,6 +203,7 @@ export async function executeSandboxDestroy({
   expectedRuntimeProviderIdentity,
   expectedRetainedSandboxIdentity,
   portableContainerAuthority,
+  verifyForwardPortsReleased = () => true,
   stopInferenceResources,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
   deps = {},
@@ -594,6 +596,29 @@ export async function executeSandboxDestroy({
         portableLifecycleOwnershipRequiresGateway:
           gatewayUnreachable && portableContainerAuthority !== undefined,
       };
+    }
+
+    if (!forcedLocalCleanup) {
+      let portsReleased = false;
+      try {
+        portsReleased = verifyForwardPortsReleased();
+      } catch {
+        portsReleased = false;
+      }
+      if (!portsReleased) {
+        return {
+          ok: false as const,
+          deleteOutput:
+            `OpenShell deleted sandbox '${sandboxName}', but its host forward ports did not release. ` +
+            "The local sandbox record was preserved for recovery.",
+          exitCode: 1,
+          gatewayUnreachable: false,
+          hostLocalInferenceOwnershipRequiresGateway: false,
+          mcpOwnershipRequiresGateway: false,
+          shieldsRelockRequiresGateway: false,
+          deleteConfirmed: true,
+        };
+      }
     }
 
     if (

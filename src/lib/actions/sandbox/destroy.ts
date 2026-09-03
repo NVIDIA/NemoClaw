@@ -71,6 +71,7 @@ import {
   prepareSandboxDestroy,
   stopModelRouterForDestroyedSandbox,
   stopSandboxInferenceResources,
+  teardownSandboxDashboardForward,
 } from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
@@ -815,6 +816,7 @@ async function destroySandboxUnlocked(
             },
           }
         : {}),
+      verifyForwardPortsReleased: () => teardownSandboxDashboardForward(sandboxName),
       stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
     });
   } catch (error) {
