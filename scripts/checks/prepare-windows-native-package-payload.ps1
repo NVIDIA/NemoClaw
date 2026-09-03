@@ -113,14 +113,13 @@ $node = (Get-Command node.exe -ErrorAction Stop).Source
 $npm = (Get-Command npm.cmd -ErrorAction Stop).Source
 $npx = (Get-Command npx.cmd -ErrorAction Stop).Source
 $tar = (Get-Command tar.exe -ErrorAction Stop).Source
-$cargo = (Get-Command cargo.exe -ErrorAction Stop).Source
-$rustc = (Get-Command rustc.exe -ErrorAction Stop).Source
+$rustup = (Get-Command rustup.exe -ErrorAction Stop).Source
 $reportedNodeVersion = (& $node --version).Trim()
 if ($LASTEXITCODE -ne 0 -or $reportedNodeVersion -cne "v$($script:NodeVersion)") {
     Fail-PayloadPreparation "Node.js $($script:NodeVersion) is required to build the payload."
 }
-$reportedRustVersion = (& $rustc --version).Trim()
-if ($LASTEXITCODE -ne 0 -or $reportedRustVersion -cnotmatch "^rustc $([regex]::Escape($script:RustVersion)) ") {
+$reportedRustVersion = (& $rustup run $script:RustVersion rustc --version).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $reportedRustVersion.StartsWith("rustc $($script:RustVersion) ", [StringComparison]::Ordinal)) {
     Fail-PayloadPreparation "Rust $($script:RustVersion) is required to build the native launcher."
 }
 
@@ -211,8 +210,9 @@ try {
     [IO.Directory]::CreateDirectory($binRoot) | Out-Null
     $launcherTarget = Join-Path $workRoot 'launcher-target'
     Invoke-Checked `
-        -FilePath $cargo `
+        -FilePath $rustup `
         -Arguments @(
+            'run', $script:RustVersion, 'cargo',
             'build',
             '--locked',
             '--release',
