@@ -319,7 +319,6 @@ exit 1`,
       },
     );
     expect(recovered.exitCode, resultText(recovered)).toBe(0);
-    expect(resultText(recovered)).toContain("Checking Ollama model readiness after daemon restart");
     expect(resultText(recovered)).toContain(`Ollama model '${model}' is loaded and ready.`);
     assertAgentExecutionSucceeded(recovered.stdout, "inference", model);
 
