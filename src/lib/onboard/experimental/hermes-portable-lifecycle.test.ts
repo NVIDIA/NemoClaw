@@ -856,7 +856,8 @@ describe("Hermes portable lifecycle", () => {
     const healthInspections: number[] = [];
     const sleepInspections: number[] = [];
     captureOpenShell.mockImplementation((args: readonly string[]) =>
-      args.includes("python3")
+      args.join("\0") ===
+      `sandbox\0exec\0-g\0${receipt.gatewayName}\0--name\0${receipt.sandboxName}\0--no-tty\0--\0python3\0-c\0${hermesPortableContainerInternals.authenticatedHealthScript}`
         ? {
             status: 0,
             stdout:
