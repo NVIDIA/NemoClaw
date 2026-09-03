@@ -490,17 +490,17 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "X4b: TELEGRAM_BOT_TOKEN_AGENT_B is a revision-scoped resolve placeholder",
     );
 
-    const startLog = await sandboxOutput(
+    const refusedGithub = await sandboxOutput(
       sandbox,
-      "cat /tmp/nemoclaw-start.log 2>/dev/null || true",
-      "start-log-messaging-providers",
+      "printenv GITHUB_TOKEN 2>/dev/null || true",
+      "refused-extra-placeholder-github",
       redactionValues,
     );
     check(
-      /\[config\] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted \d+ entry\(ies\):/.test(startLog) &&
-        startLog.includes("TELEGRAM_BOT_TOKEN_AGENT_A") &&
-        !startLog.includes("GITHUB_TOKEN"),
-      "X5: accepted-extras breadcrumb proves extra keys reached in-container parser",
+      /^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN_AGENT_A$/u.test(extraA) &&
+        /^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN_AGENT_B$/u.test(extraB) &&
+        refusedGithub === "",
+      "X5: resulting environment contains only accepted extra placeholders",
     );
 
     const config = await readOpenClawConfig(sandbox, redactionValues);
