@@ -8,10 +8,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import type { OpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command";
 
-// The default exec runner shells out via spawn and chooses whether to inherit
-// or ignore stdin. Mock node:child_process so the tests can assert that wiring
-// at the execSandbox boundary without spawning a real process. Every other test
-// injects a runner/probe seam.
+// The default CLI command executor shells out via spawn and chooses whether to
+// inherit or ignore stdin. Mock node:child_process so the tests can assert that
+// wiring at the execSandbox boundary without spawning a real process. Every
+// other test injects a typed command-executor seam.
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   return { ...actual, spawn: vi.fn() };

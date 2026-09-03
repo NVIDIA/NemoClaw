@@ -29,7 +29,6 @@ import { type ExecPolicyHintDeps, preparePolicyHint } from "./exec-policy-hint-i
 import type { GatewaySelectResult } from "./gateway-select";
 import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
-export { buildSandboxExecStdio, shouldInheritSandboxExecStdin } from "./exec-stdio";
 export {
   wrapExecCommandWithRuntimeEnv,
   wrapOpenClawAgentCommandWithRuntimeEnv,
