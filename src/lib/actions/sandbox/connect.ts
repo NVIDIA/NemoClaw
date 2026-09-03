@@ -116,6 +116,7 @@ import type {
 import type { HermesPortableContainerInspectionTimingEvidence } from "../../onboard/experimental/hermes-portable-container";
 import {
   checkAndRecoverSandboxProcesses,
+  createHermesPortableForwardRecoveryInput,
   executeSandboxExecCommand,
   type GatewayRestartFailureLayer,
   HermesPortableForwardRecoveryError,
@@ -286,7 +287,7 @@ function exitOnForwardRecoveryFailure(
     `  Probe failed: ${agentName} gateway is running in '${sandboxName}', but ${detail ?? "the dashboard/API host forward could not be restored"}.`,
   );
   console.error(
-    `  Run \`openshell forward start --background ${port} ${sandboxName}\` manually and re-run \`nemoclaw ${sandboxName} recover\`.`,
+    `  Run \`nemoclaw ${sandboxName} recover\` after resolving the reported ForwardTcp error.`,
   );
   process.exit(1);
 }
@@ -678,43 +679,16 @@ function hermesPortableForwardInputForConnectProbe(
     throw new HermesPortableForwardRecoveryError("forward-state-unavailable");
   }
 
-  const capture = (args: readonly string[], timeout: number) => {
-    return captureResolvedOpenshell([...args], {
-      env: commandAuthority.env,
-      openshellBinary: commandAuthority.executablePath,
-      replaceEnv: true,
-      ignoreError: true,
-      timeout,
-    });
-  };
-  const runMutation = (args: readonly string[], timeout: number) => {
-    return runOpenshell([...args], {
-      env: commandAuthority.env,
-      openshellBinary: commandAuthority.executablePath,
-      replaceEnv: true,
-      ignoreError: true,
-      stdio: "ignore",
-      timeout,
-    });
-  };
-
-  return {
-    intent: input.intent,
-    sandboxName: input.sandboxName,
+  return createHermesPortableForwardRecoveryInput({
+    assertCurrent: assertProductCurrent,
+    assertRollbackCurrent: assertCommandCurrent,
+    commandAuthority,
     gatewayName: input.authority.gatewayName,
-    operationTimeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+    intent: input.intent,
+    onTiming: writeHermesPortableForwardRecoveryTiming,
     ports,
-    probeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-    timing: { onComplete: writeHermesPortableForwardRecoveryTiming },
-    deps: {
-      assertCurrent: assertProductCurrent,
-      assertRollbackCurrent: assertCommandCurrent,
-      captureCurrentList: capture,
-      captureRollbackList: capture,
-      runCurrentMutation: runMutation,
-      runRollbackMutation: runMutation,
-    },
-  } as const;
+    sandboxName: input.sandboxName,
+  });
 }
 
 /** Restore the launch-readiness forwards through current Hermes command authority. */
