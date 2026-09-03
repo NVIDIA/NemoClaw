@@ -137,6 +137,38 @@ describe("onboard dashboard helpers", () => {
     );
   });
 
+  it("does not reallocate or adopt an occupied persisted dashboard port", () => {
+    const launch = vi.fn();
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      runCaptureOpenshell: vi.fn(() => ""),
+      openshellArgv: (args: string[]) => ["/usr/local/bin/openshell", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({
+        sandboxes: [{ name: "my-sandbox", dashboardPort: 18_789, scopeGatewayPort: 8_080 }],
+      }),
+      isPortBoundOnHost: () => true,
+      forwardService: {
+        executable: () => "/usr/local/bin/openshell",
+        launch,
+        resolveGatewayName: () => "nemoclaw",
+        retireLegacy: vi.fn(() => 0),
+      },
+    });
+
+    expect(() => helpers.ensureDashboardForward("my-sandbox")).toThrow(
+      /refusing to adopt or reallocate/u,
+    );
+    expect(launch).not.toHaveBeenCalled();
+  });
+
   it("skips dashboard forwarding for terminal agents without declared ports", async () => {
     const runOpenshell = vi.fn((_args: string[], _opts?: Record<string, unknown>) => ({
       status: 0,

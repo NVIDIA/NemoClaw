@@ -303,7 +303,6 @@ export function ensureSandboxPortForward(
   }
   return ensureSandboxPortForwardForPort(sandboxName, port, {
     forwardTarget: allInterfaceBindRequired ? `0.0.0.0:${port}` : String(port),
-    forceRestart: remoteBindRequested,
     expectedBind: allInterfaceBindRequired ? "0.0.0.0" : "127.0.0.1",
     afterSuccess: options.afterSuccess,
     beforeStart: () =>
@@ -359,7 +358,6 @@ export function ensureSandboxPortForwardForPort(
   options: {
     afterSuccess?: () => boolean;
     forwardTarget?: string;
-    forceRestart?: boolean;
     expectedBind?: string;
     beforeStart?: () => boolean;
   } = {},
@@ -367,7 +365,6 @@ export function ensureSandboxPortForwardForPort(
   const {
     afterSuccess = () => true,
     forwardTarget = String(port),
-    forceRestart = false,
     expectedBind,
     beforeStart = () => true,
   } = options;
@@ -381,8 +378,7 @@ export function ensureSandboxPortForwardForPort(
     return accepted;
   };
   const forwardHealth = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
-  if (forwardHealth === true && !forceRestart) return acceptSuccessfulForward();
-  if (forwardHealth === true) return false;
+  if (forwardHealth === true) return acceptSuccessfulForward();
   if (!beforeStart()) return false;
   try {
     const sandbox = registry.getSandbox(sandboxName);

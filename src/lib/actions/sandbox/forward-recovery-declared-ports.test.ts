@@ -58,6 +58,7 @@ function forwardList(rows: string[]): { status: number; output: string } {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllEnvs();
   mocks.runOpenshell.mockReturnValue({ status: 0 });
   mocks.isLocalForwardReachable.mockReturnValue(true);
   mocks.launchForwardService.mockImplementation(() => {
@@ -68,6 +69,20 @@ beforeEach(() => {
 });
 
 describe("ensureDeclaredAgentForwardPortsHealthy", () => {
+  it("accepts an already-reachable remote direct service during gateway recovery", async () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    mocks.getSandbox.mockReturnValue({
+      agent: "openclaw",
+      dashboardPort: 18789,
+      dashboardRemoteBindPrepared: true,
+    });
+    mocks.captureOpenshell.mockReturnValue(forwardList([]));
+    const { ensureSandboxPortForward } = await import("./forward-recovery");
+
+    expect(ensureSandboxPortForward("remote-box")).toBe(true);
+    expect(mocks.launchForwardService).not.toHaveBeenCalled();
+  });
+
   it("does not demand the manifest dashboard port from a sandbox that owns a different dashboard port (#8543)", async () => {
     mocks.getSandbox.mockReturnValue({
       agent: "hermes",

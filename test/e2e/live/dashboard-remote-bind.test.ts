@@ -173,11 +173,12 @@ runDashboardRemoteBindTest(
         "-e",
         [
           'const net = require("node:net");',
-          "const socket = net.connect({ host: '127.0.0.1', port: Number(process.argv[1]) });",
+          "const socket = net.connect({ host: process.argv[1], port: Number(process.argv[2]) });",
           "const deadline = setTimeout(() => { socket.destroy(); process.exit(1); }, 5000);",
           "socket.once('connect', () => { clearTimeout(deadline); socket.destroy(); process.exit(0); });",
           "socket.once('error', () => { clearTimeout(deadline); process.exit(1); });",
         ].join("\n"),
+        remoteHost,
         dashboardPort,
       ],
       {

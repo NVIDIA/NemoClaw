@@ -392,13 +392,20 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       ["forward", "list", "--gateway", forwardGateway],
       { ignoreError: true },
     );
+    const isPortBound = deps.isPortBoundOnHost ?? isPortBoundOnHost;
+    const persistedPort = getPersistedDashboardPort(sandboxName, listSandboxes);
+    if (persistedPort === preferredPort && isPortBound(preferredPort)) {
+      throw new Error(
+        `Registered dashboard port ${String(preferredPort)} is already occupied; refusing to adopt or reallocate it.`,
+      );
+    }
     let actualPort: number;
     try {
       actualPort = findAvailableDashboardPort(
         sandboxName,
         preferredPort,
         existingForwards,
-        deps.isPortBoundOnHost ?? isPortBoundOnHost,
+        isPortBound,
         getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes),
       );
     } catch (err) {

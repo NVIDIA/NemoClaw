@@ -32,7 +32,6 @@ export interface ForwardServiceLaunchOptions {
     args: readonly string[],
     environment: NodeJS.ProcessEnv,
   ) => {
-    once?(event: "error" | "exit", listener: () => void): unknown;
     unref(): void;
   };
   readonly timeoutMs?: number;
@@ -114,13 +113,6 @@ export function launchForwardService(
     buildForwardServiceArgs(target),
     buildOpenShellSubprocessEnv(options.sourceEnvironment ?? process.env),
   );
-  let exited = false;
-  child.once?.("error", () => {
-    exited = true;
-  });
-  child.once?.("exit", () => {
-    exited = true;
-  });
   child.unref();
 
   const sleep =
@@ -128,9 +120,6 @@ export function launchForwardService(
   const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
   while (Date.now() < deadline) {
     if (isReachable(target.localPort)) return;
-    if (exited) {
-      throw new Error("OpenShell forward service exited before binding the local port");
-    }
     sleep(POLL_INTERVAL_MS);
   }
   throw new Error(

@@ -28,6 +28,7 @@ export function isLegacySandboxForwardListed(
 }
 
 export interface LegacyForwardMigrationDeps {
+  readonly assertAuthority?: (ports: readonly number[]) => void;
   readonly capture: (gatewayName: string) => {
     readonly error?: unknown;
     readonly output?: string | null;
@@ -65,6 +66,7 @@ export function retireLegacySandboxForwards(
       legacyForwardPorts(listed.output, sandboxName).filter((port) => registeredPorts.has(port)),
     ),
   ];
+  if (legacyPorts.length > 0) deps.assertAuthority?.(legacyPorts);
   for (const port of legacyPorts) {
     if (deps.run(gatewayName, sandboxName, port).status !== 0) {
       throw new Error(`Legacy OpenShell forward ${String(port)} could not be retired`);

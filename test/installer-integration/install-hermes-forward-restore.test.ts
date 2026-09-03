@@ -63,6 +63,63 @@ function fixture() {
   return { bin, cliLog, env, openshellLog, root, state };
 }
 
+function seedLegacyWatcher(
+  h: ReturnType<typeof fixture>,
+  sandboxArgument = "created-by-onboard",
+): { pid: number; pidFile: string; watcherScript: string } {
+  const runtimeState = path.join(h.state, "state");
+  const pidFile = path.join(runtimeState, "hermes-created-by-onboard-8647.forward.pid");
+  const watcherScript = `${pidFile}.js`;
+  const node = path.join(h.bin, "node");
+  const openshell = path.join(h.bin, "openshell");
+  fs.mkdirSync(runtimeState, { recursive: true });
+  fs.writeFileSync(watcherScript, "setInterval(() => undefined, 1000);\n");
+  const started = spawnSync(
+    "bash",
+    [
+      "-c",
+      'nohup "$1" "$2" "$3" "$4" "$5" >/dev/null 2>&1 & printf "%s" "$!"',
+      "legacy-forward-watcher",
+      node,
+      watcherScript,
+      openshell,
+      "8647",
+      sandboxArgument,
+    ],
+    { encoding: "utf8", env: h.env },
+  );
+  const pid = Number(started.stdout);
+  expect(started.status, started.stderr).toBe(0);
+  expect(Number.isSafeInteger(pid)).toBe(true);
+  fs.writeFileSync(pidFile, `${String(pid)}\n`);
+  return { pid, pidFile, watcherScript };
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function waitForProcessExit(pid: number): boolean {
+  const deadline = Date.now() + 5_000;
+  while (processExists(pid) && Date.now() < deadline) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+  return !processExists(pid);
+}
+
+function stopFixtureProcess(pid: number): void {
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    // Already stopped by the migration path.
+  }
+}
+
 function expectRecovery(h: ReturnType<typeof fixture>): void {
   const result = restore(h.env);
   expect(result.status, result.stderr).toBe(0);
@@ -76,6 +133,37 @@ describe("Hermes installer forward restore", () => {
     try {
       expectRecovery(h);
     } finally {
+      fs.rmSync(h.root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("retires only an exact legacy watcher before ForwardTcp recovery", () => {
+    const h = fixture();
+    const watcher = seedLegacyWatcher(h);
+    try {
+      expectRecovery(h);
+      expect(waitForProcessExit(watcher.pid)).toBe(true);
+      expect(fs.existsSync(watcher.pidFile)).toBe(false);
+      expect(fs.existsSync(watcher.watcherScript)).toBe(false);
+    } finally {
+      stopFixtureProcess(watcher.pid);
+      fs.rmSync(h.root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("leaves an argument-mismatched legacy watcher and its evidence untouched", () => {
+    const h = fixture();
+    const watcher = seedLegacyWatcher(h, "different-sandbox");
+    try {
+      const result = restore(h.env);
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("leaving it untouched");
+      expect(processExists(watcher.pid)).toBe(true);
+      expect(fs.existsSync(watcher.pidFile)).toBe(true);
+      expect(fs.existsSync(watcher.watcherScript)).toBe(true);
+      expect(fs.existsSync(h.cliLog)).toBe(false);
+    } finally {
+      stopFixtureProcess(watcher.pid);
       fs.rmSync(h.root, { recursive: true, force: true });
     }
   }, 30_000);
