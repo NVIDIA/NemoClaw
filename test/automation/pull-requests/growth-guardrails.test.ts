@@ -27,11 +27,21 @@ function fixtureDiff(
 ): GrowthGuardrailDiff {
   return {
     files,
-    /** Return each requested base file or the missing-file marker. */
+    /**
+     * Return each requested base-revision fixture file.
+     *
+     * @param paths - Repository-relative paths requested by the guardrail.
+     * @returns A map from each path to fixture content or the missing-file marker.
+     */
     async readBase(paths) {
       return new Map(paths.map((file) => [file, base[file] ?? null]));
     },
-    /** Return each requested candidate file or the missing-file marker. */
+    /**
+     * Return each requested candidate-revision fixture file.
+     *
+     * @param paths - Repository-relative paths requested by the guardrail.
+     * @returns A map from each path to fixture content or the missing-file marker.
+     */
     async readHead(paths) {
       return new Map(paths.map((file) => [file, head[file] ?? null]));
     },
@@ -143,6 +153,15 @@ function defineCodebaseGrowthGuardrailTestSupport(): void {
     );
     expect(await dockerfileBudgetGrowthViolations(diff)).toEqual([
       "Dockerfile byte budget increased from 22 to 32",
+    ]);
+
+    const multibyteDiff = fixtureDiff(
+      [{ filename: "Dockerfile", status: "modified" }],
+      { Dockerfile: "FROM scratch\nRUN echo\n" },
+      { Dockerfile: "FROM scratch\nRUN echo é\n" },
+    );
+    expect(await dockerfileBudgetGrowthViolations(multibyteDiff)).toEqual([
+      "Dockerfile byte budget increased from 22 to 25",
     ]);
   }
 
