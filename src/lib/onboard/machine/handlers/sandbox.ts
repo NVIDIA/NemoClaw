@@ -326,7 +326,6 @@ export interface SandboxStateOptions<
     }): Promise<readonly CheckpointProviderBinding[]>;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
-    stopStaleDashboardListenersForSandbox(sandboxes: unknown[], sandboxName: string): void;
     listRegistrySandboxes(): { sandboxes: unknown[] };
     planRegisteredExtraProviders(
       gatewayName: string,
@@ -2146,12 +2145,6 @@ class SandboxStateFlow<
 
       let sandboxName: string;
       try {
-        if (this.options.fresh && !deferSandboxEffectsUntilIdentityVerification) {
-          this.deps.stopStaleDashboardListenersForSandbox(
-            this.deps.listRegistrySandboxes().sandboxes,
-            requestedSandboxName,
-          );
-        }
         sandboxName = await withSandboxPhaseTrace(
           requestedSandboxName,
           this.options.provider,
@@ -2195,12 +2188,6 @@ class SandboxStateFlow<
                     async (
                       verifiedContext: import("../../types").VerifiedSandboxCreateEffectsContext,
                     ) => {
-                      if (this.options.fresh) {
-                        this.deps.stopStaleDashboardListenersForSandbox(
-                          this.deps.listRegistrySandboxes().sandboxes,
-                          requestedSandboxName,
-                        );
-                      }
                       state = await activateVerifiedCredentialProviders(
                         state,
                         verifiedContext.revalidateSandboxIdentity,

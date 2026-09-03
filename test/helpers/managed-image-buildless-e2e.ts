@@ -199,6 +199,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxId: "fixture-managed-sandbox",
   lifecycleState: recreate ? "created" : "absent",
 });
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 createdSandbox.installRuntimeObservation();
 
 const coreVersion = require(${source("src/lib/core/version.ts")});
@@ -432,6 +433,7 @@ runner.run = (command, options = {}) => {
     createdSandbox.state.lifecycleState === "created"
   ) {
     createdSandbox.delete();
+    forwardService.release();
     existingEntryAvailable = false;
   }
   if (/(?:^|\s)docker(?:\s+buildx)?\s+build(?:\s|$)/u.test(normalized)) {
@@ -577,10 +579,11 @@ credentials.prompt = async () => "";
 childProcess.spawn = (command, args = [], options = {}) => {
   const argv = Array.isArray(args) ? args.map(String) : [];
   const normalized = normalize([command, ...argv]);
+  const forwardSpawn = forwardService.recordSpawn([command, argv, options]);
   if (/(?:^|\s)docker(?:\s+buildx)?\s+build(?:\s|$)/u.test(normalized)) {
     return poison("docker build");
   }
-  if (normalized.includes("sandbox create")) {
+  if (!forwardSpawn && normalized.includes("sandbox create")) {
     if (createdSandbox.state.lifecycleState === "deleted") {
       createdSandbox.recreate([command, ...argv]);
     } else {
