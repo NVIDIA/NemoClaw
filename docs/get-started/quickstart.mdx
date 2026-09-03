@@ -178,7 +178,8 @@ Use these details when your first-run path needs more control.
     On macOS, start Docker Desktop or Colima first.
 
     On a qualified Linux host, you can instead select native rootless Podman explicitly with `NEMOCLAW_GATEWAY_RUNTIME=podman`.
-    This path does not require the Docker CLI or daemon.
+    The native Podman gateway path does not require the Docker CLI or daemon.
+    Managed local vLLM remains Docker-backed; without Docker, attach an existing local vLLM server instead.
     Review the native Podman requirements and limitations in [Platform Support](../reference/platform-support#deployment-paths) and [Troubleshooting](../reference/troubleshooting#podman) before onboarding.
 
     When using the Docker path, if a coding agent reports that its execution sandbox blocked Docker, use its command-scoped approval flow, if available.

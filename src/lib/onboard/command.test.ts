@@ -9,8 +9,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getCredential } from "../credentials/store";
 import { loadServingCatalog } from "../inference/serving/catalog-loader";
+import { listServingProfiles } from "../inference/serving/profile-list";
 import { servingProfileProvenance } from "../inference/serving/profile-provenance";
 import { NEMOCLAW_VLLM_GPU_DEVICE_ENV } from "../inference/vllm-models";
+import type { SystemReadinessReport } from "../readiness/types";
 import { resolveOnboardOptions, runOnboardCommand, servingProfileProviderKey } from "./command";
 import type { OnboardFlags } from "./command-support";
 import { PortableInferenceDescriptorError } from "./experimental/portable-inference-descriptor";
@@ -905,27 +907,48 @@ describe("onboard command options", () => {
   });
 
   it("rejects native Podman --profile before onboarding while managed vLLM requires Docker (#10891)", () => {
-    const profile = {
-      ...COMPATIBLE_NANO_PROFILE,
-      id: "vllm.dgx-spark-gb10.single.qwen3-6-35b-a3b-nvfp4",
-      backend: "vllm",
-      compatible: false,
-      incompatibilityReason: "Docker is required for managed vLLM installation",
-    };
+    const catalog = loadServingCatalog();
+    const profileId = "vllm.dgx-spark-gb10.single.qwen3-6-35b-a3b-nvfp4";
+    const dockerUnavailableReport = {
+      schemaVersion: "1.1.0",
+      mutated: false,
+      provenance: {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: "a".repeat(40),
+        observedAt: new Date().toISOString(),
+      },
+      observations: [],
+      capabilities: [{ id: "host.docker.available", state: "unknown" }],
+      qualifications: [],
+      findings: [
+        {
+          id: "host.docker.unavailable",
+          severity: "blocking",
+          summary: "Docker is unavailable.",
+          capabilityIds: ["host.docker.available"],
+        },
+      ],
+      evidence: [],
+      status: "incompatible",
+      exitCode: 2,
+    } satisfies SystemReadinessReport;
+    const profiles = listServingProfiles(catalog, {
+      readinessReports: [{ nodeId: "podman-host", report: dockerUnavailableReport }],
+    });
     const errors: string[] = [];
 
     expect(() =>
       resolve(
-        { profile: profile.id },
+        { profile: profileId },
         {
           env: { NEMOCLAW_GATEWAY_RUNTIME: "podman" },
-          listServingProfiles: () => [profile],
+          listServingProfiles: () => profiles,
           error: (message = "") => errors.push(message),
         },
       ),
     ).toThrow("exit:1");
     expect(errors).toEqual([
-      `  Serving profile '${profile.id}' is incompatible: Docker is required for managed vLLM installation.`,
+      `  Serving profile '${profileId}' is incompatible: podman-host: readiness status is incompatible.`,
     ]);
   });
 
