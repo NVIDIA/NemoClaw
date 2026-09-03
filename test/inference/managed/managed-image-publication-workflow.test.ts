@@ -438,6 +438,8 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(contract.env?.RELEASE).toBe("${{ steps.release.outputs.value }}");
     const contractSource = required(contract.run, "PR managed image contract is missing");
+    expect(contractSource).toContain(".[0].RootFS.Layers | length");
+    expect(contractSource).toContain('[ "$layer_count" -gt 124 ]');
     expect(contractSource).toContain(
       '.[0].Config.Labels["org.opencontainers.image.version"] == $release',
     );

@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
-import path from "node:path";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -45,8 +45,8 @@ const COMPATIBLE_KEY = process.env.NEMOCLAW_COMPAT_MOCK_API_KEY ?? "fake-compati
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "test-fake-telegram-token-e2e";
 const TELEGRAM_IDS = process.env.TELEGRAM_ALLOWED_IDS ?? "123456789";
 const MOCK_PORT = Number(process.env.NEMOCLAW_COMPAT_MOCK_PORT ?? "18089");
-const ONBOARD_TIMEOUT_MS = 25 * 60_000;
-const TEST_TIMEOUT_MS = 45 * 60_000;
+const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
+const TEST_TIMEOUT_MS = testTimeout(45 * 60_000);
 
 validateSandboxName(SANDBOX_NAME);
 
