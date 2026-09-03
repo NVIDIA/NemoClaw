@@ -16,7 +16,7 @@ NemoClaw validates the provider and model before it creates the sandbox.
 On native N1x FASTOS, the Deferred managed-vLLM preview is the only admitted inference route.
 Accept the native N1x Express prompt or set `NEMOCLAW_PROVIDER=install-vllm` to provide the required explicit preview intent.
 On a qualifying Windows WSL N1x host, Windows Express uses managed llama.cpp after Docker Desktop GPU passthrough succeeds.
-Other Windows WSL hosts retain Windows-host or WSL-local Ollama.
+Other Windows WSL Express installs use WSL-local Ollama. Windows-host Ollama remains available through manual onboarding when Docker Desktop WSL integration and the required route protections are present.
 </Warning>
 
 ## Provider Support

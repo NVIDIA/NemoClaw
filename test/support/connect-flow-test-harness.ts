@@ -55,6 +55,7 @@ export type ConnectHarness = {
   preflightVllmSpy: MockInstance;
   probeLocalProviderHealthSpy: MockInstance;
   probeOllamaAuthProxyHealthSpy: MockInstance;
+  shouldFrontOllamaWithProxySpy: MockInstance;
   readSandboxConfigSpy: MockInstance;
   recoverPortableDemoLifecycleSpy: MockInstance;
   requalifyPortableAgentAuthoritySpy: MockInstance;
@@ -77,6 +78,7 @@ export type ConnectHarnessOptions = {
   agentName?: string;
   inferenceGetOutput?: string;
   isWsl?: boolean;
+  frontOllamaWithProxy?: boolean;
   inferenceProbeResponses?: Array<
     string | { status?: number | null; output?: string | null; stderr?: string | null }
   >;
@@ -203,6 +205,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const dockerAdapter = requireDist("../../src/lib/adapters/docker/container.js");
   const localInference = requireDist("../../src/lib/inference/local.js");
   const ollamaProxy = requireDist("../../src/lib/inference/ollama/proxy.js");
+  const localInferenceTopology = requireDist("../../src/lib/onboard/local-inference-topology.js");
   const platform = requireDist("../../src/lib/platform.js");
   const gatewayRouteMutationLock = requireDist(
     "../../src/lib/inference/gateway-route-mutation-lock.js",
@@ -488,6 +491,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const probeOllamaAuthProxyHealthSpy = vi
     .spyOn(ollamaProxy, "probeOllamaAuthProxyHealth")
     .mockReturnValue({ ok: true });
+  const shouldFrontOllamaWithProxySpy = vi
+    .spyOn(localInferenceTopology, "shouldFrontOllamaWithProxy")
+    .mockReturnValue(options.frontOllamaWithProxy ?? options.isWsl !== true);
   const realIsWsl = platform.isWsl as (opts?: WslDetectionOptions) => boolean;
   // Pin the platform gate for every isWsl consumer the harness loads: isWsl
   // answers false off Linux before it reads WSL_DISTRO_NAME, so a case that
@@ -599,6 +605,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     preflightVllmSpy,
     probeLocalProviderHealthSpy,
     probeOllamaAuthProxyHealthSpy,
+    shouldFrontOllamaWithProxySpy,
     readSandboxConfigSpy,
     recoverPortableDemoLifecycleSpy,
     requalifyPortableAgentAuthoritySpy,

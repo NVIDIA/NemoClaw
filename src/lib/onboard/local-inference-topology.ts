@@ -5,8 +5,10 @@ import { detectContainerRuntimeFromDockerInfo } from "../adapters/docker/runtime
 import {
   applyOllamaRuntimeContextWindow,
   findReachableOllamaHost,
+  getOllamaContainerPort,
   isLocalProviderHostHealthy,
   OLLAMA_HOST_DOCKER_INTERNAL,
+  OLLAMA_PORT,
   validateOllamaModel,
 } from "../inference/local";
 import { ensureOllamaAuthProxy, isProxyHealthy } from "../inference/ollama/proxy";
@@ -14,7 +16,7 @@ import {
   MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
   resolveOllamaContextWindowFloor,
 } from "../inference/ollama-runtime-context";
-import { type ContainerRuntime, containerCanReachHostLoopback } from "../platform";
+import type { ContainerRuntime } from "../platform";
 import { ensureOllamaLoopbackSystemdOverride } from "./ollama-systemd";
 
 export function getContainerRuntime(): ContainerRuntime {
@@ -142,12 +144,9 @@ export function rejectUnsupportedWindowsHostOllama(
   return requirement.reject(providerKey, isNonInteractive, abortNonInteractive);
 }
 
-// True when the sandbox container needs the local Ollama auth proxy in front
-// of raw Ollama. False only under Docker Desktop on WSL, where the docker-
-// desktop VM publishes the host's 127.0.0.1 back into containers through
-// host.docker.internal. (#3695)
+// Keep proxy lifecycle and sandbox-facing port selection under one authority.
 export function shouldFrontOllamaWithProxy(): boolean {
-  return !containerCanReachHostLoopback(getContainerRuntime());
+  return getOllamaContainerPort() !== OLLAMA_PORT;
 }
 
 export interface RepairLocalInferenceSystemdOverrideOptions {
@@ -167,7 +166,7 @@ function failOllamaResumeRepair(message: string): never {
 // Under mirrored networking it also distinguishes a Windows-forwarded loopback
 // response from a Linux-owned listener before returning that qualified route.
 function protectedWindowsHostOllamaIsReachable(): boolean {
-  const host = findReachableOllamaHost();
+  const host = findReachableOllamaHost(undefined, {}, undefined, { revalidate: true });
   return host === OLLAMA_HOST_DOCKER_INTERNAL;
 }
 

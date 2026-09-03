@@ -337,7 +337,8 @@ A qualifying Windows WSL N1x host uses managed llama.cpp through Windows Express
 The installer uses local Docker Desktop, Arm64, the Windows N1x product identity, and at least 48,000 MiB of GPU memory as preliminary selection conditions.
 Onboarding also requires the default local Docker context, at least 48,000 MiB of Docker memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
 Onboarding stops managed selection when any required readiness check fails.
-Other Windows WSL hosts retain Windows-host or WSL-local Ollama.
+Other Windows WSL Express installs use WSL-local Ollama.
+Windows-host Ollama remains available through manual onboarding when Docker Desktop WSL integration and the required route protections are present.
 On hosts other than native N1x FASTOS, an already-running vLLM server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` also appears in the menu without a flag because selecting it is an explicit user action.
 
 | Aspect | Detail |

@@ -75,6 +75,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
         {
           runCaptureImpl,
           runCaptureExImpl,
+          revalidateOllamaHost: () => "host.docker.internal",
           prepareDockerEnvironment,
           prepareOllamaApiExecution: (command, host, options) =>
             prepareOllamaApiExecution(command, host, {
@@ -128,6 +129,28 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     expect(runCaptureExImpl.mock.calls[0][0][0]).toBe("curl");
   });
 
+  it("skips a stale raw Windows route before model probes or warm-up", () => {
+    const probeRuntimeModelStatus = vi.fn(() => unloadedStatus);
+    const runCaptureExImpl = vi.fn(() => successfulWarmResult());
+
+    expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        {
+          provider: "ollama-local",
+          model: "qwen3.6:35b",
+          endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
+        },
+        {
+          revalidateOllamaHost: () => null,
+          probeRuntimeModelStatus,
+          runCaptureExImpl,
+        },
+      ),
+    ).toEqual({ kind: "skipped", reason: "unreachable" });
+    expect(probeRuntimeModelStatus).not.toHaveBeenCalled();
+    expect(runCaptureExImpl).not.toHaveBeenCalled();
+  });
+
   it("falls back to an allowlisted host instead of probing an arbitrary registry URL", () => {
     const runCaptureImpl = vi.fn((_command: readonly string[]) => JSON.stringify({ models: [] }));
     const runCaptureExImpl = vi.fn((_command: string[]) => successfulWarmResult());
@@ -161,6 +184,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       },
       {
         getOllamaHost: () => "host.docker.internal",
+        revalidateOllamaHost: () => "host.docker.internal",
         runCaptureImpl,
         runCaptureExImpl,
       },
@@ -261,6 +285,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
         },
         {
+          revalidateOllamaHost: () => "host.docker.internal",
           probeRuntimeModelStatus: () => unloadedStatus,
           probeModelInventory,
           runCaptureExImpl: () => ({

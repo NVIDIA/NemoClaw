@@ -19,6 +19,7 @@ import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
 import {
   describeModelInventory,
   createOllamaApiCapture,
+  findReachableOllamaHost,
   getOllamaApiCommand,
   getResolvedOllamaHost,
   ollamaInventoryContainsModel,
@@ -53,6 +54,7 @@ export interface OllamaRestartRecoveryDeps {
   runCaptureImpl?: RunCaptureFn;
   prepareDockerEnvironment?: Parameters<typeof createOllamaApiCapture>[2];
   prepareOllamaApiExecution?: typeof prepareOllamaApiExecution;
+  revalidateOllamaHost?: () => string | null;
 }
 
 export type OllamaRestartRecoveryFailureReason =
@@ -219,6 +221,15 @@ export function maybeWarmOllamaAfterDaemonRestart(
 
   const getOllamaHost = deps.getOllamaHost ?? getResolvedOllamaHost;
   const rawHost = resolveRawOllamaHost(route.endpointUrl, getOllamaHost);
+  if (rawHost === OLLAMA_HOST_DOCKER_INTERNAL) {
+    const revalidatedHost = (
+      deps.revalidateOllamaHost ??
+      (() => findReachableOllamaHost(undefined, {}, undefined, { revalidate: true }))
+    )();
+    if (revalidatedHost !== OLLAMA_HOST_DOCKER_INTERNAL) {
+      return { kind: "skipped", reason: "unreachable" };
+    }
+  }
   const rawEndpoint = `http://${rawHost}:${OLLAMA_PORT}`;
   const probe = deps.probeRuntimeModelStatus ?? probeOllamaRuntimeModelStatus;
   const rawCapture = createOllamaApiCapture(

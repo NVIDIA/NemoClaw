@@ -43,11 +43,11 @@ import { withGatewayRouteMutationLock } from "../../inference/gateway-route-muta
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
 import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { shouldFrontOllamaWithProxy } from "../../onboard/local-inference-topology";
 import {
   assertNoOpenShellGatewayEndpointOverride,
   OpenShellGatewayEndpointOverrideError,
 } from "../../openshell-gateway-endpoint-guard";
-import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
 import { redact, redactFull } from "../../security/redact";
@@ -1345,9 +1345,10 @@ function verifyLocalInferenceRouteDependencies(
   { quiet = false }: { quiet?: boolean } = {},
 ): boolean {
   const isOllamaLocal = provider === "ollama-local";
+  const frontOllamaWithProxy = isOllamaLocal && shouldFrontOllamaWithProxy();
   if (isOllamaLocal) {
-    findReachableOllamaHost();
-    if (!isWsl()) {
+    findReachableOllamaHost(undefined, {}, undefined, { revalidate: true });
+    if (frontOllamaWithProxy) {
       ensureOllamaAuthProxy();
     }
   }
@@ -1362,7 +1363,7 @@ function verifyLocalInferenceRouteDependencies(
     return false;
   }
 
-  if (isOllamaLocal && !isWsl()) {
+  if (frontOllamaWithProxy) {
     const proxyHealth = probeOllamaAuthProxyHealth();
     if (!proxyHealth.ok) {
       if (!quiet) {
