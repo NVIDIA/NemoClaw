@@ -434,6 +434,64 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
   });
 
+  it("preserves legacy Deep Agents status when credential handling is unavailable (#10754)", () => {
+    const home = createTempHome("nemoclaw-mcp-legacy-deepagents-projection-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  const deepAgentsFixture = require("./test/helpers/mcp-bridge-adapter-deepagents-fixture.ts");
+  const current = registry.getSandbox("alpha");
+  current.agent = "langchain-deepagents-code";
+  current.mcp.bridges.github.agent = "langchain-deepagents-code";
+  current.mcp.bridges.github.adapter = "deepagents-config";
+  registry.updateSandbox("alpha", current);
+  providerCredentialObservation = "absent";
+  let inspected = false;
+  processRecovery.executeSandboxCommand = (_sandboxName, command) => {
+    inspected = true;
+    return deepAgentsFixture.runDeepAgentsConfigCommand(
+      command,
+      undefined,
+      "legacy",
+      {
+        mcpServers: {
+          github: {
+            type: "http",
+            url: "https://api.githubcopilot.com/mcp/",
+            headers: {
+              Authorization: "Bearer openshell:resolve:env:v11_GITHUB_TOKEN",
+            },
+          },
+        },
+      },
+    );
+  };
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--json"]);
+  const status = JSON.parse(logLines.join("\n"));
+  writeHarnessResult(JSON.stringify({
+    inspected,
+    exitCode: process.exitCode ?? 0,
+    adapter: status.adapter,
+  }));
+`,
+    );
+    const payload = JSON.parse(stdout) as {
+      inspected: boolean;
+      exitCode: number;
+      adapter: { registered: boolean | null; detail?: string };
+    };
+
+    expect(payload).toEqual({
+      inspected: true,
+      exitCode: 0,
+      adapter: {
+        registered: null,
+        detail:
+          "Adapter inspection was skipped because a fresh OpenShell exec did not expose the credential placeholder.",
+      },
+    });
+  });
+
   it("skips status probe traffic until exact policy and provider readiness are verified (#6379)", () => {
     const home = createTempHome("nemoclaw-mcp-resolution-readiness-");
     const { stdout } = runHarness(
