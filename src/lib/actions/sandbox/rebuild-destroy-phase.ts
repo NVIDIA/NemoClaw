@@ -407,8 +407,7 @@ export async function runRebuildDestroyPhase(
   // running sandbox is left without its MCP wiring.
   let sourcePresence: RebuildRecreateSourcePresence;
   try {
-    sourcePresence = recreateJournal.observeSourceForDelete();
-    recreateJournal.markDeleting();
+    sourcePresence = recreateJournal.beginDelete();
   } catch (error) {
     const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
       sandboxName,
