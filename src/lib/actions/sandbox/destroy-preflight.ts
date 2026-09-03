@@ -28,6 +28,8 @@ import {
   getSandboxTargetGatewayName,
 } from "./gateway-target";
 
+export { teardownSandboxDashboardForward } from "./forward-recovery";
+
 export type SandboxDestroyPreflight = {
   cleanupGatewayName: string;
   runOpenshell: DestroyRunOpenshell;

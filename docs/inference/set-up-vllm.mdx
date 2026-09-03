@@ -10,7 +10,7 @@ content:
   type: "how_to"
 ---
 
-NemoClaw can connect to an existing vLLM server or install and start a managed vLLM container on supported NVIDIA GPU hosts.
+NemoClaw can connect to an existing vLLM server or, when Docker is available on `PATH`, install and start a managed vLLM container on supported NVIDIA GPU hosts.
 It also provides a Deferred N1x preview pending a physical NemoClaw Express E2E run.
 
 <Note>
@@ -98,6 +98,8 @@ For the authenticated fixed profile, evaluate host exposure from its published D
 
 ## Install or Start Managed vLLM
 
+Managed install/start is Docker-backed and requires Docker on `PATH`.
+On a Docker-less native Podman host, attach an already-running local vLLM server or install Docker before selecting managed vLLM.
 NemoClaw displays the **Install vLLM** or **Start vLLM** entry by default on DGX Spark and DGX Station.
 N1x displays the same entry with a **Deferred preview** label.
 Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm` before the managed entry appears.
