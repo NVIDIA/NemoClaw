@@ -172,6 +172,9 @@ test(
     corporateCaSource: corporateCa.sourceLabel,
     contracts: [
       "public curl installer uses GitHub clone path for the requested ref",
+      ...(runtimeProvider.id === "podman"
+        ? ["public installer leaves Docker unavailable during native Podman onboarding"]
+        : []),
       "ordinary cloud onboard migrates an allowlisted legacy credential through the real gateway",
       "tampered non-credential legacy fields do not become gateway providers",
       "successful onboard removes plaintext credentials.json",
@@ -213,7 +216,10 @@ test(
   progress.phase("install and onboard cloud sandbox");
   const install = await host.command(
     "bash",
-    ["-lc", `cd ${shellQuote(installCwd)} && curl -fsSL ${shellQuote(installUrl)} | bash`],
+    [
+      "-lc",
+      `cd ${shellQuote(installCwd)} && curl -fsSL ${shellQuote(installUrl)} | bash && ${runtimeProvider.id === "docker" ? "command -v docker >/dev/null" : "! command -v docker >/dev/null"}`,
+    ],
     {
       artifactName: "phase-1-public-install",
       env: testEnv({

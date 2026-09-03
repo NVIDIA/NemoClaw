@@ -5694,6 +5694,39 @@ jobs:
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
 
+      - name: Hide Docker CLI from native Podman public install
+        if: ${{ matrix.runtime_provider == 'podman' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          disabled_path="${RUNNER_TEMP}/nemoclaw-disabled-docker-cli"
+          docker_cli="$(command -v docker || true)"
+          install -d -m 0700 "${E2E_ARTIFACT_DIR}"
+          if [[ -n "${docker_cli}" ]]; then
+            case "${docker_cli}" in
+              /usr/bin/docker | /usr/local/bin/docker) ;;
+              *)
+                echo "::error::Refusing to move unexpected Docker CLI path: ${docker_cli}" >&2
+                exit 1
+                ;;
+            esac
+            if [[ -e "${disabled_path}" || -L "${disabled_path}" ]]; then
+              echo "::error::Docker CLI disable target already exists" >&2
+              exit 1
+            fi
+            printf 'NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s\n' "${disabled_path}" >>"${GITHUB_ENV}"
+            printf 'NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH=%s\n' "${docker_cli}" >>"${GITHUB_ENV}"
+            sudo mv -- "${docker_cli}" "${disabled_path}"
+          fi
+          if command -v docker >/dev/null 2>&1; then
+            echo "::error::Native Podman public install still resolves a Docker CLI" >&2
+            exit 1
+          fi
+          jq -n \
+            --arg originalPath "${docker_cli}" \
+            '{schemaVersion: 1, dockerClientAvailable: false, originalPath: $originalPath}' \
+            >"${E2E_ARTIFACT_DIR}/docker-client-absence.json"
+
       - name: Run cloud-onboard live Vitest test
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
@@ -5711,6 +5744,39 @@ jobs:
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/cloud-onboard.test.ts
+
+      - name: Restore Docker CLI after native Podman public install
+        if: ${{ always() && matrix.runtime_provider == 'podman' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          disabled_path="${NEMOCLAW_E2E_DISABLED_DOCKER_CLI:-}"
+          restore_path="${NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH:-}"
+          if [[ -z "${disabled_path}" && -z "${restore_path}" ]]; then
+            exit 0
+          fi
+          if [[ "${disabled_path}" != "${RUNNER_TEMP}/nemoclaw-disabled-docker-cli" ]]; then
+            echo "::error::Refusing unsafe Docker CLI restore source" >&2
+            exit 1
+          fi
+          case "${restore_path}" in
+            /usr/bin/docker | /usr/local/bin/docker) ;;
+            *)
+              echo "::error::Refusing unsafe Docker CLI restore destination" >&2
+              exit 1
+              ;;
+          esac
+          if [[ ! -e "${disabled_path}" && ! -L "${disabled_path}" ]]; then
+            echo "::error::Disabled Docker CLI is missing before restore" >&2
+            exit 1
+          fi
+          if [[ -e "${restore_path}" || -L "${restore_path}" ]]; then
+            echo "::error::Docker CLI restore destination is already occupied" >&2
+            exit 1
+          fi
+          sudo mv -- "${disabled_path}" "${restore_path}"
+          test -x "${restore_path}"
+          test "$(command -v docker)" = "${restore_path}"
 
       - name: Build trusted cloud-onboard timing summary
         if: always()
