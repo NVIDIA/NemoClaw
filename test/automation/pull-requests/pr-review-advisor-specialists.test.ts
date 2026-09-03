@@ -202,7 +202,9 @@ describe("PR review advisor specialist prompts", () => {
       expect(turn.requiredToolNames).toEqual(contextToolNames);
       expect(turn.requireToolsBeforeText).toEqual(contextToolNames);
       expect(turn.requireAssistantText).toBe(true);
-      expect(turn.requiredReadPaths).toEqual([context.diffPath]);
+      expect(turn.requiredReadOneOfPaths).toEqual([context.diffPath]);
+      expect(turn.prompt).toContain("Inspect changed files and their diffs on demand");
+      expect(turn.prompt).toContain("do not try to preload the complete diff");
       expect(turn.atomicTerminalToolName).toBeUndefined();
       expect(turn.terminalSubmitToolName).toBeUndefined();
     },
