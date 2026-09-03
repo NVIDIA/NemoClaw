@@ -7,6 +7,7 @@ import {
   addedJavaScriptViolations,
   conditionalGrowthViolations,
   diagnostics,
+  e2eAssertionBudgetGrowthViolations,
   loopGrowthViolations,
   onboardGrowthViolations,
   testOnly as checkTestOnly,
@@ -34,6 +35,55 @@ function fixtureDiff(
   };
 }
 
+function e2eAssertionBudget(
+  expectCalls: number,
+  referenceSha = "a".repeat(40),
+  file = "test/e2e/live/example.test.ts",
+): string {
+  const metrics = {
+    expectCalls,
+    matcherAssertions: expectCalls,
+    nodeAssertions: 0,
+    namedAssertionHelpers: 0,
+    failCalls: 0,
+    throwGuards: 0,
+    objectFieldAssertions: 0,
+    assertionPoints: expectCalls,
+    generatedProbeBlocks: 0,
+    generatedProbeConditions: 0,
+  };
+  return JSON.stringify({
+    $comment: "fixture",
+    schemaVersion: 1,
+    issue: 10934,
+    epic: 10920,
+    reference: {
+      mainSha: referenceSha,
+      currentMainCollectedTests: 1,
+      epicMainSha: "b".repeat(40),
+      epicCollectedTests: 95,
+      epicDirectExpectCalls: 2184,
+      epicLiveExpectCalls: 2677,
+    },
+    limits: {
+      testFileCount: 1,
+      liveFileCount: 1,
+      direct: metrics,
+      unique: metrics,
+      fileMetricOrder: [
+        "directExpectCalls",
+        "directAssertionPoints",
+        "transitiveExpectCalls",
+        "transitiveAssertionPoints",
+        "transitiveGeneratedProbeBlocks",
+      ],
+      files: {
+        [file]: [expectCalls, expectCalls, expectCalls, expectCalls, 0],
+      },
+    },
+  });
+}
+
 describe("codebase growth guardrails", () => {
   let diff: GrowthGuardrailDiff;
 
@@ -56,19 +106,20 @@ describe("codebase growth guardrails", () => {
     expect(violations, diagnostics.size(violations)).toEqual([]);
   });
 
+  it("does not increase the live E2E assertion baseline", async () => {
+    const violations = await e2eAssertionBudgetGrowthViolations(diff);
+    expect(violations, diagnostics.e2eAssertions(violations)).toEqual([]);
+  });
+
   it("does not add if statements to changed test files", async () => {
     const violations = await conditionalGrowthViolations(diff);
     expect(violations, diagnostics.conditionals(violations)).toEqual([]);
   });
 
-  it(
-    "does not add test loops directly, through one-use helpers, or through callback-forwarding helpers",
-    async () => {
-      const violations = await loopGrowthViolations(diff);
-      expect(violations, diagnostics.loops(violations)).toEqual([]);
-    },
-    60_000,
-  );
+  it("does not add test loops directly, through one-use helpers, or through callback-forwarding helpers", async () => {
+    const violations = await loopGrowthViolations(diff);
+    expect(violations, diagnostics.loops(violations)).toEqual([]);
+  }, 60_000);
 });
 
 describe("codebase growth guardrail test support", () => {
@@ -114,6 +165,92 @@ describe("codebase growth guardrail test support", () => {
       { "ci/test-file-size-budget.json": '{"defaultMaxLines":2000}' },
     );
     expect(await testSizeViolations(diff)).toContain("defaultMaxLines increased from 1500 to 2000");
+  });
+
+  it("accepts the initial live E2E assertion budget", async () => {
+    const budget = e2eAssertionBudget(1);
+    const diff = fixtureDiff(
+      [{ filename: "ci/e2e-assertion-budget.json", status: "added" }],
+      {},
+      { "ci/e2e-assertion-budget.json": budget },
+    );
+
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
+  });
+
+  it("accepts a lower live E2E assertion budget", async () => {
+    const diff = fixtureDiff(
+      [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
+      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(2) },
+      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(1) },
+    );
+
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
+  });
+
+  it("rejects a larger live E2E assertion budget and changed reference", async () => {
+    const diff = fixtureDiff(
+      [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
+      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(1) },
+      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(2, "c".repeat(40)) },
+    );
+    const violations = await e2eAssertionBudgetGrowthViolations(diff);
+
+    expect(violations).toContain("live E2E assertion reference metadata changed");
+    expect(violations).toContain("direct.expectCalls increased from 1 to 2");
+    expect(violations).toContain(
+      "test/e2e/live/example.test.ts directExpectCalls increased from 1 to 2",
+    );
+  });
+
+  it("rejects an omitted live E2E assertion budget unless its test was removed", async () => {
+    const withoutFile = JSON.parse(e2eAssertionBudget(1)) as {
+      limits: { files: Record<string, unknown> };
+    };
+    withoutFile.limits.files = {};
+    const base = { "ci/e2e-assertion-budget.json": e2eAssertionBudget(1) };
+    const head = {
+      "ci/e2e-assertion-budget.json": JSON.stringify(withoutFile),
+    };
+
+    const omitted = fixtureDiff(
+      [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
+      base,
+      head,
+    );
+    expect(await e2eAssertionBudgetGrowthViolations(omitted)).toContain(
+      "test/e2e/live/example.test.ts omitted its live E2E assertion budget",
+    );
+
+    const removed = fixtureDiff(
+      [
+        { filename: "ci/e2e-assertion-budget.json", status: "modified" },
+        { filename: "test/e2e/live/example.test.ts", status: "removed" },
+      ],
+      base,
+      head,
+    );
+    expect(await e2eAssertionBudgetGrowthViolations(removed)).toEqual([]);
+  });
+
+  it("carries a live E2E assertion budget across a test rename", async () => {
+    const renamed = "test/e2e/live/renamed.test.ts";
+    const diff = fixtureDiff(
+      [
+        { filename: "ci/e2e-assertion-budget.json", status: "modified" },
+        {
+          filename: renamed,
+          previous_filename: "test/e2e/live/example.test.ts",
+          status: "renamed",
+        },
+      ],
+      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(2) },
+      {
+        "ci/e2e-assertion-budget.json": e2eAssertionBudget(1, "a".repeat(40), renamed),
+      },
+    );
+
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
   });
 
   it("rejects a changed test that is missing from the latest PR commit", async () => {
