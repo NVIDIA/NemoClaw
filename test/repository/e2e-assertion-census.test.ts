@@ -112,12 +112,13 @@ describe("live E2E assertion census (#10934)", () => {
   test("counts asymmetric expect factories without treating them as assertions", () => {
     const metrics = analyzeAssertionSource(
       "test/e2e/live/example.test.ts",
-      "expect(value).toEqual(expect.objectContaining({ state: 'ready' }));",
+      "expect(value).toEqual(expect.objectContaining({ state: 'ready', nested: { id: 1 } }));",
     );
 
     expect(metrics.expectCalls).toBe(2);
     expect(metrics.matcherAssertions).toBe(1);
-    expect(metrics.assertionPoints).toBe(1);
+    expect(metrics.objectFieldAssertions).toBe(1);
+    expect(metrics.assertionPoints).toBe(2);
   });
 
   test("ignores assertions in comments and reports generated probe blocks separately", () => {

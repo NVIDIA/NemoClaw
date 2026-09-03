@@ -222,6 +222,13 @@ function countStaticLeaves(expression: ts.Expression): number {
   if (ts.isAsExpression(expression) || ts.isTypeAssertionExpression(expression)) {
     return countStaticLeaves(expression.expression);
   }
+  if (
+    ts.isCallExpression(expression) &&
+    rootIdentifier(expression.expression) === "expect" &&
+    expression.arguments[0]
+  ) {
+    return countStaticLeaves(expression.arguments[0]);
+  }
   if (ts.isObjectLiteralExpression(expression)) {
     return Math.max(
       1,
