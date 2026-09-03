@@ -258,6 +258,15 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(securityDependenciesPatch).toContain('-  - "hindsight-client>=0.6.1"');
     expect(securityDependenciesPatch).toContain('+  - "hindsight-client==0.6.1"');
     expect(runtimeBoundariesPatch).toContain("def nemoclaw_managed_gateway_plugins_only()");
+    expect(dockerfile).toContain(
+      `test "$(stat -c '%U:%G %a' /sandbox/.hermes/sessions)" = 'gateway:sandbox 2770'`,
+    );
+    expect(dockerfile).toContain(
+      "check_metadata /sandbox/.hermes/sessions 'gateway:sandbox 2770'",
+    );
+    expect(dockerfile).toContain(
+      "check_metadata /sandbox/.hermes/logs 'sandbox:sandbox 2770'",
+    );
     expect(runtimeBoundariesPatch).toContain("nemoclaw_protected_process_control");
     expect(runtimeBoundariesPatch).toContain("nemoclaw_sanitized_installer_env");
     expect(runtimeBoundariesPatch).toContain('uv_bin = "/usr/local/bin/uv"');

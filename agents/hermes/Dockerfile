@@ -941,13 +941,14 @@ RUN install -o root -g root -m 0444 \
 
 # Fresh named profiles do not receive config.yaml. Patch the pinned Hermes
 # fallback readers from the generated manifest, then validate a real profile.
-ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=424336d2ee3a12b4fb979ed84401ef105bf9c70e36dc3aa27a70f2a46b46def9
+ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=9d1158d9ce1870c12087ad20af5d107ab457980e178e46aac80a61fe46a62527
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py \
     | sha256sum -c - \
     || { echo "ERROR: patch-hermes-profile-policy-defaults.py hash mismatch (update NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256)" >&2; exit 1; }
-RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py
+RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py \
+    && grep -Fq 'is_managed() or nemoclaw_managed_gateway_plugins_only()' /opt/hermes/hermes_cli/config.py
 # Hermes v0.19.0 has several built-in environment override paths that can
 # re-enable an explicitly disabled platform when ambient credentials exist.
 # Apply this after the profile-policy patch above, then bind both its
@@ -1309,6 +1310,7 @@ RUN set -eu; \
         /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
         /opt/hermes/.venv/bin/python -I -c \
         "from pathlib import Path; from hermes_cli.plugins import discover_plugins, get_plugin_manager; from plugins.memory import _get_user_plugins_dir as memory_user_dir; from plugins.cron_providers import _get_user_plugins_dir as cron_user_dir; from providers import _user_plugins_dir as model_user_dir; discover_plugins(); plugin = get_plugin_manager()._plugins['nemoclaw']; assert plugin.enabled is True and plugin.error is None; assert plugin.manifest.source == 'bundled'; assert Path(plugin.manifest.path).resolve() == Path('/opt/hermes/plugins/nemoclaw').resolve(); assert memory_user_dir() is None; assert cron_user_dir() is None; assert model_user_dir() is None"; \
+    test "$(stat -c '%U:%G %a' /sandbox/.hermes/sessions)" = 'gateway:sandbox 2770'; \
     cd "$project_root"; \
     HERMES_HOME=/sandbox/.hermes \
         HERMES_BUNDLED_PLUGINS="$fake_bundled" \
@@ -1489,7 +1491,9 @@ RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 277
 # Prove the Discord ledger contract across the real image identities. The
 # gateway creates the live WAL-backed database, sandbox reads and online-copies
 # it before atomically restoring a sandbox-owned replacement, and gateway then
-# reopens that replacement for a write.
+# reopens that replacement for a write. Same-UID plugin discovery intentionally
+# tightens sandbox-owned directories, so reassert the shipped managed layout at
+# the tail of this final behavior layer.
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway)" = "gateway:sandbox 2770" \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I \
@@ -1506,7 +1510,30 @@ RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway)" = "gateway:sandbox 277
     && rm -f /sandbox/.hermes/gateway/discord_message_recovery.db \
         /sandbox/.hermes/gateway/discord_message_recovery.db-wal \
         /sandbox/.hermes/gateway/discord_message_recovery.db-shm \
-    && rm -f /opt/nemoclaw-hermes-config/image-build-probes.py
+    && rm -f /opt/nemoclaw-hermes-config/image-build-probes.py \
+    && chown gateway:sandbox /sandbox/.hermes/sessions /sandbox/.hermes/cron \
+    && chown sandbox:sandbox \
+        /sandbox/.hermes/logs \
+        /sandbox/.hermes/logs/curator \
+        /sandbox/.hermes/memories \
+        /sandbox/.hermes/pairing \
+        /sandbox/.hermes/hooks \
+        /sandbox/.hermes/image_cache \
+        /sandbox/.hermes/audio_cache \
+        /sandbox/.hermes/skills \
+    && chmod 3770 /sandbox/.hermes \
+    && chmod 2770 \
+        /sandbox/.hermes/sessions \
+        /sandbox/.hermes/cron \
+        /sandbox/.hermes/logs \
+        /sandbox/.hermes/logs/curator \
+    && chmod 770 \
+        /sandbox/.hermes/memories \
+        /sandbox/.hermes/pairing \
+        /sandbox/.hermes/hooks \
+        /sandbox/.hermes/image_cache \
+        /sandbox/.hermes/audio_cache \
+        /sandbox/.hermes/skills
 
 # Pin config hash at build time for integrity verification at startup. Invoke
 # the installed runtime guard's `_canonical_mcp_servers_digest` directly so
@@ -1614,7 +1641,11 @@ RUN check_metadata() { \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py 'root:root 755' \
-    && check_metadata /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444'
+    && check_metadata /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444' \
+    && check_metadata /sandbox/.hermes 'sandbox:sandbox 3770' \
+    && check_metadata /sandbox/.hermes/sessions 'gateway:sandbox 2770' \
+    && check_metadata /sandbox/.hermes/cron 'gateway:sandbox 2770' \
+    && check_metadata /sandbox/.hermes/logs 'sandbox:sandbox 2770'
 
 # Verify the immutable security package inventory in the completed image.
 # hadolint ignore=DL4006

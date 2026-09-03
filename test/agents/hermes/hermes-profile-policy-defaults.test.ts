@@ -48,6 +48,12 @@ DEFAULT_CONFIG = {
         "refresh_cua_driver": True,
     },
 }
+
+def _secure_dir(path):
+    if is_managed():
+        return
+    try:
+        mode_str = os.environ.get("HERMES_HOME_MODE", "").strip()
 `;
 
 const browserFixture = `\
@@ -169,7 +175,11 @@ describe("Hermes profile policy defaults", () => {
     expect(result.stdout).toContain('"show_commentary": False');
     expect(result.stdout).toContain('"pre_update_backup": False');
     expect(result.stdout).toContain('"refresh_cua_driver": False');
+    expect(result.stdout).toContain(
+      "is_managed() or nemoclaw_managed_gateway_plugins_only()",
+    );
     expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(6);
+    expect(result.stdout).toContain("NemoClaw owns the descriptor-verified cross-UID layout");
   });
 
   it("keeps the raw browser loader fail-safe when config is missing or unreadable", () => {
@@ -334,6 +344,9 @@ module._verify_session_reset_policy(reset_policy, expected)
       expect(dockerfile).toContain('test ! -e "$profile_probe_home/config.yaml"');
       expect(dockerfile).toContain("/usr/local/share/nemoclaw/hermes-managed-policy.json");
       expect(dockerfile).toMatch(/image-build-probes[.]py\s+profile-policy/u);
+      expect(dockerfile).toContain(
+        "is_managed() or nemoclaw_managed_gateway_plugins_only()",
+      );
     },
   );
 });

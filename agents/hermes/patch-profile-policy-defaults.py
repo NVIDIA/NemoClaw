@@ -25,6 +25,8 @@ homes. It also fixes independent config copies and loaders that bypass
   keys and config-load errors.
 * ``hermes_cli.main`` independently defaults update backups and CUA refresh
   on when configuration is missing or unreadable.
+* ``hermes_cli.config`` must not replace NemoClaw's descriptor-verified,
+  group-writable managed-gateway directories with upstream owner-only modes.
 
 Every input file is bound to the exact upstream v2026.7.20 source hash before
 any edit. A Hermes upgrade must deliberately refresh these hashes and source
@@ -111,6 +113,21 @@ def patch_config_source(source: str, values: dict[str, object]) -> str:
                 f"{shape!r}: expected one occurrence, found {count}"
             )
     replacements = (
+        (
+            "    if is_managed():\n"
+            "        return\n"
+            "    try:\n"
+            '        mode_str = os.environ.get("HERMES_HOME_MODE", "").strip()',
+            "    from hermes_constants import nemoclaw_managed_gateway_plugins_only\n"
+            "\n"
+            "    # NemoClaw owns the descriptor-verified cross-UID layout. Upstream's\n"
+            "    # owner-only replay would revoke sandbox backup/restore access every time\n"
+            "    # the separate managed gateway loads configuration.\n"
+            "    if is_managed() or nemoclaw_managed_gateway_plugins_only():\n"
+            "        return\n"
+            "    try:\n"
+            '        mode_str = os.environ.get("HERMES_HOME_MODE", "").strip()',
+        ),
         (
             '"restrict_evaluate": False',
             "# NemoClaw compatibility override: generated policy restricts sensitive evaluation.\n"
