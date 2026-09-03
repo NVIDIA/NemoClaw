@@ -209,7 +209,7 @@ describe("inference set provider binding", () => {
     });
 
     await expect(mutation.commit()).rejects.toThrow(
-      "redacted profile failure Fix the reported OpenShell provider profile error, then rerun this command.",
+      "redacted profile failure. Fix the reported OpenShell provider profile error, then rerun this command.",
     );
     expect(updateProvider).not.toHaveBeenCalled();
   });
@@ -534,7 +534,7 @@ describe("inference set provider binding", () => {
     });
 
     await expect(mutation.rollback()).rejects.toThrow(
-      "Could not inspect newly created provider 'compatible-endpoint': safe authentication failure No provider deletion was attempted.",
+      "Could not inspect newly created provider 'compatible-endpoint': safe authentication failure. No provider deletion was attempted.",
     );
     expect(deleteProvider).not.toHaveBeenCalled();
   });
@@ -574,7 +574,7 @@ describe("inference set provider binding", () => {
     });
 
     await expect(mutation.rollback()).rejects.toThrow(
-      "safe delete failure A follow-up inspection failed: safe inspection timeout",
+      "safe delete failure. A follow-up inspection failed: safe inspection timeout.",
     );
   });
 

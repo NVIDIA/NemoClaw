@@ -1502,10 +1502,7 @@ async function runInferenceSetWithoutHostLock(
       } catch (rollbackError) {
         const rollbackDetail =
           rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
-        throw new InferenceSetError(
-          `${detail}\n  ${rollbackDetail} Re-run onboarding before retrying this switch.`,
-          exitCode,
-        );
+        throw new InferenceSetError(`${detail}\n  ${rollbackDetail}`, exitCode);
       }
       const unchanged =
         providerMutation.action === "create"

@@ -240,7 +240,12 @@ function profileFailureMessage(error: OpenShellProviderError): string {
         return "Fix the reported OpenShell provider profile error, then rerun this command.";
     }
   })();
-  return `OpenShell could not prepare NemoClaw's checked-in OpenAI provider profile. ${error.message} ${recovery}`;
+  return `OpenShell could not prepare NemoClaw's checked-in OpenAI provider profile. ${sentence(error.message)} ${recovery}`;
+}
+
+function sentence(message: string): string {
+  const trimmed = message.trim();
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
 function incompleteProviderRevisionMessage(
@@ -297,7 +302,7 @@ function providerMutationFailureMessage(
   }
   return (
     `OpenShell could not confirm the ${action} operation for provider '${providerName}'. ` +
-    `Provider state may be partial. ${error.message} ` +
+    `Provider state may be partial. ${sentence(error.message)} ` +
     "Rerun onboarding to reconcile the provider before rerunning this command."
   );
 }
@@ -477,7 +482,7 @@ export async function prepareInferenceSetProviderBinding(options: {
       if (current.kind === "absent") return;
       if (current.kind === "error") {
         throw new InferenceSetError(
-          `Could not inspect newly created provider '${providerName}': ${current.error.message} ` +
+          `Could not inspect newly created provider '${providerName}': ${sentence(current.error.message)} ` +
             "No provider deletion was attempted. Resolve the reported OpenShell error, then rerun onboarding to reconcile the provider.",
           1,
         );
@@ -506,9 +511,9 @@ export async function prepareInferenceSetProviderBinding(options: {
       if (restored.kind === "error") {
         const mutationDetail = result.ok
           ? `OpenShell accepted removal of newly created provider '${providerName}' during rollback.`
-          : `OpenShell could not remove newly created provider '${providerName}' during rollback: ${result.error.message}`;
+          : `OpenShell could not remove newly created provider '${providerName}' during rollback: ${sentence(result.error.message)}`;
         throw new InferenceSetError(
-          `${mutationDetail} A follow-up inspection failed: ${restored.error.message} ` +
+          `${mutationDetail} A follow-up inspection failed: ${sentence(restored.error.message)} ` +
             "Resolve the reported OpenShell errors, then rerun onboarding to reconcile the provider.",
           1,
         );
@@ -516,7 +521,7 @@ export async function prepareInferenceSetProviderBinding(options: {
       if (!result.ok) {
         throw new InferenceSetError(
           `OpenShell could not remove newly created provider '${providerName}' during rollback. ` +
-            `The provider remains registered. ${result.error.message} ` +
+            `The provider remains registered. ${sentence(result.error.message)} ` +
             "Rerun onboarding to reconcile the provider before rerunning this switch.",
           1,
         );
