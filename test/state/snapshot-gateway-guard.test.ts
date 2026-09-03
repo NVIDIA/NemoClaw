@@ -247,8 +247,16 @@ function makeVmRestoreToEnv(
   const supervisorProbe = supervisorReady
     ? 'printf "GATEWAY_PID=123\\n"; exit 0'
     : 'printf "SUPERVISOR_INVALID\\n" >&2; exit 1';
-  const dashboardBind = process.env.WSL_DISTRO_NAME ? "0.0.0.0" : "127.0.0.1";
   writeExecutable(path.join(localBin, "openshell"), [
+    'case " $* " in',
+    '  *" forward service "*)',
+    '    while [ "$#" -gt 0 ]; do',
+    '      if [ "$1" = "--local" ]; then port="${2##*:}"; break; fi',
+    "      shift",
+    "    done",
+    `    exec ${JSON.stringify(process.execPath)} -e 'const net=require("node:net");const server=net.createServer(()=>{});server.listen(Number(process.argv[1]),"127.0.0.1");setTimeout(()=>server.close(()=>process.exit(0)),20000);' "$port"`,
+    "    ;;",
+    "esac",
     'case "$1 $2" in',
     '  "gateway info") printf "Gateway Info\\n\\nGateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"; exit 0 ;;',
     `  "sandbox get") [ "$3 $4" = "-g nemoclaw" ] || exit 91; for sandbox_ref in "$@"; do :; done; if [ -f ${JSON.stringify(cloneIdentityCapturedMarker)} ]; then clone_identity=${JSON.stringify(revalidatedCloneIdentity)}; else touch ${JSON.stringify(cloneIdentityCapturedMarker)}; clone_identity=${JSON.stringify(cloneIdentity)}; fi; printf "Name: %s\\nId: %s\\nPhase: Ready\\n" "$sandbox_ref" "$clone_identity"; exit 0 ;;`,
@@ -260,7 +268,7 @@ function makeVmRestoreToEnv(
     '    printf "NEMOCLAW_DCODE_PROBE=no-runtime\\n"; exit 0 ;;',
     '  "sandbox ssh-config") for sandbox_ref in "$@"; do :; done; printf "Host openshell-%s\\n  HostName 127.0.0.1\\n  User sandbox\\n" "$sandbox_ref"; exit 0 ;;',
     `  "sandbox create") ${markCloneReady}; touch ${JSON.stringify(cloneRunningMarker)}; printf "created clone-1\\n"; exit 0 ;;`,
-    `  "forward list") printf "SANDBOX BIND PORT PID STATUS\\nclone-1 ${dashboardBind} ${String(dashboardPort)} 4242 running\\n"; exit 0 ;;`,
+    '  "forward list") exit 0 ;;',
     '  "forward stop") exit 1 ;;',
     "esac",
     'if [ "$1" = "status" ]; then exit 0; fi',
