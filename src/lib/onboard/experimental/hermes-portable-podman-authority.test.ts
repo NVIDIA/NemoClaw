@@ -295,6 +295,38 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
     ]);
   });
 
+  it("performs one full executable assertion at each adjacent authority boundary", () => {
+    const generation = { executableInode: 10n, parentInode: 20n };
+    const capture = successfulCapture();
+    const executableAuthorityDeps = executableDeps(generation);
+    const readFile = vi.fn(executableAuthorityDeps.readFile!);
+    const deps = authorityDeps(capture, { ...executableAuthorityDeps, readFile });
+    const runtime = runtimeAuthority();
+    const socket = socketAuthority();
+    const sourceEnv = { PATH: "/usr/bin", HOME: "/home/test" };
+    const authority = captureHermesPortablePodmanExecutableAuthority(
+      socket,
+      runtime,
+      sourceEnv,
+      deps,
+    );
+    readFile.mockClear();
+
+    const command = createHermesPortablePodmanCommandAuthority(
+      authority,
+      socket,
+      runtime,
+      sourceEnv,
+      deps,
+    );
+    expect(readFile).toHaveBeenCalledTimes(1);
+    readFile.mockClear();
+
+    command.assertTransactionCurrent();
+
+    expect(readFile).toHaveBeenCalledTimes(1);
+  });
+
   it("checks transaction currentness without repeating the Podman behavior matrix", () => {
     const generation = { executableInode: 10n, parentInode: 20n };
     const capture = successfulCapture();
