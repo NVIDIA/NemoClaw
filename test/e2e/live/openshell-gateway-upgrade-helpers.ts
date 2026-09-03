@@ -86,6 +86,7 @@ export function legacyGatewayUpgradeHostFirewallOptions(nemoclawRef: string): {
     case "v0.0.55":
     case "v0.0.74":
     case "v0.0.89":
+    case "v0.0.115":
       networkName = undefined;
       break;
     default:

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -12,7 +13,7 @@ import { buildProviderRoutedEnv } from "./model-router-provider-routed-inference
 // onboard boundary plus a valid sandbox inference.local completion.
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-model-router";
-const ONBOARD_TIMEOUT_MS = 25 * 60_000;
+const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 

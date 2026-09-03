@@ -48,7 +48,6 @@ const HERMES_MANAGED_POLICY_JOBS = [
   "dashboard-remote-bind",
   "hermes-e2e",
   "hermes-inference-switch",
-  "hermes-shields-config",
   "security-posture",
 ];
 const HERMES_CLI_ADAPTER_REQUIRED_JOBS = [
@@ -60,7 +59,6 @@ const HERMES_MANAGED_POLICY_REQUIRED_JOBS = [
   "bedrock-runtime-compatible-anthropic",
   "channels-stop-start",
   "dashboard-remote-bind",
-  "hermes-shields-config",
 ];
 const HERMES_WRAPPER_FOCUSED_JOBS = [
   "bedrock-runtime-compatible-anthropic",
@@ -68,7 +66,6 @@ const HERMES_WRAPPER_FOCUSED_JOBS = [
   "dashboard-remote-bind",
   "hermes-e2e",
   "hermes-inference-switch",
-  "hermes-shields-config",
   "mcp-bridge",
   "security-posture",
 ];
@@ -99,7 +96,6 @@ const HERMES_START_FOCUSED_JOBS = [
   "hermes-discord",
   "hermes-e2e",
   "hermes-inference-switch",
-  "hermes-shields-config",
   "messaging-providers",
   "security-posture",
 ];
@@ -109,7 +105,6 @@ const HERMES_START_REQUIRED_JOBS = [
   "channels-stop-start",
   "dashboard-remote-bind",
   "hermes-discord",
-  "hermes-shields-config",
   "messaging-providers",
 ];
 const HERMES_MANAGED_POLICY_FILES = [
@@ -147,7 +142,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(20);
+    expect(first.version).toBe(21);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -426,41 +421,24 @@ describe("deterministic PR risk plan", () => {
 
     expect(focusedFamily?.matchedFiles).toEqual([changedFile]);
     expect(focusedFamily?.requiredJobs).toEqual(
-      expect.arrayContaining([...OPENCLAW_MESSAGING_RUNTIME_E2E_JOBS, "shields-config"]),
+      expect.arrayContaining(OPENCLAW_MESSAGING_RUNTIME_E2E_JOBS),
     );
     expect(riskPlanRequiredJobIds(result)).toEqual(
-      expect.arrayContaining([...OPENCLAW_MESSAGING_RUNTIME_E2E_JOBS, "shields-config"]),
+      expect.arrayContaining(OPENCLAW_MESSAGING_RUNTIME_E2E_JOBS),
     );
   });
 
-  it.each([
-    "scripts/runtime-state-mutation-control.py",
-    "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
-    "src/lib/shields/relock-reconfirm.ts",
-  ])("selects both Shields runtime proofs for %s (#10155)", (changedFile) => {
-    const result = plan(changedFile);
-    const focusedFamily = result.families.find((family) => family.id === "focused-e2e");
-
-    expect(focusedFamily?.matchedFiles).toContain(changedFile);
-    expect(focusedFamily?.requiredJobs).toEqual(
-      expect.arrayContaining(["hermes-shields-config", "shields-config"]),
-    );
-    expect(riskPlanRequiredJobIds(result)).toEqual(
-      expect.arrayContaining(["hermes-shields-config", "shields-config"]),
-    );
-  });
-
-  it("selects Hermes Shields and messaging proofs for the shared Hermes runtime guard (#10155)", () => {
+  it("selects Hermes messaging proofs for the shared Hermes runtime guard (#10153)", () => {
     const changedFile = "agents/hermes/runtime-config-guard.py";
     const result = plan(changedFile);
     const focusedFamily = result.families.find((family) => family.id === "focused-e2e");
 
     expect(focusedFamily?.matchedFiles).toEqual([changedFile]);
     expect(focusedFamily?.requiredJobs).toEqual(
-      expect.arrayContaining([...HERMES_MESSAGING_RUNTIME_E2E_JOBS, "hermes-shields-config"]),
+      expect.arrayContaining(HERMES_MESSAGING_RUNTIME_E2E_JOBS),
     );
     expect(riskPlanRequiredJobIds(result)).toEqual(
-      expect.arrayContaining([...HERMES_MESSAGING_RUNTIME_E2E_JOBS, "hermes-shields-config"]),
+      expect.arrayContaining(HERMES_MESSAGING_RUNTIME_E2E_JOBS),
     );
   });
 
@@ -1003,16 +981,6 @@ describe("deterministic PR risk plan", () => {
       file: "nemoclaw/src/blueprint/private-networks.ts",
       families: ["inference-policy", "credentials-security"],
       jobs: ["inference-routing", "network-policy", "cloud-inference", "security-posture"],
-    },
-    {
-      file: "src/lib/shields/mcp-policy-transition.ts",
-      families: ["credentials-security"],
-      jobs: ["cloud-inference", "security-posture"],
-    },
-    {
-      file: "src/lib/shields/verify-lock.ts",
-      families: ["credentials-security"],
-      jobs: ["cloud-inference", "security-posture"],
     },
   ])("keeps the $file security boundary in the deterministic floor", ({ file, families, jobs }) => {
     const result = plan(file);
