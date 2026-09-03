@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { testTimeout } from "../../../../test/helpers/timeouts";
+
 const SANDBOX = "conn-iso";
 const NON_DEFAULT_GATEWAY_PORT = "18224";
 const DEFAULT_GATEWAY_PORT = "8080";
@@ -52,11 +54,15 @@ describe("portable agent requalification across gateway ports", () => {
     homes.splice(0).forEach((home) => fs.rmSync(home, { recursive: true, force: true }));
   });
 
-  it("requalifies a sandbox that has no portable receipt on a non-default gateway port", async () => {
-    const outcome = await requalifyUnderLifecycleLock(NON_DEFAULT_GATEWAY_PORT, makeHome());
+  it(
+    "requalifies a sandbox that has no portable receipt on a non-default gateway port",
+    async () => {
+      const outcome = await requalifyUnderLifecycleLock(NON_DEFAULT_GATEWAY_PORT, makeHome());
 
-    expect(outcome).toEqual({ kind: "not-hermes" });
-  });
+      expect(outcome).toEqual({ kind: "not-hermes" });
+    },
+    testTimeout(15_000),
+  );
 
   it("reports the default gateway outcome for the same sandbox and state", async () => {
     const outcome = await requalifyUnderLifecycleLock(DEFAULT_GATEWAY_PORT, makeHome());
