@@ -21,46 +21,33 @@ index 32d7006d..ba2eebe9 100644
 +++ b/crates/openshell-driver-mxc/src/mxc.rs
 @@ -80,2 +80,5 @@ pub struct MxcProcessContainer {
      pub capabilities: Vec<String>,
-+    /// Opt in to schema 0.8 host-loopback ingress for a host-rendered UI.
++    /// Opt in to legacy host-loopback ingress for a host-rendered UI.
 +    /// False preserves the NVIDIA/OpenShell#2721 network posture exactly.
 +    pub host_loopback: bool,
  }
-@@ -167,5 +170,9 @@ fn oneshot_config_json(
-     }
--
-+    let schema_version = if pc.host_loopback {
-+        "0.8.0-alpha"
-+    } else {
-+        MXC_SCHEMA_VERSION
-+    };
-     let mut config = serde_json::json!({
--        "version": MXC_SCHEMA_VERSION,
-+        "version": schema_version,
-         "containerId": container_id,
-@@ -179,2 +187,3 @@ fn oneshot_config_json(
+@@ -179,2 +182,3 @@ fn oneshot_config_json(
          "processContainer": serde_json::Value::Object(pc_json),
 +        "ui": { "disable": false },
          "filesystem": serde_json::Value::Object(filesystem_json),
-@@ -182,3 +191,12 @@ fn oneshot_config_json(
+@@ -182,3 +186,11 @@ fn oneshot_config_json(
      if let Some(network) = network {
 +        debug_assert!(!pc.host_loopback);
          config["network"] = network_json(network);
 +    } else if pc.host_loopback {
 +        config["network"] = serde_json::json!({
-+            "egress": { "default": "deny" },
-+            "ingress": {
-+                "default": "allow",
-+                "hostLoopback": "allow",
-+            },
++            "defaultPolicy": "block",
++            "allowedHosts": [],
++            "blockedHosts": [],
++            "allowLocalNetwork": true,
 +        });
      }
-@@ -812,2 +830,29 @@ mod tests {
+@@ -812,2 +824,39 @@ mod tests {
          assert!(config.get("network").is_none());
 +        assert_eq!(config["ui"]["disable"], false);
 +    }
 +
 +    #[test]
-+    fn oneshot_host_loopback_uses_directional_schema_without_open_egress() {
++    fn oneshot_host_loopback_uses_legacy_ingress_with_blocked_egress() {
 +        let filesystem = MxcFilesystem {
 +            readwrite_paths: vec!["C:\\work\\demo".into()],
 +            readonly_paths: Vec::new(),
@@ -78,9 +65,19 @@ index 32d7006d..ba2eebe9 100644
 +        };
 +        let config = oneshot_config_json("sb-ui", &filesystem, &pc, &process, None);
 +
-+        assert_eq!(config["version"], "0.8.0-alpha");
-+        assert_eq!(config["network"]["egress"]["default"], "deny");
-+        assert_eq!(config["network"]["ingress"]["default"], "allow");
-+        assert_eq!(config["network"]["ingress"]["hostLoopback"], "allow");
-+        assert!(config["network"].get("defaultPolicy").is_none());
++        assert_eq!(config["version"], MXC_SCHEMA_VERSION);
++        assert_eq!(config["network"]["defaultPolicy"], "block");
++        assert_eq!(config["network"]["allowLocalNetwork"], true);
++        assert!(
++            config["network"]["allowedHosts"]
++                .as_array()
++                .unwrap()
++                .is_empty()
++        );
++        assert!(
++            config["network"]["blockedHosts"]
++                .as_array()
++                .unwrap()
++                .is_empty()
++        );
      }

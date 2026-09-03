@@ -23,10 +23,14 @@ merge commit, then applies the checked-in Node compatibility patch and rebuilds
 the packaged derivative. The patch and its exact hash are installed with the
 product. It sets `ui.disable=false` so the contained Node process can initialize,
 and adds an explicit per-sandbox `host_loopback` opt-in. Only the Control UI
-workload uses that opt-in; it selects MXC schema 0.8 directional networking with
-deny-default egress and host-loopback ingress so the host browser can reach the
-contained local listener. Other NVIDIA/OpenShell#2721 workloads retain the
-original network posture.
+and visible NemoCUA workloads use that opt-in. The ARM64 runner selects MXC's
+AppContainer fallback, whose schema 0.8 path rejects private-network ingress
+with denied egress. The scoped compatibility path therefore uses schema 0.6
+`allowLocalNetwork=true` with `defaultPolicy=block` so the host browser can
+reach a listener bound only to `127.0.0.1`. Windows' AppContainer
+`privateNetworkClientServer` capability is bidirectional on this fallback, so
+this preview does not claim governed network-policy parity. Other
+NVIDIA/OpenShell#2721 workloads retain the original network posture.
 The qualification turn executes OpenClaw in a worker inside that same contained
 Node process, avoiding an unsupported nested-process assumption while retaining
 MXC filesystem containment. The package does not bypass OpenShell or call MXC
