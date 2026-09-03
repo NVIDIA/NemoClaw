@@ -524,6 +524,65 @@ describe("blueprint policy convenience", () => {
     );
   });
 
+  it("preserves bounded sanitized mTLS detail when global policy inspection fails", async () => {
+    const tlsDirectory = "/tmp/openshell-policy-tls";
+    const urlCredential = "opaque-url-credential";
+    const assignmentCredential = "opaque-assignment-credential";
+    const truncatedTail = "must-not-survive-the-policy-detail-limit";
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", tlsDirectory);
+    const implementation = mockExeca.getMockImplementation();
+    expect(implementation).toBeDefined();
+    mockExeca.mockImplementation(async (command: string, args: string[]) =>
+      args.join(" ") === "policy list -g test-gateway --global --limit 1"
+        ? {
+            exitCode: 1,
+            stdout: "",
+            stderr:
+              `BadSignature from https://operator:${urlCredential}'fragment@example.test ` +
+              `AUTH_TOKEN=${assignmentCredential} ${"diagnostic-word ".repeat(30)} ${truncatedTail}`,
+          }
+        : implementation!(command, args),
+    );
+
+    const failure = await actionApply("default", blueprint()).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    const message = (failure as Error).message;
+    expect(message).toContain("BadSignature");
+    expect(message).not.toContain(urlCredential);
+    expect(message).not.toContain(assignmentCredential);
+    expect(message).not.toContain(truncatedTail);
+    const detail = /OpenShell detail: (.*)\. Policy-dependent operations must stop\.$/u.exec(
+      message,
+    )?.[1];
+    expect(detail).toBeDefined();
+    expect(detail!.length).toBeLessThanOrEqual(240);
+
+    const policyCalls = mockExeca.mock.calls.filter(
+      ([, args]) => Array.isArray(args) && args[0] === "policy",
+    );
+    expect(policyCalls).toHaveLength(1);
+    expect(policyCalls[0]).toEqual([
+      "openshell",
+      ["policy", "list", "-g", "test-gateway", "--global", "--limit", "1"],
+      expect.objectContaining({
+        extendEnv: false,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "test-gateway",
+          OPENSHELL_LOCAL_TLS_DIR: tlsDirectory,
+        }),
+      }),
+    ]);
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(
+      commands.some((command) =>
+        /^(?:policy get|policy set|sandbox create|provider create|inference set)\b/u.test(command),
+      ),
+    ).toBe(false);
+  });
+
   it("fails closed on malformed sandbox policy metadata", async () => {
     const implementation = mockExeca.getMockImplementation();
     expect(implementation).toBeDefined();

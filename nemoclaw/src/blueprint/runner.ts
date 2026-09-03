@@ -191,6 +191,7 @@ const MISSING_PROVIDER_INSPECTION_PATTERN =
   /(?:\bprovider\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bprovider\b|\bunknown provider\b)/i;
 const POLICY_INSPECTION_MAX_BYTES = 1024 * 1024;
 const POLICY_INSPECTION_TIMEOUT_MS = 30_000;
+const POLICY_INSPECTION_DETAIL_MAX_CHARS = 240;
 const BLUEPRINT_POLICY_REBASE_ATTEMPTS = 3;
 const UNRESTRICTED_POLICY_HOSTS = new Set(["*", "0.0.0.0", "0.0.0.0/0", "::", "::/0"]);
 
@@ -254,7 +255,9 @@ const SENSITIVE_ERROR_ASSIGNMENT =
   /(\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*)[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
 
 function boundedCommandError(stderr: string, secretValues: readonly string[] = []): string {
-  let redacted = redactCredentialText(stderr);
+  let redacted = redactCredentialText(
+    stderr.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1<REDACTED>@"),
+  );
   for (const secret of [...new Set(secretValues)]
     .filter(Boolean)
     .sort((a, b) => b.length - a.length)) {
@@ -875,10 +878,23 @@ async function runBlueprintInspectionCommand(
     throw new Error(failureMessage);
   }
   if (
-    result.exitCode !== 0 ||
     Buffer.byteLength(result.stdout, "utf8") + Buffer.byteLength(result.stderr, "utf8") >
       POLICY_INSPECTION_MAX_BYTES
   ) {
+    throw new Error(failureMessage);
+  }
+  if (result.exitCode !== 0) {
+    const output = result.stderr.trim() || result.stdout.trim();
+    if (failure.kind === "policy" && output.length > 0) {
+      const sanitized = boundedCommandError(output);
+      const detail =
+        sanitized.length > POLICY_INSPECTION_DETAIL_MAX_CHARS
+          ? `${sanitized.slice(0, POLICY_INSPECTION_DETAIL_MAX_CHARS - 1)}…`
+          : sanitized;
+      throw new Error(
+        `OpenShell ${failure.subject} policy inspection failed. OpenShell detail: ${detail}. Policy-dependent operations must stop.`,
+      );
+    }
     throw new Error(failureMessage);
   }
   return result;
