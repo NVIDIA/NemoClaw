@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Threading;
 using WixToolset.BootstrapperApplicationApi;
 
@@ -10,6 +11,15 @@ namespace Nvidia.NemoClaw.Bootstrapper;
 
 public partial class MainWindow : Window
 {
+    private static readonly IReadOnlyDictionary<string, string> AgentNames =
+        new Dictionary<string, string>
+        {
+            ["openclaw"] = "OpenClaw",
+            ["hermes"] = "Hermes Agent",
+            ["langchain-deepagents-code"] = "Deep Agents Code",
+            ["pi"] = "Pi",
+            ["nemocua"] = "NemoCUA",
+        };
     private readonly Stopwatch elapsed = new();
     private readonly DispatcherTimer elapsedTimer;
     private string logPath = string.Empty;
@@ -25,6 +35,8 @@ public partial class MainWindow : Window
     public event EventHandler? UninstallRequested;
     public event EventHandler? CancelRequested;
     public event EventHandler? OpenLogRequested;
+
+    public string SelectedAgent { get; private set; } = "openclaw";
 
     public void ShowReady(bool installed)
     {
@@ -78,7 +90,8 @@ public partial class MainWindow : Window
         else
         {
             this.SuccessTitle.Text = "NemoClaw is ready.";
-            this.SuccessDetail.Text = "The authentic OpenClaw onboarding experience is opening now. Runtime state and credentials remain outside the Windows Installer-owned directory.";
+            var agentName = AgentNames.GetValueOrDefault(this.SelectedAgent, "selected agent");
+            this.SuccessDetail.Text = $"Graphical onboarding for {agentName} is opening now. Runtime state and credentials remain outside the Windows Installer-owned directory.";
         }
     }
 
@@ -114,6 +127,14 @@ public partial class MainWindow : Window
     private void LicenseChanged(object sender, RoutedEventArgs args)
     {
         this.InstallButton.IsEnabled = this.LicenseCheck.IsChecked == true;
+    }
+
+    private void AgentSelected(object sender, RoutedEventArgs args)
+    {
+        if (sender is RadioButton { Tag: string agent })
+        {
+            this.SelectedAgent = agent;
+        }
     }
 
     private void InstallClicked(object sender, RoutedEventArgs args) => this.InstallRequested?.Invoke(this, EventArgs.Empty);

@@ -53,20 +53,23 @@ an elapsed timer and recovery log path, and launches NemoClaw after a successful
 interactive install. The MSI remains standard WiX authoring with no custom
 actions. Setup installs a native ARM64 `NemoClaw.exe` GUI launcher; launching it
 opens the local graphical onboarder without PowerShell or a visible console.
-The onboarder presents the
-OpenClaw candidate plus Hermes Agent, LangChain Deep Agents Code, Pi, and
-NemoCUA with an honest platform status for each. An agent is selectable only
-after its real runtime passes native ARM64 qualification. Blocked cards remain
-visible but disabled and explain their exact upstream or packaging gap; the
-machine-readable `agent-support.json` records the pinned versions and evidence.
+The onboarder presents real native candidates for OpenClaw, Hermes Agent,
+LangChain Deep Agents Code, Pi, and NemoCUA. Pi and NemoCUA are explicitly
+experimental. Each enabled choice passes through graphical selection and then
+hands off to its agent-specific native adapter; the machine-readable
+`agent-support.json` records pinned versions and current limitations. A card
+must be disabled, with its exact blocker shown, if its authentic runtime cannot
+complete qualification.
 
 Package qualification launches Microsoft Edge through the installed GUI
-launcher, walks all four graphical onboarding screens, and submits three turns
-through the real OpenClaw Control UI to the MXC-contained OpenClaw gateway. A
-deterministic loopback model endpoint makes the transport assertion repeatable
-without exposing a PR credential; it is evidence for UI/gateway/runtime wiring,
-not production inference quality. The workflow always attempts to upload the
-raw actual-window recording so a failed UI run retains visual diagnostics.
+launcher and separately walks all four graphical onboarding screens for each
+enabled agent. It submits three turns through OpenClaw's real Control UI, the
+real Hermes, Deep Agents Code, and Pi terminal entrypoints, and NemoCUA's
+experimental computer-use adapter. Every agent runtime runs inside native MXC.
+A deterministic loopback model endpoint makes transport assertions repeatable
+without exposing a PR credential; it is evidence for UI/runtime/model-transport
+wiring, not production inference quality. The workflow always attempts to
+upload raw actual-window recordings so failed UI runs retain visual diagnostics.
 
 The package is a preview distribution boundary. Host qualification,
 credential-backed onboarding parity, managed inference, service registration,

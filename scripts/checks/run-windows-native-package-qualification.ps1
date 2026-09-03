@@ -599,9 +599,7 @@ $pythonPath = Join-Path $installRoot 'python\python.exe'
 $hermesSitePackages = Join-Path $installRoot 'hermes\site-packages'
 $deepAgentsSitePackages = Join-Path $installRoot 'deepagents\site-packages'
 $nemoCuaEntryPath = Join-Path $installRoot 'nemocua\run_with_harness.py'
-$nemoCuaQualificationPath = Join-Path $installRoot 'qualification\run-installed-native-nemocua.mts'
 $piEntryPath = Join-Path $installRoot 'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js'
-$piQualificationPath = Join-Path $installRoot 'qualification\run-installed-native-pi.mts'
 $nodePath = Join-Path $installBin 'node.exe'
 $nemoclawEntryPath = Join-Path $installRoot 'nemoclaw\app\bin\nemoclaw.js'
 $openClawEntryPath = Join-Path $installRoot 'openclaw\node_modules\openclaw\openclaw.mjs'
@@ -706,8 +704,8 @@ try {
         'NATIVE_WINDOWS_TURN_2_OK',
         'NATIVE_WINDOWS_TURN_3_OK'
     )
-    $expectedAgentChoices = @('openclaw')
-    $expectedDisabledAgentChoices = @('hermes', 'langchain-deepagents-code', 'pi', 'nemocua')
+    $expectedAgentChoices = @('openclaw', 'hermes', 'langchain-deepagents-code', 'pi', 'nemocua')
+    $expectedDisabledAgentChoices = @()
     if ($webUiReceipt.verdict -cne 'pass' -or
         $webUiReceipt.backend -cne 'process_container' -or
         $webUiReceipt.browser -cne 'Microsoft Edge' -or
@@ -749,18 +747,22 @@ try {
     }
     Write-Host '[PASS] Graphical onboarding selected OpenClaw and completed three exact Control UI agent turns'
     $piArtifacts = Join-Path $artifactRoot 'pi'
-    Write-Host 'PS> Launch installed Pi runtime and complete three native MXC agent turns'
+    Write-Host 'PS> Launch NemoClaw, select Pi graphically, and complete three native MXC agent turns'
     Invoke-BoundedProcess `
-        -FilePath $nodePath `
-        -Arguments @('--experimental-strip-types', '--no-warnings', $piQualificationPath, '--qualification', '--artifact-directory', $piArtifacts) `
-        -Label 'Installed native Windows Pi qualification' `
+        -FilePath $nemoclawUiLauncherPath `
+        -Arguments @('--wait', '--qualification', '--agent', 'pi', '--artifact-directory', $piArtifacts) `
+        -Label 'Installed graphical native Windows Pi qualification' `
         -AllowedExitCodes @(0) | Out-Null
-    $piReceipts = @(Get-ChildItem -LiteralPath $piArtifacts -Filter 'native-windows-pi-*.json' -File -ErrorAction SilentlyContinue)
-    if ($piReceipts.Count -ne 1) {
-        Fail-PackageQualification 'Installed Pi runtime did not publish exactly one receipt.'
+    $piLaunchReceipts = @(Get-ChildItem -LiteralPath $piArtifacts -Filter 'native-windows-agent-launch-pi.json' -File -ErrorAction SilentlyContinue)
+    if ($piLaunchReceipts.Count -ne 1) {
+        Fail-PackageQualification 'Installed Pi graphical launch did not publish exactly one receipt.'
     }
-    $piReceipt = Get-Content -LiteralPath $piReceipts[0].FullName -Raw | ConvertFrom-Json
+    $piLaunchReceipt = Get-Content -LiteralPath $piLaunchReceipts[0].FullName -Raw | ConvertFrom-Json
+    $piReceipt = $piLaunchReceipt.runtimeReceipt
     if ($piReceipt.verdict -cne 'pass' -or
+        $piLaunchReceipt.selectedAgent -cne 'pi' -or
+        $piLaunchReceipt.onboardingSelection.agent -cne 'pi' -or
+        (@($piLaunchReceipt.demonstratedAgentChoices) -join ',') -cne 'openclaw,hermes,langchain-deepagents-code,pi,nemocua' -or
         $piReceipt.piVersion -cne '0.84.1' -or
         $piReceipt.backend -cne 'process_container' -or
         $piReceipt.interface -cne 'Pi terminal one-shot mode' -or
@@ -775,18 +777,22 @@ try {
     }
     Write-Host '[PASS] Installed Pi completed three real terminal agent turns inside native MXC'
     $hermesArtifacts = Join-Path $artifactRoot 'hermes'
-    Write-Host 'PS> Launch installed Hermes Agent runtime and complete three native MXC agent turns'
+    Write-Host 'PS> Launch NemoClaw, select Hermes Agent graphically, and complete three native MXC agent turns'
     Invoke-BoundedProcess `
-        -FilePath $nodePath `
-        -Arguments @('--experimental-strip-types', '--no-warnings', $piQualificationPath, '--qualification', '--agent', 'hermes', '--artifact-directory', $hermesArtifacts) `
-        -Label 'Installed native Windows Hermes qualification' `
+        -FilePath $nemoclawUiLauncherPath `
+        -Arguments @('--wait', '--qualification', '--agent', 'hermes', '--artifact-directory', $hermesArtifacts) `
+        -Label 'Installed graphical native Windows Hermes qualification' `
         -AllowedExitCodes @(0) | Out-Null
-    $hermesReceipts = @(Get-ChildItem -LiteralPath $hermesArtifacts -Filter 'native-windows-hermes-*.json' -File -ErrorAction SilentlyContinue)
-    if ($hermesReceipts.Count -ne 1) {
-        Fail-PackageQualification 'Installed Hermes runtime did not publish exactly one receipt.'
+    $hermesLaunchReceipts = @(Get-ChildItem -LiteralPath $hermesArtifacts -Filter 'native-windows-agent-launch-hermes.json' -File -ErrorAction SilentlyContinue)
+    if ($hermesLaunchReceipts.Count -ne 1) {
+        Fail-PackageQualification 'Installed Hermes graphical launch did not publish exactly one receipt.'
     }
-    $hermesReceipt = Get-Content -LiteralPath $hermesReceipts[0].FullName -Raw | ConvertFrom-Json
+    $hermesLaunchReceipt = Get-Content -LiteralPath $hermesLaunchReceipts[0].FullName -Raw | ConvertFrom-Json
+    $hermesReceipt = $hermesLaunchReceipt.runtimeReceipt
     if ($hermesReceipt.verdict -cne 'pass' -or
+        $hermesLaunchReceipt.selectedAgent -cne 'hermes' -or
+        $hermesLaunchReceipt.onboardingSelection.agent -cne 'hermes' -or
+        (@($hermesLaunchReceipt.demonstratedAgentChoices) -join ',') -cne 'openclaw,hermes,langchain-deepagents-code,pi,nemocua' -or
         $hermesReceipt.hermesVersion -cne '0.19.0' -or
         $hermesReceipt.backend -cne 'process_container' -or
         $hermesReceipt.interface -cne 'Hermes terminal one-shot mode' -or
@@ -801,18 +807,22 @@ try {
     }
     Write-Host '[PASS] Installed Hermes completed three real terminal agent turns inside native MXC'
     $deepAgentsArtifacts = Join-Path $artifactRoot 'deepagents'
-    Write-Host 'PS> Launch installed Deep Agents Code runtime and complete three native MXC agent turns'
+    Write-Host 'PS> Launch NemoClaw, select Deep Agents Code graphically, and complete three native MXC agent turns'
     Invoke-BoundedProcess `
-        -FilePath $nodePath `
-        -Arguments @('--experimental-strip-types', '--no-warnings', $piQualificationPath, '--qualification', '--agent', 'langchain-deepagents-code', '--artifact-directory', $deepAgentsArtifacts) `
-        -Label 'Installed native Windows Deep Agents Code qualification' `
+        -FilePath $nemoclawUiLauncherPath `
+        -Arguments @('--wait', '--qualification', '--agent', 'langchain-deepagents-code', '--artifact-directory', $deepAgentsArtifacts) `
+        -Label 'Installed graphical native Windows Deep Agents Code qualification' `
         -AllowedExitCodes @(0) | Out-Null
-    $deepAgentsReceipts = @(Get-ChildItem -LiteralPath $deepAgentsArtifacts -Filter 'native-windows-langchain-deepagents-code-*.json' -File -ErrorAction SilentlyContinue)
-    if ($deepAgentsReceipts.Count -ne 1) {
-        Fail-PackageQualification 'Installed Deep Agents Code runtime did not publish exactly one receipt.'
+    $deepAgentsLaunchReceipts = @(Get-ChildItem -LiteralPath $deepAgentsArtifacts -Filter 'native-windows-agent-launch-langchain-deepagents-code.json' -File -ErrorAction SilentlyContinue)
+    if ($deepAgentsLaunchReceipts.Count -ne 1) {
+        Fail-PackageQualification 'Installed Deep Agents Code graphical launch did not publish exactly one receipt.'
     }
-    $deepAgentsReceipt = Get-Content -LiteralPath $deepAgentsReceipts[0].FullName -Raw | ConvertFrom-Json
+    $deepAgentsLaunchReceipt = Get-Content -LiteralPath $deepAgentsLaunchReceipts[0].FullName -Raw | ConvertFrom-Json
+    $deepAgentsReceipt = $deepAgentsLaunchReceipt.runtimeReceipt
     if ($deepAgentsReceipt.verdict -cne 'pass' -or
+        $deepAgentsLaunchReceipt.selectedAgent -cne 'langchain-deepagents-code' -or
+        $deepAgentsLaunchReceipt.onboardingSelection.agent -cne 'langchain-deepagents-code' -or
+        (@($deepAgentsLaunchReceipt.demonstratedAgentChoices) -join ',') -cne 'openclaw,hermes,langchain-deepagents-code,pi,nemocua' -or
         $deepAgentsReceipt.deepAgentsCodeVersion -cne '0.1.55' -or
         $deepAgentsReceipt.backend -cne 'process_container' -or
         $deepAgentsReceipt.interface -cne 'Deep Agents Code terminal one-shot mode' -or
@@ -827,18 +837,22 @@ try {
     }
     Write-Host '[PASS] Installed Deep Agents Code completed three real terminal agent turns inside native MXC'
     $nemoCuaArtifacts = Join-Path $artifactRoot 'nemocua'
-    Write-Host 'PS> Launch installed NemoCUA runtime and complete three model-driven native MXC browser turns'
+    Write-Host 'PS> Launch NemoClaw, select NemoCUA graphically, and complete three model-driven native MXC browser turns'
     Invoke-BoundedProcess `
-        -FilePath $nodePath `
-        -Arguments @('--experimental-strip-types', '--no-warnings', $nemoCuaQualificationPath, '--qualification', '--artifact-directory', $nemoCuaArtifacts) `
-        -Label 'Installed native Windows NemoCUA qualification' `
+        -FilePath $nemoclawUiLauncherPath `
+        -Arguments @('--wait', '--qualification', '--agent', 'nemocua', '--artifact-directory', $nemoCuaArtifacts) `
+        -Label 'Installed graphical native Windows NemoCUA qualification' `
         -AllowedExitCodes @(0) | Out-Null
-    $nemoCuaReceipts = @(Get-ChildItem -LiteralPath $nemoCuaArtifacts -Filter 'native-windows-nemocua-*.json' -File -ErrorAction SilentlyContinue)
-    if ($nemoCuaReceipts.Count -ne 1) {
-        Fail-PackageQualification 'Installed NemoCUA runtime did not publish exactly one receipt.'
+    $nemoCuaLaunchReceipts = @(Get-ChildItem -LiteralPath $nemoCuaArtifacts -Filter 'native-windows-agent-launch-nemocua.json' -File -ErrorAction SilentlyContinue)
+    if ($nemoCuaLaunchReceipts.Count -ne 1) {
+        Fail-PackageQualification 'Installed NemoCUA graphical launch did not publish exactly one receipt.'
     }
-    $nemoCuaReceipt = Get-Content -LiteralPath $nemoCuaReceipts[0].FullName -Raw | ConvertFrom-Json
+    $nemoCuaLaunchReceipt = Get-Content -LiteralPath $nemoCuaLaunchReceipts[0].FullName -Raw | ConvertFrom-Json
+    $nemoCuaReceipt = $nemoCuaLaunchReceipt.runtimeReceipt
     if ($nemoCuaReceipt.verdict -cne 'pass' -or
+        $nemoCuaLaunchReceipt.selectedAgent -cne 'nemocua' -or
+        $nemoCuaLaunchReceipt.onboardingSelection.agent -cne 'nemocua' -or
+        (@($nemoCuaLaunchReceipt.demonstratedAgentChoices) -join ',') -cne 'openclaw,hermes,langchain-deepagents-code,pi,nemocua' -or
         $nemoCuaReceipt.nemocuaVersion -cne '0.1.0-windows-experimental' -or
         $nemoCuaReceipt.backend -cne 'process_container' -or
         $nemoCuaReceipt.interface -cne 'NemoCUA visible browser task' -or
@@ -990,6 +1004,12 @@ try {
         hermes = $hermesReceipt
         deepAgentsCode = $deepAgentsReceipt
         nemoCua = $nemoCuaReceipt
+        agentLaunches = [pscustomobject]@{
+            pi = $piLaunchReceipt
+            hermes = $hermesLaunchReceipt
+            deepAgentsCode = $deepAgentsLaunchReceipt
+            nemoCua = $nemoCuaLaunchReceipt
+        }
         msiRegistration = $msiArp
         bundleRegistration = $bundleArp
         repairRestoredDigest = $repairRestoredDigest

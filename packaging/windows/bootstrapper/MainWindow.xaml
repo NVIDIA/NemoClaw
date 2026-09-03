@@ -91,6 +91,34 @@
       <Setter Property="Padding" Value="13" />
       <Setter Property="Margin" Value="0,0,10,10" />
     </Style>
+    <Style TargetType="RadioButton" x:Key="AgentChoiceButton">
+      <Setter Property="Width" Value="330" />
+      <Setter Property="Margin" Value="0,0,10,10" />
+      <Setter Property="Padding" Value="13" />
+      <Setter Property="Background" Value="White" />
+      <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RadioButton">
+            <Border x:Name="ChoiceBorder" Padding="{TemplateBinding Padding}" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
+              <ContentPresenter />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="ChoiceBorder" Property="BorderBrush" Value="{StaticResource NvidiaGreen}" />
+                <Setter TargetName="ChoiceBorder" Property="BorderThickness" Value="2" />
+                <Setter TargetName="ChoiceBorder" Property="Background" Value="#FBFDF8" />
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ChoiceBorder" Property="Background" Value="#F5F7F2" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Window.Resources>
 
   <Grid>
@@ -157,41 +185,41 @@
         <StackPanel>
           <TextBlock Style="{StaticResource Eyebrow}" Text="WELCOME TO NEMOCLAW" />
           <TextBlock Margin="0,8,0,0" Foreground="{StaticResource Ink}" FontSize="34" FontWeight="SemiBold" Text="Choose an agent you can trust." />
-          <TextBlock Margin="0,8,0,0" Width="680" HorizontalAlignment="Left" Foreground="{StaticResource Muted}" FontSize="14" LineHeight="21" Text="Setup installs only reviewed native ARM64 bytes. Choices without a genuine Windows runtime stay visible but disabled, with the blocker explained." TextWrapping="Wrap" />
+          <TextBlock Margin="0,8,0,0" Width="680" HorizontalAlignment="Left" Foreground="{StaticResource Muted}" FontSize="14" LineHeight="21" Text="Every choice installs a real native ARM64 runtime. OpenClaw, Hermes, and Deep Agents Code are candidate surfaces; Pi and NemoCUA are explicitly experimental." TextWrapping="Wrap" />
         </StackPanel>
 
         <ScrollViewer Grid.Row="1" Margin="0,24,0,10" VerticalScrollBarVisibility="Auto">
           <WrapPanel>
-            <Border Width="330" Style="{StaticResource AgentCard}" BorderBrush="{StaticResource NvidiaGreen}" BorderThickness="2" automation:AutomationProperties.Name="OpenClaw, supported and selected">
+            <RadioButton GroupName="Agent" Tag="openclaw" IsChecked="True" Checked="AgentSelected" Style="{StaticResource AgentChoiceButton}" automation:AutomationProperties.Name="OpenClaw candidate, selected">
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="56" /><ColumnDefinition /></Grid.ColumnDefinitions>
                 <Border Width="46" Height="46" CornerRadius="9" Background="#FFF0F0"><Image Width="38" Height="38" Source="/NemoClaw.Bootstrapper;component/Assets/openclaw.png" /></Border>
-                <StackPanel Grid.Column="1"><StackPanel Orientation="Horizontal"><TextBlock FontSize="16" FontWeight="SemiBold" Text="OpenClaw" /><Border Margin="8,1,0,0" Padding="6,2" CornerRadius="8" Background="#EEF7DF"><TextBlock Foreground="{StaticResource NvidiaGreenDark}" FontSize="9" FontWeight="Bold" Text="SUPPORTED" /></Border></StackPanel><TextBlock Margin="0,5,0,0" Foreground="{StaticResource Muted}" FontSize="11" Text="Browser Control UI · three-turn native test" TextWrapping="Wrap" /></StackPanel>
+                <StackPanel Grid.Column="1"><StackPanel Orientation="Horizontal"><TextBlock FontSize="16" FontWeight="SemiBold" Text="OpenClaw" /><Border Margin="8,1,0,0" Padding="6,2" CornerRadius="8" Background="#EEF7DF"><TextBlock Foreground="{StaticResource NvidiaGreenDark}" FontSize="9" FontWeight="Bold" Text="CANDIDATE" /></Border></StackPanel><TextBlock Margin="0,5,0,0" Foreground="{StaticResource Muted}" FontSize="11" Text="Browser Control UI · three-turn native test" TextWrapping="Wrap" /></StackPanel>
               </Grid>
-            </Border>
-            <Border Width="330" Style="{StaticResource AgentCard}" Opacity="0.72" automation:AutomationProperties.Name="Hermes Agent unavailable on native ARM64">
+            </RadioButton>
+            <RadioButton GroupName="Agent" Tag="hermes" Checked="AgentSelected" Style="{StaticResource AgentChoiceButton}" automation:AutomationProperties.Name="Hermes Agent native candidate">
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="56" /><ColumnDefinition /></Grid.ColumnDefinitions>
                 <Border Width="46" Height="46" CornerRadius="9" Background="#252525"><Image Width="42" Height="32" Source="/NemoClaw.Bootstrapper;component/Assets/hermes.png" /></Border>
-                <StackPanel Grid.Column="1"><TextBlock FontSize="16" FontWeight="SemiBold" Text="Hermes Agent" /><TextBlock Margin="0,5,0,0" Foreground="{StaticResource Muted}" FontSize="11" Text="Unavailable: pinned native extensions lack ARM64 wheels." TextWrapping="Wrap" /></StackPanel>
+                <StackPanel Grid.Column="1"><TextBlock FontSize="16" FontWeight="SemiBold" Text="Hermes Agent" /><TextBlock Margin="0,5,0,0" Foreground="{StaticResource Muted}" FontSize="11" Text="Authentic native terminal agent · candidate" TextWrapping="Wrap" /></StackPanel>
               </Grid>
-            </Border>
-            <Border Width="330" Style="{StaticResource AgentCard}" Opacity="0.72" automation:AutomationProperties.Name="Deep Agents Code unavailable on native ARM64">
+            </RadioButton>
+            <RadioButton GroupName="Agent" Tag="langchain-deepagents-code" Checked="AgentSelected" Style="{StaticResource AgentChoiceButton}" automation:AutomationProperties.Name="Deep Agents Code native candidate">
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="56" /><ColumnDefinition /></Grid.ColumnDefinitions>
                 <Border Width="46" Height="46" CornerRadius="9" Background="#F0F2EE"><Image Width="42" Height="42" Source="/NemoClaw.Bootstrapper;component/Assets/deepagents.png" /></Border>
-                <StackPanel Grid.Column="1"><TextBlock FontSize="16" FontWeight="SemiBold" Text="Deep Agents Code" /><TextBlock Margin="0,5,0,0" Foreground="{StaticResource Muted}" FontSize="11" Text="Unavailable: sqlite-vec has no Windows ARM64 runtime." TextWrapping="Wrap" /></StackPanel>
+                <StackPanel Grid.Column="1"><TextBlock FontSize="16" FontWeight="SemiBold" Text="Deep Agents Code" /><TextBlock Margin="0,5,0,0" Foreground="{StaticResource Muted}" FontSize="11" Text="Authentic coding-agent terminal · candidate" TextWrapping="Wrap" /></StackPanel>
               </Grid>
-            </Border>
-            <Border Width="330" Style="{StaticResource AgentCard}" Opacity="0.72" automation:AutomationProperties.Name="Pi experimental, qualification in progress">
+            </RadioButton>
+            <RadioButton GroupName="Agent" Tag="pi" Checked="AgentSelected" Style="{StaticResource AgentChoiceButton}" automation:AutomationProperties.Name="Pi native experimental candidate">
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="56" /><ColumnDefinition /></Grid.ColumnDefinitions>
                 <Border Width="46" Height="46" CornerRadius="9" Background="#F0F2EE"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#353735" FontSize="20" FontWeight="Bold" Text="π" /></Border>
-                <StackPanel Grid.Column="1"><StackPanel Orientation="Horizontal"><TextBlock FontSize="16" FontWeight="SemiBold" Text="Pi" /><Border Margin="8,1,0,0" Padding="6,2" CornerRadius="8" Background="#FFF4D8"><TextBlock Foreground="#7C5C00" FontSize="9" FontWeight="Bold" Text="EXPERIMENTAL" /></Border></StackPanel><TextBlock Margin="0,5,0,0" Foreground="{StaticResource Muted}" FontSize="11" Text="Native payload found; disabled until three-turn proof passes." TextWrapping="Wrap" /></StackPanel>
+                <StackPanel Grid.Column="1"><StackPanel Orientation="Horizontal"><TextBlock FontSize="16" FontWeight="SemiBold" Text="Pi" /><Border Margin="8,1,0,0" Padding="6,2" CornerRadius="8" Background="#FFF4D8"><TextBlock Foreground="#7C5C00" FontSize="9" FontWeight="Bold" Text="EXPERIMENTAL" /></Border></StackPanel><TextBlock Margin="0,5,0,0" Foreground="{StaticResource Muted}" FontSize="11" Text="Real native terminal runtime" TextWrapping="Wrap" /></StackPanel>
               </Grid>
-            </Border>
-            <Border Width="330" Style="{StaticResource AgentCard}" Opacity="0.72" automation:AutomationProperties.Name="NemoCUA experimental and unavailable on native ARM64">
+            </RadioButton>
+            <RadioButton GroupName="Agent" Tag="nemocua" Checked="AgentSelected" Style="{StaticResource AgentChoiceButton}" automation:AutomationProperties.Name="NemoCUA native experimental candidate">
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="56" /><ColumnDefinition /></Grid.ColumnDefinitions>
                 <Border Width="46" Height="46" CornerRadius="9" Background="#EFF5E7"><Image Width="38" Height="38" Source="/NemoClaw.Bootstrapper;component/Assets/nemocua.png" /></Border>
-                <StackPanel Grid.Column="1"><StackPanel Orientation="Horizontal"><TextBlock FontSize="16" FontWeight="SemiBold" Text="NemoCUA" /><Border Margin="8,1,0,0" Padding="6,2" CornerRadius="8" Background="#FFF4D8"><TextBlock Foreground="#7C5C00" FontSize="9" FontWeight="Bold" Text="EXPERIMENTAL" /></Border></StackPanel><TextBlock Margin="0,5,0,0" Foreground="{StaticResource Muted}" FontSize="11" Text="Unavailable: current runtime is container-image-only." TextWrapping="Wrap" /></StackPanel>
+                <StackPanel Grid.Column="1"><StackPanel Orientation="Horizontal"><TextBlock FontSize="16" FontWeight="SemiBold" Text="NemoCUA" /><Border Margin="8,1,0,0" Padding="6,2" CornerRadius="8" Background="#FFF4D8"><TextBlock Foreground="#7C5C00" FontSize="9" FontWeight="Bold" Text="EXPERIMENTAL" /></Border></StackPanel><TextBlock Margin="0,5,0,0" Foreground="{StaticResource Muted}" FontSize="11" Text="Visible browser-control harness" TextWrapping="Wrap" /></StackPanel>
               </Grid>
-            </Border>
+            </RadioButton>
           </WrapPanel>
         </ScrollViewer>
 

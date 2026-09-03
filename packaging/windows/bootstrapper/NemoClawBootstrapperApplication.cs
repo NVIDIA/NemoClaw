@@ -13,6 +13,14 @@ namespace Nvidia.NemoClaw.Bootstrapper;
 internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
 {
     private const int UserCancelled = 1223;
+    private static readonly HashSet<string> AllowedAgents =
+    [
+        "openclaw",
+        "hermes",
+        "langchain-deepagents-code",
+        "pi",
+        "nemocua",
+    ];
     private IBootstrapperCommand? command;
     private MainWindow? window;
     private Dispatcher? dispatcher;
@@ -191,10 +199,15 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         try
         {
             var launcher = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "NVIDIA", "NemoClaw", "bin", "NemoClaw.exe");
+            var selectedAgent = this.window?.SelectedAgent ?? "openclaw";
+            if (!AllowedAgents.Contains(selectedAgent))
+            {
+                selectedAgent = "openclaw";
+            }
             var process = Process.Start(new ProcessStartInfo
             {
                 FileName = launcher,
-                Arguments = "--agent openclaw",
+                Arguments = $"--agent {selectedAgent}",
                 UseShellExecute = true,
                 WorkingDirectory = Path.GetDirectoryName(launcher)!,
             });

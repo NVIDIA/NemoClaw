@@ -42,7 +42,7 @@
               <span class="agent-mark openclaw"><img src="./assets/openclaw.png" alt="" /></span>
               <span class="agent-copy">
                 <span class="card-heading"
-                  >OpenClaw <span class="badge supported">Supported</span></span
+                  >OpenClaw <span class="badge supported">Candidate</span></span
                 >
                 <span class="vendor">OpenClaw</span>
                 <span class="description"
@@ -52,97 +52,85 @@
             </button>
 
             <button
-              class="agent-card unavailable"
+              class="agent-card"
               type="button"
               role="radio"
               aria-checked="false"
-              aria-disabled="true"
-              disabled
               data-agent="hermes"
-              data-blocker="Hermes Agent 0.19.0 requires cryptography 46.0.7 and pywinpty 2.x, which do not publish Windows ARM64 wheels."
             >
               <span class="agent-mark hermes"><img src="./assets/hermes.png" alt="" /></span>
               <span class="agent-copy">
                 <span class="card-heading"
-                  >Hermes Agent <span class="badge unavailable">Unavailable</span></span
+                  >Hermes Agent <span class="badge supported">Candidate</span></span
                 >
                 <span class="vendor">Nous Research</span>
                 <span class="description"
-                  >Pinned native extensions are not published for Windows ARM64. x64 emulation is
-                  not accepted for this preview.</span
+                  >Native terminal agent with memory and skills. Optional PTY and cryptographic
+                  integrations remain outside this experimental slice.</span
                 >
               </span>
             </button>
 
             <button
-              class="agent-card unavailable"
+              class="agent-card"
               type="button"
               role="radio"
               aria-checked="false"
-              aria-disabled="true"
-              disabled
               data-agent="langchain-deepagents-code"
-              data-blocker="Deep Agents Code 0.1.55 requires sqlite-vec, which does not publish a Windows ARM64 wheel."
             >
               <span class="agent-mark deepagents"
                 ><img src="./assets/deepagents.png" alt=""
               /></span>
               <span class="agent-copy">
                 <span class="card-heading"
-                  >Deep Agents Code <span class="badge unavailable">Unavailable</span></span
+                  >Deep Agents Code <span class="badge supported">Candidate</span></span
                 >
                 <span class="vendor">LangChain</span>
                 <span class="description"
-                  >Its pinned SQLite vector dependency has no Windows ARM64 runtime. Source
-                  substitution is not used.</span
+                  >Authentic non-interactive coding-agent terminal surface with a native ARM64
+                  dependency subset.</span
                 >
               </span>
             </button>
 
             <button
-              class="agent-card experimental unavailable"
+              class="agent-card experimental"
               type="button"
               role="radio"
               aria-checked="false"
-              aria-disabled="true"
-              disabled
               data-agent="pi"
-              data-blocker="Pi 0.84.1 has a Windows ARM64 payload, but remains disabled until its real three-turn MXC qualification passes."
             >
               <span class="agent-mark pi"><img src="./assets/pi.svg" alt="" /></span>
               <span class="agent-copy">
                 <span class="card-heading"
                   >Pi <span class="badge">Experimental</span>
-                  <span class="badge unavailable">Qualifying</span></span
+                  <span class="badge supported">Candidate</span></span
                 >
                 <span class="vendor">Pi</span>
                 <span class="description"
-                  >Native ARM64 payload identified; executable MXC qualification is still in
-                  progress.</span
+                  >Real Pi terminal runtime with the package's Windows ARM64 native clipboard
+                  component.</span
                 >
               </span>
             </button>
 
             <button
-              class="agent-card experimental unavailable"
+              class="agent-card experimental"
               type="button"
               role="radio"
               aria-checked="false"
-              aria-disabled="true"
-              disabled
               data-agent="nemocua"
-              data-blocker="The NemoCUA preview is currently container-image-only and has no Windows-native ARM64 entrypoint."
             >
               <span class="agent-mark nemocua"><img src="./assets/nemocua.png" alt="" /></span>
               <span class="agent-copy">
                 <span class="card-heading"
                   >NemoCUA <span class="badge">Experimental</span>
-                  <span class="badge unavailable">Unavailable</span></span
+                  <span class="badge supported">Candidate</span></span
                 >
                 <span class="vendor">NVIDIA</span>
                 <span class="description"
-                  >The current runtime is container-image-only; this no-Docker installer will not
-                  substitute another execution path.</span
+                  >Native experimental browser harness using a visible Edge surface and
+                  MXC-contained agent process.</span
                 >
               </span>
             </button>

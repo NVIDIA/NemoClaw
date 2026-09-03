@@ -340,8 +340,8 @@ if ($null -ne $qualification -and (-not $qualification.repairRestoredDigest -or
     $qualification.webUi.verdict -cne 'pass' -or
     [int]$qualification.webUi.turnCount -ne 3 -or
     $qualification.webUi.onboardingSelection.agent -cne 'openclaw' -or
-    (@($qualification.webUi.demonstratedAgentChoices) -join ',') -cne 'openclaw' -or
-    (@($qualification.webUi.disabledAgentChoices | ForEach-Object { $_.agent }) -join ',') -cne 'hermes,langchain-deepagents-code,pi,nemocua' -or
+    (@($qualification.webUi.demonstratedAgentChoices) -join ',') -cne 'openclaw,hermes,langchain-deepagents-code,pi,nemocua' -or
+    @($qualification.webUi.disabledAgentChoices).Count -ne 0 -or
     @($qualification.webUi.turns).Count -ne 3 -or
     $qualification.pi.verdict -cne 'pass' -or
     [int]$qualification.pi.turnCount -ne 3 -or
@@ -351,6 +351,10 @@ if ($null -ne $qualification -and (-not $qualification.repairRestoredDigest -or
     [int]$qualification.deepAgentsCode.turnCount -ne 3 -or
     $qualification.nemoCua.verdict -cne 'pass' -or
     [int]$qualification.nemoCua.turnCount -ne 3 -or
+    $qualification.agentLaunches.pi.onboardingSelection.agent -cne 'pi' -or
+    $qualification.agentLaunches.hermes.onboardingSelection.agent -cne 'hermes' -or
+    $qualification.agentLaunches.deepAgentsCode.onboardingSelection.agent -cne 'langchain-deepagents-code' -or
+    $qualification.agentLaunches.nemoCua.onboardingSelection.agent -cne 'nemocua' -or
     @($qualification.nativeExecutions).Count -ne 4 -or
     @($qualification.applicationExecutions).Count -ne 6 -or
     @($qualification.packageDescendantProhibitedStarts).Count -ne 0 -or
@@ -648,8 +652,8 @@ public static class NemoClawConsoleVideoEncoder
     if ($null -ne $recordedQualification -and ($recordedQualification.webUi.verdict -cne 'pass' -or
         [int]$recordedQualification.webUi.turnCount -ne 3 -or
         $recordedQualification.webUi.onboardingSelection.agent -cne 'openclaw' -or
-        (@($recordedQualification.webUi.demonstratedAgentChoices) -join ',') -cne 'openclaw' -or
-        (@($recordedQualification.webUi.disabledAgentChoices | ForEach-Object { $_.agent }) -join ',') -cne 'hermes,langchain-deepagents-code,pi,nemocua' -or
+        (@($recordedQualification.webUi.demonstratedAgentChoices) -join ',') -cne 'openclaw,hermes,langchain-deepagents-code,pi,nemocua' -or
+        @($recordedQualification.webUi.disabledAgentChoices).Count -ne 0 -or
         @($recordedQualification.webUi.turns).Count -ne 3)) {
         $captureFailures.Add('The recorded qualification receipt does not prove visible agent choices and three OpenClaw Control UI turns.')
     }
@@ -670,7 +674,11 @@ public static class NemoClawConsoleVideoEncoder
     }
     if ($null -ne $recordedQualification -and ($recordedQualification.nemoCua.verdict -cne 'pass' -or
         [int]$recordedQualification.nemoCua.turnCount -ne 3 -or
-        @($recordedQualification.nemoCua.turns).Count -ne 3)) {
+        @($recordedQualification.nemoCua.turns).Count -ne 3 -or
+        $recordedQualification.agentLaunches.pi.onboardingSelection.agent -cne 'pi' -or
+        $recordedQualification.agentLaunches.hermes.onboardingSelection.agent -cne 'hermes' -or
+        $recordedQualification.agentLaunches.deepAgentsCode.onboardingSelection.agent -cne 'langchain-deepagents-code' -or
+        $recordedQualification.agentLaunches.nemoCua.onboardingSelection.agent -cne 'nemocua')) {
         $captureFailures.Add('The recorded qualification receipt does not prove three real NemoCUA browser turns.')
     }
     $initialQualificationHash = if (Test-Path -LiteralPath $qualificationPath -PathType Leaf) {

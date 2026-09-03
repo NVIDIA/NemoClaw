@@ -29,7 +29,7 @@ const TURN_PROOFS = [
   ["Reply exactly with NATIVE_WINDOWS_TURN_3_OK", "NATIVE_WINDOWS_TURN_3_OK"],
 ];
 
-const DISABLED_AGENT_PROOF = ["hermes", "langchain-deepagents-code", "pi", "nemocua"];
+const AGENT_CHOICE_PROOF = ["openclaw", "hermes", "langchain-deepagents-code", "pi", "nemocua"];
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -195,16 +195,6 @@ async function startOnboardingServer(installRoot, openClawUrl, evidenceRoot) {
         const inference = new Set(["nvidia", "openrouter", "compatible", "local"]);
         if (!agents.has(submitted?.agent) || !inference.has(submitted?.inference))
           throw new Error("onboarding selection is invalid");
-        if (submitted.agent !== "openclaw") {
-          response.writeHead(409, { "content-type": "application/json" });
-          response.end(
-            JSON.stringify({
-              message:
-                "This agent is visible for native Windows planning, but its pinned ARM64 runtime has not passed qualification yet. Choose OpenClaw for this candidate.",
-            }),
-          );
-          return;
-        }
         selection = {
           schemaVersion: 1,
           agent: submitted.agent,
@@ -217,7 +207,27 @@ async function startOnboardingServer(installRoot, openClawUrl, evidenceRoot) {
           "utf8",
         );
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify({ redirect: `${openClawUrl}/chat` }));
+        response.end(
+          JSON.stringify({
+            redirect:
+              submitted.agent === "openclaw"
+                ? `${openClawUrl}/chat`
+                : `/launching.html?agent=${encodeURIComponent(submitted.agent)}`,
+          }),
+        );
+        return;
+      }
+      if (request.method === "GET" && pathname === "/launching.html") {
+        const agent = new URL(request.url ?? "/", "http://127.0.0.1").searchParams.get("agent");
+        const displayName = agentNamesForLaunch[agent] ?? "selected agent";
+        response.writeHead(200, {
+          "cache-control": "no-store",
+          "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'",
+          "content-type": "text/html; charset=utf-8",
+        });
+        response.end(
+          `<!doctype html><html><head><meta charset="utf-8"><title>NemoClaw Native Windows · ${displayName}</title><style>:root{font-family:"Segoe UI",system-ui;color:#202020;background:#f1f2ef}body{min-height:100vh;margin:0;display:grid;place-items:center}.card{width:650px;padding:52px;background:white;border:1px solid #ddd;border-radius:16px;box-shadow:0 24px 70px #0001}.mark{width:18px;height:18px;background:#76b900;border-radius:4px}h1{font-size:34px;letter-spacing:-.03em;margin:22px 0 10px}p{color:#666;line-height:1.6}.status{margin-top:26px;padding:16px;background:#f0f7e4;border-left:4px solid #76b900;color:#3f5f12;font-weight:600}</style></head><body><main class="card"><div class="mark"></div><h1>Starting ${displayName}</h1><p>NemoClaw is creating a native OpenShell/MXC sandbox and opening the agent's authentic Windows surface.</p><div class="status">Native ARM64 · no WSL · no Docker</div></main></body></html>`,
+        );
         return;
       }
       const file = files.get(pathname);
@@ -258,7 +268,22 @@ async function startOnboardingServer(installRoot, openClawUrl, evidenceRoot) {
   };
 }
 
-async function driveBrowser(openClawRoot, onboardingUrl, openClawUrl, evidenceRoot, qualification) {
+const agentNamesForLaunch = {
+  openclaw: "OpenClaw",
+  hermes: "Hermes Agent",
+  "langchain-deepagents-code": "Deep Agents Code",
+  pi: "Pi",
+  nemocua: "NemoCUA",
+};
+
+async function driveBrowser(
+  openClawRoot,
+  onboardingUrl,
+  openClawUrl,
+  evidenceRoot,
+  qualification,
+  targetAgent = "openclaw",
+) {
   const playwrightRoot = requiredDirectory(
     path.join(openClawRoot, "node_modules", "openclaw", "node_modules", "playwright-core"),
     "installed Playwright browser driver",
@@ -305,20 +330,11 @@ async function driveBrowser(openClawRoot, onboardingUrl, openClawUrl, evidenceRo
     }
     const demonstratedAgentChoices = [];
     const disabledAgentChoices = [];
-    console.log("WEB UI> Showing supported, experimental, and unavailable agent choices");
+    console.log("WEB UI> Showing every real native agent choice");
     await sleep(3000);
-    for (const agent of DISABLED_AGENT_PROOF) {
+    for (const agent of AGENT_CHOICE_PROOF) {
       const card = page.locator(`[data-agent='${agent}']`);
-      if (!(await card.isDisabled())) fail(`unqualified agent ${agent} remained selectable`);
-      const blocker = await card.getAttribute("data-blocker");
-      if (!blocker) fail(`unqualified agent ${agent} did not explain its blocker`);
-      await card.scrollIntoViewIfNeeded();
-      disabledAgentChoices.push({ agent, blocker });
-      console.log(`WEB UI> UNAVAILABLE ${agent}: ${blocker}`);
-      await sleep(1800);
-    }
-    for (const agent of ["openclaw"]) {
-      const card = page.locator(`[data-agent='${agent}']`);
+      if (await card.isDisabled()) fail(`native agent ${agent} is not selectable`);
       await card.click();
       if ((await card.getAttribute("aria-checked")) !== "true")
         fail(`graphical onboarding did not select ${agent}`);
@@ -326,6 +342,7 @@ async function driveBrowser(openClawRoot, onboardingUrl, openClawUrl, evidenceRo
       console.log(`WEB UI> AGENT CHOICE selected ${agent}`);
       await sleep(1500);
     }
+    await page.locator(`[data-agent='${targetAgent}']`).click();
     await page.screenshot({
       path: path.join(evidenceRoot, "onboarding-agent.png"),
       fullPage: false,
@@ -348,6 +365,17 @@ async function driveBrowser(openClawRoot, onboardingUrl, openClawUrl, evidenceRo
     });
     await sleep(2500);
     await page.locator("#launch").click();
+    if (targetAgent !== "openclaw") {
+      await page.waitForURL(`${onboardingUrl}/launching.html?agent=${targetAgent}`, {
+        timeout: 30_000,
+      });
+      await page.screenshot({
+        path: path.join(evidenceRoot, `onboarding-${targetAgent}-launching.png`),
+        fullPage: false,
+      });
+      await sleep(3000);
+      return { browserVersion, demonstratedAgentChoices, disabledAgentChoices, turns: [] };
+    }
     await page.waitForURL(`${openClawUrl}/chat`, { timeout: 30_000 });
     const composer = page.locator(".agent-chat__composer-combobox > textarea").first();
     await composer.waitFor({ state: "visible", timeout: 90_000 });
@@ -392,10 +420,123 @@ async function driveBrowser(openClawRoot, onboardingUrl, openClawUrl, evidenceRo
   }
 }
 
+async function runSelectedNonOpenClaw(
+  installRoot,
+  installedNode,
+  installedOpenClawRoot,
+  targetAgent,
+  qualification,
+  evidenceRoot,
+) {
+  const onboarding = await startOnboardingServer(installRoot, "", evidenceRoot);
+  let browserProof;
+  try {
+    console.log(`WEB UI> Launching graphical onboarding for ${agentNamesForLaunch[targetAgent]}`);
+    browserProof = await driveBrowser(
+      installedOpenClawRoot,
+      onboarding.url,
+      "",
+      evidenceRoot,
+      qualification,
+      targetAgent,
+    );
+  } finally {
+    await new Promise((resolve) => onboarding.server.close(() => resolve()));
+  }
+  const onboardingSelection = onboarding.selection();
+  if (onboardingSelection?.agent !== targetAgent)
+    fail(`graphical onboarding did not select ${targetAgent}`);
+  if (!qualification)
+    fail(`${agentNamesForLaunch[targetAgent]} requires completed provider configuration`);
+
+  const runtimeEvidence = path.join(evidenceRoot, "runtime");
+  fs.mkdirSync(runtimeEvidence, { recursive: true });
+  const isNemoCua = targetAgent === "nemocua";
+  const runner = requiredFile(
+    path.join(
+      installRoot,
+      "qualification",
+      isNemoCua ? "run-installed-native-nemocua.mts" : "run-installed-native-pi.mts",
+    ),
+    `${agentNamesForLaunch[targetAgent]} native adapter`,
+  );
+  const arguments_ = [
+    "--experimental-strip-types",
+    "--no-warnings",
+    runner,
+    "--qualification",
+    "--artifact-directory",
+    runtimeEvidence,
+  ];
+  if (!isNemoCua) arguments_.push("--agent", targetAgent);
+  const environment = allowlistedWindowsEnvironment({
+    NEMOCLAW_NATIVE_INSTALL_ROOT: installRoot,
+  });
+  console.log(
+    `WEB UI> Handing off to the authentic ${agentNamesForLaunch[targetAgent]} native surface`,
+  );
+  const exitCode = await new Promise((resolve, reject) => {
+    const child = spawn(installedNode, arguments_, {
+      cwd: installRoot,
+      env: environment,
+      stdio: "inherit",
+      windowsHide: false,
+    });
+    child.once("error", reject);
+    child.once("close", (code) => resolve(code ?? 1));
+  });
+  if (exitCode !== 0) fail(`${agentNamesForLaunch[targetAgent]} native adapter exited ${exitCode}`);
+  const receiptPrefixes = {
+    hermes: "native-windows-hermes-",
+    "langchain-deepagents-code": "native-windows-langchain-deepagents-code-",
+    pi: "native-windows-pi-",
+    nemocua: "native-windows-nemocua-",
+  };
+  const runtimeReceipts = fs
+    .readdirSync(runtimeEvidence)
+    .filter(
+      (name) =>
+        name.startsWith(receiptPrefixes[targetAgent]) &&
+        name.endsWith(".json") &&
+        fs.statSync(path.join(runtimeEvidence, name)).isFile(),
+    );
+  if (runtimeReceipts.length !== 1)
+    fail(`${agentNamesForLaunch[targetAgent]} did not publish exactly one runtime receipt`);
+  const runtimeReceipt = JSON.parse(
+    fs.readFileSync(path.join(runtimeEvidence, runtimeReceipts[0]), "utf8"),
+  );
+  if (runtimeReceipt.verdict !== "pass" || runtimeReceipt.turnCount !== 3)
+    fail(`${agentNamesForLaunch[targetAgent]} runtime receipt is incomplete`);
+  const receipt = {
+    schemaVersion: 1,
+    classification: "installed-nemoclaw-native-windows-graphical-agent-launch",
+    architecture: "arm64",
+    selectedAgent: targetAgent,
+    onboardingSelection,
+    demonstratedAgentChoices: browserProof.demonstratedAgentChoices,
+    disabledAgentChoices: browserProof.disabledAgentChoices,
+    browser: "Microsoft Edge",
+    browserVersion: browserProof.browserVersion,
+    runtimeReceipt,
+    turnCount: runtimeReceipt.turnCount,
+    verdict: "pass",
+  };
+  fs.writeFileSync(
+    path.join(evidenceRoot, `native-windows-agent-launch-${targetAgent}.json`),
+    `${JSON.stringify(receipt, null, 2)}\n`,
+    "utf8",
+  );
+  console.log(
+    `WEB UI> PASS graphical onboarding and three ${agentNamesForLaunch[targetAgent]} turns`,
+  );
+}
+
 async function main() {
   if (process.platform !== "win32" || process.arch !== "arm64")
     fail("native Windows ARM64 is required");
   const qualification = process.argv.includes("--qualification");
+  const targetAgent = argumentValue("--agent") ?? "openclaw";
+  if (!Object.hasOwn(agentNamesForLaunch, targetAgent)) fail(`unknown agent ${targetAgent}`);
   const installRoot = requiredDirectory(
     process.env.NEMOCLAW_NATIVE_INSTALL_ROOT ?? "",
     "NemoClaw installation root",
@@ -421,6 +562,29 @@ async function main() {
   );
   requiredFile(path.join(installRoot, "mxc", "wxc-exec.exe"), "MXC executor");
 
+  const selectedEvidenceRoot = path.resolve(
+    argumentValue("--artifact-directory") ??
+      path.join(
+        process.env.LOCALAPPDATA ?? installRoot,
+        "NVIDIA",
+        "NemoClaw",
+        "evidence",
+        targetAgent,
+      ),
+  );
+  fs.mkdirSync(selectedEvidenceRoot, { recursive: true });
+  if (targetAgent !== "openclaw") {
+    await runSelectedNonOpenClaw(
+      installRoot,
+      installedNode,
+      installedOpenClawRoot,
+      targetAgent,
+      qualification,
+      selectedEvidenceRoot,
+    );
+    return;
+  }
+
   const systemDrive = process.env.SystemDrive;
   if (!systemDrive || !/^[A-Za-z]:$/u.test(systemDrive)) fail("SystemDrive is invalid");
   const systemRoot = requiredDirectory(process.env.SystemRoot ?? "", "Windows system root");
@@ -432,11 +596,7 @@ async function main() {
     if (fs.existsSync(directory)) fail("qualification root already exists");
     fs.mkdirSync(directory);
   }
-  const evidenceRoot = path.resolve(
-    argumentValue("--artifact-directory") ??
-      path.join(process.env.LOCALAPPDATA ?? runRoot, "NVIDIA", "NemoClaw", "evidence"),
-  );
-  fs.mkdirSync(evidenceRoot, { recursive: true });
+  const evidenceRoot = selectedEvidenceRoot;
   const node = path.join(runtimeRoot, "node.exe");
   const openClawRoot = path.join(runtimeRoot, "openclaw");
   console.log("WEB UI> Staging the exact installed OpenClaw runtime for MXC");
@@ -587,6 +747,7 @@ async function main() {
       uiUrl,
       evidenceRoot,
       qualification,
+      targetAgent,
     );
     const onboardingSelection = onboarding.selection();
     await new Promise((resolve, reject) => {
