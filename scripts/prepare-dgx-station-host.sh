@@ -226,7 +226,7 @@ dgx_station_no_ota_stock_version_is_supported() {
 }
 
 dgx_station_release_profile() {
-  local path=$1 ota_pretty="" ota_key pretty version build_date platform
+  local path=$1 ota_pretty="" ota_key version build_date platform
   dgx_station_release_schema_is_valid "$path" || return 1
   platform="$(dgx_station_release_value "$path" DGX_PLATFORM)" || return 1
   [[ "$platform" == "DGX Server for GALAXY-GB300" ]] || return 1
@@ -234,19 +234,13 @@ dgx_station_release_profile() {
   # DGX OS keeps its upgrade history in the DGX_OTA_* fields, so a host that has
   # an OTA history is classified by the most recent OTA version it applied.
   #
-  # A host provisioned from a full DGX OS image also carries the identity field
-  # DGX_OTA_PRETTY_NAME="DGX OS"; when that field is present it must read exactly
-  # "DGX OS". It is absent on a host that was first installed from an older base
-  # image (for example 7.4.1-GB300ws) and later OTA-upgraded, because an OTA
-  # upgrade never adds that field. In that case, fall back to the hardware
-  # identity and require DGX_PRETTY_NAME="NVIDIA DGX GB300WS" so that other
-  # release lineages that also emit DGX_OTA_* fields stay fail-closed.
+  # A host provisioned from a full DGX OS image also carries the lineage field
+  # DGX_OTA_PRETTY_NAME="DGX OS". When present, it must match. OTA upgrades can
+  # omit that field, so the hardware, platform, and latest OTA version own the
+  # fallback. DGX_PRETTY_NAME remains diagnostic release text.
   if dgx_station_release_value "$path" DGX_OTA_VERSION >/dev/null 2>&1; then
     if ota_pretty="$(dgx_station_release_value "$path" DGX_OTA_PRETTY_NAME 2>/dev/null)"; then
       [[ "$ota_pretty" == "DGX OS" ]] || return 1
-    else
-      pretty="$(dgx_station_release_value "$path" DGX_PRETTY_NAME)" || return 1
-      [[ "$pretty" == "NVIDIA DGX GB300WS" ]] || return 1
     fi
     version="$(dgx_station_release_value "$path" DGX_OTA_VERSION)" || return 1
     case "$version" in
@@ -256,30 +250,27 @@ dgx_station_release_profile() {
     return 0
   fi
 
-  # Stock DGX OS 7.6 omits DGX_OTA_* metadata. Reviewed builds use two exact
-  # DGX_PRETTY_NAME values. The factory-runtime path still proves GB300, driver,
-  # ECC, Docker, CDI, and container GPU capability before onboarding. Other
-  # no-OTA factory images remain exact profiles because they carry separately
-  # qualified stacks.
+  # Stock DGX OS 7.6 omits DGX_OTA_* metadata. Hardware, platform, version, and
+  # the factory-runtime checks own qualification. DGX_PRETTY_NAME remains
+  # diagnostic text. Other no-OTA factory images remain exact build profiles
+  # because they carry separately qualified stacks.
   for ota_key in DGX_OTA_PRETTY_NAME DGX_OTA_VERSION DGX_OTA_DATE; do
     dgx_station_release_value "$path" "$ota_key" >/dev/null 2>&1 && return 1
   done
-  pretty="$(dgx_station_release_value "$path" DGX_PRETTY_NAME)" || return 1
   version="$(dgx_station_release_value "$path" DGX_SWBUILD_VERSION)" || return 1
   build_date="$(dgx_station_release_value "$path" DGX_SWBUILD_DATE)" || return 1
 
-  if [[ "$pretty" == "NVIDIA DGX GB300WS" || "$pretty" == "NVIDIA DGX Server" ]] \
-    && dgx_station_no_ota_stock_version_is_supported "$version"; then
+  if dgx_station_no_ota_stock_version_is_supported "$version"; then
     printf '%s' supported-dgx-os
     return 0
   fi
 
-  case "${pretty}|${version}|${build_date}" in
-    "NVIDIA DGX Server|7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16")
+  case "${version}|${build_date}" in
+    "7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16")
       printf '%s' supported-colossus-baseos
       ;;
-    "NVIDIA DGX GB300WS|7.5.0|2026-05-13-18-42-38" | \
-      "NVIDIA DGX GB300WS|7.5.0|2026-06-16-11-48-10")
+    "7.5.0|2026-05-13-18-42-38" | \
+      "7.5.0|2026-06-16-11-48-10")
       printf '%s' supported-ai-developer-tools
       ;;
     *) return 1 ;;

@@ -585,8 +585,9 @@ describe("platform readiness qualification (#7410)", () => {
     ["7.6.0", "NVIDIA DGX Server"],
     ["7.6.1", "NVIDIA DGX GB300WS"],
     ["7.6.1", "NVIDIA DGX Server"],
+    ["7.6.1", "NVIDIA DGX GB300 Workstation"],
   ])(
-    "accepts no-OTA DGX OS %s with the %s display name without binding its build date (#9898)",
+    "accepts no-OTA DGX OS %s without binding the %s display name or build date (#9898, #10928)",
     (version, prettyName) => {
       expect(
         collectStationIdentity(
@@ -615,7 +616,6 @@ describe("platform readiness qualification (#7410)", () => {
   });
 
   it.each([
-    ["different lineage", { prettyName: "Unrecognized DGX Station" }],
     ["older no-OTA version", { version: "7.5.0" }],
     ["future release family", { version: "7.7.0" }],
     ["non-numeric patch", { version: "7.6.rc1" }],

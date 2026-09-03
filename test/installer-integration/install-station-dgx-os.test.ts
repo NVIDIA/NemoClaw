@@ -232,8 +232,9 @@ dgx_station_release_state "$DGX_RELEASE"
     ["7.6.0", "NVIDIA DGX GB300WS", "2026-07-14-13-59-06"],
     ["7.6.0", "NVIDIA DGX Server", "2026-07-30-10-25-15"],
     ["7.6.1", "NVIDIA DGX GB300WS", "2026-08-01-00-00-00"],
+    ["7.6.1", "NVIDIA DGX GB300 Workstation", "2026-08-01-00-00-00"],
   ])(
-    "classifies no-OTA stock DGX OS %s with the %s display name without binding its build date (#7417, #9898)",
+    "classifies no-OTA stock DGX OS %s without binding the %s display name or build date (#7417, #9898, #10928)",
     (version, pretty, buildDate) => {
       const release = writeNoOtaDgxOs76Release({ version, pretty, buildDate });
       const { result, output } = runSourced(
@@ -251,10 +252,6 @@ dgx_station_release_state "$DGX_RELEASE"
   );
 
   it.each([
-    [
-      "unrecognized display name",
-      writeNoOtaDgxOs76Release({ pretty: "NVIDIA DGX Customer Image" }),
-    ],
     ["older no-OTA version", writeNoOtaDgxOs76Release({ version: "7.5.0" })],
     ["future release family", writeNoOtaDgxOs76Release({ version: "7.7.0" })],
     ["non-numeric patch", writeNoOtaDgxOs76Release({ version: "7.6.rc1" })],
@@ -293,10 +290,6 @@ dgx_station_release_state "$DGX_RELEASE"
       writeNoOtaFactoryRelease("colossus-baseos", { buildDate: "2026-04-03-00-00-00" }),
     ],
     [
-      "AI Developer Tools product drift",
-      writeNoOtaFactoryRelease("ai-developer-tools", { pretty: "NVIDIA DGX Server" }),
-    ],
-    [
       "AI Developer Tools build date drift",
       writeNoOtaFactoryRelease("ai-developer-tools", { buildDate: "2026-06-17-00-00-00" }),
     ],
@@ -327,7 +320,6 @@ dgx_station_release_state "$DGX_RELEASE"
       "unproven Station platform identity",
       writeDgxReleaseFixture("7.5.0", 'DGX_PLATFORM="Not Specified"'),
     ],
-    ["missing DGX_OTA_PRETTY_NAME", writeDgxReleaseFixture("7.5.0", "", null)],
     ["BaseOS identity", writeDgxReleaseFixture("7.5.0", "", "NVIDIA BaseOS")],
     ["unknown field", writeDgxReleaseFixture("7.5.0", 'PAYLOAD="$(touch /tmp/nope)"')],
     [
@@ -484,26 +476,25 @@ dgx_station_release_state "$DGX_RELEASE"
     expect(result.stdout).toBe(expected);
   });
 
-  it("classifies an OTA-upgraded GB300 workstation without the fresh-install marker as supported-dgx-os (#7103)", () => {
-    const release = writeOtaUpgradedRelease();
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
+  it.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server", "NVIDIA DGX GB300 Workstation"])(
+    "classifies an OTA-upgraded GB300 workstation with the %s display name as supported-dgx-os (#7103, #10928)",
+    (pretty) => {
+      const release = writeOtaUpgradedRelease({ pretty });
+      const { result, output } = runSourced(
+        STATION_PREPARE,
+        `
 stat() { printf '0|0|644|256\n'; }
 dgx_station_release_state "$DGX_RELEASE"
 `,
-      { DGX_RELEASE: release },
-    );
+        { DGX_RELEASE: release },
+      );
 
-    expect(result.status, output).toBe(0);
-    expect(result.stdout).toBe("supported-dgx-os");
-  });
+      expect(result.status, output).toBe(0);
+      expect(result.stdout).toBe("supported-dgx-os");
+    },
+  );
 
   it.each([
-    [
-      "a non-workstation DGX Server identity",
-      writeOtaUpgradedRelease({ pretty: "NVIDIA DGX Server" }),
-    ],
     ["an out-of-scope latest OTA version", writeOtaUpgradedRelease({ otaVersion: "7.6.0" })],
     ["a future latest OTA version", writeOtaUpgradedRelease({ otaVersion: "7.7.0" })],
   ])("keeps a marker-less OTA host fail-closed with %s (#7103)", (_scenario, release) => {

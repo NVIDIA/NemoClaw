@@ -191,10 +191,7 @@ function parseStationRelease(contents: string): StationProfile {
   const otaVersions = values.get("DGX_OTA_VERSION") ?? [];
   if (otaVersions.length > 0) {
     const otaPretty = values.get("DGX_OTA_PRETTY_NAME")?.[0];
-    if (
-      (otaPretty !== undefined && otaPretty !== "DGX OS") ||
-      (otaPretty === undefined && values.get("DGX_PRETTY_NAME")?.[0] !== "NVIDIA DGX GB300WS")
-    ) {
+    if (otaPretty !== undefined && otaPretty !== "DGX OS") {
       return "unsupported-dgx-os";
     }
     return ["7.2.0", "7.4.0", "7.5.0"].includes(otaVersions.at(-1) ?? "")
@@ -204,23 +201,21 @@ function parseStationRelease(contents: string): StationProfile {
   if (values.has("DGX_OTA_PRETTY_NAME") || values.has("DGX_OTA_DATE")) {
     return "unsupported-dgx-os";
   }
-  const noOtaPrettyName = values.get("DGX_PRETTY_NAME")?.[0];
   const noOtaVersion = values.get("DGX_SWBUILD_VERSION")?.[0];
   if (
-    (noOtaPrettyName === "NVIDIA DGX GB300WS" || noOtaPrettyName === "NVIDIA DGX Server") &&
     /^7\.6\.[0-9]+$/u.test(noOtaVersion ?? "") &&
     values.has("DGX_SWBUILD_DATE")
   ) {
     return "supported-dgx-os";
   }
-  const identity = [noOtaPrettyName, noOtaVersion, values.get("DGX_SWBUILD_DATE")?.[0]].join("|");
-  if (identity === "NVIDIA DGX Server|7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16") {
+  const identity = [noOtaVersion, values.get("DGX_SWBUILD_DATE")?.[0]].join("|");
+  if (identity === "7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16") {
     return "supported-colossus-baseos";
   }
-  if (identity === "NVIDIA DGX GB300WS|7.5.0|2026-06-16-11-48-10") {
+  if (identity === "7.5.0|2026-06-16-11-48-10") {
     return "supported-ai-developer-tools";
   }
-  if (identity === "NVIDIA DGX GB300WS|7.5.0|2026-05-13-18-42-38") {
+  if (identity === "7.5.0|2026-05-13-18-42-38") {
     return "supported-ai-developer-tools";
   }
   return "unsupported-dgx-os";

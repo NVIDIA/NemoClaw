@@ -1223,8 +1223,8 @@ detect_express_platform
     expect(result.stdout).toBe("DGX Station");
   });
 
-  it.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server"])(
-    "recognizes the no-OTA DGX OS 7.6 family with the %s display name (#9898)",
+  it.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server", "NVIDIA DGX GB300 Workstation"])(
+    "recognizes the no-OTA DGX OS 7.6 family without binding the %s display name (#9898, #10928)",
     (pretty) => {
       const result = detectExpressPlatformForStockDgxRelease(
         "DGX Station GB300",
@@ -1270,7 +1270,7 @@ detect_express_platform
       [
         'DGX_NAME="DGX Server"',
         'DGX_PRETTY_NAME="NVIDIA DGX GB300WS"',
-        'DGX_SWBUILD_DATE="2026-04-02-08-20-16"',
+        'DGX_SWBUILD_DATE="2099-01-02-03-04-05"',
         'DGX_SWBUILD_VERSION="7.5.0-GB300ws-GB200ws"',
         'DGX_PLATFORM="DGX Server for GALAXY-GB300"',
         "",
@@ -1300,7 +1300,6 @@ detect_express_platform
     ["future OTA version", stockDgxRelease("7.7.0")],
     ["unreviewed no-OTA version", noOtaDgxOs76Release("7.7.0")],
     ["wrong DGX platform", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB200")],
-    ["missing DGX_OTA_PRETTY_NAME", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB300", null)],
     ["BaseOS identity", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB300", "NVIDIA BaseOS")],
     [
       "duplicate non-history field",
@@ -1403,9 +1402,8 @@ printf 'PROMPT_REACHED\n'
     expect(output).toContain("outside the recognized Station Express release-metadata boundary");
     expect(output).toContain("generic Ubuntu 24.04 ARM64");
     expect(output).toContain("OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0");
-    expect(output).toContain(
-      'no-OTA DGX OS 7.6.x profile with DGX_PRETTY_NAME="NVIDIA DGX GB300WS" or DGX_PRETTY_NAME="NVIDIA DGX Server"',
-    );
+    expect(output).toContain("no-OTA DGX OS 7.6.x profile");
+    expect(output).toContain("DGX_PRETTY_NAME is diagnostic and does not determine qualification");
     expect(output).not.toContain("PROMPT_REACHED");
   });
 

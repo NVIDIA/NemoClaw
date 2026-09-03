@@ -130,8 +130,8 @@ describe("DGX Station release marker readiness", () => {
     expect(report.exitCode).toBe(2);
   });
 
-  it.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server"])(
-    "reports a trusted marker with the %s display name as a qualified Station (#9898)",
+  it.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server", "NVIDIA DGX GB300 Workstation"])(
+    "reports a trusted marker as qualified without binding the %s display name (#9898, #10928)",
     (prettyName) => {
       const release = STATION_RELEASE.replace("NVIDIA DGX GB300WS", prettyName);
       const report = reportForStationHost(createStationFixture("regular-file", release));
