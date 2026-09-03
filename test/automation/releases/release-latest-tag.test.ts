@@ -242,8 +242,7 @@ function confirmationFor(plan: Record<string, string>): string {
 function completeBrief(plan: Record<string, string>): string {
   const candidate = plan.candidateCommit ?? plan.originMainCommit;
   return [
-    `# NemoClaw ${plan.nextTag} release brief`,
-    "",
+    `# NemoClaw ${plan.nextTag} release brief`, "", "## Release range", "",
     `- Candidate: \`${candidate}\``,
     ...(plan.candidateSelection === "historical"
       ? [`- Historical candidate exception: ${plan.historicalCandidateException}`]

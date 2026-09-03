@@ -125,6 +125,8 @@ Create `../nemoclaw-release-vX.Y.Z/release-brief.md` from the plan range. Includ
 - the latest included cumulative docs PR, coverage commit, later commits and PRs, changed-path
   result, review and check state, open managed docs PRs, and maintainer decision;
 - the base-image aggregate URL and identity;
+- the plan-bound candidate and complete canonical Launchable receipt emitted by
+  `inspect-launchable-evidence.ts`, exactly matching current inspector output before tag confirmation;
 - the newest full E2E result and every requested run;
 - the maintainer's E2E decision; and
 - `Exceptions: None` or the plain-language exception reason.

@@ -177,6 +177,9 @@ Replace every `TODO_RELEASE_BRIEF` prompt in that Markdown file with:
 - the latest included cumulative docs PR, coverage commit, later commits and PRs, changed-path
   result, review and check state, open managed docs PRs, and maintainer decision;
 - candidate E2E workflow, attempt, and successful `base-image-publication` job URL;
+- the plan-bound candidate and complete canonical Launchable receipt emitted by
+  `inspect-launchable-evidence.ts`; refresh the inspector output and require an exact match before tag
+  confirmation;
 - the newest full E2E result and every focused or full rerun result, including SHA, time, age, status,
   conclusion, and URLs;
 - the maintainer's E2E choice; and

@@ -136,8 +136,9 @@ IFS= read -r first_brief_line <"$brief_snapshot" \
 [[ "$first_brief_line" == "$expected_heading" ]] \
   || fail "Release brief heading does not match planned tag $tag"
 candidate_count="$(awk -v expected="$expected_candidate" '
-  /^## / { exit }
-  $0 == expected { count++ }
+  $0 == "## Release range" { in_range = 1; next }
+  in_range && /^## / { exit }
+  in_range && $0 == expected { count++ }
   END { print count + 0 }
 ' "$brief_snapshot")" || fail "Could not validate the release brief candidate"
 [[ "$candidate_count" == "1" ]] \

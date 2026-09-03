@@ -100,11 +100,13 @@ Only a maintainer with access to the repository's Brev organization may perform 
    must also equal `nclaw-e2e-<run-id>-<attempt>`. When the receipt contains an ID, require it to equal
    the reported ID. A pending-create receipt may have an empty ID.
 3. Authenticate the Brev CLI to the repository's Brev organization through the maintainer-approved
-   credential path. Run `brev ls --json`. For a pending-create receipt, obtain the ID only when exactly
-   one row has the deterministic reported name. Otherwise, permit deletion only when exactly one row
-   has both the reported name and ID. If the row is absent, skip deletion. If the inventory is unavailable,
-   ambiguous, or differs by name or ID, prohibit deletion and escalate the handoff to the Brev
-   organization owner.
+   credential path. For a pending-create receipt, reconcile `brev ls --json` every 15 seconds for the
+   same bounded 120-second create deadline used by the lane. Obtain the ID only when exactly one row
+   has the deterministic reported name. Do not treat one absent inventory as resolved: if no unique row
+   appears by the deadline and no terminal create result proves absence, keep recovery unresolved and
+   escalate the handoff to the Brev organization owner. For a receipt with an ID, permit deletion only
+   when exactly one row has both the reported name and ID. If that row is absent, skip deletion. If the
+   inventory is unavailable, ambiguous, or differs by name or ID, prohibit deletion and escalate.
 4. Run `brev delete <workspace-id>` once, using the validated ID rather than the workspace name.
    Brev CLI version 0.6.334 accepts a workspace name or ID and resolves the ID immediately before its
    delete request. If deletion fails, record cleanup as unresolved and use a private route from

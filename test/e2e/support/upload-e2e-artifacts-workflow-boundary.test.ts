@@ -123,6 +123,22 @@ describe("E2E artifact uploads", () => {
     );
   });
 
+  it.each(["staging-brev-launchable", "staging-brev-launchable-identity"])(
+    "rejects %s uploads without recovery evidence",
+    (jobName) => {
+      const workflow = mutableWorkflow(),
+        upload = uploadStep(workflow.jobs[jobName]);
+      upload.with!.path = String(upload.with!.path).replace(
+        "${{ steps.workspace.outputs.work_dir }}/workspace-recovery.json\n",
+        "",
+      );
+
+      expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+        `${jobName} upload-e2e-artifacts must preserve its explicit name/path contract`,
+      );
+    },
+  );
+
   it("allows the named protected build-cache step to upload directly", () => {
     const workflow = mutableWorkflow();
     const job = workflow.jobs["managed-image-multiarch-startup"];
