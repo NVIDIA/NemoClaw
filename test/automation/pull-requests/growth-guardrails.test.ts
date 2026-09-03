@@ -7,7 +7,7 @@ import {
   addedJavaScriptViolations,
   conditionalGrowthViolations,
   diagnostics,
-  dockerfileSetupGrowthViolations,
+  dockerfileBudgetGrowthViolations,
   loopGrowthViolations,
   onboardGrowthViolations,
   testOnly as checkTestOnly,
@@ -52,9 +52,9 @@ describe("codebase growth guardrails", () => {
     expect(violations, diagnostics.onboard(violations)).toEqual([]);
   });
 
-  it("does not grow deprecated stock Dockerfile setup steps", async () => {
-    const violations = await dockerfileSetupGrowthViolations(diff);
-    expect(violations, diagnostics.dockerfileSetup(violations)).toEqual([]);
+  it("keeps the root Dockerfile within its ratcheted budget", async () => {
+    const violations = await dockerfileBudgetGrowthViolations(diff);
+    expect(violations, diagnostics.dockerfileBudget(violations)).toEqual([]);
   });
 
   it("keeps changed test files within the size budget", async () => {
@@ -109,49 +109,55 @@ describe("codebase growth guardrail test support", () => {
     expect(await onboardGrowthViolations(diff)).toEqual(["src/lib/onboard.ts grew by 1 line(s)"]);
   });
 
-  it("rejects growth in deprecated stock Dockerfile setup steps", async () => {
+  it("rejects root Dockerfile line and byte growth", async () => {
     const diff = fixtureDiff(
       [{ filename: "Dockerfile", status: "modified" }],
       { Dockerfile: "FROM scratch\nRUN true\n" },
       { Dockerfile: "FROM scratch\nRUN true\nCOPY setup /setup\nRUN /setup\n" },
     );
-    expect(await dockerfileSetupGrowthViolations(diff)).toEqual([
-      "Dockerfile setup instructions increased from 2 to 4",
-      "Dockerfile setup instruction lines increased from 2 to 4",
+    expect(await dockerfileBudgetGrowthViolations(diff)).toEqual([
+      "Dockerfile line budget increased from 2 to 4",
+      "Dockerfile byte budget increased from 22 to 51",
     ]);
   });
 
-  it("rejects added setup commands hidden inside an existing Dockerfile instruction", async () => {
+  it("rejects root Dockerfile growth within an existing line", async () => {
     const diff = fixtureDiff(
       [{ filename: "Dockerfile", status: "modified" }],
-      { Dockerfile: "FROM scratch\nRUN first\n" },
-      { Dockerfile: ["FROM scratch", "RUN first \\", "  && second", ""].join("\n") },
+      { Dockerfile: "FROM scratch\nRUN true\n" },
+      { Dockerfile: "FROM scratch\nRUN true && second\n" },
     );
-    expect(await dockerfileSetupGrowthViolations(diff)).toEqual([
-      "Dockerfile setup instruction lines increased from 2 to 3",
+    expect(await dockerfileBudgetGrowthViolations(diff)).toEqual([
+      "Dockerfile byte budget increased from 22 to 32",
     ]);
   });
 
-  it("allows Dockerfile setup shrinkage and documentation growth", async () => {
+  it("rejects documentation-only root Dockerfile growth", async () => {
     const diff = fixtureDiff(
       [{ filename: "Dockerfile", status: "modified" }],
-      {
-        Dockerfile: ["FROM scratch", "RUN first \\", "  && second", "COPY setup /setup", ""].join(
-          "\n",
-        ),
-      },
-      {
-        Dockerfile:
-          "# Dockerfile stock setup is deprecated; use managed-image startup.\nFROM scratch\nRUN first\n",
-      },
+      { Dockerfile: "FROM scratch\n" },
+      { Dockerfile: "# Managed image recipe\nFROM scratch\n" },
     );
-    expect(await dockerfileSetupGrowthViolations(diff)).toEqual([]);
+    expect(await dockerfileBudgetGrowthViolations(diff)).toEqual([
+      "Dockerfile line budget increased from 1 to 2",
+      "Dockerfile byte budget increased from 13 to 36",
+    ]);
   });
 
-  it("directs deprecated Dockerfile setup growth to managed setup", () => {
-    const message = diagnostics.dockerfileSetup(["Dockerfile setup instructions increased"]);
-    expect(message).toContain("Dockerfile-based stock setup is deprecated");
+  it("allows the root Dockerfile budget to shrink", async () => {
+    const diff = fixtureDiff(
+      [{ filename: "Dockerfile", status: "modified" }],
+      { Dockerfile: "FROM scratch\nRUN true\n" },
+      { Dockerfile: "FROM scratch\n" },
+    );
+    expect(await dockerfileBudgetGrowthViolations(diff)).toEqual([]);
+  });
+
+  it("requires a maintainer decision to increase the root Dockerfile budget", () => {
+    const message = diagnostics.dockerfileBudget(["Dockerfile byte budget increased"]);
+    expect(message).toContain("Host-side stock Dockerfile onboarding is deprecated");
     expect(message).toContain("managed-image startup profile, bootstrap, or runtime-provider path");
+    expect(message).toContain("record a maintainer decision before increasing this budget");
   });
 
   it("rejects a larger default test file budget", async () => {

@@ -10,9 +10,7 @@ const FALLBACK_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';
 const JAVASCRIPT_FILE_RE = /\.(?:cjs|js|mjs)$/;
 const TEST_FILE_RE = /^(?:test|src|nemoclaw\/src)\/.*\.(?:test|spec)\.(?:[cm]?[jt]s)$/;
 const ONBOARD_ENTRY = "src/lib/onboard.ts";
-const DEPRECATED_STOCK_DOCKERFILE = "Dockerfile";
-const DOCKERFILE_INSTRUCTION_RE =
-  /^(?:ADD|ARG|CMD|COPY|ENTRYPOINT|ENV|EXPOSE|FROM|HEALTHCHECK|LABEL|MAINTAINER|ONBUILD|RUN|SHELL|STOPSIGNAL|USER|VOLUME|WORKDIR)\b/iu;
+const STOCK_DOCKERFILE = "Dockerfile";
 
 type TestFileSizeBudget = {
   readonly defaultMaxLines: number;
@@ -35,18 +33,11 @@ function countLines(text: string | null): number {
   return newlineCount + (/(?:\r\n|\r|\n)$/.test(text) ? 0 : 1);
 }
 
-function dockerfileSetupMetrics(source: string | null): {
-  instructionLines: number;
-  instructions: number;
-} {
-  if (source === null) return { instructionLines: 0, instructions: 0 };
-  const setupLines = source
-    .split(/\r\n|\r|\n/u)
-    .map((line) => line.trim())
-    .filter((line) => line !== "" && !line.startsWith("#"));
+/** Keep the line and byte ratchets independent so same-line growth cannot bypass the budget. */
+function dockerfileBudget(source: string | null): { bytes: number; lines: number } {
   return {
-    instructionLines: setupLines.length,
-    instructions: setupLines.filter((line) => DOCKERFILE_INSTRUCTION_RE.test(line)).length,
+    bytes: source === null ? 0 : Buffer.byteLength(source, "utf8"),
+    lines: countLines(source),
   };
 }
 
@@ -316,29 +307,30 @@ export async function onboardGrowthViolations(diff: GrowthGuardrailDiff): Promis
   return headLines > baseLines ? [`${ONBOARD_ENTRY} grew by ${headLines - baseLines} line(s)`] : [];
 }
 
-export async function dockerfileSetupGrowthViolations(
+/** Report root Dockerfile growth while its host-side stock onboarding fallback is deprecated. */
+export async function dockerfileBudgetGrowthViolations(
   diff: GrowthGuardrailDiff,
 ): Promise<string[]> {
   const changed = diff.files.some(
     ({ filename, previous_filename }) =>
-      filename === DEPRECATED_STOCK_DOCKERFILE || previous_filename === DEPRECATED_STOCK_DOCKERFILE,
+      filename === STOCK_DOCKERFILE || previous_filename === STOCK_DOCKERFILE,
   );
   if (!changed) return [];
   const [base, head] = await Promise.all([
-    diff.readBase([DEPRECATED_STOCK_DOCKERFILE]),
-    diff.readHead([DEPRECATED_STOCK_DOCKERFILE]),
+    diff.readBase([STOCK_DOCKERFILE]),
+    diff.readHead([STOCK_DOCKERFILE]),
   ]);
-  const baseMetrics = dockerfileSetupMetrics(base.get(DEPRECATED_STOCK_DOCKERFILE) ?? null);
-  const headMetrics = dockerfileSetupMetrics(head.get(DEPRECATED_STOCK_DOCKERFILE) ?? null);
+  const baseBudget = dockerfileBudget(base.get(STOCK_DOCKERFILE) ?? null);
+  const headBudget = dockerfileBudget(head.get(STOCK_DOCKERFILE) ?? null);
   const violations: string[] = [];
-  if (headMetrics.instructions > baseMetrics.instructions) {
+  if (headBudget.lines > baseBudget.lines) {
     violations.push(
-      `${DEPRECATED_STOCK_DOCKERFILE} setup instructions increased from ${baseMetrics.instructions} to ${headMetrics.instructions}`,
+      `${STOCK_DOCKERFILE} line budget increased from ${baseBudget.lines} to ${headBudget.lines}`,
     );
   }
-  if (headMetrics.instructionLines > baseMetrics.instructionLines) {
+  if (headBudget.bytes > baseBudget.bytes) {
     violations.push(
-      `${DEPRECATED_STOCK_DOCKERFILE} setup instruction lines increased from ${baseMetrics.instructionLines} to ${headMetrics.instructionLines}`,
+      `${STOCK_DOCKERFILE} byte budget increased from ${baseBudget.bytes} to ${headBudget.bytes}`,
     );
   }
   return violations;
@@ -469,11 +461,12 @@ export const diagnostics = {
       details,
       "Move new behavior into a focused module under src/lib/onboard/.",
     ),
-  dockerfileSetup: (details: readonly string[]) =>
+  /** Explain the intentional review boundary rather than treating active managed-image use as an exemption. */
+  dockerfileBudget: (details: readonly string[]) =>
     formatList(
-      "The deprecated stock Dockerfile setup surface grew.",
+      "The root Dockerfile budget grew.",
       details,
-      "Dockerfile-based stock setup is deprecated. Add stock setup through the managed-image startup profile, bootstrap, or runtime-provider path instead; keep Dockerfile changes limited to shrinking this deprecated setup surface.",
+      "Host-side stock Dockerfile onboarding is deprecated. Keep the root Dockerfile at or below its existing line and byte budgets. Move new onboarding behavior to the managed-image startup profile, bootstrap, or runtime-provider path, or record a maintainer decision before increasing this budget.",
     ),
   size: (details: readonly string[]) =>
     formatList(
@@ -495,4 +488,4 @@ export const diagnostics = {
     ),
 };
 
-export const testOnly = { countIfStatements, countTestLoops, dockerfileSetupMetrics };
+export const testOnly = { countIfStatements, countTestLoops };
