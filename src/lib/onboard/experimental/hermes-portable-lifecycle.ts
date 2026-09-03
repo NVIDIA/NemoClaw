@@ -802,17 +802,18 @@ function qualify(
     },
     options,
   );
-  operatingAuthority.assertCurrent();
   const receipt = operatingAuthority.receipt;
   if (!contextMatches(receipt, context)) fail("registry context disagrees with the active receipt");
   assertCurrentHermesPortableStoredStartupContract(receipt.startup, sandboxName);
   const assertExecutable =
     deps.assertOpenShellExecutableAuthority ?? assertHermesPortableOpenShellExecutableAuthority;
-  const initialCommandAuthority = buildHermesPortableOpenShellCommandAuthority(
-    receipt,
-    commandEnv,
-    assertExecutable,
-  );
+  const hasTransactionAuthority = snapshot.successor !== undefined;
+  const initialCommandAuthority = hasTransactionAuthority
+    ? {
+        env: buildHermesPortableOpenShellEnv(commandEnv, receipt.runtimeAuthority),
+        executablePath: receipt.openshellExecutableAuthority.executable.executablePath,
+      }
+    : buildHermesPortableOpenShellCommandAuthority(receipt, commandEnv, assertExecutable);
   const rawCapture =
     deps.captureOpenShell ??
     defaultCaptureOpenShell(
@@ -824,8 +825,16 @@ function qualify(
     args,
     timeoutMs,
   ) => {
-    buildHermesPortableOpenShellCommandAuthority(receipt, commandEnv, assertExecutable);
-    return rawCapture(args, timeoutMs);
+    if (!hasTransactionAuthority) {
+      buildHermesPortableOpenShellCommandAuthority(receipt, commandEnv, assertExecutable);
+      return rawCapture(args, timeoutMs);
+    }
+    operatingAuthority.assertTransactionCurrent();
+    try {
+      return rawCapture(args, timeoutMs);
+    } finally {
+      operatingAuthority.assertTransactionCurrent();
+    }
   };
   const liveIdentity = observeOpenShellIdentity(receipt, capture, acceptedPhases);
   requireRegistry(receipt, liveIdentity.liveIdentityFingerprint, deps);
@@ -848,8 +857,8 @@ function qualify(
   if (container.paused || container.authority.restartPolicy !== "unless-stopped") {
     fail("container state or restart policy disagrees with active authority");
   }
-  operatingAuthority.assertCurrent();
-  const hasTransactionAuthority = snapshot.successor !== undefined;
+  if (hasTransactionAuthority) operatingAuthority.assertTransactionCurrent();
+  else operatingAuthority.assertCurrent();
   const assertTransactionCurrent = hasTransactionAuthority
     ? retainRequalifiedOperatingAuthority(
         sandboxName,
