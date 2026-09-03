@@ -932,7 +932,7 @@ exit 0
     });
 
     it("retries chat-completions when /responses errors then chat-completions times out", () => {
-      const script = `#!/usr/bin/env bash
+        const script = `#!/usr/bin/env bash
 outfile=""
 url=""
 while [ "$#" -gt 0 ]; do
@@ -981,7 +981,7 @@ exit 0
     });
 
     it("preserves query-param auth on doubled-timeout chat-completions retry", () => {
-        const script = `#!/usr/bin/env bash
+      const script = `#!/usr/bin/env bash
 outfile=""
 n=$(cat "${HARNESS_COUNTER}")
 n=$((n + 1))
@@ -1444,7 +1444,8 @@ exit 0
 });
 
 describe("onboard inference smoke abort cleanup", () => {
-  it("tears down the orphan managed gateway before exiting after a failed smoke", async () => {
+  it("uses the legacy NVIDIA Endpoints payload before cleaning up a failed smoke (#10880)", async () => {
+    const optimizedProbe = vi.fn().mockResolvedValue({ ok: false, message: "smoke failed" });
     const teardownOrphanManagedGatewayOnAbort = vi.fn();
     const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -1455,18 +1456,18 @@ describe("onboard inference smoke abort cleanup", () => {
         {
           endpointUrl: "https://inference.example.com/v1",
           forceOpenAiLike: true,
-          model: "example/model",
-          provider: "example-provider",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-nim",
         },
         {
-          probeOpenAiLikeEndpointOptimized: vi.fn().mockResolvedValue({
-            ok: false,
-            message: "smoke failed",
-          }),
+          probeOpenAiLikeEndpointOptimized: optimizedProbe,
           teardownOrphanManagedGatewayOnAbort,
         },
       );
 
+      expect(optimizedProbe.mock.calls[0]?.[3]).toMatchObject({
+        useNvidiaEndpointProbePayload: true,
+      });
       expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledOnce();
       expect(exit).toHaveBeenCalledWith(1);
       expect(teardownOrphanManagedGatewayOnAbort.mock.invocationCallOrder[0]).toBeLessThan(

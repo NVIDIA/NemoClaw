@@ -57,6 +57,7 @@ const {
   STRICT_TOOL_PROBE_INITIAL_TOKENS,
   STRICT_TOOL_PROBE_RETRY_TOKEN_LADDER,
   strictToolProbeReasoningRetryMessage,
+  usesNvidiaEndpointProbePayload,
   vllmProbePolicyForModel,
 } = require("./openai-probe-models");
 const {
@@ -1206,7 +1207,7 @@ export async function verifyOnboardInferenceSmoke(options: any, dependencies: an
     authMode: getProbeAuthMode(options.provider),
     extraHeaders: getProbeExtraHeaders(options.provider),
     skipResponsesProbe: true,
-    useNvidiaEndpointProbePayload: options.provider === "nvidia-prod",
+    useNvidiaEndpointProbePayload: usesNvidiaEndpointProbePayload(options.provider),
     pinnedAddresses: options.pinnedAddresses,
     trustedPrivateCapability: options.trustedPrivateCapability,
   });

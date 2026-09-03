@@ -9,6 +9,12 @@ export const STANDARD_NVIDIA_ENDPOINT_PROBE_POLICY =
 export const EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY =
   "nvidia.endpoint-validation.extended/v1";
 
+const NVIDIA_ENDPOINT_PROVIDERS = new Set(["nvidia-prod", "nvidia-nim"]);
+
+export function usesNvidiaEndpointProbePayload(provider: unknown): boolean {
+  return typeof provider === "string" && NVIDIA_ENDPOINT_PROVIDERS.has(provider);
+}
+
 export function vllmProbePolicyForModel(model: string): string {
   const normalized = model.trim().toLowerCase();
   const matches = loadManagedInferenceCatalog().models.filter(({ spec }) =>

@@ -10,6 +10,7 @@ import { applyCompatibleEndpointContextWindow } from "../inference/compatible-en
 import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import { getProbeExtraHeaders } from "../inference/onboard-probes";
+import { usesNvidiaEndpointProbePayload } from "../inference/openai-probe-models";
 import type { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
 import { exitOnboardFromPrompt, getNavigationChoice } from "./prompt-helpers";
@@ -474,7 +475,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
         remoteConfig.helpUrl,
         withCredentialMutationGuard(state, {
           provider: state.provider,
-          useNvidiaEndpointProbePayload: state.provider === "nvidia-prod",
+          useNvidiaEndpointProbePayload: usesNvidiaEndpointProbePayload(state.provider),
           requireResponsesToolCalling: deps.shouldRequireResponsesToolCalling(state.provider),
           skipResponsesProbe: deps.shouldSkipResponsesProbe(state.provider),
           authMode: deps.getProbeAuthMode(state.provider),
