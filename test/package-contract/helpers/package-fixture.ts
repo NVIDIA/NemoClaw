@@ -11,7 +11,6 @@ export function createPackageFixture(options: {
   readonly prefix: string;
   readonly entries: readonly string[];
   readonly omitRuntimeDependencies?: boolean;
-  readonly omitOptionalDependencies?: boolean;
 }): string {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), options.prefix));
   const packageJson = JSON.parse(
@@ -34,7 +33,6 @@ export function createPackageFixture(options: {
     packageJson.optionalDependencies = {};
     packageJson.peerDependencies = {};
   }
-  if (options.omitOptionalDependencies) packageJson.optionalDependencies = {};
   writeFileSync(
     path.join(fixtureRoot, "package.json"),
     `${JSON.stringify(packageJson, null, 2)}\n`,

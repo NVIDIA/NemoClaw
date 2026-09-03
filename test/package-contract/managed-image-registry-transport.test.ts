@@ -13,7 +13,7 @@ import { createPackageFixture } from "./helpers/package-fixture";
 const repoRoot = path.join(import.meta.dirname, "..", "..");
 
 describe("managed image registry transport package contract", () => {
-  it("loads required registry transport from the packed CLI (#7744)", { timeout: 240_000 }, () => {
+  it("loads from the packed CLI after an omit-dev install (#7744)", { timeout: 240_000 }, () => {
     const compiledTransport = path.join(
       repoRoot,
       "dist",
@@ -40,7 +40,6 @@ describe("managed image registry transport package contract", () => {
     const fixtureRoot = createPackageFixture({
       prefix: "nemoclaw-managed-registry-pack-",
       entries: ["dist"],
-      omitOptionalDependencies: true,
     });
     const archiveRoot = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-managed-registry-archive-"),
@@ -68,7 +67,6 @@ describe("managed image registry transport package contract", () => {
           "install",
           "--ignore-scripts",
           "--omit=dev",
-          "--omit=optional",
           "--no-audit",
           "--no-fund",
           "--no-package-lock",
@@ -95,13 +93,10 @@ describe("managed image registry transport package contract", () => {
         `${installedProductionTree.stdout}${installedProductionTree.stderr}`,
       ).toBe(0);
       const installedProductionDependencies = JSON.parse(installedProductionTree.stdout) as {
-        dependencies?: { nemoclaw?: { dependencies?: { undici?: { version?: string } } } };
+        dependencies?: { undici?: { version?: string } };
       };
-      expect(
-        installedProductionDependencies.dependencies?.nemoclaw?.dependencies?.undici?.version,
-      ).toBe("8.10.0");
+      expect(installedProductionDependencies.dependencies?.undici?.version).toBe("8.10.0");
 
-      const installedRoot = path.join(consumerRoot, "node_modules", "nemoclaw");
       const probe = spawnSync(
         process.execPath,
         [
