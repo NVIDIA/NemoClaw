@@ -41,6 +41,14 @@ const job = (id = 20, overrides: Partial<WorkflowJob> = {}): WorkflowJob => ({
   ...overrides,
 });
 const files = (overrides: Partial<ArtifactFiles> = {}): ArtifactFiles => ({
+  "dispatch.json": JSON.stringify({
+    kind: "nemoclaw-e2e-dispatch-v2",
+    repository: "NVIDIA/NemoClaw",
+    eventName: "workflow_dispatch",
+    workflowRunId: "10",
+    workflowRunAttempt: 2,
+    candidateSha: SHA,
+  }),
   "launchable-e2e.json": JSON.stringify({
     candidateSha: SHA,
     producer: { runId: "30", status: "success" },
@@ -74,7 +82,19 @@ const reader = (
 ): EvidenceReader => ({
   listRuns: () => runs,
   listJobs: (id, attempt) => jobs[`${id}:${attempt}`] ?? [],
-  readArtifact: () => artifact,
+  readArtifact: (id, name) =>
+    name.startsWith("e2e-dispatch-")
+      ? {
+          "dispatch.json": JSON.stringify({
+            kind: "nemoclaw-e2e-dispatch-v2",
+            repository: "NVIDIA/NemoClaw",
+            eventName: "workflow_dispatch",
+            workflowRunId: String(id),
+            workflowRunAttempt: 2,
+            candidateSha: SHA,
+          }),
+        }
+      : artifact,
 });
 describe("Launchable evidence inspection", () => {
   it("returns a versioned receipt from candidate-bound successful evidence (#10798)", () =>
@@ -117,7 +137,7 @@ describe("Launchable evidence inspection", () => {
         { candidate: SHA },
         reader([run(10, "2026-06-01T00:00:00Z", { path: ".github/workflows/ci.yaml" })]),
       ),
-    ).toThrow("no staging Brev Launchable artifact"));
+    ).toThrow("no completed staging Brev Launchable job"));
   it("reports early recovery identity before full evidence exists (#10798)", () => {
     const artifact: ArtifactFiles = {
       "workspace-recovery.json": JSON.stringify({
@@ -296,11 +316,7 @@ describe("Launchable evidence inspection", () => {
     expect(
       new Set(args.filter((arg) => arg !== "--hostname" && arg !== "github.com").slice(1)),
     ).toEqual(
-      new Set([
-        "--paginate",
-        "--slurp",
-        "repos/NVIDIA/NemoClaw/actions/workflows/e2e.yaml/runs?per_page=100",
-      ]),
+      new Set(["repos/NVIDIA/NemoClaw/actions/workflows/e2e.yaml/runs?per_page=100&page=1"]),
     );
     expect(
       inspectLaunchableEvidence(
@@ -308,6 +324,23 @@ describe("Launchable evidence inspection", () => {
         reader(runs, { "10:2": [job()], "11:2": [job()] }),
       ).run.id,
     ).toBe(11);
+  });
+  it("rejects a missing newest artifact instead of accepting older success (#10798)", () => {
+    const reads: number[] = [];
+    expect(() =>
+      inspectLaunchableEvidence(
+        { candidate: SHA },
+        {
+          listRuns: () => [run(10, "2026-06-01T00:00:00Z"), run(11, "2026-07-01T00:00:00Z")],
+          listJobs: (id) => [job(id + 10)],
+          readArtifact: (id) => {
+            reads.push(id);
+            return id === 11 ? {} : files();
+          },
+        },
+      ),
+    ).toThrow(`run=11 attempt=2 job=21 artifact=staging-brev-launchable-${SHA}-11-2`);
+    expect(reads).toEqual([11]);
   });
   it("rejects newest lane-only evidence instead of accepting older success (#10798)", () => {
     const reads: number[] = [];
@@ -405,7 +438,7 @@ describe("Launchable evidence inspection", () => {
         { candidate: SHA },
         reader([run(10, "2026-06-01T00:00:00Z", { run_attempt: 3 })]),
       ),
-    ).toThrow("no staging Brev Launchable artifact");
+    ).toThrow("no completed staging Brev Launchable job");
   });
   it("selects the newest successful job and exact artifact (#10798)", () => {
     const boundary = reader([run(10, "2026-01-01T00:00:00Z"), run(11, "2026-06-01T00:00:00Z")], {

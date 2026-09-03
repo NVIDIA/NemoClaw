@@ -14,6 +14,7 @@ const REPOSITORY = "NVIDIA/NemoClaw";
 const SENTINEL = "NEMOCLAW_FULL_E2E_PASSED";
 const WORKFLOW = ".github/workflows/e2e.yaml";
 const JOB = "Exact staging Brev Launchable";
+const MAX_WORKFLOW_RUN_PAGES = 100;
 type JsonRecord = Record<string, unknown>;
 
 export interface WorkflowRun {
@@ -35,6 +36,7 @@ export interface WorkflowJob {
   html_url: string;
 }
 export interface ArtifactFiles {
+  "dispatch.json"?: string;
   "lane.log"?: string;
   "workspace-recovery.json"?: string;
   "launchable-e2e.json"?: string;
@@ -131,16 +133,14 @@ function candidateRuns(runs: WorkflowRun[]): WorkflowRun[] {
     (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id,
   );
 }
-function candidateSelections(
+function* candidateSelections(
   runs: WorkflowRun[],
   jobs: (run: WorkflowRun) => WorkflowJob[],
-): Selection[] {
-  const selections: Selection[] = [];
+): Generator<Selection> {
   for (const run of candidateRuns(runs)) {
     const job = jobs(run).find((value) => value.name === JOB && value.status === "completed");
-    if (job) selections.push({ run, job });
+    if (job) yield { run, job };
   }
-  return selections;
 }
 function json(value: string | undefined, name: string): JsonRecord {
   if (value === undefined) fail(`artifact is missing ${name}`);
@@ -292,17 +292,37 @@ function earlyRecovery(
 export function inspectLaunchableEvidence(options: Options, reader: EvidenceReader): Receipt {
   const runs = reader.listRuns(options.candidate),
     jobs = (run: WorkflowRun): WorkflowJob[] => reader.listJobs(run.id, run.run_attempt);
-  let selected: { selection: Selection; artifactName: string; files: ArtifactFiles } | undefined;
-  for (const selection of candidateSelections(runs, jobs)) {
-    const artifactName = `staging-brev-launchable-${options.candidate}-${selection.run.id}-${selection.run.run_attempt}`,
-      files = reader.readArtifact(selection.run.id, artifactName);
-    if (Object.values(files).some((value) => value !== undefined)) {
-      selected = { selection, artifactName, files };
+  let selection: Selection | undefined;
+  for (const candidateSelection of candidateSelections(runs, jobs)) {
+    if (candidateSelection.run.head_sha === options.candidate) {
+      selection = candidateSelection;
+      break;
+    }
+    const dispatchName = `e2e-dispatch-${candidateSelection.run.id}-${candidateSelection.run.run_attempt}`,
+      dispatchFiles = reader.readArtifact(candidateSelection.run.id, dispatchName);
+    const dispatch = json(dispatchFiles["dispatch.json"], "dispatch.json");
+    if (
+      dispatch.kind !== "nemoclaw-e2e-dispatch-v2" ||
+      dispatch.repository !== REPOSITORY ||
+      dispatch.eventName !== "workflow_dispatch" ||
+      dispatch.workflowRunId !== String(candidateSelection.run.id) ||
+      dispatch.workflowRunAttempt !== candidateSelection.run.run_attempt
+    )
+      fail(
+        `dispatch receipt does not match run=${candidateSelection.run.id} attempt=${candidateSelection.run.run_attempt}`,
+      );
+    if (dispatch.candidateSha === options.candidate) {
+      selection = candidateSelection;
       break;
     }
   }
-  if (!selected) fail("no staging Brev Launchable artifact is bound to the candidate");
-  const { selection, artifactName, files } = selected;
+  if (!selection) fail("no completed staging Brev Launchable job is bound to the candidate");
+  const artifactName = `staging-brev-launchable-${options.candidate}-${selection.run.id}-${selection.run.run_attempt}`,
+    files = reader.readArtifact(selection.run.id, artifactName);
+  if (!Object.values(files).some((value) => value !== undefined))
+    fail(
+      `staging Brev Launchable artifact is missing: run=${selection.run.id} attempt=${selection.run.run_attempt} job=${selection.job.id} artifact=${artifactName}`,
+    );
   if (
     files["workspace-recovery.json"] !== undefined &&
     (files["launchable-e2e.json"] === undefined ||
@@ -357,15 +377,15 @@ export const workflowRunsFromPages = (value: unknown): WorkflowRun[] =>
 export const workflowJobsFromPages = (value: unknown): WorkflowJob[] =>
   pageItems<WorkflowJob>(value, "jobs");
 
-export function workflowRunsApiArgs(candidate: string): string[] {
+export function workflowRunsApiArgs(candidate: string, page = 1): string[] {
   if (!SHA.test(candidate)) fail("candidate must be a lowercase 40-character SHA");
+  if (!Number.isSafeInteger(page) || page <= 0)
+    fail("workflow run page must be a positive integer");
   return [
     "api",
     "--hostname",
     "github.com",
-    "--paginate",
-    "--slurp",
-    `repos/${REPOSITORY}/actions/workflows/e2e.yaml/runs?per_page=100`,
+    `repos/${REPOSITORY}/actions/workflows/e2e.yaml/runs?per_page=100&page=${page}`,
   ];
 }
 
@@ -383,8 +403,15 @@ export function workflowJobsApiArgs(runId: number, attempt: number): string[] {
 export function createGitHubReader(): EvidenceReader {
   return {
     listRuns(candidate) {
-      const pages = gh(workflowRunsApiArgs(candidate));
-      return workflowRunsFromPages(pages);
+      const runs: WorkflowRun[] = [];
+      for (let page = 1; page <= MAX_WORKFLOW_RUN_PAGES; page += 1) {
+        const response = record(gh(workflowRunsApiArgs(candidate, page)), "workflow_runs response"),
+          pageRuns = response.workflow_runs;
+        if (!Array.isArray(pageRuns)) fail("workflow_runs response must contain an array");
+        runs.push(...(pageRuns as WorkflowRun[]));
+        if (pageRuns.length < 100) return runs;
+      }
+      fail(`workflow run history exceeds the ${MAX_WORKFLOW_RUN_PAGES}-page inspection limit`);
     },
     listJobs(runId, attempt) {
       return workflowJobsFromPages(gh(workflowJobsApiArgs(runId, attempt)));
@@ -405,6 +432,7 @@ export function createGitHubReader(): EvidenceReader {
         }
         const result: ArtifactFiles = {};
         for (const file of [
+          "dispatch.json",
           "lane.log",
           "workspace-recovery.json",
           "launchable-e2e.json",

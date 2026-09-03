@@ -13,9 +13,10 @@ description: Runs local live E2E or dispatches and reports trusted GitHub Action
 | Request | Procedure |
 | --- | --- |
 | Run working-tree source or a selected local commit | [Local Runs](references/local-runs.md) |
-| Run the latest PR commit on GitHub | [Manual PR Runs](references/manual-pr.md) |
-| Run the current `main` commit on GitHub | [Main Runs](references/main-runs.md) |
+| Run the latest PR commit on GitHub, including failure-triggered comparison with its exact base | [Manual PR Runs](references/manual-pr.md) |
+| Run the current `main` commit on GitHub | [Main Runs](references/main-runs.md) and the Launchable boundary below |
 | Inspect existing evidence for a release decision | [Report the Release Context](#report-the-release-context) |
+| Classify one failed GitHub Actions job | Load `nemoclaw-maintainer-classify-ci-failure`; this skill still owns dispatch and run-level reporting. |
 
 A GitHub dispatch tests the latest PR commit or the current `main` commit. It cannot test any
 other commit. Report that request as unsupported. Do not weaken the workflow's identity or trust

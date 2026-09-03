@@ -107,10 +107,13 @@ Only a maintainer with access to the repository's Brev organization may perform 
    organization owner.
 4. Run `brev delete <workspace-id>` once, using the validated ID rather than the workspace name.
    Brev CLI version 0.6.334 accepts a workspace name or ID and resolves the ID immediately before its
-   delete request. If deletion fails, record cleanup as unresolved and open a repository security
-   escalation for the Brev organization owner. Include the run and job URLs, artifact name, candidate
-   SHA, workspace name and ID, last inventory result, credential-removal actions, and the deletion
-   error. The owner must acknowledge cleanup ownership and set a deletion or investigation deadline.
+   delete request. If deletion fails, record cleanup as unresolved and use a private route from
+   [SECURITY.md](../../../../SECURITY.md), such as GitHub private vulnerability reporting or encrypted
+   email to NVIDIA PSIRT, to transfer cleanup to the Brev organization owner. Include only the minimum
+   non-secret recovery identity: run and job URLs, artifact name, candidate SHA, workspace name and ID,
+   last inventory result, credential-removal actions, and a sanitized error summary. Keep credentials
+   and raw error output out of public issues, pull requests, and handoffs. The Brev organization owner
+   must acknowledge cleanup ownership and set a deletion or investigation deadline.
 5. After an ID-bound deletion, read `brev ls --json` every 15 seconds for at most 10 minutes. Stop
    after two consecutive successful inventories contain no row with either the reported name or ID.
    If the deadline expires, keep cleanup unresolved and record the last inventory result.

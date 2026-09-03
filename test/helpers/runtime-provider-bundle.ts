@@ -116,6 +116,7 @@ export function createInMemoryRuntimeProviderBundle({
       supported: true,
       launcher: gatewayLauncher,
       inspectLegacyContainer: false,
+      ownsHostReadiness: false,
       prepareHostRuntime: () => ({
         providerId,
         openShellDriver: "memory",
@@ -226,7 +227,6 @@ export function createInMemoryRuntimeProviderBundle({
         "workload-cleanup",
       ],
     },
-    stateMutation: unsupported(providerId, futureReason),
     bootstrap: unsupported(providerId, futureReason),
     snapshot: unsupported(providerId, futureReason),
     recovery: unsupported(providerId, futureReason),

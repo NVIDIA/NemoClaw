@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
@@ -171,6 +172,9 @@ test(
     corporateCaSource: corporateCa.sourceLabel,
     contracts: [
       "public curl installer uses GitHub clone path for the requested ref",
+      ...(runtimeProvider.id === "podman"
+        ? ["public installer leaves Docker unavailable during native Podman onboarding"]
+        : []),
       "ordinary cloud onboard migrates an allowlisted legacy credential through the real gateway",
       "tampered non-credential legacy fields do not become gateway providers",
       "successful onboard removes plaintext credentials.json",
@@ -212,7 +216,10 @@ test(
   progress.phase("install and onboard cloud sandbox");
   const install = await host.command(
     "bash",
-    ["-lc", `cd ${shellQuote(installCwd)} && curl -fsSL ${shellQuote(installUrl)} | bash`],
+    [
+      "-lc",
+      `cd ${shellQuote(installCwd)} && curl -fsSL ${shellQuote(installUrl)} | bash && ${runtimeProvider.id === "docker" ? "command -v docker >/dev/null" : "! command -v docker >/dev/null"}`,
+    ],
     {
       artifactName: "phase-1-public-install",
       env: testEnv({
@@ -224,7 +231,7 @@ test(
         NEMOCLAW_REASONING: "true",
       }),
       redactionValues,
-      timeoutMs: 25 * 60_000,
+      timeoutMs: execTimeout(25 * 60_000),
     },
   );
   expect(install.exitCode, resultText(install)).toBe(0);

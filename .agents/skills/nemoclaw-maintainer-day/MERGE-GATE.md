@@ -5,6 +5,15 @@
 
 Approve only when the trusted checker passes and all maintainer judgments pass for the same PR commit and base commit. This workflow never merges.
 
+## Stabilize the commit under review
+
+Complete [PR follow-up](../_shared/pr-follow-up.md) successfully for one unchanged latest PR commit
+before manual review or the trusted checker. A first-time fork check-approval review is the only exception.
+
+Do not integrate the base branch while this evidence is pending. If the stable candidate is behind
+after every other finding settles, integrate the base once, restart PR follow-up, and review the new
+candidate. A branch conflict or required merged dependency can justify earlier integration.
+
 ## Apply the approval rule
 
 See [PR Review Priorities](PR-REVIEW-PRIORITIES.md). Require all conditions:
@@ -48,7 +57,7 @@ Stop when no accepted issue or design decision establishes a new product surface
 
 ### CI and review evidence
 
-Use [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) to collect and classify CI and review evidence. Treat PR Review Advisor output as review input, not approval authority.
+Use [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) to collect and classify CI and review evidence. Treat PR Review Advisor output as review input, not approval authority. Deduplicate repeated findings and separate candidate-owned failures from failures that reproduce on the base.
 
 A first-time fork contributor can require an **Approve and run** decision before PR checks appear. Review the complete diff before that approval. Do not expose repository secrets or privileged credentials to candidate code.
 
@@ -70,7 +79,8 @@ The contributor set includes the PR opener, commit authors, and co-authors. Use 
 | Contributor declaration or verification fails | Ask the contributor to correct the body or commit history. Do not amend, sign, or force-push for them. |
 | PR or base commit changed | Do not approve. Restart the gate for the new state. |
 | CI or review is pending | Wait. |
-| A narrow repair or mechanical conflict is required | Follow [Salvage a Pull Request](SALVAGE-PR.md). |
+| A narrow repair or mechanical conflict is required | Follow [Salvage a Pull Request](SALVAGE-PR.md) after collection completes for the same commit. |
+| The stable candidate is behind and every other gate can pass | Integrate the base once, then restart PR follow-up for the new candidate. |
 | A required test is missing | Follow [Test Gaps](TEST-GAPS.md). |
 | All checker gates and maintainer judgments pass | Approve the commit under review. |
 

@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupWhenCommandAvailable,
@@ -115,10 +116,6 @@ for container_id in $container_ids; do
 done
 `;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function versionGte(actual: string, minimum: string): boolean {
   const actualParts = actual.split(".").map((part) => Number.parseInt(part, 10));
   const minimumParts = minimum.split(".").map((part) => Number.parseInt(part, 10));
@@ -189,7 +186,7 @@ async function expectSandboxExecAlive(
 test(
   "sandbox survives gateway restart with registry, state, SSH, and live inference intact",
   {
-    timeout: 30 * 60_000,
+    timeout: testTimeout(30 * 60_000),
     meta: {
       e2ePhases: [
         "confirm the selected runtime and inference prerequisites",
@@ -339,7 +336,7 @@ test(
       cwd: REPO_ROOT,
       env: installEnv(hosted.env),
       redactionValues: [apiKey],
-      timeoutMs: 20 * 60_000,
+      timeoutMs: execTimeout(20 * 60_000),
     });
     expect(install.exitCode, resultText(install)).toBe(0);
 

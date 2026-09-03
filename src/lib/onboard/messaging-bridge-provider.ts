@@ -17,9 +17,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
+import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/provider-command";
+import {
+  exportedProviderProfileMatchesContract,
+  parseCheckedInProviderProfileContract,
+} from "../adapters/openshell/provider-profile";
+import { registerCheckedInProviderProfile } from "../adapters/openshell/provider-profile-registration";
 import { compactText } from "../core/url-utils";
 import { createBuiltInChannelManifestRegistry } from "../messaging/channels";
 import type {
@@ -28,6 +33,7 @@ import type {
   MessagingAgentId,
 } from "../messaging/manifest";
 import { ROOT } from "../state/paths";
+import { sleepMs, waitUntil } from "./readiness-wait";
 
 // Create-time credential sentinel: the real value is minted by
 // `provider refresh configure`; this only has to be non-empty so the provider is
@@ -108,14 +114,13 @@ export interface CollectMessagingBridgeTokenDefsInput extends MessagingBridgeSec
 export interface EnsureMessagingBridgeProfilesDeps {
   readonly root: string;
   readonly runOpenshell: RunOpenshell;
-  readonly redact: (input: string) => string;
   readonly log?: (message?: string) => void;
   readonly exit?: (code?: number) => never;
   readonly profiles?: readonly MessagingBridgeProfile[];
   readonly readFileSync?: (file: string) => string;
 }
 
-export interface MatchRegisteredStaticMessagingProfileDeps {
+export interface MatchRegisteredMessagingBridgeProfileDeps {
   readonly root: string;
   readonly runOpenshell: RunOpenshell;
   readonly profiles?: readonly MessagingBridgeProfile[];
@@ -124,7 +129,7 @@ export interface MatchRegisteredStaticMessagingProfileDeps {
 
 export interface ConfigureMessagingBridgeRefreshesDeps extends MessagingBridgeSecretResolveDeps {
   readonly runOpenshell: RunOpenshell;
-  readonly redact: (input: string) => string;
+  readonly redactFull: (input: string) => string;
   readonly log?: (message?: string) => void;
   readonly profiles?: readonly MessagingBridgeProfile[];
   /** Injected for tests; defaults to a synchronous wait. */
@@ -145,80 +150,63 @@ function bufferOrStringToText(value: string | Buffer | null | undefined): string
   return "";
 }
 
-function credentialBoundary(doc: Record<string, unknown>): Record<string, unknown> | null {
-  if (
-    typeof doc.id !== "string" ||
-    !Array.isArray(doc.credentials) ||
-    !Array.isArray(doc.endpoints) ||
-    !Array.isArray(doc.binaries) ||
-    typeof doc.inference_capable !== "boolean"
-  ) {
-    return null;
+function redactRefreshDiagnostic(
+  input: string,
+  sourceSecret: string,
+  materialValues: readonly string[],
+  redactFull: (input: string) => string,
+): string {
+  let redacted = input;
+  const exactValues = Array.from(new Set([sourceSecret, ...materialValues])).sort(
+    (left, right) => right.length - left.length,
+  );
+  for (const value of exactValues) {
+    if (value) redacted = redacted.replaceAll(value, "<REDACTED>");
   }
-  const credentials = doc.credentials.map((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
-    const credential = entry as Record<string, unknown>;
-    return {
-      name: credential.name,
-      env_vars: credential.env_vars,
-      required: credential.required,
-      auth_style: credential.auth_style,
-      header_name: credential.header_name,
-      query_param: credential.query_param,
-      refresh: credential.refresh ?? null,
-    };
-  });
-  if (credentials.some((entry) => entry === null)) return null;
-  return {
-    id: doc.id,
-    credentials,
-    endpoints: doc.endpoints,
-    binaries: doc.binaries,
-    inference_capable: doc.inference_capable,
-  };
+  return redactFull(redacted);
 }
 
-function staticProfileMatchesCheckedInBoundary(
+function profileMatchesCheckedInBoundary(
   profile: MessagingBridgeProfile,
   exported: string,
   readFileSync: (file: string) => string,
 ): boolean {
   try {
-    const actual = JSON.parse(exported) as Record<string, unknown>;
-    const expected = YAML.parse(readFileSync(profile.profilePath)) as Record<string, unknown>;
-    const actualBoundary = credentialBoundary(actual);
-    const expectedBoundary = credentialBoundary(expected);
+    const expected = parseCheckedInProviderProfileContract(readFileSync(profile.profilePath));
     return (
-      actualBoundary !== null &&
-      expectedBoundary !== null &&
-      expectedBoundary.id === profile.profileId &&
-      Array.isArray(expectedBoundary.endpoints) &&
-      expectedBoundary.endpoints.length === 0 &&
-      Array.isArray(expectedBoundary.binaries) &&
-      expectedBoundary.binaries.length === 0 &&
-      expectedBoundary.inference_capable === false &&
-      isDeepStrictEqual(actualBoundary, expectedBoundary)
+      expected !== null &&
+      expected.profileId === profile.profileId &&
+      (profile.strategy !== null ||
+        (expected.boundary.endpoints.length === 0 &&
+          expected.boundary.binaries.length === 0 &&
+          expected.boundary.inference_capable === false)) &&
+      exportedProviderProfileMatchesContract(exported, expected)
     );
   } catch {
     return false;
   }
 }
 
-/** Compare a registered static profile with its checked-in credential boundary. */
-export function matchesRegisteredStaticMessagingProfile(
+/** Compare a registered bridge profile with its checked-in credential boundary. */
+export function matchesRegisteredMessagingBridgeProfile(
   providerType: string,
-  deps: MatchRegisteredStaticMessagingProfileDeps,
+  deps: MatchRegisteredMessagingBridgeProfileDeps,
 ): boolean | null {
   const profile = (deps.profiles ?? listMessagingBridgeProfiles({ root: deps.root })).find(
-    (candidate) => candidate.profileId === providerType && candidate.strategy === null,
+    (candidate) => candidate.profileId === providerType,
   );
   if (!profile) return null;
   const exported = deps.runOpenshell(
     ["provider", "profile", "export", profile.profileId, "--output", "json"],
-    { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+    {
+      ignoreError: true,
+      suppressOutput: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+    },
   );
   if (exported.status !== 0) return false;
-  return staticProfileMatchesCheckedInBoundary(
+  return profileMatchesCheckedInBoundary(
     profile,
     bufferOrStringToText(exported.stdout),
     deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8")),
@@ -368,8 +356,9 @@ function bridgeProviderNameFor(sandboxName: string, channelId: string): string {
 /**
  * Build the messaging token definitions for every enabled bridge channel whose
  * source secret was captured. Mirrors how the Brave provider is pushed in
- * messaging-prep: the value is a non-empty sentinel (overwritten by the first
- * refresh) and the real material is supplied separately by
+ * messaging-prep: the value is a non-empty sentinel used only to create a
+ * missing provider. An exact existing provider keeps its working credential
+ * until refresh succeeds. The real material is supplied separately by
  * {@link configureMessagingBridgeRefreshes}.
  */
 export function collectMessagingBridgeTokenDefs(
@@ -462,87 +451,38 @@ export function ensureMessagingBridgeProfiles(
 
   const errorLog = deps.log ?? console.error;
   const exit = deps.exit ?? ((code?: number) => process.exit(code));
-  const readFileSync = deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8"));
-
-  const rejectMismatchedStaticProfile = (profile: MessagingBridgeProfile): void => {
-    errorLog(
-      `\n  ✗ OpenShell provider profile '${profile.profileId}' does not match NemoClaw's endpointless ${profile.channelId} credential contract.`,
-    );
-    errorLog("    Remove the conflicting profile and re-run onboarding.");
-    exit(1);
-  };
-
   for (const profile of active) {
-    // Onboard registers each bridge provider twice: once up front so an
-    // interrupted run can resume, then again during create-plan materialization.
-    // Probe first and skip the re-import so the second pass never hits OpenShell's
-    // "already exists" error. A fresh gateway answers the probe with a harmless
-    // "not found" that suppressOutput hides — only the exit status says whether
-    // the profile already exists.
-    const alreadyRegistered = deps.runOpenshell(
-      ["provider", "profile", "export", profile.profileId, "--output", "json"],
-      { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    if (alreadyRegistered.status === 0) {
-      if (
-        profile.strategy === null &&
-        !staticProfileMatchesCheckedInBoundary(
-          profile,
-          bufferOrStringToText(alreadyRegistered.stdout),
-          readFileSync,
-        )
-      ) {
-        rejectMismatchedStaticProfile(profile);
-        return;
-      }
-      continue;
-    }
-    // Probe failed for something other than "not found" (gateway down, auth, …):
-    // surface it instead of masking a real problem.
-    const probeDiagnostic = `${bufferOrStringToText(alreadyRegistered.stderr)} ${bufferOrStringToText(
-      alreadyRegistered.stdout,
-    )}`;
-    if (probeDiagnostic.trim() && !/not found/i.test(probeDiagnostic)) {
-      errorLog(`\n  ⚠ Unexpected error probing the ${profile.channelId} provider profile:`);
-      const probeText = compactText(deps.redact(probeDiagnostic));
-      if (probeText) errorLog(`    ${probeText.slice(0, 500)}`);
-    }
-
-    const result = deps.runOpenshell(
-      ["provider", "profile", "import", "--file", profile.profilePath],
-      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    if (result.status === 0) continue;
-
-    // Reconcile a lost race: the probe saw no profile but a concurrent import made it.
-    const rawDiagnostic = `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`;
-    if (/already exists/i.test(rawDiagnostic)) {
-      if (profile.strategy !== null) continue;
-      const racedProfile = deps.runOpenshell(
-        ["provider", "profile", "export", profile.profileId, "--output", "json"],
-        { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+    const result = registerCheckedInProviderProfile({
+      profilePath: profile.profilePath,
+      runOpenshell: deps.runOpenshell,
+      readProfileFile: deps.readFileSync,
+    });
+    if (result.ok) continue;
+    if (result.error.kind === "command" && result.error.reason === "profile_incompatible") {
+      const contract =
+        profile.strategy === null
+          ? `endpointless ${profile.channelId} credential contract`
+          : `checked-in ${profile.channelId} credential boundary`;
+      errorLog(
+        `\n  ✗ OpenShell provider profile '${profile.profileId}' does not match NemoClaw's ${contract}.`,
       );
-      if (
-        racedProfile.status !== 0 ||
-        !staticProfileMatchesCheckedInBoundary(
-          profile,
-          bufferOrStringToText(racedProfile.stdout),
-          readFileSync,
-        )
-      ) {
-        rejectMismatchedStaticProfile(profile);
-        return;
-      }
-      continue;
+      errorLog("    Remove the conflicting profile and re-run onboarding.");
+      exit(1);
+      return;
     }
 
-    const diagnostic = compactText(deps.redact(rawDiagnostic));
-    errorLog(
-      `\n  ✗ Failed to register the ${profile.channelId} provider profile with OpenShell.`,
-    );
-    if (diagnostic) errorLog(`    ${diagnostic.slice(0, 500)}`);
-    errorLog("    Update OpenShell with scripts/install-openshell.sh and re-run onboarding.");
-    exit(result.status || 1);
+    errorLog(`\n  ✗ Failed to register the ${profile.channelId} provider profile with OpenShell.`);
+    errorLog(`    ${result.error.message}`);
+    errorLog("    Inspect the preceding OpenShell error.");
+    if (result.error.kind === "schema") {
+      errorLog("    Update NemoClaw and its managed OpenShell with `nemoclaw update`.");
+    } else if (result.error.kind === "validation") {
+      errorLog("    Restore the checked-in provider profile, then retry.");
+    } else {
+      errorLog("    Confirm OpenShell is available and authorized, then retry.");
+    }
+    errorLog("    Then re-run onboarding.");
+    exit(1);
     return;
   }
 }
@@ -626,43 +566,52 @@ export function refreshStatusForCredential(text: string, credentialKey: string):
   return keyIndex < 0 ? "" : (columns[keyIndex + 2] ?? "");
 }
 
-function sleepSync(milliseconds: number): void {
-  // Vitest sets process.env.VITEST, so the poll loop costs no wall-clock in tests.
-  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
-}
-
 function waitForMintedBridgeCredential(
   providerName: string,
   credentialKey: string,
   deps: ConfigureMessagingBridgeRefreshesDeps,
 ): MessagingBridgeRefreshResult {
-  const sleep = deps.sleep ?? sleepSync;
   const now = deps.now ?? (() => Date.now());
+  const sleep =
+    deps.sleep ??
+    (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1"
+      ? () => undefined
+      : sleepMs);
   // The mint runs on the gateway's own sweep, so this can sit for a minute.
   (deps.log ?? console.error)(`  Waiting for the gateway to mint ${credentialKey}…`);
   const deadline = now() + BRIDGE_MINT_DEADLINE_MS;
   let status = "";
-  for (let attempt = 0; attempt < BRIDGE_MINT_POLL_ATTEMPTS && now() < deadline; attempt += 1) {
-    const result = deps.runOpenshell(
-      ["provider", "refresh", "status", providerName, "--credential-key", credentialKey],
-      // suppressOutput: the runner re-emits piped child output; without it every
-      // poll reprints the whole status table into the onboarding transcript.
-      {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        suppressOutput: true,
-        timeout: BRIDGE_MINT_STATUS_TIMEOUT_MS,
-      },
-    );
-    // A nonzero probe can still print a stale table; only trust a clean read.
-    status =
-      result.status === 0
-        ? refreshStatusForCredential(bufferOrStringToText(result.stdout), credentialKey)
-        : "";
-    if (status === BRIDGE_MINT_STATUS_REFRESHED) return { ok: true };
-    sleep(BRIDGE_MINT_POLL_INTERVAL_MS);
-  }
+  const minted = waitUntil(
+    () => {
+      const result = deps.runOpenshell(
+        ["provider", "refresh", "status", providerName, "--credential-key", credentialKey],
+        // suppressOutput: the runner re-emits piped child output; without it every
+        // poll reprints the whole status table into the onboarding transcript.
+        {
+          ignoreError: true,
+          stdio: ["ignore", "pipe", "pipe"],
+          suppressOutput: true,
+          timeout: BRIDGE_MINT_STATUS_TIMEOUT_MS,
+        },
+      );
+      // A nonzero probe can still print a stale table; only trust a clean read.
+      status =
+        result.status === 0
+          ? refreshStatusForCredential(bufferOrStringToText(result.stdout), credentialKey)
+          : "";
+      return status === BRIDGE_MINT_STATUS_REFRESHED;
+    },
+    {
+      deadlineMs: deadline,
+      initialIntervalMs: BRIDGE_MINT_POLL_INTERVAL_MS,
+      maxIntervalMs: BRIDGE_MINT_POLL_INTERVAL_MS,
+      backoffFactor: 1,
+      maxAttempts: BRIDGE_MINT_POLL_ATTEMPTS,
+      now,
+      sleep,
+    },
+  );
+  if (minted) return { ok: true };
   return {
     ok: false,
     reason: `gateway token minting did not complete for '${providerName}' (last status '${status || "unknown"}')`,
@@ -725,35 +674,72 @@ export function configureMessagingBridgeRefreshes(
       }
       materialArgs.push("--material", `${key}=${value}`);
     }
-    const result = deps.runOpenshell(
-      [
-        "provider",
-        "refresh",
-        "configure",
-        "--credential-key",
-        profile.credentialKey,
-        "--strategy",
-        profile.strategy,
-        ...materialArgs,
-        bridge.name,
-      ],
-      {
-        env: secretMaterialEnv,
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
+    let result;
+    try {
+      result = deps.runOpenshell(
+        [
+          "provider",
+          "refresh",
+          "configure",
+          "--credential-key",
+          profile.credentialKey,
+          "--strategy",
+          profile.strategy,
+          ...materialArgs,
+          bridge.name,
+        ],
+        {
+          env: secretMaterialEnv,
+          ignoreError: true,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+        },
+      );
+    } catch (error) {
+      const diagnostic = compactText(
+        redactRefreshDiagnostic(
+          error instanceof Error ? error.message : String(error),
+          secret,
+          built.material.map(({ value }) => value),
+          deps.redactFull,
+        ),
+      );
+      warn(`\n  ✗ ${profile.channelId} bridge: gateway refresh configuration failed.`);
+      if (diagnostic) warn(`    ${diagnostic.slice(0, 500)}`);
+      return { ok: false, reason: diagnostic || "gateway refresh configuration failed" };
+    }
     if (result.status === 0) {
-      const minted = waitForMintedBridgeCredential(bridge.name, profile.credentialKey, deps);
+      let minted;
+      try {
+        minted = waitForMintedBridgeCredential(bridge.name, profile.credentialKey, deps);
+      } catch (error) {
+        const diagnostic = compactText(
+          redactRefreshDiagnostic(
+            error instanceof Error ? error.message : String(error),
+            secret,
+            built.material.map(({ value }) => value),
+            deps.redactFull,
+          ),
+        );
+        warn(`\n  ✗ ${profile.channelId} bridge: gateway refresh status inspection failed.`);
+        if (diagnostic) warn(`    ${diagnostic.slice(0, 500)}`);
+        return { ok: false, reason: diagnostic || "gateway refresh status inspection failed" };
+      }
       if (minted.ok) continue;
       warn(`\n  ✗ ${profile.channelId} bridge: ${minted.reason}.`);
       warn("    Outbound replies for this channel will not authenticate until this is resolved.");
       return minted;
     }
 
-    // Redact before logging — never echo secret material.
+    // Redact exact source/generated material as well as known secret shapes
+    // before logging. The diagnostic is bounded only after redaction.
     const diagnostic = compactText(
-      deps.redact(`${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`),
+      redactRefreshDiagnostic(
+        `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`,
+        secret,
+        built.material.map(({ value }) => value),
+        deps.redactFull,
+      ),
     );
     warn(
       `\n  ✗ ${profile.channelId} bridge: failed to configure gateway token minting for '${bridge.name}'.`,

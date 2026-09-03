@@ -25,10 +25,10 @@ The prefix in each skill name indicates who it is for.
 For end users operating a NemoClaw sandbox.
 Covers routing human users' AI agents to the canonical NemoClaw Markdown documentation.
 
-### `nemoclaw-maintainer-*` (20 skills)
+### `nemoclaw-maintainer-*`
 
 For project maintainers.
-Covers the daily maintainer cadence, trusted E2E dispatch, continuous E2E maintenance, runtime-provider integration and qualification, Launchable validation, workflow policy, CI performance analysis, pull request value-stream analysis, documentation refactors, releases, review selection, comparison, triage, security review, and stale bug verification.
+Covers the daily maintainer cadence, trusted E2E dispatch, continuous E2E maintenance, runtime-provider integration and qualification, Launchable validation, workflow policy, CI failure classification, CI performance analysis, pull request value-stream analysis, documentation refactors, releases, review selection, comparison, triage, security review, and stale bug verification.
 
 ### `nemoclaw-contributor-*` (6 skills)
 
@@ -64,6 +64,7 @@ Component-specific guidance lives with the package it describes, not in a skill.
 | `nemoclaw-maintainer-evening` | Complete the cumulative documentation PR and release entry, show release context, and optionally start tag cutting. |
 | `nemoclaw-maintainer-cut-release-tag` | Verify candidate evidence, record the maintainer's E2E decision, and cut one signed semver tag. |
 | [`nemoclaw-maintainer-e2e`](../nemoclaw-maintainer-e2e/SKILL.md) | Run exact detached commits locally, inspect automatic `main` E2E, dispatch the latest PR commit or current `main` commit, and verify applicable workflow evidence. |
+| `nemoclaw-maintainer-classify-ci-failure` | Classify one failed GitHub Actions job from bounded, redacted logs and an optional validated artifact. |
 | `nemoclaw-maintainer-analyze-ci-performance` | Analyze retained CLI test timings and base-image publication latency with bounded, read-only GitHub evidence. |
 | `nemoclaw-maintainer-analyze-pr-value-stream` | Measure one PR from its earliest observable branch push through merge, separate approval delay from automation time, and compare the latest revision with a target. |
 | `nemoclaw-maintainer-runtime-provider` | Implement or review one managed runtime provider through the bundle API, qualification-backed activation, provider-neutral orchestration, and exact-commit E2E qualification. |
@@ -98,10 +99,10 @@ Ask the user which role best describes them:
 
 Skills are cumulative. Each role includes the skills from the roles above it:
 
-| Role | Skills included | Count | Start with |
-|------|----------------|-------|------------|
-| User | `nemoclaw-user-*` | 1 | `nemoclaw-user-guide` |
-| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 7 | `nemoclaw-contributor-onboard` |
-| Maintainer | All skills | 27 | `nemoclaw-maintainer-morning` |
+| Role | Skills included | Start with |
+|------|----------------|------------|
+| User | `nemoclaw-user-*` | `nemoclaw-user-guide` |
+| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | `nemoclaw-contributor-onboard` |
+| Maintainer | All skills | `nemoclaw-maintainer-morning` |
 
 After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.
