@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import path from "node:path";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 
 import type { AgentDefinition } from "../../agent/defs";
@@ -26,6 +27,7 @@ import {
 } from "../../adapters/podman";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { registryEntryGatewayPort } from "../../state/gateway-registry";
+import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import type { SandboxEntry } from "../../state/registry/types";
 import { assertHermesPortableUninstallCompleteForOnboarding } from "../../state/hermes-portable-uninstall/journal";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
@@ -1085,6 +1087,9 @@ export async function runHermesPortableOnboardingTransaction<T>(
   input: HermesPortableOnboardingInput,
   deps: HermesPortableOnboardingDeps<T>,
 ): Promise<HermesPortableOnboardingResult<T>> {
+  enforceRemovedImmutabilityMigrationBoundary(input.sandboxName, {
+    stateDir: path.join(input.stateDir, "state"),
+  });
   return await deps.withLifecycleLock(input.sandboxName, async () => {
     assertHermesPortableUninstallCompleteForOnboarding(input.stateDir);
     const assertOpenShellExecutableAuthority = (): void =>

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Descriptor-safe OpenClaw top-level config shields transitions.
+"""Descriptor-safe OpenClaw config writes and gateway restart transactions.
 
 This helper is deliberately self-contained so the host can invoke the installed
 root-only copy or inject the same source through ``python3 -`` into an older
@@ -40,23 +40,15 @@ from typing import Literal
 
 
 Action = Literal[
-    "preflight",
     "preflight-restart",
-    "lock",
-    "unlock",
     "seal-restart",
     "unseal-restart",
     "revoke-startup-ready",
     "publish-startup-ready",
     "write-config",
     "recover",
-    "unlock-failed-startup",
 ]
 StartupIdentity = tuple[int, str, int]
-# One action only. It unseals both layers in a single mutex window, so the
-# multi-step host sequence can never mutate state on stale evidence (#8304).
-STARTUP_FAILURE_RECOVERY_ACTIONS = frozenset({"unlock-failed-startup"})
-INSTALLED_STATE_DIR_GUARD = "/usr/local/lib/nemoclaw/state-dir-guard.py"
 CONFIG_FILES = ("openclaw.json", ".config-hash")
 PRODUCTION_CONFIG_DIR = "/sandbox/.openclaw"
 MAX_FILE_BYTES = {
@@ -78,18 +70,6 @@ OPENSHELL_SUPERVISOR_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
 NODE_BINARY_PATH = "/usr/local/bin/node"
 JSON5_MODULE_PATH = "/opt/nemoclaw/node_modules/json5"
 JSON5_VALIDATION_TIMEOUT_SECONDS = 5
-# Whole-action budget for `unlock-failed-startup`. The recursive state guard
-# caps each transition at ten minutes. Give the forward transition that full
-# allowance, then reserve another full allowance plus two minutes of overhead
-# for the config relock and fail-closed recursive relock.
-# Keep the total below RECOVERY_CONTAINER_TIMEOUT in
-# src/lib/shields/openclaw-config-lock.ts, or the host can kill the guard before
-# the rollback finishes.
-STATE_DIR_GUARD_FORWARD_SECONDS = 10 * 60
-STATE_DIR_GUARD_ROLLBACK_SECONDS = 12 * 60
-STATE_DIR_GUARD_TIMEOUT_SECONDS = (
-    STATE_DIR_GUARD_FORWARD_SECONDS + STATE_DIR_GUARD_ROLLBACK_SECONDS
-)
 INSTALLED_HELPER_PATH = "/usr/local/lib/nemoclaw/openclaw-config-guard.py"
 COPY_BUFFER_BYTES = 1024 * 1024
 STABLE_READ_ATTEMPTS = 3
@@ -1060,18 +1040,6 @@ def _openshell_supervised_nonroot_start_is_live(
     )
 
 
-def _openshell_supervised_nonroot_start_is_absent(
-    expected_root_uid: int,
-    expected_sandbox_uid: int,
-) -> bool:
-    """Return whether a stable OpenShell supervisor has no start child."""
-
-    census = _openshell_supervised_nonroot_start_census(
-        expected_root_uid, expected_sandbox_uid
-    )
-    return census is not None and census[0] == 0
-
-
 def _pid1_effective_uid() -> int | None:
     """Read PID 1's effective UID from a pinned procfs descriptor."""
 
@@ -1367,13 +1335,8 @@ def _revoke_startup_ready(identity: Identity) -> None:
 
 def _validate_action_readiness(
     action: Action, startup_owner: bool, identity: Identity
-) -> bool:
-    """Authorize ``action`` and report whether only the failed-startup path allowed it.
-
-    A ``True`` result is provisional: it rests on a live procfs census taken
-    before the mutation mutex, so the caller must reconfirm it under the mutex
-    with ``_reconfirm_startup_failure_recovery`` before any effect.
-    """
+) -> None:
+    """Authorize ``action`` against the current startup topology and lease."""
 
     startup_action = action in {"revoke-startup-ready", "publish-startup-ready"}
     if startup_action:
@@ -1383,7 +1346,7 @@ def _validate_action_readiness(
                 STARTUP_READY_PATH,
                 f"{action} is restricted to the PID 1 startup transaction",
             )
-        return False
+        return
     installed_current = os.path.realpath(__file__) == os.path.realpath(
         INSTALLED_HELPER_PATH
     )
@@ -1392,14 +1355,11 @@ def _validate_action_readiness(
         # A source helper injected into an older image, and the local unit
         # harness, retain their explicit compatibility path. Current images
         # use the installed helper and authenticate a namespace remap below.
-        return False
+        return
     protocol_active, startup_ready = _startup_lease_state(identity)
     if not pid1_is_nemoclaw_start and not protocol_active:
         if (
             installed_current
-            # The recovery action is authorized by the escape below and by
-            # nothing else.
-            and action not in STARTUP_FAILURE_RECOVERY_ACTIONS
             and _startup_markers_absent(identity)
             and _openshell_supervised_nonroot_start_is_live(
                 identity.root_uid, identity.sandbox_uid
@@ -1412,18 +1372,7 @@ def _validate_action_readiness(
             # and NSpid evidence selects the same two topologies. They cannot
             # publish root-owned readiness markers, so authenticate the stable
             # supervisor/child pair while refusing stale or malformed markers.
-            return False
-        if (
-            installed_current
-            and action in STARTUP_FAILURE_RECOVERY_ACTIONS
-            and _startup_markers_absent(identity)
-            and _openshell_supervised_nonroot_start_is_absent(
-                identity.root_uid, identity.sandbox_uid
-            )
-        ):
-            # Provisional: a child can still appear after this scan, so main()
-            # reconfirms under the mutation mutex before any effect (#8304).
-            return True
+            return
         # The early return above leaves `installed_current` true here.
         raise GuardError(
             "startup-not-ready",
@@ -1434,17 +1383,17 @@ def _validate_action_readiness(
     # image explicitly opts in. The trusted installed helper requires the
     # protocol from its very first exec, closing the pre-revoke boot race.
     if not installed_current and not protocol_active:
-        return False
+        return
     if installed_current and not protocol_active:
         # The supported --user sandbox entrypoint cannot create a root-owned
         # readiness capability. It also explicitly disables gateway privilege
-        # separation and privileged PID 1 control. Preserve host shields/config
+        # separation and privileged PID 1 control. Preserve host config
         # compatibility only for that degraded mode. Root PID 1 never falls
         # through when the capability is missing or malformed, and any valid
         # capability opts even a non-root PID 1 into the strict lease below.
         pid1_euid = _pid1_effective_uid()
         if pid1_euid is not None and pid1_euid != identity.root_uid:
-            return False
+            return
     early_recover = action == "recover" and not startup_ready
     if early_recover:
         if not startup_owner or os.getppid() != 1:
@@ -1453,10 +1402,8 @@ def _validate_action_readiness(
                 STARTUP_READY_PATH,
                 f"{action} is restricted to the PID 1 startup transaction",
             )
-        return False
+        return
     if action in {
-        "lock",
-        "unlock",
         "write-config",
         "seal-restart",
         "unseal-restart",
@@ -1466,146 +1413,7 @@ def _validate_action_readiness(
             STARTUP_READY_PATH,
             "OpenClaw startup is not ready for host config mutations",
         )
-    return False
-
-
-def _reconfirm_startup_failure_recovery(action: Action, identity: Identity) -> None:
-    """Re-prove a failed startup while the mutation mutex is held.
-
-    The first scan runs before the mutex. Repeating it here binds the
-    authorization to the effect.
-    """
-
-    if _startup_markers_absent(identity) and _openshell_supervised_nonroot_start_is_absent(
-        identity.root_uid, identity.sandbox_uid
-    ):
-        return
-    raise GuardError(
-        "startup-not-ready",
-        STARTUP_READY_PATH,
-        f"{action} lost its failed-startup authorization before taking effect",
-    )
-
-
-def _run_state_dir_guard(
-    action: str,
-    config_dir: str,
-    plan_json: str,
-    mutation_lock_fd: int,
-    deadline: float,
-) -> None:
-    """Run the recursive state-dir guard under this process's mutation mutex.
-
-    The child takes the same mutex, so pass the held descriptor: it inherits
-    the lock instead of deadlocking on it.
-    """
-
-    if not os.path.isfile(INSTALLED_STATE_DIR_GUARD):
-        raise GuardError(
-            "state-dir-guard-missing",
-            INSTALLED_STATE_DIR_GUARD,
-            "recursive state guard is required for failed-startup recovery",
-        )
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise GuardError(
-            "state-dir-transition-timeout",
-            config_dir,
-            f"no recovery budget left for state-dir {action}",
-        )
-    try:
-        completed = subprocess.run(  # noqa: S603
-            [
-                sys.executable,
-                "-I",
-                INSTALLED_STATE_DIR_GUARD,
-                action,
-                "--config-dir",
-                config_dir,
-                "--plan-json",
-                plan_json,
-                "--transition-lock-fd",
-                str(mutation_lock_fd),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=remaining,
-            check=False,
-            pass_fds=(mutation_lock_fd,),
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise GuardError(
-            "state-dir-transition-timeout",
-            config_dir,
-            f"state-dir {action} exceeded the remaining recovery budget",
-        ) from exc
-    except subprocess.SubprocessError as exc:
-        raise GuardError(
-            "state-dir-transition-failed",
-            config_dir,
-            f"state-dir {action} could not complete: {exc}",
-        ) from exc
-    if completed.returncode != 0:
-        detail = (completed.stderr.strip() or completed.stdout.strip())[:400]
-        raise GuardError(
-            "state-dir-transition-failed",
-            config_dir,
-            f"state-dir {action} failed: {detail}",
-        )
-
-
-def _run_failed_startup_unlock(
-    opened: OpenConfig,
-    identity: Identity,
-    config_dir: str,
-    plan_json: str,
-    mutation_lock_fd: int,
-    *,
-    quarantine_untrusted: bool,
-) -> None:
-    """Unseal both OpenClaw state layers or restore their locked posture.
-
-    The forward transition cannot consume the rollback reserve. Both deadlines
-    remain within the host's whole-action timeout.
-    """
-
-    rollback_deadline = time.monotonic() + STATE_DIR_GUARD_TIMEOUT_SECONDS
-    unlock_deadline = rollback_deadline - STATE_DIR_GUARD_ROLLBACK_SECONDS
-
-    try:
-        _run_state_dir_guard(
-            "unlock", config_dir, plan_json, mutation_lock_fd, unlock_deadline
-        )
-        _transition(
-            "unlock",
-            opened,
-            identity,
-            quarantine_untrusted=quarantine_untrusted,
-        )
-    except (GuardError, OSError) as exc:
-        rollback_errors: list[str] = []
-        try:
-            _transition(
-                "lock",
-                opened,
-                identity,
-                quarantine_untrusted=quarantine_untrusted,
-            )
-        except (GuardError, OSError) as rollback_exc:
-            rollback_errors.append(f"config lock: {rollback_exc}")
-        try:
-            _run_state_dir_guard(
-                "lock", config_dir, plan_json, mutation_lock_fd, rollback_deadline
-            )
-        except (GuardError, OSError) as rollback_exc:
-            rollback_errors.append(f"state-dir lock: {rollback_exc}")
-
-        detail = str(exc)
-        if rollback_errors:
-            detail += "; rollback issues: " + "; ".join(rollback_errors)
-        if isinstance(exc, GuardError):
-            raise GuardError(exc.code, exc.path, detail) from exc
-        raise GuardError("operation-failed", config_dir, detail) from exc
+    return
 
 
 def _write_secondary_journal(record: dict[str, object], identity: Identity) -> None:
@@ -2788,18 +2596,16 @@ RESTART_PHASES = {
 
 def _restart_journal_record(
     phase: str,
-    original_locked: bool,
     originals: tuple[FileSnapshot, FileSnapshot],
     digest: str,
 ) -> dict[str, object]:
     if phase not in RESTART_PHASES:
         raise GuardError("invalid-journal", JOURNAL_PATH, "restart phase is invalid")
     return {
-        "version": 1,
+        "version": 2,
         "action": "restart-seal",
         "phase": phase,
         "configDir": PRODUCTION_CONFIG_DIR,
-        "originalLocked": original_locked,
         "configSha256": digest,
         "original": [_stored_file(item) for item in originals],
     }
@@ -2809,21 +2615,18 @@ def _decode_restart_journal(
     record: dict[str, object], identity: Identity
 ) -> tuple[
     str,
-    bool,
     tuple[FileSnapshot, FileSnapshot],
     tuple[FileSnapshot, FileSnapshot],
     tuple[FileSnapshot, FileSnapshot],
     str,
 ]:
     phase = record.get("phase")
-    original_locked = record.get("originalLocked")
     digest = record.get("configSha256")
     if (
-        record.get("version") != 1
+        record.get("version") != 2
         or record.get("action") != "restart-seal"
         or record.get("configDir") != PRODUCTION_CONFIG_DIR
         or phase not in RESTART_PHASES
-        or not isinstance(original_locked, bool)
         or not isinstance(digest, str)
         or not re.fullmatch(r"[0-9a-f]{64}", digest)
     ):
@@ -2847,25 +2650,11 @@ def _decode_restart_journal(
             "invalid-journal", JOURNAL_PATH, "restart config digest is invalid"
         )
     _validate_runtime_config_json5(originals[0].data, JOURNAL_PATH, identity)
-    if original_locked:
-        for item in originals:
-            if (
-                item.uid != identity.root_uid
-                or item.gid != identity.root_gid
-                or item.mode != 0o444
-            ):
-                raise GuardError(
-                    "invalid-journal",
-                    JOURNAL_PATH,
-                    "locked restart original metadata is invalid",
-                )
-    else:
-        _validate_recovery_posture(originals, identity)
+    _validate_recovery_posture(originals, identity)
     sealed, _ = _canonical_targets(originals, identity, locked=True)
     mutable, _ = _canonical_targets(originals, identity, locked=False)
     return (
         str(phase),
-        original_locked,
         originals,
         sealed,
         mutable,
@@ -3152,55 +2941,10 @@ def _verify_locked_files(
             raise GuardError(
                 "config-not-locked",
                 posixpath.join(opened.config_path, snapshot.name),
-                "restart seal requires the exact shields-locked file posture",
+                "restart seal requires the transaction-locked file posture",
             )
 
 
-def _is_resealable_config_hash_permissions_drift(
-    snapshots: tuple[FileSnapshot, FileSnapshot], identity: Identity
-) -> bool:
-    config, hash_record = snapshots
-    blocking_flags = FS_IMMUTABLE_FL | FS_APPEND_FL
-    config_stays_locked = (
-        config.uid == identity.root_uid
-        and config.gid == identity.root_gid
-        and config.mode == 0o444
-        and not (
-            config.inode_flags is not None
-            and config.inode_flags & blocking_flags
-        )
-    )
-    hash_has_known_reconciler_posture = (
-        hash_record.uid == identity.sandbox_uid
-        and hash_record.gid == identity.sandbox_gid
-        and hash_record.mode == 0o660
-        and not (
-            hash_record.inode_flags is not None
-            and hash_record.inode_flags & blocking_flags
-        )
-    )
-    return config_stays_locked and hash_has_known_reconciler_posture
-
-
-def _verify_locked_posture(
-    opened: OpenConfig,
-    snapshots: tuple[FileSnapshot, FileSnapshot],
-    identity: Identity,
-    *,
-    allow_blocking_flags: bool = False,
-) -> None:
-    if not _has_locked_dir_posture(opened, identity):
-        raise GuardError(
-            "config-not-locked",
-            opened.config_path,
-            "restart seal requires the exact shields-locked directory posture",
-        )
-    _verify_locked_files(
-        opened,
-        snapshots,
-        identity,
-        allow_blocking_flags=allow_blocking_flags,
-    )
 
 
 def _is_partial_frozen_mutable_posture(opened: OpenConfig, identity: Identity) -> bool:
@@ -3403,115 +3147,22 @@ def _verify_file(
         )
 
 
-def _restore_originals(
-    opened: OpenConfig,
-    snapshots: tuple[FileSnapshot, ...],
-    identity: Identity,
-) -> list[str]:
-    errors: list[str] = []
-    for snapshot in snapshots:
-        try:
-            current = _snapshot_file(opened, snapshot.name)
-            _replace_from_snapshot(
-                opened,
-                current,
-                snapshot.uid,
-                snapshot.gid,
-                snapshot.mode,
-                snapshot.inode_flags,
-                replacement_data=snapshot.data,
-                replacement_atime_ns=snapshot.atime_ns,
-                replacement_mtime_ns=snapshot.mtime_ns,
-                replacement_xattrs=snapshot.xattrs,
-            )
-        except Exception as exc:  # Best-effort rollback; force-lock follows.
-            errors.append(f"{snapshot.name}: {exc}")
-    try:
-        _set_dir(
-            opened.config_fd,
-            opened.config_stat.st_uid,
-            opened.config_stat.st_gid,
-            stat.S_IMODE(opened.config_stat.st_mode),
-            0o500,
-        )
-        _set_dir(
-            opened.parent_fd,
-            opened.parent_stat.st_uid,
-            opened.parent_stat.st_gid,
-            stat.S_IMODE(opened.parent_stat.st_mode),
-            0o555,
-        )
-    except OSError as exc:
-        errors.append(f"directory metadata: {exc}")
-    if errors:
-        try:
-            for name in CONFIG_FILES:
-                fd, _st = _open_checked_file(opened, name)
-                try:
-                    inode_flags = _get_inode_flags(fd)
-                    if inode_flags is not None:
-                        _set_inode_flags(
-                            fd, inode_flags & ~(FS_IMMUTABLE_FL | FS_APPEND_FL)
-                        )
-                    os.fchown(fd, identity.root_uid, identity.root_gid)
-                    os.fchmod(fd, 0o444)
-                    os.fsync(fd)
-                finally:
-                    os.close(fd)
-            _set_dir(
-                opened.config_fd,
-                identity.root_uid,
-                identity.root_gid,
-                0o755,
-                0o500,
-            )
-            _set_dir(
-                opened.parent_fd,
-                identity.root_uid,
-                identity.sandbox_gid,
-                0o1775,
-                0o555,
-            )
-        except Exception as exc:
-            errors.append(f"fail-closed lock: {exc}")
-    return errors
-
-
-def _preflight(opened: OpenConfig) -> None:
-    _assert_config_binding(opened)
-    _snapshot_pair(opened)
-    _assert_config_binding(opened)
-
-
 def _preflight_restart(opened: OpenConfig, identity: Identity) -> None:
     _assert_config_binding(opened)
-    if _is_mutable_dir_posture(opened, identity):
-        config, hash_file = _snapshot_raw_pair(opened)
-        _verify_mutable_files(opened, (config, hash_file), identity)
-    elif _has_locked_dir_posture(opened, identity):
-        config, hash_file = _snapshot_pair(opened)
-        _verify_locked_files(opened, (config, hash_file), identity)
-    else:
+    if not _is_mutable_dir_posture(opened, identity):
         raise GuardError(
             "invalid-restart-posture",
             opened.config_path,
-            "restart preflight requires an exact mutable or shields-locked posture",
+            "restart preflight requires the mutable config posture",
         )
+    config, hash_file = _snapshot_raw_pair(opened)
+    _verify_mutable_files(opened, (config, hash_file), identity)
     _validate_runtime_config_json5(
         config.data,
         posixpath.join(opened.config_path, "openclaw.json"),
         identity,
     )
     _assert_config_binding(opened)
-
-
-_hash_synthesized = False
-
-# Set True when a lock transition re-seals a perms-only drift on an already-locked
-# config (an in-sandbox reconciler re-permissioned a canonical file after the
-# lock: #4663 / #7985). Surfaced in the result JSON so the host can report the
-# self-heal instead of leaving it invisible.
-_resealed_drift = False
 
 
 def _write_hash_record(opened: OpenConfig, config_data: bytes, identity: Identity) -> None:
@@ -3523,34 +3174,6 @@ def _write_hash_record(opened: OpenConfig, config_data: bytes, identity: Identit
         identity,
     )
 
-
-def _repair_absent_hash_for_lock(opened: OpenConfig, identity: Identity) -> None:
-    """Synthesize a truly absent .config-hash before lock-from-mutable capture.
-
-    On lock-from-mutable the canonical pair is regenerated from openclaw.json
-    bytes regardless of the stored hash content, so an absent sidecar carries
-    less signal than the tolerated stale-content case. The repair fires only on
-    true ENOENT under the frozen tree: a planted symlink, directory, fifo, or
-    hardlink at the name is seen as existing and falls through to the existing
-    fail-closed rejections.
-    """
-
-    global _hash_synthesized
-    try:
-        os.stat(".config-hash", dir_fd=opened.config_fd, follow_symlinks=False)
-        return
-    except FileNotFoundError:
-        pass
-    _verify_dir_posture(
-        opened.config_fd,
-        opened.config_path,
-        identity.root_uid,
-        identity.root_gid,
-        0o700,
-    )
-    config = _snapshot_file(opened, "openclaw.json")
-    _write_hash_record(opened, config.data, identity)
-    _hash_synthesized = True
 
 
 def _force_fail_closed_lock(opened: OpenConfig, identity: Identity) -> list[str]:
@@ -3618,171 +3241,6 @@ def _force_fail_closed_lock(opened: OpenConfig, identity: Identity) -> list[str]
     return errors
 
 
-def _settle_pending_transaction_for_lock(
-    opened: OpenConfig, identity: Identity
-) -> None:
-    """Resolve only rootfs-authenticated state while the mutable tree is frozen."""
-
-    try:
-        secondary = _read_secondary_journal(identity)
-    except GuardError:
-        secondary = None
-    # A persistent record without the private rootfs peer is replayable after
-    # mutable exposure and is therefore never authoritative for deadline lock.
-    if secondary is not None:
-        try:
-            journal_action = secondary.get("action")
-            if journal_action == "write-config":
-                phase, originals, replacements, _digest = _decode_journal(secondary)
-                if phase != "prepared":
-                    targets = replacements if phase == "committed" else originals
-                    _install_stored_pair(opened, targets)
-            elif journal_action == "restart-seal":
-                phase, original_locked, _originals, _sealed, mutable, _digest = (
-                    _decode_restart_journal(secondary, identity)
-                )
-                if not original_locked and phase != "prepared":
-                    _install_stored_pair(opened, mutable)
-        except Exception:
-            # Containment remains deterministic even if transaction recovery is
-            # impossible: the current bounded config bytes are sealed below.
-            pass
-    try:
-        _clear_journal(identity, opened)
-    except (OSError, GuardError):
-        # A path may be a sandbox-planted nonregular entry. Quarantine it under
-        # the already-frozen descriptor and retry secondary cleanup.
-        try:
-            _quarantine_untrusted_persistent_journal(opened, identity)
-        except (OSError, GuardError):
-            # The directory is already frozen; sealing the bounded current
-            # pair below remains the fail-closed containment authority.
-            pass
-        try:
-            _clear_secondary_journal(identity)
-        except (OSError, GuardError):
-            # A stale root-only secondary record cannot weaken the frozen tree
-            # and can be retired by a later idempotent recovery.
-            pass
-
-
-def _transition(
-    action: Literal["lock", "unlock"],
-    opened: OpenConfig,
-    identity: Identity,
-    *,
-    quarantine_untrusted: bool = False,
-) -> None:
-    global _resealed_drift
-    if action == "lock":
-        if _has_clamped_locked_dir_posture(opened, identity):
-            pair = _snapshot_pair(opened)
-            _verify_locked_files(opened, pair, identity)
-            return
-        if _has_locked_dir_posture(opened, identity):
-            # A restart journal may still need rootfs-authenticated cleanup.
-            _settle_pending_transaction_for_lock(opened, identity)
-            pair = _snapshot_pair(opened)
-            try:
-                _verify_locked_files(opened, pair, identity)
-                return
-            except GuardError as verify_error:
-                if verify_error.code != "config-not-locked" or not (
-                    _is_resealable_config_hash_permissions_drift(pair, identity)
-                ):
-                    raise
-                # The config remains root-owned and read-only, while the
-                # in-sandbox reconciler re-permissioned only .config-hash after
-                # the lock (#4663 / #7985). Re-seal below instead of failing
-                # closed: the root-owned directory prevents replacement, the
-                # config cannot be written, and _snapshot_pair verified that the
-                # sidecar still authenticates those config bytes.
-                # Source: the writer is the upstream OpenClaw in-sandbox gateway/
-                # doctor perm-normalizer, which NemoClaw does not own, so the
-                # correct fix is this host-authenticated relock re-seal, not a
-                # change to that writer, which this repo cannot make. Removal
-                # condition: delete this path once the lock is durably immutable on
-                # every platform (chattr +i, unavailable on overlayfs today) or the
-                # upstream reconciler stops re-permissioning an already-locked
-                # config; either fully closes the #4663 relock settle-window race
-                # that this branch only narrows.
-                _resealed_drift = True
-        freeze_started = False
-        try:
-            freeze_started = True
-            _freeze(
-                opened,
-                identity,
-                quarantine_reserved=quarantine_untrusted,
-            )
-            _settle_pending_transaction_for_lock(opened, identity)
-            _repair_absent_hash_for_lock(opened, identity)
-            source = _snapshot_raw_pair(opened)
-            targets, _digest = _canonical_targets(source, identity, locked=True)
-            _install_stored_pair(opened, targets)
-            pair = _snapshot_pair(opened)
-            _verify_locked_files(opened, pair, identity)
-            _commit_locked_dirs(opened, identity)
-            return
-        except Exception as exc:
-            fail_closed_errors = (
-                _force_fail_closed_lock(opened, identity) if freeze_started else []
-            )
-            detail = str(exc)
-            if fail_closed_errors:
-                detail += "; fail-closed issues: " + "; ".join(fail_closed_errors)
-            if isinstance(exc, GuardError):
-                raise GuardError(exc.code, exc.path, detail) from exc
-            raise GuardError("transition-failed", opened.config_path, detail) from exc
-
-    if _is_mutable_dir_posture(opened, identity):
-        # Unlock is idempotent, mirroring the already-locked short-circuits in
-        # the lock branch above. A config already in the exact mutable posture
-        # is the unlock target: on some platforms (DGX Spark/Station, macOS) an
-        # in-sandbox OpenClaw reconciler re-permissions the config back to
-        # sandbox-owned mutable *after* a host lock returns, and a freshly
-        # onboarded or snapshot-restored sandbox boots mutable before the lock
-        # settles. Requiring the locked posture there rejected a legitimate
-        # `shields down` with config-not-locked even though the config already
-        # holds the mutable target posture. Verify the exact mutable posture
-        # and treat the transition as a no-op instead of failing.
-        pair = _snapshot_raw_pair(opened)
-        _verify_mutable_posture(opened, pair, identity)
-        _validate_runtime_config_json5(
-            pair[0].data,
-            posixpath.join(opened.config_path, "openclaw.json"),
-            identity,
-        )
-        _assert_config_binding(opened)
-        return
-    pair = _snapshot_pair(opened)
-    _verify_locked_posture(opened, pair, identity, allow_blocking_flags=True)
-    snapshots: list[FileSnapshot] = []
-    try:
-        _freeze(
-            opened,
-            identity,
-            quarantine_reserved=quarantine_untrusted,
-        )
-        snapshots.extend(_snapshot_pair(opened))
-        targets, _digest = _canonical_targets(
-            (snapshots[0], snapshots[1]), identity, locked=False
-        )
-        _install_stored_pair(opened, targets)
-        _snapshot_pair(opened)
-        _commit_mutable_dirs(opened, identity)
-    except Exception as exc:
-        rollback_errors = (
-            []
-            if isinstance(exc, MutableHandoffError)
-            else _restore_originals(opened, tuple(snapshots), identity)
-        )
-        detail = str(exc)
-        if rollback_errors:
-            detail += "; rollback issues: " + "; ".join(rollback_errors)
-        if isinstance(exc, GuardError):
-            raise GuardError(exc.code, exc.path, detail) from exc
-        raise GuardError("transition-failed", opened.config_path, detail) from exc
 
 
 def _install_stored_pair(
@@ -3854,22 +3312,12 @@ def _seal_restart(
     identity: Identity,
     *,
     quarantine_untrusted: bool = False,
-) -> bool:
-    if _has_locked_dir_posture(opened, identity):
-        original = _snapshot_pair(opened)
-        _verify_locked_files(opened, original, identity)
-        _sealed, digest = _canonical_targets(original, identity, locked=True)
-        record = _restart_journal_record("sealed", True, original, digest)
-        # Recording the original posture does not alter either protected file
-        # or any host-shields directory metadata.
-        _write_journal(record, identity, opened)
-        return True
-
+) -> None:
     if not _is_mutable_dir_posture(opened, identity):
         raise GuardError(
             "invalid-restart-posture",
             opened.config_path,
-            "restart seal requires exact mutable or shields-locked posture",
+            "restart seal requires the mutable config posture",
         )
     initial = _snapshot_raw_pair(opened)
     _verify_mutable_files(opened, initial, identity)
@@ -3882,7 +3330,6 @@ def _seal_restart(
     _write_journal(
         _restart_journal_record(
             "prepared",
-            False,
             initial,
             initial_digest,
         ),
@@ -3898,29 +3345,24 @@ def _seal_restart(
         identity,
     )
     sealed, digest = _canonical_targets(frozen, identity, locked=True)
-    applying = _restart_journal_record("applying", False, frozen, digest)
+    applying = _restart_journal_record("applying", frozen, digest)
     # No replacement begins until this record is durable both in rootfs state
     # and in the persistent /sandbox tree.
     _write_journal(applying, identity, opened)
     _install_stored_pair(opened, sealed)
     installed = _snapshot_pair(opened)
     _verify_locked_files(opened, installed, identity)
-    sealed_record = _restart_journal_record("sealed", False, frozen, digest)
+    sealed_record = _restart_journal_record("sealed", frozen, digest)
     _write_journal(sealed_record, identity, opened)
     _commit_locked_dirs(opened, identity)
-    return False
 
 
 def _unseal_restart(
     opened: OpenConfig,
     identity: Identity,
     record: dict[str, object] | None,
-) -> bool:
+) -> None:
     if record is None:
-        if _has_locked_dir_posture(opened, identity):
-            current = _snapshot_pair(opened)
-            _verify_locked_files(opened, current, identity)
-            return True
         if _is_mutable_dir_posture(opened, identity):
             current = _snapshot_raw_pair(opened)
             _verify_mutable_files(opened, current, identity)
@@ -3929,7 +3371,7 @@ def _unseal_restart(
                 posixpath.join(opened.config_path, "openclaw.json"),
                 identity,
             )
-            return False
+            return
         raise GuardError(
             "recovery-required",
             opened.config_path,
@@ -3938,52 +3380,31 @@ def _unseal_restart(
 
     (
         _phase,
-        original_locked,
         originals,
         _sealed,
         mutable,
         digest,
     ) = _decode_restart_journal(record, identity)
-    if original_locked:
-        current = _snapshot_pair(opened)
-        _verify_locked_posture(opened, current, identity)
-        try:
-            _clear_journal(identity, opened)
-        except (OSError, GuardError):
-            # The root-owned record remains an idempotent cleanup request.
-            pass
-        return True
 
     _freeze(opened, identity)
-    unsealing = _restart_journal_record("unsealing", False, originals, digest)
+    unsealing = _restart_journal_record("unsealing", originals, digest)
     _write_journal(unsealing, identity, opened)
     _install_stored_pair(opened, mutable)
     installed = _snapshot_pair(opened)
     _verify_mutable_files(opened, installed, identity)
-    committed = _restart_journal_record("unseal-committed", False, originals, digest)
+    committed = _restart_journal_record("unseal-committed", originals, digest)
     _write_journal(committed, identity, opened)
     _commit_mutable_and_retire_journal(opened, identity)
-    return False
 
 
 def _recover_restart(
     opened: OpenConfig,
     identity: Identity,
     record: dict[str, object],
-) -> tuple[str, str | None, bool]:
-    phase, original_locked, _originals, _sealed, mutable, digest = (
+) -> tuple[str, str | None]:
+    phase, _originals, _sealed, mutable, digest = (
         _decode_restart_journal(record, identity)
     )
-    if original_locked:
-        current = _snapshot_pair(opened)
-        _verify_locked_posture(opened, current, identity)
-        try:
-            _clear_journal(identity, opened)
-        except (OSError, GuardError):
-            # Locked posture is already verified; later recovery can retire an
-            # idempotent stale journal without reopening mutation authority.
-            pass
-        return "restart-locked-preserved", digest, True
 
     if phase == "prepared":
         current = _snapshot_raw_pair(opened)
@@ -4008,7 +3429,7 @@ def _recover_restart(
             # Mutable posture is already verified and committed; journal
             # retirement can be retried without changing visible bytes.
             pass
-        return "restart-prepared-preserved", visible_digest, False
+        return "restart-prepared-preserved", visible_digest
 
     if phase == "unseal-committed" and _is_mutable_dir_posture(opened, identity):
         current = _snapshot_raw_pair(opened)
@@ -4025,14 +3446,14 @@ def _recover_restart(
             # Mutable posture is already verified and committed; journal
             # retirement can be retried without changing visible bytes.
             pass
-        return "restart-unseal-visible", visible_digest, False
+        return "restart-unseal-visible", visible_digest
 
     _freeze(opened, identity)
     _install_stored_pair(opened, mutable)
     installed = _snapshot_pair(opened)
     _verify_mutable_files(opened, installed, identity)
     _commit_mutable_and_retire_journal(opened, identity)
-    return "restart-restored-mutable", digest, False
+    return "restart-restored-mutable", digest
 
 
 def _recover_write_config(
@@ -4252,15 +3673,13 @@ def _recover_any_transaction(
     opened: OpenConfig,
     identity: Identity,
     pending: dict[str, object] | None,
-) -> tuple[str, str | None, bool | None]:
+) -> tuple[str, str | None]:
     if pending is None:
         if _has_clamped_locked_dir_posture(opened, identity):
-            current = _snapshot_pair(opened)
-            _verify_locked_files(opened, current, identity)
-            return (
-                "clamped-lock-preserved",
-                hashlib.sha256(current[0].data).hexdigest(),
-                True,
+            raise GuardError(
+                "unsupported-config-posture",
+                opened.config_path,
+                "config recovery found a retired persistent config-lock posture; rebuild or recreate the sandbox",
             )
         if _is_partial_frozen_mutable_posture(opened, identity):
             partial = _snapshot_raw_pair(opened)
@@ -4272,26 +3691,25 @@ def _recover_any_transaction(
             )
             if mutable_files:
                 _commit_mutable_dirs(opened, identity)
-                return (
-                    "orphan-freeze-restored",
-                    hashlib.sha256(partial[0].data).hexdigest(),
-                    False,
-                )
-            targets, digest = _canonical_targets(partial, identity, locked=True)
-            _install_stored_pair(opened, targets)
-            _commit_locked_dirs(opened, identity)
-            return "orphan-lock-completed", digest, True
+                return "orphan-freeze-restored", hashlib.sha256(partial[0].data).hexdigest()
+            raise GuardError(
+                "ambiguous-config-posture",
+                opened.config_path,
+                "config recovery cannot prove a mutable transaction; rebuild or recreate the sandbox",
+            )
         if _has_locked_dir_posture(opened, identity):
-            current = _snapshot_pair(opened)
-            _verify_locked_files(opened, current, identity)
-            return "none", hashlib.sha256(current[0].data).hexdigest(), True
-        return "none", None, False
+            raise GuardError(
+                "unsupported-config-posture",
+                opened.config_path,
+                "config recovery found a retired persistent config-lock posture; rebuild or recreate the sandbox",
+            )
+        return "none", None
     journal_action = pending.get("action")
     if journal_action == "restart-seal":
         return _recover_restart(opened, identity, pending)
     if journal_action == "write-config":
         recovery, digest = _recover_write_config(opened, identity)
-        return recovery, digest, False
+        return recovery, digest
     raise GuardError(
         "invalid-journal", JOURNAL_PATH, "journal action is not recognized"
     )
@@ -4308,7 +3726,7 @@ def _clear_untrusted_mutable_reserved_entry(
     return "untrusted-journal-cleared", hashlib.sha256(current[0].data).hexdigest()
 
 
-def _contain_partial_replay(opened: OpenConfig, identity: Identity) -> tuple[str, str]:
+def _contain_partial_replay(opened: OpenConfig, identity: Identity) -> None:
     _freeze(opened, identity)
     _quarantine_untrusted_persistent_journal(opened, identity)
     _force_fail_closed_lock(opened, identity)
@@ -4318,8 +3736,11 @@ def _contain_partial_replay(opened: OpenConfig, identity: Identity) -> tuple[str
             opened.config_path,
             "could not contain ambiguous persistent journal replay",
         )
-    current = _snapshot_pair(opened)
-    return "ambiguous-replay-locked", hashlib.sha256(current[0].data).hexdigest()
+    raise GuardError(
+        "ambiguous-replay-contained",
+        opened.config_path,
+        "ambiguous config replay was contained; rebuild or recreate the sandbox",
+    )
 
 
 def _production_identity() -> Identity:
@@ -4343,23 +3764,18 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "action",
         choices=(
-            "preflight",
             "preflight-restart",
-            "lock",
-            "unlock",
             "seal-restart",
             "unseal-restart",
             "revoke-startup-ready",
             "publish-startup-ready",
             "write-config",
             "recover",
-            "unlock-failed-startup",
         ),
     )
     parser.add_argument("--config-dir", default=PRODUCTION_CONFIG_DIR)
     parser.add_argument("--expected-config-sha256", default="")
     parser.add_argument("--startup-owner", action="store_true")
-    parser.add_argument("--plan-json", default=None)
     return parser
 
 
@@ -4388,26 +3804,9 @@ def main(argv: list[str] | None = None) -> int:
                 f"helper is restricted to {PRODUCTION_CONFIG_DIR}",
             )
         identity = _production_identity()
-        startup_failure_recovery = _validate_action_readiness(
-            action, args.startup_owner, identity
-        )
-        if action == "unlock-failed-startup" and not startup_failure_recovery:
-            # Never let this action inherit the ordinary lease path.
-            raise GuardError(
-                "failed-startup-not-proven",
-                STARTUP_READY_PATH,
-                "unlock-failed-startup requires a proven terminal startup failure",
-            )
-        read_only = action in {"preflight", "preflight-restart"}
+        _validate_action_readiness(action, args.startup_owner, identity)
+        read_only = action == "preflight-restart"
         mutex = _acquire_mutation_mutex(action, identity, exclusive=not read_only)
-        if startup_failure_recovery:
-            _reconfirm_startup_failure_recovery(action, identity)
-        if action == "unlock-failed-startup" and args.plan_json is None:
-            raise GuardError(
-                "invalid-state-lock-plan",
-                "--plan-json",
-                "unlock-failed-startup requires the agent state lock plan",
-            )
 
         if action in {"revoke-startup-ready", "publish-startup-ready"}:
             if action == "revoke-startup-ready":
@@ -4437,53 +3836,34 @@ def main(argv: list[str] | None = None) -> int:
                 )
             replacement_config = _read_replacement_config()
 
-        opened = (
-            _open_config_for_lock(args.config_dir, identity)
-            if action == "lock"
-            else _open_config(args.config_dir)
-        )
+        opened = _open_config(args.config_dir)
         untrusted_reserved_entry = False
-        if action == "lock":
-            # Lock freezes both namespace levels before journal inspection so
-            # a last-moment sandbox swap cannot veto containment.
+        try:
+            pending_journal = _read_journal(identity, opened)
+        except GuardError as exc:
+            persistent_display = posixpath.join(
+                opened.config_path, PERSISTENT_JOURNAL_NAME
+            )
+            if exc.path != persistent_display:
+                raise
+            secondary = _read_secondary_journal(identity)
+            replay_without_secondary = (
+                exc.code == "persistent-journal-without-secondary"
+                and secondary is None
+                and (
+                    _is_mutable_dir_posture(opened, identity)
+                    or _is_partial_frozen_mutable_posture(opened, identity)
+                )
+            )
+            if secondary is not None or not (
+                replay_without_secondary
+                or _mutable_reserved_entry_is_nonauthoritative(opened, identity)
+            ):
+                raise
             pending_journal = None
-        else:
-            try:
-                pending_journal = _read_journal(identity, opened)
-            except GuardError as exc:
-                persistent_display = posixpath.join(
-                    opened.config_path, PERSISTENT_JOURNAL_NAME
-                )
-                # Never reinterpret a bad /etc journal. Only an unsafe persistent
-                # entry in the exact mutable tree, with no trusted secondary, is a
-                # sandbox-planted nonauthority.
-                if exc.path != persistent_display:
-                    raise
-                secondary = _read_secondary_journal(identity)
-                replay_without_secondary = (
-                    exc.code == "persistent-journal-without-secondary"
-                    and secondary is None
-                    and (
-                        _is_mutable_dir_posture(opened, identity)
-                        or _is_partial_frozen_mutable_posture(opened, identity)
-                    )
-                )
-                if secondary is not None or not (
-                    replay_without_secondary
-                    or _mutable_reserved_entry_is_nonauthoritative(opened, identity)
-                ):
-                    raise
-                pending_journal = None
-                untrusted_reserved_entry = True
+            untrusted_reserved_entry = True
 
-        if action == "lock" and pending_journal is not None:
-            # Deadline/manual relock cannot be vetoed by an interrupted config
-            # write or restart seal. Recover under this same mutex, then seal.
-            _recover_any_transaction(opened, identity, pending_journal)
-            pending_journal = None
-        elif (
-            action not in {"recover", "unseal-restart"} and pending_journal is not None
-        ):
+        if action not in {"recover", "unseal-restart"} and pending_journal is not None:
             raise GuardError(
                 "recovery-required",
                 JOURNAL_PATH,
@@ -4498,15 +3878,11 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         recovery: str | None = None
-        original_locked: bool | None = None
-        if action == "preflight":
-            _preflight(opened)
-            new_digest = None
-        elif action == "preflight-restart":
+        new_digest: str | None = None
+        if action == "preflight-restart":
             _preflight_restart(opened, identity)
-            new_digest = None
         elif action == "seal-restart":
-            original_locked = _seal_restart(
+            _seal_restart(
                 opened,
                 identity,
                 quarantine_untrusted=untrusted_reserved_entry,
@@ -4524,7 +3900,7 @@ def main(argv: list[str] | None = None) -> int:
                     JOURNAL_PATH,
                     "non-restart transaction must be recovered before unseal",
                 )
-            original_locked = _unseal_restart(opened, identity, pending_journal)
+            _unseal_restart(opened, identity, pending_journal)
             new_digest = hashlib.sha256(
                 _snapshot_file(opened, "openclaw.json").data
             ).hexdigest()
@@ -4543,40 +3919,17 @@ def main(argv: list[str] | None = None) -> int:
         elif action == "recover":
             if untrusted_reserved_entry:
                 if _is_partial_frozen_mutable_posture(opened, identity):
-                    recovery, new_digest = _contain_partial_replay(opened, identity)
-                    original_locked = True
+                    _contain_partial_replay(opened, identity)
+                    raise AssertionError("ambiguous replay containment must stop recovery")
                 else:
                     recovery, new_digest = _clear_untrusted_mutable_reserved_entry(
                         opened, identity
                     )
-                    original_locked = False
             else:
-                recovery, new_digest, original_locked = _recover_any_transaction(
+                recovery, new_digest = _recover_any_transaction(
                     opened, identity, pending_journal
                 )
-        elif action == "unlock-failed-startup":
-            # Every check that can refuse this action has already run, so no
-            # refusal can leave state unsealed under a locked config.
-            _run_failed_startup_unlock(
-                opened,
-                identity,
-                args.config_dir,
-                args.plan_json,
-                mutex.fd,
-                quarantine_untrusted=untrusted_reserved_entry,
-            )
-            new_digest = None
-            recovery = None
-        else:
-            _transition(
-                action,
-                opened,
-                identity,
-                quarantine_untrusted=untrusted_reserved_entry,
-            )
-            new_digest = None
-            recovery = None
-        if action in {"preflight", "preflight-restart"}:
+        if action == "preflight-restart":
             recovery = None
         print(
             json.dumps(
@@ -4586,16 +3939,8 @@ def main(argv: list[str] | None = None) -> int:
                     "status": "ok",
                     "configDir": opened.config_path,
                     "files": list(CONFIG_FILES),
-                    "chattrApplied": False,
                     **({"configSha256": new_digest} if new_digest is not None else {}),
-                    **({"hashSynthesized": True} if _hash_synthesized else {}),
-                    **({"resealedDrift": True} if _resealed_drift else {}),
                     **({"recovery": recovery} if recovery is not None else {}),
-                    **(
-                        {"originalLocked": original_locked}
-                        if original_locked is not None
-                        else {}
-                    ),
                 },
                 sort_keys=True,
             )
