@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -40,65 +41,110 @@ afterEach(() => {
 });
 
 describe("OpenClaw native skill installation", () => {
-  it("stages privately, delegates publication, verifies natively, and records provenance", () => {
-    const skill = makeSkill();
-    const digest = computeSkillContentDigest(skill);
-    const sshExec = vi.fn(
-      (
-        _ctx: SshContext,
-        _command: string,
-        _opts?: { input?: string | Buffer; timeout?: number },
-      ): SshResult => ({
-        status: 0,
-        stdout: `INSTALLED ${digest}\n`,
-        stderr: "",
-      }),
-    );
+  it.runIf(process.platform === "linux")(
+    "executes native publication, provenance, replacement, and staging cleanup",
+    () => {
+      const skill = makeSkill();
+      const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-root-"));
+      const fakeBin = path.join(sandboxRoot, "bin");
+      const workspaceSkillDir = path.join(sandboxRoot, "workspace", "skills", "demo-skill");
+      const invocationLog = path.join(sandboxRoot, "openclaw.log");
+      const executionPaths: SkillPaths = {
+        ...paths,
+        stateDir: sandboxRoot,
+        uploadDir: path.join(sandboxRoot, "skills", "demo-skill"),
+        mirrorDir: null,
+        workspaceSkillDir,
+        sessionFile: path.join(sandboxRoot, "agents", "main", "sessions", "sessions.json"),
+      };
+      roots.push(sandboxRoot);
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(
+        path.join(fakeBin, "openclaw"),
+        `#!/bin/sh
+set -eu
+case "$1 $2" in
+  "skills install")
+    if [ "\${3:-}" = "--help" ]; then
+      printf '%s\\n' '--agent --force'
+      exit 0
+    fi
+    printf '%s\\n' "$*" >> "$OPENCLAW_TEST_LOG"
+    rm -rf -- "$OPENCLAW_TEST_TARGET"
+    mkdir -p -- "$(dirname "$OPENCLAW_TEST_TARGET")"
+    cp -R -- "$3" "$OPENCLAW_TEST_TARGET"
+    ;;
+  "skills list"|"skills info"|"skills check")
+    printf '{"skills":["demo-skill"],"path":"%s"}\\n' "$OPENCLAW_TEST_TARGET"
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+`,
+        { mode: 0o755 },
+      );
+      const sshExec = vi.fn(
+        (
+          _ctx: SshContext,
+          command: string,
+          opts?: { input?: string | Buffer; timeout?: number },
+        ): SshResult => {
+          const execution = spawnSync("bash", ["--noprofile", "--norc", "-c", command], {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              OPENCLAW_TEST_LOG: invocationLog,
+              OPENCLAW_TEST_TARGET: workspaceSkillDir,
+              PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            },
+            input: opts?.input,
+            timeout: opts?.timeout,
+          });
+          return {
+            status: execution.status ?? 1,
+            stdout: execution.stdout,
+            stderr: execution.stderr,
+          };
+        },
+      );
 
-    const result = installOpenClawSkill(ctx, skill, paths, "demo-skill", {
-      sshExecImpl: sshExec,
-    });
+      const firstDigest = computeSkillContentDigest(skill);
+      expect(
+        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", {
+          sshExecImpl: sshExec,
+        }),
+      ).toEqual({ success: true, uploaded: 1, contentDigest: firstDigest });
+      expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toContain("# Demo");
+      expect(
+        fs.readFileSync(
+          path.join(sandboxRoot, ".nemoclaw", "skill-installs", "demo-skill.sha256"),
+          "utf8",
+        ),
+      ).toBe(`${firstDigest}\n`);
+      expect(
+        fs.readdirSync(sandboxRoot).filter((entry) => entry.startsWith(".nemoclaw-skill-stage.")),
+      ).toEqual([]);
 
-    expect(result).toEqual({ success: true, uploaded: 1, contentDigest: digest });
-    const command = sshExec.mock.calls[0][1];
-    expect(command).toContain('mktemp -d "$root/.nemoclaw-skill-stage.XXXXXX"');
-    expect(command).toContain('chmod 700 "$stage"');
-    expect(command).toContain("trap cleanup EXIT HUP INT TERM");
-    expect(command).toContain('openclaw skills install "$payload" --agent main');
-    expect(command).toContain("openclaw skills list --json");
-    expect(command).toContain('openclaw skills info "$skill" --json');
-    expect(command).toContain("openclaw skills check --json");
-    expect(command).toContain("/sandbox/.openclaw/.nemoclaw/skill-installs");
-    expect(command).not.toContain("sessions.json");
-    expect(command).not.toContain('rm -rf -- "$target"');
-    expect(sshExec.mock.calls[0][2]).toMatchObject({
-      input: expect.any(Buffer),
-      timeout: 120_000,
-    });
-  });
-
-  it("permits native force only after matching provenance and installed content", () => {
-    const skill = makeSkill();
-    const digest = computeSkillContentDigest(skill);
-    const sshExec = vi.fn(
-      (
-        _ctx: SshContext,
-        _command: string,
-        _opts?: { input?: string | Buffer; timeout?: number },
-      ): SshResult => ({
-        status: 0,
-        stdout: `UPDATED ${digest}\n`,
-        stderr: "",
-      }),
-    );
-
-    expect(
-      installOpenClawSkill(ctx, skill, paths, "demo-skill", { sshExecImpl: sshExec }),
-    ).toMatchObject({ success: true, contentDigest: digest });
-    const command = sshExec.mock.calls[0][1];
-    expect(command).toContain('[ "$previous" = "$current" ]');
-    expect(command).toContain('openclaw skills install "$payload" --agent main --force');
-  });
+      fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: demo-skill\n---\n# Updated\n");
+      const updatedDigest = computeSkillContentDigest(skill);
+      expect(
+        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", {
+          sshExecImpl: sshExec,
+        }),
+      ).toEqual({ success: true, uploaded: 1, contentDigest: updatedDigest });
+      expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toContain(
+        "# Updated",
+      );
+      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toEqual([
+        expect.not.stringContaining("--force"),
+        expect.stringContaining("--force"),
+      ]);
+      expect(
+        fs.readdirSync(sandboxRoot).filter((entry) => entry.startsWith(".nemoclaw-skill-stage.")),
+      ).toEqual([]);
+    },
+  );
 
   it.each([
     [2, "COLLISION\n", "destination_exists"],
