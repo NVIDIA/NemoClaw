@@ -383,8 +383,10 @@ function updateInstallerEnv(
   delete next.NEMOCLAW_INSTALL_REF;
   delete next.NEMOCLAW_INSTALL_TAG;
   delete next.NEMOCLAW_REINSTALL_CLI;
+  delete next.NEMOCLAW_UPDATE_INVOKED;
   if (maintainedRevision) next.NEMOCLAW_INSTALL_REF = maintainedRevision;
   if (forceCliReinstall) next.NEMOCLAW_REINSTALL_CLI = "1";
+  next.NEMOCLAW_UPDATE_INVOKED = "1";
   return next;
 }
 

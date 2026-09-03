@@ -797,6 +797,7 @@ usage() {
   printf "    NVIDIA_INFERENCE_API_KEY                API key (skips credential prompt)\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
+  printf "    NEMOCLAW_DISABLE_TELEMETRY=1  Disable installer telemetry\n"
   printf "    NEMOCLAW_DEFER_ONBOARDING=1   Same as --defer-onboarding\n"
   printf "                                  Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
   printf "                                  and the build, cloud, or routed NVIDIA hosted provider\n"
@@ -6407,6 +6408,7 @@ main() {
 
   finalize_install
   clear_station_resume_after_completed_onboarding
+  send_install_telemetry
 }
 
 clear_station_resume_after_completed_onboarding() {
@@ -6414,6 +6416,19 @@ clear_station_resume_after_completed_onboarding() {
   [[ "${ONBOARD_RAN:-false}" == true ]] || return 0
   clear_station_dual_pair_resume
   clear_station_express_resume
+}
+
+# Keep the installer boundary closed: update.ts provides one private marker,
+# and the TypeScript telemetry client receives only the resulting operation.
+# Delivery is best-effort and must never change the installer's exit status.
+send_install_telemetry() {
+  local operation="install"
+  if [[ "${NEMOCLAW_UPDATE_INVOKED:-}" == "1" ]]; then
+    operation="update"
+  fi
+
+  [[ -n "${_CLI_PATH:-}" && -x "$_CLI_PATH" ]] || return 0
+  "$_CLI_PATH" internal installer telemetry "$operation" >/dev/null 2>&1 || true
 }
 
 # Print the completion summary, then propagate a fatal/non-zero result when the

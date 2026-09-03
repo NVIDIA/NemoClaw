@@ -718,6 +718,35 @@ describe("runUpdateAction", () => {
     expect(options?.env?.NEMOCLAW_INSTALL_TAG).toBeUndefined();
   });
 
+  it("marks the spawned installer as an update and overwrites inherited marker state (#10440)", async () => {
+    const env = {
+      ...process.env,
+      NEMOCLAW_UPDATE_INVOKED: "untrusted",
+    };
+    const spawnSyncImpl = vi.fn(
+      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+    );
+
+    await runUpdateAction(
+      { yes: true },
+      {
+        currentVersion: () => "0.1.0",
+        env,
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
+        isSourceCheckout: () => false,
+        log: vi.fn(),
+        spawnSyncImpl,
+      },
+    );
+
+    const calls = spawnSyncImpl.mock.calls as unknown as Array<
+      [string, readonly string[], { env?: NodeJS.ProcessEnv }]
+    >;
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[2].env?.NEMOCLAW_UPDATE_INVOKED).toBe("1");
+    expect(env.NEMOCLAW_UPDATE_INVOKED).toBe("untrusted");
+  });
+
   it("preserves the canonical Deep Agents agent selection while sanitizing installer env", async () => {
     const spawnSyncImpl = vi.fn(
       () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,

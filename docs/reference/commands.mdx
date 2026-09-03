@@ -3420,6 +3420,7 @@ For contributor guidance on how these command files are structured, refer to `sr
 | `$$nemoclaw internal installer plan` | `install.sh` | Build a deterministic installer plan from environment and probe inputs without applying it. |
 | `$$nemoclaw internal installer normalize-env` | `install.sh` | Normalize installer ref and provider environment values without applying installation changes. |
 | `$$nemoclaw internal installer resolve-release-tag` | `install.sh` | Resolve the installer ref using the same precedence as `install.sh`. |
+| `$$nemoclaw internal installer telemetry <install\|update>` | `install.sh` | Pass one closed successful operation to the shared telemetry client. Production delivery remains disabled until its configuration is provisioned. |
 | `$$nemoclaw internal uninstall plan` | `uninstall.sh` / `$$nemoclaw uninstall` | Build a deterministic uninstall plan without applying it. |
 | `$$nemoclaw internal uninstall run-plan` | `uninstall.sh` / `$$nemoclaw uninstall` | Remove host-side NemoClaw resources from a previously built plan. |
 | `$$nemoclaw internal uninstall classify-shim` | `uninstall.sh` / `$$nemoclaw uninstall` | Classify whether a shim path is safe for the uninstaller to remove. |
@@ -3608,7 +3609,10 @@ installer commands: the git ref to install from. A nonempty value takes preceden
 `NEMOCLAW_INSTALL_TAG`. Overridden by the `--install-ref` flag. | | `NEMOCLAW_INSTALL_TAG` | release
 tag | For internal installer commands: the release tag to install when `NEMOCLAW_INSTALL_REF` is
 unset or empty. Defaults to the admin-promoted `lkg` tag when unset. Overridden by the
-`--install-tag` flag. | | `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE` | `1` to enable | Enables the fixed
+`--install-tag` flag. | | `NEMOCLAW_DISABLE_TELEMETRY` | exactly `1` | Stops the post-success
+installer telemetry attempt before production configuration lookup, event construction, or network
+access. Production delivery remains disabled until the client ID, schemas, and endpoints are
+provisioned. | | `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE` | `1` to enable | Enables the fixed
 vLLM local model profile. Requires `NEMOCLAW_LOCAL_MODEL_RUNTIME=vllm`. Direct `$$nemoclaw onboard`
 use also requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer makes onboarding
 non-interactive, disables Express selection, and sets this value automatically when it receives
