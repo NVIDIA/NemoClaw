@@ -72,7 +72,6 @@ function compatibility(
   preset: ServingPreset,
   recipe: ServingRecipe,
   readinessReports: readonly ManagedInferenceReadinessSource[],
-  providerOwnsHostReadiness: boolean,
 ): { compatible: boolean; incompatibilityReason: string | null } {
   if (preset.spec.selection === "disabled" || supportState(preset) === "disabled") {
     return { compatible: false, incompatibilityReason: "Profile is disabled." };
@@ -83,11 +82,13 @@ function compatibility(
       incompatibilityReason: `Backend ${recipe.spec.backend} is not available through Express onboarding yet.`,
     };
   }
+  // Managed vLLM installation still invokes the Docker-backed installer.
+  // Keep Docker readiness authoritative here until onboarding starts vLLM
+  // through the selected runtime provider's host-local operation.
   const resolution = resolveManagedInferenceServing(
     {
       readinessReports,
       topologyQualifications: [],
-      providerOwnsHostReadiness,
       intent: { preset: preset.metadata.id },
     },
     managedInferenceCatalogFromServingCatalog(catalog),
@@ -100,16 +101,11 @@ function compatibility(
 export interface ListServingProfilesOptions {
   readonly evaluateCompatibility?: typeof compatibility;
   readonly readinessReports?: readonly ManagedInferenceReadinessSource[];
-  readonly providerOwnsHostReadiness?: boolean;
 }
 
 export interface ResolveServingProfileOptions {
   readonly catalog?: CompiledServingCatalog;
-  readonly listProfiles?: (
-    catalog: CompiledServingCatalog,
-    options: ListServingProfilesOptions,
-  ) => ServingProfileListEntry[];
-  readonly providerOwnsHostReadiness?: boolean;
+  readonly listProfiles?: (catalog: CompiledServingCatalog) => ServingProfileListEntry[];
 }
 
 export class ServingProfileSelectionError extends Error {}
@@ -142,9 +138,7 @@ export function resolveServingProfileSelection(
       `Serving profile '${selected.metadata.id}' is disabled.`,
     );
   }
-  const profile = (options.listProfiles ?? listServingProfiles)(catalog, {
-    providerOwnsHostReadiness: options.providerOwnsHostReadiness,
-  }).find(
+  const profile = (options.listProfiles ?? listServingProfiles)(catalog).find(
     ({ id }) => id === selected.metadata.id,
   );
   if (!profile?.compatible) {
@@ -208,7 +202,6 @@ export function listServingProfiles(
           preset,
           recipe,
           readinessReports,
-          options.providerOwnsHostReadiness === true,
         ),
       };
     });

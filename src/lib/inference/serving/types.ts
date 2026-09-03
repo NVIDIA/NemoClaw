@@ -699,8 +699,6 @@ export interface ManagedInferenceSelectionIntent {
 export interface ManagedInferenceResolverInput<TTopologyOutput = unknown> {
   readonly readinessReports: readonly ManagedInferenceReadinessSource[];
   readonly topologyQualifications: readonly ManagedInferenceTopologyQualification<TTopologyOutput>[];
-  /** The selected runtime provider replaces standard Docker host-readiness authority. */
-  readonly providerOwnsHostReadiness?: boolean;
   readonly intent?: ManagedInferenceSelectionIntent;
   readonly now?: Date;
   readonly maxReadinessAgeMs?: number;

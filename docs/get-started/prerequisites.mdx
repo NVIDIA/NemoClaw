@@ -46,6 +46,7 @@ If that path is unavailable or does not restore Docker access, the installer exi
 Native rootless Podman is an explicit Linux path and does not require the Docker CLI or daemon.
 Start standard onboarding with `NEMOCLAW_GATEWAY_RUNTIME=podman $$nemoclaw onboard`.
 Before selecting it, review its qualified host requirements and limitations in [Platform Support](../reference/platform-support#deployment-paths) and the [Podman troubleshooting guide](../reference/troubleshooting#podman).
+Managed local vLLM install/start remains Docker-backed and is unavailable when Docker is absent; attaching an already-running local vLLM server remains a separate path.
 The portable experimental profile is separate and still requires a Docker-compatible `docker` command.
 
 NemoClaw uses an isolated `python3` helper for descriptor-relative migration snapshot sanitization and deletion.

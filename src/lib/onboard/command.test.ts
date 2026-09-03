@@ -884,18 +884,13 @@ describe("onboard command options", () => {
       displayName: "Muse Glimmer 30B NVFP4 W4A4 on one DGX Spark",
       backend: "vllm",
     };
-    const env: NodeJS.ProcessEnv = { NEMOCLAW_GATEWAY_RUNTIME: "podman" };
+    const env: NodeJS.ProcessEnv = {};
     let observedProvider: string | undefined;
     let observedPreset: string | undefined;
-    const observedReadinessOwnership: Array<boolean | undefined> = [];
     await runOnboardCommand({
       flags: { profile: vllmProfile.id },
       env,
-      providerOwnsVllmHostReadiness: () => true,
-      listServingProfiles: (options) => {
-        observedReadinessOwnership.push(options?.providerOwnsHostReadiness);
-        return [vllmProfile];
-      },
+      listServingProfiles: () => [vllmProfile],
       runOnboard: async () => {
         observedProvider = env.NEMOCLAW_PROVIDER;
         observedPreset = env.NEMOCLAW_SERVING_PRESET;
@@ -904,31 +899,34 @@ describe("onboard command options", () => {
 
     expect(observedProvider).toBe("install-vllm");
     expect(observedPreset).toBe(vllmProfile.id);
-    expect(observedReadinessOwnership).toEqual([true]);
     // Scoped to the run, like the preset itself.
     expect(env.NEMOCLAW_PROVIDER).toBeUndefined();
     expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
   });
 
-  it("keeps Docker readiness for --profile under the portable profile", () => {
-    const observedReadinessOwnership: Array<boolean | undefined> = [];
+  it("rejects native Podman --profile before onboarding while managed vLLM requires Docker (#10891)", () => {
+    const profile = {
+      ...COMPATIBLE_NANO_PROFILE,
+      id: "vllm.dgx-spark-gb10.single.qwen3-6-35b-a3b-nvfp4",
+      backend: "vllm",
+      compatible: false,
+      incompatibilityReason: "Docker is required for managed vLLM installation",
+    };
+    const errors: string[] = [];
 
-    resolve(
-      {
-        profile: COMPATIBLE_NANO_PROFILE.id,
-        "experimental-profile": "portable",
-      },
-      {
-        env: { NEMOCLAW_GATEWAY_RUNTIME: "podman" },
-        providerOwnsVllmHostReadiness: () => true,
-        listServingProfiles: (options) => {
-          observedReadinessOwnership.push(options?.providerOwnsHostReadiness);
-          return [COMPATIBLE_NANO_PROFILE];
+    expect(() =>
+      resolve(
+        { profile: profile.id },
+        {
+          env: { NEMOCLAW_GATEWAY_RUNTIME: "podman" },
+          listServingProfiles: () => [profile],
+          error: (message = "") => errors.push(message),
         },
-      },
-    );
-
-    expect(observedReadinessOwnership).toEqual([false]);
+      ),
+    ).toThrow("exit:1");
+    expect(errors).toEqual([
+      `  Serving profile '${profile.id}' is incompatible: Docker is required for managed vLLM installation.`,
+    ]);
   });
 
   it("selects the managed llama.cpp provider for a llama-cpp profile (#9313)", async () => {

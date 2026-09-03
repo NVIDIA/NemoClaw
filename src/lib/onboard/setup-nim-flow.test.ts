@@ -6,12 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../agent/defs";
 import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
 import type { VllmProfile } from "../inference/vllm";
-import {
-  makeDeps,
-  makeHostState,
-  makeReadinessOwningVllmRuntimeProvider,
-  unexpected,
-} from "./__test-helpers__/setup-nim-flow";
+import { makeDeps, makeHostState, unexpected } from "./__test-helpers__/setup-nim-flow";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import type { LocalModelProfilePlan } from "./local-model-profile/integration";
 import { createSetupNim, type SetupNimFlowDeps, withServingPortGuard } from "./setup-nim-flow";
@@ -765,7 +760,6 @@ describe("createSetupNim", () => {
         prompt,
         detectInferenceProviderHostState,
         installVllm,
-        getRuntimeProvider: makeReadinessOwningVllmRuntimeProvider,
         handleVllmSelection,
       }),
     );
@@ -776,7 +770,6 @@ describe("createSetupNim", () => {
       hasImage: true,
       nonInteractive: true,
       promptFn: prompt,
-      providerOwnsHostReadiness: true,
       beforeInstall: expect.any(Function),
     });
     expect(prompt).not.toHaveBeenCalled();

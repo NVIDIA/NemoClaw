@@ -6,16 +6,11 @@ import type { ResolvedHostLocalInferenceSelection } from "../../inference/servin
 import type { VllmProfile } from "../../inference/vllm";
 import { VLLM_EXTRA_ARGS_ENV } from "../../inference/vllm-models";
 import type { SetupNimSelectionResult, SetupNimSelectionState } from "../setup-nim-flow";
-import {
-  type RuntimeProviderBundle,
-  runtimeProviderHostReadinessOptions,
-} from "../runtime-provider/contract";
 import { vllmInstallRecoveryOptions } from "../provider-recovery";
 import type { LocalModelProfilePlan } from "./plan";
 
 export interface LocalModelProfileOnboarderDeps {
   env?: NodeJS.ProcessEnv;
-  getRuntimeProvider(): RuntimeProviderBundle;
   installVllm(
     profile: VllmProfile,
     options: {
@@ -24,7 +19,6 @@ export interface LocalModelProfileOnboarderDeps {
       promptFn: (question: string) => Promise<string>;
       beforeInstall?: (modelId: string) => void;
       checkpointInstallIntent?: (modelId: string) => void;
-      providerOwnsHostReadiness?: boolean;
     },
   ): Promise<{ ok: boolean }>;
   getVllmInstallResumeModel?(): string | null;
@@ -118,7 +112,6 @@ export function createLocalModelProfileOnboarder(deps: LocalModelProfileOnboarde
       hasImage: host.hasVllmImage,
       nonInteractive: true,
       promptFn: deps.prompt,
-      ...runtimeProviderHostReadinessOptions(deps.getRuntimeProvider(), "vllm"),
       ...(checkpointInstallIntent
         ? {
             checkpointInstallIntent: (modelId: string) => {

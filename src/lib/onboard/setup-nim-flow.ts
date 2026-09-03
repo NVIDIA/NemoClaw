@@ -57,10 +57,7 @@ import { reportProviderSelectionFailure } from "./provider-selection-failure";
 import { promptForInferenceProviderSelection } from "./provider-selection-prompt";
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
 import type { RuntimeProviderBundle } from "./runtime-provider/contract";
-import {
-  resolveCurrentRuntimeProviderBundle,
-  runtimeProviderHostReadinessOptions,
-} from "./runtime-provider/current";
+import { resolveCurrentRuntimeProviderBundle } from "./runtime-provider/current";
 
 export { resolveCurrentRuntimeProviderBundle };
 export { createHermesPortableOllamaInferenceResolver } from "./experimental/hermes-portable-ollama-inference";
@@ -230,7 +227,6 @@ export interface SetupNimFlowDeps {
       beforeInstall?: (modelId: string) => void;
       checkpointInstallIntent?: (modelId: string) => void;
       modelIntent?: string;
-      providerOwnsHostReadiness?: boolean;
     },
   ): Promise<{ ok: boolean }>;
   checkpointVllmInstallModel?(modelId: string): void;
@@ -1292,7 +1288,6 @@ export function createSetupNim(
             hasImage: hasVllmImage,
             nonInteractive: deps.isNonInteractive(),
             promptFn: deps.prompt,
-            ...runtimeProviderHostReadinessOptions(deps.getRuntimeProvider(), "vllm"),
             ...vllmRecovery,
             beforeInstall: (modelId) => {
               seedVllmInstallRoute(modelId);

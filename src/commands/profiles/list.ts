@@ -6,10 +6,6 @@ import {
   listServingProfiles,
   renderServingProfiles,
 } from "../../lib/inference/serving/profile-list";
-import {
-  resolveCurrentRuntimeProviderBundle,
-  runtimeProviderHostReadinessOptions,
-} from "../../lib/onboard/runtime-provider/access";
 
 export default class ProfilesListCommand extends NemoClawCommand {
   static id = "profiles:list";
@@ -34,10 +30,7 @@ export default class ProfilesListCommand extends NemoClawCommand {
 
   public async run(): Promise<unknown> {
     await this.parse(ProfilesListCommand);
-    const entries = listServingProfiles(
-      undefined,
-      runtimeProviderHostReadinessOptions(resolveCurrentRuntimeProviderBundle(), "vllm"),
-    );
+    const entries = listServingProfiles();
     if (this.jsonEnabled()) return entries;
     this.log(renderServingProfiles(entries));
   }

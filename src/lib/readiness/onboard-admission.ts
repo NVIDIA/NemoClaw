@@ -93,24 +93,6 @@ const STANDARD_DOCKER_REQUIRED_CAPABILITIES = new Set<string>([
   ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
 ]);
 
-const STANDARD_DOCKER_READINESS_OBSERVATIONS = new Set<string>(["host.docker.runtime"]);
-
-/** Whether a finding belongs to the standard Docker readiness authority. */
-export function isStandardDockerReadinessFinding(id: string): boolean {
-  return STANDARD_DOCKER_FINDINGS.has(id);
-}
-
-/** Whether a serving requirement belongs to the standard Docker readiness authority. */
-export function isStandardDockerReadinessRequirement(
-  kind: "capability" | "observation",
-  id: string,
-): boolean {
-  return (
-    (kind === "capability" && STANDARD_DOCKER_REQUIRED_CAPABILITIES.has(id)) ||
-    (kind === "observation" && STANDARD_DOCKER_READINESS_OBSERVATIONS.has(id))
-  );
-}
-
 const ALWAYS_REQUIRED_CAPABILITIES = [
   ONBOARD_REQUIRED_CAPABILITY_IDS.dockerAvailable,
   ONBOARD_REQUIRED_CAPABILITY_IDS.dockerDaemonReachable,
@@ -144,12 +126,7 @@ function canWaiveFinding(
   managedGateway: boolean,
 ): boolean {
   if (options.explicitlyOptedOutGpuPassthrough && GPU_FINDINGS.has(finding.id)) return true;
-  if (
-    options.providerOwnsHostReadiness &&
-    isStandardDockerReadinessFinding(finding.id)
-  ) {
-    return true;
-  }
+  if (options.providerOwnsHostReadiness && STANDARD_DOCKER_FINDINGS.has(finding.id)) return true;
   if (
     options.allowUnsupportedRuntime &&
     finding.id === ONBOARD_READINESS_FINDING_IDS.runtimeUnsupported

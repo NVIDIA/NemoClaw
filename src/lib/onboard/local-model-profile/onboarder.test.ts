@@ -5,9 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { loadServingCatalog } from "../../inference/serving/catalog-loader";
 import type { VllmProfile } from "../../inference/vllm";
-import { makeReadinessOwningVllmRuntimeProvider } from "../__test-helpers__/setup-nim-flow";
 import { OnboardInferenceCapabilityCache } from "../inference-capability-cache";
-import { createDockerRuntimeProviderBundle } from "../runtime-provider/docker";
 import type { SetupNimSelectionState } from "../setup-nim-flow";
 import { createLocalModelProfileOnboarder, type LocalModelProfileOnboarderDeps } from "./onboarder";
 import {
@@ -43,16 +41,6 @@ function plan() {
   })!;
 }
 
-function createOnboarder(
-  deps: Omit<LocalModelProfileOnboarderDeps, "getRuntimeProvider"> &
-    Partial<Pick<LocalModelProfileOnboarderDeps, "getRuntimeProvider">>,
-) {
-  return createLocalModelProfileOnboarder({
-    getRuntimeProvider: createDockerRuntimeProviderBundle,
-    ...deps,
-  });
-}
-
 describe("dedicated local model profile onboarder", () => {
   it("installs the fixed vLLM recipe before attaching its authenticated provider", async () => {
     const selection = state();
@@ -63,9 +51,8 @@ describe("dedicated local model profile onboarder", () => {
       options.beforeInstall?.("nvidia/Qwen3.6-35B-A3B-NVFP4");
       return { ok: true };
     });
-    const onboard = createOnboarder({
+    const onboard = createLocalModelProfileOnboarder({
       env: {},
-      getRuntimeProvider: makeReadinessOwningVllmRuntimeProvider,
       installVllm,
       handleVllmSelection,
       prompt: vi.fn(async () => ""),
@@ -91,7 +78,6 @@ describe("dedicated local model profile onboarder", () => {
       }),
       expect.objectContaining({
         nonInteractive: true,
-        providerOwnsHostReadiness: true,
         checkpointInstallIntent: expect.any(Function),
       }),
     );
@@ -107,7 +93,7 @@ describe("dedicated local model profile onboarder", () => {
       ok: true,
     }));
     const checkpointVllmInstallModel = vi.fn();
-    const onboard = createOnboarder({
+    const onboard = createLocalModelProfileOnboarder({
       env: {},
       installVllm,
       handleVllmSelection: vi.fn(async () => "selected" as const),
@@ -143,7 +129,7 @@ describe("dedicated local model profile onboarder", () => {
   it("rejects a conflicting resumed model before installation", async () => {
     const installVllm = vi.fn(async () => ({ ok: true }));
     const error = vi.fn();
-    const onboard = createOnboarder({
+    const onboard = createLocalModelProfileOnboarder({
       env: {},
       installVllm,
       handleVllmSelection: vi.fn() as never,
@@ -196,7 +182,7 @@ describe("dedicated local model profile onboarder", () => {
       options.beforeInstall?.("nvidia/Qwen3.6-35B-A3B-NVFP4");
       return { ok: true };
     });
-    const onboard = createOnboarder({
+    const onboard = createLocalModelProfileOnboarder({
       env: {},
       installVllm,
       handleVllmSelection,
@@ -241,7 +227,7 @@ describe("dedicated local model profile onboarder", () => {
     const installVllm = vi.fn(async () => ({ ok: true }));
     const error = vi.fn();
     const handleVllmSelection = vi.fn(async () => "selected" as const);
-    const onboard = createOnboarder({
+    const onboard = createLocalModelProfileOnboarder({
       env: { NEMOCLAW_VLLM_PORT: "9000" },
       installVllm,
       handleVllmSelection,
@@ -276,7 +262,7 @@ describe("dedicated local model profile onboarder", () => {
     delete (invalidPlan.recipe.spec.model as { gated?: boolean }).gated;
     const installVllm = vi.fn(async () => ({ ok: true }));
     const error = vi.fn();
-    const onboard = createOnboarder({
+    const onboard = createLocalModelProfileOnboarder({
       env: {},
       installVllm,
       handleVllmSelection: vi.fn() as never,

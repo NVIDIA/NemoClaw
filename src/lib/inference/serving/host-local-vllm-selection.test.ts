@@ -239,22 +239,6 @@ describe("host-local vLLM selection", () => {
     );
   });
 
-  it("carries selected-provider readiness ownership into catalog resolution", () => {
-    const selection = hostLocalSelection();
-    mocks.resolveManagedInferenceServing.mockReturnValue(selection);
-
-    expect(
-      resolveHostLocalVllmSelection(
-        baseProfile(),
-        { NEMOCLAW_SERVING_PRESET: selection.preset.metadata.id },
-        { providerOwnsHostReadiness: true },
-      ),
-    ).toMatchObject({ kind: "selected" });
-    expect(mocks.resolveManagedInferenceServing).toHaveBeenCalledWith(
-      expect.objectContaining({ providerOwnsHostReadiness: true }),
-    );
-  });
-
   it("uses provider-scoped automatic resolution for non-interactive defaults", () => {
     const selection = hostLocalSelection();
     mocks.resolveManagedInferenceServing.mockReturnValue(selection);

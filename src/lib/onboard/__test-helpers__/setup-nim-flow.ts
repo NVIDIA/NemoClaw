@@ -5,7 +5,6 @@ import { expect, vi } from "vitest";
 
 import { getWindowsHostOllamaDockerRequirement } from "../local-inference-topology";
 import type { InferenceProviderHostState } from "../provider-host-state";
-import type { RuntimeProviderBundle } from "../runtime-provider/contract";
 import { createDockerRuntimeProviderBundle } from "../runtime-provider/docker";
 import type { SetupNimFlowDeps } from "../setup-nim-flow";
 
@@ -80,21 +79,6 @@ export function makeHostState(
 
 export function unexpected(name: string): never {
   throw new Error(`Unexpected ${name} call`);
-}
-
-export function makeReadinessOwningVllmRuntimeProvider(): RuntimeProviderBundle {
-  const provider = createDockerRuntimeProviderBundle();
-  if (!provider.hostLocalInference.supported) {
-    throw new Error("Expected a supported host-local inference provider.");
-  }
-  return {
-    ...provider,
-    gateway: { ...provider.gateway, ownsHostReadiness: true },
-    hostLocalInference: {
-      ...provider.hostLocalInference,
-      services: ["vllm"],
-    },
-  };
 }
 
 function selectFromNumberedMenu(
