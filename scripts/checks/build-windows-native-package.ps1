@@ -93,6 +93,20 @@ function Get-StableWixIdentifier {
     return "$Prefix$($hex.Substring(0, 32))"
 }
 
+function Get-StableWixGuid {
+    param([Parameter(Mandatory)][string]$Value)
+
+    $bytes = [Text.Encoding]::UTF8.GetBytes("NVIDIA/NemoClaw/windows-component/$($Value.ToLowerInvariant())")
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = $sha256.ComputeHash($bytes)
+    } finally {
+        $sha256.Dispose()
+    }
+    $hex = ($digest | ForEach-Object { $_.ToString('x2') }) -join ''
+    return "$($hex.Substring(0, 8))-$($hex.Substring(8, 4))-$($hex.Substring(12, 4))-$($hex.Substring(16, 4))-$($hex.Substring(20, 12))"
+}
+
 function New-GroupedPayloadAuthoring {
     param(
         [Parameter(Mandatory)][string]$PayloadRoot,
@@ -129,10 +143,11 @@ function New-GroupedPayloadAuthoring {
         if ($files.Count -gt 0) {
             $componentIdentity = if ($Root) { '<root>' } else { $RelativeDirectory }
             $componentId = Get-StableWixIdentifier -Prefix 'Cmp_' -Value $componentIdentity
+            $componentGuidIdentity = "$componentIdentity|$(($files.Name | ForEach-Object { $_.ToLowerInvariant() }) -join '|')"
             $componentIds.Add($componentId)
             $writer.WriteStartElement('Component', $namespace)
             $writer.WriteAttributeString('Id', $componentId)
-            $writer.WriteAttributeString('Guid', '*')
+            $writer.WriteAttributeString('Guid', (Get-StableWixGuid -Value $componentGuidIdentity))
             $writer.WriteAttributeString('Bitness', 'always64')
             for ($index = 0; $index -lt $files.Count; $index++) {
                 $file = $files[$index]
