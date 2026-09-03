@@ -1050,6 +1050,7 @@ root = os.environ["NEMOCLAW_HERMES_CONFIG_ROOT"]
 directory_mode = 0o2770
 file_mode = 0o660
 max_repair_depth = 64
+max_repair_entries = 4096
 
 def fail(message: str) -> None:
     print(f"[SECURITY] Refusing Hermes log repair because {message}", file=sys.stderr)
@@ -1249,34 +1250,49 @@ def repair_file(parent_fd: int, name: str, path: str) -> None:
         os.close(fd)
 
 
+def account_repair_entry(entry_count: list[int]) -> None:
+    entry_count[0] += 1
+    if entry_count[0] > max_repair_entries:
+        fail(
+            f"{root}/logs exceeds maximum repair entry count "
+            f"{max_repair_entries}; archive or remove old retained logs "
+            "from a trusted host-side recovery environment before retrying"
+        )
+
+
+def scan_names(directory_fd: int, display_path: str):
+    try:
+        with os.scandir(directory_fd) as entries:
+            for entry in entries:
+                yield entry.name
+    except OSError as exc:
+        fail(f"{display_path} could not be scanned safely: {exc.strerror}")
+
+
 def repair_directory(
     directory_fd: int,
     display_path: str,
     *,
+    entry_count: list[int],
     skip_names: frozenset[str] = frozenset(),
     depth: int = 0,
 ) -> None:
     if depth > max_repair_depth:
         fail(f"{display_path} exceeds maximum repair depth {max_repair_depth}")
-    try:
-        names = sorted(os.listdir(directory_fd))
-    except OSError as exc:
-        fail(f"{display_path} could not be scanned safely: {exc.strerror}")
 
-    for name in names:
+    for name in scan_names(directory_fd, display_path):
+        account_repair_entry(entry_count)
         if name in skip_names:
             continue
         path = f"{display_path}/{name}"
         before = stat_entry(directory_fd, name, path)
-        if stat.S_ISLNK(before.st_mode):
-            fail(f"{path} is a symlink")
         if stat.S_ISDIR(before.st_mode):
             child_fd, opened = open_directory(directory_fd, name, path, create=False)
             if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
                 os.close(child_fd)
                 fail(f"{path} changed while it was opened")
             try:
-                repair_directory(child_fd, path, depth=depth + 1)
+                repair_directory(child_fd, path, entry_count=entry_count, depth=depth + 1)
                 verify_named_inode(directory_fd, name, path, os.fstat(child_fd))
             finally:
                 os.close(child_fd)
@@ -1284,7 +1300,40 @@ def repair_directory(
         if stat.S_ISREG(before.st_mode):
             repair_file(directory_fd, name, path)
             continue
+        if stat.S_ISLNK(before.st_mode):
+            fail(f"{path} is a symlink")
         fail(f"{path} is not a regular file or directory")
+
+
+def validate_repair_entry_budget(
+    directory_fd: int,
+    display_path: str,
+    *,
+    entry_count: list[int],
+    skip_names: frozenset[str] = frozenset(),
+    depth: int = 0,
+) -> None:
+    if depth > max_repair_depth:
+        fail(f"{display_path} exceeds maximum repair depth {max_repair_depth}")
+    for name in scan_names(directory_fd, display_path):
+        account_repair_entry(entry_count)
+        if name in skip_names:
+            continue
+        path = f"{display_path}/{name}"
+        before = stat_entry(directory_fd, name, path)
+        if not stat.S_ISDIR(before.st_mode):
+            continue
+        child_fd, opened = open_directory(directory_fd, name, path, create=False)
+        try:
+            validate_repair_entry_budget(
+                child_fd,
+                path,
+                entry_count=entry_count,
+                depth=depth + 1,
+            )
+            verify_named_inode(directory_fd, name, path, os.fstat(child_fd))
+        finally:
+            os.close(child_fd)
 
 
 try:
@@ -1311,9 +1360,23 @@ try:
     curator_path = f"{logs_path}/curator"
     curator_fd, curator_open = repair_managed_directory(logs_fd, "curator", curator_path)
 
-    repair_directory(curator_fd, curator_path)
+    entry_count = [0]
+    validate_repair_entry_budget(curator_fd, curator_path, entry_count=entry_count)
+    validate_repair_entry_budget(
+        logs_fd,
+        logs_path,
+        entry_count=entry_count,
+        skip_names=frozenset({"curator"}),
+    )
+    entry_count = [0]
+    repair_directory(curator_fd, curator_path, entry_count=entry_count)
     verify_named_inode(logs_fd, "curator", curator_path, curator_open)
-    repair_directory(logs_fd, logs_path, skip_names=frozenset({"curator"}))
+    repair_directory(
+        logs_fd,
+        logs_path,
+        entry_count=entry_count,
+        skip_names=frozenset({"curator"}),
+    )
     verify_named_inode(root_fd, "logs", logs_path, logs_open)
 
     try:

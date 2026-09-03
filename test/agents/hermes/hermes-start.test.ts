@@ -518,6 +518,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   stalePid?: boolean;
   preExistingLogFile?: boolean | "hardlink-to-config" | "hardlink-to-env";
   deepLogDepth?: number;
+  wideLogEntries?: number;
   unsafeLog?: "root-symlink" | "nested-symlink" | "fifo";
   swapLayoutDir?: MutableLayoutTarget;
   preExistingHistory?: "regular" | "symlink" | "directory" | "hardlink-to-config";
@@ -566,6 +567,12 @@ function runHermesGatewayRuntimeCleanup(opts: {
     for (let depth = 0; depth < opts.deepLogDepth; depth += 1)
       nested = path.join(nested, `d${depth}`);
     fs.mkdirSync(nested, { recursive: true });
+  }
+  if (opts.wideLogEntries) {
+    const wideRoot = path.join(hermesHome, "logs", "curator");
+    fs.mkdirSync(wideRoot, { recursive: true });
+    for (let index = 0; index < opts.wideLogEntries; index += 1)
+      fs.writeFileSync(path.join(wideRoot, `wide-${index}.log`), "", { mode: 0o644 });
   }
   const unsafeLogFixture = opts.unsafeLog
     ? createHermesUnsafeLogFixture(tmpDir, hermesHome, opts.unsafeLog)
@@ -1267,7 +1274,6 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.result.stderr).toContain("Removing unsafe stale Hermes legacy PID file symlink");
     expect(run.result.stderr).toContain("Removing stale Hermes lock file");
   });
-
   it("repairs the Hermes v0.14 writable directory layout before launch", () => {
     const run = runHermesGatewayRuntimeCleanup({
       staleLock: false,
@@ -1294,7 +1300,6 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.historyMode).toBe("660");
     expect(run.historyContent).toBe("");
   });
-
   it.each([
     ["sessions", "symlink", "is a symlink"],
     ["sessions", "file", "is not a directory"],
@@ -1317,7 +1322,6 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       "Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration.",
     );
   });
-
   it("preserves a pre-existing Hermes history file and reasserts its mode", () => {
     const run = runHermesGatewayRuntimeCleanup({
       staleLock: false,
@@ -1329,7 +1333,6 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.historyMode).toBe("660");
     expect(run.historyContent).toBe("pre-existing\n");
   });
-
   it.each([
     ["symlink", "symlink", ".hermes_history is a symlink"],
     ["directory", "directory", ".hermes_history is not a regular file"],
@@ -1350,7 +1353,6 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       "Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration.",
     );
   });
-
   it.each([".", "hooks", "image_cache", "audio_cache"] as const)(
     "rejects a swapped mutable layout directory %s after validation without mutating its external target",
     (swapLayoutDir) => {
@@ -1363,21 +1365,24 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       expect(run.result.stderr).toContain("Restore a trusted snapshot into a recreated sandbox");
     },
   );
-
   it("refuses a log tree beyond the bounded repair depth", () => {
     const run = runHermesGatewayRuntimeCleanup({ deepLogDepth: 65 });
-
     expect(run.result.status).not.toBe(0);
     expect(run.result.stderr).toContain("[SECURITY] Refusing Hermes log repair because");
     expect(run.result.stderr).toContain("exceeds maximum repair depth 64");
     expect(run.result.stderr).not.toContain("RecursionError");
   });
-
+  it("refuses a log tree beyond the bounded repair entry count", { timeout: 15_000 }, () => {
+    const run = runHermesGatewayRuntimeCleanup({ preExistingLogFile: true, wideLogEntries: 4097 });
+    expect(run.result.status).not.toBe(0);
+    expect(run.result.stderr).toContain("/logs exceeds maximum repair entry count 4096");
+    expect(run.result.stderr).toContain("archive or remove old retained logs");
+    expect(run.agentLogMode).toBe("644");
+  });
   it("refuses a history path that hard-links the mutable config file", () => {
     const run = runHermesGatewayRuntimeCleanup({
       preExistingHistory: "hardlink-to-config",
     });
-
     expect(run.result.status).not.toBe(0);
     expect(run.historyKind).toBe("regular");
     expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
@@ -1387,13 +1392,11 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.configYamlMode).toBe("600");
     expect(run.configYamlContent).toBe("model: test\n");
   });
-
   it("repair_hermes_log_permissions rejects log files hard-linked to config.yaml or .env and preserves config/env mode and content", () => {
     const [configRun, envRun] = (["hardlink-to-config", "hardlink-to-env"] as const).map(
       (preExistingLogFile) =>
         runHermesGatewayRuntimeCleanup({ staleLock: false, stalePid: false, preExistingLogFile }),
     );
-
     expect(configRun.result.status).not.toBe(0);
     expect(configRun.result.stderr).toContain("Refusing Hermes log repair because");
     expect(configRun.result.stderr).toContain("has hard-link count");
@@ -1405,7 +1408,6 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(envRun.envFileMode).toBe("600");
     expect(envRun.envFileContent).toBe("HERMES_TEST=1\n");
   });
-
   it.each([
     ["root-symlink", "/logs is a symlink"],
     ["nested-symlink", "/logs/curator/nested/sentinel-link is a symlink"],
