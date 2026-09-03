@@ -84,6 +84,7 @@ export interface EnsureAgentBaseImageOptions {
   forceBaseImageRebuild?: boolean;
   resolutionHint?: SandboxBaseImageResolutionMetadata | null;
   forceBaseImageRefresh?: boolean;
+  allowLocalFallback?: boolean;
 }
 
 export interface CreateAgentSandboxOptions extends EnsureAgentBaseImageOptions {
@@ -358,6 +359,7 @@ function createAgentBaseImageResolutionOptions(
     rootDir: ROOT,
     pinnedRemoteRef,
     requirePinnedRemoteRef: agent.name === "hermes" && pinnedRemoteRef !== undefined,
+    allowLocalFallback: options.allowLocalFallback,
     ...validationOptions,
   };
 }

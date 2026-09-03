@@ -218,29 +218,24 @@ describe("rebuild agent base image preflight", () => {
     };
   }
 
-  it("forces a repository-local build and returns its exact ref when no override exists", () => {
-    const imageRef = `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`;
-    const trustedLocalOverride = {
-      ref: imageRef,
-      provenance: `${"b".repeat(64)}.${"c".repeat(64)}`,
-    };
+  it("uses the pinned Hermes base when a legacy sandbox has no resolution hint (#10903)", () => {
+    const imageRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
     const { ensureAgentBaseImage } = mockBaseImagePreflight(imageRef);
     ensureAgentBaseImage.mockReturnValue({
       imageTag: imageRef,
-      built: true,
-      trustedLocalOverride,
+      built: false,
     });
 
     const result = ensureRebuildAgentBaseImage("hermes", makeBail());
 
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.objectContaining({ name: "hermes" }), {
-      forceBaseImageRebuild: true,
+      allowLocalFallback: false,
+      forceBaseImageRebuild: false,
     });
     expect(result).toEqual({
       ok: true,
       imageRef,
       overrideEnvVar,
-      trustedLocalOverride,
     });
   });
 

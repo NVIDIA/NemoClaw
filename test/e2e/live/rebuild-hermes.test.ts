@@ -562,7 +562,7 @@ function verifySeededOldBaseResolution(
 test(
   STALE_BASE_REBUILD
     ? "rebuild-hermes: stale base refresh restores Hermes state and resumes cron dispatch (#7806)"
-    : "rebuild-hermes: rebuild restores Hermes state and recovers a stranded cron drain (#7806)",
+    : "rebuild-hermes: rebuild resolves the pinned base and recovers a stranded cron drain (#7806, #10903)",
   {
     timeout: LIVE_TIMEOUT_MS,
     meta: { e2ePhases: REBUILD_HERMES_PHASES },
@@ -1105,7 +1105,7 @@ test(
       case false: {
         await artifacts.writeText(
           "phase-5-current-base-reuse.txt",
-          `Reusing phase 1 Hermes base ${phase1BaseResolution.ref} (${phase1BaseResolution.digest ?? phase1BaseResolution.imageId}) through verified alias ${CURRENT_BASE_REUSE_TAG}; rebuild must canonicalize it to the official digest without constructing it again.\n`,
+          `Retained phase 1 Hermes base ${phase1BaseResolution.ref} (${phase1BaseResolution.digest ?? phase1BaseResolution.imageId}) through verified evidence alias ${CURRENT_BASE_REUSE_TAG}; rebuild receives no base-image override and must resolve the pinned image without constructing it again.\n`,
         );
         break;
       }

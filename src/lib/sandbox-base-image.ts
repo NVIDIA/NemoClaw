@@ -450,6 +450,7 @@ export function resolveSandboxBaseImage(
   options: ResolveBaseImageOptions,
 ): SandboxBaseImageResolution | null {
   const env = options.env || process.env;
+  const allowLocalFallback = options.allowLocalFallback !== false;
   const override = options.envVar ? String(env[options.envVar] || "").trim() : "";
   if (options.requirePinnedRemoteRef === true && !options.pinnedRemoteRef?.trim()) {
     throw new SandboxBaseImageResolutionError(
@@ -458,10 +459,12 @@ export function resolveSandboxBaseImage(
   }
   const resolutionKey = createSandboxBaseImageResolutionKey(options);
 
-  if (!options.forceRefresh) {
+  const canReuseResolutionHint =
+    allowLocalFallback || options.resolutionHint?.source !== "local";
+  if (!options.forceRefresh && canReuseResolutionHint) {
     const reused = reuseSandboxBaseImageResolutionHint(options, resolutionKey);
     if (reused) return reused;
-  } else {
+  } else if (options.forceRefresh) {
     addTraceEvent("nemoclaw.sandbox_base_image.force_refresh");
   }
   addTraceEvent("nemoclaw.sandbox_base_image.cache_miss", {
@@ -516,7 +519,7 @@ export function resolveSandboxBaseImage(
         if (resolved) return finish(resolved);
       }
 
-      if (tags.length === 0) return null;
+      if (tags.length === 0 || !allowLocalFallback) return null;
       const local = resolveLocalCandidate(options, true);
       if (local) return finish(local);
       throw new SandboxBaseImageResolutionError(
@@ -525,7 +528,9 @@ export function resolveSandboxBaseImage(
           "resolved or validated, and no compatible local base image could be produced.",
       );
     };
-    if (baseImageInputsDirty(rootDir, env, inputPaths)) return resolveChangedInputs();
+    if (allowLocalFallback && baseImageInputsDirty(rootDir, env, inputPaths)) {
+      return resolveChangedInputs();
+    }
 
     if (requirePinnedRemoteRef && options.pinnedRemoteRef) {
       const resolved = resolvePulledCandidate(
@@ -536,15 +541,17 @@ export function resolveSandboxBaseImage(
         { pinnedRemoteRef: options.pinnedRemoteRef },
       );
       if (resolved) return finish(resolved);
-      const local = resolveLocalCandidate(options);
+      const local = allowLocalFallback ? resolveLocalCandidate(options) : null;
       if (local) return finish(local);
       const validationFailure = options.validationDescription
         ? `did not pass ${options.validationDescription}`
         : "did not pass required compatibility checks";
+      const fallbackFailure = allowLocalFallback
+        ? "No compatible local base image could be produced."
+        : "Local base image fallback is disabled for this operation.";
       throw new SandboxBaseImageResolutionError(
         `${options.label || "Sandbox base image"} '${options.pinnedRemoteRef}' is required but ` +
-          `could not be pulled or ${validationFailure}. No compatible local base image could ` +
-          "be produced.",
+          `could not be pulled or ${validationFailure}. ${fallbackFailure}`,
       );
     }
 
@@ -557,7 +564,12 @@ export function resolveSandboxBaseImage(
       if (resolved) return finish(resolved);
     }
 
-    if (baseImageInputsChangedSinceMain(rootDir, env, inputPaths)) return resolveChangedInputs();
+    if (
+      allowLocalFallback &&
+      baseImageInputsChangedSinceMain(rootDir, env, inputPaths)
+    ) {
+      return resolveChangedInputs();
+    }
 
     if (options.pinnedRemoteRef) {
       const resolved = resolvePulledCandidate(
@@ -581,7 +593,7 @@ export function resolveSandboxBaseImage(
     if (resolved) return finish(resolved);
   }
 
-  if (options.requireOpenshellSandboxAbi || options.validateImage) {
+  if (allowLocalFallback && (options.requireOpenshellSandboxAbi || options.validateImage)) {
     const local = resolveLocalCandidate(options);
     return local ? finish(local) : null;
   }
