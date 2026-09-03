@@ -852,14 +852,17 @@ describe("Hermes portable lifecycle", () => {
     const receipt = activeReceipt();
     const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false);
     const defaultCapture = captureOpenShell.getMockImplementation()!;
-    let healthAttempts = 0;
     let now = 0;
+    const healthInspections: number[] = [];
+    const sleepInspections: number[] = [];
     captureOpenShell.mockImplementation((args: readonly string[]) =>
       args.includes("python3")
         ? {
             status: 0,
             stdout:
-              (healthAttempts += 1) >= 2 && launchOpenShell.mock.calls.length === 1
+              healthInspections.push(
+                podman.mock.calls.filter(([command]) => command[1] === "inspect").length,
+              ) >= 2 && launchOpenShell.mock.calls.length === 1
                 ? "200\n"
                 : "unavailable\n",
             stderr: "",
@@ -874,6 +877,9 @@ describe("Hermes portable lifecycle", () => {
           ...deps,
           now: () => now,
           sleep: (milliseconds) => {
+            sleepInspections.push(
+              podman.mock.calls.filter(([command]) => command[1] === "inspect").length,
+            );
             now += milliseconds;
           },
         }),
@@ -881,10 +887,17 @@ describe("Hermes portable lifecycle", () => {
     );
 
     expect(result).toEqual({ kind: "recovered" });
-    expect(healthAttempts).toBe(2);
-    expect(launchOpenShell).toHaveBeenCalledTimes(1);
+    const inspectionCount = podman.mock.calls.filter(([args]) => args[1] === "inspect").length;
+    expect({ healthCount: healthInspections.length, inspectionCount, now }).toEqual({
+      healthCount: 2,
+      inspectionCount: 11,
+      now: 1_000,
+    });
+    expect(sleepInspections).toEqual([healthInspections[0]! + 1]);
+    expect(healthInspections[1]).toBeGreaterThan(sleepInspections[0]!);
+    expect(inspectionCount).toBeGreaterThan(healthInspections[1]!);
     expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
-    expect(launchOpenShell).toHaveBeenCalledWith([
+    expect(launchOpenShell).toHaveBeenCalledExactlyOnceWith([
       "sandbox",
       "exec",
       "-g",
@@ -894,18 +907,6 @@ describe("Hermes portable lifecycle", () => {
       "--no-tty",
       "--",
       ...receipt.startup.argv,
-    ]);
-    const execCommands = captureOpenShell.mock.calls
-      .map(([args]) => args)
-      .filter((args) => args.slice(0, 2).join(":") === "sandbox:exec")
-      .map((args) => args.slice(args.indexOf("--") + 1));
-    expect(execCommands).toEqual([
-      ["true"],
-      ...Array.from({ length: 2 }, () => [
-        "python3",
-        "-c",
-        hermesPortableContainerInternals.authenticatedHealthScript,
-      ]),
     ]);
   });
 
