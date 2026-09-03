@@ -335,6 +335,10 @@ async function runHermesNodeDiscordRestDenial(
     String.raw`FAKE_DISCORD_REST_PORT=${port} /usr/local/bin/node <<'NODE'
 const http = require("node:http");
 const token = process.env.DISCORD_BOT_TOKEN ?? "";
+console.log(
+  "TOKEN_PLACEHOLDER " +
+    /^openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN$/.test(token),
+);
 const request = http.request({
   host: "${FAKE_DISCORD_HOST}",
   port: Number(process.env.FAKE_DISCORD_REST_PORT),
@@ -712,7 +716,7 @@ PY`,
       redactionValues,
     );
     expect(resultText(deniedNodeRest)).toMatch(
-      /response 403|policy[_ ]denied|not allowed by any policy/iu,
+      /(?=[\s\S]*TOKEN_PLACEHOLDER true)(?=[\s\S]*(?:response 403|policy[_ ]denied|not allowed by any policy))/iu,
     );
     expect(
       readDiscordRestRequests(fakeRest.captureFile),
