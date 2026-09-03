@@ -81,7 +81,7 @@ describe("handleSandboxState live DCode selection", () => {
       extraProviders: [],
     });
     expect(calls.createSandbox.mock.calls[0]).toHaveLength(17);
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toBeNull();
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toBeUndefined();
   });
 
   it("carries authoritative thread opt-in in the create intent (#6478)", async () => {

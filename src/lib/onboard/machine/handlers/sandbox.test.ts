@@ -87,7 +87,7 @@ describe("handleSandboxState", () => {
         endpointSource: null,
         extraProviders: [],
       },
-      null,
+      undefined,
     );
     expect(calls.finalizeRouteReservation).not.toHaveBeenCalled();
     expect(calls.updateSandbox).toHaveBeenCalledWith(
@@ -558,7 +558,7 @@ describe("handleSandboxState", () => {
         endpointSource: null,
         extraProviders: [],
       },
-      null,
+      undefined,
     );
     expect(result.hermesToolGateways).toEqual(["nous-audio"]);
     expect(calls.note).toHaveBeenCalledWith(
@@ -847,7 +847,7 @@ describe("handleSandboxState", () => {
         endpointSource: null,
         extraProviders: [],
       },
-      null,
+      undefined,
     );
   });
 
@@ -1022,7 +1022,7 @@ describe("handleSandboxState", () => {
           targetIntentFingerprint: expect.any(String),
         }),
       }),
-      null,
+      undefined,
     );
     expect(result.webSearchConfigChanged).toBe(true);
   });
@@ -1156,7 +1156,7 @@ describe("handleSandboxState", () => {
           targetIntentFingerprint: expect.any(String),
         }),
       }),
-      null,
+      undefined,
     );
     expect(result.webSearchConfig).toBeNull();
   });

@@ -363,7 +363,7 @@ export interface SandboxStateOptions<
       hermesAuthMethod: HermesAuthMethod | null,
       inferenceRouteReservationAuthority: InferenceRouteReservationAuthority | null,
       createIntent: CompleteSandboxCreateIntent,
-      runVerifiedSandboxCreateEffects?: import("../../types").VerifiedSandboxCreateEffects | null,
+      runVerifiedSandboxCreateEffects?: import("../../types").VerifiedSandboxCreateEffects,
     ): Promise<string>;
     finalizeSandboxRouteReservation(sandboxName: string, sessionId: string): boolean;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
@@ -2192,7 +2192,7 @@ class SandboxStateFlow<
                       verifiedContext.revalidateSandboxIdentity,
                     );
                   }
-                : null,
+                : undefined,
             ),
         );
       } catch (error) {

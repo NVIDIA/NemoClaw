@@ -173,7 +173,7 @@ control._run_fixed_validator = (
 )
 
 
-def expire_runtime_validation(_script, _environment):
+def expire_runtime_validation(_script, _environment, **_options):
     preflight_clock[0] = 1.0
 
 
