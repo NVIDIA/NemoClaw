@@ -3,7 +3,6 @@
 
 import fs from "node:fs";
 
-
 const MAX_LOCK_BYTES = 64 * 1024;
 
 export interface OnboardLockOwner {
@@ -24,7 +23,11 @@ export interface OnboardLockEvidence {
 
 export type OnboardLockObservation =
   | { kind: "absent" }
-  | { kind: "stale"; reason: "departed" | "pid-reused"; owner: OnboardLockOwner }
+  | {
+      kind: "stale";
+      reason: "departed" | "pid-reused";
+      owner: OnboardLockOwner;
+    }
   | {
       kind: "busy";
       reason: "active" | "foreign" | "unverified" | "publishing" | "unsafe";
@@ -41,7 +44,8 @@ function readTrimmed(path: string): string | null {
 }
 
 function errnoCode(error: unknown): string | undefined {
-  if (!error || typeof error !== "object" || !("code" in error)) return undefined;
+  if (!error || typeof error !== "object" || !("code" in error))
+    return undefined;
   return typeof error.code === "string" ? error.code : undefined;
 }
 
@@ -89,7 +93,8 @@ export const systemOnboardLockEvidence: OnboardLockEvidence = {
       return null;
     }
   },
-  processGeneration: (pid) => (process.platform === "linux" ? linuxProcessGeneration(pid) : null),
+  processGeneration: (pid) =>
+    process.platform === "linux" ? linuxProcessGeneration(pid) : null,
   processAlive: defaultProcessAlive,
 };
 
@@ -143,7 +148,9 @@ export function observeOnboardLock(
   try {
     fd = fs.openSync(
       lockPath,
-      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
+      fs.constants.O_RDONLY |
+        (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_NONBLOCK ?? 0),
     );
   } catch (error) {
     if (errnoCode(error) === "ENOENT") return { kind: "absent" };
@@ -178,7 +185,9 @@ export function observeOnboardLock(
     ) {
       return { kind: "busy", reason: "publishing" };
     }
-    const owner = parseOwner(JSON.parse(bytes.subarray(0, length).toString("utf8")));
+    const owner = parseOwner(
+      JSON.parse(bytes.subarray(0, length).toString("utf8")),
+    );
     if (!owner) return { kind: "busy", reason: "unverified" };
 
     const hostIdentity = evidence.hostIdentity();
@@ -191,7 +200,8 @@ export function observeOnboardLock(
     ) {
       return { kind: "busy", reason: "foreign", owner };
     }
-    if (!evidence.processAlive(owner.pid)) return { kind: "stale", reason: "departed", owner };
+    if (!evidence.processAlive(owner.pid))
+      return { kind: "stale", reason: "departed", owner };
     const generation = evidence.processGeneration(owner.pid);
     if (!generation) return { kind: "busy", reason: "unverified", owner };
     if (generation !== owner.processGeneration)

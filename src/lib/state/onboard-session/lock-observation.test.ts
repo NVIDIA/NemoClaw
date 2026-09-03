@@ -15,8 +15,14 @@ import {
 
 const roots: string[] = [];
 
-function fixture(): { evidence: OnboardLockEvidence; lock: string; owner: OnboardLockOwner } {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-observation-"));
+function fixture(): {
+  evidence: OnboardLockEvidence;
+  lock: string;
+  owner: OnboardLockOwner;
+} {
+  const root = fs.mkdtempSync(
+    path.join(os.tmpdir(), "nemoclaw-onboard-observation-"),
+  );
   roots.push(root);
   const lock = path.join(root, "onboard.lock");
   const owner: OnboardLockOwner = {
@@ -41,7 +47,8 @@ function writeOwner(lock: string, owner: OnboardLockOwner): void {
 }
 
 afterEach(() => {
-  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0))
+    fs.rmSync(root, { recursive: true, force: true });
 });
 
 describe("onboarding lock observation", () => {
@@ -53,12 +60,17 @@ describe("onboarding lock observation", () => {
   it("reports only proven-local departed and reused owners as stale", () => {
     const { evidence, lock, owner } = fixture();
     writeOwner(lock, owner);
-    expect(observeOnboardLock(lock, { ...evidence, processAlive: () => false })).toMatchObject({
+    expect(
+      observeOnboardLock(lock, { ...evidence, processAlive: () => false }),
+    ).toMatchObject({
       kind: "stale",
       reason: "departed",
     });
     expect(
-      observeOnboardLock(lock, { ...evidence, processGeneration: () => "boot:11" }),
+      observeOnboardLock(lock, {
+        ...evidence,
+        processGeneration: () => "boot:11",
+      }),
     ).toMatchObject({ kind: "stale", reason: "pid-reused" });
   });
 
@@ -70,7 +82,9 @@ describe("onboarding lock observation", () => {
   ] as const)("keeps %s owners busy", (reason, overrides) => {
     const { evidence, lock, owner } = fixture();
     writeOwner(lock, owner);
-    expect(observeOnboardLock(lock, { ...evidence, ...overrides })).toMatchObject({
+    expect(
+      observeOnboardLock(lock, { ...evidence, ...overrides }),
+    ).toMatchObject({
       kind: "busy",
       reason,
     });
@@ -81,22 +95,34 @@ describe("onboarding lock observation", () => {
     fs.writeFileSync(lock, JSON.stringify({ pid: 123 }));
     expect(observeOnboardLock(lock, evidence)).toMatchObject({ kind: "busy" });
     fs.writeFileSync(lock, "x".repeat(64 * 1024 + 1));
-    expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "busy", reason: "unsafe" });
+    expect(observeOnboardLock(lock, evidence)).toEqual({
+      kind: "busy",
+      reason: "unsafe",
+    });
     fs.rmSync(lock);
     fs.mkdirSync(lock);
-    expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "busy", reason: "unsafe" });
+    expect(observeOnboardLock(lock, evidence)).toEqual({
+      kind: "busy",
+      reason: "unsafe",
+    });
   });
 
   it.each([0, -1])("keeps a malformed PID %s unverified", (pid) => {
     const { evidence, lock, owner } = fixture();
     writeOwner(lock, { ...owner, pid });
-    expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "busy", reason: "unverified" });
+    expect(observeOnboardLock(lock, evidence)).toEqual({
+      kind: "busy",
+      reason: "unverified",
+    });
   });
 
   it("keeps an empty process generation unverified", () => {
     const { evidence, lock, owner } = fixture();
     writeOwner(lock, { ...owner, processGeneration: "" });
-    expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "busy", reason: "unverified" });
+    expect(observeOnboardLock(lock, evidence)).toEqual({
+      kind: "busy",
+      reason: "unverified",
+    });
   });
 
   it("does not consult the local PID table for a foreign owner", () => {
