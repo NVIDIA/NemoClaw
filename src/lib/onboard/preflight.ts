@@ -129,6 +129,8 @@ export interface HostAssessment {
   dockerServiceActive?: boolean | null;
   dockerServiceEnabled?: boolean | null;
   dockerHostInvalid?: boolean;
+  /** Docker authority assessed by the bounded preflight probe. */
+  dockerHostAuthority?: string;
   dockerInstalled: boolean;
   dockerRunning: boolean;
   dockerReachable: boolean;
@@ -711,6 +713,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerServiceActive,
     dockerServiceEnabled,
     dockerHostInvalid,
+    dockerHostAuthority: env.DOCKER_HOST ?? "<unset>",
     dockerInstalled,
     dockerRunning,
     dockerReachable,
