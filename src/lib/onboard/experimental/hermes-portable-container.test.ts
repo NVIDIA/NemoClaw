@@ -117,6 +117,7 @@ function inspect(
   labels = LABELS,
   running = true,
   status = running ? "running" : "exited",
+  paused = false,
 ): HermesPortablePodmanResult {
   return {
     status: 0,
@@ -126,7 +127,7 @@ function inspect(
         Image: IMAGE,
         Name: `openshell-default--alpha-${SANDBOX_ID}`,
         Config: { Labels: labels },
-        State: { Running: running, Paused: false, Status: status },
+        State: { Running: running, Paused: paused, Status: status },
         HostConfig: { RestartPolicy: { Name: restartPolicy } },
       },
     ]),
@@ -371,14 +372,15 @@ describe("Hermes portable container authority", () => {
   });
 
   it.each([
-    ["restart policy", "no", "running"],
-    ["status", "unless-stopped", "exited"],
+    ["restart policy", "no", "running", false],
+    ["status", "unless-stopped", "exited", false],
+    ["paused state", "unless-stopped", "running", true],
   ])(
     "rejects reused health observation with invalid %s before credentials run",
-    (_label, restartPolicy, status) => {
+    (_label, restartPolicy, status, paused) => {
       const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "200\n", stderr: "" }));
       const receipt = activeReceipt();
-      const podman = vi.fn(() => inspect(restartPolicy, LABELS, true, status));
+      const podman = vi.fn(() => inspect(restartPolicy, LABELS, true, status, paused));
       const deps = { podman, authenticatedHealth, assertSocketAuthority: vi.fn() };
       const invalid = assertCurrentHermesPortableContainer(receipt, deps);
 
@@ -436,6 +438,7 @@ describe("Hermes portable container authority", () => {
 
   it.each([
     ["running state changes", inspect("unless-stopped", LABELS, false)],
+    ["paused state changes", inspect("unless-stopped", LABELS, true, "running", true)],
     ["restart policy changes", inspect("no")],
     ["status changes", inspect("unless-stopped", LABELS, true, "exited")],
   ])("rejects health when container %s during the command", (_label, after) => {
