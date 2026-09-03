@@ -307,7 +307,7 @@ describe("GitHub CLI production resolver", () => {
   });
 });
 
-describe("CI failure classifier process", () => {
+describe.skipIf(process.platform !== "linux")("CI failure classifier process", () => {
   test("redacts credentials from classified diagnostic output", () => {
     const secrets = [
       "Authorization: Bearer full authorization value with spaces",

@@ -85,6 +85,7 @@ import {
   tryAcquireManagedGatewayStateLifecycleLock,
   withRegistryLockAt,
 } from "../../state/gateway-registry";
+import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import {
   managedHermesStateVolumeContext,
   type ManagedHermesStateVolumeRuntime,
@@ -3890,13 +3891,32 @@ function failedPreparedUninstall(prepared: PreparedUninstallRun): UninstallRunOu
   };
 }
 
+function admitRemovedImmutabilityUninstall(prepared: PreparedUninstallRun): boolean {
+  const stateDir = path.join(prepared.paths.nemoclawStateDir, "state");
+  try {
+    for (const sandboxName of prepared.selectedSandboxState.names) {
+      enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
+        allowStateRecord: true,
+        stateDir,
+      });
+    }
+    return true;
+  } catch (error) {
+    prepared.runtime.error(
+      `Uninstall stopped before backup or cleanup because removed Shields recovery state is still active: ${formatError(error)}`,
+    );
+    return false;
+  }
+}
+
 async function withSelectedSandboxMutationLocks<T>(
   prepared: PreparedUninstallRun,
   deps: UninstallRunDeps,
   operation: () => Promise<T>,
 ): Promise<T | UninstallRunOutcome> {
-  const lock = deps.withSandboxMutationLock;
   const names = [...new Set(prepared.selectedSandboxState.names)].sort();
+  if (names.length === 0) return operation();
+  const lock = deps.withSandboxMutationLock;
   if (!lock) {
     prepared.runtime.error(
       "Pre-uninstall sandbox mutation locking is unavailable; uninstall stopped before backup and cleanup.",
@@ -3910,9 +3930,19 @@ async function withSelectedSandboxMutationLocks<T>(
           operationStarted = true;
           return operation();
         })
-      : lock(names[index]!, () => acquire(index + 1), {
-          stateDir: path.join(prepared.paths.nemoclawStateDir, "state"),
-        });
+      : lock(
+          names[index]!,
+          () => {
+            enforceRemovedImmutabilityMigrationBoundary(names[index]!, {
+              allowStateRecord: true,
+              stateDir: path.join(prepared.paths.nemoclawStateDir, "state"),
+            });
+            return acquire(index + 1);
+          },
+          {
+            stateDir: path.join(prepared.paths.nemoclawStateDir, "state"),
+          },
+        );
   try {
     return await acquire(0);
   } catch (error) {
@@ -3956,6 +3986,9 @@ export function runUninstallPlan(
 ): UninstallRunOutcome {
   const preparation = prepareUninstallRun(options, deps);
   if (preparation.kind === "complete") return preparation.outcome;
+  if (!admitRemovedImmutabilityUninstall(preparation.prepared)) {
+    return failedPreparedUninstall(preparation.prepared);
+  }
   if (shouldBackUpCurrentSandboxState(preparation.prepared)) {
     preparation.prepared.runtime.error(
       "Uninstall stopped before cleanup because this entrypoint cannot perform the required pre-uninstall backup.",
@@ -3976,12 +4009,14 @@ export async function runUninstallPlanProduction(
       const preparation = prepareUninstallRun(options, { ...deps, env });
       if (preparation.kind === "complete") return preparation.outcome;
       const { prepared } = preparation;
-      if (shouldBackUpCurrentSandboxState(prepared)) {
-        return withSelectedSandboxMutationLocks(prepared, deps, () =>
-          backUpAndExecutePreparedUninstall(prepared, deps),
-        );
+      if (!admitRemovedImmutabilityUninstall(prepared)) {
+        return failedPreparedUninstall(prepared);
       }
-      return executePreparedUninstall(prepared);
+      return withSelectedSandboxMutationLocks(prepared, deps, () =>
+        shouldBackUpCurrentSandboxState(prepared)
+          ? backUpAndExecutePreparedUninstall(prepared, deps)
+          : Promise.resolve(executePreparedUninstall(prepared)),
+      );
     });
   } catch (error) {
     (deps.error ?? ((message: string) => console.error(message)))(

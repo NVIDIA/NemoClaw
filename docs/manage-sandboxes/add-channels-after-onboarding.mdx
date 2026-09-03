@@ -40,7 +40,7 @@ $$nemoclaw my-assistant channels add googlechat
 Refer to [Set Up Google Chat](set-up-google-chat) before running the command.
 
 `channels add` accepts mixed-case input such as `Telegram`, then stores and prints the canonical lowercase name.
-It collects the inputs the channel needs, registers bridge providers with the OpenShell gateway when it captures tokens, records the channel in the sandbox registry, and asks whether to rebuild immediately.
+It collects the inputs the channel needs, validates or registers the matching OpenShell provider profile, records the channel in the sandbox registry, and asks whether to rebuild immediately.
 
 Telegram, Discord, Slack, and Microsoft Teams prompt for credentials and configuration.
 WeChat runs an interactive host-side QR scan.
@@ -69,7 +69,11 @@ It exits without prompting for a rebuild.
 If a gateway-side cleanup step fails, rollback continues and prints `Rollback could not fully clean <surfaces>` so you can clean up manually.
 
 When the same failure happens while re-adding an enabled channel, NemoClaw restores the prior `messagingChannels` entry, staged environment credentials when available, registry credential hashes, and prior bridge providers.
-It flags `gateway-providers` as residual because the in-flight upsert can leave the gateway with the new token.
+It flags `gateway-providers` as residual because an in-flight update can leave the gateway with the new token.
+
+For a refresh bridge such as Google Chat, NemoClaw reuses an existing provider only when its provider binding and checked-in provider-profile boundary match.
+It does not replace the existing credential with a pending value before gateway token minting succeeds.
+If minting fails, the command exits nonzero and leaves the existing provider credential usable.
 
 Verify the gateway bridge before relying on the channel.
 Restore the preset YAML and rerun the original command.

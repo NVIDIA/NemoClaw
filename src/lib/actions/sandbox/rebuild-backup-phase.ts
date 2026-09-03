@@ -44,7 +44,6 @@ export interface RebuildBackupPhaseInput {
   webSearchConfig: WebSearchConfig | null;
   log: RebuildLog;
   bail: RebuildBail;
-  relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
 }
 
 export interface RebuildBackupPhaseResult {
@@ -60,7 +59,6 @@ function bailForUnsafeOpenClawPluginProvenance(input: RebuildBackupPhaseInput): 
   console.error(
     "  To preserve state, onboard the custom image under a new sandbox name and manually migrate only user-owned state.",
   );
-  input.relockShieldsIfNeeded(!input.staleRecovery);
   return input.bail("Custom-image OpenClaw plugin provenance is unavailable.");
 }
 
@@ -146,7 +144,6 @@ export function runRebuildBackupPhase(
       input.sandboxEntry,
       input.staleRecovery,
       input.log,
-      input.relockShieldsIfNeeded,
       input.bail,
     );
   if (backupManifest === undefined) return null;

@@ -44,7 +44,6 @@ export const E2E_CATALOGUE_RUNNER_KEYS = [
   "common-egress-agent",
   "hermes-discord",
   "hermes-inference-switch",
-  "hermes-shields-config",
   "rebuild-hermes",
   "rebuild-hermes-stale-base",
   "security-posture-hermes",
@@ -894,25 +893,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
-  managedRuntimeTarget("hermes-shields-config", {
-    displayName: "Shields: restores stopped Hermes across posture changes",
-    agentRuntime: "hermes",
-    environmentOrInferenceEndpoint: "Ubuntu Docker host; no inference endpoint",
-    profile: "standard",
-    timeoutMinutes: 60,
-    installMode: "none",
-    restoreCli: true,
-    exposeCliBin: false,
-    runnerKey: "hermes-shields-config",
-    hostPreparation: "hermes-swap",
-    runnerComparison: true,
-    environment: {
-      ...nonInteractive,
-      NEMOCLAW_AGENT: "hermes",
-      NEMOCLAW_SANDBOX_NAME: "e2e-hermes-shields",
-      OPENSHELL_GATEWAY: "nemoclaw",
-    },
-  }),
+
   managedRuntimeTarget("hermes-slack", {
     displayName: "Messaging: isolates Hermes Slack credentials and reaches Slack APIs",
     agentRuntime: "hermes",
@@ -1284,6 +1265,42 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   ...GATEWAY_UPGRADE_TARGETS,
+  dockerOnlyTarget("shields-retirement-upgrade", {
+    displayName:
+      "Upgrade: migrates a v0.0.115 Shields sandbox to the candidate image",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint:
+      "x86-64 Ubuntu; pinned v0.0.115 install and candidate managed image; local compatible endpoint",
+    profile: "github-read",
+    timeoutMinutes: 120,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: true,
+    owningPaths: [
+      "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
+      "src/lib/cli/nemoclaw-oclif-command.ts",
+      "src/lib/state/migrations/removed-immutability.ts",
+      "src/lib/actions/sandbox/rebuild-flow-lifecycle.ts",
+      "src/lib/actions/sandbox/rebuild-pipeline.ts",
+      "src/lib/onboard/workload/rebuild.ts",
+      "scripts/install.sh",
+      "install.sh",
+    ],
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_AGENT: "openclaw",
+      NEMOCLAW_OLD_NEMOCLAW_REF: "v0.0.115",
+      NEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT:
+        "7503e700808655df1303ddc51888bb596c9afa34",
+      NEMOCLAW_OLD_NEMOCLAW_COMMIT: "324a886fd05b01f6756bae0371ea503c651fbd11",
+      NEMOCLAW_OLD_INSTALLER_SHA256:
+        "0ed77ba8cf176641bd3b22cfd89b4977b3d9a6f47b76da8b03bf4091a20d1251",
+      NEMOCLAW_OLD_OPENSHELL_VERSION: "0.0.106",
+      NEMOCLAW_OLD_OPENCLAW_VERSION: "2026.7.1",
+      NEMOCLAW_SANDBOX_NAME: "e2e-retire-lock",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
   dockerOnlyTarget("rebuild-openclaw", {
     displayName: "Rebuild: preserves OpenClaw state and rotates the gateway token",
     agentRuntime: "openclaw",
@@ -1469,23 +1486,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
-  managedRuntimeTarget("shields-config", {
-    displayName: "Shields: restores stopped OpenClaw across posture changes",
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
-    profile: "nvidia-inference",
-    timeoutMinutes: 45,
-    installMode: "none",
-    restoreCli: false,
-    exposeCliBin: false,
-    owningPaths: ["test/e2e/live/json-envelope.ts"],
-    environment: {
-      ...hostedInference,
-      ...nonInteractive,
-      NEMOCLAW_SANDBOX_NAME: "e2e-shields",
-      OPENSHELL_GATEWAY: "nemoclaw",
-    },
-  }),
+
   managedRuntimeTarget("snapshot-commands", {
     displayName: "Snapshot: restores selected sandbox state without credential leaks",
     agentRuntime: "openclaw",
