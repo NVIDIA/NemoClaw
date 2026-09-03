@@ -70,6 +70,165 @@ if source.count(needle) != 1:
 Path("/tmp/normalizer-handoff-race.py").write_text(source.replace(needle, replacement))
 `;
 
+const PACKAGED_IMAGE_APPLY_PROBE = String.raw`
+pass() { :; }
+fail() { printf '%s\n' "$*" >&2; return 1; }
+FAKE_OPENSHELL_BIN=$(mktemp -d)
+APPLY_BLUEPRINT_PATH=$(mktemp -d)
+APPLY_OUTPUT=$(mktemp)
+APPLY_CALLS="$FAKE_OPENSHELL_BIN/calls"
+cleanup_apply_fixture() {
+  rm -rf "$FAKE_OPENSHELL_BIN" "$APPLY_BLUEPRINT_PATH"
+  rm -f "$APPLY_OUTPUT" "$APPLY_CALLS"
+}
+trap cleanup_apply_fixture EXIT
+cat >"$APPLY_BLUEPRINT_PATH/blueprint.yaml" <<'YAML'
+components:
+  sandbox:
+    image: openclaw
+    name: openclaw
+    forward_ports:
+      - 18789
+  inference:
+    profiles:
+      ncp:
+        provider_type: nvidia
+        provider_name: nvidia-ncp
+        model: nvidia/nemotron-3-super-120b-a12b
+  policy:
+    additions:
+      fixture_service:
+        name: fixture_service
+        endpoints:
+          - host: 93.184.216.34
+            port: 8000
+            access: full
+YAML
+cat >"$APPLY_BLUEPRINT_PATH/sandbox-policy.yaml" <<'YAML'
+version: 1
+network_policies: {}
+YAML
+cp /opt/nemoclaw-blueprint/private-networks.yaml "$APPLY_BLUEPRINT_PATH/private-networks.yaml"
+cat >"$FAKE_OPENSHELL_BIN/openshell" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${"${"}1:-}" = "status" ]; then
+  printf '%s\n' 'Gateway Status' '  Status: Connected' '  Gateway: fixture-gateway'
+  exit 0
+fi
+if [ "${"${"}1:-} ${"${"}2:-}" = "gateway info" ]; then
+  printf '%s\n' 'Gateway endpoint: http://127.0.0.1:8080'
+  exit 0
+fi
+if [ "${"${"}1:-} ${"${"}2:-}" = "sandbox get" ]; then
+  sandbox="${"${"}@: -1}"
+  printf 'Name: %s\nId: fixture-sandbox-id\nPhase: Ready\n' "$sandbox"
+  exit 0
+fi
+if [ "${"${"}1:-} ${"${"}2:-}" = "policy list" ]; then
+  printf '%s\n' 'No global policy history found' >&2
+  exit 0
+fi
+if [ "${"${"}1:-} ${"${"}2:-}" = "policy set" ]; then
+  if [ "$#" -ne 8 ] || [ "${"${"}5:-}" != "--policy" ] || [ -z "${"${"}6:-}" ]; then
+    echo "unexpected policy write: expected policy set -g fixture-gateway --policy <file> --wait <sandbox>" >&2
+    exit 64
+  fi
+  cp "$6" "${"${"}BASH_SOURCE[0]%/*}/effective-policy.yaml"
+  exit 0
+fi
+if [ "${"${"}1:-} ${"${"}2:-}" = "policy get" ]; then
+  printf '%s\n' "$*" >>"${"${"}BASH_SOURCE[0]%/*}/calls"
+fi
+if [ "${"${"}1:-} ${"${"}2:-}" = "policy get" ] && [[ " $* " == *" --output json "* ]]; then
+  sandbox="${"${"}@: -1}"
+  policy_file="${"${"}OPENSHELL_SANDBOX_POLICY:?}"
+  policy_hash=sha256:fixture-policy
+  policy_version=1
+  if [ -f "${"${"}BASH_SOURCE[0]%/*}/effective-policy.yaml" ]; then
+    policy_file="${"${"}BASH_SOURCE[0]%/*}/effective-policy.yaml"
+    policy_hash=sha256:fixture-mutated-policy
+    policy_version=2
+  fi
+  node -e '
+    const fs = require("node:fs");
+    const YAML = require("/opt/nemoclaw/node_modules/yaml");
+    const policy = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
+    process.stdout.write(JSON.stringify({
+      scope: "sandbox",
+      sandbox: process.argv[1],
+      status: "effective",
+      policy_source: "sandbox",
+      hash: process.argv[3],
+      active_version: Number(process.argv[4]),
+      policy,
+    }) + "\n");
+  ' "$sandbox" "$policy_file" "$policy_hash" "$policy_version"
+  exit 0
+fi
+case "$*" in
+  "policy get -g fixture-gateway --base "*)
+    if [ "$#" -ne 6 ] || [ -z "${"${"}6:-}" ]; then
+      echo "unexpected policy read: expected policy get -g fixture-gateway --base <sandbox>" >&2
+      exit 64
+    fi
+    policy_file="${"${"}OPENSHELL_SANDBOX_POLICY:?}"
+    if [ -f "${"${"}BASH_SOURCE[0]%/*}/effective-policy.yaml" ]; then
+      policy_file="${"${"}BASH_SOURCE[0]%/*}/effective-policy.yaml"
+    fi
+    printf '%s\n' 'Policy for sandbox fixture' '---'
+    cat "$policy_file"
+    ;;
+  "policy get "*)
+    echo "unexpected policy read: expected policy get -g fixture-gateway --base <sandbox>" >&2
+    exit 64
+    ;;
+esac
+SH
+chmod 0755 "$FAKE_OPENSHELL_BIN/openshell"
+PATH="$FAKE_OPENSHELL_BIN:$PATH" \
+  NEMOCLAW_BLUEPRINT_PATH="$APPLY_BLUEPRINT_PATH" \
+  OPENSHELL_SANDBOX_POLICY="$APPLY_BLUEPRINT_PATH/sandbox-policy.yaml" \
+  node --input-type=module -e "
+  const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
+  await main(['apply', '--profile', 'ncp']);
+" 2>&1 | tee "$APPLY_OUTPUT"
+if grep -q "RUN_ID:" "$APPLY_OUTPUT"; then
+  pass "Apply generates run ID"
+else
+  fail "No run ID in apply output"
+fi
+if grep -q "PROGRESS:20:Creating OpenClaw sandbox" "$APPLY_OUTPUT"; then
+  pass "Apply executes sandbox creation step"
+else
+  fail "Apply did not reach sandbox creation step"
+fi
+if grep -q "PROGRESS:50:Configuring inference provider" "$APPLY_OUTPUT"; then
+  pass "Apply executes provider configuration"
+else
+  fail "Apply did not reach provider configuration step"
+fi
+if grep -q "PROGRESS:100:Apply complete" "$APPLY_OUTPUT"; then
+  pass "Apply completes full pipeline"
+else
+  fail "Apply did not complete"
+fi
+if grep -Eq '^policy get -g fixture-gateway --base [^ ]+$' "$APPLY_CALLS"; then
+  pass "Apply reads base policy through the active gateway"
+else
+  fail "Apply did not use the gateway-pinned base-policy read"
+fi
+# Verify run state was persisted to disk
+RUN_ID=$(grep -o 'nc-[0-9]*-[0-9]*-[a-f0-9]*' "$APPLY_OUTPUT" | head -1)
+if [ -f "$HOME/.nemoclaw/state/runs/$RUN_ID/plan.json" ]; then
+  pass "Apply persisted run state to disk"
+else
+  fail "Apply did not persist run state (plan.json missing for $RUN_ID)"
+fi
+cleanup_apply_fixture
+trap - EXIT
+`;
+
 const ROOT_BOOT_RECOVERY_PROBE = String.raw`
   set -euo pipefail
   trap 'printf "ROOT_BOOT_RECLAIM_FAIL line=%s status=%s\n" "$LINENO" "$?" >&2' ERR
@@ -376,6 +535,13 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
         "! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- test -x /usr/local/bin/nemoclaw-gateway-control",
       ].join("\n"),
       "managed-image-openclaw-isolation",
+    );
+
+    await runContainer(
+      host,
+      image,
+      PACKAGED_IMAGE_APPLY_PROBE,
+      "managed-image-openclaw-packaged-apply",
     );
 
     progress.phase("verify packaged configuration repair and refusal");
