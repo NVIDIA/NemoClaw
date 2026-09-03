@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   hasRequiredOpenshellMessagingFeatures,
+  REQUIRED_OPENSHELL_MCP_FEATURES,
   REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE,
 } from "../../../src/lib/onboard/openshell-feature-gate.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -442,7 +443,9 @@ describe("OpenClaw plugin recreation pairing resume", () => {
   });
 });
 
-function createWrapperFixture() {
+function createWrapperFixture(
+  canonicalCapabilityMarkers: readonly string[] = REQUIRED_OPENSHELL_MCP_FEATURES,
+) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-wrapper-test-"));
   const delegate = path.join(directory, "real-openshell");
   const imageIdPath = path.join(directory, "resolved-image-id");
@@ -461,19 +464,30 @@ if [ "\${1:-}" = "image" ]; then
 fi
 printf '%s\\n' "$@"
 `;
-  for (const executable of [delegate, gateway]) {
-    fs.writeFileSync(executable, executableSource, { encoding: "utf8", mode: 0o700 });
-  }
+  const canonicalCapabilityComments = canonicalCapabilityMarkers
+    .map((marker) => `# ${marker}`)
+    .join("\n");
+  fs.writeFileSync(delegate, `${executableSource}${canonicalCapabilityComments}\n`, {
+    encoding: "utf8",
+    mode: 0o700,
+  });
+  fs.writeFileSync(gateway, executableSource, { encoding: "utf8", mode: 0o700 });
   fs.writeFileSync(sandbox, `${executableSource}# ${REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE}\n`, {
     encoding: "utf8",
     mode: 0o700,
   });
   const components = resolveOpenShellSiblingComponents(delegate);
-  const wrapper = createOpenShellTrustedImageWrapper({
-    driverConfigJson: DRIVER_CONFIG_JSON,
-    imageInspectorPath: components.cli,
-    realOpenshellPath: components.cli,
-  });
+  let wrapper: ReturnType<typeof createOpenShellTrustedImageWrapper>;
+  try {
+    wrapper = createOpenShellTrustedImageWrapper({
+      driverConfigJson: DRIVER_CONFIG_JSON,
+      imageInspectorPath: components.cli,
+      realOpenshellPath: components.cli,
+    });
+  } catch (error) {
+    fs.rmSync(directory, { force: true, recursive: true });
+    throw error;
+  }
   return {
     components,
     directory,
@@ -492,6 +506,12 @@ printf '%s\\n' "$@"
 }
 
 describe("trusted EXDEV OpenShell wrapper", () => {
+  it("rejects incomplete canonical OpenShell components before creating a wrapper", () => {
+    expect(() => createWrapperFixture(REQUIRED_OPENSHELL_MCP_FEATURES.slice(1))).toThrow(
+      "trusted EXDEV image wrapper requires feature-complete canonical OpenShell components",
+    );
+  });
+
   it("rewrites sandbox creation to the verified image ID and injects driver config", () => {
     const fixture = createWrapperFixture();
     try {
@@ -628,6 +648,13 @@ describe("trusted EXDEV OpenShell wrapper", () => {
   it("passes the OpenShell feature gate for a coherent component set", () => {
     const fixture = createWrapperFixture();
     try {
+      expect(
+        hasRequiredOpenshellMessagingFeatures({
+          openshellBin: fixture.components.cli,
+          gatewayBin: fixture.components.gateway,
+          sandboxBin: fixture.components.sandbox,
+        }),
+      ).toBe(true);
       expect(
         hasRequiredOpenshellMessagingFeatures({
           openshellBin: fixture.wrapper.executable,

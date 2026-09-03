@@ -10,7 +10,10 @@ import path from "node:path";
 import { LOCAL_SANDBOX_IMAGE_REPO } from "../../../src/lib/domain/sandbox/image-tag.ts";
 import { createCustomBuildContextFilter } from "../../../src/lib/onboard/custom-build-context.ts";
 import { patchStagedDockerfile } from "../../../src/lib/onboard/dockerfile-patch.ts";
-import { REQUIRED_OPENSHELL_MCP_FEATURES } from "../../../src/lib/onboard/openshell-feature-gate.ts";
+import {
+  hasRequiredOpenshellMessagingFeatures,
+  REQUIRED_OPENSHELL_MCP_FEATURES,
+} from "../../../src/lib/onboard/openshell-feature-gate.ts";
 import {
   prebuildSandboxImageIfEligible,
   type SandboxPrebuildResult,
@@ -22,6 +25,7 @@ import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   createOpenShellDriverConfigTestWrapper,
+  resolveOpenShellSiblingComponents,
   type OpenShellDriverConfigTestWrapper,
 } from "./openshell-driver-config-test-wrapper.ts";
 
@@ -125,6 +129,15 @@ export function createOpenShellTrustedImageWrapper(options: {
   imageInspectorPath?: string;
   realOpenshellPath: string;
 }): OpenShellTrustedImageWrapper {
+  const canonicalComponents = resolveOpenShellSiblingComponents(options.realOpenshellPath);
+  assert(
+    hasRequiredOpenshellMessagingFeatures({
+      gatewayBin: canonicalComponents.gateway,
+      openshellBin: canonicalComponents.cli,
+      sandboxBin: canonicalComponents.sandbox,
+    }),
+    "trusted EXDEV image wrapper requires feature-complete canonical OpenShell components",
+  );
   const delegated = createOpenShellDriverConfigTestWrapper({
     delegatedCapabilityMarkers: REQUIRED_OPENSHELL_MCP_FEATURES,
     driverConfigJson: options.driverConfigJson,
