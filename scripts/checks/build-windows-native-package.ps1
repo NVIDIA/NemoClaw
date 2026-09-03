@@ -136,9 +136,15 @@ $authoringText = @(
     [IO.File]::ReadAllText((Join-Path $sourceRoot 'packaging\windows\Product.wxs')),
     [IO.File]::ReadAllText((Join-Path $sourceRoot 'packaging\windows\Bundle.wxs'))
 ) -join [Environment]::NewLine
+$bootstrapperText = (@(Get-ChildItem -LiteralPath (Join-Path $sourceRoot 'packaging\windows\bootstrapper') -File | ForEach-Object {
+    [IO.File]::ReadAllText($_.FullName)
+}) -join [Environment]::NewLine)
 if ($authoringText -match '<\s*CustomAction\b' -or
     $authoringText -match '(?i)\b(powershell|pwsh|wsl|bash|ubuntu|docker)\b') {
     Fail-WindowsPackageBuild 'WiX authoring contains a prohibited custom-action or non-native execution path.'
+}
+if ($bootstrapperText -match '(?i)\b(powershell|pwsh|wsl[.]exe|bash[.]exe|ubuntu[.]exe|docker[.]exe)\b') {
+    Fail-WindowsPackageBuild 'Bootstrapper source contains a prohibited non-native execution path.'
 }
 if ($authoringText -notmatch '<\s*MajorUpgrade\b[^>]*Schedule="afterInstallInitialize"') {
     Fail-WindowsPackageBuild 'Major-upgrade removal must remain inside MSI rollback protection.'
@@ -146,8 +152,10 @@ if ($authoringText -notmatch '<\s*MajorUpgrade\b[^>]*Schedule="afterInstallIniti
 foreach ($requiredAsset in @(
     'packaging\windows\assets\NemoClaw.ico',
     'packaging\windows\assets\NemoClawLogo.png',
-    'packaging\windows\assets\NemoClawSidebar.png',
-    'packaging\windows\Theme.wxl'
+    'packaging\windows\onboarding\assets\openclaw.png',
+    'packaging\windows\onboarding\assets\hermes.png',
+    'packaging\windows\onboarding\assets\deepagents.png',
+    'packaging\windows\onboarding\assets\nemocua.png'
 )) {
     if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $requiredAsset) -PathType Leaf)) {
         Fail-WindowsPackageBuild "Required branded setup asset is missing: $requiredAsset"
@@ -182,6 +190,11 @@ $msiName = "NemoClaw-$ProductVersion-windows-arm64.msi"
 $setupName = "NemoClawSetup-$ProductVersion-windows-arm64.exe"
 $msiPath = Join-Path $output $msiName
 $setupPath = Join-Path $output $setupName
+$bootstrapperProject = Join-Path $sourceRoot 'packaging\windows\bootstrapper\NemoClaw.Bootstrapper.csproj'
+$bootstrapperOutput = Join-Path $intermediate 'bootstrapper\publish'
+$bootstrapperPath = Join-Path $bootstrapperOutput 'NemoClaw.Bootstrapper.exe'
+$bootstrapperSha256 = $null
+$bootstrapperAuthenticodeStatus = $null
 Push-Location $wixRoot
 try {
     $dotnetVersion = (& dotnet --version).Trim()
@@ -227,7 +240,40 @@ try {
         Fail-WindowsPackageBuild "Expected package output is missing: $msiName"
     }
 
-    $bundleProperties = $commonProperties + "-p:MsiPath=$msiPath"
+    $bootstrapperRestoreArguments = @(
+        'restore', $bootstrapperProject,
+        '--nologo',
+        '--force',
+        '--no-cache',
+        '--runtime', 'win-arm64',
+        '--packages', $restorePackages
+    ) + $commonProperties
+    & dotnet @bootstrapperRestoreArguments
+    if ($LASTEXITCODE -ne 0) {
+        Fail-WindowsPackageBuild 'Pinned NemoClaw bootstrapper dependency restore failed.'
+    }
+    $bootstrapperPublishArguments = @(
+        'publish', $bootstrapperProject,
+        '--configuration', 'Release',
+        '--nologo',
+        '--no-restore',
+        '--disable-build-servers',
+        '--runtime', 'win-arm64',
+        '--self-contained', 'true',
+        '--output', $bootstrapperOutput
+    ) + $commonProperties
+    & dotnet @bootstrapperPublishArguments
+    if ($LASTEXITCODE -ne 0) {
+        Fail-WindowsPackageBuild 'Native ARM64 NemoClaw bootstrapper build failed.'
+    }
+    Assert-Arm64PortableExecutable -Path $bootstrapperPath -Label 'NemoClaw.Bootstrapper.exe'
+    $bootstrapperSha256 = (Get-FileHash -LiteralPath $bootstrapperPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $bootstrapperAuthenticodeStatus = (Get-AuthenticodeSignature -LiteralPath $bootstrapperPath).Status.ToString()
+
+    $bundleProperties = $commonProperties + @(
+        "-p:MsiPath=$msiPath",
+        "-p:BootstrapperPath=$bootstrapperPath"
+    )
     $bundleRestoreArguments = @(
         'restore', $bundleProject,
         '--nologo',
@@ -239,11 +285,6 @@ try {
     if ($LASTEXITCODE -ne 0) {
         Fail-WindowsPackageBuild 'Pinned WiX Burn dependency restore failed.'
     }
-    $bootstrapperExtension = Join-Path $restorePackages 'wixtoolset.bootstrapperapplications.wixext\5.0.2\wixext5\WixToolset.BootstrapperApplications.wixext.dll'
-    if (-not (Test-Path -LiteralPath $bootstrapperExtension -PathType Leaf)) {
-        Fail-WindowsPackageBuild 'Pinned WiX BootstrapperApplications extension was not restored.'
-    }
-
     $bundleBuildArguments = @(
         'build', $bundleProject,
         '--configuration', 'Release',
@@ -284,6 +325,13 @@ $manifest = [pscustomobject]@{
     architecture = 'arm64'
     dotnetSdk = $dotnetVersion
     wixToolset = $script:ExpectedWixVersion
+    bootstrapper = [pscustomobject]@{
+        framework = 'net8.0-windows'
+        runtimeIdentifier = 'win-arm64'
+        wixApiVersion = $script:ExpectedWixVersion
+        sha256 = $bootstrapperSha256
+        authenticodeStatus = $bootstrapperAuthenticodeStatus
+    }
     payload = $payloadManifest
     packages = @(
         [pscustomobject]@{

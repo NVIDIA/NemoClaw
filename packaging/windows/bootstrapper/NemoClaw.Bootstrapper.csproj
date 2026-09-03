@@ -1,0 +1,38 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>NemoClaw.Bootstrapper</AssemblyName>
+    <RootNamespace>Nvidia.NemoClaw.Bootstrapper</RootNamespace>
+    <RuntimeIdentifier>win-arm64</RuntimeIdentifier>
+    <PlatformTarget>ARM64</PlatformTarget>
+    <UseWPF>true</UseWPF>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <DebugType>none</DebugType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <ApplicationIcon>..\assets\NemoClaw.ico</ApplicationIcon>
+    <Version>$(ProductVersion)</Version>
+    <AssemblyVersion>$(ProductVersion).0</AssemblyVersion>
+    <FileVersion>$(ProductVersion).0</FileVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.BootstrapperApplicationApi" Version="5.0.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="..\assets\NemoClawLogo.png" Link="Assets\NemoClawLogo.png" />
+    <Resource Include="..\onboarding\assets\openclaw.png" Link="Assets\openclaw.png" />
+    <Resource Include="..\onboarding\assets\hermes.png" Link="Assets\hermes.png" />
+    <Resource Include="..\onboarding\assets\deepagents.png" Link="Assets\deepagents.png" />
+    <Resource Include="..\onboarding\assets\nemocua.png" Link="Assets\nemocua.png" />
+  </ItemGroup>
+</Project>

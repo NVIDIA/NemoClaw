@@ -9,32 +9,22 @@
     <IntermediateOutputPath>$(PackageIntermediateRoot)\bundle\</IntermediateOutputPath>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
-    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);SourceRoot=$(SourceRoot);MsiPath=$(MsiPath);WxcHostPrepPath=$(PayloadRoot)\mxc\wxc-host-prep.exe</DefineConstants>
+    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);SourceRoot=$(SourceRoot);MsiPath=$(MsiPath);WxcHostPrepPath=$(PayloadRoot)\mxc\wxc-host-prep.exe;BootstrapperPath=$(BootstrapperPath)</DefineConstants>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- The null-device prerequisite is boot-ephemeral by Windows design, so a
          durable DetectCondition would incorrectly skip it after reboot. -->
     <SuppressSpecificWarnings>1161</SuppressSpecificWarnings>
     <DebugType>none</DebugType>
-    <BootstrapperApplicationsExtensionPath>$(RestorePackagesPath)\wixtoolset.bootstrapperapplications.wixext\5.0.2\wixext5\WixToolset.BootstrapperApplications.wixext.dll</BootstrapperApplicationsExtensionPath>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Bundle.wxs" />
-    <PackageReference
-      Include="WixToolset.BootstrapperApplications.wixext"
-      Version="5.0.2"
-      PrivateAssets="all" />
-    <WixExtension Include="$(BootstrapperApplicationsExtensionPath)" />
   </ItemGroup>
   <Target Name="ValidateNemoClawBundleInputs" BeforeTargets="ResolveWixExtensionReferences">
     <Error Condition="'$(MsiPath)' == ''" Text="MsiPath is required." />
     <Error Condition="!Exists('$(MsiPath)')" Text="The ARM64 MSI input is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-host-prep.exe')" Text="The pinned ARM64 MXC host-preparation input is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\bin\NemoClaw.exe')" Text="The NemoClaw UI launcher is missing." />
-    <Error Condition="!Exists('$(SourceRoot)\packaging\windows\Theme.wxl')" Text="The NemoClaw setup localization is missing." />
-    <Error Condition="!Exists('$(SourceRoot)\packaging\windows\assets\NemoClawLogo.png')" Text="The NemoClaw setup logo is missing." />
-    <Error Condition="!Exists('$(SourceRoot)\packaging\windows\assets\NemoClawSidebar.png')" Text="The NemoClaw setup sidebar artwork is missing." />
-    <Error
-      Condition="!Exists('$(BootstrapperApplicationsExtensionPath)')"
-      Text="The pinned WiX BootstrapperApplications extension is missing." />
+    <Error Condition="'$(BootstrapperPath)' == ''" Text="BootstrapperPath is required." />
+    <Error Condition="!Exists('$(BootstrapperPath)')" Text="The native ARM64 NemoClaw bootstrapper application is missing." />
   </Target>
 </Project>

@@ -1,8 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<Wix
-  xmlns="http://wixtoolset.org/schemas/v4/wxs"
-  xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Bundle
     Name="NemoClaw"
     Manufacturer="NVIDIA Corporation"
@@ -11,20 +9,7 @@
     IconSourceFile="$(var.SourceRoot)\packaging\windows\assets\NemoClaw.ico"
     AboutUrl="https://github.com/NVIDIA/NemoClaw"
     Copyright="Copyright (c) 2026 NVIDIA Corporation and affiliates">
-    <BootstrapperApplication>
-      <bal:WixStandardBootstrapperApplication
-        Theme="hyperlinkSidebarLicense"
-        LicenseUrl="https://github.com/NVIDIA/NemoClaw/blob/main/LICENSE"
-        LogoFile="$(var.SourceRoot)\packaging\windows\assets\NemoClawLogo.png"
-        LogoSideFile="$(var.SourceRoot)\packaging\windows\assets\NemoClawSidebar.png"
-        LocalizationFile="$(var.SourceRoot)\packaging\windows\Theme.wxl"
-        LaunchTarget="[ProgramFiles6432Folder]NVIDIA\NemoClaw\bin\NemoClaw.exe"
-        LaunchWorkingFolder="[ProgramFiles6432Folder]NVIDIA\NemoClaw"
-        LaunchHidden="yes"
-        ShowVersion="yes"
-        SuppressOptionsUI="yes"
-        SuppressRepair="no" />
-    </BootstrapperApplication>
+    <BootstrapperApplication SourceFile="$(var.BootstrapperPath)" />
     <Chain>
       <ExePackage
         Id="MxcSystemDrivePreparation"

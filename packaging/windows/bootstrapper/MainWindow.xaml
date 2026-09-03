@@ -1,0 +1,246 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<Window
+  x:Class="Nvidia.NemoClaw.Bootstrapper.MainWindow"
+  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:automation="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
+  Title="NemoClaw Setup"
+  Width="1040"
+  Height="700"
+  MinWidth="1040"
+  MinHeight="700"
+  MaxWidth="1040"
+  MaxHeight="700"
+  WindowStartupLocation="CenterScreen"
+  ResizeMode="NoResize"
+  Background="#F7F7F5"
+  FontFamily="Segoe UI Variable Text, Segoe UI">
+  <Window.Resources>
+    <SolidColorBrush x:Key="NvidiaGreen" Color="#76B900" />
+    <SolidColorBrush x:Key="NvidiaGreenDark" Color="#4D7900" />
+    <SolidColorBrush x:Key="Ink" Color="#171717" />
+    <SolidColorBrush x:Key="Muted" Color="#666865" />
+    <SolidColorBrush x:Key="Line" Color="#E1E2DE" />
+    <Style TargetType="Button" x:Key="PrimaryButton">
+      <Setter Property="Background" Value="{StaticResource NvidiaGreen}" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderBrush" Value="{StaticResource NvidiaGreenDark}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="24,12" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border
+              x:Name="Border"
+              Background="{TemplateBinding Background}"
+              BorderBrush="{TemplateBinding BorderBrush}"
+              BorderThickness="{TemplateBinding BorderThickness}"
+              CornerRadius="5">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Border" Property="Background" Value="#659E00" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Border" Property="Opacity" Value="0.45" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="Button" x:Key="SecondaryButton" BasedOn="{StaticResource PrimaryButton}">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+      <Setter Property="BorderBrush" Value="#B9BBB6" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border
+              x:Name="Border"
+              Background="{TemplateBinding Background}"
+              BorderBrush="{TemplateBinding BorderBrush}"
+              BorderThickness="{TemplateBinding BorderThickness}"
+              CornerRadius="5">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Border" Property="Background" Value="#F1F2EF" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="TextBlock" x:Key="Eyebrow">
+      <Setter Property="Foreground" Value="{StaticResource NvidiaGreenDark}" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
+    </Style>
+    <Style TargetType="Border" x:Key="AgentCard">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="13" />
+      <Setter Property="Margin" Value="0,0,10,10" />
+    </Style>
+  </Window.Resources>
+
+  <Grid>
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="248" />
+      <ColumnDefinition Width="*" />
+    </Grid.ColumnDefinitions>
+
+    <Border Grid.Column="0" Background="#141514">
+      <Grid Margin="28,26">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <StackPanel Orientation="Horizontal">
+          <Image Width="36" Height="36" Source="/NemoClaw.Bootstrapper;component/Assets/NemoClawLogo.png" />
+          <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+            <TextBlock Foreground="White" FontWeight="Bold" FontSize="15" Text="NVIDIA" />
+            <TextBlock Foreground="#AEB1AC" FontSize="11" Text="NemoClaw" />
+          </StackPanel>
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Margin="0,54,0,0">
+          <TextBlock Foreground="White" FontSize="25" FontWeight="SemiBold" Text="Native Windows" />
+          <TextBlock Margin="0,7,0,0" Foreground="#AEB1AC" FontSize="13" LineHeight="20" Text="Real ARM64 agent runtimes isolated by OpenShell and Microsoft MXC." TextWrapping="Wrap" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="2" Margin="0,54,0,0">
+          <Grid Margin="0,0,0,22">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition /></Grid.ColumnDefinitions>
+            <Border Width="20" Height="20" CornerRadius="10" Background="{StaticResource NvidiaGreen}"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White" FontSize="11" FontWeight="Bold" Text="1" /></Border>
+            <StackPanel Grid.Column="1"><TextBlock Foreground="White" FontWeight="SemiBold" Text="Choose" /><TextBlock Foreground="#979A95" FontSize="11" Text="Agent and experience" /></StackPanel>
+          </Grid>
+          <Grid Margin="0,0,0,22">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition /></Grid.ColumnDefinitions>
+            <Border Width="20" Height="20" CornerRadius="10" BorderBrush="#62655F" BorderThickness="1"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#B9BBB7" FontSize="11" Text="2" /></Border>
+            <StackPanel Grid.Column="1"><TextBlock Foreground="White" FontWeight="SemiBold" Text="Protect" /><TextBlock Foreground="#979A95" FontSize="11" Text="Native MXC isolation" /></StackPanel>
+          </Grid>
+          <Grid Margin="0,0,0,22">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition /></Grid.ColumnDefinitions>
+            <Border Width="20" Height="20" CornerRadius="10" BorderBrush="#62655F" BorderThickness="1"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#B9BBB7" FontSize="11" Text="3" /></Border>
+            <StackPanel Grid.Column="1"><TextBlock Foreground="White" FontWeight="SemiBold" Text="Install" /><TextBlock Foreground="#979A95" FontSize="11" Text="Repairable Windows package" /></StackPanel>
+          </Grid>
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition /></Grid.ColumnDefinitions>
+            <Border Width="20" Height="20" CornerRadius="10" BorderBrush="#62655F" BorderThickness="1"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#B9BBB7" FontSize="11" Text="4" /></Border>
+            <StackPanel Grid.Column="1"><TextBlock Foreground="White" FontWeight="SemiBold" Text="Launch" /><TextBlock Foreground="#979A95" FontSize="11" Text="Your authentic agent surface" /></StackPanel>
+          </Grid>
+        </StackPanel>
+
+        <StackPanel Grid.Row="3">
+          <Border Height="1" Background="#343633" Margin="0,0,0,16" />
+          <TextBlock Foreground="{StaticResource NvidiaGreen}" FontSize="11" FontWeight="Bold" Text="CANDIDATE PREVIEW" />
+          <TextBlock Margin="0,5,0,0" Foreground="#8C8F89" FontSize="11" Text="ARM64 · no WSL · no Docker" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Column="1" Margin="44,32,42,28">
+      <Grid x:Name="ReadyPanel">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <StackPanel>
+          <TextBlock Style="{StaticResource Eyebrow}" Text="WELCOME TO NEMOCLAW" />
+          <TextBlock Margin="0,8,0,0" Foreground="{StaticResource Ink}" FontSize="34" FontWeight="SemiBold" Text="Choose an agent you can trust." />
+          <TextBlock Margin="0,8,0,0" Width="680" HorizontalAlignment="Left" Foreground="{StaticResource Muted}" FontSize="14" LineHeight="21" Text="Setup installs only reviewed native ARM64 bytes. Choices without a genuine Windows runtime stay visible but disabled, with the blocker explained." TextWrapping="Wrap" />
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1" Margin="0,24,0,10" VerticalScrollBarVisibility="Auto">
+          <WrapPanel>
+            <Border Width="330" Style="{StaticResource AgentCard}" BorderBrush="{StaticResource NvidiaGreen}" BorderThickness="2" automation:AutomationProperties.Name="OpenClaw, supported and selected">
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="56" /><ColumnDefinition /></Grid.ColumnDefinitions>
+                <Border Width="46" Height="46" CornerRadius="9" Background="#FFF0F0"><Image Width="38" Height="38" Source="/NemoClaw.Bootstrapper;component/Assets/openclaw.png" /></Border>
+                <StackPanel Grid.Column="1"><StackPanel Orientation="Horizontal"><TextBlock FontSize="16" FontWeight="SemiBold" Text="OpenClaw" /><Border Margin="8,1,0,0" Padding="6,2" CornerRadius="8" Background="#EEF7DF"><TextBlock Foreground="{StaticResource NvidiaGreenDark}" FontSize="9" FontWeight="Bold" Text="SUPPORTED" /></Border></StackPanel><TextBlock Margin="0,5,0,0" Foreground="{StaticResource Muted}" FontSize="11" Text="Browser Control UI · three-turn native test" TextWrapping="Wrap" /></StackPanel>
+              </Grid>
+            </Border>
+            <Border Width="330" Style="{StaticResource AgentCard}" Opacity="0.72" automation:AutomationProperties.Name="Hermes Agent unavailable on native ARM64">
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="56" /><ColumnDefinition /></Grid.ColumnDefinitions>
+                <Border Width="46" Height="46" CornerRadius="9" Background="#252525"><Image Width="42" Height="32" Source="/NemoClaw.Bootstrapper;component/Assets/hermes.png" /></Border>
+                <StackPanel Grid.Column="1"><TextBlock FontSize="16" FontWeight="SemiBold" Text="Hermes Agent" /><TextBlock Margin="0,5,0,0" Foreground="{StaticResource Muted}" FontSize="11" Text="Unavailable: pinned native extensions lack ARM64 wheels." TextWrapping="Wrap" /></StackPanel>
+              </Grid>
+            </Border>
+            <Border Width="330" Style="{StaticResource AgentCard}" Opacity="0.72" automation:AutomationProperties.Name="Deep Agents Code unavailable on native ARM64">
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="56" /><ColumnDefinition /></Grid.ColumnDefinitions>
+                <Border Width="46" Height="46" CornerRadius="9" Background="#F0F2EE"><Image Width="42" Height="42" Source="/NemoClaw.Bootstrapper;component/Assets/deepagents.png" /></Border>
+                <StackPanel Grid.Column="1"><TextBlock FontSize="16" FontWeight="SemiBold" Text="Deep Agents Code" /><TextBlock Margin="0,5,0,0" Foreground="{StaticResource Muted}" FontSize="11" Text="Unavailable: sqlite-vec has no Windows ARM64 runtime." TextWrapping="Wrap" /></StackPanel>
+              </Grid>
+            </Border>
+            <Border Width="330" Style="{StaticResource AgentCard}" Opacity="0.72" automation:AutomationProperties.Name="Pi experimental, qualification in progress">
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="56" /><ColumnDefinition /></Grid.ColumnDefinitions>
+                <Border Width="46" Height="46" CornerRadius="9" Background="#F0F2EE"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#353735" FontSize="20" FontWeight="Bold" Text="π" /></Border>
+                <StackPanel Grid.Column="1"><StackPanel Orientation="Horizontal"><TextBlock FontSize="16" FontWeight="SemiBold" Text="Pi" /><Border Margin="8,1,0,0" Padding="6,2" CornerRadius="8" Background="#FFF4D8"><TextBlock Foreground="#7C5C00" FontSize="9" FontWeight="Bold" Text="EXPERIMENTAL" /></Border></StackPanel><TextBlock Margin="0,5,0,0" Foreground="{StaticResource Muted}" FontSize="11" Text="Native payload found; disabled until three-turn proof passes." TextWrapping="Wrap" /></StackPanel>
+              </Grid>
+            </Border>
+            <Border Width="330" Style="{StaticResource AgentCard}" Opacity="0.72" automation:AutomationProperties.Name="NemoCUA experimental and unavailable on native ARM64">
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="56" /><ColumnDefinition /></Grid.ColumnDefinitions>
+                <Border Width="46" Height="46" CornerRadius="9" Background="#EFF5E7"><Image Width="38" Height="38" Source="/NemoClaw.Bootstrapper;component/Assets/nemocua.png" /></Border>
+                <StackPanel Grid.Column="1"><StackPanel Orientation="Horizontal"><TextBlock FontSize="16" FontWeight="SemiBold" Text="NemoCUA" /><Border Margin="8,1,0,0" Padding="6,2" CornerRadius="8" Background="#FFF4D8"><TextBlock Foreground="#7C5C00" FontSize="9" FontWeight="Bold" Text="EXPERIMENTAL" /></Border></StackPanel><TextBlock Margin="0,5,0,0" Foreground="{StaticResource Muted}" FontSize="11" Text="Unavailable: current runtime is container-image-only." TextWrapping="Wrap" /></StackPanel>
+              </Grid>
+            </Border>
+          </WrapPanel>
+        </ScrollViewer>
+
+        <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+          <StackPanel VerticalAlignment="Center"><CheckBox x:Name="LicenseCheck" Checked="LicenseChanged" Unchecked="LicenseChanged"><TextBlock Foreground="{StaticResource Muted}" FontSize="12" Text="I accept the Apache 2.0 license and candidate-preview notice." /></CheckBox><TextBlock Margin="0,7,0,0" Foreground="#888A86" FontSize="11" Text="Installs per-machine under Program Files and requests normal Windows elevation." /></StackPanel>
+          <Button x:Name="InstallButton" Grid.Column="1" Width="168" Height="46" IsEnabled="False" Click="InstallClicked" Style="{StaticResource PrimaryButton}" automation:AutomationProperties.AutomationId="InstallNemoClaw" Content="Install NemoClaw" />
+        </Grid>
+      </Grid>
+
+      <Grid x:Name="ProgressPanel" Visibility="Collapsed">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <TextBlock Style="{StaticResource Eyebrow}" Text="NATIVE WINDOWS INSTALLATION" />
+        <StackPanel Grid.Row="1" Margin="0,10,0,0"><TextBlock x:Name="ProgressTitle" Foreground="{StaticResource Ink}" FontSize="34" FontWeight="SemiBold" Text="Preparing NemoClaw" /><TextBlock x:Name="ProgressDetail" Margin="0,9,0,0" Width="680" HorizontalAlignment="Left" Foreground="{StaticResource Muted}" FontSize="15" LineHeight="22" TextWrapping="Wrap" /></StackPanel>
+        <Grid Grid.Row="2" Margin="0,34,0,0"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+          <Grid><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBlock Foreground="#30322F" FontSize="13" FontWeight="SemiBold" Text="Protected transaction" /><TextBlock x:Name="ProgressPercent" Grid.Column="1" Foreground="{StaticResource NvidiaGreenDark}" FontSize="13" FontWeight="Bold" Text="0%" /></Grid>
+          <ProgressBar x:Name="ProgressBar" Grid.Row="1" Height="9" Margin="0,10,0,0" Minimum="0" Maximum="100" Foreground="{StaticResource NvidiaGreen}" Background="#DFE2DB" Value="0" />
+          <Border Grid.Row="2" Margin="0,28,0,0" Padding="24" CornerRadius="10" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1"><StackPanel><TextBlock Foreground="{StaticResource Ink}" FontSize="15" FontWeight="SemiBold" Text="What is happening on this machine" /><TextBlock Margin="0,12,0,0" Foreground="{StaticResource Muted}" FontSize="13" LineHeight="21" Text="• Microsoft MXC creates a native ProcessContainer boundary.&#10;• Windows Installer publishes versioned, hash-verified runtime files.&#10;• Repair and rollback metadata are registered before first launch.&#10;• No WSL, Docker, Ubuntu, Bash, or Linux VM is started." /><Border Margin="0,20,0,0" Padding="14" CornerRadius="7" Background="#F2F6EC"><TextBlock Foreground="#405D14" FontSize="12" LineHeight="18" Text="Large agent runtimes contain tens of thousands of files. NemoClaw favors verifiable repair and clean uninstall over a fast, opaque extraction step." TextWrapping="Wrap" /></Border></StackPanel></Border>
+        </Grid>
+        <Grid Grid.Row="3"><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBlock x:Name="ElapsedText" VerticalAlignment="Center" Foreground="#777A75" FontSize="12" Text="Elapsed 00:00" /><Button Grid.Column="1" Width="110" Height="40" Click="CancelClicked" Style="{StaticResource SecondaryButton}" Content="Cancel" /></Grid>
+      </Grid>
+
+      <Grid x:Name="SuccessPanel" Visibility="Collapsed">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Width="620">
+          <Border Width="72" Height="72" CornerRadius="36" Background="#EDF6DF"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource NvidiaGreenDark}" FontSize="34" FontWeight="Bold" Text="✓" /></Border>
+          <TextBlock x:Name="SuccessTitle" Margin="0,24,0,0" HorizontalAlignment="Center" Foreground="{StaticResource Ink}" FontSize="34" FontWeight="SemiBold" Text="NemoClaw is ready." />
+          <TextBlock x:Name="SuccessDetail" Margin="0,12,0,0" HorizontalAlignment="Center" TextAlignment="Center" Foreground="{StaticResource Muted}" FontSize="15" LineHeight="22" Text="The authentic OpenClaw onboarding experience is opening now. Runtime state and credentials remain outside the Windows Installer-owned directory." TextWrapping="Wrap" />
+          <Border Margin="0,30,0,0" Padding="18" CornerRadius="9" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="32" /><ColumnDefinition /></Grid.ColumnDefinitions><TextBlock Foreground="{StaticResource NvidiaGreenDark}" FontSize="18" Text="●" /><StackPanel Grid.Column="1"><TextBlock FontWeight="SemiBold" Text="Native Windows ARM64" /><TextBlock Margin="0,4,0,0" Foreground="{StaticResource Muted}" FontSize="12" Text="OpenShell + Microsoft MXC · no WSL · normal Windows repair and uninstall" /></StackPanel></Grid></Border>
+          <StackPanel Margin="0,30,0,0" Orientation="Horizontal" HorizontalAlignment="Center"><Button x:Name="OpenLogButton" Width="126" Height="42" Click="OpenLogClicked" Style="{StaticResource SecondaryButton}" Content="View setup log" /><Button x:Name="CloseButton" Width="126" Height="42" Margin="12,0,0,0" Click="CloseClicked" Style="{StaticResource PrimaryButton}" Content="Done" /></StackPanel>
+        </StackPanel>
+      </Grid>
+
+      <Grid x:Name="FailurePanel" Visibility="Collapsed">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Width="620">
+          <Border Width="72" Height="72" CornerRadius="36" Background="#FFF0F0"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#9B2C2C" FontSize="34" FontWeight="Bold" Text="!" /></Border>
+          <TextBlock Margin="0,24,0,0" HorizontalAlignment="Center" Foreground="{StaticResource Ink}" FontSize="32" FontWeight="SemiBold" Text="Setup needs attention." />
+          <TextBlock x:Name="FailureDetail" Margin="0,12,0,0" HorizontalAlignment="Center" TextAlignment="Center" Foreground="{StaticResource Muted}" FontSize="15" LineHeight="22" TextWrapping="Wrap" />
+          <TextBlock x:Name="RecoverableError" Margin="0,18,0,0" Padding="14" Foreground="#8A2525" Background="#FFF4F4" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" />
+          <StackPanel Margin="0,28,0,0" Orientation="Horizontal" HorizontalAlignment="Center"><Button Width="126" Height="42" Click="OpenLogClicked" Style="{StaticResource SecondaryButton}" Content="View setup log" /><Button Width="126" Height="42" Margin="12,0,0,0" Click="CloseClicked" Style="{StaticResource PrimaryButton}" Content="Close" /></StackPanel>
+        </StackPanel>
+      </Grid>
+
+      <Grid x:Name="MaintenancePanel" Visibility="Collapsed">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Width="620">
+          <TextBlock Style="{StaticResource Eyebrow}" HorizontalAlignment="Center" Text="NEMOCLAW MAINTENANCE" />
+          <TextBlock Margin="0,12,0,0" HorizontalAlignment="Center" Foreground="{StaticResource Ink}" FontSize="34" FontWeight="SemiBold" Text="Keep the native runtime healthy." />
+          <TextBlock Margin="0,10,0,0" TextAlignment="Center" Foreground="{StaticResource Muted}" FontSize="15" Text="Repair restores every MSI-owned file and PATH registration. Uninstall removes the package while preserving user-owned state for an explicit later decision." TextWrapping="Wrap" />
+          <StackPanel Margin="0,32,0,0" Orientation="Horizontal" HorizontalAlignment="Center"><Button Width="150" Height="44" Click="RepairClicked" Style="{StaticResource PrimaryButton}" Content="Repair NemoClaw" /><Button Width="150" Height="44" Margin="12,0,0,0" Click="UninstallClicked" Style="{StaticResource SecondaryButton}" Content="Uninstall" /></StackPanel>
+        </StackPanel>
+      </Grid>
+    </Grid>
+  </Grid>
+</Window>

@@ -42,9 +42,14 @@ custom actions. System-drive preparation supplies shallow-root traversal; the
 null-device setting is required for AppContainer process initialization and
 resets when Windows reboots.
 
-The setup uses a restrained NVIDIA-branded WiX interface and installs a native
-ARM64 `NemoClaw.exe` GUI launcher. Launching NemoClaw opens the local graphical
-onboarder without PowerShell or a visible console. The onboarder presents the
+The setup uses a self-contained native ARM64 WPF bootstrapper application built
+against the pinned WiX 5.0.2 Bootstrapper Application API. It presents agent
+status before installation, narrates each MXC and Windows Installer stage with
+an elapsed timer and recovery log path, and launches NemoClaw after a successful
+interactive install. The MSI remains standard WiX authoring with no custom
+actions. Setup installs a native ARM64 `NemoClaw.exe` GUI launcher; launching it
+opens the local graphical onboarder without PowerShell or a visible console.
+The onboarder presents the
 OpenClaw candidate plus Hermes Agent, LangChain Deep Agents Code, Pi, and
 NemoCUA with an honest platform status for each. An agent is selectable only
 after its real runtime passes native ARM64 qualification. Blocked cards remain
