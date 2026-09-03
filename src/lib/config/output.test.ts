@@ -168,6 +168,7 @@ describe("publishExportFile", () => {
     fs.writeFileSync(outputPath, "validated");
     const exchangedPath = path.join(root, "exchanged.yaml");
     fs.writeFileSync(exchangedPath, "exchanged");
+    const exchangedStat = fs.lstatSync(exchangedPath);
     const fchmodSync = fs.fchmodSync;
     vi.spyOn(fs, "fchmodSync").mockImplementationOnce((descriptor, mode) => {
       fchmodSync(descriptor, mode);
@@ -180,10 +181,9 @@ describe("publishExportFile", () => {
         outputPath,
       }),
     );
-    expect(fs.existsSync(outputPath)).toBe(false);
-    const recovery = temporaryEntries(root);
-    expect(recovery).toHaveLength(1);
-    expect(fs.readFileSync(path.join(root, recovery[0]!), "utf8")).toBe("exchanged");
+    expect(fs.readFileSync(outputPath, "utf8")).toBe("exchanged");
+    expect(fs.lstatSync(outputPath).ino).toBe(exchangedStat.ino);
+    expect(temporaryEntries(root)).toEqual([]);
   });
 
   it("restores a directory exchanged before a forced move (#10938)", () => {
@@ -196,14 +196,17 @@ describe("publishExportFile", () => {
       fs.rmSync(outputPath);
       fs.mkdirSync(outputPath);
     });
+    let racedDirectoryStat: fs.Stats | undefined;
+    vi.spyOn(fs, "fsyncSync").mockImplementationOnce(() => {
+      racedDirectoryStat = fs.lstatSync(outputPath);
+    });
 
     expect(() => publishExportFile(outputPath, "content", true)).toThrowError(
       expect.objectContaining<Partial<YamlExportOutputError>>({ category: "unsafe-output" }),
     );
-    expect(fs.existsSync(outputPath)).toBe(false);
-    const recovery = temporaryEntries(root);
-    expect(recovery).toHaveLength(1);
-    expect(fs.lstatSync(path.join(root, recovery[0]!)).isDirectory()).toBe(true);
+    expect(fs.lstatSync(outputPath).isDirectory()).toBe(true);
+    expect(fs.lstatSync(outputPath).ino).toBe(racedDirectoryStat?.ino);
+    expect(temporaryEntries(root)).toEqual([]);
   });
 
   it("rolls back publication when the parent changes after publish (#10938)", () => {
@@ -226,20 +229,37 @@ describe("publishExportFile", () => {
     expect(fs.existsSync(path.join(movedParent, "selected.yaml"))).toBe(false);
   });
 
-  it("preserves a recovery artifact when forced restoration fails (#10938)", () => {
+  it("classifies final prior-inode cleanup failure with the exact recovery path (#10938)", () => {
     const root = temporaryRoot();
     const outputPath = path.join(root, "selected.yaml");
     fs.writeFileSync(outputPath, "validated");
-    vi.spyOn(fs, "linkSync")
-      .mockImplementationOnce(() => {
-        throw Object.assign(new Error("publish failed"), { code: "EIO" });
-      })
-      .mockImplementationOnce(() => {
-        throw Object.assign(new Error("restore failed"), { code: "EIO" });
-      });
+    const unlinkSync = fs.unlinkSync;
+    vi.spyOn(fs, "unlinkSync").mockImplementation((candidate) =>
+      String(candidate).endsWith(".previous")
+        ? (() => {
+            throw Object.assign(new Error("injected prior cleanup failure"), { code: "EIO" });
+          })()
+        : unlinkSync(candidate),
+    );
 
-    expect(() => publishExportFile(outputPath, "content", true)).toThrow(/recoverable at/);
-    expect(temporaryEntries(root).some((entry) => entry.endsWith(".previous"))).toBe(true);
+    let failure: unknown;
+    try {
+      publishExportFile(outputPath, "content", true);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject<Partial<YamlExportOutputError>>({
+      category: "unsafe-output",
+      outputPath,
+    });
+    const recoveryName = temporaryEntries(root).find((entry) => entry.endsWith(".previous"));
+    expect(recoveryName).toBeDefined();
+    const recoveryPath = path.join(root, recoveryName!);
+    expect((failure as Error).message).toContain(
+      `prior output remains recoverable at: ${recoveryPath}`,
+    );
+    expect(fs.readFileSync(outputPath, "utf8")).toBe("content");
+    expect(fs.readFileSync(recoveryPath, "utf8")).toBe("validated");
   });
 
   it("closes the parent descriptor when its fstat fails (#10938)", () => {

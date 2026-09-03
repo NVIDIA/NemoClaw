@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -192,44 +193,112 @@ function preserveRecovery(moved: string, outputPath: string): never {
   );
 }
 
-function restoreRegularNoReplace(
-  moved: string,
-  destination: string,
-  outputPath: string,
-  originalError: unknown,
-): never {
-  try {
-    fs.linkSync(moved, destination);
-    fs.unlinkSync(moved);
-  } catch {
-    preserveRecovery(moved, outputPath);
-  }
-  throw originalError;
-}
+const RENAME_EXCHANGE_HELPER = `
+import ctypes
+import os
+import sys
 
-function publishForced(
-  temporary: string,
-  destination: string,
-  moved: string,
-  expected: fs.Stats,
-  outputPath: string,
-): fs.Stats {
-  fs.renameSync(destination, moved);
-  let movedStat: fs.Stats;
+if len(sys.argv) != 3:
+    raise SystemExit("expected exactly two names")
+old_name, new_name = sys.argv[1:]
+for name in (old_name, new_name):
+    if not name or name in (".", "..") or "/" in name or "\\0" in name:
+        raise SystemExit("invalid exchange name")
+libc = ctypes.CDLL(None, use_errno=True)
+renameat2 = libc.renameat2
+renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+renameat2.restype = ctypes.c_int
+result = renameat2(3, os.fsencode(old_name), 3, os.fsencode(new_name), 2)
+if result != 0:
+    error = ctypes.get_errno()
+    raise OSError(error, os.strerror(error))
+`;
+
+function assertExchangeSupported(outputPath: string): void {
   try {
-    movedStat = fs.lstatSync(moved);
+    execFileSync(
+      "/usr/bin/python3",
+      ["-c", "import ctypes; getattr(ctypes.CDLL(None), 'renameat2')"],
+      {
+        stdio: "ignore",
+      },
+    );
   } catch {
     throw new YamlExportOutputError(
       "unsafe-output",
       outputPath,
-      `Could not verify the moved destination; recover it from: ${moved}`,
+      "Safe forced export publication requires /usr/bin/python3 and Linux renameat2 support",
     );
   }
-  if (!movedStat.isFile() || !sameFile(expected, movedStat)) preserveRecovery(moved, outputPath);
+}
+
+function exchangeNames(
+  parentDescriptor: number,
+  leftName: string,
+  rightName: string,
+  outputPath: string,
+): void {
+  if (process.platform !== "linux") {
+    throw new YamlExportOutputError(
+      "unsafe-output",
+      outputPath,
+      "Safe forced export publication requires Linux renameat2 exchange support",
+    );
+  }
+  for (const name of [leftName, rightName]) {
+    if (
+      name.length === 0 ||
+      name === "." ||
+      name === ".." ||
+      name.includes("/") ||
+      name.includes("\0")
+    ) {
+      throw new YamlExportOutputError("unsafe-output", outputPath, "Invalid atomic exchange name");
+    }
+  }
   try {
-    publishNew(temporary, destination, outputPath);
-  } catch (error) {
-    restoreRegularNoReplace(moved, destination, outputPath, error);
+    execFileSync("/usr/bin/python3", ["-c", RENAME_EXCHANGE_HELPER, leftName, rightName], {
+      stdio: ["ignore", "pipe", "pipe", parentDescriptor],
+    });
+  } catch {
+    throw new YamlExportOutputError(
+      "unsafe-output",
+      outputPath,
+      `Atomic output exchange failed; destination was not safely published: ${outputPath}`,
+    );
+  }
+}
+
+function publishForced(
+  parentDescriptor: number,
+  temporary: string,
+  destination: string,
+  moved: string,
+  expected: fs.Stats,
+  temporaryStat: fs.Stats,
+  outputPath: string,
+): fs.Stats {
+  assertExchangeSupported(outputPath);
+  publishNew(temporary, moved, outputPath);
+  exchangeNames(parentDescriptor, path.basename(moved), path.basename(destination), outputPath);
+  const movedStat = fs.lstatSync(moved);
+  if (!movedStat.isFile() || !sameFile(expected, movedStat)) {
+    try {
+      exchangeNames(parentDescriptor, path.basename(moved), path.basename(destination), outputPath);
+      const restored = fs.lstatSync(destination);
+      const unpublished = fs.lstatSync(moved);
+      if (!sameFile(restored, movedStat) || !sameFile(unpublished, temporaryStat)) {
+        preserveRecovery(moved, outputPath);
+      }
+      fs.unlinkSync(moved);
+    } catch {
+      preserveRecovery(moved, outputPath);
+    }
+    throw new YamlExportOutputError(
+      "unsafe-output",
+      outputPath,
+      `Refusing to replace an output path that changed during publication: ${outputPath}`,
+    );
   }
   return fs.lstatSync(destination);
 }
@@ -292,7 +361,15 @@ function publishYamlExport(options: PublishYamlExportOptions): PublishExportFile
       publishNew(temporary, destination, outputPath);
       published = fs.lstatSync(destination);
     } else {
-      published = publishForced(temporary, destination, moved, expected, outputPath);
+      published = publishForced(
+        parent.descriptor,
+        temporary,
+        destination,
+        moved,
+        expected,
+        temporaryStat,
+        outputPath,
+      );
     }
     try {
       assertParentStable(parent, outputPath);
@@ -301,7 +378,17 @@ function publishYamlExport(options: PublishYamlExportOptions): PublishExportFile
       throw error;
     }
     fs.unlinkSync(temporary);
-    if (expected !== null) fs.unlinkSync(moved);
+    if (expected !== null) {
+      try {
+        fs.unlinkSync(moved);
+      } catch {
+        throw new YamlExportOutputError(
+          "unsafe-output",
+          outputPath,
+          `The new export is published at ${outputPath}; the prior output remains recoverable at: ${path.join(path.dirname(outputPath), path.basename(moved))}`,
+        );
+      }
+    }
     fs.fsyncSync(parent.descriptor);
     return { path: outputPath };
   } finally {
