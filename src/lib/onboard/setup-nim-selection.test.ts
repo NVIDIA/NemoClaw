@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 
-import { describe, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { requireValue } from "../core/require-value";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
@@ -11,8 +11,13 @@ import {
   applyCloudFallbackSelection,
   clearNimContainerBeforeRetry,
   createRemoteModelValidator,
+  resolveCompatibleEndpointSelection,
   type SetupNimSelectionState,
 } from "./setup-nim-selection";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function makeState(): SetupNimSelectionState {
   return {
@@ -64,6 +69,28 @@ describe("setupNim selection state helpers", () => {
     assert.equal(state.nimContainer, null);
     assert.equal(state.model, "nvidia/local-nim");
     assert.equal(state.provider, "vllm-local");
+  });
+});
+
+describe("resolveCompatibleEndpointSelection", () => {
+  it("rejects an unsafe endpoint at the onboarding selection boundary", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(
+      resolveCompatibleEndpointSelection({
+        kind: "openai",
+        envUrl: null,
+        recoveredEndpointUrl: null,
+        nonInteractive: false,
+        prompt: async () => "https://operator:secret@inference.example.test/v1",
+      }),
+    ).resolves.toEqual({ action: "retry-selection" });
+
+    expect(error).toHaveBeenCalledWith(
+      "  Endpoint URL must not contain userinfo, query, or fragment components.",
+    );
+    expect([...error.mock.calls, ...log.mock.calls].flat().join("\n")).not.toContain("secret");
   });
 });
 

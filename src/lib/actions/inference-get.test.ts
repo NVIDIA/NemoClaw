@@ -11,25 +11,7 @@ vi.mock("../inference/local", () => ({
   DEFAULT_OLLAMA_MODEL: "llama3.1",
 }));
 
-import {
-  runInferenceGet,
-  type InferenceEndpointDiagnosticReason,
-  type InferenceGetDeps,
-} from "./inference-get";
-
-function expectedEndpointDiagnostic(
-  reason: InferenceEndpointDiagnosticReason,
-  affectedSandboxNames: string[],
-  sandboxName?: string,
-) {
-  const statusCommand = sandboxName ? `nemoclaw ${sandboxName} status` : "nemoclaw status";
-  return {
-    reason,
-    affectedSandboxNames,
-    additionalAffectedSandboxCount: 0,
-    recovery: `Run '${statusCommand}' to inspect the affected registry metadata. For an invalid gateway binding, restore known-good gatewayName and gatewayPort metadata from a trusted backup. Do not copy a binding from another sandbox. Otherwise, back up and remove the affected sandbox, then re-onboard it.`,
-  };
-}
+import { runInferenceGet, type InferenceGetDeps } from "./inference-get";
 
 function createDeps(
   output: string,
@@ -172,124 +154,126 @@ describe("runInferenceGet", () => {
       endpointUrl: "https://operator:secret@inference.example.test/v1?token=secret",
     });
 
-    const endpointDiagnostic = expectedEndpointDiagnostic("invalid-endpoint", ["custom"], "custom");
     await expect(runInferenceGet({ json: true, sandboxName: "custom" }, deps)).resolves.toEqual({
       provider: "compatible-endpoint",
       model: "custom/model",
-      endpointDiagnostic,
     });
     expect(deps.log.mock.calls[0][0]).not.toContain("secret");
     expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual({
       provider: "compatible-endpoint",
       model: "custom/model",
-      endpointDiagnostic,
     });
   });
 
-  it.each(
-    [
-      {
-        name: "conflicting same-gateway URLs",
-        endpoints: ["https://inference-a.example.test/v1", "https://inference-b.example.test/v1"],
-        reason: "conflicting-endpoints" as const,
-      },
-      {
-        name: "a non-HTTP URL",
-        endpoints: ["ftp://inference.example.test/v1"],
-        reason: "invalid-endpoint" as const,
-      },
-      {
-        name: "a URL containing a control character",
-        endpoints: ["https://inference.example.test/v1\u0007"],
-        reason: "invalid-endpoint" as const,
-      },
-    ].flatMap(({ name, endpoints, reason }) => [
-      { name, endpoints, reason, format: "text", json: false },
-      { name, endpoints, reason, format: "JSON", json: true },
-    ]),
-  )("reports $name without exposing it in $format output", async ({ endpoints, reason, json }) => {
+  it("omits an invalid endpoint from human-readable output without exposing it", async () => {
     const deps = createDeps(
       "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
     );
-    deps.listSandboxes.mockReturnValue(
-      endpoints.map((endpointUrl, index) => ({
-        name: `custom-${String(index + 1)}`,
-        provider: "compatible-endpoint",
-        model: "custom/model",
-        endpointUrl,
-      })),
-    );
+    recordRoute(deps, {
+      provider: "compatible-endpoint",
+      endpointUrl: "https://operator:secret@inference.example.test/v1",
+    });
 
-    const endpointDiagnostic = expectedEndpointDiagnostic(
-      reason,
-      endpoints.map((_, index) => `custom-${String(index + 1)}`),
-    );
-    const expected = {
+    await expect(runInferenceGet({ sandboxName: "custom" }, deps)).resolves.toEqual({
       provider: "compatible-endpoint",
       model: "custom/model",
-      endpointDiagnostic,
-    };
-    await expect(runInferenceGet({ json }, deps)).resolves.toEqual(expected);
-    expect(
-      json ? JSON.parse(deps.log.mock.calls[0][0]) : deps.log.mock.calls.map(([line]) => line),
-    ).toEqual(
-      json
-        ? expected
-        : [
-            "Provider: compatible-endpoint",
-            "Model:    custom/model",
-            `Endpoint: unavailable (${reason})`,
-            `Affected sandboxes: ${endpointDiagnostic.affectedSandboxNames.join(", ")}`,
-            `Recovery: ${endpointDiagnostic.recovery}`,
-          ],
-    );
+    });
+    expect(deps.log.mock.calls.map(([line]) => line)).toEqual([
+      "Provider: compatible-endpoint",
+      "Model:    custom/model",
+    ]);
     const output = deps.log.mock.calls.flat().join("\n");
-    expect(output).not.toContain(endpoints[0]);
-    expect(output).not.toContain(endpoints[1] ?? endpoints[0]);
+    expect(output).not.toContain("secret");
   });
 
-  it.each([false, true])(
-    "reports only the selected non-default gateway endpoint, JSON=%s (#10784)",
-    async (json) => {
-      const deps = createDeps(
-        "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-      );
-      deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
-      deps.listSandboxes.mockReturnValue([
-        {
-          name: "selected-gateway",
-          provider: "compatible-endpoint",
-          model: "custom/model",
-          endpointUrl: "https://selected.example.test/v1",
-          gatewayName: "nemoclaw-19090",
-          gatewayPort: 19090,
-        },
-        {
-          name: "other-gateway",
-          provider: "compatible-endpoint",
-          model: "custom/model",
-          endpointUrl: "https://other.example.test/v1",
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-        },
-      ]);
+  it("omits conflicting endpoints from JSON output", async () => {
+    const deps = createDeps(
+      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+    );
+    deps.listSandboxes.mockReturnValue([
+      {
+        name: "custom-a",
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointUrl: "https://inference-a.example.test/v1",
+      },
+      {
+        name: "custom-b",
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointUrl: "https://inference-b.example.test/v1",
+      },
+    ]);
 
-      const expected = {
+    await expect(runInferenceGet({ json: true }, deps)).resolves.toEqual({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+    });
+    expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+    });
+  });
+
+  it("treats equivalent endpoint URL forms as one endpoint identity", async () => {
+    const deps = createDeps(
+      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+    );
+    deps.listSandboxes.mockReturnValue([
+      {
+        name: "custom-a",
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointUrl: "https://inference.example.test/v1",
+      },
+      {
+        name: "custom-b",
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointUrl: "https://inference.example.test/v1/",
+      },
+    ]);
+
+    await expect(runInferenceGet({ json: true }, deps)).resolves.toEqual({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl: "https://inference.example.test/v1",
+    });
+  });
+
+  it("reports only the selected non-default gateway endpoint in JSON (#10784)", async () => {
+    const deps = createDeps(
+      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+    );
+    deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
+    deps.listSandboxes.mockReturnValue([
+      {
+        name: "selected-gateway",
         provider: "compatible-endpoint",
         model: "custom/model",
         endpointUrl: "https://selected.example.test/v1",
-      };
-      await expect(runInferenceGet({ json }, deps)).resolves.toEqual(expected);
-      const output = deps.log.mock.calls.flat().join("\n");
-      expect(output).toContain("https://selected.example.test/v1");
-      expect(output).not.toContain("https://other.example.test/v1");
-      expect(json ? JSON.parse(deps.log.mock.calls[0][0]) : output).toEqual(
-        json
-          ? expected
-          : "Provider: compatible-endpoint\nModel:    custom/model\nEndpoint: https://selected.example.test/v1",
-      );
-    },
-  );
+        gatewayName: "nemoclaw-19090",
+        gatewayPort: 19090,
+      },
+      {
+        name: "other-gateway",
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointUrl: "https://other.example.test/v1",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+      },
+    ]);
+
+    const expected = {
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl: "https://selected.example.test/v1",
+    };
+    await expect(runInferenceGet({ json: true }, deps)).resolves.toEqual(expected);
+    expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual(expected);
+    expect(deps.log.mock.calls[0][0]).not.toContain("https://other.example.test/v1");
+  });
 
   it("ignores a pending route reservation when selecting the endpoint (#10784)", async () => {
     const deps = createDeps(
@@ -319,7 +303,7 @@ describe("runInferenceGet", () => {
     expect(deps.log.mock.calls[0][0]).not.toContain("unpublished.example.test");
   });
 
-  it("reports an invalid persisted gateway binding without exposing its value", async () => {
+  it("omits an endpoint with an invalid persisted gateway binding without exposing its value", async () => {
     const deps = createDeps(
       "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
     );
@@ -333,41 +317,33 @@ describe("runInferenceGet", () => {
         gatewayPort: null,
       },
     ]);
-    const endpointDiagnostic = expectedEndpointDiagnostic("invalid-gateway-binding", [
-      "broken-binding",
-    ]);
-
     await expect(runInferenceGet({ json: true }, deps)).resolves.toEqual({
       provider: "compatible-endpoint",
       model: "custom/model",
-      endpointDiagnostic,
     });
     expect(deps.log.mock.calls[0][0]).not.toContain("secret-invalid-gateway");
-    expect(JSON.parse(deps.log.mock.calls[0][0])).toMatchObject({ endpointDiagnostic });
+    expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+    });
   });
 
-  it("bounds affected sandbox names in JSON diagnostics", async () => {
+  it("omits an endpoint longer than the canonical endpoint bound", async () => {
     const deps = createDeps(
       "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
     );
-    deps.listSandboxes.mockReturnValue(
-      Array.from({ length: 7 }, (_, index) => ({
-        name: `sandbox-${String(index + 1)}`,
-        provider: "compatible-endpoint",
-        model: "custom/model",
-        endpointUrl: `ftp://invalid-${String(index + 1)}.example.test/v1`,
-      })),
-    );
+    recordRoute(deps, {
+      provider: "compatible-endpoint",
+      endpointUrl: `https://inference.example.test/${"a".repeat(2049)}`,
+    });
 
     const result = await runInferenceGet({ json: true }, deps);
 
-    expect(result.endpointUrl).toBeUndefined();
-    expect(result.endpointDiagnostic).toMatchObject({
-      reason: "invalid-endpoint",
-      affectedSandboxNames: ["sandbox-1", "sandbox-2", "sandbox-3", "sandbox-4", "sandbox-5"],
-      additionalAffectedSandboxCount: 2,
+    expect(result).toEqual({
+      provider: "compatible-endpoint",
+      model: "custom/model",
     });
-    expect(deps.log.mock.calls[0][0]).not.toContain("ftp://");
+    expect(deps.log.mock.calls[0][0]).not.toContain("a".repeat(100));
   });
 
   it("fails closed without exposing registry-read details for a compatible route", async () => {
@@ -383,7 +359,7 @@ describe("runInferenceGet", () => {
       runInferenceGet({ cliName: "nemoclaw", json: true, sandboxName: "custom" }, deps),
     ).rejects.toMatchObject({
       message:
-        "NemoClaw could not read sandbox registry metadata for the compatible inference endpoint on gateway 'nemoclaw-19090'. Run 'nemoclaw custom status' to diagnose the sandbox's registry and recorded gateway.",
+        "NemoClaw could not read sandbox registry metadata for the compatible inference endpoint.",
     });
     expect(deps.log).not.toHaveBeenCalled();
   });
@@ -397,7 +373,6 @@ describe("runInferenceGet", () => {
     await expect(runInferenceGet({ quiet: true, sandboxName: "beta" }, deps)).resolves.toEqual({
       provider: "compatible-endpoint",
       model: "custom/model",
-      endpointDiagnostic: expectedEndpointDiagnostic("missing-endpoint", [], "beta"),
     });
 
     expect(deps.getSandboxTargetGatewayName).toHaveBeenCalledWith("beta");
@@ -415,8 +390,7 @@ describe("runInferenceGet", () => {
 
     const lookup = runInferenceGet({ sandboxName: "beta" }, deps);
     await expect(lookup).rejects.toMatchObject({
-      message:
-        "NemoClaw could not resolve the sandbox's recorded gateway. Run 'nemoclaw beta status' to inspect its registry metadata. For an invalid gateway binding, restore known-good gatewayName and gatewayPort metadata from a trusted backup. Do not copy a binding from another sandbox. Otherwise, back up and remove the affected sandbox, then re-onboard it.",
+      message: "NemoClaw could not resolve the sandbox's recorded gateway.",
     });
     await expect(lookup).rejects.not.toThrow(/secret-invalid-gateway|31337/);
     expect(deps.captureOpenshell).not.toHaveBeenCalled();
