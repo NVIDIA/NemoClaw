@@ -25,6 +25,7 @@ const PR_WORKFLOW_JOB_NAMES = [
   "changes",
   "docs-only-checks",
   "static-checks",
+  "hugging-face-models",
   "openshell-sdk-package",
   "compile-artifacts",
   "build-typecheck",

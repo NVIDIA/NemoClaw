@@ -1247,6 +1247,7 @@ const PR_METADATA_EDIT_JOB_NAMES = new Set([
   "cli-tests",
   "compile-artifacts",
   "docs-only-checks",
+  "hugging-face-models",
   "installer-integration",
   "openshell-sdk-package",
   "plugin-tests",
