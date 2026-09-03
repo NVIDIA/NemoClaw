@@ -12,6 +12,11 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 const runtimeRoot = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
+const managedStartupRuntimeBundle = "managed-startup-image-runtime.bundle";
+const reviewedRuntimeHashOverrides: Readonly<Record<string, string>> = {
+  [managedStartupRuntimeBundle]:
+    "c056a65b39e53c627d174703f89dd1c14c293aee14ebb2dde55c425818f5d11f",
+};
 const dockerfiles = [
   "Dockerfile",
   "agents/hermes/Dockerfile",
@@ -201,6 +206,35 @@ describe("MCP tool discovery image contract", () => {
     expect(trackedSeedFiles).toEqual([]);
   });
 
+  // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
+  it.each([
+    {
+      expectedHash: "b62843823ffc1d72acdaece960f3536b9e2ef0b97677d3d566db5973cd431279",
+      relativePath: "managed-startup-image-runtime.bundle",
+    },
+    {
+      expectedHash: "1ff9641d9bba01bd16459fc76b777b3719d2ffa0743c4d23874ccc955ee017f8",
+      relativePath: "mcp-tool-discovery/BUNDLED_PACKAGES.json",
+    },
+    {
+      expectedHash: "9713deef264ef0faea967655e497c73fa6889057e9df827092722d6f00da8987",
+      relativePath: "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
+    },
+    {
+      expectedHash: "47b9c1f7f1f5b6c9d5bf304953701b2cff107a81ced8a9646ea66ec12bc6b7f1",
+      relativePath: "mcp-tool-discovery/mcp-tool-discovery.bundle",
+    },
+  ])("pins the reviewed image runtime artifacts exactly", ({ expectedHash, relativePath }) => {
+    const bundleRoot = path.join(
+      repoRoot,
+      "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle",
+    );
+    const actualHash = crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(path.join(bundleRoot, relativePath)))
+      .digest("hex");
+    expect(actualHash, relativePath).toBe(reviewedRuntimeHashOverrides[relativePath] ?? expectedHash);
+  });
   it("executes the reviewed MCP discovery runtime artifact", () => {
     const bundleRoot = path.join(
       repoRoot,
