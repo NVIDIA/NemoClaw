@@ -108,14 +108,12 @@ describe("createSetupNim Windows-host Ollama", () => {
         _gpu,
         providerKey,
         requestedModel,
-        windowsOllamaReachable,
         _winOllamaLoopbackOnly,
         _winOllamaInstalledPath,
         state,
       ) => {
         expect(providerKey).toBe("start-windows-ollama");
         expect(requestedModel).toBeNull();
-        expect(windowsOllamaReachable).toBe(false);
         state.model = model;
         state.provider = "ollama-local";
         state.endpointUrl = "http://host.docker.internal:11434/v1";
@@ -164,14 +162,12 @@ describe("createSetupNim Windows-host Ollama", () => {
         _gpu,
         providerKey,
         requestedModel,
-        windowsOllamaReachable,
         _winOllamaLoopbackOnly,
         _winOllamaInstalledPath,
         state,
       ) => {
         expect(providerKey).toBe("start-windows-ollama");
         expect(requestedModel).toBe(model);
-        expect(windowsOllamaReachable).toBe(false);
         state.model = model;
         state.provider = "ollama-local";
         state.endpointUrl = "http://host.docker.internal:11434/v1";
