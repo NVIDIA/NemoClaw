@@ -123,8 +123,11 @@ Most focused changes do not require both. Record only checks that actually ran a
 Every pull request requires maintainer review. The applicable open-PR limit is defined in
 [`.github/pr-limits.json`](.github/pr-limits.json); automation closes a pull request that exceeds it.
 
-Do not add links to unofficial repositories, community collections, wrappers, or templates. Route
-independent solutions through [Community Solutions](docs/resources/community-contributions.mdx).
+Do not add links to unofficial repositories, community collections, wrappers, or templates. The
+NVIDIA NemoClaw Community repository is the designated destination for independent solutions; it is
+an NVIDIA repository, not an external project. Link to it directly for examples or contribution
+instructions. Use [Community Solutions](docs/resources/community-contributions.mdx) when readers
+need help choosing the appropriate repository.
 
 Before publication:
 

@@ -9,7 +9,6 @@ import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-a
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
-  policyGet,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { fingerprintSandboxLiveIdentity } from "../../onboard/sandbox-recreate-transaction";
 import {
@@ -230,15 +229,13 @@ describe("rebuildSandbox flow: recovery", () => {
   }
 
   it("retains the exact policy handoff across a failed recreate and consumes it on retry", async () => {
-    const policyDocument = "version: 1\nnetwork_policies:\n  host_preserved: {}\n";
+    const policyDocument = "version: 1\nnetwork_policies:\n  host_preserved: {}";
     const interrupted = createRebuildFlowHarness({
       captureOpenshell: sandboxGetProbes([SOURCE_PROBE, null]),
       onboard: () => {
         throw new Error("replacement create failed");
       },
     });
-    policyGet.getSandboxPolicy.mockReset().mockReturnValue({ yaml: policyDocument });
-
     await expect(
       interrupted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("Recreate failed");
@@ -251,9 +248,9 @@ describe("rebuildSandbox flow: recovery", () => {
       persistedManifest.rebuildPolicyHandoff.file,
     );
     expect(fs.readFileSync(handoffPath, "utf8")).toBe(policyDocument);
-    expect(fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
-      true,
-    );
+    expect(
+      fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json")),
+    ).toBe(true);
     let recreatedPolicy = "";
     const restarted = createRebuildFlowHarness({
       staleRecovery: true,
@@ -263,8 +260,6 @@ describe("rebuildSandbox flow: recovery", () => {
       },
     });
     restarted.session.checkpoint = interrupted.session.checkpoint;
-    policyGet.getSandboxPolicy.mockReset().mockReturnValue({ yaml: "" });
-
     await expect(
       restarted.rebuildSandbox("alpha", ["--yes"], {
         throwOnError: true,
@@ -274,9 +269,9 @@ describe("rebuildSandbox flow: recovery", () => {
 
     expect(recreatedPolicy).toBe(policyDocument);
     expect(fs.existsSync(handoffPath)).toBe(false);
-    expect(fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
-      false,
-    );
+    expect(
+      fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json")),
+    ).toBe(false);
   });
 
   function restartFromJournaledSource(probes: readonly (string | null)[], checkpoint: unknown) {
@@ -449,9 +444,8 @@ describe("rebuildSandbox flow: recovery", () => {
     ).rejects.toThrow("Prepared backup recovery");
 
     expect(harness.errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("MCP bridge restore incomplete: MCP restore boom"),
+      expect.stringContaining("MCP bridge restore incomplete; inspect redacted diagnostics"),
     );
-    expect(harness.relockSpy).toHaveBeenCalled();
   });
 
   it("aborts before backup/delete when messaging manifest staging fails", async () => {
@@ -565,9 +559,9 @@ describe("rebuildSandbox flow: recovery", () => {
       sandboxEntry: {},
       executeSandboxCommand: () => ({ status: 1, stdout: "", stderr: "hash refresh failed" }),
       repairMutableConfigPerms: () => ({
-        applied: false,
-        skipReason: "unreadable",
-        reason: "cannot stat mutable config",
+        applied: true,
+        verified: false,
+        errors: ["cannot stat mutable config"],
       }),
       restoreSandboxState: () => ({
         success: false,
@@ -587,7 +581,6 @@ describe("rebuildSandbox flow: recovery", () => {
     expect(output).toContain("State restore was incomplete");
     expect(output).toContain("Mutable config permissions were not verified");
     expect(output).toContain("Mutable OpenClaw config hash was not refreshed");
-    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
     });
@@ -616,7 +609,7 @@ describe("rebuildSandbox flow: recovery", () => {
     expect(output).toContain("MCP bridge definitions were preserved but not fully refreshed");
     expect(output).not.toContain("rebuilt successfully");
     expect(harness.errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("MCP bridge restore incomplete: MCP restore boom"),
+      expect.stringContaining("MCP bridge restore incomplete; inspect redacted diagnostics"),
     );
   });
 });

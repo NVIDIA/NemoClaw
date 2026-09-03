@@ -332,15 +332,31 @@ describe("addSandboxPolicy", () => {
     },
   );
 
-  it("prints Discord validation guidance when the preset name is provided", async () => {
+  it("prints Hermes Python Discord validation guidance when the preset name is provided", async () => {
+    arrangeSandbox("hermes");
+
     await addSandboxPolicy("test-sandbox", { preset: "discord", yes: true });
 
     expect(printedText()).toContain("curl is not in the preset binary allowlist");
-    expect(printedText()).toContain("Node HTTPS");
+    expect(printedText()).toContain("nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c");
+    expect(printedText()).toContain("except urllib.error.HTTPError as error: print(error.code)");
+    expect(printedText()).toContain("Any HTTP response confirms reachability");
+    expect(printedText()).not.toContain("prints 200 on success");
+    expect(printedText()).not.toMatch(/^\/opt\/hermes\/\.venv\/bin\/python -c/mu);
+    expect(printedText()).not.toContain("node -e");
     expect(promptMock).not.toHaveBeenCalled();
     expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "discord", {
       suppressDisclosure: true,
     });
+  });
+
+  it("prints OpenClaw Node Discord validation guidance without the Hermes probe", async () => {
+    arrangeSandbox("openclaw");
+
+    await addSandboxPolicy("test-sandbox", { preset: "discord", yes: true });
+
+    expect(printedText()).toContain("node -e");
+    expect(printedText()).not.toContain("/opt/hermes/.venv/bin/python");
   });
 
   it("does not print messaging guidance when a non-messaging preset is selected", async () => {

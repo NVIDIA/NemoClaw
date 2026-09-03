@@ -7,7 +7,6 @@
  * Supports subcommands:
  *   /nemoclaw status   - show sandbox/blueprint/inference state
  *   /nemoclaw eject    - rollback to host installation
- *   /nemoclaw shields  - show shields status (read-only)
  *   /nemoclaw config   - show sandbox config (read-only, redacted)
  *   /nemoclaw          - show help
  */
@@ -21,7 +20,6 @@ import {
 } from "../onboard/config.js";
 import { getPluginConfig } from "../plugin-config.js";
 import { slashConfigShow } from "./config-show.js";
-import { slashShieldsStatus } from "./shields-status.js";
 
 export function handleSlashCommand(
   ctx: PluginCommandContext,
@@ -29,7 +27,6 @@ export function handleSlashCommand(
 ): PluginCommandResult {
   const tokens = ctx.args?.trim().split(/\s+/).filter(Boolean) ?? [];
   const subcommand = tokens[0] ?? "";
-  const subArg = tokens[1];
 
   switch (subcommand) {
     case "status":
@@ -38,8 +35,6 @@ export function handleSlashCommand(
       return slashEject();
     case "onboard":
       return slashOnboard();
-    case "shields":
-      return slashShieldsStatus(subArg);
     case "config":
       return slashConfigShow();
     default:
@@ -56,13 +51,11 @@ function slashHelp(): PluginCommandResult {
       "",
       "Subcommands:",
       "  `status`  - Show sandbox, blueprint, and inference state",
-      "  `shields` - Show how to check shields status from the host",
       "  `config`  - Show sandbox configuration (credentials redacted)",
       "  `eject`   - Show rollback instructions",
       "  `onboard` - Show onboarding status and instructions",
       "",
       "For full management use the NemoClaw CLI:",
-      "  `nemoclaw <name> shields down|up|status`",
       "  `nemoclaw <name> config get`",
       "  `nemoclaw <name> status`",
       "  `nemoclaw <name> connect`",

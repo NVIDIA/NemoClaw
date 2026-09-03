@@ -4,7 +4,11 @@
 import os from "node:os";
 import path from "node:path";
 
-import { type McpLifecycleLockOptions, withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
+import {
+  type McpLifecycleLockOptions,
+  withMcpLifecycleLock,
+  withMcpLifecycleLockSync,
+} from "../state/mcp-lifecycle-lock";
 import { resolveSharedLocalAdapterStateRoot } from "./local-adapter-lifecycle";
 
 const GATEWAY_ROUTE_LOCK_PREFIX = "gateway-route:";
@@ -12,6 +16,17 @@ const MODEL_ROUTER_PORT_LOCK_PREFIX = "model-router-port:";
 
 export function resolveCurrentUserModelRouterLockStateDir(homeDir: string = os.homedir()): string {
   return path.join(resolveSharedLocalAdapterStateRoot(homeDir), "state");
+}
+
+/** Resolve Model Router lock options without touching the filesystem. */
+export function resolveModelRouterPortLifecycleLockOptions(
+  options: McpLifecycleLockOptions = {},
+  homeDir?: string,
+): McpLifecycleLockOptions & { stateDir: string } {
+  return {
+    ...options,
+    stateDir: options.stateDir ?? resolveCurrentUserModelRouterLockStateDir(homeDir),
+  };
 }
 
 /**
@@ -33,6 +48,20 @@ export function withGatewayRouteMutationLock<T>(
   );
 }
 
+export function withGatewayRouteMutationLockSync<T>(
+  gatewayName: string,
+  operation: () => T,
+  options: McpLifecycleLockOptions = {},
+): T {
+  const normalizedGatewayName = gatewayName.trim();
+  if (!normalizedGatewayName) throw new Error("OpenShell gateway name is required.");
+  return withMcpLifecycleLockSync(
+    `${GATEWAY_ROUTE_LOCK_PREFIX}${normalizedGatewayName}`,
+    operation,
+    options,
+  );
+}
+
 /** Serialize current-user lifecycle changes for one Model Router port across gateways. */
 export function withModelRouterPortLifecycleLock<T>(
   port: number,
@@ -42,9 +71,5 @@ export function withModelRouterPortLifecycleLock<T>(
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("Model Router port must be an integer from 1 to 65535.");
   }
-  const stateDir = options.stateDir ?? resolveCurrentUserModelRouterLockStateDir();
-  return withMcpLifecycleLock(`${MODEL_ROUTER_PORT_LOCK_PREFIX}${String(port)}`, operation, {
-    ...options,
-    stateDir,
-  });
+  return withMcpLifecycleLock(`${MODEL_ROUTER_PORT_LOCK_PREFIX}${String(port)}`, operation, resolveModelRouterPortLifecycleLockOptions(options));
 }

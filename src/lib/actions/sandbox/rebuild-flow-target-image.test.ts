@@ -503,12 +503,6 @@ describe("rebuildSandbox flow: target image", () => {
         machine: { state: "failed" },
         steps: { sandbox: { status: "failed", error: "Rebuild recreate failed" } },
       });
-      expect(harness.relockSpy).toHaveBeenCalledWith(
-        "alpha",
-        expect.any(Object),
-        false,
-        "nemoclaw",
-      );
       expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe(originalSandboxName);
 
       const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
