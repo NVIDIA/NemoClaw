@@ -4,6 +4,14 @@
 import { openclawProtectedImage } from "./managed-image-openclaw-security.ts";
 import type { HostCliClient } from "../e2e/fixtures/clients/host.ts";
 import { expect, test } from "../e2e/fixtures/e2e-test.ts";
+
+function managedImageCohort(): string {
+  return (
+    process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT ??
+    process.env.NEMOCLAW_MANAGED_IMAGE_SECURITY_COHORT ??
+    `local-${process.pid}`
+  );
+}
 async function runContainer(
   host: HostCliClient,
   image: string,
@@ -16,6 +24,8 @@ async function runContainer(
     [
       "run",
       "--rm",
+      "--label",
+      `io.nvidia.nemoclaw.managed-image.cohort=${managedImageCohort()}`,
       "--user",
       "root",
       "--entrypoint",
@@ -43,11 +53,19 @@ async function runDefaultContainer(
   artifactName: string,
   expectedExitCode = 0,
 ) {
-  const result = await host.command("docker", ["run", "--rm", ...dockerArgs, image, ...command], {
-    artifactName,
-    captureLimitBytes: 1024 * 1024,
-    timeoutMs: 120_000,
-  });
+  const result = await host.command(
+    "docker",
+    [
+      "run",
+      "--rm",
+      "--label",
+      `io.nvidia.nemoclaw.managed-image.cohort=${managedImageCohort()}`,
+      ...dockerArgs,
+      image,
+      ...command,
+    ],
+    { artifactName, captureLimitBytes: 1024 * 1024, timeoutMs: 120_000 },
+  );
   expect(
     result.exitCode,
     `${artifactName} failed:\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
@@ -295,10 +313,7 @@ test(
       "managed-image-openclaw-replacement-refusal",
     );
 
-    const cohort =
-      process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT ??
-      process.env.NEMOCLAW_MANAGED_IMAGE_SECURITY_COHORT ??
-      `local-${process.pid}`;
+    const cohort = managedImageCohort();
     const repairVolume = `nemoclaw-entrypoint-repair-${process.pid}`;
     const refusalVolume = `nemoclaw-entrypoint-refusal-${process.pid}`;
     let repairVolumeCreated = false;
