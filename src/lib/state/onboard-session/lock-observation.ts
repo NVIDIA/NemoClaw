@@ -3,7 +3,6 @@
 
 import fs from "node:fs";
 
-import { isErrnoException } from "../../core/errno";
 
 const MAX_LOCK_BYTES = 64 * 1024;
 
@@ -41,13 +40,18 @@ function readTrimmed(path: string): string | null {
   }
 }
 
+function errnoCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object" || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
+}
+
 function defaultProcessAlive(pid: number): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return isErrnoException(error) && error.code === "EPERM";
+    return errnoCode(error) === "EPERM";
   }
 }
 
@@ -111,8 +115,11 @@ function parseOwner(value: unknown): OnboardLockOwner | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (
+    typeof record.pid !== "number" ||
     !Number.isSafeInteger(record.pid) ||
+    record.pid <= 0 ||
     typeof record.processGeneration !== "string" ||
+    record.processGeneration.length === 0 ||
     typeof record.hostIdentity !== "string" ||
     typeof record.pidNamespaceIdentity !== "string"
   ) {
@@ -139,7 +146,7 @@ export function observeOnboardLock(
       fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
     );
   } catch (error) {
-    if (isErrnoException(error) && error.code === "ENOENT") return { kind: "absent" };
+    if (errnoCode(error) === "ENOENT") return { kind: "absent" };
     return { kind: "busy", reason: "unsafe" };
   }
 

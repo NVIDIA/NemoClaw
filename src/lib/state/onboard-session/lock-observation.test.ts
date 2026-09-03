@@ -87,6 +87,18 @@ describe("onboarding lock observation", () => {
     expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "busy", reason: "unsafe" });
   });
 
+  it.each([0, -1])("keeps a malformed PID %s unverified", (pid) => {
+    const { evidence, lock, owner } = fixture();
+    writeOwner(lock, { ...owner, pid });
+    expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "busy", reason: "unverified" });
+  });
+
+  it("keeps an empty process generation unverified", () => {
+    const { evidence, lock, owner } = fixture();
+    writeOwner(lock, { ...owner, processGeneration: "" });
+    expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "busy", reason: "unverified" });
+  });
+
   it("does not consult the local PID table for a foreign owner", () => {
     const { evidence, lock, owner } = fixture();
     writeOwner(lock, owner);
