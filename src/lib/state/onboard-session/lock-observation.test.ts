@@ -124,12 +124,12 @@ describe("onboarding lock observation", () => {
     const { evidence, lock, owner } = fixture();
     writeOwner(lock, owner);
     const original = fs.fstatSync.bind(fs);
-    let calls = 0;
-    vi.spyOn(fs, "fstatSync").mockImplementation((fd) => {
-      calls += 1;
-      if (calls === 2) fs.appendFileSync(lock, " ");
-      return original(fd);
-    });
+    vi.spyOn(fs, "fstatSync")
+      .mockImplementationOnce((fd) => original(fd))
+      .mockImplementationOnce((fd) => {
+        fs.appendFileSync(lock, " ");
+        return original(fd);
+      });
     expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "busy", reason: "publishing" });
   });
 
