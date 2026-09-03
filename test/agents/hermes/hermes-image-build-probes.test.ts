@@ -377,6 +377,20 @@ assert module._session_state_journal_mode(SimpleNamespace(_conn=Connection())) =
     expect(dockerfile).toContain("check_absent /sandbox/.hermes/runtime/state.db");
   });
 
+  it("does not normalize modes on removed Hermes compatibility patchers", () => {
+    const modeInstruction = dockerfileInstructions(dockerfile).find(({ text }) =>
+      text.startsWith("RUN chmod 755 /usr/local/bin/nemoclaw-start "),
+    );
+
+    expect(modeInstruction?.text).toBeDefined();
+    expect(modeInstruction?.text).not.toContain(
+      "/usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py",
+    );
+    expect(modeInstruction?.text).not.toContain(
+      "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
+    );
+  });
+
   it.each(commands)(
     "uses a checked-in probe runner instead of builder-dependent heredocs [case %#] (#7981)",
     (command) => {

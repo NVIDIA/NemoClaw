@@ -968,7 +968,7 @@ ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=71388064485328862ea1783d24dc57
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
     | sha256sum -c - \
-    || { echo "ERROR: patch-hermes-profile-policy-defaults.py hash mismatch (update NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256)" >&2; exit 1; }
+    || { echo "ERROR: patch-profile-policy-defaults.py hash mismatch (update NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256)" >&2; exit 1; }
 RUN /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
     && grep -Fqx '    env["npm_config_offline"] = "true"' /opt/hermes/tools/browser_tool.py \
     && rm /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
