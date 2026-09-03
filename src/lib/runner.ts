@@ -19,7 +19,13 @@ import {
   NAME_MAX_LENGTH,
   NAME_VALID_PATTERN,
 } from "./sandbox-name-contract";
-import { redact, redactError, redactFull, writeRedactedResult } from "./security/redact";
+import {
+  redact,
+  redactError,
+  redactFull,
+  redactFullWithUrls,
+  writeRedactedResult,
+} from "./security/redact";
 import { buildSubprocessEnv } from "./subprocess-env";
 
 const ROOT = REPOSITORY_ROOT;
@@ -423,6 +429,7 @@ export {
   ROOT,
   redact,
   redactFull,
+  redactFullWithUrls,
   run,
   runCapture,
   runCaptureEx,
