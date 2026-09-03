@@ -116,7 +116,7 @@ describe("rebuild shields relock guard", () => {
       gatewayAuthority,
       targetGeneration: "generation-1",
       targetIntentFingerprint: "intent-1",
-      markDeleting: vi.fn(),
+      beginDelete: vi.fn(() => "source" as const),
       confirmDeleted: vi.fn(),
     });
   });
@@ -187,9 +187,9 @@ describe("rebuild shields relock guard", () => {
     phaseMocks.runDestroy.mockResolvedValue({ entries: [], removalReceipt: null });
     phaseMocks.runRecreate.mockRejectedValue(new Error("replacement creation failed"));
 
-    await expect(
-      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("replacement creation failed");
+    await expect(rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).rejects.toThrow(
+      "replacement creation failed",
+    );
 
     expect(phaseMocks.runRecreate).toHaveBeenCalledOnce();
     expect(phaseMocks.cleanupPolicySource).toHaveBeenCalledExactlyOnceWith(
