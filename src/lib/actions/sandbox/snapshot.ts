@@ -54,11 +54,10 @@ import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
-import * as shields from "../../shields";
-import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
-import { readTimerMarker } from "../../shields/timer-control";
+import { repairMutableConfigPerms } from "../../sandbox/mutable-config-perms";
 import { isSandboxReady } from "../../state/gateway";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
+import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
@@ -70,7 +69,6 @@ import {
   parseDcodeProbeState,
 } from "./dcode-activity-probe";
 import {
-  cleanupShieldsDestroyArtifacts,
   removeSandboxRegistryEntryOutcome,
   requireSandboxDestructiveCleanupAuthority,
 } from "./destroy";
@@ -105,6 +103,7 @@ import {
   readManagedSnapshotProfileAuthority,
   rejectManagedSnapshotCloneUntilRebind,
   requireCurrentSnapshotRuntimeProvider,
+  restoreDeepAgentsManagedMcpProjection,
   retirePreparedHostLocalInferenceAuthority,
   type RuntimeProviderBundle,
 } from "./snapshot/dependencies";
@@ -117,6 +116,18 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
+
+function deepAgentsManagedProjectionRecoveryCommand(sandboxName: string): string {
+  const script = [
+    "projection=/sandbox/.deepagents/.nemoclaw-mcp.json",
+    'if [ ! -d "$projection" ] || [ -L "$projection" ]; then printf "Managed MCP projection recovery stopped because %s is no longer a directory. Rerun snapshot restore before using this recovery action.\\n" "$projection" >&2; exit 1; fi',
+    "recovery_dir=$(mktemp -d /sandbox/.nemoclaw-mcp.json.recovery.XXXXXX)",
+    'if [ ! -d "$projection" ] || [ -L "$projection" ]; then rmdir -- "$recovery_dir"; printf "Managed MCP projection recovery stopped because %s changed before it could be moved. Rerun snapshot restore before using this recovery action.\\n" "$projection" >&2; exit 1; fi',
+    'mv -- "$projection" "$recovery_dir/projection"',
+    'printf "Moved managed MCP projection to %s\\n" "$recovery_dir/projection"',
+  ].join(" && ");
+  return `${CLI_NAME} ${shellQuote(sandboxName)} exec -- sh -c ${shellQuote(script)}`;
+}
 
 export type SnapshotRequest =
   | { kind: "help" }
@@ -658,8 +669,8 @@ async function autoCreateSandboxFromSource(
 // Delete an existing destination sandbox so `snapshot restore --to <dst> --force`
 // can recreate it from the source's image. Stops the destination's NIM
 // container, runs `openshell sandbox delete`, performs the destination-only
-// cleanups that `sandboxDestroy` does (PID dir, per-sandbox messaging
-// providers, shields state), then drops the NemoClaw registry entry. Throws
+// cleanups that `sandboxDestroy` does (PID dir and per-sandbox messaging
+// providers), then drops the NemoClaw registry entry. Throws
 // SnapshotCommandError on failure so the caller does not proceed into a
 // partially-deleted target.
 //
@@ -669,7 +680,7 @@ async function autoCreateSandboxFromSource(
 // deliberately skipped here because they can also affect the source sandbox
 // we are about to clone from.
 function deleteSandboxForRestore(name: string): void {
-  withTimerBoundShieldsMutationLock(name, "delete snapshot restore destination", () => {
+  withMcpLifecycleLockSync(name, () => {
     const sbMeta = registry.getSandbox(name);
     if (!sbMeta) {
       console.error(
@@ -703,20 +714,12 @@ function deleteSandboxForRestore(name: string): void {
       }
     }
     console.log(`  Deleting existing destination '${name}' before restore...`);
-    if (readTimerMarker(name)) {
-      shields.shieldsUp(name, {
-        throwOnError: true,
-        allowLegacyHermesProtocol: true,
-      });
-    }
     const deleteResult = runOpenshell(["sandbox", "delete", name], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
     const { alreadyGone } = getSandboxDeleteOutcome(deleteResult);
     if (deleteResult.status !== 0 && !alreadyGone) {
-      // Any active timer was cleared only after shieldsUp verified the live
-      // destination was hardened. Preserve that locked state on failure.
       console.error(
         `  Failed to delete '${name}' (exit ${deleteResult.status}). Aborting restore.`,
       );
@@ -746,7 +749,6 @@ function deleteSandboxForRestore(name: string): void {
     // - /tmp/nemoclaw-services-<name>: PID dir for this sandbox's services
     // - OpenShell per-sandbox messaging bridge providers declared by channel
     //   manifests.
-    // - shields-<name>.json + shields timer: per-sandbox shields artifacts
     try {
       fs.rmSync(`/tmp/nemoclaw-services-${name}`, {
         recursive: true,
@@ -761,7 +763,6 @@ function deleteSandboxForRestore(name: string): void {
         stdio: ["ignore", "ignore", "ignore"],
       });
     }
-    cleanupShieldsDestroyArtifacts(name);
     requireSnapshotDestinationRegistryRemoval(name, removeSandboxRegistryEntryOutcome(name));
   });
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
@@ -872,20 +873,6 @@ function reconcilePendingSnapshotClone(
   return "finalized";
 }
 
-function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
-  // Snapshot creation is a shields/policy boundary. Production builds should
-  // always export this helper, but stale compiled artifacts, package-boundary
-  // skew, or test doubles can present a missing CommonJS interop surface. There
-  // is no safe runtime source fix once snapshot creation has started, so keep
-  // this as permanent defense-in-depth and fail closed before backup side effects.
-  const isShieldsDown = shields.isShieldsDown;
-  if (typeof isShieldsDown !== "function") {
-    console.error("  Cannot verify shields state. Refusing to create snapshot.");
-    return false;
-  }
-  return isShieldsDown(sandboxName);
-}
-
 function shouldCheckDcodeActivity(sandboxName: string): boolean {
   const entry = registry.getSandbox(sandboxName);
   // Preserve the existing snapshot path for registered non-dcode sandboxes while
@@ -971,15 +958,7 @@ function runSnapshotCreate(
     console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
     snapshotExit(1);
   }
-  return withTimerBoundShieldsMutationLock(sandboxName, "create sandbox snapshot", () => {
-    // Keep the shields check and backup in one timer-bound interval. At the
-    // absolute deadline, auto-restore closes the outer lifecycle gate and waits
-    // for this exact owner to finish before changing policy or config.
-    if (!isSnapshotCreationAllowedByShields(sandboxName)) {
-      console.error("  Cannot create snapshot while shields are up.");
-      console.error(`  Run \`${CLI_NAME} ${sandboxName} shields down\` first, then retry.`);
-      snapshotExit(1);
-    }
+  return withMcpLifecycleLockSync(sandboxName, () => {
     if (
       shouldCheckDcodeActivity(sandboxName) &&
       !isSnapshotCreationAllowedByDcodeActivity(sandboxName)
@@ -1025,27 +1004,29 @@ function runSnapshotCreate(
   });
 }
 
-function repairRestoredOpenClawConfigPerms(
+function requireRestoredOpenClawConfigPerms(
   targetSandbox: string,
   result: ReturnType<typeof sandboxState.restoreSandboxState>,
 ): void {
   if (!result.restoredFiles.includes("openclaw.json")) return;
+  let failure: string;
   try {
-    const permRepair = shields.repairMutableConfigPerms(targetSandbox);
+    const permRepair = repairMutableConfigPerms(targetSandbox);
     if (permRepair.applied && permRepair.verified) {
       console.log(`  ${G}✓${R} OpenClaw config permissions restored`);
-    } else if (!permRepair.applied && permRepair.skipReason === "unreadable") {
-      console.warn(`  Warning: could not verify OpenClaw config permissions: ${permRepair.reason}`);
-    } else if (permRepair.applied && !permRepair.verified) {
-      console.warn(
-        `  Warning: OpenClaw config permission repair incomplete: ${permRepair.errors.join("; ")}`,
-      );
+      return;
     }
+    failure = permRepair.applied
+      ? permRepair.errors.join("; ") || "permission verification failed"
+      : permRepair.reason;
   } catch (err) {
-    console.warn(
-      `  Warning: OpenClaw config permission repair errored: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    failure = err instanceof Error ? err.message : String(err);
   }
+  throw new SnapshotCommandError([
+    `State restored into '${targetSandbox}', but OpenClaw config permissions could not be verified.`,
+    `Run \`${CLI_NAME} ${targetSandbox} doctor --fix\`, then rerun \`${CLI_NAME} ${targetSandbox} doctor\` before running an agent.`,
+    `Details: ${failure}`,
+  ]);
 }
 
 function readCurrentManagedSnapshotProfileAuthority(entry: SandboxEntry | null) {
@@ -1076,7 +1057,7 @@ async function runSnapshotRestore(
   if (targetSandbox !== sandboxName) {
     assertSandboxSnapshotCommandAvailable(targetSandbox, "sandbox:snapshot:restore");
   }
-  const orderedNames = recoverCompletedAutoRestoreForSnapshotRestore(lockNames);
+  const orderedNames = [...new Set(lockNames)].sort();
   const acquire = (index: number): Promise<void> =>
     index === orderedNames.length
       ? Promise.resolve().then(() => {
@@ -1088,17 +1069,6 @@ async function runSnapshotRestore(
         })
       : withSandboxMutationLock(orderedNames[index], () => acquire(index + 1));
   return acquire(0);
-}
-
-export function recoverCompletedAutoRestoreForSnapshotRestore(
-  sandboxNames: readonly string[],
-  stateDir?: string,
-): string[] {
-  const orderedNames = [...new Set(sandboxNames)].sort();
-  for (const name of orderedNames) {
-    shields.recoverCompletedAutoRestoreBeforeCommand(name, stateDir);
-  }
-  return orderedNames;
 }
 
 async function runSnapshotRestoreUnlocked(
@@ -1512,11 +1482,16 @@ async function runSnapshotRestoreUnlocked(
       }
     }
   }
-  withTimerBoundShieldsMutationLock(targetSandbox, "restore sandbox snapshot", () => {
-    // Serialize filesystem restore, mutable-permission repair, and policy
-    // reconciliation under the active timer generation. At the absolute
-    // deadline, auto-restore keeps the outer lifecycle gate closed and waits
-    // for this exact owner to finish before restoring lockdown.
+  withMcpLifecycleLockSync(targetSandbox, () => {
+    const snapshotTarget = registry.getSandbox(targetSandbox);
+    const repairsManagedDeepAgentsProjection =
+      snapshotTarget?.agent === "langchain-deepagents-code" && !snapshotTarget.fromDockerfile;
+    const managedDeepAgentsEntries = repairsManagedDeepAgentsProjection
+      ? Object.values(snapshotTarget.mcp?.bridges ?? {}).filter(
+          (entry) =>
+            entry.agent === "langchain-deepagents-code" && entry.adapter === "deepagents-config",
+        )
+      : [];
     const validateProviderRestoreBeforeMutation =
       preparedRuntimeRestore || preparedHostLocalInferenceRestore
         ? () => {
@@ -1557,17 +1532,45 @@ async function runSnapshotRestoreUnlocked(
             }
           }
         : null;
-    if (targetSandbox !== sandboxName) {
-      console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
-    } else {
-      console.log(`  Restoring snapshot into '${sandboxName}'...`);
-    }
     if (Boolean(snapshotRestoreAuthority) !== Boolean(validateProviderRestoreBeforeMutation)) {
       console.error(
         `  Cannot restore provider snapshot '${sandboxName}': content authority and the runtime mutation fence must both be present.`,
       );
       console.error(`  Destination '${targetSandbox}' was not changed.`);
       snapshotExit(1);
+    }
+    if (
+      repairsManagedDeepAgentsProjection &&
+      snapshotRestoreAuthority &&
+      validateProviderRestoreBeforeMutation
+    ) {
+      const authorityError = sandboxState.validateSnapshotRestoreMutation(backupPath, {
+        authority: snapshotRestoreAuthority,
+        validateBeforeMutation: validateProviderRestoreBeforeMutation,
+      });
+      if (authorityError) {
+        console.error(`  Cannot restore provider snapshot '${sandboxName}': ${authorityError}.`);
+        console.error(`  Destination '${targetSandbox}' was not changed.`);
+        snapshotExit(1);
+      }
+    }
+    if (repairsManagedDeepAgentsProjection) {
+      try {
+        restoreDeepAgentsManagedMcpProjection(targetSandbox, managedDeepAgentsEntries);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        const recoveryCommand = deepAgentsManagedProjectionRecoveryCommand(targetSandbox);
+        throw new SnapshotCommandError([
+          `Snapshot files were not restored into '${targetSandbox}'.`,
+          `The managed Deep Agents MCP projection at '/sandbox/.deepagents/.nemoclaw-mcp.json' could not be repaired: ${detail}`,
+          `Inspect that path in '${targetSandbox}'. If it is a directory, run \`${recoveryCommand}\`. The command prints the unused recovery location. Then rerun the snapshot restore command.`,
+        ]);
+      }
+    }
+    if (targetSandbox !== sandboxName) {
+      console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
+    } else {
+      console.log(`  Restoring snapshot into '${sandboxName}'...`);
     }
     const result =
       snapshotRestoreAuthority && validateProviderRestoreBeforeMutation
@@ -1607,6 +1610,7 @@ async function runSnapshotRestoreUnlocked(
           snapshotExit(1);
         }
       }
+      requireRestoredOpenClawConfigPerms(targetSandbox, result);
       console.log(
         `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
       );
@@ -1633,13 +1637,6 @@ async function runSnapshotRestoreUnlocked(
       }
       snapshotExit(1);
     }
-    // Post-restore security-state reconciliation is best-effort by design: the
-    // filesystem restore succeeded and old snapshots may target hosts where policy
-    // providers or mutable-config repair are temporarily unavailable. Surface every
-    // failure as a warning, but keep the restore result tied to state restoration.
-    // #5027/#4538: openclaw.json restores via the generic copy strategy, which
-    // lands it at 0640. Repair the mutable config contract when needed.
-    repairRestoredOpenClawConfigPerms(targetSandbox, result);
   });
   if (isCrossSandboxRestore && crossSandboxRestoreAgent === "openclaw") {
     try {

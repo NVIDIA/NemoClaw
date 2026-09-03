@@ -7,6 +7,7 @@ import { isIPv4 } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { execTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
@@ -37,7 +38,7 @@ export const BASE_POLICY = path.join(
 );
 export const FAKE_LIB_DIR = path.join(REPO_ROOT, "test", "e2e", "lib");
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-msg-${process.pid}`;
-export const INSTALL_TIMEOUT_MS = 45 * 60_000;
+export const INSTALL_TIMEOUT_MS = execTimeout(45 * 60_000);
 export const REBUILD_TIMEOUT_MS = 25 * 60_000;
 export const PROBE_TIMEOUT_MS = 120_000;
 export const LIVE_TIMEOUT_MS = 90 * 60_000;

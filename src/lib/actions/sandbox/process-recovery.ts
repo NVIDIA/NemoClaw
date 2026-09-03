@@ -31,12 +31,13 @@ import {
   resolvePrivilegedSandboxTarget,
   withPrivilegedSandboxExecutionLease,
 } from "../../sandbox/privileged-exec";
-import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
+import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../state/registry";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import {
   ensureHermesDashboardPortForwardIfEnabled,
   ensureSandboxPortForward,
+  createHermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryError,
   isSandboxForwardHealthy,
   prepareHermesPortableLaunchForwards,
@@ -44,7 +45,6 @@ import {
   recoverHermesPortableLaunchForwards,
   recoverMessagingHostForward,
   resolveSandboxDashboardPort,
-  resolveSandboxLaunchForwardPorts,
   resolveSandboxHealthProbeUrl,
   verifyHermesPortableLaunchForwards,
   type HermesPortableForwardRecoveryFailure,
@@ -87,13 +87,10 @@ import {
   usesManagedGatewayController,
   usesLegacyManagedGatewayRecovery,
 } from "./supervisor-relaunch";
-export type { SandboxForwardHealth, SandboxForwardListEntry } from "./forward-health";
-export {
-  classifyForwardHealthWithReachability,
-  classifySandboxForwardHealth,
-} from "./forward-health";
+export type { SandboxForwardHealth } from "./forward-health";
 export { resolveSandboxDashboardPort, resolveSandboxLaunchForwardPorts } from "./forward-recovery";
 export {
+  createHermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryError,
   prepareHermesPortableLaunchForwards,
   recoverHermesPortableLaunchForwards,
@@ -107,6 +104,7 @@ export type {
   HermesPortableForwardVerificationResult,
   PreparedHermesPortableForwardRecovery,
 };
+
 export type {
   GatewayRestartDeps,
   GatewayRestartFailureLayer,
@@ -135,7 +133,6 @@ function commandTransportDependencies(): CommandTransportDependencies {
     isDirectSandboxFallbackUnavailableError,
     openshellProbeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
     root: ROOT,
-    withPrivilegedSandboxExecutionLease,
   };
 }
 
@@ -861,7 +858,7 @@ export function restartSandboxGateway(
   { quiet = false, deps = {} }: RestartSandboxGatewayOptions = {},
 ): GatewayRestartResult {
   return withUnsupportedHermesPortableGatewayRestartFence(sandboxName, () => {
-    return withTimerBoundShieldsMutationLock(sandboxName, "gateway restart", () =>
+    return withMcpLifecycleLockSync(sandboxName, () =>
       restartSandboxGatewayWithDeps(sandboxName, {
         quiet,
         deps: {
@@ -1486,9 +1483,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
         } else {
           console.error("  Failed to re-establish the dashboard port forward.");
-          console.error(
-            `  Run \`openshell forward start --background ${recoveryPort} ${sandboxName}\` manually.`,
-          );
+          console.error(`  Run \`nemoclaw ${sandboxName} recover\` after resolving the error.`);
         }
       }
       if (!forwardRecovered) {
@@ -1521,35 +1516,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         wasRunning: true,
         recovered: false,
         forwardRecovered: forwardRecovered || anyAuxiliaryRecovered(auxiliaryResults),
-      };
-    }
-    if (forwardHealthy === "occupied") {
-      probeTiming?.setForwardAction("failed");
-      if (!quiet) {
-        console.log("");
-        console.error(`  Dashboard port forward for '${sandboxName}' is owned by another sandbox.`);
-        console.error("  Leaving the existing port forward unchanged.");
-      }
-      return {
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: false,
-        forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail:
-          "the primary dashboard/API host forward is owned by another sandbox",
-      };
-    }
-    if (forwardHealthy === null) {
-      probeTiming?.setForwardAction("failed");
-      return {
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: false,
-        forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail:
-          "the primary dashboard/API host forward could not be verified because OpenShell forward state was unavailable",
       };
     }
     const dashboardForwardRecovered = measure("forward", () =>
@@ -1831,9 +1797,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
       } else {
         console.error("  Failed to re-establish the dashboard port forward.");
-        console.error(
-          `  Run \`openshell forward start --background ${recoveryPort} ${sandboxName}\` manually.`,
-        );
+        console.error(`  Run \`nemoclaw ${sandboxName} recover\` after resolving the error.`);
       }
     }
     if (!forwardRecovered) {
@@ -1891,7 +1855,7 @@ export function checkAndRecoverSandboxProcesses(
     probeTiming?: ProcessRecoveryProbeTiming;
   } = {},
 ) {
-  return withTimerBoundShieldsMutationLock(sandboxName, "gateway process recovery", () =>
+  return withMcpLifecycleLockSync(sandboxName, () =>
     checkAndRecoverSandboxProcessesWithoutHostLock(sandboxName, options),
   );
 }

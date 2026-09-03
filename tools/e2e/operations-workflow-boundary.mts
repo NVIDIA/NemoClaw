@@ -41,6 +41,16 @@ const PR_MANAGED_IMAGE_RESOLVER_SCRIPT =
     "set -euo pipefail",
     'catalog_path="${RUNNER_TEMP}/pr-managed-image-catalog.json"',
     'rm -f -- "$catalog_path"',
+    'if [[ -n "$MANAGED_IMAGE_SHA" ]]; then',
+    '  [[ "$MANAGED_IMAGE_SHA" =~ ^[a-f0-9]{40}$ ]] || {',
+    '    echo "::error::managed_image_revision must be a lowercase 40-character SHA" >&2',
+    "    exit 1",
+    "  }",
+    '  git merge-base --is-ancestor "$MANAGED_IMAGE_SHA" "$CANDIDATE_SHA" || {',
+    '    echo "::error::managed_image_revision must be an ancestor of checkout_sha" >&2',
+    "    exit 1",
+    "  }",
+    "fi",
     'selection="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "$catalog_path")"',
     'case "$selection" in',
     "  base-cohort)",
@@ -370,6 +380,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR authentication must run when any candidate identity input is present");
   }
   const authEnvironment = {
+    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
+    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
@@ -377,6 +389,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     JOBS: "${{ inputs.jobs }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
+    TARGETS: "${{ inputs.targets }}",
     WORKFLOW_EVENT: "${{ github.event_name }}",
     WORKFLOW_REF: "${{ github.ref }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
@@ -399,6 +412,16 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]]`,
+    `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
+    'if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]',
+    '"$ALLOW_JETSON_DISPATCH" != "true"',
+    '"$ALLOW_DGX_SPARK_RUNNER_QUEUE" != "true"',
+    '",${TARGETS}," != *",jetson-nvmap-gpu,"*',
+    '",${JOBS}," != *",jetson-nvmap-gpu,"*',
+    '",${TARGETS}," != *",llama-cpp-dgx-spark-qualification,"*',
+    '",${JOBS}," != *",llama-cpp-dgx-spark-qualification,"*',
+    "exact-base E2E cannot select dedicated hardware jobs",
+    `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
@@ -451,8 +474,13 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR checkout validation must skip qualification producer dispatches");
   }
   const validationSource = String(validation.run ?? "");
-  if (validation.env?.GITHUB_TOKEN !== undefined || validationSource.includes("Authorization:")) {
-    errors.push("Manual PR checkout validation must use the public PR metadata endpoint");
+  if (
+    validation.env?.GITHUB_TOKEN !==
+    "${{ steps.candidate_authorization.outputs.nvidia_owned == 'true' && github.token || '' }}"
+  ) {
+    errors.push(
+      "Manual PR checkout validation token must be limited to authenticated NVIDIA-owned revisions",
+    );
   }
   if (
     validation.env?.NVIDIA_OWNED !== "${{ steps.candidate_authorization.outputs.nvidia_owned }}"
@@ -464,23 +492,22 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     "pull request must still be open",
     "pull request base repository changed before execution",
-    "checkout_repository changed before execution",
-    "checkout_sha changed before execution",
+    "pull request base branch changed before execution",
     "base_sha changed before execution",
+    'if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]',
+    `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
+    `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
+    `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     '"$NVIDIA_OWNED" == "true"',
+    '[[ -n "$GITHUB_TOKEN" ]]',
+    'auth_args=(--header "Authorization: Bearer ${GITHUB_TOKEN}")',
+    '"${auth_args[@]}"',
     "PR source repository ownership changed before execution",
   ]) {
     if (!validationSource.includes(fragment)) {
       errors.push(`Manual PR checkout validation must retain ${fragment}`);
     }
   }
-  if (
-    validationSource.includes("Authorization: Bearer") ||
-    Object.hasOwn(validation.env ?? {}, "GITHUB_TOKEN")
-  ) {
-    errors.push("Manual PR checkout validation must use public PR metadata without a job token");
-  }
-
   const credentialAuthorization =
     credentialAuthorizationIndex >= 0 ? steps[credentialAuthorizationIndex] : {};
   if (
@@ -724,6 +751,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
           CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
           GITHUB_TOKEN: "${{ github.token }}",
+          MANAGED_IMAGE_SHA: "${{ inputs.managed_image_revision }}",
           PR_NUMBER: "${{ inputs.pr_number }}",
         },
         shell: "bash",
@@ -740,7 +768,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           REQUIRE_MANAGED_IMAGE_PUBLICATION:
             "${{ steps.select_pr_source.outputs.selection == 'candidate-catalog' && '0' || '1' }}",
           SELECT_NEAREST_SUCCESSFUL_PUBLICATION:
-            "${{ steps.select_pr_source.outputs.selection == 'candidate-catalog' && '0' || steps.publication_mode.outputs.select_nearest_successful }}",
+            "${{ steps.publication_mode.outputs.select_nearest_successful }}",
         },
         shell: "bash",
         run: [
