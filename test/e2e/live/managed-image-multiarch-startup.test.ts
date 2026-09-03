@@ -7,7 +7,6 @@ import path from "node:path";
 import {
   PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH,
   parseProtectedManagedImageActivation,
-  parseProtectedManagedImageContracts,
   parseProtectedManagedImageEvidence,
 } from "../../../scripts/checks/protected-managed-image-contract.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -38,11 +37,6 @@ test(
     progress.phase("validate exact all-agent managed-image contracts");
     const contractBytes = readRegularArtifact(dispatch.contractFile, dispatch.artifactDirectory);
     const evidenceBytes = readRegularArtifact(dispatch.evidenceFile, dispatch.artifactDirectory);
-    const contracts = parseProtectedManagedImageContracts(
-      JSON.parse(contractBytes.toString("utf8")),
-      dispatch.platform,
-    );
-
     progress.phase("validate direct-start evidence binding");
     const evidence = parseProtectedManagedImageEvidence(
       JSON.parse(evidenceBytes.toString("utf8")),

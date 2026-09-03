@@ -67,7 +67,12 @@ describe("protected managed-image runtime workflow", () => {
     expect(cleanup).toBeLessThan(glibc);
     expect(cohortCleanup).toBeGreaterThan(security);
     expect(cohortCleanup).toBeGreaterThan(glibc);
-    expect(steps[cleanup]).toMatchObject({ if: "always()" });
+    expect(steps[cleanup]).toMatchObject({
+      if: "always()",
+      run: expect.stringMatching(
+        /if docker container inspect[\s\S]*owner=.*docker container inspect/u,
+      ),
+    });
     expect(steps[cohortCleanup]).toMatchObject({ if: "always()" });
   });
 

@@ -85,11 +85,27 @@ test(
         "test -x /usr/sbin/iptables",
         "test -x /usr/bin/chattr",
         "test -x /usr/local/bin/openclaw",
+        `grep -Fqx 'export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' /usr/local/bin/nemoclaw-start`,
         "cd /sandbox/.openclaw && sha256sum -c .config-hash >/dev/null",
         'printf "%s:%s\\n" "$gateway_uid" "$sandbox_uid"',
       ].join("\n"),
       "managed-image-openclaw-identities",
     );
+    const imageUser = await host.command(
+      "docker",
+      ["image", "inspect", "--format", "{{.Config.User}}", image],
+      { artifactName: "managed-image-openclaw-default-user" },
+    );
+    expect(imageUser.exitCode, imageUser.stderr).toBe(0);
+    expect(imageUser.stdout.trim()).toBe("sandbox");
+    await runDefaultContainer(
+      host,
+      image,
+      ["--security-opt", "no-new-privileges"],
+      ["true"],
+      "managed-image-openclaw-no-new-privileges",
+    );
+
     const [gatewayUid, sandboxUid] = identity.stdout.trim().split(":");
     expect(gatewayUid).toMatch(/^[0-9]+$/u);
     expect(sandboxUid).toMatch(/^[0-9]+$/u);
@@ -106,29 +122,40 @@ test(
       host,
       image,
       [
-        "/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sleep 60 &",
-        "gateway_pid=$!",
-        'if /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- kill "$gateway_pid" 2>/dev/null; then exit 20; fi',
-        'kill "$gateway_pid"',
-        'test "$(stat -c \'%U:%G %a\' /usr/local/bin/nemoclaw-gateway-control)" = "root:root 700"',
-        'test "$(stat -c \'%U:%G %a\' /usr/local/lib/nemoclaw/managed-gateway-control.py)" = "root:root 500"',
-        'test "$(stat -c \'%U:%G %a\' /usr/local/lib/nemoclaw/openclaw-config-guard.py)" = "root:root 500"',
-        'test "$(stat -c \'%U:%G %a\' /usr/local/lib/nemoclaw/gateway-supervisor.sh)" = "root:root 444"',
-        'test "$(stat -c \'%U:%G %a\' /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py)" = "root:root 555"',
-        "id -nG gateway | tr ' ' '\n' | grep -qx sandbox",
-        "id -nG root | tr ' ' '\n' | grep -qx sandbox",
+        "{ sed -n '/^_nemoclaw_safe_replace_tmp_file() {$/,/^}$/p' /usr/local/bin/nemoclaw-start; sed -n '/^_nemoclaw_safe_create_tmp_file() {$/,/^}$/p' /usr/local/bin/nemoclaw-start; sed -n '/^prepare_auto_pair_log() {$/,/^}$/p' /usr/local/bin/nemoclaw-start; } >/tmp/prepare-auto-pair-files.sh",
+        "source /tmp/prepare-auto-pair-files.sh",
+        "prepare_auto_pair_log",
+        "printf 'export NEMOCLAW_PROXY_PROBE=https://probe.invalid:9999\n' >/tmp/nemoclaw-proxy-env.sh",
+        "chown root:root /tmp/nemoclaw-proxy-env.sh",
+        "chmod 444 /tmp/nemoclaw-proxy-env.sh",
+        "! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- test -r /tmp/auto-pair.log",
+        "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'printf %s eyJzY2hlbWFWZXJzaW9uIjoxLCJzdGF0ZSI6ImFwcHJvdmFsLWNvbXBsZXRlZCJ9 | base64 -d >/tmp/nemoclaw-auto-pair-status.json'",
+        `grep -Fqx '{"schemaVersion":1,"state":"approval-completed"}' /tmp/nemoclaw-auto-pair-status.json`,
+        `[ "$(bash -ic 'echo $NEMOCLAW_PROXY_PROBE' 2>/dev/null)" = "https://probe.invalid:9999" ]`,
+        `[ "$(bash -lc 'echo $NEMOCLAW_PROXY_PROBE' 2>/dev/null)" = "https://probe.invalid:9999" ]`,
+        `[ "$(/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- bash -ic 'echo $NEMOCLAW_PROXY_PROBE' 2>/dev/null)" = "https://probe.invalid:9999" ]`,
+        `[ "$(/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- bash -lc 'echo $NEMOCLAW_PROXY_PROBE' 2>/dev/null)" = "https://probe.invalid:9999" ]`,
+        "! grep -Eiq 'proxy|nemoclaw-proxy-env' /sandbox/.bashrc /sandbox/.profile",
+      ].join("\n"),
+      "managed-image-openclaw-packaged-entrypoint-boundaries",
+    );
+
+    await runContainer(
+      host,
+      image,
+      [
         "printf secret >/tmp/auto-pair.log",
         "chown root:root /tmp/auto-pair.log",
         "chmod 600 /tmp/auto-pair.log",
-        "printf '{}\\n' >/tmp/nemoclaw-auto-pair-status.json",
+        "printf '{}\n' >/tmp/nemoclaw-auto-pair-status.json",
         "chown sandbox:sandbox /tmp/nemoclaw-auto-pair-status.json",
         "chmod 600 /tmp/nemoclaw-auto-pair-status.json",
-        "printf '# proxy environment\\n' >/tmp/nemoclaw-proxy-env.sh",
+        "printf '# proxy environment\n' >/tmp/nemoclaw-proxy-env.sh",
         "chown root:root /tmp/nemoclaw-proxy-env.sh",
         "chmod 444 /tmp/nemoclaw-proxy-env.sh",
-        '[ "$(stat -c \'%F %U:%G %a\' /tmp/nemoclaw-proxy-env.sh)" = "regular file root:root 444" ]',
+        `[ "$(stat -c '%F %U:%G %a' /tmp/nemoclaw-proxy-env.sh)" = "regular file root:root 444" ]`,
         "! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- test -r /tmp/auto-pair.log",
-        "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'printf \"{}\\n\" >/tmp/nemoclaw-auto-pair-status.json'",
+        `/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'printf "{}\n" >/tmp/nemoclaw-auto-pair-status.json'`,
         "! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'printf x >>/tmp/nemoclaw-proxy-env.sh'",
         "! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'rm -f /tmp/nemoclaw-proxy-env.sh'",
         "gateway_control_rc=0",

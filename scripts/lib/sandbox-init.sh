@@ -203,9 +203,9 @@ validate_tmp_permissions() {
 #     after dropping cap_dac_override (see #2659).
 #   cap_setuid, cap_setgid — required by setpriv to step down from root into
 #     the sandbox/gateway UIDs during entrypoint privilege separation.
-#   cap_kill — sandbox user signals gateway-user processes via the UID
-#     separation enforced by the entrypoint. The cross-user process phase in
-#     managed-image-openclaw-security.test.ts verifies that boundary.
+#   cap_kill — root PID 1 terminates stepped-down gateway and sandbox child
+#     processes during supervised shutdown. The managed-image security test
+#     separately verifies that sandbox cannot signal gateway-user processes.
 # When the runtime cannot drop the bounding set (no CAP_SETPCAP, or capsh
 # missing), the default is to warn and continue. Set NEMOCLAW_REQUIRE_CAP_DROP=1
 # to make that case fail-closed instead — see enforce_cap_drop_if_required.
