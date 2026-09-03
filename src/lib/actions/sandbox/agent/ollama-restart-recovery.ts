@@ -133,7 +133,7 @@ function resolveRawOllamaHost(
       hostname === OPENSHELL_HOST_BRIDGE &&
       port === OLLAMA_PORT
     ) {
-      return OLLAMA_HOST_DOCKER_INTERNAL;
+      return getAllowedFallbackHost(getOllamaHost);
     }
     if (
       endpoint.protocol === "http:" &&

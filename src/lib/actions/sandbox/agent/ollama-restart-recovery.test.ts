@@ -110,7 +110,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     });
   });
 
-  it("uses the persisted direct bridge route for both the default probe and warm-up", async () => {
+  it("uses the resolved Windows host for an ambiguous direct bridge route", async () => {
     const runRecoveryCaptureImpl = scriptedRecoveryCapture(
       unloadedProbeResult(),
       successfulWarmResult(),
@@ -123,7 +123,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           model: "qwen3.6:35b",
           endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
         },
-        { runRecoveryCaptureImpl },
+        { getOllamaHost: () => "host.docker.internal", runRecoveryCaptureImpl },
       ),
     ).resolves.toEqual({ kind: "warmed", ok: true });
 
@@ -142,6 +142,39 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       "host.docker.internal",
       "host.docker.internal",
     ]);
+  });
+
+  it("uses the resolved WSL-local host for an ambiguous direct bridge route", async () => {
+    const prepareDockerEnvironment = vi.fn(() => {
+      throw new Error("unexpected Docker transport");
+    });
+    const spawnRecoveryChild = completingRecoverySpawner([
+      unloadedProbeResult().stdout,
+      successfulWarmResult().stdout,
+    ]);
+
+    await expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        {
+          provider: "ollama-local",
+          model: "qwen3.6:35b",
+          endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
+        },
+        {
+          getOllamaHost: () => "127.0.0.1",
+          prepareDockerEnvironment,
+          spawnRecoveryChild,
+        },
+      ),
+    ).resolves.toEqual({ kind: "warmed", ok: true });
+
+    const commands = spawnRecoveryChild.mock.calls.map(([binary, args]) => [binary, ...args]);
+    expect(commands.map(getCommandUrl)).toEqual([
+      `http://127.0.0.1:${OLLAMA_PORT}/api/ps`,
+      `http://127.0.0.1:${OLLAMA_PORT}/api/generate`,
+    ]);
+    expect(commands.map(([binary]) => binary)).toEqual(["curl", "curl"]);
+    expect(prepareDockerEnvironment).not.toHaveBeenCalled();
   });
 
   it("runs the production status probe and warm-up through the async capture boundary", async () => {
@@ -212,7 +245,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           model: "qwen3.6:35b",
           endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
         },
-        { spawnRecoveryChild, prepareDockerEnvironment },
+        {
+          getOllamaHost: () => "host.docker.internal",
+          spawnRecoveryChild,
+          prepareDockerEnvironment,
+        },
       ),
     ).resolves.toMatchObject({ kind: "skipped", reason: "model-absent" });
 
@@ -560,7 +597,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           model: "gemma4:26b",
           endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
         },
-        { runRecoveryCaptureImpl },
+        { getOllamaHost: () => "host.docker.internal", runRecoveryCaptureImpl },
       ),
     ).resolves.toEqual({
       kind: "skipped",
