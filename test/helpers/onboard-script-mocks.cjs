@@ -7,6 +7,47 @@
 const Module = require("node:module");
 const path = require("node:path");
 
+if (process.env.NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE === "1") {
+  let detachedForwardReady = false;
+  const childProcess = require("node:child_process");
+  let fixtureSpawn = childProcess.spawn;
+  const forwardAwareSpawn = (...args) => {
+    const argv = Array.isArray(args[1]) ? args[1] : [];
+    const forwardIndex = argv.indexOf("forward");
+    if (forwardIndex >= 0 && argv[forwardIndex + 1] === "service") detachedForwardReady = true;
+    return fixtureSpawn(...args);
+  };
+  Object.defineProperty(childProcess, "spawn", {
+    configurable: true,
+    get: () => forwardAwareSpawn,
+    set: (value) => {
+      fixtureSpawn = value;
+    },
+  });
+
+  const originalModuleLoad = Module._load;
+  Module._load = function loadForwardFixture(request, parent, isMain) {
+    const loaded = originalModuleLoad.call(this, request, parent, isMain);
+    let resolved = "";
+    try {
+      resolved = Module._resolveFilename(request, parent, isMain);
+    } catch {
+      return loaded;
+    }
+    if (
+      resolved.includes(`${path.sep}adapters${path.sep}openshell${path.sep}local-forward-listener.`) &&
+      typeof loaded?.probeLocalForwardListener === "function"
+    ) {
+      loaded.probeLocalForwardListener = () => {
+        const ready = detachedForwardReady;
+        detachedForwardReady = false;
+        return ready;
+      };
+    }
+    return loaded;
+  };
+}
+
 function registerSourceRequire() {
   const fs = require("node:fs");
   const ts = require("typescript");
@@ -41,6 +82,26 @@ function registerSourceRequire() {
     targetModule._compile(outputText, filename);
   };
   require(sourceLoader);
+}
+
+function installForwardServiceReachabilityFixture(initiallyReachable = false) {
+  const listener = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/local-forward-listener.ts"),
+  );
+  let reachable = initiallyReachable;
+  listener.probeLocalForwardListener = () => reachable;
+  return {
+    recordSpawn(args) {
+      const argv = Array.isArray(args[1]) ? args[1] : [];
+      const forwardIndex = argv.indexOf("forward");
+      if (forwardIndex < 0 || argv[forwardIndex + 1] !== "service") return false;
+      reachable = true;
+      return true;
+    },
+    release() {
+      reachable = false;
+    },
+  };
 }
 
 // Most Vitest workers use native source imports and never need the CommonJS
@@ -1291,6 +1352,7 @@ if (process.env.NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG === "1") {
 }
 
 module.exports = {
+  installForwardServiceReachabilityFixture,
   mockEndpointlessProviderProfileRun,
   mockManagedEndpointlessProviderProfileRun,
   createStatefulMessagingProviderRunner,
