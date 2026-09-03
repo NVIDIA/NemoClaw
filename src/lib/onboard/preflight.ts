@@ -54,6 +54,10 @@ const DOCKER_HOST_ADVISORY_IDS = new Set(DOCKER_HOST_ADVISORY_CHECKS.map(({ id }
 type RunCaptureFn = typeof import("../runner").runCapture;
 type RunFn = typeof import("../runner").run;
 type RunCaptureOpts = Parameters<RunCaptureFn>[1];
+type RunCaptureExFn = (
+  command: readonly string[],
+  options?: { timeout?: number },
+) => import("../runner").CaptureResult;
 type NullableRunCaptureFn = (
   command: Parameters<RunCaptureFn>[0],
   options?: RunCaptureOpts,
@@ -192,6 +196,7 @@ export interface AssessHostOpts {
   readFileImpl?: (filePath: string, encoding: BufferEncoding) => string;
   readdirImpl?: (dir: string) => string[];
   runCaptureImpl?: RunCaptureFn;
+  runCaptureExImpl?: RunCaptureExFn;
   resolveOpenshellImpl?: () => string | null;
   commandExistsImpl?: (commandName: string) => boolean;
   gpuProbeImpl?: () => boolean;
@@ -575,9 +580,12 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   let dockerReachable = false;
   let dockerRunning = false;
   if (dockerInstalled && !dockerHostInvalid && dockerInfoOutput === undefined) {
-    const dockerInfoCapture = runCaptureEx(["docker", "info", "--format", "{{json .}}"], {
-      timeout: DOCKER_PROBE_TIMEOUT_MS,
-    });
+    const dockerInfoCapture = (opts.runCaptureExImpl ?? runCaptureEx)(
+      ["docker", "info", "--format", "{{json .}}"],
+      {
+        timeout: DOCKER_PROBE_TIMEOUT_MS,
+      },
+    );
     if (dockerInfoCapture.timedOut) {
       dockerInfoTimedOut = true;
       dockerInfoOutput = "";
