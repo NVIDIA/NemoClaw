@@ -214,6 +214,7 @@ function bundle(providerId: string): RuntimeProviderBundle {
       supported: true,
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
+      ownsHostReadiness: false,
       prepareHostRuntime: () => ({
         providerId,
         openShellDriver: "memory",
