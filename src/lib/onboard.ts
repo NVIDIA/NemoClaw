@@ -2465,7 +2465,6 @@ function createSetupInference(overrides: Partial<SetupInferenceDeps> = {}): Setu
 }
 
 const setupInference = createSetupInference();
-
 // ── Step 6: Messaging channels ───────────────────────────────────
 
 const MESSAGING_CHANNELS = listChannels();
