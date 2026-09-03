@@ -538,7 +538,8 @@ describe("blueprint policy convenience", () => {
             exitCode: 1,
             stdout: "",
             stderr:
-              `BadSignature from https://operator:${urlCredential}'fragment@example.test ` +
+              `BadSignature \u001b[31mforged\u202efailure from ` +
+              `https://operator:${urlCredential}'fragment@example.test ` +
               `AUTH_TOKEN=${assignmentCredential} ${"diagnostic-word ".repeat(30)} ${truncatedTail}`,
           }
         : implementation!(command, args),
@@ -551,6 +552,10 @@ describe("blueprint policy convenience", () => {
     expect(failure).toBeInstanceOf(Error);
     const message = (failure as Error).message;
     expect(message).toContain("BadSignature");
+    expect(message).toContain("\\u001b[31mforged\\u202efailure");
+    expect(message).not.toMatch(
+      /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
+    );
     expect(message).not.toContain(urlCredential);
     expect(message).not.toContain(assignmentCredential);
     expect(message).not.toContain(truncatedTail);

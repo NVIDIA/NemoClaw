@@ -253,6 +253,8 @@ function isAction(value: string | undefined): value is Action {
 const MAX_COMMAND_ERROR_CHARS = 500;
 const SENSITIVE_ERROR_ASSIGNMENT =
   /(\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*)[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+const UNSAFE_COMMAND_ERROR_CONTROL =
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu;
 
 function boundedCommandError(stderr: string, secretValues: readonly string[] = []): string {
   let redacted = redactCredentialText(
@@ -265,7 +267,11 @@ function boundedCommandError(stderr: string, secretValues: readonly string[] = [
   }
   redacted = redacted
     .replace(SENSITIVE_ERROR_ASSIGNMENT, "$1=<REDACTED>")
-    .replace(/\b(Bearer)\s+\S+/gi, "$1 <REDACTED>");
+    .replace(/\b(Bearer)\s+\S+/gi, "$1 <REDACTED>")
+    .replace(
+      UNSAFE_COMMAND_ERROR_CONTROL,
+      (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+    );
   const collapsed = redacted.replace(/\s+/g, " ").trim();
   if (collapsed.length === 0) return "no error output";
   return collapsed.length > MAX_COMMAND_ERROR_CHARS
@@ -879,7 +885,7 @@ async function runBlueprintInspectionCommand(
   }
   if (
     Buffer.byteLength(result.stdout, "utf8") + Buffer.byteLength(result.stderr, "utf8") >
-      POLICY_INSPECTION_MAX_BYTES
+    POLICY_INSPECTION_MAX_BYTES
   ) {
     throw new Error(failureMessage);
   }
