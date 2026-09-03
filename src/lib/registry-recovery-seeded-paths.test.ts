@@ -43,7 +43,8 @@ vi.mock("./gateway-runtime-action.js", () => ({
   getNamedGatewayLifecycleState: vi.fn(),
 }));
 
-vi.mock("./adapters/openshell/runtime.js", () => ({
+vi.mock("./adapters/openshell/runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./adapters/openshell/runtime.js")>()),
   captureOpenshell: vi.fn(),
 }));
 

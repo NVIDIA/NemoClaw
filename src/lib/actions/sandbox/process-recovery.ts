@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes } from "node:crypto";
-import { dockerSpawnSync } from "../../adapters/docker";
 import { stripAnsi } from "../../adapters/openshell/client";
 import {
   captureOpenshell,
@@ -28,10 +27,11 @@ import { ROOT, shellQuote } from "../../runner";
 import {
   isDirectSandboxFallbackUnavailableError,
   isPinnedSandboxContainerIdentityChangedError,
-  privilegedSandboxExecArgv,
+  executePrivilegedSandboxCommand as executeProviderPrivilegedSandboxCommand,
+  resolvePrivilegedSandboxTarget,
   withPrivilegedSandboxExecutionLease,
 } from "../../sandbox/privileged-exec";
-import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
+import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../state/registry";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import {
@@ -85,7 +85,9 @@ import {
 } from "./sandbox-exec-output";
 import {
   type ManagedSupervisorRelaunch,
+  recoverRegisteredRuntimeProviderSandbox,
   relaunchManagedSupervisorSession,
+  usesManagedGatewayController,
 } from "./supervisor-relaunch";
 export type { SandboxForwardHealth, SandboxForwardListEntry } from "./forward-health";
 export {
@@ -129,14 +131,12 @@ function commandTransportDependencies(): CommandTransportDependencies {
     buildSandboxExecMarkedCommand,
     buildSubprocessEnv,
     captureSandboxSshConfig,
-    dockerSpawnSync,
+    executePrivilegedSandboxCommand: executeProviderPrivilegedSandboxCommand,
     extractSandboxExecCommandStdout,
     getOpenshellBinary,
     isDirectSandboxFallbackUnavailableError,
     openshellProbeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-    privilegedSandboxExecArgv,
     root: ROOT,
-    withPrivilegedSandboxExecutionLease,
   };
 }
 
@@ -251,19 +251,15 @@ export function executePrivilegedSandboxCommand(
     sandboxName,
     "sandbox process recovery controller",
     () => {
-      const argv = privilegedSandboxExecArgv(sandboxName, [...command], false, true);
-      const result = dockerSpawnSync(argv, {
-        cwd: ROOT,
-        encoding: "utf-8",
-        env: buildSubprocessEnv(),
-        stdio: ["ignore", "pipe", "pipe"],
+      const result = executeProviderPrivilegedSandboxCommand(sandboxName, command, {
+        sanitizeEnvironment: true,
         timeout,
       });
       if (result.error) return null;
       return {
         status: result.status ?? 1,
-        stdout: String(result.stdout || ""),
-        stderr: String(result.stderr || ""),
+        stdout: result.stdout.toString("utf8"),
+        stderr: result.stderr.toString("utf8"),
       };
     },
   );
@@ -293,26 +289,21 @@ function executeGatewaySupervisorActionPinned(
   const nonce = randomBytes(32).toString("hex");
   try {
     return withPrivilegedSandboxExecutionLease(sandboxName, `gateway supervisor ${action}`, () => {
-      const argv = privilegedSandboxExecArgv(
+      const targetContainerId =
+        expectedContainerId ?? resolvePrivilegedSandboxTarget(sandboxName).resourceHandle;
+      const result = executeProviderPrivilegedSandboxCommand(
         sandboxName,
         [MANAGED_GATEWAY_CONTROL_PATH, action, nonce],
-        false,
-        true,
-        expectedContainerId,
+        {
+          sanitizeEnvironment: true,
+          expectedResourceHandle: targetContainerId,
+          timeout,
+        },
       );
-      const controlPathIndex = argv.lastIndexOf(MANAGED_GATEWAY_CONTROL_PATH);
-      const targetContainerId = controlPathIndex > 0 ? argv[controlPathIndex - 1] : null;
-      const result = dockerSpawnSync(argv, {
-        cwd: ROOT,
-        encoding: "utf-8",
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout,
-      });
-      if (result.error) return null;
       const status = result.status ?? 1;
-      const stdout = String(result.stdout || "").trim();
-      let stderr = String(result.stderr || "").trim();
+      const stdout = result.stdout.toString("utf8").trim();
+      let stderr = result.stderr.toString("utf8").trim();
+      if (result.error) return null;
       const restartingContainerMatch = stderr.match(DOCKER_CONTAINER_RESTARTING_ERROR);
       const managedControlRestartingContainerId =
         status === 1 &&
@@ -711,8 +702,7 @@ export function confirmRecoveredSandboxGatewayManaged(
   const persistedAgent = entry.agent ?? "openclaw";
   if (persistedAgent !== "openclaw" && persistedAgent !== "hermes") return null;
 
-  const driver = entry.openshellDriver?.trim().toLowerCase() ?? null;
-  if (driver !== null && driver !== "docker" && driver !== "vm") return null;
+  if (!usesManagedGatewayController(entry)) return null;
 
   const getSessionAgent = options.getSessionAgentImpl ?? agentRuntime.getSessionAgent;
   const agent = getSessionAgent(sandboxName);
@@ -759,6 +749,7 @@ export async function isSandboxGatewayRunningForStatus(
 type SandboxProcessRecovery =
   | { kind: "managed"; managedControlCompletion?: ManagedGatewayControlCompletion }
   | { kind: "custom" }
+  | { kind: "provider" }
   | { kind: "relaunched"; relaunch: ManagedSupervisorRelaunch };
 
 function recoverSandboxProcesses(
@@ -789,6 +780,18 @@ function recoverSandboxProcesses(
         : "Sandbox agent lookup failed.";
     quiet || printGatewayRestartFailure(sandboxName, "unsupported agent", detail);
     return null;
+  }
+  const persistedSandbox = registry.getSandbox(sandboxName);
+  // Providers that launch NemoClaw's managed in-sandbox controller recover the
+  // gateway through that controller. Restarting their runtime first replaces
+  // the still-healthy supervisor and changes gateway parentage.
+  if (persistedSandbox && !usesManagedGatewayController(persistedSandbox)) {
+    const result = recoverRegisteredRuntimeProviderSandbox(persistedSandbox);
+    if (result) {
+      if (result.exitCode === 0) return { kind: "provider" };
+      if (!quiet && result.message) console.error(result.message);
+      return null;
+    }
   }
   const recoveredSsh = (result: SandboxCommandResult | null): SandboxProcessRecovery | null =>
     result && result.status === 0 && hasGatewayRecoveryMarker(result) ? { kind: "custom" } : null;
@@ -913,7 +916,7 @@ export function restartSandboxGateway(
   { quiet = false, deps = {} }: RestartSandboxGatewayOptions = {},
 ): GatewayRestartResult {
   return withUnsupportedHermesPortableGatewayRestartFence(sandboxName, () => {
-    return withTimerBoundShieldsMutationLock(sandboxName, "gateway restart", () =>
+    return withMcpLifecycleLockSync(sandboxName, () =>
       restartSandboxGatewayWithDeps(sandboxName, {
         quiet,
         deps: {
@@ -1806,7 +1809,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     // Host-forward recovery requires an OpenShell-ready sandbox. Managed
     // recovery has already passed its authenticated control and health gates;
     // a replacement also rechecks its pinned identity before readiness.
-    const recoveryRequiresReadiness = recovery.kind === "managed" || relaunch;
+    const recoveryRequiresReadiness =
+      recovery.kind === "managed" || recovery.kind === "provider" || relaunch;
     const waitForRecoveryReadiness = () => {
       const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
         beforeProbe: relaunch
@@ -1974,7 +1978,7 @@ export function checkAndRecoverSandboxProcesses(
     probeTiming?: ProcessRecoveryProbeTiming;
   } = {},
 ) {
-  return withTimerBoundShieldsMutationLock(sandboxName, "gateway process recovery", () =>
+  return withMcpLifecycleLockSync(sandboxName, () =>
     checkAndRecoverSandboxProcessesWithoutHostLock(sandboxName, options),
   );
 }

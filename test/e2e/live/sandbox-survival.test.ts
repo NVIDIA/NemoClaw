@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupWhenCommandAvailable,
@@ -29,6 +30,7 @@ import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { NemoClawInstance } from "../fixtures/phases/index.ts";
 import type { SandboxMarker } from "../fixtures/phases/state-validation.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-survival";
 const MIN_OPENSHELL_VERSION = "0.0.24";
@@ -37,6 +39,8 @@ const MODEL = process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
 const SURVIVAL_DIAGNOSTICS_SCRIPT = String.raw`
 set +e
 sandbox_name="$1"
+shift
+runtime_command=("$@")
 
 printf '%s\n' '== OpenShell sandbox status =='
 openshell sandbox get "$sandbox_name" 2>&1
@@ -47,13 +51,11 @@ systemctl --user status nemoclaw-openshell-gateway --no-pager -l 2>&1
 printf '%s\n' '== OpenShell gateway journal =='
 journalctl --user -u nemoclaw-openshell-gateway -n 200 --no-pager 2>&1
 
-container_ids="$(docker ps -aq \
-  --filter label=openshell.ai/managed-by=openshell \
+container_ids="$("\${runtime_command[@]}" container ps --all --quiet \
   --filter "label=openshell.ai/sandbox-name=$sandbox_name")"
 printf '%s\n' '== matching containers =='
 if [ -n "$container_ids" ]; then
-  docker ps -a --no-trunc \
-    --filter label=openshell.ai/managed-by=openshell \
+  "\${runtime_command[@]}" container ps --all --no-trunc \
     --filter "label=openshell.ai/sandbox-name=$sandbox_name" \
     --format '{{.ID}} {{.Names}} {{.Status}}'
 else
@@ -62,7 +64,7 @@ fi
 
 for container_id in $container_ids; do
   printf '%s\n' "== container $container_id inspect =="
-  docker inspect "$container_id" 2>&1 | node -e '
+  "\${runtime_command[@]}" container inspect "$container_id" 2>&1 | node -e '
     const fs = require("node:fs");
     const row = JSON.parse(fs.readFileSync(0, "utf8"))[0] || {};
     const prefix = "OPENSHELL_SANDBOX_COMMAND=";
@@ -92,9 +94,9 @@ for container_id in $container_ids; do
     }) + "\n");
   '
   printf '%s\n' "== container $container_id host process tree =="
-  docker top "$container_id" -eo pid,ppid,user,stat,comm 2>&1
+  "\${runtime_command[@]}" container top "$container_id" -eo pid,ppid,user,stat,comm 2>&1
   printf '%s\n' "== container $container_id runtime state =="
-  docker exec "$container_id" sh -lc '
+  "\${runtime_command[@]}" container exec "$container_id" sh -lc '
     printf "%s\n" "== pid 1 =="
     cat /proc/1/comm 2>/dev/null || true
     printf "\n%s\n" "== process tree =="
@@ -110,13 +112,9 @@ for container_id in $container_ids; do
     tail -n 300 /tmp/gateway.log 2>&1 || true
   ' 2>&1
   printf '%s\n' "== container $container_id logs =="
-  docker logs --tail 300 "$container_id" 2>&1
+  "\${runtime_command[@]}" container logs --tail 300 "$container_id" 2>&1
 done
 `;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function versionGte(actual: string, minimum: string): boolean {
   const actualParts = actual.split(".").map((part) => Number.parseInt(part, 10));
@@ -148,12 +146,21 @@ function installEnv(hostedEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 async function captureSurvivalDiagnostics(
   host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   stage: string,
   redactionValues: string[],
 ): Promise<void> {
+  const invocation = runtimeProvider.hostInvocation([]);
   await host.command(
-    "sh",
-    ["-lc", SURVIVAL_DIAGNOSTICS_SCRIPT, "sandbox-survival-diagnostics", SANDBOX_NAME],
+    "bash",
+    [
+      "-lc",
+      SURVIVAL_DIAGNOSTICS_SCRIPT,
+      "sandbox-survival-diagnostics",
+      SANDBOX_NAME,
+      invocation.command,
+      ...invocation.args,
+    ],
     {
       artifactName: `sandbox-survival-${stage}-diagnostics`,
       env: buildAvailabilityProbeEnv(),
@@ -179,10 +186,10 @@ async function expectSandboxExecAlive(
 test(
   "sandbox survives gateway restart with registry, state, SSH, and live inference intact",
   {
-    timeout: 30 * 60_000,
+    timeout: testTimeout(30 * 60_000),
     meta: {
       e2ePhases: [
-        "confirm Docker and inference prerequisites",
+        "confirm the selected runtime and inference prerequisites",
         "install and register the OpenClaw sandbox",
         "prove baseline sandbox access and inference",
         "write persistent OpenClaw markers",
@@ -200,6 +207,7 @@ test(
     provider,
     progress,
     runtime,
+    runtimeProvider,
     sandbox,
     secrets,
     skip,
@@ -222,20 +230,15 @@ test(
       ],
     });
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info-sandbox-survival",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "prereq-runtime-info-sandbox-survival",
+      scenarioLabel: "sandbox survival",
     });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`Docker is required for sandbox survival E2E: ${resultText(docker)}`);
-      }
-      skip("Docker is required for sandbox survival E2E");
-    }
 
     const endpointReachable = await provider.probeReachability(
-      trustedProviderEndpoint(hosted.endpointUrl, { allowedHosts: ["inference-api.nvidia.com"] }),
+      trustedProviderEndpoint(hosted.endpointUrl, {
+        allowedHosts: ["inference-api.nvidia.com"],
+      }),
       {
         artifactName: "prereq-inference-api-reachability",
         env: buildAvailabilityProbeEnv(),
@@ -333,7 +336,7 @@ test(
       cwd: REPO_ROOT,
       env: installEnv(hosted.env),
       redactionValues: [apiKey],
-      timeoutMs: 20 * 60_000,
+      timeoutMs: execTimeout(20 * 60_000),
     });
     expect(install.exitCode, resultText(install)).toBe(0);
 
@@ -407,12 +410,12 @@ test(
     await stateValidation.expectSandboxMarkers(instance, markers, "pre-restart-marker-read");
 
     progress.phase("restart the gateway and reconnect the sandbox");
-    await captureSurvivalDiagnostics(host, "before-gateway-restart", [apiKey]);
+    await captureSurvivalDiagnostics(host, runtimeProvider, "before-gateway-restart", [apiKey]);
     await lifecycle.restartGatewayRuntime({
       delayMs: 5_000,
       sandboxName: SANDBOX_NAME,
     });
-    await captureSurvivalDiagnostics(host, "after-gateway-restart", [apiKey]);
+    await captureSurvivalDiagnostics(host, runtimeProvider, "after-gateway-restart", [apiKey]);
     await lifecycle.waitForGatewayConnected({
       attempts: 60,
       intervalMs: 5_000,

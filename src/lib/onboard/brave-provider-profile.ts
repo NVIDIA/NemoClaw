@@ -3,6 +3,7 @@
 
 import path from "node:path";
 
+import { registerCheckedInProviderProfile } from "../adapters/openshell/provider-profile-registration";
 import { compactText } from "../core/url-utils";
 import { isWebSearchEnabled } from "../inference/web-search";
 
@@ -27,12 +28,6 @@ export type WebSearchProviderProfileId = (typeof WEB_SEARCH_PROVIDER_PROFILE_IDS
  * finalization/verifier paths already gate on `fetchEnabled`. Keep every gate
  * routed through this helper so they stay aligned.
  */
-export function shouldEnableBraveWebSearch(
-  webSearchConfig: { fetchEnabled?: boolean | null } | null | undefined,
-): boolean {
-  return shouldEnableWebSearch(webSearchConfig);
-}
-
 export function shouldEnableWebSearch(
   webSearchConfig: { fetchEnabled?: boolean | null } | null | undefined,
 ): boolean {
@@ -56,13 +51,6 @@ export type BraveProviderProfileDeps = {
 
 type TokenDefShape = { providerType?: string; token: string | null };
 
-function bufferOrStringToText(value: string | Buffer | null | undefined): string {
-  if (typeof value === "string") return value;
-  if (value && typeof (value as Buffer).toString === "function")
-    return (value as Buffer).toString();
-  return "";
-}
-
 export function braveProviderProfilePath(root: string): string {
   return webSearchProviderProfilePath(root, "brave");
 }
@@ -72,20 +60,6 @@ export function webSearchProviderProfilePath(
   provider: WebSearchProviderProfileId,
 ): string {
   return path.join(root, "nemoclaw-blueprint", "provider-profiles", `${provider}.yaml`);
-}
-
-/**
- * Register the Brave Search provider profile with OpenShell so providers
- * created with `--type brave` drive the L7 proxy's X-Subscription-Token
- * rewrite. Skipped unless at least one token definition is Brave-typed and
- * has a usable token. Idempotent: tolerates OpenShell reporting that the
- * custom profile is already registered.
- */
-export function ensureBraveProviderProfile(
-  tokenDefs: readonly TokenDefShape[],
-  deps: BraveProviderProfileDeps,
-): void {
-  ensureWebSearchProviderProfiles(tokenDefs, deps);
 }
 
 /** Register every selected web-search provider profile before token upsert. */
@@ -109,29 +83,26 @@ export function ensureWebSearchProviderProfiles(
   const exit = deps.exit ?? ((code?: number) => process.exit(code));
 
   for (const provider of neededProviders) {
-    const result = deps.runOpenshell(
-      [
-        "provider",
-        "profile",
-        "import",
-        "--file",
-        webSearchProviderProfilePath(deps.root, provider),
-      ],
-      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], suppressOutput: true },
-    );
-    if (result.status === 0) continue;
+    let failureStatus = 1;
+    const result = registerCheckedInProviderProfile({
+      profilePath: webSearchProviderProfilePath(deps.root, provider),
+      runOpenshell: (args, options) => {
+        const command = deps.runOpenshell(args, options);
+        failureStatus =
+          Number.isInteger(command.status) && command.status !== 0
+            ? (command.status ?? 1)
+            : failureStatus;
+        return command;
+      },
+    });
+    if (result.ok) continue;
 
-    // OpenShell reports re-imports of an already-registered custom profile as
-    // a non-zero exit. Tolerate that so re-onboard / recreate keeps working.
-    const rawDiagnostic = `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`;
-    if (/already exists/i.test(rawDiagnostic)) continue;
-
-    const diagnostic = compactText(deps.redact(rawDiagnostic));
+    const diagnostic = compactText(deps.redact(result.error.message));
     errorLog(
       `\n  ✗ Failed to register the ${provider} web-search provider profile with OpenShell.`,
     );
     if (diagnostic) errorLog(`    ${diagnostic.slice(0, 500)}`);
     errorLog("    Update OpenShell with scripts/install-openshell.sh and re-run onboarding.");
-    exit(result.status || 1);
+    exit(failureStatus);
   }
 }

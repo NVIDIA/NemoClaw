@@ -20,6 +20,7 @@ import {
   trustedSandboxShellScript,
 } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { buildHermesManagedStartupIntegrityScript } from "./hermes-gpu-startup-integrity.ts";
 import { stripAnsi } from "./json-envelope.ts";
@@ -37,21 +38,32 @@ interface HermesGpuStartupProofOptions {
   gpuRoute: "compatibility-fallback" | "compatibility-only" | "native-success";
   host: HostCliClient;
   install: Pick<ShellProbeResult, "stdout" | "stderr">;
+  runtimeProvider: RuntimeProviderPrerequisite;
   sandbox: SandboxClient;
   sandboxName: string;
   status: Pick<ShellProbeResult, "stdout" | "stderr">;
 }
 
 const IMMUTABLE_IMAGE_REFERENCE = /^[^@\s]+@sha256:[a-f0-9]{64}$/u;
+const IMMUTABLE_IMAGE_CONTENT_ID = /^sha256:[a-f0-9]{64}$/u;
+const BARE_IMMUTABLE_IMAGE_CONTENT_ID = /^[a-f0-9]{64}$/u;
+
+export function normalizeImmutableImageContentId(value: unknown): unknown {
+  return typeof value === "string" && BARE_IMMUTABLE_IMAGE_CONTENT_ID.test(value)
+    ? `sha256:${value}`
+    : value;
+}
 
 export function assertHermesGpuStartupOutputContract(
   gpuRoute: HermesGpuStartupProofOptions["gpuRoute"],
+  runtimeProviderId: RuntimeProviderPrerequisite["id"],
   installText: string,
 ): void {
-  expect(installText).toContain("Starting OpenShell Docker-driver gateway...");
-  expect(installText).toContain("Docker-driver gateway is healthy");
+  expect(installText).toContain(`Container runtime: ${runtimeProviderId}`);
+  expect(installText).toMatch(/Starting OpenShell .*gateway/u);
+  expect(installText).toMatch(/gateway is healthy/u);
   expect(installText).not.toContain("Reusing healthy NemoClaw gateway.");
-  expect(installText).not.toContain("Reusing existing Docker-driver gateway");
+  expect(installText).not.toMatch(/Reusing existing .*gateway/u);
   expect(installText).not.toContain("[reuse] Skipping gateway (running)");
   if (gpuRoute === "compatibility-fallback") {
     expect(installText).toContain(
@@ -102,8 +114,14 @@ export function assertHermesManagedWorkloadAuthority(
 export function assertHermesContainerImageAuthority(
   containerImage: unknown,
   authorityReference: string,
+  authorityContentId?: string,
 ): void {
-  expect(containerImage).toBe(authorityReference);
+  const normalizedContainerImage = normalizeImmutableImageContentId(containerImage);
+  expect(
+    normalizedContainerImage === authorityReference ||
+      (IMMUTABLE_IMAGE_CONTENT_ID.test(authorityContentId ?? "") &&
+        normalizedContainerImage === authorityContentId),
+  ).toBe(true);
 }
 
 export async function assertHermesGpuStartupProof({
@@ -111,12 +129,13 @@ export async function assertHermesGpuStartupProof({
   gpuRoute,
   host,
   install,
+  runtimeProvider,
   sandbox,
   sandboxName,
   status,
 }: HermesGpuStartupProofOptions): Promise<void> {
   const installText = resultText(install);
-  assertHermesGpuStartupOutputContract(gpuRoute, installText);
+  assertHermesGpuStartupOutputContract(gpuRoute, runtimeProvider.id, installText);
   const plainStatus = stripAnsi(resultText(status));
   expect(plainStatus).toMatch(/Phase:\s*Ready/i);
   expect(plainStatus).toContain("Sandbox GPU: enabled");
@@ -148,9 +167,9 @@ export async function assertHermesGpuStartupProof({
     has_nemoclaw_start: false,
   });
 
-  const runningContainers = await host.command(
-    "docker",
+  const runningContainers = await runtimeProvider.command(
     [
+      "container",
       "ps",
       "--filter",
       `label=openshell.ai/sandbox-name=${sandboxName}`,
@@ -185,6 +204,22 @@ export async function assertHermesGpuStartupProof({
     registryEntry.imageTag,
     managedAuthority,
   );
+  const managedImageInspection = await runtimeProvider.command(
+    ["image", "inspect", managedImageReference],
+    {
+      artifactName: "phase-4-gpu-startup-managed-image-content-authority",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(managedImageInspection.exitCode, resultText(managedImageInspection)).toBe(0);
+  const managedImageInspectEntry = (
+    JSON.parse(managedImageInspection.stdout) as Array<{ Id?: unknown; ID?: unknown }>
+  )[0];
+  const managedImageContentId = normalizeImmutableImageContentId(
+    managedImageInspectEntry?.Id ?? managedImageInspectEntry?.ID,
+  );
+  expect(managedImageContentId).toMatch(IMMUTABLE_IMAGE_CONTENT_ID);
 
   const guardWithoutStartupOwner = await sandbox.execShell(
     sandboxName,
@@ -230,28 +265,60 @@ export async function assertHermesGpuStartupProof({
   expect(startupConfig.exitCode, resultText(startupConfig)).toBe(0);
   expect(startupConfig.stdout.trim()).toBe("OK");
 
-  const dockerCommandBoundary = await host.command(
-    "bash",
-    [
-      "-lc",
-      String.raw`docker inspect "$1" | python3 -c 'import json, sys; config=json.load(sys.stdin)[0]["Config"]; env=dict(item.split("=", 1) for item in (config.get("Env") or []) if "=" in item); command=env.get("OPENSHELL_SANDBOX_COMMAND", ""); tokens=command.split(); print(json.dumps({"cmd": config.get("Cmd"), "entrypoint": config.get("Entrypoint"), "image": config.get("Image"), "has_openshell_sandbox_command": bool(command), "command_is_sleep_infinity": tokens == ["sleep", "infinity"], "command_ends_with_nemoclaw_start": bool(tokens) and tokens[-1] in ("nemoclaw-start", "/usr/local/bin/nemoclaw-start")}))'`,
-      "hermes-gpu-command-boundary",
-      containerId,
-    ],
+  const runtimeCommandBoundary = await runtimeProvider.command(
+    ["container", "inspect", containerId],
     {
-      artifactName: "phase-4-gpu-startup-docker-command-boundary",
+      artifactName: "phase-4-gpu-startup-runtime-command-boundary",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     },
   );
-  expect(dockerCommandBoundary.exitCode, resultText(dockerCommandBoundary)).toBe(0);
-  const commandBoundary = JSON.parse(dockerCommandBoundary.stdout);
+  expect(runtimeCommandBoundary.exitCode, resultText(runtimeCommandBoundary)).toBe(0);
+  const runtimeInspection = (
+    JSON.parse(runtimeCommandBoundary.stdout) as Array<{
+      Image?: unknown;
+      ImageName?: unknown;
+      Config?: {
+        Cmd?: unknown;
+        Entrypoint?: unknown;
+        Env?: string[];
+        Image?: unknown;
+      };
+    }>
+  )[0];
+  const runtimeConfig = runtimeInspection?.Config ?? {};
+  const runtimeEnvironment = Object.fromEntries(
+    (runtimeConfig.Env ?? [])
+      .filter((entry) => entry.includes("="))
+      .map((entry) => entry.split(/=(.*)/su).slice(0, 2) as [string, string]),
+  );
+  const intendedCommand = runtimeEnvironment.OPENSHELL_SANDBOX_COMMAND ?? "";
+  const intendedTokens = intendedCommand.trim().split(/\s+/u).filter(Boolean);
+  const commandBoundary = {
+    cmd: runtimeConfig.Cmd,
+    entrypoint: runtimeConfig.Entrypoint,
+    image: runtimeInspection?.Image ?? runtimeInspection?.ImageName ?? runtimeConfig.Image,
+    has_openshell_sandbox_command: Boolean(intendedCommand),
+    command_is_sleep_infinity:
+      intendedTokens.length === 2 &&
+      intendedTokens[0] === "sleep" &&
+      intendedTokens[1] === "infinity",
+    command_ends_with_nemoclaw_start:
+      intendedTokens.length > 0 &&
+      ["nemoclaw-start", "/usr/local/bin/nemoclaw-start"].includes(intendedTokens.at(-1) ?? ""),
+  };
   const verifiedManagedAuthority = managedAuthority!;
   expect(verifiedManagedAuthority.agent).toBe("hermes");
   const managedBootstrapCommand = commandBoundary.cmd;
   expect(Array.isArray(managedBootstrapCommand)).toBe(true);
+  if (!Array.isArray(managedBootstrapCommand)) {
+    throw new TypeError("managed bootstrap command must be an argument array");
+  }
   const bootstrapIdentity = managedBootstrapCommand[5];
   expect(typeof bootstrapIdentity).toBe("string");
+  if (typeof bootstrapIdentity !== "string") {
+    throw new TypeError("managed bootstrap identity must be a string");
+  }
   assertManagedBootstrapIdentity(bootstrapIdentity);
   const agentIdentity = managedImageRuntimeIdentity(verifiedManagedAuthority.agent);
   expect(commandBoundary.entrypoint).toEqual([MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE]);
@@ -274,13 +341,16 @@ export async function assertHermesGpuStartupProof({
     ...OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
   ]);
   expect(commandBoundary.has_openshell_sandbox_command).toBe(true);
-  assertHermesContainerImageAuthority(commandBoundary.image, managedImageReference);
+  assertHermesContainerImageAuthority(
+    commandBoundary.image,
+    managedImageReference,
+    managedImageContentId as string,
+  );
   expect(commandBoundary.command_ends_with_nemoclaw_start).toBe(true);
   expect(commandBoundary.command_is_sleep_infinity).toBe(false);
 
-  const containerState = await host.command(
-    "docker",
-    ["inspect", "--format", "{{.State.Status}} {{.RestartCount}}", containerId],
+  const containerState = await runtimeProvider.command(
+    ["container", "inspect", "--format", "{{.State.Status}} {{.RestartCount}}", containerId],
     {
       artifactName: "phase-4-gpu-startup-container-state",
       env: buildAvailabilityProbeEnv(),
@@ -290,11 +360,11 @@ export async function assertHermesGpuStartupProof({
   expect(containerState.exitCode, resultText(containerState)).toBe(0);
   expect(containerState.stdout.trim()).toBe("running 0");
 
-  const allContainers = await host.command(
-    "docker",
+  const allContainers = await runtimeProvider.command(
     [
+      "container",
       "ps",
-      "-a",
+      "--all",
       "--filter",
       `label=openshell.ai/sandbox-name=${sandboxName}`,
       "--format",

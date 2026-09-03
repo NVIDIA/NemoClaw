@@ -20,7 +20,7 @@ export {
 
 export const BENCH_SCHEMA_VERSION = "nemoclaw.bench.v1" as const;
 
-export type MetricId = "inference-round-trip" | "sandbox-cold-start" | "policy-shield-overhead";
+export type MetricId = "inference-round-trip" | "sandbox-cold-start" | "policy-application-overhead";
 export type MetricStatus = "ok" | "unsupported" | "error";
 export type MetricSource = "live-request" | "trace-artifact" | "none";
 
