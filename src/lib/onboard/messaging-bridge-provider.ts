@@ -615,18 +615,12 @@ export function refreshStatusForCredential(text: string, credentialKey: string):
   return keyIndex < 0 ? "" : (columns[keyIndex + 2] ?? "");
 }
 
-function sleepSync(milliseconds: number): void {
-  // Vitest sets process.env.VITEST, so the poll loop costs no wall-clock in tests.
-  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
-}
-
 function waitForMintedBridgeCredential(
   providerName: string,
   credentialKey: string,
   deps: ConfigureMessagingBridgeRefreshesDeps,
 ): MessagingBridgeRefreshResult {
-  const sleep = deps.sleep ?? sleepSync;
+  const sleep = deps.sleep ?? (() => undefined);
   const now = deps.now ?? (() => Date.now());
   // The mint runs on the gateway's own sweep, so this can sit for a minute.
   (deps.log ?? console.error)(`  Waiting for the gateway to mint ${credentialKey}…`);

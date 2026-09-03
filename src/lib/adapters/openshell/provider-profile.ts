@@ -178,14 +178,6 @@ export function compareExportedProviderProfileWithContract(
   }
 }
 
-/** Return whether an exported gateway profile matches the checked-in contract. */
-export function exportedProviderProfileMatchesContract(
-  exported: string,
-  expected: CheckedInProviderProfileContract,
-): boolean {
-  return compareExportedProviderProfileWithContract(exported, expected) === "match";
-}
-
 /** Normalize captured OpenShell diagnostics before exact classification. */
 export function normalizeOpenshellDiagnostic(output: string): string {
   return output
