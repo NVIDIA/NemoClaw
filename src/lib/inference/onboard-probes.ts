@@ -535,6 +535,7 @@ export function getChatCompletionsProbeCurlArgs(opts: {
   isWsl?: boolean;
   pinnedAddresses?: readonly string[];
   validationTiming?: unknown;
+  useNvidiaEndpointProbePayload?: boolean;
 }) {
   const {
     credentialArgs,
@@ -544,6 +545,7 @@ export function getChatCompletionsProbeCurlArgs(opts: {
     isWsl: isWslOverride,
     pinnedAddresses,
     validationTiming,
+    useNvidiaEndpointProbePayload,
   } = opts;
   const platformOptions = getProbeTimingOptions({
     ...(typeof isWslOverride === "boolean" ? { isWsl: isWslOverride } : {}),
@@ -559,7 +561,7 @@ export function getChatCompletionsProbeCurlArgs(opts: {
     "Content-Type: application/json",
     ...credSlice,
     "-d",
-    JSON.stringify(getChatCompletionsProbePayload(model)),
+    JSON.stringify(getChatCompletionsProbePayload(model, { useNvidiaEndpointProbePayload })),
     url,
   ];
 }
@@ -573,6 +575,7 @@ function runChatCompletionsProbe({
   pinnedAddresses,
   trustedPrivateCapability,
   validationTiming,
+  useNvidiaEndpointProbePayload,
   spawnSyncImpl,
 }) {
   const args = getChatCompletionsProbeCurlArgs({
@@ -582,6 +585,7 @@ function runChatCompletionsProbe({
     isWsl: isWslOverride,
     pinnedAddresses,
     validationTiming,
+    useNvidiaEndpointProbePayload,
   });
   const probeOpts = {
     timeoutMs: getProbeProcessTimeoutMs(args),
@@ -621,7 +625,11 @@ function runDoubledTimeoutChatCompletionsRetry({
     "Content-Type: application/json",
     ...authConfig.args,
     "-d",
-    JSON.stringify(getChatCompletionsProbePayload(model)),
+    JSON.stringify(
+      getChatCompletionsProbePayload(model, {
+        useNvidiaEndpointProbePayload: options.useNvidiaEndpointProbePayload,
+      }),
+    ),
     `${baseUrl}/chat/completions`,
   ];
   const runRetryProbe = () =>
@@ -879,6 +887,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               pinnedAddresses,
               trustedPrivateCapability: options.trustedPrivateCapability,
               validationTiming,
+              useNvidiaEndpointProbePayload: options.useNvidiaEndpointProbePayload,
               spawnSyncImpl: options.spawnSyncImpl,
             }),
     };
@@ -1197,6 +1206,7 @@ export async function verifyOnboardInferenceSmoke(options: any, dependencies: an
     authMode: getProbeAuthMode(options.provider),
     extraHeaders: getProbeExtraHeaders(options.provider),
     skipResponsesProbe: true,
+    useNvidiaEndpointProbePayload: options.provider === "nvidia-prod",
     pinnedAddresses: options.pinnedAddresses,
     trustedPrivateCapability: options.trustedPrivateCapability,
   });

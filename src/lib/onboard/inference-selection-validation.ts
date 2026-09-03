@@ -68,6 +68,7 @@ export interface OpenAiSelectionValidationOptions {
   requireResponsesToolCalling?: boolean;
   requireChatCompletionsToolCalling?: boolean;
   retryChatCompletionsToolReadiness?: boolean;
+  useNvidiaEndpointProbePayload?: boolean;
   /** Provider identity used only for safe, provider-specific diagnostics. */
   provider?: string;
   revalidateSandboxIdentity?: (operation: string) => void;

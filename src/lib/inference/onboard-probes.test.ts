@@ -315,6 +315,7 @@ describe("OpenAI-compatible inference probes", () => {
       model: "nvidia/nemotron-3-super-120b-a12b",
       url: "https://integrate.api.nvidia.com/v1/chat/completions",
       isWsl: false,
+      useNvidiaEndpointProbePayload: true,
     });
 
     expect(args).toContain("-d");
@@ -325,6 +326,21 @@ describe("OpenAI-compatible inference probes", () => {
       temperature: 1,
       top_p: 0.95,
       chat_template_kwargs: { enable_thinking: false },
+    });
+  });
+
+  it("keeps compatible endpoints on the generic request shape for the same Nemotron model (#10880)", () => {
+    const args = getChatCompletionsProbeCurlArgs({
+      credentialArgs: FAKE_CREDENTIAL_ARGS,
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      url: "https://compatible.example.test/v1/chat/completions",
+      isWsl: false,
+    });
+
+    expect(JSON.parse(args[args.indexOf("-d") + 1])).toEqual({
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      max_tokens: 16,
     });
   });
 

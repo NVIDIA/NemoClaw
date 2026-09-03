@@ -125,6 +125,7 @@ function buildChatCompletionsStatusProbeCurlArgs(
   endpoint: string,
   authArgs: readonly string[],
   isWsl?: boolean,
+  useNvidiaEndpointProbePayload = false,
 ): string[] {
   const args = capStatusProbeOutput(
     useStatusProbeTiming(
@@ -133,6 +134,7 @@ function buildChatCompletionsStatusProbeCurlArgs(
         model,
         url: endpoint,
         isWsl,
+        useNvidiaEndpointProbePayload,
       }),
     ),
   );
@@ -500,6 +502,7 @@ function probeChatCompletionsProviderHealth(
   credentialEnv: string,
   endpoint: string,
   options: ProviderHealthProbeOptions,
+  useNvidiaEndpointProbePayload = false,
 ): ProviderHealthStatus {
   let apiKey = "";
   try {
@@ -523,7 +526,13 @@ function probeChatCompletionsProviderHealth(
   const rawResult = (() => {
     try {
       return runCurlProbeImpl(
-        buildChatCompletionsStatusProbeCurlArgs(model, endpoint, authConfig.args, options.isWsl),
+        buildChatCompletionsStatusProbeCurlArgs(
+          model,
+          endpoint,
+          authConfig.args,
+          options.isWsl,
+          useNvidiaEndpointProbePayload,
+        ),
         { trustedConfigFiles: authConfig.trustedConfigFiles },
       );
     } finally {
@@ -659,6 +668,7 @@ export function probeRemoteProviderHealth(
       NVIDIA_HEALTH_CREDENTIAL_ENV,
       `${BUILD_ENDPOINT_URL}/chat/completions`,
       options,
+      true,
     );
   }
 

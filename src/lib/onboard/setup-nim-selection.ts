@@ -237,6 +237,7 @@ type ProbeAuthMode = "bearer" | "query-param" | undefined;
 type ProbeOptions = {
   requireResponsesToolCalling?: boolean;
   skipResponsesProbe?: boolean;
+  useNvidiaEndpointProbePayload?: boolean;
   authMode?: ProbeAuthMode;
   extraHeaders?: readonly string[];
   capabilityCache?: OnboardInferenceCapabilityCache;
@@ -473,6 +474,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
         remoteConfig.helpUrl,
         withCredentialMutationGuard(state, {
           provider: state.provider,
+          useNvidiaEndpointProbePayload: state.provider === "nvidia-prod",
           requireResponsesToolCalling: deps.shouldRequireResponsesToolCalling(state.provider),
           skipResponsesProbe: deps.shouldSkipResponsesProbe(state.provider),
           authMode: deps.getProbeAuthMode(state.provider),

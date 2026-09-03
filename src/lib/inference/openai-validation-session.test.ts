@@ -4,6 +4,7 @@
 import http from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import { probeOpenAiLikeEndpointWithValidationSession } from "./openai-validation-session";
+import { getChatCompletionsProbePayload } from "./openai-probe-models";
 import {
   createOpenAiValidationTestDeps,
   useOpenAiValidationTestServers,
@@ -12,6 +13,44 @@ import {
 const listen = useOpenAiValidationTestServers();
 
 describe("OpenAI validation keepalive sequence", () => {
+  it("sends the NVIDIA Endpoints Nemotron request shape through native validation (#10880)", async () => {
+    let observedBody = "";
+    const server = http.createServer((request, response) => {
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        observedBody += chunk;
+      });
+      request.on("end", () => {
+        response.end('{"choices":[{"message":{"content":"OK"}}]}');
+      });
+    });
+    const port = await listen(server);
+    const harness = {
+      ...createOpenAiValidationTestDeps(),
+      getChatPayload: getChatCompletionsProbePayload,
+    };
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "nvidia/nemotron-3-super-120b-a12b",
+      "test-key",
+      { skipResponsesProbe: true, useNvidiaEndpointProbePayload: true },
+      harness,
+    );
+
+    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+    expect(JSON.parse(observedBody)).toEqual({
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      max_tokens: 16,
+      temperature: 1,
+      top_p: 0.95,
+      chat_template_kwargs: { enable_thinking: false },
+    });
+    expect(JSON.parse(observedBody)).not.toHaveProperty("thinking");
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
   it("uses the GPT-5 reply-budget field for native tool-call validation (#6642)", async () => {
     let observedBody = "";
     const server = http.createServer((request, response) => {
