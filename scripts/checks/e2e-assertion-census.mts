@@ -164,17 +164,35 @@ function scriptKind(file: string): ts.ScriptKind {
 
 function parseSource(file: string, source: string): ts.SourceFile {
   const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKind(file));
-  const diagnostics = (
-    parsed as ts.SourceFile & { readonly parseDiagnostics?: readonly ts.Diagnostic[] }
-  ).parseDiagnostics;
-  if (diagnostics && diagnostics.length > 0) {
+  const options: ts.CompilerOptions = {
+    allowJs: true,
+    noLib: true,
+    noResolve: true,
+  };
+  const host: ts.CompilerHost = {
+    fileExists: (candidate) => candidate === file,
+    getCanonicalFileName: (candidate) => candidate,
+    getCurrentDirectory: () => "",
+    getDefaultLibFileName: () => "lib.d.ts",
+    getDirectories: () => [],
+    getNewLine: () => "\n",
+    getSourceFile: (candidate) => (candidate === file ? parsed : undefined),
+    readFile: (candidate) => (candidate === file ? source : undefined),
+    useCaseSensitiveFileNames: () => true,
+    writeFile: () => {},
+  };
+  const program = ts.createProgram({ rootNames: [file], options, host });
+  const programSource = program.getSourceFile(file);
+  if (!programSource) throw new Error(`${file}: TypeScript could not parse the source`);
+  const diagnostics = program.getSyntacticDiagnostics(programSource);
+  if (diagnostics.length > 0) {
     const first = diagnostics[0];
     const position = first.start ?? 0;
-    const { line, character } = parsed.getLineAndCharacterOfPosition(position);
+    const { line, character } = programSource.getLineAndCharacterOfPosition(position);
     const message = ts.flattenDiagnosticMessageText(first.messageText, " ");
     throw new Error(`${file}:${line + 1}:${character + 1}: ${message}`);
   }
-  return parsed;
+  return programSource;
 }
 
 function rootIdentifier(expression: ts.Expression): string | null {
@@ -436,6 +454,7 @@ function resolveLiveImport(
   if (!specifier.startsWith(".")) return null;
   const lexical = path.resolve(path.dirname(fromFile), specifier);
   if (!isInside(liveRoot, lexical)) return null;
+  let foundNonSourceFile = false;
   for (const candidate of importCandidates(fromFile, specifier)) {
     if (!existsSync(candidate)) continue;
     const stats = lstatSync(candidate);
@@ -447,7 +466,9 @@ function resolveLiveImport(
       throw new Error(`Live E2E import resolved outside its root: ${candidate}`);
     }
     if (sourceFiles.has(canonical)) return canonical;
+    foundNonSourceFile = true;
   }
+  if (foundNonSourceFile) return null;
   throw new Error(
     `Unresolved live E2E companion import ${JSON.stringify(specifier)} from ${fromFile}`,
   );

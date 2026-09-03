@@ -11,6 +11,7 @@ const E2E_ASSERTION_BUDGET_FILE = "ci/e2e-assertion-budget.json";
 const FALLBACK_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';
 const JAVASCRIPT_FILE_RE = /\.(?:cjs|js|mjs)$/;
 const TEST_FILE_RE = /^(?:test|src|nemoclaw\/src)\/.*\.(?:test|spec)\.(?:[cm]?[jt]s)$/;
+const LIVE_E2E_TEST_RE = /^test\/e2e\/live\/.*\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/;
 const ONBOARD_ENTRY = "src/lib/onboard.ts";
 
 type TestFileSizeBudget = {
@@ -426,8 +427,17 @@ export async function e2eAssertionBudgetGrowthViolations(
       if (after > before) violations.push(`${view}.${metric} increased from ${before} to ${after}`);
     }
   }
+  const renames = new Map(
+    diff.files.flatMap(({ filename, previous_filename, status }) =>
+      status === "renamed" && previous_filename ? [[filename, previous_filename]] : [],
+    ),
+  );
+  const renamedFrom = new Map([...renames].map(([filename, previous]) => [previous, filename]));
+  const removed = new Set(
+    diff.files.flatMap(({ filename, status }) => (status === "removed" ? [filename] : [])),
+  );
   for (const [file, after] of Object.entries(head.limits.files)) {
-    const before = base.limits.files[file];
+    const before = base.limits.files[renames.get(file) ?? file];
     if (!before) {
       violations.push(`${file} added a live E2E assertion budget`);
       continue;
@@ -439,6 +449,16 @@ export async function e2eAssertionBudgetGrowthViolations(
         );
       }
     });
+  }
+  for (const file of Object.keys(base.limits.files)) {
+    const renamedTo = renamedFrom.get(file);
+    const carriedFile = renamedTo ?? file;
+    if (head.limits.files[carriedFile]) continue;
+    const genuinelyRemoved =
+      removed.has(file) || (renamedTo !== undefined && !LIVE_E2E_TEST_RE.test(renamedTo));
+    if (!genuinelyRemoved) {
+      violations.push(`${carriedFile} omitted its live E2E assertion budget`);
+    }
   }
   return violations;
 }

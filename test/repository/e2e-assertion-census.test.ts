@@ -194,6 +194,17 @@ describe("live E2E assertion census (#10934)", () => {
     expect(() => buildE2eAssertionCensus(root)).toThrow(/Unresolved live E2E companion import/u);
   });
 
+  test("ignores an existing non-source local import", ({ resources }) => {
+    const root = resources.temporaryDirectory("nemoclaw-e2e-assertion-non-source-import-");
+    writeSource(root, "test/e2e/live/example.test.ts", 'import data from "./fixture.json";\n');
+    writeSource(root, "test/e2e/live/fixture.json", '{"value":true}\n');
+
+    expect(buildE2eAssertionCensus(root)).toMatchObject({
+      testFileCount: 1,
+      liveFileCount: 1,
+    });
+  });
+
   test("fails closed on a symlinked live source", ({ resources }) => {
     const root = resources.temporaryDirectory("nemoclaw-e2e-assertion-symlink-");
     writeSource(root, "outside.ts", "export {};\n");
@@ -223,7 +234,10 @@ describe("live E2E assertion census (#10934)", () => {
     });
     expect(evaluateE2eAssertionBudget(reduced, budget)).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ kind: "stale-budget", metric: "expectCalls" }),
+        expect.objectContaining({
+          kind: "stale-budget",
+          metric: "expectCalls",
+        }),
       ]),
     );
   });
