@@ -90,6 +90,8 @@ describe("same-commit reliability reporter entrypoint", () => {
       {
         encoding: "utf8",
         env: { ...process.env, GITHUB_TOKEN: "", SOURCE_RUN_ID: "" },
+        killSignal: "SIGKILL",
+        timeout: 20_000,
       },
     );
 
