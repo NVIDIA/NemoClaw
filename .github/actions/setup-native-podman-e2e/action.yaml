@@ -304,3 +304,32 @@ runs:
           printf 'PATH=%s:%s\n' "$toolchain_install_root/bin" "$PATH"
           printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_directory"
         } >>"$GITHUB_ENV"
+
+    - name: Remove Docker CLI from native Podman execution
+      if: ${{ inputs.enabled == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        disabled_path="${RUNNER_TEMP}/nemoclaw-disabled-docker-cli"
+        docker_cli="$(command -v docker || true)"
+        if [[ -z "$docker_cli" ]]; then
+          exit 0
+        fi
+        case "$docker_cli" in
+          /usr/bin/docker | /usr/local/bin/docker | /snap/bin/docker) ;;
+          *)
+            echo "::error::Refusing to move unexpected Docker CLI path: $docker_cli" >&2
+            exit 1
+            ;;
+        esac
+        if [[ -e "$disabled_path" || -L "$disabled_path" ]]; then
+          echo "::error::Docker CLI isolation target already exists" >&2
+          exit 1
+        fi
+        printf 'NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s\n' "$disabled_path" >>"$GITHUB_ENV"
+        printf 'NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH=%s\n' "$docker_cli" >>"$GITHUB_ENV"
+        sudo -n mv -- "$docker_cli" "$disabled_path"
+        if command -v docker >/dev/null 2>&1; then
+          echo "::error::Native Podman E2E still resolves a Docker CLI" >&2
+          exit 1
+        fi

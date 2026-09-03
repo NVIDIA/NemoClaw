@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: restore-native-podman-e2e
+description: Restore the exact Docker CLI moved by native Podman E2E isolation.
+
+inputs:
+  enabled:
+    description: Restore Docker after a selected native Podman row.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Restore Docker CLI after native Podman execution
+      if: ${{ inputs.enabled == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        disabled_path="${NEMOCLAW_E2E_DISABLED_DOCKER_CLI:-}"
+        restore_path="${NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH:-}"
+        if [[ -z "$disabled_path" && -z "$restore_path" ]]; then
+          exit 0
+        fi
+        if [[ "$disabled_path" != "${RUNNER_TEMP}/nemoclaw-disabled-docker-cli" ]]; then
+          echo "::error::Refusing unsafe Docker CLI restore source" >&2
+          exit 1
+        fi
+        case "$restore_path" in
+          /usr/bin/docker | /usr/local/bin/docker | /snap/bin/docker) ;;
+          *)
+            echo "::error::Refusing unsafe Docker CLI restore destination" >&2
+            exit 1
+            ;;
+        esac
+        if [[ ! -e "$disabled_path" && ! -L "$disabled_path" ]]; then
+          echo "::error::Disabled Docker CLI is missing before restore" >&2
+          exit 1
+        fi
+        if [[ -e "$restore_path" || -L "$restore_path" ]]; then
+          echo "::error::Docker CLI restore destination is already occupied" >&2
+          exit 1
+        fi
+        sudo -n mv -- "$disabled_path" "$restore_path"
+        test -x "$restore_path"
+        test "$(command -v docker)" = "$restore_path"
