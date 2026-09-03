@@ -186,52 +186,6 @@ function scriptedPinnedGatewayRecovery(
 }
 
 describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
-  it("checks managed recovery and OpenShell readiness before starting host forwards (#8662)", () => {
-    mockOpenClawSandbox("stopped-box");
-    setImmediateRecoveryPolling();
-    const order: string[] = [];
-    const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) => {
-      order.push(action);
-      return {
-        status: 0,
-        stdout: `v1 ${"a".repeat(64)} complete ok 0 4242\nGATEWAY_PID=4242`,
-        stderr: "",
-      };
-    });
-    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(() => {
-      order.push("OpenShell readiness");
-      return true;
-    });
-    const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-    vi.spyOn(openshellRuntime, "captureOpenshell")
-      .mockReturnValueOnce({ status: 0, output: "SANDBOX  BIND  PORT  PID  STATUS" })
-      .mockReturnValue({
-        status: 0,
-        output: "SANDBOX  BIND  PORT  PID  STATUS\nstopped-box  127.0.0.1  18789  12345  running",
-      });
-    vi.spyOn(openshellRuntime, "runOpenshell")
-      .mockReturnValueOnce({ status: 0 } as never)
-      .mockImplementationOnce(() => {
-        order.push("host forward");
-        return { status: 0 } as never;
-      });
-
-    const result = checkAndRecoverSandboxProcesses("stopped-box", {
-      quiet: true,
-      isSandboxGatewayRunningImpl: () => false,
-      requestGatewaySupervisorAction,
-      relaunchManagedSupervisorSessionImpl,
-      waitForRecreatedSandboxOpenShellReadyImpl,
-    });
-
-    expect(result).toMatchObject({ checked: true, recovered: true, forwardRecovered: true });
-    expect(result).toHaveProperty("managedControlCompletion.disposition", "ok");
-    expect(order).toContain("OpenShell readiness");
-    expect(order.indexOf("OpenShell readiness")).toBeLessThan(order.indexOf("host forward"));
-    expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
-  });
-
   it("reports the onboarding remediation for a legacy Hermes recovery refusal", () => {
     setImmediateRecoveryPolling();
     vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
@@ -521,127 +475,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         runCaptureOpenshell: expect.any(Function),
         runOpenshell,
       },
-    );
-  });
-
-  it("restores the primary dashboard/API host forward after the final legacy container restart (#9364)", () => {
-    mockOpenClawSandbox("legacy-handoff-box");
-    setImmediateRecoveryPolling();
-    const order: string[] = [];
-    let forwardStarted = false;
-    const dockerStop = vi.fn(() => ({ status: 0 }));
-    const dockerRm = vi.fn(() => ({ status: 0 }));
-    const dockerStart = vi.fn(() => ({ status: 0 }));
-    const oldContainerId = "a".repeat(64);
-    const replacementContainerId = "b".repeat(64);
-    const dockerRun = vi.fn((args: readonly string[]) =>
-      args[0] === "ps"
-        ? { status: 0, stdout: `${replacementContainerId}\n` }
-        : { status: 0, stdout: "true\n" },
-    );
-    const finalizeTransaction = vi.fn(
-      (
-        options: Parameters<typeof finalizeDockerGpuPatchBackup>[0],
-        deps: Parameters<typeof finalizeDockerGpuPatchBackup>[1],
-      ) =>
-        finalizeDockerGpuPatchBackup(options, {
-          ...deps,
-          dockerRm,
-          dockerRun,
-          dockerStart,
-          dockerStop,
-        }),
-    );
-    const { relaunchManagedSupervisorSessionImpl, runCaptureOpenshell } =
-      composedRelaunchTransaction(order, finalizeTransaction, {
-        old: oldContainerId,
-        replacement: replacementContainerId,
-      });
-    const requestGatewaySupervisorAction = vi.fn(missingSupervisorOnRecover);
-    const restartedGateway = {
-      status: 0,
-      stdout: `v1 ${"c".repeat(64)} complete ok 4242 4343\nGATEWAY_PID=4343`,
-      stderr: "",
-    };
-    const requestPinnedGatewaySupervisorAction = vi
-      .fn()
-      .mockReturnValueOnce(MISSING_MANAGED_SUPERVISOR)
-      .mockReturnValueOnce(ACCEPTED_MANAGED_PROBE)
-      .mockReturnValueOnce(ACCEPTED_MANAGED_PROBE)
-      .mockReturnValueOnce(restartedGateway)
-      .mockReturnValueOnce(MISSING_MANAGED_SUPERVISOR)
-      .mockReturnValue(ACCEPTED_MANAGED_PROBE);
-    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(
-      (_name: string, options?: { beforeProbe?: (timeoutMs: number) => boolean | null }) =>
-        options?.beforeProbe?.(1000) === true,
-    );
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => forwardStarted);
-    const captureOpenshell = vi.spyOn(openshellRuntime, "captureOpenshell");
-    captureOpenshell.mockImplementation((args) => {
-      const responses = {
-        "forward list": () => ({
-          status: 0,
-          output: forwardStarted
-            ? "SANDBOX  BIND  PORT  PID  STATUS\nlegacy-handoff-box  127.0.0.1  18789  12345  running"
-            : "SANDBOX  BIND  PORT  PID  STATUS",
-        }),
-        "sandbox list": () => ({
-          status: 0,
-          output: "legacy-handoff-box  2026-08-23 10:00:00  Ready\n",
-        }),
-      };
-      return (
-        responses[args.join(" ") as keyof typeof responses]?.() ?? {
-          status: 1,
-          output: "",
-          stdout: "",
-          stderr: "unexpected openshell command",
-        }
-      );
-    });
-    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
-      forwardStarted ||= args.join(" ") === "forward start --background 18789 legacy-handoff-box";
-      return { status: 0 } as never;
-    });
-    const result = checkAndRecoverSandboxProcesses("legacy-handoff-box", {
-      quiet: true,
-      isSandboxGatewayRunningImpl: () => false,
-      requestGatewaySupervisorAction,
-      requestPinnedGatewaySupervisorAction,
-      relaunchManagedSupervisorSessionImpl,
-      waitForRecreatedSandboxOpenShellReadyImpl,
-    });
-    expect(result).toMatchObject({
-      checked: true,
-      wasRunning: false,
-      recovered: true,
-      forwardRecovered: true,
-    });
-    expect(dockerStop).toHaveBeenCalledWith(
-      replacementContainerId,
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(dockerRm).toHaveBeenCalledWith(
-      oldContainerId,
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(dockerStart).not.toHaveBeenCalled();
-    expect(order).toContain("openshell-stop");
-    expect(order).toContain("openshell-start");
-    expect(waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledTimes(2);
-    expect(waitForRecreatedSandboxOpenShellReadyImpl.mock.invocationCallOrder[1]).toBeLessThan(
-      runOpenshell.mock.invocationCallOrder[0],
-    );
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "18789", "legacy-handoff-box"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(runCaptureOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "list"],
-      expect.objectContaining({
-        killProcessTreeOnTimeout: true,
-        killSignal: "SIGKILL",
-      }),
     );
   });
 
@@ -974,88 +807,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     );
     expect(output).toContain("rebuild --yes");
     expect(output).not.toContain("Sandbox state restore failed");
-  });
-
-  it("retries a busy pinned managed probe before starting the replacement forward", () => {
-    mockOpenClawSandbox("busy-recovered-box");
-    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
-    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "1");
-    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "0");
-    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-    const finalize = vi.fn((supervisorReady: boolean) =>
-      supervisorReady
-        ? { backupRemoved: true, rolledBack: false }
-        : { backupRemoved: false, rolledBack: true },
-    );
-    const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
-      containerId: "replacement-container-id",
-      finalize,
-    }));
-    const requestGatewaySupervisorAction = vi.fn(missingSupervisorOnRecover);
-    const acceptedProbe = ACCEPTED_MANAGED_PROBE;
-    const requestPinnedGatewaySupervisorAction = vi
-      .fn()
-      .mockReturnValueOnce(acceptedProbe)
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "SUPERVISOR_BUSY" })
-      .mockReturnValue(acceptedProbe);
-    let forwardStarted = false;
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => forwardStarted);
-    const captureOpenshell = vi
-      .spyOn(openshellRuntime, "captureOpenshell")
-      .mockImplementation((args) => {
-        const command = args.join(" ");
-        const responses = {
-          "sandbox exec --name busy-recovered-box -- true": () => ({
-            status: 0,
-            output: "",
-            stdout: "",
-            stderr: "",
-          }),
-          "forward list": () => ({
-            status: 0,
-            output: forwardStarted
-              ? "SANDBOX  BIND  PORT  PID  STATUS\nbusy-recovered-box  127.0.0.1  18789  12345  running"
-              : "SANDBOX  BIND  PORT  PID  STATUS",
-          }),
-        };
-        return (
-          responses[command as keyof typeof responses]?.() ?? {
-            status: 1,
-            output: "",
-            stdout: "",
-            stderr: "unexpected openshell command",
-          }
-        );
-      });
-    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
-      forwardStarted ||= args.join(" ") === "forward start --background 18789 busy-recovered-box";
-      return { status: 0 } as never;
-    });
-
-    const result = checkAndRecoverSandboxProcesses("busy-recovered-box", {
-      quiet: true,
-      isSandboxGatewayRunningImpl: () => false,
-      requestGatewaySupervisorAction,
-      requestPinnedGatewaySupervisorAction,
-      relaunchManagedSupervisorSessionImpl,
-    });
-
-    expect(result).toMatchObject({
-      checked: true,
-      wasRunning: false,
-      recovered: true,
-      forwardRecovered: true,
-    });
-    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(5);
-    expect(captureOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "exec", "--name", "busy-recovered-box", "--", "true"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(finalize).toHaveBeenCalledWith(true);
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "18789", "busy-recovered-box"],
-      expect.objectContaining({ ignoreError: true }),
-    );
   });
 
   it("keeps polling a recreated OpenClaw gateway beyond its ordinary health timeout (#10153)", () => {
@@ -1410,11 +1161,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(finalize).toHaveBeenCalledWith(true);
     expect(probeTiming.setForwardAction).toHaveBeenCalledOnce();
     expect(probeTiming.setForwardAction).toHaveBeenCalledWith("failed");
-    expect(runOpenshell).toHaveBeenCalledOnce();
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "drifted-box"], {
-      ignoreError: true,
-      stdio: "ignore",
-    });
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("reports GATEWAY_UNSAFE_CONFIG_PATH after a transient identity refusal clears (#9364)", () => {
@@ -1474,6 +1221,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     );
     expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(4);
     expect(finalize).toHaveBeenCalledWith(true);
-    expect(runOpenshell).toHaveBeenCalledOnce();
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 });
