@@ -126,6 +126,7 @@ describe("sanitized OpenShell capture", () => {
     vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", openshell);
     vi.stubEnv("XDG_CONFIG_HOME", path.join(directory, "config"));
     vi.stubEnv("OPENSHELL_WORKSPACE", captureLog);
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", path.join(directory, "tls"));
     vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
     vi.stubEnv("AWS_SECRET_ACCESS_KEY", "must-not-reach-openshell");
 
@@ -152,6 +153,7 @@ describe("sanitized OpenShell capture", () => {
     expect(environments[0]).toEqual(environments[1]);
     expect(environments[0]).toMatchObject({
       OPENSHELL_GATEWAY: "nemoclaw",
+      OPENSHELL_LOCAL_TLS_DIR: path.join(directory, "tls"),
       OPENSHELL_WORKSPACE: captureLog,
       XDG_CONFIG_HOME: path.join(directory, "config"),
     });

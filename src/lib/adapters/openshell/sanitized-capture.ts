@@ -21,7 +21,11 @@ export function captureSanitizedResolvedOpenshell(
   opts: SanitizedCaptureOptions,
 ): CapturedOpenShellCommandResult {
   const env = buildOpenShellSubprocessEnv();
-  for (const name of ["XDG_CONFIG_HOME", "OPENSHELL_WORKSPACE"] as const) {
+  for (const name of [
+    "XDG_CONFIG_HOME",
+    "OPENSHELL_WORKSPACE",
+    "OPENSHELL_LOCAL_TLS_DIR",
+  ] as const) {
     const value = process.env[name];
     if (value !== undefined) env[name] = value;
   }
