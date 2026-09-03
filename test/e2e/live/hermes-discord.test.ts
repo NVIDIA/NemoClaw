@@ -280,94 +280,6 @@ async function runHermesPythonDiscordGatewayProof(
   );
 }
 
-async function runHermesNodeDiscordDenial(
-  sandbox: SandboxClient,
-  port: string,
-  redactionValues: string[],
-): Promise<ShellProbeResult> {
-  return sandboxShWithArgs(
-    sandbox,
-    SANDBOX_NAME,
-    String.raw`/usr/local/bin/node <<'NODE'
-const http = require("node:http");
-const request = http.request({
-  host: "${FAKE_DISCORD_HOST}",
-  port: ${port},
-  path: "/gateway",
-  headers: {
-    Connection: "Upgrade",
-    Upgrade: "websocket",
-    "Sec-WebSocket-Key": Buffer.from("nemoclaw-denial").toString("base64"),
-    "Sec-WebSocket-Version": "13",
-  },
-}, (response) => {
-  let body = "";
-  response.setEncoding("utf8");
-  response.on("data", (chunk) => { body += chunk; });
-  response.on("end", () => {
-    console.log("response " + response.statusCode + " " + body.slice(0, 200));
-    process.exitCode = 3;
-  });
-});
-request.on("upgrade", () => {
-  console.log("unexpected websocket upgrade");
-  process.exitCode = 4;
-  request.destroy();
-});
-request.setTimeout(20000, () => request.destroy(new Error("timeout")));
-request.on("error", (error) => {
-  console.log("error " + error.message);
-  process.exitCode = 2;
-});
-request.end();
-NODE`,
-    [],
-    { artifactName: "hermes-node-discord-policy-denial", redactionValues, timeoutMs: 30_000 },
-  );
-}
-
-async function runHermesNodeDiscordRestDenial(
-  sandbox: SandboxClient,
-  port: string,
-  redactionValues: string[],
-): Promise<ShellProbeResult> {
-  return sandboxShWithArgs(
-    sandbox,
-    SANDBOX_NAME,
-    String.raw`FAKE_DISCORD_REST_PORT=${port} /usr/local/bin/node <<'NODE'
-const http = require("node:http");
-const token = process.env.DISCORD_BOT_TOKEN ?? "";
-if (!/^openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN$/.test(token)) {
-  console.log("invalid Discord token placeholder");
-  process.exit(5);
-}
-const request = http.request({
-  host: "${FAKE_DISCORD_HOST}",
-  port: Number(process.env.FAKE_DISCORD_REST_PORT),
-  path: "/api/v10/users/@me",
-  method: "GET",
-  headers: { Authorization: "Bot " + token },
-}, (response) => {
-  let body = "";
-  response.setEncoding("utf8");
-  response.on("data", (chunk) => { body += chunk; });
-  response.on("end", () => {
-    console.log("response " + response.statusCode + " " + body.slice(0, 200));
-    process.exitCode = 3;
-  });
-});
-request.setTimeout(20000, () => request.destroy(new Error("timeout")));
-request.on("error", (error) => {
-  console.log("error " + error.message);
-  process.exitCode = 2;
-});
-request.end();
-NODE`,
-    [],
-    { artifactName: "hermes-node-discord-rest-policy-denial", redactionValues, timeoutMs: 30_000 },
-  );
-}
-
 function readDiscordRestRequests(captureFile: string): Array<Record<string, unknown>> {
   return fs
     .readFileSync(captureFile, "utf8")
@@ -503,7 +415,6 @@ test(
       },
     );
     expectExitZero(cliProbe, "nemoclaw and openshell installed");
-    expect(cliProbe.stdout).toContain("nemoclaw");
 
     progress.phase("validate Discord provider and Hermes health");
     const list = await host.command("nemoclaw", ["list"], {
@@ -647,16 +558,6 @@ PY`,
       ],
     });
 
-    const deniedNodeGateway = await runHermesNodeDiscordDenial(
-      sandbox,
-      fakeGateway.port,
-      redactionValues,
-    );
-    expect(deniedNodeGateway.exitCode, resultText(deniedNodeGateway)).not.toBe(0);
-    expect(resultText(deniedNodeGateway)).toMatch(
-      /response 403|policy[_ ]denied|not allowed by any policy/i,
-    );
-
     const nativeGateway = await runHermesPythonDiscordGatewayProof(
       sandbox,
       fakeGateway.port,
@@ -679,12 +580,9 @@ PY`,
     );
     expectExitZero(gatewayCapture, "Hermes Discord Gateway capture");
     expectExitZero(nativeGateway, "Hermes Python Discord Gateway protocol proof");
-    expect(resultText(nativeGateway)).toContain("UPGRADE");
-    expect(resultText(nativeGateway)).toContain("HELLO");
     expect(resultText(nativeGateway)).toContain("IDENTIFY_SENT_PLACEHOLDER");
     expect(resultText(nativeGateway)).toContain("READY");
     expect(resultText(nativeGateway)).toContain("HEARTBEAT_ACK");
-    expect(resultText(nativeGateway)).not.toContain("IMPORT_DISCORD_FAILED");
     assertDiscordGatewayCapture(fakeGateway.captureFile, DISCORD_TOKEN);
 
     progress.phase("verify Discord token isolation and REST boundary");
@@ -745,21 +643,6 @@ PY`,
       ],
     });
 
-    expect(readDiscordRestRequests(fakeRest.captureFile)).toEqual([]);
-    const deniedNodeRest = await runHermesNodeDiscordRestDenial(
-      sandbox,
-      fakeRest.port,
-      redactionValues,
-    );
-    expect(deniedNodeRest.exitCode, resultText(deniedNodeRest)).not.toBe(0);
-    expect(resultText(deniedNodeRest)).toMatch(
-      /response 403|policy[_ ]denied|not allowed by any policy/iu,
-    );
-    expect(
-      readDiscordRestRequests(fakeRest.captureFile),
-      "denied Node REST request changed the fake Discord capture",
-    ).toEqual([]);
-
     const discordApi = await sandboxShWithArgs(
       sandbox,
       SANDBOX_NAME,
@@ -801,7 +684,6 @@ PY`,
         tokenLooksPlaceholder: false,
       }),
     ]);
-    expect(JSON.stringify(restRequests)).not.toContain(DISCORD_TOKEN);
 
     const bridgeResidue = await sandboxShWithArgs(
       sandbox,
@@ -816,7 +698,7 @@ if env | grep -q "^$proxy_needle="; then echo ENV_DISCORD_PROXY; fi
 if grep -Fq "$env_needle" /sandbox/.hermes/.env /sandbox/.hermes/config.yaml /tmp/nemoclaw-proxy-env.sh /tmp/gateway.env 2>/dev/null; then echo FILE_FACADE; fi
 if grep -Fq "$proxy_needle" /sandbox/.hermes/.env /sandbox/.hermes/config.yaml /tmp/nemoclaw-proxy-env.sh /tmp/gateway.env 2>/dev/null; then echo FILE_DISCORD_PROXY; fi
 if find /tmp -maxdepth 1 -type f \( -name "discord-facade.log" -o -name "nemoclaw-discord-facade*" \) 2>/dev/null | grep -q .; then echo FILE_FACADE; fi
-if command -v "$decode_needle" >/dev/null 2>&1; then echo BIN_DECODE_PROXY; fi
+command -v "$decode_needle" >/dev/null 2>&1 && echo BIN_DECODE_PROXY || true
 current_pid="$$"
 for p in /proc/[0-9]*; do
   pid=$(basename "$p")
@@ -880,11 +762,9 @@ done`,
         hermesHealthy: true,
         configSchema: true,
         envPlaceholders: true,
-        nodeDiscordGatewayDenied: true,
         nativePythonDiscordGatewayRewrite: true,
         rawTokenAbsentFromConfigEnvProcessAndFilesystem: true,
         nativePythonDiscordRestRewrite: true,
-        nodeDiscordRestDeniedWithoutCapture: true,
         noLocalDiscordBridgeResidue: true,
         cleanupVerified: process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1",
       },

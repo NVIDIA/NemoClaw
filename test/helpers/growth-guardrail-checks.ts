@@ -431,18 +431,6 @@ export async function e2eAssertionBudgetGrowthViolations(
       filename === E2E_ASSERTION_BUDGET_FILE || previous_filename === E2E_ASSERTION_BUDGET_FILE,
   );
   if (!changed) return [];
-  const reconciliationPaths = new Set([
-    E2E_ASSERTION_BUDGET_FILE,
-    "test/README.md",
-    "test/automation/pull-requests/growth-guardrails.test.ts",
-    "test/helpers/growth-guardrail-checks.ts",
-  ]);
-  const reconcilesInheritedDrift =
-    diff.files.some(({ filename }) => filename === E2E_ASSERTION_BUDGET_FILE) &&
-    diff.files.every(
-      ({ filename, previous_filename }) =>
-        reconciliationPaths.has(filename) && previous_filename === undefined,
-    );
   const [baseBlob, headBlob] = await Promise.all([
     diff.readBase([E2E_ASSERTION_BUDGET_FILE]),
     diff.readHead([E2E_ASSERTION_BUDGET_FILE]),
@@ -474,9 +462,7 @@ export async function e2eAssertionBudgetGrowthViolations(
     ] as const) {
       const before = base.limits[view][metric];
       const after = head.limits[view][metric];
-      if (!reconcilesInheritedDrift && after > before) {
-        violations.push(`${view}.${metric} increased from ${before} to ${after}`);
-      }
+      if (after > before) violations.push(`${view}.${metric} increased from ${before} to ${after}`);
     }
   }
   const renames = new Map(
@@ -495,7 +481,7 @@ export async function e2eAssertionBudgetGrowthViolations(
       continue;
     }
     after.forEach((value, index) => {
-      if (!reconcilesInheritedDrift && value > before[index]!) {
+      if (value > before[index]!) {
         violations.push(
           `${file} ${head.limits.fileMetricOrder[index]} increased from ${before[index]} to ${value}`,
         );

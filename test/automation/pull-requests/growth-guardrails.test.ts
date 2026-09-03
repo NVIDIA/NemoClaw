@@ -292,37 +292,9 @@ function defineCodebaseGrowthGuardrailTestSupport(): void {
     expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
   });
 
-  it("accepts an exact budget-only reconciliation for inherited drift", async () => {
+  it("rejects a larger live E2E assertion budget and changed reference", async () => {
     const diff = fixtureDiff(
       [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
-      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(1) },
-      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(2) },
-    );
-
-    expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
-  });
-
-  it("rejects a larger budget paired with an unrelated change", async () => {
-    const diff = fixtureDiff(
-      [
-        { filename: "ci/e2e-assertion-budget.json", status: "modified" },
-        { filename: "src/example.ts", status: "modified" },
-      ],
-      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(1) },
-      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(2) },
-    );
-
-    expect(await e2eAssertionBudgetGrowthViolations(diff)).toContain(
-      "direct.expectCalls increased from 1 to 2",
-    );
-  });
-
-  it("rejects assertion growth with a larger budget and changed reference", async () => {
-    const diff = fixtureDiff(
-      [
-        { filename: "ci/e2e-assertion-budget.json", status: "modified" },
-        { filename: "test/e2e/live/example.test.ts", status: "modified" },
-      ],
       { "ci/e2e-assertion-budget.json": e2eAssertionBudget(1) },
       { "ci/e2e-assertion-budget.json": e2eAssertionBudget(2, "c".repeat(40)) },
     );
