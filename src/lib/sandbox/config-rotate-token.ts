@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { checkOpenAiInferenceProviderProfile } from "../adapters/openshell/provider-profile";
+import { checkOpenAiInferenceProviderProfile } from "../adapters/openshell/provider-profile-registration";
 import type { Session } from "../state/onboard-session";
 
 export interface RotateTokenOpts {

@@ -1,16 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export type RetryFailureClass =
-  | "authentication"
-  | "authorization"
-  | "cleanup"
-  | "deterministic"
-  | "malformed-input"
-  | "policy-denial"
-  | "transient-external"
-  | "ambiguous-mutation";
+/** Canonical failure classes retained in bounded E2E retry evidence. */
+export const RETRY_FAILURE_CLASSES = [
+  "authentication",
+  "authorization",
+  "cleanup",
+  "deterministic",
+  "malformed-input",
+  "policy-denial",
+  "transient-external",
+  "ambiguous-mutation",
+] as const;
 
+export type RetryFailureClass = (typeof RETRY_FAILURE_CLASSES)[number];
 export type RetryIdempotence = "read-only" | "idempotent" | "reconciled-mutation";
 
 export interface RetryAttemptEvidence {
@@ -29,6 +32,130 @@ export interface RetryEvidence {
   maxAttempts: number;
   outcome: "failed-no-retry" | "exhausted" | "passed-after-retry" | "passed-first-attempt";
   attempts: RetryAttemptEvidence[];
+}
+
+const RETRY_IDENTIFIER = /^[a-z0-9][a-z0-9._-]{0,127}$/u;
+const RETRY_IDEMPOTENCE = ["read-only", "idempotent", "reconciled-mutation"] as const;
+const RETRY_OUTCOMES = [
+  "failed-no-retry",
+  "exhausted",
+  "passed-after-retry",
+  "passed-first-attempt",
+] as const;
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function validAttempt(
+  value: unknown,
+  index: number,
+  evidence: Record<string, unknown>,
+): value is RetryAttemptEvidence {
+  const attempt = record(value);
+  if (
+    !attempt ||
+    attempt.attempt !== index + 1 ||
+    (attempt.outcome !== "failed" && attempt.outcome !== "passed") ||
+    typeof attempt.retryScheduled !== "boolean"
+  ) {
+    return false;
+  }
+
+  if (attempt.outcome === "passed") {
+    return (
+      attempt.failureClass === undefined &&
+      attempt.reconciled === undefined &&
+      attempt.retryScheduled === false
+    );
+  }
+  if (!RETRY_FAILURE_CLASSES.includes(attempt.failureClass as RetryFailureClass)) return false;
+
+  const hasBudget = index + 1 < (evidence.maxAttempts as number);
+  const isTransient = attempt.failureClass === "transient-external";
+  const reconciledMutation = evidence.idempotence === "reconciled-mutation";
+  if (attempt.reconciled !== undefined) {
+    if (
+      !reconciledMutation ||
+      !isTransient ||
+      !hasBudget ||
+      typeof attempt.reconciled !== "boolean"
+    ) {
+      return false;
+    }
+  } else if (reconciledMutation && isTransient && hasBudget) {
+    return false;
+  }
+  return attempt.retryScheduled === (isTransient && hasBudget && attempt.reconciled !== false);
+}
+
+/** Validate serialized retry evidence at its untrusted artifact boundary. */
+export function validateRetryEvidence(value: unknown): RetryEvidence | null {
+  const evidence = record(value);
+  if (
+    evidence?.schemaVersion !== 1 ||
+    typeof evidence.operation !== "string" ||
+    !RETRY_IDENTIFIER.test(evidence.operation) ||
+    typeof evidence.owner !== "string" ||
+    !RETRY_IDENTIFIER.test(evidence.owner) ||
+    !RETRY_IDEMPOTENCE.includes(evidence.idempotence as RetryIdempotence) ||
+    !Number.isSafeInteger(evidence.maxAttempts) ||
+    (evidence.maxAttempts as number) < 1 ||
+    (evidence.maxAttempts as number) > 10 ||
+    !RETRY_OUTCOMES.includes(evidence.outcome as RetryEvidence["outcome"]) ||
+    !Array.isArray(evidence.attempts) ||
+    evidence.attempts.length < 1 ||
+    evidence.attempts.length > (evidence.maxAttempts as number) ||
+    !evidence.attempts.every((attempt, index) => validAttempt(attempt, index, evidence))
+  ) {
+    return null;
+  }
+
+  const attempts = evidence.attempts as RetryAttemptEvidence[];
+  const finalAttempt = attempts.at(-1)!;
+  const precedingAttemptsRetry = attempts.slice(0, -1).every((attempt) => attempt.retryScheduled);
+  const exhausted =
+    attempts.length === evidence.maxAttempts &&
+    finalAttempt.outcome === "failed" &&
+    (finalAttempt.failureClass === "transient-external" ||
+      (finalAttempt.failureClass === "cleanup" &&
+        attempts.slice(0, -1).some((attempt) => attempt.retryScheduled)));
+  const outcomeIsValid =
+    (evidence.outcome === "passed-first-attempt" &&
+      attempts.length === 1 &&
+      finalAttempt.outcome === "passed") ||
+    (evidence.outcome === "passed-after-retry" &&
+      attempts.length > 1 &&
+      precedingAttemptsRetry &&
+      finalAttempt.outcome === "passed") ||
+    (evidence.outcome === "failed-no-retry" &&
+      precedingAttemptsRetry &&
+      finalAttempt.outcome === "failed" &&
+      !finalAttempt.retryScheduled &&
+      !exhausted) ||
+    (evidence.outcome === "exhausted" &&
+      precedingAttemptsRetry &&
+      !finalAttempt.retryScheduled &&
+      exhausted);
+
+  if (!outcomeIsValid) return null;
+  return {
+    schemaVersion: 1,
+    operation: evidence.operation as string,
+    owner: evidence.owner as string,
+    idempotence: evidence.idempotence as RetryIdempotence,
+    maxAttempts: evidence.maxAttempts as number,
+    outcome: evidence.outcome as RetryEvidence["outcome"],
+    attempts: attempts.map((attempt) => ({
+      attempt: attempt.attempt,
+      outcome: attempt.outcome,
+      ...(attempt.failureClass === undefined ? {} : { failureClass: attempt.failureClass }),
+      ...(attempt.reconciled === undefined ? {} : { reconciled: attempt.reconciled }),
+      retryScheduled: attempt.retryScheduled,
+    })),
+  };
 }
 
 export class RetryPolicyError extends Error {
@@ -63,10 +190,10 @@ export type BoundedRetryResult<T> =
 
 /** Reject unbounded or artifact-unsafe retry metadata before an operation runs. */
 function validateOptions<T>(options: BoundedRetryOptions<T>): void {
-  if (!/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(options.operation)) {
+  if (!RETRY_IDENTIFIER.test(options.operation)) {
     throw new Error("retry operation must be a bounded identifier");
   }
-  if (!/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(options.owner)) {
+  if (!RETRY_IDENTIFIER.test(options.owner)) {
     throw new Error("retry owner must be a bounded identifier");
   }
   if (
@@ -136,6 +263,12 @@ export async function runBoundedRetry<T>(
     }
 
     const classification = options.classify(value, error);
+    if (
+      classification.outcome === "failed" &&
+      !RETRY_FAILURE_CLASSES.includes(classification.failureClass)
+    ) {
+      throw new Error("retry classifier returned an unsupported failure class");
+    }
     if (classification.outcome === "passed") {
       if (error !== undefined) throw new Error("retry classifier reported success after an error");
       if (value === undefined) throw new Error("retry classifier reported success without a value");
