@@ -2459,13 +2459,10 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
 }
 export type SetupInferenceDeps = import("./onboard/setup-inference").SetupInferenceDeps;
 export type SetupInference = import("./onboard/setup-inference").SetupInference;
-
 function createSetupInference(overrides: Partial<SetupInferenceDeps> = {}): SetupInference {
   return setupInferenceFactory.createSetupInference(getSetupInferenceDeps(), overrides);
 }
-
 const setupInference = createSetupInference();
-
 // ── Step 6: Messaging channels ───────────────────────────────────
 
 const MESSAGING_CHANNELS = listChannels();
@@ -3231,6 +3228,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   dashboardPortReservationScope,
                   hermesApiPortReservationScope,
                   ...createArgs,
+                  opts.allowRemovedImmutabilityStateRecord === true,
                 ),
               ),
             ),

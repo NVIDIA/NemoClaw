@@ -30,7 +30,7 @@ completion rather than an arbitrary HTTP 2xx body.
 |--------|--------|-------|
 | `inference-round-trip` | live request | Times N OpenAI-compatible `/v1/chat/completions` calls (warm-up + samples), reports min/median/p95/mean/max. |
 | `sandbox-cold-start` | onboard trace | Total duration of the emitted `nemoclaw.onboard.phase.sandbox` span, which encloses sandbox creation and readiness. The nested `nemoclaw.sandbox.readiness_wait` span is reported as an optional breakdown without being added twice. |
-| `policy-shield-overhead` | onboard trace | Marked `unsupported` in v1: the available `nemoclaw.policy.application` span measures setup, not request-path shield overhead. Interactive traces can also include human think time. |
+| `policy-application-overhead` | onboard trace | Marked `unsupported` in v1: the available `nemoclaw.policy.application` span measures setup, not request-path policy enforcement overhead. Interactive traces can also include human think time. |
 
 Trace metrics require a completed NemoClaw onboard trace with successful root
 and metric spans. A valid trace without a selected metric reports that metric as
