@@ -222,12 +222,12 @@ try {
       expect(dnsCommand.command).not.toContain("bash -c");
       expect(
         payload.commands.some((entry: { command: string }) =>
-          entry.command.includes("sandbox get my-assistant"),
+          entry.command.includes("sandbox get -g nemoclaw my-assistant"),
         ),
       ).toBe(true);
       expect(
         payload.commands.some((entry: { command: string }) =>
-          entry.command.includes("sandbox exec --name my-assistant -- true"),
+          entry.command.includes("sandbox exec -g nemoclaw --name my-assistant -- true"),
         ),
       ).toBe(true);
     } finally {

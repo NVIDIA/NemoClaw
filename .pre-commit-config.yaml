@@ -269,7 +269,10 @@ repos:
         pass_filenames: false
         files: ^(agents/hermes|bin|scripts|src|test|tools|nemoclaw-blueprint/scripts)/.*\.(ts|tsx|mts|cts|json)$|^\.agents/skills/nemoclaw-maintainer-day/scripts/(check-gates|shared)\.ts$|^nemoclaw/src/(lib/subprocess-env|blueprint/private-networks)\.ts$|^(package(-lock)?\.json|tsconfig\.cli\.json|vitest\.config\.ts)$
         stages: [pre-push]
-        priority: 10
+        # build:cli now removes all stale dist output. When package or script
+        # inputs select both hooks, run this reader after tsc-js finishes its
+        # clean rebuild instead of racing the deleted output tree.
+        priority: 20
 
   # ── post-merge / post-checkout: warn about stale compiled dist/ ───────────
   # See #1958 — dist/ is gitignored, so git pull / checkout can leave stale

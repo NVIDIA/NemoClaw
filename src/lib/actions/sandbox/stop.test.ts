@@ -765,6 +765,27 @@ describe("stopSandbox Ollama GPU release", () => {
     );
   });
 
+  it("never unloads a model a compatible local endpoint sibling also uses", () => {
+    const unloadOllamaModels = vi.fn(() => successfulUnload());
+    const peer = sandbox({
+      endpointUrl: "http://127.0.0.1:11434/v1",
+      model: "qwen2.5:7b",
+      name: "peer",
+      provider: "compatible-endpoint",
+    });
+    const h = harness({
+      listSandboxes: registryOf(ollamaSandbox, peer),
+      loadPersistedOllamaHost: () => "127.0.0.1",
+      unloadOllamaModels,
+    });
+    h.getSandbox.mockReturnValue(ollamaSandbox);
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+  });
+
   it("ignores a stopped sibling registry row and releases the exclusive model (#10074)", () => {
     const unloadOllamaModels = vi.fn(() => successfulUnload());
     const stoppedPeer = sandbox({

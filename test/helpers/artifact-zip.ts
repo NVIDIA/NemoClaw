@@ -14,6 +14,25 @@ function crc32(data: Buffer): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
+export function artifactZipEntryDataOffset(archive: Buffer, entryIndex: number): number {
+  if (!Number.isSafeInteger(entryIndex) || entryIndex < 0)
+    throw new Error("entryIndex must be a non-negative safe integer");
+  let localOffset = 0;
+  for (let index = 0; index <= entryIndex; index += 1) {
+    if (localOffset + 30 > archive.length || archive.readUInt32LE(localOffset) !== 0x04034b50) {
+      throw new Error(`ZIP entry ${entryIndex} does not exist`);
+    }
+    const dataOffset =
+      localOffset +
+      30 +
+      archive.readUInt16LE(localOffset + 26) +
+      archive.readUInt16LE(localOffset + 28);
+    if (index === entryIndex) return dataOffset;
+    localOffset = dataOffset + archive.readUInt32LE(localOffset + 18);
+  }
+  throw new Error(`ZIP entry ${entryIndex} does not exist`);
+}
+
 export function artifactZip(
   entries: Array<{ name: string; contents: string }>,
   compressionMethod = 0,
