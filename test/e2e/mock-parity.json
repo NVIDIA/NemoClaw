@@ -46,18 +46,9 @@
       "fast": [
         "test/e2e/support/base-image-publication.test.ts",
         "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
+        "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
         "test/inference/managed/managed-image-publication-workflow.test.ts",
         "test/automation/pull-requests/pr-risk-plan.test.ts",
-        "test/platform/images/protected-managed-image-contract.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e-runtime/managed-image-openclaw-security.test.ts",
-      "liveSources": ["test/e2e/live/managed-image-multiarch-startup-helpers.ts"],
-      "fast": [
-        "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
-        "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
-        "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/platform/images/protected-managed-image-contract.test.ts"
       ]
     },
@@ -429,6 +420,7 @@
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
+        "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
         "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
