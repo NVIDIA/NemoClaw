@@ -77,8 +77,8 @@ export async function freePort() {
   });
 }
 
-export async function waitForPort(port, child, label = "OpenShell gateway") {
-  const deadline = Date.now() + 60_000;
+export async function waitForPort(port, child, label = "OpenShell gateway", timeout = 60_000) {
+  const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) fail(`${label} exited before readiness`);
     const connected = await new Promise((resolve) => {

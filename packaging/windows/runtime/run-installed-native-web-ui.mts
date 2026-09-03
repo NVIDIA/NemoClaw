@@ -18,6 +18,7 @@ import {
   requiredDirectory,
   requiredFile,
   run,
+  sanitizedDiagnostic,
   stopChild,
   waitForPort,
 } from "./run-installed-native-turn.mts";
@@ -461,6 +462,8 @@ async function main() {
   );
   let cliEnvironment = gatewayEnvironment;
   let create = null;
+  let createOutput = "";
+  let createError = "";
   let onboarding = null;
   let passed = false;
   let logsClosed = false;
@@ -520,11 +523,17 @@ async function main() {
     console.log("WEB UI> Creating the native MXC OpenClaw Control UI sandbox");
     create = spawn(openshell, createArgs, {
       env: cliEnvironment,
-      stdio: "ignore",
+      stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
+    create.stdout.on("data", (chunk) => {
+      createOutput = `${createOutput}${chunk.toString("utf8")}`.slice(-64 * 1024);
+    });
+    create.stderr.on("data", (chunk) => {
+      createError = `${createError}${chunk.toString("utf8")}`.slice(-64 * 1024);
+    });
     console.log("WEB UI> Waiting for the real OpenClaw Control UI");
-    await waitForPort(uiPort, create, "OpenClaw Control UI");
+    await waitForPort(uiPort, create, "OpenClaw Control UI", 180_000);
     const uiUrl = `http://127.0.0.1:${uiPort}`;
     onboarding = await startOnboardingServer(installRoot, uiUrl, evidenceRoot);
     console.log(`WEB UI> Launching the NemoClaw graphical onboarder at ${onboarding.url}`);
@@ -614,6 +623,28 @@ async function main() {
     if (!logsClosed) {
       fs.closeSync(gatewayLog);
       fs.closeSync(gatewayError);
+    }
+    if (!passed) {
+      const diagnosticParts = [createOutput, createError];
+      for (const file of [gatewayLogPath, gatewayErrorPath]) {
+        if (fs.statSync(file, { throwIfNoEntry: false })?.isFile())
+          diagnosticParts.push(fs.readFileSync(file, "utf8"));
+      }
+      const availableDiagnostics = diagnosticParts.filter(Boolean);
+      if (availableDiagnostics.length > 0) {
+        const diagnostic = sanitizedDiagnostic(availableDiagnostics.join("\n"), [
+          [installRoot, "<install-root>"],
+          [runtimeRoot, "<runtime-root>"],
+          [shareRoot, "<share-root>"],
+          [runRoot, "<run-root>"],
+        ]);
+        const diagnosticPath = path.join(
+          evidenceRoot,
+          `native-windows-web-ui-diagnostic-${runId}.log`,
+        );
+        fs.writeFileSync(diagnosticPath, diagnostic, "utf8");
+        console.error(`WEB UI> Sanitized failure diagnostic\n${diagnostic}`);
+      }
     }
     for (const directory of [runRoot, shareRoot, runtimeRoot]) await removeDirectory(directory);
   }

@@ -548,12 +548,16 @@ try {
     Write-Host '[PASS] Installed nemoclaw command created an MXC sandbox and completed an exact CHAT_OK turn'
     $webUiArtifacts = Join-Path $artifactRoot 'web-ui'
     Write-Host 'PS> Launch installed NemoClaw OpenClaw web UI and complete three agent turns'
-    & $nemoclawUiLauncherPath --wait --qualification --artifact-directory $webUiArtifacts
-    $webUiExitCode = $LASTEXITCODE
-    if ($webUiExitCode -ne 0) {
-        Fail-PackageQualification "Installed NemoClaw OpenClaw web UI qualification failed with exit code $webUiExitCode."
-    }
-    $webUiReceipts = @(Get-ChildItem -LiteralPath $webUiArtifacts -Filter 'native-windows-web-ui-*.json' -File)
+    Invoke-BoundedProcess `
+        -FilePath $nemoclawUiLauncherPath `
+        -Arguments @('--wait', '--qualification', '--artifact-directory', $webUiArtifacts) `
+        -Label 'Installed NemoClaw graphical onboarding and OpenClaw web UI' `
+        -AllowedExitCodes @(0) | Out-Null
+    $webUiReceipts = @(Get-ChildItem `
+        -LiteralPath $webUiArtifacts `
+        -Filter 'native-windows-web-ui-*.json' `
+        -File `
+        -ErrorAction SilentlyContinue)
     if ($webUiReceipts.Count -ne 1) {
         Fail-PackageQualification 'Installed NemoClaw web UI did not publish exactly one receipt.'
     }
