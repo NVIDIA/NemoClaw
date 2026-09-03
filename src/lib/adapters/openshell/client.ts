@@ -17,6 +17,8 @@ import { classifyManagedGatewayEndpointBinding } from "../../../../nemoclaw/dist
 
 export { classifyManagedGatewayEndpointBinding };
 
+export { isOpenShellSandboxPolicyCredentialFree } from "./policy-boundary";
+
 export { openshellSandboxSshHost, resolveOpenshellSandboxSshHost } from "./sandbox-ssh-host";
 
 export type OpenshellSpawnSync = (

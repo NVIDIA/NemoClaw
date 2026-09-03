@@ -3,6 +3,7 @@
 
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 
+import { HERMES_LIFECYCLE_DEFINITION } from "../../domain/lifecycle/hermes-definition";
 import {
   assertPodmanExecutableAuthority,
   capturePodmanExecutableAuthority,
@@ -11,7 +12,7 @@ import {
 } from "../podman/executable-authority";
 import { resolveOpenshell } from "./resolve";
 
-export const HERMES_PORTABLE_OPENSHELL_VERSION = "0.0.106" as const;
+export const HERMES_PORTABLE_OPENSHELL_VERSION = HERMES_LIFECYCLE_DEFINITION.openshellVersion;
 const VERSION_TIMEOUT_MS = 5_000;
 const VERSION_MAX_BUFFER_BYTES = 16 * 1024;
 const SEMVER_PATTERN = /(?:^|[^0-9.])([0-9]+\.[0-9]+\.[0-9]+)(?![0-9.])/u;

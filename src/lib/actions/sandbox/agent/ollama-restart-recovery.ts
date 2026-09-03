@@ -18,16 +18,19 @@ import { buildValidatedCurlCommandArgs } from "../../../adapters/http/curl-args"
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
 import {
   describeModelInventory,
+  createOllamaApiCapture,
+  getOllamaApiCommand,
   getResolvedOllamaHost,
   ollamaInventoryContainsModel,
   OLLAMA_HOST_DOCKER_INTERNAL,
   OLLAMA_LOCALHOST,
+  prepareOllamaApiExecution,
   probeOllamaEndpointInventory,
+  type RunCaptureFn,
   type RunCaptureExFn,
 } from "../../../inference/local";
 import {
   type OllamaRuntimeModelStatus,
-  type OllamaRuntimeRunCaptureFn,
   probeOllamaRuntimeModelStatus,
 } from "../../../inference/ollama-runtime-context";
 import { runCaptureEx } from "../../../runner";
@@ -42,15 +45,14 @@ export interface OllamaRestartRecoveryDeps {
   probeRuntimeModelStatus?: (
     model: string,
     getOllamaHost: () => string,
-    runCaptureImpl?: OllamaRuntimeRunCaptureFn,
+    runCaptureImpl?: RunCaptureFn,
   ) => OllamaRuntimeModelStatus;
-  probeModelInventory?: (
-    host: string,
-    runCaptureImpl?: OllamaRuntimeRunCaptureFn,
-  ) => string[] | null;
+  probeModelInventory?: (host: string, runCaptureImpl?: RunCaptureFn) => string[] | null;
   runCaptureExImpl?: RunCaptureExFn;
   getOllamaHost?: () => string;
-  runCaptureImpl?: OllamaRuntimeRunCaptureFn;
+  runCaptureImpl?: RunCaptureFn;
+  prepareDockerEnvironment?: Parameters<typeof createOllamaApiCapture>[2];
+  prepareOllamaApiExecution?: typeof prepareOllamaApiExecution;
 }
 
 export type OllamaRestartRecoveryFailureReason =
@@ -69,6 +71,8 @@ export type OllamaRestartRecoveryResult =
       ok: false;
       timedOut: boolean;
       reason: OllamaRestartRecoveryFailureReason;
+      endpoint: string;
+      detail: string;
     };
 
 export const OLLAMA_LOCAL_PROVIDER = "ollama-local";
@@ -150,9 +154,8 @@ function buildWarmCommand(model: string, hostname: string): string[] {
     keep_alive: "15m",
     options: { num_predict: 16 },
   });
-  return [
-    "curl",
-    ...buildValidatedCurlCommandArgs([
+  return getOllamaApiCommand(
+    buildValidatedCurlCommandArgs([
       "-sS",
       "--connect-timeout",
       "3",
@@ -164,7 +167,8 @@ function buildWarmCommand(model: string, hostname: string): string[] {
       body,
       `http://${hostname}:${OLLAMA_PORT}/api/generate`,
     ]),
-  ];
+    hostname,
+  );
 }
 
 function validateWarmResponse(stdout: string): "ok" | "ollama-error" | "invalid-response" {
@@ -189,6 +193,13 @@ function validateWarmResponse(stdout: string): "ok" | "ollama-error" | "invalid-
   }
 }
 
+function boundedWarmFailureDetail(value: unknown, fallback: string): string {
+  const detail = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return (detail || fallback).slice(0, 300);
+}
+
 /**
  * Warm a registered local Ollama model only when `/api/ps` proves that the
  * daemon is reachable and the selected model is no longer loaded.
@@ -208,10 +219,16 @@ export function maybeWarmOllamaAfterDaemonRestart(
 
   const getOllamaHost = deps.getOllamaHost ?? getResolvedOllamaHost;
   const rawHost = resolveRawOllamaHost(route.endpointUrl, getOllamaHost);
+  const rawEndpoint = `http://${rawHost}:${OLLAMA_PORT}`;
   const probe = deps.probeRuntimeModelStatus ?? probeOllamaRuntimeModelStatus;
+  const rawCapture = createOllamaApiCapture(
+    deps.runCaptureImpl,
+    rawHost,
+    deps.prepareDockerEnvironment,
+  );
   let status: OllamaRuntimeModelStatus;
   try {
-    status = probe(model, () => rawHost, deps.runCaptureImpl);
+    status = probe(model, () => rawHost, rawCapture);
   } catch {
     return { kind: "skipped", reason: "unreachable" };
   }
@@ -224,12 +241,44 @@ export function maybeWarmOllamaAfterDaemonRestart(
 
   const captureEx = deps.runCaptureExImpl ?? runCaptureEx;
   try {
-    const result = captureEx(buildWarmCommand(model, rawHost));
+    const execution = (deps.prepareOllamaApiExecution ?? prepareOllamaApiExecution)(
+      buildWarmCommand(model, rawHost),
+      rawHost,
+      { operation: `Ollama restart warm-up for '${model}'` },
+    );
+    let result;
+    try {
+      result = captureEx(execution.command, {
+        ...(execution.env === undefined ? {} : { env: execution.env }),
+      });
+    } finally {
+      execution.cleanup();
+    }
     if (result.timedOut) {
-      return { kind: "warmed", ok: false, timedOut: true, reason: "timeout" };
+      return {
+        kind: "warmed",
+        ok: false,
+        timedOut: true,
+        reason: "timeout",
+        endpoint: rawEndpoint,
+        detail: boundedWarmFailureDetail(
+          result.stderr,
+          `warm-up exceeded ${OLLAMA_RESTART_RECOVERY_TIMEOUT_SECONDS} seconds`,
+        ),
+      };
     }
     if (result.exitCode !== 0) {
-      return { kind: "warmed", ok: false, timedOut: false, reason: "command-failed" };
+      return {
+        kind: "warmed",
+        ok: false,
+        timedOut: false,
+        reason: "command-failed",
+        endpoint: rawEndpoint,
+        detail: boundedWarmFailureDetail(
+          result.stderr || result.stdout,
+          `warm-up exited ${String(result.exitCode)}`,
+        ),
+      };
     }
     const response = validateWarmResponse(result.stdout);
     // An Ollama error can mean a broken runner or a daemon that simply does not
@@ -239,7 +288,7 @@ export function maybeWarmOllamaAfterDaemonRestart(
     // an unreadable inventory keeps the original warm-failure reason.
     if (response === "ollama-error") {
       const probeInventory = deps.probeModelInventory ?? probeOllamaEndpointInventory;
-      const inventory = probeInventory(rawHost, deps.runCaptureImpl);
+      const inventory = probeInventory(rawHost, rawCapture);
       if (inventory && !ollamaInventoryContainsModel(inventory, model)) {
         return {
           kind: "skipped",
@@ -250,10 +299,27 @@ export function maybeWarmOllamaAfterDaemonRestart(
       }
     }
     if (response !== "ok") {
-      return { kind: "warmed", ok: false, timedOut: false, reason: response };
+      return {
+        kind: "warmed",
+        ok: false,
+        timedOut: false,
+        reason: response,
+        endpoint: rawEndpoint,
+        detail: boundedWarmFailureDetail(result.stdout, `Ollama returned ${response}`),
+      };
     }
     return { kind: "warmed", ok: true, timedOut: false };
-  } catch {
-    return { kind: "warmed", ok: false, timedOut: false, reason: "spawn-failed" };
+  } catch (error) {
+    return {
+      kind: "warmed",
+      ok: false,
+      timedOut: false,
+      reason: "spawn-failed",
+      endpoint: rawEndpoint,
+      detail: boundedWarmFailureDetail(
+        error instanceof Error ? error.message : error,
+        "warm-up process could not start",
+      ),
+    };
   }
 }

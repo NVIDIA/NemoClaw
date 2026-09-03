@@ -199,6 +199,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxId: "fixture-managed-sandbox",
   lifecycleState: recreate ? "created" : "absent",
 });
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 createdSandbox.installRuntimeObservation();
 
 const coreVersion = require(${source("src/lib/core/version.ts")});
@@ -432,6 +433,7 @@ runner.run = (command, options = {}) => {
     createdSandbox.state.lifecycleState === "created"
   ) {
     createdSandbox.delete();
+    forwardService.release();
     existingEntryAvailable = false;
   }
   if (/(?:^|\s)docker(?:\s+buildx)?\s+build(?:\s|$)/u.test(normalized)) {
@@ -458,6 +460,10 @@ runner.run = (command, options = {}) => {
   }
   return createdSandbox.run(command) ?? { status: 0, stdout: "", stderr: "" };
 };
+const doctorHostCommand = require(${source("src/lib/actions/sandbox/doctor-host-command.ts")});
+replace(doctorHostCommand, "captureHostCommand", (command, args) =>
+  runner.run([command, ...args]),
+);
 runner.runFile = (file, args = []) => runner.run([file, ...args]);
 runner.runCapture = (command) => {
   const normalized = normalize(command);
@@ -573,10 +579,11 @@ credentials.prompt = async () => "";
 childProcess.spawn = (command, args = [], options = {}) => {
   const argv = Array.isArray(args) ? args.map(String) : [];
   const normalized = normalize([command, ...argv]);
+  const forwardSpawn = forwardService.recordSpawn([command, argv, options]);
   if (/(?:^|\s)docker(?:\s+buildx)?\s+build(?:\s|$)/u.test(normalized)) {
     return poison("docker build");
   }
-  if (normalized.includes("sandbox create")) {
+  if (!forwardSpawn && normalized.includes("sandbox create")) {
     if (createdSandbox.state.lifecycleState === "deleted") {
       createdSandbox.recreate([command, ...argv]);
     } else {
@@ -839,12 +846,14 @@ function assertManagedLaunch(
   } else {
     expect(
       result.payload.runnerCommands.some((command) =>
-        command.includes(`sandbox get ${bootstrapRequest?.sandboxName}`),
+        command.includes(`sandbox get -g nemoclaw ${bootstrapRequest?.sandboxName}`),
       ),
     ).toBe(true);
     expect(
       result.payload.runnerCommands.some((command) =>
-        command.includes(`sandbox exec --name ${bootstrapRequest?.sandboxName} -- true`),
+        command.includes(
+          `sandbox exec -g nemoclaw --name ${bootstrapRequest?.sandboxName} -- true`,
+        ),
       ),
     ).toBe(true);
   }

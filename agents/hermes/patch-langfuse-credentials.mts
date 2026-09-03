@@ -16,12 +16,18 @@ import { pathToFileURL } from "node:url";
  * pinned Hermes implementation drifts.
  *
  * Remove this patch when the pinned Hermes release natively accepts exact,
- * same-name OpenShell placeholders while retaining its raw-key prefix checks.
- * Issue #7446 tracks that removal condition.
+ * same-name OpenShell placeholders, retains its raw-key prefix checks, and
+ * rejects non-HTTPS authenticated Langfuse base URLs. Issue #7446 tracks that
+ * removal condition.
  */
 const DEFAULT_PLUGIN_PATH = "/opt/hermes/plugins/observability/langfuse/__init__.py";
 
 const replacements = [
+  {
+    name: "HTTPS URL parser",
+    old: `from typing import Any, Dict, Optional\n`,
+    patched: `from typing import Any, Dict, Optional\nfrom urllib.parse import urlsplit\n`,
+  },
   {
     name: "credential-name binding",
     old: `\
@@ -60,6 +66,67 @@ _LANGFUSE_OPENSHELL_KEYS: Dict[str, str] = {
     ):
         return None
     return (
+`,
+  },
+  {
+    name: "HTTPS base URL validation",
+    old: `\
+    return (
+        f"{env_name}={_redact_key_preview(value)} "
+        f"(expected {expected!r} prefix)"
+    )
+
+
+def _get_langfuse() -> Optional[Langfuse]:
+`,
+    patched: `\
+    return (
+        f"{env_name}={_redact_key_preview(value)} "
+        f"(expected {expected!r} prefix)"
+    )
+
+
+def _validate_langfuse_base_url(value: str) -> Optional[str]:
+    try:
+        parsed = urlsplit(value)
+        _ = parsed.port
+    except ValueError:
+        return "HERMES_LANGFUSE_BASE_URL must be a valid absolute HTTPS URL"
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        return (
+            "HERMES_LANGFUSE_BASE_URL must be an absolute HTTPS URL "
+            "without credentials, query parameters, or a fragment"
+        )
+    return None
+
+
+def _get_langfuse() -> Optional[Langfuse]:
+`,
+  },
+  {
+    name: "HTTPS base URL gate",
+    old: `\
+    base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
+    environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
+`,
+    patched: `\
+    base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
+    base_url_issue = _validate_langfuse_base_url(base_url)
+    if base_url_issue:
+        logger.warning(
+            "Langfuse plugin: invalid base URL, traces will NOT be emitted (%s).",
+            base_url_issue,
+        )
+        _LANGFUSE_CLIENT = _INIT_FAILED
+        return None
+    environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
 `,
   },
 ] as const;

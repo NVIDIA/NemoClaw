@@ -1,0 +1,87 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Publish managed image digest
+description: Build, publish, and validate one managed image by exact digest.
+
+inputs:
+  builder:
+    description: Optional Docker Buildx builder name.
+    required: false
+  context:
+    description: Docker build context.
+    required: false
+    default: .
+  file:
+    description: Dockerfile path.
+    required: true
+  platform:
+    description: Exact target platform.
+    required: true
+  image:
+    description: Canonical image repository without a tag or digest.
+    required: true
+  build-contexts:
+    description: Optional named Docker build contexts.
+    required: false
+  labels:
+    description: OCI image labels.
+    required: true
+  build-args:
+    description: Docker build arguments.
+    required: true
+  cache-from:
+    description: Optional Buildx cache source.
+    required: false
+  cache-to:
+    description: Optional Buildx cache destination.
+    required: false
+  provenance:
+    description: Buildx provenance setting.
+    required: true
+  sbom:
+    description: Buildx SBOM setting.
+    required: true
+
+outputs:
+  digest:
+    description: Published image digest.
+    value: ${{ steps.publish.outputs.digest }}
+  docker-config:
+    description: Empty Docker configuration directory used for anonymous validation.
+    value: ${{ steps.validate.outputs.docker-config }}
+  local-id:
+    description: Immutable local image ID after the anonymous exact-digest pull.
+    value: ${{ steps.validate.outputs.local-id }}
+  reference:
+    description: Published exact-digest image reference.
+    value: ${{ steps.validate.outputs.reference }}
+
+runs:
+  using: composite
+  steps:
+    - name: Publish managed image by digest
+      id: publish
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      with:
+        builder: ${{ inputs.builder }}
+        context: ${{ inputs.context }}
+        file: ${{ inputs.file }}
+        platforms: ${{ inputs.platform }}
+        build-contexts: ${{ inputs.build-contexts }}
+        outputs: type=image,name=${{ inputs.image }},push-by-digest=true,name-canonical=true,push=true
+        labels: ${{ inputs.labels }}
+        build-args: ${{ inputs.build-args }}
+        cache-from: ${{ inputs.cache-from }}
+        cache-to: ${{ inputs.cache-to }}
+        provenance: ${{ inputs.provenance }}
+        sbom: ${{ inputs.sbom }}
+
+    - name: Validate published exact digest
+      id: validate
+      shell: bash
+      env:
+        DIGEST: ${{ steps.publish.outputs.digest }}
+        IMAGE: ${{ inputs.image }}
+        PLATFORM: ${{ inputs.platform }}
+      run: "$GITHUB_ACTION_PATH/validate.sh"

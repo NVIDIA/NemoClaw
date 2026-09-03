@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupWhenCommandAvailable,
@@ -21,7 +22,7 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-gpu-double";
 const PROXY_PORT = process.env.NEMOCLAW_OLLAMA_PROXY_PORT ?? "11435";
 const GPU_E2E_MODEL = process.env.NEMOCLAW_MODEL ?? "qwen3.5:9b";
 const TOKEN_FILE = path.join(os.homedir(), ".nemoclaw", "ollama-proxy-token");
-const LIVE_TIMEOUT_MS = 90 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(90 * 60_000);
 
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
@@ -156,11 +157,13 @@ async function expectSandboxInference42(
   expect(containsAnswer(response.stdout, "42"), resultText(response)).toBe(true);
 }
 
-test("gpu double onboard keeps Ollama auth proxy token consistent after re-onboard", {
+test(
+  "gpu double onboard keeps Ollama auth proxy token consistent after re-onboard",
+  {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
-      "validate GPU and Docker prerequisites",
+      "validate GPU and runtime prerequisites",
       "install Ollama runtime",
       "perform first Ollama onboard",
       "validate first proxy token and inference",
@@ -169,13 +172,22 @@ test("gpu double onboard keeps Ollama auth proxy token consistent after re-onboa
       "remove GPU double-onboard sandbox",
     ],
   },
-}, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, skip }) => {
+  },
+  async ({
+    artifacts,
+    cleanup: cleanupRegistry,
+    host,
+    progress,
+    runtimeProvider,
+    sandbox,
+    skip,
+  }) => {
   await artifacts.target.declare({
     id: "gpu-double-onboard",
     sandboxName: SANDBOX_NAME,
     proxyPort: PROXY_PORT,
     contracts: [
-      "GPU and Docker prerequisites are present",
+      "GPU and runtime prerequisites are present",
       "install.sh onboards with the Ollama provider",
       "the persisted Ollama auth-proxy token works after first onboard",
       "nemoclaw onboard --non-interactive --yes recreates the sandbox",
@@ -184,15 +196,10 @@ test("gpu double onboard keeps Ollama auth proxy token consistent after re-onboa
     ],
   });
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "phase-0-docker-info",
-    env: env(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "phase-0-runtime-info",
+      scenarioLabel: "GPU double-onboard",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
-    skip(`Docker is required: ${resultText(docker)}`);
-  }
   const smi = await host.command("nvidia-smi", [], {
     artifactName: "phase-0-nvidia-smi",
     env: env(),
@@ -318,7 +325,7 @@ exit "$status"`,
     artifactName: "phase-2-install-sh-first-onboard",
     cwd: REPO_ROOT,
     env: env(),
-    timeoutMs: 30 * 60_000,
+    timeoutMs: execTimeout(30 * 60_000),
   });
   expect(first.exitCode, resultText(first)).toBe(0);
 
@@ -348,7 +355,7 @@ exit "$status"`,
     ["onboard", "--non-interactive", "--yes"],
     "phase-4-reonboard",
     env({ NEMOCLAW_RECREATE_SANDBOX: "1" }),
-    30 * 60_000,
+    execTimeout(30 * 60_000),
   );
   expect(reonboard.exitCode, resultText(reonboard)).toBe(0);
   expect(fs.existsSync(TOKEN_FILE), `${TOKEN_FILE} missing after re-onboard`).toBe(true);
@@ -399,4 +406,5 @@ exit "$status"`,
     id: "gpu-double-onboard",
     status: "passed",
   });
-});
+  },
+);

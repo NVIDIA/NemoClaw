@@ -139,9 +139,17 @@ function git(cwd: string, args: readonly string[], input?: string): string {
   );
 }
 const gitValue = (cwd: string, args: readonly string[]): string => git(cwd, args).trim();
-function removeSnapshotSymlinks(directory: string): void {
-  for (const entry of fs.readdirSync(directory, { recursive: true, withFileTypes: true }))
-    if (entry.isSymbolicLink()) fs.rmSync(path.join(entry.parentPath, entry.name), { force: true });
+function removeSnapshotSymlinksResolvingOutside(directory: string): void {
+  const root = fs.realpathSync(directory);
+  for (const entry of fs.readdirSync(directory, { recursive: true, withFileTypes: true })) {
+    if (!entry.isSymbolicLink()) continue;
+    const link = path.join(entry.parentPath, entry.name);
+    const target = path.resolve(entry.parentPath, fs.readlinkSync(link));
+    const relative = path.relative(root, target);
+    const resolvesOutside =
+      relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative);
+    if (resolvesOutside) fs.rmSync(link, { force: true });
+  }
 }
 export function createLocalReviewSnapshot(
   source: string,
@@ -152,7 +160,6 @@ export function createLocalReviewSnapshot(
   const initialHead = gitValue(destination, ["rev-parse", "HEAD"]);
   git(destination, ["read-tree", initialHead]);
   git(destination, [...disabledFilters(source), "checkout-index", "--all", "--force"]);
-  removeSnapshotSymlinks(destination);
   const patch = git(source, ["diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD"]);
   if (patch) {
     git(destination, ["apply", "--cached", "--binary", "-"], patch);
@@ -177,7 +184,7 @@ export function createLocalReviewSnapshot(
     "Local review snapshot",
   ]);
   git(destination, ["update-ref", "--no-deref", "HEAD", commit]);
-  removeSnapshotSymlinks(destination);
+  removeSnapshotSymlinksResolvingOutside(destination);
   git(destination, ["cat-file", "-e", baseRef + "^{commit}"]);
   return { baseRef, headRef: commit };
 }
@@ -321,7 +328,6 @@ function specialistEnvironment(
     PR_REVIEW_ADVISOR_INTEREST: specialist.interest,
     PR_REVIEW_ADVISOR_MODEL: DEFAULT_ADVISOR_MODEL,
     RUNNER_TEMP: runnerTemp,
-    SANDBOX_NAME: `lr-${specialist.sandboxName.slice(-4)}-${path.basename(runnerTemp).slice(-8)}`,
   };
 }
 
@@ -347,7 +353,7 @@ export async function runLocalReview(input: {
   const ownsRoot = input.temporaryRoot === undefined;
   const snapshot = path.join(root, "pr-workdir");
   const output = path.join(root, "output");
-  const runners = path.join(root, "runners");
+  const runnerTemp = path.join(root, "runner");
   const lifecycle = input.lifecycle ?? defaultLocalReviewLifecycle;
   const destination = path.join(source, LOCAL_OUTPUT_DIRECTORY);
   let activeCleanup: (() => Promise<void>) | undefined;
@@ -374,12 +380,23 @@ export async function runLocalReview(input: {
   let cleanup: unknown;
   try {
     fs.mkdirSync(output, { recursive: true });
-    fs.mkdirSync(runners, { recursive: true });
+    fs.mkdirSync(runnerTemp, { recursive: true });
     const base = gitValue(source, ["rev-parse", "--verify", "origin/main^{commit}"]);
     const refs = (input.prepareSnapshot ?? createLocalReviewSnapshot)(source, snapshot, base);
-    for (const specialist of input.specialists ?? ADVISOR_SPECIALISTS) {
-      const runnerTemp = path.join(runners, specialist.interest + "-" + randomUUID().slice(0, 8));
-      fs.mkdirSync(runnerTemp, { recursive: true });
+    const specialists = input.specialists ?? ADVISOR_SPECIALISTS;
+    if (specialists.length > 0) {
+      await lifecycle.prepare(
+        specialistEnvironment(
+          input.advisorDirectory ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+          output,
+          runnerTemp,
+          snapshot,
+          refs,
+          specialists[0]!,
+        ),
+      );
+    }
+    for (const specialist of specialists) {
       await runAdvisorSpecialist({
         env: specialistEnvironment(
           input.advisorDirectory ??
@@ -391,6 +408,7 @@ export async function runLocalReview(input: {
           specialist,
         ),
         lifecycle,
+        prepare: false,
         validate: () => validateSpecialistArtifacts(output, specialist.interest),
         setActiveCleanup: (value) => {
           activeCleanup = value;

@@ -24,10 +24,7 @@ import {
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import { restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
-import {
-  assertMcpAdapterConfigMutationsAllowed,
-  assertMcpAdapterTeardownRuntimeCapabilities,
-} from "./mcp-bridge-runtime-capabilities";
+import { assertMcpAdapterTeardownRuntimeCapabilities } from "./mcp-bridge-runtime-capabilities";
 import {
   bridgeState,
   ensureSandboxGatewaySelected,
@@ -50,24 +47,14 @@ export {
  * provider objects (and therefore their host-only credentials) and registry
  * cleanup manifest. OpenShell requires the generated policy key to be removed before
  * detach. Any failure restores the managed runtime before returning.
+ *
  */
 export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
+  _options: { force?: boolean } = {},
 ): Promise<McpDestroyPreparation> {
   validateSandboxName(sandboxName);
   const currentSandbox = getSandboxOrThrow(sandboxName);
-  const entriesRequiringExternalCleanup = Object.values(bridgeState(currentSandbox)).filter(
-    (entry) => entry.addState !== "prepared",
-  );
-  // Run the host-visible config preflight before
-  // discardSafeIncompleteMcpAdds, which may remove the generated live policy key for a
-  // providerless preflighted add. That cleanup has no adapter/provider to
-  // probe; complete entries get the teardown runtime probe after retry markers.
-  assertMcpAdapterConfigMutationsAllowed(
-    sandboxName,
-    currentSandbox,
-    entriesRequiringExternalCleanup,
-  );
   const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, currentSandbox);
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const destroyAlreadyPrepared = !!sandbox.mcp?.destroyPreparedAt;
@@ -220,7 +207,11 @@ export async function restoreMcpBridgesAfterDestroyAbort(
   sandboxName: string,
   preparation: McpDestroyPreparation,
 ): Promise<void> {
-  if (preparation.entries.length === 0 || preparation.destroyAlreadyPending) {
+  if (
+    preparation.entries.length === 0 ||
+    preparation.destroyAlreadyPending ||
+    preparation.adapterScrubSkipped
+  ) {
     return;
   }
   const preparedSandbox = assertMcpDestroySnapshotCurrent(sandboxName, preparation.entries);

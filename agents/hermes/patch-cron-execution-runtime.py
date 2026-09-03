@@ -4,7 +4,7 @@
 """Relocate the pinned Hermes cron execution ledger into writable runtime state.
 
 Hermes v2026.7.20 / 0.19.0 creates ``cron/executions.db`` from the gateway.
-When Shields up is active, NemoClaw correctly seals ``cron`` as the high-risk
+NemoClaw keeps ``cron`` separate from the writable execution ledger because it is a high-risk
 location for cron job definitions, so a managed gateway restart cannot reopen
 that database.
 
