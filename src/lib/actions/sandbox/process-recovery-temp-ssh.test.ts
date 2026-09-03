@@ -162,6 +162,28 @@ describe("executeSandboxCommand temp SSH config", () => {
     expect(dockerSpawnSync).not.toHaveBeenCalled();
   });
 
+  it("refuses local fallback when selected OpenShell exec is inconclusive (#10514)", () => {
+    vi.mocked(spawnSync).mockReturnValue({
+      status: 1,
+      stdout: "untrusted output",
+      stderr: "",
+      pid: 1234,
+      output: [],
+      signal: null,
+    });
+
+    expect(
+      executeSandboxExecCommand("alpha", "printf revision-1", undefined, {
+        allowLocalDockerFallback: true,
+        runtimeSelection: {
+          gatewayName: "external-http",
+          workspace: "default",
+        },
+      }),
+    ).toBeNull();
+    expect(dockerSpawnSync).not.toHaveBeenCalled();
+  });
+
   it("uses the exact legacy alias while backing up a pre-upgrade sandbox", () => {
     captureSandboxSshConfig.mockReturnValue({
       status: 0,

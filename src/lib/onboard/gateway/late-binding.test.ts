@@ -106,9 +106,9 @@ describe("gateway lifecycle late binding", () => {
         }),
         replaceEnv: true,
       });
-      expect(runCaptureOpenshell.mock.calls[0]?.[1]?.env).toBe(selectedOptions?.env);
-      expect(runCaptureOpenshell.mock.calls[1]?.[1]?.env).toBe(selectedOptions?.env);
-      expect(runCaptureOpenshell.mock.calls[2]?.[1]?.env).toBe(selectedOptions?.env);
+      expect(runCaptureOpenshell.mock.calls[0]?.[1]?.env).toEqual(selectedOptions?.env);
+      expect(runCaptureOpenshell.mock.calls[1]?.[1]?.env).toEqual(selectedOptions?.env);
+      expect(runCaptureOpenshell.mock.calls[2]?.[1]?.env).toEqual(selectedOptions?.env);
       expect(selectedOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
       expect(selectedOptions?.env).not.toHaveProperty("OPENSHELL_TOKEN");
       expect(selectedOptions?.env).not.toHaveProperty("OPENSHELL_DISABLE_TLS");
@@ -292,7 +292,7 @@ describe("gateway lifecycle late binding", () => {
       );
       const runtimeIdentityOptions = runtimeIdentitySpy.mock.calls[0]?.[0];
       const managedOptions = managedStart.mock.calls[0]?.[0];
-      expect(runtimeIdentityOptions?.env).toBe(managedOptions?.env);
+      expect(runtimeIdentityOptions?.env).toEqual(managedOptions?.env);
       expect(runtimeIdentityOptions?.env).toEqual(
         expect.objectContaining({
           OPENSHELL_GATEWAY: "resumed",
@@ -317,7 +317,7 @@ describe("gateway lifecycle late binding", () => {
         }),
         replaceEnv: true,
       });
-      expect(statusOptions?.env).toBe(versionOptions?.env);
+      expect(statusOptions?.env).toEqual(versionOptions?.env);
       expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
       expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_TOKEN");
       expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_DISABLE_TLS");

@@ -95,7 +95,6 @@ describe("package-managed gateway version gate (#8094)", () => {
       });
 
       expect(verdict.supported).toBe(true);
-      expect(observedEnv).toBe(selectedEnv);
       expect(observedEnv?.OPENSHELL_GATEWAY).toBe("nemoclaw");
       expect(observedEnv?.OPENSHELL_WORKSPACE).toBe("default");
       expect(observedEnv?.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();

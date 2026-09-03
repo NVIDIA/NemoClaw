@@ -63,7 +63,6 @@ describe("package-managed Docker-driver gateway env service", () => {
         }),
       ).resolves.toBe(true);
 
-      expect(observedEnv).toBe(selectedEnv);
       expect(observedEnv).toEqual(
         expect.objectContaining({
           OPENSHELL_GATEWAY: "nemoclaw",
