@@ -20,6 +20,16 @@ describe("redactFullWithUrls", () => {
     ],
     ["userinfo only", "https://service-token@example.com/path", "https://example.com/path"],
     [
+      "single-quote-split userinfo",
+      "https://service-user:service-password'opaque@example.com/path",
+      "https://example.com/path",
+    ],
+    [
+      "double-quote-split userinfo",
+      'https://service-user:service-password"opaque@example.com/path',
+      "https://example.com/path",
+    ],
+    [
       "malformed URL fallback",
       "https://fallback-user:fallback-password@[not-an-ip/path",
       "https://[not-an-ip/path",

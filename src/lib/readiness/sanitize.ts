@@ -8,9 +8,7 @@ const UNSAFE_TERMINAL_CONTROL_PATTERN =
 
 /** Redact and render terminal/bidirectional controls as inert visible text. */
 export function sanitizeReadinessText(value: string, maxLength: number): string {
-  return redactFullWithUrls(
-    value.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1<REDACTED>@"),
-  )
+  return redactFullWithUrls(value)
     .replace(
       UNSAFE_TERMINAL_CONTROL_PATTERN,
       (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,

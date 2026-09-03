@@ -257,9 +257,7 @@ const UNSAFE_COMMAND_ERROR_CONTROL =
   /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu;
 
 function boundedCommandError(stderr: string, secretValues: readonly string[] = []): string {
-  let redacted = redactCredentialText(
-    stderr.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1<REDACTED>@"),
-  );
+  let redacted = redactCredentialText(stderr);
   for (const secret of [...new Set(secretValues)]
     .filter(Boolean)
     .sort((a, b) => b.length - a.length)) {

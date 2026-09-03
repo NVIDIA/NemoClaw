@@ -10,7 +10,8 @@ type MalformedUrlRedactor = (text: string) => string | null;
 // Redaction intentionally accepts every RFC-style URI scheme. Proxy and
 // custom-scheme URLs can carry credentials too; an allowlist here would create
 // a bypass rather than enforce a network boundary.
-export const URL_TOKEN_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi;
+export const URL_TOKEN_PATTERN =
+  /[a-z][a-z0-9+.-]*:\/\/(?:[^/?#\s'"]+['"][^/?#@\s]*@)?[^\s'"]+/gi;
 
 const URL_TRAILING_DELIMITERS = ")]}>.,;:!?";
 const MAX_URL_PARSE_ATTEMPTS = 9;

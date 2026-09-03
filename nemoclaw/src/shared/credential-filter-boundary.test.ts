@@ -131,6 +131,16 @@ describe("shared credential filter", () => {
     expect(redactCredentialText("failed at https://%")).toBe("failed at <REDACTED>");
   });
 
+  it.each(["'", '"'])("fully redacts URL userinfo split by %s", (quote) => {
+    const credential = "opaque-url-credential";
+
+    expect(
+      redactCredentialText(
+        `failed at https://operator:${credential}${quote}fragment@example.test/path`,
+      ),
+    ).toBe("failed at https://example.test/path");
+  });
+
   it.each([
     ["token prefix", TOKEN_PREFIX_PATTERNS],
     ["structured token", STRUCTURED_TOKEN_PATTERNS],
