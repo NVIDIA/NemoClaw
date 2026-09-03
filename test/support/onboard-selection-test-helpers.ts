@@ -205,6 +205,7 @@ export function runNativeDockerWindowsProviderBoundary(options: {
   );
   const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
   const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
+  const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
   const topologyPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
   );
@@ -218,8 +219,14 @@ export function runNativeDockerWindowsProviderBoundary(options: {
 const scenario = ${scenario};
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
+const wait = require(${waitPath});
 
 platform.isWsl = () => true;
+wait.waitForHttp = () => {
+  console.error("OLLAMA_READINESS_PROBED");
+  return true;
+};
+wait.sleepSeconds = () => {};
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : String(command);
   if (cmd.includes("command -v ollama")) return "";

@@ -68,6 +68,7 @@ describe(
       });
 
       assert.equal(boundary.status, 1);
+      assert.match(boundary.stderr, /OLLAMA_READINESS_PROBED/);
       assert.match(boundary.stderr, /MODEL_SELECTION_REACHED/);
       assert.doesNotMatch(boundary.stderr, /requires Docker Desktop/);
       assert.doesNotMatch(boundary.stderr, WINDOWS_EFFECT_MARKERS);
