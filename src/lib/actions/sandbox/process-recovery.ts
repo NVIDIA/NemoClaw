@@ -33,7 +33,7 @@ import {
   resolvePrivilegedSandboxTarget,
   withPrivilegedSandboxExecutionLease,
 } from "../../sandbox/privileged-exec";
-import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
+import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../state/registry";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import {
@@ -46,7 +46,6 @@ import {
   recoverHermesPortableLaunchForwards,
   recoverMessagingHostForward,
   resolveSandboxDashboardPort,
-  resolveSandboxLaunchForwardPorts,
   resolveSandboxHealthProbeUrl,
   verifyHermesPortableLaunchForwards,
   type HermesPortableForwardRecoveryFailure,
@@ -146,7 +145,6 @@ function commandTransportDependencies(): CommandTransportDependencies {
     isDirectSandboxFallbackUnavailableError,
     openshellProbeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
     root: ROOT,
-    withPrivilegedSandboxExecutionLease,
   };
 }
 
@@ -893,7 +891,7 @@ export function restartSandboxGateway(
   { quiet = false, deps = {} }: RestartSandboxGatewayOptions = {},
 ): GatewayRestartResult {
   return withUnsupportedHermesPortableGatewayRestartFence(sandboxName, () => {
-    return withTimerBoundShieldsMutationLock(sandboxName, "gateway restart", () =>
+    return withMcpLifecycleLockSync(sandboxName, () =>
       restartSandboxGatewayWithDeps(sandboxName, {
         quiet,
         deps: {
@@ -1923,7 +1921,7 @@ export function checkAndRecoverSandboxProcesses(
     probeTiming?: ProcessRecoveryProbeTiming;
   } = {},
 ) {
-  return withTimerBoundShieldsMutationLock(sandboxName, "gateway process recovery", () =>
+  return withMcpLifecycleLockSync(sandboxName, () =>
     checkAndRecoverSandboxProcessesWithoutHostLock(sandboxName, options),
   );
 }

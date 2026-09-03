@@ -30,7 +30,6 @@
 # Remember to remove entries once the feature is ready for docs.
 
 skip-features:
-  - "openclaw-sandbox-permissive.yaml"   # permissive policy file, experimental
   - "config-show"                        # plugin config-show command, experimental
 
 skip-terms:

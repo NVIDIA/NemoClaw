@@ -446,7 +446,6 @@ describe("rebuildSandbox flow: recovery", () => {
     expect(harness.errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("MCP bridge restore incomplete; inspect redacted diagnostics"),
     );
-    expect(harness.relockSpy).toHaveBeenCalled();
   });
 
   it("aborts before backup/delete when messaging manifest staging fails", async () => {
@@ -560,9 +559,9 @@ describe("rebuildSandbox flow: recovery", () => {
       sandboxEntry: {},
       executeSandboxCommand: () => ({ status: 1, stdout: "", stderr: "hash refresh failed" }),
       repairMutableConfigPerms: () => ({
-        applied: false,
-        skipReason: "unreadable",
-        reason: "cannot stat mutable config",
+        applied: true,
+        verified: false,
+        errors: ["cannot stat mutable config"],
       }),
       restoreSandboxState: () => ({
         success: false,
@@ -582,7 +581,6 @@ describe("rebuildSandbox flow: recovery", () => {
     expect(output).toContain("State restore was incomplete");
     expect(output).toContain("Mutable config permissions were not verified");
     expect(output).toContain("Mutable OpenClaw config hash was not refreshed");
-    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
     });

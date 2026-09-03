@@ -602,6 +602,18 @@ jobs:
             echo "ERROR: PR managed image ID did not resolve to itself." >&2
             exit 1
           fi
+          layer_count="$(
+            jq -er '
+              if length == 1 and (.[0].RootFS.Layers | type) == "array"
+              then .[0].RootFS.Layers | length
+              else error("expected one local image layer graph")
+              end
+            ' <<< "$image_json"
+          )"
+          if [ "$layer_count" -gt 124 ]; then
+            echo "ERROR: PR managed image has $layer_count filesystem layers; Docker import requires at most 124 to preserve one layer of headroom." >&2
+            exit 1
+          fi
 
           if [[ ! "$PUBLICATION_COHORT" =~ ^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] ||
              ! jq -e \
