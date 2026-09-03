@@ -335,6 +335,7 @@ test(
         { artifactName: "managed-image-openclaw-create-repair-volume" },
       );
       expect(repairCreate.exitCode).toBe(0);
+      repairVolumeCreated = true;
       const repairLabel = await host.command(
         "docker",
         [
@@ -347,7 +348,6 @@ test(
         { artifactName: "managed-image-openclaw-inspect-repair-volume" },
       );
       expect(repairLabel.stdout.trim()).toBe(cohort);
-      repairVolumeCreated = true;
       const refusalCreate = await host.command(
         "docker",
         [
@@ -360,6 +360,7 @@ test(
         { artifactName: "managed-image-openclaw-create-refusal-volume" },
       );
       expect(refusalCreate.exitCode).toBe(0);
+      refusalVolumeCreated = true;
       const refusalLabel = await host.command(
         "docker",
         [
@@ -372,7 +373,6 @@ test(
         { artifactName: "managed-image-openclaw-inspect-refusal-volume" },
       );
       expect(refusalLabel.stdout.trim()).toBe(cohort);
-      refusalVolumeCreated = true;
       await runContainer(
         host,
         image,

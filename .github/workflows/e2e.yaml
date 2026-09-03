@@ -4222,7 +4222,7 @@ jobs:
       E2E_AGENT_RUNTIME: "openclaw + hermes + langchain-deepagents-code"
       E2E_OBSERVABLE_OUTCOME: "Exact managed images start directly on the native architecture"
       RELEASE_E2E_ACTIVATION_PATH: ci/protected-managed-image-multiarch-activation-v1.json
-      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha || github.sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_HEAD_SHA: ${{ inputs.checkout_sha || github.sha }}
       NEMOCLAW_E2E_SHARD: ${{ matrix.shard }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
