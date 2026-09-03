@@ -18,6 +18,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Bundle.wxs" />
+    <Compile Include="$(GeneratedBootstrapperPayloadAuthoring)" />
   </ItemGroup>
   <Target Name="ValidateNemoClawBundleInputs" BeforeTargets="ResolveWixExtensionReferences">
     <Error Condition="'$(MsiPath)' == ''" Text="MsiPath is required." />
@@ -29,5 +30,7 @@
     <Error Condition="'$(BootstrapperRoot)' == ''" Text="BootstrapperRoot is required." />
     <Error Condition="!Exists('$(BootstrapperRoot)\mbanative.dll')" Text="The native WiX managed-bootstrapper bridge is missing." />
     <Error Condition="!Exists('$(BootstrapperRoot)\NemoClaw.Bootstrapper.runtimeconfig.json')" Text="The bootstrapper runtime configuration is missing." />
+    <Error Condition="'$(GeneratedBootstrapperPayloadAuthoring)' == ''" Text="GeneratedBootstrapperPayloadAuthoring is required." />
+    <Error Condition="!Exists('$(GeneratedBootstrapperPayloadAuthoring)')" Text="The generated bootstrapper payload authoring is missing." />
   </Target>
 </Project>

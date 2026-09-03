@@ -36,12 +36,4 @@
       <MsiPackage Id="NemoClawArm64Msi" SourceFile="$(var.MsiPath)" Compressed="yes" Vital="yes" />
     </Chain>
   </Bundle>
-
-  <Fragment>
-    <PayloadGroup Id="NemoClawBootstrapperPayloads">
-      <Payloads Include="$(var.BootstrapperRoot)\**">
-        <Exclude Files="$(var.BootstrapperPath)" />
-      </Payloads>
-    </PayloadGroup>
-  </Fragment>
 </Wix>

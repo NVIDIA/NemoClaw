@@ -209,6 +209,53 @@ function New-GroupedPayloadAuthoring {
     Write-Host "Grouped WiX payload authoring: files=$($stats.fileCount) components=$($componentIds.Count)"
 }
 
+function New-BootstrapperPayloadAuthoring {
+    param(
+        [Parameter(Mandatory)][string]$BootstrapperRoot,
+        [Parameter(Mandatory)][string]$PrimaryExecutable,
+        [Parameter(Mandatory)][string]$OutputPath
+    )
+
+    $settings = [Xml.XmlWriterSettings]::new()
+    $settings.Encoding = [Text.UTF8Encoding]::new($false)
+    $settings.Indent = $true
+    $settings.NewLineChars = [Environment]::NewLine
+    $settings.NewLineHandling = [Xml.NewLineHandling]::Replace
+    $writer = [Xml.XmlWriter]::Create($OutputPath, $settings)
+    $namespace = 'http://wixtoolset.org/schemas/v4/wxs'
+    $root = [IO.Path]::GetFullPath($BootstrapperRoot).TrimEnd('\')
+    $primary = [IO.Path]::GetFullPath($PrimaryExecutable)
+    $payloads = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force | Where-Object {
+        -not [string]::Equals($_.FullName, $primary, [StringComparison]::OrdinalIgnoreCase)
+    } | Sort-Object FullName)
+    if ($payloads.Count -eq 0) {
+        Fail-WindowsPackageBuild 'Bootstrapper publish did not contain any support payloads.'
+    }
+
+    try {
+        $writer.WriteStartDocument()
+        $writer.WriteStartElement('Wix', $namespace)
+        $writer.WriteStartElement('Fragment', $namespace)
+        $writer.WriteStartElement('PayloadGroup', $namespace)
+        $writer.WriteAttributeString('Id', 'NemoClawBootstrapperPayloads')
+        foreach ($payload in $payloads) {
+            $relativePath = $payload.FullName.Substring($root.Length + 1)
+            $writer.WriteStartElement('Payload', $namespace)
+            $writer.WriteAttributeString('Id', (Get-StableWixIdentifier -Prefix 'BaPayload_' -Value $relativePath))
+            $writer.WriteAttributeString('Name', $relativePath)
+            $writer.WriteAttributeString('SourceFile', $payload.FullName)
+            $writer.WriteEndElement()
+        }
+        $writer.WriteEndElement()
+        $writer.WriteEndElement()
+        $writer.WriteEndElement()
+        $writer.WriteEndDocument()
+    } finally {
+        $writer.Dispose()
+    }
+    Write-Host "Explicit WiX bootstrapper authoring: supportPayloads=$($payloads.Count)"
+}
+
 if ($ProductVersion -cnotmatch '^[0-9]{1,3}\.[0-9]{1,5}\.[0-9]{1,5}$') {
     Fail-WindowsPackageBuild 'ProductVersion must be a strict three-part MSI version.'
 }
@@ -333,6 +380,7 @@ $setupPath = Join-Path $output $setupName
 $bootstrapperProject = Join-Path $sourceRoot 'packaging\windows\bootstrapper\NemoClaw.Bootstrapper.csproj'
 $bootstrapperOutput = Join-Path $intermediate 'bootstrapper\publish'
 $bootstrapperPath = Join-Path $bootstrapperOutput 'NemoClaw.Bootstrapper.exe'
+$bootstrapperPayloadAuthoring = Join-Path $intermediate 'BootstrapperPayloads.wxs'
 $bootstrapperSha256 = $null
 $bootstrapperAuthenticodeStatus = $null
 $payloadAuthoring = Join-Path $intermediate 'GroupedPayload.wxs'
@@ -425,11 +473,16 @@ try {
     }
     $bootstrapperSha256 = (Get-FileHash -LiteralPath $bootstrapperPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $bootstrapperAuthenticodeStatus = (Get-AuthenticodeSignature -LiteralPath $bootstrapperPath).Status.ToString()
+    New-BootstrapperPayloadAuthoring `
+        -BootstrapperRoot $bootstrapperOutput `
+        -PrimaryExecutable $bootstrapperPath `
+        -OutputPath $bootstrapperPayloadAuthoring
 
     $bundleProperties = $commonProperties + @(
         "-p:MsiPath=$msiPath",
         "-p:BootstrapperPath=$bootstrapperPath",
-        "-p:BootstrapperRoot=$bootstrapperOutput"
+        "-p:BootstrapperRoot=$bootstrapperOutput",
+        "-p:GeneratedBootstrapperPayloadAuthoring=$bootstrapperPayloadAuthoring"
     )
     $bundleRestoreArguments = @(
         'restore', $bundleProject,
