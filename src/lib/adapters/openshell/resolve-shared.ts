@@ -6,7 +6,7 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { HERMES_LIFECYCLE_DEFINITION } from "../../domain/lifecycle/hermes-definition";
 import {
   assertPodmanExecutableAuthority,
-  assertPodmanExecutableMetadataAuthority,
+
   capturePodmanExecutableAuthority,
   type PodmanExecutableAuthority,
   type PodmanExecutableAuthorityDeps,
@@ -145,7 +145,7 @@ export function assertHermesPortableOpenShellExecutableFileAuthority(
     failExecutableAuthority("disagrees with the current OpenShell resolution");
   }
   try {
-    assertPodmanExecutableMetadataAuthority(expected.executable, deps);
+    assertPodmanExecutableAuthority(expected.executable, deps);
   } catch {
     failExecutableAuthority("executable generation changed after reservation");
   }
