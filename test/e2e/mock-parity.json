@@ -507,6 +507,8 @@
         "src/lib/onboard/messaging-policy-presets.test.ts",
         "test/channels/channels-add-preset.test.ts",
         "test/e2e/support/hermes-discord-policy-binding.test.ts",
+        "test/e2e/support/hermes-discord-proxy-request.test.ts",
+        "test/onboarding/effective-policy-contracts.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
         "test/onboarding/onboard-preset-diff.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",

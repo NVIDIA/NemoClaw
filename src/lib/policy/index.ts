@@ -478,10 +478,10 @@ const MESSAGING_PRESET_LABELS: Readonly<Record<string, string>> = Object.fromEnt
   }),
 );
 
-const MESSAGING_PRESET_VALIDATION_WARNING_LINES: Readonly<Record<string, readonly string[]>> =
-  getMessagingPolicyPresetValidationWarnings();
-
-function getPresetValidationWarning(presetName: string): string | null {
+function getPresetValidationWarning(
+  presetName: string,
+  options: { agent?: "openclaw" | "hermes" } = {},
+): string | null {
   if (presetName === "jira") {
     return [
       "Jira preset validation uses per-binary policy signals.",
@@ -508,7 +508,10 @@ function getPresetValidationWarning(presetName: string): string | null {
     "configuration are wired up at onboard time and are not added by applying",
     "this preset alone.",
   ];
-  lines.push(...(MESSAGING_PRESET_VALIDATION_WARNING_LINES[presetName] ?? []));
+  const validationWarningLines = getMessagingPolicyPresetValidationWarnings({
+    agent: options.agent,
+  });
+  lines.push(...(validationWarningLines[presetName] ?? []));
 
   return lines.join("\n  ");
 }
