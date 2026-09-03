@@ -31,7 +31,7 @@ describe("backup-workspace.sh", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it("preserves a rejected directory diagnostic while backing up regular files (#10636)", () => {
+  it("reports an incomplete backup when a directory is rejected (#10636)", () => {
     const calls = path.join(root, "nemoclaw-calls.txt");
     const openshellCalls = path.join(root, "openshell-calls.txt");
     const workspace = path.join(root, "workspace");
@@ -77,7 +77,7 @@ exit 99
       },
     });
 
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, result.stderr).toBe(1);
     expect(result.stderr).toContain("NEMOCLAW_TEST_REJECTED_UNSAFE_DIRECTORY");
     expect(fs.existsSync(openshellCalls)).toBe(false);
 
@@ -91,6 +91,12 @@ exit 99
     const [backupName] = fs.readdirSync(backupRoot);
     expect(backupName).toBeTruthy();
     const backupDir = path.join(backupRoot, backupName!);
+    expect(result.stderr).toContain(
+      `Backup is incomplete at ${backupDir}/ because memory/ was not downloaded.`,
+    );
+    expect(result.stderr).toContain(
+      "Remove unsupported entries from /sandbox/.openclaw/workspace/memory/ and rerun the backup before restore.",
+    );
     expect(fs.readFileSync(path.join(backupDir, "SOUL.md"), "utf8")).toBe("saved\n");
     expect(fs.readFileSync(path.join(backupDir, "USER.md"), "utf8")).toBe("saved\n");
     expect(fs.readFileSync(path.join(backupDir, "IDENTITY.md"), "utf8")).toBe("saved\n");

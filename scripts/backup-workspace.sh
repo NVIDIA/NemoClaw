@@ -98,6 +98,7 @@ do_backup() {
   info "Backing up workspace from sandbox '${sandbox}'..."
 
   local count=0
+  local failed_directory=""
   for f in "${FILES[@]}"; do
     if "$NEMOCLAW_CLI_BIN" "$sandbox" download "${WORKSPACE_PATH}/${f}" "${dest}/"; then
       count=$((count + 1))
@@ -111,12 +112,17 @@ do_backup() {
       count=$((count + 1))
     else
       warn "Skipped ${d}/ (not found or download failed)"
+      failed_directory="$d"
     fi
   done
 
   if [ "$count" -eq 0 ]; then
     rmdir "$dest" 2>/dev/null || true
     fail "No files were backed up. Check that the sandbox '${sandbox}' exists and has workspace files."
+  fi
+
+  if [ -n "$failed_directory" ]; then
+    fail "Backup is incomplete at ${dest}/ because ${failed_directory}/ was not downloaded. Remove unsupported entries from ${WORKSPACE_PATH}/${failed_directory}/ and rerun the backup before restore."
   fi
 
   info "Backup saved to ${dest}/ (${count} items)"
