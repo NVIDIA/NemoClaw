@@ -546,7 +546,6 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     format: "yaml",
     configFile: "config.yaml",
     sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
-    stateLockPlanInImage: true,
   };
   const resolveAgentConfigSpy = vi
     .spyOn(sandboxConfig, "resolveAgentConfig")

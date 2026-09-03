@@ -21,6 +21,14 @@ const helper = resolve(
   "../../../.github/actions/publish-managed-image-digest/validate.sh",
 );
 const roots: string[] = [];
+function manifest(layerCount = 1): string {
+  return JSON.stringify({
+    schemaVersion: 2,
+    layers: Array.from({ length: layerCount }, (_, index) => ({
+      digest: `sha256:${String(index).padStart(64, "0")}`,
+    })),
+  });
+}
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -35,14 +43,14 @@ describe("managed-image digest publication validation", () => {
     const pullConfig = join(root, "pull-config");
     mkdirSync(bin);
     mkdirSync(runner);
-    const manifest = "published-manifest";
-    const digest = `sha256:${createHash("sha256").update(manifest).digest("hex")}`;
+    const publishedManifest = manifest();
+    const digest = `sha256:${createHash("sha256").update(publishedManifest).digest("hex")}`;
     const docker = join(bin, "docker");
     writeFileSync(
       docker,
       `#!/usr/bin/env bash
 set -euo pipefail
-if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then printf %s '${manifest}'; exit 0; fi
+if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then printf %s '${publishedManifest}'; exit 0; fi
 [ -z "\${DOCKER_AUTH_CONFIG+x}" ] || exit 91
 if [ "$1" = pull ]; then
   case "$DOCKER_CONFIG" in "$RUNNER_TEMP"/anonymous-docker-*) ;; *) exit 92 ;; esac
@@ -84,16 +92,32 @@ exit 94
     const pullConfig = join(root, "pull-config");
     mkdirSync(bin);
     mkdirSync(runner);
-    const manifest = "published-manifest";
-    const digest = `sha256:${createHash("sha256").update(manifest).digest("hex")}`;
+    const platformManifest = manifest();
+    const platformDigest = `sha256:${createHash("sha256").update(platformManifest).digest("hex")}`;
+    const publishedManifest = JSON.stringify({
+      schemaVersion: 2,
+      manifests: [
+        {
+          digest: platformDigest,
+          platform: { architecture: "amd64", os: "linux" },
+        },
+        {
+          digest: `sha256:${"c".repeat(64)}`,
+          platform: { architecture: "unknown", os: "unknown" },
+        },
+      ],
+    });
+    const digest = `sha256:${createHash("sha256").update(publishedManifest).digest("hex")}`;
     const imageId = "sha256:" + "b".repeat(64);
     const docker = join(bin, "docker");
     writeFileSync(
       docker,
       "#!/usr/bin/env bash\nset -euo pipefail\n" +
-        'if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then printf %s \'' +
-        manifest +
-        "'; exit 0; fi\n" +
+        'if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then case "$*" in *"$PLATFORM_DIGEST"*) printf %s \'' +
+        platformManifest +
+        "' ;; *) printf %s '" +
+        publishedManifest +
+        "' ;; esac; exit 0; fi\n" +
         'if [ "$1" = pull ]; then [ -z "${DOCKER_AUTH_CONFIG+x}" ] || exit 91; case "$DOCKER_CONFIG" in "$RUNNER_TEMP"/anonymous-docker-*) ;; *) exit 92 ;; esac; [ -z "$(find "$DOCKER_CONFIG" -mindepth 1 -print -quit)" ] || exit 93; printf %s "$DOCKER_CONFIG" > "$PULL_CONFIG_OUTPUT"; exit 0; fi\n' +
         'if [ "$1 $2" = "image inspect" ]; then printf \'%s\\n\' \'' +
         imageId +
@@ -111,6 +135,7 @@ exit 94
         IMAGE: "ghcr.io/nvidia/nemoclaw/test",
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         PLATFORM: "linux/amd64",
+        PLATFORM_DIGEST: platformDigest,
         PULL_CONFIG_OUTPUT: pullConfig,
         RUNNER_TEMP: runner,
       },

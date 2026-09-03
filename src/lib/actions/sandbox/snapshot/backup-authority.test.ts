@@ -186,7 +186,7 @@ describe("managed snapshot backup authority", () => {
     privilegedCaptureMocks.withPrivilegedSandboxExecutionLease.mockClear();
   });
 
-  it("captures the exact OpenClaw configuration with bounded privileged execution", () => {
+  it("captures the exact OpenClaw configuration with bounded direct execution", () => {
     const data = Buffer.from('{"models":{"default":"nvidia/test"}}\n');
     privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReturnValue({
       status: 0,

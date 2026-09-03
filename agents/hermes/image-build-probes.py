@@ -208,6 +208,104 @@ def verify_session_delete() -> None:
     assert not any(r["id"] == session_id for r in rows), "session still present after delete"
 
 
+_SESSION_STATE_PROBE_ID = "nemoclaw-cross-uid-session-probe"
+_SESSION_STATE_DIRECTORY = Path("/sandbox/.hermes/runtime")
+_SESSION_STATE_SIDECAR_NAMES = ("state.db-wal", "state.db-shm")
+
+
+def _session_state_journal_mode(db: object) -> str:
+    connection = getattr(db, "_conn")
+    row = connection.execute("PRAGMA journal_mode").fetchone()
+    assert row and isinstance(row[0], str), row
+    journal_mode = row[0].lower()
+    assert journal_mode in {"delete", "wal"}, journal_mode
+    return journal_mode
+
+
+def _verify_session_state_metadata(
+    journal_mode: str, expected_owners: dict[str, str]
+) -> None:
+    import grp
+    import pwd
+    import stat
+
+    expected_names = {"state.db"}
+    if journal_mode == "wal":
+        expected_names.update(_SESSION_STATE_SIDECAR_NAMES)
+    elif journal_mode == "delete":
+        for name in _SESSION_STATE_SIDECAR_NAMES:
+            path = _SESSION_STATE_DIRECTORY / name
+            try:
+                metadata = path.lstat()
+            except FileNotFoundError:
+                continue
+            raise AssertionError((path, metadata))
+    else:
+        raise AssertionError(journal_mode)
+
+    assert set(expected_owners) == expected_names, expected_owners
+    for name in expected_names:
+        path = _SESSION_STATE_DIRECTORY / name
+        metadata = path.lstat()
+        assert stat.S_ISREG(metadata.st_mode), (path, metadata)
+        assert metadata.st_nlink == 1, (path, metadata.st_nlink)
+        assert pwd.getpwuid(metadata.st_uid).pw_name == expected_owners[name], (
+            path,
+            metadata.st_uid,
+        )
+        assert grp.getgrgid(metadata.st_gid).gr_name == "sandbox", (path, metadata.st_gid)
+        assert stat.S_IMODE(metadata.st_mode) == 0o660, (path, oct(metadata.st_mode))
+
+
+def verify_session_state_create() -> None:
+    from hermes_state import SessionDB
+
+    db = SessionDB()
+    try:
+        db.create_session(_SESSION_STATE_PROBE_ID, "gateway")
+        db.append_message(_SESSION_STATE_PROBE_ID, "user", "gateway-created")
+        rows = db.list_sessions_rich(limit=10)
+        assert any(row["id"] == _SESSION_STATE_PROBE_ID for row in rows), rows
+        journal_mode = _session_state_journal_mode(db)
+        expected_owners = {"state.db": "gateway"}
+        if journal_mode == "wal":
+            expected_owners.update(
+                {name: "gateway" for name in _SESSION_STATE_SIDECAR_NAMES}
+            )
+        _verify_session_state_metadata(journal_mode, expected_owners)
+    finally:
+        db.close()
+
+
+def verify_session_state_reopen() -> None:
+    from hermes_state import SessionDB
+
+    db = SessionDB()
+    try:
+        rows = db.list_sessions_rich(limit=10)
+        assert any(row["id"] == _SESSION_STATE_PROBE_ID for row in rows), rows
+        db.append_message(_SESSION_STATE_PROBE_ID, "assistant", "sandbox-appended")
+        messages = db.get_messages(_SESSION_STATE_PROBE_ID)
+        assert [message["content"] for message in messages[-2:]] == [
+            "gateway-created",
+            "sandbox-appended",
+        ], messages
+        journal_mode = _session_state_journal_mode(db)
+        expected_owners = {"state.db": "gateway"}
+        if journal_mode == "wal":
+            expected_owners.update(
+                {name: "sandbox" for name in _SESSION_STATE_SIDECAR_NAMES}
+            )
+        _verify_session_state_metadata(journal_mode, expected_owners)
+        assert db.delete_session(_SESSION_STATE_PROBE_ID)
+        assert not any(
+            row["id"] == _SESSION_STATE_PROBE_ID
+            for row in db.list_sessions_rich(limit=10)
+        )
+    finally:
+        db.close()
+
+
 def verify_discord_recovery_source() -> None:
     source = Path("/opt/hermes/plugins/platforms/discord/recovery.py").read_text(
         encoding="utf-8"
@@ -443,6 +541,8 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "profile-policy": verify_profile_policy,
     "session-delete": verify_session_delete,
     "session-preview": verify_session_preview,
+    "session-state-create": verify_session_state_create,
+    "session-state-reopen": verify_session_state_reopen,
 }
 
 
