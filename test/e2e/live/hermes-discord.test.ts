@@ -645,21 +645,6 @@ PY`,
       fakeGateway.port,
       redactionValues,
     );
-    await host.command(
-      "bash",
-      [
-        "-lc",
-        'if [ -f "$1" ]; then sed -n "1,80p" "$1"; else printf "MISSING_CAPTURE\\n"; fi',
-        "read-hermes-discord-gateway-capture",
-        fakeGateway.captureFile,
-      ],
-      {
-        artifactName: "hermes-discord-gateway-capture",
-        env,
-        redactionValues,
-        timeoutMs: 30_000,
-      },
-    );
     expectExitZero(nativeGateway, "Hermes Python Discord Gateway protocol proof");
     assertDiscordGatewayCapture(fakeGateway.captureFile, DISCORD_TOKEN);
 
@@ -739,9 +724,12 @@ PY`,
       SANDBOX_NAME,
       `FAKE_DISCORD_REST_PORT=${shellQuote(fakeRest.port)} /opt/hermes/.venv/bin/python - <<'PY'
 import os
+import re
 import urllib.request
 
 token = os.environ.get("DISCORD_BOT_TOKEN", "")
+if not re.fullmatch(r"openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN", token):
+    raise SystemExit("invalid Discord token placeholder")
 request = urllib.request.Request(
     f"http://${FAKE_DISCORD_HOST}:{os.environ['FAKE_DISCORD_REST_PORT']}/api/v10/users/@me",
     headers={"Authorization": f"Bot {token}"},
@@ -786,7 +774,8 @@ done`,
       [],
       { artifactName: "phase-7-no-local-discord-bridge", redactionValues },
     );
-    expect(bridgeResidue.stdout.trim()).toBe("");
+    expectExitZero(bridgeResidue, "no local Discord bridge residue probe");
+    expect(resultText(bridgeResidue).trim()).toBe("");
 
     progress.phase("finalize Hermes Discord resources");
     await (async (): Promise<void> => {
