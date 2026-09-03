@@ -89,6 +89,18 @@ explicitly disabled platform before environment processing and restores those
 complete objects afterward. The target import block includes `math`, and the
 exact patch anchor and output digests were updated accordingly.
 
+`/proc/1/environ` records the environment from PID 1 startup and does not
+reflect later launcher exports. For the Hermes boundary, the trusted launcher
+overwrites only `HERMES_HOME`, `HERMES_LAZY_INSTALL_TARGET`, and
+`HERMES_BUNDLED_PLUGINS` before `hermes gateway run`. The root managed
+controller applies those values to the captured environment and validates the
+effective environment in process. It still fails closed for prohibited runtime
+controls, OpenShell supervisor-only variables, and raw secret-shaped values.
+`test/agents/hermes/hermes-env-secret-boundary-hardening.test.ts` and
+`test/inference/managed/managed-gateway-control.test.ts` cover the stale
+`/proc` snapshot, launcher overrides, in-process validation, and rejection
+cases.
+
 The gateway-runtime-metadata, gateway-process-identity, Discord recovery,
 Langfuse credential, provider/model translation, resumed one-shot, and cron
 restore controls still apply to the reviewed target shapes. Each retained

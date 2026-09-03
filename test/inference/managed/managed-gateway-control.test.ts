@@ -416,13 +416,13 @@ with tempfile.TemporaryDirectory() as root:
 
         preflight_steps = []
         real_validator = control._run_fixed_validator
-        real_runtime_validator = control._validate_runtime_environment
+        real_runtime_validator = control._validate_managed_gateway_environment
         real_hash_check = control._verify_locked_hermes_hash
         control._run_fixed_validator = lambda script, arguments, _recovery_deadline=None: preflight_steps.append({
             "script": script,
             "arguments": arguments,
         })
-        control._validate_runtime_environment = lambda script, environment: preflight_steps.append({
+        control._validate_managed_gateway_environment = lambda script, environment: preflight_steps.append({
             "script": script,
             "arguments": ["runtime-env"],
             "runtime_port": environment.get("NEMOCLAW_DASHBOARD_PORT"),
@@ -497,7 +497,7 @@ with tempfile.TemporaryDirectory() as root:
                 control.time.sleep = real_sleep
         finally:
             control._run_fixed_validator = real_validator
-            control._validate_runtime_environment = real_runtime_validator
+            control._validate_managed_gateway_environment = real_runtime_validator
             control._verify_locked_hermes_hash = real_hash_check
 
         real_subprocess_run = control.subprocess.run
@@ -505,7 +505,7 @@ with tempfile.TemporaryDirectory() as root:
             AssertionError("runtime boundary must not exec with untrusted env")
         )
         try:
-            control._validate_runtime_environment(
+            control._validate_managed_gateway_environment(
                 sys.argv[2],
                 {
                     "LD_PRELOAD": "/tmp/attacker.so",
