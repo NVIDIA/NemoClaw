@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { resultText } from "../fixtures/clients/command.ts";
-import type { RetryFailureClass } from "../fixtures/retry-policy.ts";
+import type { RetryFailureClass } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 

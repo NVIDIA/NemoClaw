@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
+import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -46,7 +47,7 @@ import {
   runBoundedRetry,
   type RetryEvidence,
   type RetryFailureClass,
-} from "../fixtures/retry-policy.ts";
+} from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
@@ -644,7 +645,7 @@ export async function installHermes(
         cwd: REPO_ROOT,
         env: env(apiKey, installEnv),
         redactionValues: [apiKey],
-        timeoutMs: 25 * 60_000,
+        timeoutMs: execTimeout(25 * 60_000),
       },
     );
     const retry =
@@ -688,11 +689,9 @@ export async function runHermesInferenceSetWithRetry(
     onEvidence: evidenceArtifacts
       ? (evidence) => writeInferenceSwitchRetryEvidence(evidenceArtifacts, evidence)
       : undefined,
-    run: (attempt, verify) =>
-      host.command("node", verify ? args : [...args, "--no-verify"], {
-        artifactName: verify
-          ? `hermes-inference-set-${attempt}`
-          : "hermes-inference-set-no-verify-after-transient-failures",
+    run: (attempt) =>
+      host.command("node", args, {
+        artifactName: `hermes-inference-set-${attempt}`,
         env: env(undefined, compatibleAnthropicSwitchEnv(options.compatibleBinding ?? null)),
         redactionValues,
         timeoutMs: 180_000,
