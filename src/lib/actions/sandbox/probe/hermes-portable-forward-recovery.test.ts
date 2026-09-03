@@ -551,6 +551,8 @@ describe("Hermes Portable connect composition", () => {
         assertCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
       }),
       expect.objectContaining({ onComplete: expect.any(Function) }),
+      expect.objectContaining({ onComplete: expect.any(Function) }),
+      expect.objectContaining({ onComplete: expect.any(Function) }),
     );
     const startCall = harness.runOpenshellSpy.mock.calls.find(
       ([args]) => Array.isArray(args) && args[0] === "forward" && args[1] === "start",
