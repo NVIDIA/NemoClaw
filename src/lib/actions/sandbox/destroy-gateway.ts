@@ -9,7 +9,6 @@ import {
   OPENSHELL_HEAVY_TIMEOUT_MS,
   OPENSHELL_OPERATION_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
-import { DASHBOARD_PORT } from "../../core/ports";
 import { stopOpenShellGatewayUserService } from "../../onboard/docker-driver-gateway-service";
 import {
   resolveGatewayPortFromName,
@@ -27,7 +26,6 @@ import {
   isHostPortFree,
   stopHostGatewayProcesses,
 } from "../../onboard/host-gateway-process";
-import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 
 export type DestroyRunOpenshell = (
   args: string[],
@@ -35,8 +33,6 @@ export type DestroyRunOpenshell = (
 ) => { error?: Error; status: number | null; stdout?: string; stderr?: string };
 
 export const SANDBOX_DESTROY_TIMEOUT_MS = OPENSHELL_HEAVY_TIMEOUT_MS;
-
-const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 
 export interface CleanupGatewayDeps {
   clearGatewayRuntimeFiles?: typeof clearHostGatewayRuntimeFiles;
@@ -121,15 +117,6 @@ export function cleanupGatewayAfterLastSandbox(
     (require("../../adapters/openshell/runtime") as { runOpenshell: DestroyRunOpenshell })
       .runOpenshell;
 
-  openshell(["forward", "stop", DASHBOARD_FORWARD_PORT], {
-    ignoreError: true,
-    stdio: ["ignore", "ignore", "ignore"],
-  });
-  // After the cooperative forward-stop, sweep the dashboard port range for
-  // stale host-side gateway-forward processes. The forward-stop above releases
-  // ports the live openshell tracks; this catches orphans whose openshell
-  // record was lost across upgrades or failed onboards.
-  stopStaleDashboardListeners();
   let packagedServiceFallbackReason: string | null = null;
   if (!externallySupervised && owner.source === "packaged-service") {
     const stopService = deps.stopOpenShellGatewayUserService ?? stopOpenShellGatewayUserService;
