@@ -90,6 +90,7 @@ test(
     },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("load Slack credentials and clear pairing state");
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     const env = pairingEnv({
       sandboxName: SANDBOX_NAME,
