@@ -106,7 +106,7 @@ describe("detectInferenceProviderHostState", () => {
   it("collects local Ollama and vLLM state into one provider host snapshot", () => {
     const dockerCapture = vi.fn(() => "sha256:cached-image\n");
     const deps = buildDeps({
-      hostCommandExists: vi.fn((command) => command === "ollama"),
+      hostCommandExists: vi.fn((command) => command === "ollama" || command === "docker"),
       findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
       runCapture: vi.fn((command) =>
         command.join(" ").includes(`http://127.0.0.1:8000/v1/models`) ? "{}" : "",
@@ -141,6 +141,7 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.vllmRunning).toBe(true);
     expect(state.hasVllmImage).toBe(true);
     expect(state.vllmEntries.map((entry) => entry.key)).toEqual(["vllm"]);
+    expect(deps.hostCommandExists).toHaveBeenCalledWith("docker");
     expect(state.gpuNimCapable).toBe(true);
     expect(state.ollamaInstallMenu.entry).toBeNull();
     expect(deps.getWindowsHostOllamaDockerRequirement).toHaveBeenCalledWith(null);
