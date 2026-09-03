@@ -63,7 +63,7 @@ Review the [Prerequisites](prerequisites) before you begin.
       Express install mode preserves the explicit Hermes selection in the install command.
       On supported non-N1x express platforms, enter `n` if you want to select a sandbox name, an inference provider, and a model interactively.
       On N1x, entering `n` stops installation because the Deferred managed-vLLM preview is the only admitted onboarding path.
-      Refer to [Use Docker and supported platforms](#use-docker-and-supported-platforms) for more information.
+      Refer to [Use a container runtime and supported platforms](#use-a-container-runtime-and-supported-platforms) for more information.
     </Note>
 
     The install command creates the `my-hermes` sandbox used in the commands that follow.
@@ -125,6 +125,46 @@ Use these details when your first-run path needs more control.
     Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling those services.
   </Accordion>
 
+  <Accordion title="Add Langfuse observability">
+    Register Langfuse keys with OpenShell instead of writing them into the sandbox.
+    The checked-in `langfuse-hermes-v1` profile binds both keys to Langfuse Cloud and the managed Hermes Python runtime.
+
+    ```bash
+    export LANGFUSE_PUBLIC_KEY=pk-lf-...
+    export LANGFUSE_SECRET_KEY=sk-lf-...
+
+    nemohermes credentials add my-hermes-langfuse \
+      --type langfuse-hermes-v1 \
+      --credential LANGFUSE_PUBLIC_KEY \
+      --credential LANGFUSE_SECRET_KEY
+
+    unset LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
+    nemohermes my-hermes rebuild
+    ```
+
+    Connect to the rebuilt sandbox and enable the bundled plugin, then restart the managed Hermes gateway from the host.
+
+    ```bash
+    nemohermes my-hermes connect
+    hermes plugins enable observability/langfuse
+    exit
+    nemohermes my-hermes gateway restart
+    ```
+
+    Hermes receives revision-scoped `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` placeholders.
+    OpenShell decodes the Langfuse Basic-auth header, replaces both placeholders only for `cloud.langfuse.com:443`, and re-encodes the header before forwarding it.
+    The managed Hermes plugin rejects a Langfuse base URL that is not absolute HTTPS before it constructs the authenticated client.
+    Do not put raw keys or copied `HERMES_LANGFUSE_PUBLIC_KEY` and `HERMES_LANGFUSE_SECRET_KEY` placeholders in `~/.hermes/.env`.
+    A copied revision can shadow the current provider value after rotation or rebuild.
+
+    For a self-hosted Langfuse deployment, copy `nemoclaw-blueprint/provider-profiles/langfuse-hermes-v1.yaml` to a new profile, change its `id` and exact `endpoints[0].host`, and import that reviewed profile before running `credentials add` with the new type.
+    When `HERMES_LANGFUSE_BASE_URL` uses a non-default HTTPS port, change `endpoints[0].port` to that exact port too.
+    Keep the profile limited to the HTTPS ingestion origin and `/api/public/**` paths.
+    Store only the non-secret `HERMES_LANGFUSE_BASE_URL` in `~/.hermes/.env`.
+    Do not use the cloud profile for a self-hosted host because OpenShell will correctly refuse to resolve its credentials there.
+    Use the same exact-host profile process when a hosted Langfuse project uses an origin other than `cloud.langfuse.com`.
+  </Accordion>
+
   <Accordion title="Automate or repeat onboarding">
     The hosted installer follows the maintained last-known-good (`lkg`) release tag by default.
     For a scripted installation, provide the required values before running the installer.
@@ -181,7 +221,10 @@ Use these details when your first-run path needs more control.
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
     ```
 
-    NemoClaw derives the forwarded dashboard port from `CHAT_UI_URL`, binds it for remote access when the origin is non-loopback, and prints the final dashboard URL in the ready summary.
+    NemoClaw derives the forwarded dashboard port from `CHAT_UI_URL` and passes its hostname to Hermes for browser Host-header validation.
+    The Hermes dashboard service remains bound to loopback.
+    External `CHAT_UI_URL` values must use HTTPS.
+    NemoClaw preserves an external browser URL across rebuild and clone operations.
     Otherwise, leave it unset and use SSH port forwarding for remote access.
 
     ```bash
@@ -211,8 +254,11 @@ Use these details when your first-run path needs more control.
     Refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) for the recovery workflow.
   </Accordion>
 
-  <Accordion title="Use Docker and supported platforms">
-    Review [Prerequisites](prerequisites) for Docker requirements and the setup-oriented platform table.
+  <Accordion title="Use a container runtime and supported platforms">
+    Review [Prerequisites](prerequisites) for container-runtime requirements and the setup-oriented platform table.
+    Docker is the default runtime provider and primary path.
+    On a qualified Linux host, you can instead select native rootless Podman explicitly with `NEMOCLAW_GATEWAY_RUNTIME=podman`; this path does not require the Docker CLI or daemon.
+    Review the native Podman requirements and limitations in [Platform Support](../reference/platform-support#deployment-paths) and [Troubleshooting](../reference/troubleshooting#podman) before onboarding.
     Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
     Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
 
@@ -347,10 +393,10 @@ Use these details when your first-run path needs more control.
     curl -sf http://127.0.0.1:8642/health
     ```
 
-    If that command cannot connect after a reboot or terminal restart, restart the forward.
+    If that command cannot connect after a reboot or terminal restart, restore the managed forward.
 
     ```bash
-    openshell forward start --background 8642 my-hermes
+    nemohermes my-hermes recover
     ```
 
     Configure OpenAI-compatible clients with `http://127.0.0.1:8642/v1`.

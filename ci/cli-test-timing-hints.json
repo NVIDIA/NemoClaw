@@ -43,16 +43,7 @@
     "src/lib/onboard/exit-step-failure.test.ts": 5262,
     "src/lib/onboard/experimental/hermes-portable-build-context.test.ts": 7152,
     "src/lib/onboard/gateway-host-runtime.test.ts": 14070,
-    "src/lib/onboard/runtime-provider/persisted-engine-lifecycle.test.ts": 11857,
     "src/lib/onboard/setup-nim-flow.test.ts": 5286,
-    "src/lib/shields/flow.test.ts": 10379,
-    "src/lib/shields/hermes-runtime-state-mutation.test.ts": 8873,
-    "src/lib/shields/index.test.ts": 9645,
-    "src/lib/shields/legacy-hermes-compat.test.ts": 10641,
-    "src/lib/shields/mcp-policy-transition.test.ts": 7366,
-    "src/lib/shields/openclaw-transition.test.ts": 10802,
-    "src/lib/shields/policy-transition.test.ts": 11035,
-    "src/lib/shields/timer.test.ts": 5759,
     "src/lib/state/onboard-session-station-express.test.ts": 11308,
     "src/lib/state/onboard-session.test.ts": 6062,
     "src/lib/state/portable-uninstall-retirement.test.ts": 27072,
@@ -111,7 +102,6 @@
     "test/cli/sandbox-skill-install.test.ts": 5955,
     "test/cli/sandbox-status-json.test.ts": 31057,
     "test/cli/sandbox-status-text.test.ts": 14597,
-    "test/cli/snapshot-shields.test.ts": 14050,
     "test/cli/tunnel-command.test.ts": 16882,
     "test/cli/update.test.ts": 10077,
     "test/credentials/credentials.test.ts": 6328,
@@ -221,7 +211,6 @@
     "test/state/snapshot-openclaw-managed-extensions.test.ts": 18060,
     "test/state/snapshot-restore-existing-dest.test.ts": 17653,
     "test/state/snapshot-stale-directory-restore.test.ts": 7384,
-    "test/state/snapshot.test.ts": 23861,
-    "test/state/state-dir-guard.test.ts": 10477
+    "test/state/snapshot.test.ts": 23861
   }
 }

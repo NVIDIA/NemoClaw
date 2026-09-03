@@ -476,8 +476,6 @@ describe("created DCode sandbox finalization", () => {
       vi.fn(),
       vi.fn(),
       vi.fn(),
-      vi.fn(),
-      vi.fn(),
       {
         runtimeProvider: null,
         ensurePreparedWorkload: vi.fn(),
@@ -1103,13 +1101,8 @@ describe("created sandbox completion actions", () => {
             releasePort: async () => {
               order.push("dashboard-release");
             },
-            ensureForward: () => {
-              order.push("dashboard-forward");
-              return 8644;
-            },
             getForwardPort: () => "8643",
             resolveHermesState: () => ({ config: null, enabled: false }),
-            ensureHermesForward: () => order.push("dashboard-hermes"),
           },
           workload: {
             runtime: {
@@ -1196,7 +1189,7 @@ describe("created sandbox completion actions", () => {
         "lifecycle-capture",
         "lifecycle-revalidate",
         "gpu",
-        ...(manageDashboard ? ["dashboard-release", "dashboard-forward", "dashboard-hermes"] : []),
+        ...(manageDashboard ? ["dashboard-release"] : []),
         ...(schema5 ? [] : ["workload"]),
         "lifecycle-revalidate",
         "registry",
@@ -1206,7 +1199,7 @@ describe("created sandbox completion actions", () => {
         expect.objectContaining({
           imageTag: "hermes:test",
           hermesPortableLifecycle: schema5,
-          dashboardPort: manageDashboard ? 8644 : 0,
+          dashboardPort: manageDashboard ? 8643 : 0,
           lifecycleGeneration: "generation-1",
           lifecycleLiveIdentityFingerprint: "a".repeat(64),
           inferenceSelection: inferenceRouteReservation.authority.selection,
