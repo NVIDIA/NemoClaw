@@ -9,9 +9,15 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  GEMINI_PROBE_REPLY_TOKENS,
+  MIN_PROBE_REPLY_TOKENS,
+} from "../../inference/max-tokens-field";
+import {
   buildDcodeSandboxInferenceInvocationArgs,
   buildSandboxInferenceInvocationCommand,
+  INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS,
   probeSandboxInferenceInvocation,
+  READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
 } from "./inference-invocation-probe";
 
 const input = {
@@ -33,6 +39,22 @@ function openshellResult(status: number, stdout: string, stderr: string) {
 }
 
 describe("sandbox inference invocation probe", () => {
+  it("keeps command reference budgets aligned with source values", () => {
+    const commands = fs.readFileSync(
+      path.join(import.meta.dirname, "../../../../docs/reference/commands.mdx"),
+      "utf8",
+    );
+
+    expect(commands).toContain(`Ordinary providers request ${MIN_PROBE_REPLY_TOKENS} reply tokens`);
+    expect(commands).toContain(`Gemini requests ${GEMINI_PROBE_REPLY_TOKENS} reply tokens`);
+    expect(commands).toContain(
+      `The request allows up to ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} seconds`,
+    );
+    expect(commands).toContain(
+      `the host wrapper allows ${READINESS_INFERENCE_INVOCATION_TIMEOUT_MS / 1000} seconds`,
+    );
+  });
+
   it("probes the recorded model through inference.local without embedding a credential (#6195)", () => {
     const command = buildSandboxInferenceInvocationCommand(input);
 

@@ -49,6 +49,7 @@ const WSL_SLOW_VERIFICATION_ADVISORY =
   "`NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS=360 nemoclaw onboard`.";
 const httpProbe = require("../adapters/http/probe");
 const authConfigModule = require("../adapters/http/auth-config");
+const openrouter = require("./openrouter");
 const trace = require("../trace");
 const {
   createContainerCurlProbeSpawn,
@@ -61,6 +62,7 @@ const {
   shouldSkipResponsesProbe,
 } = require("../validation");
 const { isPrivateHostname, isPrivateIp, isLoopbackHostname } = require("../private-networks");
+const { buildResolvePinArgs, isOperatorTrustablePrivateIp } = require("./endpoint-ssrf-preflight");
 const {
   executeProbeWithHttpRetry,
   isProbeTimeout,
@@ -70,15 +72,14 @@ const {
 } = require("./probe-retry");
 const { probeAnthropicEndpoint } = require("./probe-anthropic");
 const { probeOpenAiLikeEndpointWithValidationSession } = require("./openai-validation-session");
-const { resolveOnboardingProbeReplyBudget } = require("./max-tokens-field");
 const {
   getChatCompletionsProbePayload,
   getChatCompletionsToolProbePayload,
-  getOpenRouterProbeHeaders,
   EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY,
   isDeepSeekV4ProModel,
   isKimiK26Model,
   isReasoningOnlyLengthResponse,
+  resolveOnboardingProbeReplyBudget,
   STRICT_TOOL_PROBE_INITIAL_TOKENS,
   STRICT_TOOL_PROBE_RETRY_TOKEN_LADDER,
   strictToolProbeReasoningRetryMessage,
@@ -95,8 +96,6 @@ const {
   getCurlMaxTimeSeconds,
   getProbeProcessTimeoutMs,
   MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS,
-  buildResolvePinArgs,
-  isOperatorTrustablePrivateIp,
 } = require("./probe-http-helpers");
 const {
   getCurlTimingArgs,
@@ -301,7 +300,10 @@ function getOpenAiSelectionProbeOptions(provider) {
 }
 
 export function getProbeExtraHeaders(provider) {
-  return getOpenRouterProbeHeaders(provider);
+  if (provider === openrouter.OPENROUTER_PROVIDER_NAME) {
+    return openrouter.getOpenRouterCurlHeaders();
+  }
+  return [];
 }
 
 function getProbeTimingOptions(options = {}) {
@@ -1158,7 +1160,10 @@ export async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKe
       hasChatCompletionsToolCall,
       hasChatCompletionsToolCallLeak,
       getChatPayload: (probeModel) =>
-        getChatCompletionsProbePayload(probeModel, sessionProbeOptions.replyBudget),
+        getChatCompletionsProbePayload(probeModel, {
+          useNvidiaEndpointProbePayload: sessionProbeOptions.useNvidiaEndpointProbePayload,
+          replyBudget: sessionProbeOptions.replyBudget,
+        }),
       getResponsesTimeoutMs: (probeOptions) =>
         getCurlMaxTimeSeconds(getValidationProbeCurlArgs(getProbeTimingOptions(probeOptions))) *
         1000,

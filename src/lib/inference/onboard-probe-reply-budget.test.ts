@@ -58,25 +58,28 @@ fi
 printf '200'
 exit 0
 `;
-    withFakeCurlProbe({ script, dirPrefix: "nemoclaw-gemini-retry-budget-" }, ({ tmpDir, counter }) => {
-      const result = probeOpenAiLikeEndpoint(
-        "https://generativelanguage.googleapis.com/v1beta/openai",
-        "gemini-2.5-flash",
-        "test-key",
-        { skipResponsesProbe: true, provider: "gemini-api" },
-      );
+    withFakeCurlProbe(
+      { script, dirPrefix: "nemoclaw-gemini-retry-budget-" },
+      ({ tmpDir, counter }) => {
+        const result = probeOpenAiLikeEndpoint(
+          "https://generativelanguage.googleapis.com/v1beta/openai",
+          "gemini-2.5-flash",
+          "test-key",
+          { skipResponsesProbe: true, provider: "gemini-api" },
+        );
 
-      expect(result).toMatchObject({ ok: true, api: "openai-completions" });
-      expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
-      const initialPayload = JSON.parse(
-        fs.readFileSync(path.join(tmpDir, "gemini-retry-request-1.json"), "utf8"),
-      );
-      const retryPayload = JSON.parse(
-        fs.readFileSync(path.join(tmpDir, "gemini-retry-request-2.json"), "utf8"),
-      );
-      expect(initialPayload).toMatchObject({ max_tokens: 256 });
-      expect(retryPayload).toMatchObject({ max_tokens: 256 });
-    });
+        expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+        const initialPayload = JSON.parse(
+          fs.readFileSync(path.join(tmpDir, "gemini-retry-request-1.json"), "utf8"),
+        );
+        const retryPayload = JSON.parse(
+          fs.readFileSync(path.join(tmpDir, "gemini-retry-request-2.json"), "utf8"),
+        );
+        expect(initialPayload).toMatchObject({ max_tokens: 256 });
+        expect(retryPayload).toMatchObject({ max_tokens: 256 });
+      },
+    );
   });
 
   it("keeps DeepSeek V4 Pro's model-specific budget on the onboarding probe path", () => {

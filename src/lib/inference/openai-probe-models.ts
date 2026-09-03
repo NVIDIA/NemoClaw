@@ -4,8 +4,8 @@
 import {
   MIN_PROBE_REPLY_TOKENS,
   resolveMaxTokensField,
+  resolveProbeReplyTokens,
 } from "./max-tokens-field";
-import { getOpenRouterCurlHeaders, OPENROUTER_PROVIDER_NAME } from "./openrouter";
 import { loadManagedInferenceCatalog } from "./serving/catalog-loader";
 
 export const STANDARD_NVIDIA_ENDPOINT_PROBE_POLICY =
@@ -19,8 +19,18 @@ export function usesNvidiaEndpointProbePayload(provider: unknown): boolean {
   return typeof provider === "string" && NVIDIA_ENDPOINT_PROVIDERS.has(provider);
 }
 
-export function getOpenRouterProbeHeaders(provider: string): string[] {
-  return provider === OPENROUTER_PROVIDER_NAME ? getOpenRouterCurlHeaders() : [];
+/**
+ * Resolve an explicit onboarding budget without replacing model-owned defaults
+ * such as the DeepSeek V4 Pro 8192-token path.
+ */
+export function resolveOnboardingProbeReplyBudget(options: {
+  replyBudget?: number;
+  provider?: string | null;
+}): number | undefined {
+  if (options.replyBudget !== undefined) return options.replyBudget;
+  return options.provider === "gemini-api"
+    ? resolveProbeReplyTokens(options.provider)
+    : undefined;
 }
 
 export function vllmProbePolicyForModel(model: string): string {

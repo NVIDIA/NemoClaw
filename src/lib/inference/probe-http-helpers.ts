@@ -10,8 +10,6 @@
 
 const { isWsl } = require("../platform");
 
-export { buildResolvePinArgs, isOperatorTrustablePrivateIp } from "./endpoint-ssrf-preflight";
-
 type ValidationProbeCalibration = { ok: true; durationMs: number } | { ok: false; reason?: string };
 
 export type ValidationProbeTimingProfile = {
