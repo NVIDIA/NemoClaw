@@ -954,22 +954,22 @@ async function applyChannelAddToGatewayAndRegistry(
       if (originalFailure) console.error(`  ${originalFailure}`);
       if (updatedProviderNames.length > 0) {
         const providerNames = updatedProviderNames.map((name) => JSON.stringify(name)).join(", ");
+        // Provider names are validated identifiers, not credential material.
+        // codeql[js/clear-text-logging]
         console.error(
-          // Provider names are validated identifiers, not credential material.
-          // codeql[js/clear-text-logging]
           `  ${YW}⚠${R} Provider state may have changed for ${providerNames}; inspect the named provider, correct the gateway failure, then retry the channel add.`,
         );
       }
       if (cleanupFailures.length > 0) {
         for (const { providerName, diagnostic } of cleanupFailures) {
+          // Provider names are validated identifiers; the diagnostic is fully redacted above.
+          // codeql[js/clear-text-logging]
           console.error(
-            // Provider names are validated identifiers; the diagnostic is fully redacted above.
-            // codeql[js/clear-text-logging]
             `  ${YW}⚠${R} Could not remove newly created provider ${JSON.stringify(providerName)}: ${diagnostic}.`,
           );
+          // Gateway and provider names are validated identifiers, not credential material.
+          // codeql[js/clear-text-logging]
           console.error(
-            // Gateway and provider names are validated identifiers, not credential material.
-            // codeql[js/clear-text-logging]
             `  Run \`openshell provider delete -g ${JSON.stringify(gatewayName)} ${JSON.stringify(providerName)}\`, then retry the channel add.`,
           );
         }
