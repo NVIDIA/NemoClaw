@@ -119,6 +119,23 @@ describe("runInferenceGet", () => {
     ]);
   });
 
+  it("omits a persisted endpoint when its model differs from the live route (#10784)", async () => {
+    const deps = createDeps(
+      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: live/model\n",
+    );
+    recordRoute(deps, {
+      provider: "compatible-endpoint",
+      model: "stale/model",
+      endpointUrl: "https://stale.example.test/v1",
+    });
+
+    await expect(runInferenceGet({ json: true, sandboxName: "custom" }, deps)).resolves.toEqual({
+      provider: "compatible-endpoint",
+      model: "live/model",
+    });
+    expect(deps.log.mock.calls[0][0]).not.toContain("stale.example.test");
+  });
+
   it.each(["compatible-endpoint", "compatible-anthropic-endpoint"])(
     "includes the persisted endpoint in JSON output for %s (#10784)",
     async (provider) => {

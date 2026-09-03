@@ -61,11 +61,13 @@ const COMPATIBLE_CUSTOM_PROVIDERS = new Set([
 /** Select one safe endpoint from published rows on the live gateway. */
 function getPersistedEndpointUrl(
   provider: string | null,
+  model: string | null,
   gatewayName: string,
   sandboxName: string | undefined,
   deps: InferenceGetDeps,
 ): string | null {
-  if (!provider || !COMPATIBLE_CUSTOM_PROVIDERS.has(provider)) {
+  const liveModel = model?.trim();
+  if (!provider || !liveModel || !COMPATIBLE_CUSTOM_PROVIDERS.has(provider)) {
     return null;
   }
 
@@ -89,6 +91,10 @@ function getPersistedEndpointUrl(
     } catch {
       // A matching row with an invalid binding could belong to this gateway.
       // Omit the endpoint unless every participating row can be scoped safely.
+      incompleteMatchingMetadata = true;
+      continue;
+    }
+    if (typeof sandbox.model !== "string" || sandbox.model.trim() !== liveModel) {
       incompleteMatchingMetadata = true;
       continue;
     }
@@ -152,6 +158,7 @@ export async function runInferenceGet(
 
   const endpointUrl = getPersistedEndpointUrl(
     result.inference.provider,
+    result.inference.model,
     gatewayName,
     options.sandboxName,
     deps,
