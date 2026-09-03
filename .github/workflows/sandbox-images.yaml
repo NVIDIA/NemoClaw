@@ -508,48 +508,19 @@ jobs:
           npx tsx tools/e2e/live-vitest-invocation.mts run
           --test-path test/e2e/live/managed-image-openclaw-security.test.ts
 
+      - name: Validate glibc probe lifecycle
+        env:
+          NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1"
+        run: >-
+          npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts
+          --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+
       - name: Upload OpenClaw managed-image security evidence
         if: ${{ always() }}
         uses: ./.github/actions/upload-e2e-artifacts
         with:
           artifact-name: managed-image-openclaw-security-evidence
           artifact-path: ${{ env.E2E_ARTIFACT_DIR }}
-
-  glibc-probe-image-contract:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: build-sandbox-images
-    env:
-      NEMOCLAW_E2E_SHARD: default
-    steps:
-      - *checkout
-
-      - name: Bind managed-image risk signal identity
-        run: |
-          set -euo pipefail
-          echo "NEMOCLAW_E2E_EXPECTED_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-          echo "NEMOCLAW_E2E_CORRELATION_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')" >> "$GITHUB_ENV"
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.19.0
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
-
-      - *download-isolation-image
-
-      - *load-isolation-image
-
-      - name: Validate glibc probe lifecycle
-        env:
-          NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1"
-          NEMOCLAW_TEST_IMAGE: nemoclaw-production
-        run: >-
-          npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts
-          --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
   port-override-image-contract:
     runs-on: ubuntu-latest

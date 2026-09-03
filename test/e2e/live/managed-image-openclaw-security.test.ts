@@ -262,7 +262,10 @@ test(
       "managed-image-openclaw-replacement-refusal",
     );
 
-    const cohort = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT ?? `local-${process.pid}`;
+    const cohort =
+      process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT ??
+      process.env.NEMOCLAW_MANAGED_IMAGE_SECURITY_COHORT ??
+      `local-${process.pid}`;
     const repairVolume = `nemoclaw-entrypoint-repair-${process.pid}`;
     const refusalVolume = `nemoclaw-entrypoint-refusal-${process.pid}`;
     let repairVolumeCreated = false;

@@ -41,7 +41,6 @@ const IMAGE_BUILD_JOBS = [
 const OPENCLAW_IMAGE_CONSUMER_JOBS = [
   "runtime-overrides",
   "managed-image-openclaw-security",
-  "glibc-probe-image-contract",
   "port-override-image-contract",
 ] as const;
 const DOCKERHUB_SECRETS = ["DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN"] as const;

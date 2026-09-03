@@ -245,6 +245,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-openclaw-security
       E2E_TARGET_ID: managed-image-openclaw-security
       NEMOCLAW_E2E_SHARD: default
+      NEMOCLAW_MANAGED_IMAGE_SECURITY_COHORT: pr-${{ github.run_id }}-${{ github.run_attempt }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_TEST_IMAGE: nemoclaw-production
     steps:
@@ -287,6 +288,16 @@ jobs:
         run: >-
           npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts
           --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+
+      - name: Remove managed-image security volumes
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          label="io.nvidia.nemoclaw.managed-image.cohort=$NEMOCLAW_MANAGED_IMAGE_SECURITY_COHORT"
+          mapfile -t volumes < <(docker volume ls -q --filter "label=$label")
+          ((${#volumes[@]} > 0)) && docker volume rm -f "${volumes[@]}" >/dev/null
+          docker volume ls -q --filter "label=$label" | grep -q . && exit 1
+          exit 0
 
       - name: Upload OpenClaw managed-image security evidence
         if: ${{ always() }}

@@ -185,6 +185,7 @@ describe("OpenClaw managed-image copied-PR qualification", () => {
       env: {
         E2E_TARGET_ID: "managed-image-openclaw-security",
         NEMOCLAW_E2E_SHARD: "default",
+        NEMOCLAW_MANAGED_IMAGE_SECURITY_COHORT: "pr-${{ github.run_id }}-${{ github.run_attempt }}",
         NEMOCLAW_RUN_LIVE_E2E: "1",
         NEMOCLAW_TEST_IMAGE: "nemoclaw-production",
       },
@@ -210,6 +211,12 @@ describe("OpenClaw managed-image copied-PR qualification", () => {
         ),
       },
     );
+    expect(
+      job.steps?.find((step) => step.name === "Remove managed-image security volumes"),
+    ).toMatchObject({
+      if: "${{ always() }}",
+      run: expect.stringMatching(/managed-image\.cohort[\s\S]*docker volume rm/u),
+    });
     expect(
       job.steps?.find((step) => step.name === "Upload OpenClaw managed-image security evidence"),
     ).toMatchObject({
