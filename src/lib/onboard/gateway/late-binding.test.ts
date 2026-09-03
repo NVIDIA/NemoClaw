@@ -66,8 +66,8 @@ describe("gateway lifecycle late binding", () => {
     const runCaptureOpenshell = vi.fn(
       (_args: string[], _options?: Record<string, unknown>) => "Connected",
     );
-    const runOpenshell = vi.fn(
-      (_args: string[], _options?: Record<string, unknown>) => runResult(),
+    const runOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) =>
+      runResult(),
     );
     const runQuietOpenshell = vi.fn(() => runResult());
     const registration = createGatewayRegistration({
@@ -194,9 +194,7 @@ describe("gateway lifecycle late binding", () => {
       ).toBeNull();
       return { OPENSHELL_SERVER_PORT: String(port) };
     });
-    const runCaptureOpenshell = vi.fn(
-      (_args: string[], _options?: Record<string, unknown>) => "",
-    );
+    const runCaptureOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) => "");
     const runtimeIdentitySpy = vi
       .spyOn(dockerDriverGatewayLaunch, "buildDockerDriverGatewayRuntimeIdentity")
       .mockImplementation((options) => ({
