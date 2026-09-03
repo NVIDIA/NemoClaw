@@ -209,7 +209,7 @@ Remove the target sandbox's managed-Python opt-in when it is no longer needed.
 nemo-deepagents <sandbox-name> policy remove tavily --yes
 ```
 
-This does not unregister the gateway-wide `tavily-search` provider; its credential and Node/curl routes remain available to sandboxes that attach it. When no sandbox needs the provider, destroy those sandboxes or detach it from each one with `openshell sandbox provider detach <sandbox-name> tavily-search`, then remove it globally with `nemo-deepagents credentials reset tavily-search --yes`. OpenShell rejects provider deletion while any sandbox still has it attached.
+This does not unregister the gateway-wide `tavily-search` provider; its credential and Node/curl routes remain available to sandboxes that attach it. When no sandbox needs the provider, remove it globally with `nemo-deepagents credentials reset tavily-search --yes`. The command detaches current sandbox attachments, removes the gateway provider, and reports every detached sandbox that you must rebuild after registering a replacement.
 
   </Accordion>
 

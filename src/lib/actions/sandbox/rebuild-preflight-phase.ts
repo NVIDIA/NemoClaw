@@ -305,7 +305,7 @@ export async function runRebuildPreflightPhase(
         }
       }
       // Keep credential-reuse validation after DCode's live-route/image proofs,
-      // but before shields, backup, or any destructive rebuild work begins.
+      // but before backup or any destructive rebuild work begins.
       const { resumeConfig } = preparedTarget.targetConfig;
       const hostCredentialAvailable = Boolean(
         resumeConfig.credentialEnv && hydrateCredentialEnv(resumeConfig.credentialEnv),
