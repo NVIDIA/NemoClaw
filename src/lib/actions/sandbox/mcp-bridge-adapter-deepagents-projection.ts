@@ -3,6 +3,25 @@
 
 export const DEEPAGENTS_MCP_MAX_SERVERS = 64;
 
+const DEEPAGENTS_UNSAFE_MCP_PROJECTION_CLASSIFIERS = [
+  { predicate: "stat.S_ISLNK(metadata.st_mode)", type: "symbolic link" },
+  { predicate: "stat.S_ISFIFO(metadata.st_mode)", type: "FIFO" },
+] as const;
+const DEEPAGENTS_UNSAFE_MCP_PROJECTION_FALLBACK_TYPE = "non-regular file";
+export const DEEPAGENTS_UNSAFE_MCP_PROJECTION_TYPES = [
+  ...DEEPAGENTS_UNSAFE_MCP_PROJECTION_CLASSIFIERS.map(({ type }) => type),
+  DEEPAGENTS_UNSAFE_MCP_PROJECTION_FALLBACK_TYPE,
+] as const;
+
+const DEEPAGENTS_MANAGED_PROJECTION_TYPE_HELPERS = [
+  "def describe_managed_projection_type(metadata):",
+  ...DEEPAGENTS_UNSAFE_MCP_PROJECTION_CLASSIFIERS.flatMap(({ predicate, type }) => [
+    `    if ${predicate}:`,
+    `        return ${JSON.stringify(type)}`,
+  ]),
+  `    return ${JSON.stringify(DEEPAGENTS_UNSAFE_MCP_PROJECTION_FALLBACK_TYPE)}`,
+];
+
 export const DEEPAGENTS_STRICT_JSON_HELPERS = [
   "def reject_duplicate_keys(pairs):",
   "    result = {}",
@@ -21,12 +40,7 @@ export const DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS = [
   "MANAGED_MCP_MAX_BYTES = 262144",
   "class UnsafeManagedProjectionError(ValueError):",
   "    pass",
-  "def describe_managed_projection_type(metadata):",
-  "    if stat.S_ISLNK(metadata.st_mode):",
-  "        return 'symbolic link'",
-  "    if stat.S_ISFIFO(metadata.st_mode):",
-  "        return 'FIFO'",
-  "    return 'non-regular file'",
+  ...DEEPAGENTS_MANAGED_PROJECTION_TYPE_HELPERS,
   "def managed_fingerprint(metadata):",
   "    return (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns, metadata.st_mode, metadata.st_nlink, metadata.st_uid)",
   "def managed_path_identity(path):",

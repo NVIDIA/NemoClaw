@@ -11,8 +11,15 @@ import {
   buildDeepAgentsMcpRegisterCommand,
   buildDeepAgentsMcpRemoveCommand,
 } from "./mcp-bridge-adapter-deepagents";
-import { DEEPAGENTS_MCP_MAX_SERVERS } from "./mcp-bridge-adapter-deepagents-projection";
-import { buildDeepAgentsMcpStatusCommand } from "./mcp-bridge-adapter-status";
+import {
+  DEEPAGENTS_MCP_MAX_SERVERS,
+  DEEPAGENTS_UNSAFE_MCP_PROJECTION_TYPES,
+} from "./mcp-bridge-adapter-deepagents-projection";
+import {
+  buildDeepAgentsMcpStatusCommand,
+  parseUnsafeDeepAgentsMcpProjectionResult,
+  UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX,
+} from "./mcp-bridge-adapter-status";
 
 const emptyProjection = { mcpServers: {} };
 const duplicateProjection = '{"mcpServers":{},"mcpServers":{"shadow":{}}}\n';
@@ -51,6 +58,19 @@ describe("Deep Agents managed MCP projection safety", () => {
     expect(truncateIndex).toBeGreaterThanOrEqual(0);
     expect(sizeCheckIndex).toBeLessThan(truncateIndex);
   });
+
+  it.each(DEEPAGENTS_UNSAFE_MCP_PROJECTION_TYPES)(
+    "uses the shared %s classification in the command and result parser",
+    (type) => {
+      const path = "/sandbox/.deepagents/.nemoclaw-mcp.json";
+      const detail = `${UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX}: ${type} at ${path}`;
+
+      expect(buildDeepAgentsMcpStatusCommand(baseEntry)).toContain(JSON.stringify(type));
+      expect(
+        parseUnsafeDeepAgentsMcpProjectionResult({ status: 2, stdout: "", stderr: detail }),
+      ).toEqual({ messagePrefix: `${UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX}: ${type} at `, path });
+    },
+  );
 
   it("applies the shared server cap before normal and rollback v2 publication", () => {
     const entries = Array.from(

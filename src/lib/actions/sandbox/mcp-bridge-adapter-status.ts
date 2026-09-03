@@ -10,6 +10,7 @@ import {
 import {
   DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS,
   DEEPAGENTS_STRICT_JSON_HELPERS,
+  DEEPAGENTS_UNSAFE_MCP_PROJECTION_TYPES,
 } from "./mcp-bridge-adapter-deepagents-projection";
 
 // NemoClaw owns this dedicated projection. Deep Agents Code's user/project
@@ -18,11 +19,6 @@ import {
 export const DEEPAGENTS_MCP_CONFIG_PATH = "/sandbox/.deepagents/.nemoclaw-mcp.json";
 export const UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX =
   "Unsafe managed Deep Agents MCP projection path";
-const UNSAFE_DEEPAGENTS_MCP_PROJECTION_TYPES = [
-  "symbolic link",
-  "FIFO",
-  "non-regular file",
-] as const;
 export const DEFAULT_OPENCLAW_CONFIG_DIR = "/sandbox/.openclaw";
 export const HERMES_MCP_TRANSACTION_HELPER =
   "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
@@ -48,7 +44,7 @@ export function parseUnsafeDeepAgentsMcpProjectionResult(result: {
 }): UnsafeDeepAgentsMcpProjectionResult | null {
   if (result.status === 0) return null;
   const detail = (result.stderr || result.stdout || "not found").trim();
-  for (const type of UNSAFE_DEEPAGENTS_MCP_PROJECTION_TYPES) {
+  for (const type of DEEPAGENTS_UNSAFE_MCP_PROJECTION_TYPES) {
     const messagePrefix = `${UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX}: ${type} at `;
     if (!detail.startsWith(messagePrefix)) continue;
     const projectionPath = detail.slice(messagePrefix.length);
