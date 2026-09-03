@@ -16,6 +16,7 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
@@ -46,7 +47,7 @@ import {
 } from "../fixtures/inference-switch-retry.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
-import { runBoundedRetry } from "../fixtures/retry-policy.ts";
+import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   agentReplyContainsToken,
@@ -68,8 +69,8 @@ const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_M
 const SWITCH_INFERENCE_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
 const SWITCH_MOCK_ANTHROPIC = process.env.NEMOCLAW_SWITCH_MOCK_ANTHROPIC ?? "0";
 const SWITCH_MOCK_PORT = parsePortEnv("NEMOCLAW_SWITCH_MOCK_PORT", 0);
-const TEST_TIMEOUT_MS = 75 * 60_000;
-const INSTALL_TIMEOUT_MS = 30 * 60_000;
+const TEST_TIMEOUT_MS = testTimeout(75 * 60_000);
+const INSTALL_TIMEOUT_MS = execTimeout(30 * 60_000);
 const COMMAND_TIMEOUT_MS = 120_000;
 const INFERENCE_TIMEOUT_MS = 150_000;
 const AGENT_TIMEOUT_MS = 150_000;
@@ -855,11 +856,9 @@ async function runOpenClawInferenceSetWithRetry(
   return runInferenceSetWithRetry({
     attempts,
     onEvidence: (evidence) => writeInferenceSwitchRetryEvidence(artifacts, evidence),
-    run: (attempt, verify) =>
-      runNemoclaw(host, home, verify ? args : [...args, "--no-verify"], {
-        artifactName: verify
-          ? `nemoclaw-inference-set-${attempt}`
-          : "nemoclaw-inference-set-no-verify-after-transient-failures",
+    run: (attempt) =>
+      runNemoclaw(host, home, args, {
+        artifactName: `nemoclaw-inference-set-${attempt}`,
         env: compatibleAnthropicSwitchEnv(switchBinding),
         redactionValues,
         timeoutMs: COMMAND_TIMEOUT_MS,

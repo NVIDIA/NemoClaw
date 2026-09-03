@@ -35,7 +35,7 @@ Track each observed workflow run by run ID, attempt, status, conclusion, and job
 Repeat these steps continuously while the loop remains authorized:
 
 1. Refresh `origin/main`. List automatic E2E runs for that commit SHA and later `main` commit SHAs.
-2. Inspect only new or changed runs. Read failed job logs and artifacts far enough to identify the earliest actionable product, test, workflow, runner, or cleanup failure.
+2. Inspect only new or changed runs. Load `nemoclaw-maintainer-classify-ci-failure` to read one failed job's bounded logs and optional retained artifact before identifying the earliest actionable product, test, workflow, runner, or cleanup failure.
 3. Group failures that share the same causal signature. Do not equate a job name with a root cause.
 4. Reconcile each group with open PRs before editing. If another maintainer owns it, record that PR and take the next unowned group.
 5. Prefer a peer E2E maintenance PR that needs review or a final merge decision before starting another fix.

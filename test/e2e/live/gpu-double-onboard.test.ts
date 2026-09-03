@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupWhenCommandAvailable,
@@ -21,7 +22,7 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-gpu-double";
 const PROXY_PORT = process.env.NEMOCLAW_OLLAMA_PROXY_PORT ?? "11435";
 const GPU_E2E_MODEL = process.env.NEMOCLAW_MODEL ?? "qwen3.5:9b";
 const TOKEN_FILE = path.join(os.homedir(), ".nemoclaw", "ollama-proxy-token");
-const LIVE_TIMEOUT_MS = 90 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(90 * 60_000);
 
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
@@ -324,7 +325,7 @@ exit "$status"`,
     artifactName: "phase-2-install-sh-first-onboard",
     cwd: REPO_ROOT,
     env: env(),
-    timeoutMs: 30 * 60_000,
+    timeoutMs: execTimeout(30 * 60_000),
   });
   expect(first.exitCode, resultText(first)).toBe(0);
 
@@ -354,7 +355,7 @@ exit "$status"`,
     ["onboard", "--non-interactive", "--yes"],
     "phase-4-reonboard",
     env({ NEMOCLAW_RECREATE_SANDBOX: "1" }),
-    30 * 60_000,
+    execTimeout(30 * 60_000),
   );
   expect(reonboard.exitCode, resultText(reonboard)).toBe(0);
   expect(fs.existsSync(TOKEN_FILE), `${TOKEN_FILE} missing after re-onboard`).toBe(true);

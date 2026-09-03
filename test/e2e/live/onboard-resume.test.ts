@@ -11,6 +11,7 @@ import {
   ONBOARD_RESUME_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { parseSandboxPhase } from "../../../src/lib/state/gateway.ts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -158,7 +159,7 @@ function expectHermeticCompatibleEndpointUsed(
 test(
   "onboard-resume: interrupted onboard then --resume can recreate with cached setup",
   {
-    timeout: ONBOARD_RESUME_TEST_TIMEOUT_MS,
+    timeout: testTimeout(ONBOARD_RESUME_TEST_TIMEOUT_MS),
     meta: {
       e2ePhases: [
         "confirm runtime and compatible-endpoint prerequisites",
@@ -380,7 +381,7 @@ test(
       artifactName: "phase-2-onboard-interrupted",
       env: firstRunEnv,
       redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-      timeoutMs: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+      timeoutMs: execTimeout(ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS),
     });
     const firstText = `${firstRun.stdout}\n${firstRun.stderr}`;
 
@@ -484,7 +485,7 @@ test(
         artifactName: "phase-3-onboard-resume",
         env: resumeEnv,
         redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+        timeoutMs: execTimeout(ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS),
       },
     );
     const resumeText = `${resumeRun.stdout}\n${resumeRun.stderr}`;
