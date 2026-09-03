@@ -66,7 +66,7 @@ describe("sandbox image workflow boundary", () => {
       (candidate) => candidate.name === name,
     );
     expect(step).toBeDefined();
-    step![key] = value;
+    (step as Record<string, unknown>)[key] = value;
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).not.toEqual([]);
   });
