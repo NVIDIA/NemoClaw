@@ -215,19 +215,10 @@ export function runNativeDockerWindowsProviderBoundary(options: {
 
   const script = String.raw`
 const scenario = ${scenario};
-const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
-const topology = require(${topologyPath});
-const local = require(${localPath});
-const windows = require(${windowsPath});
 
 platform.isWsl = () => true;
-topology.getContainerRuntime = () => "docker";
-credentials.prompt = async () => {
-  throw new Error("Unexpected prompt in non-interactive test");
-};
-credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : String(command);
   if (cmd.includes("command -v ollama")) return "";
@@ -246,6 +237,17 @@ runner.runCapture = (command) => {
 };
 runner.run = () => ({ status: 0 });
 runner.runShell = () => ({ status: 0 });
+
+const credentials = require(${credentialsPath});
+const topology = require(${topologyPath});
+const local = require(${localPath});
+const windows = require(${windowsPath});
+
+topology.getContainerRuntime = () => "docker";
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {};
 local.resetOllamaHostCache();
 if (scenario.reachable) local.setResolvedOllamaHost(local.OLLAMA_HOST_DOCKER_INTERNAL);
 local.getOllamaModelOptions = () => {
