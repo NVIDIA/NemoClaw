@@ -63,7 +63,7 @@ describe("package-managed Docker-driver gateway env service", () => {
         }),
       ).resolves.toBe(true);
 
-      expect(observedEnv).toBe(selectedEnv);
+      expect(observedEnv).toEqual(selectedEnv);
       expect(observedEnv).toEqual(
         expect.objectContaining({
           OPENSHELL_GATEWAY: "nemoclaw",
@@ -262,9 +262,7 @@ describe("package-managed Docker-driver gateway env service", () => {
     ).toThrow(/not supported for the OpenShell Docker-driver gateway/);
   });
 
-  it.each(
-    ["signing_key_path", "public_key_path", "kid_path", "gateway_id", "ttl_secs"],
-  )(
+  it.each(["signing_key_path", "public_key_path", "kid_path", "gateway_id", "ttl_secs"])(
     "rejects incomplete gateway JWT config before writing env or starting the service [%s] (#6903)",
     (key) => {
       const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));

@@ -8,7 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const captureSandboxSshConfig = vi.hoisted(() => vi.fn());
-const dockerSpawnSync = vi.hoisted(() => vi.fn());
+const executePrivilegedSandboxCommand = vi.hoisted(() => vi.fn());
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
@@ -25,9 +25,9 @@ vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
   runOpenshell: vi.fn(),
 }));
 
-vi.mock("../../adapters/docker/exec", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../adapters/docker/exec")>()),
-  dockerSpawnSync,
+vi.mock("../../sandbox/privileged-exec", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../sandbox/privileged-exec")>()),
+  executePrivilegedSandboxCommand,
 }));
 
 vi.mock("../../runner", () => ({
@@ -137,7 +137,6 @@ describe("executeSandboxCommand temp SSH config", () => {
 
     expect(
       executeSandboxExecCommand("alpha", "printf revision-1", undefined, {
-        allowLocalDockerFallback: false,
         runtimeSelection: {
           gatewayName: "nemoclaw-8091",
           localTlsDir: "/authority/tls",
@@ -159,7 +158,35 @@ describe("executeSandboxCommand temp SSH config", () => {
     expect(options?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
     expect(options?.env).not.toHaveProperty("OPENSHELL_GATEWAY_INSECURE");
     expect(options?.env).not.toHaveProperty("OPENSHELL_TOKEN");
-    expect(dockerSpawnSync).not.toHaveBeenCalled();
+    expect(executePrivilegedSandboxCommand).not.toHaveBeenCalled();
+  });
+
+  it("fails closed instead of using a same-name local sandbox for selected exec (#10514)", () => {
+    vi.mocked(spawnSync).mockReturnValue({
+      status: 1,
+      stdout: "selected gateway unavailable\n",
+      stderr: "",
+      pid: 1234,
+      output: [],
+      signal: null,
+    });
+    executePrivilegedSandboxCommand.mockReturnValue({
+      status: 0,
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nlocal-same-name\n",
+      stderr: "",
+    });
+
+    expect(
+      executeSandboxExecCommand("alpha", "printf selected", undefined, {
+        allowLocalDockerFallback: true,
+        runtimeSelection: {
+          gatewayName: "recorded-gateway",
+          localTlsDir: "/authority/tls",
+          workspace: "default",
+        },
+      }),
+    ).toBeNull();
+    expect(executePrivilegedSandboxCommand).not.toHaveBeenCalled();
   });
 
   it("uses the exact legacy alias while backing up a pre-upgrade sandbox", () => {

@@ -248,7 +248,12 @@ export function executeSandboxExecCommand(
     timeout,
     {
       ...transportOptions,
-      ...(runtimeSelection ? { gatewayName: runtimeSelection.gatewayName } : {}),
+      ...(runtimeSelection
+        ? {
+            allowLocalDockerFallback: false,
+            gatewayName: runtimeSelection.gatewayName,
+          }
+        : {}),
       ...(runtimeEnv ? { runtimeEnv } : {}),
     },
   );
