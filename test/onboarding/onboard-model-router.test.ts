@@ -13,6 +13,7 @@ import {
   createProductionModelRouterCommandProvisioner,
   hashModelRouterRecoveryIdentity,
   isManagedModelRouterCurrent,
+  modelRouterPoolCheckpointError,
   poolTargetsOnlyNvidiaEndpoints,
   startModelRouter,
 } from "../../src/lib/onboard/model-router";
@@ -156,6 +157,24 @@ function findCommand(commands: DirectCommandEntry[], pattern: RegExp): DirectCom
 }
 
 describe("onboard Model Router setup", () => {
+  it("accepts only models scored by the shipped prefill checkpoint", () => {
+    const config = (models: readonly string[]) => `
+routing:
+  checkpoint: llm-router/checkpoints/prefill_router_qwen08b.pt
+models:
+${models.map((name) => `  - name: ${name}`).join("\n")}
+`;
+
+    assert.equal(
+      modelRouterPoolCheckpointError(config(["gpt-oss-20b-high", "nemotron-3-super"])),
+      null,
+    );
+    assert.equal(
+      modelRouterPoolCheckpointError(config(["retired-model"])),
+      "checkpoint 'llm-router/checkpoints/prefill_router_qwen08b.pt' does not score configured model(s): retired-model",
+    );
+  });
+
   it("tracks credentials and pool contents in the router recovery identity", () => {
     const current = hashModelRouterRecoveryIdentity(NVIDIA_TEST_CREDENTIAL, "models: [current]");
 

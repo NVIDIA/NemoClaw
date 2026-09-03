@@ -31,6 +31,7 @@ export interface InferenceRuntimeChatOptions extends InferenceRuntimeRequestOpti
   readonly maxTokens?: number;
   readonly model?: string;
   readonly prompt?: string;
+  readonly routingModels?: readonly string[];
 }
 
 export interface InferenceRuntimeStatusOptions extends InferenceRuntimeRequestOptions {
@@ -157,10 +158,18 @@ function openAiChatPayload(options: InferenceRuntimeChatOptions): string {
   if (!prompt.trim()) {
     throw new Error("inference chat prompt is required");
   }
+  const routingModels = options.routingModels;
+  if (
+    routingModels &&
+    (routingModels.length === 0 || routingModels.some((candidate) => !candidate.trim()))
+  ) {
+    throw new Error("inference routing models must contain at least one non-empty value");
+  }
   return JSON.stringify({
     model,
     messages: [{ role: "user", content: prompt }],
     max_tokens: options.maxTokens ?? DEFAULT_CHAT_MAX_TOKENS,
+    ...(routingModels ? { metadata: { models: routingModels } } : {}),
   });
 }
 

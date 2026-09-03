@@ -10,7 +10,8 @@ import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { buildProviderRoutedEnv } from "./model-router-provider-routed-inference-helpers.ts";
 
 // Focused direct CLI/sandbox test: the contract is the real provider-routed
-// onboard boundary plus a valid sandbox inference.local completion.
+// onboard boundary plus a valid sandbox inference.local completion constrained
+// to a model scored by the pinned router checkpoint.
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-model-router";
 const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
@@ -46,7 +47,7 @@ test(
         "the selected runtime is available before onboarding",
         "NVIDIA_API_KEY is present and nvapi-prefixed, then staged for the router's NVIDIA_INFERENCE_API_KEY credential",
         "nemoclaw onboard --fresh completes with NEMOCLAW_PROVIDER=routed",
-        "sandbox inference.local returns a valid chat completion through the Model Router",
+        "sandbox inference.local returns a valid chat completion routed only to gpt-oss-20b-high",
       ],
     });
 
@@ -94,6 +95,7 @@ test(
         model: "nvidia-routed",
         prompt: "Reply with a short greeting.",
         redactionValues: [apiKey],
+        routingModels: ["gpt-oss-20b-high"],
         timeoutMs: 120_000,
       },
     );

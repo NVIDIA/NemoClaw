@@ -131,6 +131,48 @@ export function hashModelRouterRecoveryIdentity(
   }
 }
 
+// The pinned upstream config and LFS checkpoint own this nine-model scoring space.
+// Update this compatibility map together with the llm-router gitlink and checkpoint.
+const MODEL_ROUTER_CHECKPOINT_MODELS: Readonly<Record<string, ReadonlySet<string>>> = Object.freeze(
+  {
+    "llm-router/checkpoints/prefill_router_qwen08b.pt": new Set([
+      "nemotron-3-nano-reasoning",
+      "gpt-oss-20b-high",
+      "nemotron-3-super",
+      "gpt-oss-120b-high",
+      "qwen-3-5-35b",
+      "qwen-3-5-122b",
+      "gpt-5-2-high",
+      "gpt-5-4-high",
+      "claude-opus-4-6-high",
+    ]),
+  },
+);
+
+/** Return a diagnostic when a known checkpoint cannot score a configured model. */
+export function modelRouterPoolCheckpointError(poolConfig: string | null): string | null {
+  if (!poolConfig) return null;
+  try {
+    const YAML = require("yaml");
+    const parsed = YAML.parse(poolConfig) as {
+      routing?: { checkpoint?: unknown };
+      models?: readonly { name?: unknown }[];
+    };
+    const checkpoint = parsed?.routing?.checkpoint;
+    if (typeof checkpoint !== "string") return null;
+    const checkpointModels = MODEL_ROUTER_CHECKPOINT_MODELS[checkpoint];
+    if (!checkpointModels || !Array.isArray(parsed?.models)) return null;
+    const unsupported = parsed.models
+      .map((model) => model?.name)
+      .filter((name): name is string => typeof name === "string" && !checkpointModels.has(name));
+    return unsupported.length > 0
+      ? `checkpoint '${checkpoint}' does not score configured model(s): ${unsupported.join(", ")}`
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 type ModelRouterProxyConfigResult = {
   status: number | null;
   stderr?: string | Buffer;
@@ -372,10 +414,15 @@ export async function startModelRouter(
   overrides: Partial<StartModelRouterDeps> = {},
 ): Promise<number> {
   const deps: StartModelRouterDeps = { ...createStartModelRouterDeps(), ...overrides };
-  const routerCommand = deps.ensureModelRouterCommand();
   const port = routerCfg.port || 4000;
   const blueprintDir = path.join(deps.rootDir, "nemoclaw-blueprint");
   const poolConfigPath = modelRouterPoolConfigPath(routerCfg, deps.rootDir);
+  const poolConfig = deps.readPoolConfig(poolConfigPath);
+  const checkpointError = modelRouterPoolCheckpointError(poolConfig);
+  if (checkpointError) {
+    throw new Error(`Model Router pool configuration is incompatible: ${checkpointError}.`);
+  }
+  const routerCommand = deps.ensureModelRouterCommand();
   const stateDir = path.join(nemoclawStateRoot(deps.homeDir, GATEWAY_PORT), "state");
   const litellmConfigPath = path.join(stateDir, "litellm-proxy.yaml");
 
@@ -408,7 +455,7 @@ export async function startModelRouter(
     // #8962 does not define a credential contract for those pools. Resolving
     // OPENAI_API_KEY only on that path also avoids restaging a stale legacy
     // value into process.env for the shipped pool.
-    if (poolTargetsOnlyNvidiaEndpoints(deps.readPoolConfig(poolConfigPath))) {
+    if (poolTargetsOnlyNvidiaEndpoints(poolConfig)) {
       credEnvVars.OPENAI_API_KEY = routedCredential;
     } else {
       const ambientOpenAiCredential = deps.resolveProviderCredential("OPENAI_API_KEY");
@@ -650,7 +697,13 @@ async function verifyModelRouterSandboxReachability(routerPort: number): Promise
   }
 }
 
-export async function reconcileModelRouter(): Promise<void> {
+type ReconcileModelRouterDeps = {
+  startRouter: typeof startModelRouter;
+};
+
+export async function reconcileModelRouter(
+  overrides: Partial<ReconcileModelRouterDeps> = {},
+): Promise<void> {
   const bp = getRoutedProfile();
   const routerPort = resolveModelRouterPort();
   const routerCredentialEnv =
@@ -663,13 +716,17 @@ export async function reconcileModelRouter(): Promise<void> {
   }
   saveCredential(routerCredentialEnv, routerCredential);
   const poolConfigPath = modelRouterPoolConfigPath(bp.router);
-  const routerRecoveryHash = hashModelRouterRecoveryIdentity(
-    routerCredential,
-    readModelRouterPoolConfig(poolConfigPath),
-  );
+  const poolConfig = readModelRouterPoolConfig(poolConfigPath);
+  const routerRecoveryHash = hashModelRouterRecoveryIdentity(routerCredential, poolConfig);
   if (!routerRecoveryHash) {
     throw new Error(
       `Cannot read or parse Model Router pool configuration at ${poolConfigPath}. Repair the file and rerun onboarding. NemoClaw did not change the router process.`,
+    );
+  }
+  const checkpointError = modelRouterPoolCheckpointError(poolConfig);
+  if (checkpointError) {
+    throw new Error(
+      `Model Router pool configuration is incompatible: ${checkpointError}. NemoClaw did not change the router process.`,
     );
   }
   const session = onboardSession.loadSession();
@@ -724,7 +781,7 @@ export async function reconcileModelRouter(): Promise<void> {
   }
 
   console.log("  Starting model router...");
-  const routerPid = await startModelRouter(bp.router);
+  const routerPid = await (overrides.startRouter ?? startModelRouter)(bp.router);
   console.log(`  ✓ Model router started (PID ${routerPid}) on port ${routerPort}`);
   onboardSession.updateSession((current: Session) => {
     current.routerPid = routerPid;

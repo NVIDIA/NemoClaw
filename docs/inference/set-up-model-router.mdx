@@ -106,6 +106,7 @@ models:
 
 Keep each model `name` aligned with a logical model represented by the configured checkpoint.
 Pointing a checkpoint model name at an unrelated replacement endpoint does not retrain the router and produces invalid quality predictions.
+NemoClaw refuses to start the shipped prefill checkpoint when its pool contains an unscored model.
 
 Use these values to tune the accuracy and cost tradeoff.
 

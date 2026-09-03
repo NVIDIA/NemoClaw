@@ -14,13 +14,15 @@ const holder = vi.hoisted(() => ({
   legacyCredentialHash: "LEGACY-CREDENTIAL-HASH" as string | null,
   recordedRecoveryHash: "MATCHING-HASH" as string | null,
   snapshotBody: null as string | null,
+  stop: (() => Promise.reject(new Error("router restart reached"))) as () => Promise<void>,
   stopped: [] as Array<[number, number]>,
   reachabilityProbes: 0,
+  updatedSession: null as {
+    routerPid?: number | null;
+    routerCredentialHash?: string | null;
+  } | null,
 }));
 
-// `stopModelRouterProcess` throws a sentinel so each case ends at the
-// reuse decision. Restarting the router is `startModelRouter`'s contract and
-// is covered by `test/onboarding/onboard-model-router.test.ts`.
 vi.mock("./model-router-process", () => ({
   ROUTER_HEALTH_TIMEOUT_MS: 3_000,
   getRouterHealthSnapshot: vi.fn(async () => ({ healthy: true, body: holder.snapshotBody })),
@@ -29,7 +31,7 @@ vi.mock("./model-router-process", () => ({
   inspectModelRouterProcessForPort: vi.fn(() => ({ status: "missing" as const })),
   stopModelRouterProcess: vi.fn(async (pid: number, port: number) => {
     holder.stopped.push([pid, port]);
-    throw new Error("router restart reached");
+    await holder.stop();
   }),
 }));
 
@@ -48,7 +50,19 @@ vi.mock("../state/onboard-session", () => ({
     routerPid: RECORDED_ROUTER_PID,
     routerCredentialHash: holder.recordedRecoveryHash,
   }),
-  updateSession: vi.fn(),
+  updateSession: vi.fn(
+    (
+      updater: (session: { routerPid?: number | null; routerCredentialHash?: string | null }) => {
+        routerPid?: number | null;
+        routerCredentialHash?: string | null;
+      },
+    ) => {
+      holder.updatedSession = updater({
+        routerPid: RECORDED_ROUTER_PID,
+        routerCredentialHash: holder.recordedRecoveryHash,
+      });
+    },
+  ),
 }));
 
 vi.mock("../security/credential-hash", () => ({
@@ -70,8 +84,10 @@ describe("model router reconciliation", () => {
     holder.legacyCredentialHash = "LEGACY-CREDENTIAL-HASH";
     holder.recordedRecoveryHash = "MATCHING-HASH";
     holder.snapshotBody = null;
+    holder.stop = () => Promise.reject(new Error("router restart reached"));
     holder.stopped = [];
     holder.reachabilityProbes = 0;
+    holder.updatedSession = null;
   });
 
   afterEach(() => {
@@ -102,17 +118,24 @@ describe("model router reconciliation", () => {
     expect(holder.reachabilityProbes).toBe(0);
   });
 
-  it("restarts a healthy recorded router when its pool recovery identity changed", async () => {
+  it("replaces a healthy recorded router and persists its new pool recovery identity", async () => {
     holder.snapshotBody = JSON.stringify({
       healthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
       unhealthy_endpoints: [],
     });
     holder.recordedRecoveryHash = "PREVIOUS-POOL-HASH";
+    holder.stop = async () => undefined;
+    const startRouter = vi.fn(async () => 9876);
 
-    await expect(reconcileModelRouter()).rejects.toThrow("router restart reached");
+    await reconcileModelRouter({ startRouter });
 
     expect(holder.stopped).toEqual([[RECORDED_ROUTER_PID, expect.any(Number)]]);
-    expect(holder.reachabilityProbes).toBe(0);
+    expect(startRouter).toHaveBeenCalledOnce();
+    expect(holder.updatedSession).toMatchObject({
+      routerPid: 9876,
+      routerCredentialHash: "MATCHING-HASH",
+    });
+    expect(holder.reachabilityProbes).toBe(1);
   });
 
   it("restarts a healthy router recorded before pool identity tracking", async () => {
