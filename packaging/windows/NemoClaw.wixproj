@@ -45,6 +45,7 @@
     <Error Condition="!Exists('$(PayloadRoot)\config\mxc-gateway.toml')" Text="The OpenShell MXC gateway configuration is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-turn.mts')" Text="The installed native turn qualification entrypoint is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-web-ui.mts')" Text="The installed native web UI entrypoint is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-console-agent.mts')" Text="The configured native terminal-agent entrypoint is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-pi.mts')" Text="The installed native Pi entrypoint is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-nemocua.mts')" Text="The installed native NemoCUA entrypoint is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\agent-support.json')" Text="The native Windows agent support catalog is missing." />

@@ -144,6 +144,11 @@
             Credentials are requested only after the selected endpoint passes validation and are
             never written to Windows Installer logs.
           </p>
+          <div class="qualification-note" id="qualification-note" hidden>
+            <strong>PR qualification mode</strong>
+            This run uses a deterministic loopback endpoint so the authentic agent and model
+            transport can be tested without exposing a provider credential.
+          </div>
           <div class="choice-grid" role="radiogroup" aria-label="Inference provider">
             <button
               class="choice selected"
@@ -181,10 +186,58 @@
               aria-checked="false"
               data-inference="local"
             >
-              <strong>Local NVIDIA GPU</strong
-              ><span>Keep inference on this machine when hardware qualification passes.</span>
+              <strong>Local compatible endpoint</strong
+              ><span>Experimental: connect to an already-running native endpoint.</span>
             </button>
           </div>
+          <section class="configuration-card" id="inference-configuration">
+            <div class="configuration-heading">
+              <div>
+                <p class="eyebrow">Connection details</p>
+                <h2 id="provider-heading">NVIDIA hosted inference</h2>
+              </div>
+              <span class="secure-chip">Protected by Windows</span>
+            </div>
+            <div class="field-grid">
+              <label class="field span-two" id="endpoint-field">
+                <span>OpenAI-compatible endpoint</span>
+                <input
+                  id="endpoint"
+                  name="endpoint"
+                  type="url"
+                  inputmode="url"
+                  spellcheck="false"
+                  value="https://integrate.api.nvidia.com/v1"
+                />
+                <small id="endpoint-help">The reviewed NVIDIA API endpoint.</small>
+              </label>
+              <label class="field">
+                <span>Model</span>
+                <input
+                  id="model"
+                  name="model"
+                  type="text"
+                  spellcheck="false"
+                  value="nvidia/nemotron-3-super-120b-a12b"
+                />
+              </label>
+              <label class="field" id="credential-field">
+                <span id="credential-label">NVIDIA API key</span>
+                <input
+                  id="credential"
+                  name="credential"
+                  type="password"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="nvapi-…"
+                />
+                <small id="credential-help"
+                  >Stored for your Windows account in Credential Manager; never in MSI logs.</small
+                >
+              </label>
+            </div>
+            <p class="field-error" id="inference-error" role="alert" hidden></p>
+          </section>
         </section>
 
         <section class="panel" data-step="3">
@@ -198,25 +251,26 @@
               ><span
                 ><strong>Open the agent when setup finishes</strong
                 ><small>Launch the selected agent surface immediately.</small></span
-              ><input type="checkbox" name="launch" checked
+              ><input type="checkbox" checked disabled
+            /></label>
+            <input type="hidden" name="launch" value="on" />
+            <label
+              ><span
+                ><strong>Web search</strong
+                ><small>Not enabled in this native preview yet.</small></span
+              ><input type="checkbox" name="webSearch" disabled
             /></label>
             <label
               ><span
-                ><strong>Enable web search</strong
-                ><small>Configure a reviewed search provider during onboarding.</small></span
-              ><input type="checkbox" name="webSearch"
-            /></label>
-            <label
-              ><span
-                ><strong>Connect messaging</strong
-                ><small>Add Slack, Discord, Telegram, or another supported channel.</small></span
-              ><input type="checkbox" name="messaging"
+                ><strong>Messaging channels</strong
+                ><small>Not enabled in this native preview yet.</small></span
+              ><input type="checkbox" name="messaging" disabled
             /></label>
             <label
               ><span
                 ><strong>Advanced diagnostics</strong
-                ><small>Keep additional local qualification receipts for support.</small></span
-              ><input type="checkbox" name="diagnostics"
+                ><small>Always-on failure logs are used for this preview.</small></span
+              ><input type="checkbox" name="diagnostics" disabled
             /></label>
           </div>
         </section>
@@ -236,6 +290,14 @@
             <div>
               <dt>Inference</dt>
               <dd id="review-inference">NVIDIA hosted inference</dd>
+            </div>
+            <div>
+              <dt>Model</dt>
+              <dd id="review-model">nvidia/nemotron-3-super-120b-a12b</dd>
+            </div>
+            <div>
+              <dt>Credential</dt>
+              <dd id="review-credential">Windows Credential Manager</dd>
             </div>
             <div>
               <dt>Isolation</dt>

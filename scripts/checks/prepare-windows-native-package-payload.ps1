@@ -367,6 +367,7 @@ debug = false
     [IO.Directory]::CreateDirectory($qualificationRoot) | Out-Null
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-turn.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-web-ui.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-console-agent.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-pi.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-nemocua.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\nemocua') -Destination (Join-Path $output 'nemocua') -Recurse
@@ -400,6 +401,7 @@ debug = false
         'config\mxc-gateway.toml',
         'qualification\run-installed-native-turn.mts',
         'qualification\run-installed-native-web-ui.mts',
+        'qualification\run-installed-native-console-agent.mts',
         'qualification\run-installed-native-pi.mts',
         'qualification\run-installed-native-nemocua.mts',
         'agent-support.json'
@@ -417,7 +419,16 @@ debug = false
         launcher = [pscustomobject]@{
             rustVersion = $script:RustVersion
             sha256 = (Get-FileHash -LiteralPath (Join-Path $output 'bin\NemoClaw.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+            credentialBackend = 'Windows Credential Manager generic credentials'
+            configurationRoot = '%LOCALAPPDATA%\NVIDIA\NemoClaw\agents'
         }
+        agentAdapters = @(
+            [pscustomobject]@{ agent = 'openclaw'; interface = 'OpenClaw Control UI'; status = 'candidate' },
+            [pscustomobject]@{ agent = 'hermes'; interface = 'Hermes native terminal'; status = 'candidate' },
+            [pscustomobject]@{ agent = 'langchain-deepagents-code'; interface = 'Deep Agents Code terminal'; status = 'candidate' },
+            [pscustomobject]@{ agent = 'pi'; interface = 'Pi native terminal'; status = 'experimental-candidate' },
+            [pscustomobject]@{ agent = 'nemocua'; interface = 'NemoCUA visible browser'; status = 'experimental-candidate' }
+        )
         openClaw = [pscustomobject]@{ version = '2026.7.1' }
         pi = [pscustomobject]@{
             version = '0.84.1'

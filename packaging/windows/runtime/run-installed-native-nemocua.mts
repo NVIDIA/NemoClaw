@@ -33,7 +33,91 @@ const EXPECTED_TOKENS = [
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 function fail(message) {
-  throw new Error(`Native Windows NemoCUA qualification failed: ${message}`);
+  throw new Error(`NemoClaw native Windows NemoCUA failed: ${message}`);
+}
+
+function readNativeConfiguration() {
+  const localAppData = requiredDirectory(
+    process.env.LOCALAPPDATA ?? "",
+    "Windows local application-data directory",
+  );
+  const stateRoot = path.join(localAppData, "NVIDIA", "NemoClaw", "agents", "nemocua");
+  const configPath = requiredFile(
+    path.join(stateRoot, "native-windows.json"),
+    "NemoCUA graphical configuration",
+  );
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  if (
+    config?.schemaVersion !== 1 ||
+    config?.classification !== "nemoclaw-native-windows-agent-configuration" ||
+    config?.agent !== "nemocua" ||
+    !["nvidia", "openrouter", "compatible", "local"].includes(config?.inference) ||
+    typeof config?.endpoint !== "string" ||
+    typeof config?.model !== "string" ||
+    typeof config?.credentialStored !== "boolean"
+  )
+    fail("NemoCUA graphical configuration is incomplete");
+  return { config, stateRoot };
+}
+
+async function readWindowsCredential(launcher, provider, required) {
+  if (!required) return "";
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn(launcher, ["--credential-read", provider], {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const chunks = [];
+    let size = 0;
+    child.stdout.on("data", (chunk) => {
+      size += chunk.length;
+      if (size <= 2048) chunks.push(chunk);
+    });
+    child.once("error", reject);
+    child.once("close", (code) => resolve({ code: code ?? 1, secret: Buffer.concat(chunks) }));
+  });
+  if (result.code !== 0 || !result.secret.length || result.secret.length > 2048)
+    fail("Windows Credential Manager does not contain the selected provider credential");
+  return result.secret.toString("utf8");
+}
+
+async function forwardConfiguredModel(body, configuration, credential) {
+  const endpoint = new URL(`${configuration.endpoint.replace(/\/$/u, "")}/`);
+  const upstreamUrl = new URL("chat/completions", endpoint);
+  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  const upstreamBody = {
+    ...body,
+    model: configuration.model,
+    messages: [
+      {
+        role: "system",
+        content:
+          'You control a bounded browser verification task. Return only one JSON object with kind "focus", "type", or "click" and the selector from the observation. Do not use Markdown.',
+      },
+      ...messages,
+    ],
+    stream: false,
+  };
+  const headers = { "content-type": "application/json" };
+  if (credential) headers.authorization = `Bearer ${credential}`;
+  if (configuration.inference === "openrouter") {
+    headers["http-referer"] = "https://www.nvidia.com/nemoclaw/";
+    headers["x-openrouter-title"] = "NVIDIA NemoClaw";
+  }
+  const upstream = await fetch(upstreamUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(upstreamBody),
+    redirect: "error",
+    signal: AbortSignal.timeout(180_000),
+  });
+  const responseBody = Buffer.from(await upstream.arrayBuffer());
+  if (responseBody.length > 4 * 1024 * 1024) fail("the provider response exceeded the limit");
+  return {
+    status: upstream.status,
+    contentType: upstream.headers.get("content-type") ?? "application/json",
+    body: responseBody,
+  };
 }
 
 function resolveEdge() {
@@ -114,7 +198,14 @@ function taskScript() {
 });`;
 }
 
-async function startBrowserBridge(openClawRoot, evidenceRoot) {
+async function startBrowserBridge(
+  openClawRoot,
+  evidenceRoot,
+  qualification,
+  configuration,
+  credential,
+  bridgeToken,
+) {
   const playwrightRoot = requiredDirectory(
     path.join(openClawRoot, "node_modules", "openclaw", "node_modules", "playwright-core"),
     "installed Playwright browser driver",
@@ -156,6 +247,11 @@ async function startBrowserBridge(openClawRoot, evidenceRoot) {
         response.end(taskScript());
         return;
       }
+      if (request.headers.authorization !== `Bearer ${bridgeToken}`) {
+        response.writeHead(401, { "content-type": "application/json" });
+        response.end(JSON.stringify({ message: "unauthorized" }));
+        return;
+      }
       if (request.method === "GET" && url.pathname === "/observe") {
         const screenshot = await page.screenshot({ fullPage: false });
         observationIndex += 1;
@@ -189,6 +285,12 @@ async function startBrowserBridge(openClawRoot, evidenceRoot) {
       }
       if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
         const body = JSON.parse(await readRequestBody(request));
+        if (!qualification) {
+          const upstream = await forwardConfiguredModel(body, configuration, credential);
+          response.writeHead(upstream.status, { "content-type": upstream.contentType });
+          response.end(upstream.body);
+          return;
+        }
         const content = body?.messages?.at(-1)?.content;
         const prompt = typeof content === "string" ? content : JSON.stringify(content ?? "");
         const action = prompt.includes("focus its input")
@@ -259,13 +361,16 @@ async function startBrowserBridge(openClawRoot, evidenceRoot) {
 async function main() {
   if (process.platform !== "win32" || process.arch !== "arm64")
     fail("native Windows ARM64 is required");
-  if (!process.argv.includes("--qualification"))
-    fail("the experimental NemoCUA preview requires completed graphical configuration");
+  const qualification = process.argv.includes("--qualification");
+  const configured = process.argv.includes("--configured");
+  if (qualification === configured)
+    fail("select exactly one of qualification or configured execution");
   const installRoot = requiredDirectory(
     process.env.NEMOCLAW_NATIVE_INSTALL_ROOT ?? "",
     "NemoClaw installation root",
   );
   const binRoot = requiredDirectory(path.join(installRoot, "bin"), "NemoClaw bin directory");
+  const launcher = requiredFile(path.join(binRoot, "NemoClaw.exe"), "NemoClaw launcher");
   const openshell = requiredFile(path.join(binRoot, "openshell.exe"), "OpenShell CLI");
   const gatewayExecutable = requiredFile(
     path.join(binRoot, "openshell-gateway.exe"),
@@ -285,6 +390,14 @@ async function main() {
     "MXC gateway configuration",
   );
   requiredFile(path.join(installRoot, "mxc", "wxc-exec.exe"), "MXC executor");
+  const configuredIdentity = configured ? readNativeConfiguration() : null;
+  const credential = configuredIdentity
+    ? await readWindowsCredential(
+        launcher,
+        configuredIdentity.config.inference,
+        configuredIdentity.config.credentialStored,
+      )
+    : "";
 
   const systemDrive = process.env.SystemDrive;
   if (!systemDrive || !/^[A-Za-z]:$/u.test(systemDrive)) fail("SystemDrive is invalid");
@@ -294,12 +407,12 @@ async function main() {
   const shareRoot = path.join(`${systemDrive}\\`, `NemoClawNativeCuaShare-${runId}`);
   const runtimeRoot = path.join(`${systemDrive}\\`, `NemoClawNativeCuaRuntime-${runId}`);
   for (const directory of [runRoot, shareRoot, runtimeRoot]) {
-    if (fs.existsSync(directory)) fail("qualification root already exists");
+    if (fs.existsSync(directory)) fail("runtime root already exists");
     fs.mkdirSync(directory);
   }
   const evidenceRoot = path.resolve(
     argumentValue("--artifact-directory") ??
-      path.join(process.env.LOCALAPPDATA ?? runRoot, "NVIDIA", "NemoClaw", "evidence", "nemocua"),
+      path.join(configuredIdentity?.stateRoot ?? process.env.LOCALAPPDATA ?? runRoot, "evidence"),
   );
   fs.mkdirSync(evidenceRoot, { recursive: true });
   const pythonRoot = path.join(runtimeRoot, "python");
@@ -333,7 +446,15 @@ async function main() {
   const temp = path.join(shareRoot, "temp");
   for (const directory of [configRoot, stateRoot, temp])
     fs.mkdirSync(directory, { recursive: true });
-  const bridge = await startBrowserBridge(installedOpenClawRoot, evidenceRoot);
+  const bridgeToken = randomBytes(32).toString("base64url");
+  const bridge = await startBrowserBridge(
+    installedOpenClawRoot,
+    evidenceRoot,
+    qualification,
+    configuredIdentity?.config ?? null,
+    credential,
+    bridgeToken,
+  );
   const openShellPort = await freePort();
   const sandboxName = `nc-nemocua-${runId}`;
   const gatewayName = `nemoclaw-nemocua-${runId}`;
@@ -416,9 +537,11 @@ async function main() {
           command: [
             python,
             harness,
-            "--qualification",
+            qualification ? "--qualification" : "--configured",
             "--bridge-url",
             `http://127.0.0.1:${bridge.port}`,
+            "--bridge-token",
+            bridgeToken,
             "--result-path",
             resultPath,
           ],
@@ -500,7 +623,9 @@ async function main() {
       browser: "Microsoft Edge",
       browserVersion: bridge.browserVersion,
       interface: "NemoCUA visible browser task",
-      deterministicLocalModel: true,
+      deterministicLocalModel: qualification,
+      inferenceProvider: configuredIdentity?.config.inference ?? "qualification",
+      model: configuredIdentity?.config.model ?? "nemocua-native-preview",
       visiblePostcondition: finalState,
       createWatcherStopped: true,
       sandboxDeleted: true,
@@ -562,8 +687,11 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(
-    error instanceof Error ? error.message : "Native Windows NemoCUA qualification failed.",
-  );
+  console.error(error instanceof Error ? error.message : "NemoClaw native Windows NemoCUA failed.");
+  if (process.argv.includes("--configured")) {
+    console.error("Press Enter to close.");
+    process.stdin.resume();
+    process.stdin.once("data", () => process.stdin.pause());
+  }
   process.exitCode = 1;
 });

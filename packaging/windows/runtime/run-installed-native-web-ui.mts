@@ -34,7 +34,257 @@ const AGENT_CHOICE_PROOF = ["openclaw", "hermes", "langchain-deepagents-code", "
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 function fail(message) {
-  throw new Error(`Native Windows OpenClaw UI qualification failed: ${message}`);
+  throw new Error(`NemoClaw native Windows launch failed: ${message}`);
+}
+
+const PROVIDER_CONFIGURATION = {
+  nvidia: {
+    endpoint: "https://integrate.api.nvidia.com/v1",
+    credentialRequired: true,
+    credentialPrefix: "nvapi-",
+  },
+  openrouter: {
+    endpoint: "https://openrouter.ai/api/v1",
+    credentialRequired: true,
+    credentialPrefix: "sk-or-",
+  },
+  compatible: { endpoint: null, credentialRequired: false, credentialPrefix: null },
+  local: { endpoint: null, credentialRequired: false, credentialPrefix: null },
+};
+
+function normalizeOnboardingConfiguration(submitted, qualification) {
+  const agents = new Set(["openclaw", "hermes", "langchain-deepagents-code", "pi", "nemocua"]);
+  if (!agents.has(submitted?.agent)) throw new Error("Select a valid agent runtime.");
+  if (qualification) {
+    if (submitted?.inference !== "qualification")
+      throw new Error("Qualification must use its deterministic local inference endpoint.");
+    return {
+      agent: submitted.agent,
+      inference: "qualification",
+      endpoint: "http://127.0.0.1/qualification",
+      model: "native-preview",
+      credential: "",
+      options: submitted.options ?? {},
+    };
+  }
+  if (!Object.hasOwn(PROVIDER_CONFIGURATION, submitted?.inference))
+    throw new Error("Select a valid inference provider.");
+  const provider = PROVIDER_CONFIGURATION[submitted.inference];
+  const options = submitted?.options;
+  if (options === null || typeof options !== "object" || Array.isArray(options))
+    throw new Error("Onboarding options are invalid.");
+  const submittedEndpoint = typeof options.endpoint === "string" ? options.endpoint.trim() : "";
+  const endpoint = provider.endpoint ?? submittedEndpoint;
+  let endpointUrl;
+  try {
+    endpointUrl = new URL(endpoint);
+  } catch {
+    throw new Error("Enter a complete inference endpoint URL.");
+  }
+  const endpointIsAllowed =
+    submitted.inference === "local"
+      ? endpointUrl.protocol === "http:" || endpointUrl.protocol === "https:"
+      : endpointUrl.protocol === "https:";
+  if (!endpointIsAllowed) throw new Error("The selected inference endpoint protocol is unsafe.");
+  if (
+    submitted.inference === "local" &&
+    !["127.0.0.1", "localhost", "[::1]"].includes(endpointUrl.hostname)
+  )
+    throw new Error("Local inference must use a loopback endpoint.");
+  const model = typeof options.model === "string" ? options.model.trim() : "";
+  if (!model || model.length > 256 || /[\u0000-\u001f\u007f]/u.test(model))
+    throw new Error("Enter a valid model ID.");
+  const credential = typeof options.credential === "string" ? options.credential.trim() : "";
+  if (credential.length > 2048 || /[\u0000\r\n]/u.test(credential))
+    throw new Error("The provider credential is invalid.");
+  if (provider.credentialRequired && !credential)
+    throw new Error("The selected provider requires an API key.");
+  if (provider.credentialPrefix && !credential.startsWith(provider.credentialPrefix))
+    throw new Error(`The ${submitted.inference} API key has an unexpected format.`);
+  return {
+    agent: submitted.agent,
+    inference: submitted.inference,
+    endpoint: endpointUrl.toString().replace(/\/$/u, ""),
+    model,
+    credential,
+    options,
+  };
+}
+
+async function updateWindowsCredential(launcher, provider, credential) {
+  const operation = credential ? "--credential-write" : "--credential-delete";
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn(launcher, [operation, provider], {
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout = `${stdout}${chunk.toString("utf8")}`.slice(-4096);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr = `${stderr}${chunk.toString("utf8")}`.slice(-4096);
+    });
+    child.once("error", reject);
+    child.once("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
+    child.stdin.end(credential, "utf8");
+  });
+  if (result.code !== 0 || result.stdout)
+    throw new Error(
+      credential
+        ? "Windows Credential Manager could not protect this API key."
+        : "Windows Credential Manager could not clear the previous API key.",
+    );
+}
+
+function writeNativeAgentConfiguration(configuration) {
+  const localAppData = requiredDirectory(
+    process.env.LOCALAPPDATA ?? "",
+    "Windows local application-data directory",
+  );
+  const stateRoot = path.join(localAppData, "NVIDIA", "NemoClaw", "agents", configuration.agent);
+  fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
+  const configPath = path.join(stateRoot, "native-windows.json");
+  const temporaryPath = `${configPath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  const persisted = {
+    schemaVersion: 1,
+    classification: "nemoclaw-native-windows-agent-configuration",
+    agent: configuration.agent,
+    inference: configuration.inference,
+    endpoint: configuration.endpoint,
+    model: configuration.model,
+    credentialStored: Boolean(configuration.credential),
+    options: Object.fromEntries(
+      Object.entries(configuration.options).filter(
+        ([name]) => !["credential", "endpoint", "model"].includes(name),
+      ),
+    ),
+  };
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(persisted, null, 2)}\n`, {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600,
+  });
+  fs.renameSync(temporaryPath, configPath);
+  return configPath;
+}
+
+function readNativeAgentConfiguration(agent) {
+  const localAppData = requiredDirectory(
+    process.env.LOCALAPPDATA ?? "",
+    "Windows local application-data directory",
+  );
+  const stateRoot = path.join(localAppData, "NVIDIA", "NemoClaw", "agents", agent);
+  const configPath = requiredFile(
+    path.join(stateRoot, "native-windows.json"),
+    `${agentNamesForLaunch[agent]} configuration`,
+  );
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  if (
+    config?.schemaVersion !== 1 ||
+    config?.classification !== "nemoclaw-native-windows-agent-configuration" ||
+    config?.agent !== agent ||
+    !["nvidia", "openrouter", "compatible", "local"].includes(config?.inference) ||
+    typeof config?.endpoint !== "string" ||
+    typeof config?.model !== "string" ||
+    typeof config?.credentialStored !== "boolean"
+  )
+    fail(`${agentNamesForLaunch[agent]} graphical configuration is incomplete`);
+  return { config, stateRoot };
+}
+
+async function readWindowsCredential(launcher, provider, required) {
+  if (!required) return "";
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn(launcher, ["--credential-read", provider], {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const chunks = [];
+    let size = 0;
+    child.stdout.on("data", (chunk) => {
+      size += chunk.length;
+      if (size <= 2048) chunks.push(chunk);
+    });
+    child.once("error", reject);
+    child.once("close", (code) => resolve({ code: code ?? 1, secret: Buffer.concat(chunks) }));
+  });
+  if (result.code !== 0 || !result.secret.length || result.secret.length > 2048)
+    fail("Windows Credential Manager does not contain the selected provider credential");
+  return result.secret.toString("utf8");
+}
+
+async function readBrokerRequest(request) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > 16 * 1024 * 1024) fail("the agent request exceeded the broker limit");
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+async function startHostInferenceBroker(configuration, credential, brokerToken) {
+  const endpoint = new URL(`${configuration.endpoint.replace(/\/$/u, "")}/`);
+  const server = createServer(async (request, response) => {
+    try {
+      if (!request.url?.startsWith("/v1/")) {
+        response.writeHead(404, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: { message: "not found" } }));
+        return;
+      }
+      if (request.headers.authorization !== `Bearer ${brokerToken}`) {
+        response.writeHead(401, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: { message: "unauthorized" } }));
+        return;
+      }
+      const upstreamUrl = new URL(request.url.slice("/v1/".length), endpoint);
+      const body =
+        request.method === "GET" || request.method === "HEAD"
+          ? undefined
+          : await readBrokerRequest(request);
+      const headers = { accept: request.headers.accept ?? "application/json" };
+      if (request.headers["content-type"])
+        headers["content-type"] = request.headers["content-type"];
+      if (credential) headers.authorization = `Bearer ${credential}`;
+      if (configuration.inference === "openrouter") {
+        headers["http-referer"] = "https://www.nvidia.com/nemoclaw/";
+        headers["x-openrouter-title"] = "NVIDIA NemoClaw";
+      }
+      const upstream = await fetch(upstreamUrl, {
+        method: request.method,
+        headers,
+        body,
+        redirect: "error",
+        signal: AbortSignal.timeout(180_000),
+      });
+      const responseBody = Buffer.from(await upstream.arrayBuffer());
+      if (responseBody.length > 32 * 1024 * 1024)
+        fail("the provider response exceeded the broker limit");
+      response.writeHead(upstream.status, {
+        "cache-control": "no-store",
+        "content-type": upstream.headers.get("content-type") ?? "application/json",
+      });
+      response.end(responseBody);
+    } catch (error) {
+      response.writeHead(502, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          error: {
+            message: error instanceof Error ? error.message : "inference provider request failed",
+          },
+        }),
+      );
+    }
+  });
+  const port = await freePort();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", resolve);
+  });
+  return { server, port };
 }
 
 function gatewaySource() {
@@ -50,7 +300,10 @@ const required = (name) => {
 };
 const launcher = required("NEMOCLAW_MXC_OPENCLAW_ENTRY");
 const home = required("NEMOCLAW_MXC_HOME");
-const mockPort = Number(required("NEMOCLAW_MXC_MOCK_PORT"));
+const modelPort = Number(required("NEMOCLAW_MXC_MODEL_PORT"));
+const modelId = required("NEMOCLAW_MXC_MODEL_ID");
+const modelToken = required("NEMOCLAW_MXC_MODEL_TOKEN");
+const qualification = required("NEMOCLAW_MXC_QUALIFICATION") === "1";
 const uiPort = Number(required("NEMOCLAW_MXC_UI_PORT"));
 const readBody = async (request) => {
   const chunks = [];
@@ -67,7 +320,7 @@ const responseFor = (body) => {
   const turn = text.match(/NATIVE_WINDOWS_TURN_([123])_OK/u)?.[1];
   return turn ? "NATIVE_WINDOWS_TURN_" + turn + "_OK" : "NEMOCLAW_NATIVE_PREVIEW_OK";
 };
-const mock = createServer(async (request, response) => {
+const mock = qualification ? createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/v1/models") {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ object: "list", data: [{ id: "native-preview", object: "model" }] }));
@@ -79,7 +332,7 @@ const mock = createServer(async (request, response) => {
     return;
   }
   const body = JSON.parse(await readBody(request));
-  if (body?.model !== "native-preview" || !Array.isArray(body?.messages)) {
+  if (request.headers.authorization !== "Bearer " + modelToken || body?.model !== modelId || !Array.isArray(body?.messages)) {
     response.writeHead(400, { "content-type": "application/json" });
     response.end(JSON.stringify({ error: { message: "unexpected request" } }));
     return;
@@ -105,10 +358,10 @@ const mock = createServer(async (request, response) => {
     model: "native-preview",
     choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
   }));
-});
-await new Promise((resolve, reject) => {
+}) : null;
+if (mock !== null) await new Promise((resolve, reject) => {
   mock.once("error", reject);
-  mock.listen(mockPort, "127.0.0.1", resolve);
+  mock.listen(modelPort, "127.0.0.1", resolve);
 });
 const configDirectory = join(home, ".openclaw");
 mkdirSync(configDirectory, { recursive: true });
@@ -120,14 +373,14 @@ writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
     auth: { mode: "none" },
     controlUi: { allowedOrigins: ["http://127.0.0.1:" + uiPort, "http://localhost:" + uiPort] },
   },
-  models: { mode: "merge", providers: { nemoclawNativePreview: {
-    baseUrl: "http://127.0.0.1:" + mockPort + "/v1",
-    apiKey: "unused",
+  models: { mode: "merge", providers: { nemoclawNative: {
+    baseUrl: "http://127.0.0.1:" + modelPort + "/v1",
+    apiKey: modelToken,
     api: "openai-completions",
     timeoutSeconds: 180,
-    models: [{ id: "native-preview", name: "NemoClaw Native Preview", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 131072, maxTokens: 4096 }],
+    models: [{ id: modelId, name: modelId, reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 131072, maxTokens: 4096 }],
   } } },
-  agents: { defaults: { model: { primary: "nemoclawNativePreview/native-preview" }, timeoutSeconds: 180, skipBootstrap: true, thinkingDefault: "off" }, list: [{ id: "main", default: true }] },
+  agents: { defaults: { model: { primary: "nemoclawNative/" + modelId }, timeoutSeconds: 180, skipBootstrap: true, thinkingDefault: "off" }, list: [{ id: "main", default: true }] },
 }), "utf8");
 Object.assign(process.env, {
   HOME: home,
@@ -155,7 +408,13 @@ function resolveEdge() {
   fail("Microsoft Edge is required for the visible Control UI proof");
 }
 
-async function startOnboardingServer(installRoot, openClawUrl, evidenceRoot) {
+async function startOnboardingServer(
+  installRoot,
+  openClawUrl,
+  evidenceRoot,
+  qualification,
+  launcher,
+) {
   const onboardingRoot = requiredDirectory(
     path.join(installRoot, "onboarding"),
     "NemoClaw graphical onboarder",
@@ -173,6 +432,7 @@ async function startOnboardingServer(installRoot, openClawUrl, evidenceRoot) {
     ["/assets/nemocua.png", ["assets/nemocua.png", "image/png"]],
   ]);
   let selection = null;
+  let runtimeConfiguration = null;
   const server = createServer(async (request, response) => {
     try {
       const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
@@ -185,21 +445,35 @@ async function startOnboardingServer(installRoot, openClawUrl, evidenceRoot) {
           chunks.push(chunk);
         }
         const submitted = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-        const agents = new Set([
-          "openclaw",
-          "hermes",
-          "langchain-deepagents-code",
-          "pi",
-          "nemocua",
-        ]);
-        const inference = new Set(["nvidia", "openrouter", "compatible", "local"]);
-        if (!agents.has(submitted?.agent) || !inference.has(submitted?.inference))
-          throw new Error("onboarding selection is invalid");
+        const normalized = normalizeOnboardingConfiguration(submitted, qualification);
+        if (!qualification) {
+          await updateWindowsCredential(launcher, normalized.inference, normalized.credential);
+        }
+        const configPath = qualification ? null : writeNativeAgentConfiguration(normalized);
         selection = {
           schemaVersion: 1,
-          agent: submitted.agent,
-          inference: submitted.inference,
-          options: submitted.options ?? {},
+          agent: normalized.agent,
+          inference: normalized.inference,
+          endpoint: qualification ? "deterministic-loopback" : normalized.endpoint,
+          model: normalized.model,
+          credentialStorage: qualification
+            ? "none"
+            : normalized.credential
+              ? "Windows Credential Manager"
+              : "not required",
+          options: Object.fromEntries(
+            Object.entries(normalized.options).filter(
+              ([name]) => !["credential", "endpoint", "model"].includes(name),
+            ),
+          ),
+        };
+        runtimeConfiguration = {
+          agent: normalized.agent,
+          inference: normalized.inference,
+          endpoint: normalized.endpoint,
+          model: normalized.model,
+          credentialStored: !qualification && Boolean(normalized.credential),
+          configPath,
         };
         fs.writeFileSync(
           path.join(evidenceRoot, "onboarding-selection.json"),
@@ -210,7 +484,7 @@ async function startOnboardingServer(installRoot, openClawUrl, evidenceRoot) {
         response.end(
           JSON.stringify({
             redirect:
-              submitted.agent === "openclaw"
+              qualification && submitted.agent === "openclaw"
                 ? `${openClawUrl}/chat`
                 : `/launching.html?agent=${encodeURIComponent(submitted.agent)}`,
           }),
@@ -265,6 +539,7 @@ async function startOnboardingServer(installRoot, openClawUrl, evidenceRoot) {
     server,
     url: `http://127.0.0.1:${port}`,
     selection: () => selection,
+    runtimeConfiguration: () => runtimeConfiguration,
   };
 }
 
@@ -307,7 +582,10 @@ async function driveBrowser(
       viewport: { width: 1200, height: 630 },
     });
     const page = await context.newPage();
-    await page.goto(onboardingUrl, {
+    const onboardingPageUrl = new URL(onboardingUrl);
+    onboardingPageUrl.searchParams.set("agent", targetAgent);
+    if (qualification) onboardingPageUrl.searchParams.set("qualification", "1");
+    await page.goto(onboardingPageUrl.toString(), {
       waitUntil: "domcontentloaded",
       timeout: 90_000,
     });
@@ -320,7 +598,9 @@ async function driveBrowser(
         path: path.join(evidenceRoot, "onboarding-agent.png"),
       });
       console.log(`WEB UI> READY ${onboardingUrl}`);
-      await new Promise((resolve) => browser.once("disconnected", resolve));
+      await page.waitForURL(`${onboardingUrl}/launching.html?agent=*`, {
+        timeout: 30 * 60_000,
+      });
       return {
         browserVersion,
         demonstratedAgentChoices: [],
@@ -420,6 +700,90 @@ async function driveBrowser(
   }
 }
 
+async function runInitialOnboarding(
+  installRoot,
+  installedOpenClawRoot,
+  initialAgent,
+  evidenceRoot,
+) {
+  const launcher = requiredFile(path.join(installRoot, "bin", "NemoClaw.exe"), "NemoClaw launcher");
+  const onboarding = await startOnboardingServer(installRoot, "", evidenceRoot, false, launcher);
+  try {
+    console.log(`WEB UI> Launching graphical onboarding for ${agentNamesForLaunch[initialAgent]}`);
+    await driveBrowser(
+      installedOpenClawRoot,
+      onboarding.url,
+      "",
+      evidenceRoot,
+      false,
+      initialAgent,
+    );
+  } finally {
+    await new Promise((resolve) => onboarding.server.close(() => resolve()));
+  }
+  const selection = onboarding.selection();
+  const runtimeConfiguration = onboarding.runtimeConfiguration();
+  if (
+    !Object.hasOwn(agentNamesForLaunch, selection?.agent) ||
+    runtimeConfiguration?.agent !== selection.agent ||
+    typeof runtimeConfiguration.configPath !== "string"
+  )
+    fail("graphical onboarding did not publish a complete agent configuration");
+  if (selection.options.launch !== "on") {
+    console.log(`WEB UI> Saved ${agentNamesForLaunch[selection.agent]} configuration for later`);
+    return;
+  }
+  const arguments_ = ["--configured", "--agent", selection.agent];
+  arguments_.unshift("--console");
+  const child = spawn(launcher, arguments_, {
+    cwd: installRoot,
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false,
+  });
+  child.once("error", (error) => {
+    console.error(
+      `WEB UI> ${agentNamesForLaunch[selection.agent]} launch failed: ${error.message}`,
+    );
+  });
+  child.unref();
+  console.log(`WEB UI> Opened the authentic ${agentNamesForLaunch[selection.agent]} surface`);
+}
+
+async function driveConfiguredOpenClaw(openClawRoot, openClawUrl) {
+  const playwrightRoot = requiredDirectory(
+    path.join(openClawRoot, "node_modules", "openclaw", "node_modules", "playwright-core"),
+    "installed Playwright browser driver",
+  );
+  const require = createRequire(import.meta.url);
+  const { chromium } = require(playwrightRoot);
+  const browser = await chromium.launch({
+    executablePath: resolveEdge(),
+    headless: false,
+    args: [
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--window-position=20,10",
+      "--window-size=1240,700",
+    ],
+  });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1200, height: 630 } });
+    const page = await context.newPage();
+    await page.goto(`${openClawUrl}/chat`, { waitUntil: "domcontentloaded", timeout: 90_000 });
+    const composer = page.locator(".agent-chat__composer-combobox > textarea").first();
+    await composer.waitFor({ state: "visible", timeout: 90_000 });
+    await page.evaluate(() => {
+      document.title = "NemoClaw Native Windows · OpenClaw Control UI";
+    });
+    console.log("WEB UI> OpenClaw Control UI is ready inside native MXC");
+    await new Promise((resolve) => browser.once("disconnected", resolve));
+  } catch (error) {
+    if (browser.isConnected()) await browser.close();
+    throw error;
+  }
+}
+
 async function runSelectedNonOpenClaw(
   installRoot,
   installedNode,
@@ -428,7 +792,14 @@ async function runSelectedNonOpenClaw(
   qualification,
   evidenceRoot,
 ) {
-  const onboarding = await startOnboardingServer(installRoot, "", evidenceRoot);
+  const launcher = requiredFile(path.join(installRoot, "bin", "NemoClaw.exe"), "NemoClaw launcher");
+  const onboarding = await startOnboardingServer(
+    installRoot,
+    "",
+    evidenceRoot,
+    qualification,
+    launcher,
+  );
   let browserProof;
   try {
     console.log(`WEB UI> Launching graphical onboarding for ${agentNamesForLaunch[targetAgent]}`);
@@ -446,8 +817,7 @@ async function runSelectedNonOpenClaw(
   const onboardingSelection = onboarding.selection();
   if (onboardingSelection?.agent !== targetAgent)
     fail(`graphical onboarding did not select ${targetAgent}`);
-  if (!qualification)
-    fail(`${agentNamesForLaunch[targetAgent]} requires completed provider configuration`);
+  if (!qualification) fail("the non-OpenClaw runtime bypassed its configured adapter");
 
   const runtimeEvidence = path.join(evidenceRoot, "runtime");
   fs.mkdirSync(runtimeEvidence, { recursive: true });
@@ -535,6 +905,7 @@ async function main() {
   if (process.platform !== "win32" || process.arch !== "arm64")
     fail("native Windows ARM64 is required");
   const qualification = process.argv.includes("--qualification");
+  const configured = process.argv.includes("--configured");
   const targetAgent = argumentValue("--agent") ?? "openclaw";
   if (!Object.hasOwn(agentNamesForLaunch, targetAgent)) fail(`unknown agent ${targetAgent}`);
   const installRoot = requiredDirectory(
@@ -573,6 +944,15 @@ async function main() {
       ),
   );
   fs.mkdirSync(selectedEvidenceRoot, { recursive: true });
+  if (!qualification && !configured) {
+    await runInitialOnboarding(
+      installRoot,
+      installedOpenClawRoot,
+      targetAgent,
+      selectedEvidenceRoot,
+    );
+    return;
+  }
   if (targetAgent !== "openclaw") {
     await runSelectedNonOpenClaw(
       installRoot,
@@ -584,6 +964,21 @@ async function main() {
     );
     return;
   }
+
+  const launcherPath = requiredFile(path.join(binRoot, "NemoClaw.exe"), "NemoClaw launcher");
+  const configuredIdentity = configured ? readNativeAgentConfiguration("openclaw") : null;
+  const modelId = configuredIdentity?.config.model ?? "native-preview";
+  const modelToken = randomBytes(32).toString("base64url");
+  const credential = configuredIdentity
+    ? await readWindowsCredential(
+        launcherPath,
+        configuredIdentity.config.inference,
+        configuredIdentity.config.credentialStored,
+      )
+    : "";
+  const inferenceBroker = configuredIdentity
+    ? await startHostInferenceBroker(configuredIdentity.config, credential, modelToken)
+    : null;
 
   const systemDrive = process.env.SystemDrive;
   if (!systemDrive || !/^[A-Za-z]:$/u.test(systemDrive)) fail("SystemDrive is invalid");
@@ -622,19 +1017,25 @@ async function main() {
       `    - ${quoteYamlPath(runtimeRoot)}`,
       "  read_write:",
       `    - ${quoteYamlPath(shareRoot)}`,
+      ...(configuredIdentity === null
+        ? []
+        : [`    - ${quoteYamlPath(configuredIdentity.stateRoot)}`]),
       "",
     ].join("\n"),
     "utf8",
   );
   const configRoot = path.join(runRoot, "config");
   const stateRoot = path.join(runRoot, "state");
-  const home = path.join(shareRoot, "home");
+  const home =
+    configuredIdentity === null
+      ? path.join(shareRoot, "home")
+      : path.join(configuredIdentity.stateRoot, "runtime");
   const temp = path.join(shareRoot, "temp");
   for (const directory of [configRoot, stateRoot, home, temp])
     fs.mkdirSync(directory, { recursive: true });
   const openShellPort = await freePort();
   const uiPort = await freePort();
-  const mockPort = await freePort();
+  const modelPort = inferenceBroker?.port ?? (await freePort());
   const sandboxName = `nc-ui-${runId}`;
   const gatewayName = `nemoclaw-ui-${runId}`;
   const gatewayLogPath = path.join(runRoot, "openshell-gateway.log");
@@ -693,8 +1094,11 @@ async function main() {
     const sandboxEnvironment = {
       LOCALAPPDATA: home,
       NEMOCLAW_MXC_HOME: home,
-      NEMOCLAW_MXC_MOCK_PORT: String(mockPort),
+      NEMOCLAW_MXC_MODEL_ID: modelId,
+      NEMOCLAW_MXC_MODEL_PORT: String(modelPort),
+      NEMOCLAW_MXC_MODEL_TOKEN: modelToken,
       NEMOCLAW_MXC_OPENCLAW_ENTRY: openClawEntry,
+      NEMOCLAW_MXC_QUALIFICATION: qualification ? "1" : "0",
       NEMOCLAW_MXC_UI_PORT: String(uiPort),
       NODE_DISABLE_COMPILE_CACHE: "1",
       NUMBER_OF_PROCESSORS: process.env.NUMBER_OF_PROCESSORS ?? "1",
@@ -739,23 +1143,41 @@ async function main() {
     console.log("WEB UI> Waiting for the real OpenClaw Control UI");
     await waitForPort(uiPort, create, "OpenClaw Control UI", 180_000);
     const uiUrl = `http://127.0.0.1:${uiPort}`;
-    onboarding = await startOnboardingServer(installRoot, uiUrl, evidenceRoot);
-    console.log(`WEB UI> Launching the NemoClaw graphical onboarder at ${onboarding.url}`);
-    const browserProof = await driveBrowser(
-      openClawRoot,
-      onboarding.url,
-      uiUrl,
-      evidenceRoot,
-      qualification,
-      targetAgent,
-    );
-    const onboardingSelection = onboarding.selection();
-    await new Promise((resolve, reject) => {
-      onboarding.server.close((error) => (error ? reject(error) : resolve()));
-    });
-    onboarding = null;
-    if (qualification && onboardingSelection?.agent !== "openclaw")
-      fail("graphical onboarding did not select OpenClaw");
+    let browserProof;
+    let onboardingSelection = null;
+    if (qualification) {
+      onboarding = await startOnboardingServer(
+        installRoot,
+        uiUrl,
+        evidenceRoot,
+        true,
+        launcherPath,
+      );
+      console.log(`WEB UI> Launching the NemoClaw graphical onboarder at ${onboarding.url}`);
+      browserProof = await driveBrowser(
+        openClawRoot,
+        onboarding.url,
+        uiUrl,
+        evidenceRoot,
+        true,
+        targetAgent,
+      );
+      onboardingSelection = onboarding.selection();
+      await new Promise((resolve, reject) => {
+        onboarding.server.close((error) => (error ? reject(error) : resolve()));
+      });
+      onboarding = null;
+      if (onboardingSelection?.agent !== "openclaw")
+        fail("graphical onboarding did not select OpenClaw");
+    } else {
+      browserProof = {
+        browserVersion: "Microsoft Edge",
+        demonstratedAgentChoices: [],
+        disabledAgentChoices: [],
+        turns: [],
+      };
+      await driveConfiguredOpenClaw(openClawRoot, uiUrl);
+    }
     await run(
       openshell,
       ["sandbox", "delete", sandboxName],
@@ -827,6 +1249,9 @@ async function main() {
       } catch {}
     }
     await stopChild(gateway);
+    if (inferenceBroker !== null) {
+      await new Promise((resolve) => inferenceBroker.server.close(() => resolve()));
+    }
     if (!logsClosed) {
       fs.closeSync(gatewayLog);
       fs.closeSync(gatewayError);
@@ -858,8 +1283,11 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(
-    error instanceof Error ? error.message : "Native Windows OpenClaw UI qualification failed.",
-  );
+  console.error(error instanceof Error ? error.message : "NemoClaw native Windows launch failed.");
+  if (process.argv.includes("--configured")) {
+    console.error("Press Enter to close.");
+    process.stdin.resume();
+    process.stdin.once("data", () => process.stdin.pause());
+  }
   process.exitCode = 1;
 });

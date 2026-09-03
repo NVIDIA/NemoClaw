@@ -19,12 +19,24 @@ workload result, then deletes the sandbox through OpenShell.
 The NVIDIA-branded setup installs a native ARM64 NemoClaw GUI launcher and a
 graphical first-run experience. The interface names OpenClaw, Hermes Agent,
 LangChain Deep Agents Code, Pi, and NemoCUA, with Pi and NemoCUA explicitly
-marked experimental. Only OpenClaw activation is qualified in this package
-slice; other selections fail closed until their exact native payloads pass.
+marked experimental. Every enabled choice has an agent-specific executable
+adapter: OpenClaw opens its authentic Control UI, Hermes Agent, Deep Agents
+Code, and Pi open their native terminal surfaces, and NemoCUA runs its bounded
+experimental visible-browser implementation. A choice is not a production
+support claim until its exact package qualification passes.
 
-CI drives three deterministic turns through the real OpenClaw Control UI and
-MXC-contained gateway. The deterministic loopback model proves transport and
-runtime wiring without a pull-request secret; it is not production inference.
+CI separately drives three deterministic turns through each real agent runtime
+inside native MXC. OpenClaw uses its Control UI; terminal agents use their
+genuine non-interactive CLI modes; NemoCUA observes and acts on real Edge
+pixels. The deterministic loopback model proves transport and runtime wiring
+without a pull-request secret; it is not production inference quality.
+
+Graphical onboarding collects the selected provider endpoint and model.
+Provider API keys are written by the native ARM64 launcher to Windows
+Credential Manager and are not stored in MSI-owned files or JSON. Agent state
+and secret-free configuration live below the current user's Local AppData.
+Runtime processes receive only an authenticated, ephemeral loopback broker
+route; the provider credential remains on the Windows host.
 
 The setup executable applies Microsoft MXC's elevated prepare-system-drive and
 prepare-null-device host prerequisites before installing the MSI. Windows
@@ -33,9 +45,9 @@ ownership remains deferred.
 
 This is a qualification candidate, not a production support claim. Native MXC
 execution remains limited by the Windows host build and capabilities. Gateway
-service registration, supported onboarding, managed inference, local inference,
-and production activation remain incomplete. Mutable runtime state must remain
-outside this MSI-owned installation directory.
+service registration, messaging, web-search integration, managed local-model
+lifecycle, and production activation remain incomplete. Mutable runtime state
+stays outside this MSI-owned installation directory.
 
 PR qualification artifacts are unsigned. Production use remains gated on
 Authenticode signing of the NemoClaw, OpenClaw, OpenShell, MXC, MSI, and setup

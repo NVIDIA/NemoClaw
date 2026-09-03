@@ -151,22 +151,22 @@
         <StackPanel Grid.Row="2" Margin="0,54,0,0">
           <Grid Margin="0,0,0,22">
             <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition /></Grid.ColumnDefinitions>
-            <Border Width="20" Height="20" CornerRadius="10" Background="{StaticResource NvidiaGreen}"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White" FontSize="11" FontWeight="Bold" Text="1" /></Border>
+            <Border x:Name="ChooseStageDot" Width="20" Height="20" CornerRadius="10" Background="{StaticResource NvidiaGreen}" BorderBrush="{StaticResource NvidiaGreen}" BorderThickness="1"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White" FontSize="11" FontWeight="Bold" Text="1" /></Border>
             <StackPanel Grid.Column="1"><TextBlock Foreground="White" FontWeight="SemiBold" Text="Choose" /><TextBlock Foreground="#979A95" FontSize="11" Text="Agent and experience" /></StackPanel>
           </Grid>
           <Grid Margin="0,0,0,22">
             <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition /></Grid.ColumnDefinitions>
-            <Border Width="20" Height="20" CornerRadius="10" BorderBrush="#62655F" BorderThickness="1"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#B9BBB7" FontSize="11" Text="2" /></Border>
+            <Border x:Name="ProtectStageDot" Width="20" Height="20" CornerRadius="10" BorderBrush="#62655F" BorderThickness="1"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#B9BBB7" FontSize="11" Text="2" /></Border>
             <StackPanel Grid.Column="1"><TextBlock Foreground="White" FontWeight="SemiBold" Text="Protect" /><TextBlock Foreground="#979A95" FontSize="11" Text="Native MXC isolation" /></StackPanel>
           </Grid>
           <Grid Margin="0,0,0,22">
             <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition /></Grid.ColumnDefinitions>
-            <Border Width="20" Height="20" CornerRadius="10" BorderBrush="#62655F" BorderThickness="1"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#B9BBB7" FontSize="11" Text="3" /></Border>
+            <Border x:Name="InstallStageDot" Width="20" Height="20" CornerRadius="10" BorderBrush="#62655F" BorderThickness="1"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#B9BBB7" FontSize="11" Text="3" /></Border>
             <StackPanel Grid.Column="1"><TextBlock Foreground="White" FontWeight="SemiBold" Text="Install" /><TextBlock Foreground="#979A95" FontSize="11" Text="Repairable Windows package" /></StackPanel>
           </Grid>
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition /></Grid.ColumnDefinitions>
-            <Border Width="20" Height="20" CornerRadius="10" BorderBrush="#62655F" BorderThickness="1"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#B9BBB7" FontSize="11" Text="4" /></Border>
+            <Border x:Name="LaunchStageDot" Width="20" Height="20" CornerRadius="10" BorderBrush="#62655F" BorderThickness="1"><TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#B9BBB7" FontSize="11" Text="4" /></Border>
             <StackPanel Grid.Column="1"><TextBlock Foreground="White" FontWeight="SemiBold" Text="Launch" /><TextBlock Foreground="#979A95" FontSize="11" Text="Your authentic agent surface" /></StackPanel>
           </Grid>
         </StackPanel>

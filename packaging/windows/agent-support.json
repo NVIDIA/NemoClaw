@@ -11,17 +11,17 @@
       "interface": "OpenClaw Control UI",
       "status": "candidate",
       "selectable": true,
-      "limitation": "Requires a passing exact-head three-turn native MXC qualification before the candidate is proven."
+      "limitation": "Candidate Control UI uses a host-side credential broker and requires two consecutive exact-head native MXC qualifications before it is called proven."
     },
     {
       "id": "hermes",
       "displayName": "Hermes Agent",
       "version": "0.19.0",
       "source": "https://github.com/NousResearch/hermes-agent/tree/3ef6bbd201263d354fd83ec55b3c306ded2eb72a",
-      "interface": "Hermes native terminal or desktop UI",
+      "interface": "Hermes native terminal UI",
       "status": "candidate",
       "selectable": true,
-      "limitation": "The native terminal candidate omits the unqualified cryptography 46.0.7 and pywinpty 2.0.15 integrations; those optional surfaces are not claimed."
+      "limitation": "The native terminal candidate omits unqualified cryptography 46.0.7 and pywinpty 2.0.15 integrations; optional encrypted integration and PTY surfaces are not claimed."
     },
     {
       "id": "langchain-deepagents-code",
@@ -53,7 +53,7 @@
       "interface": "NemoCUA computer-use runtime",
       "status": "experimental-candidate",
       "selectable": true,
-      "limitation": "Windows-native experimental adapter for the repository's run_with_harness.py terminal contract; it does not claim parity with private scenario-owned images."
+      "limitation": "Windows-native bounded visible-browser adapter for the repository's run_with_harness.py contract; it is experimental and does not claim parity with private scenario-owned images."
     }
   ]
 }

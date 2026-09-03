@@ -344,6 +344,8 @@ if ($null -ne $qualification -and (-not $qualification.repairRestoredDigest -or
     $qualification.nativeTurn.sandboxDeleted -ne $true -or
     $qualification.nativeTurn.sandboxRegistryAbsent -ne $true -or
     $qualification.nativeTurn.qualificationRootsRemoved -ne $true -or
+    $qualification.credentialManager.exactRoundTrip -ne $true -or
+    $qualification.credentialManager.removedAfterProbe -ne $true -or
     $qualification.webUi.verdict -cne 'pass' -or
     [int]$qualification.webUi.turnCount -ne 3 -or
     $qualification.webUi.onboardingSelection.agent -cne 'openclaw' -or
@@ -656,9 +658,14 @@ public static class NemoClawConsoleVideoEncoder
     $agentVideos = [ordered]@{}
     foreach ($agent in $script:AgentVideoSegments) {
         $segment = $agentSegmentFrames[$agent]
-        if ($null -eq $segment.start -or $null -eq $segment.end -or $segment.end -lt $segment.start) {
-            $captureFailures.Add("The recording is missing a complete $agent agent segment.")
+        if ($null -eq $segment.start) {
+            $captureFailures.Add("The recording did not start a $agent agent segment.")
             continue
+        }
+        $segmentComplete = $null -ne $segment.end -and $segment.end -ge $segment.start
+        if (-not $segmentComplete) {
+            $captureFailures.Add("The recording captured a failed or incomplete $agent agent segment.")
+            $segment.end = $framePaths.Count - 1
         }
         $segmentStart = [Math]::Max(0, [int]$segment.start - (2 * $script:CaptureFramesPerSecond))
         $segmentEnd = [Math]::Min($framePaths.Count - 1, [int]$segment.end + (2 * $script:CaptureFramesPerSecond))
@@ -692,6 +699,7 @@ public static class NemoClawConsoleVideoEncoder
             firstCombinedFrame = $segmentStart
             lastCombinedFrame = $segmentEnd
             frameCount = $segmentFrames.Count
+            completed = $segmentComplete
             expectedDurationMilliseconds = $segmentFrames.Count * $script:FrameDurationMilliseconds
             sha256 = (Get-FileHash -LiteralPath $agentVideoPath -Algorithm SHA256).Hash.ToLowerInvariant()
             bytes = (Get-Item -LiteralPath $agentVideoPath).Length
@@ -715,6 +723,11 @@ public static class NemoClawConsoleVideoEncoder
         $recordedQualification.nativeTurn.sandboxRegistryAbsent -ne $true -or
         $recordedQualification.nativeTurn.qualificationRootsRemoved -ne $true)) {
         $captureFailures.Add('The recorded qualification receipt does not prove the installed NemoClaw turn.')
+    }
+    if ($null -ne $recordedQualification -and (
+        $recordedQualification.credentialManager.exactRoundTrip -ne $true -or
+        $recordedQualification.credentialManager.removedAfterProbe -ne $true)) {
+        $captureFailures.Add('The recorded qualification receipt does not prove the Windows Credential Manager boundary.')
     }
     if ($null -ne $recordedQualification -and ($recordedQualification.webUi.verdict -cne 'pass' -or
         [int]$recordedQualification.webUi.turnCount -ne 3 -or

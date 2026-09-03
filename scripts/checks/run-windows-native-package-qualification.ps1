@@ -354,6 +354,83 @@ function Invoke-PythonScriptVersionProbe {
     }
 }
 
+function Invoke-NativeCredentialManagerRoundTrip {
+    param([Parameter(Mandatory)][string]$LauncherPath)
+
+    $secret = "NemoClawNativeCredential-$([guid]::NewGuid().ToString('N'))"
+    $invokeHelper = {
+        param(
+            [Parameter(Mandatory)][string[]]$Arguments,
+            [AllowEmptyString()][string]$StandardInput = ''
+        )
+        $startInfo = [Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $LauncherPath
+        $startInfo.Arguments = ($Arguments | ForEach-Object {
+            ConvertTo-NativeArgument -Value $_
+        }) -join ' '
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardInput = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $process = [Diagnostics.Process]::new()
+        $process.StartInfo = $startInfo
+        try {
+            if (-not $process.Start()) {
+                Fail-PackageQualification 'The native Windows credential helper could not start.'
+            }
+            if (-not [string]::IsNullOrEmpty($StandardInput)) {
+                $process.StandardInput.Write($StandardInput)
+            }
+            $process.StandardInput.Close()
+            $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+            $stderrTask = $process.StandardError.ReadToEndAsync()
+            if (-not $process.WaitForExit(30000)) {
+                $process.Kill()
+                $process.WaitForExit()
+                Fail-PackageQualification 'The native Windows credential helper exceeded its timeout.'
+            }
+            $process.WaitForExit()
+            return [pscustomobject]@{
+                exitCode = $process.ExitCode
+                stdout = $stdoutTask.GetAwaiter().GetResult()
+                stderr = $stderrTask.GetAwaiter().GetResult()
+            }
+        } finally {
+            $process.Dispose()
+        }
+    }
+
+    $write = & $invokeHelper @('--credential-write', 'local') $secret
+    if ($write.exitCode -ne 0 -or -not [string]::IsNullOrEmpty($write.stdout) -or
+        -not [string]::IsNullOrEmpty($write.stderr)) {
+        Fail-PackageQualification 'The native Windows credential helper did not store a test credential.'
+    }
+    try {
+        $read = & $invokeHelper @('--credential-read', 'local')
+        if ($read.exitCode -ne 0 -or $read.stdout -cne $secret -or
+            -not [string]::IsNullOrEmpty($read.stderr)) {
+            Fail-PackageQualification 'Windows Credential Manager did not return the exact test credential.'
+        }
+    } finally {
+        $delete = & $invokeHelper @('--credential-delete', 'local')
+        if ($delete.exitCode -ne 0) {
+            Fail-PackageQualification 'The native Windows credential helper did not delete its test credential.'
+        }
+    }
+    $absent = & $invokeHelper @('--credential-read', 'local')
+    if ($absent.exitCode -eq 0 -or -not [string]::IsNullOrEmpty($absent.stdout)) {
+        Fail-PackageQualification 'The native Windows credential helper left its test credential behind.'
+    }
+    Write-Host '[PASS] Native launcher stored, read, and removed a secret through Windows Credential Manager'
+    return [pscustomobject]@{
+        backend = 'Windows Credential Manager generic credential'
+        provider = 'local'
+        exactRoundTrip = $true
+        removedAfterProbe = $true
+    }
+}
+
 function Get-ArpEntries {
     param([Parameter(Mandatory)][string]$DisplayName)
 
@@ -594,6 +671,7 @@ foreach ($requiredPayload in @(
     'config\mxc-gateway.toml',
     'qualification\run-installed-native-turn.mts',
     'qualification\run-installed-native-web-ui.mts',
+    'qualification\run-installed-native-console-agent.mts',
     'qualification\run-installed-native-pi.mts',
     'qualification\run-installed-native-nemocua.mts',
     'agent-support.json',
@@ -680,6 +758,7 @@ try {
         Invoke-PythonDistributionVersionProbe -PythonPath $pythonPath -SitePackages $deepAgentsSitePackages -Distribution 'deepagents-code' -ExpectedVersion '0.1.55' -EntryRelativePath 'deepagents_code\main.py' -Label 'Installed Deep Agents Code runtime'
         Invoke-PythonScriptVersionProbe -PythonPath $pythonPath -ScriptPath $nemoCuaEntryPath -ExpectedVersion '0.1.0-windows-experimental' -Label 'Installed NemoCUA runtime'
     )
+    $credentialManagerEvidence = Invoke-NativeCredentialManagerRoundTrip -LauncherPath $nemoclawUiLauncherPath
     $nativeTurnArtifacts = Join-Path $artifactRoot 'native-turn'
     Write-Host "PS> Installed NemoClaw native MXC agent turn :: nemoclaw debug --native-windows-turn"
     & $nemoclawLauncherPath debug --native-windows-turn --artifact-directory $nativeTurnArtifacts
@@ -734,7 +813,7 @@ try {
         $webUiReceipt.browser -cne 'Microsoft Edge' -or
         $webUiReceipt.deterministicLocalModel -ne $true -or
         $webUiReceipt.onboardingSelection.agent -cne 'openclaw' -or
-        $webUiReceipt.onboardingSelection.inference -cne 'nvidia' -or
+        $webUiReceipt.onboardingSelection.inference -cne 'qualification' -or
         @($webUiReceipt.demonstratedAgentChoices).Count -ne $expectedAgentChoices.Count -or
         @($webUiReceipt.disabledAgentChoices).Count -ne $expectedDisabledAgentChoices.Count -or
         [int]$webUiReceipt.turnCount -ne 3 -or
@@ -1030,6 +1109,7 @@ try {
         }
         nativeExecutions = $nativeEvidence
         applicationExecutions = $applicationEvidence
+        credentialManager = $credentialManagerEvidence
         nativeTurn = $nativeTurnReceipt
         webUi = $webUiReceipt
         pi = $piReceipt

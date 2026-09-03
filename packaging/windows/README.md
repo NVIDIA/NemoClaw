@@ -53,6 +53,11 @@ an elapsed timer and recovery log path, and launches NemoClaw after a successful
 interactive install. The MSI remains standard WiX authoring with no custom
 actions. Setup installs a native ARM64 `NemoClaw.exe` GUI launcher; launching it
 opens the local graphical onboarder without PowerShell or a visible console.
+The onboarder stores secret-free provider/model configuration below the
+current user's Local AppData and sends API keys over its loopback-only request
+to the native launcher, which writes them to Windows Credential Manager. Agent
+processes receive an ephemeral authenticated loopback broker instead of the
+provider credential.
 The onboarder presents real native candidates for OpenClaw, Hermes Agent,
 LangChain Deep Agents Code, Pi, and NemoCUA. Pi and NemoCUA are explicitly
 experimental. Each enabled choice passes through graphical selection and then
@@ -71,6 +76,7 @@ without exposing a PR credential; it is evidence for UI/runtime/model-transport
 wiring, not production inference quality. The workflow always attempts to
 upload raw actual-window recordings so failed UI runs retain visual diagnostics.
 
-The package is a preview distribution boundary. Host qualification,
-credential-backed onboarding parity, managed inference, service registration,
-production activation, and production signing remain separate gates.
+The package is a preview distribution boundary. Host qualification, managed
+local-model lifecycle, gateway service registration, messaging and web-search
+integration, production activation, and production signing remain separate
+gates.

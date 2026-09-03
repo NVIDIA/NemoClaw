@@ -462,9 +462,6 @@ writeFileSync(join(configDirectory, "config.toml"), [
   "check = false",
   "auto_update = false",
   "",
-  "[warnings]",
-  "suppress = [\"tavily\"]",
-  "",
 ].join("\n"), "utf8");
 const runner = join(home, "run-deep-agents.py");
 writeFileSync(runner, [

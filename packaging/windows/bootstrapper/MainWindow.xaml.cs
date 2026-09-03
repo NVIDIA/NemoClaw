@@ -40,6 +40,7 @@ public partial class MainWindow : Window
 
     public void ShowReady(bool installed)
     {
+        this.SetJourneyStage(installed ? 4 : 1);
         this.HidePanels();
         if (installed)
         {
@@ -59,6 +60,7 @@ public partial class MainWindow : Window
 
     public void ShowProgress(string title, string detail, int percentage)
     {
+        this.SetJourneyStage(percentage >= 60 ? 3 : 2);
         this.HidePanels();
         this.ProgressPanel.Visibility = Visibility.Visible;
         this.ProgressTitle.Text = title;
@@ -74,6 +76,7 @@ public partial class MainWindow : Window
 
     public void ShowSuccess(LaunchAction action)
     {
+        this.SetJourneyStage(4);
         this.StopElapsed();
         this.HidePanels();
         this.SuccessPanel.Visibility = Visibility.Visible;
@@ -122,6 +125,24 @@ public partial class MainWindow : Window
         this.SuccessPanel.Visibility = Visibility.Collapsed;
         this.FailurePanel.Visibility = Visibility.Collapsed;
         this.MaintenancePanel.Visibility = Visibility.Collapsed;
+    }
+
+    private void SetJourneyStage(int stage)
+    {
+        var inactive = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x62, 0x65, 0x5F));
+        var active = (System.Windows.Media.Brush)this.FindResource("NvidiaGreen");
+        var dots = new[] { this.ChooseStageDot, this.ProtectStageDot, this.InstallStageDot, this.LaunchStageDot };
+        for (var index = 0; index < dots.Length; index++)
+        {
+            var reached = index < stage;
+            dots[index].Background = reached ? active : System.Windows.Media.Brushes.Transparent;
+            dots[index].BorderBrush = reached ? active : inactive;
+            if (dots[index].Child is TextBlock number)
+            {
+                number.Foreground = reached ? System.Windows.Media.Brushes.White : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xB9, 0xBB, 0xB7));
+                number.FontWeight = reached ? FontWeights.Bold : FontWeights.Normal;
+            }
+        }
     }
 
     private void LicenseChanged(object sender, RoutedEventArgs args)

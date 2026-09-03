@@ -232,6 +232,7 @@ foreach ($requiredPayload in @(
     'config\mxc-gateway.toml',
     'qualification\run-installed-native-turn.mts',
     'qualification\run-installed-native-web-ui.mts',
+    'qualification\run-installed-native-console-agent.mts',
     'qualification\run-installed-native-pi.mts',
     'qualification\run-installed-native-nemocua.mts',
     'agent-support.json',
