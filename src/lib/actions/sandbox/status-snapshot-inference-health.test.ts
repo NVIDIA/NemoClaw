@@ -784,6 +784,65 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     },
   );
 
+  // Repeating the probe pair is only worth anything if the retry believes the
+  // second route result. A retry that re-probed and then ignored the answer
+  // would still pass a call-count assertion (#10709).
+  it("stops at a route that fails between attempts without sending a second inference request (#10709)", async () => {
+    const healthy: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 200,
+      detail: "reachable",
+    };
+    const brokenRoute: SandboxInferenceRouteHealth = {
+      ok: false,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 0,
+      detail: "Inference gateway unreachable on https://inference.local/v1/models.",
+    };
+    const options = snapshotDeps(healthy, null, { ok: true }, { openshellDriver: "docker" });
+    options.deps.reconcile = async () => ({
+      state: "present",
+      phase: "Ready",
+      output: "Phase: Ready",
+    });
+    const probeSandboxInferenceGatewayHealthImpl = vi
+      .fn()
+      .mockResolvedValueOnce(healthy)
+      .mockResolvedValueOnce(brokenRoute);
+    const probeSandboxInferenceInvocationImpl = vi.fn(() => ({
+      ok: false as const,
+      detail: "sandbox inference invocation probe returned HTTP 503",
+      httpStatus: 503,
+    }));
+    const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+    const recoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+    })) as never;
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        delayInferenceRecoveryProbe,
+        probeSandboxInferenceGatewayHealthImpl,
+        probeSandboxInferenceInvocationImpl,
+        recoverSandboxProcesses,
+      },
+    });
+
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledTimes(2);
+    expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledOnce();
+    expect(delayInferenceRecoveryProbe).toHaveBeenCalledOnce();
+    expect(snapshot.inferenceHealth).toMatchObject({
+      ok: false,
+      detail: brokenRoute.detail,
+      failureLabel: "unreachable",
+    });
+  });
+
   it("reports unhealthy after three transient HTTP 503 inference requests (#10709)", async () => {
     const healthy: SandboxInferenceRouteHealth = {
       ok: true,
