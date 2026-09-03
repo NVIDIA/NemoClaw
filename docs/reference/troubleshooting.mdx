@@ -2300,7 +2300,7 @@ gateway connect failed: GatewayClientRequestError: scope upgrade pending approva
   (requestId: 4899d110-911f-4bc7-ac1a-85d76c7b366f)
 ```
 
-When you run an `openclaw` command through `$$nemoclaw <name> exec -- ...` and it exits non-zero, NemoClaw asks the sandbox whether any device request is pending.
+When you run an `openclaw` command through `$$nemoclaw <name> exec -- ...` and it exits non-zero, NemoClaw asks the sandbox whether any device request is pending when the host can bound the probe process tree.
 If one is, it appends the review path to stderr after the command's own output:
 
 ```text
@@ -2318,6 +2318,12 @@ The hint never names a request id. NemoClaw cannot tell which pending request be
 
 The probe runs only for a failed `openclaw` command. A command that succeeds, a non-`openclaw` command, and a transport failure all print no hint.
 If the probe fails, or nothing is pending, no hint is added.
+The automatic probe requires Linux and `/usr/bin/timeout`. On another host, review pending requests directly before approving one:
+
+```bash
+$$nemoclaw <name> exec -- openclaw devices list
+```
+
 An invalid sandbox name is shown as `<name>`.
 `NEMOCLAW_NO_POLICY_HINT` suppresses this hint on the same terms as the network-policy breadcrumb above.
 

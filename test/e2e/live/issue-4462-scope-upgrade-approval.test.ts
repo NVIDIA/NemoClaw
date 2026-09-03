@@ -1456,6 +1456,12 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
   expect(cronTriggerOutput).toMatch(
     /operator\.admin|scope upgrade pending approval|device pairing required|pairing required|requestId/i,
   );
+  expect(cronTriggerOutput).toContain(
+    `nemoclaw ${SANDBOX_NAME} exec -- openclaw devices list`,
+  );
+  expect(cronTriggerOutput).toContain(
+    `nemoclaw ${SANDBOX_NAME} exec -- openclaw devices approve <requestId>`,
+  );
   const adminRequestId = extractPendingRequestId(cronTriggerOutput);
 
   const connectProbe = await host.command(
