@@ -66,13 +66,30 @@ type CommandHarnessOptions = {
 
 const tempDirs = new Set<string>();
 
+function createPoolSnapshotFixture(prefix: string, poolConfig = "models: []\n") {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.add(tmpDir);
+  const rootDir = path.join(tmpDir, "repo");
+  const homeDir = path.join(tmpDir, "home");
+  const poolConfigPath = path.join(rootDir, "nemoclaw-blueprint", "router", "test-pool.yaml");
+  const stateDir = path.join(homeDir, ".nemoclaw", "state");
+  const digest = createHash("sha256").update(poolConfig).digest("hex");
+  const snapshotPath = path.join(stateDir, `model-router-pool-${digest}.yaml`);
+  fs.mkdirSync(path.dirname(poolConfigPath), { recursive: true });
+  fs.writeFileSync(poolConfigPath, poolConfig);
+  return { homeDir, poolConfig, rootDir, snapshotPath, stateDir };
+}
+
 function startModelRouter(
   routerCfg: Parameters<typeof startModelRouterSource>[0],
   overrides: Parameters<typeof startModelRouterSource>[1] = {},
 ) {
   return startModelRouterSource(routerCfg, {
     readPoolConfig: () => "models: []\n",
-    writePoolConfigSnapshot: () => "/test/state/model-router-pool.yaml",
+    writePoolConfigSnapshot: () => ({
+      path: "/test/state/model-router-pool.yaml",
+      createdFileIdentity: null,
+    }),
     ...overrides,
   });
 }
@@ -479,18 +496,10 @@ ${models.map((name) => `  - name: ${name}`).join("\n")}
   });
 
   it("rejects a pool snapshot whose content-addressed file has trailing bytes", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-router-pool-tamper-"));
-    tempDirs.add(tmpDir);
-    const rootDir = path.join(tmpDir, "repo");
-    const homeDir = path.join(tmpDir, "home");
-    const poolConfig = "models: []\n";
-    const poolConfigPath = path.join(rootDir, "nemoclaw-blueprint", "router", "test-pool.yaml");
-    const stateDir = path.join(homeDir, ".nemoclaw", "state");
-    const digest = createHash("sha256").update(poolConfig).digest("hex");
-    const snapshotPath = path.join(stateDir, `model-router-pool-${digest}.yaml`);
-    fs.mkdirSync(path.dirname(poolConfigPath), { recursive: true });
+    const { homeDir, poolConfig, rootDir, snapshotPath, stateDir } = createPoolSnapshotFixture(
+      "nemoclaw-router-pool-tamper-",
+    );
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(poolConfigPath, poolConfig);
     fs.writeFileSync(snapshotPath, `${poolConfig}trailing: bytes\n`, { mode: 0o400 });
     const ensureModelRouterCommand = vi.fn(() => "/test/model-router");
 
@@ -503,6 +512,79 @@ ${models.map((name) => `  - name: ${name}`).join("\n")}
     );
 
     assert.equal(ensureModelRouterCommand.mock.calls.length, 0);
+  });
+
+  it("removes a newly created snapshot when immutable materialization fails", async () => {
+    const { homeDir, rootDir, stateDir } = createPoolSnapshotFixture(
+      "nemoclaw-router-pool-write-failure-",
+    );
+    vi.spyOn(fs, "fchmodSync").mockImplementationOnce(() => {
+      throw new Error("simulated snapshot chmod failure");
+    });
+
+    await assert.rejects(
+      startModelRouterSource(
+        { pool_config_path: "router/test-pool.yaml" },
+        { rootDir, homeDir, ensureModelRouterCommand: () => "/test/model-router" },
+      ),
+      /simulated snapshot chmod failure/,
+    );
+
+    assert.deepEqual(
+      fs.readdirSync(stateDir).filter((entry) => entry.startsWith("model-router-pool-")),
+      [],
+    );
+  });
+
+  it("closes the created snapshot when initial inode capture fails", async () => {
+    const { homeDir, rootDir, snapshotPath } = createPoolSnapshotFixture(
+      "nemoclaw-router-pool-stat-failure-",
+    );
+    const realFstat = fs.fstatSync.bind(fs);
+    let fstatCalls = 0;
+    vi.spyOn(fs, "fstatSync").mockImplementation((fd) => {
+      fstatCalls += 1;
+      return fstatCalls === 3
+        ? (() => {
+            throw new Error("simulated snapshot identity failure");
+          })()
+        : realFstat(fd);
+    });
+    const closeSpy = vi.spyOn(fs, "closeSync");
+
+    await assert.rejects(
+      startModelRouterSource(
+        { pool_config_path: "router/test-pool.yaml" },
+        { rootDir, homeDir, ensureModelRouterCommand: () => "/test/model-router" },
+      ),
+      /simulated snapshot identity failure/,
+    );
+
+    assert.equal(closeSpy.mock.calls.length, 1);
+    assert.equal(fs.existsSync(snapshotPath), true);
+  });
+
+  it("does not delete a replaced snapshot path after materialization identity changes", async () => {
+    const { homeDir, rootDir, snapshotPath, stateDir } = createPoolSnapshotFixture(
+      "nemoclaw-router-pool-write-swap-",
+    );
+    const detachedPath = path.join(stateDir, "detached-created-snapshot.yaml");
+    vi.spyOn(fs, "fchmodSync").mockImplementationOnce(() => {
+      fs.renameSync(snapshotPath, detachedPath);
+      fs.writeFileSync(snapshotPath, "replacement inode\n", { mode: 0o400 });
+      throw new Error("simulated snapshot path swap");
+    });
+
+    await assert.rejects(
+      startModelRouterSource(
+        { pool_config_path: "router/test-pool.yaml" },
+        { rootDir, homeDir, ensureModelRouterCommand: () => "/test/model-router" },
+      ),
+      /simulated snapshot path swap/,
+    );
+
+    assert.equal(fs.readFileSync(snapshotPath, "utf8"), "replacement inode\n");
+    assert.equal(fs.existsSync(detachedPath), true);
   });
 
   it("writes router output to an owner-only log in the state directory (#8962)", async () => {
@@ -1089,7 +1171,10 @@ ${models.map((name) => `  - name: ${name}`).join("\n")}
         ensureModelRouterCommand: () => "/test/model-router",
         mkdirSync,
         readPoolConfig: () => "models: []\n",
-        writePoolConfigSnapshot: () => path.join(expectedStateDir, "model-router-pool.yaml"),
+        writePoolConfigSnapshot: () => ({
+          path: path.join(expectedStateDir, "model-router-pool.yaml"),
+          createdFileIdentity: null,
+        }),
         runProxyConfig: (_command, args) => {
           proxyConfigArgs.push(args);
           return { status: 0 };

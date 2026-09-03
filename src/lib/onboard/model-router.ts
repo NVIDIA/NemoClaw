@@ -41,7 +41,9 @@ import {
   doesModelRouterProcessOwnPort,
   getRouterHealthSnapshot,
   inspectModelRouterProcessForPort,
+  isModelRouterCommandLineForPort,
   isRouterHealthy,
+  readModelRouterProcessCommandLine,
   ROUTER_HEALTH_TIMEOUT_MS as ROUTER_HEALTH_REQUEST_TIMEOUT_MS,
   type RouterHealthSnapshot,
   stopModelRouterProcess,
@@ -79,6 +81,7 @@ const MODEL_ROUTER_VENV_DIR = path.join(
 export const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
 const DEFAULT_MODEL_ROUTER_POOL_CONFIG_PATH = "router/pool-config.yaml";
 const MODEL_ROUTER_POOL_SNAPSHOT_PREFIX = "model-router-pool-";
+const MODEL_ROUTER_POOL_SNAPSHOT_NAME = /^model-router-pool-[a-f0-9]{64}\.yaml$/;
 
 export type BlueprintRouterConfig = {
   enabled?: boolean;
@@ -119,33 +122,51 @@ function readModelRouterPoolConfig(poolConfigPath: string): string | null {
  * Materialize one owner-read-only, content-addressed pool snapshot.
  * NemoClaw never replaces a snapshot after another process can consume it.
  */
-function writeModelRouterPoolConfigSnapshot(stateDir: string, poolConfig: string): string {
+function writeModelRouterPoolConfigSnapshot(
+  stateDir: string,
+  poolConfig: string,
+): ModelRouterPoolSnapshotFile {
   const contentDigest = createHash("sha256").update(poolConfig).digest("hex");
   const snapshotPath = path.join(
     stateDir,
     `${MODEL_ROUTER_POOL_SNAPSHOT_PREFIX}${contentDigest}.yaml`,
   );
-  let snapshot: ReturnType<typeof openRegularFileNoFollow>;
+  let snapshot: ReturnType<typeof openRegularFileNoFollow> | null = null;
+  let createdFileIdentity: ModelRouterPoolSnapshotFileIdentity | null = null;
   if (fs.existsSync(snapshotPath)) {
     snapshot = openRegularFileNoFollow(snapshotPath);
   } else {
+    let createdFile: ReturnType<typeof openRegularFileNoFollow> | null = null;
     try {
-      const created = openRegularFileNoFollow(snapshotPath, {
+      createdFile = openRegularFileNoFollow(snapshotPath, {
         create: true,
         mode: 0o600,
         writable: true,
       });
-      try {
-        created.replaceUtf8(poolConfig, 0o400);
-        snapshot = created;
-      } catch (writeError) {
-        created.close();
-        throw writeError;
-      }
     } catch (createError) {
-      if (!fs.existsSync(snapshotPath)) throw createError;
+      if ((createError as NodeJS.ErrnoException).code !== "EEXIST") throw createError;
       snapshot = openRegularFileNoFollow(snapshotPath);
     }
+    if (createdFile !== null) {
+      snapshot = createdFile;
+      try {
+        const createdStats = snapshot.stat();
+        createdFileIdentity = { dev: createdStats.dev, ino: createdStats.ino };
+      } catch (identityError) {
+        snapshot.close();
+        throw identityError;
+      }
+      try {
+        snapshot.replaceUtf8(poolConfig, 0o400);
+      } catch (writeError) {
+        snapshot.close();
+        removeModelRouterPoolSnapshot({ path: snapshotPath, ...createdFileIdentity }, stateDir);
+        throw writeError;
+      }
+    }
+  }
+  if (snapshot === null) {
+    throw new Error(`Model Router pool snapshot was not opened: ${snapshotPath}`);
   }
   try {
     const expectedSize = Buffer.byteLength(poolConfig);
@@ -162,10 +183,15 @@ function writeModelRouterPoolConfigSnapshot(stateDir: string, poolConfig: string
     ) {
       throw new Error(`Model Router pool snapshot is not immutable: ${snapshotPath}`);
     }
-  } finally {
+  } catch (validationError) {
     snapshot.close();
+    if (createdFileIdentity !== null) {
+      removeModelRouterPoolSnapshot({ path: snapshotPath, ...createdFileIdentity }, stateDir);
+    }
+    throw validationError;
   }
-  return snapshotPath;
+  snapshot.close();
+  return { path: snapshotPath, createdFileIdentity };
 }
 
 /**
@@ -301,8 +327,8 @@ export type StartModelRouterDeps = {
   readRouterLogTail: (logPath: string, startOffset: number) => string;
   /** Read the router pool config; null when unreadable. */
   readPoolConfig: (poolConfigPath: string) => string | null;
-  /** Write an owner-read-only snapshot and return its path. */
-  writePoolConfigSnapshot: (stateDir: string, poolConfig: string) => string;
+  /** Write an owner-read-only snapshot and report whether this call created it. */
+  writePoolConfigSnapshot: (stateDir: string, poolConfig: string) => ModelRouterPoolSnapshotFile;
   resolveProviderCredential: (name: string) => string | null;
   buildSubprocessEnv: (extra: Record<string, string>) => Record<string, string>;
   isRouterHealthy: (port: number, timeoutMs?: number) => Promise<boolean>;
@@ -323,9 +349,24 @@ type PreparedModelRouterStart = {
   stateDir: string;
 };
 
+type ModelRouterPoolSnapshotFile = {
+  path: string;
+  createdFileIdentity: ModelRouterPoolSnapshotFileIdentity | null;
+};
+
+type ModelRouterPoolSnapshotFileIdentity = {
+  dev: number;
+  ino: number;
+};
+
+type ModelRouterPoolSnapshotFileReference = ModelRouterPoolSnapshotFileIdentity & {
+  path: string;
+};
+
 type ModelRouterPoolSnapshot = {
   poolConfig: string;
   poolConfigPath: string;
+  createdFileIdentity: ModelRouterPoolSnapshotFileIdentity | null;
   stateDir: string;
 };
 
@@ -535,8 +576,89 @@ function createModelRouterPoolSnapshot(
   rejectSymlinksOnPath(stateDir);
   deps.mkdirSync(stateDir);
   rejectSymlinksOnPath(stateDir);
-  const poolConfigPath = deps.writePoolConfigSnapshot(stateDir, poolConfig);
-  return Object.freeze({ poolConfig, poolConfigPath, stateDir });
+  const snapshotFile = deps.writePoolConfigSnapshot(stateDir, poolConfig);
+  return Object.freeze({
+    poolConfig,
+    poolConfigPath: snapshotFile.path,
+    createdFileIdentity: snapshotFile.createdFileIdentity,
+    stateDir,
+  });
+}
+
+function modelRouterPoolSnapshotFileReference(
+  snapshotPath: string,
+  stateDir: string,
+): ModelRouterPoolSnapshotFileReference | null {
+  const resolved = path.resolve(snapshotPath);
+  if (
+    path.dirname(resolved) !== path.resolve(stateDir) ||
+    !MODEL_ROUTER_POOL_SNAPSHOT_NAME.test(path.basename(resolved))
+  ) {
+    return null;
+  }
+  try {
+    const stats = fs.lstatSync(resolved);
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1) return null;
+    return { path: resolved, dev: stats.dev, ino: stats.ino };
+  } catch {
+    return null;
+  }
+}
+
+function modelRouterPoolSnapshotForProcess(
+  pid: number,
+  port: number,
+  stateDir: string,
+): ModelRouterPoolSnapshotFileReference | null {
+  const args = readModelRouterProcessCommandLine(pid);
+  if (!args || !isModelRouterCommandLineForPort(args, port)) return null;
+  const configArgument = args.find((arg) => arg.startsWith("--router-config="));
+  const configIndex = args.indexOf("--router-config");
+  const candidate = configArgument
+    ? configArgument.slice("--router-config=".length)
+    : configIndex >= 0
+      ? args[configIndex + 1]
+      : null;
+  if (!candidate) return null;
+  return modelRouterPoolSnapshotFileReference(candidate, stateDir);
+}
+
+function removeModelRouterPoolSnapshot(
+  snapshot: ModelRouterPoolSnapshotFileReference,
+  stateDir: string,
+  retainedPath: string | null = null,
+): void {
+  if (retainedPath !== null && snapshot.path === path.resolve(retainedPath)) return;
+  try {
+    const current = modelRouterPoolSnapshotFileReference(snapshot.path, stateDir);
+    if (current === null || current.dev !== snapshot.dev || current.ino !== snapshot.ino) return;
+    fs.unlinkSync(snapshot.path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.error(
+        `  Failed to remove unused Model Router pool snapshot '${snapshot.path}': ${String(error)}`,
+      );
+    }
+  }
+}
+
+function removeCreatedModelRouterPoolSnapshotIfUnused(
+  snapshot: ModelRouterPoolSnapshot,
+  port: number,
+): void {
+  if (snapshot.createdFileIdentity === null) return;
+  const candidate = { path: snapshot.poolConfigPath, ...snapshot.createdFileIdentity };
+  const liveRouter = inspectModelRouterProcessForPort(port);
+  if (liveRouter.status === "unavailable") return;
+  if (liveRouter.status === "found") {
+    const activeSnapshot = modelRouterPoolSnapshotForProcess(
+      liveRouter.pid,
+      port,
+      snapshot.stateDir,
+    );
+    if (activeSnapshot === null || activeSnapshot.path === path.resolve(candidate.path)) return;
+  }
+  removeModelRouterPoolSnapshot(candidate, snapshot.stateDir);
 }
 
 function prepareModelRouterStart(
@@ -723,7 +845,18 @@ export async function startModelRouter(
   routerCfg: BlueprintRouterConfig,
   overrides: Partial<StartModelRouterDeps> = {},
 ): Promise<number> {
-  return startPreparedModelRouter(routerCfg, overrides);
+  const deps = { ...createStartModelRouterDeps(), ...overrides };
+  const poolSnapshot = createModelRouterPoolSnapshot(routerCfg, deps);
+  try {
+    const prepared = prepareModelRouterStart(routerCfg, deps, poolSnapshot);
+    return await startPreparedModelRouter(routerCfg, deps, prepared);
+  } catch (error) {
+    removeCreatedModelRouterPoolSnapshotIfUnused(
+      poolSnapshot,
+      routerCfg.port || DEFAULT_MODEL_ROUTER_PORT,
+    );
+    throw error;
+  }
 }
 
 /** Router readiness: /health answered 2xx and names at least one healthy endpoint. */
@@ -852,6 +985,11 @@ type ReconcileModelRouterDeps = {
     routerCfg: BlueprintRouterConfig,
     prepared: PreparedModelRouterStart,
   ) => Promise<number>;
+  poolSnapshotForProcess: (
+    pid: number,
+    port: number,
+    stateDir: string,
+  ) => ModelRouterPoolSnapshotFileReference | null;
 };
 
 type ReconcileModelRouterOverrides = Partial<ReconcileModelRouterDeps> & {
@@ -868,6 +1006,7 @@ export async function reconcileModelRouter(
     prepareRouter: (routerCfg, poolSnapshot) =>
       prepareModelRouterStart(routerCfg, resolvedStartDeps, poolSnapshot),
     startRouter: (routerCfg, prepared) => startPreparedModelRouter(routerCfg, startDeps, prepared),
+    poolSnapshotForProcess: modelRouterPoolSnapshotForProcess,
     ...routerOverrides,
   };
   const bp = getRoutedProfile();
@@ -890,11 +1029,14 @@ export async function reconcileModelRouter(
     const detail = redacted ? compactText(redacted) : "unknown pool snapshot error";
     throw new Error(`${detail} NemoClaw did not change the router process or recovery identity.`);
   }
+  const discardCreatedPoolSnapshot = () =>
+    removeCreatedModelRouterPoolSnapshotIfUnused(poolSnapshot, routerPort);
   const routerRecoveryHash = hashModelRouterRecoveryIdentity(
     routerCredential,
     poolSnapshot.poolConfig,
   );
   if (!routerRecoveryHash) {
+    discardCreatedPoolSnapshot();
     throw new Error(
       `Cannot read or parse Model Router pool configuration at ${poolConfigPath}. Repair the file and rerun onboarding. NemoClaw did not change the router process.`,
     );
@@ -908,20 +1050,24 @@ export async function reconcileModelRouter(
   // router usable, exactly as it is for the startup poll. Budget the body read,
   // because /health probes every upstream endpoint and can answer well after
   // the 3-second liveness budget.
-  const snapshot = await getRouterHealthSnapshot(
-    routerPort,
-    ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS,
-  );
+  let snapshot: RouterHealthSnapshot;
+  try {
+    snapshot = await getRouterHealthSnapshot(routerPort, ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS);
+  } catch (error) {
+    discardCreatedPoolSnapshot();
+    throw error;
+  }
   let prepared: PreparedModelRouterStart | null = null;
   let stoppedRouterForReplacement = false;
+  let stoppedPoolSnapshot: ModelRouterPoolSnapshotFileReference | null = null;
   if (snapshot.healthy) {
     const recordedProcessOwnsRouter = doesModelRouterProcessOwnPort(recordedPid, routerPort);
     if (
-      routerRecoveryHash &&
       recordedRecoveryHash === routerRecoveryHash &&
       recordedProcessOwnsRouter &&
       isRouterSnapshotReady(snapshot)
     ) {
+      discardCreatedPoolSnapshot();
       console.log(`  ✓ Model router is already healthy on port ${routerPort}`);
       await verifyModelRouterSandboxReachability(routerPort);
       return;
@@ -929,6 +1075,7 @@ export async function reconcileModelRouter(
     try {
       prepared = deps.prepareRouter(bp.router, poolSnapshot);
     } catch (error) {
+      discardCreatedPoolSnapshot();
       const redacted = redactSensitiveText(String(error));
       const detail = redacted ? compactText(redacted) : "";
       throw new Error(
@@ -936,24 +1083,43 @@ export async function reconcileModelRouter(
       );
     }
     if (recordedProcessOwnsRouter) {
-      console.log("  Restarting model router...");
-      await stopModelRouterProcess(
-        requireValue(recordedPid, "Expected recorded router PID"),
+      const ownedPid = requireValue(recordedPid, "Expected recorded router PID");
+      stoppedPoolSnapshot = deps.poolSnapshotForProcess(
+        ownedPid,
         routerPort,
+        poolSnapshot.stateDir,
       );
+      console.log("  Restarting model router...");
+      try {
+        await stopModelRouterProcess(ownedPid, routerPort);
+      } catch (error) {
+        discardCreatedPoolSnapshot();
+        throw error;
+      }
       stoppedRouterForReplacement = true;
     } else {
       // The recorded PID doesn't own the port (stale session or fresh start).
       // Try to locate the orphaned router via /proc so we can recover without
       // requiring a manual stop-and-retry. Only stop it if the cmdline
-      // confirms it is actually model-router proxy — never kill an unrelated
+      // confirms it is actually model-router proxy. Never kill an unrelated
       // service that happens to occupy the port. See issue #5169.
       const orphan = inspectModelRouterProcessForPort(routerPort);
       if (orphan.status === "found") {
+        stoppedPoolSnapshot = deps.poolSnapshotForProcess(
+          orphan.pid,
+          routerPort,
+          poolSnapshot.stateDir,
+        );
         console.log(`  Stopping orphaned model router (PID ${orphan.pid})...`);
-        await stopModelRouterProcess(orphan.pid, routerPort);
+        try {
+          await stopModelRouterProcess(orphan.pid, routerPort);
+        } catch (error) {
+          discardCreatedPoolSnapshot();
+          throw error;
+        }
         stoppedRouterForReplacement = true;
       } else {
+        discardCreatedPoolSnapshot();
         const inventoryDetail =
           orphan.status === "unavailable" ? " The host process inventory is unavailable." : "";
         throw new Error(
@@ -963,12 +1129,20 @@ export async function reconcileModelRouter(
     }
   }
 
-  prepared ??= deps.prepareRouter(bp.router, poolSnapshot);
+  if (prepared === null) {
+    try {
+      prepared = deps.prepareRouter(bp.router, poolSnapshot);
+    } catch (error) {
+      discardCreatedPoolSnapshot();
+      throw error;
+    }
+  }
   console.log("  Starting model router...");
   let routerPid: number;
   try {
     routerPid = await deps.startRouter(bp.router, prepared);
   } catch (error) {
+    discardCreatedPoolSnapshot();
     if (!stoppedRouterForReplacement) throw error;
     const redacted = redactSensitiveText(String(error));
     const detail = redacted ? compactText(redacted) : "unknown startup error";
@@ -982,5 +1156,15 @@ export async function reconcileModelRouter(
     current.routerCredentialHash = routerRecoveryHash;
     return current;
   });
+  if (stoppedPoolSnapshot !== null) {
+    // The pinned router eagerly loads its pool during startup. Once the old
+    // process has stopped and the replacement is healthy, only the new
+    // snapshot remains part of the owned router lifecycle.
+    removeModelRouterPoolSnapshot(
+      stoppedPoolSnapshot,
+      poolSnapshot.stateDir,
+      poolSnapshot.poolConfigPath,
+    );
+  }
   await verifyModelRouterSandboxReachability(routerPort);
 }
