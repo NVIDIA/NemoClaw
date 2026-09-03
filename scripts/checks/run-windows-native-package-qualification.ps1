@@ -34,6 +34,28 @@ function Fail-PackageQualification {
     throw "Windows native package qualification failed: $Message"
 }
 
+function Write-InteractiveVideoMarker {
+    param(
+        [Parameter(Mandatory)][ValidateSet('openclaw', 'hermes', 'langchain-deepagents-code', 'pi', 'nemocua')][string]$Agent,
+        [Parameter(Mandatory)][ValidateSet('start', 'end')][string]$Phase
+    )
+
+    if (-not $InteractiveProof) {
+        return
+    }
+    $marker = [pscustomobject]@{
+        schemaVersion = 1
+        agent = $Agent
+        phase = $Phase
+        recordedAtUtc = [DateTime]::UtcNow.ToString('O')
+    }
+    [IO.File]::WriteAllText(
+        (Join-Path $artifactRoot "video-segment-$Agent-$Phase.json"),
+        (($marker | ConvertTo-Json -Compress) + [Environment]::NewLine),
+        [Text.UTF8Encoding]::new($false)
+    )
+}
+
 function Assert-Arm64PortableExecutable {
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -685,6 +707,7 @@ try {
     Write-Host '[PASS] Installed nemoclaw command created an MXC sandbox and completed an exact CHAT_OK turn'
     $webUiArtifacts = Join-Path $artifactRoot 'web-ui'
     Write-Host 'PS> Launch installed NemoClaw OpenClaw web UI and complete three agent turns'
+    Write-InteractiveVideoMarker -Agent 'openclaw' -Phase 'start'
     Invoke-BoundedProcess `
         -FilePath $nemoclawUiLauncherPath `
         -Arguments @('--wait', '--qualification', '--artifact-directory', $webUiArtifacts) `
@@ -746,8 +769,10 @@ try {
         Fail-PackageQualification 'Installed NemoClaw did not capture all four graphical onboarding steps.'
     }
     Write-Host '[PASS] Graphical onboarding selected OpenClaw and completed three exact Control UI agent turns'
+    Write-InteractiveVideoMarker -Agent 'openclaw' -Phase 'end'
     $piArtifacts = Join-Path $artifactRoot 'pi'
     Write-Host 'PS> Launch NemoClaw, select Pi graphically, and complete three native MXC agent turns'
+    Write-InteractiveVideoMarker -Agent 'pi' -Phase 'start'
     Invoke-BoundedProcess `
         -FilePath $nemoclawUiLauncherPath `
         -Arguments @('--wait', '--qualification', '--agent', 'pi', '--artifact-directory', $piArtifacts) `
@@ -776,8 +801,10 @@ try {
         Fail-PackageQualification 'Installed Pi qualification receipt is incomplete.'
     }
     Write-Host '[PASS] Installed Pi completed three real terminal agent turns inside native MXC'
+    Write-InteractiveVideoMarker -Agent 'pi' -Phase 'end'
     $hermesArtifacts = Join-Path $artifactRoot 'hermes'
     Write-Host 'PS> Launch NemoClaw, select Hermes Agent graphically, and complete three native MXC agent turns'
+    Write-InteractiveVideoMarker -Agent 'hermes' -Phase 'start'
     Invoke-BoundedProcess `
         -FilePath $nemoclawUiLauncherPath `
         -Arguments @('--wait', '--qualification', '--agent', 'hermes', '--artifact-directory', $hermesArtifacts) `
@@ -806,8 +833,10 @@ try {
         Fail-PackageQualification 'Installed Hermes qualification receipt is incomplete.'
     }
     Write-Host '[PASS] Installed Hermes completed three real terminal agent turns inside native MXC'
+    Write-InteractiveVideoMarker -Agent 'hermes' -Phase 'end'
     $deepAgentsArtifacts = Join-Path $artifactRoot 'deepagents'
     Write-Host 'PS> Launch NemoClaw, select Deep Agents Code graphically, and complete three native MXC agent turns'
+    Write-InteractiveVideoMarker -Agent 'langchain-deepagents-code' -Phase 'start'
     Invoke-BoundedProcess `
         -FilePath $nemoclawUiLauncherPath `
         -Arguments @('--wait', '--qualification', '--agent', 'langchain-deepagents-code', '--artifact-directory', $deepAgentsArtifacts) `
@@ -836,8 +865,10 @@ try {
         Fail-PackageQualification 'Installed Deep Agents Code qualification receipt is incomplete.'
     }
     Write-Host '[PASS] Installed Deep Agents Code completed three real terminal agent turns inside native MXC'
+    Write-InteractiveVideoMarker -Agent 'langchain-deepagents-code' -Phase 'end'
     $nemoCuaArtifacts = Join-Path $artifactRoot 'nemocua'
     Write-Host 'PS> Launch NemoClaw, select NemoCUA graphically, and complete three model-driven native MXC browser turns'
+    Write-InteractiveVideoMarker -Agent 'nemocua' -Phase 'start'
     Invoke-BoundedProcess `
         -FilePath $nemoclawUiLauncherPath `
         -Arguments @('--wait', '--qualification', '--agent', 'nemocua', '--artifact-directory', $nemoCuaArtifacts) `
@@ -869,6 +900,7 @@ try {
         Fail-PackageQualification 'Installed NemoCUA qualification receipt is incomplete.'
     }
     Write-Host '[PASS] Installed NemoCUA completed three real model-driven browser actions inside native MXC'
+    Write-InteractiveVideoMarker -Agent 'nemocua' -Phase 'end'
     if ($InteractiveProof) {
         Start-Sleep -Seconds 3
     }

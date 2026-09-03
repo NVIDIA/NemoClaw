@@ -38,6 +38,13 @@ $script:FrameDurationMilliseconds = 250
 $script:MaximumRecordingMilliseconds = 1800000
 $script:MinimumCaptureFrames = 40
 $script:MinimumUniqueFrames = 8
+$script:AgentVideoSegments = @(
+    'openclaw',
+    'hermes',
+    'langchain-deepagents-code',
+    'pi',
+    'nemocua'
+)
 
 function Fail-ProofVideo {
     param([Parameter(Mandatory)][string]$Message)
@@ -415,6 +422,10 @@ try {
 
     $recordingClock = [Diagnostics.Stopwatch]::StartNew()
     $framePaths = @()
+    $agentSegmentFrames = [ordered]@{}
+    foreach ($agent in $script:AgentVideoSegments) {
+        $agentSegmentFrames[$agent] = [ordered]@{ start = $null; end = $null }
+    }
     $installerWindowFrameCount = 0
     $browserWindowFrameCount = 0
     while (-not $proofProcess.HasExited) {
@@ -461,6 +472,17 @@ try {
             $browserWindowFrameCount++
         }
         $framePaths += $framePath
+        foreach ($agent in $script:AgentVideoSegments) {
+            $segment = $agentSegmentFrames[$agent]
+            if ($null -eq $segment.start -and
+                (Test-Path -LiteralPath (Join-Path $consoleQualification "video-segment-$agent-start.json") -PathType Leaf)) {
+                $segment.start = $framePaths.Count - 1
+            }
+            if ($null -ne $segment.start -and $null -eq $segment.end -and
+                (Test-Path -LiteralPath (Join-Path $consoleQualification "video-segment-$agent-end.json") -PathType Leaf)) {
+                $segment.end = $framePaths.Count - 1
+            }
+        }
         Start-Sleep -Milliseconds $script:FrameDurationMilliseconds
         $proofProcess.Refresh()
     }
@@ -631,6 +653,51 @@ public static class NemoClawConsoleVideoEncoder
         Fail-ProofVideo 'Rendered console proof is not an ISO base media file.'
     }
 
+    $agentVideos = [ordered]@{}
+    foreach ($agent in $script:AgentVideoSegments) {
+        $segment = $agentSegmentFrames[$agent]
+        if ($null -eq $segment.start -or $null -eq $segment.end -or $segment.end -lt $segment.start) {
+            $captureFailures.Add("The recording is missing a complete $agent agent segment.")
+            continue
+        }
+        $segmentStart = [Math]::Max(0, [int]$segment.start - (2 * $script:CaptureFramesPerSecond))
+        $segmentEnd = [Math]::Min($framePaths.Count - 1, [int]$segment.end + (2 * $script:CaptureFramesPerSecond))
+        $segmentFrames = [string[]]$framePaths[$segmentStart..$segmentEnd]
+        $agentVideoName = "NemoClaw-$ProductVersion-windows-arm64-$agent-raw-proof-$($CandidateSha.Substring(0, 12)).mp4"
+        $agentVideoPath = Join-Path $output $agentVideoName
+        $agentRenderTask = [NemoClawConsoleVideoEncoder]::RenderAsync(
+            $segmentFrames,
+            $script:FrameDurationMilliseconds,
+            $agentVideoPath
+        )
+        $agentRenderedPath = $agentRenderTask.GetAwaiter().GetResult()
+        if ($agentRenderedPath -cne $agentVideoPath -or
+            -not (Test-Path -LiteralPath $agentVideoPath -PathType Leaf) -or
+            (Get-Item -LiteralPath $agentVideoPath).Length -lt 65536) {
+            $captureFailures.Add("Media Foundation did not produce the expected $agent raw proof MP4.")
+            continue
+        }
+        $agentVideoBytes = [IO.File]::ReadAllBytes($agentVideoPath)
+        $agentHeader = [Text.Encoding]::ASCII.GetString(
+            $agentVideoBytes,
+            0,
+            [Math]::Min(64, $agentVideoBytes.Length)
+        )
+        if ($agentHeader -notmatch 'ftyp') {
+            $captureFailures.Add("The $agent raw proof is not an ISO base media file.")
+            continue
+        }
+        $agentVideos[$agent] = [pscustomobject]@{
+            file = $agentVideoName
+            firstCombinedFrame = $segmentStart
+            lastCombinedFrame = $segmentEnd
+            frameCount = $segmentFrames.Count
+            expectedDurationMilliseconds = $segmentFrames.Count * $script:FrameDurationMilliseconds
+            sha256 = (Get-FileHash -LiteralPath $agentVideoPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            bytes = (Get-Item -LiteralPath $agentVideoPath).Length
+        }
+    }
+
     $consoleQualificationReceipt = Join-Path $consoleQualification 'package-qualification.json'
     $recordedQualification = if (Test-Path -LiteralPath $consoleQualificationReceipt -PathType Leaf) {
         Get-Content -LiteralPath $consoleQualificationReceipt -Raw | ConvertFrom-Json
@@ -741,6 +808,7 @@ public static class NemoClawConsoleVideoEncoder
             sha256 = (Get-FileHash -LiteralPath $videoPath -Algorithm SHA256).Hash.ToLowerInvariant()
             bytes = (Get-Item -LiteralPath $videoPath).Length
         }
+        agentVideos = [pscustomobject]$agentVideos
         verdict = if ($captureFailures.Count -eq 0) { 'pass' } else { 'fail' }
     }
     [IO.File]::WriteAllText(
