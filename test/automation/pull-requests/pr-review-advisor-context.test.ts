@@ -78,13 +78,17 @@ describe("PR review advisor", () => {
   it("requires test ownership evidence before recommending more coverage", () => {
     const prompt = buildSystemPrompt();
 
-    expect(prompt).toContain(
-      "Prefer, in order: cite existing coverage unchanged; extend an existing owner with one missing case; add a new test only when no existing owner can express the behavior; or state why automated coverage does not apply.",
-    );
-    expect(prompt).toContain(
-      "Selecting existing E2E coverage validates the PR; it does not authorize adding or modifying E2E tests, assertions, fixtures, selectors, matrix entries, jobs, or workflow fan-out.",
-    );
-    expect(prompt).toContain("missingRegressionTest with exactly one decision");
+    expect(
+      [
+        "Prefer, in order: cite existing coverage unchanged; extend an existing owner with one missing case; add a new test only when no existing owner can express the behavior; or state why automated coverage does not apply.",
+        "A changed source file without a changed test file does not establish a gap.",
+        "Report a missing-coverage finding only after identifying the changed behavior, checking the nearest existing test owner, and showing that the owner does not detect the regression.",
+        "Selecting existing E2E coverage validates the PR; it does not authorize adding or modifying E2E tests, assertions, fixtures, selectors, matrix entries, jobs, or workflow fan-out.",
+        "Propose a new live E2E test only when the changed behavior crosses a real external boundary that no existing live proof reaches.",
+        "If a real boundary gap is outside the accepted scope of the current PR, record it as a limitation instead of asking this PR to add coverage.",
+        "missingRegressionTest with exactly one decision",
+      ].filter((clause) => !prompt.includes(clause)),
+    ).toEqual([]);
   });
 
   it("keeps test-depth outputs factual while the prompt owns coverage decisions", () => {
