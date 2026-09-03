@@ -91,7 +91,7 @@
       "test/e2e/live/mcp-bridge.test.ts": [50,170,203,511,46],
       "test/e2e/live/messaging-compatible-endpoint.test.ts": [13,19,13,28,2],
       "test/e2e/live/messaging-providers.test.ts": [0,11,6,51,12],
-      "test/e2e/live/model-router-provider-routed-inference.test.ts": [1,2,1,2,0],
+      "test/e2e/live/model-router-provider-routed-inference.test.ts": [2,3,2,3,0],
       "test/e2e/live/native-runtime-qualification-case.test.ts": [0,0,15,93,0],
       "test/e2e/live/network-policy.test.ts": [21,22,21,22,1],
       "test/e2e/live/ollama-auth-proxy.test.ts": [21,29,21,29,0],

@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requirePublicNvidiaInferenceKey } from "../fixtures/inference-adapter.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
@@ -95,6 +96,7 @@ test(
         timeoutMs: ONBOARD_TIMEOUT_MS,
       },
     );
+    expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
     progress.phase("request a routed inference.local completion");
     const completion = await runtime.expectInferenceLocalChatCompletion(
@@ -113,7 +115,7 @@ test(
     const configuredModels = modelRouterPoolModelNames(
       readFileSync(MODEL_ROUTER_POOL_CONFIG, "utf8"),
     );
-    expect(onboard.exitCode === 0 ? configuredModels : []).toContain(selectedModel);
+    expect(configuredModels).toContain(selectedModel);
 
     progress.phase("record the routed inference contract result");
     await artifacts.target.complete({
