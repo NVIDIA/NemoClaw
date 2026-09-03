@@ -79,7 +79,7 @@ const LOCAL_COPY_SOURCES = [
   "scripts/managed-startup-hold.sh",
   "scripts/patch-bundled-npm-brace-expansion.mts",
   "scripts/patch-bundled-npm-tar.mts",
-  "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json",
+  "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
   "src/lib/hermes-managed-route.ts",
   "src/lib/messaging/",
   "src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py",

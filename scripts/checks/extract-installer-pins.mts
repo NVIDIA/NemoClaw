@@ -48,6 +48,16 @@ type TrustedSupervisorManifest = {
   runtimeTemplateSha256: readonly string[];
 };
 
+type ConsumerPinLayout = {
+  assets: readonly string[];
+  manifests: readonly string[];
+};
+
+type OpenShellPinLayout = {
+  brev: ConsumerPinLayout;
+  installer: ConsumerPinLayout;
+};
+
 type OpenShellReleaseTrust = {
   brevTemplateSha256: readonly string[];
   formula: {
@@ -60,9 +70,62 @@ type OpenShellReleaseTrust = {
     asset: string;
     sha256: string;
   }[];
+  pinLayout: OpenShellPinLayout;
   sandboxBuilds: readonly TrustedSandboxBuild[];
   supervisor: TrustedSupervisorManifest | null;
   version: string;
+};
+
+const LEGACY_OPENSHELL_PIN_LAYOUT: OpenShellPinLayout = {
+  brev: {
+    assets: [
+      "openshell-x86_64-unknown-linux-musl.tar.gz",
+      "openshell-aarch64-unknown-linux-musl.tar.gz",
+    ],
+    manifests: [],
+  },
+  installer: {
+    assets: [
+      "openshell-x86_64-unknown-linux-musl.tar.gz",
+      "openshell-aarch64-unknown-linux-musl.tar.gz",
+      "openshell-aarch64-apple-darwin.tar.gz",
+      "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+      "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
+      "openshell-gateway-aarch64-apple-darwin.tar.gz",
+      "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
+      "openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz",
+      "openshell.rb",
+    ],
+    manifests: [],
+  },
+};
+
+const V00116_OPENSHELL_PIN_LAYOUT: OpenShellPinLayout = {
+  brev: {
+    assets: [
+      "openshell-x86_64-unknown-linux-musl.tar.gz",
+      "openshell-aarch64-unknown-linux-musl.tar.gz",
+    ],
+    manifests: ["openshell-checksums-sha256.txt"],
+  },
+  installer: {
+    assets: [
+      "openshell-x86_64-unknown-linux-musl.tar.gz",
+      "openshell-aarch64-unknown-linux-musl.tar.gz",
+      "openshell-aarch64-apple-darwin.tar.gz",
+      "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+      "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
+      "openshell-gateway-aarch64-apple-darwin.tar.gz",
+      "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
+      "openshell-sandbox-aarch64-unknown-linux-musl.tar.gz",
+      "openshell.rb",
+    ],
+    manifests: [
+      "openshell-checksums-sha256.txt",
+      "openshell-gateway-checksums-sha256.txt",
+      "openshell-sandbox-checksums-sha256.txt",
+    ],
+  },
 };
 
 type CliOptions = {
@@ -135,6 +198,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
       ],
     },
+    pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
     version: "0.0.72",
   },
   {
@@ -174,6 +238,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       },
     ],
     supervisor: null,
+    pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
     version: "0.0.82",
   },
   {
@@ -204,6 +269,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     ],
     sandboxBuilds: [],
     supervisor: null,
+    pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
     version: "0.0.85",
   },
   {
@@ -251,6 +317,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
       ],
     },
+    pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
     version: "0.0.99",
   },
   {
@@ -301,6 +368,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
       ],
     },
+    pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
     version: "0.0.101",
   },
   {
@@ -348,6 +416,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
       ],
     },
+    pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
     version: "0.0.103",
   },
   {
@@ -415,6 +484,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
       ],
     },
+    pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
     version: "0.0.106",
   },
   {
@@ -484,31 +554,10 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
       ],
     },
+    pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
     version: "0.0.116",
   },
 ] as const;
-const EXPECTED_INSTALLER_ASSETS = [
-  "openshell-x86_64-unknown-linux-musl.tar.gz",
-  "openshell-aarch64-unknown-linux-musl.tar.gz",
-  "openshell-aarch64-apple-darwin.tar.gz",
-  "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
-  "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
-  "openshell-gateway-aarch64-apple-darwin.tar.gz",
-  "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
-  "openshell-sandbox-aarch64-unknown-linux-musl.tar.gz",
-  "openshell.rb",
-] as const;
-const EXPECTED_INSTALLER_MANIFESTS = [
-  "openshell-checksums-sha256.txt",
-  "openshell-gateway-checksums-sha256.txt",
-  "openshell-sandbox-checksums-sha256.txt",
-] as const;
-const EXPECTED_BREV_ASSETS = [
-  "openshell-x86_64-unknown-linux-musl.tar.gz",
-  "openshell-aarch64-unknown-linux-musl.tar.gz",
-] as const;
-const EXPECTED_BREV_MANIFESTS = ["openshell-checksums-sha256.txt"] as const;
-
 function fail(message: string): never {
   throw new Error(`Installer pin extraction failed: ${message}`);
 }
@@ -527,6 +576,20 @@ function validateTrustedRelease(release: OpenShellReleaseTrust): void {
     release.manifests.some((manifest) => !SHA256_PATTERN.test(manifest.sha256))
   ) {
     fail(`OpenShell v${release.version} must have exactly three trusted release-manifest digests`);
+  }
+  const trustedManifestAssets = new Set(release.manifests.map((manifest) => manifest.asset));
+  for (const [consumer, layout] of [
+    ["installer", release.pinLayout.installer],
+    ["Brev launchable", release.pinLayout.brev],
+  ] as const) {
+    const entries = [...layout.assets, ...layout.manifests];
+    if (
+      layout.assets.length === 0 ||
+      new Set(entries).size !== entries.length ||
+      layout.manifests.some((asset) => !trustedManifestAssets.has(asset))
+    ) {
+      fail(`trusted OpenShell v${release.version} ${consumer} pin layout is invalid`);
+    }
   }
   if (
     !release.formula ||
@@ -683,6 +746,24 @@ function assertTrustedManifestPins(
       );
     }
   }
+}
+
+export function validateReleasePinLayout(
+  pins: InstallerPin[],
+  releaseVersion: string,
+  consumer: "installer" | "Brev launchable",
+  sourceLabel: string,
+): InstallerPin[] {
+  // Resolve the base-trusted record before inspecting the candidate-authored
+  // table shape. A candidate must never select its own layout contract.
+  const release = trustedRelease(releaseVersion);
+  const layout = consumer === "installer" ? release.pinLayout.installer : release.pinLayout.brev;
+  const manifestNames = new Set(release.manifests.map((manifest) => manifest.asset));
+  const manifestPins = pins.filter((pin) => manifestNames.has(pin.asset));
+  const assetPins = pins.filter((pin) => !manifestNames.has(pin.asset));
+  assertExactAssetSet(assetPins, layout.assets, sourceLabel);
+  assertTrustedManifestPins(manifestPins, release, layout.manifests, `${sourceLabel} manifest`);
+  return assetPins;
 }
 
 // invalidState: the blueprint and stable runtime selectors request a newer
@@ -1612,35 +1693,17 @@ function runCli(): void {
   const installerReleaseVersions = [
     ...new Set(installerPins.map((pin) => pin.releaseVersion)),
   ].sort();
-  const installerManifestNames = new Set<string>(EXPECTED_INSTALLER_MANIFESTS);
-  const installerManifestPins = installerPins.filter((pin) =>
-    installerManifestNames.has(pin.asset),
-  );
-  const installerAssetPins = installerPins.filter((pin) => !installerManifestNames.has(pin.asset));
-  for (const version of installerReleaseVersions) {
-    assertExactAssetSet(
-      installerAssetPins.filter((pin) => pin.releaseVersion === version),
-      EXPECTED_INSTALLER_ASSETS,
+  const installerAssetPins = installerReleaseVersions.flatMap((version) =>
+    validateReleasePinLayout(
+      installerPins.filter((pin) => pin.releaseVersion === version),
+      version,
+      "installer",
       installerReleaseVersions.length === 1
         ? "installer pin table"
         : `installer pin table for ${version}`,
-    );
-  }
+    ),
+  );
   const installerReleases = installerReleaseVersions.map(trustedRelease);
-  for (const release of installerReleases) {
-    assertTrustedManifestPins(
-      installerManifestPins.filter((pin) => pin.releaseVersion === release.version),
-      release,
-      EXPECTED_INSTALLER_MANIFESTS,
-      installerReleaseVersions.length === 1
-        ? "installer manifest pin table"
-        : `installer manifest pin table for ${release.version}`,
-    );
-  }
-  const brevManifestNames = new Set<string>(EXPECTED_BREV_MANIFESTS);
-  const brevManifestPins = brevPins.filter((pin) => brevManifestNames.has(pin.asset));
-  const brevAssetPins = brevPins.filter((pin) => !brevManifestNames.has(pin.asset));
-  assertExactAssetSet(brevAssetPins, EXPECTED_BREV_ASSETS, "Brev pin table");
   const brevReleaseVersions = [...new Set(brevPins.map((pin) => pin.releaseVersion))].sort();
   if (brevReleaseVersions.length !== 1) {
     fail(
@@ -1651,14 +1714,14 @@ function runCli(): void {
   if (!installerReleaseVersions.includes(releaseVersion)) {
     fail(`installer pin table has no assets for selected release ${releaseVersion}`);
   }
+  const brevAssetPins = validateReleasePinLayout(
+    brevPins,
+    releaseVersion,
+    "Brev launchable",
+    "Brev pin table",
+  );
   const pins = [...installerAssetPins, ...brevAssetPins];
   const release = trustedRelease(releaseVersion);
-  assertTrustedManifestPins(
-    brevManifestPins,
-    release,
-    EXPECTED_BREV_MANIFESTS,
-    "Brev manifest pin table",
-  );
   const sandboxBuildPins = extractSandboxBuildPins(installerSource);
   assertTrustedSandboxBuildPins(sandboxBuildPins, release);
   const supervisor =

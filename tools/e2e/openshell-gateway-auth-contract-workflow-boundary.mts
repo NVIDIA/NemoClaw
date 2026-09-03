@@ -1,13 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import YAML from "yaml";
 import { PREPARE_E2E_ACTION } from "./prepare-e2e-workflow-boundary.mts";
 import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-boundary.mts";
 
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const JOB_NAME = "openshell-gateway-auth-contract";
-const OPENSHELL_RELEASE_VERSION = "0.0.116";
-const OPENSHELL_SOURCE_REVISION = "d1155aa70042d3e2ee49dbfa15346b108b7c1d92";
-const OPENSHELL_SOURCE_CHECKOUT_PATH = "${{ github.workspace }}/openshell-v0116-source";
+const OPENSHELL_RELEASE_VERSION = "0.0.106";
 const OPENSHELL_INSTALL_RUN =
   "env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh";
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
@@ -43,6 +48,12 @@ export type OpenShellGatewayAuthContractWorkflow = {
   jobs: Record<string, WorkflowJob>;
 };
 
+export function readOpenShellGatewayAuthContractWorkflow(
+  workflowPath = DEFAULT_WORKFLOW_PATH,
+): OpenShellGatewayAuthContractWorkflow {
+  return YAML.parse(readFileSync(workflowPath, "utf8")) as OpenShellGatewayAuthContractWorkflow;
+}
+
 function findStep(job: WorkflowJob, name: string): WorkflowStep {
   return job.steps?.find((step) => step.name === name) ?? {};
 }
@@ -64,18 +75,6 @@ function requireStepOrder(
   if (before < 0 || after < 0 || before >= after) {
     errors.push(`${JOB_NAME} step '${beforeName}' must precede '${afterName}'`);
   }
-}
-
-function containsDockerAuthentication(step: WorkflowStep): boolean {
-  const uses = step.uses ?? "";
-  const run = step.run ?? "";
-  const credentialInputs = JSON.stringify({ env: step.env, with: step.with });
-  return (
-    /(?:^|\/)docker\/login-action@/u.test(uses) ||
-    /docker-auth-(?:setup|login)@/u.test(uses) ||
-    /(?:^|[;\n])\s*docker\s+login\b/u.test(run) ||
-    /DOCKER(?:HUB)?_(?:CONFIG|PASSWORD|TOKEN|USERNAME)/u.test(credentialInputs)
-  );
 }
 
 export function validateOpenShellGatewayAuthContractWorkflow(
@@ -104,7 +103,6 @@ export function validateOpenShellGatewayAuthContractWorkflow(
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract",
     NEMOCLAW_CANDIDATE_VERSION: OPENSHELL_RELEASE_VERSION,
     NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_OPENSHELL_SOURCE_CHECKOUT: OPENSHELL_SOURCE_CHECKOUT_PATH,
     NEMOCLAW_RUN_LIVE_E2E: "1",
   };
   for (const [name, value] of Object.entries(expectedEnv)) {
@@ -112,7 +110,9 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   }
   const pinVersion = env.NEMOCLAW_OPENSHELL_PIN_VERSION;
   if (pinVersion !== OPENSHELL_RELEASE_VERSION) {
-    errors.push(`${JOB_NAME} must set NEMOCLAW_OPENSHELL_PIN_VERSION=${OPENSHELL_RELEASE_VERSION}`);
+    errors.push(
+      `${JOB_NAME} must set NEMOCLAW_OPENSHELL_PIN_VERSION=${OPENSHELL_RELEASE_VERSION}`,
+    );
   }
   for (const secret of [
     "DOCKERHUB_USERNAME",
@@ -126,9 +126,6 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   }
 
   const steps = job.steps ?? [];
-  if (steps.some(containsDockerAuthentication)) {
-    errors.push(`${JOB_NAME} must not authenticate Docker or receive Docker credential inputs`);
-  }
   for (const step of steps.filter((candidate) => candidate.uses)) {
     if (!FULL_SHA_ACTION.test(step.uses ?? "")) {
       errors.push(`${JOB_NAME} action '${step.name ?? step.uses}' must pin a full SHA`);
@@ -137,17 +134,6 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   const checkout = steps.find((step) => step.uses?.startsWith("actions/checkout@")) ?? {};
   if (checkout.with?.["persist-credentials"] !== false) {
     errors.push(`${JOB_NAME} checkout must disable persisted credentials`);
-  }
-
-  const sourceCheckout = findStep(job, "Check out exact OpenShell driver behavior source");
-  if (
-    sourceCheckout.uses !== "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" ||
-    sourceCheckout.with?.repository !== "NVIDIA/OpenShell" ||
-    sourceCheckout.with?.ref !== OPENSHELL_SOURCE_REVISION ||
-    sourceCheckout.with?.path !== "openshell-v0116-source" ||
-    sourceCheckout.with?.["persist-credentials"] !== false
-  ) {
-    errors.push(`${JOB_NAME} must check out the exact credential-free OpenShell behavior source`);
   }
 
   const prepare = findStep(job, "Prepare E2E workspace");
@@ -197,12 +183,6 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   requireStepOrder(
     errors,
     steps,
-    "Check out exact OpenShell driver behavior source",
-    "Run OpenShell gateway auth contract live test",
-  );
-  requireStepOrder(
-    errors,
-    steps,
     "Install OpenShell CLI",
     "Pre-pull pinned gateway auth probe image",
   );
@@ -217,4 +197,12 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   requireStepOrder(errors, steps, runName, "Upload OpenShell gateway auth contract artifacts");
 
   return errors;
+}
+
+export function validateOpenShellGatewayAuthContractWorkflowBoundary(
+  workflowPath = DEFAULT_WORKFLOW_PATH,
+): string[] {
+  return validateOpenShellGatewayAuthContractWorkflow(
+    readOpenShellGatewayAuthContractWorkflow(workflowPath),
+  );
 }

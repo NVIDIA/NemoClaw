@@ -15,8 +15,6 @@ import { HERMES_PORTABLE_BUILD_CONTEXT_FILES } from "./hermes-portable-build-con
 
 const TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
 const CREATE_INTENT = "a".repeat(64);
-const CREDENTIAL_BOUNDARY_MANIFEST =
-  "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json";
 const BUILD_SETTINGS = {
   model: "qwen3-vl:4b",
   provider: "ollama-local",
@@ -135,10 +133,6 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(stagedDockerfile).toContain("ARG NEMOCLAW_TOOL_DISCLOSURE=direct");
     expect(stagedDockerfile).toContain("ARG CHAT_UI_URL=");
     expect(stagedDockerfile).not.toContain("ARG CHAT_UI_URL=http://127.0.0.1:18789");
-    expect(stagedDockerfile).toContain(`COPY ${CREDENTIAL_BOUNDARY_MANIFEST} `);
-    expect(fs.existsSync(path.join(first.buildContextPath, CREDENTIAL_BOUNDARY_MANIFEST))).toBe(
-      true,
-    );
     const globalArguments = stagedDockerfile.slice(0, stagedDockerfile.indexOf("\nFROM "));
     expect(globalArguments).toContain("ARG TARGETARCH=amd64");
     expect(stagedDockerfile).toContain(

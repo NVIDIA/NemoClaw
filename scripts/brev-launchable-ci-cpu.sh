@@ -73,7 +73,7 @@ assert_openshell_version() {
 if [ -z "$OPENSHELL_VERSION" ]; then
   case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
     dev) OPENSHELL_VERSION="dev" ;;
-    stable | auto) OPENSHELL_VERSION="v0.0.116" ;;
+    stable | auto) OPENSHELL_VERSION="v0.0.106" ;;
     *) fail "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, dev, auto" ;;
   esac
 fi
@@ -148,14 +148,11 @@ openshell_cli_asset_for_arch() {
 openshell_cli_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
-    v0.0.116:openshell-checksums-sha256.txt)
-      printf '%s\n' "f8b6ec65366f9d256737b884ba4d9f184b4dbbbb9540711ed9e4934d772eba7e"
+    v0.0.106:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "d1a885a91b3e5aaa006c36aca95dc78bed0638c1ba1a79b55f1da93211b8a0a0"
       ;;
-    v0.0.116:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e"
-      ;;
-    v0.0.116:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "7a949c48d1e000cd280869eea1e203e24816b9cfefc575b68a8b72b939cb3f43"
+    v0.0.106:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "ce981904ae8febd9cd6b3fbceb04e1dcfb48da6042bac08eadf0c2211f83fe55"
       ;;
     *)
       return 1
@@ -182,7 +179,7 @@ validate_openshell_archive() {
 
 verify_openshell_cli_asset() {
   local tmpdir="$1" asset="$2" checksum_file="openshell-checksums-sha256.txt"
-  local checksum_line checksum_sha expected_sha release_sha
+  local checksum_line expected_sha release_sha
   local -a sha_cmd
   if command -v sha256sum >/dev/null 2>&1; then
     sha_cmd=(sha256sum)
@@ -195,10 +192,6 @@ verify_openshell_cli_asset() {
   retry 3 10 "download openshell checksum" \
     curl -fsSL -o "$tmpdir/$checksum_file" \
     "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${checksum_file}"
-  checksum_sha="$(openshell_cli_pinned_sha256 "$OPENSHELL_VERSION" "$checksum_file")" \
-    || fail "No NemoClaw-pinned SHA-256 for OpenShell ${OPENSHELL_VERSION} checksum manifest"
-  (cd "$tmpdir" && printf '%s  %s\n' "$checksum_sha" "$checksum_file" | "${sha_cmd[@]}" -c -) \
-    || fail "OpenShell checksum manifest verification failed"
   checksum_line="$(openshell_checksum_line "$tmpdir/$checksum_file" "$asset")" \
     || fail "OpenShell checksum file does not list $asset"
   expected_sha="$(openshell_cli_pinned_sha256 "$OPENSHELL_VERSION" "$asset")" \

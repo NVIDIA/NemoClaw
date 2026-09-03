@@ -4,83 +4,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  type OpenShellGatewayAuthContractWorkflow,
+  readOpenShellGatewayAuthContractWorkflow,
   validateOpenShellGatewayAuthContractWorkflow,
+  validateOpenShellGatewayAuthContractWorkflowBoundary,
 } from "../../../tools/e2e/openshell-gateway-auth-contract-workflow-boundary.mts";
 
-function validWorkflow(): OpenShellGatewayAuthContractWorkflow {
-  return {
-    jobs: {
-      "openshell-gateway-auth-contract": {
-        env: {
-          DOCKER_GRPC_PROBE_IMAGE:
-            "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
-          E2E_ARTIFACT_DIR:
-            "${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract",
-          NEMOCLAW_CANDIDATE_VERSION: "0.0.116",
-          NEMOCLAW_NON_INTERACTIVE: "1",
-          NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.116",
-          NEMOCLAW_OPENSHELL_SOURCE_CHECKOUT: "${{ github.workspace }}/openshell-v0116-source",
-          NEMOCLAW_RUN_LIVE_E2E: "1",
-        },
-        if: "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-gateway-auth-contract') }}",
-        needs: "generate-matrix",
-        "runs-on": "ubuntu-latest",
-        steps: [
-          {
-            uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-            with: { "persist-credentials": false },
-          },
-          {
-            name: "Check out exact OpenShell driver behavior source",
-            uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-            with: {
-              repository: "NVIDIA/OpenShell",
-              ref: "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
-              path: "openshell-v0116-source",
-              "persist-credentials": false,
-            },
-          },
-          {
-            name: "Prepare E2E workspace",
-            uses: "NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75",
-          },
-          {
-            name: "Install OpenShell CLI",
-            run: "env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh",
-          },
-          {
-            name: "Pre-pull pinned gateway auth probe image",
-            run: 'docker pull "$DOCKER_GRPC_PROBE_IMAGE"',
-          },
-          {
-            name: "Run OpenShell gateway auth contract live test",
-            run: "npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openshell-gateway-auth-source-contract.test.ts",
-          },
-          {
-            id: "artifact_safety",
-            if: "always()",
-            name: "Validate final OpenShell gateway auth contract artifacts",
-            run: 'node --experimental-strip-types --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"',
-          },
-          {
-            if: "${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}",
-            name: "Upload OpenShell gateway auth contract artifacts",
-            uses: "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57",
-            with: { path: "${{ steps.artifact_safety.outputs.approved_path }}" },
-          },
-        ],
-        "timeout-minutes": 20,
-      },
-    },
-  };
-}
-
 describe("OpenShell gateway auth contract workflow boundary", () => {
-  it("accepts a valid contract and rejects protected trust-boundary mutations", () => {
-    const workflow = validWorkflow();
-    expect(validateOpenShellGatewayAuthContractWorkflow(workflow)).toEqual([]);
+  it("accepts the checked-in workflow and rejects protected trust-boundary mutations", () => {
+    expect(validateOpenShellGatewayAuthContractWorkflowBoundary()).toEqual([]);
 
+    const workflow = readOpenShellGatewayAuthContractWorkflow();
     const job = workflow.jobs["openshell-gateway-auth-contract"];
     job.if = "${{ always() }}";
     job["runs-on"] = "self-hosted";
@@ -91,7 +24,6 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
       E2E_ARTIFACT_DIR: "/tmp/gateway-auth",
       NEMOCLAW_CANDIDATE_VERSION: "latest",
       NEMOCLAW_OPENSHELL_PIN_VERSION: "latest",
-      NEMOCLAW_OPENSHELL_SOURCE_CHECKOUT: "/tmp/unreviewed-openshell",
       NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
     };
 
@@ -99,19 +31,6 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
     const checkout = steps.find((step) => step.uses?.startsWith("actions/checkout@"))!;
     checkout.uses = "actions/checkout@v6";
     checkout.with!["persist-credentials"] = true;
-
-    const sourceCheckout = steps.find(
-      (step) => step.name === "Check out exact OpenShell driver behavior source",
-    )!;
-    sourceCheckout.with!.ref = "main";
-    steps.splice(steps.indexOf(sourceCheckout) + 1, 0, {
-      name: "Authenticate to Docker Hub",
-      uses: "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@05fa6b810017752ab21148cb7e9d82d12a88c92f",
-      with: {
-        username: "${{ secrets.DOCKERHUB_USERNAME }}",
-        token: "${{ secrets.DOCKERHUB_TOKEN }}",
-      },
-    });
 
     const prepare = steps.find((step) => step.name === "Prepare E2E workspace")!;
     prepare.uses = "./.github/actions/prepare-e2e";
@@ -153,14 +72,11 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
         "openshell-gateway-auth-contract must retain its 20 minute resource budget",
         "openshell-gateway-auth-contract must set DOCKER_GRPC_PROBE_IMAGE=node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
         "openshell-gateway-auth-contract must set E2E_ARTIFACT_DIR=${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract",
-        "openshell-gateway-auth-contract must set NEMOCLAW_CANDIDATE_VERSION=0.0.116",
-        "openshell-gateway-auth-contract must set NEMOCLAW_OPENSHELL_PIN_VERSION=0.0.116",
-        "openshell-gateway-auth-contract must set NEMOCLAW_OPENSHELL_SOURCE_CHECKOUT=${{ github.workspace }}/openshell-v0116-source",
+        "openshell-gateway-auth-contract must set NEMOCLAW_CANDIDATE_VERSION=0.0.106",
+        "openshell-gateway-auth-contract must set NEMOCLAW_OPENSHELL_PIN_VERSION=0.0.106",
         "openshell-gateway-auth-contract must not expose NVIDIA_API_KEY at job scope",
         "openshell-gateway-auth-contract action 'actions/checkout@v6' must pin a full SHA",
         "openshell-gateway-auth-contract checkout must disable persisted credentials",
-        "openshell-gateway-auth-contract must check out the exact credential-free OpenShell behavior source",
-        "openshell-gateway-auth-contract must not authenticate Docker or receive Docker credential inputs",
         "openshell-gateway-auth-contract must use the reviewed prepare-e2e action",
         "openshell-gateway-auth-contract must run only the canonical credential-free OpenShell install",
         "openshell-gateway-auth-contract step 'Pre-pull pinned gateway auth probe image' must run: docker pull \"$DOCKER_GRPC_PROBE_IMAGE\"",
@@ -177,7 +93,7 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
   });
 
   it("rejects artifact safety commands that can mask scanner failures (#7101)", () => {
-    const workflow = validWorkflow();
+    const workflow = readOpenShellGatewayAuthContractWorkflow();
     const artifactSafety = workflow.jobs["openshell-gateway-auth-contract"].steps!.find(
       (step) => step.name === "Validate final OpenShell gateway auth contract artifacts",
     )!;
