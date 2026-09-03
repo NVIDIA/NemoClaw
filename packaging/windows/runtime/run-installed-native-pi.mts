@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -42,6 +42,10 @@ const DEEP_AGENTS_TURN_PROOFS = [
 
 function fail(message) {
   throw new Error(`Native Windows terminal-agent qualification failed: ${message}`);
+}
+
+function sha256(file) {
+  return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
 function piWorkloadSource() {
@@ -570,6 +574,21 @@ async function main() {
     isHermes || isDeepAgents
       ? requiredDirectory(path.join(installRoot, "python"), "Python runtime")
       : null;
+  const installedAgentEntrypoint = requiredFile(
+    isHermes
+      ? path.join(installedAgentRoot, "site-packages", "hermes_cli", "main.py")
+      : isDeepAgents
+        ? path.join(installedAgentRoot, "site-packages", "deepagents_code", "main.py")
+        : path.join(
+            installedAgentRoot,
+            "node_modules",
+            "@earendil-works",
+            "pi-coding-agent",
+            "dist",
+            "cli.js",
+          ),
+    `${agentLabel} installed entrypoint`,
+  );
   const gatewayConfig = requiredFile(
     path.join(installRoot, "config", "mxc-gateway.toml"),
     "MXC gateway configuration",
@@ -834,6 +853,12 @@ async function main() {
       architecture: "arm64",
       backend: "process_container",
       interface: `${agentLabel} terminal one-shot mode`,
+      runtimeEntrypointSha256: sha256(installedAgentEntrypoint),
+      runtimeHostSha256: sha256(
+        installedPythonRoot === null
+          ? installedNode
+          : requiredFile(path.join(installedPythonRoot, "python.exe"), "installed Python runtime"),
+      ),
       deterministicLocalModel: true,
       createWatcherStopped: true,
       sandboxDeleted: true,

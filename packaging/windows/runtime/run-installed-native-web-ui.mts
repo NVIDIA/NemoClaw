@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -35,6 +35,10 @@ const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 
 function fail(message) {
   throw new Error(`NemoClaw native Windows launch failed: ${message}`);
+}
+
+function sha256(file) {
+  return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
 const PROVIDER_CONFIGURATION = {
@@ -1209,6 +1213,10 @@ async function main() {
       backend: "process_container",
       browser: "Microsoft Edge",
       browserVersion: browserProof.browserVersion,
+      openClawEntrypointSha256: sha256(installedOpenClawEntry),
+      nodeSha256: sha256(installedNode),
+      openShellSha256: sha256(openshell),
+      openShellGatewaySha256: sha256(gatewayExecutable),
       deterministicLocalModel: qualification,
       onboardingSelection,
       demonstratedAgentChoices: browserProof.demonstratedAgentChoices,

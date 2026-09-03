@@ -811,6 +811,10 @@ try {
     if ($webUiReceipt.verdict -cne 'pass' -or
         $webUiReceipt.backend -cne 'process_container' -or
         $webUiReceipt.browser -cne 'Microsoft Edge' -or
+        $webUiReceipt.openClawEntrypointSha256 -cne $payloadHashes['openclaw\node_modules\openclaw\openclaw.mjs'] -or
+        $webUiReceipt.nodeSha256 -cne $payloadHashes['bin\node.exe'] -or
+        $webUiReceipt.openShellSha256 -cne $payloadHashes['bin\openshell.exe'] -or
+        $webUiReceipt.openShellGatewaySha256 -cne $payloadHashes['bin\openshell-gateway.exe'] -or
         $webUiReceipt.deterministicLocalModel -ne $true -or
         $webUiReceipt.onboardingSelection.agent -cne 'openclaw' -or
         $webUiReceipt.onboardingSelection.inference -cne 'qualification' -or
@@ -870,6 +874,8 @@ try {
         $piReceipt.piVersion -cne '0.84.1' -or
         $piReceipt.backend -cne 'process_container' -or
         $piReceipt.interface -cne 'Pi terminal one-shot mode' -or
+        $piReceipt.runtimeEntrypointSha256 -cne $payloadHashes['pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js'] -or
+        $piReceipt.runtimeHostSha256 -cne $payloadHashes['bin\node.exe'] -or
         [int]$piReceipt.turnCount -ne 3 -or
         @($piReceipt.turns).Count -ne 3 -or
         $piReceipt.createWatcherStopped -ne $true -or
@@ -902,6 +908,8 @@ try {
         $hermesReceipt.hermesVersion -cne '0.19.0' -or
         $hermesReceipt.backend -cne 'process_container' -or
         $hermesReceipt.interface -cne 'Hermes terminal one-shot mode' -or
+        $hermesReceipt.runtimeEntrypointSha256 -cne $payloadHashes['hermes\site-packages\hermes_cli\main.py'] -or
+        $hermesReceipt.runtimeHostSha256 -cne $payloadHashes['python\python.exe'] -or
         [int]$hermesReceipt.turnCount -ne 3 -or
         @($hermesReceipt.turns).Count -ne 3 -or
         $hermesReceipt.createWatcherStopped -ne $true -or
@@ -934,6 +942,8 @@ try {
         $deepAgentsReceipt.deepAgentsCodeVersion -cne '0.1.55' -or
         $deepAgentsReceipt.backend -cne 'process_container' -or
         $deepAgentsReceipt.interface -cne 'Deep Agents Code terminal one-shot mode' -or
+        $deepAgentsReceipt.runtimeEntrypointSha256 -cne $payloadHashes['deepagents\site-packages\deepagents_code\main.py'] -or
+        $deepAgentsReceipt.runtimeHostSha256 -cne $payloadHashes['python\python.exe'] -or
         [int]$deepAgentsReceipt.turnCount -ne 3 -or
         @($deepAgentsReceipt.turns).Count -ne 3 -or
         $deepAgentsReceipt.createWatcherStopped -ne $true -or
@@ -967,6 +977,9 @@ try {
         $nemoCuaReceipt.backend -cne 'process_container' -or
         $nemoCuaReceipt.interface -cne 'NemoCUA visible browser task' -or
         $nemoCuaReceipt.browser -cne 'Microsoft Edge' -or
+        $nemoCuaReceipt.runtimeEntrypointSha256 -cne $payloadHashes['nemocua\run_with_harness.py'] -or
+        $nemoCuaReceipt.pythonSha256 -cne $payloadHashes['python\python.exe'] -or
+        $nemoCuaReceipt.openShellSha256 -cne $payloadHashes['bin\openshell.exe'] -or
         [int]$nemoCuaReceipt.turnCount -ne 3 -or
         @($nemoCuaReceipt.turns).Count -ne 3 -or
         $nemoCuaReceipt.visiblePostcondition.inputValue -cne 'NEMOCUA_NATIVE_WINDOWS' -or

@@ -623,6 +623,13 @@ async function main() {
       browser: "Microsoft Edge",
       browserVersion: bridge.browserVersion,
       interface: "NemoCUA visible browser task",
+      runtimeEntrypointSha256: createHash("sha256")
+        .update(fs.readFileSync(path.join(installedNemoCuaRoot, "run_with_harness.py")))
+        .digest("hex"),
+      pythonSha256: createHash("sha256")
+        .update(fs.readFileSync(path.join(installedPythonRoot, "python.exe")))
+        .digest("hex"),
+      openShellSha256: createHash("sha256").update(fs.readFileSync(openshell)).digest("hex"),
       deterministicLocalModel: qualification,
       inferenceProvider: configuredIdentity?.config.inference ?? "qualification",
       model: configuredIdentity?.config.model ?? "nemocua-native-preview",
