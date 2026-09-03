@@ -366,8 +366,7 @@ describe("managed gateway recovery controller", () => {
       const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
       const registry = requireSource("../../src/lib/state/registry.js");
       const childProcess = requireSource("node:child_process");
-      const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
-beta  127.0.0.1  18789  12345  running`;
+      const runningForward = "SANDBOX  BIND  PORT  PID  STATUS";
       const previousWaitSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
       const previousPollInterval = process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
       const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
