@@ -63,7 +63,7 @@ Review the [Prerequisites](prerequisites) before you begin.
       Express install mode preserves the explicit Hermes selection in the install command.
       On supported non-N1x express platforms, enter `n` if you want to select a sandbox name, an inference provider, and a model interactively.
       On N1x, entering `n` stops installation because the Deferred managed-vLLM preview is the only admitted onboarding path.
-      Refer to [Use Docker and supported platforms](#use-docker-and-supported-platforms) for more information.
+      Refer to [Use a container runtime and supported platforms](#use-a-container-runtime-and-supported-platforms) for more information.
     </Note>
 
     The install command creates the `my-hermes` sandbox used in the commands that follow.
@@ -254,8 +254,11 @@ Use these details when your first-run path needs more control.
     Refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) for the recovery workflow.
   </Accordion>
 
-  <Accordion title="Use Docker and supported platforms">
-    Review [Prerequisites](prerequisites) for Docker requirements and the setup-oriented platform table.
+  <Accordion title="Use a container runtime and supported platforms">
+    Review [Prerequisites](prerequisites) for container-runtime requirements and the setup-oriented platform table.
+    Docker is the default runtime provider and primary path.
+    On a qualified Linux host, you can instead select native rootless Podman explicitly with `NEMOCLAW_GATEWAY_RUNTIME=podman`; this path does not require the Docker CLI or daemon.
+    Review the native Podman requirements and limitations in [Platform Support](../reference/platform-support#deployment-paths) and [Troubleshooting](../reference/troubleshooting#podman) before onboarding.
     Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
     Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
 

@@ -52,7 +52,6 @@ describe("E2E runtime matrix", () => {
   it.each([
     "bootstrap-install-smoke",
     "concurrent-gateway-ports",
-    "legacy-forward-migration",
     "llama-cpp-generic-gpu",
     "rebuild-hermes-stale-base",
   ])("keeps the explicit Docker contract %s out of Podman fanout", (target) => {
