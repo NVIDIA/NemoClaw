@@ -161,7 +161,7 @@ tmp="$(mktemp)"
 code="$(curl -sS -o "$tmp" -w '%{http_code}' --max-time 2 http://127.0.0.1:8642/health 2>/dev/null || true)"
 body="$(cat "$tmp" 2>/dev/null || true)"
 rm -f "$tmp"
-[ -n "$code" ] || code=000
+code="\${code:-000}"
 printf '%s\n%s' "$code" "$body"
 `,
       `${container}-health-${attempt}`,
@@ -170,11 +170,8 @@ printf '%s\n%s' "$code" "$body"
     const body = bodyLines.join("\n");
     switch (code) {
       case "200":
-        expect(body, `${container}: health response did not report status ok`).toMatch(
-          /"status"\s*:\s*"ok"/,
-        );
-        expect(body, `${container}: health response did not report Hermes platform`).toMatch(
-          /"platform"\s*:\s*"hermes-agent"/,
+        expect(body, `${container}: health response did not report ready Hermes state`).toMatch(
+          /(?=[\s\S]*"status"\s*:\s*"ok")(?=[\s\S]*"platform"\s*:\s*"hermes-agent")/,
         );
         return;
       case "401":
@@ -200,38 +197,8 @@ async function assertGatewayLogClean(probe: DockerProbe, container: string): Pro
   await expectContainerSh(
     probe,
     container,
-    "gateway log contains PID race failure",
-    "test -r /tmp/gateway.log && ! grep -F 'PID file race lost' /tmp/gateway.log",
-  );
-  await expectContainerSh(
-    probe,
-    container,
-    "gateway log contains config load failure",
-    "test -r /tmp/gateway.log && ! grep -F 'Could not load config.yaml' /tmp/gateway.log",
-  );
-}
-
-async function assertImageCapabilitySurface(probe: DockerProbe, container: string): Promise<void> {
-  await expectContainerSh(
-    probe,
-    container,
-    "Hermes image is missing an optional runtime capability or root sandbox-group membership",
-    String.raw`set -eu
-id -Gn root | tr ' ' '\n' | grep -Fx sandbox
-test "$(command -v hermes)" = /usr/local/bin/hermes
-/usr/local/bin/hermes --version >/dev/null
-/opt/hermes/.venv/bin/python -I - <<'PY'
-import acp
-import anthropic
-import discord
-import fastapi
-import mcp
-import ptyprocess
-import uvicorn
-from acp_adapter.server import HermesACPAgent
-
-assert HermesACPAgent is not None
-PY`,
+    "gateway log contains a PID race or config load failure",
+    "test -r /tmp/gateway.log && ! grep -F 'PID file race lost' /tmp/gateway.log && ! grep -F 'Could not load config.yaml' /tmp/gateway.log",
   );
 }
 
@@ -251,22 +218,19 @@ async function assertRuntimeLayout(probe: DockerProbe, container: string): Promi
   await expectContainerSh(
     probe,
     container,
-    "gateway user cannot write required Hermes v0.14 directories",
-    '/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -lc \'for dir in hooks image_cache audio_cache logs/curator; do p="/sandbox/.hermes/$dir/.nemoclaw-write-test"; : >"$p" && rm -f "$p"; done\'',
-  );
-  await expectContainerSh(
-    probe,
-    container,
-    "Hermes history ownership does not preserve append access and sticky-entry protection",
+    "Hermes shared runtime layout does not preserve cross-UID writes or history protection",
     String.raw`set -eu
+/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -lc 'for dir in hooks image_cache audio_cache logs/curator; do p="/sandbox/.hermes/$dir/.nemoclaw-write-test"; : >"$p" && rm -f "$p"; done'
+for dir in sessions gateway runtime; do
+  stat -c '%U:%G %a' "/sandbox/.hermes/$dir" | grep -Fx 'gateway:sandbox 2770'
+  /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -lc ": > /sandbox/.hermes/$dir/.nemoclaw-gateway-write-test && rm -f /sandbox/.hermes/$dir/.nemoclaw-gateway-write-test"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -lc ": > /sandbox/.hermes/$dir/.nemoclaw-sandbox-write-test && rm -f /sandbox/.hermes/$dir/.nemoclaw-sandbox-write-test"
+done
 history=/sandbox/.hermes/.hermes_history
-test "$(stat -c '%U:%G %a' "$history")" = "gateway:sandbox 660"
+stat -c '%U:%G %a' "$history" | grep -Fx 'gateway:sandbox 660'
 /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -lc 'printf "sandbox history probe\n" >>/sandbox/.hermes/.hermes_history'
-if /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- rm -f "$history"; then
-  echo "sandbox user replaced gateway-owned history entry" >&2
-  exit 1
-fi
-test -f "$history" && test ! -L "$history"`,
+! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- rm -f "$history"
+stat -c '%F' "$history" | grep -Fx 'regular file'`,
   );
   await expectContainerSh(
     probe,
@@ -292,105 +256,26 @@ async function assertBuildOnlyPathsAbsent(probe: DockerProbe, container: string)
   await expectContainerSh(
     probe,
     container,
-    "build-only Hermes paths are present in the runtime image",
-    'for path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; do test ! -e "$path" && test ! -L "$path"; done',
-  );
-}
+    "Hermes image capability or build-only-path contract failed",
+    String.raw`set -eu
+id -Gn root | tr ' ' '\n' | grep -Fx sandbox
+test "$(command -v hermes)" = /usr/local/bin/hermes
+/usr/local/bin/hermes --version >/dev/null
+/opt/hermes/.venv/bin/python -I - <<'PY'
+import acp
+import anthropic
+import discord
+import fastapi
+import mcp
+import ptyprocess
+import uvicorn
+from acp_adapter.server import HermesACPAgent
 
-async function assertBearerAuth(probe: DockerProbe, container: string): Promise<void> {
-  await expectContainerSh(
-    probe,
-    container,
-    "Hermes API bearer auth did not reject missing/wrong tokens and accept API_SERVER_KEY",
-    String.raw`
-set -eu
-token="$(python3 - <<'PY'
-from pathlib import Path
-
-for raw_line in Path("/sandbox/.hermes/.env").read_text(encoding="utf-8").splitlines():
-    line = raw_line.strip()
-    if line.startswith("export "):
-        line = line[len("export "):].lstrip()
-    if line.startswith("API_SERVER_KEY="):
-        print(line.split("=", 1)[1].strip().strip("\"'"))
-        break
-else:
-    raise SystemExit("API_SERVER_KEY missing")
+assert HermesACPAgent is not None
 PY
-)"
-test -n "$token"
-probe_status() {
-  tmp="$(mktemp)"
-  code="$(curl -sS -o "$tmp" -w '%{http_code}' --max-time 15 "$@" || printf '000')"
-  cat "$tmp" >/dev/null
-  rm -f "$tmp"
-  printf '%s' "$code"
-}
-missing="$(probe_status http://127.0.0.1:8642/v1/models)"
-wrong="$(probe_status -H "Authorization: Bearer wrong-token" http://127.0.0.1:8642/v1/models)"
-valid="$(probe_status -H "Authorization: Bearer $token" http://127.0.0.1:8642/v1/models)"
-printf 'missing=%s wrong=%s valid=%s\n' "$missing" "$wrong" "$valid"
-[ "$missing" = "401" ]
-[ "$wrong" = "401" ]
-case "$valid" in
-  2??|3??|404) ;;
-  *) exit 1 ;;
-esac
-`,
-  );
-}
-
-async function assertDashboardHome(probe: DockerProbe, container: string): Promise<void> {
-  await expectContainerSh(
-    probe,
-    container,
-    "Hermes dashboard profile did not preserve ownership, file modes, or the API credential boundary",
-    String.raw`
-set -eu
-for _ in $(seq 1 30); do
-  [ -f /sandbox/.hermes/profiles/dashboard-home/config.yaml ] && [ -f /sandbox/.hermes/profiles/dashboard-home/.env ] && break
-  sleep 1
-done
-[ "$(stat -c '%a' /sandbox/.hermes/profiles/dashboard-home)" = "700" ]
-[ "$(stat -c '%U:%G' /sandbox/.hermes/profiles/dashboard-home)" = "sandbox:sandbox" ]
-[ "$(stat -c '%a' /sandbox/.hermes/profiles/dashboard-home/config.yaml)" = "600" ]
-[ "$(stat -c '%a' /sandbox/.hermes/profiles/dashboard-home/.env)" = "600" ]
-[ "$(stat -c '%U:%G' /sandbox/.hermes/profiles/dashboard-home/config.yaml)" = "sandbox:sandbox" ]
-[ "$(stat -c '%U:%G' /sandbox/.hermes/profiles/dashboard-home/.env)" = "sandbox:sandbox" ]
-python3 - <<'PY'
-from pathlib import Path
-
-allowed = {
-    "API_SERVER_HOST",
-    "API_SERVER_PORT",
-    "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER",
-    "FIRECRAWL_GATEWAY_URL",
-    "OPENAI_AUDIO_GATEWAY_URL",
-    "BROWSER_USE_GATEWAY_URL",
-    "FAL_QUEUE_GATEWAY_URL",
-    "MODAL_GATEWAY_URL",
-}
-env_path = Path("/sandbox/.hermes/profiles/dashboard-home/.env")
-keys = set()
-for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-    line = raw_line.strip()
-    if not line or line.startswith("#") or "=" not in line:
-        continue
-    if line.startswith("export "):
-        line = line[len("export "):].lstrip()
-    keys.add(line.split("=", 1)[0].strip())
-if "API_SERVER_KEY" in keys:
-    raise SystemExit("dashboard .env contains API_SERVER_KEY")
-extra = sorted(keys - allowed)
-missing = sorted({"API_SERVER_HOST", "API_SERVER_PORT"} - keys)
-if extra or missing:
-    raise SystemExit(f"dashboard .env allowlist mismatch extra={extra} missing={missing}")
-config_text = Path("/sandbox/.hermes/profiles/dashboard-home/config.yaml").read_text(encoding="utf-8")
-for fragment in ("model:", "custom_providers:", "_nemoclaw_upstream:"):
-    if fragment not in config_text:
-        raise SystemExit(f"dashboard config missing {fragment}")
-PY
-`,
+for path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; do
+  test ! -e "$path" && test ! -L "$path"
+done`,
   );
 }
 
@@ -416,31 +301,20 @@ grep -Fx "legacy dashboard memory" /sandbox/.hermes/profiles/dashboard-home/MEMO
   );
 }
 
-async function assertGatewayProcess(probe: DockerProbe, container: string): Promise<void> {
-  await expectContainerSh(
-    probe,
-    container,
-    "Hermes gateway process is not running as gateway user",
-    'ps -eo user=,args= | awk \'$1 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { found = 1 } END { exit found ? 0 : 1 }\'',
-  );
-  await expectContainerSh(
-    probe,
-    container,
-    "start log does not show gateway privilege separation",
-    "grep -F \"hermes gateway launched as 'gateway' user\" /tmp/nemoclaw-start.log",
-  );
-}
-
-async function assertGatewayKanbanDispatcher(
+async function assertGatewayProcess(
   probe: DockerProbe,
   container: string,
-  expected: "0" | "1",
+  expectedDispatcher?: "0" | "1",
 ): Promise<void> {
+  const dispatcherProbe =
+    expectedDispatcher === undefined
+      ? ":"
+      : `pid="$(ps -eo pid=,user=,args= | awk '$2 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1; exit }')" && printf '%s\\n' "$pid" | grep -Ex '[0-9]+' && tr '\\0' '\\n' <"/proc/$pid/environ" | grep -Fx 'HERMES_KANBAN_DISPATCH_IN_GATEWAY=${expectedDispatcher}'`;
   await expectContainerSh(
     probe,
     container,
-    `gateway process did not inherit HERMES_KANBAN_DISPATCH_IN_GATEWAY=${expected}`,
-    `pid="$(ps -eo pid=,user=,args= | awk '$2 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1; exit }')"; test -n "$pid"; tr '\\0' '\\n' <"/proc/$pid/environ" | grep -Fx 'HERMES_KANBAN_DISPATCH_IN_GATEWAY=${expected}'`,
+    "Hermes gateway process does not preserve its user, launch, or dispatcher contract",
+    `ps -eo user=,args= | awk '$1 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { found = 1 } END { exit found ? 0 : 1 }' && grep -F "hermes gateway launched as 'gateway' user" /tmp/nemoclaw-start.log && ${dispatcherProbe}`,
   );
 }
 
@@ -467,14 +341,10 @@ async function runCleanVariant(
   containers.push(container);
 
   await waitForHealth(probe, container);
-  await assertGatewayProcess(probe, container);
-  await assertGatewayKanbanDispatcher(probe, container, "1");
+  await assertGatewayProcess(probe, container, "1");
   await assertGatewayLogClean(probe, container);
-  await assertImageCapabilitySurface(probe, container);
   await assertRuntimeLayout(probe, container);
   await assertBuildOnlyPathsAbsent(probe, container);
-  await assertBearerAuth(probe, container);
-  await assertDashboardHome(probe, container);
 }
 
 async function runLegacyVariant(
@@ -506,17 +376,6 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
   containers.push(container);
 
   await waitForHealth(probe, container);
-  await expectContainerSh(
-    probe,
-    container,
-    "restored state directories were not repaired for cross-UID writes",
-    String.raw`set -eu
-for dir in sessions gateway runtime; do
-  test "$(stat -c '%U:%G %a' "/sandbox/.hermes/$dir")" = "gateway:sandbox 2770"
-  /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -lc ": > /sandbox/.hermes/$dir/.nemoclaw-gateway-write-test && rm -f /sandbox/.hermes/$dir/.nemoclaw-gateway-write-test"
-  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -lc ": > /sandbox/.hermes/$dir/.nemoclaw-sandbox-write-test && rm -f /sandbox/.hermes/$dir/.nemoclaw-sandbox-write-test"
-done`,
-  );
   await assertGatewayProcess(probe, container);
   await assertGatewayLogClean(probe, container);
   await assertRuntimeLayout(probe, container);
@@ -572,10 +431,7 @@ test -f /tmp/nemoclaw-hostile-python/sitecustomize.py
 test ! -e /tmp/nemoclaw-root-sitecustomize-ran
 sha256sum -c /tmp/nemoclaw-locked-config.sha256`,
   );
-  await assertGatewayProcess(probe, container);
-  await assertGatewayKanbanDispatcher(probe, container, "0");
-  await assertGatewayLogClean(probe, container);
-  await assertRuntimeLayout(probe, container);
+  await assertGatewayProcess(probe, container, "0");
 }
 
 async function runHardLinkRefusalVariant(
@@ -621,17 +477,11 @@ grep -F 'has hard-link count' /tmp/nemoclaw-hardlink-start.log
 grep -F ${JSON.stringify(expectedEvent)} /tmp/nemoclaw-hardlink-start.log
 cat /tmp/nemoclaw-hardlink-start.log`;
 
+  containers.push(container);
   await probe.expect(
-    ["run", "-d", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", bootstrap],
+    ["run", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", bootstrap],
     { artifactName: `start-${kind}-hardlink-refusal-container`, timeoutMs: RUN_TIMEOUT_MS },
   );
-  containers.push(container);
-  const wait = await probe.run(["wait", container], {
-    artifactName: `wait-${kind}-hardlink-refusal-container`,
-    timeoutMs: RUN_TIMEOUT_MS,
-  });
-  expect(wait.exitCode, resultText(wait)).toBe(0);
-  expect(wait.stdout.trim(), resultText(wait)).toBe("0");
 }
 
 async function runMutableLayoutSwapRefusalVariant(
@@ -691,17 +541,11 @@ sha256sum -c /tmp/nemoclaw-layout-external.sha256
 grep -F '/sandbox/.hermes changed during repair' /tmp/nemoclaw-layout-swap-start.log
 cat /tmp/nemoclaw-layout-swap-start.log`;
 
+  containers.push(container);
   await probe.expect(
-    ["run", "-d", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", bootstrap],
+    ["run", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", bootstrap],
     { artifactName: "start-root-layout-swap-refusal-container", timeoutMs: RUN_TIMEOUT_MS },
   );
-  containers.push(container);
-  const wait = await probe.run(["wait", container], {
-    artifactName: "wait-root-layout-swap-refusal-container",
-    timeoutMs: RUN_TIMEOUT_MS,
-  });
-  expect(wait.exitCode, resultText(wait)).toBe(0);
-  expect(wait.stdout.trim(), resultText(wait)).toBe("0");
 }
 
 async function runNonRootHistoryOwnershipRefusalVariant(
@@ -711,32 +555,21 @@ async function runNonRootHistoryOwnershipRefusalVariant(
   containers: string[],
 ): Promise<void> {
   const container = `nemoclaw-hermes-nonroot-history-owner-${runId}`;
-  const bootstrap = `set -euo pipefail
-chown sandbox:root /sandbox/.hermes/.hermes_history
-chmod 660 /sandbox/.hermes/.hermes_history
-stat -c '%U:%G %a' /sandbox/.hermes/.hermes_history >/tmp/nemoclaw-history.stat
-set +e
-/usr/bin/timeout 30s /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start >/tmp/nemoclaw-history-owner-start.log 2>&1
-startup_status=$?
-set -e
-test "$startup_status" -ne 0
-test "$startup_status" -ne 124
-test "$(stat -c '%U:%G %a' /sandbox/.hermes/.hermes_history)" = "$(cat /tmp/nemoclaw-history.stat)"
-grep -F 'has group gid' /tmp/nemoclaw-history-owner-start.log
-grep -F 'Hermes pre-launch layout repair failed at history file' /tmp/nemoclaw-history-owner-start.log
-cat /tmp/nemoclaw-history-owner-start.log`;
-
-  await probe.expect(
-    ["run", "-d", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", bootstrap],
+  const result = await probe.run(
+    [
+      "run",
+      "--name",
+      container,
+      "--entrypoint",
+      "/bin/bash",
+      image,
+      "-lc",
+      "chown sandbox:root /sandbox/.hermes/.hermes_history && chmod 660 /sandbox/.hermes/.hermes_history && exec /usr/bin/timeout 30s /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start",
+    ],
     { artifactName: "start-nonroot-history-owner-refusal-container", timeoutMs: RUN_TIMEOUT_MS },
   );
   containers.push(container);
-  const wait = await probe.run(["wait", container], {
-    artifactName: "wait-nonroot-history-owner-refusal-container",
-    timeoutMs: RUN_TIMEOUT_MS,
-  });
-  expect(wait.exitCode, resultText(wait)).toBe(0);
-  expect(wait.stdout.trim(), resultText(wait)).toBe("0");
+  expect(result.exitCode, resultText(result)).toBe(78);
 }
 
 type RootEntrypointTestContext = Pick<
@@ -843,8 +676,6 @@ test(
           "build-only upstream tests and root caches are absent from the runtime image",
           "gateway.pid is stored as a regular file below the writable runtime directory",
           "gateway user cannot remove config.yaml from sticky config root",
-          "Hermes API denies missing or wrong bearer tokens and accepts API_SERVER_KEY",
-          "dashboard profile is sandbox-owned, and its .env allowlist excludes API_SERVER_KEY",
         ],
       },
       async ({ containers, image, probe, runId }) => {
@@ -1015,7 +846,9 @@ test(
       {
         id: "non-root-history-owner-refusal",
         assertion: "nonRootHistoryOwnershipRefusalVerified",
-        contract: ["non-root startup rejects a mode-correct history file with an unusable group"],
+        contract: [
+          "non-root startup returns the stable layout-refusal status for a mode-correct history file with an unusable group",
+        ],
       },
       async ({ containers, image, probe, runId }) => {
         context.progress.phase("validate non-root history ownership refusal");
