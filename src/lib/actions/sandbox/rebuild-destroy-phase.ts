@@ -40,7 +40,6 @@ export interface RebuildDestroyPhaseInput {
   backupManifest: RebuildBackupManifest;
   log: RebuildLog;
   bail: RebuildBail;
-  relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   force?: boolean;
   validateAfterMcpPreparation?: (
     preparation: McpRebuildPreparation,
@@ -236,7 +235,6 @@ export async function runRebuildDestroyPhase(
     backupManifest,
     log,
     bail,
-    relockShieldsIfNeeded,
     validateAfterMcpPreparation,
     validateAtDeleteEdge,
     cleanupDockerOrphanAfterDelete,
@@ -276,7 +274,6 @@ export async function runRebuildDestroyPhase(
         sandboxName,
         staleRecovery,
         input.force === true,
-        relockShieldsIfNeeded,
         bail,
       );
       return preparation;
@@ -305,7 +302,6 @@ export async function runRebuildDestroyPhase(
           preparation.detachedProviderEntries,
           preparation.scrubbedAdapterEntries,
         );
-        relockShieldsIfNeeded(true);
         bail(
           mcpRecoveryFailure
             ? `${validation.message} MCP provider recovery also failed: ${mcpRecoveryFailure}`
@@ -342,7 +338,6 @@ export async function runRebuildDestroyPhase(
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
       );
-      relockShieldsIfNeeded(true);
       const detail = error instanceof Error ? error.message : String(error);
       bail(
         mcpRecoveryFailure
@@ -361,7 +356,6 @@ export async function runRebuildDestroyPhase(
       rebuildDetachedMcpProviderEntries,
       rebuildScrubbedMcpAdapterEntries,
     );
-    relockShieldsIfNeeded(true);
     bail(
       mcpRecoveryFailure
         ? `Sandbox delete target changed during rebuild preparation; MCP provider recovery also failed: ${mcpRecoveryFailure}`
@@ -388,7 +382,6 @@ export async function runRebuildDestroyPhase(
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
       );
-      relockShieldsIfNeeded(true);
       bail(
         mcpRecoveryFailure
           ? `${validation.message} MCP provider recovery also failed: ${mcpRecoveryFailure}`
@@ -411,7 +404,6 @@ export async function runRebuildDestroyPhase(
       rebuildDetachedMcpProviderEntries,
       rebuildScrubbedMcpAdapterEntries,
     );
-    relockShieldsIfNeeded(true);
     const detail = error instanceof Error ? error.message : String(error);
     bail(
       mcpRecoveryFailure
@@ -458,7 +450,6 @@ export async function runRebuildDestroyPhase(
       if (backupManifest) {
         console.error("  State backup is preserved at: " + backupManifest.backupPath);
       }
-      relockShieldsIfNeeded(true);
       bail(
         mcpRecoveryFailure
           ? `Failed to delete sandbox; recovery also failed: ${[

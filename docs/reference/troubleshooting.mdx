@@ -1441,40 +1441,20 @@ For a custom image, update its Dockerfile to preserve the current NemoClaw entry
 
 <AgentOnly variant="hermes">
 
-### Hermes config or shields reports a mutation already in progress
+### Hermes config reports a mutation already in progress
 
-Hermes host config writes, shields transitions, and lifecycle seals use the same root-only mutation lock. A host-side config write is bound to the SHA-256 digest of the matching read, installs fresh sealed config inodes, refreshes both config hashes, and restores the prior permissions before releasing that lock. For shields changes, the lock remains held through recursive state-directory updates, config verification, and content-seal capture. If a concurrent config or shields command reports `Hermes config mutation is already in progress`, do not remove `/run/nemoclaw/hermes-config-mutation.lock` manually. Wait for the active config, shields, recovery, or restart command to finish, then retry. If the command says shields are up, run `$$nemoclaw <name> shields down` before `config set` or `inference set`.
-
-### A Hermes command reports that runtime provider state mutation owns direct-container execution
-
-A current managed Hermes image on the Docker driver can report this retryable refusal while a Shields provider fence is active:
-
-```text
-Runtime provider state mutation owns direct-container execution for sandbox '<name>'; retry after the provider fence is released.
-```
-
-The refused command did not start a process inside the sandbox. Do not bypass the fence with manual `docker exec`, OpenShell, or SSH commands, and do not delete `~/.nemoclaw/state/runtime-provider-lifecycle/`. Wait for the active Shields or recovery command to finish, then reconcile the retained authority from the host:
-
-```bash
-$$nemoclaw <name> shields status
-```
-
-Use the status result as follows:
-
-- If status reports verified `UP`, `DOWN`, or mutable-default posture and exits with status `0`, retry the original command.
-- If status reports `runtime-provider recovery restored lockdown`, retry the intended `shields up` or `shields down` transition because provider verification rejected the persisted mutable posture.
-- If status reports `DOWN (DRIFTED...)` or `NOT CONFIGURED (DRIFTED...)`, run `$$nemoclaw <name> shields up`. Open a new shields-down window only after `shields status` reports `UP` and exits with status `0`.
-
-Hermes can also log `[SECURITY] Hermes startup held by an active runtime state mutation.` before it reads mutable state. Do not kill or manually restart the held entrypoint. Run `$$nemoclaw <name> shields status` from the host so NemoClaw can recover the exact retained target and authenticate the startup release. If recovery still fails, preserve the owner-only lifecycle ledger and the complete error for diagnosis instead of removing a marker or changing in-sandbox permissions.
-
-If the startup gate instead reports `invalid-state code=<code> transaction=<id>` and Hermes refuses startup, the error code identifies rejected gate state rather than an active transition that can make progress by waiting.
-The transaction is a 64-character identifier when the gate safely parsed it, or `unknown` when it could not.
-Run `$$nemoclaw <name> shields status` from the host to recover the retained transition.
-If status cannot recover it, preserve `~/.nemoclaw/state/runtime-provider-lifecycle/`, the error code, and the transaction identifier for diagnosis; do not remove or edit the root-owned in-sandbox receipts.
+Hermes host config writes and lifecycle seals use the same root-only mutation lock.
+A host-side config write binds to the SHA-256 digest of the matching read, installs fresh config inodes, refreshes both config hashes, and restores mutable access before releasing that lock.
+If a concurrent command reports `Hermes config mutation is already in progress`, do not remove `/run/nemoclaw/hermes-config-mutation.lock` manually.
+Wait for the active config, recovery, or restart command to finish, then retry.
 
 ### Hermes startup reports `HERMES_CONFIG_MUTATION_ORPHANED`
 
-This refusal means a root-owned config or shields transaction stopped without a safely recoverable complete state. NemoClaw intentionally does not guess whether a partially updated recursive state tree should be locked or mutable, and it does not treat a leftover lock file as permission to continue. Do not delete `/run/nemoclaw/hermes-config-mutation.lock`, the restart state, or the persistent transaction marker manually. The config root remains sealed from the sandbox identity, so an ordinary in-place `rebuild` cannot create a new trustworthy backup and will stop before deleting the sandbox. If you already have a trusted host-side snapshot, record its selector, destroy the sealed sandbox, re-onboard the same sandbox name from trusted host configuration, and then restore that snapshot:
+This refusal means a root-owned config transaction stopped without a safely recoverable complete state.
+NemoClaw does not treat a leftover lock file as permission to continue or adopt partially written config.
+Do not delete `/run/nemoclaw/hermes-config-mutation.lock`, the restart state, or the persistent transaction marker manually.
+An ordinary in-place `rebuild` can stop when it cannot create a trustworthy backup of the interrupted config state.
+If you already have a trusted host-side snapshot, record its selector, destroy the sandbox, re-onboard the same sandbox name from trusted host configuration, and then restore that snapshot:
 
 ```bash
 $$nemoclaw <name> snapshot list
@@ -1487,28 +1467,10 @@ Destroying the sealed sandbox permanently discards any state newer than the sele
 
 ### Hermes startup reports `HERMES_RESTART_SEAL_ORPHANED`
 
-This refusal means a container recreation discarded the root-only restart metadata under `/run` while the persistent `/sandbox` tree still carries the frozen transaction marker, or a non-root entrypoint found a root transaction it cannot safely restore. NemoClaw cannot safely infer the original ownership, modes, or inode flags from a partial seal, so startup fails closed even when `config.yaml` and `.env` still look readable. Do not repair the paths with manual `chown`, `chmod`, or hash regeneration. An ordinary `rebuild` cannot safely back up a sealed tree. Restore a trusted snapshot into a new sandbox as shown above, or recreate from host-side onboarding configuration if no state-preserving recovery is required.
-
-### Hermes startup reports `HERMES_LOCKED_PARENT_UNPROTECTED`
-
-This refusal means Hermes config files look shields-locked but `/sandbox` is not `root:sandbox 1775`, so the sandbox identity could rename the entire `.hermes` lock root. `shields up` cannot repair this after PID 1 has refused startup. Do not change the parent ownership manually or accept the current bytes as a new seal. Restore a trusted pre-incident snapshot into a new sandbox, or recreate the sandbox from host-side onboarding configuration.
-
-</AgentOnly>
-
-<AgentOnly variant="openclaw">
-
-### OpenClaw startup reports `OPENCLAW_LOCKED_PARENT_UNPROTECTED`
-
-This refusal means the OpenClaw config directory is root-owned but `/sandbox` is not `root:sandbox 1775`, so the sandbox identity could rename the entire `.openclaw` lock root. PID 1 refuses startup before migration or config reads, and `shields up` cannot repair the parent after that refusal. Do not change the parent ownership manually or accept the current bytes as a new seal. If you have a trusted host-side snapshot from before the incident, record its selector, destroy the refused sandbox, re-onboard the same sandbox name from trusted host configuration, and restore that snapshot:
-
-```bash
-$$nemoclaw <name> snapshot list
-$$nemoclaw <name> destroy
-$$nemoclaw onboard --name <name> --agent openclaw
-$$nemoclaw <name> snapshot restore <selector>
-```
-
-Destroying the refused sandbox permanently discards state newer than the selected snapshot, so confirm that the host-side snapshot exists before destruction. Without a trusted pre-incident snapshot, recreate the sandbox from host-side onboarding configuration only if you accept losing the inaccessible in-sandbox state.
+This refusal means a container recreation discarded the root-only restart metadata under `/run` while the persistent `/sandbox` tree still carries the temporary restart transaction marker, or a non-root entrypoint found a root transaction it cannot safely restore.
+NemoClaw cannot safely infer the pre-transaction ownership, modes, or inode flags, so startup fails closed even when `config.yaml` and `.env` still look readable.
+Do not repair the paths with manual `chown`, `chmod`, or hash regeneration.
+Restore a trusted snapshot into a new sandbox as shown above, or recreate from host-side onboarding configuration if no state-preserving recovery is required.
 
 </AgentOnly>
 
@@ -1633,58 +1595,6 @@ Run `openshell sandbox list` on the host to check the underlying sandbox state.
 <AgentOnly variant="deepagents">
 
 ## Deep Agents
-
-### Deep Agents Config Lock Failure Recovery
-
-A `CRITICAL` Deep Agents config-lock diagnostic can report `fail-closed containment=`, `rollback failed`, or that the lock rollback could not restore the trusted posture. A containment result identifies one of two confirmed postures or an incomplete containment attempt. A `rollback failed` result or lock-rollback diagnostic does not confirm containment. Both rollback diagnostics mean NemoClaw could not restore or confirm the original trusted posture.
-
-- **Config-root posture** (`fail-closed containment=config-root`) means NemoClaw installed fresh `0444 root:root` config and hash inodes. NemoClaw also confirmed `0500 root:root` on `/sandbox/.deepagents` and `1775 root:sandbox` on `/sandbox`.
-- **Sandbox-parent posture** (`fail-closed containment=sandbox-parent`) means NemoClaw confirmed `0700 root:root` on `/sandbox`. NemoClaw uses this posture when it cannot confirm the complete config-root posture.
-- `fail-closed containment=incomplete` means NemoClaw could not confirm either complete posture.
-
-Preserve the complete `CRITICAL` diagnostic. Do not retry `shields up`. Do not run `chmod`, `chown`, or another repair inside the sandbox. A confirmed containment posture removes the sandbox identity's access to the Deep Agents configuration. An incomplete containment result, a `rollback failed` result, or a lock-rollback diagnostic does not establish a trustworthy boundary from which to accept the current bytes. An ordinary `rebuild` cannot turn the current state into a trustworthy snapshot.
-
-If you have a trusted host-side snapshot from before the failure, list the snapshots and record its selector:
-
-```bash
-$$nemoclaw <name> snapshot list
-```
-
-<Warning>
-  Destroying the sandbox permanently discards state newer than the selected snapshot. Confirm that
-  the trusted host-side snapshot exists before you destroy the sandbox.
-</Warning>
-
-Destroy the sandbox, re-onboard the same name from trusted host configuration, and restore the snapshot:
-
-```bash
-$$nemoclaw <name> destroy
-$$nemoclaw onboard --name <name> --agent dcode
-$$nemoclaw <name> snapshot restore <selector>
-```
-
-For snapshot contents and selector rules, refer to [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots).
-
-If no trusted snapshot exists and you do not need to preserve the current state, recreate the sandbox from host-side onboarding configuration.
-
-<Warning>
-  This recreation permanently discards the current sandbox state. Continue only if you accept that
-  loss.
-</Warning>
-
-```bash
-$$nemoclaw <name> destroy
-$$nemoclaw onboard --name <name> --agent dcode
-```
-
-After either recovery path, verify the recreated sandbox from the host:
-
-```bash
-$$nemoclaw <name> status
-$$nemoclaw <name> shields status
-```
-
-Continue only when `status` identifies the expected Deep Agents sandbox and `shields status` returns without a `CRITICAL` or corrupt-state diagnostic. Then retry the original `shields up` operation.
 
 ### `dcode status` reports a stale inference route
 
@@ -2183,34 +2093,6 @@ $$nemoclaw <name> rebuild
 
 </AgentOnly>
 
-<AgentOnly variant="openclaw,hermes,deepagents">
-
-### A Shields command reports corrupt persisted state
-
-If `shields up`, `shields down`, or `shields status` reports corrupt persisted state, NemoClaw refuses to infer or change the Shields posture. It preserves the Shields state file, timer marker, and transition record so an active recovery authority remains intact.
-
-While the state remains corrupt, do not use `shields up` or an ordinary rebuild to replace it. Inspect the reported state-file error and restore the state file from a trusted host backup before retrying.
-
-</AgentOnly>
-
-<AgentOnly variant="openclaw">
-
-### `shields up` or `shields down` fails after `.config-hash` was removed
-
-`/sandbox/.openclaw/.config-hash` is the integrity sidecar for `openclaw.json`; deleting it during a manual config edit removes the file the shields guard captures alongside the config. From the default mutable posture, `$$nemoclaw <name> shields up` regenerates a stale hash from the current `openclaw.json` bytes. On sandboxes with the updated guard, the same command synthesizes a truly absent `.config-hash` under the frozen tree. Only a truly absent file is repaired; an unexpected file type at that name still fails closed. `$$nemoclaw <name> shields down` does not synthesize the hash: with the file missing it fails closed without modifying the config. If shields are already up, another `shields up` also fails closed when the hash is missing. Do not use mutable-posture synthesis to recover a locked sandbox.
-
-Sandboxes created by an older NemoClaw release keep the older guard baked into the container image, where a missing `.config-hash` makes the transition fail closed and quarantine `openclaw.json` by renaming it to `.nemoclaw-rejected-openclaw.json-<random>` in the same directory. The config bytes are preserved, not deleted. Upgrade the NemoClaw CLI before either recovery path because an older CLI restages the older guard. To preserve the quarantined settings, copy the file to the host before rebuilding:
-
-```bash
-docker exec <container> ls -a /sandbox/.openclaw
-docker cp <container>:/sandbox/.openclaw/<quarantine-file> ./openclaw.json.recovered
-$$nemoclaw <name> rebuild --yes
-```
-
-After the rebuild, inspect `./openclaw.json.recovered` and reapply required settings with the host-side `config set` command. Do not overwrite the regenerated `openclaw.json` with an unreviewed quarantine copy. To discard the quarantined settings, upgrade the CLI and run `$$nemoclaw <name> rebuild --yes` without copying the file.
-
-</AgentOnly>
-
 <AgentOnly variant="openclaw,hermes">
 
 ### `openclaw channels add` or `remove` is blocked inside the sandbox
@@ -2248,13 +2130,15 @@ WhatsApp pairs entirely inside the sandbox. NemoClaw advertises WhatsApp for Ope
 
 `scripts/rcf_patch.py` is intentionally absent from current NemoClaw blueprints. Older QA plans used that helper for a Dockerfile "Patch-4" test that corrupted the build-time `replaceConfigFile` monkey-patch and expected `ERROR: Patch 4 (replaceConfigFile EACCES) not applied`. The old Patch-4 fail-closed test no longer applies because NemoClaw no longer patches OpenClaw's compiled `replaceConfigFile` source at image build time.
 
-Current sandboxes use a mutable-default config model instead. Before a reviewed host-side lockdown, `/sandbox/.openclaw/openclaw.json` is group-writable by the sandbox and gateway users, so OpenClaw config mutations should write normally rather than requiring an EACCES swallow. After lockdown, runtime config mutations should fail cleanly or route users to the supported host-side NemoClaw command.
+Current sandboxes use a mutable config model instead.
+`/sandbox/.openclaw/openclaw.json` is group-writable by the sandbox and gateway users, so OpenClaw config mutations should write normally rather than requiring an EACCES swallow.
+Use the host-side NemoClaw config command when you need validation and managed metadata to change with the config.
 
 To validate this area now, use the config lifecycle tests instead of looking for `rcf_patch.py`:
 
 ```bash
 npm run build:cli
-npm test -- test/runtime/sandbox/repro-2681-group-writable.test.ts
+npm test -- test/agents/openclaw/runtime/nemoclaw-start-perms.test.ts
 ```
 
 ### `openclaw config set` or `unset` is blocked inside the sandbox
@@ -2305,7 +2189,12 @@ If you ran `openclaw doctor --fix` from an interactive `connect` shell or use an
 $$nemoclaw <sandbox> doctor --fix
 ```
 
-`$$nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores `2770/660`. Restarting the sandbox repairs the same drift automatically when the config tree passes its safety checks, and NemoClaw's own `rebuild` re-applies the contract after its post-upgrade `openclaw doctor --fix` step. For a persisted root-owned `700/600` tree, startup reclaims ownership only when both fixed config files have that exact posture under the expected sandbox-owned parent. Other root-owned layouts, links, mounts, and ambiguous metadata fail closed so startup cannot mistake a shields-locked or unsafe tree for mutable drift. If startup reports `[SECURITY] Refusing mutable config permission normalization`, NemoClaw stops startup without following or modifying the unsafe target; safe permission repairs completed before detection are not rolled back. Rebuild with the current image and trusted host-side configuration instead of repairing the tree recursively.
+`$$nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores `2770/660`.
+Restarting the sandbox repairs the same drift automatically when the config tree passes its safety checks, and NemoClaw's own `rebuild` reapplies the contract after its post-upgrade `openclaw doctor --fix` step.
+For a persisted root-owned `700/600` tree, startup reclaims ownership only when both fixed config files have that exact posture under the expected sandbox-owned parent.
+Other root-owned layouts, links, mounts, and ambiguous metadata fail closed so startup cannot mistake an unsafe tree for ordinary mutable-permission drift.
+If startup reports `[SECURITY] Refusing mutable config permission normalization`, NemoClaw stops startup without following or modifying the unsafe target; safe permission repairs completed before detection are not rolled back.
+Rebuild with the current image and trusted host-side configuration instead of repairing the tree recursively.
 
 When verifying gateway write access by hand, step down to the gateway UID with the image's installed mechanism so the `sandbox` group membership is initialized:
 
@@ -2317,10 +2206,9 @@ If `setpriv` is unavailable, rebuild the sandbox from a NemoClaw-managed image t
 
 Do not probe with `su -s /bin/sh gateway ...`: `su` does not initialize the gateway's supplementary groups the same way, so a group-write probe can spuriously report `EACCES` even when the mutable contract is intact.
 
-A NemoClaw sandbox has two intentional permission states for `/sandbox/.openclaw`; `700/600` is not one of them:
+A NemoClaw sandbox supports the mutable permission state for `/sandbox/.openclaw`; `700/600` is drift:
 
 - **Mutable default:** `/sandbox/.openclaw` is `2770 sandbox:sandbox` and `openclaw.json` is `660 sandbox:sandbox`. Both the sandbox user and the gateway (same `sandbox` group, different UID) can write config, so control-UI toggles persist.
-- **Host-locked state:** `openclaw.json` is read-only for in-sandbox writers and the config dir is owned by `root`, with the immutable bit set where available. No in-sandbox writes are expected; use the host-side `$$nemoclaw <sandbox> config set` flow described in [`openclaw config set` or `unset` is blocked inside the sandbox](#openclaw-config-set-or-unset-is-blocked-inside-the-sandbox).
 - **`700/600` (drift):** the layout that upstream `openclaw doctor --fix` imposes inside a mutable sandbox. It is not a supported NemoClaw state; recover with `$$nemoclaw <sandbox> doctor --fix` or a sandbox restart.
 
 ### Discord bot logs in, but the channel still does not work
@@ -4422,44 +4310,13 @@ nemohermes <name> start
 
 Then run `nemohermes inference get` and verify Dashboard Chat uses the selected model. If the command succeeds because the dashboard profile is missing, the dashboard is disabled and no dashboard recovery is required.
 
-### Shields Reports Drift for the Hermes Configuration Root
-
-The Hermes configuration root holds the agent's top-level runtime state, not only its configuration. The configuration root stores `auth.json`, the drain request, and temporary files for atomic `gateway_state.json` and `gateway.pid` replacement. Lockdown moves that directory to `root:sandbox` mode `3770`, which preserves the set-group-ID and sticky bits. The gateway can still manage its runtime files. The sticky bit prevents the sandbox identity from unlinking or renaming sealed root-owned configuration. Run the following command to inspect a locked root:
-
-```bash
-$$nemoclaw <name> exec -- stat -c '%a %U:%G' /sandbox/.hermes
-```
-
-Expected output:
-
-```text
-3770 root:sandbox
-```
-
-A sandbox locked by an older release carries a `755 root:root` root instead. The gateway cannot write its runtime state there. `$$nemoclaw <name> shields status` reports the stale posture as drift. Before restarting the gateway, repair the posture:
-
-```bash
-$$nemoclaw <name> shields up
-```
-
-If the command refuses the repair, follow its recovery guidance and do not restart the gateway. Otherwise, verify the repaired posture:
-
-```bash
-$$nemoclaw <name> shields status
-$$nemoclaw <name> exec -- stat -c '%a %U:%G' /sandbox/.hermes
-```
-
-Continue only when status no longer reports drift and `stat` prints the expected output above. Then restart the gateway:
-
-```bash
-$$nemoclaw <name> gateway restart
-```
-
-The restart must exit zero and report that the health check passed. If restart or recovery already reports `relaunch quarantined`, repairing the directory cannot clear the supervisor quarantine. Follow [Restart or recovery reports `relaunch quarantined`](#restart-or-recovery-reports-relaunch-quarantined) to rebuild the sandbox. The sealed files are unchanged by the repair and stay `444 root:root`.
-
 ### Hermes restart reports `config hash mismatch`
 
-A Hermes restart reports `config hash mismatch` when a strict root-owned hash is available and `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` does not match it. The direct root-entrypoint supervisor always uses the strict hash at `/etc/nemoclaw/hermes.config-hash`. The OpenShell-managed controller uses that hash when both config inputs are root-owned and locked. Mutable config in the managed topology has no durable root-owned hash anchor, so restart retains the same trust and time-of-check/time-of-use limits as managed cold start and cannot use this error to prove direct drift. Both controllers validate the secret boundary and supervisor runtime environment before they stop the tracked gateway. They do not recompute a trusted strict hash to adopt direct edits made inside the sandbox.
+A Hermes restart reports `config hash mismatch` when an available managed hash does not match `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env`.
+The direct root-entrypoint supervisor uses the strict hash at `/etc/nemoclaw/hermes.config-hash`.
+Mutable config in the OpenShell-managed topology has no durable tamper-proof hash anchor, so restart retains the same trust and time-of-check/time-of-use limits as managed cold start.
+Both controllers validate the secret boundary and supervisor runtime environment before they stop the tracked gateway.
+They do not recompute a trusted strict hash to adopt direct edits made inside the sandbox.
 
 For intended changes, use supported host commands such as `nemohermes <name> config set` and `nemohermes inference set` so NemoClaw updates the config and its strict and compatibility hashes together. Do not edit either hash file manually.
 

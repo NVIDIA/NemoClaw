@@ -8,6 +8,7 @@
  * device-auth 401 responses must not be misreported as Health Offline.
  */
 
+import { testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -24,7 +25,7 @@ import {
   waitForRecoveryArtifact,
 } from "./device-auth-health-helpers.ts";
 
-const LIVE_TIMEOUT_MS = 30 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(30 * 60_000);
 const INFERENCE_API_KEY = "device-auth-health-fixture-credential";
 const INFERENCE_MODEL = "device-auth-health-model";
 

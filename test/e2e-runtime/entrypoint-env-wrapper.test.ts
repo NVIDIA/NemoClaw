@@ -159,7 +159,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     const openClawPortBlock = sliceBlock(
       OPENCLAW_START,
       'NEMOCLAW_CMD=("$@")',
-      "# ── Config integrity check",
+      "# ── Mutable config permission normalize",
     );
     const snippet = [
       normalizer,
@@ -215,7 +215,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       const injected = runScenario(
         "set -- env CHAT_UI_URL=https://chat.example.test NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw-start openclaw agent --agent main",
       );
-      expect(injected.status).toBe(0);
+      expect(injected.status, injected.stderr).toBe(0);
       expect(injected.stdout).toContain("CHAT_UI_URL=http://127.0.0.1:19000");
       expect(injected.stdout).toContain("PUBLIC_PORT=19000");
       expect(injected.stdout).toContain("OPENCLAW_GATEWAY_PORT=19000");
