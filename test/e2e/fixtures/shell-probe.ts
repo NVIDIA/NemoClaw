@@ -9,6 +9,7 @@ import {
 } from "../../../src/lib/agent/candidate.ts";
 import { CUA_FEATURE_ENV } from "../../../src/lib/cua/feature.ts";
 import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
+import { createBoundarySafeRedactedSink } from "./redaction.ts";
 import { superviseChild } from "./shell/supervisor.ts";
 import type { TrustedShellCommand } from "./shell/trusted-command.ts";
 
@@ -267,6 +268,19 @@ export class ShellProbe {
 
     const stdout = createTextCapture(options.captureLimitBytes);
     const stderr = createTextCapture(options.captureLimitBytes);
+    const streamLiveOutput = process.env.NEMOCLAW_RUN_LIVE_E2E === "1";
+    const stdoutLive = streamLiveOutput
+      ? createBoundarySafeRedactedSink({
+          redact: redactProbeText,
+          write: (text) => process.stdout.write(text),
+        })
+      : undefined;
+    const stderrLive = streamLiveOutput
+      ? createBoundarySafeRedactedSink({
+          redact: redactProbeText,
+          write: (text) => process.stderr.write(text),
+        })
+      : undefined;
     const startedAtMs = Date.now();
     const commandOutputObserver =
       options.onOutput === this.progress.onOutput ? undefined : options.onOutput;
@@ -291,6 +305,11 @@ export class ShellProbe {
       onStdout: (chunk) => {
         stdout.append(chunk);
         try {
+          stdoutLive?.write(chunk);
+        } catch {
+          // Console diagnostics must not change command execution.
+        }
+        try {
           commandOutputObserver?.({ stream: "stdout", atMs: Date.now() });
         } catch {
           // Test instrumentation must not change command execution.
@@ -299,12 +318,23 @@ export class ShellProbe {
       onStderr: (chunk) => {
         stderr.append(chunk);
         try {
+          stderrLive?.write(chunk);
+        } catch {
+          // Console diagnostics must not change command execution.
+        }
+        try {
           commandOutputObserver?.({ stream: "stderr", atMs: Date.now() });
         } catch {
           // Test instrumentation must not change command execution.
         }
       },
     });
+    try {
+      stdoutLive?.end();
+      stderrLive?.end();
+    } catch {
+      // Console diagnostics must not change command completion.
+    }
 
     const redactedStdout = renderCapturedText(stdout);
     const redactedStderr = renderCapturedText(stderr);

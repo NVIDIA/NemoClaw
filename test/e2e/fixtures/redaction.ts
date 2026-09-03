@@ -345,11 +345,100 @@ export function pipeRedacted(
   log: Writable,
   onChunk?: (redactedChunk: string) => void,
 ): void {
-  src.on("data", (chunk: Buffer) => {
-    const redacted = redactString(chunk.toString("utf8"));
-    log.write(redacted);
-    onChunk?.(redacted);
+  const sink = createBoundarySafeRedactedSink({
+    redact: redactString,
+    write: (redactedChunk) => {
+      log.write(redactedChunk);
+      onChunk?.(redactedChunk);
+    },
   });
+  src.on("data", (chunk: Buffer) => {
+    sink.write(chunk.toString("utf8"));
+  });
+  src.on("end", () => sink.end());
+}
+
+export interface BoundarySafeRedactedSink {
+  write(chunk: string): void;
+  end(): void;
+}
+
+/**
+ * Redact complete logical lines before emitting them. Holding an incomplete
+ * line prevents a credential split across arbitrary stream chunks from
+ * crossing the output boundary. Private-key blocks are collapsed while the
+ * sink is in block state so their multi-line payload never reaches the writer.
+ */
+export function createBoundarySafeRedactedSink(options: {
+  redact: (text: string) => string;
+  write: (redactedChunk: string) => void;
+}): BoundarySafeRedactedSink {
+  const privateKeyBegin = /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u;
+  const privateKeyEnd = /-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/u;
+  let pending = "";
+  let insidePrivateKey = false;
+  let ended = false;
+
+  const emit = (text: string): void => {
+    if (text) options.write(options.redact(text));
+  };
+
+  const processLine = (line: string): void => {
+    let remainder = line;
+    while (remainder) {
+      if (insidePrivateKey) {
+        const end = privateKeyEnd.exec(remainder);
+        if (!end) return;
+        insidePrivateKey = false;
+        remainder = remainder.slice(end.index + end[0].length);
+        if (remainder.startsWith("\n")) remainder = remainder.slice(1);
+        continue;
+      }
+
+      const begin = privateKeyBegin.exec(remainder);
+      if (!begin) {
+        emit(remainder);
+        return;
+      }
+
+      emit(remainder.slice(0, begin.index));
+      options.write("<REDACTED>");
+      const afterBegin = remainder.slice(begin.index + begin[0].length);
+      const end = privateKeyEnd.exec(afterBegin);
+      if (end) {
+        remainder = afterBegin.slice(end.index + end[0].length);
+        continue;
+      }
+      insidePrivateKey = true;
+      if (remainder.endsWith("\n")) options.write("\n");
+      return;
+    }
+  };
+
+  const drain = (flush: boolean): void => {
+    while (pending) {
+      const newline = pending.indexOf("\n");
+      if (newline < 0 && !flush) return;
+      const length = newline < 0 ? pending.length : newline + 1;
+      const line = pending.slice(0, length);
+      pending = pending.slice(length);
+      processLine(line);
+    }
+  };
+
+  return {
+    write(chunk) {
+      if (ended) throw new Error("redacted stream sink is already closed");
+      pending += chunk;
+      drain(false);
+    },
+    end() {
+      if (ended) return;
+      ended = true;
+      drain(true);
+      pending = "";
+    },
+  };
 }
 
 /**
