@@ -285,6 +285,30 @@ export function sha256(content: string | Buffer): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
+function repairAttemptKey(input: {
+  repository: typeof CANONICAL_REPOSITORY;
+  prNumber: number;
+  sourceHeadSha: string;
+  baseSha: string;
+  advisor: Pick<SelectionInput["advisor"], "workflowSha" | "runId" | "runAttempt">;
+  findingIds: readonly string[];
+}): string {
+  return `sha256:${sha256(
+    canonicalJson({
+      repository: input.repository,
+      prNumber: input.prNumber,
+      sourceHeadSha: input.sourceHeadSha,
+      baseSha: input.baseSha,
+      advisor: {
+        workflowSha: input.advisor.workflowSha,
+        runId: input.advisor.runId,
+        runAttempt: input.advisor.runAttempt,
+      },
+      findingIds: [...input.findingIds].sort(compareCodeUnits),
+    }),
+  )}`;
+}
+
 export function readBoundedRegularFile(file: string, maximum: number, allowEmpty = false): Buffer {
   const descriptor = fs.openSync(
     file,
@@ -579,27 +603,18 @@ export function selectRepairAttempt(input: SelectionInput): SelectionBundle {
   const selectedPaths = [...new Set(selected.map(({ path: selectedPath }) => selectedPath!))].sort(
     compareCodeUnits,
   );
-  const identity = {
-    repository: input.repository,
-    prNumber: input.prNumber,
-    sourceHeadSha: input.sourceHeadSha,
-    baseSha: input.baseSha,
-    advisor: {
-      workflowSha: input.advisor.workflowSha,
-      runId: input.advisor.runId,
-      runAttempt: input.advisor.runAttempt,
-      artifactIds: [...input.advisor.artifactIds].sort((left, right) => left - right),
-    },
-    optIn: input.optIn,
-    productScope: input.productScope,
-    findingIds: selectedFindingIds,
-    paths: selectedPaths,
-  };
   return {
     version: 1,
     phase: "phase1-manual-publication",
     identityStatus: "exact-head-advisor-ledger",
-    attemptKey: `sha256:${sha256(canonicalJson(identity))}`,
+    attemptKey: repairAttemptKey({
+      repository: input.repository,
+      prNumber: input.prNumber,
+      sourceHeadSha: input.sourceHeadSha,
+      baseSha: input.baseSha,
+      advisor: input.advisor,
+      findingIds: selectedFindingIds,
+    }),
     input,
     decisions,
     selectedFindingIds,
@@ -981,24 +996,14 @@ export function parseValidatedReceiptForPublication(
     );
   }
 
-  const recomputedAttemptKey = `sha256:${sha256(
-    canonicalJson({
-      repository: CANONICAL_REPOSITORY,
-      prNumber,
-      sourceHeadSha,
-      baseSha,
-      advisor: {
-        workflowSha: advisor.workflowSha,
-        runId: advisor.runId,
-        runAttempt: advisor.runAttempt,
-        artifactIds: [...advisor.artifactIds].sort((left, right) => left - right),
-      },
-      optIn,
-      productScope,
-      findingIds,
-      paths: selectedPaths,
-    }),
-  )}`;
+  const recomputedAttemptKey = repairAttemptKey({
+    repository: CANONICAL_REPOSITORY,
+    prNumber,
+    sourceHeadSha,
+    baseSha,
+    advisor,
+    findingIds,
+  });
   if (attemptKey !== recomputedAttemptKey) {
     throw new RepairContractError("validation receipt attempt digest is invalid");
   }

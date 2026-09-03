@@ -157,7 +157,13 @@ function removeSnapshotSymlinksResolvingOutside(directory: string): void {
   for (const entry of fs.readdirSync(directory, { recursive: true, withFileTypes: true })) {
     if (!entry.isSymbolicLink()) continue;
     const link = path.join(entry.parentPath, entry.name);
-    const target = path.resolve(entry.parentPath, fs.readlinkSync(link));
+    let target: string;
+    try {
+      target = fs.realpathSync(link);
+    } catch {
+      fs.rmSync(link, { force: true });
+      continue;
+    }
     const relative = path.relative(root, target);
     const resolvesOutside =
       relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative);

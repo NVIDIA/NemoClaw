@@ -16,6 +16,10 @@ import {
   type AdvisorInterest,
 } from "../../../tools/pr-review-advisor/specialist-catalog.mts";
 import {
+  parseSelectionInput,
+  selectRepairAttempt,
+} from "../../../tools/pr-review-advisor-repair/contract.mts";
+import {
   bindDownloadedAdvisorArtifacts,
   expectedAdvisorArtifactNames,
   parseRepairSelectionAuthority,
@@ -74,6 +78,92 @@ function writeSpecialistArtifact(
 }
 
 describe("PR Review Advisor repair artifact binding", () => {
+  it("keeps one-shot identity fixed for the approved head, run, and findings (#10791)", () => {
+    const sourceHeadSha = "a".repeat(40);
+    const original = selectRepairAttempt(
+      parseSelectionInput({
+        version: 1,
+        repository: "NVIDIA/NemoClaw",
+        prNumber: 42,
+        pullRequest: {
+          state: "open",
+          draft: false,
+          author: "contributor",
+          baseRef: "main",
+          headRepository: "NVIDIA/NemoClaw",
+          headRef: "fix/demo",
+          maintainerCanModify: true,
+        },
+        sourceHeadSha,
+        baseSha: "b".repeat(40),
+        advisor: {
+          workflowSha: "c".repeat(40),
+          runId: 700,
+          runAttempt: 2,
+          artifactIds: Array.from({ length: 10 }, (_value, index) => index + 100),
+          artifactDigests: Array.from(
+            { length: 10 },
+            (_value, index) => `sha256:${String(index).padStart(64, "0")}`,
+          ),
+          findingLedgerDigest: `sha256:${"d".repeat(64)}`,
+          reviewStateDigest: `sha256:${"e".repeat(64)}`,
+        },
+        optIn: {
+          kind: "phase1-maintainer-dispatch",
+          actor: "maintainer",
+          triggeringActor: "maintainer",
+          headSha: sourceHeadSha,
+          findingIds: ["behavior:001"],
+        },
+        productScope: { kind: "accepted-issue", identity: "#10791" },
+        findings: [
+          {
+            id: "behavior:001",
+            repairClass: "source",
+            summary: "Repair the selected source behavior.",
+            path: "src/demo.ts",
+            exclusions: [],
+          },
+        ],
+      }),
+    );
+    const sameInput = structuredClone(original.input);
+    sameInput.advisor.artifactIds = Array.from({ length: 10 }, (_value, index) => index + 900);
+    sameInput.advisor.artifactDigests = sameInput.advisor.artifactDigests.map(
+      (_digest, index) => `sha256:${String(index + 10).padStart(64, "0")}`,
+    );
+    sameInput.advisor.findingLedgerDigest = `sha256:${"1".repeat(64)}`;
+    sameInput.advisor.reviewStateDigest = `sha256:${"2".repeat(64)}`;
+    sameInput.optIn.actor = "another-maintainer";
+    sameInput.optIn.triggeringActor = "another-maintainer";
+    sameInput.productScope = {
+      kind: "maintainer-decision",
+      identity: "a differently formatted approval reference",
+    };
+    sameInput.findings[0]!.path = "src/another-safe-path.ts";
+
+    expect(selectRepairAttempt(parseSelectionInput(sameInput)).attemptKey).toBe(
+      original.attemptKey,
+    );
+    expect(
+      selectRepairAttempt(
+        parseSelectionInput({
+          ...original.input,
+          advisor: { ...original.input.advisor, runAttempt: 3 },
+        }),
+      ).attemptKey,
+    ).not.toBe(original.attemptKey);
+    expect(
+      selectRepairAttempt(
+        parseSelectionInput({
+          ...original.input,
+          optIn: { ...original.input.optIn, findingIds: ["behavior:002"] },
+          findings: [{ ...original.input.findings[0], id: "behavior:002" }],
+        }),
+      ).attemptKey,
+    ).not.toBe(original.attemptKey);
+  });
+
   it("validates every bounded artifact file and rejects symlink substitution (#10791)", () => {
     const root = temporaryDirectory();
     const downloadRoot = path.join(root, "downloads");

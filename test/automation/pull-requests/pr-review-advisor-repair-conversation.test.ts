@@ -96,14 +96,41 @@ function expectSecretFree(environment: NodeJS.ProcessEnv): void {
 }
 
 describe("PR Review Advisor disposable repair conversation", () => {
-  it("keeps commit and run identity outside the Pi context (#10791)", () => {
+  it("keeps PR, commit, and run identity outside the Pi context (#10791)", () => {
     const bundle = selection();
+    bundle.input.productScope.identity = `https://github.com/${bundle.input.repository}/pull/${bundle.input.prNumber}`;
     const context = buildRepairModelContext({
       selection: bundle,
       context: {
-        pullRequest: { head: { sha: bundle.input.sourceHeadSha, ref: "fix/demo" } },
-        reviewState: { headSha: bundle.input.sourceHeadSha },
-        quotedText: `old revision ${bundle.input.sourceHeadSha}; head 9bed1d74`,
+        repo: bundle.input.repository,
+        prNumber: bundle.input.prNumber,
+        pullRequest: {
+          number: bundle.input.prNumber,
+          user: { login: bundle.input.pullRequest.author },
+          head: {
+            sha: bundle.input.sourceHeadSha,
+            ref: bundle.input.pullRequest.headRef,
+            repo: { full_name: bundle.input.repository },
+          },
+          base: { sha: bundle.input.baseSha, ref: bundle.input.pullRequest.baseRef },
+        },
+        reviewState: {
+          repository: bundle.input.repository,
+          prNumber: bundle.input.prNumber,
+          headSha: bundle.input.sourceHeadSha,
+        },
+        numericIdentities: [
+          bundle.input.prNumber,
+          bundle.input.advisor.runId,
+          bundle.input.advisor.artifactIds[0],
+        ],
+        quotedText:
+          `Review PR #${bundle.input.prNumber} at https://github.com/${bundle.input.repository}` +
+          `/pull/${bundle.input.prNumber} from ${bundle.input.pullRequest.author}:` +
+          `${bundle.input.pullRequest.headRef}; old revision ${bundle.input.sourceHeadSha}; ` +
+          `head 9bed1d74; bare ${bundle.input.prNumber}; ` +
+          `run ${bundle.input.advisor.runId}; artifact ${bundle.input.advisor.artifactIds[0]}; ` +
+          `run attempt ${bundle.input.advisor.runAttempt}`,
       },
       ledgers: [],
       summaries: {
@@ -116,8 +143,25 @@ describe("PR Review Advisor disposable repair conversation", () => {
     expect(serialized).not.toContain(bundle.input.baseSha);
     expect(serialized).not.toContain(bundle.input.advisor.workflowSha);
     expect(serialized).not.toContain(bundle.attemptKey);
+    expect(serialized).not.toContain(bundle.input.repository);
+    expect(serialized).not.toContain(bundle.input.pullRequest.author);
+    expect(serialized).not.toContain(bundle.input.pullRequest.headRef);
+    expect(serialized).not.toContain(`PR #${bundle.input.prNumber}`);
+    expect(serialized).not.toContain(`/pull/${bundle.input.prNumber}`);
+    expect(serialized).not.toContain(String(bundle.input.prNumber));
+    expect(serialized).not.toContain(String(bundle.input.advisor.runId));
+    expect(serialized).not.toContain(String(bundle.input.advisor.artifactIds[0]));
+    expect(serialized).not.toContain(`run attempt ${bundle.input.advisor.runAttempt}`);
+    expect(serialized).not.toContain('"prNumber"');
+    expect(serialized).not.toContain('"repo"');
+    expect(serialized).not.toContain(`"number":${bundle.input.prNumber}`);
     expect(serialized).not.toContain("9bed1d74");
     expect(serialized).not.toContain("headSha");
+    expect(serialized).toContain("[repository-redacted]");
+    expect(serialized).toContain("[author-redacted]");
+    expect(serialized).toContain("[branch-redacted]");
+    expect(serialized).toContain("[pr-redacted]");
+    expect(serialized).toContain("[advisor-identity-redacted]");
     expect(serialized).toContain("[revision-redacted]");
     expect(serialized).toContain("[digest-redacted]");
     expect(context).toMatchObject({

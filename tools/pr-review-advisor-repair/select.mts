@@ -41,17 +41,32 @@ const MAX_SPECIALIST_SESSION_BYTES = 8 * 1024 * 1024;
 const MAX_SPECIALIST_FINDINGS_BYTES = 512 * 1024;
 const MAX_REPAIR_CONTEXT_BYTES = 10 * 1024 * 1024;
 const MODEL_IDENTITY_KEYS = new Set([
+  "author",
   "artifactdigests",
+  "artifactid",
   "artifactids",
+  "attempt",
   "attemptkey",
+  "base",
+  "baseref",
   "basesha",
   "bodysha256",
   "commit",
   "commits",
   "commitsha",
   "findingledgerdigest",
+  "fullname",
+  "head",
+  "headref",
+  "headrepository",
   "headsha",
+  "login",
+  "number",
   "oid",
+  "prnumber",
+  "ref",
+  "repo",
+  "repository",
   "reviewstatedigest",
   "runattempt",
   "runid",
@@ -171,24 +186,63 @@ export type CollectedSelectionAuthority = {
   manifest: AdvisorArtifactManifest;
 };
 
-function redactRevisionText(value: string): string {
-  return value
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function redactModelIdentityText(value: string, selection: SelectionBundle): string {
+  const identity = selection.input;
+  const prNumber = String(identity.prNumber);
+  let redacted = value
     .replace(/\bsha256:[0-9a-f]{64}\b/giu, "[digest-redacted]")
     .replace(
       /\b(commit|head|base|revision|sha)(?:\s+|\s*[:=]\s*)[0-9a-f]{7,64}\b/giu,
       "$1 [revision-redacted]",
     )
-    .replace(/\b[0-9a-f]{40}\b/giu, "[revision-redacted]");
+    .replace(/\b[0-9a-f]{40}\b/giu, "[revision-redacted]")
+    .replace(new RegExp(escapeRegex(identity.repository), "giu"), "[repository-redacted]")
+    .replace(new RegExp(escapeRegex(identity.pullRequest.headRef), "giu"), "[branch-redacted]")
+    .replace(new RegExp(escapeRegex(identity.pullRequest.author), "giu"), "[author-redacted]")
+    .replace(new RegExp(`/pull/${escapeRegex(prNumber)}\\b`, "giu"), "/pull/[pr-redacted]")
+    .replace(
+      new RegExp(`\\bpull\\s+request\\s*#?\\s*${escapeRegex(prNumber)}\\b`, "giu"),
+      "pull request [pr-redacted]",
+    )
+    .replace(new RegExp(`\\bPR\\s*#?\\s*${escapeRegex(prNumber)}\\b`, "giu"), "PR [pr-redacted]")
+    .replace(new RegExp(`#${escapeRegex(prNumber)}\\b`, "giu"), "#[pr-redacted]")
+    .replace(new RegExp(`\\b${escapeRegex(prNumber)}\\b`, "gu"), "[pr-redacted]");
+  for (const numericIdentity of [identity.advisor.runId, ...identity.advisor.artifactIds]) {
+    redacted = redacted.replace(
+      new RegExp(`\\b${escapeRegex(String(numericIdentity))}\\b`, "gu"),
+      "[advisor-identity-redacted]",
+    );
+  }
+  return redacted.replace(
+    new RegExp(
+      `\\b(run(?:[ _-]+)attempt)(?:\\s+|\\s*[:=#]\\s*)${escapeRegex(String(identity.advisor.runAttempt))}\\b`,
+      "giu",
+    ),
+    "$1 [advisor-identity-redacted]",
+  );
 }
 
-function modelSafeValue(value: unknown): unknown {
-  if (typeof value === "string") return redactRevisionText(value);
-  if (Array.isArray(value)) return value.map(modelSafeValue);
+function modelSafeValue(value: unknown, selection: SelectionBundle): unknown {
+  if (typeof value === "string") return redactModelIdentityText(value, selection);
+  if (typeof value === "number") {
+    if (value === selection.input.prNumber) return "[pr-redacted]";
+    if (
+      value === selection.input.advisor.runId ||
+      selection.input.advisor.artifactIds.includes(value)
+    ) {
+      return "[advisor-identity-redacted]";
+    }
+  }
+  if (Array.isArray(value)) return value.map((item) => modelSafeValue(item, selection));
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
       .filter(([key]) => !MODEL_IDENTITY_KEYS.has(key.replace(/[_-]/gu, "").toLowerCase()))
-      .map(([key, item]) => [key, modelSafeValue(item)]),
+      .map(([key, item]) => [key, modelSafeValue(item, selection)]),
   );
 }
 
@@ -208,17 +262,17 @@ export function buildRepairModelContext(input: {
       persistentMemory: false,
       commitMetadataVisible: false,
     },
-    productScope: input.selection.input.productScope,
+    productScope: modelSafeValue(input.selection.input.productScope, input.selection),
     selectedFindingIds: input.selection.selectedFindingIds,
     selectedPaths: input.selection.selectedPaths,
-    context: modelSafeValue(input.context),
+    context: modelSafeValue(input.context, input.selection),
     specialistFindings: input.ledgers.map(({ interest, status, findings, noFindingsReason }) => ({
       interest,
       status,
-      findings: modelSafeValue(findings),
-      noFindingsReason: modelSafeValue(noFindingsReason),
+      findings: modelSafeValue(findings, input.selection),
+      noFindingsReason: modelSafeValue(noFindingsReason, input.selection),
     })),
-    summaries: modelSafeValue(input.summaries),
+    summaries: modelSafeValue(input.summaries, input.selection),
   };
 }
 
