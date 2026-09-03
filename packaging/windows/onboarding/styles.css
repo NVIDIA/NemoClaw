@@ -161,6 +161,20 @@ h1 {
 .agent-card.experimental {
   background: #fbfbfb;
 }
+.agent-card.unavailable {
+  cursor: not-allowed;
+  background: #f7f7f7;
+  border-color: #e3e3e3;
+  color: #626262;
+}
+.agent-card.unavailable:hover {
+  border-color: #e3e3e3;
+  transform: none;
+}
+.agent-card.unavailable .agent-mark {
+  filter: grayscale(0.55);
+  opacity: 0.72;
+}
 .agent-mark {
   display: grid;
   place-items: center;
@@ -225,9 +239,13 @@ h1 {
   font-weight: 700;
   vertical-align: 2px;
 }
-.badge.recommended {
+.badge.supported {
   background: #eff7e3;
   color: var(--green-dark);
+}
+.badge.unavailable {
+  background: #ececec;
+  color: #555;
 }
 
 .choice-grid {

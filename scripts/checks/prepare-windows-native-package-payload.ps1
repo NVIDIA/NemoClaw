@@ -275,6 +275,7 @@ debug = false
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-web-ui.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'LICENSE') -Destination (Join-Path $output 'LICENSE.txt')
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\NATIVE-PREVIEW.txt') -Destination (Join-Path $output 'NATIVE-PREVIEW.txt')
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\agent-support.json') -Destination (Join-Path $output 'agent-support.json')
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\openshell-2721-node-ui.patch') -Destination (Join-Path $output 'OPENSHELL-NODE-UI-COMPATIBILITY.patch')
 
     foreach ($portableExecutable in @(
@@ -296,7 +297,8 @@ debug = false
         'onboarding\app.ts',
         'config\mxc-gateway.toml',
         'qualification\run-installed-native-turn.mts',
-        'qualification\run-installed-native-web-ui.mts'
+        'qualification\run-installed-native-web-ui.mts',
+        'agent-support.json'
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $output $required) -PathType Leaf)) {
             Fail-PayloadPreparation "Prepared payload is incomplete: $required"
@@ -313,6 +315,7 @@ debug = false
             sha256 = (Get-FileHash -LiteralPath (Join-Path $output 'bin\NemoClaw.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
         }
         openClaw = [pscustomobject]@{ version = '2026.7.1' }
+        agentSupportSha256 = (Get-FileHash -LiteralPath (Join-Path $output 'agent-support.json') -Algorithm SHA256).Hash.ToLowerInvariant()
         openShell = [pscustomobject]@{ pullRequest = 'NVIDIA/OpenShell#2721'; revision = $script:OpenShellRevision }
         openShellCompatibilityPatchSha256 = (Get-FileHash -LiteralPath (Join-Path $output 'OPENSHELL-NODE-UI-COMPATIBILITY.patch') -Algorithm SHA256).Hash.ToLowerInvariant()
         mxc = [pscustomobject]@{

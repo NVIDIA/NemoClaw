@@ -29,7 +29,7 @@ const TURN_PROOFS = [
   ["Reply exactly with NATIVE_WINDOWS_TURN_3_OK", "NATIVE_WINDOWS_TURN_3_OK"],
 ];
 
-const AGENT_CHOICE_PROOF = ["hermes", "langchain-deepagents-code", "pi", "nemocua", "openclaw"];
+const DISABLED_AGENT_PROOF = ["hermes", "langchain-deepagents-code", "pi", "nemocua"];
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -296,12 +296,28 @@ async function driveBrowser(openClawRoot, onboardingUrl, openClawUrl, evidenceRo
       });
       console.log(`WEB UI> READY ${onboardingUrl}`);
       await new Promise((resolve) => browser.once("disconnected", resolve));
-      return { browserVersion, demonstratedAgentChoices: [], turns: [] };
+      return {
+        browserVersion,
+        demonstratedAgentChoices: [],
+        disabledAgentChoices: [],
+        turns: [],
+      };
     }
     const demonstratedAgentChoices = [];
-    console.log("WEB UI> Showing every available agent choice in graphical onboarding");
+    const disabledAgentChoices = [];
+    console.log("WEB UI> Showing supported, experimental, and unavailable agent choices");
     await sleep(3000);
-    for (const agent of AGENT_CHOICE_PROOF) {
+    for (const agent of DISABLED_AGENT_PROOF) {
+      const card = page.locator(`[data-agent='${agent}']`);
+      if (!(await card.isDisabled())) fail(`unqualified agent ${agent} remained selectable`);
+      const blocker = await card.getAttribute("data-blocker");
+      if (!blocker) fail(`unqualified agent ${agent} did not explain its blocker`);
+      await card.scrollIntoViewIfNeeded();
+      disabledAgentChoices.push({ agent, blocker });
+      console.log(`WEB UI> UNAVAILABLE ${agent}: ${blocker}`);
+      await sleep(1800);
+    }
+    for (const agent of ["openclaw"]) {
       const card = page.locator(`[data-agent='${agent}']`);
       await card.click();
       if ((await card.getAttribute("aria-checked")) !== "true")
@@ -370,7 +386,7 @@ async function driveBrowser(openClawRoot, onboardingUrl, openClawUrl, evidenceRo
       await sleep(2000);
     }
     await sleep(3000);
-    return { browserVersion, demonstratedAgentChoices, turns };
+    return { browserVersion, demonstratedAgentChoices, disabledAgentChoices, turns };
   } finally {
     if (browser.isConnected()) await browser.close();
   }
@@ -613,6 +629,7 @@ async function main() {
       deterministicLocalModel: qualification,
       onboardingSelection,
       demonstratedAgentChoices: browserProof.demonstratedAgentChoices,
+      disabledAgentChoices: browserProof.disabledAgentChoices,
       turnCount: browserProof.turns.length,
       turns: browserProof.turns,
       sandboxDeleted: true,

@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "platform": "windows-arm64",
+  "agents": [
+    {
+      "id": "openclaw",
+      "displayName": "OpenClaw",
+      "version": "2026.7.1",
+      "source": "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz",
+      "lockSha256": "60f816dcff6f35179b1c48b4c06db9473497760d45ca1831252c27e8b1d2d665",
+      "interface": "OpenClaw Control UI",
+      "status": "candidate",
+      "selectable": true,
+      "limitation": "Requires a passing exact-head three-turn native MXC qualification before the candidate is proven."
+    },
+    {
+      "id": "hermes",
+      "displayName": "Hermes Agent",
+      "version": "0.19.0",
+      "source": "https://github.com/NousResearch/hermes-agent/tree/3ef6bbd201263d354fd83ec55b3c306ded2eb72a",
+      "interface": "Hermes native terminal or desktop UI",
+      "status": "blocked",
+      "selectable": false,
+      "limitation": "The pinned Windows graph requires cryptography 46.0.7 and pywinpty 2.0.15; neither publishes a Windows ARM64 wheel. x64 emulation is not accepted as native ARM64 qualification."
+    },
+    {
+      "id": "langchain-deepagents-code",
+      "displayName": "Deep Agents Code",
+      "version": "0.1.55",
+      "source": "https://pypi.org/project/deepagents-code/0.1.55/",
+      "lockSha256": "203eeeb3786c736423be60ce2b315ad6f817d4adf0c13de184bf5deee4c793ad",
+      "interface": "Deep Agents Code terminal UI",
+      "status": "blocked",
+      "selectable": false,
+      "limitation": "deepagents-code 0.1.55 requires sqlite-vec 0.1.9 through langgraph-checkpoint-sqlite; sqlite-vec 0.1.9 has no Windows ARM64 wheel."
+    },
+    {
+      "id": "pi",
+      "displayName": "Pi",
+      "version": "0.84.1",
+      "source": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-0.84.1.tgz",
+      "lockSha256": "6267ec58e69fc6cd53d3c753f28b0e25c00f4befdcae63e8e4924bee2abf0712",
+      "interface": "Pi native terminal UI",
+      "status": "experimental-unqualified",
+      "selectable": false,
+      "limitation": "The locked graph includes a Windows ARM64 clipboard payload, but Pi remains disabled until its real MXC-contained three-turn qualification passes."
+    },
+    {
+      "id": "nemocua",
+      "displayName": "NemoCUA",
+      "version": "experimental",
+      "source": "agents/nemocua/Dockerfile",
+      "lockSha256": "41a020f30648eb7b47bcc56c4e990faca05c5aef025ac68726511c2b70e732da",
+      "interface": "NemoCUA computer-use runtime",
+      "status": "blocked",
+      "selectable": false,
+      "limitation": "The current NemoCUA definition is container-image-only and has no Windows-native ARM64 entrypoint; Docker is prohibited from this installer path."
+    }
+  ]
+}

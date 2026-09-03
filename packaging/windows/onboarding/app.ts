@@ -48,6 +48,7 @@ function select(selector, attribute, value) {
 
 document.querySelectorAll("[data-agent]").forEach((card) => {
   card.addEventListener("click", () => {
+    if (card.disabled || card.getAttribute("aria-disabled") === "true") return;
     state.agent = card.dataset.agent;
     select("[data-agent]", "agent", state.agent);
   });

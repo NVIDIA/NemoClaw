@@ -16,18 +16,10 @@
       </header>
 
       <nav class="steps" aria-label="Setup progress">
-        <button class="step active" data-step-target="1" type="button">
-          <span>1</span>Agent
-        </button>
-        <button class="step" data-step-target="2" type="button">
-          <span>2</span>Inference
-        </button>
-        <button class="step" data-step-target="3" type="button">
-          <span>3</span>Experience
-        </button>
-        <button class="step" data-step-target="4" type="button">
-          <span>4</span>Review
-        </button>
+        <button class="step active" data-step-target="1" type="button"><span>1</span>Agent</button>
+        <button class="step" data-step-target="2" type="button"><span>2</span>Inference</button>
+        <button class="step" data-step-target="3" type="button"><span>3</span>Experience</button>
+        <button class="step" data-step-target="4" type="button"><span>4</span>Review</button>
       </nav>
 
       <form id="onboarding-form">
@@ -35,8 +27,8 @@
           <p class="eyebrow">Choose your agent</p>
           <h1>Start with the experience that fits your work.</h1>
           <p class="lead">
-            NemoClaw places each qualified agent behind native OpenShell and
-            Microsoft MXC isolation. You can add another sandbox later.
+            NemoClaw places each qualified agent behind native OpenShell and Microsoft MXC
+            isolation. You can add another sandbox later.
           </p>
 
           <div class="agent-grid" role="radiogroup" aria-label="Agent runtime">
@@ -47,102 +39,110 @@
               aria-checked="true"
               data-agent="openclaw"
             >
-              <span class="agent-mark openclaw"
-                ><img src="./assets/openclaw.png" alt=""
-              /></span>
+              <span class="agent-mark openclaw"><img src="./assets/openclaw.png" alt="" /></span>
               <span class="agent-copy">
                 <span class="card-heading"
-                  >OpenClaw
-                  <span class="badge recommended">Recommended</span></span
+                  >OpenClaw <span class="badge supported">Supported</span></span
                 >
                 <span class="vendor">OpenClaw</span>
                 <span class="description"
-                  >Gateway agent with a polished browser Control UI and plugin
-                  ecosystem.</span
+                  >Gateway agent with a polished browser Control UI and plugin ecosystem.</span
                 >
               </span>
             </button>
 
             <button
-              class="agent-card"
+              class="agent-card unavailable"
               type="button"
               role="radio"
               aria-checked="false"
+              aria-disabled="true"
+              disabled
               data-agent="hermes"
+              data-blocker="Hermes Agent 0.19.0 requires cryptography 46.0.7 and pywinpty 2.x, which do not publish Windows ARM64 wheels."
             >
-              <span class="agent-mark hermes"
-                ><img src="./assets/hermes.png" alt=""
-              /></span>
+              <span class="agent-mark hermes"><img src="./assets/hermes.png" alt="" /></span>
               <span class="agent-copy">
-                <span class="card-heading">Hermes Agent</span>
+                <span class="card-heading"
+                  >Hermes Agent <span class="badge unavailable">Unavailable</span></span
+                >
                 <span class="vendor">Nous Research</span>
                 <span class="description"
-                  >A learning agent with durable memory, skills, messaging, and
-                  a dashboard.</span
+                  >Pinned native extensions are not published for Windows ARM64. x64 emulation is
+                  not accepted for this preview.</span
                 >
               </span>
             </button>
 
             <button
-              class="agent-card"
+              class="agent-card unavailable"
               type="button"
               role="radio"
               aria-checked="false"
+              aria-disabled="true"
+              disabled
               data-agent="langchain-deepagents-code"
+              data-blocker="Deep Agents Code 0.1.55 requires sqlite-vec, which does not publish a Windows ARM64 wheel."
             >
               <span class="agent-mark deepagents"
                 ><img src="./assets/deepagents.png" alt=""
               /></span>
               <span class="agent-copy">
-                <span class="card-heading">Deep Agents Code</span>
+                <span class="card-heading"
+                  >Deep Agents Code <span class="badge unavailable">Unavailable</span></span
+                >
                 <span class="vendor">LangChain</span>
                 <span class="description"
-                  >A terminal-first coding agent for long-horizon work, tools,
-                  and subagents.</span
+                  >Its pinned SQLite vector dependency has no Windows ARM64 runtime. Source
+                  substitution is not used.</span
                 >
               </span>
             </button>
 
             <button
-              class="agent-card experimental"
+              class="agent-card experimental unavailable"
               type="button"
               role="radio"
               aria-checked="false"
+              aria-disabled="true"
+              disabled
               data-agent="pi"
+              data-blocker="Pi 0.84.1 has a Windows ARM64 payload, but remains disabled until its real three-turn MXC qualification passes."
             >
-              <span class="agent-mark pi"
-                ><img src="./assets/pi.svg" alt=""
-              /></span>
+              <span class="agent-mark pi"><img src="./assets/pi.svg" alt="" /></span>
               <span class="agent-copy">
                 <span class="card-heading"
-                  >Pi <span class="badge">Experimental</span></span
+                  >Pi <span class="badge">Experimental</span>
+                  <span class="badge unavailable">Qualifying</span></span
                 >
                 <span class="vendor">Pi</span>
                 <span class="description"
-                  >A focused, extensible terminal coding agent with a compact
-                  interaction model.</span
+                  >Native ARM64 payload identified; executable MXC qualification is still in
+                  progress.</span
                 >
               </span>
             </button>
 
             <button
-              class="agent-card experimental"
+              class="agent-card experimental unavailable"
               type="button"
               role="radio"
               aria-checked="false"
+              aria-disabled="true"
+              disabled
               data-agent="nemocua"
+              data-blocker="The NemoCUA preview is currently container-image-only and has no Windows-native ARM64 entrypoint."
             >
-              <span class="agent-mark nemocua"
-                ><img src="./assets/nemocua.png" alt=""
-              /></span>
+              <span class="agent-mark nemocua"><img src="./assets/nemocua.png" alt="" /></span>
               <span class="agent-copy">
                 <span class="card-heading"
-                  >NemoCUA <span class="badge">Experimental</span></span
+                  >NemoCUA <span class="badge">Experimental</span>
+                  <span class="badge unavailable">Unavailable</span></span
                 >
                 <span class="vendor">NVIDIA</span>
                 <span class="description"
-                  >A computer-use research path for visible browser and desktop
-                  tasks.</span
+                  >The current runtime is container-image-only; this no-Docker installer will not
+                  substitute another execution path.</span
                 >
               </span>
             </button>
@@ -153,14 +153,10 @@
           <p class="eyebrow">Choose inference</p>
           <h1>Connect the model you trust.</h1>
           <p class="lead">
-            Credentials are requested only after the selected endpoint passes
-            validation and are never written to Windows Installer logs.
+            Credentials are requested only after the selected endpoint passes validation and are
+            never written to Windows Installer logs.
           </p>
-          <div
-            class="choice-grid"
-            role="radiogroup"
-            aria-label="Inference provider"
-          >
+          <div class="choice-grid" role="radiogroup" aria-label="Inference provider">
             <button
               class="choice selected"
               type="button"
@@ -169,8 +165,7 @@
               data-inference="nvidia"
             >
               <strong>NVIDIA hosted inference</strong
-              ><span>Fastest path to an NVIDIA-hosted model.</span
-              ><em>Recommended</em>
+              ><span>Fastest path to an NVIDIA-hosted model.</span><em>Recommended</em>
             </button>
             <button
               class="choice"
@@ -179,8 +174,7 @@
               aria-checked="false"
               data-inference="openrouter"
             >
-              <strong>OpenRouter</strong
-              ><span>Choose from a broad hosted model catalog.</span>
+              <strong>OpenRouter</strong><span>Choose from a broad hosted model catalog.</span>
             </button>
             <button
               class="choice"
@@ -200,10 +194,7 @@
               data-inference="local"
             >
               <strong>Local NVIDIA GPU</strong
-              ><span
-                >Keep inference on this machine when hardware qualification
-                passes.</span
-              >
+              ><span>Keep inference on this machine when hardware qualification passes.</span>
             </button>
           </div>
         </section>
@@ -212,43 +203,31 @@
           <p class="eyebrow">Shape the experience</p>
           <h1>Begin simple. Add integrations when you need them.</h1>
           <p class="lead">
-            These choices mirror the core onboarding decisions and remain
-            editable after setup.
+            These choices mirror the core onboarding decisions and remain editable after setup.
           </p>
           <div class="toggle-list">
             <label
               ><span
                 ><strong>Open the agent when setup finishes</strong
-                ><small
-                  >Launch the selected agent surface immediately.</small
-                ></span
+                ><small>Launch the selected agent surface immediately.</small></span
               ><input type="checkbox" name="launch" checked
             /></label>
             <label
               ><span
                 ><strong>Enable web search</strong
-                ><small
-                  >Configure a reviewed search provider during
-                  onboarding.</small
-                ></span
+                ><small>Configure a reviewed search provider during onboarding.</small></span
               ><input type="checkbox" name="webSearch"
             /></label>
             <label
               ><span
                 ><strong>Connect messaging</strong
-                ><small
-                  >Add Slack, Discord, Telegram, or another supported
-                  channel.</small
-                ></span
+                ><small>Add Slack, Discord, Telegram, or another supported channel.</small></span
               ><input type="checkbox" name="messaging"
             /></label>
             <label
               ><span
                 ><strong>Advanced diagnostics</strong
-                ><small
-                  >Keep additional local qualification receipts for
-                  support.</small
-                ></span
+                ><small>Keep additional local qualification receipts for support.</small></span
               ><input type="checkbox" name="diagnostics"
             /></label>
           </div>
@@ -258,8 +237,8 @@
           <p class="eyebrow">Review</p>
           <h1>Ready to launch NemoClaw.</h1>
           <p class="lead">
-            Your runtime stays under Program Files. Agent state, credentials,
-            and workspaces stay in user-owned data directories.
+            Your runtime stays under Program Files. Agent state, credentials, and workspaces stay in
+            user-owned data directories.
           </p>
           <dl class="review">
             <div>
@@ -281,23 +260,17 @@
           </dl>
           <div class="notice" id="experimental-notice" hidden>
             <strong>Experimental runtime</strong>
-            This option is visible for evaluation and is not part of the
-            supported native Windows set yet.
+            This option is visible for evaluation and is not part of the supported native Windows
+            set yet.
           </div>
           <p class="error" id="submit-error" role="alert" hidden></p>
         </section>
 
         <footer class="actions">
-          <button class="secondary" id="back" type="button" disabled>
-            Back
-          </button>
-          <span class="privacy"
-            >No configuration secret is passed through MSI.</span
-          >
+          <button class="secondary" id="back" type="button" disabled>Back</button>
+          <span class="privacy">No configuration secret is passed through MSI.</span>
           <button class="primary" id="next" type="button">Continue</button>
-          <button class="primary" id="launch" type="submit" hidden>
-            Finish &amp; launch
-          </button>
+          <button class="primary" id="launch" type="submit" hidden>Finish &amp; launch</button>
         </footer>
       </form>
     </main>

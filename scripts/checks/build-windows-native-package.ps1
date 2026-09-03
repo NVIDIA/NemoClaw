@@ -109,6 +109,7 @@ foreach ($requiredPayload in @(
     'config\mxc-gateway.toml',
     'qualification\run-installed-native-turn.mts',
     'qualification\run-installed-native-web-ui.mts',
+    'agent-support.json',
     'OPENSHELL-NODE-UI-COMPATIBILITY.patch',
     'LICENSE.txt',
     'NATIVE-PREVIEW.txt'

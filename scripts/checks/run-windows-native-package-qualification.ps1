@@ -567,13 +567,8 @@ try {
         'NATIVE_WINDOWS_TURN_2_OK',
         'NATIVE_WINDOWS_TURN_3_OK'
     )
-    $expectedAgentChoices = @(
-        'hermes',
-        'langchain-deepagents-code',
-        'pi',
-        'nemocua',
-        'openclaw'
-    )
+    $expectedAgentChoices = @('openclaw')
+    $expectedDisabledAgentChoices = @('hermes', 'langchain-deepagents-code', 'pi', 'nemocua')
     if ($webUiReceipt.verdict -cne 'pass' -or
         $webUiReceipt.backend -cne 'process_container' -or
         $webUiReceipt.browser -cne 'Microsoft Edge' -or
@@ -581,6 +576,7 @@ try {
         $webUiReceipt.onboardingSelection.agent -cne 'openclaw' -or
         $webUiReceipt.onboardingSelection.inference -cne 'nvidia' -or
         @($webUiReceipt.demonstratedAgentChoices).Count -ne $expectedAgentChoices.Count -or
+        @($webUiReceipt.disabledAgentChoices).Count -ne $expectedDisabledAgentChoices.Count -or
         [int]$webUiReceipt.turnCount -ne 3 -or
         @($webUiReceipt.turns).Count -ne 3 -or
         $webUiReceipt.sandboxDeleted -ne $true -or
@@ -592,6 +588,12 @@ try {
     for ($index = 0; $index -lt $expectedAgentChoices.Count; $index++) {
         if ($webUiReceipt.demonstratedAgentChoices[$index] -cne $expectedAgentChoices[$index]) {
             Fail-PackageQualification "Installed NemoClaw onboarding did not visibly demonstrate agent choice $($index + 1)."
+        }
+    }
+    for ($index = 0; $index -lt $expectedDisabledAgentChoices.Count; $index++) {
+        if ($webUiReceipt.disabledAgentChoices[$index].agent -cne $expectedDisabledAgentChoices[$index] -or
+            [string]::IsNullOrWhiteSpace([string]$webUiReceipt.disabledAgentChoices[$index].blocker)) {
+            Fail-PackageQualification "Installed NemoClaw onboarding did not disable and explain unavailable agent choice $($index + 1)."
         }
     }
     for ($index = 0; $index -lt $expectedWebUiReplies.Count; $index++) {

@@ -45,10 +45,11 @@ resets when Windows reboots.
 The setup uses a restrained NVIDIA-branded WiX interface and installs a native
 ARM64 `NemoClaw.exe` GUI launcher. Launching NemoClaw opens the local graphical
 onboarder without PowerShell or a visible console. The onboarder presents the
-three supported agent identities (OpenClaw, Hermes Agent, and LangChain Deep
-Agents Code) plus explicitly experimental Pi and NemoCUA choices. This slice
-activates only the pinned OpenClaw runtime; the other selections fail closed
-with a native-qualification explanation until their ARM64 payloads land.
+OpenClaw candidate plus Hermes Agent, LangChain Deep Agents Code, Pi, and
+NemoCUA with an honest platform status for each. An agent is selectable only
+after its real runtime passes native ARM64 qualification. Blocked cards remain
+visible but disabled and explain their exact upstream or packaging gap; the
+machine-readable `agent-support.json` records the pinned versions and evidence.
 
 Package qualification launches Microsoft Edge through the installed GUI
 launcher, walks all four graphical onboarding screens, and submits three turns

@@ -37,6 +37,7 @@
     <Error Condition="!Exists('$(PayloadRoot)\config\mxc-gateway.toml')" Text="The OpenShell MXC gateway configuration is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-turn.mts')" Text="The installed native turn qualification entrypoint is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-web-ui.mts')" Text="The installed native web UI entrypoint is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\agent-support.json')" Text="The native Windows agent support catalog is missing." />
     <Error Condition="!Exists('$(SourceRoot)\packaging\windows\assets\NemoClaw.ico')" Text="The NemoClaw product icon is missing." />
   </Target>
 </Project>
