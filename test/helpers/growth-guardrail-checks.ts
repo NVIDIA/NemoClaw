@@ -448,6 +448,15 @@ export function loopGrowthViolations(diff: GrowthGuardrailDiff): Promise<string[
   return syntaxGrowthViolations(diff, countTestLoops, "test loop");
 }
 
+/** Explain the intentional review boundary rather than treating active managed-image use as an exemption. */
+function dockerfileBudgetDiagnostic(details: readonly string[]): string {
+  return formatList(
+    "The root Dockerfile budget grew.",
+    details,
+    "Host-side stock Dockerfile onboarding is deprecated. Keep the root Dockerfile at or below its existing line and byte budgets. Move new onboarding behavior to the managed-image startup profile, bootstrap, or runtime-provider path, or record a maintainer decision before increasing this budget.",
+  );
+}
+
 export const diagnostics = {
   javascript: (details: readonly string[]) =>
     formatList(
@@ -461,13 +470,7 @@ export const diagnostics = {
       details,
       "Move new behavior into a focused module under src/lib/onboard/.",
     ),
-  /** Explain the intentional review boundary rather than treating active managed-image use as an exemption. */
-  dockerfileBudget: (details: readonly string[]) =>
-    formatList(
-      "The root Dockerfile budget grew.",
-      details,
-      "Host-side stock Dockerfile onboarding is deprecated. Keep the root Dockerfile at or below its existing line and byte budgets. Move new onboarding behavior to the managed-image startup profile, bootstrap, or runtime-provider path, or record a maintainer decision before increasing this budget.",
-    ),
+  dockerfileBudget: dockerfileBudgetDiagnostic,
   size: (details: readonly string[]) =>
     formatList(
       "The test file size budget was exceeded or weakened.",
