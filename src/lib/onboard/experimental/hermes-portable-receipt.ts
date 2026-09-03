@@ -12,7 +12,7 @@ import {
   type HermesPortableOpenShellExecutableAuthority,
 } from "../../adapters/openshell/resolve-shared";
 import type { PodmanExecutableAuthority, PodmanSocketAuthority } from "../../adapters/podman";
-import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock-acquisition";
+import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock/inspection";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { parsePortableRuntimeAuthority } from "../../state/onboard/portable-runtime-authority";
 import { assertCurrentPortableHostFenceHeld } from "../../state/portable-uninstall-retirement";

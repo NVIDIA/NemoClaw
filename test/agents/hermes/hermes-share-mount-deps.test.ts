@@ -114,6 +114,7 @@ function runHermesArchiveLayer(
     : path.join(tmp, downloadedTarball);
   const checksumFile = `${downloadedTarball}.sha256`;
   const securityPatch = path.join(tmp, "hermes-security-dependencies.patch");
+  const runtimeBoundariesPatch = path.join(tmp, "hermes-runtime-boundaries.patch");
   const whatsappProxyPatch = path.join(tmp, "hermes-whatsapp-proxy.patch");
   const helperCopy = path.join(tmp, "download-hermes-source-archive.sh");
   const fakeBin = path.join(tmp, "bin");
@@ -127,6 +128,7 @@ function runHermesArchiveLayer(
   fs.mkdirSync(path.dirname(downloadedTarballPath), { recursive: true });
   fs.mkdirSync(fakeBin);
   fs.writeFileSync(securityPatch, "test patch fixture\n");
+  fs.writeFileSync(runtimeBoundariesPatch, "test runtime boundaries patch fixture\n");
   fs.writeFileSync(whatsappProxyPatch, "test patch fixture\n");
   fs.writeFileSync(path.join(archiveRoot, "pyproject.toml"), 'version = "test"\n');
   fs.writeFileSync(
@@ -139,6 +141,9 @@ function runHermesArchiveLayer(
   expect(packed.status, packed.stderr).toBe(0);
   fs.writeFileSync(sourceTarball, archiveReplacement ?? fs.readFileSync(sourceTarball));
   const checksum = createHash("sha256").update(fs.readFileSync(sourceTarball)).digest("hex");
+  const runtimeBoundariesPatchChecksum = createHash("sha256")
+    .update(fs.readFileSync(runtimeBoundariesPatch))
+    .digest("hex");
   fs.writeFileSync(responseFile, `${responses.join("\n")}\n`);
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
@@ -193,6 +198,7 @@ function runHermesArchiveLayer(
   fs.copyFileSync(HERMES_ARCHIVE_HELPER, helperCopy);
   const command = extractHermesArchiveCommand(fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8"))
     .replaceAll("/tmp/hermes-security-dependencies.patch", securityPatch)
+    .replaceAll("/tmp/hermes-runtime-boundaries.patch", runtimeBoundariesPatch)
     .replaceAll("/tmp/hermes-whatsapp-proxy.patch", whatsappProxyPatch)
     .replaceAll("/tmp/hermes.tar.gz.sha256", checksumFile)
     .replaceAll("/tmp/hermes.tar.gz", downloadedTarball)
@@ -205,19 +211,31 @@ function runHermesArchiveLayer(
       "set -euo pipefail",
       `target_root=${JSON.stringify(targetRoot)}`,
       `security_patch=${JSON.stringify(securityPatch)}`,
+      `runtime_boundaries_patch=${JSON.stringify(runtimeBoundariesPatch)}`,
       `whatsapp_proxy_patch=${JSON.stringify(whatsappProxyPatch)}`,
       "git() {",
       '  [ "$1" = "-C" ]',
       '  [ "$2" = "$target_root" ]',
       '  [ "$3" = "apply" ]',
       '  if [ "$4" = "--check" ]; then',
-      '    [ "$5" = "$security_patch" ] || [ "$5" = "$whatsapp_proxy_patch" ]',
+      '    [ "$5" = "$security_patch" ] || [ "$5" = "$runtime_boundaries_patch" ] || [ "$5" = "$whatsapp_proxy_patch" ]',
       "  else",
-      '    [ "$4" = "$security_patch" ] || [ "$4" = "$whatsapp_proxy_patch" ]',
+      '    [ "$4" = "$security_patch" ] || [ "$4" = "$runtime_boundaries_patch" ] || [ "$4" = "$whatsapp_proxy_patch" ]',
+      '    if [ "$4" = "$runtime_boundaries_patch" ]; then',
+      '      mkdir -p "$target_root/hermes_cli" "$target_root/tools" "$target_root/plugins/memory" "$target_root/plugins/cron_providers" "$target_root/providers"',
+      '      printf "%s\\n" "def nemoclaw_managed_gateway_plugins_only():" > "$target_root/hermes_constants.py"',
+      '      printf "%s\\n" "nemoclaw_protected_process_control" > "$target_root/hermes_cli/env_loader.py"',
+      '      printf "%s\\n" "Managed gateway: user and project plugins disabled" > "$target_root/hermes_cli/plugins.py"',
+      '      printf "%s\\n" "nemoclaw_sanitized_installer_env" > "$target_root/tools/lazy_deps.py"',
+      '      printf "%s\\n" "nemoclaw_managed_gateway_plugins_only" > "$target_root/plugins/memory/__init__.py"',
+      '      printf "%s\\n" "nemoclaw_managed_gateway_plugins_only" > "$target_root/plugins/cron_providers/__init__.py"',
+      '      printf "%s\\n" "nemoclaw_managed_gateway_plugins_only" > "$target_root/providers/__init__.py"',
+      "    fi",
       "  fi",
       "}",
       `export HERMES_VERSION=${JSON.stringify(input.version ?? "v2026.7.20")}`,
       `export HERMES_TARBALL_SHA256=${JSON.stringify(expectedChecksum ?? checksum)}`,
+      `export NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256=${JSON.stringify(runtimeBoundariesPatchChecksum)}`,
       command,
     ].join("\n"),
     { mode: 0o700 },

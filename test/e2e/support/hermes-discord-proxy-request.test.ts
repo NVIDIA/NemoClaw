@@ -7,10 +7,10 @@ import { hermesDiscordHttpProxyWebSocketUrl } from "../live/hermes-discord-proxy
 
 describe("Hermes Discord proxy request", () => {
   it("uses HTTP absolute-form for the native WebSocket upgrade through OpenShell", () => {
-    const gateway = new URL(hermesDiscordHttpProxyWebSocketUrl("host.docker.internal", 32_768));
+    const gateway = new URL(hermesDiscordHttpProxyWebSocketUrl("host.openshell.internal", 32_768));
 
     expect(gateway.protocol).toBe("http:");
-    expect(gateway.host).toBe("host.docker.internal:32768");
+    expect(gateway.host).toBe("host.openshell.internal:32768");
     expect(gateway.pathname).toBe("/gateway");
   });
 });

@@ -5,11 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { REASONING_EFFORT_ENV } from "../onboard/reasoning-mode";
 import type { ConfigObject } from "../security/credential-filter";
 import { patchOpenClawInferenceConfig, runInferenceSet } from "./inference-set";
-import {
-  baseSession,
-  createDeps,
-  OPENAI_ENDPOINTLESS_PROFILE,
-} from "./inference-set.test-support";
+import { baseSession, createDeps, OPENAI_ENDPOINTLESS_PROFILE } from "./inference-set.test-support";
 
 function compatibleEndpointConfig(modelOverrides: ConfigObject = {}): ConfigObject {
   return {
@@ -222,28 +218,30 @@ describe("inference set reasoning effort (#7659)", () => {
   it.each([
     ["extreme", /must be one of: low, medium, high, default/],
     ["default", /only to the compatible-endpoint provider/],
-  ] as const)("rejects the %s environment effort before mutating an unsupported provider", async (environmentEffort, expectedError) => {
-    vi.stubEnv(REASONING_EFFORT_ENV, environmentEffort);
-    const deps = createDeps({ config: compatibleEndpointConfig() });
+  ] as const)(
+    "rejects the %s environment effort before mutating an unsupported provider",
+    async (environmentEffort, expectedError) => {
+      vi.stubEnv(REASONING_EFFORT_ENV, environmentEffort);
+      const deps = createDeps({ config: compatibleEndpointConfig() });
 
-    await expect(
-      runInferenceSet(
-        {
-          provider: "nvidia-prod",
-          model: "nvidia/nemotron-3-super-120b-a12b",
-        },
-        deps,
-      ),
-    ).rejects.toThrow(expectedError);
+      await expect(
+        runInferenceSet(
+          {
+            provider: "nvidia-prod",
+            model: "nvidia/nemotron-3-super-120b-a12b",
+          },
+          deps,
+        ),
+      ).rejects.toThrow(expectedError);
 
-    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
-    expect(deps.calls.ensureHttpsPinRuntimeAdapter).not.toHaveBeenCalled();
-    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
-    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
-    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
-  });
+      expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
+      expect(deps.calls.ensureHttpsPinRuntimeAdapter).not.toHaveBeenCalled();
+      expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+      expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+      expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+      expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    },
+  );
 
   it("clears the matching session effort when switching to an unsupported provider", async () => {
     const deps = createDeps({
@@ -277,45 +275,44 @@ describe("inference set reasoning effort (#7659)", () => {
     ]);
   });
 
-  it.each([
-    "high",
-    "default",
-  ] as const)("rejects an explicit %s effort before mutating a non-Completions route", async (reasoningEffort) => {
-    const deps = createDeps({
-      config: compatibleEndpointConfig(),
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "compatible-endpoint",
-        model: "nemotron-3-super",
-        endpointUrl: "https://compatible.example.test/v1",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        preferredInferenceApi: "openai-completions",
-      },
-    });
-
-    await expect(
-      runInferenceSet(
-        {
+  it.each(["high", "default"] as const)(
+    "rejects an explicit %s effort before mutating a non-Completions route",
+    async (reasoningEffort) => {
+      const deps = createDeps({
+        config: compatibleEndpointConfig(),
+        entry: {
+          name: "alpha",
+          agent: "openclaw",
           provider: "compatible-endpoint",
           model: "nemotron-3-super",
           endpointUrl: "https://compatible.example.test/v1",
           credentialEnv: "COMPATIBLE_API_KEY",
-          inferenceApi: "openai-responses",
-          reasoningEffort,
+          preferredInferenceApi: "openai-completions",
         },
-        deps,
-      ),
-    ).rejects.toThrow(/only to compatible-endpoint routes using openai-completions/);
+      });
 
-    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
-    expect(deps.calls.ensureHttpsPinRuntimeAdapter).not.toHaveBeenCalled();
-    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
-    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
-    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
-  });
+      await expect(
+        runInferenceSet(
+          {
+            provider: "compatible-endpoint",
+            model: "nemotron-3-super",
+            endpointUrl: "https://compatible.example.test/v1",
+            credentialEnv: "COMPATIBLE_API_KEY",
+            inferenceApi: "openai-responses",
+            reasoningEffort,
+          },
+          deps,
+        ),
+      ).rejects.toThrow(/only to compatible-endpoint routes using openai-completions/);
+
+      expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
+      expect(deps.calls.ensureHttpsPinRuntimeAdapter).not.toHaveBeenCalled();
+      expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+      expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+      expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+      expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    },
+  );
 
   it("clears the matching session effort when switching to an unsupported API", async () => {
     let providerVersion = 1;
