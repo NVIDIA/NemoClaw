@@ -902,7 +902,7 @@ jobs:
       - name: Download exact published all-agent contracts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-*
+          pattern: managed-pr-contract-${{ github.run_id }}-*
           path: ${{ runner.temp }}/managed-pr-contracts
           merge-multiple: false
 
@@ -1004,7 +1004,7 @@ jobs:
       - name: Download exact published all-agent contracts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-*
+          pattern: managed-pr-contract-${{ github.run_id }}-*
           path: ${{ runner.temp }}/managed-pr-contracts
           merge-multiple: false
 
@@ -1509,9 +1509,9 @@ jobs:
           set -euo pipefail
           [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,9}$ ]]
-          # Failed-job reruns retain successful candidate artifacts from prior
-          # attempts, so every attempt of this logical run shares one cohort.
-          printf 'cohort=ghrun-%s-1\n' "$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+          # Failed-job reruns retain this successful job's original output,
+          # while rerun-all executes it again and must mint fresh immutable aliases.
+          printf 'cohort=ghrun-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
   build-and-validate:
     name: Build and validate ${{ matrix.display_name }} managed image (${{ matrix.arch }})

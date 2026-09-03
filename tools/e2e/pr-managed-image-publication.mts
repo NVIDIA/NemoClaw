@@ -32,6 +32,7 @@ const MANAGED_IMAGE_WORKFLOW_NAME = "Images / Build, Test, and Publish Managed I
 const MANAGED_IMAGE_WORKFLOW_PATH = ".github/workflows/managed-images.yaml";
 const MAX_COMMIT_TREE_ENTRIES = 100_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
+const COHORT_PATTERN = /^ghrun-([1-9][0-9]{0,19})-([1-9][0-9]{0,9})$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const TREE_ENTRY_MODES = new Map([
   ["blob", new Set(["100644", "100755", "120000"])],
@@ -118,6 +119,81 @@ export function writeManagedImageCatalog(
     (contractPath) => JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown,
   );
   const catalog = assembleManagedImageCatalog(contracts, candidateSha, expectedCohort);
+  writeValidatedManagedImageCatalog(catalog, outputPath);
+}
+
+export function writeLatestManagedImageCatalog(
+  contractPaths: readonly string[],
+  candidateSha: string,
+  outputPath: string,
+  runId: number,
+  runAttempt: number,
+): void {
+  if (!SHA_PATTERN.test(candidateSha)) throw new Error("candidate SHA is invalid");
+  positiveInteger(runId, "workflow run id");
+  positiveInteger(runAttempt, "workflow run attempt");
+  const contracts = contractPaths.map((contractPath) => ({
+    contract: parseManagedImageContractV1(
+      JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown,
+      undefined,
+      "linux/amd64",
+    ),
+    path: contractPath,
+  }));
+  if (contracts.length === 0) {
+    throw new Error("exact PR managed-image publication contracts are missing");
+  }
+
+  const byAttempt = new Map<number, ManagedImageContractV1[]>();
+  const artifactIdentities = new Set<string>();
+  for (const { contract, path: contractPath } of contracts) {
+    if (contract.source.revision !== candidateSha) {
+      throw new Error("exact PR managed-image contracts do not match the candidate commit");
+    }
+    const match = COHORT_PATTERN.exec(contract.source.cohort);
+    if (!match) throw new Error("exact PR managed-image contract cohort is invalid");
+    const producerRunId = positiveInteger(Number(match[1]), "contract workflow run id");
+    const producerAttempt = positiveInteger(Number(match[2]), "contract workflow run attempt");
+    if (producerRunId !== runId) {
+      throw new Error("exact PR managed-image contracts do not match the selected workflow run");
+    }
+    if (producerAttempt > runAttempt) {
+      throw new Error("exact PR managed-image contracts come from a future workflow attempt");
+    }
+    if (!(SHIPPED_MANAGED_IMAGE_AGENTS as readonly string[]).includes(contract.agent)) {
+      throw new Error("exact PR managed-image contract agent is not shipped");
+    }
+    const expectedArtifact = `managed-pr-contract-${runId}-${producerAttempt}-${contract.agent}`;
+    if (
+      path.basename(contractPath) !== "contract.json" ||
+      path.basename(path.dirname(contractPath)) !== expectedArtifact ||
+      artifactIdentities.has(expectedArtifact)
+    ) {
+      throw new Error("exact PR managed-image contract artifact identity is invalid");
+    }
+    artifactIdentities.add(expectedArtifact);
+    const cohort = byAttempt.get(producerAttempt) ?? [];
+    cohort.push(contract);
+    byAttempt.set(producerAttempt, cohort);
+  }
+
+  const latestAttempt = [...byAttempt.entries()]
+    .filter(
+      ([, cohort]) =>
+        cohort.length === SHIPPED_MANAGED_IMAGE_AGENTS.length &&
+        SHIPPED_MANAGED_IMAGE_AGENTS.every((agent) =>
+          cohort.some((contract) => contract.agent === agent),
+        ),
+    )
+    .reduce((latest, [attempt]) => Math.max(latest, attempt), 0);
+  if (latestAttempt === 0) {
+    throw new Error("exact PR managed-image publication has no complete producer cohort");
+  }
+  const catalog = assembleManagedImageCatalog(
+    byAttempt.get(latestAttempt) ?? [],
+    candidateSha,
+    `ghrun-${runId}-${latestAttempt}` as const,
+  );
   writeValidatedManagedImageCatalog(catalog, outputPath);
 }
 
@@ -420,12 +496,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     }
     const runId = requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID");
     const runAttempt = requiredInteger(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT");
-    writeManagedImageCatalog(
-      argv.slice(3),
-      argv[1],
-      argv[2],
-      `ghrun-${runId}-${runAttempt}` as const,
-    );
+    writeLatestManagedImageCatalog(argv.slice(3), argv[1], argv[2], runId, runAttempt);
     console.log("pr-managed-image-catalog outcome=assembled");
     return;
   }

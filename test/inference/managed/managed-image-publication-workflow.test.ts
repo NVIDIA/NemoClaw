@@ -625,6 +625,9 @@ describe("complete managed-image publication workflow", () => {
     expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
       "${{ github.event.pull_request.head.sha }}",
     );
+    expect(step(activation, "Download exact published all-agent contracts").with?.pattern).toBe(
+      "managed-pr-contract-${{ github.run_id }}-*",
+    );
     expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
       /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
     );
@@ -675,6 +678,9 @@ describe("complete managed-image publication workflow", () => {
     expect(JSON.stringify(discovery)).not.toContain("github.token");
     expect(step(discovery, "Checkout exact PR head").with?.ref).toBe(
       "${{ github.event.pull_request.head.sha }}",
+    );
+    expect(step(discovery, "Download exact published all-agent contracts").with?.pattern).toBe(
+      "managed-pr-contract-${{ github.run_id }}-*",
     );
     expect(step(discovery, "Bind E2E correlation identity").run).toContain("randomUUID()");
     const assemble = step(discovery, "Assemble exact all-agent MCP catalog").run ?? "";
@@ -1006,9 +1012,40 @@ fi
     expect(contract.run).not.toContain("aliases:");
   });
 
+  it("mints a fresh immutable publication cohort when every job is rerun", () => {
+    const workflow = readWorkflow("managed-images.yaml");
+    const identity = required(
+      workflow.jobs?.["publication-identity"],
+      "managed-image workflow is missing its publication identity",
+    );
+    const recordIdentity = step(identity, "Record publication identity");
+    const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-publication-identity-"));
+    const output = path.join(temporaryRoot, "github-output");
+    try {
+      const result = spawnSync("bash", ["-c", recordIdentity.run ?? ""], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GITHUB_OUTPUT: output,
+          GITHUB_RUN_ATTEMPT: "2",
+          GITHUB_RUN_ID: "7744",
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(output, "utf8")).toBe("cohort=ghrun-7744-2\n");
+    } finally {
+      fs.rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
   it("holds every alias behind the exact six-candidate aggregate barrier (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const identity = workflow.jobs?.["publication-identity"];
+    const recordIdentity = step(
+      required(identity, "managed-image workflow is missing its publication identity"),
+      "Record publication identity",
+    );
     const publisher = managedPublisher(workflow);
     const promoter = managedPromoter(workflow);
     const steps = promoter.steps ?? [];
@@ -1027,6 +1064,10 @@ fi
     );
 
     expect(identity?.outputs).toEqual({ cohort: "${{ steps.identity.outputs.cohort }}" });
+    expect(recordIdentity.run).toContain(
+      'printf \'cohort=ghrun-%s-%s\\n\' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"',
+    );
+    expect(recordIdentity.run).not.toContain("cohort=ghrun-%s-1");
     expect(publisher.needs).toBe("publication-identity");
     expect(publisher.outputs).toBeUndefined();
     expect(publisher.steps?.map((candidate) => candidate.name)).not.toContain(
