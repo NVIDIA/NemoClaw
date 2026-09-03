@@ -7,10 +7,12 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, it, vi } from "vitest";
+import YAML from "yaml";
 
 import { getSandboxInferenceConfig } from "../../src/lib/inference/config";
 import {
   createProductionModelRouterCommandProvisioner,
+  hashModelRouterRecoveryIdentity,
   isManagedModelRouterCurrent,
   poolTargetsOnlyNvidiaEndpoints,
   startModelRouter,
@@ -20,7 +22,7 @@ import {
   type ModelRouterCommandDeps,
 } from "../../src/lib/onboard/model-router-command";
 import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
-import { run, runCapture } from "../../src/lib/runner";
+import { ROOT, run, runCapture } from "../../src/lib/runner";
 import {
   createProductionModelRouterInstallFixture,
   readRouterLaunchLog,
@@ -155,6 +157,54 @@ function findCommand(commands: DirectCommandEntry[], pattern: RegExp): DirectCom
 }
 
 describe("onboard Model Router setup", () => {
+  it("tracks credentials and pool contents in the router recovery identity", () => {
+    const current = hashModelRouterRecoveryIdentity(NVIDIA_TEST_CREDENTIAL, "models: [current]");
+
+    assert.match(current ?? "", /^[0-9a-f]{64}$/);
+    assert.equal(
+      current,
+      hashModelRouterRecoveryIdentity(NVIDIA_TEST_CREDENTIAL, "models: [current]"),
+    );
+    assert.equal(
+      current,
+      hashModelRouterRecoveryIdentity(NVIDIA_TEST_CREDENTIAL, "models:\n  - current\n"),
+    );
+    assert.notEqual(
+      current,
+      hashModelRouterRecoveryIdentity(NVIDIA_TEST_CREDENTIAL, "models: [replacement]"),
+    );
+    assert.notEqual(
+      current,
+      hashModelRouterRecoveryIdentity("nvapi-ROTATED-NOT-A-REAL-KEY", "models: [current]"),
+    );
+    assert.equal(hashModelRouterRecoveryIdentity(NVIDIA_TEST_CREDENTIAL, null), null);
+  });
+
+  it("ships the reviewed model records scored by the default checkpoint", () => {
+    const pool = YAML.parse(
+      fs.readFileSync(path.join(ROOT, "nemoclaw-blueprint", "router", "pool-config.yaml"), "utf8"),
+    ) as { models?: unknown };
+
+    assert.deepEqual(pool.models, [
+      {
+        name: "gpt-oss-20b-high",
+        display_name: "GPT-OSS 20B High",
+        litellm_model: "openai/openai/gpt-oss-20b",
+        cost_per_m_input_tokens: 0.052,
+        cost_per_m_output_tokens: 0.245,
+        api_base: "https://integrate.api.nvidia.com/v1",
+      },
+      {
+        name: "nemotron-3-super",
+        display_name: "Nemotron 3 Super 120B",
+        litellm_model: "openai/nvidia/nemotron-3-super-120b-a12b",
+        cost_per_m_input_tokens: 0.1,
+        cost_per_m_output_tokens: 0.4,
+        api_base: "https://integrate.api.nvidia.com/v1",
+      },
+    ]);
+  });
+
   it("configures Model Router as a host provider while sandboxes keep inference.local", async () => {
     await withProcessEnv({ NVIDIA_INFERENCE_API_KEY: NVIDIA_TEST_CREDENTIAL }, async () => {
       const reconcileModelRouter = vi.fn(async () => undefined);

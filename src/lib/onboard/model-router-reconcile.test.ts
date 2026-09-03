@@ -8,6 +8,8 @@ import { reconcileModelRouter } from "./model-router";
 const RECORDED_ROUTER_PID = 4321;
 
 const holder = vi.hoisted(() => ({
+  currentRecoveryHash: "MATCHING-HASH" as string | null,
+  recordedRecoveryHash: "MATCHING-HASH" as string | null,
   snapshotBody: null as string | null,
   stopped: [] as Array<[number, number]>,
   reachabilityProbes: 0,
@@ -41,12 +43,14 @@ vi.mock("./credential-env", () => ({
 vi.mock("../state/onboard-session", () => ({
   loadSession: () => ({
     routerPid: RECORDED_ROUTER_PID,
-    routerCredentialHash: "MATCHING-HASH",
+    routerCredentialHash: holder.recordedRecoveryHash,
   }),
   updateSession: vi.fn(),
 }));
 
-vi.mock("../security/credential-hash", () => ({ hashCredential: () => "MATCHING-HASH" }));
+vi.mock("../security/credential-hash", () => ({
+  hashCredential: () => holder.currentRecoveryHash,
+}));
 
 vi.mock("./host-service-reachability", () => ({
   probeHostServiceSandboxReachability: vi.fn(async () => {
@@ -58,6 +62,8 @@ vi.mock("./host-service-reachability", () => ({
 
 describe("model router reconciliation", () => {
   beforeEach(() => {
+    holder.currentRecoveryHash = "MATCHING-HASH";
+    holder.recordedRecoveryHash = "MATCHING-HASH";
     holder.snapshotBody = null;
     holder.stopped = [];
     holder.reachabilityProbes = 0;
@@ -80,6 +86,32 @@ describe("model router reconciliation", () => {
       healthy_endpoints: [],
       unhealthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
     });
+
+    await expect(reconcileModelRouter()).rejects.toThrow("router restart reached");
+
+    expect(holder.stopped).toEqual([[RECORDED_ROUTER_PID, expect.any(Number)]]);
+    expect(holder.reachabilityProbes).toBe(0);
+  });
+
+  it("restarts a healthy recorded router when its pool recovery identity changed", async () => {
+    holder.snapshotBody = JSON.stringify({
+      healthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
+      unhealthy_endpoints: [],
+    });
+    holder.recordedRecoveryHash = "PREVIOUS-POOL-HASH";
+
+    await expect(reconcileModelRouter()).rejects.toThrow("router restart reached");
+
+    expect(holder.stopped).toEqual([[RECORDED_ROUTER_PID, expect.any(Number)]]);
+    expect(holder.reachabilityProbes).toBe(0);
+  });
+
+  it("restarts a healthy router recorded before pool identity tracking", async () => {
+    holder.snapshotBody = JSON.stringify({
+      healthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
+      unhealthy_endpoints: [],
+    });
+    holder.recordedRecoveryHash = null;
 
     await expect(reconcileModelRouter()).rejects.toThrow("router restart reached");
 

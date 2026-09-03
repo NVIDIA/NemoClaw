@@ -75,6 +75,7 @@ const MODEL_ROUTER_VENV_DIR = path.join(
   "model-router-venv",
 );
 export const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
+const DEFAULT_MODEL_ROUTER_POOL_CONFIG_PATH = "router/pool-config.yaml";
 
 export type BlueprintRouterConfig = {
   enabled?: boolean;
@@ -91,6 +92,44 @@ export type BlueprintInferenceProfile = {
   credential_default?: string;
   router: BlueprintRouterConfig;
 };
+
+function modelRouterPoolConfigPath(
+  routerCfg: BlueprintRouterConfig,
+  rootDir: string = ROOT,
+): string {
+  return path.join(
+    rootDir,
+    "nemoclaw-blueprint",
+    routerCfg.pool_config_path || DEFAULT_MODEL_ROUTER_POOL_CONFIG_PATH,
+  );
+}
+
+function readModelRouterPoolConfig(poolConfigPath: string): string | null {
+  try {
+    return fs.readFileSync(poolConfigPath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build the secret-free change detector used to decide whether a healthy
+ * router process can be reused. The persisted field retains its historical
+ * `routerCredentialHash` name for session compatibility, but the identity now
+ * covers the credential and pool inputs that require a router restart.
+ */
+export function hashModelRouterRecoveryIdentity(
+  credential: string,
+  poolConfig: string | null,
+): string | null {
+  if (!credential.trim() || poolConfig === null) return null;
+  try {
+    const YAML = require("yaml");
+    return hashCredential(JSON.stringify({ credential, poolConfig: YAML.parse(poolConfig) }));
+  } catch {
+    return null;
+  }
+}
 
 type ModelRouterProxyConfigResult = {
   status: number | null;
@@ -308,13 +347,7 @@ function createStartModelRouterDeps(): StartModelRouterDeps {
         return "";
       }
     },
-    readPoolConfig: (poolConfigPath) => {
-      try {
-        return fs.readFileSync(poolConfigPath, "utf8");
-      } catch {
-        return null;
-      }
-    },
+    readPoolConfig: readModelRouterPoolConfig,
     resolveProviderCredential,
     buildSubprocessEnv,
     isRouterHealthy,
@@ -342,10 +375,7 @@ export async function startModelRouter(
   const routerCommand = deps.ensureModelRouterCommand();
   const port = routerCfg.port || 4000;
   const blueprintDir = path.join(deps.rootDir, "nemoclaw-blueprint");
-  const poolConfigPath = path.join(
-    blueprintDir,
-    routerCfg.pool_config_path || "router/pool-config.yaml",
-  );
+  const poolConfigPath = modelRouterPoolConfigPath(routerCfg, deps.rootDir);
   const stateDir = path.join(nemoclawStateRoot(deps.homeDir, GATEWAY_PORT), "state");
   const litellmConfigPath = path.join(stateDir, "litellm-proxy.yaml");
 
@@ -632,10 +662,13 @@ export async function reconcileModelRouter(): Promise<void> {
     throw new Error(`${routerCredentialEnv} is required to start Model Router.`);
   }
   saveCredential(routerCredentialEnv, routerCredential);
-  const routerCredentialHash = hashCredential(routerCredential);
+  const routerRecoveryHash = hashModelRouterRecoveryIdentity(
+    routerCredential,
+    readModelRouterPoolConfig(modelRouterPoolConfigPath(bp.router)),
+  );
   const session = onboardSession.loadSession();
   const recordedPid = session?.routerPid ?? null;
-  const recordedCredentialHash = session?.routerCredentialHash ?? null;
+  const recordedRecoveryHash = session?.routerCredentialHash ?? null;
 
   // One snapshot answers both questions: `healthy` is the occupied-port check,
   // and `isRouterSnapshotReady` is the single authority for declaring the
@@ -649,8 +682,8 @@ export async function reconcileModelRouter(): Promise<void> {
   if (snapshot.healthy) {
     const recordedProcessOwnsRouter = doesModelRouterProcessOwnPort(recordedPid, routerPort);
     if (
-      routerCredentialHash &&
-      recordedCredentialHash === routerCredentialHash &&
+      routerRecoveryHash &&
+      recordedRecoveryHash === routerRecoveryHash &&
       recordedProcessOwnsRouter &&
       isRouterSnapshotReady(snapshot)
     ) {
@@ -678,7 +711,7 @@ export async function reconcileModelRouter(): Promise<void> {
         const inventoryDetail =
           orphan.status === "unavailable" ? " The host process inventory is unavailable." : "";
         throw new Error(
-          `Port ${routerPort} already has a healthy router endpoint, but its credential state is unknown.${inventoryDetail} Stop the existing model-router process and rerun onboarding.`,
+          `Port ${routerPort} already has a healthy router endpoint, but its credential or pool state is unknown.${inventoryDetail} Stop the existing model-router process and rerun onboarding.`,
         );
       }
     }
@@ -689,7 +722,7 @@ export async function reconcileModelRouter(): Promise<void> {
   console.log(`  ✓ Model router started (PID ${routerPid}) on port ${routerPort}`);
   onboardSession.updateSession((current: Session) => {
     current.routerPid = routerPid;
-    current.routerCredentialHash = routerCredentialHash;
+    current.routerCredentialHash = routerRecoveryHash;
     return current;
   });
   await verifyModelRouterSandboxReachability(routerPort);
