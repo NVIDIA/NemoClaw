@@ -115,7 +115,7 @@ validation after checkout rejects changed PR identity or ownership.
 
 ```bash
 set -euo pipefail
-RUN_TITLE="E2E PR #${PR_NUMBER} head (${HEAD_CORRELATION_ID})"
+RUN_TITLE="E2E PR #${PR_NUMBER} (${HEAD_CORRELATION_ID})"
 MATCHES='[]'
 for POLL_INDEX in $(seq 1 30); do
   RUNS="$(gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
@@ -197,7 +197,7 @@ gh workflow run .github/workflows/e2e.yaml \
 Find the base run with the same bounded lookup used above and this exact title:
 
 ```bash
-RUN_TITLE="E2E PR #${PR_NUMBER} base (${BASE_CORRELATION_ID})"
+RUN_TITLE="E2E PR #${PR_NUMBER} (${BASE_CORRELATION_ID})"
 ```
 
 Verify that its Actions run `head_sha` is the same `WORKFLOW_SHA`. Record its run ID, URL, and

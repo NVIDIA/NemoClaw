@@ -3,7 +3,7 @@
 # Manual PR runs bind the selected head or base SHA independently from reusable image publication.
 
 name: E2E / Main and Manual Suite
-run-name: "${{ inputs.checkout_sha != '' && inputs.checkout_sha == inputs.base_sha && format('E2E PR #{0} base ({1})', inputs.pr_number, inputs.correlation_id) || inputs.checkout_sha != '' && format('E2E PR #{0} head ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
+run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
 
 on:
   push:
@@ -104,7 +104,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}-{1}', inputs.pr_number, inputs.checkout_sha == inputs.base_sha && 'base' || 'head') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
+  group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
   cancel-in-progress: ${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
 
 env:

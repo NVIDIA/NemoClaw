@@ -303,17 +303,12 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     if (workflow.env?.[name] !== value) errors.push(`E2E workflow must bind ${name}`);
   }
   const runName = String(workflow["run-name"] ?? "");
-  for (const fragment of ["inputs.checkout_sha", "inputs.base_sha", "inputs.pr_number"]) {
+  for (const fragment of ["inputs.checkout_sha", "inputs.pr_number"]) {
     if (!runName.includes(fragment)) errors.push(`Manual PR E2E run name must include ${fragment}`);
-  }
-  for (const fragment of ["format('E2E PR #{0} base ({1})'", "format('E2E PR #{0} head ({1})'"]) {
-    if (!runName.includes(fragment))
-      errors.push(`Manual PR E2E run name must distinguish ${fragment}`);
   }
   const concurrencyGroup = String(workflow.concurrency?.group ?? "");
   if (
     !concurrencyGroup.includes("inputs.checkout_sha") ||
-    !concurrencyGroup.includes("inputs.base_sha") ||
     !concurrencyGroup.includes("inputs.pr_number") ||
     !concurrencyGroup.includes("manual-pr")
   ) {
