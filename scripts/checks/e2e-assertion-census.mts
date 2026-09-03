@@ -755,7 +755,9 @@ export function formatE2eAssertionBudgetViolations(
     ...violations.map((violation) => {
       const target = violation.file ?? "suite";
       const actual = violation.actual === null ? "absent" : String(violation.actual);
-      return `- ${target} ${violation.view}.${violation.metric}: ${actual}; baseline ${violation.limit} (${violation.kind})`;
+      const numericDelta = violation.actual === null ? null : violation.actual - violation.limit;
+      const delta = numericDelta === null ? "n/a" : `${numericDelta > 0 ? "+" : ""}${numericDelta}`;
+      return `- ${target} ${violation.view}.${violation.metric}: current ${actual}; baseline ${violation.limit}; delta ${delta} (${violation.kind})`;
     }),
     "",
     "Reduce the assertion surface, then lower ci/e2e-assertion-budget.json in the same change.",

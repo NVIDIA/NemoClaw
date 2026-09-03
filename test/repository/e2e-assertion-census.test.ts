@@ -302,7 +302,7 @@ describe("live E2E assertion census (#10934)", () => {
 
     expect(formatE2eAssertionCensus(census)).toContain("test/e2e/live/example.test.ts | 1 | 1");
     expect(formatE2eAssertionBudgetViolations(violations)).toContain(
-      "test/e2e/live/example.test.ts direct.expectCalls: 2; baseline 1 (growth)",
+      "test/e2e/live/example.test.ts direct.expectCalls: current 2; baseline 1; delta +1 (growth)",
     );
     const serializedBudget = formatE2eAssertionBudget(budget);
     expect(serializedBudget).toContain('"test/e2e/live/example.test.ts": [1,1,1,1,0]');
