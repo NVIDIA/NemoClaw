@@ -198,9 +198,9 @@ import ctypes
 import os
 import sys
 
-if len(sys.argv) != 3:
-    raise SystemExit("expected exactly two names")
-old_name, new_name = sys.argv[1:]
+if len(sys.argv) != 4:
+    raise SystemExit("expected two names and one rename flag")
+old_name, new_name, rename_flag = sys.argv[1:]
 for name in (old_name, new_name):
     if not name or name in (".", "..") or "/" in name or "\\0" in name:
         raise SystemExit("invalid exchange name")
@@ -208,7 +208,7 @@ libc = ctypes.CDLL(None, use_errno=True)
 renameat2 = libc.renameat2
 renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
 renameat2.restype = ctypes.c_int
-result = renameat2(3, os.fsencode(old_name), 3, os.fsencode(new_name), 2)
+result = renameat2(3, os.fsencode(old_name), 3, os.fsencode(new_name), int(rename_flag))
 if result != 0:
     error = ctypes.get_errno()
     raise OSError(error, os.strerror(error))
@@ -232,10 +232,11 @@ function assertExchangeSupported(outputPath: string): void {
   }
 }
 
-function exchangeNames(
+function renameNames(
   parentDescriptor: number,
   leftName: string,
   rightName: string,
+  renameFlag: 1 | 2,
   outputPath: string,
 ): void {
   if (process.platform !== "linux") {
@@ -257,9 +258,13 @@ function exchangeNames(
     }
   }
   try {
-    execFileSync("/usr/bin/python3", ["-c", RENAME_EXCHANGE_HELPER, leftName, rightName], {
-      stdio: ["ignore", "pipe", "pipe", parentDescriptor],
-    });
+    execFileSync(
+      "/usr/bin/python3",
+      ["-c", RENAME_EXCHANGE_HELPER, leftName, rightName, String(renameFlag)],
+      {
+        stdio: ["ignore", "pipe", "pipe", parentDescriptor],
+      },
+    );
   } catch {
     throw new YamlExportOutputError(
       "unsafe-output",
@@ -267,6 +272,15 @@ function exchangeNames(
       `Atomic output exchange failed; destination was not safely published: ${outputPath}`,
     );
   }
+}
+
+function exchangeNames(
+  parentDescriptor: number,
+  leftName: string,
+  rightName: string,
+  outputPath: string,
+): void {
+  renameNames(parentDescriptor, leftName, rightName, 2, outputPath);
 }
 
 function publishForced(
@@ -280,7 +294,12 @@ function publishForced(
 ): fs.Stats {
   assertExchangeSupported(outputPath);
   publishNew(temporary, moved, outputPath);
-  exchangeNames(parentDescriptor, path.basename(moved), path.basename(destination), outputPath);
+  try {
+    exchangeNames(parentDescriptor, path.basename(moved), path.basename(destination), outputPath);
+  } catch (error) {
+    removeIfSame(moved, temporaryStat);
+    throw error;
+  }
   const movedStat = fs.lstatSync(moved);
   if (!movedStat.isFile() || !sameFile(expected, movedStat)) {
     try {
@@ -304,12 +323,48 @@ function publishForced(
 }
 
 function rollbackPublication(
+  parentDescriptor: number,
   destination: string,
+  quarantine: string,
   published: fs.Stats,
   moved: string | null,
   outputPath: string,
 ): void {
-  removeIfSame(destination, published);
+  try {
+    renameNames(
+      parentDescriptor,
+      path.basename(destination),
+      path.basename(quarantine),
+      1,
+      outputPath,
+    );
+  } catch {
+    throw new YamlExportOutputError(
+      "unsafe-output",
+      outputPath,
+      "Publication rollback could not claim the output without replacing concurrent state.",
+    );
+  }
+  const quarantined = fs.lstatSync(quarantine);
+  if (!sameFile(quarantined, published)) {
+    try {
+      renameNames(
+        parentDescriptor,
+        path.basename(quarantine),
+        path.basename(destination),
+        1,
+        outputPath,
+      );
+    } catch {
+      preserveRecovery(quarantine, outputPath);
+    }
+    throw new YamlExportOutputError(
+      "unsafe-output",
+      outputPath,
+      "A concurrent output change was preserved during publication rollback.",
+    );
+  }
+  fs.unlinkSync(quarantine);
   if (moved !== null) {
     try {
       fs.linkSync(moved, destination);
@@ -328,6 +383,7 @@ function publishYamlExport(options: PublishYamlExportOptions): PublishExportFile
   const suffix = `${String(process.pid)}.${randomUUID()}`;
   const temporary = path.join(parent.retainedPath, `.${name}.${suffix}.tmp`);
   const moved = path.join(parent.retainedPath, `.${name}.${suffix}.previous`);
+  const quarantine = path.join(parent.retainedPath, `.${name}.${suffix}.rollback`);
   let descriptor: number | null = null;
   try {
     const expected = inspectDestination(destination, outputPath, options.force === true);
@@ -359,7 +415,7 @@ function publishYamlExport(options: PublishYamlExportOptions): PublishExportFile
     let published: fs.Stats;
     if (expected === null) {
       publishNew(temporary, destination, outputPath);
-      published = fs.lstatSync(destination);
+      published = temporaryStat;
     } else {
       published = publishForced(
         parent.descriptor,
@@ -374,7 +430,14 @@ function publishYamlExport(options: PublishYamlExportOptions): PublishExportFile
     try {
       assertParentStable(parent, outputPath);
     } catch (error) {
-      rollbackPublication(destination, published, expected === null ? null : moved, outputPath);
+      rollbackPublication(
+        parent.descriptor,
+        destination,
+        quarantine,
+        published,
+        expected === null ? null : moved,
+        outputPath,
+      );
       throw error;
     }
     fs.unlinkSync(temporary);

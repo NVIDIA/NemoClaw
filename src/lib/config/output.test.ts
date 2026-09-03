@@ -162,6 +162,25 @@ describe("publishExportFile", () => {
     expect(temporaryEntries(root)).toEqual([]);
   });
 
+  it("cleans staging when the atomic force exchange fails (#10938)", () => {
+    const root = temporaryRoot();
+    const outputPath = path.join(root, "selected.yaml");
+    fs.writeFileSync(outputPath, "validated");
+    const movedByRacer = path.join(root, "racer.yaml");
+    const expected = fs.lstatSync(outputPath);
+    const linkSync = fs.linkSync;
+    vi.spyOn(fs, "linkSync").mockImplementationOnce((source, destination) => {
+      linkSync(source, destination);
+      fs.renameSync(outputPath, movedByRacer);
+    });
+    expect(() => publishExportFile(outputPath, "content", true)).toThrowError(
+      expect.objectContaining<Partial<YamlExportOutputError>>({ category: "unsafe-output" }),
+    );
+    expect(fs.readFileSync(movedByRacer, "utf8")).toBe("validated");
+    expect(fs.lstatSync(movedByRacer).ino).toBe(expected.ino);
+    expect(temporaryEntries(root)).toEqual([]);
+  });
+
   it("does not overwrite a destination exchanged during force publication (#10938)", () => {
     const root = temporaryRoot();
     const outputPath = path.join(root, "selected.yaml");
@@ -227,6 +246,29 @@ describe("publishExportFile", () => {
     );
     expect(fs.existsSync(outputPath)).toBe(false);
     expect(fs.existsSync(path.join(movedParent, "selected.yaml"))).toBe(false);
+  });
+
+  it("preserves a concurrent destination during parent-change rollback (#10938)", () => {
+    const root = temporaryRoot();
+    const outputParent = path.join(root, "output");
+    const movedParent = path.join(root, "moved");
+    const outputPath = path.join(outputParent, "selected.yaml");
+    const racedPath = path.join(movedParent, "selected.yaml");
+    const writer = path.join(movedParent, "writer.yaml");
+    fs.mkdirSync(outputParent);
+    const linkSync = fs.linkSync;
+    vi.spyOn(fs, "linkSync").mockImplementationOnce((source, destination) => {
+      linkSync(source, destination);
+      fs.renameSync(outputParent, movedParent);
+      fs.mkdirSync(outputParent);
+      fs.writeFileSync(writer, "writer");
+      fs.renameSync(writer, racedPath);
+    });
+
+    expect(() => publishExportFile(outputPath, "content")).toThrowError(
+      expect.objectContaining<Partial<YamlExportOutputError>>({ category: "unsafe-output" }),
+    );
+    expect(fs.readFileSync(racedPath, "utf8")).toBe("writer");
   });
 
   it("classifies final prior-inode cleanup failure with the exact recovery path (#10938)", () => {
