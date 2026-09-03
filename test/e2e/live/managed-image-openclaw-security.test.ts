@@ -354,14 +354,18 @@ test(
         ["--volume", `${refusalVolume}:/sandbox/.openclaw`],
       );
     } finally {
-      const createdVolumes = [
-        ...(repairVolumeCreated ? [repairVolume] : []),
-        ...(refusalVolumeCreated ? [refusalVolume] : []),
-      ];
-      const removed = await host.command("docker", ["volume", "rm", "-f", ...createdVolumes], {
-        artifactName: "managed-image-openclaw-remove-entrypoint-volumes",
-      });
-      expect(removed.exitCode).toBe(0);
+      const repairRemoved = await host.command(
+        "docker",
+        repairVolumeCreated ? ["volume", "rm", "-f", repairVolume] : ["volume", "ls", "--quiet"],
+        { artifactName: "managed-image-openclaw-remove-repair-volume" },
+      );
+      expect(repairRemoved.exitCode).toBe(0);
+      const refusalRemoved = await host.command(
+        "docker",
+        refusalVolumeCreated ? ["volume", "rm", "-f", refusalVolume] : ["volume", "ls", "--quiet"],
+        { artifactName: "managed-image-openclaw-remove-refusal-volume" },
+      );
+      expect(refusalRemoved.exitCode).toBe(0);
     }
 
     progress.phase("verify post-stepdown capability boundary");

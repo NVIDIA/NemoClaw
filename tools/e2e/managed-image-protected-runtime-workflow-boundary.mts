@@ -361,7 +361,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   const cleanup = requireStep(errors, workflowSteps, "Remove isolated protected runtime registry");
   if (cleanup?.if !== "always()") errors.push(`${JOB_ID} registry cleanup must always run`);
   requireFragments(errors, cleanup, [
-    "io.nvidia.nemoclaw.e2e-owner",
+    "io.nvidia.nemoclaw.managed-image.cohort",
     '[[ "$owner" == "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" ]]',
     'docker rm -f "$NEMOCLAW_PROTECTED_REGISTRY_NAME"',
     "http://127.0.0.1:5000/v2/",

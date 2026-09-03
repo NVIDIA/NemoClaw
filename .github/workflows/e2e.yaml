@@ -5171,7 +5171,7 @@ jobs:
           if docker container inspect "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >/dev/null 2>&1; then
             owner="$(
               docker container inspect \
-                --format '{{index .Config.Labels "io.nvidia.nemoclaw.e2e-owner"}}' \
+                --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.cohort"}}' \
                 "$NEMOCLAW_PROTECTED_REGISTRY_NAME"
             )"
             [[ "$owner" == "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" ]] || {
