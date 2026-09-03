@@ -18,11 +18,13 @@ vi.mock("../../gateway-runtime-action", () => ({
 
 vi.mock("../../inference/local", () => ({
   findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
+  isLocalProviderHostHealthy: vi.fn(() => true),
   probeLocalProviderHealth: vi.fn(() => ({ ok: true })),
 }));
 
 vi.mock("../../inference/ollama/proxy", () => ({
   ensureOllamaAuthProxy: vi.fn(() => true),
+  isProxyHealthy: vi.fn(() => true),
   probeOllamaAuthProxyHealth: vi.fn(() => ({ ok: true })),
 }));
 
