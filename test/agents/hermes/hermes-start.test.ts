@@ -704,30 +704,42 @@ function runHermesGatewayRuntimeCleanup(opts: {
         modeEntry(entry, 0o7777),
       ),
     );
-    const historyStat = fs.lstatSync(historyPath, { throwIfNoEntry: false });
     let historyMode = "missing";
     let historyKind: "missing" | "regular" | "symlink" | "directory" | "other" = "missing";
     let historyContent = "";
-    if (historyStat) {
-      historyMode = (historyStat.mode & 0o777).toString(8);
-      if (historyStat.isSymbolicLink()) historyKind = "symlink";
-      else if (historyStat.isDirectory()) historyKind = "directory";
-      else if (historyStat.isFile()) historyKind = "regular";
-      else historyKind = "other";
-      if (historyKind === "regular") {
-        const historyFd = fs.openSync(historyPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-        try {
-          const openedHistoryStat = fs.fstatSync(historyFd);
-          expect(
-            openedHistoryStat.isFile() &&
-              openedHistoryStat.dev === historyStat.dev &&
-              openedHistoryStat.ino === historyStat.ino,
-            "Hermes history fixture changed during inspection",
-          ).toBe(true);
-          historyContent = fs.readFileSync(historyFd, "utf-8");
-        } finally {
-          fs.closeSync(historyFd);
-        }
+    let historyFd: number | undefined;
+    try {
+      historyFd = fs.openSync(
+        historyPath,
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+      );
+    } catch {
+      const rejectedHistoryStat = fs.lstatSync(historyPath, { throwIfNoEntry: false });
+      historyMode = rejectedHistoryStat
+        ? (rejectedHistoryStat.mode & 0o777).toString(8)
+        : "missing";
+      historyKind = rejectedHistoryStat?.isSymbolicLink()
+        ? "symlink"
+        : rejectedHistoryStat?.isDirectory()
+          ? "directory"
+          : rejectedHistoryStat?.isFile()
+            ? "regular"
+            : rejectedHistoryStat
+              ? "other"
+              : "missing";
+    }
+    if (historyFd !== undefined) {
+      try {
+        const openedHistoryStat = fs.fstatSync(historyFd);
+        historyMode = (openedHistoryStat.mode & 0o777).toString(8);
+        historyKind = openedHistoryStat.isFile()
+          ? "regular"
+          : openedHistoryStat.isDirectory()
+            ? "directory"
+            : "other";
+        historyContent = openedHistoryStat.isFile() ? fs.readFileSync(historyFd, "utf-8") : "";
+      } finally {
+        fs.closeSync(historyFd);
       }
     }
     const symlinkTargetContent = fs.existsSync(symlinkTarget)

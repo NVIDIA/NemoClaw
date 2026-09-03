@@ -90,6 +90,60 @@ describe("Hermes gateway auxiliary retry", () => {
     expect(result.stderr.match(/auxiliary repair failed/g)).toHaveLength(2);
   });
 
+  it("quarantines an unrecoverable layout refusal without another launch", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const launchFunction = extractShellFunction(
+      source,
+      "launch_hermes_gateway_current_user",
+    ).replace(
+      "launch_hermes_gateway_current_user() {",
+      "launch_hermes_gateway_current_user_impl() {",
+    );
+    const result = runBashHarness([
+      "prepare_hermes_nonroot_runtime() { return 0; }",
+      "has_live_hermes_gateway() { return 1; }",
+      extractShellFunction(source, "fail_hermes_startup_layout_repair"),
+      'repair_hermes_startup_layout() { repair_calls=$((repair_calls + 1)); fail_hermes_startup_layout_repair "history file"; return 1; }',
+      extractShellFunction(source, "cleanup_stale_hermes_gateway_runtime"),
+      launchFunction,
+      "launch_hermes_gateway_current_user() { launch_calls=$((launch_calls + 1)); launch_hermes_gateway_current_user_impl; }",
+      "quarantine_hermes_managed_gateway_relaunch() { quarantine_calls=$((quarantine_calls + 1)); return 0; }",
+      "sleep() { sleep_calls=$((sleep_calls + 1)); }",
+      extractShellFunction(source, "recover_hermes_gateway_current_user"),
+      "HERMES_LAYOUT_REPAIR_REFUSED_STATUS=78",
+      "HERMES_DIR=/unused-hermes-home",
+      "launch_calls=0",
+      "repair_calls=0",
+      "quarantine_calls=0",
+      "sleep_calls=0",
+      "if recover_hermes_gateway_current_user; then recovery_status=0; else recovery_status=$?; fi",
+      'printf "recovery_status=%s\\nlaunch_calls=%s\\nrepair_calls=%s\\nquarantine_calls=%s\\nsleep_calls=%s\\n" "$recovery_status" "$launch_calls" "$repair_calls" "$quarantine_calls" "$sleep_calls"',
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(
+      Object.fromEntries(
+        result.stdout
+          .trim()
+          .split("\n")
+          .map((line) => line.split("=")),
+      ),
+    ).toEqual({
+      recovery_status: "1",
+      launch_calls: "1",
+      repair_calls: "1",
+      quarantine_calls: "1",
+      sleep_calls: "0",
+    });
+    expect(result.stderr).toContain(
+      "Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration.",
+    );
+    expect(result.stderr).toContain(
+      "Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation",
+    );
+    expect(result.stderr).not.toContain("retrying under the same supervisor");
+  });
+
   it("stops and charges a replacement that loses health during auxiliary retry", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([

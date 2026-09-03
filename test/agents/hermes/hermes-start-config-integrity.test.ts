@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { runHermesBashHarness } from "../../support/hermes-shell-harness";
 
 const START_SCRIPT = path.join(import.meta.dirname, "../../..", "agents", "hermes", "start.sh");
 
@@ -191,24 +192,28 @@ describe("agents/hermes/start.sh config integrity", () => {
     expect(result.stdout).toContain("result=failure failure-code=mcp-integrity");
   });
 
-  it("prepares root dashboard home and seeds config through the sandbox identity", {
-    timeout: 15_000,
-  }, () => {
-    const result = runHermesDashboardHomePrepAsRoot();
+  it(
+    "prepares root dashboard home and seeds config through the sandbox identity",
+    {
+      timeout: 15_000,
+    },
+    () => {
+      const result = runHermesDashboardHomePrepAsRoot();
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("gateway_state_exists=0");
-    expect(result.stdout).toContain("cmd=mkdir stepped=1");
-    expect(result.stdout).toContain("cmd=chmod stepped=1");
-    expect(result.stdout).toContain("cmd=rm stepped=1");
-    expect(result.stdout).toContain("cmd=python stepped=1");
-    expect(result.stdout).not.toContain("cmd=chown");
-    expect(result.stdout).toMatch(
-      /seed-dashboard-config[.]py\s+[^\s]*managed-policy[.]json\s+[^\s]*config[.]yaml/u,
-    );
-    expect(result.stdout).toContain("/.env");
-  });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("gateway_state_exists=0");
+      expect(result.stdout).toContain("cmd=mkdir stepped=1");
+      expect(result.stdout).toContain("cmd=chmod stepped=1");
+      expect(result.stdout).toContain("cmd=rm stepped=1");
+      expect(result.stdout).toContain("cmd=python stepped=1");
+      expect(result.stdout).not.toContain("cmd=chown");
+      expect(result.stdout).toMatch(
+        /seed-dashboard-config[.]py\s+[^\s]*managed-policy[.]json\s+[^\s]*config[.]yaml/u,
+      );
+      expect(result.stdout).toContain("/.env");
+    },
+  );
 
   it("continues locked startup only when /sandbox has the sticky root-owned posture", () => {
     const protectedParent = runLockedParentStartupPreflight("root:sandbox 1775");
@@ -220,5 +225,28 @@ describe("agents/hermes/start.sh config integrity", () => {
     expect(unprotectedParent.stderr).toContain("HERMES_LOCKED_PARENT_UNPROTECTED");
     expect(unprotectedParent.stderr).toContain("trusted backup and recreate");
     expect(unprotectedParent.stderr).not.toContain("run shields up");
+  });
+
+  it.each([
+    ["locked", 0, 0],
+    ["mutable", 1, 5],
+  ])("restores dashboard permissions only for a %s config root", (_posture, lockStatus, calls) => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runHermesBashHarness([
+      'id() { [ "${1:-}" = "-u" ] && printf "0\\n" || command id "$@"; }',
+      `hermes_config_root_is_locked() { return ${lockStatus}; }`,
+      "ensure_hermes_config_root_mode() { repair_calls=$((repair_calls + 1)); }",
+      "sleep() { :; }",
+      extractShellFunctionFromSource(
+        source,
+        "restore_hermes_config_permissions_after_dashboard_start",
+      ),
+      "repair_calls=0",
+      "restore_hermes_config_permissions_after_dashboard_start",
+      'printf "repair_calls=%s\\n" "$repair_calls"',
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe(`repair_calls=${calls}\n`);
   });
 });

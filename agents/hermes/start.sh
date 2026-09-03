@@ -1617,6 +1617,11 @@ fail_hermes_startup_layout_repair() {
   return 1
 }
 
+# EX_CONFIG: the persisted Hermes layout is unsafe or cannot be repaired. A
+# supervised relaunch cannot make this condition transient, so callers must
+# quarantine instead of retrying the same mutation forever.
+readonly HERMES_LAYOUT_REPAIR_REFUSED_STATUS=78
+
 repair_hermes_startup_layout() {
   local state_dir
 
@@ -1678,7 +1683,7 @@ cleanup_stale_hermes_gateway_runtime() {
     return 0
   fi
 
-  repair_hermes_startup_layout || return 1
+  repair_hermes_startup_layout || return "$HERMES_LAYOUT_REPAIR_REFUSED_STATUS"
 
   # Hermes can leave gateway.lock behind after Docker GPU recreation kills the
   # old process namespace. Clear it only after confirming no gateway is alive.
@@ -2228,6 +2233,7 @@ wait_for_hermes_gateway_internal() {
 
 restore_hermes_config_permissions_after_dashboard_start() {
   [ "$(id -u)" -eq 0 ] || return 0
+  hermes_config_root_is_locked && return 0
   # Hermes dashboard startup may tighten HERMES_HOME to 0700 because it runs as
   # the sandbox owner. The gateway process runs as the separate gateway user and
   # reads config via sandbox-group membership, so restore NemoClaw's shared
@@ -3532,7 +3538,7 @@ prepare_hermes_root_runtime() {
 }
 
 launch_hermes_gateway_current_user() {
-  cleanup_stale_hermes_gateway_runtime || return 1
+  cleanup_stale_hermes_gateway_runtime || return $?
   HERMES_HOME="${HERMES_DIR}" \
     nohup "$HERMES" gateway run >>/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
@@ -3679,7 +3685,8 @@ record_hermes_managed_gateway_exit() {
 }
 
 recover_hermes_gateway_current_user() {
-  local replacement_reached_internal_health
+  local launch_status replacement_reached_internal_health
+  local layout_repair_refused_status="${HERMES_LAYOUT_REPAIR_REFUSED_STATUS:-78}"
 
   while :; do
     replacement_reached_internal_health=0
@@ -3692,11 +3699,21 @@ recover_hermes_gateway_current_user() {
       echo "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s" >&2
       sleep 5 || true
     done
-    if ! launch_hermes_gateway_current_user; then
-      echo "[gateway] Hermes gateway launch failed; retrying under the same supervisor" >&2
-      sleep 5 || true
-      continue
-    fi
+    launch_status=0
+    launch_hermes_gateway_current_user || launch_status=$?
+    case "$launch_status" in
+      "$layout_repair_refused_status")
+        echo "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation" >&2
+        quarantine_hermes_managed_gateway_relaunch
+        return 1
+        ;;
+      0) ;;
+      *)
+        echo "[gateway] Hermes gateway launch failed; retrying under the same supervisor" >&2
+        sleep 5 || true
+        continue
+        ;;
+    esac
     if wait_for_hermes_gateway_internal "$GATEWAY_PID"; then
       replacement_reached_internal_health=1
       # The gateway and its socat relay are separate supervised children. A
