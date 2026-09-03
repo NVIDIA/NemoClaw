@@ -34,7 +34,7 @@ Review the log before you share it.
 NemoClaw does not provide log-only cleanup.
 NemoClaw stores a router recovery identity that covers the routed credential and parsed pool configuration.
 During reconciliation, NemoClaw restarts a healthy router when either input changes.
-If the pool file is unreadable or invalid, NemoClaw preserves the running router and reports the file to repair.
+If the pool file is unreadable, incompatible with the checkpoint, or rejected by Model Router validation, NemoClaw preserves the running router and its recovery identity, then reports the file to repair.
 
 ## Router and Sandbox Lifecycle Locks
 

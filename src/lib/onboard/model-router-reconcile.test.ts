@@ -8,6 +8,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { reconcileModelRouter } from "./model-router";
 
 const RECORDED_ROUTER_PID = 4321;
+const PREPARED_ROUTER = {
+  blueprintDir: "/test/repo/nemoclaw-blueprint",
+  litellmConfigPath: "/test/state/litellm-proxy.yaml",
+  poolConfig: "models: []\n",
+  poolConfigPath: "/test/repo/nemoclaw-blueprint/router/pool-config.yaml",
+  routerCommand: "/test/model-router",
+  stateDir: "/test/state",
+};
+
+function reconcileWithPreparedRouter(
+  overrides: Parameters<typeof reconcileModelRouter>[0] = {},
+): Promise<void> {
+  return reconcileModelRouter({ prepareRouter: () => PREPARED_ROUTER, ...overrides });
+}
 
 const holder = vi.hoisted(() => ({
   currentRecoveryHash: "MATCHING-HASH" as string | null,
@@ -100,7 +114,7 @@ describe("model router reconciliation", () => {
       unhealthy_endpoints: [],
     });
 
-    await reconcileModelRouter();
+    await reconcileWithPreparedRouter();
 
     expect(holder.stopped).toEqual([]);
     expect(holder.reachabilityProbes).toBe(1);
@@ -112,7 +126,7 @@ describe("model router reconciliation", () => {
       unhealthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
     });
 
-    await expect(reconcileModelRouter()).rejects.toThrow("router restart reached");
+    await expect(reconcileWithPreparedRouter()).rejects.toThrow("router restart reached");
 
     expect(holder.stopped).toEqual([[RECORDED_ROUTER_PID, expect.any(Number)]]);
     expect(holder.reachabilityProbes).toBe(0);
@@ -127,7 +141,7 @@ describe("model router reconciliation", () => {
     holder.stop = async () => undefined;
     const startRouter = vi.fn(async () => 9876);
 
-    await reconcileModelRouter({ startRouter });
+    await reconcileWithPreparedRouter({ startRouter });
 
     expect(holder.stopped).toEqual([[RECORDED_ROUTER_PID, expect.any(Number)]]);
     expect(startRouter).toHaveBeenCalledOnce();
@@ -138,6 +152,24 @@ describe("model router reconciliation", () => {
     expect(holder.reachabilityProbes).toBe(1);
   });
 
+  it("reports a recovery action when a validated replacement fails after stopping the router", async () => {
+    holder.snapshotBody = JSON.stringify({
+      healthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
+      unhealthy_endpoints: [],
+    });
+    holder.recordedRecoveryHash = "PREVIOUS-POOL-HASH";
+    holder.stop = async () => undefined;
+    const startRouter = vi.fn(async () => Promise.reject(new Error("replacement exited")));
+
+    await expect(reconcileWithPreparedRouter({ startRouter })).rejects.toThrow(
+      /previous Model Router process was stopped.*replacement failed to start.*replacement exited.*Repair the reported problem and rerun onboarding/,
+    );
+
+    expect(holder.stopped).toEqual([[RECORDED_ROUTER_PID, expect.any(Number)]]);
+    expect(holder.updatedSession).toBeNull();
+    expect(holder.reachabilityProbes).toBe(0);
+  });
+
   it("restarts a healthy router recorded before pool identity tracking", async () => {
     holder.snapshotBody = JSON.stringify({
       healthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
@@ -145,7 +177,7 @@ describe("model router reconciliation", () => {
     });
     holder.recordedRecoveryHash = holder.legacyCredentialHash;
 
-    await expect(reconcileModelRouter()).rejects.toThrow("router restart reached");
+    await expect(reconcileWithPreparedRouter()).rejects.toThrow("router restart reached");
 
     expect(holder.stopped).toEqual([[RECORDED_ROUTER_PID, expect.any(Number)]]);
     expect(holder.reachabilityProbes).toBe(0);
@@ -162,11 +194,38 @@ describe("model router reconciliation", () => {
         ? "models: ["
         : realReadFile(file, ...args)) as typeof fs.readFileSync);
 
-    await expect(reconcileModelRouter()).rejects.toThrow(
+    await expect(reconcileWithPreparedRouter()).rejects.toThrow(
       /Cannot read or parse Model Router pool configuration at .*pool-config\.yaml.*did not change the router process/,
     );
 
     expect(holder.stopped).toEqual([]);
+    expect(holder.reachabilityProbes).toBe(0);
+  });
+
+  it("preserves a healthy recorded router when proxy-config rejects a YAML-valid pool", async () => {
+    holder.snapshotBody = JSON.stringify({
+      healthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
+      unhealthy_endpoints: [],
+    });
+    holder.recordedRecoveryHash = "PREVIOUS-POOL-HASH";
+    const realReadFile = fs.readFileSync.bind(fs);
+    vi.spyOn(fs, "readFileSync").mockImplementation(((file, ...args) =>
+      String(file).endsWith("router/pool-config.yaml")
+        ? "models: []\n"
+        : realReadFile(file, ...args)) as typeof fs.readFileSync);
+    const prepareRouter = vi.fn(() => {
+      throw new Error("model-router proxy-config failed: models must not be empty");
+    });
+    const startRouter = vi.fn(async () => 9876);
+
+    await expect(reconcileModelRouter({ prepareRouter, startRouter })).rejects.toThrow(
+      /Cannot validate replacement Model Router pool configuration at .*pool-config\.yaml.*models must not be empty.*Repair the reported problem.*did not change the router process or recovery identity/,
+    );
+
+    expect(prepareRouter).toHaveBeenCalledOnce();
+    expect(startRouter).not.toHaveBeenCalled();
+    expect(holder.stopped).toEqual([]);
+    expect(holder.updatedSession).toBeNull();
     expect(holder.reachabilityProbes).toBe(0);
   });
 });

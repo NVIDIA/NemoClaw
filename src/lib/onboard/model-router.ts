@@ -224,6 +224,15 @@ export type StartModelRouterDeps = {
   getProviderKey: () => string;
 };
 
+type PreparedModelRouterStart = {
+  blueprintDir: string;
+  litellmConfigPath: string;
+  poolConfig: string | null;
+  poolConfigPath: string;
+  routerCommand: string;
+  stateDir: string;
+};
+
 /**
  * Load a named inference profile and router config from blueprint.yaml.
  * Returns null if the blueprint or profile is missing.
@@ -409,12 +418,10 @@ function createStartModelRouterDeps(): StartModelRouterDeps {
   };
 }
 
-export async function startModelRouter(
+function prepareModelRouterStart(
   routerCfg: BlueprintRouterConfig,
-  overrides: Partial<StartModelRouterDeps> = {},
-): Promise<number> {
-  const deps: StartModelRouterDeps = { ...createStartModelRouterDeps(), ...overrides };
-  const port = routerCfg.port || 4000;
+  deps: StartModelRouterDeps,
+): PreparedModelRouterStart {
   const blueprintDir = path.join(deps.rootDir, "nemoclaw-blueprint");
   const poolConfigPath = modelRouterPoolConfigPath(routerCfg, deps.rootDir);
   const poolConfig = deps.readPoolConfig(poolConfigPath);
@@ -440,6 +447,26 @@ export async function startModelRouter(
       `model-router proxy-config failed: ${proxyConfigResult.stderr || proxyConfigResult.error || "unknown error"}`,
     );
   }
+
+  return {
+    blueprintDir,
+    litellmConfigPath,
+    poolConfig,
+    poolConfigPath,
+    routerCommand,
+    stateDir,
+  };
+}
+
+async function startPreparedModelRouter(
+  routerCfg: BlueprintRouterConfig,
+  overrides: Partial<StartModelRouterDeps> = {},
+  prepared?: PreparedModelRouterStart,
+): Promise<number> {
+  const deps: StartModelRouterDeps = { ...createStartModelRouterDeps(), ...overrides };
+  const port = routerCfg.port || 4000;
+  const { blueprintDir, litellmConfigPath, poolConfig, poolConfigPath, routerCommand, stateDir } =
+    prepared ?? prepareModelRouterStart(routerCfg, deps);
 
   const credEnvVars: Record<string, string> = {};
   const credName = routerCfg.credential_env || DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV;
@@ -581,6 +608,13 @@ export async function startModelRouter(
   );
 }
 
+export async function startModelRouter(
+  routerCfg: BlueprintRouterConfig,
+  overrides: Partial<StartModelRouterDeps> = {},
+): Promise<number> {
+  return startPreparedModelRouter(routerCfg, overrides);
+}
+
 /** Router readiness: /health answered 2xx and names at least one healthy endpoint. */
 function isRouterSnapshotReady(snapshot: RouterHealthSnapshot): boolean {
   if (!snapshot.healthy || !snapshot.body) return false;
@@ -698,12 +732,21 @@ async function verifyModelRouterSandboxReachability(routerPort: number): Promise
 }
 
 type ReconcileModelRouterDeps = {
-  startRouter: typeof startModelRouter;
+  prepareRouter: (routerCfg: BlueprintRouterConfig) => PreparedModelRouterStart;
+  startRouter: (
+    routerCfg: BlueprintRouterConfig,
+    prepared: PreparedModelRouterStart,
+  ) => Promise<number>;
 };
 
 export async function reconcileModelRouter(
   overrides: Partial<ReconcileModelRouterDeps> = {},
 ): Promise<void> {
+  const deps: ReconcileModelRouterDeps = {
+    prepareRouter: (routerCfg) => prepareModelRouterStart(routerCfg, createStartModelRouterDeps()),
+    startRouter: (routerCfg, prepared) => startPreparedModelRouter(routerCfg, {}, prepared),
+    ...overrides,
+  };
   const bp = getRoutedProfile();
   const routerPort = resolveModelRouterPort();
   const routerCredentialEnv =
@@ -742,6 +785,8 @@ export async function reconcileModelRouter(
     routerPort,
     ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS,
   );
+  let prepared: PreparedModelRouterStart | null = null;
+  let stoppedRouterForReplacement = false;
   if (snapshot.healthy) {
     const recordedProcessOwnsRouter = doesModelRouterProcessOwnPort(recordedPid, routerPort);
     if (
@@ -754,12 +799,22 @@ export async function reconcileModelRouter(
       await verifyModelRouterSandboxReachability(routerPort);
       return;
     }
+    try {
+      prepared = deps.prepareRouter(bp.router);
+    } catch (error) {
+      const redacted = redactSensitiveText(String(error));
+      const detail = redacted ? compactText(redacted) : "";
+      throw new Error(
+        `Cannot validate replacement Model Router pool configuration at ${poolConfigPath}${detail ? `: ${detail}` : ""}. Repair the reported problem and rerun onboarding. NemoClaw did not change the router process or recovery identity.`,
+      );
+    }
     if (recordedProcessOwnsRouter) {
       console.log("  Restarting model router...");
       await stopModelRouterProcess(
         requireValue(recordedPid, "Expected recorded router PID"),
         routerPort,
       );
+      stoppedRouterForReplacement = true;
     } else {
       // The recorded PID doesn't own the port (stale session or fresh start).
       // Try to locate the orphaned router via /proc so we can recover without
@@ -770,6 +825,7 @@ export async function reconcileModelRouter(
       if (orphan.status === "found") {
         console.log(`  Stopping orphaned model router (PID ${orphan.pid})...`);
         await stopModelRouterProcess(orphan.pid, routerPort);
+        stoppedRouterForReplacement = true;
       } else {
         const inventoryDetail =
           orphan.status === "unavailable" ? " The host process inventory is unavailable." : "";
@@ -780,8 +836,19 @@ export async function reconcileModelRouter(
     }
   }
 
+  prepared ??= deps.prepareRouter(bp.router);
   console.log("  Starting model router...");
-  const routerPid = await (overrides.startRouter ?? startModelRouter)(bp.router);
+  let routerPid: number;
+  try {
+    routerPid = await deps.startRouter(bp.router, prepared);
+  } catch (error) {
+    if (!stoppedRouterForReplacement) throw error;
+    const redacted = redactSensitiveText(String(error));
+    const detail = redacted ? compactText(redacted) : "unknown startup error";
+    throw new Error(
+      `The previous Model Router process was stopped after the replacement pool passed validation, but the replacement failed to start: ${detail}. Repair the reported problem and rerun onboarding.`,
+    );
+  }
   console.log(`  ✓ Model router started (PID ${routerPid}) on port ${routerPort}`);
   onboardSession.updateSession((current: Session) => {
     current.routerPid = routerPid;
