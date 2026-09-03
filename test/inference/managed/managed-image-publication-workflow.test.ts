@@ -332,6 +332,12 @@ describe("complete managed-image publication workflow", () => {
     const localBaseBuild = step(prBuilder, "Build PR managed image from local base");
     const registryBaseBuild = step(prBuilder, "Build PR managed image from registry base");
     const contract = step(prBuilder, "Validate exact PR managed image contract");
+    const publicationIdentity = required(
+      workflow.jobs?.["publication-identity"],
+      "managed-image workflow is missing its publication identity",
+    );
+    const publishedContract = step(prBuilder, "Export exact published PR managed-image contract");
+    const contractUpload = step(prBuilder, "Upload exact published PR managed-image contract");
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         ".github/actions/ci-reviewed-npm-audit/**",
@@ -383,7 +389,11 @@ describe("complete managed-image publication workflow", () => {
       expect(action.uses, action.name).toMatch(fullShaAction);
     }
 
-    expect(prBuilder.needs).toBe("pr-reviewed-npm-audit");
+    expect(prBuilder.needs).toEqual(["pr-reviewed-npm-audit", "publication-identity"]);
+    expect(publicationIdentity.if).toBeUndefined();
+    expect(publicationIdentity.outputs).toEqual({
+      cohort: "${{ steps.identity.outputs.cohort }}",
+    });
     expect(prBuilder.if).toBe("github.event_name == 'pull_request'");
     expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
     expect(prBuilder["timeout-minutes"]).toBe(90);
@@ -436,6 +446,25 @@ describe("complete managed-image publication workflow", () => {
     expect(registryBaseBuild.with?.labels).toContain(
       "org.opencontainers.image.version=${{ steps.release.outputs.value }}",
     );
+    expect(localBaseBuild.env?.PUBLICATION_COHORT).toBe(
+      "${{ needs.publication-identity.outputs.cohort }}",
+    );
+    expect(registryBaseBuild.with?.labels).toContain(
+      "io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}",
+    );
+    expect(publishedContract.env?.COHORT).toBe("${{ needs.publication-identity.outputs.cohort }}");
+    expect(contractUpload.with).toMatchObject({
+      name: "managed-pr-contract-${{ github.run_id }}-${{ matrix.agent }}",
+      overwrite: true,
+    });
+    expect(
+      step(managedPrActivation(workflow), "Download exact published all-agent contracts").with
+        ?.pattern,
+    ).toBe("managed-pr-contract-${{ github.run_id }}-*");
+    expect(
+      step(managedPrOpenClawMcpDiscovery(workflow), "Download exact published all-agent contracts")
+        .with?.pattern,
+    ).toBe("managed-pr-contract-${{ github.run_id }}-*");
     expect(contract.env?.RELEASE).toBe("${{ steps.release.outputs.value }}");
     const contractSource = required(contract.run, "PR managed image contract is missing");
     expect(contractSource).toContain(".[0].RootFS.Layers | length");
@@ -604,16 +633,9 @@ describe("complete managed-image publication workflow", () => {
 
   it("runs the exact candidate CLI through real all-agent Docker and OpenShell activation (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
-    const builder = managedPrBuilder(workflow);
     const activation = managedPrActivation(workflow);
     const steps = activation.steps ?? [];
 
-    expect(builder.outputs?.contract_run_attempt).toBe(
-      "${{ steps.contract-attempt.outputs.value }}",
-    );
-    const contractAttempt = step(builder, "Bind exact contract artifact run attempt");
-    expect(contractAttempt.id).toBe("contract-attempt");
-    expect(contractAttempt.run).toContain("printf 'value=%s\\n' \"$GITHUB_RUN_ATTEMPT\"");
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         "src/lib/onboard/**",
@@ -633,9 +655,6 @@ describe("complete managed-image publication workflow", () => {
     expect(JSON.stringify(activation)).not.toContain("github.token");
     expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
       "${{ github.event.pull_request.head.sha }}",
-    );
-    expect(step(activation, "Download exact published all-agent contracts").with?.pattern).toBe(
-      "managed-pr-contract-${{ github.run_id }}-${{ needs.pr-build-and-entrypoint.outputs.contract_run_attempt }}-*",
     );
     expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
       /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
@@ -687,9 +706,6 @@ describe("complete managed-image publication workflow", () => {
     expect(JSON.stringify(discovery)).not.toContain("github.token");
     expect(step(discovery, "Checkout exact PR head").with?.ref).toBe(
       "${{ github.event.pull_request.head.sha }}",
-    );
-    expect(step(discovery, "Download exact published all-agent contracts").with?.pattern).toBe(
-      "managed-pr-contract-${{ github.run_id }}-${{ needs.pr-build-and-entrypoint.outputs.contract_run_attempt }}-*",
     );
     expect(step(discovery, "Bind E2E correlation identity").run).toContain("randomUUID()");
     const assemble = step(discovery, "Assemble exact all-agent MCP catalog").run ?? "";
