@@ -20,6 +20,14 @@ const helper = resolve(
   "../../../.github/actions/publish-managed-image-digest/validate.sh",
 );
 const roots: string[] = [];
+function manifest(layerCount = 1): string {
+  return JSON.stringify({
+    schemaVersion: 2,
+    layers: Array.from({ length: layerCount }, (_, index) => ({
+      digest: `sha256:${String(index).padStart(64, "0")}`,
+    })),
+  });
+}
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -73,20 +81,36 @@ describe("managed-image digest publication rejection", () => {
   });
 
   it("rejects a pulled reference whose image ID is not self-consistent", () => {
-    const manifest = "published-manifest";
+    const publishedManifest = manifest();
     const { createHash } = require("node:crypto") as typeof import("node:crypto");
-    const digest = `sha256:${createHash("sha256").update(manifest).digest("hex")}`;
+    const digest = `sha256:${createHash("sha256").update(publishedManifest).digest("hex")}`;
     const first = "sha256:" + "b".repeat(64);
     const second = "sha256:" + "c".repeat(64);
     const { output, result } = fixture(
       [
-        `if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then printf %s '${manifest}'; exit 0; fi`,
+        `if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then printf %s '${publishedManifest}'; exit 0; fi`,
         `if [ "$1" = pull ]; then exit 0; fi`,
         `if [ "$1 $2" = "image inspect" ]; then case "$*" in *"${first}"*) printf '%s\n' '${second}' ;; *) printf '%s\n' '${first}' ;; esac; exit 0; fi`,
       ],
       digest,
     );
     expect(result.status).not.toBe(0);
+    expect(existsSync(output) ? readFileSync(output, "utf8") : "").toBe("");
+  });
+
+  it("rejects a published digest above the Docker layer-depth ceiling before pulling", () => {
+    const publishedManifest = manifest(125);
+    const { createHash } = require("node:crypto") as typeof import("node:crypto");
+    const digest = `sha256:${createHash("sha256").update(publishedManifest).digest("hex")}`;
+    const { log, output, result } = fixture(
+      [
+        `if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then printf %s '${publishedManifest}'; exit 0; fi`,
+      ],
+      digest,
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(readFileSync(log, "utf8")).not.toContain("pull --platform");
     expect(existsSync(output) ? readFileSync(output, "utf8") : "").toBe("");
   });
 });

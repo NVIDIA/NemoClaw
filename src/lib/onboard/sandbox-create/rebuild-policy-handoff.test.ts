@@ -613,8 +613,12 @@ network_policies:
       const removedChannels = ["wechat", "teams", "googlechat"];
       const remainingChannels = ["telegram", "discord", "slack", "whatsapp"];
       const sandboxName = `lifecycle-${agent}`;
+      const basePolicyPath =
+        agent === "openclaw"
+          ? path.join(process.cwd(), "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml")
+          : path.join(process.cwd(), "agents", "hermes", "policy-additions.yaml");
       const baseSource = fs.readFileSync(
-        path.join(process.cwd(), "agents", agent, "policy-permissive.yaml"),
+        basePolicyPath,
         "utf8",
       );
       const keysByChannel = getMessagingPolicyKeysByChannel({ agent });
@@ -628,7 +632,7 @@ network_policies:
         ).policy;
 
       const activeDocument = YAML.parse(compose(channels));
-      activeDocument.network_policies.github.endpoints[0].host = "host-maintained.example.com";
+      activeDocument.network_policies.nvidia.endpoints[0].host = "host-maintained.example.com";
       const activeSource = YAML.stringify(activeDocument);
       expect(getCredentialBindingProviders(activeSource)).toContain(
         `${sandboxName}-teams-bridge`,
@@ -668,13 +672,13 @@ network_policies:
         `${sandboxName}-teams-bridge`,
       );
 
-      expect(YAML.parse(stopped).network_policies.github.endpoints[0].host).toBe(
+      expect(YAML.parse(stopped).network_policies.nvidia.endpoints[0].host).toBe(
         "host-maintained.example.com",
       );
-      expect(YAML.parse(reenabled).network_policies.github.endpoints[0].host).toBe(
+      expect(YAML.parse(reenabled).network_policies.nvidia.endpoints[0].host).toBe(
         "host-maintained.example.com",
       );
-      expect(YAML.parse(selectedRemoved).network_policies.github.endpoints[0].host).toBe(
+      expect(YAML.parse(selectedRemoved).network_policies.nvidia.endpoints[0].host).toBe(
         "host-maintained.example.com",
       );
       const finalPolicies = YAML.parse(selectedRemoved).network_policies;

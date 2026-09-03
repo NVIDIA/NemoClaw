@@ -4,7 +4,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { performance } from "node:perf_hooks";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as portableAgentLifecycle from "../../lib/onboard/experimental/portable-agent-lifecycle";
@@ -36,9 +35,6 @@ const mocks = vi.hoisted(() => {
     restartSandboxGateway: vi.fn().mockReturnValue({ ok: true }),
     recoverSandboxWithHermesCronRestore: vi.fn().mockResolvedValue(undefined),
     runSandboxDoctor: vi.fn().mockResolvedValue(undefined),
-    shieldsDown: vi.fn(),
-    shieldsStatus: vi.fn(),
-    shieldsUp: vi.fn(),
     showSandboxLogs: vi.fn(),
     showSandboxStatus: vi.fn().mockResolvedValue(undefined),
     addSandboxHostAlias: vi.fn(),
@@ -98,12 +94,6 @@ vi.mock("../../lib/actions/sandbox/doctor", () => ({
   runSandboxDoctor: mocks.runSandboxDoctor,
 }));
 
-vi.mock("../../lib/shields", () => ({
-  shieldsDown: mocks.shieldsDown,
-  shieldsStatus: mocks.shieldsStatus,
-  shieldsUp: mocks.shieldsUp,
-}));
-
 import SandboxChannelsListCommand from "./channels/list";
 import SandboxConfigGetCommand from "./config/get";
 import SandboxConfigRotateTokenCommand from "./config/rotate-token";
@@ -122,9 +112,6 @@ import SandboxLogsCommand from "./logs";
 import SandboxPolicyListCommand from "./policy/list";
 import RebuildCliCommand from "./rebuild";
 import RecoverCliCommand from "./recover";
-import ShieldsDownCommand from "./shields/down";
-import ShieldsStatusCommand from "./shields/status";
-import ShieldsUpCommand from "./shields/up";
 import SandboxStatusCommand from "./status";
 
 const rootDir = process.cwd();
@@ -224,9 +211,7 @@ describe("sandbox oclif command adapters", () => {
     try {
       await ConnectCliCommand.run(["alpha", "--dangerously-skip-permissions"], rootDir);
 
-      expect(lines.join("\n")).toContain(
-        "--dangerously-skip-permissions was removed; use shields commands instead.",
-      );
+      expect(lines.join("\n")).toContain("--dangerously-skip-permissions was removed.");
       expect(process.exitCode).toBe(1);
       expect(mocks.connectSandbox).not.toHaveBeenCalled();
     } finally {
@@ -410,167 +395,10 @@ describe("sandbox oclif command adapters", () => {
     }
   });
 
-  it("maps doctor and shields commands to action helpers", async () => {
+  it("maps the doctor command to its action helper", async () => {
     await SandboxDoctorCliCommand.run(["alpha", "--json"], rootDir);
-    await ShieldsDownCommand.run(
-      ["alpha", "--timeout", "5m", "--reason", "debugging", "--policy", "permissive"],
-      rootDir,
-    );
-    await ShieldsUpCommand.run(["alpha"], rootDir);
-    await ShieldsStatusCommand.run(["alpha"], rootDir);
 
     expect(mocks.runSandboxDoctor).toHaveBeenCalledWith("alpha", ["--json"], { quietJson: true });
-    expect(mocks.shieldsDown).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({
-        timeout: "5m",
-        reason: "debugging",
-        policy: "permissive",
-        throwOnError: true,
-        assertCommandAvailable: expect.any(Function),
-      }),
-    );
-    expect(mocks.shieldsUp).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({
-        throwOnError: true,
-        assertCommandAvailable: expect.any(Function),
-      }),
-    );
-    expect(mocks.shieldsStatus).toHaveBeenCalledWith("alpha", true, {
-      assertCommandAvailable: expect.any(Function),
-    });
-  });
-
-  it("dispatches Shields commands to their lifecycle deadline gate after timer expiry (#9738)", async () => {
-    fs.writeFileSync(
-      path.join(stateDir, "shields-timer-alpha.json"),
-      JSON.stringify({
-        pid: 2_147_483_647,
-        sandboxName: "alpha",
-        snapshotPath: path.join(stateDir, "snapshot.yaml"),
-        restoreAt: new Date(Date.now() - 60_000).toISOString(),
-        processToken: "a".repeat(32),
-      }),
-    );
-    let monotonicNow = 0;
-    vi.spyOn(performance, "now").mockImplementation(() => {
-      monotonicNow += 30 * 60_000 + 1;
-      return monotonicNow;
-    });
-
-    await expect(ShieldsStatusCommand.run(["alpha"], rootDir)).resolves.toBeUndefined();
-    await expect(ShieldsUpCommand.run(["alpha"], rootDir)).resolves.toBeUndefined();
-    await expect(ShieldsDownCommand.run(["alpha"], rootDir)).resolves.toBeUndefined();
-
-    expect(mocks.shieldsStatus).toHaveBeenCalledOnce();
-    expect(mocks.shieldsUp).toHaveBeenCalledOnce();
-    expect(mocks.shieldsDown).toHaveBeenCalledOnce();
-  });
-
-  it("rejects schema-5 Shields commands through their owned lifecycle fence (#9203)", async ({
-    onTestFinished,
-  }) => {
-    fs.writeFileSync(
-      path.join(stateDir, "shields-timer-alpha.json"),
-      JSON.stringify({
-        pid: 2_147_483_647,
-        sandboxName: "alpha",
-        snapshotPath: path.join(stateDir, "snapshot.yaml"),
-        restoreAt: new Date(Date.now() - 60_000).toISOString(),
-        processToken: "a".repeat(32),
-      }),
-    );
-    const authority = {
-      kind: "hermes",
-      snapshot: {
-        receipt: {
-          phase: "active",
-          gatewayName: "nemoclaw",
-          lifecycleGeneration: "generation-1",
-          container: { sandboxId: "sandbox-id" },
-        },
-      } as never,
-    } as const;
-    vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue(authority);
-    vi.spyOn(
-      receiptAuthority,
-      "inspectPortableAgentReceiptAuthorityForClassification",
-    ).mockReturnValue(authority);
-    const mutation = vi.fn();
-    mocks.shieldsDown.mockImplementation(
-      (_sandboxName: string, options: { assertCommandAvailable?: () => void }) => {
-        options.assertCommandAvailable?.();
-        mutation();
-      },
-    );
-    mocks.shieldsUp.mockImplementation(
-      (_sandboxName: string, options: { assertCommandAvailable?: () => void }) => {
-        options.assertCommandAvailable?.();
-        mutation();
-      },
-    );
-    mocks.shieldsStatus.mockImplementation(
-      (
-        _sandboxName: string,
-        _allowInlineRecovery: boolean,
-        options: { assertCommandAvailable?: () => void },
-      ) => {
-        options.assertCommandAvailable?.();
-        mutation();
-      },
-    );
-    onTestFinished(() => {
-      mocks.shieldsDown.mockReset();
-      mocks.shieldsUp.mockReset();
-      mocks.shieldsStatus.mockReset();
-    });
-
-    await expect(ShieldsDownCommand.run(["alpha"], rootDir)).rejects.toThrow(
-      "not supported for an experimental Hermes portable sandbox",
-    );
-    await expect(ShieldsUpCommand.run(["alpha"], rootDir)).rejects.toThrow(
-      "not supported for an experimental Hermes portable sandbox",
-    );
-    await expect(ShieldsStatusCommand.run(["alpha"], rootDir)).rejects.toThrow(
-      "not supported for an experimental Hermes portable sandbox",
-    );
-
-    expect(mocks.shieldsDown).toHaveBeenCalledOnce();
-    expect(mocks.shieldsUp).toHaveBeenCalledOnce();
-    expect(mocks.shieldsStatus).toHaveBeenCalledOnce();
-    expect(mutation).not.toHaveBeenCalled();
-  });
-
-  it("translates shields exit sentinels into exit codes without a traceback (#7382)", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const previousExitCode = process.exitCode;
-    process.exitCode = undefined;
-    try {
-      mocks.shieldsUp.mockImplementationOnce(() => {
-        throw Object.assign(new Error("Config not locked: OpenClaw config guard lock failed"), {
-          name: "DeferredShieldsExit",
-          exitCode: 1,
-        });
-      });
-      mocks.shieldsDown.mockImplementationOnce(() => {
-        throw Object.assign(new Error("Config remains unlocked — manual intervention required"), {
-          name: "DeferredShieldsExit",
-          exitCode: 1,
-        });
-      });
-
-      await expect(ShieldsUpCommand.run(["alpha"], rootDir)).resolves.toBeUndefined();
-      expect(process.exitCode).toBe(1);
-
-      process.exitCode = undefined;
-      await expect(ShieldsDownCommand.run(["alpha"], rootDir)).resolves.toBeUndefined();
-      expect(process.exitCode).toBe(1);
-      expect(error).not.toHaveBeenCalled();
-    } finally {
-      process.exitCode = previousExitCode;
-      error.mockRestore();
-    }
   });
 
   it("sets a nonzero JSON exit when doctor reports inference.local failure (#6192)", async () => {

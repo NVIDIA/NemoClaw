@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
-
 import type {
   RuntimeProviderPrivilegedSandboxCommandResult,
   RuntimeProviderPrivilegedSandboxControl,
@@ -15,13 +12,11 @@ import {
   DirectSandboxFallbackUnavailableError,
   PinnedSandboxResourceIdentityChangedError,
 } from "../onboard/runtime-provider/privileged-sandbox-control-errors";
-import {
-  createFilePersistedEngineLifecycleStore,
-  hasActivePersistedEngineStateMutationTarget,
-  PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
-} from "../onboard/runtime-provider/persisted-engine-lifecycle";
 import { requireRuntimeProviderBundleForSandbox } from "../onboard/runtime-provider/selection";
-import { resolveShieldsStateDir, withShieldsTransitionLock } from "../shields/transition-lock";
+import {
+  buildStoppedSandboxChannelCleanupScript,
+  validateStoppedSandboxStatePaths,
+} from "../onboard/runtime-provider/stopped-sandbox-state-cleanup";
 import * as registry from "../state/registry";
 
 type SandboxEntry = import("../state/registry").SandboxEntry;
@@ -75,43 +70,18 @@ function registeredSandboxNames(sandboxName: string): readonly string[] {
   );
 }
 
-function assertNoActiveStateMutationTarget(sandboxName: string): void {
-  const stateDir = resolveShieldsStateDir();
-  const lifecycleDirectory = path.join(stateDir, PERSISTED_ENGINE_LIFECYCLE_DIRECTORY);
-  try {
-    fs.lstatSync(lifecycleDirectory);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
-  const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
-  if (hasActivePersistedEngineStateMutationTarget(lifecycleStore, sandboxName)) {
-    throw new Error(
-      `Runtime provider state mutation owns direct-container execution for sandbox '${sandboxName}'; retry after the provider fence is released.`,
-    );
-  }
-}
-
-/** Serialize one ordinary privileged operation against provider fence acquisition. */
+/** Preserve the provider-wide callback boundary after retirement of the mutation fence. */
 export function withPrivilegedSandboxExecutionLease<T>(
-  sandboxName: string,
-  operation: string,
+  _sandboxName: string,
+  _operation: string,
   fn: () => T,
 ): T {
-  return withShieldsTransitionLock(
-    sandboxName,
-    `privileged direct-container execution: ${operation}`,
-    () => {
-      assertNoActiveStateMutationTarget(sandboxName);
-      return fn();
-    },
-  );
+  return fn();
 }
 
 export function resolvePrivilegedSandboxTarget(
   sandboxName: string,
 ): RuntimeProviderPrivilegedSandboxTarget {
-  assertNoActiveStateMutationTarget(sandboxName);
   const { sandbox, control } = privilegedSandboxControl(sandboxName);
   return control.resolveTarget({
     registeredSandboxNames: registeredSandboxNames(sandboxName),
@@ -130,7 +100,6 @@ export function executePrivilegedSandboxCommand(
   command: readonly string[],
   options: PrivilegedSandboxCommandOptions = {},
 ): RuntimeProviderPrivilegedSandboxCommandResult {
-  assertNoActiveStateMutationTarget(sandboxName);
   const { sandbox, control } = privilegedSandboxControl(sandboxName);
   const input =
     options.input === undefined
@@ -161,7 +130,6 @@ export function privilegedSandboxExecArgv(
   sanitizeEnvironment = false,
   expectedContainerId?: string,
 ): string[] {
-  assertNoActiveStateMutationTarget(sandboxName);
   const { sandbox, control } = privilegedSandboxControl(sandboxName);
   if (!control.buildLegacyDockerArgv) {
     throw new Error(
@@ -195,7 +163,36 @@ export function capturePrivilegedSandboxCommand(
   return result.stdout;
 }
 
+export function clearStoppedSandboxStateRoots(
+  sandboxName: string,
+  paths: readonly string[],
+): RuntimeProviderStoppedSandboxStateCleanupResult {
+  if (!validateStoppedSandboxStatePaths(paths)) {
+    return { cleared: false, failure: "state-paths-invalid" };
+  }
+  const sandbox = registry.getSandbox?.(sandboxName) ?? null;
+  if (!sandbox) return { cleared: false, failure: "sandbox-registry-unavailable" };
+  try {
+    return withPrivilegedSandboxExecutionLease(sandboxName, "offline channel state cleanup", () => {
+      const { control } = privilegedSandboxControl(sandboxName);
+      if (!control.clearStoppedStateRoots)
+        return { cleared: false, failure: "provider-cleanup-unavailable" };
+      return control.clearStoppedStateRoots({
+        registeredSandboxNames: registeredSandboxNames(sandboxName),
+        sandbox,
+        sandboxName,
+        paths,
+      });
+    });
+  } catch {
+    return { cleared: false, failure: "lifecycle-authority-unavailable" };
+  }
+}
 
+export {
+  buildStoppedSandboxChannelCleanupScript,
+  buildStoppedSandboxChannelCleanupScript as buildStoppedDockerSandboxChannelCleanupScript,
+};
 
 export function isDirectSandboxFallbackUnavailableError(
   error: unknown,

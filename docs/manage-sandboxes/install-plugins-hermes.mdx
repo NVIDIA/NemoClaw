@@ -4,7 +4,7 @@
 title: "Install Hermes Plugins"
 sidebar-title: "Install Hermes Plugins"
 description: "Install Hermes plugins and configure the bundled Hindsight memory plugin in NemoClaw-managed sandboxes."
-description-agent: "Explains how to configure the bundled Hindsight memory plugin in a stock sealed Hermes sandbox or install a custom Hermes plugin. Use when users ask about Hindsight, lazy plugin dependencies, or custom Hermes plugins."
+description-agent: "Explains how to configure the bundled Hindsight memory plugin in a stock Hermes sandbox or install a custom Hermes plugin. Use when users ask about Hindsight, lazy plugin dependencies, or custom Hermes plugins."
 keywords: ["install hermes plugins", "hermes hindsight memory", "hermes lazy dependencies", "nemoclaw hermes plugins", "nemohermes dockerignore"]
 content:
   type: "how_to"
@@ -18,17 +18,22 @@ They are different from NemoClaw skills and from OpenClaw plugins, so install th
 ## How Hermes Loads Plugins
 
 NemoClaw sets `HERMES_HOME` to `/sandbox/.hermes` when it starts the Hermes gateway.
-Hermes plugin directories live under `/sandbox/.hermes/plugins/<plugin-name>`.
-NemoClaw uses the same mechanism for its built-in Hermes integration, which the sandbox image bakes into `/sandbox/.hermes/plugins/nemoclaw`.
+Hermes can discover bundled plugins under `/opt/hermes/plugins/<plugin-name>` and user plugins under `$HERMES_HOME/plugins/<plugin-name>`.
+NemoClaw supports the image-owned bundled path so the sandbox agent cannot replace code later executed by the separated gateway identity.
+NemoClaw installs its built-in Hermes integration into the image-owned bundled-plugin path at `/opt/hermes/plugins/nemoclaw`.
 
 The built-in NemoClaw Hermes plugin provides sandbox status tools, skill reload support, managed-tool broker patches, and runtime grounding for the OpenShell sandbox.
-Do not replace or remove `/sandbox/.hermes/plugins/nemoclaw` when you add your own plugin.
+Do not replace or remove `/opt/hermes/plugins/nemoclaw` when you add your own plugin.
+The root-separated gateway ignores `/sandbox/.hermes/plugins` because it cannot trust sandbox-writable Python.
+The same-identity topology retains Hermes' upstream user-plugin behavior, and rebuilds continue to preserve that directory as agent state; image-bundled plugins are the supported path across both topologies.
+After an upgrade, root-separated startup warns when preserved user plugins are present; rebuild any required plugin into `/opt/hermes/plugins` before relying on it.
 
 ## Configure the Bundled Hindsight Plugin
 
-The stock Hermes image provides a durable lazy-install directory at `/sandbox/.hermes/lazy-packages`.
-Hermes installs the bundled Hindsight plugin dependency in this directory as the sandbox user.
-The dependency does not modify the root virtual environment, and the managed target is not declared in the sealed `.env` file.
+The stock Hermes image provides `/sandbox/.hermes/lazy-packages` for lazy dependencies used by interactive sandbox commands.
+The separated gateway never loads code from that sandbox-writable directory.
+Instead, gateway startup installs the bundled Hindsight dependency into a gateway-owned runtime directory under `/run/nemoclaw` and loads it only from there.
+Neither target modifies the root virtual environment, and neither target is declared in the generated `.env` file.
 
 NemoClaw supports `hindsight-client==0.6.1` for this workflow.
 Hermes checks this version before it loads the plugin.
@@ -43,18 +48,6 @@ Add the preset to the sandbox:
 
 ```bash
 nemohermes <name> policy add local-memory --yes
-```
-
-Check the current Shields posture:
-
-```bash
-nemohermes <name> shields status
-```
-
-If Shields are up, open a timed maintenance window before setup changes the Hermes configuration and lazy dependency directory:
-
-```bash
-nemohermes <name> shields down --timeout 15m --reason "Configure Hindsight memory"
 ```
 
 Run the Hermes setup command through the NemoClaw CLI:
@@ -73,17 +66,11 @@ After the setup command finishes, restart the gateway:
 nemohermes <name> gateway restart
 ```
 
-If you lowered Shields for setup, restore them after the restart:
-
-```bash
-nemohermes <name> shields up
-```
-
-The setup command installs `hindsight-client==0.6.1` under `/sandbox/.hermes/lazy-packages` as the sandbox user.
-When `memory.provider` is `hindsight`, gateway startup repairs a missing approved dependency before it launches.
-After Shields lock the directory, the gateway can import the client, but neither the gateway nor the sandbox user can modify the dependency tree.
-The directory is outside the integrity-sealed `.env`, `config.yaml`, and `.config-hash` files.
-It is part of the Hermes durable state plan, so the dependency remains available after a gateway restart.
+The setup command installs `hindsight-client==0.6.1` under `/sandbox/.hermes/lazy-packages` for the sandbox-side command.
+When `memory.provider` is `hindsight`, gateway startup independently installs the supported client into `/run/nemoclaw/hermes-gateway-lazy-packages` as the gateway user before it launches.
+The sandbox user cannot read or modify that gateway-owned tree, and the gateway does not activate the sandbox-owned tree.
+Both directories are outside the generated `.env`, `config.yaml`, and `.config-hash` files.
+The sandbox copy is part of the Hermes durable state plan; the gateway copy lasts for the container runtime and is recreated after a rebuild or container replacement.
 
 Verify the provider and dependency after the restart:
 
@@ -102,12 +89,12 @@ If an earlier root install changed `/opt/hermes/.venv`, rebuild the sandbox befo
 nemohermes <name> rebuild --yes
 ```
 
-A rebuild replaces the root virtual environment and preserves any captured lazy-install directory as declared Hermes state.
-If the dependency is absent from the restored directory, the next setup or gateway start reinstalls the supported client as the sandbox user.
+A rebuild replaces the root virtual environment and preserves the sandbox lazy-install directory as declared Hermes state.
+Gateway startup always recreates its private runtime target when the container has been replaced and reinstalls the supported client as the gateway user when Hindsight is selected.
 
 Do not edit `/sandbox/.hermes/.env` to set `HERMES_LAZY_INSTALL_TARGET`.
 Do not install the dependency into `/opt/hermes/.venv`.
-Both paths change sealed inputs and can make gateway reconciliation fail.
+Both paths change generated inputs and can make gateway reconciliation fail.
 
 The preset permits one local host route only.
 To use another approved Hindsight host or port, create a custom preset and name the endpoint.
@@ -174,20 +161,21 @@ Kubernetes and other deployments without a matching direct container fail closed
 
 ## Install the Plugin in the Image
 
-Add your plugin after the Dockerfile has created `/sandbox/.hermes`.
-The example below shows the layer that copies a plugin directory into the Hermes plugin tree.
+Add your plugin to Hermes' bundled-plugin tree while the custom image is built.
+The example below keeps executable Python root-owned and non-writable at runtime.
 
 ```dockerfile
 COPY my-hermes-plugin/ /opt/my-hermes-plugin/
 
 USER root
-RUN mkdir -p /sandbox/.hermes/plugins/my-hermes-plugin \
-    && cp -a /opt/my-hermes-plugin/. /sandbox/.hermes/plugins/my-hermes-plugin/ \
+RUN mkdir -p /opt/hermes/plugins/my-hermes-plugin \
+    && cp -a /opt/my-hermes-plugin/. /opt/hermes/plugins/my-hermes-plugin/ \
     && if [ -f /opt/my-hermes-plugin/requirements.txt ]; then \
         /opt/hermes/.venv/bin/python -m pip install --no-cache-dir -r /opt/my-hermes-plugin/requirements.txt; \
     fi \
-    && chown -R sandbox:sandbox /sandbox/.hermes/plugins/my-hermes-plugin \
-    && chmod -R a+rX /sandbox/.hermes/plugins/my-hermes-plugin
+    && chown -R root:root /opt/hermes/plugins/my-hermes-plugin \
+    && find /opt/hermes/plugins/my-hermes-plugin -type d -exec chmod 0755 {} + \
+    && find /opt/hermes/plugins/my-hermes-plugin -type f -exec chmod 0444 {} +
 
 USER sandbox
 WORKDIR /sandbox
@@ -234,14 +222,15 @@ The following places commonly mix Hermes plugin installation with other NemoClaw
 
 - Do not use `skill install` for Hermes runtime plugins.
 - Do not install Hermes plugins into `/sandbox/.openclaw/extensions`; that path is for OpenClaw plugins.
-- Do not remove `/sandbox/.hermes/plugins/nemoclaw`; NemoClaw depends on that plugin for managed Hermes behavior.
+- Do not remove `/opt/hermes/plugins/nemoclaw`; NemoClaw depends on that image-owned plugin for managed Hermes behavior.
+- Do not rely on executable plugins under `/sandbox/.hermes/plugins`; root-separated gateways ignore them and accept image-owned bundled plugins instead.
 - Do not put the Dockerfile in a broad directory unless you intend to send that whole directory as the Docker build context.
 - Do not rely on `.dockerignore` to include credential-like paths; NemoClaw excludes those from staged custom build contexts for safety.
 - Do not assume OpenShell policy allows Python package downloads during runtime by default.
-- Do not install a bundled lazy dependency into `/opt/hermes/.venv` or declare its target in the sealed `.env` file.
+- Do not install a bundled lazy dependency into `/opt/hermes/.venv` or declare its target in the generated `.env` file.
 
 ## Next Steps
 
 - Review [NemoHermes Command Reference](../reference/commands#nemohermes-onboard-from) for `nemohermes onboard --from` details.
 - Review [Customize Network Policy](../network-policy/customize-network-policy) if the plugin needs runtime network egress.
-- Review [Understand Runtime Changes](configure-sandboxes/understand-runtime-changes) before changing shields or mutability settings for a plugin-enabled sandbox.
+- Review [Understand Runtime Changes](configure-sandboxes/understand-runtime-changes) before changing runtime configuration for a plugin-enabled sandbox.

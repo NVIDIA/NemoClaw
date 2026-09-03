@@ -4,7 +4,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  isShieldsDown: vi.fn(),
   runOpenshellProviderCommand: vi.fn(),
 }));
 
@@ -12,16 +11,11 @@ vi.mock("../../adapters/openshell/provider-command", () => ({
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 
-vi.mock("../../shields", () => ({
-  isShieldsDown: mocks.isShieldsDown,
-}));
-
 import { assertHermesMcpMutationRuntimeCapability } from "./mcp-bridge-adapter-hermes";
 
 describe("Hermes MCP recovery guidance", () => {
   beforeEach(() => {
     vi.stubEnv("NEMOCLAW_INVOKED_AS", "nemohermes");
-    mocks.isShieldsDown.mockReset().mockReturnValue(true);
     mocks.runOpenshellProviderCommand.mockReset().mockReturnValue({
       status: 1,
       stdout: "",
