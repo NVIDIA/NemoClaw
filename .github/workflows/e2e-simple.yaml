@@ -27,6 +27,11 @@ on:
         required: false
         default: ""
         type: string
+      openclaw_base_image:
+        description: "Optional exact OpenClaw base digest to use instead of rebuilding or latest"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: read
@@ -42,6 +47,7 @@ jobs:
     outputs:
       build_base: ${{ steps.plan.outputs.build_base }}
       image_run_id: ${{ steps.plan.outputs.image_run_id }}
+      openclaw_base_image: ${{ steps.plan.outputs.openclaw_base_image }}
       selected: ${{ steps.plan.outputs.selected }}
       sha: ${{ steps.plan.outputs.sha }}
     steps:
@@ -70,6 +76,7 @@ jobs:
         env:
           IMAGE_RUN_ID: ${{ inputs.image_run_id }}
           JOBS: ${{ inputs.jobs }}
+          OPENCLAW_BASE_IMAGE: ${{ inputs.openclaw_base_image }}
           TARGETS: ${{ inputs.targets }}
         shell: bash
         run: |
@@ -114,11 +121,19 @@ jobs:
             }
             build_base=false
           fi
+          if [[ -n "$OPENCLAW_BASE_IMAGE" ]]; then
+            [[ "$OPENCLAW_BASE_IMAGE" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || {
+              echo "::error::openclaw_base_image must be an exact NVIDIA NemoClaw base-image digest"
+              exit 1
+            }
+            build_base=false
+          fi
 
           {
             printf 'sha=%s\n' "$sha"
             printf 'build_base=%s\n' "$build_base"
             printf 'image_run_id=%s\n' "$IMAGE_RUN_ID"
+            printf 'openclaw_base_image=%s\n' "$OPENCLAW_BASE_IMAGE"
             printf 'selected=%s\n' "$selected"
           } >>"$GITHUB_OUTPUT"
           {
@@ -254,13 +269,17 @@ jobs:
       - id: base
         name: Select exact base
         env:
+          AGENT: ${{ matrix.agent }}
           BASE_ALIAS: ${{ matrix.base_alias }}
           BASE_REPOSITORY: ${{ matrix.base_repository }}
           BUILD_BASE: ${{ needs.plan.outputs.build_base }}
+          OPENCLAW_BASE_IMAGE: ${{ needs.plan.outputs.openclaw_base_image }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$BUILD_BASE" == "true" ]]; then
+          if [[ "$AGENT" == "openclaw" && -n "$OPENCLAW_BASE_IMAGE" ]]; then
+            reference="$OPENCLAW_BASE_IMAGE"
+          elif [[ "$BUILD_BASE" == "true" ]]; then
             reference="$(jq -er .reference "$RUNNER_TEMP/base-contract/contract.json")"
           else
             docker buildx imagetools inspect "$BASE_ALIAS" --raw >"$RUNNER_TEMP/base.raw"
