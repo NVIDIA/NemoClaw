@@ -24,6 +24,7 @@ const MAX_CHANGED_PATHS = 6_000;
 const PAGINATION_ATTEMPTS = 3;
 const REQUEST_ATTEMPTS = 3;
 const REQUEST_TIMEOUT_MS = 20_000;
+const MAX_REQUEST_BUDGET_MS = 3_000_000;
 const MAX_RETRY_DELAY_MS = 10_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/u;
@@ -120,7 +121,7 @@ export type PublicationSelection =
 
 export interface PublicationWaitOptions {
   history: FirstParentHistory;
-  request: (path: string) => Promise<unknown>;
+  request: (path: string, budgetMs?: number) => Promise<unknown>;
   requireWorkflowSuccess?: boolean;
   selectNearestSuccessfulRun?: boolean;
   waitMs: number;
@@ -149,6 +150,7 @@ export interface GithubRequestOptions {
   now?: () => number;
   attempts?: number;
   timeoutMs?: number;
+  budgetMs?: number;
 }
 
 function asRecord(value: unknown): JsonRecord {
@@ -686,6 +688,43 @@ function publicationEvidenceError(error: unknown, run: PublicationRun): Error {
   return new Error([message, ...context].join("; "));
 }
 
+async function resolveCompletedPublicationAttempt(
+  request: (path: string, budgetMs?: number) => Promise<unknown>,
+  latest: PublicationRun,
+  requireWorkflowSuccess: boolean,
+  deadline: number,
+  now: () => number,
+): Promise<PublicationRun> {
+  if (
+    !requireWorkflowSuccess ||
+    latest.status !== "completed" ||
+    latest.conclusion !== "cancelled" ||
+    latest.attempt === 1
+  ) {
+    return latest;
+  }
+
+  for (let attempt = latest.attempt - 1; attempt >= 1; attempt -= 1) {
+    const remainingMs = Math.floor(deadline - now());
+    if (remainingMs < 1) {
+      throw new Error(
+        `timed out validating base-image publication for ${latest.headSha}; ${latest.url}`,
+      );
+    }
+    const previous = validateBoundRun(
+      await request(
+        `/repos/${REPOSITORY}/actions/runs/${latest.id}/attempts/${attempt}`,
+        remainingMs,
+      ),
+      { ...latest, attempt },
+    );
+    if (previous.status === "completed" && previous.conclusion === "success") {
+      return previous;
+    }
+  }
+  return latest;
+}
+
 export async function waitForBaseImagePublication(
   options: PublicationWaitOptions,
 ): Promise<PublicationRun> {
@@ -702,17 +741,25 @@ export async function waitForBaseImagePublication(
   }
 
   const deadline = now() + options.waitMs;
+  const request: PublicationWaitOptions["request"] = async (path, requestedBudgetMs) => {
+    const remainingMs = Math.floor(deadline - now());
+    if (remainingMs < 1) {
+      throw new Error(
+        `timed out waiting for base-image publication covering ${options.history.relevantSha}`,
+      );
+    }
+    return options.request(path, Math.min(requestedBudgetMs ?? remainingMs, remainingMs));
+  };
   const workflowId = validateWorkflow(
-    await options.request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
+    await request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
   );
   const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}&event=push&per_page=100`;
   while (true) {
-    const runs = await collectPaginated(options.request, runsPath, "workflow_runs");
+    const runs = await collectPaginated(request, runsPath, "workflow_runs");
     const selection = selectPublicationRun(runs, options.history, workflowId, {
       completedSuccessOnly: options.selectNearestSuccessfulRun === true,
     });
     if (selection.state === "selected") {
-      const jobsPath = `/repos/${REPOSITORY}/actions/runs/${selection.run.id}/attempts/${selection.run.attempt}/jobs?per_page=100`;
       if (now() > deadline) {
         throw new Error(
           `timed out validating base-image publication for ${selection.run.headSha}; ${selection.run.url}`,
@@ -721,13 +768,30 @@ export async function waitForBaseImagePublication(
       let publisherState: "pending" | "ready";
       let validatedRun = selection.run;
       try {
-        const jobs = await collectPaginated(options.request, jobsPath, "jobs");
-        publisherState = validatePublisherJobs(jobs, selection.run);
+        const evidenceRun = await resolveCompletedPublicationAttempt(
+          request,
+          selection.run,
+          options.requireWorkflowSuccess === true,
+          deadline,
+          now,
+        );
+        const jobsPath = `/repos/${REPOSITORY}/actions/runs/${evidenceRun.id}/attempts/${evidenceRun.attempt}/jobs?per_page=100`;
+        const jobs = await collectPaginated(request, jobsPath, "jobs");
+        publisherState = validatePublisherJobs(jobs, evidenceRun);
         if (publisherState === "ready") {
-          const boundRun = validateBoundRun(
-            await options.request(`/repos/${REPOSITORY}/actions/runs/${selection.run.id}`),
+          const latestBound = validateBoundRun(
+            await request(`/repos/${REPOSITORY}/actions/runs/${selection.run.id}`),
             selection.run,
           );
+          const boundRun =
+            evidenceRun.attempt === selection.run.attempt
+              ? latestBound
+              : validateBoundRun(
+                  await request(
+                    `/repos/${REPOSITORY}/actions/runs/${evidenceRun.id}/attempts/${evidenceRun.attempt}`,
+                  ),
+                  evidenceRun,
+                );
           validatedRun = boundRun;
           if (options.requireWorkflowSuccess === true) {
             if (boundRun.status !== "completed") {
@@ -812,6 +876,7 @@ export async function githubRequest(
   const now = options.now ?? Date.now;
   const attempts = options.attempts ?? REQUEST_ATTEMPTS;
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const budgetMs = options.budgetMs;
   const authenticated = options.authenticated ?? true;
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > REQUEST_ATTEMPTS) {
     throw new Error(`request attempts must be between 1 and ${REQUEST_ATTEMPTS}`);
@@ -819,10 +884,31 @@ export async function githubRequest(
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > REQUEST_TIMEOUT_MS) {
     throw new Error(`request timeout must be between 1 and ${REQUEST_TIMEOUT_MS} milliseconds`);
   }
+  if (
+    budgetMs !== undefined &&
+    (!Number.isSafeInteger(budgetMs) || budgetMs < 1 || budgetMs > MAX_REQUEST_BUDGET_MS)
+  ) {
+    throw new Error(`request budget must be between 1 and ${MAX_REQUEST_BUDGET_MS} milliseconds`);
+  }
+  const deadline = budgetMs === undefined ? undefined : now() + budgetMs;
+
+  const remainingBudget = (): number | undefined => {
+    if (deadline === undefined) return undefined;
+    const remainingMs = Math.floor(deadline - now());
+    if (remainingMs < 1) throw new Error("GitHub API request exceeded its time budget");
+    return remainingMs;
+  };
+
+  const boundedSleep = async (milliseconds: number): Promise<void> => {
+    const remainingMs = remainingBudget();
+    await sleep(remainingMs === undefined ? milliseconds : Math.min(milliseconds, remainingMs));
+    remainingBudget();
+  };
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     let response: Response;
     try {
+      const remainingMs = remainingBudget();
       response = await fetchImpl(`${API_ROOT}${path}`, {
         headers: {
           Accept: "application/vnd.github+json",
@@ -830,13 +916,16 @@ export async function githubRequest(
           "User-Agent": "NemoClaw-base-image-publication-gate",
           "X-GitHub-Api-Version": "2022-11-28",
         },
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(
+          remainingMs === undefined ? timeoutMs : Math.min(timeoutMs, remainingMs),
+        ),
       });
     } catch {
+      remainingBudget();
       if (attempt === attempts) {
         throw new Error(`GitHub API request failed after ${attempts} attempts`);
       }
-      await sleep(Math.min(attempt * 1000, MAX_RETRY_DELAY_MS));
+      await boundedSleep(Math.min(attempt * 1000, MAX_RETRY_DELAY_MS));
       continue;
     }
 
@@ -848,14 +937,17 @@ export async function githubRequest(
       if (!transient || attempt === attempts) {
         throw new Error(`GitHub API request failed with HTTP ${response.status}`);
       }
-      await sleep(retryDelay(response, attempt, now));
+      await boundedSleep(retryDelay(response, attempt, now));
       continue;
     }
+    let result: unknown;
     try {
-      return await response.json();
+      result = await response.json();
     } catch {
       throw new Error("GitHub API response was not valid JSON");
     }
+    remainingBudget();
+    return result;
   }
 
   throw new Error("GitHub API request failed unexpectedly");
@@ -935,7 +1027,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   });
   const run = await waitForBaseImagePublication({
     history,
-    request: (path) => githubRequest(path, token),
+    request: (path, budgetMs) => githubRequest(path, token, { budgetMs }),
     requireWorkflowSuccess: requireManagedImagePublication === "1",
     selectNearestSuccessfulRun: selectNearestSuccessfulRun === "1",
     waitMs: waitSeconds * 1000,

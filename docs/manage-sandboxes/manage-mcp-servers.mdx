@@ -37,6 +37,11 @@ An existing valid provider can remain ready when a host variable is unset becaus
 
 For a trusted private server, status resolves the endpoint without changing managed state. Text output reports `private address pins: match`, `drift`, or `unresolved`. JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins. Status never adds a new address to the policy.
 
+<AgentOnly variant="deepagents">
+When status inspects a managed Deep Agents v2 MCP projection, it rejects a symbolic link, FIFO, or other non-regular file at `/sandbox/.deepagents/.nemoclaw-mcp.json`.
+The command exits with status `2` and does not report a healthy server status.
+</AgentOnly>
+
 ## Discover Advertised Tools
 
 Pass `--tools` with one server name to request the server's advertised tool names:
