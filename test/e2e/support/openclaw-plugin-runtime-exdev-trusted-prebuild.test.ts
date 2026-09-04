@@ -351,13 +351,13 @@ if (fs.existsSync(${JSON.stringify(nextImageIdPath)})) {
 }
 
 describe("trusted EXDEV OpenShell wrapper", () => {
-  it("rejects incomplete canonical OpenShell components before creating a wrapper", () => {
+  it("rejects canonical OpenShell components that lack a required MCP feature", () => {
     expect(() => createWrapperFixture(REQUIRED_OPENSHELL_MCP_FEATURES.slice(1))).toThrow(
       "trusted EXDEV image wrapper requires canonical OpenShell components with all required MCP features",
     );
   });
 
-  it("rewrites sandbox creation to the verified image ID and injects driver config", () => {
+  it("rewrites sandbox creation to the verified image ID and injects driver configuration", () => {
     const fixture = createWrapperFixture();
     try {
       const imageRef = trustedExdevImageRef("wrapper-contract-v1");
