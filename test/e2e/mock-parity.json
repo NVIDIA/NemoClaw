@@ -595,6 +595,7 @@
         "test/e2e/live/mcp-bridge-hermes-lifecycle.ts",
         "test/e2e/live/mcp-bridge-phases.ts",
         "test/e2e/live/mcp-bridge-sandbox.ts",
+        "test/e2e/live/mcp-bridge-tool-discovery.ts",
         "test/e2e/live/mcp-bridge-trusted-private.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
         "test/e2e/live/openshell-exact-main-runtime-contracts.ts"

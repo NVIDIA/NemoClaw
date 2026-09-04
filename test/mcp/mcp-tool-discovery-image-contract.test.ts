@@ -9,6 +9,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { describe, expect, it } from "vitest";
+import { expectManagedToolDiscoveryRuntimeImageContract } from "../support/managed-bootstrap-image-contract";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 const runtimeRoot = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
@@ -108,6 +109,12 @@ function createCacheSeedFixture(): {
 }
 
 describe("MCP tool discovery image contract", () => {
+  it.each(dockerfiles)("executes the discovery runtime contract in %s", (dockerfilePath) => {
+    expectManagedToolDiscoveryRuntimeImageContract(
+      fs.readFileSync(path.join(repoRoot, dockerfilePath), "utf8"),
+    );
+  });
+
   it.skipIf(process.platform === "win32")(
     "installs the complete pinned cache seed offline before registry access",
     async () => {

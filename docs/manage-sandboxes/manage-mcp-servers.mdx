@@ -74,7 +74,7 @@ An older sandbox image that does not contain the shared discovery client reports
 
 A discovery failure sets `toolDiscovery.ok` to `false` and makes the command exit nonzero.
 The command still returns the ordinary provider, policy, environment, and adapter status.
-The `commandStatus` field records the sandbox discovery runtime's exit status, or `null` when the runtime did not start.
+The `commandStatus` field records the sandbox discovery runtime's exit status. It is `null` when no runtime exit status exists, such as a failed precondition or an unreachable sandbox.
 A failed result includes `failedStage`, `failureClass`, and a redacted `detail` value.
 Bounded partial results set `truncated` to `true`.
 Correct the reported precondition, runtime, connection, authentication, protocol, or tool-operation failure, and then rerun the same command.

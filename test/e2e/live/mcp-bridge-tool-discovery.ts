@@ -17,19 +17,18 @@ export interface AuthenticatedMcpDiscoveryTarget {
   label: string;
 }
 
-const MCP_TOOL_DISCOVERY_TRANSPORT_FAILURE = "MCP tool discovery request failed";
 const MCP_TOOL_DISCOVERY_ATTEMPTS = 2;
 const MCP_TOOL_DISCOVERY_RETRY_DELAY_MS = 1_000;
 
 export function shouldRetryMcpToolDiscoveryTransportFailure(
-  toolDiscovery: { ok: boolean; detail?: string },
+  toolDiscovery: { ok: boolean; failureClass?: string },
   requestsSinceAttempt: readonly FakeMcpRequest[],
   attempt: number,
 ): boolean {
   return (
     attempt < MCP_TOOL_DISCOVERY_ATTEMPTS &&
     !toolDiscovery.ok &&
-    toolDiscovery.detail === MCP_TOOL_DISCOVERY_TRANSPORT_FAILURE &&
+    toolDiscovery.failureClass === "connection" &&
     requestsSinceAttempt.length === 0
   );
 }
@@ -530,23 +529,22 @@ export async function assertAuthenticatedMcpToolDiscovery(
         timeoutMs: 60_000,
       },
     );
-    assertExitZero(status, `${options.artifactPrefix} mcp status --tools --json`);
     statusJson = JSON.parse(status.stdout) as McpToolDiscoveryStatusJson;
-    if (
-      !shouldRetryMcpToolDiscoveryTransportFailure(
+    const shouldRetry =
+      status.exitCode !== 0 &&
+      shouldRetryMcpToolDiscoveryTransportFailure(
         statusJson.toolDiscovery,
         fakeMcp.requests.slice(requestOffset),
         attempt,
-      )
-    ) {
-      break;
-    }
+      );
+    if (!shouldRetry) break;
     options.progress.event(
       "MCP tool discovery transport failed before reaching the fixture; retrying once",
     );
     await new Promise((resolve) => setTimeout(resolve, MCP_TOOL_DISCOVERY_RETRY_DELAY_MS));
   }
   if (!status || !statusJson) throw new Error("MCP tool discovery did not run");
+  assertExitZero(status, `${options.artifactPrefix} mcp status --tools --json`);
   const discoveryRequests = fakeMcp.requests.slice(requestOffset);
   await options.artifacts.writeJson(
     `${options.artifactPrefix}-mcp-tool-discovery-diagnostics.json`,

@@ -284,7 +284,7 @@ describe("authenticated MCP rediscovery evidence", () => {
 });
 
 describe("authenticated MCP tool discovery transport retry", () => {
-  it("records denied authentication after success and restores the fixture credential (#10944)", async () => {
+  it("retries one connection failure, records denied authentication, and restores the credential (#10944)", async () => {
     const requests: FakeMcpRequest[] = [];
     const setSecret = vi.fn();
     const fakeMcp = { requests, setSecret } as unknown as FakeMcpHttpsServer;
@@ -299,6 +299,25 @@ describe("authenticated MCP tool discovery transport retry", () => {
     const host = {
       nemoclaw: vi
         .fn()
+        .mockImplementationOnce(async () => ({
+          exitCode: 1,
+          stdout: JSON.stringify({
+            provider,
+            policy,
+            adapter,
+            toolDiscovery: {
+              ok: false,
+              count: 0,
+              tools: [],
+              truncated: false,
+              commandStatus: 0,
+              failedStage: "initialization",
+              failureClass: "connection",
+              detail: "MCP tool discovery request failed",
+            },
+          }),
+          stderr: "",
+        }))
         .mockImplementationOnce(async () => {
           requests.push(
             successfulInitialize(),
@@ -354,6 +373,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
         }),
     } as unknown as Parameters<typeof assertAuthenticatedMcpToolDiscovery>[0];
     const artifacts = discoveryArtifacts();
+    const progress = { event: vi.fn() };
 
     await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
       artifacts,
@@ -361,9 +381,11 @@ describe("authenticated MCP tool discovery transport retry", () => {
       artifactPrefix: "hermes",
       deniedSecret: "denied-secret",
       hostSecret: EXPECTED_SECRET,
-      progress: { event: vi.fn() },
+      progress,
     });
 
+    expect(host.nemoclaw).toHaveBeenCalledTimes(3);
+    expect(progress.event).toHaveBeenCalledOnce();
     expect(setSecret.mock.calls).toEqual([["denied-secret"], [EXPECTED_SECRET]]);
     expect(artifacts.writeJson).toHaveBeenLastCalledWith(
       "hermes-mcp-tool-discovery-denied-auth.json",
@@ -484,10 +506,10 @@ describe("authenticated MCP tool discovery transport retry", () => {
     expect(diagnostics).not.toContain(PROTOCOL_VERSION);
   });
 
-  it("retries one generic transport failure before any request reaches the fixture", () => {
+  it("retries one connection failure before any request reaches the fixture", () => {
     expect(
       shouldRetryMcpToolDiscoveryTransportFailure(
-        { ok: false, detail: "MCP tool discovery request failed" },
+        { ok: false, failureClass: "connection" },
         [],
         1,
       ),
@@ -500,7 +522,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
   ])("does not retry when %s", (_case, requests, attempt) => {
     expect(
       shouldRetryMcpToolDiscoveryTransportFailure(
-        { ok: false, detail: "MCP tool discovery request failed" },
+        { ok: false, failureClass: "connection" },
         requests as FakeMcpRequest[],
         attempt as number,
       ),
@@ -510,7 +532,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
   it("does not retry a classified product or endpoint failure", () => {
     expect(
       shouldRetryMcpToolDiscoveryTransportFailure(
-        { ok: false, detail: "MCP endpoint returned an invalid tool-list response" },
+        { ok: false, failureClass: "protocol" },
         [],
         1,
       ),
