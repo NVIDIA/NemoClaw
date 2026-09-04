@@ -121,10 +121,15 @@ async function forwardConfiguredModel(body, configuration, credential) {
 }
 
 function resolveEdge() {
+  const systemDrive = process.env.SystemDrive;
+  const fixedRoots = /^[A-Za-z]:$/u.test(systemDrive ?? "")
+    ? [`${systemDrive}\\Program Files (x86)`, `${systemDrive}\\Program Files`]
+    : [];
   const candidates = [
     process.env["ProgramFiles(x86)"],
     process.env.ProgramFiles,
     process.env.LOCALAPPDATA,
+    ...fixedRoots,
   ]
     .filter(Boolean)
     .map((root) => path.join(root, "Microsoft", "Edge", "Application", "msedge.exe"));
@@ -456,7 +461,7 @@ async function main() {
     bridgeToken,
   );
   const openShellPort = await freePort();
-  const sandboxName = `nc-nemocua-${runId}`;
+  const sandboxName = `nc-nc-${runId}`;
   const gatewayName = `nemoclaw-nemocua-${runId}`;
   const gatewayLogPath = path.join(runRoot, "openshell-gateway.log");
   const gatewayErrorPath = path.join(runRoot, "openshell-gateway.err.log");

@@ -24,11 +24,12 @@ import {
 } from "./run-installed-native-turn.mts";
 
 const AGENT_ADAPTERS = {
-  pi: { displayName: "Pi", runtimeDirectory: "pi" },
-  hermes: { displayName: "Hermes Agent", runtimeDirectory: "hermes" },
+  pi: { displayName: "Pi", runtimeDirectory: "pi", sandboxPrefix: "nc-pi" },
+  hermes: { displayName: "Hermes Agent", runtimeDirectory: "hermes", sandboxPrefix: "nc-h" },
   "langchain-deepagents-code": {
     displayName: "Deep Agents Code",
     runtimeDirectory: "deepagents",
+    sandboxPrefix: "nc-d",
   },
 };
 
@@ -382,7 +383,7 @@ async function main() {
   for (const directory of [configRoot, gatewayState, temp])
     fs.mkdirSync(directory, { recursive: true });
   const gatewayPort = await freePort();
-  const sandboxName = `nc-${agentId}-${runId}`;
+  const sandboxName = `${adapter.sandboxPrefix}-${runId}`;
   const gatewayName = `nemoclaw-${agentId}-${runId}`;
   const gatewayLogPath = path.join(runRoot, "openshell-gateway.log");
   const gatewayErrorPath = path.join(runRoot, "openshell-gateway.err.log");
