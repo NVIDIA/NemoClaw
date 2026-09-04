@@ -154,7 +154,13 @@ export function buildDockerDriverGatewayLaunch(
   if (options.sandboxBin && !gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN) {
     gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN = options.sandboxBin;
   }
-  assertDockerDriverGatewayBindAddressSafe(gatewayEnv);
+  const platform = options.platform ?? process.platform;
+  assertDockerDriverGatewayBindAddressSafe(
+    gatewayEnv,
+    baseEnv,
+    platform,
+    options.gatewayHostRuntime,
+  );
   prepareDockerDriverGatewayConfigEnv(
     gatewayEnv,
     options.stateDir,
@@ -165,7 +171,12 @@ export function buildDockerDriverGatewayLaunch(
       ...(options.gatewayHostRuntime ? { gatewayRuntime: options.gatewayHostRuntime } : {}),
     },
   );
-  assertDockerDriverGatewayAuthConfigSafe(gatewayEnv);
+  assertDockerDriverGatewayAuthConfigSafe(
+    gatewayEnv,
+    baseEnv,
+    platform,
+    options.gatewayHostRuntime,
+  );
   const compat = shouldUseContainerizedGateway(options);
   if (!compat.useContainer) {
     const env = buildGatewayProcessEnv(baseEnv, gatewayEnv);

@@ -50,6 +50,7 @@ function gatewayRuntime(
 
 function providerBundle(
   inspectHost: RuntimeProviderBundle["preflightDoctor"]["inspectHost"],
+  observeHostRuntime: RuntimeProviderBundle["gateway"]["observeHostRuntime"],
   prepareHostRuntime: RuntimeProviderBundle["gateway"]["prepareHostRuntime"],
 ): RuntimeProviderBundle {
   return {
@@ -71,7 +72,7 @@ function providerBundle(
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
       ownsHostReadiness: false,
-      observeHostRuntime: prepareHostRuntime,
+      observeHostRuntime,
       prepareHostRuntime,
     },
   } as unknown as RuntimeProviderBundle;
@@ -104,8 +105,11 @@ describe("configured runtime provider effectful preflight", () => {
       status: "ok" as const,
       detail: "ready",
     }));
+    const observeHostRuntime = vi.fn(() => {
+      throw new Error("effectful preflight used observation instead of preparation");
+    });
     const prepareHostRuntime = vi.fn(() => runtime);
-    const provider = providerBundle(inspectHost, prepareHostRuntime);
+    const provider = providerBundle(inspectHost, observeHostRuntime, prepareHostRuntime);
     const resolveProvider = vi.fn(() => provider);
 
     assertConfiguredRuntimeProviderHealthy(host, sandboxGpuConfig, false, process.exit, {
@@ -124,6 +128,7 @@ describe("configured runtime provider effectful preflight", () => {
       process.exit,
     );
     expect(prepareHostRuntime).toHaveBeenCalledOnce();
+    expect(observeHostRuntime).not.toHaveBeenCalled();
     expect(ensureProbeImageCached).toHaveBeenCalledOnce();
     expect(run).toHaveBeenCalledTimes(2);
     expect(run.mock.calls[0]?.[0]).toEqual([
@@ -167,6 +172,7 @@ describe("configured runtime provider effectful preflight", () => {
     const exitProcess = vi.fn((_code: number): never => {
       throw new Error("exit");
     });
+    const observeHostRuntime = vi.fn();
     const prepareHostRuntime = vi.fn();
     const provider = providerBundle(
       () => ({
@@ -176,6 +182,7 @@ describe("configured runtime provider effectful preflight", () => {
         detail: "unavailable",
         hint: "start it",
       }),
+      observeHostRuntime,
       prepareHostRuntime,
     );
 
@@ -188,5 +195,6 @@ describe("configured runtime provider effectful preflight", () => {
     ).toThrow("exit");
     expect(exitProcess).toHaveBeenCalledWith(1);
     expect(prepareHostRuntime).not.toHaveBeenCalled();
+    expect(observeHostRuntime).not.toHaveBeenCalled();
   });
 });

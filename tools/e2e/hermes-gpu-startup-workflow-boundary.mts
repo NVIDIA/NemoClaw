@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
 import { CLI_ARTIFACT_RESTORE_STEP } from "./cli-artifact-workflow-boundary.mts";
@@ -274,18 +275,23 @@ if ! @run restore`;
   const restoreI = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
   const ni = steps.findIndex((step) => step.name === "Reassert trusted Node runtime");
   const node = steps[ni];
-  const nativePodmanRuntime = steps[ni + 1];
+  const staleDockerRestore = steps[ni + 1];
+  const nativePodmanRuntime = steps[ni + 2];
   if (
     runStep.shell !== BASH ||
     !trustedEnv(runStep) ||
     pi < 0 ||
     restoreI <= pi ||
     ni !== restoreI + 1 ||
-    ni + 2 !== steps.indexOf(runStep) ||
+    ni + 3 !== steps.indexOf(runStep) ||
     node?.uses !== "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" ||
     asRecord(node?.with)["node-version"] !== "22" ||
     !trustedEnv(node) ||
     asRecord(node?.env).NODE_OPTIONS !== "" ||
+    staleDockerRestore?.name !== "Recover Docker CLI before native Podman E2E" ||
+    staleDockerRestore?.uses !== E2E_ACTION_PROVENANCE.restoreNativePodmanRuntime.reference ||
+    staleDockerRestore?.if !== "${{ matrix.runtime_provider == 'podman' }}" ||
+    !isDeepStrictEqual(asRecord(staleDockerRestore?.with), { enabled: "true" }) ||
     nativePodmanRuntime?.name !== "Prepare native Podman E2E runtime" ||
     nativePodmanRuntime?.uses !== E2E_ACTION_PROVENANCE.nativePodmanRuntime.reference ||
     asRecord(nativePodmanRuntime?.with).enabled !==

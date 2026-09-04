@@ -400,18 +400,27 @@ describe("docker-driver-gateway-launch", () => {
 
   it("scrubs stale internal env from direct host gateway launches", () => {
     withTempBinaries(({ dir, gatewayBin }) => {
+      const gatewayHostRuntime = nativePodmanGatewayRuntime();
       const launch = buildDockerDriverGatewayLaunch({
         gatewayBin,
         stateDir: dir,
         platform: "linux",
         env: {
+          NEMOCLAW_GATEWAY_RUNTIME: "docker",
           OPENSHELL_DISABLE_GATEWAY_AUTH: "true",
           [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: "stale",
         },
         hostGlibcVersion: "2.39",
         requiredGlibcVersions: ["2.39"],
-        gatewayHostRuntime: nativePodmanGatewayRuntime(),
-        gatewayEnv: { OPENSHELL_DRIVERS: "podman" },
+        gatewayHostRuntime,
+        gatewayEnv: {
+          OPENSHELL_BIND_ADDRESS: gatewayHostRuntime.bindAddress,
+          OPENSHELL_DRIVERS: "podman",
+          OPENSHELL_GRPC_ENDPOINT: `https://${gatewayHostRuntime.grpcHost}:8080`,
+          OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+          OPENSHELL_SERVER_PORT: "8080",
+          OPENSHELL_SSH_GATEWAY_HOST: gatewayHostRuntime.sshGatewayHost,
+        },
       });
 
       expect(launch.mode).toBe("host");

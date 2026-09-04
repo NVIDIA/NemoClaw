@@ -5462,6 +5462,12 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Recover Docker CLI before native Podman E2E
+        if: ${{ matrix.runtime_provider == 'podman' }}
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@b61fbd6be14db93b23c3a5b952b841165dc4fd77
+        with:
+          enabled: "true"
+
       - name: Prepare native Podman E2E runtime
         uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@b61fbd6be14db93b23c3a5b952b841165dc4fd77
         with:

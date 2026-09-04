@@ -269,9 +269,11 @@ export function assertDockerDriverGatewayBindAddressSafe(
   gatewayEnv: Record<string, string>,
   environment: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
+  gatewayRuntime?: RuntimeProviderGatewayHostRuntime,
 ): void {
   if (gatewayEnv.OPENSHELL_BIND_ADDRESS !== WILDCARD_GATEWAY_BIND_ADDRESS) return;
-  const selectedRuntime = observeConfiguredGatewayHostRuntime({ environment, platform });
+  const selectedRuntime =
+    gatewayRuntime ?? observeConfiguredGatewayHostRuntime({ environment, platform });
   if (
     selectedRuntime.sandboxHostAddress !== null &&
     gatewayEnv.OPENSHELL_GRPC_ENDPOINT ===
@@ -366,8 +368,15 @@ function assertGatewayJwtFile(key: string, filePath: string): void {
 export function assertDockerDriverGatewayAuthConfigSafe(
   gatewayEnv: Record<string, string>,
   environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  gatewayRuntime?: RuntimeProviderGatewayHostRuntime,
 ): void {
-  assertDockerDriverGatewayBindAddressSafe(gatewayEnv, environment);
+  assertDockerDriverGatewayBindAddressSafe(
+    gatewayEnv,
+    environment,
+    platform,
+    gatewayRuntime,
+  );
   const configPath = gatewayEnv.OPENSHELL_GATEWAY_CONFIG?.trim();
   if (!configPath) {
     throw new Error("OpenShell Docker-driver gateway requires OPENSHELL_GATEWAY_CONFIG");

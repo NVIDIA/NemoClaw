@@ -12,6 +12,7 @@ import {
   assertDockerDriverGatewayAuthConfigSafe,
   assertDockerDriverGatewayBindAddressSafe,
 } from "./docker-driver-gateway-env";
+import { prepareNativePodmanGatewayHostRuntime } from "./runtime-provider/podman-runtime-surfaces";
 import { writeSafeGatewayAuthConfig } from "../../../test/support/docker-driver-gateway-env-test-support";
 
 describe("Docker-driver gateway env config validation", () => {
@@ -22,6 +23,28 @@ describe("Docker-driver gateway env config validation", () => {
         OPENSHELL_GATEWAY_CONFIG: "/tmp/openshell-gateway.toml",
       }),
     ).toThrow(/not supported for the OpenShell Docker-driver gateway/);
+  });
+
+  it("validates a wildcard bind against the explicit native Podman runtime", () => {
+    const runtime = prepareNativePodmanGatewayHostRuntime({
+      environment: { OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock" },
+      platform: "linux",
+    });
+    const gatewayEnv = {
+      OPENSHELL_BIND_ADDRESS: runtime.bindAddress,
+      OPENSHELL_GRPC_ENDPOINT: `https://${runtime.grpcHost}:8080`,
+      OPENSHELL_SERVER_PORT: "8080",
+      OPENSHELL_SSH_GATEWAY_HOST: runtime.sshGatewayHost,
+    };
+
+    expect(() =>
+      assertDockerDriverGatewayBindAddressSafe(
+        gatewayEnv,
+        { NEMOCLAW_GATEWAY_RUNTIME: "docker" },
+        "linux",
+        runtime,
+      ),
+    ).not.toThrow();
   });
 
   it("validates generated gateway auth config before runtime startup", () => {

@@ -2771,6 +2771,25 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
       .filter(
         ({ step }) => step.uses === E2E_ACTION_PROVENANCE.restoreNativePodmanRuntime.reference,
       );
+    const preSetupRestores = restores.filter(({ index }) => index < setupIndex);
+    const postSetupRestores = restores.filter(({ index }) => index > setupIndex);
+    const requiresStaleRecovery = jobName === "hermes-gpu-startup";
+    if (
+      requiresStaleRecovery &&
+      (preSetupRestores.length !== 1 ||
+        preSetupRestores[0]!.index !== setupIndex - 1 ||
+        preSetupRestores[0]!.step.name !== "Recover Docker CLI before native Podman E2E" ||
+        stringValue(preSetupRestores[0]!.step.if) !==
+          "${{ matrix.runtime_provider == 'podman' }}" ||
+        !isDeepStrictEqual(asRecord(preSetupRestores[0]!.step.with), { enabled: "true" }))
+    ) {
+      errors.push(
+        `${jobName} must recover stale Docker CLI isolation immediately before native Podman setup`,
+      );
+    }
+    if (!requiresStaleRecovery && preSetupRestores.length !== 0) {
+      errors.push(`${jobName} must not restore Docker before native Podman setup`);
+    }
     const resultUploads = jobSteps
       .map((step, index) => ({ index, step }))
       .filter(({ step }) => step.uses === E2E_ACTION_PROVENANCE.uploadArtifacts.reference);
@@ -2779,11 +2798,10 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
       Number.NEGATIVE_INFINITY,
     );
     if (
-      restores.length !== 1 ||
-      restores[0]!.index <= setupIndex ||
-      stringValue(restores[0]!.step.if) !==
+      postSetupRestores.length !== 1 ||
+      stringValue(postSetupRestores[0]!.step.if) !==
         "${{ always() && matrix.runtime_provider == 'podman' }}" ||
-      !isDeepStrictEqual(asRecord(restores[0]!.step.with), { enabled: "true" })
+      !isDeepStrictEqual(asRecord(postSetupRestores[0]!.step.with), { enabled: "true" })
     ) {
       errors.push(
         `${jobName} must restore the Docker CLI exactly once after native Podman execution`,
@@ -2791,7 +2809,8 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
     }
     if (
       resultUploads.length === 0 ||
-      (restores.length === 1 && restores[0]!.index <= finalResultUploadIndex)
+      (postSetupRestores.length === 1 &&
+        postSetupRestores[0]!.index <= finalResultUploadIndex)
     ) {
       errors.push(`${jobName} must keep Docker unavailable through result artifact upload`);
     }
