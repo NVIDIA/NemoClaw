@@ -225,18 +225,39 @@ export function observeOpenShellRuntimeSnapshot(
   };
 }
 
-function dockerRequestUsesGpu(
+function dockerNvidiaGpuRequestSelectors(
   request: NonNullable<
     Extract<OpenShellDockerSandboxRuntimeSnapshotQuery, { ok: true }>["deviceRequests"]
   >[number],
-): boolean {
-  return (
-    request.Driver.trim().toLowerCase() === "nvidia" ||
-    request.DeviceIDs?.some((device) => /^nvidia[.]com\/gpu(?:=|$)/iu.test(device.trim())) ===
-      true ||
+): readonly string[] | null {
+  const driver = request.Driver.trim().toLowerCase();
+  const deviceIds = request.DeviceIDs ?? [];
+  const hasGpuCapability =
     request.Capabilities?.some((group) =>
       group.some((capability) => capability.trim().toLowerCase() === "gpu"),
-    ) === true
+    ) === true;
+  const hasNvidiaCdiSelector = deviceIds.some((device) =>
+    /^nvidia[.]com\/gpu=/iu.test(device.trim()),
+  );
+  if (driver !== "nvidia" && !hasNvidiaCdiSelector && !hasGpuCapability) return null;
+
+  if (deviceIds.length > 0) {
+    if (driver === "nvidia") return deviceIds;
+    if (
+      ["", "cdi"].includes(driver) &&
+      deviceIds.every((device) => /^nvidia[.]com\/gpu=/iu.test(device.trim()))
+    ) {
+      return deviceIds;
+    }
+    throw new RuntimeProviderSnapshotError(
+      "Docker GPU attachment does not prove NVIDIA acceleration authority",
+    );
+  }
+  if (request.Count === -1 && ["", "nvidia"].includes(driver)) return ["all"];
+  throw new RuntimeProviderSnapshotError(
+    driver && !["nvidia", "cdi"].includes(driver)
+      ? "Docker GPU attachment does not prove NVIDIA acceleration authority"
+      : "Docker GPU attachment does not expose exact live device selectors",
   );
 }
 
@@ -334,20 +355,8 @@ function dockerGpuSelectors(
   }
   const requestedDevices: string[] = [];
   for (const request of snapshot.deviceRequests ?? []) {
-    if (!dockerRequestUsesGpu(request)) continue;
-    if (request.DeviceIDs && request.DeviceIDs.length > 0) {
-      requestedDevices.push(...request.DeviceIDs);
-      continue;
-    }
-    if (request.Count === -1) {
-      // Count=-1 is Docker's explicit live all-device selector. Never infer
-      // this value from a durable "GPU enabled" flag.
-      requestedDevices.push("all");
-      continue;
-    }
-    throw new RuntimeProviderSnapshotError(
-      "Docker GPU attachment does not expose exact live device selectors",
-    );
+    const selectors = dockerNvidiaGpuRequestSelectors(request);
+    if (selectors) requestedDevices.push(...selectors);
   }
   if (requestedDevices.length > 0) selections.push(requestedDevices);
   const canonicalSelections = selections.map(canonicalDockerGpuSelection);

@@ -827,6 +827,59 @@ describe("Docker provider snapshot evidence", () => {
     );
   });
 
+  it("rejects a non-NVIDIA driver before restoring matching device authority (#10758)", () => {
+    const target = sandbox({ openshellDriver: "docker" });
+    const sourceSurface = requireSupportedSurface(
+      createDockerRuntimeProviderSnapshotSurface("docker", {
+        captureHostCommand: dockerRestoreCapture(),
+        queryRuntimeSnapshot: () =>
+          dockerSnapshot({
+            deviceRequests: [
+              {
+                Driver: "cdi",
+                Count: 0,
+                DeviceIDs: ["nvidia.com/gpu=GPU-0"],
+                Capabilities: null,
+                Options: null,
+              },
+            ],
+            nativeGpuAttachmentState: "present",
+          }),
+      }),
+    );
+    const sourcePreflight = sourceSurface.preflight("backup", target);
+    const source = snapshotSource(sourcePreflight, sourceSurface.capture(target, sourcePreflight));
+    const restoreManagedProfile = dockerRestoreCapture();
+    const targetSurface = requireSupportedSurface(
+      createDockerRuntimeProviderSnapshotSurface("docker", {
+        captureHostCommand: restoreManagedProfile,
+        queryRuntimeSnapshot: () =>
+          dockerSnapshot({
+            deviceRequests: [
+              {
+                Driver: "amd",
+                Count: 0,
+                DeviceIDs: ["GPU-0"],
+                Capabilities: [["gpu"]],
+                Options: null,
+              },
+            ],
+            nativeGpuAttachmentState: "present",
+          }),
+      }),
+    );
+
+    expect(() => {
+      const targetPreflight = targetSurface.preflight("restore", target);
+      targetSurface.restore(target, targetPreflight, source, managedProfile);
+    }).toThrow(/does not prove NVIDIA acceleration authority/u);
+    expect(restoreManagedProfile).not.toHaveBeenCalledWith(
+      "docker",
+      expect.arrayContaining(["exec"]),
+      expect.any(Number),
+    );
+  });
+
   it.each(
     Array.from(
       [

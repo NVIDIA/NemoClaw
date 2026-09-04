@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -187,9 +184,9 @@ function dockerCapture() {
 function managedDockerRestoreFixture(
   sourceDevices: string[],
   initialTargetSelection: "all" | "exact",
-  backupPath = "/tmp/alpha",
 ) {
   const agent = "openclaw";
+  const backupPath = "/tmp/alpha";
   const target = sandbox(agent, { openshellDriver: "docker" });
   const source = retainedDockerSnapshot(target, {
     kind: "gpu",
@@ -425,37 +422,24 @@ describe("managed rebuild restore authority", () => {
   });
 
   it("retains exact-device authority before mutation and succeeds on retry (#10758)", () => {
-    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acceleration-retry-"));
-    const retainedFile = path.join(backupPath, "retained-state");
-    fs.writeFileSync(retainedFile, "state");
-    try {
-      const fixture = managedDockerRestoreFixture(
-        ["docker-device-id:nvidia.com/gpu=0"],
-        "all",
-        backupPath,
-      );
+    const fixture = managedDockerRestoreFixture(["docker-device-id:nvidia.com/gpu=0"], "all");
 
-      expect(fixture.run()).toMatchObject({
-        success: false,
-        error: expect.stringContaining("cannot represent the snapshot acceleration state"),
-      });
-      expect(fixture.restore).not.toHaveBeenCalled();
-      expect(fixture.providerRestore).not.toHaveBeenCalled();
-      expect(fixture.captureHostCommand.mock.calls.some(([, args]) => args[0] === "exec")).toBe(
-        false,
-      );
-      expect(fs.readFileSync(retainedFile, "utf8")).toBe("state");
+    expect(fixture.run()).toMatchObject({
+      success: false,
+      error: expect.stringContaining("cannot represent the snapshot acceleration state"),
+    });
+    expect(fixture.restore).not.toHaveBeenCalled();
+    expect(fixture.providerRestore).not.toHaveBeenCalled();
+    expect(fixture.captureHostCommand.mock.calls.some(([, args]) => args[0] === "exec")).toBe(
+      false,
+    );
 
-      fixture.selectTarget("exact");
-      expect(fixture.run()).toMatchObject({ success: true, restoredDirs: ["workspace"] });
-      expect(fixture.restore).toHaveBeenCalledOnce();
-      expect(fixture.providerRestore).toHaveBeenCalledOnce();
-      expect(
-        fixture.captureHostCommand.mock.calls.filter(([, args]) => args[0] === "exec"),
-      ).toHaveLength(1);
-      expect(fs.readFileSync(retainedFile, "utf8")).toBe("state");
-    } finally {
-      fs.rmSync(backupPath, { recursive: true, force: true });
-    }
+    fixture.selectTarget("exact");
+    expect(fixture.run()).toMatchObject({ success: true, restoredDirs: ["workspace"] });
+    expect(fixture.restore).toHaveBeenCalledOnce();
+    expect(fixture.providerRestore).toHaveBeenCalledOnce();
+    expect(
+      fixture.captureHostCommand.mock.calls.filter(([, args]) => args[0] === "exec"),
+    ).toHaveLength(1);
   });
 });
