@@ -3,6 +3,7 @@
 
 import type { McpBridgeEntry } from "../../state/registry";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import { executeSandboxCommand, type SandboxCommandResult } from "./process-recovery";
 
 export type AdapterRegistrationInspection =
@@ -50,8 +51,9 @@ export function inspectAdapterRegistrationCommand(
   sandboxName: string,
   entry: McpBridgeEntry,
   command: string,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): AdapterRegistrationInspection {
-  const result = executeSandboxCommand(sandboxName, command);
+  const result = executeSandboxCommand(sandboxName, command, { runtimeSelection });
   if (!result) return { state: "error", detail: "sandbox unreachable" };
   return parseAdapterRegistrationInspection(result, entry);
 }

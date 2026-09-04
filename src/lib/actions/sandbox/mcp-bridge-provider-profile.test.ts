@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setProviderCommandRuntimeHooksForTest } from "../../adapters/openshell/provider-command";
 import { ensureMcpBridgeProviderProfile, MCP_BRIDGE_PROVIDER_TYPE } from "./mcp-bridge-provider";
 
+const runtimeSelection = { gatewayName: "nemoclaw-8080", workspace: "default" };
+
 beforeEach(() => {
   setProviderCommandRuntimeHooksForTest({});
 });
@@ -44,7 +46,7 @@ describe("OpenShell MCP provider profile", () => {
       });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    expect(() => ensureMcpBridgeProviderProfile()).not.toThrow();
+    expect(() => ensureMcpBridgeProviderProfile(runtimeSelection)).not.toThrow();
     expect(runOpenshell).toHaveBeenCalledTimes(6);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["provider", "profile", "import", "--file", expect.stringMatching(/openai\.yaml$/)],
@@ -71,7 +73,7 @@ describe("OpenShell MCP provider profile", () => {
       });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    expect(() => ensureMcpBridgeProviderProfile()).not.toThrow();
+    expect(() => ensureMcpBridgeProviderProfile(runtimeSelection)).not.toThrow();
     expect(runOpenshell).toHaveBeenCalledWith(
       ["provider", "profile", "export", "openai", "--output", "json"],
       expect.any(Object),
@@ -103,7 +105,7 @@ describe("OpenShell MCP provider profile", () => {
       });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    expect(() => ensureMcpBridgeProviderProfile()).toThrow(
+    expect(() => ensureMcpBridgeProviderProfile(runtimeSelection)).toThrow(
       /does not match NemoClaw's endpointless credential contract/,
     );
   });
@@ -118,7 +120,7 @@ describe("OpenShell MCP provider profile", () => {
 
     let message = "";
     try {
-      ensureMcpBridgeProviderProfile();
+      ensureMcpBridgeProviderProfile(runtimeSelection);
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
@@ -146,7 +148,7 @@ describe("OpenShell MCP provider profile", () => {
 
     let message = "";
     try {
-      ensureMcpBridgeProviderProfile();
+      ensureMcpBridgeProviderProfile(runtimeSelection);
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
@@ -183,7 +185,7 @@ describe("OpenShell MCP provider profile", () => {
     const runOpenshell = vi.fn().mockReturnValueOnce({ status: 0, stdout, stderr: "" });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    expect(() => ensureMcpBridgeProviderProfile()).toThrow(
+    expect(() => ensureMcpBridgeProviderProfile(runtimeSelection)).toThrow(
       /does not match NemoClaw's endpointless inference contract/,
     );
     expect(runOpenshell).toHaveBeenCalledOnce();
@@ -201,7 +203,9 @@ describe("OpenShell MCP provider profile", () => {
     });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    expect(() => ensureMcpBridgeProviderProfile()).toThrow(/could not be read for validation/);
+    expect(() => ensureMcpBridgeProviderProfile(runtimeSelection)).toThrow(
+      /could not be read for validation/,
+    );
     expect(runOpenshell).toHaveBeenCalledOnce();
   });
 
@@ -216,7 +220,7 @@ describe("OpenShell MCP provider profile", () => {
       .mockReturnValueOnce({ status: 1, stdout: "", stderr: "export rejected" });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    expect(() => ensureMcpBridgeProviderProfile()).toThrow(
+    expect(() => ensureMcpBridgeProviderProfile(runtimeSelection)).toThrow(
       /nemoclaw-mcp-v1.*could not be exported for validation/u,
     );
     expect(runOpenshell).toHaveBeenCalledTimes(2);
