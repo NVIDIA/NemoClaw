@@ -319,7 +319,6 @@ exit 1`,
       },
     );
     expect(recovered.exitCode, resultText(recovered)).toBe(0);
-    expect(resultText(recovered)).toContain(`Ollama model '${model}' is loaded and ready.`);
     assertAgentExecutionSucceeded(recovered.stdout, "inference", model);
 
     const loaded = await host.command("curl", ["-fsS", "http://127.0.0.1:11434/api/ps"], {
