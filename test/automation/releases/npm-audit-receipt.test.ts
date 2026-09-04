@@ -258,9 +258,7 @@ describe("reviewed npm audit receipt", () => {
           JSON.stringify({ npmVersion }),
         );
 
-        const result = spawnSync(
-          process.execPath,
-          [
+        const verifierArgs = [
             "--experimental-strip-types",
             path.join(import.meta.dirname, "../../../scripts/lib/npm-audit-receipt.mts"),
             "--receipt",
@@ -283,10 +281,24 @@ describe("reviewed npm audit receipt", () => {
             inputs.severityThreshold,
             "--result",
             resultFile,
-            "--raw-copy",
-            rawCopyFile,
+          ];
+        const result = spawnSync(
+          "bash",
+          [
+            "-c",
+            'set -euo pipefail\n"$@" && cp "$NEMOCLAW_TEST_RAW_REPORT" "$NEMOCLAW_TEST_RAW_COPY"',
+            "receipt-consumer",
+            process.execPath,
+            ...verifierArgs,
           ],
-          { encoding: "utf8" },
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              NEMOCLAW_TEST_RAW_COPY: rawCopyFile,
+              NEMOCLAW_TEST_RAW_REPORT: path.join(root, "raw.json"),
+            },
+          },
         );
 
         expect(result.status, result.stderr).toBe(status);

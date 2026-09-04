@@ -592,6 +592,11 @@ describe("sandbox build context staging", () => {
     try {
       writeBuildContextFixture(sourceRoot);
       const { buildCtx } = stageOptimizedSandboxBuildContext(sourceRoot, tmpDir);
+      const stagedAuditConfig = path.join(buildCtx, "ci", "reviewed-npm-audit.json");
+      expect(fs.readFileSync(stagedAuditConfig, "utf8")).toBe(
+        fs.readFileSync(path.join(sourceRoot, "ci", "reviewed-npm-audit.json"), "utf8"),
+      );
+      expect((fs.statSync(stagedAuditConfig).mode & 0o777).toString(8)).toBe("644");
       expectStagedBlueprintModes(buildCtx);
       expectStagedOpenClawRuntimeGraphs(buildCtx, sourceRoot);
       expectStagedMcpToolDiscoveryRuntime(buildCtx, sourceRoot);
