@@ -108,6 +108,19 @@
       "lockSha256": "720c0e3ec2efcccd2c820ce2a39d733f7bd5bf9d3e6fb95310e7f6cd369db83c"
     },
     {
+      "id": "wechat-runtime",
+      "label": "Tencent WeChat plugin 2.4.3 locked runtime graph",
+      "packageSpec": "@tencent-weixin/openclaw-weixin@2.4.3",
+      "integrity": "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==",
+      "tarballUrl": "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+      "directory": "agents/openclaw/wechat-runtime",
+      "lockSha256": "27fcc4abe6707d5d710c691b25b942a269ebe2b652c6591174ee01fe06a5df35",
+      "severityThreshold": "low",
+      "installMode": "legacy-peer-deps",
+      "inputValidation": "wechat-runtime",
+      "signatureAudit": "retry-download-failures"
+    },
+    {
       "id": "mcp-tool-discovery-runtime",
       "label": "MCP tool discovery runtime locked production graph",
       "packageSpec": "@modelcontextprotocol/sdk@1.30.0",

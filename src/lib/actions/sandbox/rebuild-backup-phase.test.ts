@@ -89,6 +89,7 @@ describe("rebuild policy handoff", () => {
     expect(mocks.captureRecordedSandboxBasePolicy).toHaveBeenCalledWith(
       "alpha",
       "capture the live policy before sandbox replacement",
+      undefined,
     );
   });
 
