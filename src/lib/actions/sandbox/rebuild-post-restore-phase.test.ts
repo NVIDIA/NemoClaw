@@ -759,7 +759,7 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).not.toHaveBeenCalled();
   });
 
-  it("prints every incomplete OpenClaw recovery report in a fixed order (#8283)", async () => {
+  it("prints every incomplete OpenClaw recovery report in a fixed order (#8283, #10758)", async () => {
     vi.mocked(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
     ).mockReturnValue(false);
@@ -796,6 +796,7 @@ describe("rebuild post-restore phase", () => {
     const offsets = ordered.map((fragment) => output.indexOf(fragment));
     expect(offsets.every((offset) => offset >= 0)).toBe(true);
     expect(offsets).toEqual([...offsets].sort((left, right) => left - right));
+    expect(output).toContain("backup available at: /tmp/alpha-backup");
     expect(args.bail).toHaveBeenCalledWith(
       "State restore remained incomplete after rebuilding 'alpha'.",
     );

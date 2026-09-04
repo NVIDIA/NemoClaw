@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -146,55 +149,54 @@ function provider(agent: ShippedManagedImageAgent) {
 }
 
 describe("managed rebuild restore authority", () => {
-  it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("revalidates %s content and provider authority at the mutation edge", (agent) => {
-    const target = sandbox(agent);
-    const runtimeProvider = provider(agent);
-    const restore = vi.fn(
-      (_name: string, _path: string, options: RecreatedSandboxRestoreOptions): RestoreResult => {
-        options.validateBeforeMutation?.();
-        return {
-          success: true,
-          restoredDirs: ["workspace"],
-          failedDirs: [],
-          restoredFiles: [],
-          failedFiles: [],
-        };
-      },
-    );
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "revalidates %s content and provider authority at the mutation edge",
+    (agent) => {
+      const target = sandbox(agent);
+      const runtimeProvider = provider(agent);
+      const restore = vi.fn(
+        (_name: string, _path: string, options: RecreatedSandboxRestoreOptions): RestoreResult => {
+          options.validateBeforeMutation?.();
+          return {
+            success: true,
+            restoredDirs: ["workspace"],
+            failedDirs: [],
+            restoredFiles: [],
+            failedFiles: [],
+          };
+        },
+      );
 
-    const result = restoreRecreatedSandboxStateWithManagedAuthority(
-      "alpha",
-      manifest(agent),
-      { targetAgentType: agent },
-      {
-        getSandbox: () => target,
-        requireProvider: () => runtimeProvider.bundle,
-        captureContentAuthority: () => ({
-          schemaVersion: 1,
-          backupPath: "/tmp/alpha",
-          contentSha256: "c".repeat(64),
+      const result = restoreRecreatedSandboxStateWithManagedAuthority(
+        "alpha",
+        manifest(agent),
+        { targetAgentType: agent },
+        {
+          getSandbox: () => target,
+          requireProvider: () => runtimeProvider.bundle,
+          captureContentAuthority: () => ({
+            schemaVersion: 1,
+            backupPath: "/tmp/alpha",
+            contentSha256: "c".repeat(64),
+          }),
+          restore,
+        },
+      );
+
+      expect(result.success).toBe(true);
+      expect(restore).toHaveBeenCalledWith(
+        "alpha",
+        "/tmp/alpha",
+        expect.objectContaining({
+          authority: expect.objectContaining({ contentSha256: "c".repeat(64) }),
+          validateBeforeMutation: expect.any(Function),
         }),
-        restore,
-      },
-    );
-
-    expect(result.success).toBe(true);
-    expect(restore).toHaveBeenCalledWith(
-      "alpha",
-      "/tmp/alpha",
-      expect.objectContaining({
-        authority: expect.objectContaining({ contentSha256: "c".repeat(64) }),
-        validateBeforeMutation: expect.any(Function),
-      }),
-    );
-    expect(runtimeProvider.preflight).toHaveBeenCalledTimes(2);
-    expect(runtimeProvider.validateRestore).toHaveBeenCalledTimes(2);
-    expect(runtimeProvider.restore).toHaveBeenCalledOnce();
-  });
+      );
+      expect(runtimeProvider.preflight).toHaveBeenCalledTimes(2);
+      expect(runtimeProvider.validateRestore).toHaveBeenCalledTimes(2);
+      expect(runtimeProvider.restore).toHaveBeenCalledOnce();
+    },
+  );
 
   it("keeps legacy rebuild manifests on the state-only restore path", () => {
     const legacy = { ...manifest("openclaw"), workload: undefined, runtimeSnapshot: undefined };
@@ -243,5 +245,70 @@ describe("managed rebuild restore authority", () => {
       error: expect.stringContaining("missing provider runtime authority"),
     });
     expect(restore).not.toHaveBeenCalled();
+  });
+
+  it("retains an incompatible backup for a successful retry before file mutation (#10758)", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acceleration-retry-"));
+    const retainedFile = path.join(backupPath, "retained-state");
+    fs.writeFileSync(retainedFile, "state");
+    try {
+      const target = sandbox("openclaw");
+      const runtimeProvider = provider("openclaw");
+      runtimeProvider.validateRestore.mockImplementation(() => {
+        throw new Error("target cannot represent the snapshot acceleration state");
+      });
+      const restore = vi.fn(
+        (_name: string, _path: string, options: RecreatedSandboxRestoreOptions): RestoreResult => {
+          options.validateBeforeMutation?.();
+          return {
+            success: true,
+            restoredDirs: ["workspace"],
+            failedDirs: [],
+            restoredFiles: [],
+            failedFiles: [],
+          };
+        },
+      );
+      const retainedManifest = { ...manifest("openclaw"), backupPath };
+      const dependencies = {
+        getSandbox: () => target,
+        requireProvider: () => runtimeProvider.bundle,
+        captureContentAuthority: () => ({
+          schemaVersion: 1 as const,
+          backupPath,
+          contentSha256: "c".repeat(64),
+        }),
+        restore,
+      };
+
+      expect(
+        restoreRecreatedSandboxStateWithManagedAuthority(
+          "alpha",
+          retainedManifest,
+          { targetAgentType: "openclaw" },
+          dependencies,
+        ),
+      ).toMatchObject({
+        success: false,
+        error: expect.stringContaining("cannot represent the snapshot acceleration state"),
+      });
+      expect(restore).not.toHaveBeenCalled();
+      expect(fs.readFileSync(retainedFile, "utf8")).toBe("state");
+
+      runtimeProvider.validateRestore.mockReset();
+      expect(
+        restoreRecreatedSandboxStateWithManagedAuthority(
+          "alpha",
+          retainedManifest,
+          { targetAgentType: "openclaw" },
+          dependencies,
+        ),
+      ).toMatchObject({ success: true, restoredDirs: ["workspace"] });
+      expect(restore).toHaveBeenCalledOnce();
+      expect(runtimeProvider.restore).toHaveBeenCalledOnce();
+      expect(fs.readFileSync(retainedFile, "utf8")).toBe("state");
+    } finally {
+      fs.rmSync(backupPath, { recursive: true, force: true });
+    }
   });
 });

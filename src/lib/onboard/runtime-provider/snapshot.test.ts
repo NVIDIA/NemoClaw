@@ -654,10 +654,177 @@ describe("Docker provider snapshot evidence", () => {
         acceleration: {
           kind: "gpu",
           vendor: "nvidia",
-          devices: ["docker-device-id:GPU-live-0", "docker-nvidia-visible-device:GPU-live-0"],
+          devices: ["nvidia.com/gpu=GPU-live-0"],
         },
       },
     });
+  });
+
+  it("restores all-GPU authority across CDI and Docker capability forms (#10758)", () => {
+    const target = sandbox({ openshellDriver: "docker" });
+    const sourceSurface = requireSupportedSurface(
+      createDockerRuntimeProviderSnapshotSurface("docker", {
+        captureHostCommand: dockerRestoreCapture(),
+        queryRuntimeSnapshot: () =>
+          dockerSnapshot({
+            deviceRequests: [
+              {
+                Driver: "cdi",
+                Count: 0,
+                DeviceIDs: ["nvidia.com/gpu=all"],
+                Capabilities: null,
+                Options: null,
+              },
+            ],
+            nativeGpuAttachmentState: "present",
+          }),
+      }),
+    );
+    const sourcePreflight = sourceSurface.preflight("backup", target);
+    const source = snapshotSource(sourcePreflight, sourceSurface.capture(target, sourcePreflight));
+    const restoreManagedProfile = dockerRestoreCapture();
+    const targetSurface = requireSupportedSurface(
+      createDockerRuntimeProviderSnapshotSurface("docker", {
+        captureHostCommand: restoreManagedProfile,
+        queryRuntimeSnapshot: () =>
+          dockerSnapshot({
+            deviceRequests: [
+              {
+                Driver: "",
+                Count: -1,
+                DeviceIDs: null,
+                Capabilities: [["gpu"]],
+                Options: null,
+              },
+            ],
+            nativeGpuAttachmentState: "present",
+          }),
+      }),
+    );
+    const targetPreflight = targetSurface.preflight("restore", target);
+
+    expect(source.runtime.acceleration).toEqual({
+      kind: "gpu",
+      vendor: "nvidia",
+      devices: ["nvidia.com/gpu=all"],
+    });
+    expect(targetSurface.restore(target, targetPreflight, source, managedProfile)).toMatchObject({
+      runtime: { acceleration: source.runtime.acceleration },
+    });
+    expect(restoreManagedProfile).toHaveBeenCalledWith(
+      "docker",
+      expect.arrayContaining(["exec", "--user", "root"]),
+      15_000,
+    );
+  });
+
+  it("restores a retained legacy all-GPU snapshot through canonical target authority (#10758)", () => {
+    const target = sandbox({ openshellDriver: "docker" });
+    const legacyObservation = observation("docker", {
+      runtime: {
+        schemaVersion: 1,
+        providerId: "docker",
+        runtime: { kind: "docker-container", handle: "c".repeat(64) },
+        acceleration: {
+          kind: "gpu",
+          vendor: "nvidia",
+          devices: ["docker-device-id:nvidia.com/gpu=all"],
+        },
+      },
+    });
+    const legacySurface = requireSupportedSurface(
+      createRuntimeProviderSnapshotSurface(
+        "docker",
+        surfaceDriver(() => legacyObservation),
+      ),
+    );
+    const sourcePreflight = legacySurface.preflight("backup", target);
+    const source = snapshotSource(sourcePreflight, legacySurface.capture(target, sourcePreflight));
+    const targetSurface = requireSupportedSurface(
+      createDockerRuntimeProviderSnapshotSurface("docker", {
+        captureHostCommand: dockerRestoreCapture(),
+        queryRuntimeSnapshot: () =>
+          dockerSnapshot({
+            deviceRequests: [
+              {
+                Driver: "",
+                Count: -1,
+                DeviceIDs: null,
+                Capabilities: [["gpu"]],
+                Options: null,
+              },
+            ],
+            nativeGpuAttachmentState: "present",
+          }),
+      }),
+    );
+    const targetPreflight = targetSurface.preflight("restore", target);
+
+    expect(source.runtime.acceleration).toMatchObject({
+      devices: ["docker-device-id:nvidia.com/gpu=all"],
+    });
+    expect(targetSurface.restore(target, targetPreflight, source, managedProfile)).toMatchObject({
+      runtime: {
+        acceleration: {
+          kind: "gpu",
+          vendor: "nvidia",
+          devices: ["nvidia.com/gpu=all"],
+        },
+      },
+    });
+  });
+
+  it("rejects an all-GPU target for an exact-device snapshot before restore (#10758)", () => {
+    const target = sandbox({ openshellDriver: "docker" });
+    const sourceSurface = requireSupportedSurface(
+      createDockerRuntimeProviderSnapshotSurface("docker", {
+        captureHostCommand: dockerRestoreCapture(),
+        queryRuntimeSnapshot: () =>
+          dockerSnapshot({
+            deviceRequests: [
+              {
+                Driver: "cdi",
+                Count: 0,
+                DeviceIDs: ["nvidia.com/gpu=0"],
+                Capabilities: null,
+                Options: null,
+              },
+            ],
+            nativeGpuAttachmentState: "present",
+          }),
+      }),
+    );
+    const sourcePreflight = sourceSurface.preflight("backup", target);
+    const source = snapshotSource(sourcePreflight, sourceSurface.capture(target, sourcePreflight));
+    const restoreManagedProfile = dockerRestoreCapture();
+    const targetSurface = requireSupportedSurface(
+      createDockerRuntimeProviderSnapshotSurface("docker", {
+        captureHostCommand: restoreManagedProfile,
+        queryRuntimeSnapshot: () =>
+          dockerSnapshot({
+            deviceRequests: [
+              {
+                Driver: "",
+                Count: -1,
+                DeviceIDs: null,
+                Capabilities: [["gpu"]],
+                Options: null,
+              },
+            ],
+            nativeGpuAttachmentState: "present",
+          }),
+      }),
+    );
+    const targetPreflight = targetSurface.preflight("restore", target);
+
+    expect(() => targetSurface.restore(target, targetPreflight, source, managedProfile)).toThrow(
+      /cannot represent the snapshot acceleration state/u,
+    );
+    expect(restoreManagedProfile).not.toHaveBeenCalledWith(
+      "docker",
+      expect.arrayContaining(["exec"]),
+      expect.any(Number),
+    );
   });
 
   it.each(
@@ -681,6 +848,18 @@ describe("Docker provider snapshot evidence", () => {
           ],
           nativeGpuAttachmentState: "present",
           runtime: "nvidia",
+        }),
+        dockerSnapshot({
+          deviceRequests: [
+            {
+              Driver: "cdi",
+              Count: 0,
+              DeviceIDs: ["nvidia.com/gpu="],
+              Capabilities: null,
+              Options: null,
+            },
+          ],
+          nativeGpuAttachmentState: "present",
         }),
         dockerSnapshot({ nativeGpuAttachmentState: "unknown", runtime: "custom-runtime" }),
       ],
@@ -712,7 +891,7 @@ describe("Docker provider snapshot evidence", () => {
         },
       );
       expect(allDevices.runtime.acceleration).toMatchObject({
-        devices: ["docker-device-request:nvidia:count=-1", "docker-nvidia-visible-devices:all"],
+        devices: ["nvidia.com/gpu=all"],
       });
 
       expect(() =>
@@ -744,8 +923,31 @@ describe("Docker provider snapshot evidence", () => {
     expect(observed.runtime.acceleration).toEqual({
       kind: "gpu",
       vendor: "nvidia",
-      devices: ["docker-nvidia-visible-device:0", "docker-nvidia-visible-device:GPU-live-1"],
+      devices: ["nvidia.com/gpu=0", "nvidia.com/gpu=GPU-live-1"],
     });
+  });
+
+  it("rejects conflicting Docker GPU selectors instead of widening access", () => {
+    expect(() =>
+      observeDockerRuntimeSnapshot(sandbox({ openshellDriver: "docker" }), "docker", {
+        captureHostCommand: dockerLifecycleCapture(),
+        queryRuntimeSnapshot: () =>
+          dockerSnapshot({
+            deviceRequests: [
+              {
+                Driver: "nvidia",
+                Count: 0,
+                DeviceIDs: ["GPU-live-0"],
+                Capabilities: [["gpu"]],
+                Options: null,
+              },
+            ],
+            nativeGpuAttachmentState: "present",
+            runtime: "nvidia",
+            nvidiaVisibleDevices: "all",
+          }),
+      }),
+    ).toThrow(/conflicting live device selectors/u);
   });
 
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(

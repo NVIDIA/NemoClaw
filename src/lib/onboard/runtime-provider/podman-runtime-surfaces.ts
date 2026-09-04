@@ -682,6 +682,9 @@ export function createPodmanRuntimeProviderSnapshotSurface(
       surface().preflight(...args),
     capture: (...args: Parameters<SupportedSnapshotSurface["capture"]>) =>
       surface().capture(...args),
+    canRepresentAcceleration: (
+      ...args: Parameters<NonNullable<SupportedSnapshotSurface["canRepresentAcceleration"]>>
+    ) => surface().canRepresentAcceleration?.(...args) ?? false,
     validateRestore: (...args: Parameters<SupportedSnapshotSurface["validateRestore"]>) =>
       surface().validateRestore(...args),
     restore: (...args: Parameters<SupportedSnapshotSurface["restore"]>) =>
