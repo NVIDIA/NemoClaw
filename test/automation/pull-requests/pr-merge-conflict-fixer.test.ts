@@ -163,6 +163,22 @@ function repairSelection(
   };
 }
 
+function repairProposal(selection: RepairSelection, changedPaths = selection.selectedPaths): string {
+  const target = path.join(temporaryDirectory(), "proposal.json");
+  fs.writeFileSync(
+    target,
+    JSON.stringify({
+      version: 1,
+      findingIds: selection.findingIds,
+      unresolvedFindingIds: [],
+      changedPaths,
+      summary: "Corrected the selected source behavior.",
+      outcome: "proposed",
+    }),
+  );
+  return target;
+}
+
 function resolverTools(outputs: string[] = []): ResolverTools {
   return {
     run: vi.fn(() => outputs.shift() ?? ""),
@@ -1025,7 +1041,6 @@ describe("PR merge conflict fixer", () => {
     const candidate = path.join(directory, "candidate");
     const artifact = path.join(directory, "artifact");
     const selectionFile = path.join(directory, "selection.json");
-    const proposalFile = path.join(directory, "proposal.json");
     fs.mkdirSync(source);
     fs.mkdirSync(base);
     fs.mkdirSync(candidate);
@@ -1040,17 +1055,7 @@ describe("PR merge conflict fixer", () => {
     write(candidate, "src/lib/example.ts", "after\n");
     const selection = repairSelection(head, head);
     fs.writeFileSync(selectionFile, JSON.stringify(selection));
-    fs.writeFileSync(
-      proposalFile,
-      JSON.stringify({
-        version: 1,
-        findingIds: selection.findingIds,
-        unresolvedFindingIds: [],
-        changedPaths: selection.selectedPaths,
-        summary: "Corrected the selected source behavior.",
-        outcome: "proposed",
-      }),
-    );
+    const proposalFile = repairProposal(selection);
 
     exportAdvisorRepairPatch({
       artifactDirectory: artifact,
@@ -1088,19 +1093,8 @@ describe("PR merge conflict fixer", () => {
     const head = git(source, ["rev-parse", "HEAD"]);
     const selection = repairSelection(head, head);
     const selectionFile = path.join(directory, "selection.json");
-    const proposalFile = path.join(directory, "proposal.json");
     fs.writeFileSync(selectionFile, JSON.stringify(selection));
-    fs.writeFileSync(
-      proposalFile,
-      JSON.stringify({
-        version: 1,
-        findingIds: selection.findingIds,
-        unresolvedFindingIds: [],
-        changedPaths: selection.selectedPaths,
-        summary: "Corrected the selected source behavior.",
-        outcome: "proposed",
-      }),
-    );
+    const proposalFile = repairProposal(selection);
     expect(() =>
       exportAdvisorRepairPatch({
         artifactDirectory: path.join(directory, "artifact"),
@@ -1132,18 +1126,7 @@ describe("PR merge conflict fixer", () => {
     const patchFile = createRepairPatch(fixture, (repository) =>
       write(repository, "src/lib/example.ts", "export const value = 3;\n"),
     );
-    const proposalFile = path.join(temporaryDirectory(), "proposal.json");
-    fs.writeFileSync(
-      proposalFile,
-      JSON.stringify({
-        version: 1,
-        findingIds: selection.findingIds,
-        unresolvedFindingIds: [],
-        changedPaths: selection.selectedPaths,
-        summary: "Corrected the selected value.",
-        outcome: "proposed",
-      }),
-    );
+    const proposalFile = repairProposal(selection);
     const candidate = validateRepairPatch({
       sourceCheckout: fixture.repository,
       destination: path.join(temporaryDirectory(), "validated"),
@@ -1446,18 +1429,7 @@ describe("PR merge conflict fixer", () => {
     const fixture = createRepairFixture();
     const selection = repairSelection(fixture.headSha, fixture.baseSha);
     const patchFile = createRepairPatch(fixture, mutate);
-    const proposalFile = path.join(temporaryDirectory(), "proposal.json");
-    fs.writeFileSync(
-      proposalFile,
-      JSON.stringify({
-        version: 1,
-        findingIds: selection.findingIds,
-        unresolvedFindingIds: [],
-        changedPaths,
-        summary: "Produced a repair candidate.",
-        outcome: "proposed",
-      }),
-    );
+    const proposalFile = repairProposal(selection, changedPaths);
     expect(() =>
       validateRepairPatch({
         sourceCheckout: fixture.repository,
