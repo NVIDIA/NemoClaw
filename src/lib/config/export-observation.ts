@@ -79,9 +79,18 @@ export interface ObservedExportSandboxIdentity {
   readonly policyVersion: number;
 }
 
+export type ExportSnapshotReadStage =
+  | "registry"
+  | "gateway-binding"
+  | "sandbox-inventory"
+  | "sandbox-identity"
+  | "inference-route"
+  | "provider-metadata"
+  | "effective-policy";
+
 /** One complete, untrusted read from all export evidence owners. */
 export type RawExportSnapshot =
-  | Readonly<{ kind: "read-failed" }>
+  | Readonly<{ kind: "read-failed"; stage: ExportSnapshotReadStage }>
   | Readonly<{
       kind: "not-found";
       sandboxName: string;
@@ -731,14 +740,24 @@ function verifySnapshot(
   };
 }
 
-function failedLiveRead(): ObservationAttempt {
+const LIVE_READ_SOURCE_LABELS = {
+  registry: "sandbox registry",
+  "gateway-binding": "registered gateway binding",
+  "sandbox-inventory": "live sandbox inventory",
+  "sandbox-identity": "live sandbox identity",
+  "inference-route": "live gateway inference route",
+  "provider-metadata": "live inference provider metadata",
+  "effective-policy": "effective OpenShell policy",
+} satisfies Readonly<Record<ExportSnapshotReadStage, string>>;
+
+function failedLiveRead(stage: ExportSnapshotReadStage): ObservationAttempt {
   return {
     kind: "rejected",
     findings: [
       finding(
         "source.live",
         "live-verification-failed",
-        "Required live source state could not be read or verified.",
+        `The ${LIVE_READ_SOURCE_LABELS[stage]} could not be read or verified.`,
       ),
     ],
   };
@@ -749,9 +768,9 @@ async function observeAttempt(
   reader: ExportSnapshotReader,
 ): Promise<ObservationAttempt> {
   const observed = cloneAndDeepFreeze(await reader.read(sandboxName));
-  if (observed.kind === "read-failed") return failedLiveRead();
+  if (observed.kind === "read-failed") return failedLiveRead(observed.stage);
   const confirmed = cloneAndDeepFreeze(await reader.read(sandboxName));
-  if (confirmed.kind === "read-failed") return failedLiveRead();
+  if (confirmed.kind === "read-failed") return failedLiveRead(confirmed.stage);
   if (!isDeepStrictEqual(observed, confirmed)) return { kind: "changed" };
   if (observed.kind === "not-found") {
     if (observed.sandboxName !== sandboxName) {

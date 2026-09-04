@@ -26,6 +26,7 @@ import type { SandboxEntry } from "../state/registry/types";
 import {
   observeStableExportSource,
   type ExportObservationResult,
+  type ExportSnapshotReadStage,
   type ExportSnapshotReader,
   type ObservedExportGateway,
   type ObservedExportInference,
@@ -104,7 +105,10 @@ function sandboxIdentity(
   };
 }
 
-async function inferenceFor(entry: Readonly<SandboxEntry>): Promise<ObservedExportInference> {
+async function inferenceFor(
+  entry: Readonly<SandboxEntry>,
+  beforeProviderRead: () => void,
+): Promise<ObservedExportInference> {
   const selected = getSandboxEntryInference(entry);
   const normalized = normalizeInferenceSelection(entry);
   const gateway = resolveGatewayBinding(entry);
@@ -127,6 +131,7 @@ async function inferenceFor(entry: Readonly<SandboxEntry>): Promise<ObservedExpo
     live.inference.model !== selected.model
   )
     throw new Error("The live gateway inference route does not match the registry.");
+  beforeProviderRead();
   const provider = await createCliOpenShellProviderAdapter().getProvider({
     target: namedOpenShellGateway(gateway.name),
     providerName: live.inference.provider,
@@ -195,37 +200,41 @@ function effectivePolicy(
 }
 
 async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
-  const entry = loadRegistry().sandboxes[sandboxName] ?? null;
-  if (!entry) {
-    return { kind: "not-found", sandboxName };
+  let stage: ExportSnapshotReadStage = "registry";
+  try {
+    const entry = loadRegistry().sandboxes[sandboxName] ?? null;
+    if (!entry) {
+      return { kind: "not-found", sandboxName };
+    }
+    stage = "gateway-binding";
+    const gateway = gatewayFor(entry);
+    stage = "sandbox-inventory";
+    const row = liveRow(sandboxName, gateway.name);
+    stage = "sandbox-identity";
+    const sandbox = sandboxIdentity(sandboxName, gateway.name, row);
+    stage = "inference-route";
+    const inference = await inferenceFor(entry, () => {
+      stage = "provider-metadata";
+    });
+    stage = "effective-policy";
+    const policy = effectivePolicy(sandboxName, gateway, row);
+    return {
+      kind: "observed",
+      sandboxName,
+      registry: entry,
+      gateway,
+      sandbox,
+      inference,
+      policy,
+    };
+  } catch {
+    return { kind: "read-failed", stage };
   }
-  const gateway = gatewayFor(entry);
-  const row = liveRow(sandboxName, gateway.name);
-  const sandbox = sandboxIdentity(sandboxName, gateway.name, row);
-  const inference = await inferenceFor(entry);
-  const policy = effectivePolicy(sandboxName, gateway, row);
-  return {
-    kind: "observed",
-    sandboxName,
-    registry: entry,
-    gateway,
-    sandbox,
-    inference,
-    policy,
-  };
 }
 
 /** Concrete read-only bindings for one complete export snapshot. */
 export function createLiveExportSnapshotReader(): ExportSnapshotReader {
-  return {
-    read: async (sandboxName) => {
-      try {
-        return await readSnapshot(sandboxName);
-      } catch {
-        return { kind: "read-failed" };
-      }
-    },
-  };
+  return { read: readSnapshot };
 }
 
 /** Resolve one verified observation without reading credential values or mutating state. */

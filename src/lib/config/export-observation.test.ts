@@ -532,11 +532,18 @@ describe("stable config export source observation (#10938)", () => {
   });
 
   it("maps a typed concrete read failure to a controlled finding", async () => {
-    const result = await observeStableExportSource("alpha", reader([{ kind: "read-failed" }]));
+    const result = await observeStableExportSource(
+      "alpha",
+      reader([{ kind: "read-failed", stage: "provider-metadata" }]),
+    );
 
     expect(result).toMatchObject({ ok: false, attempts: 1 });
     expect(findings(result)).toContainEqual(
-      expect.objectContaining({ category: "live-verification-failed" }),
+      expect.objectContaining({
+        field: "source.live",
+        category: "live-verification-failed",
+        diagnostic: "The live inference provider metadata could not be read or verified.",
+      }),
     );
   });
 

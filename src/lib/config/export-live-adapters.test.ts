@@ -29,6 +29,7 @@ import { fingerprintOpenShellSandboxId } from "../adapters/openshell/sandbox-ide
 import { inspectOpenShellSandboxIdentityFingerprint } from "../adapters/openshell/sandbox-identity-cli";
 import { syncCliOpenShellSandboxPolicyReader } from "../adapters/openshell/sandbox-policy-cli";
 import { getLiveGatewayInference } from "../inference/live";
+import { resolveGatewayStateDirForPort } from "../onboard/gateway/state-dir";
 import { buildManagedStartupProfile } from "../onboard/managed-startup/profile-builder";
 import { getSandboxEntryInference } from "../state/registry-entry-view";
 import { load as loadRegistry } from "../state/registry/persistence";
@@ -38,6 +39,7 @@ import { createLiveExportSnapshotReader, observeLiveExportSource } from "./expor
 const sandboxId = "123e4567-e89b-42d3-a456-426614174000";
 const identityFingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
 const endpoint = "https://integrate.api.nvidia.com/v1";
+const readFailureCanary = "credential-canary-value";
 const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
 const startup = buildManagedStartupProfile({
   agent: "openclaw",
@@ -177,6 +179,68 @@ function mockSupportedLiveSource(
 }
 
 describe("live export snapshot reader", () => {
+  it.each([
+    {
+      stage: "registry",
+      fail: () =>
+        vi.mocked(loadRegistry).mockImplementationOnce(() => {
+          throw new Error(readFailureCanary);
+        }),
+    },
+    {
+      stage: "gateway-binding",
+      fail: () =>
+        vi.mocked(resolveGatewayStateDirForPort).mockImplementationOnce(() => {
+          throw new Error(readFailureCanary);
+        }),
+    },
+    {
+      stage: "sandbox-inventory",
+      fail: () =>
+        vi.mocked(captureSanitizedResolvedOpenshell).mockImplementationOnce(() => {
+          throw new Error(readFailureCanary);
+        }),
+    },
+    {
+      stage: "sandbox-identity",
+      fail: () =>
+        vi.mocked(inspectOpenShellSandboxIdentityFingerprint).mockImplementationOnce(() => {
+          throw new Error(readFailureCanary);
+        }),
+    },
+    {
+      stage: "inference-route",
+      fail: () =>
+        vi.mocked(getLiveGatewayInference).mockImplementationOnce(() => {
+          throw new Error(readFailureCanary);
+        }),
+    },
+    {
+      stage: "provider-metadata",
+      fail: () =>
+        vi.mocked(createCliOpenShellProviderAdapter).mockImplementationOnce(() => {
+          throw new Error(readFailureCanary);
+        }),
+    },
+    {
+      stage: "effective-policy",
+      fail: () =>
+        vi
+          .mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy)
+          .mockImplementationOnce(() => {
+            throw new Error(readFailureCanary);
+          }),
+    },
+  ] as const)("tags a sanitized $stage read failure", async ({ stage, fail }) => {
+    mockSupportedLiveSource();
+    fail();
+
+    const result = await createLiveExportSnapshotReader().read("alpha");
+
+    expect(result).toEqual({ kind: "read-failed", stage });
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
+  });
+
   it("fails closed when OpenShell cannot expose independent endpoint evidence", async () => {
     mockSupportedLiveSource();
     const result = await observeLiveExportSource("alpha");
@@ -257,7 +321,12 @@ describe("live export snapshot reader", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      findings: [expect.objectContaining({ category: "live-verification-failed" })],
+      findings: [
+        expect.objectContaining({
+          category: "live-verification-failed",
+          diagnostic: "The effective OpenShell policy could not be read or verified.",
+        }),
+      ],
     });
     expect(JSON.stringify(result)).not.toContain(canary);
   });
@@ -278,7 +347,12 @@ describe("live export snapshot reader", () => {
 
     await expect(observeLiveExportSource("alpha")).resolves.toMatchObject({
       ok: false,
-      findings: [expect.objectContaining({ category: "live-verification-failed" })],
+      findings: [
+        expect.objectContaining({
+          category: "live-verification-failed",
+          diagnostic: "The live inference provider metadata could not be read or verified.",
+        }),
+      ],
     });
   });
 
@@ -286,7 +360,12 @@ describe("live export snapshot reader", () => {
     mockSupportedLiveSource(4, 3);
     await expect(observeLiveExportSource("alpha")).resolves.toMatchObject({
       ok: false,
-      findings: [expect.objectContaining({ category: "live-verification-failed" })],
+      findings: [
+        expect.objectContaining({
+          category: "live-verification-failed",
+          diagnostic: "The effective OpenShell policy could not be read or verified.",
+        }),
+      ],
     });
 
     mockSupportedLiveSource();
@@ -298,7 +377,12 @@ describe("live export snapshot reader", () => {
     });
     await expect(observeLiveExportSource("alpha")).resolves.toMatchObject({
       ok: false,
-      findings: [expect.objectContaining({ category: "live-verification-failed" })],
+      findings: [
+        expect.objectContaining({
+          category: "live-verification-failed",
+          diagnostic: "The live gateway inference route could not be read or verified.",
+        }),
+      ],
     });
   });
 
@@ -312,7 +396,12 @@ describe("live export snapshot reader", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      findings: [expect.objectContaining({ category: "live-verification-failed" })],
+      findings: [
+        expect.objectContaining({
+          category: "live-verification-failed",
+          diagnostic: "The sandbox registry could not be read or verified.",
+        }),
+      ],
     });
     expect(JSON.stringify(result)).not.toContain(canary);
   });
