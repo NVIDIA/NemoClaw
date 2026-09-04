@@ -15,21 +15,19 @@ function sha256(value: string): string {
   return "sha256:" + createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-/** Serialize a validated aggregate config as deterministic canonical YAML. */
-export function serializeCanonicalNemoClawConfig(value: unknown): string {
-  return canonicalYaml(validateNemoClawConfig(value));
-}
-
-export interface NemoClawConfigDigests {
+export interface RenderedNemoClawConfig {
+  readonly yaml: string;
   readonly documentDigest: string;
   readonly specDigest: string;
 }
 
-/** Digest the canonical document and its desired-state spec separately. */
-export function digestNemoClawConfig(value: unknown): NemoClawConfigDigests {
+/** Validate and render one canonical document and its digests in one pass. */
+export function renderCanonicalNemoClawConfig(value: unknown): RenderedNemoClawConfig {
   const config = validateNemoClawConfig(value);
+  const yaml = canonicalYaml(config);
   return {
-    documentDigest: sha256(canonicalYaml(config)),
+    yaml,
+    documentDigest: sha256(yaml),
     specDigest: sha256(canonicalYaml(config.spec satisfies NemoClawConfigSpec)),
   };
 }

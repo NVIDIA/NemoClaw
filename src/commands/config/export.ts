@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Command, Flags } from "@oclif/core";
-import { digestNemoClawConfig, serializeCanonicalNemoClawConfig } from "../../lib/config/canonical";
+import { renderCanonicalNemoClawConfig } from "../../lib/config/canonical";
 import { ConfigExportInputError, runConfigExport } from "../../lib/config/export";
 import { buildExportConfig } from "../../lib/config/export-builder";
 import {
@@ -74,10 +74,7 @@ export default class ConfigExportCommand extends Command {
         {
           observe: observeLiveExportSource,
           buildConfig: buildExportConfig,
-          render: (config) => ({
-            yaml: serializeCanonicalNemoClawConfig(config),
-            ...digestNemoClawConfig(config),
-          }),
+          render: renderCanonicalNemoClawConfig,
           publish: publishExportFile,
           writeStdout: (yaml) => process.stdout.write(yaml),
         },

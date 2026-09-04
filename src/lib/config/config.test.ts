@@ -3,11 +3,7 @@
 
 import YAML from "yaml";
 import { describe, expect, it } from "vitest";
-import {
-  digestNemoClawConfig,
-  serializeCanonicalNemoClawConfig,
-  validateNemoClawConfig,
-} from "./index";
+import { renderCanonicalNemoClawConfig, validateNemoClawConfig } from "./index";
 import type { NemoClawConfig } from "./model";
 
 function config(uid = "11111111-1111-4111-8111-111111111111"): NemoClawConfig {
@@ -133,10 +129,9 @@ describe("NemoClawConfig v1", () => {
         z: policies.z,
         ä: policies.ä,
       };
-    const yaml = serializeCanonicalNemoClawConfig(value);
-    expect(yaml.indexOf("      z:")).toBeLessThan(yaml.indexOf("      ä:"));
-    expect(serializeCanonicalNemoClawConfig(reordered)).toBe(yaml);
-    expect(digestNemoClawConfig(reordered)).toEqual(digestNemoClawConfig(value));
+    const rendered = renderCanonicalNemoClawConfig(value);
+    expect(rendered.yaml.indexOf("      z:")).toBeLessThan(rendered.yaml.indexOf("      ä:"));
+    expect(renderCanonicalNemoClawConfig(reordered)).toEqual(rendered);
   });
 
   it("emits the same canonical YAML for mapping insertion order changes (#10938)", () => {
@@ -147,15 +142,15 @@ describe("NemoClawConfig v1", () => {
       metadata: value.metadata,
       apiVersion: value.apiVersion,
     };
-    expect(serializeCanonicalNemoClawConfig(reordered)).toBe(
-      serializeCanonicalNemoClawConfig(value),
+    expect(renderCanonicalNemoClawConfig(reordered).yaml).toBe(
+      renderCanonicalNemoClawConfig(value).yaml,
     );
-    expect(YAML.parse(serializeCanonicalNemoClawConfig(value))).toEqual(value);
+    expect(YAML.parse(renderCanonicalNemoClawConfig(value).yaml)).toEqual(value);
   });
 
   it("changes documentDigest but keeps specDigest when a fresh UID changes (#10938)", () => {
-    const first = digestNemoClawConfig(config());
-    const second = digestNemoClawConfig(config("22222222-2222-4222-8222-222222222222"));
+    const first = renderCanonicalNemoClawConfig(config());
+    const second = renderCanonicalNemoClawConfig(config("22222222-2222-4222-8222-222222222222"));
     expect(second.documentDigest).not.toBe(first.documentDigest);
     expect(second.specDigest).toBe(first.specDigest);
     expect(first.documentDigest).toMatch(/^sha256:[0-9a-f]{64}$/u);

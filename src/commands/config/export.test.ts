@@ -6,14 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   observeLiveExportSource: vi.fn(),
   buildExportConfig: vi.fn(),
-  serializeCanonicalNemoClawConfig: vi.fn(),
-  digestNemoClawConfig: vi.fn(),
+  renderCanonicalNemoClawConfig: vi.fn(),
   publishExportFile: vi.fn(),
 }));
 
 vi.mock("../../lib/config/canonical", () => ({
-  serializeCanonicalNemoClawConfig: mocks.serializeCanonicalNemoClawConfig,
-  digestNemoClawConfig: mocks.digestNemoClawConfig,
+  renderCanonicalNemoClawConfig: mocks.renderCanonicalNemoClawConfig,
 }));
 vi.mock("../../lib/config/export-builder", () => ({ buildExportConfig: mocks.buildExportConfig }));
 vi.mock("../../lib/config/output", async (importOriginal) => ({
@@ -31,8 +29,8 @@ describe("config export command", () => {
   beforeEach(() => {
     mocks.observeLiveExportSource.mockReset().mockResolvedValue({ sandboxName: "alpha" });
     mocks.buildExportConfig.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
-    mocks.serializeCanonicalNemoClawConfig.mockReset().mockReturnValue("kind: NemoClawConfig\n");
-    mocks.digestNemoClawConfig.mockReset().mockReturnValue({
+    mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
+      yaml: "kind: NemoClawConfig\n",
       documentDigest: "sha256:document",
       specDigest: "sha256:spec",
     });
