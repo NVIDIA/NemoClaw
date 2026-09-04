@@ -588,6 +588,10 @@ describe("pull request and main workflow contracts", () => {
     expect(repairPublishText).toContain("advisor-repair");
     expect(repairPublishText).toContain("assertRepairArtifactDirectory");
     expect(repairPublishText).toContain("advisor-repair-generated-head-request");
+    const upload = repairPublishText.indexOf("Upload the generated-head validation request");
+    expect(upload).toBeLessThan(repairPublishText.indexOf("Compare-and-swap the prepared repair commit"));
+    const auditSteps = advisorWorkflow.jobs["repair-audit"]?.steps ?? [];
+    expect(auditSteps.every((step) => step["continue-on-error"] === true)).toBe(true);
     expect(repairPublishText).not.toMatch(/secrets[.]|OPENAI_API_KEY|PR_REVIEW_ADVISOR_API_KEY/u);
     expect(repairRequestText).toContain("github.event.workflow_run.id");
     expect(repairRequestText).toContain("pr-review-advisor.yaml");
@@ -602,7 +606,6 @@ describe("pull request and main workflow contracts", () => {
     expect(auditText).toContain("prNumber:$pr");
     expect(auditText).toContain("tr -cd '0-9'");
   });
-
   // source-shape-contract: security -- Exact-SHA inputs and trusted-main dispatches prevent generated commits from inheriting old-head checks.
   it("runs generated-head validation only through trusted exact-SHA dispatches (#10791)", () => {
     const standard = [prWorkflow, commitLintWorkflow, dcoWorkflow, installerHashWorkflow, codeScanningWorkflow];
@@ -633,6 +636,9 @@ describe("pull request and main workflow contracts", () => {
       "github.event_name != 'workflow_dispatch'",
     );
     expect(String(dcoWorkflow.concurrency?.["cancel-in-progress"])).toContain(
+      "github.event_name != 'workflow_dispatch'",
+    );
+    expect(String(prWorkflow.concurrency?.["cancel-in-progress"])).toContain(
       "github.event_name != 'workflow_dispatch'",
     );
     expect(advisorWorkflow.on?.workflow_dispatch?.inputs).toHaveProperty("repair_attempt_key");
@@ -667,7 +673,6 @@ describe("pull request and main workflow contracts", () => {
     );
     expect(JSON.stringify(codeScanningWorkflow)).toContain("refs/pull/{0}/head");
   });
-
   it.each([
     ["pull_request", prWorkflow],
     ["main", mainWorkflow],

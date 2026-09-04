@@ -54,6 +54,13 @@ explicitly requested, the protected deterministic publisher rechecks the live st
 one verified, non-force, compare-and-swap branch update. A trusted-main reporter then runs and
 records the approved exact-generated-SHA checks without starting another repair attempt.
 
+Before dispatch, set the repository variable `PR_REVIEW_ADVISOR_REPAIR_ENABLED=true`. Dispatch the
+workflow from `main` with `target_repo`, `target_pr`, `target_base`, the exact
+`repair_head_sha` and `repair_base_sha`, `repair_finding_ids_json`, and explicit
+`repair_egress_authorized=true`; set `repair_publish=true` only for Phase 1. Selection requires a
+maintainer-triggered, open, same-repository, non-draft PR whose exact head is current and whose
+`maintainer_can_modify` value is true.
+
 The repair path retains bounded proposal, validation, publication, generated-head, and diagnostic
 artifacts. Ordinary `pull_request_target` review runs remain advisory-only and read-only.
 
@@ -88,7 +95,10 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - The review job is limited to `NVIDIA/NemoClaw` and has read-only GitHub permissions. Within it, only the trusted host provider-configuration step receives the upstream model secret.
 - A separate trusted host step collects deterministic GitHub context with `github.token` and writes a bounded, identity-checked context file before model work. The sandbox receives that file, not the token.
 - The OpenShell gateway binds only to loopback and holds the upstream provider credential. The sandbox uses `https://inference.local/v1` with an inert SDK key, and receives neither the provider credential nor a GitHub token.
-- The separate publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link.
+- The advisory-comment publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link.
+- The protected repair publisher separately has `contents: write`. It receives no model credential,
+  rechecks the complete live PR state, creates one verified commit, and advances the contributor
+  branch once with a non-force compare-and-swap update.
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target. Publication errors remain visible in the publisher logs.
 - Ordinary review runs post advisory comments only; they do not approve, request changes, merge,
   push, label, or dispatch E2E. The manual repair pilot can perform its single protected branch
@@ -157,7 +167,7 @@ workflow run also displays each Markdown review as a job summary. Replace `<inte
 specialist interest and `<attempt>` with the workflow run attempt number, then download the artifact
 with `gh run download <run-id> --name pr-review-specialist-<interest>-<attempt>`.
 
-The publisher has the only pull-request write permission. It receives neither the model credential
+The advisory-comment publisher has the only pull-request write permission. It receives neither the model credential
 nor the specialist artifacts. It posts only the workflow-run link.
 
 ## Local run

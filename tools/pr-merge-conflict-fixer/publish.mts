@@ -301,6 +301,20 @@ export async function publishVerifiedCommit(input: {
   request: GitHubRequest;
   sleep?: (milliseconds: number) => Promise<void>;
 }): Promise<string> {
+  const commitSha = await createVerifiedCommit(input);
+  await updateVerifiedRef({ ...input, commitSha });
+  return commitSha;
+}
+
+export async function createVerifiedCommit(input: {
+  finalTree: string;
+  headSha: string;
+  message: string;
+  repository: string;
+  repositoryName: string;
+  request: GitHubRequest;
+  sleep?: (milliseconds: number) => Promise<void>;
+}): Promise<string> {
   const tree = await createGitHubTree({
     baseSha: input.headSha,
     finalTree: input.finalTree,
@@ -333,7 +347,17 @@ export async function publishVerifiedCommit(input: {
   }
   if (!verified) throw new ConflictFixerError(`GitHub did not verify the repair commit: ${reason}`);
 
-  const clientMutationId = commitSha;
+  return commitSha;
+}
+
+export async function updateVerifiedRef(input: {
+  commitSha: string;
+  graphql: GraphqlRequest;
+  headRef: string;
+  headSha: string;
+  repositoryId: string;
+}): Promise<void> {
+  const clientMutationId = input.commitSha;
   const result = (await input.graphql(
     `mutation UpdateAdvisorRepairRef($input: UpdateRefsInput!) {
       updateRefs(input: $input) { clientMutationId }
@@ -343,7 +367,7 @@ export async function publishVerifiedCommit(input: {
         clientMutationId,
         refUpdates: [
           {
-            afterOid: commitSha,
+            afterOid: input.commitSha,
             beforeOid: input.headSha,
             force: false,
             name: `refs/heads/${input.headRef}`,
@@ -356,24 +380,19 @@ export async function publishVerifiedCommit(input: {
   if (result.updateRefs?.clientMutationId !== clientMutationId) {
     throw new ConflictFixerError("GitHub did not confirm the atomic PR branch update");
   }
-  return commitSha;
 }
 
-export async function publishAdvisorRepair(input: {
-  graphql: GraphqlRequest;
+export async function prepareAdvisorRepair(input: {
   request: GitHubRequest;
   sourceRepository: string;
   selectionPath: string;
   patchPath: string;
   receiptPath: string;
-  state: unknown;
-  reviews: unknown;
   workDirectory: string;
 }): Promise<string> {
   const selection = parseSelection(readJson(input.selectionPath));
   if (selection.repository !== REPAIR_REPOSITORY)
     throw new ConflictFixerError("Advisor repair target is not NVIDIA/NemoClaw");
-  assertLiveRepairState(selection, input.state, input.reviews);
   const receipt = parseValidationReceipt(readJson(input.receiptPath));
   const candidate = validateRepairPatch({
     sourceCheckout: input.sourceRepository,
@@ -383,17 +402,61 @@ export async function publishAdvisorRepair(input: {
     expectedChangedPaths: receipt.changedPaths.map(({ path: file }) => file),
   });
   assertValidatedRepair(selection, receipt, candidate);
-  return publishVerifiedCommit({
+  return createVerifiedCommit({
     finalTree: candidate.candidateTreeSha,
-    graphql: input.graphql,
-    headRef: selection.headRef,
     headSha: selection.sourceHeadSha,
     message: `fix: address PR Review Advisor findings\n\n${selection.findingIds.join("\n")}\n\nAdvisor-Repair-Attempt: ${selection.attemptKey}`,
     repository: candidate.repository,
-    repositoryId: selection.repositoryId,
     repositoryName: REPAIR_REPOSITORY,
     request: input.request,
   });
+}
+
+export async function publishPreparedAdvisorRepair(input: {
+  commitSha: string;
+  graphql: GraphqlRequest;
+  request: GitHubRequest;
+  selectionPath: string;
+  state: unknown;
+  reviews: unknown;
+}): Promise<void> {
+  const selection = parseSelection(readJson(input.selectionPath));
+  assertLiveRepairState(selection, input.state, input.reviews);
+  const commit = (await input.request(
+    "GET",
+    `/repos/${REPAIR_REPOSITORY}/git/commits/${input.commitSha}`,
+  )) as { sha?: unknown; parents?: Array<{ sha?: unknown }>; verification?: { verified?: unknown } };
+  if (
+    commit.sha !== input.commitSha ||
+    commit.parents?.length !== 1 ||
+    commit.parents[0]?.sha !== selection.sourceHeadSha ||
+    commit.verification?.verified !== true
+  )
+    throw new ConflictFixerError("prepared Advisor repair commit is invalid");
+  await updateVerifiedRef({
+    commitSha: input.commitSha,
+    graphql: input.graphql,
+    headRef: selection.headRef,
+    headSha: selection.sourceHeadSha,
+    repositoryId: selection.repositoryId,
+  });
+}
+
+export async function publishAdvisorRepair(input: Parameters<typeof prepareAdvisorRepair>[0] & {
+  graphql: GraphqlRequest;
+  state: unknown;
+  reviews: unknown;
+}): Promise<string> {
+  assertLiveRepairState(parseSelection(readJson(input.selectionPath)), input.state, input.reviews);
+  const commitSha = await prepareAdvisorRepair(input);
+  await updateVerifiedRef({
+    commitSha,
+    graphql: input.graphql,
+    headRef: parseSelection(readJson(input.selectionPath)).headRef,
+    headSha: parseSelection(readJson(input.selectionPath)).sourceHeadSha,
+    repositoryId: parseSelection(readJson(input.selectionPath)).repositoryId,
+  });
+  return commitSha;
 }
 
 async function publishValidatedTree(input: {
@@ -602,6 +665,7 @@ async function completedWorkflowEvidence(
   dispatch: { workflow: string; runId: number; url: string },
   requiredJobs: readonly string[],
   runName: string,
+  generatedHeadSha: string,
   request: GitHubRequest,
 ): Promise<AdvisorRepairHeadReceipt["workflows"][number] | null> {
   const run = (await request(
@@ -615,8 +679,7 @@ async function completedWorkflowEvidence(
     run.head_branch !== "main" ||
     run.display_title !== runName ||
     run.html_url !== dispatch.url ||
-    typeof run.head_sha !== "string" ||
-    !/^[0-9a-f]{40}$/u.test(run.head_sha) ||
+    run.head_sha !== generatedHeadSha ||
     !Number.isSafeInteger(run.run_attempt) ||
     Number(run.run_attempt) < 1
   )
@@ -756,6 +819,7 @@ export async function waitForAdvisorRepairHead(input: {
         dispatch,
         specification.checks,
         runName,
+        input.generatedHeadSha,
         input.request,
       );
       if (evidence) workflows.push(evidence);
@@ -876,19 +940,32 @@ async function main(): Promise<void> {
     }
     return;
   }
-  if (process.argv[2] === "advisor-repair") {
+  if (process.argv[2] === "advisor-repair-prepare") {
     const token = required(process.env.GITHUB_TOKEN, "GITHUB_TOKEN");
-    const client = githubClient(token);
-    const commitSha = await publishAdvisorRepair({
-      graphql: client.graphql,
-      request: client.request,
+    const commitSha = await prepareAdvisorRepair({
+      request: githubClient(token).request,
       sourceRepository: required(process.env.SOURCE_REPOSITORY, "SOURCE_REPOSITORY"),
       selectionPath: required(process.env.SELECTION_FILE, "SELECTION_FILE"),
       patchPath: required(process.env.PATCH_FILE, "PATCH_FILE"),
       receiptPath: required(process.env.RECEIPT_FILE, "RECEIPT_FILE"),
+      workDirectory: required(process.env.WORK_DIRECTORY, "WORK_DIRECTORY"),
+    });
+    if (process.env.GITHUB_OUTPUT)
+      appendFileSync(process.env.GITHUB_OUTPUT, `prepared-sha=${commitSha}\n`);
+    console.log(`Prepared verified Advisor repair commit ${commitSha}.`);
+    return;
+  }
+  if (process.argv[2] === "advisor-repair-publish") {
+    const token = required(process.env.GITHUB_TOKEN, "GITHUB_TOKEN");
+    const client = githubClient(token);
+    const commitSha = requireSha(required(process.env.PREPARED_SHA, "PREPARED_SHA"), "prepared SHA");
+    await publishPreparedAdvisorRepair({
+      commitSha,
+      graphql: client.graphql,
+      request: client.request,
+      selectionPath: required(process.env.SELECTION_FILE, "SELECTION_FILE"),
       state: readJson(required(process.env.STATE_FILE, "STATE_FILE")),
       reviews: readJson(required(process.env.REVIEWS_FILE, "REVIEWS_FILE")),
-      workDirectory: required(process.env.WORK_DIRECTORY, "WORK_DIRECTORY"),
     });
     if (process.env.GITHUB_OUTPUT)
       appendFileSync(process.env.GITHUB_OUTPUT, `published-sha=${commitSha}\n`);

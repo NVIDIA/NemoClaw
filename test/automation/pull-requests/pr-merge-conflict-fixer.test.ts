@@ -473,7 +473,6 @@ describe("PR merge conflict fixer", () => {
       sourceRepository: fixture.repository,
       workDirectory: path.join(temporaryDirectory(), "publisher"),
     });
-
     expect(result.finalTree).toBe(expectedTree);
     expect(git(result.repository, ["show", `${result.finalTree}:main-only.txt`])).toBe("main");
   });
@@ -485,7 +484,6 @@ describe("PR merge conflict fixer", () => {
       write(repository, ".github/workflows/example.yaml", "name: untrusted\n");
       git(repository, ["add", ".github/workflows/example.yaml"]);
     });
-
     expect(() =>
       validateResolutionPatch({
         entry: entryFor(fixture),
@@ -523,7 +521,6 @@ describe("PR merge conflict fixer", () => {
       sourceRepository: fixture.repository,
       workDirectory: path.join(temporaryDirectory(), "publisher"),
     });
-
     expect(result.finalTree).toBe(expectedTree);
     expect(git(result.repository, ["show", `${result.finalTree}:adapter.mts`])).toBe(
       "main migration\npull request intent",
@@ -1292,6 +1289,7 @@ describe("PR merge conflict fixer", () => {
     const runName = `Repair validation ${selection.attemptKey} head ${generatedHeadSha}`;
     let failedWorkflow: string | undefined;
     let correlationMode: "one" | "zero" | "ambiguous" = "one";
+    let workflowHeadSha = generatedHeadSha;
     const dispatchedWorkflows = new Set<string>();
     const request = vi.fn(async (method: string, apiPath: string, body?: unknown) => {
       const workflow = ADVISOR_REPAIR_HEAD_WORKFLOWS.find(({ workflow }) =>
@@ -1345,7 +1343,7 @@ describe("PR merge conflict fixer", () => {
             conclusion: specification.workflow === failedWorkflow ? "failure" : "success",
             display_title: runName,
             head_branch: "main",
-            head_sha: "a".repeat(40),
+            head_sha: workflowHeadSha,
             html_url: `https://github.com/${selection.repository}/actions/runs/${runId}`,
             run_attempt: 1,
           };
@@ -1394,6 +1392,9 @@ describe("PR merge conflict fixer", () => {
       workflows: { length: 6 },
       checks: { length: 5 },
     });
+    workflowHeadSha = "a".repeat(40);
+    dispatchedWorkflows.clear(); // A valid but different run SHA is not evidence for this head.
+    await expect(verify()).rejects.toThrow("run evidence is invalid");
     failedWorkflow = "pr.yaml";
     dispatchedWorkflows.clear();
     await expect(verify()).rejects.toThrow("generated-head pr.yaml run failed");

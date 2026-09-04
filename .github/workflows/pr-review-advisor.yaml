@@ -965,8 +965,8 @@ jobs:
             --slurpfile triggeringPermission "$live/triggering-permission.json" \
             '{pull:$pull[0], comments:$comments[0], reviewComments:$reviewComments[0], actorPermission:$actorPermission[0], triggeringPermission:$triggeringPermission[0]}' > "$live/state.json"
 
-      - id: publish
-        name: Publish with one-parent verified commit and compare-and-swap
+      - id: prepare
+        name: Create and verify the one-parent repair commit
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PATCH_FILE: ${{ env.PUBLISH_INPUT_DIR }}/validated/repair.patch
@@ -976,11 +976,11 @@ jobs:
           SOURCE_REPOSITORY: ${{ env.PUBLISH_SOURCE_DIR }}
           STATE_FILE: ${{ runner.temp }}/publish-live/state.json
           WORK_DIRECTORY: ${{ env.PUBLISH_WORK_DIR }}
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-merge-conflict-fixer/publish.mts" advisor-repair
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-merge-conflict-fixer/publish.mts" advisor-repair-prepare
 
       - name: Prepare the trusted generated-head request
         env:
-          GENERATED_HEAD_SHA: ${{ steps.publish.outputs.published-sha }}
+          GENERATED_HEAD_SHA: ${{ steps.prepare.outputs.prepared-sha }}
           SELECTION_FILE: ${{ env.PUBLISH_INPUT_DIR }}/context/selection.json
           SOURCE_WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
@@ -999,6 +999,35 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Rebind live state immediately before branch update
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.identity.outputs.pr }}
+        run: |
+          set -euo pipefail
+          live="$RUNNER_TEMP/publish-live"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$live/pull.json"
+          gh api "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_ACTOR/permission" > "$live/permission.json"
+          gh api "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_TRIGGERING_ACTOR/permission" > "$live/triggering-permission.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" --slurp | jq 'add' > "$live/reviews.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" --slurp | jq 'add' > "$live/comments.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments?per_page=100" --slurp | jq 'add' > "$live/review-comments.json"
+          jq -n --slurpfile pull "$live/pull.json" --slurpfile comments "$live/comments.json" \
+            --slurpfile reviewComments "$live/review-comments.json" \
+            --slurpfile actorPermission "$live/permission.json" \
+            --slurpfile triggeringPermission "$live/triggering-permission.json" \
+            '{pull:$pull[0], comments:$comments[0], reviewComments:$reviewComments[0], actorPermission:$actorPermission[0], triggeringPermission:$triggeringPermission[0]}' > "$live/state.json"
+
+      - id: publish
+        name: Compare-and-swap the prepared repair commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PREPARED_SHA: ${{ steps.prepare.outputs.prepared-sha }}
+          REVIEWS_FILE: ${{ runner.temp }}/publish-live/reviews.json
+          SELECTION_FILE: ${{ env.PUBLISH_INPUT_DIR }}/context/selection.json
+          STATE_FILE: ${{ runner.temp }}/publish-live/state.json
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-merge-conflict-fixer/publish.mts" advisor-repair-publish
+
   repair-audit:
     name: Preserve bounded repair audit receipt
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.repair_finding_ids_json != '[]' }}
@@ -1008,6 +1037,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Write bounded redacted receipt
+        continue-on-error: true
         env:
           TARGET_PR: ${{ inputs.target_pr }}
           RESOLVE_RESULT: ${{ needs.repair-resolve.result }}
@@ -1031,6 +1061,7 @@ jobs:
             > "$RUNNER_TEMP/advisor-repair-audit/attempt.json"
 
       - name: Upload audit receipt
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: advisor-repair-audit-${{ github.run_id }}-${{ github.run_attempt }}

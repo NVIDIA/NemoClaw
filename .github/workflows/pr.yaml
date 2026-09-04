@@ -41,7 +41,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.repair_attempt_key || github.ref }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   # Detect which files changed so we can skip expensive jobs for docs-only PRs.
