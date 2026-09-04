@@ -49,6 +49,10 @@ import { ownedHostGatewayTarget } from "../onboard/gateway-process-target-identi
 import { resolveOpenshell } from "../onboard/openshell-cli";
 import { checkPortAvailable } from "../onboard/preflight";
 import { resolveGatewayStateDirForPort } from "../onboard/gateway/state-dir";
+import {
+  resolveCurrentRuntimeProviderBundle,
+  runtimeProviderContainerEngineIdentity,
+} from "../onboard/runtime-provider/access";
 import type {
   GatewayPortConflictState,
   GatewayReadinessDependencies,
@@ -59,6 +63,7 @@ import { buildSystemReadinessProbeEnv, type ReadinessProbeEnvironmentControls } 
 export interface ProductionGatewayReadinessOptions {
   gatewayName?: () => string;
   gatewayPort?: () => number;
+  containerEngineId?: () => string | null;
   resolveOwner?: GatewayReadinessDependencies["resolveOwner"];
   probeAttachment?: GatewayReadinessDependencies["probeAttachment"];
   isLegacyClusterBound?: () => boolean;
@@ -66,6 +71,17 @@ export interface ProductionGatewayReadinessOptions {
     source: GatewayVersionSource,
     hostProcessPid: number | null,
   ) => GatewayVersionCompatibility;
+}
+
+/**
+ * Resolve the container engine binary bound to the active runtime provider's
+ * `gateway-inspection` operation ("docker" or "podman"). Returns null when the
+ * active provider does not register that operation, so callers can skip
+ * engine-specific inspection instead of guessing a binary.
+ */
+function resolveGatewayInspectionEngineId(): string | null {
+  const bundle = resolveCurrentRuntimeProviderBundle();
+  return runtimeProviderContainerEngineIdentity(bundle, "gateway-inspection")?.engineId ?? null;
 }
 
 interface ReadonlyCaptureResult {
@@ -340,13 +356,14 @@ function observeReuseState(
   };
 }
 
-function inspectLegacyCluster(
+export function inspectLegacyCluster(
   gatewayName: string,
   gatewayPort: number,
   openshell: string | null,
   env: NodeJS.ProcessEnv,
+  containerEngineId: string | null,
 ): { active: boolean; imageRef: string | null } {
-  if (!openshell) return { active: false, imageRef: null };
+  if (!openshell || !containerEngineId) return { active: false, imageRef: null };
   const status = captureReadonly([openshell, "status", "-g", gatewayName], env);
   const named = captureReadonly([openshell, "gateway", "info", "-g", gatewayName], env);
   const active = captureReadonly([openshell, "gateway", "info"], env);
@@ -368,11 +385,11 @@ function inspectLegacyCluster(
 
   const containerName = getGatewayClusterContainerName(gatewayName);
   const running = captureReadonly(
-    ["docker", "inspect", "--format", "{{.State.Running}}", containerName],
+    [containerEngineId, "inspect", "--format", "{{.State.Running}}", containerName],
     env,
   );
   const ports = captureReadonly(
-    ["docker", "inspect", "--format", "{{json .NetworkSettings.Ports}}", containerName],
+    [containerEngineId, "inspect", "--format", "{{json .NetworkSettings.Ports}}", containerName],
     env,
   );
   if (
@@ -399,7 +416,7 @@ function inspectLegacyCluster(
   }
 
   const image = captureReadonly(
-    ["docker", "inspect", "--format", "{{.Config.Image}}", containerName],
+    [containerEngineId, "inspect", "--format", "{{.Config.Image}}", containerName],
     env,
   );
   return {
@@ -577,6 +594,7 @@ export function createProductionGatewayReadinessDependencies(
 ): GatewayReadinessDependencies {
   const gatewayPort = options.gatewayPort?.() ?? getConfiguredGatewayPort();
   const gatewayName = options.gatewayName?.() ?? resolveDockerDriverGatewayName(gatewayPort);
+  const containerEngineId = options.containerEngineId?.() ?? resolveGatewayInspectionEngineId();
   const probeEnv = buildGatewayReadinessProbeEnv(process.env, {
     gatewayName,
     localTlsDir: resolveManagedGatewayProbeTlsDir(gatewayPort, process.env),
@@ -765,6 +783,7 @@ export function createProductionGatewayReadinessDependencies(
             gatewayPort,
             openshellBin,
             probeEnv,
+            containerEngineId,
           );
           legacyClusterBound = legacyCluster.active;
           legacyClusterImageRef = legacyCluster.imageRef;

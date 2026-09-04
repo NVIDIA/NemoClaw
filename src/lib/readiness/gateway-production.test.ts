@@ -39,6 +39,7 @@ import {
   gatewayPortConflictDetail,
   gatewayProcessIdentityMatchesTrustedBinary,
   gatewayProcessSamplesMatchTrustedBinary,
+  inspectLegacyCluster,
   parseDarwinLsofExecutable,
 } from "./gateway-production";
 
@@ -462,6 +463,64 @@ describe("managed gateway port readiness (#7411)", () => {
       ["gateway", "info"],
       expect.any(Object),
     );
+  });
+
+  it("inspects the legacy cluster container through the resolved runtime provider engine, not a hardcoded docker binary", () => {
+    const gatewayName = "nemoclaw-readiness-test";
+    const gatewayPort = 18_080;
+    const openshell = "/usr/local/bin/openshell";
+    const containerName = `openshell-cluster-${gatewayName}`;
+    const resultByInvocation = new Map([
+      [
+        [openshell, "status", "-g", gatewayName].join("\0"),
+        commandResult(`Gateway: ${gatewayName}\nStatus: Connected\n`, 0),
+      ],
+      [[openshell, "gateway", "info", "-g", gatewayName].join("\0"), commandResult("", 0)],
+      [
+        [openshell, "gateway", "info"].join("\0"),
+        commandResult(`Gateway endpoint: http://127.0.0.1:${gatewayPort}\n`, 0),
+      ],
+      [
+        ["podman", "inspect", "--format", "{{.State.Running}}", containerName].join("\0"),
+        commandResult("true", 0),
+      ],
+      [
+        [
+          "podman",
+          "inspect",
+          "--format",
+          "{{json .NetworkSettings.Ports}}",
+          containerName,
+        ].join("\0"),
+        commandResult(JSON.stringify({ "8080/tcp": [{ HostPort: String(gatewayPort) }] }), 0),
+      ],
+      [
+        ["podman", "inspect", "--format", "{{.Config.Image}}", containerName].join("\0"),
+        commandResult("ghcr.io/nvidia/openshell/gateway:latest", 0),
+      ],
+    ]);
+    subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      return resultByInvocation.get([command, ...args].join("\0")) ?? commandResult();
+    });
+
+    const result = inspectLegacyCluster(gatewayName, gatewayPort, openshell, {}, "podman");
+
+    expect(result).toEqual({ active: true, imageRef: "ghcr.io/nvidia/openshell/gateway:latest" });
+    expect(subprocess.spawnSync.mock.calls.some(([command]) => command === "podman")).toBe(true);
+    expect(subprocess.spawnSync.mock.calls.some(([command]) => command === "docker")).toBe(false);
+  });
+
+  it("skips legacy-cluster container inspection when no runtime provider engine can be resolved", () => {
+    const result = inspectLegacyCluster(
+      "nemoclaw-readiness-test",
+      18_080,
+      "/usr/local/bin/openshell",
+      {},
+      null,
+    );
+
+    expect(result).toEqual({ active: false, imageRef: null });
+    expect(subprocess.spawnSync).not.toHaveBeenCalled();
   });
 
   it("collects production port evidence without attempting sudo", async () => {
