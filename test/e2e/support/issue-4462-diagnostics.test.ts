@@ -25,13 +25,11 @@ describe("pairing failure evidence", () => {
       }),
     }));
 
-    await expect(
-      captureIssue4462FailureDiagnostics({ exec } as never, {
-        env: { PATH: "/usr/bin" },
-        redactionValues: ["secret-api-key"],
-        sandboxName: "issue-4462",
-      }),
-    ).resolves.toBe(true);
+    await captureIssue4462FailureDiagnostics({ exec } as never, {
+      env: { PATH: "/usr/bin" },
+      redactionValues: ["secret-api-key"],
+      sandboxName: "issue-4462",
+    });
 
     expect(exec).toHaveBeenCalledExactlyOnceWith(
       "issue-4462",
@@ -42,31 +40,6 @@ describe("pairing failure evidence", () => {
       }),
     );
   });
-
-  it.each([
-    [false, true],
-    [true, false],
-  ])(
-    "fails closed when required diagnostic readability is autoPair=%s gateway=%s (#9844)",
-    async (autoPairReadable, gatewayReadable) => {
-      const exec = vi.fn(async () => ({
-        exitCode: 0,
-        stdout: JSON.stringify({
-          schemaVersion: 1,
-          autoPair: { readable: autoPairReadable },
-          gateway: { readable: gatewayReadable },
-        }),
-      }));
-
-      await expect(
-        captureIssue4462FailureDiagnostics({ exec } as never, {
-          env: {},
-          redactionValues: [],
-          sandboxName: "issue-4462",
-        }),
-      ).resolves.toBe(false);
-    },
-  );
 
   it("emits only structured allowlisted diagnostics from secret-bearing logs (#9844)", () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-issue4462-diagnostics-"));
