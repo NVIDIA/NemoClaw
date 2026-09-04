@@ -498,13 +498,8 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
       expect.objectContaining({ failure: "recovery-failed" }),
     );
-    expect(fixture.rollbackCalls).toContainEqual([
-      "forward",
-      "stop",
-      "8642",
-      "alpha",
-      "--gateway",
-      "nemoclaw",
+    expect(fixture.rollbackMutationCalls).toEqual([
+      ["forward", "stop", "8642", "alpha", "--gateway", "nemoclaw"],
     ]);
   });
 
