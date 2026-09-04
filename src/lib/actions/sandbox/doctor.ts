@@ -593,21 +593,52 @@ function unavailableGatewayCheck(): DoctorCheck {
   };
 }
 
+function globalGatewayGuidance(gatewayName: string): {
+  checks: DoctorCheck[];
+  unavailableHint: string;
+} {
+  try {
+    return { checks: [], unavailableHint: gatewayDoctorStartHint(gatewayName) };
+  } catch {
+    const hint =
+      "check the gateway-management declaration file permissions and JSON, then retry";
+    return {
+      checks: [
+        {
+          group: "Gateway",
+          label: "Gateway management",
+          status: "fail",
+          detail: "could not resolve the gateway lifecycle owner",
+          hint,
+        },
+      ],
+      unavailableHint: hint,
+    };
+  }
+}
+
 export async function runGlobalDoctor(
   options: { quiet?: boolean } = {},
 ): Promise<GlobalDoctorReport> {
   const host = collectDoctorHostChecks(null);
   const gatewayName = resolveGatewayName(GATEWAY_PORT);
-  const gatewayChecks = host.openshellBin
-    ? (
+  let gatewayChecks: DoctorCheck[];
+  if (host.openshellBin) {
+    const guidance = globalGatewayGuidance(gatewayName);
+    gatewayChecks = [
+      ...guidance.checks,
+      ...(
         await collectDoctorGatewayChecks(gatewayName, null, host.openshellBin, {
           gatewayPort: GATEWAY_PORT,
           ignoreProbeErrors: true,
           recoverGateway: false,
-          unavailableHint: gatewayDoctorStartHint(gatewayName),
+          unavailableHint: guidance.unavailableHint,
         })
-      ).checks
-    : [unavailableGatewayCheck()];
+      ).checks,
+    ];
+  } else {
+    gatewayChecks = [unavailableGatewayCheck()];
+  }
   const report = buildGlobalDoctorReport([
     ...host.checks,
     registryReadabilityCheck(),

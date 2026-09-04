@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   dockerInspectGateway: vi.fn(),
+  gatewayDoctorStartHint: vi.fn(),
   getNamedGatewayLifecycleState: vi.fn(),
   inspectHost: vi.fn(),
   listSandboxes: vi.fn(),
@@ -50,8 +51,7 @@ vi.mock("./sandbox/doctor-lifecycle-registration", () => ({
 
 vi.mock("./sandbox/doctor-system-checks", () => ({
   dockerInspectGateway: mocks.dockerInspectGateway,
-  gatewayDoctorStartHint: () =>
-    "Start the gateway again with `nemoclaw onboard`. Then retry this command.",
+  gatewayDoctorStartHint: mocks.gatewayDoctorStartHint,
   oneLine: (value = "") => String(value).replace(/\s+/g, " ").trim(),
   shouldInspectLegacyGatewayContainer: mocks.shouldInspectLegacyGatewayContainer,
 }));
@@ -70,6 +70,9 @@ describe("global doctor action", () => {
       detail: "available",
     });
     mocks.listSandboxes.mockReturnValue({ sandboxes: [], defaultSandbox: null });
+    mocks.gatewayDoctorStartHint.mockReturnValue(
+      "Start the gateway again with `nemoclaw onboard`. Then retry this command.",
+    );
     mocks.getNamedGatewayLifecycleState.mockReturnValue({
       state: "healthy_named",
       status: "Status: Connected",
@@ -148,6 +151,47 @@ describe("global doctor action", () => {
       ]),
     );
     expect(mocks.getNamedGatewayLifecycleState).not.toHaveBeenCalled();
+    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+  });
+
+  it("reports invalid gateway management without hiding gateway health (#10212)", async () => {
+    mocks.gatewayDoctorStartHint.mockImplementationOnce(() => {
+      throw new Error("invalid declaration at /private/gateway-management.json");
+    });
+    mocks.getNamedGatewayLifecycleState.mockReturnValueOnce({
+      state: "missing_named",
+      status: "Status: Disconnected",
+      gatewayInfo: "",
+      activeGateway: null,
+    });
+
+    const report = await runGlobalDoctor({ quiet: true });
+
+    expect(report).toMatchObject({
+      schemaVersion: 1,
+      scope: "global",
+      status: "fail",
+    });
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          group: "Gateway",
+          label: "Gateway management",
+          status: "fail",
+          hint: "check the gateway-management declaration file permissions and JSON, then retry",
+        }),
+        expect.objectContaining({
+          group: "Gateway",
+          label: "OpenShell status",
+          status: "fail",
+          hint: "check the gateway-management declaration file permissions and JSON, then retry",
+        }),
+      ]),
+    );
+    expect(JSON.stringify(report)).not.toContain("/private/gateway-management.json");
+    expect(mocks.getNamedGatewayLifecycleState).toHaveBeenCalledWith("nemoclaw", {
+      ignoreProbeErrors: true,
+    });
     expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
   });
 
