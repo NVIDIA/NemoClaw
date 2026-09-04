@@ -3,7 +3,7 @@
 
 import type { CaptureOpenshellResult } from "../adapters/openshell/client";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
-import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
+import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { classifyGatewayProviderNames } from "../credentials/provider-list";
 import {
   buildOpenshellInferenceSetFailureMessage,
@@ -18,11 +18,12 @@ interface ProviderDiagnosticDeps {
 }
 
 export async function queryRegisteredGatewayProviders(
+  gatewayName: string,
   deps: ProviderDiagnosticDeps,
 ): Promise<string[] | undefined> {
   try {
     const result = await deps.providerAdapter.listProviders({
-      target: selectedOpenShellGateway(),
+      target: namedOpenShellGateway(gatewayName),
       timeoutMs: OPEN_SHELL_DIAGNOSTIC_TIMEOUT_MS,
     });
     if (result.ok) {
@@ -40,6 +41,7 @@ export async function queryRegisteredGatewayProviders(
 export async function buildInferenceSetFailure(
   setResult: CaptureOpenshellResult,
   provider: string,
+  gatewayName: string,
   deps: ProviderDiagnosticDeps,
 ): Promise<{ exitCode: number; message: string }> {
   const stderr = typeof setResult.stderr === "string" ? setResult.stderr : "";
@@ -52,7 +54,7 @@ export async function buildInferenceSetFailure(
       exitCode,
       providerNotFound,
       registeredProviders: providerNotFound
-        ? await queryRegisteredGatewayProviders(deps)
+        ? await queryRegisteredGatewayProviders(gatewayName, deps)
         : undefined,
       stderr,
       stdout,

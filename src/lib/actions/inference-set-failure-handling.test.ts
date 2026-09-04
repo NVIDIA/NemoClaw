@@ -152,7 +152,7 @@ describe("runInferenceSet failure handling", () => {
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
-  it("uses gateway providers instead of stale sandbox providers for the diagnostic (#5924)", async () => {
+  it("uses the route gateway instead of stale sandbox providers for the diagnostic (#5924)", async () => {
     const deps = createDeps({
       config: {},
       entries: [
@@ -187,7 +187,7 @@ describe("runInferenceSet failure handling", () => {
     expect(message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
     expect(deps.calls.captureOpenshell).toHaveBeenNthCalledWith(
       2,
-      ["provider", "list", "--names"],
+      ["provider", "list", "-g", "nemoclaw", "--names"],
       {
         ignoreError: true,
         includeStreams: true,

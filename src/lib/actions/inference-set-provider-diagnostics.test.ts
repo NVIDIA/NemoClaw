@@ -22,19 +22,21 @@ function adapterWithList(
 }
 
 describe("inference set provider diagnostics", () => {
-  it("returns sorted credential provider names and excludes messaging providers (#5924)", async () => {
+  it("queries the route's named gateway and excludes messaging providers (#9806)", async () => {
     const providerAdapter = adapterWithList({
       ok: true,
       value: { names: ["nvidia-prod", "alpha-telegram-bridge", "anthropic-prod"] },
     });
     const log = vi.fn();
 
-    await expect(queryRegisteredGatewayProviders({ providerAdapter, log })).resolves.toEqual([
+    await expect(
+      queryRegisteredGatewayProviders("non-default-gateway", { providerAdapter, log }),
+    ).resolves.toEqual([
       "anthropic-prod",
       "nvidia-prod",
     ]);
     expect(providerAdapter.listProviders).toHaveBeenCalledExactlyOnceWith({
-      target: { kind: "selected" },
+      target: { kind: "named", gatewayName: "non-default-gateway" },
       timeoutMs: 5_000,
     });
     expect(log).not.toHaveBeenCalled();
@@ -78,7 +80,7 @@ describe("inference set provider diagnostics", () => {
     const log = vi.fn();
 
     await expect(
-      queryRegisteredGatewayProviders({ providerAdapter, log }),
+      queryRegisteredGatewayProviders("non-default-gateway", { providerAdapter, log }),
     ).resolves.toBeUndefined();
     expect(log).toHaveBeenCalledWith(STATIC_WARNING);
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining("query-secret"));
