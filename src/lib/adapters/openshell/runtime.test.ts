@@ -8,7 +8,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { inspectOpenShellSandboxIdentityFingerprint } from "./sandbox-identity-cli";
 import { namedOpenShellGateway } from "./sandbox-observer";
-import { readCliOpenShellSandboxPolicy } from "./sandbox-policy-cli";
+import {
+  readCliOpenShellSandboxPolicy,
+  syncCliOpenShellSandboxPolicyWriter,
+} from "./sandbox-policy-cli";
 import { captureResolvedOpenshell, runOpenshell } from "./runtime";
 
 const directories: string[] = [];
@@ -111,6 +114,11 @@ describe("sanitized OpenShell capture", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-env-test-"));
     directories.push(directory);
     const captureLog = path.join(directory, "capture.jsonl");
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      localTlsDir: path.join(directory, "authority-tls"),
+      workspace: captureLog,
+    } as const;
     const openshell = nodeExecutable(
       "openshell",
       [
@@ -126,7 +134,7 @@ describe("sanitized OpenShell capture", () => {
     vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", openshell);
     vi.stubEnv("XDG_CONFIG_HOME", path.join(directory, "config"));
     vi.stubEnv("OPENSHELL_WORKSPACE", captureLog);
-    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", path.join(directory, "tls"));
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", path.join(directory, "hostile-tls"));
     vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
     vi.stubEnv("AWS_SECRET_ACCESS_KEY", "must-not-reach-openshell");
 
@@ -135,25 +143,34 @@ describe("sanitized OpenShell capture", () => {
         target: namedOpenShellGateway("nemoclaw"),
         sandboxName: "alpha",
         scope: "base",
+        runtimeSelection,
       }),
     ).resolves.toMatchObject({ result: { ok: true } });
     expect(
       inspectOpenShellSandboxIdentityFingerprint({
         sandboxName: "alpha",
         gatewayName: "nemoclaw",
+        runtimeSelection,
       }),
     ).toHaveLength(64);
+    syncCliOpenShellSandboxPolicyWriter.setSandboxPolicy({
+      target: namedOpenShellGateway("nemoclaw"),
+      sandboxName: "alpha",
+      policyPath: path.join(directory, "policy.yaml"),
+      runtimeSelection,
+    });
 
     const environments = fs
       .readFileSync(captureLog, "utf8")
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as NodeJS.ProcessEnv);
-    expect(environments).toHaveLength(2);
+    expect(environments).toHaveLength(3);
     expect(environments[0]).toEqual(environments[1]);
+    expect(environments[1]).toEqual(environments[2]);
     expect(environments[0]).toMatchObject({
       OPENSHELL_GATEWAY: "nemoclaw",
-      OPENSHELL_LOCAL_TLS_DIR: path.join(directory, "tls"),
+      OPENSHELL_LOCAL_TLS_DIR: runtimeSelection.localTlsDir,
       OPENSHELL_WORKSPACE: captureLog,
       XDG_CONFIG_HOME: path.join(directory, "config"),
     });

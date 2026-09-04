@@ -603,11 +603,11 @@ describe("blueprint policy convenience", () => {
         : joined === "policy get -g test-gateway --full --output json test-sandbox"
           ? {
               exitCode: 1,
-              stdout: "",
-              stderr:
+              stdout:
                 `BadSignature \u001b[31mforged\u202efailure from ` +
                 `https://operator:${urlCredential}'fragment@example.test ` +
                 `AUTH_TOKEN=${assignmentCredential} ${"diagnostic-word ".repeat(30)} ${truncatedTail}`,
+              stderr: "",
             }
           : implementation!(command, args);
     });
