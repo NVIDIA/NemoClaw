@@ -95,7 +95,9 @@ The same #7338 sign-off gate applies to this work.
 
 Each reviewed npm audit report has a `*.provenance.json` sidecar.
 The sidecars include `coverage/reviewed-npm-audit/` artifacts and `npm-audit.provenance.json` for the WeChat locked runtime graph audit.
-Each sidecar records:
+A configured cache reuses a response only when the package and lock bytes, npm version, registry origin, command arguments, and parser identity match.
+The sidecar records whether the response came from the cache or a live registry request, plus its creation time, age, input digest, and response digest.
+Each sidecar also records:
 
 - Scanner identity, including `npm audit`, npm version, and Node.js version.
 - The configured registry with URL credentials removed.

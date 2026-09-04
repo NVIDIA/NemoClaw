@@ -54,6 +54,14 @@ export type AuditEndpoints = Readonly<{
   note: string;
 }>;
 
+export type AuditCacheEvidence = Readonly<{
+  origin: "cache" | "live";
+  createdAt: string;
+  ageMs: number;
+  inputSha256: string;
+  responseSha256: string;
+}>;
+
 export type AuditProvenance = Readonly<{
   schemaVersion: 1;
   scanner: Readonly<{ name: "npm audit"; npmVersion: string; nodeVersion: string }>;
@@ -62,6 +70,7 @@ export type AuditProvenance = Readonly<{
   graph: Readonly<{ label: string; packageSpecs: readonly string[] }>;
   rawReportPath: string;
   advisoryIds: readonly string[];
+  cache?: AuditCacheEvidence;
   failure?: string;
 }>;
 
@@ -93,6 +102,12 @@ const MAX_EXCEPTION_LIFETIME_DAYS = 30;
 const GHSA_ID_IN_URL = /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/gi;
 const NPM_AUDIT_ATTEMPT_TIMEOUT_MS = 45_000;
 const NPM_AUDIT_RETRY_DELAYS_MS = [1_000, 2_000] as const;
+export const NPM_AUDIT_ARGV = ["audit", "--omit=dev", "--json"] as const;
+export const NPM_AUDIT_CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+export const NPM_AUDIT_CACHE_FUTURE_SKEW_MS = 5 * 60 * 1000;
+const NPM_AUDIT_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+const NPM_AUDIT_CACHE_SCHEMA_VERSION = 1;
+const NPM_AUDIT_PARSER_IDENTITY = "reviewed-npm-audit-report-v1";
 
 type NpmAuditCommandResult = Readonly<{
   error?: Error;
@@ -423,6 +438,7 @@ export function extractAdvisoryIds(report: Record<string, unknown>): readonly st
 
 export function buildAuditProvenance(
   input: Readonly<{
+    cache?: AuditCacheEvidence;
     failure?: string;
     finishedAt: string;
     label: string;
@@ -443,12 +459,25 @@ export function buildAuditProvenance(
     graph: { label: input.label, packageSpecs: input.packageSpecs },
     rawReportPath: input.rawReportPath,
     advisoryIds: extractAdvisoryIds(input.report),
+    ...(input.cache === undefined ? {} : { cache: input.cache }),
     ...(input.failure === undefined ? {} : { failure: input.failure }),
   };
 }
 
 export function provenanceSidecarPath(reportPath: string): string {
   return `${reportPath.replace(/\.json$/, "")}.provenance.json`;
+}
+
+function npmVersion(directory: string): string {
+  const result = spawnSync("npm", ["--version"], {
+    cwd: directory,
+    encoding: "utf-8",
+    env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error || result.status !== 0)
+    throw new Error("npm version could not be determined for audit cache identity");
+  return result.stdout.trim();
 }
 
 function configuredNpmRegistry(directory: string): string {
@@ -460,6 +489,184 @@ function configuredNpmRegistry(directory: string): string {
     stdio: ["ignore", "pipe", "pipe"],
   });
   return result.error || result.status !== 0 ? "" : result.stdout.trim();
+}
+
+type AuditCacheInput = Readonly<{
+  argv: readonly string[];
+  npmVersion: string;
+  packageJsonSha256: string;
+  packageLockSha256: string;
+  parserIdentity: string;
+  registryOrigin: string;
+}>;
+
+type AuditCacheRecord = Readonly<{
+  schemaVersion: 1;
+  createdAt: string;
+  input: AuditCacheInput;
+  result: Readonly<{ stdout: string; exitCode: number }>;
+}>;
+
+function sha256(value: string | Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function canonicalRegistryOrigin(registry: string): string | null {
+  try {
+    const parsed = new URL(registry.trim());
+    if (parsed.protocol !== "https:") return null;
+    return `${parsed.origin}/`;
+  } catch {
+    return null;
+  }
+}
+
+export function buildAuditCacheInput(
+  directory: string,
+  npmVersion: string,
+  registry: string,
+): AuditCacheInput {
+  const registryOrigin = canonicalRegistryOrigin(registry);
+  if (!registryOrigin) throw new Error("npm audit cache requires a valid HTTP(S) registry");
+  return {
+    argv: NPM_AUDIT_ARGV,
+    npmVersion,
+    packageJsonSha256: sha256(fs.readFileSync(path.join(directory, "package.json"))),
+    packageLockSha256: sha256(fs.readFileSync(path.join(directory, "package-lock.json"))),
+    parserIdentity: NPM_AUDIT_PARSER_IDENTITY,
+    registryOrigin,
+  };
+}
+
+function cacheInputSha256(input: AuditCacheInput): string {
+  return sha256(JSON.stringify(input));
+}
+
+function parseAuditCacheRecord(source: string): AuditCacheRecord {
+  const parsed = asRecord(JSON.parse(source), "npm audit cache record");
+  requireExactKeys(
+    parsed,
+    new Set(["createdAt", "input", "result", "schemaVersion"]),
+    "npm audit cache record",
+  );
+  if (parsed.schemaVersion !== NPM_AUDIT_CACHE_SCHEMA_VERSION)
+    throw new Error("npm audit cache schema is incompatible");
+  const input = asRecord(parsed.input, "npm audit cache input");
+  requireExactKeys(
+    input,
+    new Set([
+      "argv",
+      "npmVersion",
+      "packageJsonSha256",
+      "packageLockSha256",
+      "parserIdentity",
+      "registryOrigin",
+    ]),
+    "npm audit cache input",
+  );
+  const result = asRecord(parsed.result, "npm audit cache result");
+  requireExactKeys(result, new Set(["exitCode", "stdout"]), "npm audit cache result");
+  if (!Array.isArray(input.argv) || JSON.stringify(input.argv) !== JSON.stringify(NPM_AUDIT_ARGV))
+    throw new Error("npm audit cache input.argv is invalid");
+  for (const key of [
+    "npmVersion",
+    "packageJsonSha256",
+    "packageLockSha256",
+    "parserIdentity",
+    "registryOrigin",
+  ] as const)
+    nonEmptyString(input[key], `npm audit cache input.${key}`);
+  if (
+    typeof result.stdout !== "string" ||
+    Buffer.byteLength(result.stdout) > NPM_AUDIT_CACHE_MAX_BYTES ||
+    (result.exitCode !== 0 && result.exitCode !== 1)
+  )
+    throw new Error("npm audit cache result is invalid");
+  for (const key of ["packageJsonSha256", "packageLockSha256"] as const) {
+    if (!/^[a-f0-9]{64}$/u.test(String(input[key])))
+      throw new Error(`npm audit cache input.${key} is invalid`);
+  }
+  if (
+    input.parserIdentity !== NPM_AUDIT_PARSER_IDENTITY ||
+    canonicalRegistryOrigin(String(input.registryOrigin)) !== input.registryOrigin
+  )
+    throw new Error("npm audit cache identity is invalid");
+  const createdAt = nonEmptyString(parsed.createdAt, "npm audit cache createdAt");
+  const createdTime = Date.parse(createdAt);
+  if (Number.isNaN(createdTime) || new Date(createdTime).toISOString() !== createdAt)
+    throw new Error("npm audit cache createdAt must be canonical UTC");
+  return parsed as unknown as AuditCacheRecord;
+}
+
+export function readAuditCache(
+  filename: string,
+  expectedInput: AuditCacheInput,
+  now = new Date(),
+): Readonly<{ result: NpmAuditCommandResult; evidence: AuditCacheEvidence }> | null {
+  try {
+    const descriptor = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    let source: string;
+    try {
+      const metadata = fs.fstatSync(descriptor);
+      if (!metadata.isFile() || metadata.size > NPM_AUDIT_CACHE_MAX_BYTES) return null;
+      source = fs.readFileSync(descriptor, "utf-8");
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    const record = parseAuditCacheRecord(source);
+    const ageMs = now.valueOf() - Date.parse(record.createdAt);
+    if (ageMs < -NPM_AUDIT_CACHE_FUTURE_SKEW_MS || ageMs >= NPM_AUDIT_CACHE_MAX_AGE_MS) return null;
+    if (JSON.stringify(record.input) !== JSON.stringify(expectedInput)) return null;
+    return {
+      result: {
+        status: record.result.exitCode,
+        stderr: "",
+        stdout: record.result.stdout,
+      },
+      evidence: {
+        origin: "cache",
+        createdAt: record.createdAt,
+        ageMs: Math.max(0, ageMs),
+        inputSha256: cacheInputSha256(expectedInput),
+        responseSha256: sha256(record.result.stdout),
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeAuditCache(
+  filename: string,
+  input: AuditCacheInput,
+  result: NpmAuditCommandResult,
+  createdAt: string,
+): void {
+  if (!Number.isSafeInteger(result.status)) return;
+  const record: AuditCacheRecord = {
+    schemaVersion: 1,
+    createdAt,
+    input,
+    result: { stdout: result.stdout, exitCode: result.status as number },
+  };
+  fs.mkdirSync(path.dirname(filename), { recursive: true });
+  const temporary = `${filename}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    const descriptor = fs.openSync(
+      temporary,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    try {
+      fs.writeFileSync(descriptor, `${JSON.stringify(record, null, 2)}\n`);
+      fs.fsyncSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    fs.renameSync(temporary, filename);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
 }
 
 function advisoryId(value: Readonly<Record<string, unknown>>): string {
@@ -634,6 +841,7 @@ export function evaluateAuditPolicy(
 
 export function runReviewedNpmAudit(
   options: Readonly<{
+    cacheFile?: string;
     directory: string;
     exceptionFile: string;
     graph: string;
@@ -649,23 +857,57 @@ export function runReviewedNpmAudit(
   }
   const exceptionRegistry = readAuditExceptionRegistry(options.exceptionFile);
   const startedAt = new Date().toISOString();
-  const audit = runNpmAuditWithRetry({
-    run: () =>
-      spawnSync("npm", ["audit", "--omit=dev", "--json"], {
-        cwd: options.directory,
-        encoding: "utf-8",
-        env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
-        maxBuffer: 64 * 1024 * 1024,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: NPM_AUDIT_ATTEMPT_TIMEOUT_MS,
-      }),
-  });
+  const cacheFile = options.cacheFile ?? process.env.NEMOCLAW_NPM_AUDIT_CACHE_FILE;
+  const registry = process.env.NPM_CONFIG_REGISTRY ?? configuredNpmRegistry(options.directory);
+  let cacheInput: AuditCacheInput | undefined;
+  if (cacheFile) {
+    try {
+      cacheInput = buildAuditCacheInput(
+        options.directory,
+        options.provenance?.npmVersion ?? npmVersion(options.directory),
+        registry,
+      );
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "npm audit cache requires a valid HTTP(S) registry") {
+        throw error;
+      }
+      // An invalid optional cache registry degrades to a live audit.
+    }
+  }
+  const cached = cacheFile && cacheInput ? readAuditCache(cacheFile, cacheInput) : null;
+  const audit = cached
+    ? runNpmAuditWithRetry({ run: () => cached.result, wait: () => {}, warn: () => {} })
+    : runNpmAuditWithRetry({
+        run: () =>
+          spawnSync("npm", NPM_AUDIT_ARGV, {
+            cwd: options.directory,
+            encoding: "utf-8",
+            env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
+            maxBuffer: 64 * 1024 * 1024,
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: NPM_AUDIT_ATTEMPT_TIMEOUT_MS,
+          }),
+      });
   const finishedAt = new Date().toISOString();
+  if (!cached && cacheFile && cacheInput && audit.report)
+    writeAuditCache(cacheFile, cacheInput, audit.result, startedAt);
+  const cacheEvidence =
+    cached?.evidence ??
+    (cacheInput
+      ? {
+          origin: "live" as const,
+          createdAt: startedAt,
+          ageMs: 0,
+          inputSha256: cacheInputSha256(cacheInput),
+          responseSha256: sha256(audit.result.stdout),
+        }
+      : undefined);
   const auditFailure = audit.failure;
   const report = audit.report ?? {};
   if (options.reportFile) fs.writeFileSync(options.reportFile, audit.result.stdout);
   if (options.provenance && options.reportFile) {
     const provenance = buildAuditProvenance({
+      cache: cacheEvidence,
       failure: auditFailure?.message,
       finishedAt,
       label: options.provenance.label,
@@ -673,7 +915,7 @@ export function runReviewedNpmAudit(
       npmVersion: options.provenance.npmVersion,
       packageSpecs: options.provenance.packageSpecs,
       rawReportPath: path.basename(options.reportFile),
-      registry: configuredNpmRegistry(options.directory),
+      registry,
       report,
       startedAt,
     });
@@ -706,6 +948,7 @@ export function runReviewedNpmAudit(
 }
 
 function parseCliArgs(args: readonly string[]): {
+  cacheFile?: string;
   directory: string;
   exceptionFile: string;
   graph: string;
@@ -723,6 +966,7 @@ function parseCliArgs(args: readonly string[]): {
     values.set(key, value);
   }
   const allowed = new Set([
+    "--cache",
     "--directory",
     "--exceptions",
     "--graph",
@@ -745,6 +989,7 @@ function parseCliArgs(args: readonly string[]): {
   if (!SEVERITIES.includes(threshold as Severity))
     throw new Error("reviewed npm audit threshold is invalid");
   return {
+    ...(values.has("--cache") ? { cacheFile: values.get("--cache") } : {}),
     directory,
     exceptionFile,
     graph,
