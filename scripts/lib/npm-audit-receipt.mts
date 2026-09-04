@@ -6,11 +6,15 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  evaluateAuditPolicy,
+  parseAuditExceptionRegistry,
+  parseAuditReport,
+} from "./reviewed-npm-audit.mts";
 
 export const AUDIT_ARGV = ["audit", "--omit=dev", "--json"] as const;
 export const RECEIPT_LIFETIME_MS = 12 * 60 * 60 * 1000 - 1;
 export const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
-const SHA256 = /^[0-9a-f]{64}$/;
 const SEVERITIES = new Set(["info", "low", "moderate", "high", "critical"]);
 const RECEIPT_KEYS = [
   "acceptedAdvisoryIds",
@@ -218,18 +222,43 @@ function cli(args: readonly string[]): void {
     "--registry",
     "--threshold",
   ];
-  exactKeys(Object.fromEntries(values), required, "verifier arguments");
+  const allowed = [...required, "--result"];
+  exactKeys(
+    Object.fromEntries([...values].filter(([key]) => key !== "--result")),
+    required,
+    "verifier arguments",
+  );
+  if ([...values.keys()].some((key) => !allowed.includes(key)))
+    throw new Error("verifier arguments has unexpected or missing keys");
+  const packageJson = fs.readFileSync(values.get("--package-json")!);
+  const packageLock = fs.readFileSync(values.get("--package-lock")!);
+  const rawResponse = fs.readFileSync(values.get("--raw-report")!);
+  const exceptionPolicy = fs.readFileSync(values.get("--exceptions")!);
   parseAndVerifyAuditReceipt(fs.readFileSync(values.get("--receipt")!, "utf8"), {
     graphId: values.get("--graph")!,
     npmVersion: values.get("--npm-version")!,
-    exceptionPolicy: fs.readFileSync(values.get("--exceptions")!),
+    exceptionPolicy,
     severityThreshold: values.get("--threshold")! as AuditReceipt["severityThreshold"],
-    packageJson: fs.readFileSync(values.get("--package-json")!),
-    packageLock: fs.readFileSync(values.get("--package-lock")!),
-    rawResponse: fs.readFileSync(values.get("--raw-report")!),
+    packageJson,
+    packageLock,
+    rawResponse,
     registryOrigin: values.get("--registry")!,
   });
-  console.log("reviewed npm audit receipt verified");
+  const policyResult = evaluateAuditPolicy({
+    directory: path.dirname(values.get("--package-json")!),
+    exceptionPolicy: parseAuditExceptionRegistry(exceptionPolicy.toString("utf8")),
+    exceptionPolicySha256: sha256(exceptionPolicy),
+    graph: values.get("--graph")!,
+    report: parseAuditReport({ status: 0, stderr: "", stdout: rawResponse.toString("utf8") }),
+    threshold: values.get("--threshold")! as AuditReceipt["severityThreshold"],
+  });
+  if (policyResult.unacceptedBlockingAdvisories.length > 0)
+    throw new Error(
+      `${values.get("--graph")}: cached raw audit report fails current exception policy`,
+    );
+  if (values.has("--result"))
+    fs.writeFileSync(values.get("--result")!, `${JSON.stringify(policyResult, null, 2)}\n`);
+  console.log("reviewed npm audit receipt and current policy verified");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

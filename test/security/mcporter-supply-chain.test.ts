@@ -181,7 +181,7 @@ describe("mcporter image supply-chain controls", () => {
     );
     expect(
       flattenedContents.includes(
-        "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/npm-audit-receipt.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
+        "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
       ) ||
         contents.includes(
           "COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts",

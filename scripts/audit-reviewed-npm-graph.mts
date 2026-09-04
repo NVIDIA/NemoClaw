@@ -807,6 +807,7 @@ export function emitAuditReceipt(
     npmVersion: string;
     packageJsonFile: string;
     packageLockFile: string;
+    preserveInputs?: boolean;
     rawReportFile: string;
     registryOrigin: string;
     result: AuditPolicyResult;
@@ -846,6 +847,16 @@ export function emitAuditReceipt(
   const transportRawFile = path.join(options.artifactDirectory, `${options.graphId}.raw.json`);
   fs.copyFileSync(options.rawReportFile, transportRawFile);
   fs.chmodSync(transportRawFile, 0o600);
+  if (options.preserveInputs) {
+    for (const [source, suffix] of [
+      [options.packageJsonFile, "package.json"],
+      [options.packageLockFile, "package-lock.json"],
+    ] as const) {
+      const destination = path.join(options.artifactDirectory, `${options.graphId}.${suffix}`);
+      fs.copyFileSync(source, destination);
+      fs.chmodSync(destination, 0o600);
+    }
+  }
   fs.writeFileSync(receiptFile, canonicalAuditReceipt(receipt), { mode: 0o600 });
   return receiptFile;
 }
@@ -956,6 +967,7 @@ function main(): void {
       npmVersion,
       packageJsonFile: path.join(archiveDirectory, "package.json"),
       packageLockFile: path.join(archiveDirectory, "package-lock.json"),
+      preserveInputs: true,
       rawReportFile: path.join(artifactDirectory, "reviewed-archive-graph.json"),
       registryOrigin: config.registryOrigin,
       result: archiveResult,

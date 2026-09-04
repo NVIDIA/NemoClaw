@@ -17,11 +17,12 @@ const NOW = new Date("2026-09-04T00:00:00.000Z");
 const inputs = {
   graphId: "mcporter-runtime",
   npmVersion: "10.9.4",
-  exceptionPolicy: "exceptions",
+  exceptionPolicy: '{"schemaVersion":1,"exceptions":[]}\n',
   severityThreshold: "high",
   packageJson: "package",
   packageLock: "lock",
-  rawResponse: "raw",
+  rawResponse:
+    '{"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}',
   registryOrigin: "https://registry.npmjs.org/",
   now: NOW,
 } as const;
@@ -35,7 +36,8 @@ function receipt(createdAt = NOW) {
     npmVersion: inputs.npmVersion,
     packageJson: inputs.packageJson,
     packageLock: inputs.packageLock,
-    rawResponse: "raw",
+    rawResponse:
+      '{"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}',
     registryOrigin: inputs.registryOrigin,
     severityThreshold: "high",
   });
@@ -148,7 +150,7 @@ describe("reviewed npm audit receipt", () => {
         { encoding: "utf8" },
       );
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("receipt verified");
+      expect(result.stdout).toContain("current policy verified");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

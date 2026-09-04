@@ -1104,6 +1104,14 @@ fi
     expect(contract.run).not.toContain("aliases:");
   });
 
+  it("binds non-PR OpenClaw publication to same-run reviewed audit evidence", () => {
+    const workflow = readWorkflow("managed-images.yaml"), publisher = managedPublisher(workflow), action = readAction("publish-managed-image-digest"), source = JSON.stringify(workflow);
+    expect(workflow.jobs?.["reviewed-npm-audit"]?.if).toBe("github.event_name != 'pull_request'");
+    expect(publisher.needs).toEqual(["publication-identity", "reviewed-npm-audit"]);
+    expect(["Download same-run reviewed npm audit evidence", "Prepare same-run mcporter audit evidence", "mcporter-runtime.receipt.json", "mcporter-runtime.raw.json", "nemoclaw-mcporter-audit-receipt", "nemoclaw-mcporter-audit-raw-report", "NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256"].filter((marker) => !source.includes(marker))).toEqual([]);
+    expect(source).not.toContain("NEMOCLAW_MCPORTER_AUDIT_RAW_REPORT_SHA256");
+    const actionSource = JSON.stringify(action); expect([actionSource.includes('"secret-files":{"description"'), actionSource.includes('"secret-files":"${{ inputs.secret-files }}"')]).toEqual([true, true]);
+  });
   it("holds every alias behind the exact six-candidate aggregate barrier (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const identity = workflow.jobs?.["publication-identity"];
@@ -1125,7 +1133,7 @@ fi
     );
 
     expect(identity?.outputs).toEqual({ cohort: "${{ steps.identity.outputs.cohort }}" });
-    expect(publisher.needs).toBe("publication-identity");
+    expect(publisher.needs).toEqual(["publication-identity", "reviewed-npm-audit"]);
     expect(publisher.outputs).toBeUndefined();
     expect(publisher.steps?.map((candidate) => candidate.name)).not.toContain(
       "Export validated managed image candidate output",

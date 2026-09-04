@@ -604,14 +604,16 @@ export function readAuditCache(
   now = new Date(),
 ): Readonly<{ result: NpmAuditCommandResult; evidence: AuditCacheEvidence }> | null {
   try {
-    const metadata = fs.lstatSync(filename);
-    if (
-      !metadata.isFile() ||
-      metadata.isSymbolicLink() ||
-      metadata.size > NPM_AUDIT_CACHE_MAX_BYTES
-    )
-      return null;
-    const record = parseAuditCacheRecord(fs.readFileSync(filename, "utf-8"));
+    const descriptor = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    let source: string;
+    try {
+      const metadata = fs.fstatSync(descriptor);
+      if (!metadata.isFile() || metadata.size > NPM_AUDIT_CACHE_MAX_BYTES) return null;
+      source = fs.readFileSync(descriptor, "utf-8");
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    const record = parseAuditCacheRecord(source);
     const ageMs = now.valueOf() - Date.parse(record.createdAt);
     if (ageMs < -NPM_AUDIT_CACHE_FUTURE_SKEW_MS || ageMs >= NPM_AUDIT_CACHE_MAX_AGE_MS) return null;
     if (JSON.stringify(record.input) !== JSON.stringify(expectedInput)) return null;
@@ -866,7 +868,10 @@ export function runReviewedNpmAudit(
         registry,
       );
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (!(error instanceof Error) || error.message !== "npm audit cache requires a valid HTTP(S) registry") {
+        throw error;
+      }
+      // An invalid optional cache registry degrades to a live audit.
     }
   }
   const cached = cacheFile && cacheInput ? readAuditCache(cacheFile, cacheInput) : null;

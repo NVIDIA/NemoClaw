@@ -817,8 +817,8 @@ RUN command -v codex-acp >/dev/null
 
 # Upgrade stale bases. Reuse is restricted to matching provenance from an
 # official digest-pinned base; mutable/custom bases reinstall the locked graphs.
-# OPENCLAW_VERSION must meet the blueprint minimum. Reviewed archives retain
-# registry and packed-byte SRI, basename, local-only install, and cleanup gates.
+# OPENCLAW_VERSION is the NemoClaw runtime build target and must meet the blueprint minimum.
+# Reviewed archives retain registry and packed-byte SRI, basename, local-only install, and cleanup gates.
 # hadolint ignore=DL3059,DL4006,DL3016,SC2015
 RUN --network=default \
     --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
@@ -985,24 +985,24 @@ RUN --network=default \
             'const { StreamableHTTPServerTransport } = await import("file:///usr/local/lib/nemoclaw/mcporter-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/server/streamableHttp.js"); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); await transport.close();'; \
         ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter; \
         test "$(mcporter --version)" = "$MCPORTER_VERSION"; \
-        MCPORTER_RECEIPT=/run/secrets/nemoclaw-mcporter-audit-receipt; \
-        MCPORTER_RAW_REPORT=/run/secrets/nemoclaw-mcporter-audit-raw-report; \
-        if [ -f "$MCPORTER_RECEIPT" ] || [ -f "$MCPORTER_RAW_REPORT" ] || [ -n "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" ]; then \
-            [ -f "$MCPORTER_RECEIPT" ] && [ -f "$MCPORTER_RAW_REPORT" ] && printf %s "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" | grep -qxE '[0-9a-f]{64}' \
-                || { echo "ERROR: cached mcporter audit requires paired receipt, raw report, and receipt SHA-256" >&2; exit 1; }; \
-            printf '%s  %s\n' "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" "$MCPORTER_RECEIPT" | sha256sum -c -; \
-            node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts \
-                --receipt "$MCPORTER_RECEIPT" \
-                --package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
-                --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
-                --raw-report "$MCPORTER_RAW_REPORT" --exceptions /scripts/npm-audit-exceptions.json \
-                --graph mcporter-runtime --npm-version "$(npm --version)" \
-                --registry https://registry.npmjs.org/ --threshold high; \
-        else \
-            node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
-                --directory /usr/local/lib/nemoclaw/mcporter-runtime \
-                --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high; \
-        fi; \
+    fi; \
+    MCPORTER_RECEIPT=/run/secrets/nemoclaw-mcporter-audit-receipt; \
+    MCPORTER_RAW_REPORT=/run/secrets/nemoclaw-mcporter-audit-raw-report; \
+    if [ -f "$MCPORTER_RECEIPT" ] || [ -f "$MCPORTER_RAW_REPORT" ] || [ -n "${NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256:-}" ]; then \
+        [ -f "$MCPORTER_RECEIPT" ] && [ -f "$MCPORTER_RAW_REPORT" ] && printf %s "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" | grep -qxE '[0-9a-f]{64}' \
+            || { echo "ERROR: cached mcporter audit requires paired receipt, raw report, and receipt SHA-256" >&2; exit 1; }; \
+        printf '%s  %s\n' "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" "$MCPORTER_RECEIPT" | sha256sum -c -; \
+        node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts \
+            --receipt "$MCPORTER_RECEIPT" \
+            --package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
+            --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
+            --raw-report "$MCPORTER_RAW_REPORT" --exceptions /scripts/npm-audit-exceptions.json \
+            --graph mcporter-runtime --npm-version "$(npm --version)" \
+            --registry https://registry.npmjs.org/ --threshold high; \
+    else \
+        node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
+            --directory /usr/local/lib/nemoclaw/mcporter-runtime \
+            --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high; \
     fi
 
 # Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).
