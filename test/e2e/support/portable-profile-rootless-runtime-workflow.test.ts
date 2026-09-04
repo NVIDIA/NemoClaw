@@ -15,6 +15,16 @@ type PortableProfileWorkflow = Workflow & {
 };
 
 describe("portable profile rootless runtime workflow", () => {
+  // source-shape-contract: security -- The rootless dependency install must not issue a non-authoritative advisory request for the candidate lock
+  it("installs root dependencies without an implicit npm audit (#11028)", () => {
+    const workflow = readYaml<Workflow>(".github/workflows/portable-profile-e2e.yaml");
+    const install = workflow.jobs["rootless-linux"]?.steps?.find(
+      (step) => step.name === "Install root dependencies",
+    );
+
+    expect(install?.run).toBe("npm ci --ignore-scripts --no-audit --no-fund");
+  });
+
   // source-shape-contract: compatibility -- The workflow and live fixture must keep the accepted OS, Podman, AppArmor, and HTTP local-registry authorities aligned before live E2E
   it("keeps live E2E on the accepted rootless runtime and local registry authority (#9006)", () => {
     const actionlint = readYaml<{ "self-hosted-runner"?: { labels?: string[] } }>(

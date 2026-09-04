@@ -70,7 +70,7 @@ jobs:
           cache: npm
 
       - name: Install root dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Compile managed inference catalogue
         run: npm run catalog:compile

@@ -68,6 +68,11 @@
     },
     {
       "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test": "installs root dependencies without an implicit npm audit (#11028)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
       "test": "keeps live E2E on the accepted rootless runtime and local registry authority (#9006)",
       "category": "compatibility"
     },
