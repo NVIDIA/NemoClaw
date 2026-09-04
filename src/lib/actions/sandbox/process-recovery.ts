@@ -78,6 +78,7 @@ import { enforceHermesSecretBoundaryOnRunningGateway } from "./hermes-secret-bou
 import {
   inspectHermesMcpReconciliationRefusal,
   processRecoveryMcpReconciliationRefusal,
+  selectedRuntimeAllowsHostLocalSupervisor,
 } from "./mcp-bridge-recovery";
 import {
   buildSandboxExecMarkedCommand,
@@ -352,6 +353,16 @@ function refuseHostLocalSupervisorForSelectedRuntime(
     stderr:
       "PRIVILEGED_CONTROL_UNAVAILABLE\nSELECTED_RUNTIME_SUPERVISOR_UNAVAILABLE: host-local supervisor control is not valid for an explicitly selected OpenShell target",
   };
+}
+
+function defaultGatewaySupervisorActionForRuntime(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): typeof executeGatewaySupervisorAction {
+  return !runtimeSelection ||
+    selectedRuntimeAllowsHostLocalSupervisor(sandboxName, runtimeSelection)
+    ? executeGatewaySupervisorAction
+    : refuseHostLocalSupervisorForSelectedRuntime;
 }
 
 async function executeSandboxExecCommandForStatus(
@@ -785,12 +796,14 @@ function recoverSandboxProcesses(
 ): SandboxProcessRecovery | null {
   const effectiveGatewaySupervisorAction =
     runtimeSelection && requestGatewaySupervisorAction === executeGatewaySupervisorAction
-      ? refuseHostLocalSupervisorForSelectedRuntime
+      ? defaultGatewaySupervisorActionForRuntime(sandboxName, runtimeSelection)
       : requestGatewaySupervisorAction;
   const effectivePinnedGatewaySupervisorAction =
     runtimeSelection &&
     requestPinnedGatewaySupervisorAction === executeGatewaySupervisorActionPinned
-      ? refuseHostLocalSupervisorForSelectedRuntime
+      ? selectedRuntimeAllowsHostLocalSupervisor(sandboxName, runtimeSelection)
+        ? executeGatewaySupervisorActionPinned
+        : refuseHostLocalSupervisorForSelectedRuntime
       : requestPinnedGatewaySupervisorAction;
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const dashboardPort = resolveSandboxDashboardPort(sandboxName);
@@ -969,9 +982,10 @@ export function restartSandboxGateway(
   { quiet = false, deps = {}, runtimeSelection }: RestartSandboxGatewayOptions = {},
 ): GatewayRestartResult {
   return withUnsupportedHermesPortableGatewayRestartFence(sandboxName, () => {
-    const defaultSupervisorAction = runtimeSelection
-      ? refuseHostLocalSupervisorForSelectedRuntime
-      : executeGatewaySupervisorAction;
+    const defaultSupervisorAction = defaultGatewaySupervisorActionForRuntime(
+      sandboxName,
+      runtimeSelection,
+    );
     return withMcpLifecycleLockSync(sandboxName, () =>
       restartSandboxGatewayWithDeps(sandboxName, {
         quiet,
@@ -1554,12 +1568,14 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     probeTiming ? probeTiming.measure(stage, operation) : operation();
   const effectiveGatewaySupervisorAction =
     runtimeSelection && requestGatewaySupervisorAction === executeGatewaySupervisorAction
-      ? refuseHostLocalSupervisorForSelectedRuntime
+      ? defaultGatewaySupervisorActionForRuntime(sandboxName, runtimeSelection)
       : requestGatewaySupervisorAction;
   const effectivePinnedGatewaySupervisorAction =
     runtimeSelection &&
     requestPinnedGatewaySupervisorAction === executeGatewaySupervisorActionPinned
-      ? refuseHostLocalSupervisorForSelectedRuntime
+      ? selectedRuntimeAllowsHostLocalSupervisor(sandboxName, runtimeSelection)
+        ? executeGatewaySupervisorActionPinned
+        : refuseHostLocalSupervisorForSelectedRuntime
       : requestPinnedGatewaySupervisorAction;
   const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   const recoveryDisplayName = recoveryAgentDisplayName(sandboxName, recoveryAgent);

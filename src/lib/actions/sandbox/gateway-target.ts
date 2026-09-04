@@ -8,6 +8,8 @@ import {
   resolveSandboxGatewayName,
   type SandboxGatewayBinding,
 } from "../../onboard/gateway-binding";
+import { isExternallySupervised, type GatewayOwner } from "../../onboard/gateway-ownership";
+import { resolveGatewayCredentialMutationAuthority } from "../../onboard/gateway-teardown-authority";
 import * as registry from "../../state/registry";
 
 export function getKnownSandboxTarget(sandboxName: string): registry.SandboxEntry | null {
@@ -44,6 +46,36 @@ export function getPersistedSandboxTargetGateway(sandbox: SandboxGatewayBinding)
     throw new Error(`Invalid persisted OpenShell gateway '${gatewayName}'.`);
   }
   return { gatewayName, gatewayPort, selectedInProcess: gatewayPort === GATEWAY_PORT };
+}
+
+export function selectedRuntimeAllowsHostLocalSupervisor(
+  sandboxName: string,
+  runtimeSelection: { gatewayName: string; workspace: string },
+  deps: {
+    getSandbox?: typeof registry.getSandbox;
+    resolveGatewayOwner?: (target: { gatewayName: string; gatewayPort: number }) => GatewayOwner;
+  } = {},
+): boolean {
+  if (runtimeSelection.workspace !== "default") return false;
+  try {
+    const sandbox = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
+    if (!sandbox) return false;
+    const target = getPersistedSandboxTargetGateway(sandbox);
+    if (!target.selectedInProcess || target.gatewayName !== runtimeSelection.gatewayName) {
+      return false;
+    }
+    const owner = (deps.resolveGatewayOwner ?? resolveGatewayCredentialMutationAuthority)({
+      gatewayName: target.gatewayName,
+      gatewayPort: target.gatewayPort,
+    });
+    return (
+      owner.gatewayName === target.gatewayName &&
+      owner.gatewayPort === target.gatewayPort &&
+      !isExternallySupervised(owner)
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function gatewayNamePattern(gatewayName: string): RegExp {
