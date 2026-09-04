@@ -49,6 +49,7 @@ const testState = vi.hoisted(() => {
     removePreset: vi.fn(),
     runOpenshell: vi.fn(),
     runOpenshellProviderCommand: vi.fn(),
+    runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
     stopNimContainer: vi.fn(),
     stopNimContainerByName: vi.fn(),
     warnUnpreservedUserManagedFiles: vi.fn(),
@@ -63,6 +64,16 @@ vi.mock("../../src/lib/adapters/dns/resolve", () => ({
   resolveHostAddresses: testState.resolveHostAddresses,
 }));
 
+vi.mock(
+  "../../src/lib/actions/sandbox/mcp-bridge-provider-inspection",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../src/lib/actions/sandbox/mcp-bridge-provider-inspection")
+    >()),
+    getMcpProviderInspectionRuntimeSelection: () => testState.runtimeSelection,
+  }),
+);
+
 vi.mock("../../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/lib/adapters/openshell/runtime")>()),
   captureOpenshell: testState.captureOpenshell,
@@ -71,6 +82,8 @@ vi.mock("../../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
 
 vi.mock("../../src/lib/gateway-runtime-action", () => ({
   recoverNamedGatewayRuntime: testState.recoverNamedGatewayRuntime,
+  replaceOpenShellRuntimeSelectionEnv: () => undefined,
+  snapshotOpenShellEnv: () => () => undefined,
 }));
 
 vi.mock("../../src/lib/policy", async (importOriginal) => ({
@@ -981,8 +994,11 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.executeSandboxExecCommand).toHaveBeenCalledOnce();
     expect(testState.executeSandboxExecCommand).toHaveBeenCalledWith("alpha", ":", undefined, {
       allowLocalDockerFallback: false,
+      runtimeSelection: testState.runtimeSelection,
     });
-    expect(testState.executeSandboxCommand).toHaveBeenCalledWith("alpha", ":");
+    expect(testState.executeSandboxCommand).toHaveBeenCalledWith("alpha", ":", {
+      runtimeSelection: testState.runtimeSelection,
+    });
     expect(testState.runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
       expect.any(Object),

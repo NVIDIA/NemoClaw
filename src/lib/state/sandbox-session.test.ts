@@ -1,12 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createSystemDeps,
   getActiveSandboxSessions,
   parseSshProcesses,
   type SessionDetectionDeps,
 } from "./sandbox-session";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("parseSshProcesses", () => {
   it("returns empty array for empty input", () => {
@@ -132,6 +137,54 @@ describe("parseSshProcesses", () => {
 });
 
 describe("getActiveSandboxSessions", () => {
+  it("pins a proxied session lookup to the recorded OpenShell target (#10514)", () => {
+    const sandboxId = "de7eab7a-002f-41e9-acad-5fd4749e07bb";
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    const spawn = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `12345 ssh -o ProxyCommand=/usr/local/bin/openshell ssh-proxy --sandbox-id ${sandboxId} --token t -tt -o RequestTTY=force sandbox`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: `Id: ${sandboxId}\n`, stderr: "" });
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-9090",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+
+    const result = getActiveSandboxSessions(
+      "my-sandbox",
+      createSystemDeps("/usr/bin/openshell", {
+        runtimeSelection,
+        spawnSync: spawn as never,
+      }),
+    );
+
+    expect(result.sessions).toHaveLength(1);
+    expect(spawn).toHaveBeenNthCalledWith(
+      2,
+      "/usr/bin/openshell",
+      ["sandbox", "get", "-g", "nemoclaw-9090", "my-sandbox"],
+      expect.any(Object),
+    );
+    const openshellOptions = spawn.mock.calls[1]?.[2] as
+      | { env?: Record<string, string> }
+      | undefined;
+    expect(openshellOptions?.env).toMatchObject({
+      OPENSHELL_GATEWAY: "nemoclaw-9090",
+      OPENSHELL_WORKSPACE: "default",
+      OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+    });
+    expect(openshellOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(openshellOptions?.env).not.toHaveProperty("OPENSHELL_TOKEN");
+  });
+
   it("returns detected=false when no deps available", () => {
     const deps: SessionDetectionDeps = {
       getSshProcesses: () => null,

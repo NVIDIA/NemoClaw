@@ -23,6 +23,41 @@ export const DEFAULT_OPENCLAW_CONFIG_DIR = "/sandbox/.openclaw";
 export const HERMES_MCP_TRANSACTION_HELPER =
   "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
 
+/** Build the runtime classifier shared by Deep Agents status, repair, rollback, and teardown. */
+export function buildDeepAgentsRuntimeKindCommandLines(
+  initialKind: "auto" | "v2" = "auto",
+): string[] {
+  return [
+    `runtime_kind = "${initialKind}"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
+    "if runtime_kind == 'auto':",
+    "    runtime_kind = 'unknown'",
+    "    try:",
+    "        from deepagents_code import _nemoclaw_managed as managed",
+    "        runtime_path = str(getattr(managed, '_MCP_CONFIG_FILE', ''))",
+    "        if runtime_path == str(managed_path):",
+    "            runtime_kind = 'v2'",
+    "        elif runtime_path == str(legacy_path):",
+    "            runtime_kind = 'legacy'",
+    "    except Exception:",
+    "        pass",
+    "if runtime_kind not in ('v2', 'legacy'):",
+    "    print('Could not identify the managed Deep Agents MCP runtime', file=sys.stderr)",
+    "    raise SystemExit(2)",
+  ];
+}
+
+export function buildDeepAgentsMcpRuntimeKindCommand(): string {
+  return [
+    "/opt/venv/bin/python3 -I - <<'PY'",
+    "import pathlib, sys",
+    `managed_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_MCP_CONFIG_PATH)})`,
+    `legacy_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_LEGACY_MCP_CONFIG_PATH)})`,
+    ...buildDeepAgentsRuntimeKindCommandLines(),
+    "print(runtime_kind)",
+    "PY",
+  ].join("\n");
+}
+
 /** Resolve Mcporter's project root beneath an OpenClaw agent configuration directory. */
 export function openClawMcporterRoot(configDir = DEFAULT_OPENCLAW_CONFIG_DIR): string {
   return `${configDir.replace(/\/+$/, "")}/workspace`;
@@ -268,21 +303,7 @@ export function buildDeepAgentsMcpStatusCommand(
     ...DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS,
     ...DEEPAGENTS_LEGACY_CONFIG_HELPERS,
     ...MANAGED_HTTP_SERVER_MATCH_HELPERS,
-    `runtime_kind = "auto"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
-    "if runtime_kind == 'auto':",
-    "    runtime_kind = 'unknown'",
-    "    try:",
-    "        from deepagents_code import _nemoclaw_managed as managed",
-    "        runtime_path = str(getattr(managed, '_MCP_CONFIG_FILE', ''))",
-    "        if runtime_path == str(managed_path):",
-    "            runtime_kind = 'v2'",
-    "        elif runtime_path == str(legacy_path):",
-    "            runtime_kind = 'legacy'",
-    "    except Exception:",
-    "        pass",
-    "if runtime_kind not in ('v2', 'legacy'):",
-    "    print('Could not identify the managed Deep Agents MCP runtime', file=sys.stderr)",
-    "    raise SystemExit(2)",
+    ...buildDeepAgentsRuntimeKindCommandLines(),
     "is_v2 = runtime_kind == 'v2'",
     "config_path = managed_path if is_v2 else legacy_path",
     "try:",
