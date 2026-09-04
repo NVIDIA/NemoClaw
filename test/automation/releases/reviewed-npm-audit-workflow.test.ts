@@ -172,6 +172,11 @@ if (args[0] === "pack") {
 }
 if (args[0] === "audit" && args[1] === "signatures") process.exit(0);
 if (args[0] === "audit") { process.stdout.write(process.env.NEMOCLAW_TEST_AUDIT_OUTPUT); process.exit(Number(process.env.NEMOCLAW_TEST_AUDIT_STATUS)); }
+if (args[0] === "cache" && args[1] === "add") {
+  fs.mkdirSync(process.env.NPM_CONFIG_CACHE + "/_cacache", { recursive: true });
+  fs.writeFileSync(process.env.NPM_CONFIG_CACHE + "/_cacache/fixture", "cached");
+  process.exit(0);
+}
 if (args[0] === "ci" && !fs.existsSync("package-lock.json")) {
   console.error("npm ci requires an existing package-lock.json");
   process.exit(1);
