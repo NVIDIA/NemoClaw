@@ -351,6 +351,97 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     );
   });
 
+  it("reports reconciliation when provider update and selection restore both fail (#9806)", async () => {
+    vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
+    const capture = providerCapture({
+      providerName: "compatible-endpoint",
+      providerType: "openai",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+    const original = capture.getMockImplementation() as InferenceSetDeps["captureOpenshell"];
+    let inferenceSetCalls = 0;
+    const restoreFailure = {
+      status: 1,
+      stdout: "",
+      stderr: "selection restore failed",
+      output: "selection restore failed",
+    };
+    const inferenceSetResults = [null, restoreFailure];
+    capture.mockImplementation((args, opts) => {
+      switch (`${args[0]}:${args[1]}`) {
+        case "provider:update":
+          return {
+            status: 1,
+            stdout: "",
+            stderr: "provider update failed",
+            output: "provider update failed",
+          };
+        case "inference:set": {
+          const result = inferenceSetResults[inferenceSetCalls++];
+          return result ?? original(args, opts);
+        }
+        default:
+          return original(args, opts);
+      }
+    });
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "old-model",
+      },
+      session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+      ensureHttpsPinRuntimeAdapter: mockAdapter(),
+      captureOpenshell: capture,
+    });
+
+    const failure = await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "new-model",
+        endpointUrl: "https://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-completions",
+      },
+      deps,
+    ).catch((error: Error) => error);
+
+    expect(failure).toBeInstanceOf(InferenceSetError);
+    const message = (failure as Error).message;
+    expect(message).toContain("provider update failed");
+    expect(message).toContain(
+      "Failed to restore the previous OpenShell inference selection 'nvidia-prod' / 'old-model': " +
+        "the restore command exited with status 1",
+    );
+    expect(message).toContain(
+      "The live selection and provider binding may be split; rerun onboarding before using this route.",
+    );
+
+    const selectionMutations = capture.mock.calls.filter(
+      ([args]) => args[0] === "inference" && args[1] === "set",
+    );
+    expect(selectionMutations).toHaveLength(2);
+    expect(selectionMutations[0]?.[0]).toEqual(
+      expect.arrayContaining([
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        "new-model",
+        "--no-verify",
+      ]),
+    );
+    expect(selectionMutations[1]?.[0]).toEqual(
+      expect.arrayContaining(["--provider", "nvidia-prod", "--model", "old-model", "--no-verify"]),
+    );
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
+    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
+  });
+
   it("restores the prior selection and reports partial state after an uncertain provider failure (#9806)", async () => {
     vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
     const capture = providerCapture({
