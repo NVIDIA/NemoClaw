@@ -114,7 +114,7 @@
       "integrity": "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==",
       "tarballUrl": "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
       "directory": "agents/openclaw/wechat-runtime",
-      "lockSha256": "27fcc4abe6707d5d710c691b25b942a269ebe2b652c6591174ee01fe06a5df35",
+      "lockSha256": "09a91cabd559ed2294fb263602009f9f79259e765281992e56961eed0e8c1ed9",
       "severityThreshold": "low",
       "installMode": "legacy-peer-deps",
       "inputValidation": "wechat-runtime",
