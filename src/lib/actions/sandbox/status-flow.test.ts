@@ -665,6 +665,24 @@ describe("showSandboxStatus flow", () => {
     });
   });
 
+  it("renders llama.cpp details already classified in the snapshot", async () => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: {
+        provider: "llama-cpp-local",
+        model: "muse-glimmer",
+      },
+      currentProvider: "llama-cpp-local",
+      currentModel: "muse-glimmer",
+      llamaCpp: { kind: "attached", endpointUrl: "http://127.0.0.1:8081/v1" },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Llama.cpp: attached");
+    expect(output).toContain("Endpoint: http://127.0.0.1:8081/v1");
+  });
+
   it("does not erase a dashboard-port conflict during Docker recovery", async () => {
     const conflict = {
       failure: {

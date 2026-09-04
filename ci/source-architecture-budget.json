@@ -42,7 +42,7 @@
       "src/lib/actions/sandbox/destroy.ts": 28,
       "src/lib/actions/sandbox/doctor.ts": 27,
       "src/lib/actions/sandbox/gateway-state.ts": 21,
-      "src/lib/actions/sandbox/status-snapshot.ts": 19,
+      "src/lib/actions/sandbox/status-snapshot.ts": 20,
       "src/lib/actions/sandbox/policy-channel.ts": 30,
       "src/lib/actions/sandbox/process-recovery.ts": 20,
       "src/lib/actions/sandbox/rebuild-pipeline.ts": 30,
