@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { shellQuote } from "../fixtures/clients/command.ts";
+import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-installer.ts";
 
 const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
@@ -12,6 +13,7 @@ export interface LegacyGatewayUpgradeFixture {
   nemoclawRef: string;
   nemoclawCommit: string;
   installerSha256: string;
+  openShellVersion: string;
   openclawVersion: string;
   sandboxBaseImageRef: string;
 }
@@ -27,23 +29,33 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
       `NEMOCLAW_OLD_NEMOCLAW_COMMIT must be a full lowercase commit SHA; got ${fixture.nemoclawCommit}`,
     );
   }
-  if (!/^[0-9a-f]{64}$/.test(fixture.installerSha256)) {
+  if (
+    !/^[0-9a-f]{64}$/.test(fixture.installerSha256) ||
+    fixture.installerSha256 !== REVIEWED_GATEWAY_UPGRADE_FIXTURE.installerSha256
+  ) {
     throw new Error(
-      `NEMOCLAW_OLD_INSTALLER_SHA256 must be a lowercase SHA-256 digest; got ${fixture.installerSha256}`,
+      `NEMOCLAW_OLD_INSTALLER_SHA256 must match the reviewed descriptor's lowercase SHA-256 digest; got ${fixture.installerSha256}`,
     );
   }
-  if (!/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(fixture.openclawVersion)) {
+  if (
+    !/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(fixture.openclawVersion) ||
+    !/^\d+\.\d+\.\d+$/.test(fixture.openShellVersion) ||
+    fixture.openShellVersion !== REVIEWED_GATEWAY_UPGRADE_FIXTURE.openShellVersion
+  ) {
     throw new Error(
-      `NEMOCLAW_OLD_OPENCLAW_VERSION must use the YYYY.M.D release format; got ${fixture.openclawVersion}`,
+      `NEMOCLAW_OLD_OPENCLAW_VERSION and NEMOCLAW_OLD_OPENSHELL_VERSION must match the reviewed descriptor; got ${fixture.openclawVersion}/${fixture.openShellVersion}`,
     );
   }
   reviewedOldInstallerProfile(fixture);
   const sandboxBaseDigest = fixture.sandboxBaseImageRef.match(
     /^[^@\s]+@sha256:([0-9a-f]{64})$/,
   )?.[1];
-  if (!sandboxBaseDigest) {
+  if (
+    !sandboxBaseDigest ||
+    fixture.sandboxBaseImageRef !== REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef
+  ) {
     throw new Error(
-      `NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF must be digest-pinned; got ${fixture.sandboxBaseImageRef}`,
+      `NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF must match the reviewed descriptor and use a digest pin; got ${fixture.sandboxBaseImageRef}`,
     );
   }
   return { sandboxBaseDigest };

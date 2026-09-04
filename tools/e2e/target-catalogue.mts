@@ -22,6 +22,7 @@ import {
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
+import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "./openshell-gateway-upgrade-fixture.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
 export const E2E_EXECUTION_PROFILES = [
@@ -326,7 +327,7 @@ function commonEgressTarget(options: {
 
 const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-89-x86-64", {
   targetId: "openshell-gateway-upgrade",
-  displayName: "Upgrade: preserves a v0.0.89 sandbox on x86-64",
+  displayName: `Upgrade: preserves a ${REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef} sandbox on x86-64`,
   agentRuntime: "openclaw",
   environmentOrInferenceEndpoint:
     "x86-64 Ubuntu; GitHub release artifacts; host-local compatible inference endpoint",
@@ -339,20 +340,19 @@ const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-
   exposeCliBin: true,
   shard: "v0-0-89-x86-64",
   owningPaths: [
+    "tools/e2e/openshell-gateway-upgrade-fixture.mts",
     "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
     "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
   ],
   environment: {
     ...nonInteractive,
     NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gw-survivor",
-    NEMOCLAW_OLD_NEMOCLAW_REF: "v0.0.89",
-    NEMOCLAW_OLD_NEMOCLAW_COMMIT: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e",
-    NEMOCLAW_OLD_INSTALLER_SHA256:
-      "00f24959e5ca68104fe91221c0a015dab6a4154618497fa36b969b661f418cc2",
-    NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF:
-      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1",
-    NEMOCLAW_OLD_OPENSHELL_VERSION: "0.0.85",
-    NEMOCLAW_OLD_OPENCLAW_VERSION: "2026.6.10",
+    NEMOCLAW_OLD_NEMOCLAW_REF: REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef,
+    NEMOCLAW_OLD_NEMOCLAW_COMMIT: REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawCommit,
+    NEMOCLAW_OLD_INSTALLER_SHA256: REVIEWED_GATEWAY_UPGRADE_FIXTURE.installerSha256,
+    NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef,
+    NEMOCLAW_OLD_OPENSHELL_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openShellVersion,
+    NEMOCLAW_OLD_OPENCLAW_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion,
     OPENSHELL_GATEWAY: "nemoclaw",
   },
 });
@@ -1142,8 +1142,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   GATEWAY_UPGRADE_TARGET,
   dockerOnlyTarget("shields-retirement-upgrade", {
-    displayName:
-      "Upgrade: migrates a v0.0.115 Shields sandbox to the candidate image",
+    displayName: "Upgrade: migrates a v0.0.115 Shields sandbox to the candidate image",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint:
       "x86-64 Ubuntu; pinned v0.0.115 install and candidate managed image; local compatible endpoint",
@@ -1166,8 +1165,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...nonInteractive,
       NEMOCLAW_AGENT: "openclaw",
       NEMOCLAW_OLD_NEMOCLAW_REF: "v0.0.115",
-      NEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT:
-        "7503e700808655df1303ddc51888bb596c9afa34",
+      NEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT: "7503e700808655df1303ddc51888bb596c9afa34",
       NEMOCLAW_OLD_NEMOCLAW_COMMIT: "324a886fd05b01f6756bae0371ea503c651fbd11",
       NEMOCLAW_OLD_INSTALLER_SHA256:
         "0ed77ba8cf176641bd3b22cfd89b4977b3d9a6f47b76da8b03bf4091a20d1251",

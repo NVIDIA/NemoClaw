@@ -2,29 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 
-export type ReviewedOldOpenClawArchive = Readonly<{
-  expectedIntegrity: string;
-  label: string;
-  packageSpec: string;
-  tarballUrl: string;
-}>;
-
-export type OldInstallerFixtureIdentity = Readonly<{
+type ReviewedOldOpenClawArchive = typeof REVIEWED_GATEWAY_UPGRADE_FIXTURE.openClawArchive;
+type OldInstallerFixtureIdentity = Readonly<{
   nemoclawCommit: string;
   nemoclawRef: string;
   openclawVersion: string;
 }>;
-
-type ReviewedOldInstallerProfile = OldInstallerFixtureIdentity &
-  Readonly<{
-    expectedAdvisoryAuditCount: 0 | 1;
-  }>;
-
-type ReviewedOldInstallerFixture = ReviewedOldInstallerProfile &
-  Readonly<{
-    openClawArchive: ReviewedOldOpenClawArchive;
-  }>;
+type ReviewedOldInstallerProfile = Pick<
+  typeof REVIEWED_GATEWAY_UPGRADE_FIXTURE,
+  "expectedAdvisoryAuditCount" | "nemoclawCommit" | "nemoclawRef" | "openclawVersion"
+>;
 
 export const OLD_INSTALLER_BOOTSTRAP_NEEDLE = '  legacy_script="${source_root}/install.sh"\n';
 export const OLD_INSTALLER_CLONE_NEEDLE =
@@ -33,38 +22,24 @@ export const OLD_INSTALLER_ADVISORY_AUDIT =
   "    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \\\n";
 export const OLD_INSTALLER_ARCHIVE_CONTEXT_PATH = "nemoclaw/src/.nemoclaw-e2e-old-openclaw.tgz";
 
-const REVIEWED_OLD_INSTALLER_FIXTURE: ReviewedOldInstallerFixture = Object.freeze({
-  expectedAdvisoryAuditCount: 1,
-  nemoclawCommit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e",
-  nemoclawRef: "v0.0.89",
-  openclawVersion: "2026.6.10",
-  openClawArchive: Object.freeze({
-    expectedIntegrity:
-      "sha512-LcooND2tBQw8A+kc1Ujltu3lg30bJ0w7XaeRy7eYzobb8BBdcW6DOGbwJL4vpj1vl9+gjRceOtlh5nh9OARcug==",
-    label: "historical fixture OpenClaw 2026.6.10",
-    packageSpec: "openclaw@2026.6.10",
-    tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.6.10.tgz",
-  }),
-});
-
 export function reviewedOldOpenClawArchive(version: string): ReviewedOldOpenClawArchive {
-  if (version !== REVIEWED_OLD_INSTALLER_FIXTURE.openclawVersion) {
+  if (version !== REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion) {
     throw new Error(`Historical gateway upgrade OpenClaw ${version} has no reviewed archive pin`);
   }
-  return REVIEWED_OLD_INSTALLER_FIXTURE.openClawArchive;
+  return REVIEWED_GATEWAY_UPGRADE_FIXTURE.openClawArchive;
 }
 
 export function reviewedOldInstallerProfile(
   identity: OldInstallerFixtureIdentity,
 ): ReviewedOldInstallerProfile {
-  const profile = REVIEWED_OLD_INSTALLER_FIXTURE;
+  const profile = REVIEWED_GATEWAY_UPGRADE_FIXTURE;
   if (
     profile.nemoclawRef !== identity.nemoclawRef ||
     profile.nemoclawCommit !== identity.nemoclawCommit ||
     profile.openclawVersion !== identity.openclawVersion
   ) {
     throw new Error(
-      `Historical gateway upgrade fixture must match an exact reviewed ref/commit/OpenClaw profile; got ${identity.nemoclawRef}/${identity.nemoclawCommit}/${identity.openclawVersion}`,
+      `Historical gateway upgrade fixture must match the reviewed descriptor's ref, commit, and OpenClaw version; got ${identity.nemoclawRef}/${identity.nemoclawCommit}/${identity.openclawVersion}`,
     );
   }
   return profile;

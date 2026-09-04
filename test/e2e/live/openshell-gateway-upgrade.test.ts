@@ -17,6 +17,7 @@ import {
   removeReviewedNpmArchive,
 } from "../../../scripts/lib/reviewed-npm-archive.mts";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
@@ -56,18 +57,20 @@ const STATE_DIR = path.join(
   "openshell-docker-gateway",
 );
 const PID_FILE = path.join(STATE_DIR, "openshell-gateway.pid");
-const OLD_NEMOCLAW_REF = process.env.NEMOCLAW_OLD_NEMOCLAW_REF ?? "v0.0.89";
+const OLD_NEMOCLAW_REF =
+  process.env.NEMOCLAW_OLD_NEMOCLAW_REF ?? REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef;
 const OLD_NEMOCLAW_COMMIT =
-  process.env.NEMOCLAW_OLD_NEMOCLAW_COMMIT ?? "1143aa5cce77f3bad1b3b5588bd7fddbe438237e";
+  process.env.NEMOCLAW_OLD_NEMOCLAW_COMMIT ?? REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawCommit;
 const OLD_INSTALLER_SHA256 =
-  process.env.NEMOCLAW_OLD_INSTALLER_SHA256 ??
-  "00f24959e5ca68104fe91221c0a015dab6a4154618497fa36b969b661f418cc2";
-const OLD_OPENSHELL_VERSION = process.env.NEMOCLAW_OLD_OPENSHELL_VERSION ?? "0.0.85";
+  process.env.NEMOCLAW_OLD_INSTALLER_SHA256 ?? REVIEWED_GATEWAY_UPGRADE_FIXTURE.installerSha256;
+const OLD_OPENSHELL_VERSION =
+  process.env.NEMOCLAW_OLD_OPENSHELL_VERSION ?? REVIEWED_GATEWAY_UPGRADE_FIXTURE.openShellVersion;
 const CURRENT_OPENSHELL_VERSION = process.env.NEMOCLAW_CURRENT_OPENSHELL_VERSION ?? "0.0.106";
 const OLD_SANDBOX_BASE_IMAGE_REF =
   process.env.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF ??
-  "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1";
-const OLD_OPENCLAW_VERSION = process.env.NEMOCLAW_OLD_OPENCLAW_VERSION ?? "2026.6.10";
+  REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef;
+const OLD_OPENCLAW_VERSION =
+  process.env.NEMOCLAW_OLD_OPENCLAW_VERSION ?? REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion;
 const OLD_INSTALLER_FIXTURE_IDENTITY = Object.freeze({
   nemoclawCommit: OLD_NEMOCLAW_COMMIT,
   nemoclawRef: OLD_NEMOCLAW_REF,
@@ -76,6 +79,7 @@ const OLD_INSTALLER_FIXTURE_IDENTITY = Object.freeze({
 validateLegacyGatewayUpgradeFixture({
   ...OLD_INSTALLER_FIXTURE_IDENTITY,
   installerSha256: OLD_INSTALLER_SHA256,
+  openShellVersion: OLD_OPENSHELL_VERSION,
   sandboxBaseImageRef: OLD_SANDBOX_BASE_IMAGE_REF,
 });
 const SURVIVOR_SANDBOX =
@@ -183,8 +187,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const gatewayCredential = String.fromCharCode(${Array.from(GATEWAY_CREDENTIAL)
-  .map((character) => character.charCodeAt(0))
-  .join(", ")});
+      .map((character) => character.charCodeAt(0))
+      .join(", ")});
 if (Object.values(process.env).some((value) => value.includes(gatewayCredential))) {
   process.exit(41);
 }
