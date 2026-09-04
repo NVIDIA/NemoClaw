@@ -44,6 +44,10 @@ $script:LangGraphCheckpointerSourceDigest = 'd63262d2f5e834a782c0d3f6e96f1b998af
 $script:LangGraphCheckpointerPatchedDigest = 'f34ea4982d5a2623e8e38fa324142441d355639cc0340fc76a0a6c052fed0b8b' # gitleaks:allow -- deterministic compatibility output pin
 $script:LangGraphStreamSourceDigest = '6a88d50614d34189d3a77d5d852d4479b889c88307bb1ccb52b9d1ef845c06e3' # gitleaks:allow -- public wheel source integrity pin
 $script:LangGraphStreamPatchedDigest = 'f9128fa986c46015d5391fbb3c944f5678c06597f09b4f9630e208bb297cc96f' # gitleaks:allow -- deterministic compatibility output pin
+$script:QuickJsRsVersion = '0.2.5'
+$script:QuickJsRsWheelSha256 = 'e82240af1f1dd1b2e12bcf169a22a8e0e451e356f0688f2fc3bba886d9b2bb20' # gitleaks:allow -- public PyPI wheel integrity pin
+$script:LangChainQuickJsSnapshotSourceDigest = '616cbc40402b7b414fcbac1992113bab6310974883b01a9f89fba8ce621b1e3d' # gitleaks:allow -- public wheel source integrity pin
+$script:LangChainQuickJsSnapshotPatchedDigest = '105d5d6e999d5e04131211890e450e614b295bde4af0d5e7d40ac4ddfbc295a9' # gitleaks:allow -- deterministic compatibility output pin
 $script:JsonSchemaRsVersion = '0.44.1'
 $script:JsonSchemaRsSourceDigest = '49ca909cc3017990a732145b9a7c2f1a0727b2f95dba4190c05a514575b5f4bf' # gitleaks:allow -- public PyPI source integrity pin
 $script:JsonSchemaRsCargoLockDigest = '77170cff39f4f8bf22ecfde8c728aad659f0f4e2471e36eaffeb1eaca340e291' # gitleaks:allow -- source-supplied Cargo lock integrity pin
@@ -300,14 +304,17 @@ try {
         -Label 'Deep Agents Code native ARM64 runtime restore'
     $langGraphPatch = Join-Path $candidate 'packaging\windows\python\langgraph-api-0.14.0.dev3-python313.patch'
     $langGraphNoGrpcPatch = Join-Path $candidate 'packaging\windows\python\langgraph-api-0.14.0.dev3-inmemory-no-grpc.patch'
+    $langChainQuickJsPatch = Join-Path $candidate 'packaging\windows\python\langchain-quickjs-0.3.5-no-bsdiff.patch'
     $langGraphLogging = Join-Path $deepAgentsSitePackages 'langgraph_api\logging.py'
     $langGraphApi = Join-Path $deepAgentsSitePackages 'langgraph_api\api\__init__.py'
     $langGraphCheckpointer = Join-Path $deepAgentsSitePackages 'langgraph_api\_checkpointer\_adapter.py'
     $langGraphStream = Join-Path $deepAgentsSitePackages 'langgraph_api\stream.py'
+    $langChainQuickJsSnapshot = Join-Path $deepAgentsSitePackages 'langchain_quickjs\_snapshot.py'
     Assert-Sha256 -Path $langGraphLogging -Expected $script:LangGraphLoggingSourceDigest -Label 'langgraph-api logging source'
     Assert-Sha256 -Path $langGraphApi -Expected $script:LangGraphApiSourceDigest -Label 'langgraph-api API source'
     Assert-Sha256 -Path $langGraphCheckpointer -Expected $script:LangGraphCheckpointerSourceDigest -Label 'langgraph-api checkpointer source'
     Assert-Sha256 -Path $langGraphStream -Expected $script:LangGraphStreamSourceDigest -Label 'langgraph-api stream source'
+    Assert-Sha256 -Path $langChainQuickJsSnapshot -Expected $script:LangChainQuickJsSnapshotSourceDigest -Label 'langchain-quickjs snapshot source'
     Invoke-Checked `
         -FilePath $git `
         -Arguments @('-c', 'core.autocrlf=false', 'apply', '--check', '--whitespace=nowarn', $langGraphPatch) `
@@ -328,12 +335,24 @@ try {
         -Arguments @('-c', 'core.autocrlf=false', 'apply', '--unidiff-zero', '--whitespace=nowarn', $langGraphNoGrpcPatch) `
         -Label 'langgraph-api in-memory no-gRPC patch' `
         -WorkingDirectory $deepAgentsSitePackages
+    Invoke-Checked `
+        -FilePath $git `
+        -Arguments @('-c', 'core.autocrlf=false', 'apply', '--check', '--unidiff-zero', '--whitespace=nowarn', $langChainQuickJsPatch) `
+        -Label 'langchain-quickjs no-bsdiff patch check' `
+        -WorkingDirectory $deepAgentsSitePackages
+    Invoke-Checked `
+        -FilePath $git `
+        -Arguments @('-c', 'core.autocrlf=false', 'apply', '--unidiff-zero', '--whitespace=nowarn', $langChainQuickJsPatch) `
+        -Label 'langchain-quickjs no-bsdiff patch' `
+        -WorkingDirectory $deepAgentsSitePackages
     Assert-Sha256 -Path $langGraphLogging -Expected $script:LangGraphLoggingPatchedDigest -Label 'patched langgraph-api logging source'
     Assert-Sha256 -Path $langGraphApi -Expected $script:LangGraphApiPatchedDigest -Label 'patched langgraph-api API source'
     Assert-Sha256 -Path $langGraphCheckpointer -Expected $script:LangGraphCheckpointerPatchedDigest -Label 'patched langgraph-api checkpointer source'
     Assert-Sha256 -Path $langGraphStream -Expected $script:LangGraphStreamPatchedDigest -Label 'patched langgraph-api stream source'
+    Assert-Sha256 -Path $langChainQuickJsSnapshot -Expected $script:LangChainQuickJsSnapshotPatchedDigest -Label 'patched langchain-quickjs snapshot source'
     Copy-Item -LiteralPath $langGraphPatch -Destination (Join-Path $output 'LANGGRAPH-PYTHON313-COMPATIBILITY.patch')
     Copy-Item -LiteralPath $langGraphNoGrpcPatch -Destination (Join-Path $output 'LANGGRAPH-INMEMORY-NO-GRPC.patch')
+    Copy-Item -LiteralPath $langChainQuickJsPatch -Destination (Join-Path $output 'LANGCHAIN-QUICKJS-NO-BSDIFF.patch')
     $forbiddenFruitArchive = Join-Path $workRoot 'forbiddenfruit-0.1.4.tar.gz'
     Invoke-WebRequest -UseBasicParsing -Uri 'https://files.pythonhosted.org/packages/e6/79/d4f20e91327c98096d605646bdc6a5ffedae820f38d378d3515c42ec5e60/forbiddenfruit-0.1.4.tar.gz' -OutFile $forbiddenFruitArchive
     Assert-Sha256 -Path $forbiddenFruitArchive -Expected $script:ForbiddenFruitArchiveSha256 -Label 'forbiddenfruit source archive'
@@ -600,6 +619,9 @@ debug = false
         'deepagents\site-packages\deepagents_code\main.py',
         'deepagents\site-packages\colorama\__init__.py',
         'deepagents\site-packages\jsonschema_rs\jsonschema_rs.pyd',
+        'deepagents\site-packages\quickjs_rs\__init__.py',
+        'deepagents\site-packages\quickjs_rs\_guest.wasm',
+        'deepagents\site-packages\quickjs_rs\_transform.wasm',
         'deepagents\site-packages\tiktoken\_tiktoken.cp313-win_arm64.pyd',
         'nemocua\run_with_harness.py',
         'onboarding\index.html',
@@ -613,7 +635,8 @@ debug = false
         'qualification\run-installed-native-nemocua.mts',
         'agent-support.json',
         'LANGGRAPH-PYTHON313-COMPATIBILITY.patch',
-        'LANGGRAPH-INMEMORY-NO-GRPC.patch'
+        'LANGGRAPH-INMEMORY-NO-GRPC.patch',
+        'LANGCHAIN-QUICKJS-NO-BSDIFF.patch'
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $output $required) -PathType Leaf)) {
             Fail-PayloadPreparation "Prepared payload is incomplete: $required"
@@ -674,6 +697,18 @@ debug = false
                 cargoLockSha256 = $script:JsonSchemaRsCargoLockDigest
                 nativeExtensionSha256 = (Get-FileHash -LiteralPath (Join-Path $deepAgentsSitePackages 'jsonschema_rs\jsonschema_rs.pyd') -Algorithm SHA256).Hash.ToLowerInvariant()
             }
+            quickJsRs = [pscustomobject]@{
+                version = $script:QuickJsRsVersion
+                universalWheelSha256 = $script:QuickJsRsWheelSha256
+                guestWasmSha256 = (Get-FileHash -LiteralPath (Join-Path $deepAgentsSitePackages 'quickjs_rs\_guest.wasm') -Algorithm SHA256).Hash.ToLowerInvariant()
+                transformWasmSha256 = (Get-FileHash -LiteralPath (Join-Path $deepAgentsSitePackages 'quickjs_rs\_transform.wasm') -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            langChainQuickJs = [pscustomobject]@{
+                version = '0.3.5'
+                snapshotCompatibilitySourceSha256 = $script:LangChainQuickJsSnapshotSourceDigest
+                snapshotCompatibilityPatchedSha256 = $script:LangChainQuickJsSnapshotPatchedDigest
+                snapshotCompatibilityPatchSha256 = (Get-FileHash -LiteralPath $langChainQuickJsPatch -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
             tiktoken = [pscustomobject]@{
                 version = $script:TiktokenVersion
                 sourceArchiveSha256 = $script:TiktokenSourceDigest
@@ -686,7 +721,6 @@ debug = false
                 'grpcio==1.81.1',
                 'grpcio-tools==1.81.1',
                 'httptools==0.8.0',
-                'quickjs-rs==0.2.5',
                 'sqlite-vec==0.1.9',
                 'textual-speedups==0.2.1',
                 'uvloop==0.22.1'

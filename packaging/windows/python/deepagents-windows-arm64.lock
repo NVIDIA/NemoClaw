@@ -1821,6 +1821,10 @@ pyyaml==6.0.3 \
     # via
     #   deepagents-code
     #   langchain-core
+quickjs-rs==0.2.5 \
+    --hash=sha256:3ceb30fba27013108fac92f0a716d6a16980131ce5b13f9912848df1f1f2cf09 \
+    --hash=sha256:e82240af1f1dd1b2e12bcf169a22a8e0e451e356f0688f2fc3bba886d9b2bb20
+    # via langchain-quickjs
 referencing==0.37.0 \
     --hash=sha256:381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231 \
     --hash=sha256:44aefc3142c5b842538163acb373e24cce6632bd54bdb01b21ad5863489f50d8

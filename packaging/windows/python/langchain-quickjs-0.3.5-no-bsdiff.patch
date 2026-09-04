@@ -1,0 +1,16 @@
+diff --git a/langchain_quickjs/_snapshot.py b/langchain_quickjs/_snapshot.py
+index 44e8dd6..d1e3192 100644
+--- a/langchain_quickjs/_snapshot.py
++++ b/langchain_quickjs/_snapshot.py
+@@ -30 +30,4 @@ from typing import TYPE_CHECKING
+-import bsdiff4
++try:
++    import bsdiff4
++except ModuleNotFoundError:
++    bsdiff4 = None
+@@ -90,0 +94,2 @@ def replay_snapshot_chain(
++            if bsdiff4 is None:
++                raise RuntimeError("Cannot replay a QuickJS delta snapshot without bsdiff4")
+@@ -111 +116 @@ def encode_snapshot(payload: bytes, prior: bytes) -> SnapshotRecord:
+-    if not prior:
++    if not prior or bsdiff4 is None:

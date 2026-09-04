@@ -288,6 +288,9 @@ foreach ($requiredPayload in @(
     'deepagents\site-packages\deepagents_code\main.py',
     'deepagents\site-packages\colorama\__init__.py',
     'deepagents\site-packages\jsonschema_rs\jsonschema_rs.pyd',
+    'deepagents\site-packages\quickjs_rs\__init__.py',
+    'deepagents\site-packages\quickjs_rs\_guest.wasm',
+    'deepagents\site-packages\quickjs_rs\_transform.wasm',
     'deepagents\site-packages\tiktoken\_tiktoken.cp313-win_arm64.pyd',
     'nemocua\run_with_harness.py',
     'onboarding\index.html',
@@ -304,6 +307,7 @@ foreach ($requiredPayload in @(
     'agent-support.json',
     'LANGGRAPH-PYTHON313-COMPATIBILITY.patch',
     'LANGGRAPH-INMEMORY-NO-GRPC.patch',
+    'LANGCHAIN-QUICKJS-NO-BSDIFF.patch',
     'OPENSHELL-NODE-UI-COMPATIBILITY.patch',
     'LICENSE.txt',
     'NATIVE-PREVIEW.txt'
