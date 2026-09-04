@@ -129,18 +129,18 @@ describe("ensureRebuildAgentBaseImage", () => {
     });
   });
 
-  it("uses the pinned Hermes base when a legacy sandbox has no resolution hint (#10903)", () => {
+  it("preserves the forced local rebuild path for legacy sandboxes without a hint (#4680)", () => {
     const { agent, ensureAgentBaseImage } = setup();
     const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
 
     expect(ensureRebuildAgentBaseImage("hermes", makeBail())).toEqual({
       ok: true,
-      imageRef: cachedRemoteRef,
+      imageRef: rebuiltLocalRef,
       overrideEnvVar,
+      trustedLocalOverride: rebuiltLocalTrust,
     });
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(agent, {
-      allowLocalFallback: false,
-      forceBaseImageRebuild: false,
+      forceBaseImageRebuild: true,
     });
   });
 
@@ -157,9 +157,7 @@ describe("ensureRebuildAgentBaseImage", () => {
     });
     const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
 
-    expect(
-      ensureRebuildAgentBaseImage("hermes", makeBail(), { resolutionHint: hint }),
-    ).toEqual({
+    expect(ensureRebuildAgentBaseImage("hermes", makeBail())).toEqual({
       ok: true,
       imageRef: trustedLocalOverride.ref,
       overrideEnvVar,
@@ -167,7 +165,7 @@ describe("ensureRebuildAgentBaseImage", () => {
     });
   });
 
-  it("reports a pinned Hermes base-image failure before rebuild can continue (#10903)", () => {
+  it("reports a forced Hermes base-image failure before rebuild can continue", () => {
     const { ensureAgentBaseImage } = setup();
     ensureAgentBaseImage.mockImplementation(() => {
       throw new Error("Failed to build Hermes Agent base image (exit 23)");
@@ -181,7 +179,7 @@ describe("ensureRebuildAgentBaseImage", () => {
 
     const output = error.mock.calls.flat().join("\n");
     expect(output).toContain("Rebuild preflight failed");
-    expect(output).toContain("agent base image could not be prepared");
+    expect(output).toContain("agent base image could not be built");
     expect(output).toContain("Inspect the redacted rebuild diagnostics for details.");
     expect(output).not.toContain("Failed to build Hermes Agent base image (exit 23)");
     expect(output).toContain("Sandbox is untouched");

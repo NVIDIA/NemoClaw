@@ -294,8 +294,6 @@ export function ensureRebuildAgentBaseImage(
   const overrideEnvVar = getAgentSandboxBaseImageEnvVar(agentDef.name);
   const explicitOverride = process.env[overrideEnvVar]?.trim();
   const hasExplicitOverride = Boolean(explicitOverride);
-  const requirePinnedHermesBase =
-    agentDef.name === "hermes" && !hasExplicitOverride && !options.resolutionHint;
   try {
     // Prove that a retained local alias names the tracked official image before
     // the resolver sees it, and lease that proof only for this resolution call.
@@ -313,9 +311,7 @@ export function ensureRebuildAgentBaseImage(
     let result: ReturnType<typeof ensureAgentBaseImage>;
     try {
       result = ensureAgentBaseImage(agentDef, {
-        forceBaseImageRebuild:
-          !requirePinnedHermesBase && !hasExplicitOverride && !options.resolutionHint,
-        ...(requirePinnedHermesBase ? { allowLocalFallback: false } : {}),
+        forceBaseImageRebuild: !hasExplicitOverride && !options.resolutionHint,
         ...(options.resolutionHint !== undefined ? { resolutionHint: options.resolutionHint } : {}),
         ...(options.forceBaseImageRefresh !== undefined
           ? { forceBaseImageRefresh: options.forceBaseImageRefresh }
@@ -323,12 +319,6 @@ export function ensureRebuildAgentBaseImage(
       });
     } finally {
       restoreExplicitOverrideTrust();
-    }
-    if (
-      requirePinnedHermesBase &&
-      (!result.imageTag || !isImmutableRemoteBaseImageRef(result.imageTag))
-    ) {
-      throw new Error("Hermes rebuild requires the release-pinned immutable base image");
     }
     if (agentDef.name === "nemocua") {
       if (!result.imageTag) throw new Error("NemoCUA caller image resolution returned no image");
@@ -433,7 +423,7 @@ export function ensureRebuildAgentBaseImage(
     const safeMessage =
       formatBuildFailureDiagnostics({ error: err }) || "Agent base image preparation failed.";
     console.error("");
-    console.error(`  ${_RD}Rebuild preflight failed:${R} agent base image could not be prepared.`);
+    console.error(`  ${_RD}Rebuild preflight failed:${R} agent base image could not be built.`);
     console.error("  Inspect the redacted rebuild diagnostics for details.");
     console.error("");
     console.error("  Sandbox is untouched — no data was lost.");
