@@ -1,225 +1,110 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { requirePublicNvidiaInferenceKey } from "../fixtures/inference-adapter.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
-import {
-  buildProviderRoutedEnv,
-  requireModelRouterPublicKey,
-} from "./model-router-provider-routed-inference-helpers.ts";
+import { buildProviderRoutedEnv } from "./model-router-provider-routed-inference-helpers.ts";
 
 // Focused direct CLI/sandbox test: the contract is the real provider-routed
-// onboard boundary plus host model-router health and sandbox inference.local
-// completion semantics, not a new target registry entry.
+// onboard boundary plus one ordinary sandbox inference.local completion.
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-model-router";
 const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
-const HEALTH_ATTEMPTS = 20;
-const COMPLETION_ATTEMPTS = 3;
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
-interface ModelRouterHealth {
-  healthy_count?: unknown;
-}
-
-interface ChatCompletionResponse {
-  model?: unknown;
-  choices?: Array<{
-    message?: { content?: unknown };
-    text?: unknown;
-  }>;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function parseJson<T>(raw: string): T | undefined {
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return undefined;
-  }
-}
-
-function hasHealthyEndpoint(raw: string): boolean {
-  const health = parseJson<ModelRouterHealth>(raw);
-  return typeof health?.healthy_count === "number" && health.healthy_count > 0;
-}
-
-function routedPongReason(raw: string): "ok" | string {
-  const response = parseJson<ChatCompletionResponse>(raw);
-  if (!response) return "response was not JSON";
-  const model = String(response.model ?? "");
-  if (model !== "nvidia-routed" && !model.startsWith("nvidia-routed")) {
-    return "response model was not provider-routed";
-  }
-  const content = (response.choices ?? [])
-    .map((choice) => {
-      if (typeof choice.message?.content === "string") return choice.message.content;
-      if (typeof choice.text === "string") return choice.text;
-      return "";
-    })
-    .join("\n");
-  if (!/\bPONG\b/i.test(content)) return "response missing PONG content";
-  return "ok";
-}
-
 test(
-  "model-router provider-routed onboard returns routed inference.local PONG",
+  "model-router provider-routed onboard returns an inference.local completion",
   {
-  meta: {
-    e2ePhases: [
-      "confirm routed-provider prerequisites",
-      "clear the previous routed-provider sandbox",
-      "onboard the routed provider",
-      "wait for a healthy model-router endpoint",
-      "request a routed inference.local completion",
-      "record the routed inference contract result",
-    ],
-  },
-  },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
-  expect(
-    fs.existsSync(CLI_ENTRYPOINT),
-    "run `npm run build:cli` before live repo CLI targets",
-  ).toBe(true);
-
-    await runtimeProvider.requireAvailable({
-    artifactName: "prereq-runtime-info-model-router-provider-routed",
-      scenarioLabel: "provider-routed Model Router onboarding",
-  });
-
-  const apiKey = requireModelRouterPublicKey(secrets);
-
-  await artifacts.target.declare({
-    id: "model-router-provider-routed-inference",
-    boundary: "direct-cli-onboard-and-sandbox-exec",
-    contract: [
-      "the selected runtime is available before onboarding",
-      "NVIDIA_API_KEY is present and nvapi-prefixed, then staged for the router's NVIDIA_INFERENCE_API_KEY credential",
-      "nemoclaw onboard --fresh completes with NEMOCLAW_PROVIDER=routed",
-      "host model-router health reports at least one healthy endpoint",
-      "sandbox inference.local returns model nvidia-routed with PONG content",
-    ],
-  });
-
-  progress.phase("clear the previous routed-provider sandbox");
-  const cleanEnv = buildAvailabilityProbeEnv();
-  await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-    artifactName: "pre-cleanup-nemoclaw-destroy-model-router-provider-routed",
-    env: cleanEnv,
-    timeoutMs: 120_000,
-  });
-
-  cleanup.trackSandbox(host, SANDBOX_NAME, {
-    artifactName: "cleanup-nemoclaw-destroy-model-router-provider-routed",
-    env: buildAvailabilityProbeEnv(),
-    redactionValues: [apiKey],
-    timeoutMs: 120_000,
-  });
-
-  progress.phase("onboard the routed provider");
-  const onboard = await host.command(
-    "node",
-    [
-      CLI_ENTRYPOINT,
-      "onboard",
-      "--fresh",
-      "--non-interactive",
-      "--yes-i-accept-third-party-software",
-    ],
-    {
-      artifactName: "onboard-model-router-provider-routed",
-      env: buildProviderRoutedEnv(apiKey, SANDBOX_NAME),
-      redactionValues: [apiKey],
-      timeoutMs: ONBOARD_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm routed-provider prerequisites",
+        "clear the previous routed-provider sandbox",
+        "onboard the routed provider",
+        "request a routed inference.local completion",
+        "record the routed inference contract result",
+      ],
     },
-  );
-  expect(onboard.exitCode, resultText(onboard)).toBe(0);
+  },
+  async ({ artifacts, cleanup, host, progress, runtime, runtimeProvider, secrets }) => {
+    progress.phase("confirm routed-provider prerequisites");
+    await runtimeProvider.requireAvailable({
+      artifactName: "prereq-runtime-info-model-router-provider-routed",
+      scenarioLabel: "provider-routed Model Router onboarding",
+    });
 
-  progress.phase("wait for a healthy model-router endpoint");
-  let lastHealth = "";
-  for (let attempt = 1; attempt <= HEALTH_ATTEMPTS; attempt += 1) {
-    const health = await host.command(
-      "curl",
-      ["-s", "--max-time", "10", "http://127.0.0.1:4000/health"],
-      {
-        artifactName: `model-router-health-${attempt}`,
-        env: buildAvailabilityProbeEnv(),
-        redactionValues: [apiKey],
-        timeoutMs: 15_000,
-      },
-    );
-    lastHealth = health.stdout || health.stderr;
-    if (health.exitCode === 0 && hasHealthyEndpoint(lastHealth)) break;
-    if (attempt < HEALTH_ATTEMPTS) await sleep(3_000);
-  }
-  expect(
-    hasHealthyEndpoint(lastHealth),
-    `model-router has no healthy endpoints; expected #3255 main-equivalent failure: ${lastHealth.slice(0, 500)}`,
-  ).toBe(true);
+    const apiKey = requirePublicNvidiaInferenceKey(secrets.required("NVIDIA_API_KEY"));
 
-  progress.phase("request a routed inference.local completion");
-  const payload = JSON.stringify({
-    model: "nvidia-routed",
-    messages: [
-      {
-        role: "user",
-        content: "Return only the exact word PONG. Do not include reasoning or any other text.",
-      },
-    ],
-    max_tokens: 128,
-  });
-  let lastCompletion = "";
-  let completionReason = "not attempted";
-  for (let attempt = 1; attempt <= COMPLETION_ATTEMPTS; attempt += 1) {
-    const completion = await sandbox.exec(
-      SANDBOX_NAME,
+    await artifacts.target.declare({
+      id: "model-router-provider-routed-inference",
+      boundary: "direct-cli-onboard-and-sandbox-exec",
+      contract: [
+        "the selected runtime is available before onboarding",
+        "NVIDIA_API_KEY is present and nvapi-prefixed, then staged for the router's NVIDIA_INFERENCE_API_KEY credential",
+        "nemoclaw onboard --fresh completes with NEMOCLAW_PROVIDER=routed",
+        "sandbox inference.local returns a valid chat completion through the routed provider",
+      ],
+    });
+
+    progress.phase("clear the previous routed-provider sandbox");
+    await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
+      artifactName: "pre-cleanup-nemoclaw-destroy-model-router-provider-routed",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 120_000,
+    });
+
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      artifactName: "cleanup-nemoclaw-destroy-model-router-provider-routed",
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [apiKey],
+      timeoutMs: 120_000,
+    });
+
+    progress.phase("onboard the routed provider");
+    const onboard = await host.command(
+      "node",
       [
-        "curl",
-        "-sk",
-        "--max-time",
-        "90",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "--data-raw",
-        payload,
+        CLI_ENTRYPOINT,
+        "onboard",
+        "--fresh",
+        "--non-interactive",
+        "--yes-i-accept-third-party-software",
       ],
       {
-        artifactName: `sandbox-inference-local-routed-completion-${attempt}`,
-        env: buildAvailabilityProbeEnv(),
+        artifactName: "onboard-model-router-provider-routed",
+        env: buildProviderRoutedEnv(apiKey, SANDBOX_NAME),
+        redactionValues: [apiKey],
+        timeoutMs: ONBOARD_TIMEOUT_MS,
+      },
+    );
+    expect(onboard.exitCode, resultText(onboard)).toBe(0);
+
+    progress.phase("request a routed inference.local completion");
+    await runtime.expectInferenceLocalChatCompletion(
+      { sandboxName: SANDBOX_NAME },
+      {
+        artifactName: "sandbox-inference-local-routed-completion",
+        curlMaxTimeSeconds: 90,
+        maxTokens: 128,
+        model: "nvidia-routed",
+        prompt: "Reply with a short greeting.",
         redactionValues: [apiKey],
         timeoutMs: 120_000,
       },
     );
-    lastCompletion = completion.stdout || completion.stderr;
-    completionReason = routedPongReason(lastCompletion);
-    if (completion.exitCode === 0 && completionReason === "ok") break;
-    if (/inference service unavailable|HTTP 503|healthy_count.*0/i.test(lastCompletion)) break;
-    if (attempt < COMPLETION_ATTEMPTS) await sleep(5_000);
-  }
-  expect(
-    completionReason,
-    `Model Router inference.local did not return a routed completion; expected #3255 main-equivalent failure: ${lastCompletion.slice(0, 500)}`,
-  ).toBe("ok");
 
-  progress.phase("record the routed inference contract result");
-  await artifacts.target.complete({
-    id: "model-router-provider-routed-inference",
-    assertions: {
+    progress.phase("record the routed inference contract result");
+    await artifacts.target.complete({
+      id: "model-router-provider-routed-inference",
+      assertions: {
         runtimeProviderAvailable: true,
-      onboardCompleted: onboard.exitCode === 0,
-      modelRouterHealthy: hasHealthyEndpoint(lastHealth),
-      routedPongCompletion: completionReason === "ok",
-    },
-  });
+        onboardCompleted: true,
+        validCompletionReturned: true,
+      },
+    });
   },
 );

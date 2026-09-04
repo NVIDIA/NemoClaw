@@ -294,7 +294,7 @@ export class RuntimePhaseFixture {
   }
 
   async expectInferenceLocalChatCompletion(
-    instance: NemoClawInstance,
+    instance: Pick<NemoClawInstance, "sandboxName">,
     options: InferenceRuntimeChatOptions & {
       readonly route?: InferenceRoute;
     } = {},

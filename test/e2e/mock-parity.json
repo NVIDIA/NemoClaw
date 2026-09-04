@@ -655,9 +655,13 @@
     },
     {
       "live": "test/e2e/live/model-router-provider-routed-inference.test.ts",
+      "liveSources": [
+        "test/e2e/live/model-router-provider-routed-inference-helpers.ts"
+      ],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/model-router-provider-routed-inference.test.ts"
       ]
     },
     {
