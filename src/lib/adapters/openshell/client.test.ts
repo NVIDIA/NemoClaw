@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncReturns } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -55,6 +56,24 @@ function timeoutError(): Error {
 
 function exitWithCode(code: number): never {
   throw new Error(`exit:${code}`);
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+async function waitForProcessExit(pid: number, timeoutMs = 2_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) return true;
+    await delay(25);
+  }
+  return !isProcessAlive(pid);
 }
 
 describe("openshell helpers", () => {
@@ -215,6 +234,50 @@ describe("openshell helpers", () => {
       rmSync(fixtureDirectory, { force: true, recursive: true });
     }
   });
+
+  it.runIf(process.platform === "linux" && existsSync("/usr/bin/timeout"))(
+    "kills descendant processes before a bounded capture returns (#10238)",
+    async () => {
+      const fixtureDirectory = mkdtempSync(join(tmpdir(), "nemoclaw-openshell-timeout-tree-"));
+      const fixturePath = join(fixtureDirectory, "openshell");
+      const childPidPath = join(fixtureDirectory, "child.pid");
+      let childPid: number | undefined;
+      writeFileSync(
+        fixturePath,
+        `#!${process.execPath}\n` +
+          `const { spawn } = require("node:child_process");\n` +
+          `const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], { stdio: "inherit" });\n` +
+          `require("node:fs").writeFileSync(${JSON.stringify(childPidPath)}, String(child.pid));\n` +
+          `setTimeout(() => {}, 5000);\n`,
+        { mode: 0o500 },
+      );
+      chmodSync(fixturePath, 0o500);
+      try {
+        const startedAt = Date.now();
+        const result = captureOpenshellCommand(fixturePath, ["sandbox", "list"], {
+          ignoreError: true,
+          killProcessTreeOnTimeout: true,
+          timeout: 1_000,
+        });
+        const elapsedMs = Date.now() - startedAt;
+        childPid = Number.parseInt(readFileSync(childPidPath, "utf8"), 10);
+
+        expect(elapsedMs).toBeLessThan(2_500);
+        expect((result.error as NodeJS.ErrnoException | undefined)?.code).not.toBe("ETIMEDOUT");
+        expect(Number.isInteger(childPid)).toBe(true);
+        expect(await waitForProcessExit(childPid)).toBe(true);
+      } finally {
+        if (childPid && isProcessAlive(childPid)) {
+          try {
+            process.kill(childPid, "SIGKILL");
+          } catch {
+            // The descendant exited after the final liveness check.
+          }
+        }
+        rmSync(fixtureDirectory, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("redirects inherited stdout while the JSONL stdout guard is active", async () => {
     const observedStdio: unknown[] = [];

@@ -102,10 +102,7 @@ export function buildWorkdirProbeArgs(
   workdir: string,
   gatewayName?: string,
 ): string[] {
-  const argv = ["sandbox", "exec", "--name", sandboxName];
-  if (gatewayName) argv.push("-g", gatewayName);
-  argv.push("--", "test", "-d", workdir);
-  return argv;
+  return buildOpenshellExecArgs(sandboxName, ["test", "-d", workdir], {}, gatewayName);
 }
 
 // OpenShell accepts LF/CR in command argv while retaining field-specific
