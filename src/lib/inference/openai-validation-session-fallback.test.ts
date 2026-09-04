@@ -308,4 +308,36 @@ describe("OpenAI validation curl fallback", () => {
     expect(legacyProbe).toHaveBeenCalledTimes(1);
     expect(harness.sessionOptions!.lookup).not.toHaveBeenCalled();
   });
+
+  // Pins the shared transient policy from the native retry side: a status the
+  // policy does not list must reach the fallback without spending retries
+  // (#10709).
+  it("does not retry a settled HTTP failure before falling back", async () => {
+    vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
+    let requests = 0;
+    const server = http.createServer((request, response) => {
+      request.resume();
+      requests += 1;
+      response.statusCode = 500;
+      response.end('{"error":{"message":"internal"}}');
+    });
+    const port = await listen(server);
+    const legacyProbe: OpenAiValidationSessionDeps["legacyProbe"] = vi.fn(() => ({
+      ok: false,
+      message: "curl settled diagnostic",
+    }));
+    const harness = createOpenAiValidationTestDeps(legacyProbe);
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "test-model",
+      "test-key",
+      { skipResponsesProbe: true },
+      harness,
+    );
+
+    expect(result).toEqual({ ok: false, message: "curl settled diagnostic" });
+    expect(requests).toBe(1);
+    expect(legacyProbe).toHaveBeenCalledTimes(1);
+  });
 });

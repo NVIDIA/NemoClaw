@@ -31,6 +31,10 @@ The `min_openclaw_version` field in `nemoclaw-blueprint/blueprint.yaml` is the c
 
 The Hermes agent manifest declares the expected Hermes version and the `hermes --version` probe command.
 
+When a legacy Hermes sandbox has no recorded base-image resolution metadata, `nemohermes <name> rebuild` requires the release-pinned immutable Hermes base image.
+If NemoClaw cannot resolve and validate that image, rebuild stops before it changes the sandbox.
+An explicit base-image override or recorded resolution metadata uses its existing rebuild path.
+
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
