@@ -1,15 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { renderCanonicalNemoClawConfig } from "./canonical";
-import { buildExportConfig } from "./export-builder";
-import type { ExportObservationResult, NonEmptyExportFindings } from "./export-observation";
-import type { NemoClawConfigDocumentName, NemoClawConfigDocumentUid } from "./model";
+import { renderCanonicalNemoClawConfig } from "../../config/canonical";
+import type {
+  ExportObservationResult,
+  NonEmptyExportFindings,
+} from "../../config/export-observation";
+import type { NemoClawConfigDocumentName, NemoClawConfigDocumentUid } from "../../config/model";
+import { buildExportConfig } from "../../domain/config/export-document";
 import {
   YamlExportOutputError,
   type YamlExportFailureKind,
   type YamlExportFileState,
-} from "./output";
+} from "../../adapters/fs/config-export-file";
 
 export const CONFIG_EXPORT_RESULT_VERSION = 1 as const;
 
@@ -83,10 +86,7 @@ function unreachable(value: never): never {
   throw new Error(`Unexpected export file state: ${String(value)}`);
 }
 
-function fileDiagnostic(
-  category: YamlExportFailureKind,
-  fileState: YamlExportFileState,
-): string {
+function fileDiagnostic(category: YamlExportFailureKind, fileState: YamlExportFileState): string {
   switch (fileState.publication) {
     case "unknown":
       return fileState.stagingCleanup === "incomplete"

@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import type { VerifiedExportSource } from "./export-observation";
-import { buildExportConfig } from "./export-builder";
-import { parseNemoClawConfigDocumentName, parseNemoClawConfigDocumentUid } from "./model";
+import type { VerifiedExportSource } from "../../config/export-observation";
+import {
+  parseNemoClawConfigDocumentName,
+  parseNemoClawConfigDocumentUid,
+} from "../../config/model";
+import { buildExportConfig } from "./export-document";
 
 const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const firstUid = parseNemoClawConfigDocumentUid("018f47e2-9d93-7d15-9c41-3ecf70b2550f");

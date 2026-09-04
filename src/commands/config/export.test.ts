@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { YamlExportOutputError } from "../../lib/config/output";
+import { YamlExportOutputError } from "../../lib/adapters/fs/config-export-file";
 
 const mocks = vi.hoisted(() => ({
   observeLiveExportSource: vi.fn(),
@@ -14,13 +14,15 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../lib/config/canonical", () => ({
   renderCanonicalNemoClawConfig: mocks.renderCanonicalNemoClawConfig,
 }));
-vi.mock("../../lib/config/export-builder", () => ({ buildExportConfig: mocks.buildExportConfig }));
-vi.mock("../../lib/config/output", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../lib/config/output")>()),
+vi.mock("../../lib/domain/config/export-document", () => ({
+  buildExportConfig: mocks.buildExportConfig,
+}));
+vi.mock("../../lib/adapters/fs/config-export-file", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/adapters/fs/config-export-file")>()),
   publishExportFile: mocks.publishExportFile,
 }));
-vi.mock("../../lib/config/export-live-adapters", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../lib/config/export-live-adapters")>()),
+vi.mock("../../lib/adapters/config/live-export-source", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/adapters/config/live-export-source")>()),
   observeLiveExportSource: mocks.observeLiveExportSource,
 }));
 

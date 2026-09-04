@@ -8,14 +8,19 @@ const mocks = vi.hoisted(() => ({
   renderCanonicalNemoClawConfig: vi.fn(),
 }));
 
-vi.mock("./canonical", () => ({
+vi.mock("../../config/canonical", () => ({
   renderCanonicalNemoClawConfig: mocks.renderCanonicalNemoClawConfig,
 }));
-vi.mock("./export-builder", () => ({ buildExportConfig: mocks.buildExportConfig }));
+vi.mock("../../domain/config/export-document", () => ({
+  buildExportConfig: mocks.buildExportConfig,
+}));
 
 import { runConfigExport, type ConfigExportDependencies } from "./export";
-import { parseNemoClawConfigDocumentName, parseNemoClawConfigDocumentUid } from "./model";
-import { YamlExportOutputError } from "./output";
+import { YamlExportOutputError } from "../../adapters/fs/config-export-file";
+import {
+  parseNemoClawConfigDocumentName,
+  parseNemoClawConfigDocumentUid,
+} from "../../config/model";
 
 const alphaDocumentName = parseNemoClawConfigDocumentName("alpha");
 const teamDocumentName = parseNemoClawConfigDocumentName("team");
@@ -246,7 +251,8 @@ describe("runConfigExport", () => {
         publication: "unknown",
         stagingCleanup: "complete",
       },
-      diagnostic: "The export may have been written, but its publication state could not be confirmed.",
+      diagnostic:
+        "The export may have been written, but its publication state could not be confirmed.",
     },
     {
       name: "unknown",

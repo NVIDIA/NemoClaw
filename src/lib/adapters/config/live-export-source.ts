@@ -3,26 +3,15 @@
 
 import os from "node:os";
 
-import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
-import { captureSanitizedResolvedOpenshell } from "../adapters/openshell/sanitized-capture";
+import { createCliOpenShellProviderAdapter } from "../openshell/provider-adapter-cli";
+import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import {
   fingerprintOpenShellSandboxId,
   parseStrictOpenShellSandboxListJson,
-} from "../adapters/openshell/sandbox-identity";
-import { inspectOpenShellSandboxIdentityFingerprint } from "../adapters/openshell/sandbox-identity-cli";
-import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
-import { syncCliOpenShellSandboxPolicyReader } from "../adapters/openshell/sandbox-policy-cli";
-import { getLiveGatewayInference } from "../inference/live";
-import { normalizeInferenceSelection } from "../inference/selection";
-import { resolveGatewayName } from "../onboard/gateway-binding/identity";
-import {
-  managedGatewayStateRootOwnershipFailure,
-  resolveGatewayStateDirForPort,
-} from "../onboard/gateway/state-dir";
-import { isSandboxPolicyCredentialFree } from "../policy/sandbox-policy-validation";
-import { getSandboxEntryInference } from "../state/registry-entry-view";
-import { load as loadRegistry } from "../state/registry/persistence";
-import type { SandboxEntry } from "../state/registry/types";
+} from "../openshell/sandbox-identity";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../openshell/sandbox-identity-cli";
+import { namedOpenShellGateway } from "../openshell/sandbox-observer";
+import { syncCliOpenShellSandboxPolicyReader } from "../openshell/sandbox-policy-cli";
 import {
   observeStableExportSource,
   type ExportObservationResult,
@@ -32,7 +21,18 @@ import {
   type ObservedExportInference,
   type ObservedExportSandboxIdentity,
   type RawExportSnapshot,
-} from "./export-observation";
+} from "../../config/export-observation";
+import { getLiveGatewayInference } from "../../inference/live";
+import { normalizeInferenceSelection } from "../../inference/selection";
+import { resolveGatewayName } from "../../onboard/gateway-binding/identity";
+import {
+  managedGatewayStateRootOwnershipFailure,
+  resolveGatewayStateDirForPort,
+} from "../../onboard/gateway/state-dir";
+import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
+import { getSandboxEntryInference } from "../../state/registry-entry-view";
+import { load as loadRegistry } from "../../state/registry/persistence";
+import type { SandboxEntry } from "../../state/registry/types";
 
 const CAPTURE_MAX_BYTES = 1024 * 1024;
 const CAPTURE_TIMEOUT_MS = 30_000;

@@ -3,38 +3,38 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../state/registry/persistence", () => ({ load: vi.fn() }));
-vi.mock("../state/registry-entry-view", () => ({ getSandboxEntryInference: vi.fn() }));
-vi.mock("../inference/live", () => ({ getLiveGatewayInference: vi.fn() }));
-vi.mock("../adapters/openshell/provider-adapter-cli", () => ({
+vi.mock("../../state/registry/persistence", () => ({ load: vi.fn() }));
+vi.mock("../../state/registry-entry-view", () => ({ getSandboxEntryInference: vi.fn() }));
+vi.mock("../../inference/live", () => ({ getLiveGatewayInference: vi.fn() }));
+vi.mock("../openshell/provider-adapter-cli", () => ({
   createCliOpenShellProviderAdapter: vi.fn(),
 }));
-vi.mock("../adapters/openshell/sanitized-capture", () => ({
+vi.mock("../openshell/sanitized-capture", () => ({
   captureSanitizedResolvedOpenshell: vi.fn(),
 }));
-vi.mock("../adapters/openshell/sandbox-identity-cli", () => ({
+vi.mock("../openshell/sandbox-identity-cli", () => ({
   inspectOpenShellSandboxIdentityFingerprint: vi.fn(),
 }));
-vi.mock("../adapters/openshell/sandbox-policy-cli", () => ({
+vi.mock("../openshell/sandbox-policy-cli", () => ({
   syncCliOpenShellSandboxPolicyReader: { readSandboxPolicy: vi.fn() },
 }));
-vi.mock("../onboard/gateway/state-dir", () => ({
+vi.mock("../../onboard/gateway/state-dir", () => ({
   managedGatewayStateRootOwnershipFailure: vi.fn(() => null),
   resolveGatewayStateDirForPort: vi.fn(() => "/managed/gateway"),
 }));
 
-import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
-import { captureSanitizedResolvedOpenshell } from "../adapters/openshell/sanitized-capture";
-import { fingerprintOpenShellSandboxId } from "../adapters/openshell/sandbox-identity";
-import { inspectOpenShellSandboxIdentityFingerprint } from "../adapters/openshell/sandbox-identity-cli";
-import { syncCliOpenShellSandboxPolicyReader } from "../adapters/openshell/sandbox-policy-cli";
-import { getLiveGatewayInference } from "../inference/live";
-import { resolveGatewayStateDirForPort } from "../onboard/gateway/state-dir";
-import { buildManagedStartupProfile } from "../onboard/managed-startup/profile-builder";
-import { getSandboxEntryInference } from "../state/registry-entry-view";
-import { load as loadRegistry } from "../state/registry/persistence";
-import type { SandboxEntry } from "../state/registry/types";
-import { createLiveExportSnapshotReader, observeLiveExportSource } from "./export-live-adapters";
+import { getLiveGatewayInference } from "../../inference/live";
+import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
+import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
+import { getSandboxEntryInference } from "../../state/registry-entry-view";
+import { load as loadRegistry } from "../../state/registry/persistence";
+import type { SandboxEntry } from "../../state/registry/types";
+import { createCliOpenShellProviderAdapter } from "../openshell/provider-adapter-cli";
+import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
+import { fingerprintOpenShellSandboxId } from "../openshell/sandbox-identity";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../openshell/sandbox-identity-cli";
+import { syncCliOpenShellSandboxPolicyReader } from "../openshell/sandbox-policy-cli";
+import { createLiveExportSnapshotReader, observeLiveExportSource } from "./live-export-source";
 
 const sandboxId = "123e4567-e89b-42d3-a456-426614174000";
 const identityFingerprint = fingerprintOpenShellSandboxId(sandboxId)!;

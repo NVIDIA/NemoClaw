@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { publishExportFile, YamlExportOutputError } from "./output";
+import { publishExportFile, YamlExportOutputError } from "./config-export-file";
 
 const roots: string[] = [];
 

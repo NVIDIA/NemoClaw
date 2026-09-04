@@ -3,7 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { Flags } from "@oclif/core";
-import type { ConfigExportTarget } from "../../lib/config/export";
+import type { ConfigExportTarget } from "../../lib/actions/config/export";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 import { sandboxNameArg } from "../../lib/sandbox/command-support";
 
@@ -66,9 +66,9 @@ export default class ConfigExportCommand extends NemoClawCommand {
         : { kind: "file", outputPath: flags.output, force: flags.force };
     const [{ runConfigExport }, { observeLiveExportSource }, { publishExportFile }] =
       await Promise.all([
-        import("../../lib/config/export"),
-        import("../../lib/config/export-live-adapters"),
-        import("../../lib/config/output"),
+        import("../../lib/actions/config/export"),
+        import("../../lib/adapters/config/live-export-source"),
+        import("../../lib/adapters/fs/config-export-file"),
       ]);
     const outcome = await runConfigExport(
       {

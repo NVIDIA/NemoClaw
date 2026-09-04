@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+
 type ErrnoException = Error & { code?: string };
 
 function isErrnoException(error: unknown): error is ErrnoException {
@@ -184,10 +185,7 @@ function removeOwnedStagingPath(temporary: string, stagedFile: fs.Stats): boolea
   }
 }
 
-function assertPublishedLocation(
-  stagedFile: fs.Stats,
-  outputPath: string,
-): void {
+function assertPublishedLocation(stagedFile: fs.Stats, outputPath: string): void {
   let current: fs.Stats;
   try {
     current = fs.lstatSync(outputPath);
@@ -345,16 +343,16 @@ export function publishExportFile(
 
   const fileState: YamlExportFileState =
     publication === "published"
-    ? {
-        publication: "published",
-        durability: durabilityConfirmed ? "confirmed" : "unknown",
-        location: locationConfirmed ? "confirmed" : "unknown",
-        stagingCleanup: stagingCleanupIncomplete ? "incomplete" : "complete",
-      }
+      ? {
+          publication: "published",
+          durability: durabilityConfirmed ? "confirmed" : "unknown",
+          location: locationConfirmed ? "confirmed" : "unknown",
+          stagingCleanup: stagingCleanupIncomplete ? "incomplete" : "complete",
+        }
       : {
-        publication,
-        stagingCleanup: stagingCleanupIncomplete ? "incomplete" : "complete",
-      };
+          publication,
+          stagingCleanup: stagingCleanupIncomplete ? "incomplete" : "complete",
+        };
   if (primaryError !== undefined || stagingCleanupIncomplete) {
     const category =
       primaryError instanceof YamlExportOutputError &&

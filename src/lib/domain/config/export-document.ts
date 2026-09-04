@@ -7,9 +7,9 @@ import type {
   NemoClawConfigDocumentUid,
   NemoClawInferenceProviderConfig,
   ValidatedNemoClawConfig,
-} from "./model";
-import { validateNemoClawConfig } from "./schema";
-import type { VerifiedExportSource } from "./export-observation";
+} from "../../config/model";
+import type { VerifiedExportSource } from "../../config/export-observation";
+import { validateNemoClawConfig } from "../../config/schema";
 
 function providerLocalName(provider: string): string {
   const normalized = provider
