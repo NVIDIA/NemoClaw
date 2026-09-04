@@ -1241,8 +1241,12 @@ async function runInferenceSetWithoutHostLock(
             sleep: deps.sleep,
             onRetry: (result, delayMs, attempt) => {
               if (result.ok) return;
+              const retryCause =
+                result.httpStatus === null
+                  ? "the sandbox probe did not receive an HTTP status"
+                  : `HTTP ${result.httpStatus}`;
               deps.log(
-                `  Waiting ${delayMs / 1_000}s for OpenShell route convergence after HTTP ${result.httpStatus} (probe ${attempt}/3)...`,
+                `  Waiting ${delayMs / 1_000}s for OpenShell route convergence after ${retryCause} (probe ${attempt}/3)...`,
               );
             },
           },

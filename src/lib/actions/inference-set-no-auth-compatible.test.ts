@@ -254,6 +254,9 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
 
     expect(probeSandboxRoute).toHaveBeenCalledTimes(2);
     expect(deps.calls.sleep.mock.calls).toEqual([[6_000], [2_000]]);
+    expect(deps.calls.log).toHaveBeenCalledWith(
+      "  Waiting 2s for OpenShell route convergence after the sandbox probe did not receive an HTTP status (probe 1/3)...",
+    );
     expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
       "alpha",
       expect.objectContaining({ model: "model-b", credentialEnv: NO_AUTH_CREDENTIAL_ENV }),
