@@ -136,7 +136,7 @@ describe("OpenClaw plugin onboarding pairing evidence", () => {
     );
   });
 
-  it("does not capture diagnostics for another onboarding failure (#9844)", async () => {
+  it("does not capture pairing diagnostics for a non-pairing onboarding failure (#9844)", async () => {
     const captureDiagnostics = vi.fn(async () => true);
 
     const result = await runOpenClawPluginWithFailureEvidence({
@@ -199,7 +199,7 @@ describe("OpenClaw plugin onboarding pairing evidence", () => {
 });
 
 describe("OpenClaw plugin recreation pairing evidence", () => {
-  it("records the recreation operation without diagnostics (#9844)", async () => {
+  it("records successful recreation without diagnostics (#9844)", async () => {
     const captureDiagnostics = vi.fn(async () => true);
     const run = vi.fn(async () => onboardResult(0));
     const onEvidence = vi.fn();
@@ -223,7 +223,7 @@ describe("OpenClaw plugin recreation pairing evidence", () => {
     );
   });
 
-  it("captures recreation diagnostics and fails without resuming (#9844)", async () => {
+  it("captures diagnostics and stops when recreation scope warm-up fails (#9844)", async () => {
     const sandboxName = "fixture-sandbox";
     const captureDiagnostics = vi.fn(async () => true);
     const onEvidence = vi.fn();
@@ -353,7 +353,7 @@ if (fs.existsSync(${JSON.stringify(nextImageIdPath)})) {
 describe("trusted EXDEV OpenShell wrapper", () => {
   it("rejects incomplete canonical OpenShell components before creating a wrapper", () => {
     expect(() => createWrapperFixture(REQUIRED_OPENSHELL_MCP_FEATURES.slice(1))).toThrow(
-      "trusted EXDEV image wrapper requires feature-complete canonical OpenShell components",
+      "trusted EXDEV image wrapper requires canonical OpenShell components with all required MCP features",
     );
   });
 
@@ -489,7 +489,7 @@ describe("trusted EXDEV OpenShell wrapper", () => {
 
       expect(result.status).toBe(64);
       expect(result.stdout).toBe("");
-      expect(result.stderr).toContain("immutable identity mismatch");
+      expect(result.stderr).toContain("image inspection failed");
       expect(fixture.readInspectorInvocations()).toEqual([
         ["image", "inspect", "--format", "{{.Id}}", imageRef],
       ]);

@@ -126,7 +126,7 @@ export function createOpenShellTrustedImageWrapper(options: {
       openshellBin: canonicalComponents.cli,
       sandboxBin: canonicalComponents.sandbox,
     }),
-    "trusted EXDEV image wrapper requires feature-complete canonical OpenShell components",
+    "trusted EXDEV image wrapper requires canonical OpenShell components with all required MCP features",
   );
   const delegated = createOpenShellDriverConfigTestWrapper({
     delegatedCapabilityMarkers: REQUIRED_OPENSHELL_MCP_FEATURES,
@@ -177,7 +177,9 @@ if (args[0] === "sandbox" && args[1] === "create") {
       ? "trusted EXDEV image handoff rejected the selected image ID"
       : inspectionTimedOut
         ? "trusted EXDEV image inspection timed out"
-        : inspected.error || inspected.status !== 0 || inspected.stdout.trim() !== imageId
+        : inspected.error || inspected.status !== 0
+          ? "trusted EXDEV image inspection failed"
+          : inspected.stdout.trim() !== imageId
           ? "trusted EXDEV image handoff detected an immutable identity mismatch"
           : "";
   if (rejection) {
