@@ -437,6 +437,7 @@ jobs:
           BASE_SHA: ${{ needs.collect.outputs.base_sha }}
           COMMIT_SHA: ${{ needs.publish.outputs.commit_sha }}
           GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
           SOURCE_HEAD_SHA: ${{ needs.collect.outputs.source_head_sha }}
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/verify-generated-head.mts"
 

@@ -541,6 +541,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     );
     await expect(
       verifyGeneratedHeadOnce({
+        prNumber: bundle.input.prNumber,
         commitSha,
         baseSha: bundle.input.baseSha,
         attemptKey: bundle.attemptKey,
@@ -565,6 +566,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     );
     await expect(
       verifyGeneratedHeadWithReceipt({
+        prNumber: bundle.input.prNumber,
         commitSha,
         sourceHeadSha: bundle.input.sourceHeadSha,
         baseSha: bundle.input.baseSha,
@@ -595,6 +597,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     );
     await expect(
       verifyGeneratedHeadOnce({
+        prNumber: bundle.input.prNumber,
         commitSha,
         baseSha: bundle.input.baseSha,
         attemptKey: bundle.attemptKey,
@@ -603,4 +606,36 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
       }),
     ).rejects.toThrow("ambiguous generated-head validation results");
   });
+
+  it.each(["head", "base"] as const)(
+    "refuses to attest generated-head checks after the live %s changes (#10791)",
+    async (changedIdentity) => {
+      const bundle = selection();
+      const commitSha = "d".repeat(40);
+      const request = asGitHubRequest(
+        vi.fn(
+          generatedHeadEvidenceResponder(bundle.attemptKey, commitSha, {
+            changedPullIdentity: changedIdentity,
+          }),
+        ),
+      );
+
+      await expect(
+        verifyGeneratedHeadOnce({
+          prNumber: bundle.input.prNumber,
+          commitSha,
+          baseSha: bundle.input.baseSha,
+          attemptKey: bundle.attemptKey,
+          token: "token",
+          request,
+        }),
+      ).rejects.toThrow("no longer matches generated-head dispatch");
+      expect(
+        request.mock.calls.some(
+          ([apiPath, , options]) =>
+            apiPath === "repos/NVIDIA/NemoClaw/check-runs" && options?.method === "POST",
+        ),
+      ).toBe(false);
+    },
+  );
 });

@@ -32,6 +32,27 @@ function job(
   return { permissions, steps: [structuredClone(checkout)], ...extra };
 }
 
+function generatedHeadReporterJob(): Record<string, unknown> {
+  return job(
+    { actions: "read", checks: "write", contents: "read" },
+    {
+      steps: [
+        structuredClone(checkout),
+        {
+          env: {
+            ATTEMPT_KEY: "${{ needs.collect.outputs.attempt_key }}",
+            BASE_SHA: "${{ needs.collect.outputs.base_sha }}",
+            COMMIT_SHA: "${{ needs.publish.outputs.commit_sha }}",
+            PR_NUMBER: "${{ inputs.pr_number }}",
+            SOURCE_HEAD_SHA: "${{ needs.collect.outputs.source_head_sha }}",
+          },
+          run: "node tools/pr-review-advisor-repair/verify-generated-head.mts",
+        },
+      ],
+    },
+  );
+}
+
 function phase1Workflow(): Record<string, unknown> {
   const exactHeadCheckout = {
     uses: `actions/checkout@${"b".repeat(40)}`,
@@ -85,7 +106,7 @@ function phase1Workflow(): Record<string, unknown> {
           steps: [structuredClone(checkout), structuredClone(exactHeadCheckout)],
         },
       ),
-      "verify-generated-head": job({ actions: "read", checks: "write", contents: "read" }),
+      "verify-generated-head": generatedHeadReporterJob(),
     },
   };
 }
@@ -114,7 +135,7 @@ function reconciliationWorkflow(): Record<string, unknown> {
           ],
         },
       ),
-      "verify-generated-head": job({ actions: "read", checks: "write", contents: "read" }),
+      "verify-generated-head": generatedHeadReporterJob(),
     },
   };
 }
@@ -229,6 +250,28 @@ describe("PR Review Advisor repair workflow validator", () => {
 
     expect(validatePhase1WorkflowAuthority(workflow)).toContain(
       "repair must be disabled on workflow reruns",
+    );
+  });
+
+  it("rejects final reporters that omit the live PR identity (#10791)", () => {
+    const phase1 = phase1Workflow();
+    const reconciliation = reconciliationWorkflow();
+    const phase1Jobs = phase1.jobs as Record<string, Record<string, unknown>>;
+    const phase1Reporter = (
+      phase1Jobs["verify-generated-head"]!.steps as Array<Record<string, unknown>>
+    )[1]!;
+    delete (phase1Reporter.env as Record<string, unknown>).PR_NUMBER;
+    const reconciliationJobs = reconciliation.jobs as Record<string, Record<string, unknown>>;
+    const reconciliationReporter = (
+      reconciliationJobs["verify-generated-head"]!.steps as Array<Record<string, unknown>>
+    )[1]!;
+    delete (reconciliationReporter.env as Record<string, unknown>).PR_NUMBER;
+
+    expect(validatePhase1WorkflowAuthority(phase1)).toContain(
+      "Phase 1 generated-head reporter must bind the live PR and published commit",
+    );
+    expect(validateReconciliationWorkflowAuthority(reconciliation)).toContain(
+      "reconciliation generated-head reporter must bind the live PR and published commit",
     );
   });
 

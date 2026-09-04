@@ -22,7 +22,7 @@ import { TRUSTED_GENERATED_HEAD_REF } from "./generated-head-validation.mts";
 
 type GitHubRequest = <T>(apiPath: string, token: string) => Promise<T>;
 
-type PullRequest = {
+export type GeneratedHeadPullRequest = {
   number?: unknown;
   state?: unknown;
   draft?: unknown;
@@ -62,6 +62,26 @@ function boundedText(
   return value;
 }
 
+export function assertGeneratedHeadPullRequestIdentity(
+  pull: GeneratedHeadPullRequest,
+  expected: { prNumber: number; sourceHeadSha: string; baseSha: string },
+): void {
+  if (
+    pull.number !== expected.prNumber ||
+    pull.state !== "open" ||
+    pull.draft !== false ||
+    pull.maintainer_can_modify !== true ||
+    pull.user?.login !== PHASE1_PILOT_AUTHOR ||
+    pull.head?.sha !== expected.sourceHeadSha ||
+    pull.head?.repo?.full_name !== CANONICAL_REPOSITORY ||
+    pull.base?.sha !== expected.baseSha ||
+    pull.base?.ref !== "main" ||
+    pull.base?.repo?.full_name !== CANONICAL_REPOSITORY
+  ) {
+    throw new RepairContractError("live pull request no longer matches generated-head dispatch");
+  }
+}
+
 export async function collectGeneratedHeadContext(
   env: NodeJS.ProcessEnv,
   request: GitHubRequest = githubApi,
@@ -93,24 +113,11 @@ export async function collectGeneratedHeadContext(
     );
   }
 
-  const pull = await request<PullRequest>(
+  const pull = await request<GeneratedHeadPullRequest>(
     `repos/${CANONICAL_REPOSITORY}/pulls/${prNumber}`,
     required(env, "GITHUB_TOKEN"),
   );
-  if (
-    pull.number !== prNumber ||
-    pull.state !== "open" ||
-    pull.draft !== false ||
-    pull.maintainer_can_modify !== true ||
-    pull.user?.login !== PHASE1_PILOT_AUTHOR ||
-    pull.head?.sha !== sourceHeadSha ||
-    pull.head?.repo?.full_name !== CANONICAL_REPOSITORY ||
-    pull.base?.sha !== baseSha ||
-    pull.base?.ref !== "main" ||
-    pull.base?.repo?.full_name !== CANONICAL_REPOSITORY
-  ) {
-    throw new RepairContractError("live pull request no longer matches generated-head dispatch");
-  }
+  assertGeneratedHeadPullRequestIdentity(pull, { prNumber, sourceHeadSha, baseSha });
   return {
     version: 1,
     repository: CANONICAL_REPOSITORY,

@@ -184,6 +184,18 @@ function isTrustedGeneratedHeadVerifier(job: Value, expectedPrInput: string): bo
   );
 }
 
+function generatedHeadReporterBindsPullRequest(job: Value): boolean {
+  const reporter = steps(job).find(({ run }) => String(run).includes("verify-generated-head.mts"));
+  const environment = record(reporter?.env);
+  return (
+    environment.ATTEMPT_KEY === "${{ needs.collect.outputs.attempt_key }}" &&
+    environment.BASE_SHA === "${{ needs.collect.outputs.base_sha }}" &&
+    environment.COMMIT_SHA === "${{ needs.publish.outputs.commit_sha }}" &&
+    environment.PR_NUMBER === "${{ inputs.pr_number }}" &&
+    environment.SOURCE_HEAD_SHA === "${{ needs.collect.outputs.source_head_sha }}"
+  );
+}
+
 function validateSharedWorkflowBoundary(workflow: Value, label: string): string[] {
   const errors: string[] = [];
   const workflowJobs = jobs(workflow);
@@ -297,6 +309,11 @@ export function validatePhase1WorkflowAuthority(workflow: Value): string[] {
       ),
     "Phase 1 source checkouts must bind the selected exact head",
   );
+  condition(
+    errors,
+    generatedHeadReporterBindsPullRequest(record(workflowJobs["verify-generated-head"])),
+    "Phase 1 generated-head reporter must bind the live PR and published commit",
+  );
   return errors;
 }
 
@@ -336,6 +353,11 @@ export function validateReconciliationWorkflowAuthority(workflow: Value): string
       sourceCheckouts(workflow)[0]?.jobName === "publish" &&
       sourceCheckouts(workflow)[0]?.input.ref === "${{ inputs.source_head_sha }}",
     "reconciliation may check out only the exact original source in its publisher",
+  );
+  condition(
+    errors,
+    generatedHeadReporterBindsPullRequest(record(workflowJobs["verify-generated-head"])),
+    "reconciliation generated-head reporter must bind the live PR and published commit",
   );
   return errors;
 }

@@ -342,12 +342,34 @@ export function successfulPublicationResponder(fixture: PublicationFixture, comm
 export function generatedHeadEvidenceResponder(
   attemptKey: string,
   commitSha: string,
-  options: { failedJob?: string; duplicateWorkflow?: string } = {},
+  options: {
+    changedPullIdentity?: "head" | "base";
+    failedJob?: string;
+    duplicateWorkflow?: string;
+  } = {},
 ) {
   const runIds = new Map(
     GENERATED_HEAD_VALIDATIONS.map(({ workflow }, index) => [workflow, 2000 + index]),
   );
   return async (apiPath: string, _token: string, requestOptions?: RequestOptions) => {
+    if (apiPath === "repos/NVIDIA/NemoClaw/pulls/42") {
+      return {
+        number: 42,
+        state: "open",
+        draft: false,
+        maintainer_can_modify: true,
+        user: { login: "cjagwani" },
+        head: {
+          sha: options.changedPullIdentity === "head" ? "f".repeat(40) : commitSha,
+          repo: { full_name: "NVIDIA/NemoClaw" },
+        },
+        base: {
+          sha: options.changedPullIdentity === "base" ? "f".repeat(40) : "b".repeat(40),
+          ref: "main",
+          repo: { full_name: "NVIDIA/NemoClaw" },
+        },
+      };
+    }
     const validation = GENERATED_HEAD_VALIDATIONS.find(({ workflow }) =>
       apiPath.includes(`/actions/workflows/${workflow}/runs?`),
     );

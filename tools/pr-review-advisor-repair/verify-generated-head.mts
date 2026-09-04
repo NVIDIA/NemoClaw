@@ -15,6 +15,10 @@ import {
   sanitizeDiagnostic,
 } from "./contract.mts";
 import {
+  assertGeneratedHeadPullRequestIdentity,
+  type GeneratedHeadPullRequest,
+} from "./generated-head-context.mts";
+import {
   GENERATED_HEAD_VALIDATIONS,
   generatedHeadRunTitle,
   listGeneratedHeadWorkflowRuns,
@@ -251,6 +255,7 @@ async function attestRequiredChecks(input: {
 }
 
 export async function verifyGeneratedHeadOnce(input: {
+  prNumber: number;
   commitSha: string;
   baseSha: string;
   attemptKey: string;
@@ -263,11 +268,21 @@ export async function verifyGeneratedHeadOnce(input: {
     request,
   });
   if (!evidence) return "pending";
+  const pull = await request<GeneratedHeadPullRequest>(
+    `repos/${CANONICAL_REPOSITORY}/pulls/${input.prNumber}`,
+    input.token,
+  );
+  assertGeneratedHeadPullRequestIdentity(pull, {
+    prNumber: input.prNumber,
+    sourceHeadSha: input.commitSha,
+    baseSha: input.baseSha,
+  });
   await attestRequiredChecks({ ...input, request, evidence });
   return "success";
 }
 
 export async function waitForGeneratedHeadValidation(input: {
+  prNumber: number;
   commitSha: string;
   baseSha: string;
   attemptKey: string;
@@ -312,6 +327,7 @@ function writeVerificationReceipt(
 }
 
 export async function verifyGeneratedHeadWithReceipt(input: {
+  prNumber: number;
   commitSha: string;
   sourceHeadSha: string;
   baseSha: string;
@@ -351,6 +367,7 @@ export async function verifyGeneratedHeadWithReceipt(input: {
 }
 
 async function main(env: NodeJS.ProcessEnv): Promise<void> {
+  const prNumber = positiveInteger(Number(required(env, "PR_NUMBER")), "PR_NUMBER");
   const commitSha = fullSha(required(env, "COMMIT_SHA"), "COMMIT_SHA");
   const sourceHeadSha = fullSha(required(env, "SOURCE_HEAD_SHA"), "SOURCE_HEAD_SHA");
   const baseSha = fullSha(required(env, "BASE_SHA"), "BASE_SHA");
@@ -359,6 +376,7 @@ async function main(env: NodeJS.ProcessEnv): Promise<void> {
     throw new RepairContractError("ATTEMPT_KEY is malformed");
   }
   await verifyGeneratedHeadWithReceipt({
+    prNumber,
     commitSha,
     sourceHeadSha,
     baseSha,
