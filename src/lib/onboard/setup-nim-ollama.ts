@@ -195,7 +195,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     if (!deps.checkOllamaPortsOrWarn({ isNonInteractive: deps.isNonInteractive })) {
       return "retry-selection";
     }
-    const lockedModel = preflightOllamaRoute(state, requestedModel, null);
+    preflightOllamaRoute(state, requestedModel, null);
     const isInstall = selectedKey === "install-windows-ollama";
     const isRestart = !isInstall;
     const promptMsg = isInstall
@@ -242,6 +242,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
       }
       console.log(`  ✓ Using Ollama on host.docker.internal:${deps.OLLAMA_PORT}`);
     }
+    const lockedModel = preflightOllamaRoute(state, requestedModel, null);
     const result = await selectModel(gpu, state, requestedModel, null, lockedModel);
     if (result === "retry-selection") deps.resetOllamaHostCache();
     return result;
