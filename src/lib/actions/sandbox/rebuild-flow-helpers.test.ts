@@ -239,6 +239,18 @@ describe("rebuild agent base image preflight", () => {
     });
   });
 
+  it("rejects a missing Hermes base when a legacy sandbox has no resolution hint (#10903)", () => {
+    const { ensureAgentBaseImage } = mockBaseImagePreflight("");
+    ensureAgentBaseImage.mockReturnValue({
+      imageTag: null,
+      built: false,
+    });
+
+    expect(() => ensureRebuildAgentBaseImage("hermes", makeBail())).toThrow(
+      "Hermes rebuild requires the release-pinned immutable base image",
+    );
+  });
+
   it("hands a pinned NemoCUA image alias to the inner sandbox create (#9649)", () => {
     const cuaOverrideEnvVar = "NEMOCLAW_CUA_SANDBOX_IMAGE_REF";
     const mutableRef = "nemocua-scenario:mutable";

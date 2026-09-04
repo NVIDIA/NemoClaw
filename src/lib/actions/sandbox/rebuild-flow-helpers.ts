@@ -326,8 +326,7 @@ export function ensureRebuildAgentBaseImage(
     }
     if (
       requirePinnedHermesBase &&
-      result.imageTag &&
-      !isImmutableRemoteBaseImageRef(result.imageTag)
+      (!result.imageTag || !isImmutableRemoteBaseImageRef(result.imageTag))
     ) {
       throw new Error("Hermes rebuild requires the release-pinned immutable base image");
     }
