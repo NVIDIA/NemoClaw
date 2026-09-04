@@ -12,6 +12,7 @@ export type DirectPublicDispatchHarness = {
   getSandbox: ReturnType<typeof vi.fn>;
   listSandboxes: ReturnType<typeof vi.fn>;
   migrateLegacyPortState: ReturnType<typeof vi.fn>;
+  printSandboxConnectHelp: ReturnType<typeof vi.fn>;
   recoverRegistryEntries: ReturnType<typeof vi.fn>;
   resetObservedCalls: () => void;
   runOclifArgv: ReturnType<typeof vi.fn>;
@@ -28,8 +29,12 @@ type DirectPublicDispatchOptions = {
   pendingSandboxNames?: readonly string[];
   /** Args the sandbox-connect stub treats as connect flags (default: none). */
   connectFlags?: readonly string[];
+  /** Legacy sandbox rows that belong to the selected gateway but are not migrated yet. */
+  migratableSandboxNames?: readonly string[];
   /** Error injected by the pre-dispatch legacy-state migration seam. */
   migrationError?: Error;
+  /** Error injected by sandbox registry lookups. */
+  registryReadError?: Error;
 };
 
 const requireCache = require.cache as Record<string, NodeModule | undefined>;
@@ -82,7 +87,10 @@ export async function withDirectPublicDispatch(
       },
     ]),
   );
-  const getSandbox = vi.fn((name: string) => sandboxes.get(name) ?? null);
+  const getSandbox = vi.fn((name: string) => {
+    if (options.registryReadError) throw options.registryReadError;
+    return sandboxes.get(name) ?? null;
+  });
   const isPublishedSandboxRegistration = vi.fn(
     (sandbox: SandboxStub) => sandbox.pendingRouteReservation !== true,
   );
@@ -108,8 +116,11 @@ export async function withDirectPublicDispatch(
     if (options.migrationError) throw options.migrationError;
     return { migratedSandboxNames: [], migratedSession: false, warnings: [] };
   });
+  const migratableSandboxNames = new Set(options.migratableSandboxNames ?? []);
+  const hasMigratableLegacySandbox = vi.fn((name: string) => migratableSandboxNames.has(name));
   const runOclifArgv = vi.fn(async () => undefined);
   const runOclifCommandById = vi.fn(async () => undefined);
+  const printSandboxConnectHelp = vi.fn();
   const stderr: string[] = [];
   const previousExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
@@ -136,7 +147,7 @@ export async function withDirectPublicDispatch(
     isPublishedSandboxRegistration,
     listSandboxes,
   });
-  cacheModule(legacyPortMigrationPath, { migrateLegacyPortState });
+  cacheModule(legacyPortMigrationPath, { hasMigratableLegacySandbox, migrateLegacyPortState });
   cacheModule(registryRecoveryPath, { recoverRegistryEntries });
   cacheModule(oclifRunnerPath, { runOclifArgv, runOclifCommandById });
   const connectFlags = new Set(options.connectFlags ?? []);
@@ -145,7 +156,7 @@ export async function withDirectPublicDispatch(
       typeof arg === "string" ? connectFlags.has(arg) : false,
     ),
     parseSandboxConnectArgs: vi.fn(),
-    printSandboxConnectHelp: vi.fn(),
+    printSandboxConnectHelp,
   });
 
   try {
@@ -160,6 +171,7 @@ export async function withDirectPublicDispatch(
       getSandbox,
       listSandboxes,
       migrateLegacyPortState,
+      printSandboxConnectHelp,
       recoverRegistryEntries,
       resetObservedCalls,
       runOclifArgv,
