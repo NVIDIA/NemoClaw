@@ -194,7 +194,7 @@ $$nemoclaw completion fish > ~/.config/fish/completions/$$nemoclaw.fish
 
 Start a new shell session to refresh the cached sandbox names after creating or removing a sandbox.
 
-### `$$nemoclaw config export`
+### `$$nemoclaw config export <sandbox>`
 
 Export a supported registered OpenClaw sandbox as a secret-free `NemoClawConfig` document. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
