@@ -137,7 +137,7 @@ DNS-backed HTTPS routes use an HTTPS Pin Runtime binding.
 Provider updates occur after OpenShell selects the new route.
 If an update fails, NemoClaw attempts to restore the previously recorded provider and model.
 If NemoClaw rejects the update before the provider command runs, the provider binding stays unchanged.
-After any failed provider command, the provider state may be partial.
+After a provider command fails without confirming that no change occurred, provider state may be partial.
 If the error says that provider state may be partial, rerun onboarding to reconcile the provider before using the route or rerunning `inference set`.
 If NemoClaw cannot restore the previous selection, resolve the reported restore failure.
 Then rerun onboarding before you use the route.
