@@ -31,7 +31,7 @@
       "src/lib/state/registry.ts": 96,
       "src/lib/state/state-root.ts": 21,
       "src/lib/subprocess-env.ts": 22,
-      "src/lib/validation.ts": 24
+      "src/lib/validation.ts": 23
     }
   },
   "fanOut": {
@@ -64,7 +64,7 @@
     "src/lib/actions": 18,
     "src/lib/actions/sandbox": 179,
     "src/lib/state": 38,
-    "src/lib/inference": 63,
+    "src/lib/inference": 64,
     "scripts": 42
   }
 }

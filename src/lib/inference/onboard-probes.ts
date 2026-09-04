@@ -35,7 +35,10 @@ const {
   getHostDockerInternalProbeFailure,
   isHijackedDockerInternalUrl,
 } = require("./onboard-host-docker-internal");
-const { isNvcfFunctionNotFoundForAccount, nvcfFunctionNotFoundMessage } = require("../validation");
+const {
+  isNvcfFunctionNotFoundForAccount,
+  nvcfFunctionNotFoundMessage,
+} = require("./nvcf-model-access");
 const { isPrivateHostname, isPrivateIp, isLoopbackHostname } = require("../private-networks");
 const { buildResolvePinArgs, isOperatorTrustablePrivateIp } = require("./endpoint-ssrf-preflight");
 const {
@@ -506,9 +509,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
 
 // ── OpenAI-like probe ────────────────────────────────────────────
 function needsExtendedNvidiaEndpointValidationBudget(model) {
-  return (
-    vllmProbePolicyForModel(String(model || "")) === EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY
-  );
+  return vllmProbePolicyForModel(String(model || "")) === EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY;
 }
 
 function getChatCompletionsProbeTimingArgs(model, opts) {
@@ -1154,7 +1155,15 @@ export function shouldSmokeOpenAiLikeOnboardRoute(
     return false;
   }
   const { REMOTE_PROVIDER_CONFIG } = require("../onboard/providers");
-  if (provider === "nvidia-nim" || provider === "nvidia-router") return true;
+  // NVIDIA Endpoints registers as OpenShell provider type "nvidia", which the
+  // providerType test below does not match, so nvidia-prod was the only
+  // OpenAI-completions remote provider whose onboarding never sent a Chat
+  // Completions request. A model that is in the NVIDIA Build catalog but not
+  // deployed for the account then onboarded clean and first failed at
+  // `status` with a bare HTTP 404 (#10879). Smoke it like its siblings.
+  if (provider === "nvidia-prod" || provider === "nvidia-nim" || provider === "nvidia-router") {
+    return true;
+  }
   return Object.values(REMOTE_PROVIDER_CONFIG).some(
     (entry) =>
       entry.providerName === provider &&
@@ -1222,9 +1231,8 @@ export async function verifyOnboardInferenceSmoke(options: any, dependencies: an
   try {
     const teardownOrphanManagedGatewayOnAbort =
       dependencies.teardownOrphanManagedGatewayOnAbort ??
-      (
-        require("../onboard/gateway-destroy") as typeof import("../onboard/gateway-destroy")
-      ).teardownOrphanManagedGatewayOnAbort;
+      (require("../onboard/gateway-destroy") as typeof import("../onboard/gateway-destroy"))
+        .teardownOrphanManagedGatewayOnAbort;
     teardownOrphanManagedGatewayOnAbort();
   } catch (error) {
     // Helper never throws; this covers require/load failures only.

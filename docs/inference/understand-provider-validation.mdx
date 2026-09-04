@@ -31,7 +31,7 @@ NemoClaw sends a provider-specific request that exercises the API surface intend
 | Provider | Validation request |
 |---|---|
 | OpenAI | Tries `/responses`, then `/chat/completions`. |
-| NVIDIA Endpoints | Uses `/v1/chat/completions` and skips `/v1/responses`. |
+| NVIDIA Endpoints | Uses `/v1/chat/completions` for model and smoke validation and skips `/v1/responses`. |
 | OpenRouter | Uses `/v1/chat/completions` for catalog, model, and smoke validation. |
 | Google Gemini | Uses the OpenAI-compatible chat-completions path and skips `/v1/responses`. |
 | Other OpenAI-compatible endpoint | Tries `/v1/responses` with tool-calling and streaming checks, then falls back to `/v1/chat/completions`. |

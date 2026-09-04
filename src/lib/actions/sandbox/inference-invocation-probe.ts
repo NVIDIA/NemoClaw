@@ -6,6 +6,12 @@ import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime
 import { getSandboxInferenceConfig } from "../../inference/config";
 import { validateInferenceResponseBody } from "../../inference/health";
 import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "../../inference/max-tokens-field";
+import {
+  NVCF_FUNCTION_NOT_FOUND_MARKER,
+  NVCF_FUNCTION_NOT_FOUND_SHELL_ERE,
+  NVCF_FUNCTION_NOT_FOUND_SHELL_MATCH_ARGS,
+  nvcfFunctionNotFoundMessage,
+} from "../../inference/nvcf-model-access";
 import { shellQuote } from "../../runner";
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "./connect-inference-route-probe";
 import {
@@ -27,7 +33,7 @@ export type SandboxInferenceInvocationInput = {
 
 export type SandboxInferenceInvocationResult =
   | { ok: true }
-  | { ok: false; detail: string; httpStatus: number | null };
+  | { ok: false; detail: string; httpStatus: number | null; endpoint?: string };
 
 export type SandboxInferenceInvocationDeps = {
   runOpenshell?: typeof runOpenshellProviderCommand;
@@ -91,6 +97,13 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   };
 }
 
+/** The endpoint this input's API family posts to, for callers that report a hop. */
+export function resolveSandboxInferenceInvocationEndpoint(
+  input: SandboxInferenceInvocationInput,
+): string {
+  return buildProbeRequest(input).endpoint;
+}
+
 export function buildSandboxInferenceInvocationCommand(
   input: SandboxInferenceInvocationInput,
 ): string {
@@ -106,7 +119,10 @@ export function buildSandboxInferenceInvocationCommand(
     "trap 'rm -f \"$body\"' EXIT HUP INT TERM",
     `code=$(curl -sS --connect-timeout 5 --max-time 90 --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
     "printf '%s\\n' \"$code\"",
-    'case "$code" in 2??) cat "$body"; exit 0 ;; *) exit 1 ;; esac',
+    // A non-2xx body never leaves the sandbox (#6195). A 404 is classified
+    // here instead, so status can name the cause the onboarding probe already
+    // recognises without carrying the body that proved it (#10879).
+    `case "$code" in 2??) cat "$body"; exit 0 ;; 404) grep ${NVCF_FUNCTION_NOT_FOUND_SHELL_MATCH_ARGS} ${shellQuote(NVCF_FUNCTION_NOT_FOUND_SHELL_ERE)} "$body" && printf '%s\\n' ${shellQuote(NVCF_FUNCTION_NOT_FOUND_MARKER)}; exit 1 ;; *) exit 1 ;; esac`,
   ].join("; ");
 }
 
@@ -198,6 +214,7 @@ export function probeSandboxInferenceInvocation(
       ok: false,
       detail: "sandbox inference invocation probe was unavailable",
       httpStatus: null,
+      endpoint: resolveSandboxInferenceInvocationEndpoint(input),
     };
   }
   if (result.status === 0) {
@@ -217,14 +234,25 @@ export function probeSandboxInferenceInvocation(
       ok: false,
       detail: "sandbox inference invocation probe returned an invalid response body",
       httpStatus,
+      endpoint: resolveSandboxInferenceInvocationEndpoint(input),
     };
   }
   const httpStatus = result.stdout.match(/(?:^|\n)([1-5]\d\d)(?:\n|$)/)?.[1];
+  // Only the fixed marker is read back, never the line that carried it, so an
+  // upstream body can still not reach diagnostics (#6195).
+  const nvcfFunctionNotFound = result.stdout
+    .split("\n")
+    .some((line) => line.trim() === NVCF_FUNCTION_NOT_FOUND_MARKER);
+  const detail = httpStatus
+    ? `sandbox inference invocation probe returned HTTP ${httpStatus}`
+    : `sandbox inference invocation probe exited with status ${result.status}`;
   return {
     ok: false,
-    detail: httpStatus
-      ? `sandbox inference invocation probe returned HTTP ${httpStatus}`
-      : `sandbox inference invocation probe exited with status ${result.status}`,
+    detail:
+      httpStatus === "404" && nvcfFunctionNotFound
+        ? `${detail}: ${nvcfFunctionNotFoundMessage(input.model).replace(/\.$/, "")}`
+        : detail,
     httpStatus: httpStatus ? Number.parseInt(httpStatus, 10) : null,
+    endpoint: resolveSandboxInferenceInvocationEndpoint(input),
   };
 }
