@@ -294,7 +294,14 @@ export function ensureRebuildAgentBaseImage(
     let result: ReturnType<typeof ensureAgentBaseImage>;
     try {
       result = ensureAgentBaseImage(agentDef, {
-        forceBaseImageRebuild: !hasExplicitOverride && !options.resolutionHint,
+        // A missing resolution hint is a cache miss, not authority to compile
+        // a base image from source. The resolver already routes genuine local
+        // intent — changed base inputs, or a repository-built local image — to
+        // a validated local build, and otherwise resolves the release's pinned
+        // published base. Forcing a rebuild here made a stock managed upgrade
+        // depend on reaching every source archive the Dockerfile fetches
+        // (#10903).
+        forceBaseImageRebuild: false,
         ...(options.resolutionHint !== undefined ? { resolutionHint: options.resolutionHint } : {}),
         ...(options.forceBaseImageRefresh !== undefined
           ? { forceBaseImageRefresh: options.forceBaseImageRefresh }

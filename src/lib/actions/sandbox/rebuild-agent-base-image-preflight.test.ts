@@ -48,6 +48,10 @@ function loadDockerImage(): DockerImageModule {
   return requireDist(dockerImagePath);
 }
 
+function failUnreachableSourceBuild(): never {
+  throw new Error("Failed to build Hermes Agent base image (exit 1)");
+}
+
 function makeBail(): (msg: string, code?: number) => never {
   return (msg: string) => {
     throw new Error(`bail: ${msg}`);
@@ -129,17 +133,61 @@ describe("ensureRebuildAgentBaseImage", () => {
     });
   });
 
-  it("preserves the forced local rebuild path for legacy sandboxes without a hint (#4680)", () => {
+  it("resolves the release-pinned base for a managed sandbox with no cached hint (#10903)", () => {
     const { agent, ensureAgentBaseImage } = setup();
+    // The reporter upgraded a v0.0.109 managed sandbox whose image carried no
+    // resolution metadata. A source build on that host died fetching libssh2,
+    // so recovery must reach the release's published base instead.
+    ensureAgentBaseImage.mockImplementation((_agent, options = {}) =>
+      options.forceBaseImageRebuild
+        ? failUnreachableSourceBuild()
+        : { imageTag: cachedRemoteRef, built: false },
+    );
+    const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
+
+    expect(ensureRebuildAgentBaseImage("hermes", makeBail())).toEqual({
+      ok: true,
+      imageRef: cachedRemoteRef,
+      overrideEnvVar,
+    });
+    expect(ensureAgentBaseImage).toHaveBeenCalledOnce();
+    expect(ensureAgentBaseImage).toHaveBeenCalledWith(agent, {
+      forceBaseImageRebuild: false,
+    });
+  });
+
+  it("still binds a resolver-selected fresh local base to a forced build (#10903)", () => {
+    const { ensureAgentBaseImage } = setup();
+    const freshLocalMetadata = {
+      key: "fresh-local",
+      ref: rebuiltLocalRef,
+      digest: null,
+      source: "local",
+      imageId: `sha256:${"c".repeat(64)}`,
+    } as SandboxBaseImageResolutionMetadata;
+    ensureAgentBaseImage
+      .mockReturnValueOnce({
+        imageTag: rebuiltLocalRef,
+        built: false,
+        resolutionMetadata: freshLocalMetadata,
+      })
+      .mockReturnValueOnce({
+        imageTag: rebuiltLocalRef,
+        built: true,
+        resolutionMetadata: freshLocalMetadata,
+        trustedLocalOverride: rebuiltLocalTrust,
+      });
     const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
 
     expect(ensureRebuildAgentBaseImage("hermes", makeBail())).toEqual({
       ok: true,
       imageRef: rebuiltLocalRef,
       overrideEnvVar,
+      resolutionMetadata: freshLocalMetadata,
       trustedLocalOverride: rebuiltLocalTrust,
     });
-    expect(ensureAgentBaseImage).toHaveBeenCalledWith(agent, {
+    expect(ensureAgentBaseImage).toHaveBeenCalledTimes(2);
+    expect(ensureAgentBaseImage).toHaveBeenNthCalledWith(2, expect.anything(), {
       forceBaseImageRebuild: true,
     });
   });

@@ -164,7 +164,7 @@ describe("rebuild agent base image preflight", () => {
     };
   }
 
-  it("forces a repository-local build and returns its exact ref when no override exists", () => {
+  it("returns the exact repository-local ref the resolver selected when no override exists", () => {
     const imageRef = `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`;
     const trustedLocalOverride = {
       ref: imageRef,
@@ -180,7 +180,7 @@ describe("rebuild agent base image preflight", () => {
     const result = ensureRebuildAgentBaseImage("hermes", makeBail());
 
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.objectContaining({ name: "hermes" }), {
-      forceBaseImageRebuild: true,
+      forceBaseImageRebuild: false,
     });
     expect(result).toEqual({
       ok: true,
