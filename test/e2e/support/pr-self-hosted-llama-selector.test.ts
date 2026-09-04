@@ -24,6 +24,7 @@ type WorkflowJob = {
   outputs?: Record<string, string>;
   permissions?: Record<string, string>;
   steps?: WorkflowStep[];
+  needs?: string;
 };
 
 type Workflow = {
@@ -173,5 +174,61 @@ describe("generic NVIDIA GPU PR selection", () => {
     expect(value.jobs["llama-cpp-generic-gpu"]?.env?.E2E_MANAGED_IMAGE_REVISION).toBe(
       "${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_revision }}",
     );
+  });
+});
+
+describe("OpenClaw managed-image copied-PR qualification", () => {
+  // source-shape-contract: security -- Copied PR qualification must run the exact typed final-image security test and retain its evidence
+  it("runs the typed security test against the produced image and uploads evidence", () => {
+    const job = workflow().jobs["managed-image-openclaw-security"];
+    expect(job).toMatchObject({
+      env: {
+        E2E_TARGET_ID: "managed-image-openclaw-security",
+        NEMOCLAW_E2E_SHARD: "default",
+        NEMOCLAW_MANAGED_IMAGE_SECURITY_COHORT: "pr-${{ github.run_id }}-${{ github.run_attempt }}",
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_TEST_IMAGE: "nemoclaw-production",
+      },
+      needs: "build-sandbox-images",
+    });
+    expect(
+      job.steps?.find((step) => step.name === "Bind managed-image risk signal identity"),
+    ).toMatchObject({
+      run: expect.stringMatching(/NEMOCLAW_E2E_EXPECTED_SHA[\s\S]*NEMOCLAW_E2E_CORRELATION_ID/u),
+    });
+    expect(
+      job.steps?.find((step) => step.name === "Validate OpenClaw managed-image security boundary"),
+    ).toMatchObject({
+      run: expect.stringContaining(
+        "vitest run --project integration test/e2e-runtime/managed-image-openclaw-security.test.ts",
+      ),
+    });
+    expect(job.steps?.find((step) => step.name === "Validate glibc probe lifecycle")).toMatchObject(
+      {
+        if: "${{ !cancelled() }}",
+        env: { NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1" },
+        run: expect.stringContaining(
+          "test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts",
+        ),
+      },
+    );
+    expect(
+      job.steps?.find((step) => step.name === "Remove managed-image security resources"),
+    ).toMatchObject({
+      if: "${{ always() }}",
+      run: expect.stringMatching(
+        /managed-image\.cohort[\s\S]*docker ps -aq[\s\S]*docker rm -f[\s\S]*docker volume rm -f[\s\S]*docker ps -aq[\s\S]*docker volume ls -q[\s\S]*cleanup_failed/u,
+      ),
+    });
+    expect(
+      job.steps?.find((step) => step.name === "Upload OpenClaw managed-image security evidence"),
+    ).toMatchObject({
+      if: "${{ always() }}",
+      uses: "./.github/actions/upload-e2e-artifacts",
+      with: {
+        name: "managed-image-openclaw-security-evidence",
+        path: "${{ env.E2E_ARTIFACT_DIR }}",
+      },
+    });
   });
 });

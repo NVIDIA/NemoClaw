@@ -8,12 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const DEFAULT_WORKFLOW_PATH = join(
-  REPO_ROOT,
-  ".github",
-  "workflows",
-  "sandbox-images-and-e2e.yaml",
-);
+const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "sandbox-images.yaml");
 const DEFAULT_MAIN_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "main.yaml");
 
 const AUTH_STEP_NAME = "Authenticate to Docker Hub";
@@ -37,12 +32,6 @@ const HERMES_CACHE_FROM = "type=gha,scope=hermes-production-${{ runner.os }}-${{
 const HERMES_CACHE_TO =
   "type=gha,mode=max,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}";
 const MESSAGING_PLAN_IMAGE_BOUNDARY_JOB = "messaging-plan-image-boundary";
-const GLIBC_PROBE_STEP_NAME = "Run glibc probe lifecycle regression";
-const GLIBC_PROBE_RUN =
-  "npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts --silent=false --reporter=default";
-const GLIBC_PROBE_ENABLE_ENV = "NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E";
-const GLIBC_PROBE_IMAGE_ENV = "NEMOCLAW_TEST_IMAGE";
-const REMOVED_GLIBC_PROBE_TEST_PATH = "test/image-compatibility-docker-lifecycle.test.ts";
 const IMAGE_BUILD_JOBS = [
   "build-sandbox-images",
   "build-hermes-sandbox-image",
@@ -51,9 +40,8 @@ const IMAGE_BUILD_JOBS = [
 ] as const;
 const OPENCLAW_IMAGE_CONSUMER_JOBS = [
   "runtime-overrides",
-  "test-e2e-sandbox",
-  "test-e2e-gateway-isolation",
-  "test-e2e-port-overrides",
+  "managed-image-openclaw-security",
+  "port-override-image-contract",
 ] as const;
 const DOCKERHUB_SECRETS = ["DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN"] as const;
 const FORBIDDEN_RUNTIME_SECRETS = [
@@ -104,7 +92,6 @@ const GUARDED_PRODUCTION_BUILD_CONTRACTS: readonly GuardedProductionBuildContrac
     label: "OpenClaw production image",
     stepName: "Build production image",
     target: "nemoclaw-production",
-    testImageDockerfile: "-f test/Dockerfile.sandbox",
   },
   {
     args: '-f agents/hermes/Dockerfile --build-arg "BASE_IMAGE=${HERMES_BASE_IMAGE}"',
@@ -121,7 +108,6 @@ const GUARDED_PRODUCTION_BUILD_CONTRACTS: readonly GuardedProductionBuildContrac
     label: "OpenClaw arm64 production image",
     stepName: "Build production image on arm64",
     target: "nemoclaw-production-arm64",
-    testImageDockerfile: "-f test/Dockerfile.sandbox",
   },
 ];
 
@@ -204,8 +190,8 @@ function validateTriggersAndPermissions(errors: string[], workflow: SandboxImage
 }
 
 function validateMainCaller(errors: string[], mainWorkflow: SandboxImagesWorkflow): void {
-  const caller = record(record(mainWorkflow.jobs)["sandbox-images-and-e2e"]);
-  if (caller.uses !== "./.github/workflows/sandbox-images-and-e2e.yaml") {
+  const caller = record(record(mainWorkflow.jobs)["sandbox-image-contracts"]);
+  if (caller.uses !== "./.github/workflows/sandbox-images.yaml") {
     errors.push("main workflow must call the local sandbox image workflow");
   }
   if (!isDeepStrictEqual(caller.needs, ["static-checks", "build-typecheck"])) {
@@ -223,15 +209,15 @@ function validateMainCaller(errors: string[], mainWorkflow: SandboxImagesWorkflo
   }
 
   const checks = record(record(mainWorkflow.jobs).checks);
-  if (!Array.isArray(checks.needs) || !checks.needs.includes("sandbox-images-and-e2e")) {
+  if (!Array.isArray(checks.needs) || !checks.needs.includes("sandbox-image-contracts")) {
     errors.push("main checks must wait for the sandbox image workflow");
   }
   const gate = requireStep(errors, "main checks", checks, "Verify required main checks");
   if (
-    record(gate.env).SANDBOX_IMAGES_E2E_RESULT !==
-      "${{ needs['sandbox-images-and-e2e'].result }}" ||
+    record(gate.env).SANDBOX_IMAGE_CONTRACTS_RESULT !==
+      "${{ needs['sandbox-image-contracts'].result }}" ||
     !(gate.run ?? "").includes(
-      'require_success "sandbox-images-and-e2e" "$SANDBOX_IMAGES_E2E_RESULT"',
+      'require_success "sandbox-image-contracts" "$SANDBOX_IMAGE_CONTRACTS_RESULT"',
     )
   ) {
     errors.push("main checks must require the sandbox image workflow result");
@@ -746,9 +732,10 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
       errors.push(`runtime-overrides must run '${stepName}' exactly once`);
     }
   }
-  const save = requireStep(errors, producerName, producer, "Save images to tarballs");
+  const save = requireStep(errors, producerName, producer, "Save production image");
   if (
-    steps(producer).filter((step) => step.name === "Save images to tarballs").length !== 1 ||
+    steps(producer).filter((step) => step.name === "Save production image").length !== 1 ||
+    !(save.run ?? "").includes("set -euo pipefail") ||
     !(save.run ?? "").includes(
       "docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz",
     )
@@ -832,6 +819,71 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
     stepIndex(runtimeJob, runtime.name ?? "") >= stepIndex(runtimeJob, upload.name ?? "")
   ) {
     errors.push("runtime overrides image handoff and artifact upload steps are out of order");
+  }
+  const securityName = "managed-image-openclaw-security";
+  const securityJob = workflow.jobs[securityName] ?? {};
+  if (securityJob["timeout-minutes"] !== 15) {
+    errors.push(`${securityName} must retain its 15-minute job budget`);
+  }
+  const securityStep = requireStep(
+    errors,
+    securityName,
+    securityJob,
+    "Validate OpenClaw managed-image security boundary",
+  );
+  const securityRun = securityStep.run ?? "";
+  for (const fragment of [
+    "npx vitest run --project integration",
+    "test/e2e-runtime/managed-image-openclaw-security.test.ts",
+    "--reporter=test/e2e/risk-signal-reporter.ts",
+  ]) {
+    if (!securityRun.includes(fragment))
+      errors.push(`${securityName} test must include ${fragment}`);
+  }
+  if (securityStep["continue-on-error"] !== undefined) {
+    errors.push(`${securityName} test must not continue on error`);
+  }
+  const cleanup = requireStep(
+    errors,
+    securityName,
+    securityJob,
+    "Remove managed-image security resources",
+  );
+  const cleanupRun = cleanup.run ?? "";
+  if (cleanup.if !== "${{ always() }}" || cleanup["continue-on-error"] !== undefined) {
+    errors.push(`${securityName} cleanup must always run and fail on residual resources`);
+  }
+  for (const fragment of [
+    "docker ps -aq",
+    "docker rm -f",
+    "docker volume rm -f",
+    "cleanup_failed",
+  ]) {
+    if (!cleanupRun.includes(fragment))
+      errors.push(`${securityName} cleanup must include ${fragment}`);
+  }
+  const securityUpload = requireStep(
+    errors,
+    securityName,
+    securityJob,
+    "Upload OpenClaw managed-image security evidence",
+  );
+  if (
+    securityUpload.if !== "${{ always() }}" ||
+    securityUpload.uses !== "./.github/actions/upload-e2e-artifacts" ||
+    !isDeepStrictEqual(record(securityUpload.with), {
+      name: "managed-image-openclaw-security-evidence",
+      path: "${{ env.E2E_ARTIFACT_DIR }}",
+    }) ||
+    securityUpload["continue-on-error"] !== undefined
+  ) {
+    errors.push(`${securityName} must always upload evidence with the shared action`);
+  }
+  if (
+    stepIndex(securityJob, securityStep.name ?? "") >= stepIndex(securityJob, cleanup.name ?? "") ||
+    stepIndex(securityJob, cleanup.name ?? "") >= stepIndex(securityJob, securityUpload.name ?? "")
+  ) {
+    errors.push(`${securityName} test, cleanup, and evidence upload are out of order`);
   }
 }
 
@@ -1009,44 +1061,6 @@ export function readSandboxImagesWorkflow(
   workflowPath = DEFAULT_WORKFLOW_PATH,
 ): SandboxImagesWorkflow {
   return YAML.parse(readFileSync(workflowPath, "utf8")) as SandboxImagesWorkflow;
-}
-
-export function validateGlibcProbeLifecycleWorkflowPaths(
-  prWorkflow: SandboxImagesWorkflow,
-  imageWorkflow: SandboxImagesWorkflow,
-): string[] {
-  const errors: string[] = [];
-  for (const [label, workflow] of [
-    ["PR self-hosted workflow", prWorkflow],
-    ["sandbox image workflow", imageWorkflow],
-  ] as const) {
-    const job = workflow.jobs["test-e2e-gateway-isolation"] ?? {};
-    const jobSteps = steps(job);
-    const matchingSteps = jobSteps.filter((step) => step.name === GLIBC_PROBE_STEP_NAME);
-    const workflowSteps = Object.values(workflow.jobs).flatMap((candidate) => steps(candidate));
-    const matchingRuns = workflowSteps.filter((step) => step.run === GLIBC_PROBE_RUN);
-    const containsRemovedRun = workflowSteps.some((step) =>
-      step.run?.includes(REMOVED_GLIBC_PROBE_TEST_PATH),
-    );
-    if (
-      matchingSteps.length !== 1 ||
-      matchingSteps[0]?.run !== GLIBC_PROBE_RUN ||
-      matchingRuns.length !== 1 ||
-      containsRemovedRun
-    ) {
-      errors.push(`${label} must run the grouped glibc probe lifecycle test exactly once`);
-    }
-    if (
-      matchingSteps.length === 1 &&
-      (matchingSteps[0]?.env?.[GLIBC_PROBE_ENABLE_ENV] !== "1" ||
-        matchingSteps[0]?.env?.[GLIBC_PROBE_IMAGE_ENV] !== "nemoclaw-production")
-    ) {
-      errors.push(
-        `${label} glibc probe lifecycle step must enable the Docker E2E against nemoclaw-production`,
-      );
-    }
-  }
-  return errors;
 }
 
 export function validateSandboxImagesWorkflow(

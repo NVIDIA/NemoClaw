@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, test } from "vitest";
 
 import {
   readSandboxImagesWorkflow,
-  validateGlibcProbeLifecycleWorkflowPaths,
   validateSandboxImagesWorkflow,
 } from "../../../tools/e2e/sandbox-images-workflow-boundary.mts";
 
@@ -13,184 +12,116 @@ function readWorkflows() {
   return {
     imageWorkflow: readSandboxImagesWorkflow(),
     mainWorkflow: readSandboxImagesWorkflow(".github/workflows/main.yaml"),
-    prWorkflow: readSandboxImagesWorkflow(".github/workflows/pr-self-hosted.yaml"),
   };
 }
 
 describe("sandbox image workflow boundary", () => {
-  it("runs the glibc probe lifecycle test from its grouped runtime path (#10155)", () => {
-    const { imageWorkflow, prWorkflow } = readWorkflows();
-
-    expect(validateGlibcProbeLifecycleWorkflowPaths(prWorkflow, imageWorkflow)).toEqual([]);
-  });
-
-  it.each([
-    ["PR self-hosted workflow", "prWorkflow"],
-    ["sandbox image workflow", "imageWorkflow"],
-  ] as const)("rejects the removed glibc probe lifecycle path in the %s (#10155)", (_, key) => {
-    const { imageWorkflow, prWorkflow } = readWorkflows();
-    const workflow = { imageWorkflow, prWorkflow }[key];
-    const step = workflow.jobs["test-e2e-gateway-isolation"].steps!.find(
-      (candidate) => candidate.name === "Run glibc probe lifecycle regression",
-    )!;
-    step.run = step.run!.replace("test/e2e-runtime/", "test/");
-
-    expect(validateGlibcProbeLifecycleWorkflowPaths(prWorkflow, imageWorkflow)).toEqual([
-      `${key === "prWorkflow" ? "PR self-hosted workflow" : "sandbox image workflow"} must run the grouped glibc probe lifecycle test exactly once`,
-    ]);
-  });
-
-  it.each([
-    ["PR self-hosted workflow", "prWorkflow"],
-    ["sandbox image workflow", "imageWorkflow"],
-  ] as const)("rejects a renamed duplicate glibc probe command in the %s (#10155)", (_, key) => {
-    const { imageWorkflow, prWorkflow } = readWorkflows();
-    const workflow = { imageWorkflow, prWorkflow }[key];
-    const steps = workflow.jobs["test-e2e-gateway-isolation"].steps!;
-    const canonicalStep = steps.find(
-      (candidate) => candidate.name === "Run glibc probe lifecycle regression",
-    )!;
-    steps.push({ ...canonicalStep, name: "Run duplicate glibc probe" });
-
-    expect(validateGlibcProbeLifecycleWorkflowPaths(prWorkflow, imageWorkflow)).toEqual([
-      `${key === "prWorkflow" ? "PR self-hosted workflow" : "sandbox image workflow"} must run the grouped glibc probe lifecycle test exactly once`,
-    ]);
-  });
-
-  it.each([
-    ["PR self-hosted workflow", "prWorkflow"],
-    ["sandbox image workflow", "imageWorkflow"],
-  ] as const)("rejects the glibc probe command in another %s job (#10155)", (_, key) => {
-    const { imageWorkflow, prWorkflow } = readWorkflows();
-    const workflow = { imageWorkflow, prWorkflow }[key];
-    const canonicalStep = workflow.jobs["test-e2e-gateway-isolation"].steps!.find(
-      (candidate) => candidate.name === "Run glibc probe lifecycle regression",
-    )!;
-    workflow.jobs["build-sandbox-images"].steps!.push({
-      ...canonicalStep,
-      name: "Run duplicate glibc probe in another job",
-    });
-
-    expect(validateGlibcProbeLifecycleWorkflowPaths(prWorkflow, imageWorkflow)).toEqual([
-      `${key === "prWorkflow" ? "PR self-hosted workflow" : "sandbox image workflow"} must run the grouped glibc probe lifecycle test exactly once`,
-    ]);
-  });
-
-  it.each([
-    ["PR self-hosted workflow", "prWorkflow"],
-    ["sandbox image workflow", "imageWorkflow"],
-  ] as const)("rejects the removed glibc probe beside the canonical %s step (#10155)", (_, key) => {
-    const { imageWorkflow, prWorkflow } = readWorkflows();
-    const workflow = { imageWorkflow, prWorkflow }[key];
-    const canonicalStep = workflow.jobs["test-e2e-gateway-isolation"].steps!.find(
-      (candidate) => candidate.name === "Run glibc probe lifecycle regression",
-    )!;
-    workflow.jobs["build-sandbox-images"].steps!.push({
-      ...canonicalStep,
-      name: "Run removed glibc probe",
-      run: canonicalStep.run!.replace("test/e2e-runtime/", "test/"),
-    });
-
-    expect(validateGlibcProbeLifecycleWorkflowPaths(prWorkflow, imageWorkflow)).toEqual([
-      `${key === "prWorkflow" ? "PR self-hosted workflow" : "sandbox image workflow"} must run the grouped glibc probe lifecycle test exactly once`,
-    ]);
-  });
-
-  it.each([
-    [
-      "missing enable flag",
-      "PR self-hosted workflow",
-      "prWorkflow",
-      "NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E",
-      undefined,
-    ],
-    [
-      "changed enable flag",
-      "PR self-hosted workflow",
-      "prWorkflow",
-      "NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E",
-      "true",
-    ],
-    [
-      "missing image",
-      "PR self-hosted workflow",
-      "prWorkflow",
-      "NEMOCLAW_TEST_IMAGE",
-      undefined,
-    ],
-    [
-      "changed image",
-      "PR self-hosted workflow",
-      "prWorkflow",
-      "NEMOCLAW_TEST_IMAGE",
-      "other-image",
-    ],
-    [
-      "missing enable flag",
-      "sandbox image workflow",
-      "imageWorkflow",
-      "NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E",
-      undefined,
-    ],
-    [
-      "changed enable flag",
-      "sandbox image workflow",
-      "imageWorkflow",
-      "NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E",
-      "true",
-    ],
-    [
-      "missing image",
-      "sandbox image workflow",
-      "imageWorkflow",
-      "NEMOCLAW_TEST_IMAGE",
-      undefined,
-    ],
-    [
-      "changed image",
-      "sandbox image workflow",
-      "imageWorkflow",
-      "NEMOCLAW_TEST_IMAGE",
-      "other-image",
-    ],
-  ] as const)(
-    "rejects the %s in the %s glibc probe lifecycle step (#10155)",
-    (_, label, key, envName, value) => {
-      const { imageWorkflow, prWorkflow } = readWorkflows();
-      const workflow = { imageWorkflow, prWorkflow }[key];
-      const step = workflow.jobs["test-e2e-gateway-isolation"].steps!.find(
-        (candidate) => candidate.name === "Run glibc probe lifecycle regression",
-      )!;
-      const mutateEnv =
-        value === undefined
-          ? () => Reflect.deleteProperty(step.env!, envName)
-          : () => Reflect.set(step.env!, envName, value);
-      mutateEnv();
-
-      expect(validateGlibcProbeLifecycleWorkflowPaths(prWorkflow, imageWorkflow)).toEqual([
-        `${label} glibc probe lifecycle step must enable the Docker E2E against nemoclaw-production`,
-      ]);
-    },
-  );
-
   it("accepts the production-image handoff and focused metadata probe", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual([]);
   });
 
+  test("keeps typed OpenClaw security evidence in the main image gate", () => {
+    const { imageWorkflow } = readWorkflows();
+    const job = imageWorkflow.jobs["managed-image-openclaw-security"];
+    expect(job).toMatchObject({
+      needs: "build-sandbox-images",
+      env: {
+        E2E_TARGET_ID: "managed-image-openclaw-security",
+        NEMOCLAW_E2E_SHARD: "default",
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_TEST_IMAGE: "nemoclaw-production",
+      },
+    });
+    expect(
+      job.steps?.find((step) => step.name === "Bind managed-image risk signal identity"),
+    ).toMatchObject({
+      run: expect.stringMatching(/NEMOCLAW_E2E_EXPECTED_SHA[\s\S]*NEMOCLAW_E2E_CORRELATION_ID/u),
+    });
+    expect(
+      job.steps?.find((step) => step.name === "Validate OpenClaw managed-image security boundary"),
+    ).toMatchObject({
+      run: expect.stringMatching(
+        /vitest run --project integration test\/e2e-runtime\/managed-image-openclaw-security\.test\.ts/u,
+      ),
+    });
+    expect(
+      job.steps?.find((step) => step.name === "Upload OpenClaw managed-image security evidence"),
+    ).toMatchObject({
+      if: "${{ always() }}",
+      uses: "./.github/actions/upload-e2e-artifacts",
+      with: {
+        name: "managed-image-openclaw-security-evidence",
+        path: "${{ env.E2E_ARTIFACT_DIR }}",
+      },
+    });
+  });
+
+  it("rejects a shortened managed-image security job budget", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    imageWorkflow.jobs["managed-image-openclaw-security"]["timeout-minutes"] = 12;
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "managed-image-openclaw-security must retain its 15-minute job budget",
+    );
+  });
+
+  it.each([
+    ["Validate OpenClaw managed-image security boundary", "run", "true"],
+    ["Validate OpenClaw managed-image security boundary", "continue-on-error", true],
+    ["Remove managed-image security resources", "run", "true"],
+    ["Remove managed-image security resources", "if", "success()"],
+    ["Upload OpenClaw managed-image security evidence", "if", "success()"],
+    ["Upload OpenClaw managed-image security evidence", "with", {}],
+  ] as const)("rejects weakened reusable security step %s %s", (name, key, value) => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const step = imageWorkflow.jobs["managed-image-openclaw-security"].steps?.find(
+      (candidate) => candidate.name === name,
+    );
+    expect(step).toBeDefined();
+    (step as Record<string, unknown>)[key] = value;
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).not.toEqual([]);
+  });
+
+  test("keeps glibc probe lifecycle evidence in the main image gate", () => {
+    const { imageWorkflow } = readWorkflows();
+    expect(imageWorkflow.jobs["glibc-probe-image-contract"]).toBeUndefined();
+    const job = imageWorkflow.jobs["managed-image-openclaw-security"];
+    expect(job.env).toMatchObject({
+      NEMOCLAW_MANAGED_IMAGE_SECURITY_COHORT:
+        "reusable-${{ github.run_id }}-${{ github.run_attempt }}",
+    });
+    expect(job.steps?.find((step) => step.name === "Validate glibc probe lifecycle")).toMatchObject(
+      {
+        if: "${{ !cancelled() }}",
+        env: { NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1" },
+        run: expect.stringContaining(
+          "test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts",
+        ),
+      },
+    );
+    expect(
+      job.steps?.find((step) => step.name === "Remove managed-image security resources"),
+    ).toMatchObject({
+      if: "${{ always() }}",
+      run: expect.stringMatching(/managed-image\.cohort[\s\S]*docker rm[\s\S]*docker volume rm/u),
+    });
+  });
+
   it("rejects late sandbox scheduling or omission from the final main gate", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
-    mainWorkflow.jobs["sandbox-images-and-e2e"].needs = "checks";
+    mainWorkflow.jobs["sandbox-image-contracts"].needs = "checks";
     mainWorkflow.jobs.checks.needs = (mainWorkflow.jobs.checks.needs as string[]).filter(
-      (dependency) => dependency !== "sandbox-images-and-e2e",
+      (dependency) => dependency !== "sandbox-image-contracts",
     );
     const gate = mainWorkflow.jobs.checks.steps!.find(
       (step) => step.name === "Verify required main checks",
     )!;
-    delete gate.env!.SANDBOX_IMAGES_E2E_RESULT;
+    delete gate.env!.SANDBOX_IMAGE_CONTRACTS_RESULT;
     gate.run = gate.run!.replace(
-      'require_success "sandbox-images-and-e2e" "$SANDBOX_IMAGES_E2E_RESULT"',
+      'require_success "sandbox-image-contracts" "$SANDBOX_IMAGE_CONTRACTS_RESULT"',
       "",
     );
 
@@ -733,22 +664,20 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
-  it.each(
-    ["build-hermes-sandbox-image", "messaging-plan-image-boundary"],
-  )("requires bounded swap before every hosted Hermes image export [%s]", (jobName) => {
-    const { imageWorkflow, mainWorkflow } = readWorkflows();
+  it.each(["build-hermes-sandbox-image", "messaging-plan-image-boundary"])(
+    "requires bounded swap before every hosted Hermes image export [%s]",
+    (jobName) => {
+      const { imageWorkflow, mainWorkflow } = readWorkflows();
 
-    const job = imageWorkflow.jobs[jobName];
-    const swap = job.steps!.find((step) => step.name === "Add swap for Hermes image export")!;
-    swap.run = swap.run!.replace('sudo swapon "$swap_file"', 'echo "swap omitted"');
+      const job = imageWorkflow.jobs[jobName];
+      const swap = job.steps!.find((step) => step.name === "Add swap for Hermes image export")!;
+      swap.run = swap.run!.replace('sudo swapon "$swap_file"', 'echo "swap omitted"');
 
-    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
-      expect.arrayContaining([
-        'build-hermes-sandbox-image Hermes export swap must include sudo swapon "$swap_file"',
-        'messaging-plan-image-boundary Hermes export swap must include sudo swapon "$swap_file"',
-      ]),
-    );
-  });
+      expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+        `${jobName} Hermes export swap must include sudo swapon "$swap_file"`,
+      );
+    },
+  );
 
   it("rejects coupling, rebuilding, or failing to reuse the OpenClaw image artifact", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
@@ -767,8 +696,10 @@ describe("sandbox image workflow boundary", () => {
     runtime.run = `${runtime.run}\ndocker build -t nemoclaw-runtime-overrides-rebuilt .`;
     producer.steps!.push({ ...runtime });
     producer.steps!.push({ ...runtimeSteps.find((step) => step.name === "Set up Node")! });
-    const save = producer.steps!.find((step) => step.name === "Save images to tarballs")!;
-    save.run = save.run!.replace("docker save nemoclaw-production", "docker save rebuilt-image");
+    const save = producer.steps!.find((step) => step.name === "Save production image")!;
+    save.run = save.run!
+      .replace("set -euo pipefail", "set -eu")
+      .replace("docker save nemoclaw-production", "docker save rebuilt-image");
     producer.steps!.push({ ...save });
     const isolationUpload = producer.steps!.find((step) => step.name === "Upload isolation image")!;
     isolationUpload.with!.path = "/tmp/rebuilt-image.tar.gz";
@@ -813,9 +744,7 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
-  it.each(
-    ["Set up Node", "Install root dependencies"],
-  )(
+  it.each(["Set up Node", "Install root dependencies"])(
     "rejects duplicate setup, rebuilding, or failing to reuse the Hermes image [%s]",
     (stepName) => {
       const { imageWorkflow, mainWorkflow } = readWorkflows();

@@ -32,7 +32,7 @@ before those targets run; local runners must provide it themselves.
   This workflow does not publish or satisfy `Release qualification`.
 - `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
-- `.github/workflows/sandbox-images-and-e2e.yaml` provides reusable sandbox-image build and test evidence.
+- `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
 ## CI execution shape
@@ -200,9 +200,12 @@ The 90-minute `test-hermes-sandbox-image` job downloads and loads that artifact 
 rebuilding the image.
 Within that job, the secret-boundary and root-entrypoint steps have 45- and 30-minute budgets respectively.
 
-The former top-level `test/e2e/test-*.sh` suite has been removed. Keep real
-shell, installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in
-E2E tests when those boundaries are the behavior under test.
+The former root-level `test/e2e-test.sh` and `test/e2e-gateway-isolation.sh` suites have been
+removed. Their production-image security coverage now belongs to
+`test/e2e-runtime/managed-image-openclaw-security.test.ts` and the
+`managed-image-openclaw-security` job in `.github/workflows/sandbox-images.yaml`. Keep real shell,
+installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in E2E tests when those
+boundaries are the behavior under test.
 
 ## Platform Evidence
 
