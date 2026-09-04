@@ -121,22 +121,23 @@ function renderSummary(report: RenderableDoctorReport): void {
 }
 
 export function renderDoctorReport(report: RenderableDoctorReport, asJson: boolean): number {
+  const displayReport = redactForLog(report) as RenderableDoctorReport;
   if (asJson) {
     // Parity with `sandbox status --json` (#4310): this console.log egress
     // bypasses the oclif logJson redaction boundary (#3657), so route the
     // machine-readable report through the centralized redactForLog source of
     // truth before check details (subprocess stderr, probe errors) reach
     // stdout.
-    console.log(JSON.stringify(redactForLog(report), null, 2));
+    console.log(JSON.stringify(displayReport, null, 2));
     return report.failed > 0 ? 1 : 0;
   }
 
   console.log("");
-  const target = "sandbox" in report ? `: ${report.sandbox}` : "";
+  const target = "sandbox" in displayReport ? `: ${displayReport.sandbox}` : "";
   console.log(`  ${B}${CLI_DISPLAY_NAME} doctor${target}${R}`);
-  renderCheckGroups(report);
+  renderCheckGroups(displayReport);
   console.log("");
-  renderSummary(report);
+  renderSummary(displayReport);
   console.log("");
   return report.failed > 0 ? 1 : 0;
 }

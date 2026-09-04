@@ -649,7 +649,13 @@ describe("CLI dispatch", () => {
 
   it("dispatches the global doctor without a sandbox name (#10212)", async () => {
     await withDirectPublicDispatch(
-      async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, stderr }) => {
+      async ({
+        dispatchCli,
+        migrateLegacyPortState,
+        recoverRegistryEntries,
+        runOclifCommandById,
+        stderr,
+      }) => {
         await dispatchCli(["doctor"]);
 
         expect(runOclifCommandById).toHaveBeenCalledWith(
@@ -657,6 +663,7 @@ describe("CLI dispatch", () => {
           [],
           expect.objectContaining({ rootDir: process.cwd() }),
         );
+        expect(migrateLegacyPortState).not.toHaveBeenCalled();
         expect(recoverRegistryEntries).not.toHaveBeenCalled();
         expect(stderr).toEqual([]);
       },
@@ -665,7 +672,12 @@ describe("CLI dispatch", () => {
 
   it("dispatches global doctor flags without reading sandbox state (#10212)", async () => {
     await withDirectPublicDispatch(
-      async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById }) => {
+      async ({
+        dispatchCli,
+        migrateLegacyPortState,
+        recoverRegistryEntries,
+        runOclifCommandById,
+      }) => {
         await dispatchCli(["doctor", "--json"]);
 
         expect(runOclifCommandById).toHaveBeenCalledWith(
@@ -673,6 +685,7 @@ describe("CLI dispatch", () => {
           ["--json"],
           expect.objectContaining({ rootDir: process.cwd() }),
         );
+        expect(migrateLegacyPortState).not.toHaveBeenCalled();
         expect(recoverRegistryEntries).not.toHaveBeenCalled();
       },
     );
@@ -823,9 +836,10 @@ describe("CLI dispatch", () => {
 
   it("keeps the name-first grammar for a sandbox literally named doctor (#10212)", async () => {
     await withDirectPublicDispatch(
-      async ({ dispatchCli, runOclifCommandById, stderr }) => {
+      async ({ dispatchCli, migrateLegacyPortState, runOclifCommandById, stderr }) => {
         await dispatchCli(["doctor", "status"]);
 
+        expect(migrateLegacyPortState).toHaveBeenCalledTimes(1);
         expect(runOclifCommandById).toHaveBeenCalledWith(
           "sandbox:status",
           ["doctor"],

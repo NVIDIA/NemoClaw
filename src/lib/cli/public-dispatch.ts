@@ -128,6 +128,10 @@ function isMigrationRecoveryInvocation(argv: readonly string[]): boolean {
   if (argv[0] === "sandbox") {
     return MIGRATION_RECOVERY_SANDBOX_ACTIONS.has(argv[1] ?? "");
   }
+  if (argv[0] === "doctor") {
+    const action = argv[1];
+    return !action || !isKnownSandboxAction(action);
+  }
   return (
     argv.length > 1 &&
     !GLOBAL_COMMANDS.has(argv[0] ?? "") &&

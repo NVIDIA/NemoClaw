@@ -60,6 +60,25 @@ describe("doctor reports", () => {
     expect(JSON.stringify(printed)).not.toContain("sk-abc123DEF456ghi789");
   });
 
+  it("redacts token-shaped values from the text report", () => {
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line = "") => lines.push(String(line)));
+    const report = buildGlobalDoctorReport([
+      {
+        group: "Gateway",
+        label: "OpenShell status",
+        status: "fail",
+        detail: "connect failed: Authorization: Bearer sk-abc123DEF456ghi789 (HTTP 401)",
+      },
+    ]);
+
+    expect(renderDoctorReport(report, false)).toBe(1);
+    const output = lines.join("\n");
+    expect(output).toContain("Authorization: Bearer <REDACTED>");
+    expect(output).toContain("[fail]");
+    expect(output).not.toContain("sk-abc123DEF456ghi789");
+  });
+
   it("renders preferred groups first, preserves extra-group order, and includes hints", () => {
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((line = "") => lines.push(String(line)));
