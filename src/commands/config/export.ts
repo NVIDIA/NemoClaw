@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command, Flags } from "@oclif/core";
+import { Flags } from "@oclif/core";
 import { renderCanonicalNemoClawConfig } from "../../lib/config/canonical";
 import { ConfigExportInputError, runConfigExport } from "../../lib/config/export";
 import { buildExportConfig } from "../../lib/config/export-builder";
@@ -10,10 +10,11 @@ import {
   observeLiveExportSource,
 } from "../../lib/config/export-live-adapters";
 import { publishExportFile, YamlExportOutputError } from "../../lib/config/output";
+import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 import { isValidName } from "../../lib/sandbox-name-contract";
 import { sandboxNameArg } from "../../lib/sandbox/command-support";
 
-export default class ConfigExportCommand extends Command {
+export default class ConfigExportCommand extends NemoClawCommand {
   static id = "config:export";
   static strict = true;
   static enableJsonFlag = true;
@@ -27,7 +28,6 @@ export default class ConfigExportCommand extends Command {
   ];
   static args = { sandboxName: sandboxNameArg };
   static flags = {
-    help: Flags.help({ char: "h" }),
     output: Flags.string({
       char: "o",
       description: "Write YAML to this path on Linux. Use - on any supported host.",
