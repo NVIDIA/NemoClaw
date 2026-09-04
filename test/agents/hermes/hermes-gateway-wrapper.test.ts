@@ -105,6 +105,51 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realArgs).toBe("gateway run");
   });
 
+  it.each([
+    ["short option", ["-p", "research", "gateway", "run"]],
+    ["long option", ["--profile", "operations", "gateway", "run"]],
+    ["equals option", ["--profile=research", "gateway", "run"]],
+  ])("refuses a named-profile gateway through the %s form (#10776)", (_form, args) => {
+    const run = runWrapper(args, {});
+
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain("Refusing named-profile Hermes gateway");
+    expect(run.stderr).toContain("separate NemoClaw sandbox");
+    expect(run.realInvoked).toBe(false);
+  });
+
+  it.each(["install", "restart", "start"])(
+    "refuses the named-profile gateway %s launch path (#10776)",
+    (command) => {
+      const run = runWrapper(["--profile", "operations", "gateway", command], {});
+
+      expect(run.status).toBe(2);
+      expect(run.stderr).toContain("Refusing named-profile Hermes gateway");
+      expect(run.realInvoked).toBe(false);
+    },
+  );
+
+  it.each(["../outside", "profile with spaces", "$(touch /tmp/profile-owned)", "gateway\nrun"])(
+    "refuses a named gateway without rendering the hostile profile name %s (#10776)",
+    (profile) => {
+      const run = runWrapper(["--profile", profile, "gateway", "run"], {});
+
+      expect(run.status).toBe(2);
+      expect(run.stderr).toContain("Refusing named-profile Hermes gateway");
+      expect(run.stderr).not.toContain(profile);
+      expect(run.realInvoked).toBe(false);
+    },
+  );
+
+  it("preserves named-profile non-gateway commands", () => {
+    const run = runWrapper(["--profile", "research", "chat", "hello"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--profile research chat hello");
+  });
+
   it("scrubs package-manager and Python startup inputs before a root-separated gateway exec", () => {
     const run = runWrapper(
       ["gateway", "run"],
