@@ -3,8 +3,23 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ observeLiveExportSource: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  observeLiveExportSource: vi.fn(),
+  buildExportConfig: vi.fn(),
+  serializeCanonicalNemoClawConfig: vi.fn(),
+  digestNemoClawConfig: vi.fn(),
+  publishExportFile: vi.fn(),
+}));
 
+vi.mock("../../lib/config/canonical", () => ({
+  serializeCanonicalNemoClawConfig: mocks.serializeCanonicalNemoClawConfig,
+  digestNemoClawConfig: mocks.digestNemoClawConfig,
+}));
+vi.mock("../../lib/config/export-builder", () => ({ buildExportConfig: mocks.buildExportConfig }));
+vi.mock("../../lib/config/output", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/config/output")>()),
+  publishExportFile: mocks.publishExportFile,
+}));
 vi.mock("../../lib/config/export-live-adapters", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/config/export-live-adapters")>()),
   observeLiveExportSource: mocks.observeLiveExportSource,
@@ -14,17 +29,34 @@ import ConfigExportCommand from "./export";
 
 describe("config export command", () => {
   beforeEach(() => {
-    mocks.observeLiveExportSource.mockReset();
+    mocks.observeLiveExportSource.mockReset().mockResolvedValue({ sandboxName: "alpha" });
+    mocks.buildExportConfig.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
+    mocks.serializeCanonicalNemoClawConfig.mockReset().mockReturnValue("kind: NemoClawConfig\n");
+    mocks.digestNemoClawConfig.mockReset().mockReturnValue({
+      documentDigest: "sha256:document",
+      specDigest: "sha256:spec",
+    });
+    mocks.publishExportFile.mockReset().mockReturnValue({ path: "/tmp/alpha.yaml" });
   });
   afterEach(() => {
     process.exitCode = 0;
+  });
+
+  it("composes live observation through canonical YAML stdout (#10938)", async () => {
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    await expect(
+      ConfigExportCommand.run(["alpha", "--output", "-"], process.cwd()),
+    ).resolves.toBeUndefined();
+    expect(mocks.observeLiveExportSource).toHaveBeenCalledWith("alpha");
+    expect(mocks.buildExportConfig).toHaveBeenCalledWith({ sandboxName: "alpha" }, "alpha");
+    expect(write).toHaveBeenCalledWith("kind: NemoClawConfig\n");
+    expect(mocks.publishExportFile).not.toHaveBeenCalled();
   });
 
   it("rejects JSON on YAML stdout before reading source state (#10938)", async () => {
     await expect(
       ConfigExportCommand.run(["alpha", "--output", "-", "--json"], process.cwd()),
     ).resolves.toBeUndefined();
-    expect(process.exitCode).toBe(1);
     expect(mocks.observeLiveExportSource).not.toHaveBeenCalled();
   });
 
@@ -47,6 +79,23 @@ describe("config export command", () => {
       oclif: { exit: 0 },
     });
     expect(mocks.observeLiveExportSource).not.toHaveBeenCalled();
+  });
+
+  it("composes live observation through file publication and JSON result (#10938)", async () => {
+    await expect(
+      ConfigExportCommand.run(["alpha", "--output", "/tmp/alpha.yaml", "--json"], process.cwd()),
+    ).resolves.toMatchObject({
+      status: "succeeded",
+      sourceSandbox: "alpha",
+      outputPath: "/tmp/alpha.yaml",
+      documentDigest: "sha256:document",
+      specDigest: "sha256:spec",
+    });
+    expect(mocks.publishExportFile).toHaveBeenCalledWith(
+      "/tmp/alpha.yaml",
+      "kind: NemoClawConfig\n",
+      false,
+    );
   });
 
   it("declares the required output and safe replacement flags (#10938)", () => {

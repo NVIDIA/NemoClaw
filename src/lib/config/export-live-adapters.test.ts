@@ -6,6 +6,9 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../state/registry/persistence", () => ({ load: vi.fn() }));
 vi.mock("../state/registry-entry-view", () => ({ getSandboxEntryInference: vi.fn() }));
 vi.mock("../inference/live", () => ({ getLiveGatewayInference: vi.fn() }));
+vi.mock("../adapters/openshell/provider-adapter-cli", () => ({
+  createCliOpenShellProviderAdapter: vi.fn(),
+}));
 vi.mock("../adapters/openshell/sanitized-capture", () => ({
   captureSanitizedResolvedOpenshell: vi.fn(),
 }));
@@ -20,6 +23,7 @@ vi.mock("../onboard/gateway/state-dir", () => ({
   resolveGatewayStateDirForPort: vi.fn(() => "/managed/gateway"),
 }));
 
+import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { captureSanitizedResolvedOpenshell } from "../adapters/openshell/sanitized-capture";
 import { fingerprintOpenShellSandboxId } from "../adapters/openshell/sandbox-identity";
 import { inspectOpenShellSandboxIdentityFingerprint } from "../adapters/openshell/sandbox-identity-cli";
@@ -93,6 +97,17 @@ function mockSupportedLiveSource(policyVersion = 3, appliedRevision = 3): void {
     output: "",
     status: 0,
   });
+  vi.mocked(createCliOpenShellProviderAdapter).mockReturnValue({
+    getProvider: vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        name: "nvidia",
+        type: "openai",
+        credentialKeys: ["NVIDIA_API_KEY"],
+        configKeys: ["OPENAI_BASE_URL"],
+      },
+    })),
+  } as never);
   vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
     status: 0,
     output: inventory(7, policyVersion),
@@ -136,6 +151,24 @@ describe("live export observation dependencies", () => {
     const result = await observeLiveExportSource("alpha").catch((error: unknown) => error);
     expect(result).toMatchObject({ category: "live-verification-failed" });
     expect(JSON.stringify(result)).not.toContain(canary);
+  });
+
+  it("rejects live provider metadata that disagrees with registry provenance (#10938)", async () => {
+    mockSupportedLiveSource();
+    vi.mocked(createCliOpenShellProviderAdapter).mockReturnValue({
+      getProvider: vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          name: "nvidia",
+          type: "openai",
+          credentialKeys: ["OTHER_API_KEY"],
+          configKeys: ["OPENAI_BASE_URL"],
+        },
+      })),
+    } as never);
+    await expect(observeLiveExportSource("alpha")).rejects.toMatchObject({
+      category: "live-verification-failed",
+    });
   });
 
   it("rejects a live inference route that disagrees with the registry (#10938)", async () => {

@@ -10,6 +10,7 @@ import {
   parseStrictOpenShellSandboxListJson,
 } from "../adapters/openshell/sandbox-identity";
 import { inspectOpenShellSandboxIdentityFingerprint } from "../adapters/openshell/sandbox-identity-cli";
+import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { syncCliOpenShellSandboxPolicyReader } from "../adapters/openshell/sandbox-policy-cli";
 import { getLiveGatewayInference } from "../inference/live";
@@ -118,7 +119,7 @@ function sandboxIdentity(
   };
 }
 
-function inferenceFor(entry: Readonly<SandboxEntry>): ObservedExportInference {
+async function inferenceFor(entry: Readonly<SandboxEntry>): Promise<ObservedExportInference> {
   const selected = getSandboxEntryInference(entry);
   const normalized = normalizeInferenceSelection(entry);
   const gateway = resolveGatewayBinding(entry);
@@ -141,6 +142,29 @@ function inferenceFor(entry: Readonly<SandboxEntry>): ObservedExportInference {
     live.inference.model !== selected.model
   )
     throw new Error("The live gateway inference route does not match the registry.");
+  const provider = await createCliOpenShellProviderAdapter().getProvider({
+    target: namedOpenShellGateway(gateway.name),
+    providerName: live.inference.provider,
+    timeoutMs: CAPTURE_TIMEOUT_MS,
+  });
+  if (!provider.ok) throw new Error("The live inference provider metadata could not be read.");
+  const expectedType = normalized.preferredInferenceApi?.startsWith("anthropic")
+    ? "anthropic"
+    : normalized.preferredInferenceApi?.startsWith("openai")
+      ? "openai"
+      : null;
+  const expectedConfigKey = expectedType === "anthropic" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL";
+  if (
+    provider.value.name !== live.inference.provider ||
+    expectedType === null ||
+    provider.value.type !== expectedType ||
+    provider.value.credentialKeys.length !== (normalized.credentialEnv ? 1 : 0) ||
+    (normalized.credentialEnv !== undefined &&
+      provider.value.credentialKeys[0] !== normalized.credentialEnv) ||
+    provider.value.configKeys.length !== 1 ||
+    provider.value.configKeys[0] !== expectedConfigKey
+  )
+    throw new Error("The live inference provider metadata does not match the registry.");
   return {
     topology:
       entry.hostLocalInferenceReceipt || entry.hostLocalInferenceProvenance || entry.nimContainer
@@ -203,7 +227,7 @@ export function createLiveExportObservationDependencies(): ExportObservationDepe
       if (!entry) return digest({ registry: null });
       const gateway = gatewayFor(entry);
       const sandbox = sandboxIdentity(sandboxName, entry);
-      const inference = inferenceFor(entry);
+      const inference = await inferenceFor(entry);
       const policy = effectivePolicy(sandboxName, gateway);
       return digest({ entry, gateway, sandbox, inference, policy });
     },
