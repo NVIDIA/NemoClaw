@@ -3,18 +3,98 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { fingerprintOpenShellSandboxId } from "../adapters/openshell/sandbox-identity";
-import type { SandboxEntry } from "../state/registry/types";
+import {
+  buildManagedStartupProfile,
+  type ManagedStartupProfileBuilderInput,
+} from "../onboard/managed-startup/profile-builder";
+import type { SandboxEntry, SandboxWorkloadReceipt } from "../state/registry/types";
 import {
   canonicalizeEffectivePolicy,
-  classifyExportRegistryFidelity,
+  classifyExportRegistry,
   observeStableExportSource,
-  type ExportObservationDependencies,
+  type ExportSnapshotReader,
+  type RawExportSnapshot,
 } from "./export-observation";
 
-const id = "018f47e2-9d93-7d15-9c41-3ecf70b2550f";
-const fingerprint = fingerprintOpenShellSandboxId(id)!;
+const sandboxId = "018f47e2-9d93-7d15-9c41-3ecf70b2550f";
+const fingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
+const endpoint = "https://api.openai.com/v1";
+const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
 const policy =
   "version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\nnetwork_policies:\n  api:\n    name: api\n    endpoints: [{host: api.example.com, port: 443}]\n    binaries: [{path: /usr/bin/curl}]\nfilesystem_policy:\n  include_workdir: false\n  read_only: [/usr]\n  read_write: [/sandbox]\n";
+const canonicalEnvironment = {
+  NEMOCLAW_AGENT_TIMEOUT: "600",
+  NEMOCLAW_CONTEXT_WINDOW: "131072",
+  NEMOCLAW_EXTRA_AGENTS_JSON: '{"agents":[],"defaults":{},"main":{}}',
+  NEMOCLAW_MAX_TOKENS: "8192",
+  NEMOCLAW_MINIMAL_BOOTSTRAP: "1",
+  NEMOCLAW_OPENCLAW_OTEL: "0",
+  NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://host.openshell.internal:4318",
+  NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE: "1",
+  NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME: "openclaw-gateway",
+  NEMOCLAW_PROXY_HOST: "10.200.0.1",
+  NEMOCLAW_PROXY_PORT: "3128",
+  NEMOCLAW_REASONING: "false",
+  NEMOCLAW_REASONING_EFFORT: "default",
+};
+
+function profileInput(
+  overrides: Partial<ManagedStartupProfileBuilderInput> = {},
+): ManagedStartupProfileBuilderInput {
+  return {
+    agent: "openclaw",
+    inference: {
+      routeProvider: "openai",
+      upstreamProvider: "openai-api",
+      model: "gpt-5",
+      routedBaseUrl: "https://inference.local/v1",
+      upstreamEndpointUrl: null,
+      api: "openai-responses",
+      primaryModelRef: "openai/gpt-5",
+      compatibility: {},
+    },
+    dashboard: {
+      agent: "openclaw",
+      mode: "loopback",
+      url: "http://127.0.0.1:18789",
+      port: 18_789,
+      bindAddress: "127.0.0.1",
+      wslExposure: false,
+    },
+    webSearch: null,
+    toolDisclosure: "progressive",
+    hermesToolGateways: [],
+    messagingPlan: null,
+    dcodeAutoApprovalMode: null,
+    observabilityEnabled: null,
+    environment: canonicalEnvironment,
+    corporateCa: null,
+    ...overrides,
+  };
+}
+
+function managedWorkload(
+  input = profileInput(),
+  reference = imageRef,
+): Extract<SandboxWorkloadReceipt, { kind: "managed-image" }> {
+  const built = buildManagedStartupProfile(input);
+  return {
+    schemaVersion: 1,
+    kind: "managed-image",
+    reference,
+    platform: "linux/amd64",
+    release: "v1.0.0",
+    sourceRevision: "b".repeat(40),
+    sourceCohort: "ghrun-1-1",
+    capabilityContractVersion: 1,
+    startupProfileContractVersion: 1,
+    encodedProfile: built.encodedProfile,
+    startupProfileSha256: built.startupProfileSha256,
+    credentialProxyReplayRequired: false,
+    shared: true,
+  };
+}
+
 function entry(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
   return {
     name: "alpha",
@@ -27,92 +107,145 @@ function entry(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
     provider: "openai-api",
     model: "gpt-5",
     preferredInferenceApi: "openai-responses",
-    endpointUrl: "https://api.openai.com/v1",
+    endpointUrl: endpoint,
     credentialEnv: "OPENAI_API_KEY",
-    workload: {
-      schemaVersion: 1,
-      kind: "managed-image",
-      reference:
-        "nvcr.io/nvidia/nemoclaw@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      platform: "linux/amd64",
-      release: "1.0.0",
-      sourceRevision: "abc",
-      sourceCohort: "cohort",
-      capabilityContractVersion: 1,
-      startupProfileContractVersion: 1,
-      encodedProfile: "e30",
-      startupProfileSha256: "sha256:profile",
-      credentialProxyReplayRequired: false,
-      shared: true,
-    },
-    ...overrides,
-  };
-}
-function deps(
-  tokens = ["stable"],
-  overrides: Partial<ExportObservationDependencies> = {},
-): ExportObservationDependencies {
-  let token = 0;
-  return {
-    sourceTokenFor: vi.fn(() => "stable"),
-    readSourceToken: vi.fn(async () => tokens[token++] ?? tokens.at(-1)!),
-    readRegistryEntry: vi.fn(async () => entry()),
-    readSandboxIdentity: vi.fn(async () => ({
-      sandboxId: id,
-      fingerprint,
-      lifecycleGeneration: "generation-1",
-      identity: "live-sandbox-1",
-    })),
-    readGateway: vi.fn(async () => ({
-      name: "nemoclaw",
-      port: 8080,
-      management: "nemoclaw" as const,
-      stateRootOwned: true,
-      identity: "gateway-1",
-    })),
-    readInference: vi.fn(async () => ({
-      topology: "hosted" as const,
-      provider: "openai-api",
-      model: "gpt-5",
-      api: "openai-responses",
-      endpoint: "https://api.openai.com/v1",
-      credentialEnv: "OPENAI_API_KEY",
-      identity: "route-1",
-    })),
-    readEffectivePolicy: vi.fn(async () => ({
-      sandboxId: id,
-      revision: "policy-1",
-      document: policy,
-    })),
+    imageTag: imageRef,
+    workload: managedWorkload(),
     ...overrides,
   };
 }
 
+type ObservedSnapshot = Extract<RawExportSnapshot, { kind: "observed" }>;
+
+function snapshot(overrides: Partial<ObservedSnapshot> = {}): ObservedSnapshot {
+  return {
+    kind: "observed",
+    sandboxName: "alpha",
+    registry: entry(),
+    sandbox: {
+      sandboxId,
+      fingerprint,
+      resourceVersion: 7,
+      policyVersion: 3,
+    },
+    gateway: {
+      name: "nemoclaw",
+      port: 8080,
+      management: "nemoclaw",
+      stateRootOwned: true,
+    },
+    inference: {
+      topology: "hosted",
+      provider: "openai-api",
+      model: "gpt-5",
+      api: "openai-responses",
+      endpoint,
+      endpointEvidence: {
+        endpoint,
+        gatewayName: "nemoclaw",
+        providerName: "openai-api",
+        configKey: "OPENAI_BASE_URL",
+      },
+      credentialEnv: "OPENAI_API_KEY",
+    },
+    policy: { sandboxId, revision: "3", document: policy },
+    ...overrides,
+  };
+}
+
+function withResourceVersion(resourceVersion: number): ObservedSnapshot {
+  const value = snapshot();
+  return { ...value, sandbox: { ...value.sandbox, resourceVersion } };
+}
+
+function reader(
+  sequence: readonly RawExportSnapshot[] = [snapshot(), snapshot()],
+): ExportSnapshotReader & { read: ReturnType<typeof vi.fn> } {
+  let call = 0;
+  const read = vi.fn(async () => sequence[Math.min(call++, sequence.length - 1)]!);
+  return { read };
+}
+
+function findings(result: Awaited<ReturnType<typeof observeStableExportSource>>) {
+  return result.ok ? [] : result.findings;
+}
+
 describe("stable config export source observation (#10938)", () => {
-  it("observes the supported profile through only read dependencies", async () => {
-    const d = deps();
-    const result = await observeStableExportSource("alpha", d);
-    expect(result).toMatchObject({ ok: true, attempts: 1 });
-    expect(result.ok && result.source.policyBasis).toBe("verified-effective-state");
-    expect(d.readSourceToken).toHaveBeenCalledTimes(1);
-    expect(d.readRegistryEntry).toHaveBeenCalledTimes(1);
+  it("narrows one stable supported snapshot to an immutable verified source", async () => {
+    const sourceReader = reader();
+    const result = await observeStableExportSource("alpha", sourceReader);
+
+    expect(result).toMatchObject({
+      ok: true,
+      attempts: 1,
+      source: {
+        sandboxName: "alpha",
+        runtime: { provider: "docker", imageRef },
+        inference: { api: "openai-responses" },
+      },
+    });
+    expect(sourceReader.read).toHaveBeenCalledTimes(2);
+    if (result.ok) {
+      expect(result.source).not.toHaveProperty("registry");
+      expect(Object.isFrozen(result.source)).toBe(true);
+      expect(Object.isFrozen(result.source.policy)).toBe(true);
+    }
   });
-  it("discards one unstable attempt and retries the complete observation", async () => {
-    const d = deps(["changed", "stable"]);
-    await expect(observeStableExportSource("alpha", d)).resolves.toMatchObject({
+
+  it("retries one structurally changed snapshot pair", async () => {
+    const stable = withResourceVersion(3);
+    const sourceReader = reader([
+      withResourceVersion(1),
+      withResourceVersion(2),
+      stable,
+      structuredClone(stable),
+    ]);
+
+    await expect(observeStableExportSource("alpha", sourceReader)).resolves.toMatchObject({
       ok: true,
       attempts: 2,
     });
-    expect(d.readRegistryEntry).toHaveBeenCalledTimes(2);
-    expect(d.readEffectivePolicy).toHaveBeenCalledTimes(2);
+    expect(sourceReader.read).toHaveBeenCalledTimes(4);
   });
-  it("fails as unstable-source after two changing attempts", async () => {
-    await expect(
-      observeStableExportSource("alpha", deps(["changed", "changed"])),
-    ).resolves.toMatchObject({ ok: false, category: "unstable-source", attempts: 2 });
+
+  it("owns each read before an untrusted reader can mutate and reuse it", async () => {
+    const shared = snapshot();
+    let calls = 0;
+    const sourceReader = {
+      read: vi.fn(async () => {
+        if (calls++ === 1) {
+          (shared.sandbox as { resourceVersion: number }).resourceVersion = 8;
+        }
+        return shared;
+      }),
+    };
+
+    await expect(observeStableExportSource("alpha", sourceReader)).resolves.toMatchObject({
+      ok: true,
+      attempts: 2,
+    });
+    expect(sourceReader.read).toHaveBeenCalledTimes(4);
   });
-  it("reports every excluded capability instead of omitting it", () => {
-    const findings = classifyExportRegistryFidelity(
+
+  it("returns unstable-source after two changed snapshot pairs", async () => {
+    const result = await observeStableExportSource(
+      "alpha",
+      reader([
+        withResourceVersion(1),
+        withResourceVersion(2),
+        withResourceVersion(3),
+        withResourceVersion(4),
+      ]),
+    );
+
+    expect(result).toMatchObject({ ok: false, attempts: 2 });
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({ category: "unstable-source" }),
+    );
+  });
+
+  it("reports every excluded registry capability", () => {
+    const result = classifyExportRegistry(
       entry({
         agent: "hermes",
         fromDockerfile: "/tmp/Dockerfile",
@@ -126,7 +259,10 @@ describe("stable config export source observation (#10938)", () => {
         hostLocalInferenceReceipt: "receipt",
       }),
     );
-    expect(findings.filter((x) => x.category === "unsupported").map((x) => x.field)).toEqual(
+
+    expect(
+      result.filter(({ category }) => category === "unsupported").map(({ field }) => field),
+    ).toEqual(
       expect.arrayContaining([
         "spec.sandboxes[].runtime.customImage",
         "spec.sandboxes[].runtime.gpu",
@@ -141,85 +277,281 @@ describe("stable config export source observation (#10938)", () => {
       ]),
     );
   });
-  it("fails closed on lifecycle, gateway, route, and policy drift", async () => {
-    const result = await observeStableExportSource(
-      "alpha",
-      deps(["stable", "stable"], {
-        readRegistryEntry: vi.fn(async () => entry({ lifecycleGeneration: "old" })),
-        readGateway: vi.fn(async () => ({
-          name: "other",
-          port: 8081,
-          management: "external" as const,
-          stateRootOwned: false,
-          identity: "gw",
-        })),
-        readInference: vi.fn(async () => ({
-          topology: "local" as const,
-          provider: "x",
-          model: "y",
-          api: "z",
+
+  it("fails closed on lifecycle, gateway, route, endpoint, and policy drift", async () => {
+    const changed = snapshot({
+      registry: entry({ lifecycleLiveIdentityFingerprint: "different" }),
+      gateway: {
+        name: "other",
+        port: 8081,
+        management: "external",
+        stateRootOwned: false,
+      },
+      inference: {
+        topology: "local",
+        provider: "other",
+        model: "model-b",
+        api: "invalid",
+        endpoint: "http://local",
+        endpointEvidence: {
           endpoint: "http://local",
-          credentialEnv: null,
-          identity: "route",
-        })),
-        readEffectivePolicy: vi.fn(async () => ({
-          sandboxId: "018f47e2-9d93-7d15-9c41-3ecf70b25500",
-          revision: "r",
-          document: policy,
-        })),
-      }),
-    );
+          gatewayName: "other",
+          providerName: "other",
+          configKey: "OPENAI_BASE_URL",
+        },
+        credentialEnv: null,
+      },
+      policy: { sandboxId: "other-id", revision: "4", document: policy },
+    });
+
+    const result = await observeStableExportSource("alpha", reader([changed, changed]));
+    const fields = findings(result).map(({ field }) => field);
+
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.findings.map((x) => x.field)).toEqual(
+    expect(fields).toEqual(
       expect.arrayContaining([
-        "source.lifecycle.generation",
+        "source.lifecycle.fingerprint",
         "spec.gateway.management",
         "spec.gateway",
         "spec.inferenceProviders",
+        "spec.inferenceProviders[].endpoint",
         "spec.sandboxes[].network.policy",
       ]),
     );
   });
-  it.each(["_KEY", "DSH_TOKEN", "OPENSHELL_TOKEN", "VITEST_TOKEN", "NEMOCLAW_TEST_SECRET"])(
-    "rejects reserved credential identifier %s during observation",
-    async (credentialEnv) => {
-      const result = await observeStableExportSource(
-        "alpha",
-        deps(["stable", "stable"], {
-          readInference: vi.fn(async () => ({
-            topology: "hosted" as const,
-            provider: "openai-api",
-            model: "gpt-5",
-            api: "openai-responses",
-            endpoint: "https://api.openai.com/v1",
-            credentialEnv,
-            identity: "route-1",
-          })),
-        }),
-      );
-      expect(result.ok).toBe(false);
-      expect(!result.ok && result.findings).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ field: "spec.inferenceProviders[].credential.env" }),
-        ]),
+
+  it("normalizes an absent credential to an omitted verified field", async () => {
+    const value = snapshot();
+    const raw = snapshot({
+      registry: entry({ credentialEnv: undefined }),
+      inference: { ...value.inference, credentialEnv: null },
+    });
+    const result = await observeStableExportSource("alpha", reader([raw, raw]));
+
+    expect(result).toMatchObject({ ok: true });
+    if (result.ok) expect(result.source.inference).not.toHaveProperty("credentialEnv");
+  });
+
+  it("requires endpoint evidence bound to the observed route", async () => {
+    const value = snapshot();
+    const missing = snapshot({
+      inference: { ...value.inference, endpointEvidence: null },
+    });
+    const mismatched = snapshot({
+      inference: {
+        ...value.inference,
+        endpointEvidence: {
+          ...value.inference.endpointEvidence!,
+          providerName: "other-provider",
+        },
+      },
+    });
+
+    const missingResult = await observeStableExportSource("alpha", reader([missing, missing]));
+    const mismatchResult = await observeStableExportSource(
+      "alpha",
+      reader([mismatched, mismatched]),
+    );
+
+    expect(findings(missingResult)).toContainEqual(
+      expect.objectContaining({
+        field: "source.inference.endpoint",
+        category: "missing-provenance",
+      }),
+    );
+    expect(findings(mismatchResult)).toContainEqual(
+      expect.objectContaining({ field: "source.inference.endpoint", category: "drifted" }),
+    );
+  });
+
+  it.each([
+    "http://api.example.test/v1",
+    "https://user:credential-canary@api.example.test/v1",
+    "https://api.example.test/v1?token=credential-canary",
+    "https://api.example.test/v1#credential-canary",
+    "https://api.example.test/%0acredential-canary",
+  ])("rejects an unsafe endpoint without exposing it: %s", async (unsafeEndpoint) => {
+    const value = snapshot();
+    const raw = snapshot({
+      registry: entry({ endpointUrl: unsafeEndpoint }),
+      inference: {
+        ...value.inference,
+        endpoint: unsafeEndpoint,
+        endpointEvidence: { ...value.inference.endpointEvidence!, endpoint: unsafeEndpoint },
+      },
+    });
+
+    const result = await observeStableExportSource("alpha", reader([raw, raw]));
+
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("credential-canary");
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({ field: "spec.inferenceProviders[].endpoint" }),
+    );
+  });
+
+  it.each([
+    ["snapshot", snapshot({ sandboxName: "beta" })],
+    ["registry", snapshot({ registry: entry({ name: "beta" }) })],
+  ])("binds the requested name to the %s name", async (_source, raw) => {
+    const result = await observeStableExportSource("alpha", reader([raw, raw]));
+
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({
+        field: "source.sandbox.name",
+        category: "live-verification-failed",
+      }),
+    );
+  });
+
+  it("binds a not-found result to the requested name", async () => {
+    const raw = { kind: "not-found", sandboxName: "beta" } as const;
+    const result = await observeStableExportSource("alpha", reader([raw, raw]));
+
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({
+        field: "source.sandbox.name",
+        category: "live-verification-failed",
+      }),
+    );
+  });
+
+  it("rejects a stable sandbox name outside the v1 grammar", async () => {
+    const invalidName = "a".repeat(20);
+    const raw = snapshot({
+      sandboxName: invalidName,
+      registry: entry({ name: invalidName }),
+    });
+    const result = await observeStableExportSource(invalidName, reader([raw, raw]));
+
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({ field: "spec.sandboxes[].name", category: "unsupported" }),
+    );
+  });
+
+  it.each([
+    ["invalid name", 8080],
+    ["nemoclaw", 70_000],
+    ["nemoclaw", 8080.5],
+  ] as const)("rejects an invalid gateway binding", async (name, port) => {
+    const raw = snapshot({
+      registry: entry({ gatewayName: name, gatewayPort: port }),
+      gateway: { name, port, management: "nemoclaw", stateRootOwned: true },
+    });
+    const result = await observeStableExportSource("alpha", reader([raw, raw]));
+
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({ field: "spec.gateway", category: "unsupported" }),
+    );
+  });
+
+  it.each([
+    "ghcr.io/nvidia/nemoclaw/openclaw-sandbox:latest",
+    "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:not-a-digest",
+    "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64) + "\n",
+    "registry.example/" + "a".repeat(500) + "/image@sha256:" + "a".repeat(64),
+  ])("rejects a mutable or malformed image identity", async (reference) => {
+    const sourceEntry = entry({
+      imageTag: reference,
+      workload: managedWorkload(profileInput(), reference),
+    });
+    const raw = snapshot({ registry: sourceEntry });
+    const result = await observeStableExportSource("alpha", reader([raw, raw]));
+
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({ field: "spec.sandboxes[].runtime.image" }),
+    );
+  });
+
+  it.each(["Docker", "docker runtime", "docker_runtime", "-docker", "d".repeat(64)])(
+    "rejects invalid runtime provider %s",
+    async (openshellDriver) => {
+      const raw = snapshot({ registry: entry({ openshellDriver }) });
+      const result = await observeStableExportSource("alpha", reader([raw, raw]));
+
+      expect(findings(result)).toContainEqual(
+        expect.objectContaining({ field: "spec.sandboxes[].runtime.provider" }),
       );
     },
   );
-  it("classifies missing gateway and runtime driver provenance", () => {
-    const findings = classifyExportRegistryFidelity(
-      entry({ gatewayName: undefined, gatewayPort: undefined, openshellDriver: null }),
-    );
-    expect(findings.map(({ field }) => field)).toEqual(
-      expect.arrayContaining(["spec.gateway", "spec.sandboxes[].runtime.provider"]),
+
+  it("rejects any noncanonical managed startup profile", async () => {
+    const base = profileInput();
+    if (base.dashboard.agent !== "openclaw") throw new Error("Invalid test fixture");
+    const configured = profileInput({
+      dashboard: { ...base.dashboard, url: "http://127.0.0.1:18888", port: 18_888 },
+    });
+    const workload = managedWorkload(configured);
+    const raw = snapshot({ registry: entry({ imageTag: workload.reference, workload }) });
+    const result = await observeStableExportSource("alpha", reader([raw, raw]));
+
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({ field: "source.workload.startupProfile", category: "unsupported" }),
     );
   });
-  it("canonicalizes policy independently of mapping insertion order (#10938)", () => {
+
+  it.each(["_KEY", "DSH_TOKEN", "OPENSHELL_TOKEN", "VITEST_TOKEN", "NEMOCLAW_TEST_SECRET"])(
+    "rejects reserved credential identifier %s",
+    async (credentialEnv) => {
+      const value = snapshot();
+      const raw = snapshot({
+        registry: entry({ credentialEnv }),
+        inference: { ...value.inference, credentialEnv },
+      });
+      const result = await observeStableExportSource("alpha", reader([raw, raw]));
+
+      expect(findings(result)).toContainEqual(
+        expect.objectContaining({ field: "spec.inferenceProviders[].credential.env" }),
+      );
+    },
+  );
+
+  it("rejects credential-bearing policy without exposing its value", async () => {
+    const canary = "credential-canary-value";
+    const raw = snapshot({
+      policy: {
+        sandboxId,
+        revision: "3",
+        document: `version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\n  password: ${canary}\nnetwork_policies: {}\n`,
+      },
+    });
+    const result = await observeStableExportSource("alpha", reader([raw, raw]));
+
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({ category: "policy-not-representable" }),
+    );
+    expect(JSON.stringify(result)).not.toContain(canary);
+  });
+
+  it("maps a typed concrete read failure to a controlled finding", async () => {
+    const result = await observeStableExportSource("alpha", reader([{ kind: "read-failed" }]));
+
+    expect(result).toMatchObject({ ok: false, attempts: 1 });
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({ category: "live-verification-failed" }),
+    );
+  });
+
+  it("lets unexpected reader defects escape the pure observer", async () => {
+    const sourceReader = {
+      read: vi.fn(async () => {
+        throw new Error("programmer-defect-canary");
+      }),
+    };
+
+    await expect(observeStableExportSource("alpha", sourceReader)).rejects.toThrow(
+      "programmer-defect-canary",
+    );
+  });
+
+  it("canonicalizes policy independently of mapping insertion order", () => {
     const first = canonicalizeEffectivePolicy(
       "version: 1\nnetwork_policies:\n  ä:\n    name: ä\n    endpoints: [{host: z.example.com, port: 443}]\n    binaries: [{path: /usr/bin/z}]\n  z:\n    name: z\n    endpoints: [{host: a.example.com, port: 443}]\n    binaries: [{path: /usr/bin/a}]\n",
     );
     const second = canonicalizeEffectivePolicy(
       "network_policies:\n  z:\n    binaries: [{path: /usr/bin/a}]\n    endpoints: [{port: 443, host: a.example.com}]\n    name: z\n  ä:\n    binaries: [{path: /usr/bin/z}]\n    endpoints: [{port: 443, host: z.example.com}]\n    name: ä\nversion: 1\n",
     );
+
     expect(second).toEqual(first);
   });
 
@@ -237,17 +569,5 @@ describe("stable config export source observation (#10938)", () => {
       version: 1,
     });
     expect(() => canonicalizeEffectivePolicy("network_policies: [not-a-map]")).toThrow();
-  });
-  it("redacts exceptions from live readers", async () => {
-    const result = await observeStableExportSource(
-      "alpha",
-      deps(["stable"], {
-        readInference: vi.fn(async () => {
-          throw new Error("credential-canary");
-        }),
-      }),
-    );
-    expect(JSON.stringify(result)).not.toContain("credential-canary");
-    expect(result).toMatchObject({ ok: false, category: "live-verification-failed" });
   });
 });

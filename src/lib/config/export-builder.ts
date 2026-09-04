@@ -1,10 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomUUID } from "node:crypto";
-import type { NemoClawConfig, NemoClawInferenceProviderConfig } from "./model";
+import type {
+  NemoClawConfig,
+  NemoClawConfigDocumentName,
+  NemoClawConfigDocumentUid,
+  NemoClawInferenceProviderConfig,
+  ValidatedNemoClawConfig,
+} from "./model";
 import { validateNemoClawConfig } from "./schema";
-import type { ObservedExportSource } from "./export-observation";
+import type { VerifiedExportSource } from "./export-observation";
 
 function providerLocalName(provider: string): string {
   const normalized = provider
@@ -15,7 +20,7 @@ function providerLocalName(provider: string): string {
 }
 
 function inferenceProvider(
-  source: ObservedExportSource,
+  source: VerifiedExportSource,
   name: string,
 ): NemoClawInferenceProviderConfig {
   const provider = {
@@ -24,25 +29,26 @@ function inferenceProvider(
     api: source.inference.api,
     endpoint: source.inference.endpoint,
   };
-  return source.inference.credentialEnv === null
+  return source.inference.credentialEnv === undefined
     ? provider
     : { ...provider, credential: { env: source.inference.credentialEnv } };
 }
 
+export interface ExportConfigBuildIdentity {
+  readonly documentName: NemoClawConfigDocumentName;
+  readonly documentUid: NemoClawConfigDocumentUid;
+}
+
 /** Build and validate an unbound aggregate document from one verified export observation. */
 export function buildExportConfig(
-  source: ObservedExportSource,
-  documentName: string,
-): NemoClawConfig {
+  source: VerifiedExportSource,
+  identity: ExportConfigBuildIdentity,
+): ValidatedNemoClawConfig {
   const providerName = providerLocalName(source.inference.provider);
-  if (source.workload.kind !== "managed-image") {
-    throw new Error("Verified export source must contain a managed image workload.");
-  }
-  const imageDigest = source.workload.reference.slice(source.workload.reference.indexOf("@") + 1);
-  return validateNemoClawConfig({
+  const candidate = {
     apiVersion: "nemoclaw.nvidia.com/v1",
     kind: "NemoClawConfig",
-    metadata: { name: documentName, uid: randomUUID() },
+    metadata: { name: identity.documentName, uid: identity.documentUid },
     spec: {
       gateway: {
         management: "nemoclaw",
@@ -54,8 +60,8 @@ export function buildExportConfig(
         {
           name: source.sandboxName,
           runtime: {
-            provider: source.registry.openshellDriver,
-            image: { ref: source.workload.reference, digest: imageDigest },
+            provider: source.runtime.provider,
+            image: { ref: source.runtime.imageRef },
           },
           network: { policy: { explicit: source.policy } },
           agents: [
@@ -76,5 +82,6 @@ export function buildExportConfig(
         },
       ],
     },
-  });
+  } satisfies NemoClawConfig;
+  return validateNemoClawConfig(candidate);
 }

@@ -74,6 +74,8 @@
     "build:policy-boundary": "tsc -p nemoclaw/tsconfig.shared.json",
     "catalog:compile": "tsx src/lib/inference/serving/generate-catalog.ts",
     "catalog:check": "tsx src/lib/inference/serving/generate-catalog.ts --check",
+    "config-schema:generate": "npm run build:policy-boundary && tsx scripts/config/generate-nemoclaw-config-schema.mts",
+    "config-schema:check": "npm run build:policy-boundary && tsx scripts/config/generate-nemoclaw-config-schema.mts --check",
     "catalog:verify-hugging-face": "npm run catalog:compile && tsx tools/managed-inference/verify-hugging-face-models.ts",
     "build:cli": "npm run prune:retired-cli && npm run build:policy-boundary && npm run build:runner-boundary && tsc -p tsconfig.src.json && node --experimental-strip-types --no-warnings scripts/lib/package-blueprint-runner-runtime.mts && node dist/lib/core/generate-build-identity.js && node dist/lib/inference/serving/generate-catalog.js && node dist/lib/cli/generate-oclif-metadata-manifest.js && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
     "build:runner-boundary": "node -e \"require('node:fs').rmSync('nemoclaw/runner-dist', { recursive: true, force: true })\" && tsc -p nemoclaw/tsconfig.runner.json",
@@ -113,6 +115,7 @@
     "p-retry": "^4.6.2",
     "qrcode-terminal": "^0.12.0",
     "smol-toml": "1.7.0",
+    "typebox": "1.1.38",
     "undici": "8.10.0",
     "yaml": "2.8.3"
   },
@@ -170,7 +173,6 @@
     "oxlint": "1.78.0",
     "oxlint-tsgolint": "7.0.2001",
     "tsx": "^4.21.0",
-    "typebox": "1.1.38",
     "typescript": "6.0.3",
     "vitest": "^4.1.9"
   },

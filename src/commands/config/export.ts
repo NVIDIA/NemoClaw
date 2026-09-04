@@ -1,17 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import { Flags } from "@oclif/core";
-import { renderCanonicalNemoClawConfig } from "../../lib/config/canonical";
-import { ConfigExportInputError, runConfigExport } from "../../lib/config/export";
-import { buildExportConfig } from "../../lib/config/export-builder";
+import { runConfigExport, type ConfigExportTarget } from "../../lib/config/export";
+import { observeLiveExportSource } from "../../lib/config/export-live-adapters";
 import {
-  LiveExportObservationError,
-  observeLiveExportSource,
-} from "../../lib/config/export-live-adapters";
-import { publishExportFile, YamlExportOutputError } from "../../lib/config/output";
+  isValidNemoClawConfigDocumentName,
+  parseNemoClawConfigDocumentUid,
+} from "../../lib/config/model";
+import { publishExportFile } from "../../lib/config/output";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
-import { isValidName } from "../../lib/sandbox-name-contract";
 import { sandboxNameArg } from "../../lib/sandbox/command-support";
 
 export default class ConfigExportCommand extends NemoClawCommand {
@@ -38,10 +37,6 @@ export default class ConfigExportCommand extends NemoClawCommand {
       description: "Replace an existing regular file; refuse symlinks and other file types",
       default: false,
     }),
-    json: Flags.boolean({
-      description: "Print the versioned JSON export result after writing the file",
-      default: false,
-    }),
   };
   static publicDisplay = [
     {
@@ -56,42 +51,52 @@ export default class ConfigExportCommand extends NemoClawCommand {
 
   public async run(): Promise<unknown> {
     const { args, flags } = await this.parse(ConfigExportCommand);
-    const json = flags.json ?? false;
+    const json = this.jsonEnabled();
     const documentName = flags.name ?? args.sandboxName;
-    if (!isValidName(documentName)) this.error("The config name is invalid.");
+    if (!isValidNemoClawConfigDocumentName(documentName)) this.error("The config name is invalid.");
+    if (json && flags.output === "-") {
+      this.error("--json cannot be used when --output is stdout (-).");
+    }
+    if (flags.force && flags.output === "-") {
+      this.error("--force cannot be used when --output is stdout (-).");
+    }
     if (flags.output !== "-" && process.platform !== "linux") {
       this.error("Config export file output currently requires Linux. Use --output - instead.");
     }
-    try {
-      return await runConfigExport(
-        {
-          sandboxName: args.sandboxName,
-          documentName,
-          output: flags.output,
-          force: flags.force,
-          json,
-        },
-        {
-          observe: observeLiveExportSource,
-          buildConfig: buildExportConfig,
-          render: renderCanonicalNemoClawConfig,
-          publish: publishExportFile,
-          writeStdout: (yaml) => process.stdout.write(yaml),
-        },
-      );
-    } catch (error) {
-      if (error instanceof LiveExportObservationError) {
+    const target: ConfigExportTarget =
+      flags.output === "-"
+        ? { kind: "stdout" }
+        : { kind: "file", outputPath: flags.output, force: flags.force };
+    const outcome = await runConfigExport(
+      {
+        sandboxName: args.sandboxName,
+        documentName,
+        target,
+      },
+      {
+        observe: observeLiveExportSource,
+        createDocumentUid: () => parseNemoClawConfigDocumentUid(randomUUID()),
+        publish: publishExportFile,
+        writeStdout: (yaml) =>
+          new Promise<void>((resolve, reject) => {
+            process.stdout.write(yaml, (error) => (error ? reject(error) : resolve()));
+          }),
+      },
+    );
+    if (!outcome.ok) {
+      const { failure } = outcome;
+      if (failure.kind === "observation") {
+        const categories = [...new Set(failure.findings.map(({ category }) => category))];
         this.error(
           [
-            `Config export failed (${error.category}).`,
-            ...error.findings.map((finding) => finding.diagnostic),
+            `Config export failed (${categories.join(", ")}).`,
+            ...failure.findings.map(({ diagnostic }) => diagnostic),
           ].join("\n"),
         );
       }
-      if (error instanceof ConfigExportInputError || error instanceof YamlExportOutputError) {
-        this.error(`Config export failed (${error.category}): ${error.message}`);
-      }
-      throw error;
+      this.error(`Config export failed (${failure.category}): ${failure.diagnostic}`);
     }
+    const { completion } = outcome;
+    return completion.kind === "file" ? completion.result : undefined;
   }
 }

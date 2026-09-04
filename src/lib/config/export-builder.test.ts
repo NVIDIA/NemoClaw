@@ -2,10 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import type { ObservedExportSource } from "./export-observation";
+import type { VerifiedExportSource } from "./export-observation";
 import { buildExportConfig } from "./export-builder";
+import { parseNemoClawConfigDocumentName, parseNemoClawConfigDocumentUid } from "./model";
 
 const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const firstUid = parseNemoClawConfigDocumentUid("018f47e2-9d93-7d15-9c41-3ecf70b2550f");
+const secondUid = parseNemoClawConfigDocumentUid("018f47e2-9d93-7d15-9c41-3ecf70b25510");
+const alphaDocumentName = parseNemoClawConfigDocumentName("alpha");
+const workAgentsDocumentName = parseNemoClawConfigDocumentName("work-agents");
 const policy = {
   version: 1,
   process: { run_as_user: "sandbox", run_as_group: "sandbox" },
@@ -22,73 +27,40 @@ const policy = {
     read_write: ["/sandbox"],
   },
 };
-const source: ObservedExportSource = {
+const source = {
   sandboxName: "alpha",
-  registry: {
-    name: "alpha",
-    agent: "openclaw",
-    openshellDriver: "docker",
-    provider: "OpenAI API",
-    model: "gpt-5",
-    preferredInferenceApi: "openai-responses",
-    endpointUrl: "https://api.openai.com/v1",
-    credentialEnv: "OPENAI_API_KEY",
+  runtime: {
+    provider: "docker",
+    imageRef: `nvcr.io/nvidia/nemoclaw@${digest}`,
   },
-  sandbox: {
-    sandboxId: "018f47e2-9d93-7d15-9c41-3ecf70b2550f",
-    fingerprint: "sha256:sandbox",
-    lifecycleGeneration: "generation-1",
-    identity: "live-sandbox-1",
-  },
-  gateway: {
-    name: "nemoclaw",
-    port: 8080,
-    management: "nemoclaw",
-    stateRootOwned: true,
-    identity: "gateway-1",
-  },
-  workload: {
-    schemaVersion: 1,
-    kind: "managed-image",
-    reference: `nvcr.io/nvidia/nemoclaw@${digest}`,
-    platform: "linux/amd64",
-    release: "1.0.0",
-    sourceRevision: "abc",
-    sourceCohort: "cohort",
-    capabilityContractVersion: 1,
-    startupProfileContractVersion: 1,
-    encodedProfile: "e30",
-    startupProfileSha256: "sha256:profile",
-    credentialProxyReplayRequired: false,
-    shared: true,
-  },
+  gateway: { name: "nemoclaw", port: 8080 },
   inference: {
-    topology: "hosted",
-    provider: "OpenAI API",
+    provider: "openai-api",
     model: "gpt-5",
     api: "openai-responses",
     endpoint: "https://api.openai.com/v1",
     credentialEnv: "OPENAI_API_KEY",
-    identity: "hosted-route-1",
   },
   policy,
-  policyBasis: "verified-effective-state",
-};
+} as unknown as VerifiedExportSource;
 
 describe("export config builder", () => {
-  it("maps verified source evidence into one validated aggregate (#10938)", () => {
-    const result = buildExportConfig(source, "work-agents");
+  it("maps a verified source into one validated aggregate (#10938)", () => {
+    const result = buildExportConfig(source, {
+      documentName: workAgentsDocumentName,
+      documentUid: firstUid,
+    });
 
     expect(result).toMatchObject({
       apiVersion: "nemoclaw.nvidia.com/v1",
       kind: "NemoClawConfig",
-      metadata: { name: "work-agents", uid: expect.any(String) },
+      metadata: { name: "work-agents", uid: firstUid },
       spec: {
         gateway: { management: "nemoclaw", name: "nemoclaw", port: 8080 },
         inferenceProviders: [
           {
             name: "hosted-openai-api",
-            provider: "OpenAI API",
+            provider: "openai-api",
             api: "openai-responses",
             endpoint: "https://api.openai.com/v1",
             credential: { env: "OPENAI_API_KEY" },
@@ -99,7 +71,7 @@ describe("export config builder", () => {
             name: "alpha",
             runtime: {
               provider: "docker",
-              image: { ref: `nvcr.io/nvidia/nemoclaw@${digest}`, digest },
+              image: { ref: `nvcr.io/nvidia/nemoclaw@${digest}` },
             },
             network: { policy: { explicit: policy } },
             agents: [
@@ -121,15 +93,19 @@ describe("export config builder", () => {
         ],
       },
     });
-    expect(result.metadata.uid).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
-    );
   });
 
-  it("creates fresh identity while keeping derived provider references deterministic (#10938)", () => {
-    const first = buildExportConfig(source, "alpha");
-    const second = buildExportConfig(source, "alpha");
+  it("uses the supplied identity and keeps derived references deterministic (#10938)", () => {
+    const first = buildExportConfig(source, {
+      documentName: alphaDocumentName,
+      documentUid: firstUid,
+    });
+    const second = buildExportConfig(source, {
+      documentName: alphaDocumentName,
+      documentUid: secondUid,
+    });
 
+    expect(second.metadata.uid).toBe(secondUid);
     expect(second.metadata.uid).not.toBe(first.metadata.uid);
     expect(second.spec).toEqual(first.spec);
     expect(second.spec.inferenceProviders[0]?.name).toBe("hosted-openai-api");
@@ -138,19 +114,22 @@ describe("export config builder", () => {
     );
   });
 
-  it("omits an absent hosted credential reference and validates the complete result (#10938)", () => {
-    const credentialless = {
+  it("omits an absent hosted credential reference and validates the result (#10938)", () => {
+    const credentialless: VerifiedExportSource = {
       ...source,
-      registry: { ...source.registry, credentialEnv: null },
-      inference: { ...source.inference, credentialEnv: null },
+      inference: { ...source.inference, credentialEnv: undefined },
     };
 
-    expect(buildExportConfig(credentialless, "alpha").spec.inferenceProviders[0]).toEqual({
+    expect(
+      buildExportConfig(credentialless, {
+        documentName: alphaDocumentName,
+        documentUid: firstUid,
+      }).spec.inferenceProviders[0],
+    ).toEqual({
       name: "hosted-openai-api",
-      provider: "OpenAI API",
+      provider: "openai-api",
       api: "openai-responses",
       endpoint: "https://api.openai.com/v1",
     });
-    expect(() => buildExportConfig(source, "Invalid Name")).toThrow("Invalid NemoClawConfig");
   });
 });

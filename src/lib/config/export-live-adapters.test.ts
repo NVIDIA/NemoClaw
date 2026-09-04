@@ -29,17 +29,61 @@ import { fingerprintOpenShellSandboxId } from "../adapters/openshell/sandbox-ide
 import { inspectOpenShellSandboxIdentityFingerprint } from "../adapters/openshell/sandbox-identity-cli";
 import { syncCliOpenShellSandboxPolicyReader } from "../adapters/openshell/sandbox-policy-cli";
 import { getLiveGatewayInference } from "../inference/live";
+import { buildManagedStartupProfile } from "../onboard/managed-startup/profile-builder";
 import { getSandboxEntryInference } from "../state/registry-entry-view";
 import { load as loadRegistry } from "../state/registry/persistence";
-import {
-  LiveExportObservationError,
-  createLiveExportObservationDependencies,
-  observeLiveExportSource,
-} from "./export-live-adapters";
+import type { SandboxEntry } from "../state/registry/types";
+import { createLiveExportSnapshotReader, observeLiveExportSource } from "./export-live-adapters";
 
-const id = "123e4567-e89b-42d3-a456-426614174000";
-const identityFingerprint = fingerprintOpenShellSandboxId(id)!;
-const entry = {
+const sandboxId = "123e4567-e89b-42d3-a456-426614174000";
+const identityFingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
+const endpoint = "https://integrate.api.nvidia.com/v1";
+const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
+const startup = buildManagedStartupProfile({
+  agent: "openclaw",
+  inference: {
+    routeProvider: "inference",
+    upstreamProvider: "nvidia",
+    model: "model-a",
+    routedBaseUrl: "https://inference.local/v1",
+    upstreamEndpointUrl: null,
+    api: "openai-completions",
+    primaryModelRef: "inference/model-a",
+    compatibility: {},
+  },
+  dashboard: {
+    agent: "openclaw",
+    mode: "loopback",
+    url: "http://127.0.0.1:18789",
+    port: 18_789,
+    bindAddress: "127.0.0.1",
+    wslExposure: false,
+  },
+  webSearch: null,
+  toolDisclosure: "progressive",
+  hermesToolGateways: [],
+  messagingPlan: null,
+  dcodeAutoApprovalMode: null,
+  observabilityEnabled: null,
+  environment: {
+    NEMOCLAW_AGENT_TIMEOUT: "600",
+    NEMOCLAW_CONTEXT_WINDOW: "131072",
+    NEMOCLAW_EXTRA_AGENTS_JSON: '{"agents":[],"defaults":{},"main":{}}',
+    NEMOCLAW_MAX_TOKENS: "8192",
+    NEMOCLAW_MINIMAL_BOOTSTRAP: "1",
+    NEMOCLAW_OPENCLAW_OTEL: "0",
+    NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://host.openshell.internal:4318",
+    NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE: "1",
+    NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME: "openclaw-gateway",
+    NEMOCLAW_PROXY_HOST: "10.200.0.1",
+    NEMOCLAW_PROXY_PORT: "3128",
+    NEMOCLAW_REASONING: "false",
+    NEMOCLAW_REASONING_EFFORT: "default",
+  },
+  corporateCa: null,
+});
+
+const entry: SandboxEntry = {
   name: "alpha",
   agent: "openclaw",
   openshellDriver: "docker",
@@ -50,30 +94,30 @@ const entry = {
   provider: "nvidia",
   model: "model-a",
   preferredInferenceApi: "openai-completions",
-  endpointUrl: "https://integrate.api.nvidia.com/v1",
+  endpointUrl: endpoint,
   credentialEnv: "NVIDIA_API_KEY",
+  imageTag: imageRef,
   workload: {
     schemaVersion: 1,
     kind: "managed-image",
-    reference: "example.test/image@sha256:" + "a".repeat(64),
-    release: "v1",
-    sourceRevision: "revision",
-    sourceCohort: "cohort",
+    reference: imageRef,
+    platform: "linux/amd64",
+    release: "v1.0.0",
+    sourceRevision: "b".repeat(40),
+    sourceCohort: "ghrun-1-1",
     capabilityContractVersion: 1,
     startupProfileContractVersion: 1,
-    encodedProfile: "profile",
-    startupProfileSha256: "b".repeat(64),
-    credentialProxyReplayRequired: true,
-    deletionPolicy: "retain",
-    deleteWithSandbox: false,
+    encodedProfile: startup.encodedProfile,
+    startupProfileSha256: startup.startupProfileSha256,
+    credentialProxyReplayRequired: false,
     shared: true,
   },
-} as const;
+};
 
-function inventory(resourceVersion = 7, policyVersion = 3) {
+function inventory(resourceVersion = 7, policyVersion = 3): string {
   return JSON.stringify([
     {
-      id,
+      id: sandboxId,
       name: "alpha",
       labels: {},
       resource_version: resourceVersion,
@@ -84,8 +128,15 @@ function inventory(resourceVersion = 7, policyVersion = 3) {
   ]);
 }
 
-function mockSupportedLiveSource(policyVersion = 3, appliedRevision = 3): void {
-  vi.mocked(loadRegistry).mockReturnValue({ sandboxes: { alpha: entry }, defaultSandbox: null });
+function mockSupportedLiveSource(
+  policyVersion = 3,
+  appliedRevision = 3,
+  sourceEntry: SandboxEntry = entry,
+): void {
+  vi.mocked(loadRegistry).mockReturnValue({
+    sandboxes: { alpha: sourceEntry },
+    defaultSandbox: null,
+  });
   vi.mocked(getSandboxEntryInference).mockReturnValue({
     kind: "configured",
     provider: "nvidia",
@@ -103,7 +154,7 @@ function mockSupportedLiveSource(policyVersion = 3, appliedRevision = 3): void {
       value: {
         name: "nvidia",
         type: "openai",
-        credentialKeys: ["NVIDIA_API_KEY"],
+        credentialKeys: sourceEntry.credentialEnv ? [sourceEntry.credentialEnv] : [],
         configKeys: ["OPENAI_BASE_URL"],
       },
     })),
@@ -125,35 +176,90 @@ function mockSupportedLiveSource(policyVersion = 3, appliedRevision = 3): void {
   });
 }
 
-describe("live export observation dependencies", () => {
-  it("hands one verified live observation to the export builder (#10938)", async () => {
+describe("live export snapshot reader", () => {
+  it("fails closed when OpenShell cannot expose independent endpoint evidence", async () => {
     mockSupportedLiveSource();
-    const observed = await observeLiveExportSource("alpha");
-    expect(observed).toMatchObject({
-      sandboxName: "alpha",
-      inference: { provider: "nvidia", credentialEnv: "NVIDIA_API_KEY" },
-      gateway: { name: "nemoclaw", port: 8080 },
-      workload: { reference: expect.stringContaining("@sha256:") },
-      policy: { version: 1, network_policies: { api: expect.any(Object) } },
+    const result = await observeLiveExportSource("alpha");
+
+    expect(result).toMatchObject({
+      ok: false,
+      attempts: 1,
+      findings: [expect.objectContaining({ field: "source.inference.endpoint" })],
+    });
+    if (!result.ok) {
+      expect(result.findings.some(({ category }) => category === "missing-provenance")).toBe(true);
+    }
+  });
+
+  it("returns a complete non-secret raw snapshot", async () => {
+    mockSupportedLiveSource();
+    const result = await createLiveExportSnapshotReader().read("alpha");
+
+    expect(result).toMatchObject({
+      kind: "observed",
+      sandbox: { resourceVersion: 7, policyVersion: 3 },
+      inference: {
+        topology: "hosted",
+        credentialEnv: "NVIDIA_API_KEY",
+        provider: "nvidia",
+        model: "model-a",
+        endpointEvidence: null,
+      },
+    });
+    expect(result).not.toHaveProperty("inference.credential");
+    expect(process.env.NVIDIA_API_KEY).toBeUndefined();
+  });
+
+  it("preserves live revision fields for structural stability checks", async () => {
+    mockSupportedLiveSource();
+    const reader = createLiveExportSnapshotReader();
+    const first = await reader.read("alpha");
+    vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
+      status: 0,
+      output: inventory(8, 4),
+      stdout: inventory(8, 4),
+      stderr: "",
+    });
+    vi.mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy).mockReturnValue({
+      ok: true,
+      value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: 4 },
+    });
+
+    const second = await reader.read("alpha");
+
+    expect(first).toMatchObject({
+      kind: "observed",
+      sandbox: { resourceVersion: 7, policyVersion: 3 },
+      policy: { revision: "3" },
+    });
+    expect(second).toMatchObject({
+      kind: "observed",
+      sandbox: { resourceVersion: 8, policyVersion: 4 },
+      policy: { revision: "4" },
     });
   });
 
-  it("rejects credential-bearing effective policy without exposing its value (#10938)", async () => {
+  it("sanitizes credential-bearing policy failures", async () => {
     mockSupportedLiveSource();
     const canary = "credential-canary-value";
     vi.mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy).mockReturnValue({
       ok: true,
       value: {
-        document: `version: 1\nenv: {TOKEN: \"${canary}\"}\nnetwork_policies: {}\n`,
+        document: `version: 1\nenv: {TOKEN: "${canary}"}\nnetwork_policies: {}\n`,
         appliedRevision: 3,
       },
     });
-    const result = await observeLiveExportSource("alpha").catch((error: unknown) => error);
-    expect(result).toMatchObject({ category: "live-verification-failed" });
+
+    const result = await observeLiveExportSource("alpha");
+
+    expect(result).toMatchObject({
+      ok: false,
+      findings: [expect.objectContaining({ category: "live-verification-failed" })],
+    });
     expect(JSON.stringify(result)).not.toContain(canary);
   });
 
-  it("rejects live provider metadata that disagrees with registry provenance (#10938)", async () => {
+  it("maps inconsistent provider metadata to a controlled read failure", async () => {
     mockSupportedLiveSource();
     vi.mocked(createCliOpenShellProviderAdapter).mockReturnValue({
       getProvider: vi.fn(async () => ({
@@ -166,12 +272,20 @@ describe("live export observation dependencies", () => {
         },
       })),
     } as never);
-    await expect(observeLiveExportSource("alpha")).rejects.toMatchObject({
-      category: "live-verification-failed",
+
+    await expect(observeLiveExportSource("alpha")).resolves.toMatchObject({
+      ok: false,
+      findings: [expect.objectContaining({ category: "live-verification-failed" })],
     });
   });
 
-  it("rejects a live inference route that disagrees with the registry (#10938)", async () => {
+  it("maps route and policy revision drift to controlled read failures", async () => {
+    mockSupportedLiveSource(4, 3);
+    await expect(observeLiveExportSource("alpha")).resolves.toMatchObject({
+      ok: false,
+      findings: [expect.objectContaining({ category: "live-verification-failed" })],
+    });
+
     mockSupportedLiveSource();
     vi.mocked(getLiveGatewayInference).mockReturnValue({
       failure: null,
@@ -179,100 +293,24 @@ describe("live export observation dependencies", () => {
       output: "",
       status: 0,
     });
-    await expect(observeLiveExportSource("alpha")).rejects.toMatchObject({
-      category: "live-verification-failed",
+    await expect(observeLiveExportSource("alpha")).resolves.toMatchObject({
+      ok: false,
+      findings: [expect.objectContaining({ category: "live-verification-failed" })],
     });
   });
 
-  it("blocks the live handoff when the policy revision disagrees (#10938)", async () => {
-    mockSupportedLiveSource(4, 3);
-    await expect(observeLiveExportSource("alpha")).rejects.toMatchObject({
-      name: "LiveExportObservationError",
-      category: "live-verification-failed",
+  it("does not expose concrete reader exceptions", async () => {
+    const canary = "credential-canary-value";
+    vi.mocked(loadRegistry).mockImplementation(() => {
+      throw new Error(canary);
     });
-  });
 
-  it("binds tokens to live sandbox and policy revisions without reading credential values", async () => {
-    vi.mocked(loadRegistry).mockReturnValue({ sandboxes: { alpha: entry }, defaultSandbox: null });
-    vi.mocked(getSandboxEntryInference).mockReturnValue({
-      kind: "configured",
-      provider: "nvidia",
-      model: "model-a",
-    });
-    vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
-      status: 0,
-      output: inventory(),
-      stdout: inventory(),
-      stderr: "",
-    });
-    vi.mocked(inspectOpenShellSandboxIdentityFingerprint).mockReturnValue(
-      entry.lifecycleLiveIdentityFingerprint!,
-    );
-    vi.mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy).mockReturnValue({
-      ok: true,
-      value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: 3 },
-    });
-    const deps = createLiveExportObservationDependencies();
-    const first = await deps.readSourceToken("alpha");
-    vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
-      status: 0,
-      output: inventory(8, 4),
-      stdout: inventory(8, 4),
-      stderr: "",
-    });
-    vi.mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy).mockReturnValue({
-      ok: true,
-      value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: 4 },
-    });
-    await expect(deps.readSourceToken("alpha")).resolves.not.toBe(first);
-    expect(process.env.NVIDIA_API_KEY).toBeUndefined();
-  });
+    const result = await observeLiveExportSource("alpha");
 
-  it("rejects effective policy that is older than the live sandbox revision (#10938)", async () => {
-    vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
-      status: 0,
-      output: inventory(7, 4),
-      stdout: inventory(7, 4),
-      stderr: "",
+    expect(result).toMatchObject({
+      ok: false,
+      findings: [expect.objectContaining({ category: "live-verification-failed" })],
     });
-    vi.mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy).mockReturnValue({
-      ok: true,
-      value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: 3 },
-    });
-    const deps = createLiveExportObservationDependencies();
-    await expect(
-      deps.readEffectivePolicy("alpha", { name: "nemoclaw", port: 8080 } as never),
-    ).rejects.toThrow("does not match the live sandbox");
-  });
-
-  it("returns registry-backed inference metadata and never resolves a credential value", async () => {
-    vi.mocked(getSandboxEntryInference).mockReturnValue({
-      kind: "configured",
-      provider: "nvidia",
-      model: "model-a",
-    });
-    const observed = await createLiveExportObservationDependencies().readInference(entry);
-    expect(observed).toMatchObject({
-      topology: "hosted",
-      credentialEnv: "NVIDIA_API_KEY",
-      provider: "nvidia",
-      model: "model-a",
-    });
-    expect(observed).not.toHaveProperty("credential");
-  });
-
-  it("bounds typed failure findings", () => {
-    const findings = Array.from({ length: 20 }, (_, index) => ({
-      field: String(index),
-      fidelity: "missing" as const,
-      category: "missing-provenance" as const,
-      diagnostic: "bounded",
-    }));
-    const error = new LiveExportObservationError("missing-provenance", findings);
-    expect(error).toMatchObject({
-      name: "LiveExportObservationError",
-      category: "missing-provenance",
-    });
-    expect(error.findings).toHaveLength(16);
+    expect(JSON.stringify(result)).not.toContain(canary);
   });
 });

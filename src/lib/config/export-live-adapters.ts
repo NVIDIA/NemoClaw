@@ -1,16 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import os from "node:os";
 
+import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { captureSanitizedResolvedOpenshell } from "../adapters/openshell/sanitized-capture";
 import {
   fingerprintOpenShellSandboxId,
   parseStrictOpenShellSandboxListJson,
 } from "../adapters/openshell/sandbox-identity";
 import { inspectOpenShellSandboxIdentityFingerprint } from "../adapters/openshell/sandbox-identity-cli";
-import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { syncCliOpenShellSandboxPolicyReader } from "../adapters/openshell/sandbox-policy-cli";
 import { getLiveGatewayInference } from "../inference/live";
@@ -26,22 +25,16 @@ import { load as loadRegistry } from "../state/registry/persistence";
 import type { SandboxEntry } from "../state/registry/types";
 import {
   observeStableExportSource,
-  type ExportFailureCategory,
-  type ExportFidelityFinding,
-  type ExportObservationDependencies,
+  type ExportObservationResult,
+  type ExportSnapshotReader,
   type ObservedExportGateway,
   type ObservedExportInference,
   type ObservedExportSandboxIdentity,
-  type ObservedExportSource,
+  type RawExportSnapshot,
 } from "./export-observation";
 
-const MAX_FINDINGS = 16;
 const CAPTURE_MAX_BYTES = 1024 * 1024;
 const CAPTURE_TIMEOUT_MS = 30_000;
-
-function digest(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
 
 function liveRow(sandboxName: string, gatewayName: string) {
   const captured = captureSanitizedResolvedOpenshell(
@@ -90,7 +83,6 @@ function gatewayFor(entry: Readonly<SandboxEntry>): ObservedExportGateway {
     port,
     management: stateRootOwned ? "nemoclaw" : "unknown",
     stateRootOwned,
-    identity: digest({ name, port, stateDir, stateRootOwned }),
   };
 }
 
@@ -108,14 +100,8 @@ function sandboxIdentity(
   return {
     sandboxId: row.id,
     fingerprint,
-    lifecycleGeneration: entry.lifecycleGeneration ?? "",
-    identity: digest({
-      sandboxId: row.id,
-      fingerprint,
-      resourceVersion: row.resource_version,
-      policyVersion: row.current_policy_version,
-      lifecycleGeneration: entry.lifecycleGeneration ?? "",
-    }),
+    resourceVersion: row.resource_version,
+    policyVersion: row.current_policy_version,
   };
 }
 
@@ -154,36 +140,32 @@ async function inferenceFor(entry: Readonly<SandboxEntry>): Promise<ObservedExpo
       ? "openai"
       : null;
   const expectedConfigKey = expectedType === "anthropic" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL";
+  const expectedCredentialCount = normalized.credentialEnv === null ? 0 : 1;
   if (
     provider.value.name !== live.inference.provider ||
     expectedType === null ||
     provider.value.type !== expectedType ||
-    provider.value.credentialKeys.length !== (normalized.credentialEnv ? 1 : 0) ||
-    (normalized.credentialEnv !== undefined &&
+    provider.value.credentialKeys.length !== expectedCredentialCount ||
+    (normalized.credentialEnv !== null &&
       provider.value.credentialKeys[0] !== normalized.credentialEnv) ||
     provider.value.configKeys.length !== 1 ||
     provider.value.configKeys[0] !== expectedConfigKey
   )
     throw new Error("The live inference provider metadata does not match the registry.");
+
   return {
     topology:
       entry.hostLocalInferenceReceipt || entry.hostLocalInferenceProvenance || entry.nimContainer
         ? "local"
         : "hosted",
-    provider: selected.kind === "configured" ? selected.provider : "",
-    model: selected.kind === "configured" ? selected.model : "",
+    provider: live.inference.provider,
+    model: live.inference.model,
     api: normalized.preferredInferenceApi ?? "",
     endpoint: normalized.endpointUrl ?? "",
+    // OpenShell's provider metadata does not expose an independently read
+    // endpoint value. V1 export therefore fails closed at the pure boundary.
+    endpointEvidence: null,
     credentialEnv: normalized.credentialEnv,
-    identity: digest({
-      kind: selected.kind,
-      provider: normalized.provider,
-      model: normalized.model,
-      api: normalized.preferredInferenceApi,
-      endpoint: normalized.endpointUrl,
-      credentialEnv: normalized.credentialEnv,
-      endpointSource: normalized.endpointSource,
-    }),
   };
 }
 
@@ -210,60 +192,42 @@ function effectivePolicy(sandboxName: string, gateway: ObservedExportGateway) {
   };
 }
 
-function sourceTokenFor(
-  entry: Readonly<SandboxEntry>,
-  sandbox: ObservedExportSandboxIdentity,
-  gateway: ObservedExportGateway,
-  inference: ObservedExportInference,
-  policy: ReturnType<typeof effectivePolicy>,
-): string {
-  return digest({ entry, gateway, sandbox, inference, policy });
+async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
+  const entry = loadRegistry().sandboxes[sandboxName] ?? null;
+  if (!entry) {
+    return { kind: "not-found", sandboxName };
+  }
+  const gateway = gatewayFor(entry);
+  const sandbox = sandboxIdentity(sandboxName, entry);
+  const inference = await inferenceFor(entry);
+  const policy = effectivePolicy(sandboxName, gateway);
+  return {
+    kind: "observed",
+    sandboxName,
+    registry: entry,
+    gateway,
+    sandbox,
+    inference,
+    policy,
+  };
 }
 
-/** Concrete read-only bindings for one stable export observation. */
-export function createLiveExportObservationDependencies(): ExportObservationDependencies {
+/** Concrete read-only bindings for one complete export snapshot. */
+export function createLiveExportSnapshotReader(): ExportSnapshotReader {
   return {
-    sourceTokenFor,
-    readRegistryEntry: async (sandboxName) => loadRegistry().sandboxes[sandboxName] ?? null,
-    readSandboxIdentity: async (sandboxName) => {
-      const entry = loadRegistry().sandboxes[sandboxName] ?? null;
-      if (!entry) throw new Error("The source sandbox is not registered.");
-      return sandboxIdentity(sandboxName, entry);
-    },
-    readGateway: async (entry) => gatewayFor(entry),
-    readInference: async (entry) => inferenceFor(entry),
-    readEffectivePolicy: async (sandboxName, gateway) => effectivePolicy(sandboxName, gateway),
-    readSourceToken: async (sandboxName) => {
-      const entry = loadRegistry().sandboxes[sandboxName] ?? null;
-      if (!entry) return digest({ registry: null });
-      const gateway = gatewayFor(entry);
-      const sandbox = sandboxIdentity(sandboxName, entry);
-      const inference = await inferenceFor(entry);
-      const policy = effectivePolicy(sandboxName, gateway);
-      return sourceTokenFor(entry, sandbox, gateway, inference, policy);
+    read: async (sandboxName) => {
+      try {
+        return await readSnapshot(sandboxName);
+      } catch {
+        return { kind: "read-failed" };
+      }
     },
   };
 }
 
-/** Stable, bounded failure surfaced by the concrete live export observer. */
-export class LiveExportObservationError extends Error {
-  readonly category: ExportFailureCategory;
-  readonly findings: readonly ExportFidelityFinding[];
-
-  constructor(category: ExportFailureCategory, findings: readonly ExportFidelityFinding[]) {
-    super("The live export source could not be observed safely.");
-    this.name = "LiveExportObservationError";
-    this.category = category;
-    this.findings = findings.slice(0, MAX_FINDINGS);
-  }
-}
-
 /** Resolve one verified observation without reading credential values or mutating state. */
-export async function observeLiveExportSource(sandboxName: string): Promise<ObservedExportSource> {
-  const result = await observeStableExportSource(
-    sandboxName,
-    createLiveExportObservationDependencies(),
-  );
-  if (!result.ok) throw new LiveExportObservationError(result.category, result.findings);
-  return result.source;
+export async function observeLiveExportSource(
+  sandboxName: string,
+): Promise<ExportObservationResult> {
+  return observeStableExportSource(sandboxName, createLiveExportSnapshotReader());
 }
