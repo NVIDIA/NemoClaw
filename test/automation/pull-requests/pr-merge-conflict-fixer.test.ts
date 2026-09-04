@@ -382,7 +382,7 @@ describe("PR merge conflict fixer", () => {
     ).toThrow(/draft/u);
   });
 
-  it("creates a verified commit from a main-relative tree before the atomic head update (#7542)", async () => {
+  it("creates a verified commit before a guarded non-force head update (#7542)", async () => {
     const fixture = createConflictFixture();
     for (let index = 0; index < 100; index += 1) {
       write(fixture.repository, `stale-main/${index}.txt`, `main ${index}\n`);
@@ -395,14 +395,8 @@ describe("PR merge conflict fixer", () => {
     const finalTree = createResolutionPatch(fixture, patchPath);
     const commitSha = "c".repeat(40);
     const requests: Array<{ body: unknown; method: string; path: string }> = [];
-    const graphql = vi.fn(async (_query: string, variables: Record<string, unknown>) => ({
-      updateRefs: {
-        clientMutationId: commitSha,
-      },
-      variables,
-    }));
     const responseHandlers: Record<string, (body: unknown) => unknown> = {
-      [`/repos/NVIDIA/NemoClaw/pulls/${entry.pr_number}`]: () => ({
+      [`GET /repos/NVIDIA/NemoClaw/pulls/${entry.pr_number}`]: () => ({
         base: {
           ref: "main",
           repo: { full_name: "NVIDIA/NemoClaw", node_id: "R_repo" },
@@ -414,30 +408,40 @@ describe("PR merge conflict fixer", () => {
         draft: false,
         state: "open",
       }),
-      "/repos/NVIDIA/NemoClaw/git/ref/heads/main": () => ({
+      "GET /repos/NVIDIA/NemoClaw/git/ref/heads/main": () => ({
         object: { sha: entry.base_sha },
       }),
-      "/repos/NVIDIA/NemoClaw/git/blobs": (body) => {
+      [`GET /repos/NVIDIA/NemoClaw/git/ref/heads/${entry.head_ref}`]: () => ({
+        object: { sha: entry.head_sha },
+      }),
+      [`PATCH /repos/NVIDIA/NemoClaw/git/refs/heads/${entry.head_ref}`]: () => ({
+        object: { sha: commitSha },
+      }),
+      "POST /repos/NVIDIA/NemoClaw/git/blobs": (body) => {
         const encoded = (body as { content: string }).content;
         const content = Buffer.from(encoded, "base64");
         const header = Buffer.from(`blob ${content.length}\0`);
         return { sha: createHash("sha1").update(header).update(content).digest("hex") };
       },
-      "/repos/NVIDIA/NemoClaw/git/trees": () => ({ sha: finalTree }),
-      "/repos/NVIDIA/NemoClaw/git/commits": () => ({
+      "POST /repos/NVIDIA/NemoClaw/git/trees": () => ({ sha: finalTree }),
+      "POST /repos/NVIDIA/NemoClaw/git/commits": () => ({
         sha: commitSha,
         verification: { reason: "valid", verified: true },
       }),
     };
-    const request = vi.fn(async (method: "GET" | "POST", apiPath: string, body?: unknown) => {
-      requests.push({ body, method, path: apiPath });
-      return required(responseHandlers[apiPath], `unexpected request: ${method} ${apiPath}`)(body);
-    });
+    const request = vi.fn(
+      async (method: "GET" | "PATCH" | "POST", apiPath: string, body?: unknown) => {
+        requests.push({ body, method, path: apiPath });
+        return required(
+          responseHandlers[`${method} ${apiPath}`],
+          `unexpected request: ${method} ${apiPath}`,
+        )(body);
+      },
+    );
 
     await expect(
       publishResolution({
         entry,
-        graphql,
         patchPath,
         repositoryName: "NVIDIA/NemoClaw",
         request,
@@ -484,20 +488,23 @@ describe("PR merge conflict fixer", () => {
         "resolved intent\n",
       ].sort(),
     );
-    expect(graphql).toHaveBeenCalledWith(expect.stringContaining("updateRefs"), {
-      input: {
-        clientMutationId: commitSha,
-        refUpdates: [
-          {
-            afterOid: commitSha,
-            beforeOid: entry.head_sha,
-            force: false,
-            name: `refs/heads/${entry.head_ref}`,
-          },
-        ],
-        repositoryId: "R_repo",
+    const headRefPath = `/repos/NVIDIA/NemoClaw/git/ref/heads/${entry.head_ref}`;
+    const updateRefPath = `/repos/NVIDIA/NemoClaw/git/refs/heads/${entry.head_ref}`;
+    expect(
+      requests.filter((item) => item.method === "GET" && item.path === headRefPath),
+    ).toHaveLength(1);
+    expect(
+      requests.filter((item) => item.method === "PATCH" && item.path === updateRefPath),
+    ).toEqual([
+      {
+        body: { force: false, sha: commitSha },
+        method: "PATCH",
+        path: updateRefPath,
       },
-    });
+    ]);
+    expect(requests.findIndex((item) => item.path === headRefPath)).toBeLessThan(
+      requests.findIndex((item) => item.path === updateRefPath),
+    );
     expect(requests.filter((item) => item.path.includes("/pulls/"))).toHaveLength(1);
     expect(requests.filter((item) => item.path.endsWith("/git/ref/heads/main"))).toHaveLength(1);
   });

@@ -43,9 +43,11 @@ type GitTreeEntry = {
   type: "blob" | "commit";
 };
 
-type GitHubRequest = (method: "GET" | "POST", path: string, body?: unknown) => Promise<unknown>;
-
-type GraphqlRequest = (query: string, variables: Record<string, unknown>) => Promise<unknown>;
+type GitHubRequest = (
+  method: "GET" | "PATCH" | "POST",
+  path: string,
+  body?: unknown,
+) => Promise<unknown>;
 
 function required(value: string | undefined, name: string): string {
   if (!value) throw new ConflictFixerError(`${name} is required`);
@@ -214,8 +216,6 @@ async function createGitHubTree(input: {
 async function publishValidatedTree(input: {
   entry: ConflictMatrixEntry;
   finalTree: string;
-  graphql: GraphqlRequest;
-  pullRequest: LivePullRequest;
   repository: string;
   repositoryName: string;
   request: GitHubRequest;
@@ -243,37 +243,23 @@ async function publishValidatedTree(input: {
     );
   }
 
-  const clientMutationId = commitSha;
-  const mutation = `
-    mutation UpdateConflictFixerRef($input: UpdateRefsInput!) {
-      updateRefs(input: $input) {
-        clientMutationId
-      }
-    }
-  `;
-  const result = (await input.graphql(mutation, {
-    input: {
-      clientMutationId,
-      refUpdates: [
-        {
-          afterOid: commitSha,
-          beforeOid: input.entry.head_sha,
-          force: false,
-          name: `refs/heads/${input.entry.head_ref}`,
-        },
-      ],
-      repositoryId: input.pullRequest.base.repo.node_id,
-    },
-  })) as {
-    updateRefs?: { clientMutationId?: string };
-  };
-  if (result.updateRefs?.clientMutationId !== clientMutationId) {
-    throw new ConflictFixerError("GitHub did not confirm the atomic PR branch update");
+  const headRefPath = `/repos/${input.repositoryName}/git/ref/heads/${input.entry.head_ref}`;
+  const currentHead = (await input.request("GET", headRefPath)) as LiveRef;
+  if (currentHead.object.sha !== input.entry.head_sha) {
+    throw new ConflictFixerError("The pull request branch changed before publication");
+  }
+  const updatedHead = (await input.request(
+    "PATCH",
+    `/repos/${input.repositoryName}/git/refs/heads/${input.entry.head_ref}`,
+    { force: false, sha: commitSha },
+  )) as LiveRef;
+  if (updatedHead.object.sha !== commitSha) {
+    throw new ConflictFixerError("GitHub did not confirm the PR branch update");
   }
   return commitSha;
 }
 
-function githubClient(token: string): { graphql: GraphqlRequest; request: GitHubRequest } {
+function githubClient(token: string): { request: GitHubRequest } {
   const headers = {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${token}`,
@@ -299,14 +285,6 @@ function githubClient(token: string): { graphql: GraphqlRequest; request: GitHub
     return body.data ?? body;
   };
   return {
-    graphql: async (query, variables) =>
-      parse(
-        await fetch("https://api.github.com/graphql", {
-          body: JSON.stringify({ query, variables }),
-          headers,
-          method: "POST",
-        }),
-      ),
     request: async (method, apiPath, body) =>
       parse(
         await fetch(`https://api.github.com${apiPath}`, {
@@ -320,7 +298,6 @@ function githubClient(token: string): { graphql: GraphqlRequest; request: GitHub
 
 export async function publishResolution(input: {
   entry: ConflictMatrixEntry;
-  graphql: GraphqlRequest;
   patchPath: string;
   repositoryName: string;
   request: GitHubRequest;
@@ -347,8 +324,6 @@ export async function publishResolution(input: {
     return await publishValidatedTree({
       entry: input.entry,
       finalTree: validated.finalTree,
-      graphql: input.graphql,
-      pullRequest,
       repository: validated.repository,
       repositoryName: input.repositoryName,
       request: input.request,
@@ -367,7 +342,6 @@ async function main(): Promise<void> {
   const client = githubClient(token);
   const commitSha = await publishResolution({
     entry,
-    graphql: client.graphql,
     patchPath,
     repositoryName,
     request: client.request,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { prepareNativePodmanGatewayHostRuntime } from "../../../src/lib/onboard/runtime-provider/podman-runtime-surfaces.ts";
 import { type CommandRunner } from "../fixtures/clients/command.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
 import { discoverHostAddress, parseHostAddressProbe } from "../fixtures/host-address.ts";
@@ -61,6 +62,12 @@ describe("host address discovery", () => {
           OPENSHELL_PODMAN_SOCKET: "/tmp/podman.sock",
         },
         "linux",
+        (options = {}) =>
+          prepareNativePodmanGatewayHostRuntime({
+            environment: options.environment ?? {},
+            platform: options.platform ?? "linux",
+            ...(options.socketPath ? { socketPath: options.socketPath } : {}),
+          }),
       ),
     ).resolves.toEqual({ source: "runtime-provider", address: "169.254.2.2", probe: null });
   });

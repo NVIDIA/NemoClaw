@@ -36,6 +36,29 @@ describe("platform evidence workflow", () => {
     expect(run).toContain('test "$(git rev-parse --verify HEAD)" = "$GITHUB_SHA"');
     expect(run.indexOf("safe.directory")).toBeLessThan(run.indexOf("npm run build:cli"));
   });
+  it("installs authenticated dependencies before isolating the macOS suite from OpenShell", () => {
+    const installDependencies = step("macos-vitest", "Install dependencies");
+    const installOpenShell = step("macos-vitest", "Install pinned OpenShell");
+    const stepNames = job("macos-vitest").steps?.map(({ name }) => name) ?? [];
+
+    expect(installDependencies.env).toMatchObject({ NODE_AUTH_TOKEN: "${{ github.token }}" });
+    expect(installDependencies.run).toBe("bash .github/actions/ci-install-dependencies.sh");
+    expect(stepNames.indexOf("Run full Vitest suite on macOS")).toBeLessThan(
+      stepNames.indexOf("Install pinned OpenShell"),
+    );
+    expect(installOpenShell.if).toContain("matrix.shard == 1");
+    expect(installOpenShell.if).toContain("github.ref == 'refs/heads/main'");
+  });
+
+  it("normalizes WSL checkout modes and installs the reviewed SDK with the job token", () => {
+    const install = step("wsl-vitest", "Install dependencies and build in WSL");
+
+    expect(wslHelperSource).toContain('"chmod -R go-w $workdirLiteral"');
+    expect(install.env).toMatchObject({ NODE_AUTH_TOKEN: "${{ github.token }}" });
+    expect(install.run).toContain("'NODE_AUTH_TOKEN', 'GITHUB_EVENT_NAME'");
+    expect(install.run).toContain("bash .github/actions/ci-install-dependencies.sh");
+  });
+
   it.each([
     {
       job: "macos-vitest",
