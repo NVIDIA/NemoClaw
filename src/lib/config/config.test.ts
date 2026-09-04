@@ -105,9 +105,20 @@ describe("NemoClawConfig v1", () => {
         binaries: [{ path: "/usr/bin/a" }],
       },
     };
+    const reordered = config();
+    const policies = value.spec.sandboxes[0]!.network.policy.explicit.network_policies as Record<
+      string,
+      unknown
+    >;
+    (reordered.spec.sandboxes[0]!.network.policy.explicit as Record<string, any>).network_policies =
+      {
+        z: policies.z,
+        ä: policies.ä,
+      };
     const yaml = serializeCanonicalNemoClawConfig(value);
     expect(yaml.indexOf("      z:")).toBeLessThan(yaml.indexOf("      ä:"));
-    expect(digestNemoClawConfig(value)).toEqual(digestNemoClawConfig(structuredClone(value)));
+    expect(serializeCanonicalNemoClawConfig(reordered)).toBe(yaml);
+    expect(digestNemoClawConfig(reordered)).toEqual(digestNemoClawConfig(value));
   });
 
   it("emits the same canonical YAML for mapping insertion order changes (#10938)", () => {
