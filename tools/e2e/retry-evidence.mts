@@ -159,11 +159,11 @@ export function validateRetryEvidence(value: unknown): RetryEvidence | null {
 }
 
 export class RetryPolicyError extends Error {
-  constructor(
-    message: string,
-    readonly evidence: RetryEvidence,
-  ) {
+  readonly evidence: RetryEvidence;
+
+  constructor(message: string, evidence: RetryEvidence) {
     super(message);
+    this.evidence = evidence;
   }
 }
 

@@ -33,6 +33,28 @@ export function hermesSessionIds(output: string): Set<string> {
   return new Set(output.match(/\b[0-9]{8}_[0-9]{6}_[a-zA-Z0-9]+\b/g) ?? []);
 }
 
+export function displayedHermesSessionTitle(row: string): string {
+  return (
+    row
+      .trim()
+      .split(/\s{2,}/u)[0]
+      ?.trim() ?? ""
+  );
+}
+
+export function isDisplayedHermesSessionTitleForContinuation(
+  row: string,
+  continuePrompt: string,
+  seedPrompt: string,
+): boolean {
+  const displayedTitle = displayedHermesSessionTitle(row);
+  return (
+    displayedTitle.length > 0 &&
+    continuePrompt.startsWith(displayedTitle) &&
+    !seedPrompt.startsWith(displayedTitle)
+  );
+}
+
 export function onlyNewHermesSessionId(before: Set<string>, after: Set<string>): string {
   const created = [...after].filter((id) => !before.has(id));
   expect(created).toHaveLength(1);
@@ -280,7 +302,12 @@ export async function assertHermesCliAdapterLiveContract({
   const profileSessionRow = stripAnsi(profileSessionsAfterContinueText)
     .split("\n")
     .find((line) => line.includes(profileSessionId));
-  expect(profileSessionRow, stripAnsi(profileSessionsAfterContinueText)).toContain(
-    profileContinuePrompt,
-  );
+  expect(
+    isDisplayedHermesSessionTitleForContinuation(
+      profileSessionRow ?? "",
+      profileContinuePrompt,
+      profileSeedPrompt,
+    ),
+    stripAnsi(profileSessionsAfterContinueText),
+  ).toBe(true);
 }

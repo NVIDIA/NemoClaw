@@ -42,6 +42,7 @@ function snapshotDeps(
       probeProviderHealthImpl: () => providerHealth,
       probeSandboxInferenceGatewayHealthImpl: async () => gateway,
       probeSandboxInferenceInvocationImpl: () => invocation,
+      reportInferenceProbeRetry: vi.fn(),
     },
   };
 }
@@ -729,5 +730,317 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
 
     expect(snapshot.inferenceHealth).toMatchObject({ ok: false });
     expect(snapshot.inferenceHealth?.okLabel).toBeUndefined();
+  });
+
+  // Every transient status must repeat the whole probe pair, not just the
+  // inference request: a retry that skipped the route probe could report a
+  // served request against a route it never rechecked.
+  it.each([429, 502, 503, 504])(
+    "serves a Ready managed sandbox after one transient HTTP %i inference request (#10709)",
+    async (httpStatus) => {
+      const healthy: SandboxInferenceRouteHealth = {
+        ok: true,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus: 200,
+        detail: "reachable",
+      };
+      const options = snapshotDeps(healthy, null, { ok: true }, { openshellDriver: "docker" });
+      options.deps.reconcile = async () => ({
+        state: "present",
+        phase: "Ready",
+        output: "Phase: Ready",
+      });
+      const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => healthy);
+      const probeSandboxInferenceInvocationImpl = vi
+        .fn()
+        .mockReturnValueOnce({
+          ok: false,
+          detail: `sandbox inference invocation probe returned HTTP ${httpStatus}`,
+          httpStatus,
+        })
+        .mockReturnValueOnce({ ok: true });
+      const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+      const reportInferenceProbeRetry = vi.fn();
+      const recoverSandboxProcesses = vi.fn(() => ({
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+      })) as never;
+
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        ...options,
+        deps: {
+          ...options.deps,
+          delayInferenceRecoveryProbe,
+          probeSandboxInferenceGatewayHealthImpl,
+          probeSandboxInferenceInvocationImpl,
+          recoverSandboxProcesses,
+          reportInferenceProbeRetry,
+        },
+      });
+
+      expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledTimes(2);
+      expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledTimes(2);
+      expect(delayInferenceRecoveryProbe).toHaveBeenCalledOnce();
+      expect(delayInferenceRecoveryProbe).toHaveBeenCalledWith(2_000);
+      expect(reportInferenceProbeRetry).toHaveBeenCalledOnce();
+      expect(reportInferenceProbeRetry).toHaveBeenCalledWith(
+        `  Inference request returned HTTP ${httpStatus}; retrying route and request in 2s ` +
+          "(attempt 2/3)...",
+      );
+      expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
+    },
+  );
+
+  // Repeating the probe pair is only worth anything if the retry believes the
+  // second route result. A retry that re-probed and then ignored the answer
+  // would still pass a call-count assertion (#10709).
+  it("stops at a route that fails between attempts without sending a second inference request (#10709)", async () => {
+    const healthy: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 200,
+      detail: "reachable",
+    };
+    const brokenRoute: SandboxInferenceRouteHealth = {
+      ok: false,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 0,
+      detail: "Inference gateway unreachable on https://inference.local/v1/models.",
+    };
+    const options = snapshotDeps(healthy, null, { ok: true }, { openshellDriver: "docker" });
+    options.deps.reconcile = async () => ({
+      state: "present",
+      phase: "Ready",
+      output: "Phase: Ready",
+    });
+    const probeSandboxInferenceGatewayHealthImpl = vi
+      .fn()
+      .mockResolvedValueOnce(healthy)
+      .mockResolvedValueOnce(brokenRoute);
+    const probeSandboxInferenceInvocationImpl = vi.fn(() => ({
+      ok: false as const,
+      detail: "sandbox inference invocation probe returned HTTP 503",
+      httpStatus: 503,
+    }));
+    const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+    const reportInferenceProbeRetry = vi.fn();
+    const recoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+    })) as never;
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        delayInferenceRecoveryProbe,
+        probeSandboxInferenceGatewayHealthImpl,
+        probeSandboxInferenceInvocationImpl,
+        recoverSandboxProcesses,
+        reportInferenceProbeRetry,
+      },
+    });
+
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledTimes(2);
+    expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledOnce();
+    expect(delayInferenceRecoveryProbe).toHaveBeenCalledOnce();
+    expect(snapshot.inferenceHealth).toMatchObject({
+      ok: false,
+      detail: brokenRoute.detail,
+      failureLabel: "unreachable",
+    });
+  });
+
+  it("reports unhealthy after three transient HTTP 503 inference requests (#10709)", async () => {
+    const healthy: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 200,
+      detail: "reachable",
+    };
+    const refused: SandboxInferenceInvocationResult = {
+      ok: false,
+      detail: "sandbox inference invocation probe returned HTTP 503",
+      httpStatus: 503,
+    };
+    const options = snapshotDeps(healthy, null, { ok: true }, { openshellDriver: "docker" });
+    options.deps.reconcile = async () => ({
+      state: "present",
+      phase: "Ready",
+      output: "Phase: Ready",
+    });
+    const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => healthy);
+    const probeSandboxInferenceInvocationImpl = vi.fn(() => refused);
+    const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+    const reportInferenceProbeRetry = vi.fn();
+    const recoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+    })) as never;
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        delayInferenceRecoveryProbe,
+        probeSandboxInferenceGatewayHealthImpl,
+        probeSandboxInferenceInvocationImpl,
+        recoverSandboxProcesses,
+        reportInferenceProbeRetry,
+      },
+    });
+
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledTimes(3);
+    expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledTimes(3);
+    expect(delayInferenceRecoveryProbe).toHaveBeenCalledTimes(2);
+    expect(delayInferenceRecoveryProbe).toHaveBeenCalledWith(2_000);
+    expect(reportInferenceProbeRetry.mock.calls).toEqual([
+      ["  Inference request returned HTTP 503; retrying route and request in 2s (attempt 2/3)..."],
+      ["  Inference request returned HTTP 503; retrying route and request in 2s (attempt 3/3)..."],
+    ]);
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unhealthy" });
+    expect(snapshot.inferenceHealth?.subprobes).toContainEqual(
+      expect.objectContaining({ probeLabel: "route reachability", okLabel: "reachable" }),
+    );
+  });
+
+  it.each([
+    {
+      label: "unauthorized",
+      invocation: {
+        ok: false as const,
+        detail: "sandbox inference invocation probe returned HTTP 401",
+        httpStatus: 401,
+      },
+      failureLabel: "unauthorized",
+    },
+    {
+      label: "forbidden",
+      invocation: {
+        ok: false as const,
+        detail: "sandbox inference invocation probe returned HTTP 403",
+        httpStatus: 403,
+      },
+      failureLabel: "unauthorized",
+    },
+    {
+      label: "not found",
+      invocation: {
+        ok: false as const,
+        detail: "sandbox inference invocation probe returned HTTP 404",
+        httpStatus: 404,
+      },
+      failureLabel: "unhealthy",
+    },
+    {
+      label: "internal error",
+      invocation: {
+        ok: false as const,
+        detail: "sandbox inference invocation probe returned HTTP 500",
+        httpStatus: 500,
+      },
+      failureLabel: "unhealthy",
+    },
+    {
+      label: "invalid response body",
+      invocation: {
+        ok: false as const,
+        detail: "sandbox inference invocation probe returned an invalid response body",
+        httpStatus: 200,
+      },
+      failureLabel: "unhealthy",
+    },
+    {
+      label: "statusless",
+      invocation: {
+        ok: false as const,
+        detail: "sandbox inference invocation probe was unavailable",
+        httpStatus: null,
+      },
+      failureLabel: "unreachable",
+    },
+  ])("fails a $label inference request on the first attempt (#10709)", async (testCase) => {
+    const healthy: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 200,
+      detail: "reachable",
+    };
+    const options = snapshotDeps(healthy, null, { ok: true }, { openshellDriver: "docker" });
+    options.deps.reconcile = async () => ({
+      state: "present",
+      phase: "Ready",
+      output: "Phase: Ready",
+    });
+    const probeSandboxInferenceInvocationImpl = vi.fn(() => testCase.invocation);
+    const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+    const reportInferenceProbeRetry = vi.fn();
+    const recoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+    })) as never;
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        delayInferenceRecoveryProbe,
+        probeSandboxInferenceInvocationImpl,
+        recoverSandboxProcesses,
+        reportInferenceProbeRetry,
+      },
+    });
+
+    expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledOnce();
+    expect(delayInferenceRecoveryProbe).not.toHaveBeenCalled();
+    expect(reportInferenceProbeRetry).not.toHaveBeenCalled();
+    expect(snapshot.inferenceHealth).toMatchObject({
+      ok: false,
+      failureLabel: testCase.failureLabel,
+    });
+  });
+
+  it("fails a 5xx models route on the first attempt without sending an inference request (#10709)", async () => {
+    const brokenRoute: SandboxInferenceRouteHealth = {
+      ok: false,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 503,
+      detail:
+        "Inference gateway returned HTTP 503 on https://inference.local/v1/models; the route is reachable but unhealthy.",
+    };
+    const options = snapshotDeps(brokenRoute, null, { ok: true }, { openshellDriver: "docker" });
+    options.deps.reconcile = async () => ({
+      state: "present",
+      phase: "Ready",
+      output: "Phase: Ready",
+    });
+    const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => brokenRoute);
+    const probeSandboxInferenceInvocationImpl = vi.fn(() => ({ ok: true }) as const);
+    const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+    const recoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+    })) as never;
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        delayInferenceRecoveryProbe,
+        probeSandboxInferenceGatewayHealthImpl,
+        probeSandboxInferenceInvocationImpl,
+        recoverSandboxProcesses,
+      },
+    });
+
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledOnce();
+    expect(probeSandboxInferenceInvocationImpl).not.toHaveBeenCalled();
+    expect(delayInferenceRecoveryProbe).not.toHaveBeenCalled();
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unhealthy" });
   });
 });
