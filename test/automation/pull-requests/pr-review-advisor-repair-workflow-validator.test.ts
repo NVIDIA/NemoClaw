@@ -8,6 +8,10 @@ import {
   validatePhase1WorkflowAuthority,
   validateReconciliationWorkflowAuthority,
 } from "../../../scripts/checks/pr-review-advisor-repair-workflow-boundary.mts";
+import {
+  GENERATED_HEAD_VALIDATIONS,
+  GENERATED_HEAD_WORKFLOW_NAMES,
+} from "../../../tools/pr-review-advisor-repair/generated-head-validation.mts";
 
 const checkout = {
   uses: `actions/checkout@${"a".repeat(40)}`,
@@ -115,7 +119,62 @@ function reconciliationWorkflow(): Record<string, unknown> {
   };
 }
 
+function generatedHeadWorkflow(consumerNeeds?: string): Record<string, unknown> {
+  const trustedCheckout = {
+    uses: `actions/checkout@${"a".repeat(40)}`,
+    with: {
+      ref: "${{ github.workflow_sha }}",
+      "persist-credentials": false,
+    },
+  };
+  return {
+    on: {
+      workflow_dispatch: {
+        inputs: {
+          base_sha: {},
+          pr_number: {},
+          repair_attempt_key: {},
+          source_head_sha: {},
+        },
+      },
+    },
+    jobs: {
+      verify: {
+        steps: [
+          trustedCheckout,
+          {
+            env: {
+              BASE_SHA: "${{ inputs.base_sha }}",
+              GITHUB_WORKFLOW_SHA: "${{ github.workflow_sha }}",
+              PR_NUMBER: "${{ inputs.pr_number }}",
+              REPAIR_ATTEMPT_KEY: "${{ inputs.repair_attempt_key }}",
+              SOURCE_HEAD_SHA: "${{ inputs.source_head_sha }}",
+            },
+            run: "node tools/pr-review-advisor-repair/generated-head-context.mts",
+          },
+        ],
+      },
+      consumer: {
+        ...(consumerNeeds ? { needs: consumerNeeds } : {}),
+        steps: [
+          {
+            uses: `actions/checkout@${"b".repeat(40)}`,
+            with: { ref: "${{ inputs.source_head_sha }}" },
+          },
+        ],
+      },
+    },
+  };
+}
+
 describe("PR Review Advisor repair workflow validator", () => {
+  it("derives the workflow boundary inventory from generated-head validation (#10791)", () => {
+    expect(GENERATED_HEAD_WORKFLOW_NAMES).toEqual(
+      GENERATED_HEAD_VALIDATIONS.map(({ workflow }) => workflow),
+    );
+    expect(new Set(GENERATED_HEAD_WORKFLOW_NAMES).size).toBe(GENERATED_HEAD_VALIDATIONS.length);
+  });
+
   it("rejects model credentials combined with publication authority (#10791)", () => {
     const workflow = phase1Workflow();
     const publish = workflow.jobs as Record<string, Record<string, unknown>>;
@@ -195,5 +254,17 @@ describe("PR Review Advisor repair workflow validator", () => {
     expect(validateGeneratedHeadWorkflow("synthetic.yaml", workflow)).toContain(
       "synthetic.yaml must invoke the exact-identity verifier from trusted workflow code",
     );
+  });
+
+  it("rejects generated-head consumers that bypass the trusted verifier (#10791)", () => {
+    expect(validateGeneratedHeadWorkflow("synthetic.yaml", generatedHeadWorkflow())).toContain(
+      "synthetic.yaml generated-head consumers must depend on its trusted verifier: consumer",
+    );
+  });
+
+  it("accepts generated-head consumers gated by the trusted verifier (#10791)", () => {
+    expect(
+      validateGeneratedHeadWorkflow("synthetic.yaml", generatedHeadWorkflow("verify")),
+    ).toEqual([]);
   });
 });

@@ -46,6 +46,10 @@ export const GENERATED_HEAD_VALIDATIONS = [
   },
 ] as const;
 
+export const GENERATED_HEAD_WORKFLOW_NAMES = GENERATED_HEAD_VALIDATIONS.map(
+  ({ workflow }) => workflow,
+);
+
 export function generatedHeadRunTitle(
   titlePrefix: string,
   attemptKey: string,

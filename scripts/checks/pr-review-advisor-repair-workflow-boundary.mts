@@ -8,18 +8,12 @@ import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
 
+import { GENERATED_HEAD_WORKFLOW_NAMES } from "../../tools/pr-review-advisor-repair/generated-head-validation.mts";
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const WORKFLOW_DIRECTORY = path.join(REPO_ROOT, ".github", "workflows");
 const PHASE1_WORKFLOW = "pr-review-advisor-repair.yaml";
 const RECONCILIATION_WORKFLOW = "pr-review-advisor-repair-reconcile.yaml";
-const GENERATED_HEAD_WORKFLOWS = [
-  "pr.yaml",
-  "commit-lint.yaml",
-  "dco-check.yaml",
-  "installer-hash-check.yaml",
-  "code-scanning.yaml",
-  "pr-review-advisor.yaml",
-] as const;
 const PINNED_ACTION = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*@[0-9a-f]{40}$/u;
 const TRUSTED_REF = "${{ github.workflow_sha }}";
 const PHASE1_INPUTS = [
@@ -125,6 +119,68 @@ function sourceCheckouts(workflow: Value): Array<{ jobName: string; step: Step; 
           uses?.startsWith("actions/checkout@") && record(input).path === "source",
       )
       .map((step) => ({ jobName, step, input: record(step.with) })),
+  );
+}
+
+function jobNeeds(job: Value): string[] {
+  if (typeof job.needs === "string") return [job.needs];
+  return Array.isArray(job.needs)
+    ? job.needs.filter((dependency): dependency is string => typeof dependency === "string")
+    : [];
+}
+
+function transitivelyNeeds(
+  jobName: string,
+  workflowJobs: Value,
+  trustedVerifierJobs: ReadonlySet<string>,
+  visited = new Set<string>(),
+): boolean {
+  if (visited.has(jobName)) return false;
+  visited.add(jobName);
+  return jobNeeds(record(workflowJobs[jobName])).some(
+    (dependency) =>
+      trustedVerifierJobs.has(dependency) ||
+      transitivelyNeeds(dependency, workflowJobs, trustedVerifierJobs, visited),
+  );
+}
+
+function consumesGeneratedHead(job: Value): boolean {
+  const serialized = JSON.stringify(job);
+  return (
+    serialized.includes("inputs.source_head_sha") ||
+    serialized.includes("generated-head-context.json") ||
+    steps(job).some(({ uses, with: input }) => {
+      if (!uses?.startsWith("actions/checkout@")) return false;
+      const ref = record(input).ref;
+      return typeof ref !== "string" || !ref.includes("github.workflow_sha");
+    })
+  );
+}
+
+function isTrustedGeneratedHeadVerifier(job: Value, expectedPrInput: string): boolean {
+  const jobSteps = steps(job);
+  const verifierIndex = jobSteps.findIndex(({ run }) =>
+    String(run).includes("generated-head-context.mts"),
+  );
+  const verifier = jobSteps[verifierIndex];
+  const verifierEnvironment = record(verifier?.env);
+  const trustedCheckoutBeforeVerifier = jobSteps
+    .slice(0, verifierIndex)
+    .some(
+      ({ uses, with: input }) =>
+        uses?.startsWith("actions/checkout@") &&
+        String(record(input).ref).includes("github.workflow_sha") &&
+        record(input)["persist-credentials"] === false &&
+        !("path" in record(input)),
+    );
+  return (
+    verifierIndex >= 0 &&
+    trustedCheckoutBeforeVerifier &&
+    verifierEnvironment.BASE_SHA === "${{ inputs.base_sha }}" &&
+    verifierEnvironment.GITHUB_WORKFLOW_SHA === TRUSTED_REF &&
+    verifierEnvironment.PR_NUMBER === expectedPrInput &&
+    verifierEnvironment.REPAIR_ATTEMPT_KEY === "${{ inputs.repair_attempt_key }}" &&
+    verifierEnvironment.SOURCE_HEAD_SHA === "${{ inputs.source_head_sha }}"
   );
 }
 
@@ -300,31 +356,20 @@ export function validateGeneratedHeadWorkflow(fileName: string, workflow: Value)
   const verifierJobs = jobs(workflow).filter(([, job]) =>
     steps(job).some(({ run }) => String(run).includes("generated-head-context.mts")),
   );
-  const verifierIsTrusted = verifierJobs.some(([, job]) => {
-    const jobSteps = steps(job);
-    const verifierIndex = jobSteps.findIndex(({ run }) =>
-      String(run).includes("generated-head-context.mts"),
-    );
-    const verifier = jobSteps[verifierIndex];
-    const verifierEnvironment = record(verifier?.env);
-    const trustedCheckoutBeforeVerifier = jobSteps
-      .slice(0, verifierIndex)
-      .some(
-        ({ uses, with: input }) =>
-          uses?.startsWith("actions/checkout@") &&
-          String(record(input).ref).includes("github.workflow_sha") &&
-          record(input)["persist-credentials"] === false &&
-          !("path" in record(input)),
-      );
-    return (
-      trustedCheckoutBeforeVerifier &&
-      verifierEnvironment.BASE_SHA === "${{ inputs.base_sha }}" &&
-      verifierEnvironment.GITHUB_WORKFLOW_SHA === TRUSTED_REF &&
-      verifierEnvironment.PR_NUMBER === expectedPrInput &&
-      verifierEnvironment.REPAIR_ATTEMPT_KEY === "${{ inputs.repair_attempt_key }}" &&
-      verifierEnvironment.SOURCE_HEAD_SHA === "${{ inputs.source_head_sha }}"
-    );
-  });
+  const trustedVerifierJobs = new Set(
+    verifierJobs
+      .filter(([, job]) => isTrustedGeneratedHeadVerifier(job, expectedPrInput))
+      .map(([jobName]) => jobName),
+  );
+  const workflowJobs = record(workflow.jobs);
+  const ungatedConsumers = jobs(workflow)
+    .filter(
+      ([jobName, job]) =>
+        consumesGeneratedHead(job) &&
+        !trustedVerifierJobs.has(jobName) &&
+        !transitivelyNeeds(jobName, workflowJobs, trustedVerifierJobs),
+    )
+    .map(([jobName]) => jobName);
   condition(
     errors,
     same(Object.keys(dispatchInputs).sort(), [...expectedInputs].sort()),
@@ -339,8 +384,13 @@ export function validateGeneratedHeadWorkflow(fileName: string, workflow: Value)
   condition(
     errors,
     runSteps.some(({ run }) => String(run).includes("generated-head-context.mts")) &&
-      verifierIsTrusted,
+      trustedVerifierJobs.size > 0,
     `${fileName} must invoke the exact-identity verifier from trusted workflow code`,
+  );
+  condition(
+    errors,
+    ungatedConsumers.length === 0,
+    `${fileName} generated-head consumers must depend on its trusted verifier: ${ungatedConsumers.join(", ")}`,
   );
   return errors;
 }
@@ -366,7 +416,7 @@ export function validateRepairWorkflowBoundary(sources: RepairWorkflowSources): 
   const reconciliation = parseWorkflow(RECONCILIATION_WORKFLOW, sources.reconciliation, errors);
   errors.push(...validatePhase1WorkflowAuthority(phase1));
   errors.push(...validateReconciliationWorkflowAuthority(reconciliation));
-  for (const fileName of GENERATED_HEAD_WORKFLOWS) {
+  for (const fileName of GENERATED_HEAD_WORKFLOW_NAMES) {
     const source = sources.generatedHead[fileName];
     const workflow = parseWorkflow(fileName, source ?? "", errors);
     errors.push(...validateGeneratedHeadWorkflow(fileName, workflow));
@@ -379,7 +429,7 @@ function readCurrentSources(): RepairWorkflowSources {
     phase1: fs.readFileSync(path.join(WORKFLOW_DIRECTORY, PHASE1_WORKFLOW), "utf8"),
     reconciliation: fs.readFileSync(path.join(WORKFLOW_DIRECTORY, RECONCILIATION_WORKFLOW), "utf8"),
     generatedHead: Object.fromEntries(
-      GENERATED_HEAD_WORKFLOWS.map((fileName) => [
+      GENERATED_HEAD_WORKFLOW_NAMES.map((fileName) => [
         fileName,
         fs.readFileSync(path.join(WORKFLOW_DIRECTORY, fileName), "utf8"),
       ]),
