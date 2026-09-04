@@ -382,7 +382,9 @@ jobs:
     # External contributor PRs retain the local build/direct-startup lane after
     # GitHub's maintainer workflow approval. Exact digest publication is limited
     # to branches in NVIDIA/NemoClaw; fork jobs never log in or push.
-    needs: pr-reviewed-npm-audit
+    needs:
+      - pr-reviewed-npm-audit
+      - publication-identity
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -508,6 +510,7 @@ jobs:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
           DOCKERFILE: ${{ matrix.dockerfile }}
           IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
+          PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
           RELEASE: ${{ steps.release.outputs.value }}
           RESOLUTION_KEY: ${{ steps.base.outputs.resolution_key }}
           RESOLUTION_LABEL: ${{ steps.base.outputs.resolution_label }}
@@ -535,7 +538,7 @@ jobs:
             --label "io.nvidia.nemoclaw.managed-image.platform=linux/amd64" \
             --label "io.nvidia.nemoclaw.managed-image.startup-profile=1" \
             --label "io.nvidia.nemoclaw.managed-image.capabilities=1" \
-            --label "io.nvidia.nemoclaw.managed-image.cohort=ghrun-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --label "io.nvidia.nemoclaw.managed-image.cohort=${PUBLICATION_COHORT}" \
             "${resolution_labels[@]}" \
             --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
@@ -561,7 +564,7 @@ jobs:
             io.nvidia.nemoclaw.managed-image.platform=linux/amd64
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
-            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+            io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}
             ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution-key={0}', steps.base.outputs.resolution_key) || '' }}
             ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution={0}', steps.base.outputs.resolution_label) || '' }}
           build-args: |
@@ -579,7 +582,7 @@ jobs:
           AGENT: ${{ matrix.agent }}
           IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
           PLATFORM: linux/amd64
-          PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
           RELEASE: ${{ steps.release.outputs.value }}
           RESOLUTION_KEY: ${{ steps.base.outputs.resolution_key }}
           RESOLUTION_LABEL: ${{ steps.base.outputs.resolution_label }}
@@ -773,7 +776,7 @@ jobs:
             io.nvidia.nemoclaw.managed-image.platform=linux/amd64
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
-            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+            io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}
             ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution-key={0}', steps.base.outputs.resolution_key) || '' }}
             ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution={0}', steps.base.outputs.resolution_label) || '' }}
           build-args: |
@@ -794,7 +797,7 @@ jobs:
         shell: bash
         env:
           AGENT: ${{ matrix.agent }}
-          COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          COHORT: ${{ needs.publication-identity.outputs.cohort }}
           DIGEST: ${{ steps.publish.outputs.digest }}
           IMAGE: ${{ matrix.repository }}
           RELEASE: ${{ steps.release.outputs.value }}
@@ -864,9 +867,10 @@ jobs:
         if: github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}
+          name: managed-pr-contract-${{ github.run_id }}-${{ matrix.agent }}
           path: ${{ runner.temp }}/managed-pr-contract/contract.json
           if-no-files-found: error
+          overwrite: true
           retention-days: 1
 
   pr-managed-activation:
@@ -914,7 +918,7 @@ jobs:
       - name: Download exact published all-agent contracts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-*
+          pattern: managed-pr-contract-${{ github.run_id }}-*
           path: ${{ runner.temp }}/managed-pr-contracts
           merge-multiple: false
 
@@ -1016,7 +1020,7 @@ jobs:
       - name: Download exact published all-agent contracts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-*
+          pattern: managed-pr-contract-${{ github.run_id }}-*
           path: ${{ runner.temp }}/managed-pr-contracts
           merge-multiple: false
 
@@ -1508,7 +1512,8 @@ jobs:
 
   publication-identity:
     name: Record managed image publication identity
-    if: github.event_name != 'pull_request'
+    # Failed-job reruns reuse this successful job and its cohort output. A
+    # retried producer lane therefore stays in the original publication cohort.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:

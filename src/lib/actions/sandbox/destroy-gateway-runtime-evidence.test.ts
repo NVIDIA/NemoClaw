@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({
   dockerRemoveVolumesByPrefix: vi.fn(),
   resolveGatewayTeardownAuthority: vi.fn(),
   spawnSync: vi.fn(),
-  stopStaleDashboardListeners: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -23,10 +22,6 @@ vi.mock("../../adapters/docker/volume", () => ({
 vi.mock("../../onboard/gateway-teardown-authority", () => ({
   resolveGatewayTeardownAuthority: mocks.resolveGatewayTeardownAuthority,
 }));
-vi.mock("../../onboard/stale-gateway-cleanup", () => ({
-  stopStaleDashboardListeners: mocks.stopStaleDashboardListeners,
-}));
-
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 
 describe("cleanupGatewayAfterLastSandbox runtime evidence", () => {
