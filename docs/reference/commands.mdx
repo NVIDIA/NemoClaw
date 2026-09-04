@@ -2158,7 +2158,8 @@ When the same failure happens on a re-add of an already-enabled channel, NemoCla
 An existing provider can be changed during re-add.
 NemoClaw attempts to restore stored provider credentials, but it cannot restore prior gateway refresh material that was available only during the earlier setup command.
 It flags `gateway-providers` as residual.
-Inspect the channel's gateway providers, restore the preset YAML, correct the gateway failure, and rerun `$$nemoclaw <name> channels add <channel>`.
+Inspect the channel's gateway providers, restore the preset YAML, and correct the gateway failure.
+When the gateway is reachable, run the `$$nemoclaw <name> channels remove <channel>` command printed by the CLI, then rerun `$$nemoclaw <name> channels add <channel>`.
 For Telegram, Discord, and Slack, a rebuild triggered by `channels add` also verifies that the selected bridge starts and reports credential, startup, or plugin discovery warnings.
 
 ```bash
