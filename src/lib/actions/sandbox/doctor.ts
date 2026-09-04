@@ -622,11 +622,11 @@ export async function runGlobalDoctor(
 ): Promise<GlobalDoctorReport> {
   const host = collectDoctorHostChecks(null);
   const gatewayName = resolveGatewayName(GATEWAY_PORT);
-  let gatewayChecks: DoctorCheck[];
+  const guidance = globalGatewayGuidance(gatewayName);
+  let gatewayChecks: DoctorCheck[] = [...guidance.checks];
   if (host.openshellBin) {
-    const guidance = globalGatewayGuidance(gatewayName);
     gatewayChecks = [
-      ...guidance.checks,
+      ...gatewayChecks,
       ...(
         await collectDoctorGatewayChecks(gatewayName, null, host.openshellBin, {
           gatewayPort: GATEWAY_PORT,
@@ -637,7 +637,7 @@ export async function runGlobalDoctor(
       ).checks,
     ];
   } else {
-    gatewayChecks = [unavailableGatewayCheck()];
+    gatewayChecks.push(unavailableGatewayCheck());
   }
   const report = buildGlobalDoctorReport([
     ...host.checks,

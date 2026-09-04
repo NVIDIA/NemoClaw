@@ -30,6 +30,8 @@ type DirectPublicDispatchOptions = {
   connectFlags?: readonly string[];
   /** Error injected by the pre-dispatch legacy-state migration seam. */
   migrationError?: Error;
+  /** Error injected by sandbox registry lookups. */
+  registryReadError?: Error;
 };
 
 const requireCache = require.cache as Record<string, NodeModule | undefined>;
@@ -82,7 +84,10 @@ export async function withDirectPublicDispatch(
       },
     ]),
   );
-  const getSandbox = vi.fn((name: string) => sandboxes.get(name) ?? null);
+  const getSandbox = vi.fn((name: string) => {
+    if (options.registryReadError) throw options.registryReadError;
+    return sandboxes.get(name) ?? null;
+  });
   const isPublishedSandboxRegistration = vi.fn(
     (sandbox: SandboxStub) => sandbox.pendingRouteReservation !== true,
   );

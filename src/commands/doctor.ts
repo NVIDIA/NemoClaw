@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command, Flags } from "@oclif/core";
 import { runGlobalDoctor } from "../lib/actions/sandbox/doctor";
 import { redactForLog, withStdoutRedirectedToStderr } from "../lib/cli/doctor-command-support";
+import { NemoClawCommand } from "../lib/cli/nemoclaw-oclif-command";
 
-export default class DoctorCommand extends Command {
-  static baseFlags = { help: Flags.help({ char: "h" }) };
+export default class DoctorCommand extends NemoClawCommand {
   static id = "doctor";
   static strict = true;
   static enableJsonFlag = true;

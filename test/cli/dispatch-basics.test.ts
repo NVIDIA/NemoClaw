@@ -292,6 +292,7 @@ describe("CLI dispatch", () => {
     expect(
       normalizeArgv(["-h"], {
         globalCommands: globalCommandTokens(),
+        isRegisteredSandbox: () => false,
         isSandboxAction: () => false,
         isSandboxConnectFlag: () => false,
       }),
@@ -671,6 +672,27 @@ describe("CLI dispatch", () => {
     );
   });
 
+  it("dispatches global doctor when the sandbox registry is unreadable (#10212)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, migrateLegacyPortState, runOclifCommandById, stderr }) => {
+        await dispatchCli(["doctor"]);
+
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "doctor",
+          [],
+          expect.objectContaining({ rootDir: process.cwd() }),
+        );
+        expect(migrateLegacyPortState).not.toHaveBeenCalled();
+        expect(stderr).toEqual([]);
+      },
+      {
+        registryReadError: new Error(
+          "Authorization: Bearer sk-secret-value in /private/sandboxes.json",
+        ),
+      },
+    );
+  });
+
   it(
     "emits one redacted JSON report through the public global doctor route (#10212)",
     testTimeoutOptions(35_000),
@@ -911,6 +933,23 @@ describe("CLI dispatch", () => {
           expect.anything(),
         );
         expect(stderr.join("\n")).not.toContain("is a sandbox command");
+      },
+      { sandboxNames: ["doctor"] },
+    );
+  });
+
+  it("keeps bare connect for a sandbox literally named doctor (#10212)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, migrateLegacyPortState, runOclifCommandById, stderr }) => {
+        await dispatchCli(["doctor"]);
+
+        expect(migrateLegacyPortState).toHaveBeenCalledTimes(1);
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "sandbox:connect",
+          ["doctor"],
+          expect.anything(),
+        );
+        expect(stderr).toEqual([]);
       },
       { sandboxNames: ["doctor"] },
     );

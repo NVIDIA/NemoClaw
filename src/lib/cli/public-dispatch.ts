@@ -48,6 +48,7 @@ const NATIVE_OCLIF_NAMESPACES = new Set(["internal", "sandbox"]);
 const MIGRATION_RECOVERY_SANDBOX_ACTIONS = new Set(["doctor", "recover"]);
 const PUBLIC_ARGV_OPTIONS: NormalizeArgvOptions = {
   globalCommands: GLOBAL_COMMANDS,
+  isRegisteredSandbox: hasRegisteredSandbox,
   isSandboxAction: isKnownSandboxAction,
   isSandboxConnectFlag: isPublicSandboxConnectFlag,
 };
@@ -77,6 +78,16 @@ function sandboxConnect(): SandboxConnectModule {
 
 function isPublicSandboxConnectFlag(arg: string | undefined): boolean {
   return sandboxConnect().isSandboxConnectFlag(arg);
+}
+
+function hasRegisteredSandbox(name: string): boolean {
+  try {
+    return registry().getSandbox(name) !== null;
+  } catch {
+    // Global doctor owns the registry-readability diagnostic. If dispatch
+    // cannot inspect the registry, keep routing the bare token there.
+    return false;
+  }
 }
 
 // ── Commands ─────────────────────────────────────────────────────

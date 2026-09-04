@@ -9,6 +9,7 @@ const globalCommands = new Set(["list", "status", "onboard", "doctor", "--versio
 const isConnectFlag = (arg: string | undefined) => arg === "--probe-only" || arg === "--help";
 const normalizerOptions = {
   globalCommands,
+  isRegisteredSandbox: () => false,
   isSandboxAction: (arg: string | undefined) => ["status", "policy-add"].includes(arg ?? ""),
   isSandboxConnectFlag: isConnectFlag,
 };
@@ -101,6 +102,21 @@ describe("normalizeArgv", () => {
     expect(normalizeArgv(argv, normalizerOptions)).toMatchObject({
       kind,
       ...(action ? { sandboxName: "doctor", action } : {}),
+    });
+  });
+
+  it("preserves bare connect for a registered sandbox named doctor (#10212)", () => {
+    expect(
+      normalizeArgv(["doctor"], {
+        ...normalizerOptions,
+        isRegisteredSandbox: (name) => name === "doctor",
+      }),
+    ).toEqual({
+      kind: "sandbox",
+      sandboxName: "doctor",
+      action: "connect",
+      actionArgs: [],
+      connectHelpRequested: false,
     });
   });
 });

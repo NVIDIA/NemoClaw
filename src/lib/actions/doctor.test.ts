@@ -154,6 +154,37 @@ describe("global doctor action", () => {
     expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
   });
 
+  it("reports invalid gateway management when the OpenShell CLI is missing (#10212)", async () => {
+    mocks.resolveOpenshell.mockReturnValueOnce(null);
+    mocks.gatewayDoctorStartHint.mockImplementationOnce(() => {
+      throw new Error("Authorization: Bearer sk-secret-value in /private/gateway-management.json");
+    });
+
+    const report = await runGlobalDoctor({ quiet: true });
+
+    expect(report.status).toBe("fail");
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          group: "Gateway",
+          label: "Gateway management",
+          status: "fail",
+          detail: "could not resolve the gateway lifecycle owner",
+        }),
+        expect.objectContaining({
+          group: "Gateway",
+          label: "OpenShell status",
+          status: "fail",
+          detail: "skipped because the OpenShell CLI is not installed",
+        }),
+      ]),
+    );
+    expect(JSON.stringify(report)).not.toContain("sk-secret-value");
+    expect(JSON.stringify(report)).not.toContain("/private/gateway-management.json");
+    expect(mocks.getNamedGatewayLifecycleState).not.toHaveBeenCalled();
+    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+  });
+
   it("reports invalid gateway management without hiding gateway health (#10212)", async () => {
     mocks.gatewayDoctorStartHint.mockImplementationOnce(() => {
       throw new Error("invalid declaration at /private/gateway-management.json");

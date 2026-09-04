@@ -22,6 +22,7 @@ export type NormalizedArgv =
 
 export type NormalizeArgvOptions = {
   globalCommands: ReadonlySet<string>;
+  isRegisteredSandbox: (name: string) => boolean;
   isSandboxAction: (arg: string | undefined) => boolean;
   isSandboxConnectFlag: (arg: string | undefined) => boolean;
 };
@@ -32,7 +33,9 @@ export function isGlobalCommandInvocation(
 ): boolean {
   const [command, firstArg] = argv;
   if (!command || !opts.globalCommands.has(command)) return false;
-  return command !== "doctor" || !firstArg || !opts.isSandboxAction(firstArg);
+  if (command !== "doctor") return true;
+  if (firstArg) return !opts.isSandboxAction(firstArg);
+  return !opts.isRegisteredSandbox(command);
 }
 
 export function normalizeArgv(argv: readonly string[], opts: NormalizeArgvOptions): NormalizedArgv {
