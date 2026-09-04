@@ -1826,9 +1826,12 @@ The probe runs only for a failed `openclaw` command. A command that succeeds, a 
 
 </AgentOnly>
 
-### Sandbox creation reports a TLS certificate mismatch
+### Onboarding or Sandbox Creation Reports a TLS Certificate Error
 
-If sandbox creation reports a TLS or certificate mismatch, the OpenShell gateway certificate may have changed since the CLI last registered it. Remove the stale local gateway registration and then resume onboarding so NemoClaw refreshes the registration:
+Use this recovery when global policy inspection or sandbox creation reports a TLS or certificate error during onboarding.
+The OpenShell gateway certificate may have changed since the CLI last registered it.
+This procedure also applies when global policy inspection fails before sandbox creation.
+Remove the stale local gateway registration and then resume onboarding so NemoClaw refreshes the registration:
 
 ```bash
 openshell gateway remove nemoclaw
