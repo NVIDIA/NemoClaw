@@ -5,7 +5,7 @@ import {
   WEB_SEARCH_PROVIDER_PROFILE_IDS,
   webSearchProviderProfilePath,
   type WebSearchProviderProfileId,
-} from "../../onboard/brave-provider-profile";
+} from "./web-search-provider-profile";
 import {
   buildMessagingBridgeRefreshMaterial,
   listMessagingBridgeProfiles,

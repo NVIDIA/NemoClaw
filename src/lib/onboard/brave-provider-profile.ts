@@ -1,24 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
-
 import { registerCheckedInProviderProfile } from "../adapters/openshell/provider-profile-registration";
 import { compactText } from "../core/url-utils";
 import { isWebSearchEnabled } from "../inference/web-search";
-
-export const BRAVE_PROVIDER_PROFILE_ID = "brave";
-export const TAVILY_PROVIDER_PROFILE_ID = "tavily";
-// OpenShell custom profiles are immutable after import. Use a versioned Hermes
-// profile so upgrades never accept the earlier Deep Agents-only Tavily binary
-// allowlist as compatible with Hermes.
-export const HERMES_TAVILY_PROVIDER_PROFILE_ID = "tavily-hermes-v1";
-export const WEB_SEARCH_PROVIDER_PROFILE_IDS = [
+import {
   BRAVE_PROVIDER_PROFILE_ID,
-  TAVILY_PROVIDER_PROFILE_ID,
   HERMES_TAVILY_PROVIDER_PROFILE_ID,
-] as const;
-export type WebSearchProviderProfileId = (typeof WEB_SEARCH_PROVIDER_PROFILE_IDS)[number];
+  TAVILY_PROVIDER_PROFILE_ID,
+  WEB_SEARCH_PROVIDER_PROFILE_IDS,
+  webSearchProviderProfilePath,
+  type WebSearchProviderProfileId,
+} from "../messaging/applier/web-search-provider-profile";
+
+export {
+  BRAVE_PROVIDER_PROFILE_ID,
+  HERMES_TAVILY_PROVIDER_PROFILE_ID,
+  TAVILY_PROVIDER_PROFILE_ID,
+  WEB_SEARCH_PROVIDER_PROFILE_IDS,
+  webSearchProviderProfilePath,
+  type WebSearchProviderProfileId,
+};
 
 /**
  * Single source of truth for "the user opted in to Brave Search at runtime."
@@ -53,13 +55,6 @@ type TokenDefShape = { providerType?: string; token: string | null };
 
 export function braveProviderProfilePath(root: string): string {
   return webSearchProviderProfilePath(root, "brave");
-}
-
-export function webSearchProviderProfilePath(
-  root: string,
-  provider: WebSearchProviderProfileId,
-): string {
-  return path.join(root, "nemoclaw-blueprint", "provider-profiles", `${provider}.yaml`);
 }
 
 /** Register every selected web-search provider profile before token upsert. */

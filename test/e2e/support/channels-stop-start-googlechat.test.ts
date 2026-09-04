@@ -78,7 +78,7 @@ describe("channels stop/start Google Chat live composition", () => {
     });
 
     try {
-      await fixture.upsertMessagingProviders(
+      const addProviderNames = await fixture.upsertMessagingProviders(
         [
           {
             name: providerName,
@@ -97,12 +97,15 @@ describe("channels stop/start Google Chat live composition", () => {
           revalidateSandboxIdentity: () => undefined,
         },
       );
-      await messagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+      const rebuildApplication = await fixture.applyCredentialsAtOpenShell(plan, {
         runOpenshell: () => ({ status: 0, stdout: "", stderr: "" }),
         definitions: [definition],
         refreshes: [refresh],
       });
 
+      expect(addProviderNames).toEqual([providerName]);
+      expect(rebuildApplication).toEqual(applied);
+      expect(channelDependencies.upsertMessagingProviders).toHaveBeenCalledTimes(1);
       expect(applyCredentialsAtOpenShell).toHaveBeenCalledTimes(2);
       expect(
         applyCredentialsAtOpenShell.mock.calls.map(([, options]) => ({

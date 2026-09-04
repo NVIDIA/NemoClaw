@@ -178,6 +178,21 @@ export async function applyCredentialsAtOpenShell(
       state = "missing";
     }
 
+    const refreshCredentialKeys = new Set(
+      state === "exact"
+        ? refreshes
+            .filter((refresh) => refresh.providerName === definition.providerName)
+            .map((refresh) => refresh.credentialKey)
+        : [],
+    );
+    const credentialsForMutation = credentials.filter(
+      ({ name }) => !refreshCredentialKeys.has(name),
+    );
+    if (state === "exact" && credentialsForMutation.length === 0) {
+      reused.push(toReuseEntry(definition));
+      continue;
+    }
+
     const action = state === "exact" ? "update" : "create";
     try {
       options.revalidateSandboxIdentity?.(
@@ -204,7 +219,7 @@ export async function applyCredentialsAtOpenShell(
         : await providerAdapter.updateProvider({
             target,
             providerName: definition.providerName,
-            credentials,
+            credentials: credentialsForMutation,
             config: [],
           });
     if (!result.ok) {

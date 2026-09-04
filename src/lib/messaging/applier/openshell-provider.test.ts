@@ -612,9 +612,10 @@ describe("messaging OpenShell provider application", () => {
       refreshes: [refresh],
     });
 
-    expect(adapter.updateProvider).toHaveBeenCalledWith(
-      expect.objectContaining({ credentials: expected.credentials }),
-    );
+    expect(adapter.updateProvider).not.toHaveBeenCalled();
+    expect(result.reused).toEqual([
+      expect.objectContaining({ providerName: expected.providerName }),
+    ]);
     expect(adapter.configureProviderRefresh).toHaveBeenCalledWith(
       expect.objectContaining({ secretMaterial: refresh.secretMaterial }),
     );
@@ -664,7 +665,9 @@ describe("messaging OpenShell provider application", () => {
     "reports %s refresh failure with mutation evidence (#9806)",
     async (failureKind) => {
       const observationSecret = "nvapi-observation-secret";
-      const expected = definition();
+      const expected = definition({
+        credentials: [{ name: "TELEGRAM_BOT_TOKEN", value: "openshell-managed-pending-mint" }],
+      });
       const refresh: MessagingProviderRefreshEphemeralInput = {
         channelId: "telegram",
         providerName: expected.providerName,
@@ -715,9 +718,52 @@ describe("messaging OpenShell provider application", () => {
       expect(failure).toMatchObject({
         mutatedProviderNames: [expected.providerName],
       });
+      expect(adapter.updateProvider).not.toHaveBeenCalled();
       expect((failure as Error).message).not.toContain(observationSecret);
     },
   );
+
+  it("bounds a refresh that stays pending and reports mutation evidence (#9806)", async () => {
+    const expected = definition({
+      credentials: [{ name: "TELEGRAM_BOT_TOKEN", value: "openshell-managed-pending-mint" }],
+    });
+    const refresh: MessagingProviderRefreshEphemeralInput = {
+      channelId: "telegram",
+      providerName: expected.providerName,
+      credentialKey: "TELEGRAM_BOT_TOKEN",
+      strategy: "test-refresh",
+      material: [{ key: "scope", value: "chat" }],
+      secretMaterial: [{ key: "private_key", value: "refresh-secret" }],
+    };
+    const getProviderRefreshStatus = vi
+      .fn<OpenShellProviderAdapter["getProviderRefreshStatus"]>()
+      .mockResolvedValue({ ok: true, value: { status: "configured" } });
+    const sleep = vi.fn(async () => {});
+    const adapter = providerAdapter({
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>().mockResolvedValue({
+        ok: true,
+        value: metadata(expected),
+      }),
+      getProviderRefreshStatus,
+    });
+
+    const failure = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [expected],
+      refreshes: [refresh],
+      now: () => 0,
+      sleep,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      mutatedProviderNames: [expected.providerName],
+    });
+    expect((failure as Error).message).toContain("last status 'configured'");
+    expect(adapter.updateProvider).not.toHaveBeenCalled();
+    expect(getProviderRefreshStatus).toHaveBeenCalledTimes(REFRESH_POLL_ATTEMPTS_FOR_TEST);
+    expect(sleep).toHaveBeenCalledTimes(REFRESH_POLL_ATTEMPTS_FOR_TEST - 1);
+  });
 
   it("returns exact detach and residual cleanup evidence (#9806)", async () => {
     const providerName = "alpha-telegram-bridge";
@@ -813,3 +859,4 @@ describe("messaging OpenShell provider application", () => {
 });
 
 const REFRESH_DEADLINE_FOR_TEST = 300_001;
+const REFRESH_POLL_ATTEMPTS_FOR_TEST = 50;

@@ -439,6 +439,50 @@ describe("CLI OpenShell provider adapter", () => {
     expect(JSON.stringify([attached, configured, status])).not.toContain(refreshSecret);
   });
 
+  it.each([
+    [
+      "a matching refreshed row",
+      "search-prod  TAVILY_API_KEY  test-refresh  refreshed  2026-09-02 20:00:00\n",
+      "refreshed",
+    ],
+    [
+      "a malformed status",
+      "search-prod  TAVILY_API_KEY  test-refresh  refreshed!  2026-09-02 20:00:00\n",
+      null,
+    ],
+    [
+      "a nonmatching credential row",
+      "search-prod  OTHER_API_KEY  test-refresh  refreshed  2026-09-02 20:00:00\n",
+      null,
+    ],
+  ] as const)("parses %s from refresh status output (#9806)", async (_case, output, status) => {
+    const run = vi.fn<RunProviderCommand>(() => captured(0, output));
+    const adapter = createCliOpenShellProviderAdapter({ run });
+    const target = namedOpenShellGateway("nemoclaw-18080");
+
+    await expect(
+      adapter.getProviderRefreshStatus({
+        target,
+        providerName: "search-prod",
+        credentialKey: "TAVILY_API_KEY",
+        timeoutMs: 4_321,
+      }),
+    ).resolves.toEqual({ ok: true, value: { status } });
+    expect(run).toHaveBeenCalledWith(
+      [
+        "provider",
+        "refresh",
+        "-g",
+        "nemoclaw-18080",
+        "status",
+        "search-prod",
+        "--credential-key",
+        "TAVILY_API_KEY",
+      ],
+      expect.objectContaining({ suppressOutput: true, timeout: 4_321 }),
+    );
+  });
+
   it("redacts refresh secrets from failed command diagnostics (#9806)", async () => {
     const refreshSecret = "refresh-secret-value";
     const run = vi.fn<RunProviderCommand>(() =>

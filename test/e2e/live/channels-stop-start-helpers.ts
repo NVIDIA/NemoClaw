@@ -89,6 +89,7 @@ interface GooglechatCredentialFixtureDependencies {
 }
 
 type InstalledGooglechatCredentialFixture = (() => void) & {
+  readonly applyCredentialsAtOpenShell: typeof MessagingSetupApplier.applyCredentialsAtOpenShell;
   readonly upsertMessagingProviders: NonNullable<
     AddSandboxChannelDependencies["upsertMessagingProviders"]
   >;
@@ -159,6 +160,7 @@ export function installGooglechatCredentialFixture(
     applier.applyCredentialsAtOpenShell = originalApply;
   };
   return Object.assign(restore, {
+    applyCredentialsAtOpenShell: applier.applyCredentialsAtOpenShell.bind(applier),
     upsertMessagingProviders: originalChannelUpsert.bind(channelDependencies),
   });
 }

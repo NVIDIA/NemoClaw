@@ -30,24 +30,6 @@ type MessagingProviderUpsertOptions = {
   gatewayName?: string;
 };
 
-type LegacyOnboardProvidersModule = {
-  isMessagingProviderBindingConflict(error: unknown): error is Error & {
-    readonly mutatedProviderNames: readonly string[];
-    readonly createdProviderNames?: readonly string[];
-    readonly replacedProviderNames?: readonly string[];
-  };
-  isMessagingProviderMutationFailure(error: unknown): error is Error & {
-    readonly mutatedProviderNames: readonly string[];
-    readonly createdProviderNames: readonly string[];
-    readonly replacedProviderNames?: readonly string[];
-  };
-  upsertMessagingProviders(
-    tokenDefs: MessagingProviderTokenDefinition[],
-    run: typeof runOpenshell,
-    options?: MessagingProviderUpsertOptions,
-  ): string[];
-};
-
 type RebuildModule = typeof import("./rebuild");
 type PrivilegedExecModule = typeof import("../../sandbox/privileged-exec");
 type PolicyModule = typeof import("../../policy");
@@ -97,18 +79,14 @@ export const policyChannelDependencies = {
     readonly createdProviderNames?: readonly string[];
     readonly replacedProviderNames?: readonly string[];
   } {
-    if (isTypedMessagingProviderBindingConflict(error)) return true;
-    const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
-    return providers.isMessagingProviderBindingConflict(error);
+    return isTypedMessagingProviderBindingConflict(error);
   },
   isMessagingProviderMutationFailure(error: unknown): error is Error & {
     readonly mutatedProviderNames: readonly string[];
     readonly createdProviderNames: readonly string[];
     readonly replacedProviderNames?: readonly string[];
   } {
-    if (isTypedMessagingProviderMutationFailure(error)) return true;
-    const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
-    return providers.isMessagingProviderMutationFailure(error);
+    return isTypedMessagingProviderMutationFailure(error);
   },
   upsertMessagingProviders(
     tokenDefs: MessagingProviderTokenDefinition[],
