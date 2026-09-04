@@ -147,11 +147,16 @@ describe("reviewed npm audit receipt", () => {
   });
 
   it.each([
-    { legacy: false, registry: inputs.registryOrigin },
-    { legacy: true, registry: "https://registry.npmjs.org/" },
+    { legacy: false, registry: inputs.registryOrigin, unflaggedStatus: 0, unflaggedStderr: "" },
+    {
+      legacy: true,
+      registry: "https://registry.npmjs.org/",
+      unflaggedStatus: 1,
+      unflaggedStderr: "receipt npm audit registry and arguments do not match an allowed contract",
+    },
   ])(
     "provides a local CLI verifier for a BuildKit secret mount ($legacy)",
-    ({ legacy, registry }) => {
+    ({ legacy, registry, unflaggedStatus, unflaggedStderr }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "receipt-cli-"));
       try {
         fs.writeFileSync(path.join(root, "package.json"), inputs.packageJson);
@@ -166,35 +171,38 @@ describe("reviewed npm audit receipt", () => {
             }
           : receipt(new Date());
         fs.writeFileSync(path.join(root, "receipt.json"), canonicalAuditReceipt(auditReceipt));
-        const result = spawnSync(
-          process.execPath,
-          [
-            "--experimental-strip-types",
-            path.join(import.meta.dirname, "../../../scripts/lib/npm-audit-receipt.mts"),
-            "--receipt",
-            path.join(root, "receipt.json"),
-            "--package-json",
-            path.join(root, "package.json"),
-            "--package-lock",
-            path.join(root, "package-lock.json"),
-            "--raw-report",
-            path.join(root, "raw.json"),
-            "--exceptions",
-            path.join(root, "exceptions.json"),
-            "--graph",
-            inputs.graphId,
-            "--npm-version",
-            inputs.npmVersion,
-            "--registry",
-            registry,
-            "--threshold",
-            inputs.severityThreshold,
-            ...(legacy ? ["--legacy-npmjs", "true"] : []),
-          ],
-          { encoding: "utf8" },
-        );
+        const verifierArgs = [
+          "--experimental-strip-types",
+          path.join(import.meta.dirname, "../../../scripts/lib/npm-audit-receipt.mts"),
+          "--receipt",
+          path.join(root, "receipt.json"),
+          "--package-json",
+          path.join(root, "package.json"),
+          "--package-lock",
+          path.join(root, "package-lock.json"),
+          "--raw-report",
+          path.join(root, "raw.json"),
+          "--exceptions",
+          path.join(root, "exceptions.json"),
+          "--graph",
+          inputs.graphId,
+          "--npm-version",
+          inputs.npmVersion,
+          "--registry",
+          registry,
+          "--threshold",
+          inputs.severityThreshold,
+          ...(legacy ? ["--legacy-npmjs", "true"] : []),
+        ];
+        const result = spawnSync(process.execPath, verifierArgs, { encoding: "utf8" });
         expect(result.status, result.stderr).toBe(0);
         expect(result.stdout).toContain("current policy verified");
+        const unflaggedArgs = legacy ? verifierArgs.slice(0, -2) : verifierArgs;
+        const withoutMigrationFlag = spawnSync(process.execPath, unflaggedArgs, {
+          encoding: "utf8",
+        });
+        expect(withoutMigrationFlag.status).toBe(unflaggedStatus);
+        expect(withoutMigrationFlag.stderr).toContain(unflaggedStderr);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
