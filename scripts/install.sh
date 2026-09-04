@@ -3683,7 +3683,10 @@ run_installer_host_preflight() {
       try {
         const { assessHost, planHostAdvisories } = require(preflightPath);
         const { createHostReadinessReport } = require(hostReadinessPath);
-        const { evaluateOnboardReadinessAdmission } = require(onboardAdmissionPath);
+        const {
+          evaluateOnboardReadinessAdmission,
+          hasExplicitDeferredN1xOnboardingIntent,
+        } = require(onboardAdmissionPath);
         const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
         const { configuredRuntimeProviderOwnsHostReadiness } = require(gatewayRuntimePath);
         const host = assessHost();
@@ -3718,9 +3721,7 @@ run_installer_host_preflight() {
           // authoritative onboarding gate apply supported storage remediation,
           // but only when the gateway declaration confirms NemoClaw ownership.
           allowStorageRemediation,
-          allowDeferredN1xManagedVllm:
-            process.env.NEMOCLAW_PROVIDER === "install-vllm" ||
-            process.env.NEMOCLAW_NO_EXPRESS === "1",
+          allowDeferredN1xManagedVllm: hasExplicitDeferredN1xOnboardingIntent(process.env),
         });
         const infoLines = [];
         const actionLines = [];

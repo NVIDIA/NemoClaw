@@ -3,6 +3,13 @@
 
 import type { ReadinessCapability, ReadinessFinding, SystemReadinessReport } from "./types";
 
+/** Return whether installer state records an accepted Deferred N1x onboarding path. */
+export function hasExplicitDeferredN1xOnboardingIntent(
+  env: Readonly<Record<string, string | undefined>>,
+): boolean {
+  return env.NEMOCLAW_PROVIDER === "install-vllm" || env.NEMOCLAW_NO_EXPRESS === "1";
+}
+
 export const ONBOARD_READINESS_ADMISSION_REASON_IDS = {
   blockingFindings: "onboard.readiness.blocking_findings",
   requiredCapabilitiesUnknown: "onboard.readiness.required_capabilities_unknown",
@@ -53,7 +60,7 @@ export interface OnboardReadinessAdmissionOptions {
   allowStorageRemediation: boolean;
   /** The explicit portable profile may prepare its rootless runtime before revalidation. */
   allowPortableHostPreparation?: boolean;
-  /** Explicit managed-vLLM intent may exercise the Deferred N1x validation path. */
+  /** Explicit accepted onboarding intent may exercise the Deferred N1x validation path. */
   allowDeferredN1xManagedVllm?: boolean;
 }
 

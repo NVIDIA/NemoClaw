@@ -21,6 +21,7 @@ import {
 import {
   evaluateOnboardGatewayReadinessAdmission,
   evaluateOnboardReadinessAdmission,
+  hasExplicitDeferredN1xOnboardingIntent,
 } from "../readiness/onboard-admission";
 import { composeSystemReadinessReport } from "../readiness/system";
 import type { SystemReadinessReport } from "../readiness/types";
@@ -46,7 +47,6 @@ import {
   validateSandboxGpuPreflight,
 } from "./sandbox-gpu-preflight";
 import type { OnboardOptions } from "./types";
-import { MANAGED_VLLM_PROVIDER_KEY } from "./vllm-menu";
 
 export type FatalRuntimePreflightOptions = Pick<
   OnboardOptions,
@@ -179,9 +179,7 @@ export function assertOnboardSystemReadiness(
     allowStorageRemediation: options.allowStorageRemediation === true,
     allowPortableHostPreparation: options.allowPortableHostPreparation,
     allowDeferredN1xManagedVllm:
-      options.allowDeferredN1xManagedVllm ??
-      (process.env.NEMOCLAW_PROVIDER === MANAGED_VLLM_PROVIDER_KEY ||
-        process.env.NEMOCLAW_NO_EXPRESS === "1"),
+      options.allowDeferredN1xManagedVllm ?? hasExplicitDeferredN1xOnboardingIntent(process.env),
   });
   const advisories = planHostAdvisories(host, {
     providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
