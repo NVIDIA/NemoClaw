@@ -1004,7 +1004,6 @@ function main(): void {
       });
     });
   } finally {
-    makeTreeOwnerWritable(tempRoot);
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 }
