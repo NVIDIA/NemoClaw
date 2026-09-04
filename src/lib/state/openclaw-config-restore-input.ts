@@ -20,6 +20,7 @@ export type OpenClawConfigRestoreInputResult =
 export interface OpenClawConfigRestoreFromSandboxOptions {
   backupContents: Buffer;
   dir: string;
+  env?: NodeJS.ProcessEnv;
   freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   log?: (message: string) => void;
   previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
@@ -47,9 +48,11 @@ function readCurrentOpenClawConfig(
   dir: string,
   specPath: string,
   log: (message: string) => void,
+  env?: NodeJS.ProcessEnv,
 ): Buffer | null {
   const command = buildOpenClawConfigReadCommand(dir, specPath);
   const result = spawnSync("ssh", [...sshArgs, command], {
+    ...(env ? { env } : {}),
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 120000,
     maxBuffer: 256 * 1024 * 1024,
@@ -91,6 +94,7 @@ export function buildOpenClawConfigRestoreInput(
 export function buildOpenClawConfigRestoreInputFromSandbox({
   backupContents,
   dir,
+  env,
   freshImagePluginInstalls,
   log = () => {},
   previousImagePluginInstalls,
@@ -117,7 +121,7 @@ export function buildOpenClawConfigRestoreInputFromSandbox({
   }
   return buildOpenClawConfigRestoreInput(
     backupContents,
-    readCurrentOpenClawConfig(sshArgs, dir, specPath, log),
+    readCurrentOpenClawConfig(sshArgs, dir, specPath, log, env),
     { freshImagePluginInstalls, previousImagePluginInstalls },
   );
 }
