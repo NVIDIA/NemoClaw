@@ -170,6 +170,11 @@ function findings(result: Awaited<ReturnType<typeof observeStableExportSource>>)
   return result.ok ? [] : result.findings;
 }
 
+function verifiedSource(result: Awaited<ReturnType<typeof observeStableExportSource>>) {
+  expect(result.ok).toBe(true);
+  return (result as Extract<typeof result, { ok: true }>).source;
+}
+
 describe("stable config export source observation (#10938)", () => {
   it("narrows one stable supported snapshot to an immutable verified source", async () => {
     const sourceReader = reader();
@@ -185,11 +190,10 @@ describe("stable config export source observation (#10938)", () => {
       },
     });
     expect(sourceReader.read).toHaveBeenCalledTimes(2);
-    if (result.ok) {
-      expect(result.source).not.toHaveProperty("registry");
-      expect(Object.isFrozen(result.source)).toBe(true);
-      expect(Object.isFrozen(result.source.policy)).toBe(true);
-    }
+    const source = verifiedSource(result);
+    expect(source).not.toHaveProperty("registry");
+    expect(Object.isFrozen(source)).toBe(true);
+    expect(Object.isFrozen(source.policy)).toBe(true);
   });
 
   it("retries one structurally changed snapshot pair", async () => {
@@ -210,14 +214,15 @@ describe("stable config export source observation (#10938)", () => {
 
   it("owns each read before an untrusted reader can mutate and reuse it", async () => {
     const shared = snapshot();
-    let calls = 0;
     const sourceReader = {
-      read: vi.fn(async () => {
-        if (calls++ === 1) {
+      read: vi
+        .fn()
+        .mockResolvedValueOnce(shared)
+        .mockImplementationOnce(async () => {
           (shared.sandbox as { resourceVersion: number }).resourceVersion = 8;
-        }
-        return shared;
-      }),
+          return shared;
+        })
+        .mockResolvedValue(shared),
     };
 
     await expect(observeStableExportSource("alpha", sourceReader)).resolves.toMatchObject({
@@ -329,7 +334,7 @@ describe("stable config export source observation (#10938)", () => {
     const result = await observeStableExportSource("alpha", reader([raw, raw]));
 
     expect(result).toMatchObject({ ok: true });
-    if (result.ok) expect(result.source.inference).not.toHaveProperty("credentialEnv");
+    expect(verifiedSource(result).inference).not.toHaveProperty("credentialEnv");
   });
 
   it("requires endpoint evidence bound to the observed route", async () => {
@@ -477,9 +482,12 @@ describe("stable config export source observation (#10938)", () => {
 
   it("rejects any noncanonical managed startup profile", async () => {
     const base = profileInput();
-    if (base.dashboard.agent !== "openclaw") throw new Error("Invalid test fixture");
+    const dashboard = base.dashboard as Extract<
+      ManagedStartupProfileBuilderInput["dashboard"],
+      { agent: "openclaw" }
+    >;
     const configured = profileInput({
-      dashboard: { ...base.dashboard, url: "http://127.0.0.1:18888", port: 18_888 },
+      dashboard: { ...dashboard, url: "http://127.0.0.1:18888", port: 18_888 },
     });
     const workload = managedWorkload(configured);
     const raw = snapshot({ registry: entry({ imageTag: workload.reference, workload }) });

@@ -307,13 +307,12 @@ describe("publishExportFile", () => {
     const outputPath = path.join(root, "selected.yaml");
     const fsyncSync = fs.fsyncSync;
     const unlinkSync = fs.unlinkSync;
-    let fsyncCalls = 0;
-    vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
-      fsyncCalls += 1;
-      if (fsyncCalls === 2)
+    vi.spyOn(fs, "fsyncSync")
+      .mockImplementationOnce((descriptor) => fsyncSync(descriptor))
+      .mockImplementationOnce(() => {
         throw Object.assign(new Error("injected fsync failure"), { code: "EIO" });
-      fsyncSync(descriptor);
-    });
+      })
+      .mockImplementation((descriptor) => fsyncSync(descriptor));
     vi.spyOn(fs, "unlinkSync").mockImplementation(() => {
       throw Object.assign(new Error("injected cleanup failure"), { code: "EIO" });
     });
@@ -342,15 +341,14 @@ describe("publishExportFile", () => {
     const outputPath = path.join(outputParent, "selected.yaml");
     fs.mkdirSync(outputParent);
     const fsyncSync = fs.fsyncSync;
-    let calls = 0;
-    vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
-      calls += 1;
-      fsyncSync(descriptor);
-      if (calls === 2) {
+    vi.spyOn(fs, "fsyncSync")
+      .mockImplementationOnce((descriptor) => fsyncSync(descriptor))
+      .mockImplementationOnce((descriptor) => {
+        fsyncSync(descriptor);
         fs.renameSync(outputParent, movedParent);
         fs.mkdirSync(outputParent);
-      }
-    });
+      })
+      .mockImplementation((descriptor) => fsyncSync(descriptor));
 
     expect(() => publishExportFile(outputPath, "content")).toThrowError(
       expect.objectContaining<Partial<YamlExportOutputError>>({
@@ -373,15 +371,14 @@ describe("publishExportFile", () => {
     const root = temporaryRoot();
     const outputPath = path.join(root, "selected.yaml");
     const fsyncSync = fs.fsyncSync;
-    let calls = 0;
-    vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
-      calls += 1;
-      fsyncSync(descriptor);
-      if (calls === 2) {
+    vi.spyOn(fs, "fsyncSync")
+      .mockImplementationOnce((descriptor) => fsyncSync(descriptor))
+      .mockImplementationOnce((descriptor) => {
+        fsyncSync(descriptor);
         fs.unlinkSync(outputPath);
         fs.writeFileSync(outputPath, "foreign");
-      }
-    });
+      })
+      .mockImplementation((descriptor) => fsyncSync(descriptor));
 
     expect(() => publishExportFile(outputPath, "content")).toThrowError(
       expect.objectContaining<Partial<YamlExportOutputError>>({
@@ -427,14 +424,17 @@ describe("publishExportFile", () => {
     const closeSync = fs.closeSync;
     let failedDescriptor: number | null = null;
     const closed: number[] = [];
-    vi.spyOn(fs, "closeSync").mockImplementation((descriptor) => {
-      closed.push(descriptor);
-      closeSync(descriptor);
-      if (failedDescriptor === null) {
+    vi.spyOn(fs, "closeSync")
+      .mockImplementationOnce((descriptor) => {
         failedDescriptor = descriptor;
+        closed.push(descriptor);
+        closeSync(descriptor);
         throw Object.assign(new Error("injected close failure"), { code: "EIO" });
-      }
-    });
+      })
+      .mockImplementation((descriptor) => {
+        closed.push(descriptor);
+        closeSync(descriptor);
+      });
 
     expect(() => publishExportFile(outputPath, "content")).toThrowError(
       expect.objectContaining<Partial<YamlExportOutputError>>({

@@ -184,11 +184,13 @@ describe("live export snapshot reader", () => {
     expect(result).toMatchObject({
       ok: false,
       attempts: 1,
-      findings: [expect.objectContaining({ field: "source.inference.endpoint" })],
+      findings: [
+        expect.objectContaining({
+          field: "source.inference.endpoint",
+          category: "missing-provenance",
+        }),
+      ],
     });
-    if (!result.ok) {
-      expect(result.findings.some(({ category }) => category === "missing-provenance")).toBe(true);
-    }
   });
 
   it("returns a complete non-secret raw snapshot", async () => {
