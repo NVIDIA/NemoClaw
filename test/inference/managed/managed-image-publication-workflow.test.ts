@@ -136,12 +136,8 @@ describe("complete managed-image publication workflow", () => {
     const prAudit = step(required(readWorkflow("pr.yaml").jobs?.["reviewed-npm-audit"], "missing PR audit"), "Audit reviewed production npm graphs");
     const mainAudit = step(required(readWorkflow("main.yaml").jobs?.["reviewed-npm-audit"], "missing main audit"), "Audit reviewed production npm graphs");
     const managedAudit = step(managedPrReviewedAudit(readWorkflow("managed-images.yaml")), "Audit exact PR production npm graphs");
-    expect(prAudit.with).toMatchObject({
-      "cache-directory": "${{ runner.temp }}/reviewed-npm-audit-cache",
-    });
-    expect(managedAudit.with).toMatchObject({
-      "cache-directory": "${{ runner.temp }}/reviewed-npm-audit-cache",
-    });
+    expect(prAudit.with?.["cache-directory"]).toBeUndefined();
+    expect(managedAudit.with?.["cache-directory"]).toBeUndefined();
     expect(prAudit.with?.["trusted-cache-write"]).toBeUndefined();
     expect(managedAudit.with?.["trusted-cache-write"]).toBeUndefined();
     expect(mainAudit.with).toMatchObject({
@@ -445,7 +441,6 @@ describe("complete managed-image publication workflow", () => {
     expect(step(reviewedAudit, "Audit exact PR production npm graphs")).toMatchObject({
       uses: "./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit",
       with: {
-        "cache-directory": "${{ runner.temp }}/reviewed-npm-audit-cache",
         "report-dir": "artifacts/reviewed-npm-audit",
         "target-root": "${{ github.workspace }}/candidate",
       },

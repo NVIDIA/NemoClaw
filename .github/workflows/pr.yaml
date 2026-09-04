@@ -552,7 +552,6 @@ jobs:
         with:
           target-root: ${{ github.workspace }}
           report-dir: artifacts/reviewed-npm-audit
-          cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
 
   cli-test-shards:
     needs: [changes, compile-artifacts, openshell-sdk-package]

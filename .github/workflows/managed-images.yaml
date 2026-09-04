@@ -122,7 +122,6 @@ jobs:
         with:
           target-root: ${{ github.workspace }}/candidate
           report-dir: artifacts/reviewed-npm-audit
-          cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
 
   pr-staging-qa-deep-code:
     name: Staging QA base permission regression (Deep Agents Code)
