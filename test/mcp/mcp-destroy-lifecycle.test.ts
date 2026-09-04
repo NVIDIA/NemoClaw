@@ -49,6 +49,7 @@ const testState = vi.hoisted(() => {
     removePreset: vi.fn(),
     runOpenshell: vi.fn(),
     runOpenshellProviderCommand: vi.fn(),
+    runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
     stopNimContainer: vi.fn(),
     stopNimContainerByName: vi.fn(),
     warnUnpreservedUserManagedFiles: vi.fn(),
@@ -981,8 +982,11 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.executeSandboxExecCommand).toHaveBeenCalledOnce();
     expect(testState.executeSandboxExecCommand).toHaveBeenCalledWith("alpha", ":", undefined, {
       allowLocalDockerFallback: false,
+      runtimeSelection: testState.runtimeSelection,
     });
-    expect(testState.executeSandboxCommand).toHaveBeenCalledWith("alpha", ":");
+    expect(testState.executeSandboxCommand).toHaveBeenCalledWith("alpha", ":", {
+      runtimeSelection: testState.runtimeSelection,
+    });
     expect(testState.runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
       expect.any(Object),

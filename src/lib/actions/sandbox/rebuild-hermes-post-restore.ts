@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../cli/branding";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime";
 import { isDirectSandboxFallbackUnavailableError } from "../../sandbox/privileged-exec";
 import type { GatewayRestartResult } from "./gateway-restart";
 import {
@@ -101,16 +102,17 @@ type GatewayRecoveryObservation = {
 interface HermesPostRestoreGatewayDeps {
   checkAndRecoverSandboxProcesses?: (
     sandboxName: string,
-    options: { quiet: boolean },
+    options: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
   ) => GatewayRecoveryObservation;
   restartSandboxGateway?: (
     sandboxName: string,
-    options: { quiet: boolean },
+    options: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
   ) => GatewayRestartResult;
   observeHermesCronReplacement?: (
     sandboxName: string,
     originalIdentity: HermesCronRestoreIdentity,
   ) => HermesCronRestoreIdentity;
+  runtimeSelection?: OpenShellRuntimeSelection;
 }
 
 export interface HermesPostRestoreGatewayVerification {
@@ -169,7 +171,10 @@ export function restartHermesGatewayAfterStateRestore(
 ): HermesPostRestoreGatewayRestartState {
   if (agentName !== "hermes") return "not-applicable";
   const restart = deps.restartSandboxGateway ?? restartSandboxGateway;
-  const result = restart(sandboxName, { quiet: true });
+  const result = restart(sandboxName, {
+    quiet: true,
+    ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
+  });
   if (result.ok) return "restarted";
   const mcpRestoreCanSupersede =
     result.failureLayer === "MCP reconciliation refusal" &&
@@ -237,7 +242,10 @@ function verifyHermesGatewayAfterStateRestoreImpl(
         // later iteration must observe it both before and after health.
       }
     }
-    const observation: GatewayRecoveryObservation = checkAndRecover(sandboxName, { quiet: true });
+    const observation: GatewayRecoveryObservation = checkAndRecover(sandboxName, {
+      quiet: true,
+      ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
+    });
     if (
       observation.forwardRecoveryFailed === true ||
       observation.secretBoundaryRefused === true ||
