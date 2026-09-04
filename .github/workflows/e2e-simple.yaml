@@ -41,8 +41,8 @@ jobs:
       contents: read
     outputs:
       build_base: ${{ steps.plan.outputs.build_base }}
-      exclude: ${{ steps.plan.outputs.exclude }}
       image_run_id: ${{ steps.plan.outputs.image_run_id }}
+      selected: ${{ steps.plan.outputs.selected }}
       sha: ${{ steps.plan.outputs.sha }}
     steps:
       - name: Require a repository maintainer
@@ -96,9 +96,6 @@ jobs:
             }
             selected="$(jq -cn --argjson jobs "$selected_jobs" --argjson targets "$selected_targets" '$jobs + $targets | unique')"
           fi
-          # shellcheck disable=SC2016
-          exclude="$(jq -cn --argjson all "$all" --argjson selected "$selected" '$all - $selected | map({id:.})')"
-
           git fetch --no-tags origin main
           merge_base="$(git merge-base "$sha" origin/main)"
           if [[ "$merge_base" == "$sha" ]]; then
@@ -120,9 +117,9 @@ jobs:
 
           {
             printf 'sha=%s\n' "$sha"
-            printf 'exclude=%s\n' "$exclude"
             printf 'build_base=%s\n' "$build_base"
             printf 'image_run_id=%s\n' "$IMAGE_RUN_ID"
+            printf 'selected=%s\n' "$selected"
           } >>"$GITHUB_OUTPUT"
           {
             # shellcheck disable=SC2016
@@ -385,140 +382,13 @@ jobs:
   test:
     needs: [plan, catalog]
     if: ${{ always() && needs.plan.result == 'success' && needs.catalog.result == 'success' }}
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: ${{ matrix.timeout }}
+    name: ${{ matrix.id }}
+    runs-on: ${{ matrix.id == 'openshell-gateway-upgrade-v0-0-55-aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        id:
-          - messaging-providers
-          - mcp-bridge
-          - hermes-e2e
-          - security-posture-hermes
-          - openshell-gateway-upgrade-v0-0-55-x86-64
-          - openshell-gateway-upgrade-v0-0-55-aarch64
-          - openshell-gateway-upgrade-v0-0-74-x86-64
-          - openshell-gateway-upgrade-v0-0-89-x86-64
-          - shields-retirement-upgrade
-        exclude: ${{ fromJSON(needs.plan.outputs.exclude) }}
-        include:
-          - id: messaging-providers
-            name: Messaging providers
-            runner: ubuntu-latest
-            timeout: 90
-            test: test/e2e/live/messaging-providers.test.ts
-            selector: ""
-            image: openclaw
-            old_base: ""
-            swap: false
-            install_openshell: false
-            mcp: false
-            settings: '{"NEMOCLAW_E2E_USE_HOSTED_INFERENCE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","OPENSHELL_GATEWAY":"nemoclaw"}'
-
-          - id: mcp-bridge
-            name: MCP bridge Hermes
-            runner: ubuntu-latest
-            timeout: 90
-            test: test/e2e/live/mcp-bridge.test.ts
-            selector: ^mcp-bridge-hermes$
-            image: hermes
-            old_base: ""
-            swap: true
-            install_openshell: true
-            mcp: true
-            settings: '{"NEMOCLAW_MCP_BRIDGE_AGENT":"hermes"}'
-
-          - id: hermes-e2e
-            name: Hermes E2E
-            runner: ubuntu-latest
-            timeout: 85
-            test: test/e2e/live/hermes-e2e.test.ts
-            selector: ""
-            image: hermes
-            old_base: ""
-            swap: true
-            install_openshell: false
-            mcp: false
-            settings: '{"NEMOCLAW_E2E_INFERENCE_MODE":"mock","NEMOCLAW_E2E_HERMES_DASHBOARD":"1","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes","NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS":"60"}'
-
-          - id: security-posture-hermes
-            name: Hermes security posture
-            runner: ubuntu-latest
-            timeout: 75
-            test: test/e2e/live/hermes-e2e.test.ts
-            selector: ""
-            image: hermes
-            old_base: ""
-            swap: true
-            install_openshell: true
-            mcp: false
-            settings: '{"NEMOCLAW_E2E_USE_HOSTED_INFERENCE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS":"1","NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST":"1","NEMOCLAW_E2E_SECURITY_POSTURE":"1","NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS":"60","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hm-security","OPENSHELL_GATEWAY":"nemoclaw"}'
-
-          - id: openshell-gateway-upgrade-v0-0-55-x86-64
-            name: Upgrade v0.0.55 x86-64
-            runner: ubuntu-latest
-            timeout: 70
-            test: test/e2e/live/openshell-gateway-upgrade.test.ts
-            selector: ""
-            image: openclaw
-            old_base: ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108
-            swap: false
-            install_openshell: false
-            mcp: false
-            settings: '{"NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME":"e2e-gw-survivor","NEMOCLAW_OLD_NEMOCLAW_REF":"v0.0.55","NEMOCLAW_OLD_NEMOCLAW_COMMIT":"95d483fe2b6569d68e59493c60f19df09a068e8f","NEMOCLAW_OLD_INSTALLER_SHA256":"ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897","NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF":"ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108","NEMOCLAW_OLD_OPENSHELL_VERSION":"0.0.44","NEMOCLAW_OLD_OPENCLAW_VERSION":"2026.5.22","OPENSHELL_GATEWAY":"nemoclaw"}'
-
-          - id: openshell-gateway-upgrade-v0-0-55-aarch64
-            name: Upgrade v0.0.55 ARM64
-            runner: ubuntu-24.04-arm
-            timeout: 70
-            test: test/e2e/live/openshell-gateway-upgrade.test.ts
-            selector: ""
-            image: openclaw
-            old_base: ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108
-            swap: false
-            install_openshell: false
-            mcp: false
-            settings: '{"NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME":"e2e-gw-survivor","NEMOCLAW_OLD_NEMOCLAW_REF":"v0.0.55","NEMOCLAW_OLD_NEMOCLAW_COMMIT":"95d483fe2b6569d68e59493c60f19df09a068e8f","NEMOCLAW_OLD_INSTALLER_SHA256":"ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897","NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF":"ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108","NEMOCLAW_OLD_OPENSHELL_VERSION":"0.0.44","NEMOCLAW_OLD_OPENCLAW_VERSION":"2026.5.22","OPENSHELL_GATEWAY":"nemoclaw"}'
-
-          - id: openshell-gateway-upgrade-v0-0-74-x86-64
-            name: Upgrade v0.0.74 x86-64
-            runner: ubuntu-latest
-            timeout: 70
-            test: test/e2e/live/openshell-gateway-upgrade.test.ts
-            selector: ""
-            image: openclaw
-            old_base: ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6
-            swap: false
-            install_openshell: false
-            mcp: false
-            settings: '{"NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME":"e2e-gw-survivor","NEMOCLAW_OLD_NEMOCLAW_REF":"v0.0.74","NEMOCLAW_OLD_NEMOCLAW_COMMIT":"3a05b54e8ec3e1d5550ec5c728de54af872bffe3","NEMOCLAW_OLD_INSTALLER_SHA256":"a0cd3feca488d247e53d59d7d8246d2b86e75e95acb5e7d78504b3c0c60fd7db","NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF":"ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6","NEMOCLAW_OLD_OPENSHELL_VERSION":"0.0.72","NEMOCLAW_OLD_OPENCLAW_VERSION":"2026.5.27","OPENSHELL_GATEWAY":"nemoclaw"}'
-
-          - id: openshell-gateway-upgrade-v0-0-89-x86-64
-            name: Upgrade v0.0.89 x86-64
-            runner: ubuntu-latest
-            timeout: 70
-            test: test/e2e/live/openshell-gateway-upgrade.test.ts
-            selector: ""
-            image: openclaw
-            old_base: ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1
-            swap: false
-            install_openshell: false
-            mcp: false
-            settings: '{"NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME":"e2e-gw-survivor","NEMOCLAW_OLD_NEMOCLAW_REF":"v0.0.89","NEMOCLAW_OLD_NEMOCLAW_COMMIT":"1143aa5cce77f3bad1b3b5588bd7fddbe438237e","NEMOCLAW_OLD_INSTALLER_SHA256":"00f24959e5ca68104fe91221c0a015dab6a4154618497fa36b969b661f418cc2","NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF":"ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1","NEMOCLAW_OLD_OPENSHELL_VERSION":"0.0.85","NEMOCLAW_OLD_OPENCLAW_VERSION":"2026.6.10","NEMOCLAW_CURRENT_OPENCLAW_VERSION":"2026.7.1","NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF":"1","OPENSHELL_GATEWAY":"nemoclaw"}'
-
-          - id: shields-retirement-upgrade
-            name: Shields retirement upgrade
-            runner: ubuntu-latest
-            timeout: 120
-            test: test/e2e/live/shields-retirement-upgrade.test.ts
-            selector: ""
-            image: openclaw
-            old_base: ""
-            swap: false
-            install_openshell: false
-            mcp: false
-            settings: '{"NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"openclaw","NEMOCLAW_OLD_NEMOCLAW_REF":"v0.0.115","NEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT":"7503e700808655df1303ddc51888bb596c9afa34","NEMOCLAW_OLD_NEMOCLAW_COMMIT":"324a886fd05b01f6756bae0371ea503c651fbd11","NEMOCLAW_OLD_INSTALLER_SHA256":"0ed77ba8cf176641bd3b22cfd89b4977b3d9a6f47b76da8b03bf4091a20d1251","NEMOCLAW_OLD_OPENSHELL_VERSION":"0.0.106","NEMOCLAW_OLD_OPENCLAW_VERSION":"2026.7.1","NEMOCLAW_SANDBOX_NAME":"e2e-retire-lock","OPENSHELL_GATEWAY":"nemoclaw"}'
+        id: ${{ fromJSON(needs.plan.outputs.selected) }}
     env:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ needs.plan.outputs.sha }}
@@ -548,16 +418,75 @@ jobs:
           name: simple-managed-catalog
           path: ${{ github.workspace }}/simple-managed-catalog
 
+      - id: config
+        name: Configure selected test
+        env:
+          TEST_ID: ${{ matrix.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          agent=openclaw
+          old_base=""
+          selector=""
+          case "$TEST_ID" in
+            messaging-providers)
+              test_file=test/e2e/live/messaging-providers.test.ts
+              env_lines=$'NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1\nNEMOCLAW_NON_INTERACTIVE=1\nNEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1\nOPENSHELL_GATEWAY=nemoclaw'
+              ;;
+            mcp-bridge)
+              agent=hermes
+              test_file=test/e2e/live/mcp-bridge.test.ts
+              selector='^mcp-bridge-hermes$'
+              env_lines='NEMOCLAW_MCP_BRIDGE_AGENT=hermes'
+              ;;
+            hermes-e2e)
+              agent=hermes
+              test_file=test/e2e/live/hermes-e2e.test.ts
+              env_lines=$'NEMOCLAW_E2E_INFERENCE_MODE=mock\nNEMOCLAW_E2E_HERMES_DASHBOARD=1\nNEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1\nNEMOCLAW_AGENT=hermes\nNEMOCLAW_NON_INTERACTIVE=1\nNEMOCLAW_RECREATE_SANDBOX=1\nNEMOCLAW_SANDBOX_NAME=e2e-hermes\nNEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS=60'
+              ;;
+            security-posture-hermes)
+              agent=hermes
+              test_file=test/e2e/live/hermes-e2e.test.ts
+              env_lines=$'NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1\nNEMOCLAW_NON_INTERACTIVE=1\nNEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1\nNEMOCLAW_AGENT=hermes\nNEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS=1\nNEMOCLAW_E2E_EXPECT_NON_ROOT_HOST=1\nNEMOCLAW_E2E_SECURITY_POSTURE=1\nNEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS=60\nNEMOCLAW_RECREATE_SANDBOX=1\nNEMOCLAW_SANDBOX_NAME=e2e-hm-security\nOPENSHELL_GATEWAY=nemoclaw'
+              ;;
+            openshell-gateway-upgrade-v0-0-55-x86-64|openshell-gateway-upgrade-v0-0-55-aarch64)
+              test_file=test/e2e/live/openshell-gateway-upgrade.test.ts
+              old_base=ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108
+              env_lines=$'NEMOCLAW_NON_INTERACTIVE=1\nNEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1\nNEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME=e2e-gw-survivor\nNEMOCLAW_OLD_NEMOCLAW_REF=v0.0.55\nNEMOCLAW_OLD_NEMOCLAW_COMMIT=95d483fe2b6569d68e59493c60f19df09a068e8f\nNEMOCLAW_OLD_INSTALLER_SHA256=ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897\nNEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF=ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108\nNEMOCLAW_OLD_OPENSHELL_VERSION=0.0.44\nNEMOCLAW_OLD_OPENCLAW_VERSION=2026.5.22\nOPENSHELL_GATEWAY=nemoclaw'
+              ;;
+            openshell-gateway-upgrade-v0-0-74-x86-64)
+              test_file=test/e2e/live/openshell-gateway-upgrade.test.ts
+              old_base=ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6
+              env_lines=$'NEMOCLAW_NON_INTERACTIVE=1\nNEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1\nNEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME=e2e-gw-survivor\nNEMOCLAW_OLD_NEMOCLAW_REF=v0.0.74\nNEMOCLAW_OLD_NEMOCLAW_COMMIT=3a05b54e8ec3e1d5550ec5c728de54af872bffe3\nNEMOCLAW_OLD_INSTALLER_SHA256=a0cd3feca488d247e53d59d7d8246d2b86e75e95acb5e7d78504b3c0c60fd7db\nNEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF=ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6\nNEMOCLAW_OLD_OPENSHELL_VERSION=0.0.72\nNEMOCLAW_OLD_OPENCLAW_VERSION=2026.5.27\nOPENSHELL_GATEWAY=nemoclaw'
+              ;;
+            openshell-gateway-upgrade-v0-0-89-x86-64)
+              test_file=test/e2e/live/openshell-gateway-upgrade.test.ts
+              old_base=ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1
+              env_lines=$'NEMOCLAW_NON_INTERACTIVE=1\nNEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1\nNEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME=e2e-gw-survivor\nNEMOCLAW_OLD_NEMOCLAW_REF=v0.0.89\nNEMOCLAW_OLD_NEMOCLAW_COMMIT=1143aa5cce77f3bad1b3b5588bd7fddbe438237e\nNEMOCLAW_OLD_INSTALLER_SHA256=00f24959e5ca68104fe91221c0a015dab6a4154618497fa36b969b661f418cc2\nNEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF=ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1\nNEMOCLAW_OLD_OPENSHELL_VERSION=0.0.85\nNEMOCLAW_OLD_OPENCLAW_VERSION=2026.6.10\nNEMOCLAW_CURRENT_OPENCLAW_VERSION=2026.7.1\nNEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF=1\nOPENSHELL_GATEWAY=nemoclaw'
+              ;;
+            shields-retirement-upgrade)
+              test_file=test/e2e/live/shields-retirement-upgrade.test.ts
+              env_lines=$'NEMOCLAW_NON_INTERACTIVE=1\nNEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1\nNEMOCLAW_AGENT=openclaw\nNEMOCLAW_OLD_NEMOCLAW_REF=v0.0.115\nNEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT=7503e700808655df1303ddc51888bb596c9afa34\nNEMOCLAW_OLD_NEMOCLAW_COMMIT=324a886fd05b01f6756bae0371ea503c651fbd11\nNEMOCLAW_OLD_INSTALLER_SHA256=0ed77ba8cf176641bd3b22cfd89b4977b3d9a6f47b76da8b03bf4091a20d1251\nNEMOCLAW_OLD_OPENSHELL_VERSION=0.0.106\nNEMOCLAW_OLD_OPENCLAW_VERSION=2026.7.1\nNEMOCLAW_SANDBOX_NAME=e2e-retire-lock\nOPENSHELL_GATEWAY=nemoclaw'
+              ;;
+          esac
+          printf '%s\n' "$env_lines" >>"$GITHUB_ENV"
+          {
+            printf 'agent=%s\n' "$agent"
+            printf 'old_base=%s\n' "$old_base"
+            printf 'selector=%s\n' "$selector"
+            printf 'test_file=%s\n' "$test_file"
+          } >>"$GITHUB_OUTPUT"
+
       - name: Pull exact images
         shell: bash
         run: |
           set -euo pipefail
-          reference="$(jq -er --arg agent "${{ matrix.image }}" '.[$agent].reference' "$NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG")"
+          reference="$(jq -er --arg agent "${{ steps.config.outputs.agent }}" '.[$agent].reference' "$NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG")"
           docker pull "$reference"
-          if [[ -n "${{ matrix.old_base }}" ]]; then docker pull "${{ matrix.old_base }}"; fi
+          if [[ -n "${{ steps.config.outputs.old_base }}" ]]; then docker pull "${{ steps.config.outputs.old_base }}"; fi
 
       - name: Add swap
-        if: ${{ matrix.swap }}
+        if: ${{ contains(fromJSON('["mcp-bridge","hermes-e2e","security-posture-hermes"]'), matrix.id) }}
         run: |
           sudo fallocate -l 32G /mnt/nemoclaw-e2e.swap
           sudo chmod 0600 /mnt/nemoclaw-e2e.swap
@@ -565,11 +494,11 @@ jobs:
           sudo swapon /mnt/nemoclaw-e2e.swap
 
       - name: Install OpenShell
-        if: ${{ matrix.install_openshell }}
+        if: ${{ contains(fromJSON('["mcp-bridge","security-posture-hermes"]'), matrix.id) }}
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Install MCP prerequisites
-        if: ${{ matrix.mcp }}
+        if: ${{ matrix.id == 'mcp-bridge' }}
         env:
           CLOUDFLARED_VERSION: "2026.6.1"
           CLOUDFLARED_DEB_SHA256: ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526
@@ -581,7 +510,6 @@ jobs:
 
       - name: Run test
         env:
-          TEST_SETTINGS: ${{ matrix.settings }}
           DISCORD_BOT_TOKEN_REAL: ${{ secrets.DISCORD_BOT_TOKEN_REAL }}
           DISCORD_CHANNEL_ID_E2E: ${{ secrets.DISCORD_CHANNEL_ID_E2E }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -598,7 +526,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          while IFS=$'\t' read -r key value; do export "$key=$value"; done < <(jq -r 'to_entries[] | [.key, .value] | @tsv' <<<"$TEST_SETTINGS")
-          args=(vitest run --project e2e-live "${{ matrix.test }}" --silent=false --reporter=default)
-          if [[ -n "${{ matrix.selector }}" ]]; then args+=(-t "${{ matrix.selector }}"); fi
+          args=(vitest run --project e2e-live "${{ steps.config.outputs.test_file }}" --silent=false --reporter=default)
+          if [[ -n "${{ steps.config.outputs.selector }}" ]]; then args+=(-t "${{ steps.config.outputs.selector }}"); fi
           npx "${args[@]}"

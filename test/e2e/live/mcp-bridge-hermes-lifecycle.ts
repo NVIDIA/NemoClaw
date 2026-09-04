@@ -78,6 +78,7 @@ export async function assertHermesManagedAddSurvivesGatewayRestartAndStateLayout
         "strict_status=0; sha256sum -c /etc/nemoclaw/hermes.config-hash || strict_status=$?",
         "compat_status=0; sha256sum -c /sandbox/.hermes/.config-hash || compat_status=$?",
         'printf "HERMES_MCP_HASH_STATUS strict=%s compat=%s\\n" "$strict_status" "$compat_status"',
+        "set -e",
         'test "$(stat -c \'%u:%g:%a\' /etc/nemoclaw/hermes.config-hash)" = "0:0:444"',
         "! cmp -s /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
         'test "$strict_status" -ne 0',
