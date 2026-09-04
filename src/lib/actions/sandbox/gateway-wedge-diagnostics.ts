@@ -21,7 +21,10 @@ import { shellQuote } from "../../runner";
 import { redactFull } from "../../security/redact";
 import type { SandboxCommandResult } from "./process-recovery";
 
-export type SandboxExec = (sandboxName: string, command: string) => SandboxCommandResult | null;
+export type SandboxExec = (
+  sandboxName: string,
+  command: string,
+) => Promise<SandboxCommandResult | null>;
 
 const WEDGE_LOG_SIGNATURE =
   "config change requires gateway restart|gateway startup failed|Process will stay alive";
@@ -50,9 +53,12 @@ export function sanitizeWedgeLogLine(line: string): string {
  * Returns up to the last five matching lines (sanitized), or [] when none
  * match or the log cannot be read.
  */
-export function collectGatewayWedgeDiagnostics(sandboxName: string, exec: SandboxExec): string[] {
+export async function collectGatewayWedgeDiagnostics(
+  sandboxName: string,
+  exec: SandboxExec,
+): Promise<string[]> {
   const command = `grep -E ${shellQuote(WEDGE_LOG_SIGNATURE)} /tmp/gateway.log 2>/dev/null | tail -5`;
-  const result = exec(sandboxName, command);
+  const result = await exec(sandboxName, command);
   if (!result || result.status !== 0) {
     return [];
   }
@@ -64,8 +70,11 @@ export function collectGatewayWedgeDiagnostics(sandboxName: string, exec: Sandbo
  * sees why the gateway is unreachable despite a live process. Returns true
  * when signature lines were found and printed.
  */
-export function printGatewayWedgeDiagnostics(sandboxName: string, exec: SandboxExec): boolean {
-  const wedgeLines = collectGatewayWedgeDiagnostics(sandboxName, exec);
+export async function printGatewayWedgeDiagnostics(
+  sandboxName: string,
+  exec: SandboxExec,
+): Promise<boolean> {
+  const wedgeLines = await collectGatewayWedgeDiagnostics(sandboxName, exec);
   if (wedgeLines.length === 0) {
     return false;
   }

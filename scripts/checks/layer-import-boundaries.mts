@@ -57,6 +57,13 @@ const MANAGED_STATE_ROOT_PROVIDER_MODULES = [
   "src/lib/onboard/managed-bootstrap/docker.ts",
   "src/lib/onboard/managed-bootstrap/podman-runtime.ts",
 ] as const;
+const LEGACY_BUFFERED_EXEC_HELPER = "src/lib/actions/sandbox/exec.ts";
+const INTERACTIVE_EXEC_HELPER_IMPORTERS = new Set([
+  "src/lib/actions/sandbox/agent/passthrough-json.ts",
+  "src/lib/actions/sandbox/agent/passthrough.ts",
+  "src/lib/actions/sandbox/launch.ts",
+  "src/lib/actions/sandbox/sessions/passthrough.ts",
+]);
 const MANAGED_AGENT_IDS = new Set(["openclaw", "hermes", "langchain-deepagents-code", "pi"]);
 
 function toRepoPath(absPath: string): string {
@@ -379,6 +386,68 @@ function checkNoBinLibShimImport(
   }
 }
 
+function checkBufferedExecHelperImport(
+  absPath: string,
+  repoPath: string,
+  sourceFile: ts.SourceFile,
+  violations: Violation[],
+): void {
+  if (
+    repoPath === LEGACY_BUFFERED_EXEC_HELPER ||
+    INTERACTIVE_EXEC_HELPER_IMPORTERS.has(repoPath)
+  ) {
+    return;
+  }
+  const namespaceImports = new Set<string>();
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteralLike(statement.moduleSpecifier) ||
+      resolveInternalImport(absPath, statement.moduleSpecifier.text) !== LEGACY_BUFFERED_EXEC_HELPER
+    ) {
+      continue;
+    }
+    const bindings = statement.importClause?.namedBindings;
+    if (bindings && ts.isNamedImports(bindings)) {
+      for (const binding of bindings.elements) {
+        if ((binding.propertyName?.text ?? binding.name.text) !== "buildOpenshellExecArgs") continue;
+        const pos = position(sourceFile, binding);
+        addViolation(
+          violations,
+          repoPath,
+          pos.line,
+          pos.column,
+          "buffered-exec-uses-async-executor",
+          "buffered sandbox execution must use the async command executor instead of buildOpenshellExecArgs",
+        );
+      }
+    } else if (bindings && ts.isNamespaceImport(bindings)) {
+      namespaceImports.add(bindings.name.text);
+    }
+  }
+  if (namespaceImports.size === 0) return;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      namespaceImports.has(node.expression.text) &&
+      node.name.text === "buildOpenshellExecArgs"
+    ) {
+      const pos = position(sourceFile, node);
+      addViolation(
+        violations,
+        repoPath,
+        pos.line,
+        pos.column,
+        "buffered-exec-uses-async-executor",
+        "buffered sandbox execution must use the async command executor instead of buildOpenshellExecArgs",
+      );
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+}
+
 function checkMessagingManifestFile(
   absPath: string,
   repoPath: string,
@@ -506,11 +575,12 @@ export function findLayerImportBoundaryViolations(root = SRC_ROOT): Violation[] 
     const messagingManifestFile = isMessagingManifestFile(repoPath);
     const commandFile = isCommandFile(repoPath);
     const source = readFileSync(absPath, "utf8");
+    const sourceFile = sourceFileFor(absPath, source);
+    checkBufferedExecHelperImport(absPath, repoPath, sourceFile, violations);
     if (!domainFile && !actionFile && !adapterFile && !messagingManifestFile && !commandFile) {
       checkNoBinLibShimImport(absPath, repoPath, collectPreprocessedImportRefs(source), violations);
       continue;
     }
-    const sourceFile = sourceFileFor(absPath, source);
     const imports = collectImportRefs(sourceFile);
     checkNoBinLibShimImport(absPath, repoPath, imports, violations);
     if (domainFile) {

@@ -26,7 +26,10 @@ const CLEANUP_SKIPPED: SandboxExecCleanupDeps = {
   },
 };
 
-function depsFor(status: number, restartGateway = vi.fn(() => ({ ok: true }))): ExecSandboxDeps {
+function depsFor(
+  status: number,
+  restartGateway = vi.fn(async () => ({ ok: true })),
+): ExecSandboxDeps {
   return {
     selectGateway: () => ({ outcome: "selected", gatewayName: "nemoclaw-alpha" }),
     commandExecutor: {
@@ -98,7 +101,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   });
 
   it("restarts the managed gateway after the exact approval succeeds", async () => {
-    const restartGateway = vi.fn(() => ({ ok: true }));
+    const restartGateway = vi.fn(async () => ({ ok: true }));
     const exitCode = await runAndCaptureExit(
       ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
       depsFor(0, restartGateway),
@@ -111,7 +114,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
 
   it("restarts only after the mutable OpenClaw config contract is verified", async () => {
     const order: string[] = [];
-    const restartGateway = vi.fn(() => {
+    const restartGateway = vi.fn(async () => {
       order.push("restart");
       return { ok: true };
     });
@@ -247,13 +250,13 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
                     stderr: result.stderr,
                   };
                 },
-                executeSandboxExecCommand: () => null,
-                waitForRecoveredSandboxGateway: () => true,
+                executeSandboxExecCommand: async () => null,
+                waitForRecoveredSandboxGateway: async () => true,
                 ensureSandboxPortForward: () => true,
                 ensureHermesDashboardPortForwardIfEnabled: () => null,
                 recoverMessagingHostForward: () => null,
                 recoverDeclaredAgentForwardPorts: () => null,
-                printGatewayWedgeDiagnostics: () => false,
+                printGatewayWedgeDiagnostics: async () => false,
                 inspectHermesMcpReconciliationRefusal: () => null,
               },
             }),
@@ -288,7 +291,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   });
 
   it("does not restart when post-command config cleanup fails", async () => {
-    const restartGateway = vi.fn(() => ({ ok: true }));
+    const restartGateway = vi.fn(async () => ({ ok: true }));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const deps = depsFor(0, restartGateway);
     deps.cleanupDeps = {
@@ -315,7 +318,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   });
 
   it("fails the public command when activation restart fails", async () => {
-    const restartGateway = vi.fn(() => ({ ok: false }));
+    const restartGateway = vi.fn(async () => ({ ok: false }));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const exitCode = await runAndCaptureExit(
       ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
@@ -333,7 +336,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   });
 
   it("reports a controlled partial commit when the activation restart throws", async () => {
-    const restartGateway = vi.fn(() => {
+    const restartGateway = vi.fn(async () => {
       throw new Error("supervisor transport unavailable");
     });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -352,7 +355,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   });
 
   it("does not restart after a failed approval", async () => {
-    const restartGateway = vi.fn(() => ({ ok: true }));
+    const restartGateway = vi.fn(async () => ({ ok: true }));
     const exitCode = await runAndCaptureExit(
       ["openclaw", "pairing", "approve", "googlechat", "BADCODE"],
       depsFor(17, restartGateway),
@@ -363,7 +366,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   });
 
   it("leaves unrelated successful exec commands unchanged", async () => {
-    const restartGateway = vi.fn(() => ({ ok: true }));
+    const restartGateway = vi.fn(async () => ({ ok: true }));
     const exitCode = await runAndCaptureExit(
       ["openclaw", "pairing", "approve", "telegram", "ABCD1234"],
       depsFor(0, restartGateway),
@@ -376,7 +379,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   it.each(["hermes", "custom-agent"])(
     "does not restart a recorded non-OpenClaw %s sandbox",
     async (agent) => {
-      const restartGateway = vi.fn(() => ({ ok: true }));
+      const restartGateway = vi.fn(async () => ({ ok: true }));
       const deps = depsFor(0, restartGateway);
       deps.resolveSandboxAgent = () => agent;
 
@@ -391,7 +394,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   );
 
   it("does not restart an unregistered sandbox", async () => {
-    const restartGateway = vi.fn(() => ({ ok: true }));
+    const restartGateway = vi.fn(async () => ({ ok: true }));
     const deps = depsFor(0, restartGateway);
     deps.resolveSandboxAgent = () => null;
 
@@ -405,7 +408,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   });
 
   it("does not activate or claim managed recovery without an owning gateway", async () => {
-    const restartGateway = vi.fn(() => ({ ok: true }));
+    const restartGateway = vi.fn(async () => ({ ok: true }));
     const deps = depsFor(0, restartGateway);
     deps.selectGateway = () => ({ outcome: "unregistered", gatewayName: null });
     deps.cleanupDeps = {
@@ -434,7 +437,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   });
 
   it("fails closed when the recorded sandbox identity cannot be read", async () => {
-    const restartGateway = vi.fn(() => ({ ok: true }));
+    const restartGateway = vi.fn(async () => ({ ok: true }));
     const deps = depsFor(0, restartGateway);
     deps.resolveSandboxAgent = () => {
       throw new Error("registry unavailable");

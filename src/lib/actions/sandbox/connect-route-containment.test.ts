@@ -37,14 +37,14 @@ describe("connect route containment", () => {
     delete require.cache[requireDist.resolve(connectModulePath)];
   });
 
-  it("stops before the initial endpoint probe or repair mutation when routes conflict (#6315)", () => {
+  it("stops before the initial endpoint probe or repair mutation when routes conflict (#6315)", async () => {
     const conflict = new Error("shared gateway route conflict");
     const assertRouteCompatible = vi.fn(() => {
       throw conflict;
     });
-    const probe = vi.fn(() => ({ healthy: false, broken: true, detail: "BROKEN 503" }));
+    const probe = vi.fn(async () => ({ healthy: false, broken: true, detail: "BROKEN 503" }));
     const applyVmDnsMonkeypatch = vi.fn(() => ({ ok: false }));
-    const reapplyVmInferenceRoute = vi.fn(() => null);
+    const reapplyVmInferenceRoute = vi.fn(async () => null);
     const repairLegacyDnsProxy = vi.fn(() => ({ exitCode: 0 }));
     const deps: SandboxInferenceRouteRepairDeps = {
       probe,
@@ -62,7 +62,7 @@ describe("connect route containment", () => {
       gpuEnabled: false,
     };
 
-    expect(() => repairSandboxInferenceRouteWithDeps("vm-box", sandbox, {}, deps)).toThrow(
+    await expect(repairSandboxInferenceRouteWithDeps("vm-box", sandbox, {}, deps)).rejects.toBe(
       conflict,
     );
 
@@ -407,7 +407,7 @@ describe("connect route containment", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    const routeProbeCalls = harness.captureOpenshellSpy.mock.calls.filter((call) =>
+    const routeProbeCalls = harness.sandboxRunBufferedSpy.mock.calls.filter((call) =>
       JSON.stringify(call[0]).includes("inference.local/v1/models"),
     );
     expect(routeProbeCalls).toHaveLength(1);

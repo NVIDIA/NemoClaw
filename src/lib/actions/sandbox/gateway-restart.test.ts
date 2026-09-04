@@ -134,19 +134,19 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
         stdout: "GATEWAY_PID=123",
         stderr: "",
       })),
-      executeSandboxExecCommand: vi.fn(() => null),
-      waitForRecoveredSandboxGateway: vi.fn(() => true),
+      executeSandboxExecCommand: vi.fn(async () => null),
+      waitForRecoveredSandboxGateway: vi.fn(async () => true),
       ensureSandboxPortForward: vi.fn(() => true),
       ensureHermesDashboardPortForwardIfEnabled: vi.fn(() => null),
       recoverMessagingHostForward: vi.fn(() => null),
       recoverDeclaredAgentForwardPorts: vi.fn(() => null),
-      printGatewayWedgeDiagnostics: vi.fn(() => false),
+      printGatewayWedgeDiagnostics: vi.fn(async () => false),
       inspectHermesMcpReconciliationRefusal: vi.fn(() => null),
       ...overrides,
     };
   }
 
-  it("rejects schema-5 inside the gateway restart lifecycle fence (#9203)", () => {
+  it("rejects schema-5 inside the gateway restart lifecycle fence (#9203)", async () => {
     vi.spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable").mockImplementation(
       () => {
         throw new Error("schema-5 rejected");
@@ -154,7 +154,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     );
     const deps = baseDeps();
 
-    expect(() => restartSandboxGateway("alpha", { quiet: true, deps })).toThrow(
+    await expect(restartSandboxGateway("alpha", { quiet: true, deps })).rejects.toThrow(
       "schema-5 rejected",
     );
 
@@ -162,14 +162,14 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     expect(deps.executeSandboxExecCommand).not.toHaveBeenCalled();
   });
 
-  it("refuses supervisor output without a completion marker", () => {
+  it("refuses supervisor output without a completion marker", async () => {
     const deps = baseDeps({
       getSandbox: () => ({ name: "openclaw-box", agent: "openclaw" }),
       requestGatewaySupervisorAction: vi.fn(() => null),
     });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const result = restartSandboxGateway("openclaw-box", { quiet: true, deps });
+    const result = await restartSandboxGateway("openclaw-box", { quiet: true, deps });
 
     expect(result).toMatchObject({
       ok: false,
@@ -185,13 +185,13 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     );
   });
 
-  it("fails closed instead of using host-local supervisor control for a selected runtime", () => {
+  it("fails closed instead of using host-local supervisor control for a selected runtime", async () => {
     const deps = baseDeps();
     const { requestGatewaySupervisorAction: hostLocalSupervisorAction, ...nonSupervisorDeps } =
       deps;
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const result = restartSandboxGateway("alpha", {
+    const result = await restartSandboxGateway("alpha", {
       quiet: true,
       runtimeSelection: { gatewayName: "remote-gateway", workspace: "remote-workspace" },
       deps: nonSupervisorDeps,
@@ -208,13 +208,13 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     );
   });
 
-  it("prints a bounded sanitized Hermes gateway-log tail after supervisor failure (#8614)", () => {
+  it("prints a bounded sanitized Hermes gateway-log tail after supervisor failure (#8614)", async () => {
     const restore = silenceConsole();
     try {
       const logLines = Array.from({ length: 15 }, (_, index) => `line-${index}`);
       logLines[1] = "token=sk-proj-abcdefghijklmnopqrstuvwxyz0123456789";
       logLines[14] = "Bearer super-secret-token-value";
-      const executeSandboxExecCommand = vi.fn(() => ({
+      const executeSandboxExecCommand = vi.fn(async () => ({
         status: 0,
         stdout: logLines.join("\n"),
         stderr: "",
@@ -230,7 +230,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
         executeSandboxExecCommand,
       });
 
-      const result = restartSandboxGateway("triage-8614", { quiet: true, deps });
+      const result = await restartSandboxGateway("triage-8614", { quiet: true, deps });
       const output = (console.error as ReturnType<typeof vi.fn>).mock.calls.flat().join("\n");
 
       expect(result).toMatchObject({ ok: false, failureLayer: "launch failure" });
@@ -251,10 +251,10 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("does not read a gateway-log tail for non-Hermes failures (#8614)", () => {
+  it("does not read a gateway-log tail for non-Hermes failures (#8614)", async () => {
     const restore = silenceConsole();
     try {
-      const executeSandboxExecCommand = vi.fn(() => ({
+      const executeSandboxExecCommand = vi.fn(async () => ({
         status: 0,
         stdout: "unexpected",
         stderr: "",
@@ -268,7 +268,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
         executeSandboxExecCommand,
       });
 
-      restartSandboxGateway("alpha", { quiet: true, deps });
+      await restartSandboxGateway("alpha", { quiet: true, deps });
 
       expect(executeSandboxExecCommand).not.toHaveBeenCalled();
     } finally {
@@ -276,11 +276,11 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("force-restarts through PID 1 even when a gateway might already be healthy", () => {
+  it("force-restarts through PID 1 even when a gateway might already be healthy", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps();
-      const result = restartSandboxGateway("alpha", { deps });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({ ok: true, restarted: true, healthPassed: true });
       expect(deps.requestGatewaySupervisorAction).toHaveBeenCalledWith("alpha", "restart", 210000);
@@ -294,7 +294,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("uses the injected supervisor action for managed settle probes", () => {
+  it("uses the injected supervisor action for managed settle probes", async () => {
     const restore = silenceConsole();
     const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
     process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0.001";
@@ -314,7 +314,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
         requestGatewaySupervisorAction,
       });
 
-      const result = restartSandboxGateway("alpha", { quiet: true, deps });
+      const result = await restartSandboxGateway("alpha", { quiet: true, deps });
 
       expect(result).toMatchObject({ ok: true, restarted: true, healthPassed: true });
       expect(requestGatewaySupervisorAction.mock.calls).toEqual([
@@ -330,11 +330,11 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("suppresses restart success output in quiet mode", () => {
+  it("suppresses restart success output in quiet mode", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps();
-      const result = restartSandboxGateway("alpha", { quiet: true, deps });
+      const result = await restartSandboxGateway("alpha", { quiet: true, deps });
 
       expect(result).toMatchObject({ ok: true, restarted: true, healthPassed: true });
       expect(console.log).not.toHaveBeenCalled();
@@ -343,11 +343,11 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("reports privileged supervisor unavailability", () => {
+  it("reports privileged supervisor unavailability", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({ requestGatewaySupervisorAction: vi.fn(() => null) });
-      const result = restartSandboxGateway("alpha", { quiet: true, deps });
+      const result = await restartSandboxGateway("alpha", { quiet: true, deps });
 
       expect(result).toMatchObject({
         ok: false,
@@ -358,7 +358,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("distinguishes a supervisor that becomes unavailable during replacement (#7484)", () => {
+  it("distinguishes a supervisor that becomes unavailable during replacement (#7484)", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
@@ -373,7 +373,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
           ].join("\n"),
         })),
       });
-      const result = restartSandboxGateway("alpha", { quiet: true, deps });
+      const result = await restartSandboxGateway("alpha", { quiet: true, deps });
 
       expect(result).toMatchObject({
         ok: false,
@@ -388,7 +388,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("reports Hermes boundary refusals without hiding diagnostics in quiet mode", () => {
+  it("reports Hermes boundary refusals without hiding diagnostics in quiet mode", async () => {
     const restore = silenceConsole();
     try {
       const hermesAgent = {
@@ -405,7 +405,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
           stderr: "[SECURITY] TELEGRAM_BOT_TOKEN (line 2)",
         })),
       });
-      const result = restartSandboxGateway("alpha", { quiet: true, deps });
+      const result = await restartSandboxGateway("alpha", { quiet: true, deps });
 
       expect(result).toMatchObject({
         ok: false,
@@ -420,7 +420,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("reports launch failure markers", () => {
+  it("reports launch failure markers", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
@@ -430,7 +430,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
           stderr: "tail output",
         })),
       });
-      const result = restartSandboxGateway("alpha", { deps });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({ ok: false, failureLayer: "launch failure" });
     } finally {
@@ -438,7 +438,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("redacts and strips restart failure detail before printing it", () => {
+  it("redacts and strips restart failure detail before printing it", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
@@ -448,7 +448,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
           stderr: "\u001b[31mOPENAI_API_KEY=sk-review-secret\u001b[0m",
         })),
       });
-      const result = restartSandboxGateway("alpha", { deps });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({ ok: false, failureLayer: "launch failure" });
       expect(result.ok).toBe(false);
@@ -466,7 +466,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("prints bounded redacted evidence for a Hermes health timeout (#7484)", () => {
+  it("prints bounded redacted evidence for a Hermes health timeout (#7484)", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
@@ -488,7 +488,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
           ].join("\n"),
         })),
       });
-      const result = restartSandboxGateway("alpha", { deps });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({
         ok: false,
@@ -517,11 +517,11 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("reports a health timeout after the restart process marker", () => {
+  it("reports a health timeout after the restart process marker", async () => {
     const restore = silenceConsole();
     try {
-      const deps = baseDeps({ waitForRecoveredSandboxGateway: vi.fn(() => false) });
-      const result = restartSandboxGateway("alpha", { deps });
+      const deps = baseDeps({ waitForRecoveredSandboxGateway: vi.fn(async () => false) });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({ ok: false, failureLayer: "health timeout" });
       expect(deps.printGatewayWedgeDiagnostics).toHaveBeenCalledWith(
@@ -533,7 +533,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("fails when the primary dashboard/API forward cannot be restored", () => {
+  it("fails when the primary dashboard/API forward cannot be restored", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
@@ -541,7 +541,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
         recoverMessagingHostForward: vi.fn(() => true),
         recoverDeclaredAgentForwardPorts: vi.fn(() => true),
       });
-      const result = restartSandboxGateway("alpha", { deps });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({
         ok: false,
@@ -563,13 +563,13 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("fails when an enabled auxiliary forward cannot be restored", () => {
+  it("fails when an enabled auxiliary forward cannot be restored", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
         ensureHermesDashboardPortForwardIfEnabled: vi.fn(() => false),
       });
-      const result = restartSandboxGateway("alpha", { deps });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({
         ok: false,
@@ -584,7 +584,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("reports every failed auxiliary forward in declaration order", () => {
+  it("reports every failed auxiliary forward in declaration order", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
@@ -592,7 +592,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
         recoverMessagingHostForward: vi.fn(() => false),
         recoverDeclaredAgentForwardPorts: vi.fn(() => false),
       });
-      const result = restartSandboxGateway("alpha", { deps });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({ ok: false, failureLayer: "forward recovery failure" });
       expect(result.ok).toBe(false);
@@ -612,7 +612,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("omits recovered and not-enabled auxiliary forwards from the failure detail", () => {
+  it("omits recovered and not-enabled auxiliary forwards from the failure detail", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
@@ -620,7 +620,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
         recoverMessagingHostForward: vi.fn(() => false),
         recoverDeclaredAgentForwardPorts: vi.fn(() => null),
       });
-      const result = restartSandboxGateway("alpha", { deps });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({ ok: false, failureLayer: "forward recovery failure" });
       expect(result.ok).toBe(false);
@@ -633,13 +633,13 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("reports the agent-declared host forwards when only their recovery fails", () => {
+  it("reports the agent-declared host forwards when only their recovery fails", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
         recoverDeclaredAgentForwardPorts: vi.fn(() => false),
       });
-      const result = restartSandboxGateway("alpha", { deps });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({
         ok: false,
@@ -652,11 +652,11 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("returns a recovered result when no auxiliary forward is enabled", () => {
+  it("returns a recovered result when no auxiliary forward is enabled", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps();
-      const result = restartSandboxGateway("alpha", { deps });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toEqual({
         ok: true,
@@ -670,7 +670,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("reports the primary forward failure ahead of failed auxiliary forwards", () => {
+  it("reports the primary forward failure ahead of failed auxiliary forwards", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
@@ -679,7 +679,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
         recoverMessagingHostForward: vi.fn(() => false),
         recoverDeclaredAgentForwardPorts: vi.fn(() => false),
       });
-      const result = restartSandboxGateway("alpha", { deps });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({
         ok: false,
@@ -696,7 +696,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("refuses terminal agents with the unsupported-agent support matrix", () => {
+  it("refuses terminal agents with the unsupported-agent support matrix", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
@@ -707,7 +707,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
         }),
         getSandbox: () => ({ name: "alpha", agent: "langchain-deepagents-code" }),
       });
-      const result = restartSandboxGateway("alpha", { deps });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({ ok: false, failureLayer: "unsupported agent" });
       expect(result.ok).toBe(false);
@@ -728,14 +728,14 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("refuses custom agents when the explicit runtime definition is unavailable", () => {
+  it("refuses custom agents when the explicit runtime definition is unavailable", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
         getSessionAgent: () => null,
         getSandbox: () => ({ name: "alpha", agent: "custom-agent" }),
       });
-      const result = restartSandboxGateway("alpha", { deps });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({ ok: false, failureLayer: "unsupported agent" });
       expect(result.ok).toBe(false);
@@ -752,7 +752,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("fails closed when the persisted agent lookup fails", () => {
+  it("fails closed when the persisted agent lookup fails", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
@@ -761,7 +761,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
           throw new Error("registry unavailable");
         },
       });
-      const result = restartSandboxGateway("alpha", { deps });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({
         ok: false,
@@ -774,7 +774,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("refuses custom gateway agents without a supported restart runtime", () => {
+  it("refuses custom gateway agents without a supported restart runtime", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
@@ -784,7 +784,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
         }),
         getSandbox: () => ({ name: "alpha", agent: "custom-gateway" }),
       });
-      const result = restartSandboxGateway("alpha", { deps });
+      const result = await restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({ ok: false, failureLayer: "unsupported agent" });
       expect(result.ok).toBe(false);

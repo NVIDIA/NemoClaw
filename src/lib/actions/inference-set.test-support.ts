@@ -257,11 +257,11 @@ export function createDeps(options: {
     revokeHttpsPinRuntimeAdapterRoute: vi.fn(
       options.revokeHttpsPinRuntimeAdapterRoute ?? (async () => true),
     ),
-    probeSandboxRoute: vi.fn(options.probeSandboxRoute ?? (() => ({ ok: true }) as const)),
+    probeSandboxRoute: vi.fn(options.probeSandboxRoute ?? (async () => ({ ok: true }) as const)),
     sleep: vi.fn(async () => {}),
     restartSandboxGateway: vi.fn(
       options.restartSandboxGateway ??
-        ((): ReturnType<InferenceSetDeps["restartSandboxGateway"]> => ({
+        (async (): ReturnType<InferenceSetDeps["restartSandboxGateway"]> => ({
           ok: true,
           restarted: true,
           healthPassed: true,

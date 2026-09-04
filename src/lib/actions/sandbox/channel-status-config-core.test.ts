@@ -4,11 +4,23 @@
 import { describe, expect, it } from "vitest";
 import {
   entry,
-  makeDeps,
+  makeDeps as makeSyncDeps,
   reportSignals,
   showSandboxChannelStatus,
   withTelegramProbe,
 } from "./channel-status.test-helpers";
+
+function makeDeps(options: Parameters<typeof makeSyncDeps>[0]) {
+  const result = makeSyncDeps(options);
+  const execSandbox = result.deps.execSandbox;
+  return {
+    ...result,
+    deps: {
+      ...result.deps,
+      execSandbox: async (...args: Parameters<typeof execSandbox>) => execSandbox(...args),
+    },
+  };
+}
 
 describe("showSandboxChannelStatus config comparison", () => {
   it("marks rendered config ok when the sandbox config matches the sandbox entry", async () => {

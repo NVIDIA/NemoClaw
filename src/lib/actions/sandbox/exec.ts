@@ -47,7 +47,7 @@ export type SandboxExecChildOptions = SandboxExecOptions & {
   subprocessEnv?: NodeJS.ProcessEnv;
 };
 
-export type SandboxExecGatewayRestart = (sandboxName: string) => { ok: boolean };
+export type SandboxExecGatewayRestart = (sandboxName: string) => Promise<{ ok: boolean }>;
 
 export type SandboxExecAgentResolver = (sandboxName: string) => string | null;
 
@@ -299,7 +299,7 @@ export function isGoogleChatPairingApproval(command: readonly string[]): boolean
   );
 }
 
-function defaultRestartGateway(sandboxName: string): { ok: boolean } {
+function defaultRestartGateway(sandboxName: string): Promise<{ ok: boolean }> {
   const { defaultInferenceGatewayRestart } =
     require("../inference-set-gateway-restart") as typeof import("../inference-set-gateway-restart");
   return defaultInferenceGatewayRestart(sandboxName);
@@ -444,7 +444,7 @@ export async function execSandbox(
     if (recordedAgent === "openclaw") {
       let restartSucceeded = false;
       try {
-        restartSucceeded = (deps.restartGateway ?? defaultRestartGateway)(sandboxName).ok;
+        restartSucceeded = (await (deps.restartGateway ?? defaultRestartGateway)(sandboxName)).ok;
       } catch {
         // The approval already committed inside OpenClaw. Convert restart
         // exceptions into the same explicit partial-commit recovery contract.

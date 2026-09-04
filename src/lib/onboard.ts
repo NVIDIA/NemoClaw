@@ -130,6 +130,7 @@ const {
 }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
 const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tracing");
 const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
+const sandboxCommandCli: typeof import("./adapters/openshell/sandbox-command-cli") = require("./adapters/openshell/sandbox-command-cli");
 const messagingChannelSetup: typeof import("./onboard/messaging-channel-setup") = require("./onboard/messaging-channel-setup");
 const { applySessionRecovery } =
   require("./onboard/session-recovery") as typeof import("./onboard/session-recovery");
@@ -698,8 +699,8 @@ const {
   getGatewayPort: () => GATEWAY_PORT,
   getDockerDriverGatewayEndpoint,
 });
+const sandboxExec = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
 
-// Gateway state functions — delegated to src/lib/state/gateway.ts
 const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatewayState;
 const waitForSandboxReady = sandboxReadinessTracing.createCliSandboxReadyWaiter({
   isLinuxDockerDriverGatewayEnabled,
@@ -919,13 +920,14 @@ const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawRea
     isAffirmativeAnswer,
   });
 
+const webSearchDeps = { prompt, note, isNonInteractive, cliName, commandExecutor: sandboxExec };
 const {
   ensureValidatedWebSearchCredential,
   ensureValidatedBraveSearchCredential,
   configureWebSearch,
   verifyWebSearchInsideSandbox,
   webSearchProviderForConfig,
-} = createWebSearchFlowHelpers({ prompt, note, isNonInteractive, cliName, runCaptureOpenshell });
+} = createWebSearchFlowHelpers(webSearchDeps);
 
 const {
   hasResponsesToolCall,
@@ -1517,7 +1519,7 @@ const sandboxCreateOrchestrationRuntime = {
   get getDashboardForwardPort() {
     return getDashboardForwardPort;
   },
-  readDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell, () => GATEWAY_NAME),
+  readDcodeSelectionDrift: createDcodeSelectionDriftReader(sandboxExec, () => GATEWAY_NAME),
   getDefaultSandboxNameForAgent,
   getDockerDriverGatewayStateDir,
   getHermesToolGatewayBroker,
@@ -1561,6 +1563,7 @@ const sandboxCreateOrchestrationRuntime = {
   runSandboxProviderPreDeleteCleanup,
   sandboxAgent,
   sandboxBuildPatchConfig,
+  sandboxCommandExecutor: sandboxExec,
   get sandboxCancelRollback() {
     return sandboxCancelRollback;
   },
@@ -2499,12 +2502,8 @@ const setupMessagingChannels = messagingChannelSetup.createSetupMessagingChannel
   prompt,
 });
 
-// ── Step 7: OpenClaw ─────────────────────────────────────────────
-const syncNemoClawConfigInSandbox = createNemoClawConfigSync({
-  getProviderSelectionConfig,
-  run,
-  openshellArgv,
-});
+const configSyncDeps = { getProviderSelectionConfig, sandboxCommandExecutor: sandboxExec };
+const syncNemoClawConfigInSandbox = createNemoClawConfigSync(configSyncDeps);
 
 const configureOpenclawSandbox = openclawSetup.createConfigureOpenclawSandbox({
   syncNemoClawConfigInSandbox,
@@ -3276,6 +3275,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             verifyCompatibleEndpointSandboxSmoke({
               ...options,
               runOpenshell: runCoreGatewayOpenshell,
+              sandboxCommandExecutor: sandboxExec,
               redact,
             }),
           preparePolicyPresetResumeSelection,
@@ -3309,7 +3309,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               chain,
               {
                 executeSandboxCommand: (sandbox: string, script: string) =>
-                  executeSandboxCommandForVerification(sandbox, script),
+                  executeSandboxCommandForVerification(sandbox, script, sandboxExec),
                 probeHostPort: (port: number, probePath: string) => {
                   const result = runCapture(
                     [

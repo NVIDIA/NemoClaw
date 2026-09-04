@@ -50,6 +50,19 @@ describe("CLI layer import boundaries (#6245)", () => {
     expect(findManagedRuntimeBoundaryViolations()).toEqual([]);
   });
 
+  it("keeps buffered sandbox commands on the async executor (#10991)", () => {
+    const violations = scanFixture(
+      fixturePath("src/lib/onboard", "buffered-exec-helper"),
+      'import { buildOpenshellExecArgs } from "../actions/sandbox/exec";\nexport const value = buildOpenshellExecArgs;\n',
+    );
+
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: "buffered-exec-uses-async-executor" }),
+      ]),
+    );
+  });
+
   it("collects TypeScript import-equals references (#6245)", () => {
     const violations = scanFixture(
       fixturePath("src/lib/domain", "import-equals"),
@@ -118,9 +131,7 @@ describe("CLI layer import boundaries (#6245)", () => {
     const violations = scanFixture(fixturePath("src/lib", "bin-lib-call"), source);
 
     expect(violations).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ rule: "src-no-bin-lib-shims" }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ rule: "src-no-bin-lib-shims" })]),
     );
   });
 
@@ -270,12 +281,8 @@ describe("CLI layer import boundaries (#6245)", () => {
         "src/lib/domain",
         `emitted-specifier-importer-${sourceExtension.slice(1)}`,
       );
-    const specifier = path
-      .relative(path.dirname(importer), target)
-      .split(path.sep)
-        .join("/");
-      const emittedSpecifier =
-        specifier.slice(0, -sourceExtension.length) + emittedExtension;
+      const specifier = path.relative(path.dirname(importer), target).split(path.sep).join("/");
+      const emittedSpecifier = specifier.slice(0, -sourceExtension.length) + emittedExtension;
       try {
         fs.writeFileSync(target, "export const value = true;\n");
         fs.writeFileSync(

@@ -1,10 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  OpenShellSandboxBufferedCommandCompletion,
+  OpenShellSandboxBufferedCommandExecutor,
+} from "../../adapters/openshell/sandbox-command";
 import type { SandboxEntry } from "../../state/registry";
 
-import { captureOpenshell } from "../../adapters/openshell/runtime";
+const runBuffered = vi.hoisted(() =>
+  vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(),
+);
+
+vi.mock("../../adapters/openshell/sandbox-command-cli", () => ({
+  createCliOpenShellSandboxCommandExecutor: vi.fn(() => ({ runBuffered })),
+}));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: vi.fn(() => ({ status: 0, output: "" })),
@@ -46,6 +56,10 @@ import {
   type SandboxInferenceRouteRepairDeps,
 } from "./connect";
 
+function completed(output: string): OpenShellSandboxBufferedCommandCompletion {
+  return { outcome: { kind: "completed", exitCode: 0 }, stdout: output, stderr: "" };
+}
+
 const healthy = (detail = "OK 200"): SandboxInferenceRouteProbe => ({
   healthy: true,
   broken: false,
@@ -82,7 +96,7 @@ function makeRepairDeps(
   };
   const queue = [...probes];
   const deps: SandboxInferenceRouteRepairDeps = {
-    probe: vi.fn((_sandboxName, options) => {
+    probe: vi.fn(async (_sandboxName, options) => {
       calls.probeOptions.push(options);
       return queue.shift() ?? broken("missing mocked probe");
     }),
@@ -91,7 +105,7 @@ function makeRepairDeps(
       calls.monkeypatches.push(sandboxName);
       return { ok: false, reason: "not mocked" };
     }),
-    reapplyVmInferenceRoute: vi.fn((sandboxName) => {
+    reapplyVmInferenceRoute: vi.fn(async (sandboxName) => {
       calls.reapplications.push(sandboxName);
       return queue.shift() ?? broken("missing mocked reapply probe");
     }),
@@ -107,12 +121,12 @@ function makeRepairDeps(
 }
 
 describe("sandbox connect route repair unit flow", () => {
-  it("still probes and fails closed when route repair is disabled (#8502)", () => {
+  it("still probes and fails closed when route repair is disabled (#8502)", async () => {
     const { calls, deps } = makeRepairDeps([broken()], {
       isRepairDisabled: () => true,
     });
 
-    const result = repairSandboxInferenceRouteWithDeps("demo", sandbox(), {}, deps);
+    const result = await repairSandboxInferenceRouteWithDeps("demo", sandbox(), {}, deps);
 
     expect(result).toEqual({
       healthy: false,
@@ -123,10 +137,10 @@ describe("sandbox connect route repair unit flow", () => {
     expect(calls.legacyRepairs).toEqual([]);
   });
 
-  it("does not repair a healthy initial probe", () => {
+  it("does not repair a healthy initial probe", async () => {
     const { calls, deps } = makeRepairDeps([healthy()]);
 
-    const result = repairSandboxInferenceRouteWithDeps("demo", sandbox(), {}, deps);
+    const result = await repairSandboxInferenceRouteWithDeps("demo", sandbox(), {}, deps);
 
     expect(result).toEqual({
       healthy: true,
@@ -137,10 +151,10 @@ describe("sandbox connect route repair unit flow", () => {
     expect(calls.reapplications).toEqual([]);
   });
 
-  it("repairs legacy kubernetes routes through the DNS proxy path", () => {
+  it("repairs legacy kubernetes routes through the DNS proxy path", async () => {
     const { calls, deps } = makeRepairDeps([broken(), healthy()]);
 
-    const result = repairSandboxInferenceRouteWithDeps(
+    const result = await repairSandboxInferenceRouteWithDeps(
       "legacy-box",
       sandbox({ openshellDriver: "kubernetes" }),
       {},
@@ -161,7 +175,7 @@ describe("sandbox connect route repair unit flow", () => {
     expect(calls.logs).toContain("  inference.local route repaired.");
   });
 
-  it("returns the DNS repair failure detail without route reapply on legacy sandboxes", () => {
+  it("returns the DNS repair failure detail without route reapply on legacy sandboxes", async () => {
     const { calls, deps } = makeRepairDeps([broken()], {
       repairLegacyDnsProxy: vi.fn((sandboxName, quiet) => {
         calls.legacyRepairs.push({ sandboxName, quiet });
@@ -169,7 +183,7 @@ describe("sandbox connect route repair unit flow", () => {
       }),
     });
 
-    const result = repairSandboxInferenceRouteWithDeps(
+    const result = await repairSandboxInferenceRouteWithDeps(
       "legacy-box",
       sandbox({ openshellDriver: "kubernetes" }),
       {},
@@ -187,10 +201,10 @@ describe("sandbox connect route repair unit flow", () => {
 
   it.each(["docker", "podman"])(
     "uses inference route reapply instead of legacy DNS repair for %s sandboxes",
-    (driver) => {
+    async (driver) => {
       const { calls, deps } = makeRepairDeps([broken(), healthy()]);
 
-      const result = repairSandboxInferenceRouteWithDeps(
+      const result = await repairSandboxInferenceRouteWithDeps(
         `${driver}-box`,
         sandbox({ openshellDriver: driver }),
         {},
@@ -205,7 +219,7 @@ describe("sandbox connect route repair unit flow", () => {
     },
   );
 
-  it("lets the VM monkeypatch satisfy the route before inference reapply", () => {
+  it("lets the VM monkeypatch satisfy the route before inference reapply", async () => {
     const { calls, deps } = makeRepairDeps([broken(), healthy()], {
       shouldApplyVmDnsMonkeypatch: vi.fn(() => true),
       applyVmDnsMonkeypatch: vi.fn((sandboxName) => {
@@ -214,7 +228,7 @@ describe("sandbox connect route repair unit flow", () => {
       }),
     });
 
-    const result = repairSandboxInferenceRouteWithDeps(
+    const result = await repairSandboxInferenceRouteWithDeps(
       "vm-box",
       sandbox({ openshellDriver: "vm" }),
       {},
@@ -234,7 +248,7 @@ describe("sandbox connect route repair unit flow", () => {
     );
   });
 
-  it("falls back to inference reapply when the VM monkeypatch leaves the route broken", () => {
+  it("falls back to inference reapply when the VM monkeypatch leaves the route broken", async () => {
     const { calls, deps } = makeRepairDeps([broken(), broken(), healthy()], {
       shouldApplyVmDnsMonkeypatch: vi.fn(() => true),
       applyVmDnsMonkeypatch: vi.fn((sandboxName) => {
@@ -243,7 +257,7 @@ describe("sandbox connect route repair unit flow", () => {
       }),
     });
 
-    const result = repairSandboxInferenceRouteWithDeps(
+    const result = await repairSandboxInferenceRouteWithDeps(
       "vm-box",
       sandbox({ openshellDriver: "vm" }),
       {},
@@ -258,10 +272,10 @@ describe("sandbox connect route repair unit flow", () => {
     );
   });
 
-  it("reports broken non-legacy routes after inference reapply cannot repair them", () => {
+  it("reports broken non-legacy routes after inference reapply cannot repair them", async () => {
     const { calls, deps } = makeRepairDeps([broken(), broken()]);
 
-    const result = repairSandboxInferenceRouteWithDeps(
+    const result = await repairSandboxInferenceRouteWithDeps(
       "vm-box",
       sandbox({ openshellDriver: "vm" }),
       {},
@@ -301,7 +315,7 @@ function makeResetDeps(
       calls.inferenceSets.push({ provider, model });
       return { status: 0 };
     }),
-    probe: vi.fn((_sandboxName, options) => {
+    probe: vi.fn(async (_sandboxName, options) => {
       calls.probeOptions.push(options);
       return queue.shift() ?? broken("missing mocked reset probe");
     }),
@@ -316,10 +330,10 @@ function makeResetDeps(
 }
 
 describe("managed inference route reset unit flow", () => {
-  it("verifies local dependencies before and after a successful route reset", () => {
+  it("verifies local dependencies before and after a successful route reset", async () => {
     const { calls, deps } = makeResetDeps([healthy()]);
 
-    const result = resetManagedInferenceRouteWithDeps(
+    const result = await resetManagedInferenceRouteWithDeps(
       "demo",
       sandbox({ provider: "ollama-local", model: "qwen3:0.6b" }),
       { detail: "BROKEN 503" },
@@ -335,7 +349,7 @@ describe("managed inference route reset unit flow", () => {
     expect(calls.logs).toContain("  inference.local route repaired.");
   });
 
-  it("probes route health after a non-zero inference set and accepts a healthy route", () => {
+  it("probes route health after a non-zero inference set and accepts a healthy route", async () => {
     const { calls, deps } = makeResetDeps([healthy()], {
       runInferenceSet: vi.fn((provider, model) => {
         calls.inferenceSets.push({ provider, model });
@@ -343,7 +357,7 @@ describe("managed inference route reset unit flow", () => {
       }),
     });
 
-    const result = resetManagedInferenceRouteWithDeps(
+    const result = await resetManagedInferenceRouteWithDeps(
       "demo",
       sandbox(),
       { detail: "BROKEN 503" },
@@ -356,7 +370,7 @@ describe("managed inference route reset unit flow", () => {
     expect(calls.errors).toEqual([]);
   });
 
-  it("stops before inference set when local dependency checks fail", () => {
+  it("stops before inference set when local dependency checks fail", async () => {
     const { calls, deps } = makeResetDeps([], {
       verifyLocalInferenceRouteDependencies: vi.fn((provider, options) => {
         calls.localChecks.push({ provider, quiet: options.quiet });
@@ -364,7 +378,7 @@ describe("managed inference route reset unit flow", () => {
       }),
     });
 
-    const result = resetManagedInferenceRouteWithDeps(
+    const result = await resetManagedInferenceRouteWithDeps(
       "demo",
       sandbox({ provider: "ollama-local", model: "qwen3:0.6b" }),
       { detail: "BROKEN 503" },
@@ -376,7 +390,7 @@ describe("managed inference route reset unit flow", () => {
     expect(calls.unrecoverable).toEqual([{ sandboxName: "demo", detail: "BROKEN 503" }]);
   });
 
-  it("fails closed when route reset and the follow-up probe are both unhealthy", () => {
+  it("fails closed when route reset and the follow-up probe are both unhealthy", async () => {
     const { calls, deps } = makeResetDeps([broken("BROKEN 503 still down")], {
       runInferenceSet: vi.fn((provider, model) => {
         calls.inferenceSets.push({ provider, model });
@@ -384,7 +398,7 @@ describe("managed inference route reset unit flow", () => {
       }),
     });
 
-    const result = resetManagedInferenceRouteWithDeps(
+    const result = await resetManagedInferenceRouteWithDeps(
       "demo",
       sandbox(),
       { detail: "BROKEN 503" },
@@ -398,32 +412,43 @@ describe("managed inference route reset unit flow", () => {
 });
 
 describe("connect inference route retries", () => {
-  it("returns the third healthy probe result after two unhealthy probe results (#9218)", () => {
-    vi.mocked(captureOpenshell)
-      .mockReturnValueOnce({ status: 0, output: "BROKEN 503", stderr: "" })
-      .mockReturnValueOnce({ status: 0, output: "BROKEN 503", stderr: "" })
-      .mockReturnValueOnce({ status: 0, output: "OK 200", stderr: "" });
+  beforeEach(() => {
+    runBuffered.mockReset();
+  });
 
-    const result = probeSandboxInferenceRoute(
+  it("returns the third healthy probe result after two unhealthy probe results (#9218)", async () => {
+    runBuffered
+      .mockResolvedValueOnce(completed("BROKEN 503"))
+      .mockResolvedValueOnce(completed("BROKEN 503"))
+      .mockResolvedValueOnce(completed("OK 200"));
+
+    const result = await probeSandboxInferenceRoute(
       "alpha",
       { name: "hermes" },
       { attempts: 3, delayMs: 2_000 },
     );
 
     expect(result).toMatchObject({ healthy: true, broken: false, httpStatus: 200 });
-    expect(captureOpenshell).toHaveBeenCalledTimes(3);
+    expect(runBuffered).toHaveBeenCalledTimes(3);
+    expect(runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "selected" },
+        command: ["sh", "-c", expect.any(String)],
+      }),
+    );
   });
 
-  it("returns the final unhealthy probe result after exhausting attempts (#9218)", () => {
-    vi.mocked(captureOpenshell).mockReturnValue({ status: 0, output: "BROKEN 503", stderr: "" });
+  it("returns the final unhealthy probe result after exhausting attempts (#9218)", async () => {
+    runBuffered.mockResolvedValue(completed("BROKEN 503"));
 
-    const result = probeSandboxInferenceRoute(
+    const result = await probeSandboxInferenceRoute(
       "alpha",
       { name: "hermes" },
       { attempts: 2, delayMs: 500 },
     );
 
     expect(result).toMatchObject({ healthy: false, broken: true, httpStatus: 503 });
-    expect(captureOpenshell).toHaveBeenCalledTimes(2);
+    expect(runBuffered).toHaveBeenCalledTimes(2);
   });
 });

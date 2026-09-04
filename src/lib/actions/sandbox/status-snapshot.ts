@@ -61,7 +61,9 @@ type ProbeProviderHealth = (
   provider: string,
   options?: ProviderHealthProbeOptions,
 ) => ProviderHealthStatus | null;
-type ProbeSandboxInferenceGatewayHealth = typeof probeSandboxInferenceGatewayHealth;
+type ProbeSandboxInferenceGatewayHealth = (
+  ...args: Parameters<typeof probeSandboxInferenceGatewayHealth>
+) => ReturnType<typeof probeSandboxInferenceGatewayHealth>;
 type DelayInferenceRecoveryProbe = (delayMs: number) => Promise<void>;
 
 const INFERENCE_PROBE_ATTEMPTS = 3;
@@ -260,9 +262,12 @@ export function resolveSandboxStatusAgent(agentName = "openclaw"): SandboxStatus
 
 type ReconcileSandboxGatewayState = (sandboxName: string) => Promise<SandboxGatewayState>;
 type ProbeTerminalRuntimeHealth = (sandboxName: string) => TerminalRuntimeOomProbeResult;
-type RecoverSandboxProcesses =
+type ProductionRecoverSandboxProcesses =
   (typeof import("./status/process-recovery"))["checkAndRecoverSandboxProcesses"];
-type SandboxProcessRecoveryResult = ReturnType<RecoverSandboxProcesses>;
+type SandboxProcessRecoveryResult = Awaited<ReturnType<ProductionRecoverSandboxProcesses>>;
+type RecoverSandboxProcesses = (
+  ...args: Parameters<ProductionRecoverSandboxProcesses>
+) => Promise<SandboxProcessRecoveryResult>;
 
 type SandboxProcessRecoveryFailure = {
   layer:
@@ -394,7 +399,7 @@ function reportInferenceProbeError(error: unknown, writer: (message: string) => 
 
 function reportInferenceProbeRetry(
   gatewayChain: Awaited<ReturnType<ProbeSandboxInferenceGatewayHealth>>,
-  invocation: ReturnType<typeof runSandboxInferenceInvocationProbe> | null,
+  invocation: Awaited<ReturnType<typeof runSandboxInferenceInvocationProbe>> | null,
   delayMs: number,
   attempt: number,
   writer: (message: string) => void,
@@ -468,7 +473,7 @@ export async function collectSandboxStatusSnapshot(
       // The managed gateway service can restart a Docker sandbox before status
       // runs. OpenShell then reports Ready without a recoveredSandbox marker,
       // while the OpenClaw gateway and host forward can still be absent.
-      const recovery = (opts.deps?.recoverSandboxProcesses ?? loadRecoverSandboxProcesses())(
+      const recovery = await (opts.deps?.recoverSandboxProcesses ?? loadRecoverSandboxProcesses())(
         sandboxName,
         {
           quiet: true,
@@ -622,7 +627,7 @@ export async function collectSandboxStatusSnapshot(
     const invocationModel = (invocationRoute.model || "").trim();
     const invocationProvider = (invocationRoute.provider || "").trim();
     const canProbeInvocation = Boolean(invocationModel && invocationProvider);
-    let invocation: ReturnType<typeof runSandboxInferenceInvocationProbe> | null = null;
+    let invocation: Awaited<ReturnType<typeof runSandboxInferenceInvocationProbe>> | null = null;
     try {
       const probe =
         opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth;
@@ -631,7 +636,7 @@ export async function collectSandboxStatusSnapshot(
           gatewayChain = gatewayName ? await probe(sandboxName, { gatewayName }) : null;
           invocation =
             gatewayChain?.ok && canProbeInvocation
-              ? runSandboxInferenceInvocationProbe(
+              ? await runSandboxInferenceInvocationProbe(
                   {
                     sandboxName,
                     gatewayName: gatewayName ?? undefined,

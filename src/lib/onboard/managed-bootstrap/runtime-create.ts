@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxGpuProofResult } from "../../state/registry";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import type {
   ManagedStartupStateRoot,
@@ -25,6 +26,7 @@ export interface ManagedBootstrapRuntimeCommandResult {
 }
 
 export interface ManagedBootstrapRuntimeDependencies {
+  readonly commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   readonly runCaptureOpenshell?: (args: string[], options?: Record<string, unknown>) => string;
   readonly runOpenshell?: (
     args: string[],

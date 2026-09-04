@@ -6,6 +6,11 @@ import { isDeepStrictEqual } from "node:util";
 import * as agentRuntime from "../../agent/runtime";
 import type { AgentDefinition } from "../../agent/definition-types";
 import { spawnExitCode } from "../../core/process-exit";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
+import {
+  createCliOpenShellSandboxCommandExecutor,
+  createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor,
+} from "../../adapters/openshell/sandbox-command-cli";
 import { resolveSandboxGatewayName } from "../../gateway-runtime-action";
 import type { SandboxEntry } from "../../state/registry";
 import {
@@ -43,6 +48,9 @@ import {
 
 const LAUNCH_READINESS_FENCE_REPAIR =
   "Launch readiness evidence could not be safely invalidated. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.";
+const sandboxCommandExecutor = createCliOpenShellSandboxCommandExecutor({
+  hostCwd: REPOSITORY_ROOT,
+});
 
 /**
  * Connect to a sandbox and start its agent in one host-side step (#6006).
@@ -117,7 +125,10 @@ async function inspectLaunchReadinessForLaunch(
   const inspect = deps.inspectLaunchReadiness ?? inspectLaunchReadiness;
   const readSandbox = deps.getSandbox ?? getKnownSandboxTarget;
   if (inspectPortableAgentReceiptDisposition(sandboxName).kind !== "hermes") {
-    return { decision: await inspect(sandboxName), hermesAuthority: null };
+    return {
+      decision: await inspect(sandboxName, { commandExecutor: sandboxCommandExecutor }),
+      hermesAuthority: null,
+    };
   }
   if (readSandbox(sandboxName)?.agent !== "hermes") {
     throw new Error("Hermes portable registry authority changed before launch readiness.");
@@ -148,9 +159,17 @@ async function inspectLaunchReadinessForLaunch(
     const command = qualified.commandAuthority;
     const capture = (args: string[], options = {}) =>
       captureHermesPortableAcceptedReadinessObservation(command, args, options);
+    const commandExecutor = createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor(
+      {
+        resolveBinary: () => command.executablePath,
+        hostCwd: REPOSITORY_ROOT,
+        hostEnv: command.env,
+      },
+      command.assertCurrent,
+    );
     command.assertCurrent();
     const decision = await inspect(sandboxName, {
-      ...createBoundLaunchReadinessDeps(capture),
+      ...createBoundLaunchReadinessDeps(capture, commandExecutor),
       getSandbox: readSandbox,
       withSandboxLock: async (_name, operation) => operation(),
     });

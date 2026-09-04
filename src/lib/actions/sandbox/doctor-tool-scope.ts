@@ -55,7 +55,7 @@ export type ToolScopeProbe = {
 };
 
 export type SandboxExecResult = { status: number; stdout: string; stderr: string } | null;
-export type SandboxExec = (sandboxName: string, script: string) => SandboxExecResult;
+export type SandboxExec = (sandboxName: string, script: string) => Promise<SandboxExecResult>;
 
 const PROBE_MARKER = "__NEMOCLAW_TOOL_SCOPE_PROBE__";
 
@@ -443,18 +443,18 @@ export type BuildToolScopeChecksDeps = {
  * Orchestrate the probe, the optional `--fix` repair, and a re-probe, returning
  * doctor checks. The exec/repair/policy dependencies are injected for testing.
  */
-export function buildToolScopeChecks(
+export async function buildToolScopeChecks(
   sandboxName: string,
   cliName: string,
   wantsFix: boolean,
   deps: BuildToolScopeChecksDeps,
-): DoctorToolScopeCheck[] {
+): Promise<DoctorToolScopeCheck[]> {
   const readPolicy = deps.readPolicyModule ?? readAutoPairApprovalPolicyModule;
   const policyModule = readPolicy();
   const policyModuleB64 = policyModule ? Buffer.from(policyModule, "utf-8").toString("base64") : "";
   const script = buildToolScopeProbeScript(policyModuleB64);
 
-  const firstRaw = deps.exec(sandboxName, script);
+  const firstRaw = await deps.exec(sandboxName, script);
   const firstProbe = parseToolScopeProbe(firstRaw?.stdout ?? "");
 
   // Only repair when --fix is set AND the probe shows an allowlisted backlog.
@@ -468,7 +468,7 @@ export function buildToolScopeChecks(
     firstProbe.pendingAllowlisted > 0
   ) {
     const passResult = deps.runApprovalPass(sandboxName);
-    const secondRaw = deps.exec(sandboxName, script);
+    const secondRaw = await deps.exec(sandboxName, script);
     const secondProbe = parseToolScopeProbe(secondRaw?.stdout ?? "") ?? firstProbe;
     // Derive the repaired count from the pending delta rather than the approval
     // pass's self-report: OpenClaw's local-fallback `devices approve` can apply

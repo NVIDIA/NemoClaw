@@ -31,23 +31,23 @@ function context(inputs = BASE_INPUTS): MessagingHookContext {
   } as unknown as MessagingHookContext;
 }
 
-function reportOf(result: MessagingHookResult | Promise<MessagingHookResult>): ChannelHealthReport {
-  const output = (result as MessagingHookResult).outputs?.channelHealth;
+function reportOf(result: MessagingHookResult): ChannelHealthReport {
+  const output = result.outputs?.channelHealth;
   expect(output).toBeDefined();
   return (output?.value as unknown as { report: ChannelHealthReport }).report;
 }
 
-function runProbe(
+async function runProbe(
   account: Record<string, unknown> = {},
   inputOverrides: Partial<typeof BASE_INPUTS> = {},
-): { report: ChannelHealthReport; execute: ReturnType<typeof vi.fn> } {
+): Promise<{ report: ChannelHealthReport; execute: ReturnType<typeof vi.fn> }> {
   const stdout = JSON.stringify({
     channels: { slack: { configured: true } },
     channelAccounts: { slack: [{ accountId: "default", ...READY_ACCOUNT, ...account }] },
   });
-  const execute = vi.fn(() => ({ status: 0, stdout, stderr: "" }));
+  const execute = vi.fn(async () => ({ status: 0, stdout, stderr: "" }));
   const report = reportOf(
-    createSlackStatusHealthHook({ executeSandboxCommand: execute })(
+    await createSlackStatusHealthHook({ executeSandboxCommand: execute })(
       context({ ...BASE_INPUTS, ...inputOverrides }),
     ),
   );
@@ -55,8 +55,8 @@ function runProbe(
 }
 
 describe("slack.statusHealth hook", () => {
-  it("reports operational readiness for a connected account with a successful probe (#7383)", () => {
-    const { report, execute } = runProbe({
+  it("reports operational readiness for a connected account with a successful probe (#7383)", async () => {
+    const { report, execute } = await runProbe({
       lastProbeAt: Date.parse("2026-08-07T12:00:00.000Z"),
       probe: { ok: true, bot: { name: "test-bot" } },
     });
@@ -83,9 +83,9 @@ describe("slack.statusHealth hook", () => {
     );
   });
 
-  it("keeps deferred Socket Mode initialization retryable without exposing errors or credentials (#7383)", () => {
+  it("keeps deferred Socket Mode initialization retryable without exposing errors or credentials (#7383)", async () => {
     const secret = "xoxb-secret-sentinel";
-    const { report } = runProbe({
+    const { report } = await runProbe({
       connected: false,
       lastError: "socket mode connection timed out",
       probe: { ok: false, error: "network timeout " + secret },
@@ -105,8 +105,8 @@ describe("slack.statusHealth hook", () => {
     ["the preset is not registered", { presetApplied: false }, "policy_missing"],
     ["the preset is not applied", { presetOnGateway: false }, "policy_missing"],
     ["gateway policy is unknown", { presetOnGateway: null }, "policy_status_unavailable"],
-  ] as const)("skips the live probe when %s (#7383)", (_condition, inputs, reason) => {
-    const { report, execute } = runProbe({}, inputs);
+  ] as const)("skips the live probe when %s (#7383)", async (_condition, inputs, reason) => {
+    const { report, execute } = await runProbe({}, inputs);
 
     expect(report.readiness?.reason).toBe(reason);
     expect(report.signals.map(({ label }) => label)).toEqual([
@@ -138,9 +138,9 @@ describe("slack.statusHealth hook", () => {
     ],
   ] as const)(
     "classifies %s as terminal (#7383)",
-    (_condition, account, inputs, expected, signal) => {
+    async (_condition, account, inputs, expected, signal) => {
       const [state, category, reason, retryable] = expected;
-      const report = runProbe(account, inputs).report;
+      const report = (await runProbe(account, inputs)).report;
       expect(report.readiness).toMatchObject({
         state,
         category,
@@ -151,16 +151,16 @@ describe("slack.statusHealth hook", () => {
     },
   );
 
-  it("returns a null transition time for an out-of-range Slack timestamp (#7383)", () => {
+  it("returns a null transition time for an out-of-range Slack timestamp (#7383)", async () => {
     expect(
-      runProbe({ lastProbeAt: Number.MAX_SAFE_INTEGER }).report.readiness?.lastTransitionAt,
+      (await runProbe({ lastProbeAt: Number.MAX_SAFE_INTEGER })).report.readiness?.lastTransitionAt,
     ).toBeNull();
   });
 
-  it("keeps an unreachable live status probe retryable until the caller timeout (#7383)", () => {
-    const execute = vi.fn(() => null);
+  it("keeps an unreachable live status probe retryable until the caller timeout (#7383)", async () => {
+    const execute = vi.fn(async () => null);
     const report = reportOf(
-      createSlackStatusHealthHook({ executeSandboxCommand: execute })(context()),
+      await createSlackStatusHealthHook({ executeSandboxCommand: execute })(context()),
     );
 
     expect(report.readiness).toMatchObject({

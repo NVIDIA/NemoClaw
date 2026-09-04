@@ -53,7 +53,7 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     "SUPERVISOR_DISCOVERY_PENDING",
     "PRIVILEGED_CONTROL_UNAVAILABLE",
     "GATEWAY_HEALTH_TIMEOUT",
-  ])("waits through the exact %s startup transition (#9466)", (startupMarker) => {
+  ])("waits through the exact %s startup transition (#9466)", async (startupMarker) => {
     const sandboxName = "startup-box";
     mockOpenClawSandbox(sandboxName);
     mockRecoveredForward(sandboxName);
@@ -65,12 +65,12 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
       .mockReturnValueOnce(ACCEPTED_MANAGED_RECOVERY);
     const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
 
-    const result = checkAndRecoverSandboxProcesses(sandboxName, {
+    const result = await checkAndRecoverSandboxProcesses(sandboxName, {
       quiet: true,
-      isSandboxGatewayRunningImpl: () => false,
+      isSandboxGatewayRunningImpl: async () => false,
       requestGatewaySupervisorAction,
       relaunchManagedSupervisorSessionImpl,
-      waitForRecreatedSandboxOpenShellReadyImpl: () => true,
+      waitForRecreatedSandboxOpenShellReadyImpl: async () => true,
     });
 
     expect(result).toMatchObject({
@@ -83,7 +83,7 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
   });
 
-  it("does not retry a diagnostic-bearing supervisor-discovery result", () => {
+  it("does not retry a diagnostic-bearing supervisor-discovery result", async () => {
     const sandboxName = "diagnostic-start";
     mockOpenClawSandbox(sandboxName);
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
@@ -94,9 +94,9 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     }));
     const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
 
-    const result = checkAndRecoverSandboxProcesses(sandboxName, {
+    const result = await checkAndRecoverSandboxProcesses(sandboxName, {
       quiet: true,
-      isSandboxGatewayRunningImpl: () => false,
+      isSandboxGatewayRunningImpl: async () => false,
       requestGatewaySupervisorAction,
       relaunchManagedSupervisorSessionImpl,
     });
@@ -111,7 +111,7 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
   });
 
-  it("does not retry a managed-container identity mismatch (#9466)", () => {
+  it("does not retry a managed-container identity mismatch (#9466)", async () => {
     const sandboxName = "identity-box";
     mockOpenClawSandbox(sandboxName);
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
@@ -124,9 +124,9 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     }));
     const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
 
-    const result = checkAndRecoverSandboxProcesses(sandboxName, {
+    const result = await checkAndRecoverSandboxProcesses(sandboxName, {
       quiet: true,
-      isSandboxGatewayRunningImpl: () => false,
+      isSandboxGatewayRunningImpl: async () => false,
       requestGatewaySupervisorAction,
       relaunchManagedSupervisorSessionImpl,
     });

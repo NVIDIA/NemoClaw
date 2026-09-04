@@ -139,13 +139,27 @@ export function upsertMcpProvider(
     allowExisting: boolean;
     expectedProviderId?: string;
     requireExisting?: boolean;
-    prepareMutation?: (action: "create" | "update") => void;
+    prepareMutation?: (action: "create" | "update") => Promise<void>;
     runtimeSelection: McpProviderInspectionRuntimeSelection;
   },
-): {
+): Promise<{
   action: "created" | "updated" | "reused" | "none";
   inspection: McpProviderInspection;
-} {
+}>;
+export async function upsertMcpProvider(
+  providerName: string,
+  env: readonly ParsedEnvReference[],
+  options: {
+    allowExisting: boolean;
+    expectedProviderId?: string;
+    requireExisting?: boolean;
+    prepareMutation?: (action: "create" | "update") => Promise<void>;
+    runtimeSelection: McpProviderInspectionRuntimeSelection;
+  },
+): Promise<{
+  action: "created" | "updated" | "reused" | "none";
+  inspection: McpProviderInspection;
+}> {
   const envNames = uniqueEnvNames(env);
   if (envNames.length === 0) {
     return {
@@ -200,7 +214,7 @@ export function upsertMcpProvider(
   // Let callers establish policy and revision proofs only after the actual
   // mutation kind is known. The immediate reinspection below closes races
   // that occur while those fail-closed prerequisites are being prepared.
-  options.prepareMutation?.(action);
+  await options.prepareMutation?.(action);
   // invalidState: another OpenShell client replaces a mutable provider name
   // between inspection and mutation. sourceBoundary: OpenShell owns provider
   // compare-and-swap; v0.0.99 uses the version read inside the server but its

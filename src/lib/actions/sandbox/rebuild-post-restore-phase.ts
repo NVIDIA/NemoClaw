@@ -171,7 +171,7 @@ export async function runRebuildPostRestorePhase(
 
   if (targetAgentName === "openclaw") {
     log("Running openclaw doctor --fix inside sandbox for post-upgrade structure repair");
-    const doctorResult = executeSandboxExecCommand(
+    const doctorResult = await executeSandboxExecCommand(
       sandboxName,
       "openclaw doctor --fix",
       OPENCLAW_DOCTOR_TIMEOUT_MS,
@@ -269,7 +269,7 @@ export async function runRebuildPostRestorePhase(
   // Restart before restoring MCP. The Hermes MCP transaction performs an
   // acknowledged reload of its own; restarting afterwards would replace the
   // only runtime whose managed MCP configuration was proven to have loaded.
-  const hermesGatewayRestartState = restartHermesGatewayAfterStateRestore(
+  const hermesGatewayRestartState = await restartHermesGatewayAfterStateRestore(
     sandboxName,
     targetAgentName,
     mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {},
@@ -292,7 +292,7 @@ export async function runRebuildPostRestorePhase(
     }
   }
   const hermesGatewayVerification = hermesCronRestoreIdentity
-    ? verifyHermesGatewayAfterStateRestoreForCronGate(
+    ? await verifyHermesGatewayAfterStateRestoreForCronGate(
         sandboxName,
         targetAgentName,
         hermesGatewayRestartState,
@@ -300,7 +300,7 @@ export async function runRebuildPostRestorePhase(
         mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {},
       )
     : {
-        state: verifyHermesGatewayAfterStateRestore(
+        state: await verifyHermesGatewayAfterStateRestore(
           sandboxName,
           targetAgentName,
           hermesGatewayRestartState,
@@ -458,8 +458,7 @@ export async function runRebuildPostRestorePhase(
     mutableConfigPermissionsVerified = true;
     log(`Verified the rebuilt ${targetAgentName} terminal-agent mutable posture`);
   }
-  const postRestoreComplete =
-    genericPostRestoreComplete && mutableConfigPermissionsVerified;
+  const postRestoreComplete = genericPostRestoreComplete && mutableConfigPermissionsVerified;
   if (postRestoreComplete) {
     console.log(`  ${G}✓${R} Sandbox '${sandboxName}' rebuild completed`);
     if (versionCheck.expectedVersion) {

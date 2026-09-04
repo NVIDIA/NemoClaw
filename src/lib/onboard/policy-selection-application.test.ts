@@ -61,7 +61,7 @@ describe("onboarding policy application", () => {
         reason: "ready" as const,
         error: null,
       })),
-      waitForSandboxControlPlaneReady: vi.fn(() => true),
+      waitForSandboxControlPlaneReady: vi.fn(async () => true),
       parsePolicyPresetEnv: vi.fn(() => []),
       env: {},
     });
@@ -109,7 +109,7 @@ describe("onboarding policy application", () => {
           reason: "ready" as const,
           error: null,
         })),
-        waitForSandboxControlPlaneReady: vi.fn(() => true),
+        waitForSandboxControlPlaneReady: vi.fn(async () => true),
         parsePolicyPresetEnv: vi.fn((value: string) =>
           value
             .split(",")

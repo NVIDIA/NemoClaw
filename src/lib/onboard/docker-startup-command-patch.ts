@@ -10,17 +10,27 @@ import {
 
 const STARTUP_COMMAND_MODE = buildDockerGpuMode("startup-command");
 
+type RecreateStartupCommandOptions = {
+  sandboxName: string;
+  timeoutSecs?: number;
+  waitForSupervisor?: boolean;
+  openshellSandboxCommand: readonly string[];
+  requiredUlimits?: readonly import("./docker-gpu-patch-types").DockerUlimit[] | null;
+  expectedOldContainerId?: string | null;
+};
+
 export function recreateOpenShellDockerSandboxWithStartupCommand(
-  options: {
-    sandboxName: string;
-    timeoutSecs?: number;
-    waitForSupervisor?: boolean;
-    openshellSandboxCommand: readonly string[];
-    requiredUlimits?: readonly import("./docker-gpu-patch-types").DockerUlimit[] | null;
-    expectedOldContainerId?: string | null;
-  },
+  options: RecreateStartupCommandOptions & { waitForSupervisor: false },
+  deps?: DockerGpuPatchDeps,
+): DockerGpuPatchResult;
+export function recreateOpenShellDockerSandboxWithStartupCommand(
+  options: RecreateStartupCommandOptions,
+  deps?: DockerGpuPatchDeps,
+): Promise<DockerGpuPatchResult>;
+export function recreateOpenShellDockerSandboxWithStartupCommand(
+  options: RecreateStartupCommandOptions,
   deps: DockerGpuPatchDeps = {},
-): DockerGpuPatchResult {
+): DockerGpuPatchResult | Promise<DockerGpuPatchResult> {
   if (options.openshellSandboxCommand.length === 0) {
     throw new Error("OpenShell sandbox startup command is required for restart persistence.");
   }

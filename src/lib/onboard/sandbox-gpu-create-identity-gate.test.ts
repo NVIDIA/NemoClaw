@@ -138,7 +138,7 @@ describe("created sandbox identity gate", () => {
       await expect(
         options.observer.listSandboxes({ target: options.target }),
       ).resolves.toMatchObject({ ok: true });
-      expect(options.checkReadyIdentity?.()).toBe("ready");
+      await expect(options.checkReadyIdentity?.()).resolves.toBe("ready");
       return { ready: true, reason: "ready", failurePhase: null };
     });
 
@@ -155,10 +155,13 @@ describe("created sandbox identity gate", () => {
       ["sandbox", "get", "-g", gatewayName, "alpha"],
       expect.objectContaining({ ignoreError: true, suppressOutput: true }),
     );
-    expect(deps.runOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "exec", "-g", gatewayName, "--name", "alpha", "--", "true"],
-      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
-    );
+    expect(deps.commandExecutor.runBuffered).toHaveBeenCalledWith({
+      command: ["true"],
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName },
+      timeoutKillSignal: "SIGKILL",
+      timeoutMilliseconds: expect.any(Number),
+    });
   });
 
   it("resumes the exact verified sandbox without issuing another create (#9833)", async () => {
@@ -563,9 +566,12 @@ describe("created sandbox identity gate", () => {
 
   it.each([
     ["returns false", (): boolean => false],
-    ["throws", (): boolean => {
-      throw new Error("recovery writer failed");
-    }],
+    [
+      "throws",
+      (): boolean => {
+        throw new Error("recovery writer failed");
+      },
+    ],
   ] as const)(
     "blocks the create after retained recovery persistence %s (#10769)",
     async (_failureMode, persistRecovery) => {

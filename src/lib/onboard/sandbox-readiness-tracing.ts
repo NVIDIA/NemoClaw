@@ -9,6 +9,8 @@ import type {
   OpenShellSandboxReadinessProbe,
   OpenShellSandboxResult,
 } from "../adapters/openshell/sandbox-observer";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import {
   createCliOpenShellLegacyPodReadinessProbe,
@@ -113,7 +115,7 @@ export type SandboxReadyWaitResult =
 
 export type CreatedSandboxReadyIdentityCheck = (
   getRemainingMs?: () => number,
-) => "ready" | "not_ready" | "identity_changed" | "probe_failed";
+) => Promise<"ready" | "not_ready" | "identity_changed" | "probe_failed">;
 
 export interface SandboxReadyWaitDeps {
   observer: OpenShellSandboxObserver;
@@ -466,7 +468,9 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
         transient.error = null;
         const sandbox = observation.value.state === "present" ? observation.value.sandbox : null;
         if (sandbox?.readiness === "ready") {
-          const identity = options.checkReadyIdentity?.(getRemainingMs) ?? "ready";
+          const identity = options.checkReadyIdentity
+            ? await options.checkReadyIdentity(getRemainingMs)
+            : "ready";
           if (identity === "identity_changed") {
             addTraceEvent("identity_changed", { attempt });
             result = {
@@ -627,16 +631,16 @@ export function printReadinessFailure(
 export function waitForDashboardReadyWithTrace(options: {
   sandboxName: string;
   port: string | number;
-  runCaptureOpenshell: RunCaptureOpenshell;
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor;
   sleep: (seconds: number) => void;
   timeoutSecs?: number;
   now?: () => number;
   trace?: typeof addTraceEvent;
-}): boolean {
-  const { sandboxName, port, runCaptureOpenshell, sleep } = options;
+}): Promise<boolean> {
+  const { sandboxName, port, commandExecutor, sleep } = options;
   const timeoutSecs = options.timeoutSecs ?? 30;
   const budgetMs = Math.max(0, timeoutSecs * 1000);
-  return withDashboardReadinessTrace(sandboxName, port, timeoutSecs, () => {
+  return withDashboardReadinessTrace(sandboxName, port, timeoutSecs, async () => {
     let attempt = 0;
     const waitOptions = createReadinessWaitOptions({
       budgetMs,
@@ -650,15 +654,12 @@ export function waitForDashboardReadyWithTrace(options: {
     }
     const ready =
       waitOptions !== null &&
-      waitUntil(() => {
+      (await waitUntilAsync(async () => {
         attempt += 1;
-        const readyOutput = runCaptureOpenshell(
-          [
-            "sandbox",
-            "exec",
-            "-n",
-            sandboxName,
-            "--",
+        const result = await commandExecutor.runBuffered({
+          sandboxName,
+          target: selectedOpenShellGateway(),
+          command: [
             "curl",
             "-so",
             "/dev/null",
@@ -668,12 +669,12 @@ export function waitForDashboardReadyWithTrace(options: {
             "3",
             `http://localhost:${port}/health`,
           ],
-          { ignoreError: true },
-        );
+        });
+        const readyOutput = result.outcome.kind === "completed" ? result.stdout : "";
         const readyCode = parseInt((readyOutput || "").trim(), 10) || 0;
         traceEvent("dashboard_probe", { attempt, http_status: readyCode });
         return readyCode === 200 || readyCode === 401;
-      }, waitOptions);
+      }, waitOptions));
     if (ready) {
       console.log("  ✓ Dashboard is live");
       return true;

@@ -351,7 +351,7 @@ async function addMcpBridgeUnlocked(
     }
     assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, providerRuntimeSelection);
     if (detachedMissingProviderReference) {
-      waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+      await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
     }
     if (resumingPreflightedAdd && !Object.hasOwn(adapterEnvValues, entry.env[0])) {
       try {
@@ -414,19 +414,19 @@ async function addMcpBridgeUnlocked(
       runtimeSelection: providerRuntimeSelection,
     });
     policyApplied = true;
-    const providerResult = upsertMcpProvider(providerName ?? "", options.env, {
+    const providerResult = await upsertMcpProvider(providerName ?? "", options.env, {
       // A first mutation must still observe the absence proven above. Only a
       // retry of the durable preflighted transaction may encounter an exact
       // provider whose immutable ID was already persisted by this add.
       allowExisting: resumingPreflightedAdd,
       expectedProviderId: entry.providerId,
       runtimeSelection: providerRuntimeSelection,
-      prepareMutation: (action) => {
+      prepareMutation: async (action) => {
         // A fresh create has no prior revision to compare. Observe only the
         // bounded placeholder classification for an actual update, after the
         // running supervisor has accepted the authenticated MCP policy.
         if (action === "update") {
-          previousCredentialRevision = observeMcpCredentialRevision(
+          previousCredentialRevision = await observeMcpCredentialRevision(
             sandboxName,
             entry,
             providerRuntimeSelection,
@@ -460,43 +460,43 @@ async function addMcpBridgeUnlocked(
       runtimeSelection: providerRuntimeSelection,
     });
     let refreshedAfterObservedAbsence = false;
-    let credentialRevision = waitForAttachedMcpCredential(
+    let credentialRevision = await waitForAttachedMcpCredential(
       sandboxName,
       entry,
       providerRuntimeSelection,
       {
-      ...(providerResult.action === "updated"
-        ? {
-            previousRevision: previousCredentialRevision,
+        ...(providerResult.action === "updated"
+          ? {
+              previousRevision: previousCredentialRevision,
+            }
+          : {}),
+        // A no-field provider update advances only the provider resource version.
+        // If the credential remains available, republish it after observing an
+        // absence; otherwise, a hostless recovery advances the provider revision.
+        refreshAfterObservedAbsence: async () => {
+          refreshedAfterObservedAbsence = true;
+          // invalidState: OpenShell 0.0.106 can coalesce a no-field provider
+          // refresh without publishing the credential into fresh sandbox execs.
+          // sourceBoundary: OpenShell owns provider revision projection.
+          // whyNotSourceFix: NemoClaw can only observe absence after the bound
+          // policy is active, then republish when this process still has the host
+          // credential value. Hostless recovery retains the credential-free path.
+          // regressionTest: mcp-add-crash-consistency.test.ts covers republish
+          // and hostless recovery; mcp-provider-ownership.test.ts covers loss of
+          // the persisted provider identity before republish.
+          // removalCondition: remove the credential-bearing republish when the
+          // supported OpenShell version guarantees that a post-policy no-field
+          // refresh projects the bound credential into fresh sandbox execs.
+          const republished = await upsertMcpProvider(entry.providerName ?? "", options.env, {
+            allowExisting: true,
+            expectedProviderId: entry.providerId,
+            requireExisting: true,
+            runtimeSelection: providerRuntimeSelection,
+          });
+          if (republished.action !== "updated") {
+            refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
           }
-        : {}),
-      // A no-field provider update advances only the provider resource version.
-      // If the credential remains available, republish it after observing an
-      // absence; otherwise, a hostless recovery advances the provider revision.
-      refreshAfterObservedAbsence: () => {
-        refreshedAfterObservedAbsence = true;
-        // invalidState: OpenShell 0.0.106 can coalesce a no-field provider
-        // refresh without publishing the credential into fresh sandbox execs.
-        // sourceBoundary: OpenShell owns provider revision projection.
-        // whyNotSourceFix: NemoClaw can only observe absence after the bound
-        // policy is active, then republish when this process still has the host
-        // credential value. Hostless recovery retains the credential-free path.
-        // regressionTest: mcp-add-crash-consistency.test.ts covers republish
-        // and hostless recovery; mcp-provider-ownership.test.ts covers loss of
-        // the persisted provider identity before republish.
-        // removalCondition: remove the credential-bearing republish when the
-        // supported OpenShell version guarantees that a post-policy no-field
-        // refresh projects the bound credential into fresh sandbox execs.
-        const republished = upsertMcpProvider(entry.providerName ?? "", options.env, {
-          allowExisting: true,
-          expectedProviderId: entry.providerId,
-          requireExisting: true,
-          runtimeSelection: providerRuntimeSelection,
-        });
-        if (republished.action !== "updated") {
-          refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
-        }
-      },
+        },
       },
     );
     if (Object.hasOwn(adapterEnvValues, entry.env[0]) && !refreshedAfterObservedAbsence) {
@@ -505,13 +505,13 @@ async function addMcpBridgeUnlocked(
       // bound policy is active and require a different observed revision.
       // This prevents a quick series of reads from accepting an intermediate
       // generation while the final credential-bearing update is still queued.
-      upsertMcpProvider(entry.providerName ?? "", options.env, {
+      await upsertMcpProvider(entry.providerName ?? "", options.env, {
         allowExisting: true,
         expectedProviderId: entry.providerId,
         requireExisting: true,
         runtimeSelection: providerRuntimeSelection,
       });
-      credentialRevision = waitForAttachedMcpCredential(
+      credentialRevision = await waitForAttachedMcpCredential(
         sandboxName,
         entry,
         providerRuntimeSelection,
@@ -567,7 +567,7 @@ async function addMcpBridgeUnlocked(
     let reservationCleanupProved = !providerAttachAttempted;
     if (providerAttachAttempted && detachOutcome !== "unknown") {
       try {
-        waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+        await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
         reservationCleanupProved = true;
       } catch {
         reservationCleanupProved = false;

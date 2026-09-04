@@ -829,13 +829,13 @@ describe("Hermes Portable connect composition", () => {
       portableRecoveryResult: { kind: "already-running" },
     });
     let ollamaRunning = false;
-    harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation(((input: {
-      verifyRoute: () => unknown;
+    harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation((async (input: {
+      verifyRoute: () => Promise<unknown>;
       prepareProbeDependency?: () => { release: () => void; rollback: () => void };
     }) => {
       ollamaRunning = true;
       try {
-        input.verifyRoute();
+        await input.verifyRoute();
         input.prepareProbeDependency?.().release();
         return "recovered";
       } catch (error) {
@@ -874,12 +874,12 @@ describe("Hermes Portable connect composition", () => {
       portableRecoveryResult: { kind: "already-running" },
     });
     let ollamaRunning = false;
-    harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation(((input: {
-      verifyRoute: () => unknown;
+    harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation((async (input: {
+      verifyRoute: () => Promise<unknown>;
       prepareProbeDependency?: () => { rollback: () => void };
     }) => {
       ollamaRunning = true;
-      input.verifyRoute();
+      await input.verifyRoute();
       const dependency = input.prepareProbeDependency?.();
       try {
         dependency?.rollback();
@@ -908,12 +908,12 @@ describe("Hermes Portable connect composition", () => {
       portableRecoveryResult: { kind: "already-running" },
     });
     let ollamaRunning = false;
-    harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation(((input: {
-      verifyRoute: () => unknown;
+    harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation((async (input: {
+      verifyRoute: () => Promise<unknown>;
       prepareProbeDependency?: () => { rollback: () => void };
     }) => {
       ollamaRunning = true;
-      input.verifyRoute();
+      await input.verifyRoute();
       const dependency = input.prepareProbeDependency?.();
       harness.assertHermesPortableOperatingCommandCurrentSpy.mockImplementation(() => {
         throw new Error("rollback authority canary");

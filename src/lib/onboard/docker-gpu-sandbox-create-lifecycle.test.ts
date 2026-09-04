@@ -46,8 +46,8 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const deps = makeDeps();
     const result = deferredCreateResult();
     const recreatePatch = vi.fn(() => result);
-    const waitForSupervisor = vi.fn(() => true);
-    const finalizeBackup = vi.fn(() => ({
+    const waitForSupervisor = vi.fn(async () => true);
+    const finalizeBackup = vi.fn(async () => ({
       backupRemoved: true,
       rolledBack: false,
       replacementRestarted: true,
@@ -87,7 +87,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     // result still carries backupRemoved=false).
     expect(finalizeBackup).not.toHaveBeenCalled();
 
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.waitForSupervisorReconnectIfNeeded();
     expect(waitForSupervisor).toHaveBeenCalledTimes(1);
     expect(finalizeBackup).not.toHaveBeenCalled();
 
@@ -110,8 +110,8 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
   it("accepts a backup that the patch helper already finalized after reconnect", async () => {
     const deps = makeDeps();
     const result = { ...deferredCreateResult(), backupRemoved: true };
-    const waitForSupervisor = vi.fn(() => true);
-    const finalizeBackup = vi.fn(() => ({
+    const waitForSupervisor = vi.fn(async () => true);
+    const finalizeBackup = vi.fn(async () => ({
       backupRemoved: true,
       rolledBack: false,
     }));
@@ -131,7 +131,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     });
 
     patch.maybeApplyDuringCreate();
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.waitForSupervisorReconnectIfNeeded();
     await expect(patch.commitAfterReady()).resolves.toBeUndefined();
 
     expect(finalizeBackup).toHaveBeenCalledWith(
@@ -159,8 +159,8 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
       overrides: {
         findContainerIds: vi.fn(() => ["existing-container"]),
         recreatePatch: vi.fn(() => result),
-        waitForSupervisor: vi.fn(() => true),
-        finalizeBackup: vi.fn(() => ({
+        waitForSupervisor: vi.fn(async () => true),
+        finalizeBackup: vi.fn(async () => ({
           backupRemoved: true,
           rolledBack: false,
           replacementRestarted: false,
@@ -170,7 +170,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     });
 
     patch.maybeApplyDuringCreate();
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.waitForSupervisorReconnectIfNeeded();
     await expect(patch.commitAfterReady()).rejects.toThrow("automatic rollback is unavailable");
     expect(onPatchFailureExit).toHaveBeenCalledOnce();
     expect(onPatchFailureExit.mock.calls[0]?.[2]?.context).toMatchObject({
@@ -181,7 +181,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
   it("rejects final handoff when OpenShell reports Deleting after restart (#9531)", async () => {
     const deps = makeDeps();
     const result = deferredCreateResult();
-    const waitForSupervisor = vi.fn(() => true);
+    const waitForSupervisor = vi.fn(async () => true);
     const onPatchFailureExit = vi.fn();
     const patch = createDockerGpuSandboxCreatePatch({
       route: "compatibility",
@@ -192,7 +192,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
         findContainerIds: vi.fn(() => ["existing-container"]),
         recreatePatch: vi.fn(() => result),
         waitForSupervisor,
-        finalizeBackup: vi.fn(() => ({
+        finalizeBackup: vi.fn(async () => ({
           backupRemoved: true,
           rolledBack: false,
           replacementRestarted: true,
@@ -204,7 +204,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     });
 
     patch.maybeApplyDuringCreate();
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.waitForSupervisorReconnectIfNeeded();
     await expect(patch.commitAfterReady()).rejects.toThrow("automatic rollback is unavailable");
 
     expect(waitForSupervisor).toHaveBeenCalledOnce();
@@ -214,7 +214,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
   it("reports a failed post-Ready rollback instead of treating it as restored", async () => {
     const deps = makeDeps();
     const result = deferredCreateResult();
-    const finalizeBackup = vi.fn(() => ({
+    const finalizeBackup = vi.fn(async () => ({
       backupRemoved: false,
       rolledBack: false,
     }));
@@ -227,14 +227,14 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
       overrides: {
         findContainerIds: vi.fn(() => ["existing-container"]),
         recreatePatch: vi.fn(() => result),
-        waitForSupervisor: vi.fn(() => true),
+        waitForSupervisor: vi.fn(async () => true),
         finalizeBackup,
         onPatchFailureExit,
       },
     });
 
     patch.maybeApplyDuringCreate();
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.waitForSupervisorReconnectIfNeeded();
     await patch.rollbackManagedStartupAfterCreateFailure();
 
     expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: false }, deps);
@@ -264,8 +264,8 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
       overrides: {
         findContainerIds: vi.fn(() => ["existing-container"]),
         recreatePatch: vi.fn(() => result),
-        waitForSupervisor: vi.fn(() => true),
-        finalizeBackup: vi.fn(() => ({
+        waitForSupervisor: vi.fn(async () => true),
+        finalizeBackup: vi.fn(async () => ({
           backupRemoved: false,
           rolledBack: false,
         })),
@@ -274,7 +274,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     });
 
     patch.maybeApplyDuringCreate();
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.waitForSupervisorReconnectIfNeeded();
     expect(onPatchFailureExit).not.toHaveBeenCalled();
 
     await expect(patch.commitAfterReady()).rejects.toThrow("final runtime handoff");
@@ -299,7 +299,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
   it("rejects an early commit after rolling back before supervisor reconnect", async () => {
     const deps = makeDeps();
     const result = deferredCreateResult();
-    const finalizeBackup = vi.fn(() => ({ backupRemoved: false, rolledBack: true }));
+    const finalizeBackup = vi.fn(async () => ({ backupRemoved: false, rolledBack: true }));
     const onPatchFailureExit = vi.fn();
     const patch = createDockerGpuSandboxCreatePatch({
       route: "compatibility",
@@ -326,13 +326,13 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(onPatchFailureExit).toHaveBeenCalledOnce();
   });
 
-  it("rolls back to the backup container and surfaces rolledBack=true diagnostics when supervisorReady=false", () => {
+  it("rolls back to the backup container and surfaces rolledBack=true diagnostics when supervisorReady=false", async () => {
     const deps = makeDeps();
     const result = deferredCreateResult();
     const recreatePatch = vi.fn(() => result);
-    const waitForSupervisor = vi.fn(() => false);
+    const waitForSupervisor = vi.fn(async () => false);
     const capturePreRollbackDiagnostics = vi.fn(() => null);
-    const finalizeBackup = vi.fn(() => ({
+    const finalizeBackup = vi.fn(async () => ({
       backupRemoved: false,
       rolledBack: true,
     }));
@@ -355,7 +355,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     });
 
     patch.maybeApplyDuringCreate();
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.waitForSupervisorReconnectIfNeeded();
 
     expect(capturePreRollbackDiagnostics).toHaveBeenCalledWith("alpha", result, deps);
     expect(capturePreRollbackDiagnostics.mock.invocationCallOrder[0]).toBeLessThan(
@@ -372,12 +372,12 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(context.backupContainerName).toBe(result.backupContainerName);
   });
 
-  it("reports rolledBack=false in diagnostics when rollback itself fails", () => {
+  it("reports rolledBack=false in diagnostics when rollback itself fails", async () => {
     const deps = makeDeps();
     const result = deferredCreateResult();
     const recreatePatch = vi.fn(() => result);
-    const waitForSupervisor = vi.fn(() => false);
-    const finalizeBackup = vi.fn(() => ({
+    const waitForSupervisor = vi.fn(async () => false);
+    const finalizeBackup = vi.fn(async () => ({
       backupRemoved: false,
       rolledBack: false,
     }));
@@ -401,7 +401,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     });
 
     patch.maybeApplyDuringCreate();
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.waitForSupervisorReconnectIfNeeded();
 
     expect(onPatchFailureExit).toHaveBeenCalledTimes(1);
     const [, error, exitDeps] = onPatchFailureExit.mock.calls[0];
@@ -410,7 +410,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(context.rolledBack).toBe(false);
   });
 
-  it("skips both apply and supervisor wait when no OpenShell container is found", () => {
+  it("skips both apply and supervisor wait when no OpenShell container is found", async () => {
     const deps = makeDeps();
     const recreatePatch = vi.fn();
     const waitForSupervisor = vi.fn();
@@ -433,7 +433,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     });
 
     patch.maybeApplyDuringCreate();
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.waitForSupervisorReconnectIfNeeded();
 
     expect(recreatePatch).not.toHaveBeenCalled();
     expect(waitForSupervisor).not.toHaveBeenCalled();
@@ -470,7 +470,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     await patch.exitOnPatchError();
     expect(onPatchFailureExit).toHaveBeenCalledTimes(1);
     // Supervisor wait must be skipped because needsSupervisorWait stayed false.
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.waitForSupervisorReconnectIfNeeded();
     expect(waitForSupervisor).not.toHaveBeenCalled();
     expect(finalizeBackup).not.toHaveBeenCalled();
   });
@@ -509,8 +509,8 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
       overrides: {
         findContainerIds: vi.fn(() => ["existing-container"]),
         recreatePatch: vi.fn(() => result),
-        waitForSupervisor: vi.fn(() => true),
-        finalizeBackup: vi.fn(() => ({
+        waitForSupervisor: vi.fn(async () => true),
+        finalizeBackup: vi.fn(async () => ({
           backupRemoved: false,
           rolledBack: false,
         })),
@@ -518,7 +518,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     });
 
     patch.maybeApplyDuringCreate();
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.waitForSupervisorReconnectIfNeeded();
 
     await expect(
       patch.verifyGpuOrExit(() => {

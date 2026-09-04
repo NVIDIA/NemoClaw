@@ -2,11 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildCliOpenShellSandboxExecArgs,
   createCliOpenShellSandboxCommandExecutor,
+  createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor,
+  runCliOpenShellBufferedCommand,
+  type OpenShellBufferedCommandRunner,
   type OpenShellCommandChild,
   type OpenShellCommandSignalSource,
 } from "./sandbox-command-cli";
@@ -32,6 +38,14 @@ function completedChild(
     }) as OpenShellCommandChild["once"],
   };
   return child;
+}
+
+function killTestProcess(pid: number): void {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // Expected when the command runner already terminated the process group.
+  }
 }
 
 describe("CLI OpenShell sandbox command executor", () => {
@@ -92,6 +106,322 @@ describe("CLI OpenShell sandbox command executor", () => {
       { stdin: false, hostCwd: "/repo", hostEnv },
     );
     completed.release();
+  });
+
+  it("captures a buffered command with explicit target, environment, input, and limits", async () => {
+    const runBuffered = vi.fn<OpenShellBufferedCommandRunner>(async () => ({
+      status: 42,
+      signal: null,
+      stdout: "output\n",
+      stderr: "warning\n",
+    }));
+    const hostEnvironment = { PATH: "/trusted/bin", OPENSHELL_GATEWAY: "nemoclaw-8091" };
+    const executor = createCliOpenShellSandboxCommandExecutor({
+      resolveBinary: () => "/usr/bin/openshell",
+      runBuffered,
+      hostCwd: "/repo",
+    });
+
+    const completed = await executor.runBuffered({
+      sandboxName: "alpha",
+      target: namedOpenShellGateway("nemoclaw-8091"),
+      command: ["sh", "-c", "read line; printf '%s' \"$line\""],
+      environment: hostEnvironment,
+      sandboxEnvironment: { HOME: "/usr/local/lib/nemoclaw", BASH_ENV: "", ENV: "" },
+      input: "hello\n",
+      tty: false,
+      workdir: "/sandbox/work",
+      timeoutMilliseconds: 9000,
+      outputLimitBytes: 2048,
+    });
+
+    expect(completed).toEqual({
+      outcome: { kind: "completed", exitCode: 42 },
+      stdout: "output\n",
+      stderr: "warning\n",
+    });
+    expect(runBuffered).toHaveBeenCalledWith(
+      "/usr/bin/openshell",
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        "alpha",
+        "-g",
+        "nemoclaw-8091",
+        "--workdir",
+        "/sandbox/work",
+        "--no-tty",
+        "--env",
+        "BASH_ENV=",
+        "--env",
+        "ENV=",
+        "--env",
+        "HOME=/usr/local/lib/nemoclaw",
+        "--",
+        "sh",
+        "-c",
+        "read line; printf '%s' \"$line\"",
+      ],
+      {
+        environment: hostEnvironment,
+        hostCwd: "/repo",
+        input: "hello\n",
+        timeoutMilliseconds: 9000,
+        outputLimitBytes: 2048,
+      },
+    );
+  });
+
+  it("binds buffered execution to retained binary, environment, and currentness", async () => {
+    const events: string[] = [];
+    let release!: () => void;
+    const runBuffered = vi.fn<OpenShellBufferedCommandRunner>(async (binary, _args, options) => {
+      events.push(`run:${binary}:${options.environment?.OPENSHELL_GATEWAY ?? "missing"}`);
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { status: 0, stdout: "ok", stderr: "" };
+    });
+    const assertCurrent = vi.fn(() => events.push("current"));
+    const executor = createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor(
+      {
+        resolveBinary: () => "/retained/openshell",
+        hostCwd: "/repo",
+        hostEnv: { PATH: "/retained/bin", OPENSHELL_GATEWAY: "receipt-owned" },
+        runBuffered,
+      },
+      assertCurrent,
+    );
+
+    const pending = executor.runBuffered({
+      sandboxName: "alpha",
+      target: namedOpenShellGateway("receipt-owned"),
+      command: ["true"],
+    });
+    expect(events).toEqual(["current", "run:/retained/openshell:receipt-owned"]);
+    release();
+    await expect(pending).resolves.toMatchObject({ stdout: "ok" });
+    expect(events).toEqual(["current", "run:/retained/openshell:receipt-owned", "current"]);
+    expect(runBuffered).toHaveBeenCalledWith(
+      "/retained/openshell",
+      expect.any(Array),
+      expect.objectContaining({
+        environment: { PATH: "/retained/bin", OPENSHELL_GATEWAY: "receipt-owned" },
+        hostCwd: "/repo",
+      }),
+    );
+  });
+
+  it("closes buffered stdin when no input is provided", async () => {
+    const result = await runCliOpenShellBufferedCommand(
+      process.execPath,
+      ["-e", "process.stdin.on('end', () => process.stdout.write('EOF')); process.stdin.resume();"],
+      { timeoutMilliseconds: 1000 },
+    );
+
+    expect(result).toMatchObject({ status: 0, stdout: "EOF" });
+    expect(result.timedOut).toBeUndefined();
+  });
+
+  it("marks only its own buffered deadline as a timeout", async () => {
+    const result = await runCliOpenShellBufferedCommand(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)"],
+      { timeoutMilliseconds: 10 },
+    );
+
+    expect(result).toMatchObject({ status: null, signal: "SIGTERM", timedOut: true });
+  });
+
+  it("keeps the timeout classification when SIGTERM triggers a clean exit", async () => {
+    const result = await runCliOpenShellBufferedCommand(
+      process.execPath,
+      ["-e", "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)"],
+      { timeoutMilliseconds: 50 },
+    );
+
+    expect(result).toMatchObject({ status: null, signal: "SIGTERM", timedOut: true });
+  });
+
+  it("escalates a buffered timeout when the child ignores SIGTERM", async () => {
+    const result = await runCliOpenShellBufferedCommand(
+      process.execPath,
+      ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+      { timeoutMilliseconds: 200 },
+    );
+
+    expect(result).toMatchObject({ status: null, signal: "SIGKILL", timedOut: true });
+  });
+
+  it("supports immediate process-group SIGKILL for deadline-bounded probes", async () => {
+    const result = await runCliOpenShellBufferedCommand(
+      process.execPath,
+      ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+      { timeoutMilliseconds: 200, timeoutKillSignal: "SIGKILL" },
+    );
+
+    expect(result).toMatchObject({ status: null, signal: "SIGKILL", timedOut: true });
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "terminates descendants when the direct buffered child exits cleanly on timeout",
+    async () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-buffered-tree-"));
+      const pidPath = path.join(directory, "descendant.pid");
+      const survivorPath = path.join(directory, "descendant-survived");
+      let descendantPid: number | undefined;
+      try {
+        const descendantScript = [
+          "const fs = require('node:fs');",
+          "process.on('SIGTERM', () => {});",
+          `setTimeout(() => fs.writeFileSync(${JSON.stringify(survivorPath)}, 'alive'), 500);`,
+          "setInterval(() => {}, 1000);",
+        ].join("");
+        const parentScript = [
+          "const { spawn } = require('node:child_process');",
+          "const fs = require('node:fs');",
+          `const child = spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { stdio: 'ignore' });`,
+          `fs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));`,
+          "process.on('SIGTERM', () => process.exit(0));",
+          "setInterval(() => {}, 1000);",
+        ].join("");
+
+        const result = await runCliOpenShellBufferedCommand(
+          process.execPath,
+          ["-e", parentScript],
+          {
+            timeoutMilliseconds: 250,
+          },
+        );
+
+        descendantPid = Number(fs.readFileSync(pidPath, "utf8"));
+        expect(result).toMatchObject({ status: null, signal: "SIGTERM", timedOut: true });
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        expect(fs.existsSync(survivorPath)).toBe(false);
+      } finally {
+        descendantPid === undefined || killTestProcess(descendantPid);
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("terminates a buffered child that closes stdin early but remains alive", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-buffered-epipe-"));
+    const pidPath = path.join(directory, "child.pid");
+    const survivorPath = path.join(directory, "child-survived");
+    let childPid: number | undefined;
+    try {
+      const script = [
+        "const fs = require('node:fs');",
+        `fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
+        "fs.closeSync(0);",
+        `setTimeout(() => fs.writeFileSync(${JSON.stringify(survivorPath)}, 'alive'), 500);`,
+        "setInterval(() => {}, 1000);",
+      ].join("");
+      const result = await runCliOpenShellBufferedCommand(process.execPath, ["-e", script], {
+        input: "x".repeat(10 * 1024 * 1024),
+        timeoutMilliseconds: 3000,
+      });
+
+      childPid = Number(fs.readFileSync(pidPath, "utf8"));
+      expect(result.status).toBeNull();
+      expect((result.error as NodeJS.ErrnoException | undefined)?.code).toBe("EPIPE");
+      expect(result.timedOut).toBe(false);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(fs.existsSync(survivorPath)).toBe(false);
+    } finally {
+      childPid === undefined || killTestProcess(childPid);
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves an explicit child signal when a later timeout was configured", async () => {
+    const result = await runCliOpenShellBufferedCommand(
+      process.execPath,
+      ["-e", "process.kill(process.pid, 'SIGTERM')"],
+      { timeoutMilliseconds: 1000 },
+    );
+
+    expect(result).toMatchObject({ status: null, signal: "SIGTERM" });
+    expect(result.timedOut).toBeUndefined();
+    expect(result.error).toBeUndefined();
+  });
+
+  it("uses a sanitized host environment when none is supplied", async () => {
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "must-not-leak");
+    const runBuffered = vi.fn<OpenShellBufferedCommandRunner>(async () => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
+    const executor = createCliOpenShellSandboxCommandExecutor({
+      resolveBinary: () => "/usr/bin/openshell",
+      runBuffered,
+    });
+
+    await executor.runBuffered({
+      sandboxName: "alpha",
+      target: selectedOpenShellGateway(),
+      command: ["true"],
+    });
+
+    const options = runBuffered.mock.calls[0]?.[2];
+    expect(options?.environment).toBeDefined();
+    expect(options?.environment).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+  });
+
+  it.each([
+    ["an unavailable executable", "ENOENT", "unavailable"],
+    ["a capture limit", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", "capture"],
+    ["an unclassified transport failure", undefined, "invocation"],
+  ] as const)("maps %s for buffered execution", async (_label, code, kind) => {
+    const error = Object.assign(new Error("buffered command failed"), code ? { code } : {});
+    const executor = createCliOpenShellSandboxCommandExecutor({
+      resolveBinary: () => "/usr/bin/openshell",
+      runBuffered: async () => ({ status: null, stdout: "partial", stderr: "detail", error }),
+    });
+
+    await expect(
+      executor.runBuffered({
+        sandboxName: "alpha",
+        target: selectedOpenShellGateway(),
+        command: ["true"],
+      }),
+    ).resolves.toEqual({
+      outcome: { kind: "failed", error: { kind, message: "buffered command failed" } },
+      stdout: "partial",
+      stderr: "detail",
+    });
+  });
+
+  it("maps a buffered timeout without treating it as a remote exit", async () => {
+    const executor = createCliOpenShellSandboxCommandExecutor({
+      resolveBinary: () => "/usr/bin/openshell",
+      runBuffered: async () => ({
+        status: null,
+        signal: "SIGTERM",
+        stdout: "partial",
+        stderr: "",
+        timedOut: true,
+      }),
+    });
+
+    await expect(
+      executor.runBuffered({
+        sandboxName: "alpha",
+        target: selectedOpenShellGateway(),
+        command: ["sleep", "30"],
+        timeoutMilliseconds: 10,
+      }),
+    ).resolves.toEqual({
+      outcome: {
+        kind: "failed",
+        error: { kind: "timeout", message: "OpenShell command timed out" },
+      },
+      stdout: "partial",
+      stderr: "",
+    });
   });
 
   it("distinguishes an unavailable executable without spawning", async () => {
@@ -271,5 +601,25 @@ describe("CLI OpenShell sandbox command executor", () => {
     ).rejects.toThrow("OPENSHELL_GATEWAY_ENDPOINT is set");
     expect(resolveBinary).not.toHaveBeenCalled();
     expect(spawnChild).not.toHaveBeenCalled();
+  });
+
+  it("rejects endpoint overrides from the buffered request environment", async () => {
+    const resolveBinary = vi.fn(() => "/usr/bin/openshell");
+    const runBuffered = vi.fn<OpenShellBufferedCommandRunner>();
+    const executor = createCliOpenShellSandboxCommandExecutor({ resolveBinary, runBuffered });
+
+    await expect(
+      executor.runBuffered({
+        sandboxName: "alpha",
+        target: namedOpenShellGateway("nemoclaw-8091"),
+        command: ["true"],
+        environment: {
+          PATH: "/usr/bin",
+          OPENSHELL_GATEWAY_ENDPOINT: "https://sibling.invalid",
+        },
+      }),
+    ).rejects.toThrow("OPENSHELL_GATEWAY_ENDPOINT is set");
+    expect(resolveBinary).not.toHaveBeenCalled();
+    expect(runBuffered).not.toHaveBeenCalled();
   });
 });

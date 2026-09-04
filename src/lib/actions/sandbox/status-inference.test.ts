@@ -61,7 +61,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
           : async () => options.routeHealth,
       ),
       probeSandboxInferenceInvocationImpl: vi.fn(
-        (_input: Parameters<typeof buildSandboxInferenceInvocationCommand>[0]) =>
+        async (_input: Parameters<typeof buildSandboxInferenceInvocationCommand>[0]) =>
           ({ ok: true }) as const,
       ),
       probeTerminalRuntimeHealth: vi.fn(() => ({ kind: "ok" as const, oomKillCount: 0 as const })),
@@ -227,7 +227,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
         detail: "route reachable",
       },
     });
-    deps.probeSandboxInferenceInvocationImpl.mockImplementation((input) => {
+    deps.probeSandboxInferenceInvocationImpl.mockImplementation(async (input) => {
       const command = buildSandboxInferenceInvocationCommand(input);
       expect(command).toContain("https://inference.local/v1/chat/completions");
       expect(command).not.toContain("https://inference.local/v1/responses");
@@ -263,7 +263,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
         detail: "route reachable",
       },
     });
-    deps.probeSandboxInferenceInvocationImpl.mockImplementation((input) => {
+    deps.probeSandboxInferenceInvocationImpl.mockImplementation(async (input) => {
       const command = buildSandboxInferenceInvocationCommand(input);
       expect(command).toContain("https://inference.local/v1/responses");
       expect(command).not.toContain("https://inference.local/v1/chat/completions");

@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerCapture } from "../../adapters/docker";
+import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import * as agentRuntime from "../../agent/runtime";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import {
   type DockerContainerInspect,
+  type DockerGpuPatchResult,
   parseDockerInspectJson,
 } from "../../onboard/docker-gpu-patch";
 import { sameContainerId } from "../../onboard/docker-gpu-patch-clone";
@@ -40,10 +44,12 @@ const STATE_BACKUP_RETRY_SECONDS = 2;
 
 export type ManagedSupervisorRelaunch = {
   containerId: string;
-  finalize(supervisorReady: boolean): DockerGpuPatchFinalizeOutcome & {
-    stateRestored?: boolean;
-    stateBackupRemoved?: boolean;
-  };
+  finalize(supervisorReady: boolean): Promise<
+    DockerGpuPatchFinalizeOutcome & {
+      stateRestored?: boolean;
+      stateBackupRemoved?: boolean;
+    }
+  >;
 };
 
 export type ManagedSupervisorRelaunchDeps = {
@@ -59,8 +65,17 @@ export type ManagedSupervisorRelaunchDeps = {
   sleep?: (seconds: number) => void;
   restoreState?: typeof sandboxState.restoreSandboxState;
   removeBackup?: typeof sandboxState.removeSandboxStateBackup;
-  recreate?: typeof recreateOpenShellDockerSandboxWithStartupCommand;
-  finalize?: typeof finalizeDockerGpuPatchBackup;
+  commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
+  recreate?: (
+    options: Parameters<typeof recreateOpenShellDockerSandboxWithStartupCommand>[0] & {
+      waitForSupervisor: false;
+    },
+    deps?: Parameters<typeof recreateOpenShellDockerSandboxWithStartupCommand>[1],
+  ) => DockerGpuPatchResult;
+  finalize?: (
+    options: Parameters<typeof finalizeDockerGpuPatchBackup>[0],
+    deps?: Parameters<typeof finalizeDockerGpuPatchBackup>[1],
+  ) => Promise<DockerGpuPatchFinalizeOutcome>;
   runOpenshell?: NonNullable<Parameters<typeof finalizeDockerGpuPatchBackup>[1]>["runOpenshell"];
   runCaptureOpenshell?: NonNullable<
     Parameters<typeof finalizeDockerGpuPatchBackup>[1]
@@ -149,15 +164,12 @@ function reconstructSupervisorLaunchCommand(
   const loopbackDashboardUrl = `http://127.0.0.1:${dashboardPort}`;
   let chatUiUrl = manageDashboard ? loopbackDashboardUrl : "";
   if (persistedAgent === "hermes" && manageDashboard && hermesDashboardEnabled) {
-    const readWorkloadAuthority =
-      deps.readManagedWorkloadAuthority ?? readManagedWorkloadAuthority;
+    const readWorkloadAuthority = deps.readManagedWorkloadAuthority ?? readManagedWorkloadAuthority;
     const profile = readWorkloadAuthority(entry)?.profile;
     if (profile?.dashboard.agent !== "hermes" || profile.dashboard.browserUrl === undefined) {
       if (!quiet) {
         console.error("  Trusted container recovery stopped because the Hermes dashboard profile");
-        console.error(
-          "  has no recorded browser URL. Rerun onboarding before retrying recovery.",
-        );
+        console.error("  has no recorded browser URL. Rerun onboarding before retrying recovery.");
       }
       return null;
     }
@@ -216,6 +228,9 @@ export function relaunchManagedSupervisorSession(
   const removeBackup = deps.removeBackup ?? sandboxState.removeSandboxStateBackup;
   const recreate = deps.recreate ?? recreateOpenShellDockerSandboxWithStartupCommand;
   const finalize = deps.finalize ?? finalizeDockerGpuPatchBackup;
+  const commandExecutor =
+    deps.commandExecutor ??
+    createCliOpenShellSandboxCommandExecutor({ hostCwd: REPOSITORY_ROOT });
   let pendingStateBackupPath: string | null = null;
   try {
     const containerId = resolveContainer(sandboxName, driver);
@@ -296,7 +311,7 @@ export function relaunchManagedSupervisorSession(
     };
     return {
       containerId: result.newContainerId,
-      finalize(supervisorReady) {
+      async finalize(supervisorReady) {
         if (completed) {
           if (completed.supervisorReady !== supervisorReady) {
             throw new Error(
@@ -305,8 +320,8 @@ export function relaunchManagedSupervisorSession(
           }
           return completed.outcome;
         }
-        const finalizeFailure = () => {
-          const finalized = finalize({ result, supervisorReady: false });
+        const finalizeFailure = async () => {
+          const finalized = await finalize({ result, supervisorReady: false });
           const outcome = {
             ...finalized,
             stateRestored: false,
@@ -358,11 +373,12 @@ export function relaunchManagedSupervisorSession(
         const captureLifecycleProbe = deps.runCaptureOpenshell;
         if (!runLifecycleProbe || !captureLifecycleProbe) return finalizeFailure();
         const lifecycleDeps = {
+          commandExecutor,
           runCaptureOpenshell: captureLifecycleProbe,
           runOpenshell: runLifecycleProbe,
           ...(deps.sleep ? { sleep: deps.sleep } : {}),
         };
-        const finalized = finalize(
+        const finalized = await finalize(
           {
             result,
             supervisorReady: true,

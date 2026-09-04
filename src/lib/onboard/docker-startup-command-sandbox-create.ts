@@ -11,6 +11,11 @@ import { recreateOpenShellDockerSandboxWithStartupCommand } from "./docker-start
 export type RecreateGpuPatchFn = typeof recreateOpenShellDockerSandboxWithGpu;
 export type RecreateStartupPatchFn = typeof recreateOpenShellDockerSandboxWithStartupCommand;
 
+type DockerSandboxRecreator = {
+  (waitForSupervisor: false, deps: DockerGpuPatchDeps): DockerGpuPatchResult;
+  (waitForSupervisor: true, deps: DockerGpuPatchDeps): Promise<DockerGpuPatchResult>;
+};
+
 export function createDockerSandboxRecreator(options: {
   gpuEnabled: boolean;
   gpuOptions: Parameters<RecreateGpuPatchFn>[0];
@@ -18,23 +23,24 @@ export function createDockerSandboxRecreator(options: {
   requiredUlimits?: Parameters<RecreateStartupPatchFn>[0]["requiredUlimits"];
   recreateGpu?: RecreateGpuPatchFn;
   recreateStartup?: RecreateStartupPatchFn;
-}): (waitForSupervisor: boolean, deps: DockerGpuPatchDeps) => DockerGpuPatchResult {
+}): DockerSandboxRecreator {
   const recreateGpu = options.recreateGpu ?? recreateOpenShellDockerSandboxWithGpu;
   const recreateStartup =
     options.recreateStartup ?? recreateOpenShellDockerSandboxWithStartupCommand;
-  return (waitForSupervisor, deps) => {
+  return ((waitForSupervisor: boolean, deps: DockerGpuPatchDeps) => {
     if (options.gpuEnabled) {
-      return recreateGpu({ ...options.gpuOptions, waitForSupervisor }, deps);
+      return waitForSupervisor
+        ? recreateGpu({ ...options.gpuOptions, waitForSupervisor: true }, deps)
+        : recreateGpu({ ...options.gpuOptions, waitForSupervisor: false }, deps);
     }
-    return recreateStartup(
-      {
-        sandboxName: options.gpuOptions.sandboxName,
-        openshellSandboxCommand: options.startupCommand || [],
-        requiredUlimits: options.requiredUlimits,
-        timeoutSecs: options.gpuOptions.timeoutSecs,
-        waitForSupervisor,
-      },
-      deps,
-    );
-  };
+    const startupOptions = {
+      sandboxName: options.gpuOptions.sandboxName,
+      openshellSandboxCommand: options.startupCommand || [],
+      requiredUlimits: options.requiredUlimits,
+      timeoutSecs: options.gpuOptions.timeoutSecs,
+    };
+    return waitForSupervisor
+      ? recreateStartup({ ...startupOptions, waitForSupervisor: true }, deps)
+      : recreateStartup({ ...startupOptions, waitForSupervisor: false }, deps);
+  }) as DockerSandboxRecreator;
 }

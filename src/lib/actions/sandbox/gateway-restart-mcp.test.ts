@@ -29,20 +29,20 @@ function baseDeps(overrides: Partial<GatewayRestartDeps> = {}): GatewayRestartDe
       stdout: "GATEWAY_PID=123",
       stderr: "",
     })),
-    executeSandboxExecCommand: vi.fn(() => null),
-    waitForRecoveredSandboxGateway: vi.fn(() => true),
+    executeSandboxExecCommand: vi.fn(async () => null),
+    waitForRecoveredSandboxGateway: vi.fn(async () => true),
     ensureSandboxPortForward: vi.fn(() => true),
     ensureHermesDashboardPortForwardIfEnabled: vi.fn(() => null),
     recoverMessagingHostForward: vi.fn(() => null),
     recoverDeclaredAgentForwardPorts: vi.fn(() => null),
-    printGatewayWedgeDiagnostics: vi.fn(() => false),
+    printGatewayWedgeDiagnostics: vi.fn(async () => false),
     inspectHermesMcpReconciliationRefusal: vi.fn(() => null),
     ...overrides,
   };
 }
 
 describe("Hermes MCP gateway restart", () => {
-  it("refuses to report a restarted gateway with stale MCP intent", () => {
+  it("refuses to report a restarted gateway with stale MCP intent", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
@@ -51,7 +51,7 @@ describe("Hermes MCP gateway restart", () => {
         })),
       });
 
-      expect(restartSandboxGateway("alpha", { quiet: true, deps })).toEqual({
+      expect(await restartSandboxGateway("alpha", { quiet: true, deps })).toEqual({
         ok: false,
         failureLayer: "MCP reconciliation refusal",
         detail: "Hermes MCP config does not match persisted managed intent",
@@ -64,7 +64,7 @@ describe("Hermes MCP gateway restart", () => {
     }
   });
 
-  it("returns only sanitized MCP reconciliation detail", () => {
+  it("returns only sanitized MCP reconciliation detail", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
@@ -73,7 +73,7 @@ describe("Hermes MCP gateway restart", () => {
         })),
       });
 
-      expect(restartSandboxGateway("alpha", { quiet: true, deps })).toEqual({
+      expect(await restartSandboxGateway("alpha", { quiet: true, deps })).toEqual({
         ok: false,
         failureLayer: "MCP reconciliation refusal",
         detail: "integrity pending FORGED SUCCESS <REDACTED>",
@@ -86,7 +86,7 @@ describe("Hermes MCP gateway restart", () => {
     }
   });
 
-  it("prints MCP recovery guidance for a supervisor-side integrity refusal", () => {
+  it("prints MCP recovery guidance for a supervisor-side integrity refusal", async () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
@@ -98,7 +98,7 @@ describe("Hermes MCP gateway restart", () => {
         })),
       });
 
-      const result = restartSandboxGateway("alpha", { quiet: true, deps });
+      const result = await restartSandboxGateway("alpha", { quiet: true, deps });
       expect(result).toMatchObject({
         ok: false,
         failureLayer: "MCP reconciliation refusal",

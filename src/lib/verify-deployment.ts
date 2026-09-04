@@ -116,7 +116,7 @@ export interface VerifyDeploymentDeps {
    * the runtime view, so a user could land on the dashboard and see
    * "No channels found" without any NemoClaw warning.
    */
-  probeChannelRuntimeStatus?: () => RuntimeChannelStatus | null;
+  probeChannelRuntimeStatus?: () => Promise<RuntimeChannelStatus | null>;
 }
 
 export interface VerifyDeploymentOptions {
@@ -189,17 +189,17 @@ export function buildGatewayLogHint(
  * Probe the gateway /health endpoint inside the sandbox.
  * Uses HTTP status code extraction (not curl -sf) so 401 counts as alive.
  */
-function probeGatewayInSandboxOnce(
+async function probeGatewayInSandboxOnce(
   sandboxName: string,
   chain: DashboardDeliveryChain,
   deps: VerifyDeploymentDeps,
-): { reachable: boolean; httpCode: number; detail: string } {
+): Promise<{ reachable: boolean; httpCode: number; detail: string }> {
   const port = chain.gatewayPort ?? chain.port;
   const endpoint = chain.gatewayHealthEndpoint ?? chain.healthEndpoint;
   const script =
     `curl -so /dev/null -w '%{http_code}' --max-time 3 ` +
     `http://127.0.0.1:${port}${endpoint} 2>/dev/null || echo 000`;
-  const result = deps.executeSandboxCommand(sandboxName, script);
+  const result = await deps.executeSandboxCommand(sandboxName, script);
   if (!result) {
     return { reachable: false, httpCode: 0, detail: "sandbox unreachable (SSH failed)" };
   }
@@ -227,23 +227,26 @@ async function verifyGatewayInSandbox(
 /**
  * Retrieve the gateway version from inside the sandbox.
  */
-function fetchGatewayVersion(sandboxName: string, deps: VerifyDeploymentDeps): string | null {
+async function fetchGatewayVersion(
+  sandboxName: string,
+  deps: VerifyDeploymentDeps,
+): Promise<string | null> {
   const script = "openclaw --version 2>/dev/null";
-  const result = deps.executeSandboxCommand(sandboxName, script);
+  const result = await deps.executeSandboxCommand(sandboxName, script);
   if (!result || result.status !== 0 || !result.stdout.trim()) return null;
   return parseVersionFromText(result.stdout, "openclaw --version");
 }
 
 type InferenceRouteStatus = "ok" | "unreachable" | "unhealthy";
 
-function probeInferenceRouteOnce(
+async function probeInferenceRouteOnce(
   sandboxName: string,
   deps: VerifyDeploymentDeps,
-): { status: InferenceRouteStatus; detail: string } {
+): Promise<{ status: InferenceRouteStatus; detail: string }> {
   const script =
     `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time ${INFERENCE_ROUTE_REACHABILITY_MAX_SECONDS} ` +
     `https://inference.local/v1/models 2>/dev/null || echo 000); echo $HTTP_CODE`;
-  const result = deps.executeSandboxCommand(sandboxName, script);
+  const result = await deps.executeSandboxCommand(sandboxName, script);
   if (!result) {
     return { status: "unreachable", detail: "sandbox unreachable" };
   }
@@ -402,10 +405,10 @@ export interface MessagingBridgeStatus {
  * the channel?) so the "No channels found" dashboard symptom from #4156
  * surfaces here as a warning.
  */
-function verifyMessagingBridges(
+async function verifyMessagingBridges(
   sandboxName: string,
   deps: VerifyDeploymentDeps,
-): MessagingBridgeStatus {
+): Promise<MessagingBridgeStatus> {
   const channels = deps.getMessagingChannels(sandboxName);
   if (channels.length === 0) {
     return {
@@ -434,7 +437,7 @@ function verifyMessagingBridges(
   let runtimeProbeFailed = false;
   let runtimeProbeOnlyConfig = false;
   if (deps.probeChannelRuntimeStatus) {
-    const runtime = deps.probeChannelRuntimeStatus();
+    const runtime = await deps.probeChannelRuntimeStatus();
     if (runtime) {
       runtimeProbeDetail = runtime.detail;
       if (runtime.ok) {
@@ -569,7 +572,7 @@ export async function verifyDeployment(
   // exec cannot safely prove that image artifacts are absent.
   const runtimeDiagnosis =
     !gateway.reachable && options.diagnoseCustomOpenClawRuntime
-      ? classifyOpenClawRuntimeFailure(sandboxName, deps.executeSandboxCommand)
+      ? await classifyOpenClawRuntimeFailure(sandboxName, deps.executeSandboxCommand)
       : null;
   const customRuntimeHints = runtimeDiagnosis
     ? buildCustomOpenClawRuntimeFailureHints(runtimeDiagnosis)
@@ -584,7 +587,7 @@ export async function verifyDeployment(
   });
 
   // 2. Gateway version (cosmetic — not a health signal)
-  const gatewayVersion = gateway.reachable ? fetchGatewayVersion(sandboxName, deps) : null;
+  const gatewayVersion = gateway.reachable ? await fetchGatewayVersion(sandboxName, deps) : null;
 
   // 3. Dashboard reachable from host (port forward)
   // A port forward cannot repair an image that has no managed gateway runtime,
@@ -643,7 +646,7 @@ export async function verifyDeployment(
 
   // 5. Messaging bridges (providers attached AND runtime config exposes
   // each configured channel — #4156).
-  const messaging = verifyMessagingBridges(sandboxName, deps);
+  const messaging = await verifyMessagingBridges(sandboxName, deps);
   if (!messaging.healthy) {
     diagnostics.push({
       link: "messaging",

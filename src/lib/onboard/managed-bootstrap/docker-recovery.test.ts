@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import {
   enforceManagedBootstrapRecoveryForSandbox,
   ManagedBootstrapRecoveryBlockedError,
@@ -17,11 +18,41 @@ import {
   authority,
   type DockerFixtureOptions,
   durablePreparation,
-  fixture,
+  fixture as createFixture,
   IDENTITY,
   NEW_ID,
   OLD_ID,
 } from "./docker-test-fixture";
+
+function commandExecutorThrough(
+  fake: ReturnType<typeof createFixture>,
+): OpenShellSandboxBufferedCommandExecutor {
+  return {
+    runBuffered: vi.fn(async (request) => {
+      const result = fake.deps.runOpenshell?.(
+        ["sandbox", "exec", "-n", request.sandboxName, "--", ...request.command],
+        { ignoreError: true, suppressOutput: true },
+      );
+      return {
+        outcome:
+          result?.status == null
+            ? {
+                kind: "failed" as const,
+                error: { kind: "invocation" as const, message: "failed" },
+              }
+            : { kind: "completed" as const, exitCode: result.status },
+        stdout: String(result?.stdout ?? ""),
+        stderr: String(result?.stderr ?? ""),
+      };
+    }),
+  };
+}
+
+function fixture(options?: Parameters<typeof createFixture>[0]) {
+  const fake = createFixture(options);
+  fake.deps.commandExecutor = commandExecutorThrough(fake);
+  return fake;
+}
 
 async function prepareTransaction(
   fake: ReturnType<typeof fixture>,
@@ -131,76 +162,76 @@ describe("Docker managed bootstrap restart recovery", () => {
     readonly label: string;
     readonly options: DockerFixtureOptions;
     readonly phase: "cutover" | "staged";
-  }[])("retains owner cleanup after a process restart from the durable $label phase", async ({
-    options,
-    phase,
-  }) => {
-    const fake = fixture(options);
-    const transaction = await prepareTransaction(fake);
+  }[])(
+    "retains owner cleanup after a process restart from the durable $label phase",
+    async ({ options, phase }) => {
+      const fake = fixture(options);
+      const transaction = await prepareTransaction(fake);
 
-    await expect(
-      transaction.adapter.activateBootstrapReplacement({
-        handle: transaction.handle,
-        snapshot: transaction.snapshot,
-        prepared: transaction.prepared,
-        durablePreparation: transaction.durable,
-      }),
-    ).rejects.toThrow(`crash after durable ${phase} fence`);
-    expect(fake.journal?.phase).toBe(phase);
+      await expect(
+        transaction.adapter.activateBootstrapReplacement({
+          handle: transaction.handle,
+          snapshot: transaction.snapshot,
+          prepared: transaction.prepared,
+          durablePreparation: transaction.durable,
+        }),
+      ).rejects.toThrow(`crash after durable ${phase} fence`);
+      expect(fake.journal?.phase).toBe(phase);
 
-    const restarted = createDockerManagedBootstrapAdapter(fake.deps);
-    await expect(restarted.recoverUnfinishedTransactions()).resolves.toMatchObject({
-      receipts: [],
-      failures: [
-        {
-          bootstrapIdentity: IDENTITY,
-          sourcePhase: "owner-cleanup-required",
-          code: "owner-cleanup-required",
-          blockingScope: "sandbox",
-          retryable: true,
-        },
-      ],
-    });
-    expect(fake.journal?.phase).toBe("owner-cleanup-required");
-    expect(fake.finalization).toBeNull();
-    expect(fake.replacement).toBeNull();
-    expect(fake.original?.State?.Running).toBe(false);
-    expectEventBefore(fake.events, `rm:${NEW_ID}`, "journal:owner-cleanup-required");
+      const restarted = createDockerManagedBootstrapAdapter(fake.deps);
+      await expect(restarted.recoverUnfinishedTransactions()).resolves.toMatchObject({
+        receipts: [],
+        failures: [
+          {
+            bootstrapIdentity: IDENTITY,
+            sourcePhase: "owner-cleanup-required",
+            code: "owner-cleanup-required",
+            blockingScope: "sandbox",
+            retryable: true,
+          },
+        ],
+      });
+      expect(fake.journal?.phase).toBe("owner-cleanup-required");
+      expect(fake.finalization).toBeNull();
+      expect(fake.replacement).toBeNull();
+      expect(fake.original?.State?.Running).toBe(false);
+      expectEventBefore(fake.events, `rm:${NEW_ID}`, "journal:owner-cleanup-required");
 
-    const ownerTransitions = fake.events.filter(
-      (event) => event === "journal:owner-cleanup-required",
-    ).length;
-    const mutationsAfterFirstRecovery = dockerMutationEvents(fake.events);
-    await expect(restarted.recoverUnfinishedTransactions()).resolves.toMatchObject({
-      receipts: [],
-      failures: [{ code: "owner-cleanup-required" }],
-    });
-    expect(fake.events.filter((event) => event === "journal:owner-cleanup-required")).toHaveLength(
-      ownerTransitions,
-    );
-    expect(fake.journal?.phase).toBe("owner-cleanup-required");
-    expect(fake.finalization).toBeNull();
-    expect(dockerMutationEvents(fake.events)).toEqual(mutationsAfterFirstRecovery);
+      const ownerTransitions = fake.events.filter(
+        (event) => event === "journal:owner-cleanup-required",
+      ).length;
+      const mutationsAfterFirstRecovery = dockerMutationEvents(fake.events);
+      await expect(restarted.recoverUnfinishedTransactions()).resolves.toMatchObject({
+        receipts: [],
+        failures: [{ code: "owner-cleanup-required" }],
+      });
+      expect(
+        fake.events.filter((event) => event === "journal:owner-cleanup-required"),
+      ).toHaveLength(ownerTransitions);
+      expect(fake.journal?.phase).toBe("owner-cleanup-required");
+      expect(fake.finalization).toBeNull();
+      expect(dockerMutationEvents(fake.events)).toEqual(mutationsAfterFirstRecovery);
 
-    fake.removeOriginalExternally();
-    await expect(restarted.recoverUnfinishedTransactions()).resolves.toMatchObject({
-      receipts: [
-        {
-          bootstrapIdentity: IDENTITY,
-          sourcePhase: "owner-cleanup-required",
-          outcome: "rolled-back",
-        },
-      ],
-      failures: [],
-    });
-    expect(fake.journal).toBeNull();
-    expect(fake.finalization?.phase).toBe("rolled-back");
-    expect(fake.replacement).toBeNull();
-    await expect(restarted.recoverUnfinishedTransactions()).resolves.toEqual({
-      receipts: [],
-      failures: [],
-    });
-  });
+      fake.removeOriginalExternally();
+      await expect(restarted.recoverUnfinishedTransactions()).resolves.toMatchObject({
+        receipts: [
+          {
+            bootstrapIdentity: IDENTITY,
+            sourcePhase: "owner-cleanup-required",
+            outcome: "rolled-back",
+          },
+        ],
+        failures: [],
+      });
+      expect(fake.journal).toBeNull();
+      expect(fake.finalization?.phase).toBe("rolled-back");
+      expect(fake.replacement).toBeNull();
+      await expect(restarted.recoverUnfinishedTransactions()).resolves.toEqual({
+        receipts: [],
+        failures: [],
+      });
+    },
+  );
 
   it("publishes owner cleanup only after shared rollback, replacement cleanup, and restoration", async () => {
     const fake = fixture({

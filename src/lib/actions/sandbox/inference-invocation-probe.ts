@@ -1,12 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
+import type {
+  OpenShellSandboxBufferedCommandExecutor,
+  OpenShellSandboxBufferedCommandRequest,
+} from "../../adapters/openshell/sandbox-command";
+import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
+import {
+  namedOpenShellGateway,
+  selectedOpenShellGateway,
+} from "../../adapters/openshell/sandbox-observer";
+import { buildOpenShellRuntimeSelectionEnv } from "../../adapters/openshell/runtime-selection";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { getSandboxInferenceConfig } from "../../inference/config";
 import { validateInferenceResponseBody } from "../../inference/health";
 import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "../../inference/max-tokens-field";
-import { shellQuote } from "../../runner";
+import { ROOT, shellQuote } from "../../runner";
+import { buildSubprocessEnv } from "../../subprocess-env";
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "./connect-inference-route-probe";
 import {
   executeSandboxExecCommand,
@@ -30,13 +40,13 @@ export type SandboxInferenceInvocationResult =
   | { ok: false; detail: string; httpStatus: number | null };
 
 export type SandboxInferenceInvocationDeps = {
-  runOpenshell?: typeof runOpenshellProviderCommand;
+  commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   execute?: (
     sandboxName: string,
     command: string,
     timeout?: number,
     options?: SandboxExecCommandOptions,
-  ) => SandboxCommandResult | null;
+  ) => Promise<SandboxCommandResult | null>;
 };
 
 /**
@@ -110,55 +120,51 @@ export function buildSandboxInferenceInvocationCommand(
   ].join("; ");
 }
 
-export function buildDcodeSandboxInferenceInvocationArgs(
+export function buildDcodeSandboxInferenceInvocationRequest(
   input: SandboxInferenceInvocationInput,
-): string[] {
-  return [
-    "sandbox",
-    "exec",
-    "--name",
-    input.sandboxName,
-    ...(input.gatewayName ? ["-g", input.gatewayName] : []),
-    "--no-tty",
-    "--env",
-    "HOME=/usr/local/lib/nemoclaw",
-    "--env",
-    "BASH_ENV=",
-    "--env",
-    "ENV=",
-    "--",
-    DCODE_MANAGED_EXEC_LAUNCHER,
-    "/bin/sh",
-    "-c",
-    buildSandboxInferenceInvocationCommand(input),
-  ];
+  timeoutMilliseconds: number,
+): OpenShellSandboxBufferedCommandRequest {
+  const gatewayName = input.gatewayName ?? input.runtimeSelection?.gatewayName;
+  return {
+    sandboxName: input.sandboxName,
+    target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
+    command: [
+      DCODE_MANAGED_EXEC_LAUNCHER,
+      "/bin/sh",
+      "-c",
+      buildSandboxInferenceInvocationCommand(input),
+    ],
+    sandboxEnvironment: {
+      BASH_ENV: "",
+      ENV: "",
+      HOME: "/usr/local/lib/nemoclaw",
+    },
+    environment: input.runtimeSelection
+      ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), input.runtimeSelection)
+      : buildSubprocessEnv(),
+    tty: false,
+    timeoutMilliseconds,
+  };
 }
 
-function executeDcodeSandboxInferenceInvocation(
+async function executeDcodeSandboxInferenceInvocation(
   input: SandboxInferenceInvocationInput,
   deps: SandboxInferenceInvocationDeps,
   timeoutMs: number,
-): SandboxCommandResult | null {
-  const runOpenshell = deps.runOpenshell ?? runOpenshellProviderCommand;
+): Promise<SandboxCommandResult | null> {
+  const commandExecutor =
+    deps.commandExecutor ?? createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
   try {
-    const result = runOpenshell(buildDcodeSandboxInferenceInvocationArgs(input), {
-      ignoreError: true,
-      ...(input.runtimeSelection ? { runtimeSelection: input.runtimeSelection } : {}),
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: timeoutMs,
-    });
-    if (
-      result.error ||
-      typeof result.stdout !== "string" ||
-      typeof result.stderr !== "string" ||
-      result.stderr.trim()
-    ) {
+    const completed = await commandExecutor.runBuffered(
+      buildDcodeSandboxInferenceInvocationRequest(input, timeoutMs),
+    );
+    if (completed.outcome.kind !== "completed" || completed.stderr.trim()) {
       return null;
     }
     return {
-      status: result.status ?? 1,
-      stdout: result.stdout,
-      stderr: result.stderr,
+      status: completed.outcome.exitCode,
+      stdout: completed.stdout,
+      stderr: completed.stderr,
     };
   } catch {
     return null;
@@ -171,14 +177,14 @@ function executeDcodeSandboxInferenceInvocation(
  * credential through inference.local; no host credential is placed in the
  * command or its output.
  */
-export function probeSandboxInferenceInvocation(
+export async function probeSandboxInferenceInvocation(
   input: SandboxInferenceInvocationInput,
   deps: SandboxInferenceInvocationDeps = {},
   timeoutMs: number = REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS,
-): SandboxInferenceInvocationResult {
+): Promise<SandboxInferenceInvocationResult> {
   let result: SandboxCommandResult | null;
   if (input.agentName === DCODE_AGENT_NAME) {
-    result = executeDcodeSandboxInferenceInvocation(input, deps, timeoutMs);
+    result = await executeDcodeSandboxInferenceInvocation(input, deps, timeoutMs);
   } else {
     const execute = deps.execute ?? executeSandboxExecCommand;
     const execOptions: SandboxExecCommandOptions = {
@@ -186,7 +192,7 @@ export function probeSandboxInferenceInvocation(
       ...(input.runtimeSelection ? { runtimeSelection: input.runtimeSelection } : {}),
       allowLocalDockerFallback: false,
     };
-    result = execute(
+    result = await execute(
       input.sandboxName,
       buildSandboxInferenceInvocationCommand(input),
       timeoutMs,

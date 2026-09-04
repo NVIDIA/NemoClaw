@@ -64,10 +64,10 @@ function makeRepairDeps(probes: SandboxInferenceRouteProbe[]) {
   };
   const queue = [...probes];
   const deps: SandboxInferenceRouteRepairDeps = {
-    probe: vi.fn(() => queue.shift() ?? broken()),
+    probe: vi.fn(async () => queue.shift() ?? broken()),
     shouldApplyVmDnsMonkeypatch: vi.fn(() => false),
     applyVmDnsMonkeypatch: vi.fn(() => ({ ok: false })),
-    reapplyVmInferenceRoute: vi.fn((sandboxName) => {
+    reapplyVmInferenceRoute: vi.fn(async (sandboxName) => {
       calls.reapplications.push(sandboxName);
       return queue.shift() ?? broken();
     }),
@@ -82,10 +82,10 @@ function makeRepairDeps(probes: SandboxInferenceRouteProbe[]) {
 }
 
 describe("sandbox connect inconclusive route repair", () => {
-  it("fails closed without repair when the initial probe is inconclusive (#6192)", () => {
+  it("fails closed without repair when the initial probe is inconclusive (#6192)", async () => {
     const { calls, deps } = makeRepairDeps([inconclusive()]);
 
-    const result = repairSandboxInferenceRouteWithDeps("demo", sandbox(), {}, deps);
+    const result = await repairSandboxInferenceRouteWithDeps("demo", sandbox(), {}, deps);
 
     expect(result).toEqual({
       healthy: false,
@@ -96,10 +96,10 @@ describe("sandbox connect inconclusive route repair", () => {
     expect(calls.reapplications).toEqual([]);
   });
 
-  it("fails closed when non-legacy route reapply remains inconclusive (#6192)", () => {
+  it("fails closed when non-legacy route reapply remains inconclusive (#6192)", async () => {
     const { calls, deps } = makeRepairDeps([broken(), inconclusive()]);
 
-    const result = repairSandboxInferenceRouteWithDeps(
+    const result = await repairSandboxInferenceRouteWithDeps(
       "vm-box",
       sandbox({ openshellDriver: "vm" }),
       {},
@@ -114,10 +114,10 @@ describe("sandbox connect inconclusive route repair", () => {
     expect(calls.reapplications).toEqual(["vm-box"]);
   });
 
-  it("fails closed when a legacy repair probe remains inconclusive (#6192)", () => {
+  it("fails closed when a legacy repair probe remains inconclusive (#6192)", async () => {
     const { calls, deps } = makeRepairDeps([broken(), inconclusive()]);
 
-    const result = repairSandboxInferenceRouteWithDeps(
+    const result = await repairSandboxInferenceRouteWithDeps(
       "legacy-box",
       sandbox({ openshellDriver: "kubernetes" }),
       {},

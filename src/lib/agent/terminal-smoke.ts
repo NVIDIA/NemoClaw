@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "../actions/sandbox/connect-inference-route-probe";
+import type {
+  OpenShellSandboxBufferedCommandExecutor,
+  OpenShellSandboxBufferedCommandRequest,
+} from "../adapters/openshell/sandbox-command";
+import {
+  namedOpenShellGateway,
+  selectedOpenShellGateway,
+} from "../adapters/openshell/sandbox-observer";
 import type { AgentDefinition } from "./defs";
-
-type RunCaptureOpenshell = (
-  args: string[],
-  opts?: { ignoreError?: boolean; timeout?: number },
-) => string | { status?: number | null; output?: string | null } | null;
 
 const SMOKE_EXIT_MARKER = "NEMOCLAW_AGENT_SMOKE_EXIT:";
 const SMOKE_BEGIN_MARKER = "NEMOCLAW_AGENT_SMOKE_BEGIN";
@@ -53,76 +56,64 @@ function smokeRunner(shell: "sh -c" | "sh -lc" | "/bin/bash -lc"): string {
  * commands rely on profile-provided PATH entries and retain legacy diagnostic
  * markers.
  */
-export function buildAgentSmokeArgs(
+export function buildAgentSmokeRequest(
   sandboxName: string,
   agent: AgentDefinition,
   command: string,
   gatewayName?: string,
-): string[] {
+): OpenShellSandboxBufferedCommandRequest {
+  const target = gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway();
   if (agent.name === "langchain-deepagents-code") {
-    return [
-      "sandbox",
-      "exec",
-      "-n",
+    return {
       sandboxName,
-      ...(gatewayName ? ["-g", gatewayName] : []),
-      "--no-tty",
-      "--env",
-      "HOME=/usr/local/lib/nemoclaw",
-      "--env",
-      "BASH_ENV=",
-      "--env",
-      "ENV=",
-      "--",
-      DCODE_MANAGED_EXEC_LAUNCHER,
-      "/bin/sh",
-      "-c",
-      smokeRunner("sh -c"),
-      "nemoclaw-agent-smoke",
-      command,
-    ];
+      target,
+      tty: false,
+      sandboxEnvironment: { HOME: "/usr/local/lib/nemoclaw", BASH_ENV: "", ENV: "" },
+      command: [
+        DCODE_MANAGED_EXEC_LAUNCHER,
+        "/bin/sh",
+        "-c",
+        smokeRunner("sh -c"),
+        "nemoclaw-agent-smoke",
+        command,
+      ],
+    };
   }
   // Pi's login profile enforces an exact nproc limit, which Ubuntu /bin/sh
   // cannot inspect. Keep the profile active, but run it with the Bash shell
   // the Pi image provisions for this contract.
   const shellPath = agent.name === "pi" ? "/bin/bash" : "/bin/sh";
   const commandShell = agent.name === "pi" ? "/bin/bash -lc" : "sh -lc";
-  return [
-    "sandbox",
-    "exec",
-    "-n",
+  return {
     sandboxName,
-    ...(gatewayName ? ["-g", gatewayName] : []),
-    "--",
-    shellPath,
-    "-lc",
-    smokeRunner(commandShell),
-    "nemoclaw-agent-smoke",
-    command,
-  ];
+    target,
+    command: [shellPath, "-lc", smokeRunner(commandShell), "nemoclaw-agent-smoke", command],
+  };
 }
 
-export function runAgentSmokeCommands(
+export async function runAgentSmokeCommands(
   sandboxName: string,
   agent: AgentDefinition,
-  runCaptureOpenshell: RunCaptureOpenshell,
+  executor: OpenShellSandboxBufferedCommandExecutor,
   gatewayName?: string,
-): AgentSmokeCommandResult {
+): Promise<AgentSmokeCommandResult> {
   // smoke_commands are shell-form commands from repository-shipped agents/*/manifest.yaml files.
   // Switch to argv-form commands before accepting custom or user-provided manifests here.
   const commands = agent.runtime?.smoke_commands ?? [];
   for (const command of commands) {
-    const result = runCaptureOpenshell(
-      buildAgentSmokeArgs(sandboxName, agent, command, gatewayName),
-      {
-        ignoreError: true,
-      },
-    );
-    const output = typeof result === "string" ? result : (result?.output ?? null);
+    let result;
+    try {
+      result = await executor.runBuffered(
+        buildAgentSmokeRequest(sandboxName, agent, command, gatewayName),
+      );
+    } catch {
+      return { ok: false, command, output: null };
+    }
+    const output = result.stdout || null;
     const requireManagedBoundary = agent.name === "langchain-deepagents-code";
     const exitCode = getSmokeExitCode(output, requireManagedBoundary);
     const transportFailed =
-      requireManagedBoundary && (typeof result === "string" || result?.status !== 0);
+      result.outcome.kind === "failed" || (requireManagedBoundary && result.outcome.exitCode !== 0);
     if (exitCode !== 0 || transportFailed) {
       return { ok: false, command, output };
     }

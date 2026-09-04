@@ -4,10 +4,22 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   entry,
-  makeDeps,
+  makeDeps as makeSyncDeps,
   showSandboxChannelStatus,
   TELEGRAM_PROBE_UNKNOWN_STDOUT,
 } from "./channel-status.test-helpers";
+
+function makeDeps(options: Parameters<typeof makeSyncDeps>[0]) {
+  const result = makeSyncDeps(options);
+  const execSandbox = result.deps.execSandbox;
+  return {
+    ...result,
+    deps: {
+      ...result.deps,
+      execSandbox: async (...args: Parameters<typeof execSandbox>) => execSandbox(...args),
+    },
+  };
+}
 
 // The whatsapp status hook now reads OpenClaw's authoritative live status JSON
 // (`openclaw channels status --channel whatsapp --json`) instead of scraping
@@ -374,7 +386,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     // bridge and preset until the operator runs `channels start`. The
     // status command should reflect that rather than probing a torn-down
     // bridge and reporting failures.
-    const execSpy = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const execSpy = vi.fn(async () => ({ status: 0, stdout: "", stderr: "" }));
     const { deps, out_lines } = makeDeps({
       exec: () => ({ status: 0, stdout: "", stderr: "" }),
       sandbox: entry(["whatsapp"], ["whatsapp"]),
@@ -399,7 +411,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
   it("labels a paused telegram channel as paused rather than summary view under --channel (#6887)", async () => {
     // A probe-capable channel that is paused skips the live probe but keeps the
     // detailed envelope. The Runtime health signal must reflect the paused state.
-    const execSpy = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const execSpy = vi.fn(async () => ({ status: 0, stdout: "", stderr: "" }));
     const { deps } = makeDeps({
       exec: () => ({ status: 0, stdout: "", stderr: "" }),
       sandbox: entry(["telegram"], ["telegram"]),
@@ -541,23 +553,26 @@ describe("showSandboxChannelStatus Slack readiness wait", () => {
   it.each([
     ["openclaw", "channel_paused"],
     ["hermes", "readiness_not_supported"],
-  ] as const)("returns the agent-appropriate terminal result for paused %s Slack (#7383)", async (agentName, reason) => {
-    const { deps, probe, sleep } = slackWaitHarness([{}], { paused: true, agentName });
+  ] as const)(
+    "returns the agent-appropriate terminal result for paused %s Slack (#7383)",
+    async (agentName, reason) => {
+      const { deps, probe, sleep } = slackWaitHarness([{}], { paused: true, agentName });
 
-    const result = await waitForSlack(deps);
+      const result = await waitForSlack(deps);
 
-    expect(result && "readiness" in result ? result.readiness : null).toMatchObject({
-      state: "terminal",
-      category: "runtime",
-      reason,
-      retryable: false,
-      attempts: 1,
-      elapsedMs: 0,
-    });
-    expect(result && (await import("./channel-status")).exitCodeFor(result)).toBe(1);
-    expect(probe).not.toHaveBeenCalled();
-    expect(sleep).not.toHaveBeenCalled();
-  });
+      expect(result && "readiness" in result ? result.readiness : null).toMatchObject({
+        state: "terminal",
+        category: "runtime",
+        reason,
+        retryable: false,
+        attempts: 1,
+        elapsedMs: 0,
+      });
+      expect(result && (await import("./channel-status")).exitCodeFor(result)).toBe(1);
+      expect(probe).not.toHaveBeenCalled();
+      expect(sleep).not.toHaveBeenCalled();
+    },
+  );
 
   it("bounds every readiness dependency by one wait deadline (#7383)", async () => {
     const { deps, gatewayPolicy, probe, configRead, sleep } = slackWaitHarness(

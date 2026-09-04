@@ -7,6 +7,7 @@ import {
   createCliOpenShellSandboxObserver,
   stripOpenShellCliAnsi,
 } from "../../adapters/openshell/sandbox-observer-cli";
+import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import {
   namedOpenShellGateway,
   type OpenShellSandboxError,
@@ -106,6 +107,8 @@ type SandboxProbe = {
   checks: DoctorCheck[];
   reachable: boolean;
 };
+
+const sandboxCommandExecutor = createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
 
 function hermesPortableDoctorReport(
   sandboxName: string,
@@ -454,12 +457,12 @@ function agentVersionDoctorCheck(sandboxName: string): DoctorCheck {
   }
 }
 
-function collectRegisteredSandboxChecks(
+async function collectRegisteredSandboxChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
   wantsFix: boolean,
   sandboxReachable: boolean,
-): DoctorCheck[] {
+): Promise<DoctorCheck[]> {
   if (!sb) return [];
   const checks = [agentVersionDoctorCheck(sandboxName)];
   let dashboardPortRequired = true;
@@ -477,19 +480,20 @@ function collectRegisteredSandboxChecks(
     cliName: CLI_NAME,
   });
   if (permsCheck) checks.push(permsCheck);
-  checks.push(...collectMessagingDoctorChecks(sandboxName, sb, sandboxReachable));
+  checks.push(...(await collectMessagingDoctorChecks(sandboxName, sb, sandboxReachable)));
   return checks;
 }
 
-function collectToolScopeChecks(
+async function collectToolScopeChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
   sandboxReachable: boolean,
   wantsFix: boolean,
-): DoctorCheck[] {
+): Promise<DoctorCheck[]> {
   if (!sb || !sandboxReachable || (sb.agent ?? "openclaw") !== "openclaw") return [];
   return buildToolScopeChecks(sandboxName, CLI_NAME, wantsFix, {
-    exec: (name, script) => executeSandboxCommandForVerification(name, script),
+    exec: (name, script) =>
+      executeSandboxCommandForVerification(name, script, sandboxCommandExecutor),
     runApprovalPass: (name) => {
       const result = runSandboxAutoPairApprovalPass(name, { capture: true });
       return { reported: result.reported, approved: result.approved };
@@ -547,8 +551,8 @@ async function collectDoctorChecks(
       gatewayName,
       includeServingProcessCheck: shouldReportServingProcessHealth(sb?.agent),
     })),
-    ...collectRegisteredSandboxChecks(sandboxName, sb, intent.wantsFix, sandbox.reachable),
-    ...collectToolScopeChecks(sandboxName, sb, sandbox.reachable, intent.wantsFix),
+    ...(await collectRegisteredSandboxChecks(sandboxName, sb, intent.wantsFix, sandbox.reachable)),
+    ...(await collectToolScopeChecks(sandboxName, sb, sandbox.reachable, intent.wantsFix)),
     ...collectManagedLlamaCppDoctorChecks(sandboxName, sb?.gatewayPort),
     ollamaDoctorCheck(route.provider),
     cloudflaredDoctorCheck(sandboxName),

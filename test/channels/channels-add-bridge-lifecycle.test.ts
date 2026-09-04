@@ -312,16 +312,16 @@ beforeEach(() => {
           ? JSON.stringify(GOOGLECHAT_PROFILE_DOC)
           : providerName && !providerMissing
             ? `Name: ${providerName}\nType: google-chat-bridge\nCredential keys: GOOGLE_CHAT_ACCESS_TOKEN\nConfig keys: <none>\n`
-          : "",
+            : "",
       stderr: invalidRefresh
         ? "invalid secret handoff"
         : commandFailure
           ? commandFailure
-        : profileMissing
-          ? "provider profile 'google-chat-bridge' not found"
-          : providerMissing
-            ? `provider '${args[args.length - 1]}' not found`
-            : "",
+          : profileMissing
+            ? "provider profile 'google-chat-bridge' not found"
+            : providerMissing
+              ? `provider '${args[args.length - 1]}' not found`
+              : "",
       status:
         invalidRefresh || refreshFailure || deleteFailure || profileMissing || providerMissing
           ? 1
@@ -343,7 +343,7 @@ beforeEach(() => {
     attempted: false,
   });
 
-  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
     status: 0,
     stdout: "",
     stderr: "",

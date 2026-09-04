@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveAgent } from "../../src/lib/agent/onboard.ts";
 import { parseOpenShellSandboxId } from "../../src/lib/adapters/openshell/sandbox-identity.ts";
+import { createCliOpenShellSandboxCommandExecutor } from "../../src/lib/adapters/openshell/sandbox-command-cli.ts";
 import { createCliOpenShellSandboxObserverFromRunner } from "../../src/lib/adapters/openshell/sandbox-observer-cli.ts";
 import { isValidName, NAME_ALLOWED_FORMAT } from "../../src/lib/name-validation.ts";
 import {
@@ -67,6 +68,7 @@ import {
 // and profile policy remains in managed-image-protected-runtime-contract.ts.
 
 const MANAGED_AGENTS = new Set<ShippedManagedImageAgent>(SHIPPED_MANAGED_IMAGE_AGENTS);
+const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const GATEWAY_NAME = "nemoclaw";
 const GATEWAY_PORT = 8080;
@@ -367,12 +369,7 @@ export function parseManagedImageOpenShellE2eInputs(argv: readonly string[]): In
 }
 
 export function managedImageOpenShellBasePolicyPath(agent: ShippedManagedImageAgent): string {
-  return path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "..",
-    "..",
-    ...MANAGED_AGENT_BASE_POLICIES[agent],
-  );
+  return path.resolve(REPOSITORY_ROOT, ...MANAGED_AGENT_BASE_POLICIES[agent]);
 }
 
 export interface ManagedImageCommandResult {
@@ -1179,6 +1176,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           ...startupPlan,
         },
         {
+          commandExecutor: createCliOpenShellSandboxCommandExecutor({ hostCwd: REPOSITORY_ROOT }),
           runOpenshell: onboard.runOpenshell,
           runCaptureOpenshell: onboard.runCaptureOpenshell,
           sandboxObserver: createCliOpenShellSandboxObserverFromRunner(onboard.runOpenshell),

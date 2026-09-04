@@ -17,7 +17,7 @@ import {
 } from "../channels/channel-health";
 import type { ChannelHookSpec, MessagingAgentId, MessagingSerializableValue } from "../manifest";
 import { createBuiltInMessagingHookRegistry } from "./builtins";
-import { runMessagingHookSync } from "./hook-runner";
+import { runMessagingHook, runMessagingHookSync } from "./hook-runner";
 
 export interface MessagingStatusHookRunOptions {
   readonly agent?: MessagingAgentId;
@@ -57,6 +57,45 @@ export function runMessagingStatusHooks(
         seen.add(key);
         try {
           const result = runMessagingHookSync(hook, hookRegistry, {
+            channelId: manifest.id,
+            inputs: createMessagingStatusHookInputs(options),
+          });
+          hookResults.push({
+            channelId: manifest.id,
+            hookId: hook.id,
+            outputs: result.outputs,
+          });
+        } catch {
+          // Status hooks are advisory; a broken hook must not hide the rest of
+          // `nemoclaw status` or a channels-status probe.
+        }
+      }
+    }
+  }
+  return hookResults;
+}
+
+export async function runMessagingStatusHooksAsync(
+  options: MessagingStatusHookRunOptions,
+): Promise<MessagingStatusHookRunResult[]> {
+  const hookRegistry = options.hookRegistry ?? createBuiltInMessagingHookRegistry();
+  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const agents: ReadonlySet<MessagingAgentId> = options.agent
+    ? new Set<MessagingAgentId>([options.agent])
+    : (options.agents ?? new Set<MessagingAgentId>(["openclaw"]));
+  const hookResults: MessagingStatusHookRunResult[] = [];
+  const seen = new Set<string>();
+
+  for (const agent of agents) {
+    for (const manifest of manifestRegistry.listAvailable({ agent })) {
+      if (options.channels && !options.channels.has(manifest.id)) continue;
+      for (const hook of manifest.hooks) {
+        if (!shouldRunStatusHook(hook, agent)) continue;
+        const key = `${manifest.id}\0${hook.id}\0${hook.handler}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        try {
+          const result = await runMessagingHook(hook, hookRegistry, {
             channelId: manifest.id,
             inputs: createMessagingStatusHookInputs(options),
           });

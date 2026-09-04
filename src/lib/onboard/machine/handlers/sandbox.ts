@@ -725,7 +725,9 @@ class SandboxStateFlow<
     return this.checkpointSandboxName(state, explicitName);
   }
 
-  private resolveResumeDecision(state: SandboxStepState<WebSearchConfig>): SandboxResumeDecision {
+  private async resolveResumeDecision(
+    state: SandboxStepState<WebSearchConfig>,
+  ): Promise<SandboxResumeDecision> {
     const storedMessagingConfig = this.deps.getStoredMessagingChannelConfig(
       state.sandboxName,
       state.session,
@@ -749,7 +751,7 @@ class SandboxStateFlow<
       : { source: "none" as const, plan: null };
     const toolDisclosureSignals = resolveToolDisclosureResumeSignals(registryEntry, state.session);
     const sandboxReuseState = this.deps.getSandboxReuseState(state.sandboxName);
-    const dcodeResumeSignals = dcodeResume.resolveSignals(
+    const dcodeResumeSignals = await dcodeResume.resolveSignals(
       this.options,
       state,
       sandboxReuseState,
@@ -2511,7 +2513,7 @@ class SandboxStateFlow<
     const initialState = this.checkpointChangedExplicitSandboxName(
       this.applyObservabilityRequest(this.prepareWebSearchSupport()),
     );
-    const decision = this.resolveResumeDecision(initialState);
+    const decision = await this.resolveResumeDecision(initialState);
     const completedState =
       decision.kind === "reuse"
         ? await this.reuseSandbox(initialState)
