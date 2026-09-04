@@ -949,3 +949,93 @@ describe("CLI dispatch", () => {
     );
   });
 });
+
+describe("multi-gateway sandbox ownership (#10656)", () => {
+  const owner = {
+    owners: [
+      {
+        gatewayName: "nemoclaw-8990",
+        gatewayPort: 8990,
+        registryFile: "/home/qa/.nemoclaw/gateways/8990/sandboxes.json",
+      },
+    ],
+    selectedGatewayName: "nemoclaw",
+    selectedGatewayPort: 8080,
+  };
+
+  it.each(["status", "recover"])(
+    "names the owning gateway instead of denying the sandbox for %s",
+    async (action) => {
+      await withDirectPublicDispatch(
+        async ({ dispatchCli, exitSpy, stderr }) => {
+          await expect(dispatchCli(["failure-a", action])).rejects.toThrow("process.exit:1");
+
+          const output = stderr.join("\n");
+          expect(output).toContain(
+            "Sandbox 'failure-a' is registered on a different NemoClaw gateway.",
+          );
+          expect(output).toContain("Owning gateway: nemoclaw-8990 (port 8990)");
+          expect(output).toContain(
+            "Owning registry: /home/qa/.nemoclaw/gateways/8990/sandboxes.json",
+          );
+          expect(output).toContain("Selected gateway: nemoclaw (port 8080)");
+          expect(output).toContain(`NEMOCLAW_GATEWAY_PORT=8990 nemoclaw failure-a ${action}`);
+          expect(output).not.toContain("does not exist");
+          expect(output).not.toContain("Registered sandboxes:");
+          expect(exitSpy).toHaveBeenCalledWith(1);
+        },
+        { sandboxNames: ["healthy-b"], foreignGatewaySandbox: owner },
+      );
+    },
+  );
+
+  it("names every gateway when more than one claims the sandbox", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, stderr }) => {
+        await expect(dispatchCli(["failure-a", "status"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
+        expect(output).toContain("Sandbox 'failure-a' is registered on 2 other NemoClaw gateways.");
+        expect(output).toContain("Owning gateway: nemoclaw-8990 (port 8990)");
+        expect(output).toContain("Owning gateway: nemoclaw-9000 (port 9000)");
+        expect(output).toContain("NEMOCLAW_GATEWAY_PORT=8990 nemoclaw failure-a status");
+        expect(output).toContain("NEMOCLAW_GATEWAY_PORT=9000 nemoclaw failure-a status");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+      {
+        sandboxNames: ["healthy-b"],
+        foreignGatewaySandbox: {
+          owners: [
+            {
+              gatewayName: "nemoclaw-8990",
+              gatewayPort: 8990,
+              registryFile: "/home/qa/.nemoclaw/gateways/8990/sandboxes.json",
+            },
+            {
+              gatewayName: "nemoclaw-9000",
+              gatewayPort: 9000,
+              registryFile: "/home/qa/.nemoclaw/gateways/9000/sandboxes.json",
+            },
+          ],
+          selectedGatewayName: "nemoclaw",
+          selectedGatewayPort: 8080,
+        },
+      },
+    );
+  });
+
+  it("keeps the unknown-sandbox message when no other gateway owns the name", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, stderr }) => {
+        await expect(dispatchCli(["failure-a", "status"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
+        expect(output).toContain("Sandbox 'failure-a' does not exist.");
+        expect(output).toContain("Registered sandboxes: healthy-b");
+        expect(output).not.toContain("Owning gateway:");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+      { sandboxNames: ["healthy-b"], foreignGatewaySandbox: null },
+    );
+  });
+});

@@ -3,6 +3,8 @@
 
 import { vi } from "vitest";
 
+import type { ForeignGatewaySandbox } from "../../src/lib/state/gateway-registry.js";
+
 type SandboxStub = { name: string; pendingRouteReservation?: true; createdAt?: string };
 
 export type DirectPublicDispatchHarness = {
@@ -30,6 +32,12 @@ type DirectPublicDispatchOptions = {
   connectFlags?: readonly string[];
   /** Error injected by the pre-dispatch legacy-state migration seam. */
   migrationError?: Error;
+  /**
+   * Owning-gateway row the host-wide lookup reports for a foreign sandbox
+   * (#10656). Stubbed for every case so the real lookup never reads the
+   * developer's own `$HOME`.
+   */
+  foreignGatewaySandbox?: ForeignGatewaySandbox | null;
 };
 
 const requireCache = require.cache as Record<string, NodeModule | undefined>;
@@ -64,12 +72,14 @@ export async function withDirectPublicDispatch(
   const legacyPortMigrationPath = require.resolve("../../src/lib/state/legacy-port-migration.js");
   const registryRecoveryPath = require.resolve("../../src/lib/registry-recovery-action.js");
   const runnerPath = require.resolve("../../src/lib/runner.js");
+  const gatewayRegistryPath = require.resolve("../../src/lib/state/gateway-registry.js");
   const priorPublicDispatch = requireCache[publicDispatchPath];
   const priorOclifRunner = requireCache[oclifRunnerPath];
   const priorSandboxConnect = requireCache[sandboxConnectPath];
   const priorRegistry = requireCache[registryPath];
   const priorLegacyPortMigration = requireCache[legacyPortMigrationPath];
   const priorRegistryRecovery = requireCache[registryRecoveryPath];
+  const priorGatewayRegistry = requireCache[gatewayRegistryPath];
   const priorRunner = requireCache[runnerPath];
   const priorDockerHost = process.env.DOCKER_HOST;
   const pendingSandboxNames = new Set(options.pendingSandboxNames ?? []);
@@ -138,6 +148,9 @@ export async function withDirectPublicDispatch(
   });
   cacheModule(legacyPortMigrationPath, { migrateLegacyPortState });
   cacheModule(registryRecoveryPath, { recoverRegistryEntries });
+  cacheModule(gatewayRegistryPath, {
+    findForeignGatewaySandbox: vi.fn(() => options.foreignGatewaySandbox ?? null),
+  });
   cacheModule(oclifRunnerPath, { runOclifArgv, runOclifCommandById });
   const connectFlags = new Set(options.connectFlags ?? []);
   cacheModule(sandboxConnectPath, {
@@ -177,6 +190,7 @@ export async function withDirectPublicDispatch(
     restoreCache(registryPath, priorRegistry);
     restoreCache(legacyPortMigrationPath, priorLegacyPortMigration);
     restoreCache(registryRecoveryPath, priorRegistryRecovery);
+    restoreCache(gatewayRegistryPath, priorGatewayRegistry);
     restoreCache(runnerPath, priorRunner);
     if (priorDockerHost === undefined) {
       delete process.env.DOCKER_HOST;

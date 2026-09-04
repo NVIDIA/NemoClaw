@@ -12,7 +12,7 @@
 // src/lib/actions/**; keep this file limited to argv normalization,
 // public route translation, suggestions, and registry-aware sandbox-name checks.
 const { ROOT, validateName } = require("../runner");
-const { CLI_NAME } = require("./branding");
+const { CLI_NAME, CLI_DISPLAY_NAME } = require("./branding");
 const { help } = require("../actions/root-help");
 const { runOclifArgv, runOclifCommandById } = require("./oclif-runner");
 const {
@@ -22,6 +22,7 @@ const {
   sandboxActionTokensForDispatch,
 } = require("./command-registry");
 
+import { type ForeignGatewaySandbox, findForeignGatewaySandbox } from "../state/gateway-registry";
 import { migrateLegacyPortState } from "../state/legacy-port-migration";
 import {
   type NormalizedArgv,
@@ -277,6 +278,41 @@ function printGlobalStatusScopeHint(sandboxName: string, args: readonly string[]
   process.exit(2);
 }
 
+/** Name every gateway that owns a sandbox the selected gateway's registry cannot see (#10656). */
+function printForeignGatewaySandbox(
+  sandboxName: string,
+  action: string,
+  owner: ForeignGatewaySandbox,
+): never {
+  const { owners } = owner;
+  console.error(
+    owners.length === 1
+      ? `  Sandbox '${sandboxName}' is registered on a different ${CLI_DISPLAY_NAME} gateway.`
+      : `  Sandbox '${sandboxName}' is registered on ${String(owners.length)} other ${CLI_DISPLAY_NAME} gateways.`,
+  );
+  console.error("");
+  for (const entry of owners) {
+    console.error(`  Owning gateway: ${entry.gatewayName} (port ${String(entry.gatewayPort)})`);
+    console.error(`  Owning registry: ${entry.registryFile}`);
+  }
+  console.error(
+    `  Selected gateway: ${owner.selectedGatewayName} (port ${String(owner.selectedGatewayPort)})`,
+  );
+  console.error("");
+  console.error(`  Every command reads the state root that NEMOCLAW_GATEWAY_PORT selects.`);
+  console.error(
+    owners.length === 1
+      ? "  Rerun against the owning gateway:"
+      : "  Rerun against the gateway you meant:",
+  );
+  for (const entry of owners) {
+    console.error(
+      `    NEMOCLAW_GATEWAY_PORT=${String(entry.gatewayPort)} ${CLI_NAME} ${sandboxName} ${action}`,
+    );
+  }
+  process.exit(1);
+}
+
 /**
  * Report the sandbox-first grammar for a first token that names a sandbox action.
  *
@@ -330,6 +366,12 @@ async function recoverRequestedSandboxIfNeeded(
   validateName(sandboxName, "sandbox name");
   await registryRecovery().recoverRegistryEntries({ requestedSandboxName: sandboxName });
   if (registry().getSandbox(sandboxName)) return;
+
+  // Registry reads are pinned to the selected gateway's state root, so another
+  // gateway's sandbox reads as absent and the block below would claim it does
+  // not exist. Name the owner instead; recovery stays gateway-scoped (#7105).
+  const foreignOwner = findForeignGatewaySandbox(sandboxName);
+  if (foreignOwner) printForeignGatewaySandbox(sandboxName, action, foreignOwner);
 
   // Recovery runs first so a live sandbox named after an action stays reachable
   // through the name-first grammar. A token that recovery cannot resolve is a
