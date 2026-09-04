@@ -159,7 +159,7 @@ const commands = []; let registeredSandbox = null;
 	}, { sandboxId: sourceSandboxId });
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   commands.push({ command: cmd, env: opts.env || null });
@@ -319,7 +319,7 @@ const events = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 runner.run = (command) => {
   const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   events.push({ kind: "run", cmd });
@@ -352,15 +352,18 @@ runner.run = (command) => {
 	  getSandbox: registry.getSandbox,
 	});
 
+let latestBackup = null;
+sandboxState.getLatestBackup = () => latestBackup;
 sandboxState.backupSandboxState = (name) => {
   events.push({ kind: "backup", name });
+  latestBackup = { backupPath: "/tmp/fake-backup-path", timestamp: "2026-05-25T00:00:00Z" };
   return {
     success: true,
     backedUpDirs: ["workspace", "skills"],
     failedDirs: [],
     backedUpFiles: ["UPGRADE_MARKER.md"],
     failedFiles: [],
-    manifest: { backupPath: "/tmp/fake-backup-path", timestamp: "2026-05-25T00:00:00Z" },
+    manifest: latestBackup,
   };
 };
 sandboxState.restoreRecreatedSandboxState = (name, backupPath, options) => {
@@ -436,7 +439,10 @@ const { createSandbox } = require(${onboardPath});
         cmd?: string;
         name?: string;
         backupPath?: string;
-        options?: { targetAgentType?: string; freshOpenClawImagePluginInstalls?: unknown[] };
+        options?: {
+          targetAgentType?: string;
+          freshOpenClawImagePluginInstalls?: unknown[];
+        };
       }>;
       const backupIndex = events.findIndex((e) => e.kind === "backup");
       const deleteIndex = events.findIndex(
@@ -498,7 +504,7 @@ const events = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 runner.run = (command) => {
   const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   events.push({ kind: "run", cmd });
@@ -648,7 +654,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
 });
 runner.run = (command) => {
   const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   events.push({ kind: "run", cmd });
@@ -681,15 +687,18 @@ runner.run = (command) => {
 	  getSandbox: registry.getSandbox,
 	});
 
+let latestBackup = null;
+sandboxState.getLatestBackup = () => latestBackup;
 sandboxState.backupSandboxState = (name) => {
   events.push({ kind: "backup", name });
+  latestBackup = { backupPath: "/tmp/fake-backup-notready", timestamp: "2026-05-25T00:00:00Z" };
   return {
     success: true,
     backedUpDirs: ["workspace"],
     failedDirs: [],
     backedUpFiles: ["UPGRADE_MARKER.md"],
     failedFiles: [],
-    manifest: { backupPath: "/tmp/fake-backup-notready", timestamp: "2026-05-25T00:00:00Z" },
+    manifest: latestBackup,
   };
 };
 sandboxState.restoreRecreatedSandboxState = (name, backupPath) => {
@@ -819,7 +828,7 @@ const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
@@ -969,7 +978,7 @@ const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
@@ -1145,7 +1154,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
 });
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   commands.push({ command: cmd, env: opts.env || null });

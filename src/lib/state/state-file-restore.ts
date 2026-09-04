@@ -147,6 +147,7 @@ export function restoreStateFile(
   log: (message: string) => void,
   freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
   previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
+  env?: NodeJS.ProcessEnv,
 ): boolean {
   const localPath = path.join(backupPath, spec.path);
   if (!existsSync(localPath)) return true;
@@ -161,6 +162,7 @@ export function restoreStateFile(
     const result = buildOpenClawConfigRestoreInputFromSandbox({
       backupContents,
       dir,
+      env,
       freshImagePluginInstalls,
       log,
       previousImagePluginInstalls,
@@ -185,6 +187,7 @@ export function restoreStateFile(
   if (input === null) return false;
 
   const result = spawnSync("ssh", [...sshArgs, command], {
+    ...(env ? { env } : {}),
     input,
     stdio: ["pipe", "pipe", "pipe"],
     timeout: 120000,

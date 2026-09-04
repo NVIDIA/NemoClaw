@@ -4,7 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import {
-  assertPodmanExecutableMetadataAuthority,
+  assertPodmanExecutableAuthority,
   capturePodmanExecutableAuthority,
   createPodmanContainerEngine,
   createPodmanExecutableOperationProof,
@@ -148,7 +148,6 @@ function createHermesPortablePodmanOperationCommandAuthority(
   requireRuntimeAuthority(runtimeAuthority, socketAuthority, deps);
   const commandEnvironment = buildHermesPortablePodmanEnvironment(runtimeAuthority, sourceEnv);
   requireResolvedExecutable(authority, sourceEnv, deps);
-  executableProof.assertContentAuthority();
   const engine = createPodmanContainerEngine({
     operation,
     socketAuthority,
@@ -167,7 +166,6 @@ function createHermesPortablePodmanOperationCommandAuthority(
     requireRuntimeAuthority(runtimeAuthority, socketAuthority, deps);
     buildHermesPortablePodmanEnvironment(runtimeAuthority, sourceEnv);
     requireResolvedExecutable(authority, sourceEnv, deps);
-    executableProof.assertContentAuthority();
     engine.assertAuthority();
   };
   const assertCurrent = (): void => {
@@ -296,7 +294,7 @@ export function captureHermesPortablePodmanExecutableFileAuthority(
   requireRuntimeAuthority(receipt.runtimeAuthority, socketAuthority, deps);
   buildHermesPortablePodmanEnvironment(receipt.runtimeAuthority, sourceEnv);
   requireResolvedExecutable(receipt.podmanExecutableAuthority, sourceEnv, deps);
-  assertPodmanExecutableMetadataAuthority(
+  assertPodmanExecutableAuthority(
     receipt.podmanExecutableAuthority.executable,
     deps.executableAuthorityDeps,
   );

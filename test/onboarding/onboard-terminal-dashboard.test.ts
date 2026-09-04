@@ -128,6 +128,8 @@ runner.run = (command, opts = {}) => {
   if (profileResult !== null) return profileResult;
   const providerResult = managedProviderResult(normalized);
   if (providerResult !== null) return providerResult;
+  const inferenceProviderResult = fixtureMocks.mockNvidiaProviderGetRun(command, "nemoclaw");
+  if (inferenceProviderResult !== null) return inferenceProviderResult;
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
 };

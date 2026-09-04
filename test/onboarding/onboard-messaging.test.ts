@@ -649,7 +649,7 @@ const { createSandbox } = require(${onboardPath});
       assert.deepEqual(deniedPayload.temporaryCreateSources, []);
       assert.match(
         deniedPayload.error,
-        /did not confirm messaging provider 'my-assistant-telegram-bridge' before sandbox creation/,
+        /Could not inspect messaging provider 'my-assistant-telegram-bridge' before sandbox creation: transport unavailable/,
       );
       const combinedOutput = result.stdout + result.stderr + denied.stdout + denied.stderr;
       assert.equal(
@@ -697,7 +697,6 @@ const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
-
 const commands = []; let dockerfileContent;
 const registerCalls = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
@@ -711,7 +710,7 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
   if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
-  if (normalized.includes("provider get")) return { status: 1 };
+  const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw"); if (providerGetResult !== null) return providerGetResult;
   return createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -871,7 +870,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbo
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider get")) return { status: 1 };
+  const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw"); if (providerGetResult !== null) return providerGetResult;
   return createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -960,8 +959,9 @@ const { createSandbox } = require(${onboardPath});
         assert.equal(result.status, 0, result.stderr);
         const payload = parseStdoutJson(result.stdout);
 
-        const providerMutationCommands = payload.commands.filter((entry: CommandEntry) =>
-          /\bprovider (create|update)\b/.test(entry.command),
+        const providerMutationCommands = payload.commands.filter(
+          (entry: CommandEntry) =>
+            /\bprovider (create|update)\b/.test(entry.command) && entry.command.includes("-bridge"),
         );
         assert.equal(
           providerMutationCommands.length,
@@ -1041,7 +1041,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbo
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider get")) return { status: 1 };
+  const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw"); if (providerGetResult !== null) return providerGetResult;
   return createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -1519,7 +1519,7 @@ const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
-  return createdSandbox.run(command) ?? { status: 0 };
+  return fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw") ?? createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
   const createdIdentity = createdSandbox.capture(command);

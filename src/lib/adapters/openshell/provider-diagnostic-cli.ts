@@ -11,9 +11,8 @@ const NOT_FOUND_SUFFIXES = new Set([
   "was notfound",
 ]);
 
-// Parser helpers deliberately default to null/false for malformed or unknown
-// diagnostics. The caller treats that as `ambiguous-diagnostic`, preserving the
-// provider and emitting one redacted aggregate warning for observability.
+// Malformed or unknown diagnostics return false so callers cannot treat them as
+// exact provider absence.
 function stripAnsi(value: string): string {
   return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "");
 }

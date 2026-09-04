@@ -12,7 +12,7 @@ import {
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
 } from "../../../messaging/provider-profile";
 import { isValidName, isValidProviderName } from "../../../name-validation";
-import { reportsExactProviderNotFound } from "../../../onboard/extra-provider-diagnostic-parser";
+import { reportsExactProviderNotFound } from "../../../adapters/openshell/provider-diagnostic-cli";
 import {
   matchesGatewayCredentialOnlyProviderBinding,
   parseGatewayProviderMetadata,

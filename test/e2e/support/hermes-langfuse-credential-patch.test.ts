@@ -18,11 +18,13 @@ const patcherPath = fileURLToPath(
 const pinnedValidatorFixture = `\
 import os
 import re
+import threading
 from typing import Any, Dict, Optional
 
 Langfuse = Any
 _LANGFUSE_CLIENT = None
 _INIT_FAILED = object()
+_LANGFUSE_CLIENT_LOCK = threading.Lock()
 
 class _Logger:
     def warning(self, *_args: Any) -> None:
@@ -55,9 +57,10 @@ def _validate_langfuse_key(env_name: str, value: str) -> Optional[str]:
 
 def _get_langfuse() -> Optional[Langfuse]:
     global _LANGFUSE_CLIENT
-    base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
-    environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
-    return None
+    with _LANGFUSE_CLIENT_LOCK:
+        base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
+        environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
+        return None
 `;
 
 const validatorAssertions = `\

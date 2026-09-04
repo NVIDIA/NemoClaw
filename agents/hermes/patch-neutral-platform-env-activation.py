@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Keep explicitly disabled Hermes platforms inert under ambient credentials.
 
-Hermes v0.19.0 honors ``enabled: false`` in its shared and plugin-driven
+Hermes v0.20.6 honors ``enabled: false`` in its shared and plugin-driven
 environment enablement paths, but several built-in adapters still assign
 ``enabled = True`` directly when credentials are present. A neutral managed
 image explicitly disables every packaged optional platform. Preserve those
@@ -22,11 +22,13 @@ import argparse
 from pathlib import Path
 
 IMPORT_ANCHOR = """import logging
+import math
 import os
 import json
 """
 PATCHED_IMPORT_ANCHOR = """from copy import deepcopy
 import logging
+import math
 import os
 import json
 """

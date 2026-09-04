@@ -9,10 +9,16 @@ import {
   buildOpenShellSubprocessEnv,
   type HermesPortableOpenShellExecutableAuthority,
 } from "../../adapters/openshell/resolve-shared";
-import { capturePodmanSocketAuthority, type PodmanSocketAuthority } from "../../adapters/podman";
+import {
+  capturePodmanSocketAuthority,
+  resolvePodmanExecutablePath,
+  type PodmanExecutableAuthorityTimingStage,
+  type PodmanSocketAuthority,
+} from "../../adapters/podman";
 import {
   captureHermesPortablePodmanExecutableAuthority,
   captureHermesPortablePodmanExecutableFileAuthority,
+  type HermesPortablePodmanAuthorityDeps,
   type HermesPortablePodmanExecutableAuthority,
 } from "./hermes-portable-podman-authority";
 import {
@@ -25,9 +31,17 @@ import {
   type HermesPortableSuccessorReceipt,
 } from "./hermes-portable-receipt";
 
+export type HermesPortableOperatingAuthorityTimingStage =
+  | "socketAuthority"
+  | "openshellExecutable"
+  | "podmanExecutable"
+  | "podmanPathResolution"
+  | PodmanExecutableAuthorityTimingStage
+  | "transactionCompare";
+
 export interface HermesPortableOperatingAuthorityTiming {
   readonly measure: <T>(
-    stage: "socketAuthority" | "openshellExecutable" | "podmanExecutable" | "transactionCompare",
+    stage: HermesPortableOperatingAuthorityTimingStage,
     operation: () => T,
   ) => T;
 }
@@ -35,6 +49,7 @@ export interface HermesPortableOperatingAuthorityTiming {
 export interface HermesPortableOperatingAuthorityDeps {
   readonly env?: NodeJS.ProcessEnv;
   readonly timing?: HermesPortableOperatingAuthorityTiming;
+  readonly podmanAuthorityDeps?: HermesPortablePodmanAuthorityDeps;
   readonly captureSocketAuthority?: (socketPath: string, uid: number) => PodmanSocketAuthority;
   readonly captureOpenShellExecutableAuthority?: (
     executablePath: string,
@@ -173,6 +188,16 @@ export function qualifyHermesPortableOperatingAuthority(
     ((socketPath: string, uid: number) => capturePodmanSocketAuthority(socketPath, { uid }));
   const captureOpenShell =
     deps.captureOpenShellExecutableAuthority ?? captureHermesPortableOpenShellExecutableAuthority;
+  const podmanAuthorityDeps = {
+    ...deps.podmanAuthorityDeps,
+    executableAuthorityDeps: {
+      ...deps.podmanAuthorityDeps?.executableAuthorityDeps,
+      timing: { measure },
+    },
+    resolveExecutablePath:
+      deps.podmanAuthorityDeps?.resolveExecutablePath ??
+      ((sourceEnv: NodeJS.ProcessEnv) => resolvePodmanExecutablePath(sourceEnv, { measure })),
+  } satisfies HermesPortablePodmanAuthorityDeps;
   const capturePodman =
     deps.capturePodmanExecutableAuthority ??
     ((socketAuthority, receipt, sourceEnv) =>
@@ -180,15 +205,8 @@ export function qualifyHermesPortableOperatingAuthority(
         socketAuthority,
         receipt.runtimeAuthority,
         sourceEnv,
+        podmanAuthorityDeps,
       ));
-  const assertOpenShellFile =
-    deps.assertOpenShellExecutableFileAuthority ??
-    ((expected: HermesPortableOpenShellExecutableAuthority, resolutionEnv: NodeJS.ProcessEnv) =>
-      assertHermesPortableOpenShellExecutableFileAuthority(expected, resolutionEnv));
-  const capturePodmanFile =
-    deps.capturePodmanExecutableFileAuthority ??
-    ((socketAuthority, receipt, sourceEnv) =>
-      captureHermesPortablePodmanExecutableFileAuthority(socketAuthority, receipt, sourceEnv));
   const capture = () => {
     const socket = measure("socketAuthority", () =>
       captureSocket(
@@ -223,6 +241,19 @@ export function qualifyHermesPortableOperatingAuthority(
       } satisfies HermesPortableConfiguredReceipt,
     };
   };
+  const assertOpenShellFile =
+    deps.assertOpenShellExecutableFileAuthority ??
+    ((expected: HermesPortableOpenShellExecutableAuthority, resolutionEnv: NodeJS.ProcessEnv) =>
+      assertHermesPortableOpenShellExecutableFileAuthority(expected, resolutionEnv));
+  const capturePodmanFile =
+    deps.capturePodmanExecutableFileAuthority ??
+    ((socketAuthority, receipt, sourceEnv) =>
+      captureHermesPortablePodmanExecutableFileAuthority(
+        socketAuthority,
+        receipt,
+        sourceEnv,
+        podmanAuthorityDeps,
+      ));
   const initial = capture();
   const assertTransactionCurrent = (): void => {
     const socket = measure("socketAuthority", () =>

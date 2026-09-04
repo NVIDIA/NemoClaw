@@ -77,7 +77,7 @@ jobs:
     name: PR reviewed npm audit
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -99,6 +99,7 @@ jobs:
             ci/npm-audit-exceptions.json
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/npm-audit-receipt.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
@@ -121,6 +122,7 @@ jobs:
         with:
           target-root: ${{ github.workspace }}/candidate
           report-dir: artifacts/reviewed-npm-audit
+          cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
 
   pr-staging-qa-deep-code:
     name: Staging QA base permission regression (Deep Agents Code)
@@ -382,7 +384,9 @@ jobs:
     # External contributor PRs retain the local build/direct-startup lane after
     # GitHub's maintainer workflow approval. Exact digest publication is limited
     # to branches in NVIDIA/NemoClaw; fork jobs never log in or push.
-    needs: pr-reviewed-npm-audit
+    needs:
+      - pr-reviewed-npm-audit
+      - publication-identity
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -457,6 +461,24 @@ jobs:
             chmod 0664 "$artifact_path"
           done
 
+      - name: Download same-run reviewed npm audit evidence
+        if: matrix.agent == 'openclaw'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: reviewed-npm-audit
+          path: ${{ runner.temp }}/reviewed-npm-audit
+
+      - name: Prepare same-run mcporter audit evidence
+        if: matrix.agent == 'openclaw'
+        id: mcporter-audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.receipt.json"
+          raw="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.raw.json"
+          test -f "$receipt"; test -f "$raw"
+          printf 'receipt=%s\nraw=%s\nreceipt_sha256=%s\n' "$receipt" "$raw" "$(sha256sum "$receipt" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -508,15 +530,27 @@ jobs:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
           DOCKERFILE: ${{ matrix.dockerfile }}
           IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
+          PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
           RELEASE: ${{ steps.release.outputs.value }}
           RESOLUTION_KEY: ${{ steps.base.outputs.resolution_key }}
           RESOLUTION_LABEL: ${{ steps.base.outputs.resolution_label }}
+          MCPORTER_AUDIT_RECEIPT: ${{ steps.mcporter-audit.outputs.receipt }}
+          MCPORTER_AUDIT_RAW_REPORT: ${{ steps.mcporter-audit.outputs.raw }}
+          MCPORTER_AUDIT_RECEIPT_SHA256: ${{ steps.mcporter-audit.outputs.receipt_sha256 }}
         run: |
           set -euo pipefail
           # The base resolver loads a changed base into Docker's local image
           # store. Keep this consumer on that same store: a Buildx container
           # builder otherwise treats the local-only reference as Docker Hub.
           resolution_labels=()
+          audit_options=()
+          if [ "$AGENT" = "openclaw" ]; then
+            audit_options+=(
+              --build-arg "NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=${MCPORTER_AUDIT_RECEIPT_SHA256}"
+              --secret "id=nemoclaw-mcporter-audit-receipt,src=${MCPORTER_AUDIT_RECEIPT}"
+              --secret "id=nemoclaw-mcporter-audit-raw-report,src=${MCPORTER_AUDIT_RAW_REPORT}"
+            )
+          fi
           if [ "$AGENT" = "langchain-deepagents-code" ]; then
             resolution_labels+=(
               --label "com.nvidia.nemoclaw.base-resolution-key=${RESOLUTION_KEY}"
@@ -535,8 +569,9 @@ jobs:
             --label "io.nvidia.nemoclaw.managed-image.platform=linux/amd64" \
             --label "io.nvidia.nemoclaw.managed-image.startup-profile=1" \
             --label "io.nvidia.nemoclaw.managed-image.capabilities=1" \
-            --label "io.nvidia.nemoclaw.managed-image.cohort=ghrun-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --label "io.nvidia.nemoclaw.managed-image.cohort=${PUBLICATION_COHORT}" \
             "${resolution_labels[@]}" \
+            "${audit_options[@]}" \
             --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root" \
@@ -561,13 +596,17 @@ jobs:
             io.nvidia.nemoclaw.managed-image.platform=linux/amd64
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
-            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+            io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}
             ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution-key={0}', steps.base.outputs.resolution_key) || '' }}
             ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution={0}', steps.base.outputs.resolution_label) || '' }}
           build-args: |
             BASE_IMAGE=${{ steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
             NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256={0}', steps.mcporter-audit.outputs.receipt_sha256) || '' }}
+          secret-files: |
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', steps.mcporter-audit.outputs.raw) || '' }}
           cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
           provenance: false
           sbom: false
@@ -579,13 +618,20 @@ jobs:
           AGENT: ${{ matrix.agent }}
           IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
           PLATFORM: linux/amd64
-          PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
           RELEASE: ${{ steps.release.outputs.value }}
           RESOLUTION_KEY: ${{ steps.base.outputs.resolution_key }}
           RESOLUTION_LABEL: ${{ steps.base.outputs.resolution_label }}
         run: |
           set -euo pipefail
           image_json="$(docker image inspect "$IMAGE_REFERENCE")"
+          if [ "$AGENT" = "hermes" ]; then
+            layer_count="$(jq -er '.[0].RootFS.Layers | length' <<< "$image_json")"
+            if [ "$layer_count" -gt 125 ]; then
+              echo "ERROR: Hermes managed image has ${layer_count} filesystem layers; the publication runner compatibility ceiling is 125." >&2
+              exit 1
+            fi
+          fi
           image_id="$(
             jq -er '
               if length == 1 and (.[0].Id | type) == "string"
@@ -727,7 +773,7 @@ jobs:
 
       - name: Install managed-image direct harness dependencies
         run: |
-          npm ci --ignore-scripts
+          npm ci --ignore-scripts --no-audit --no-fund
           npm run build:policy-boundary
 
       - name: Exercise managed startup root stdin and hold
@@ -773,13 +819,17 @@ jobs:
             io.nvidia.nemoclaw.managed-image.platform=linux/amd64
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
-            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+            io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}
             ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution-key={0}', steps.base.outputs.resolution_key) || '' }}
             ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution={0}', steps.base.outputs.resolution_label) || '' }}
           build-args: |
             BASE_IMAGE=${{ steps.base.outputs.local == 'true' && 'nemoclaw-pr-base' || steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
             NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256={0}', steps.mcporter-audit.outputs.receipt_sha256) || '' }}
+          secret-files: |
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', steps.mcporter-audit.outputs.raw) || '' }}
           cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
           provenance: false
           sbom: false
@@ -794,7 +844,7 @@ jobs:
         shell: bash
         env:
           AGENT: ${{ matrix.agent }}
-          COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          COHORT: ${{ needs.publication-identity.outputs.cohort }}
           DIGEST: ${{ steps.publish.outputs.digest }}
           IMAGE: ${{ matrix.repository }}
           RELEASE: ${{ steps.release.outputs.value }}
@@ -813,6 +863,13 @@ jobs:
           reference="${IMAGE}@${DIGEST}"
           raw="$RUNNER_TEMP/${AGENT}-published-manifest.raw"
           scripts/checks/pull-public-exact-digest.sh "$reference" linux/amd64
+          if [ "$AGENT" = "hermes" ]; then
+            published_layer_count="$(docker image inspect --format '{{len .RootFS.Layers}}' "$reference")"
+            if [ "$published_layer_count" -gt 125 ]; then
+              echo "ERROR: Hermes managed image has ${published_layer_count} filesystem layers; the publication runner compatibility ceiling is 125." >&2
+              exit 1
+            fi
+          fi
           docker buildx imagetools inspect "$reference" --raw > "$raw"
           [[ "sha256:$(sha256sum "$raw" | awk '{print $1}')" == "$DIGEST" ]] || {
             echo "ERROR: published PR manifest bytes do not match the build digest" >&2
@@ -864,9 +921,10 @@ jobs:
         if: github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}
+          name: managed-pr-contract-${{ github.run_id }}-${{ matrix.agent }}
           path: ${{ runner.temp }}/managed-pr-contract/contract.json
           if-no-files-found: error
+          overwrite: true
           retention-days: 1
 
   pr-managed-activation:
@@ -914,7 +972,7 @@ jobs:
       - name: Download exact published all-agent contracts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-*
+          pattern: managed-pr-contract-${{ github.run_id }}-*
           path: ${{ runner.temp }}/managed-pr-contracts
           merge-multiple: false
 
@@ -922,7 +980,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm ci --ignore-scripts
+          npm ci --ignore-scripts --no-audit --no-fund
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
@@ -1016,7 +1074,7 @@ jobs:
       - name: Download exact published all-agent contracts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-*
+          pattern: managed-pr-contract-${{ github.run_id }}-*
           path: ${{ runner.temp }}/managed-pr-contracts
           merge-multiple: false
 
@@ -1024,7 +1082,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm ci --ignore-scripts
+          npm ci --ignore-scripts --no-audit --no-fund
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
@@ -1508,7 +1566,8 @@ jobs:
 
   publication-identity:
     name: Record managed image publication identity
-    if: github.event_name != 'pull_request'
+    # Failed-job reruns reuse this successful job and its cohort output. A
+    # retried producer lane therefore stays in the original publication cohort.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -1523,10 +1582,32 @@ jobs:
           [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,9}$ ]]
           printf 'cohort=ghrun-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
+  reviewed-npm-audit:
+    name: Reviewed npm audit for managed image publication
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Audit reviewed production npm graphs
+        uses: ./.github/actions/ci-reviewed-npm-audit
+        with:
+          target-root: ${{ github.workspace }}
+          report-dir: artifacts/reviewed-npm-audit
+          cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
+          trusted-cache-write: true
+
   build-and-validate:
     name: Build and validate ${{ matrix.display_name }} managed image (${{ matrix.arch }})
     if: github.event_name != 'pull_request'
-    needs: publication-identity
+    needs:
+      - publication-identity
+      - reviewed-npm-audit
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
@@ -1618,6 +1699,24 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Download same-run reviewed npm audit evidence
+        if: matrix.agent == 'openclaw'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: reviewed-npm-audit
+          path: ${{ runner.temp }}/reviewed-npm-audit
+
+      - name: Prepare same-run mcporter audit evidence
+        if: matrix.agent == 'openclaw'
+        id: mcporter-audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.receipt.json"
+          raw="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.raw.json"
+          test -f "$receipt"; test -f "$raw"
+          printf 'receipt=%s\nraw=%s\nreceipt_sha256=%s\n' "$receipt" "$raw" "$(sha256sum "$receipt" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Restore exact base image contract
         shell: bash
@@ -1799,6 +1898,10 @@ jobs:
             TARGETARCH=${{ matrix.arch }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
             NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256={0}', steps.mcporter-audit.outputs.receipt_sha256) || '' }}
+          secret-files: |
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', steps.mcporter-audit.outputs.raw) || '' }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }},mode=max
           provenance: mode=max
@@ -1806,7 +1909,7 @@ jobs:
 
       - name: Install managed-image publication harness dependencies
         run: |
-          npm ci --ignore-scripts
+          npm ci --ignore-scripts --no-audit --no-fund
           npm run build:policy-boundary
 
       - name: Validate exact managed image before promotion

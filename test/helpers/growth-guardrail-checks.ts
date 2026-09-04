@@ -13,6 +13,7 @@ const JAVASCRIPT_FILE_RE = /\.(?:cjs|js|mjs)$/;
 const TEST_FILE_RE = /^(?:test|src|nemoclaw\/src)\/.*\.(?:test|spec)\.(?:[cm]?[jt]s)$/;
 const LIVE_E2E_TEST_RE = /^test\/e2e\/live\/.*\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/;
 const ONBOARD_ENTRY = "src/lib/onboard.ts";
+const STOCK_DOCKERFILE = "Dockerfile";
 
 type TestFileSizeBudget = {
   readonly defaultMaxLines: number;
@@ -33,6 +34,14 @@ function countLines(text: string | null): number {
   if (text === null || text.length === 0) return 0;
   const newlineCount = text.match(/\r\n|\r|\n/g)?.length ?? 0;
   return newlineCount + (/(?:\r\n|\r|\n)$/.test(text) ? 0 : 1);
+}
+
+/** Keep the line and byte ratchets independent so same-line growth cannot bypass the budget. */
+function dockerfileBudget(source: string | null): { bytes: number; lines: number } {
+  return {
+    bytes: source === null ? 0 : Buffer.byteLength(source, "utf8"),
+    lines: countLines(source),
+  };
 }
 
 function positiveInteger(value: unknown, label: string): number {
@@ -301,6 +310,35 @@ export async function onboardGrowthViolations(diff: GrowthGuardrailDiff): Promis
   return headLines > baseLines ? [`${ONBOARD_ENTRY} grew by ${headLines - baseLines} line(s)`] : [];
 }
 
+/** Report root Dockerfile growth while its host-side stock onboarding fallback is deprecated. */
+export async function dockerfileBudgetGrowthViolations(
+  diff: GrowthGuardrailDiff,
+): Promise<string[]> {
+  const changed = diff.files.some(
+    ({ filename, previous_filename }) =>
+      filename === STOCK_DOCKERFILE || previous_filename === STOCK_DOCKERFILE,
+  );
+  if (!changed) return [];
+  const [base, head] = await Promise.all([
+    diff.readBase([STOCK_DOCKERFILE]),
+    diff.readHead([STOCK_DOCKERFILE]),
+  ]);
+  const baseBudget = dockerfileBudget(base.get(STOCK_DOCKERFILE) ?? null);
+  const headBudget = dockerfileBudget(head.get(STOCK_DOCKERFILE) ?? null);
+  const violations: string[] = [];
+  if (headBudget.lines > baseBudget.lines) {
+    violations.push(
+      `${STOCK_DOCKERFILE} line budget increased from ${baseBudget.lines} to ${headBudget.lines}`,
+    );
+  }
+  if (headBudget.bytes > baseBudget.bytes) {
+    violations.push(
+      `${STOCK_DOCKERFILE} byte budget increased from ${baseBudget.bytes} to ${headBudget.bytes}`,
+    );
+  }
+  return violations;
+}
+
 export async function testSizeViolations(diff: GrowthGuardrailDiff): Promise<string[]> {
   const budgetChanged = diff.files.some(
     ({ filename, previous_filename }) =>
@@ -491,6 +529,15 @@ export function loopGrowthViolations(diff: GrowthGuardrailDiff): Promise<string[
   return syntaxGrowthViolations(diff, countTestLoops, "test loop");
 }
 
+/** Explain the intentional review boundary rather than treating active managed-image use as an exemption. */
+function dockerfileBudgetDiagnostic(details: readonly string[]): string {
+  return formatList(
+    "The root Dockerfile budget grew.",
+    details,
+    "Host-side stock Dockerfile onboarding is deprecated. Keep the root Dockerfile at or below its existing line and byte budgets. Move new onboarding behavior to the managed-image startup profile, bootstrap, or runtime-provider path, or record a maintainer decision before increasing this budget.",
+  );
+}
+
 export const diagnostics = {
   javascript: (details: readonly string[]) =>
     formatList(
@@ -504,6 +551,7 @@ export const diagnostics = {
       details,
       "Move new behavior into a focused module under src/lib/onboard/.",
     ),
+  dockerfileBudget: dockerfileBudgetDiagnostic,
   size: (details: readonly string[]) =>
     formatList(
       "The test file size budget was exceeded or weakened.",

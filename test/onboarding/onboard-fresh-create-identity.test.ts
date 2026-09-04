@@ -264,6 +264,8 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: cmd, env: opts.env || null });
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
+  const providerResult = require(${onboardScriptMocksPath}).mockNvidiaProviderGetRun(command, "nemoclaw-18080");
+  if (providerResult !== null) return providerResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") {
     createdSandbox.delete();
   }
