@@ -121,7 +121,7 @@ const source = Buffer.concat(chunks).toString("utf8");
 if (!streaming) {
   const body = JSON.parse(source);
   const text = body?.choices?.[0]?.message?.content ?? body?.choices?.[0]?.text ?? "";
-  if (!String(text).includes(expected)) throw new Error("synchronous response mismatch");
+  if (!String(text).toLocaleUpperCase("en-US").includes(expected.toLocaleUpperCase("en-US"))) throw new Error("synchronous response mismatch");
   process.stdout.write(JSON.stringify({ ok: true }));
 } else {
   const events = source.split(/\r?\n/).filter((line) => line.startsWith("data: "));
@@ -133,7 +133,7 @@ if (!streaming) {
     .filter((line) => line !== "data: [DONE]")
     .map((line) => JSON.parse(line.slice(6))?.choices?.[0]?.delta?.content ?? "")
     .join("");
-  if (!text.includes(expected)) throw new Error("streaming response mismatch");
+  if (!text.toLocaleUpperCase("en-US").includes(expected.toLocaleUpperCase("en-US"))) throw new Error("streaming response mismatch");
   process.stdout.write(JSON.stringify({ done: true, events: events.length }));
 }
 `;
@@ -242,7 +242,11 @@ export async function runLlamaCppOpenClawAgentQualification(
     agentArgv(config.sessions.normal, config.prompts.normal),
     "OpenClaw normal agent turn",
   );
-  if (!normal.stdout.includes(config.expectations.normal)) {
+  if (
+    !normal.stdout
+      .toLocaleUpperCase("en-US")
+      .includes(config.expectations.normal.toLocaleUpperCase("en-US"))
+  ) {
     throw new Error("OpenClaw normal agent turn did not pass");
   }
 

@@ -17,6 +17,7 @@ describe("Qwen llama.cpp RTX qualification plan", () => {
       agent: "openclaw",
       execution: "enabled",
       image: { reference: IMAGE, sourceRevision: REVISION },
+      bounds: { maxStreamEvents: 2048, maxTokens: 1024 },
       route: {
         provider: "llama-cpp-local",
         routedBaseUrl: "https://inference.local/v1",

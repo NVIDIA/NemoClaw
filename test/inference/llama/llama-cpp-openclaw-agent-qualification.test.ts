@@ -61,7 +61,7 @@ describe("llama.cpp OpenClaw qualification probe", () => {
         [
           { status: 0, stdout: '{"ok":true}' },
           { status: 0, stdout: '{"done":true,"events":7}' },
-          { status: 0, stdout: '{"payloads":[{"text":"PONG"}]}' },
+          { status: 0, stdout: '{"payloads":[{"text":"pong"}]}' },
           { status: 0, stdout: "" },
           {
             status: 0,

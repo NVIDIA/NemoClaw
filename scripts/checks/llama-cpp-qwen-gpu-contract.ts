@@ -21,8 +21,8 @@ export function qwenGpuAgentPlan(
     bounds: {
       commandTimeoutSeconds: 420,
       maxResponseBytes: QWEN_GPU_MAX_COMMAND_BYTES,
-      maxStreamEvents: 512,
-      maxTokens: 64,
+      maxStreamEvents: 2048,
+      maxTokens: 1024,
     },
     execution: "enabled",
     expectations: { normal: "PONG" },

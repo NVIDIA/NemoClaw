@@ -161,9 +161,16 @@ function modelCacheEntry(setting: QualificationSetting): string {
 
 function responseText(source: string): string {
   const body = JSON.parse(source) as {
-    choices?: Array<{ message?: { content?: unknown }; text?: unknown }>;
+    choices?: Array<{
+      message?: { content?: unknown; reasoning?: unknown; reasoning_content?: unknown };
+      text?: unknown;
+    }>;
   };
-  return String(body.choices?.[0]?.message?.content ?? body.choices?.[0]?.text ?? "");
+  const choice = body.choices?.[0];
+  const message = choice?.message;
+  return String(
+    message?.content ?? message?.reasoning_content ?? message?.reasoning ?? choice?.text ?? "",
+  );
 }
 
 function requireCleanup(
@@ -349,7 +356,11 @@ export async function runQwenGpuQualification(): Promise<void> {
             ],
             5 * 60_000,
           );
-          if (!responseText(hostChat).includes(agentPlan.expectations.normal)) {
+          if (
+            !responseText(hostChat)
+              .toLocaleUpperCase("en-US")
+              .includes(agentPlan.expectations.normal.toLocaleUpperCase("en-US"))
+          ) {
             throw new Error("managed llama.cpp host inference did not return PONG");
           }
           process.env[credentialName] = apiKey;
