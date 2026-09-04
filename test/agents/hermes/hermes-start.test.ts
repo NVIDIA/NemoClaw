@@ -455,6 +455,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   staleLock?: boolean;
   stalePid?: boolean;
   rootOwnedConfigRoot?: boolean;
+  cronMode?: number;
   preExistingLogFile?: boolean | "hardlink-to-config" | "hardlink-to-env";
   preExistingHistory?: "regular" | "symlink" | "directory" | "hardlink-to-config";
 }) {
@@ -475,7 +476,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   fs.mkdirSync(runtimeDir, { recursive: true });
   fs.mkdirSync(cronDir);
   fs.chmodSync(runtimeDir, 0o2770);
-  fs.chmodSync(cronDir, 0o2770);
+  fs.chmodSync(cronDir, opts.cronMode ?? 0o2770);
   fs.mkdirSync(procRoot, { recursive: true });
   void (opts.preExistingLogFile === "hardlink-to-config" ||
   opts.preExistingHistory === "hardlink-to-config"
@@ -1169,6 +1170,13 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.historyKind).toBe("regular");
     expect(run.historyMode).toBe("660");
     expect(run.historyContent).toBe("");
+  });
+
+  it("restores a private Hermes cron directory for sandbox backup", () => {
+    const run = runHermesGatewayRuntimeCleanup({ cronMode: 0o700 });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.requiredDirFullModes.cron).toBe("2770");
   });
 
   it("preserves a pre-existing Hermes history file and re-asserts its mode", () => {

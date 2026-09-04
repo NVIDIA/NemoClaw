@@ -223,6 +223,7 @@ describe("Hermes cross-UID ledger permissions", () => {
     expect(runtimeRepair).toBeGreaterThan(gatewayRepair);
     expect(runtimeRepair).toBeLessThan(configRootRepair);
     expect(startScript).not.toContain("ensure_hermes_cross_uid_state_dir cron");
+    expect(startScript).toContain('ensure_hermes_state_dir "${HERMES_DIR}/cron" 2770');
   });
 
   it.each([

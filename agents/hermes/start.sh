@@ -1139,6 +1139,10 @@ repair_hermes_startup_layout() {
   fi
 
   ensure_hermes_config_root_mode || return 1
+  # Cron definitions are sandbox-owned mutable state. Hermes can recreate this
+  # directory with a private umask; restore the shared sandbox-group mode before
+  # each managed gateway launch so the sandbox identity can back it up.
+  ensure_hermes_state_dir "${HERMES_DIR}/cron" 2770 || return 1
   repair_hermes_log_permissions || return 1
   ensure_hermes_state_dir "${HERMES_DIR}/hooks" 770 || return 1
   ensure_hermes_state_dir "${HERMES_DIR}/image_cache" 770 || return 1
