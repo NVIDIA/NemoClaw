@@ -28,6 +28,7 @@ const expectedFastUriVersion = "3.1.6";
 const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz";
 const expectedIpAddressVersion = "10.3.1";
 const expectedIpAddressTarball = "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz";
+const expectedReviewedNpmVersion = "10.9.4";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
 const reviewedAuditConfig = JSON.parse(
   fs.readFileSync(path.join(repoRoot, "ci", "reviewed-npm-audit.json"), "utf8"),
@@ -204,11 +205,9 @@ describe("mcporter image supply-chain controls", () => {
       "--package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json --raw-report",
     );
     expect(flattenedContents).toContain(
-      "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --npm-version",
+      `--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --npm-version ${expectedReviewedNpmVersion} --registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true`,
     );
-    expect(flattenedContents).toContain(
-      "--registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true",
-    );
+    expect(flattenedContents).not.toContain('--npm-version "$(npm --version)"');
     expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
     expect(contents).not.toContain(`${runtimePrefix} audit signatures`);
     expect(flattenedContents).toContain(
