@@ -26,6 +26,12 @@ const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
 const DOCKERFILE_SANDBOX = path.join(ROOT, "test", "Dockerfile.sandbox");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const HERMES_DOCKERFILE_BASE = path.join(ROOT, "agents", "hermes", "Dockerfile.base");
+const HERMES_FINALIZE_IMAGE_LAYOUT = path.join(
+  ROOT,
+  "agents",
+  "hermes",
+  "finalize-image-layout.sh",
+);
 const DEEPAGENTS_DOCKERFILE_BASE = path.join(
   ROOT,
   "agents",
@@ -1106,10 +1112,21 @@ describe("Hermes sandbox provisioning", () => {
       fs.writeFileSync(path.join(hermesDir, "config.yaml"), "model: test\n");
       fs.writeFileSync(path.join(hermesDir, ".env"), "TOKEN=test\n");
     }
-    const command = dockerRunCommandBetween(dockerfile, startMarker, endMarker).replaceAll(
-      "/root/.cache/pip",
-      path.join(tmp, "root-cache", "pip"),
-    );
+    const finalizeImageLayout = path.join(tmp, "finalize-image-layout.sh");
+    fs.copyFileSync(HERMES_FINALIZE_IMAGE_LAYOUT, finalizeImageLayout);
+    const finalizeImageLayoutSha256 = dockerfile.match(
+      /^ARG NEMOCLAW_HERMES_FINALIZE_IMAGE_LAYOUT_SHA256=([a-f0-9]{64})$/mu,
+    )?.[1] ?? "";
+    const command = dockerRunCommandBetween(dockerfile, startMarker, endMarker)
+      .replaceAll("/root/.cache/pip", path.join(tmp, "root-cache", "pip"))
+      .replaceAll(
+        "/opt/nemoclaw-hermes-config/finalize-image-layout.sh",
+        finalizeImageLayout,
+      )
+      .replaceAll(
+        "$NEMOCLAW_HERMES_FINALIZE_IMAGE_LAYOUT_SHA256",
+        finalizeImageLayoutSha256,
+      );
     const result = runDockerShell(command, sandboxRoot);
     return { ...result, tmp, sandboxRoot };
   }
@@ -1274,7 +1291,10 @@ describe("Hermes sandbox provisioning", () => {
     ];
     try {
       runs.forEach((run) => {
-        expect(run.result.status).toBe(0);
+        expect(
+          run.result.status,
+          [run.result.stderr, run.result.error?.message].filter(Boolean).join("\n"),
+        ).toBe(0);
         const hermesDir = path.join(run.sandboxRoot, ".hermes");
         expect((fs.statSync(hermesDir).mode & 0o7777).toString(8)).toBe("3770");
         expect(["logs", "logs/curator", "cache", "hooks", "image_cache", "audio_cache", "platforms"].every((dir) =>

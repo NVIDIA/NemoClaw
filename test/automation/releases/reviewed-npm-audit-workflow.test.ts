@@ -438,7 +438,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
         id: "wechat-runtime",
         inputValidation: "wechat-runtime",
         installMode: "legacy-peer-deps",
-        lockSha256: "27fcc4abe6707d5d710c691b25b942a269ebe2b652c6591174ee01fe06a5df35",
+        lockSha256: "09a91cabd559ed2294fb263602009f9f79259e765281992e56961eed0e8c1ed9",
         severityThreshold: "low",
         signatureAudit: "retry-download-failures",
       }),

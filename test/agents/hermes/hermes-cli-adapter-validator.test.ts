@@ -62,7 +62,7 @@ function runValidator(
   try {
     const packageDir = path.join(fixture, "hermes_cli");
     fs.mkdirSync(packageDir);
-    fs.writeFileSync(path.join(packageDir, "__init__.py"), '__version__ = "0.19.0"\n');
+    fs.writeFileSync(path.join(packageDir, "__init__.py"), '__version__ = "0.20.6"\n');
     fs.writeFileSync(path.join(packageDir, "_parser.py"), parserFixture);
     fs.writeFileSync(path.join(packageDir, "main.py"), mainFixture);
     const contractPath = path.join(fixture, "adapter.json");
