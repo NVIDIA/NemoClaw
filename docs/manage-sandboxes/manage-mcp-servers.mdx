@@ -62,7 +62,8 @@ JSON output adds a per-server `toolDiscovery` object without changing the existi
     "ok": true,
     "count": 2,
     "tools": ["createJiraIssue", "getJiraIssue"],
-    "truncated": false
+    "truncated": false,
+    "commandStatus": 0
   }
 }
 ```
@@ -71,7 +72,12 @@ Discovery is opt-in and sends authenticated network traffic to the configured en
 
 An older sandbox image that does not contain the shared discovery client reports that a rebuild is required. Run `$$nemoclaw my-sandbox rebuild` and retry the command.
 
-A discovery failure sets `toolDiscovery.ok` to `false` and leaves the ordinary provider, policy, environment, and adapter status available. Bounded partial results set `truncated` to `true` and include a redacted `detail` value.
+A discovery failure sets `toolDiscovery.ok` to `false` and makes the command exit nonzero.
+The command still returns the ordinary provider, policy, environment, and adapter status.
+The `commandStatus` field records the sandbox discovery runtime's exit status, or `null` when the runtime did not start.
+A failed result includes `failedStage`, `failureClass`, and a redacted `detail` value.
+Bounded partial results set `truncated` to `true`.
+Correct the reported precondition, runtime, connection, authentication, protocol, or tool-operation failure, and then rerun the same command.
 
 ## Verify Credential Resolution
 

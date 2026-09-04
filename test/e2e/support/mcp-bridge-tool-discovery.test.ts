@@ -284,6 +284,101 @@ describe("authenticated MCP rediscovery evidence", () => {
 });
 
 describe("authenticated MCP tool discovery transport retry", () => {
+  it("records denied authentication after success and restores the fixture credential (#10944)", async () => {
+    const requests: FakeMcpRequest[] = [];
+    const setSecret = vi.fn();
+    const fakeMcp = { requests, setSecret } as unknown as FakeMcpHttpsServer;
+    const provider = {
+      registryPresent: true,
+      gatewayPresent: true,
+      attached: true,
+      credentialReady: true,
+    };
+    const policy = { registryPresent: true, gatewayPresent: true };
+    const adapter = { registered: true };
+    const host = {
+      nemoclaw: vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          requests.push(
+            successfulInitialize(),
+            request("notifications/initialized"),
+            request("tools/list"),
+            request("tools/list"),
+          );
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              provider,
+              policy,
+              adapter,
+              toolDiscovery: {
+                ok: true,
+                count: 2,
+                tools: ["fake_echo", "fake_status"],
+                truncated: false,
+                commandStatus: 0,
+              },
+            }),
+            stderr: "",
+          };
+        })
+        .mockImplementationOnce(async () => {
+          requests.push(
+            request("initialize", {
+              sessionId: "",
+              protocolVersion: "",
+              responseStatus: 401,
+              responseHasResult: false,
+            }),
+          );
+          return {
+            exitCode: 1,
+            stdout: JSON.stringify({
+              provider,
+              policy,
+              adapter,
+              toolDiscovery: {
+                ok: false,
+                count: 0,
+                tools: [],
+                truncated: false,
+                commandStatus: 0,
+                failedStage: "initialization",
+                failureClass: "authentication",
+                detail: "MCP endpoint rejected tool discovery (HTTP 401)",
+              },
+            }),
+            stderr: "",
+          };
+        }),
+    } as unknown as Parameters<typeof assertAuthenticatedMcpToolDiscovery>[0];
+    const artifacts = discoveryArtifacts();
+
+    await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
+      artifacts,
+      sandboxName: "sandbox",
+      artifactPrefix: "hermes",
+      deniedSecret: "denied-secret",
+      hostSecret: EXPECTED_SECRET,
+      progress: { event: vi.fn() },
+    });
+
+    expect(setSecret.mock.calls).toEqual([["denied-secret"], [EXPECTED_SECRET]]);
+    expect(artifacts.writeJson).toHaveBeenLastCalledWith(
+      "hermes-mcp-tool-discovery-denied-auth.json",
+      expect.objectContaining({
+        toolDiscovery: expect.objectContaining({
+          commandStatus: 0,
+          failedStage: "initialization",
+          failureClass: "authentication",
+        }),
+      }),
+    );
+    expect(JSON.stringify(artifacts.writeJson.mock.calls)).not.toContain("denied-secret");
+    expect(JSON.stringify(artifacts.writeJson.mock.calls)).not.toContain(EXPECTED_SECRET);
+  });
+
   it("writes redacted boundary diagnostics before a discovery failure (#8746)", async () => {
     const statusJson = {
       provider: {
@@ -307,6 +402,9 @@ describe("authenticated MCP tool discovery transport retry", () => {
         count: 0,
         tools: [],
         truncated: false,
+        commandStatus: 0,
+        failedStage: "initialization" as const,
+        failureClass: "connection" as const,
         detail: "MCP tool discovery request failed",
         credential: STATUS_SECRET,
       },
@@ -353,6 +451,9 @@ describe("authenticated MCP tool discovery transport retry", () => {
         count: 0,
         tools: [],
         truncated: false,
+        commandStatus: 0,
+        failedStage: "initialization",
+        failureClass: "connection",
         detail: "MCP tool discovery request failed",
       },
       requests: [

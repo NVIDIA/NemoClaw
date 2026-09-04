@@ -34,7 +34,7 @@ const MANAGED_BOOTSTRAP_BUILDER_IMAGE =
 const DISCOVERY_RUNTIME_ROOT = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
 const DISCOVERY_RUNTIME_PATH = `${DISCOVERY_RUNTIME_ROOT}/mcp-tool-discovery.mjs`;
 const DISCOVERY_EXPECTED_CONTRACT =
-  '{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments"}';
+  '{"protocol":2,"ok":false,"detail":"tool discovery received invalid runtime arguments","failedStage":"preflight","failureClass":"precondition"}';
 const REVIEWED_DISCOVERY_RUNTIME_ROOT = path.join(
   import.meta.dirname,
   "..",
@@ -260,9 +260,11 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
     expect(permissionReplay.status, permissionReplay.stderr).toBe(0);
     expect(permissionReplay.stderr).toBe("");
     expect(JSON.parse(permissionReplay.stdout)).toMatchObject({
-      protocol: 1,
+      protocol: 2,
       ok: false,
       detail: "tool discovery received invalid runtime arguments",
+      failedStage: "preflight",
+      failureClass: "precondition",
     });
     const expectedUid = process.getuid?.() ?? 0;
     const expectedGid = process.getgid?.() ?? 0;
@@ -403,12 +405,14 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
 
     const success = runDiscoveryChecks({
       discoveryOutput: JSON.stringify({
-        protocol: 1,
+        protocol: 2,
         ok: false,
         detail: "tool discovery received invalid runtime arguments",
         count: 0,
         tools: [],
         truncated: false,
+        failedStage: "preflight",
+        failureClass: "precondition",
       }),
     });
     expect(success.status, success.stderr).toBe(0);

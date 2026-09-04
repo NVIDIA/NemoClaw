@@ -605,12 +605,14 @@ describe("complete managed-image publication workflow", () => {
       const bundleResult = spawnSync(process.execPath, [executableBundle], { encoding: "utf8" });
       expect(bundleResult.status, bundleResult.stderr).toBe(0);
       expect(JSON.parse(bundleResult.stdout)).toMatchObject({
-        protocol: 1,
+        protocol: 2,
         ok: false,
         count: 0,
         tools: [],
         truncated: false,
         detail: "tool discovery received invalid runtime arguments",
+        failedStage: "preflight",
+        failureClass: "precondition",
       });
       const acceptedContract = spawnSync(process.execPath, ["-e", contractValidator], {
         encoding: "utf8",
@@ -618,9 +620,9 @@ describe("complete managed-image publication workflow", () => {
       });
       expect(acceptedContract.status, acceptedContract.stderr).toBe(0);
       for (const rejectedOutput of [
-        '{"protocol":1,"ok":false,"detail":"wrong"}\n',
-        '{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments","extra":NaN}\n',
-        '\uFEFF{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments"}\n',
+        '{"protocol":2,"ok":false,"detail":"wrong"}\n',
+        '{"protocol":2,"ok":false,"detail":"tool discovery received invalid runtime arguments","failedStage":"preflight","failureClass":"precondition","extra":NaN}\n',
+        '\uFEFF{"protocol":2,"ok":false,"detail":"tool discovery received invalid runtime arguments","failedStage":"preflight","failureClass":"precondition"}\n',
       ]) {
         const rejectedContract = spawnSync(process.execPath, ["-e", contractValidator], {
           encoding: "utf8",

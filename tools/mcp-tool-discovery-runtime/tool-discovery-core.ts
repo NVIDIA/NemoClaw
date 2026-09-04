@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export const MCP_TOOL_DISCOVERY_PROTOCOL = 1;
+export const MCP_TOOL_DISCOVERY_PROTOCOL = 2;
 
 export const MCP_TOOL_DISCOVERY_LIMITS = {
   maxTotalTimeMs: 10_000,
@@ -13,13 +13,38 @@ export const MCP_TOOL_DISCOVERY_LIMITS = {
   maxToolNameBytes: 256,
 } as const;
 
-export interface McpToolDiscoveryResult {
-  ok: boolean;
+export type McpToolDiscoveryFailedStage =
+  | "preflight"
+  | "runtime"
+  | "initialization"
+  | "tool-discovery";
+export type McpToolDiscoveryFailureClass =
+  | "precondition"
+  | "runtime"
+  | "connection"
+  | "authentication"
+  | "protocol"
+  | "tool-operation";
+
+interface McpToolDiscoveryResultBase {
   count: number;
   tools: string[];
-  truncated: boolean;
-  detail?: string;
 }
+
+export interface McpToolDiscoverySuccessResult extends McpToolDiscoveryResultBase {
+  ok: true;
+  truncated: false;
+}
+
+export interface McpToolDiscoveryFailureResult extends McpToolDiscoveryResultBase {
+  ok: false;
+  truncated: boolean;
+  detail: string;
+  failedStage: McpToolDiscoveryFailedStage;
+  failureClass: McpToolDiscoveryFailureClass;
+}
+
+export type McpToolDiscoveryResult = McpToolDiscoverySuccessResult | McpToolDiscoveryFailureResult;
 
 export interface McpToolPage {
   tools: Array<{ name: string }>;
@@ -83,6 +108,7 @@ export function normalizeMcpToolPage(page: McpToolPage): McpToolPage {
 }
 
 type ToolDiscoveryErrorCode =
+  | "connection"
   | "http-error"
   | "invalid-response"
   | "redirect"
@@ -137,6 +163,8 @@ function truncatedResult(tools: string[], detail: string): McpToolDiscoveryResul
     tools: sorted,
     truncated: true,
     detail,
+    failedStage: "tool-discovery",
+    failureClass: "tool-operation",
   };
 }
 
@@ -203,17 +231,14 @@ export async function enumerateMcpToolNames(
 }
 
 export async function runMcpToolDiscoverySession(session: McpToolDiscoverySession): Promise<void> {
+  let failedStage: Extract<McpToolDiscoveryFailedStage, "initialization" | "tool-discovery"> =
+    "initialization";
   try {
     await session.connect();
+    failedStage = "tool-discovery";
     session.publishResult(await enumerateMcpToolNames(session.loadPage));
   } catch (error) {
-    session.publishResult({
-      ok: false,
-      count: 0,
-      tools: [],
-      truncated: false,
-      detail: safeToolDiscoveryErrorDetail(error),
-    });
+    session.publishResult(mcpToolDiscoveryFailure(error, failedStage));
   } finally {
     // Source boundary: after connect, the remote MCP server owns session
     // lifetime. SDK cleanup can reject once the transport has failed, so the
@@ -244,6 +269,15 @@ function combinedSignal(left: AbortSignal | null | undefined, right: AbortSignal
   return left ? AbortSignal.any([left, right]) : right;
 }
 
+function boundedFetchError(
+  error: unknown,
+  deadlineSignal: AbortSignal,
+): ToolDiscoveryRuntimeError {
+  return deadlineSignal.aborted || (error instanceof Error && error.name === "AbortError")
+    ? new ToolDiscoveryRuntimeError("timeout")
+    : new ToolDiscoveryRuntimeError("connection");
+}
+
 export function createBoundedMcpFetch(
   fetchImpl: ToolDiscoveryFetch,
   deadlineSignal: AbortSignal,
@@ -259,10 +293,7 @@ export function createBoundedMcpFetch(
         signal: combinedSignal(init.signal, deadlineSignal),
       });
     } catch (error) {
-      if (deadlineSignal.aborted || (error instanceof Error && error.name === "AbortError")) {
-        throw new ToolDiscoveryRuntimeError("timeout");
-      }
-      throw error;
+      throw boundedFetchError(error, deadlineSignal);
     }
 
     if (response.status >= 300 && response.status < 400) {
@@ -304,7 +335,7 @@ export function createBoundedMcpFetch(
           }
           controller.enqueue(value);
         } catch (error) {
-          controller.error(error);
+          controller.error(boundedFetchError(error, deadlineSignal));
         }
       },
       cancel(reason) {
@@ -322,6 +353,8 @@ export function createBoundedMcpFetch(
 export function safeToolDiscoveryErrorDetail(error: unknown): string {
   if (error instanceof ToolDiscoveryRuntimeError) {
     switch (error.code) {
+      case "connection":
+        return "MCP endpoint connection failed";
       case "http-error":
         return typeof error.httpStatus === "number"
           ? `MCP endpoint rejected tool discovery (HTTP ${error.httpStatus})`
@@ -347,4 +380,40 @@ export function safeToolDiscoveryErrorDetail(error: unknown): string {
   }
 
   return "MCP tool discovery request failed";
+}
+
+export function mcpToolDiscoveryFailure(
+  error: unknown,
+  failedStage: Extract<McpToolDiscoveryFailedStage, "initialization" | "tool-discovery">,
+): McpToolDiscoveryFailureResult {
+  let failureClass: McpToolDiscoveryFailureClass;
+  if (error instanceof ToolDiscoveryRuntimeError) {
+    if (error.code === "connection" || error.code === "timeout") {
+      failureClass = "connection";
+    } else if (
+      error.code === "http-error" &&
+      (error.httpStatus === 401 || error.httpStatus === 403)
+    ) {
+      failureClass = "authentication";
+    } else {
+      failureClass = "protocol";
+    }
+  } else if (
+    error instanceof Error &&
+    (error.name === "AbortError" ||
+      /(?:request|maximum total) timeout|timed out/iu.test(error.message))
+  ) {
+    failureClass = "connection";
+  } else {
+    failureClass = failedStage === "initialization" ? "protocol" : "tool-operation";
+  }
+  return {
+    ok: false,
+    count: 0,
+    tools: [],
+    truncated: false,
+    detail: safeToolDiscoveryErrorDetail(error),
+    failedStage,
+    failureClass,
+  };
 }

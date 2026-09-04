@@ -352,9 +352,11 @@ jobs:
           fi
           if ! node -e '
             const expected = {
-              protocol: 1,
+              protocol: 2,
               ok: false,
               detail: "tool discovery received invalid runtime arguments",
+              failedStage: "preflight",
+              failureClass: "precondition",
             };
             let result;
             try {
@@ -370,7 +372,9 @@ jobs:
               !record ||
               record.protocol !== expected.protocol ||
               record.ok !== expected.ok ||
-              record.detail !== expected.detail
+              record.detail !== expected.detail ||
+              record.failedStage !== expected.failedStage ||
+              record.failureClass !== expected.failureClass
             ) {
               process.exit(1);
             }
@@ -740,9 +744,11 @@ jobs:
           fi
           if ! node -e '
             const expected = {
-              protocol: 1,
+              protocol: 2,
               ok: false,
               detail: "tool discovery received invalid runtime arguments",
+              failedStage: "preflight",
+              failureClass: "precondition",
             };
             let result;
             try {
@@ -758,7 +764,9 @@ jobs:
               !record ||
               record.protocol !== expected.protocol ||
               record.ok !== expected.ok ||
-              record.detail !== expected.detail
+              record.detail !== expected.detail ||
+              record.failedStage !== expected.failedStage ||
+              record.failureClass !== expected.failureClass
             ) {
               process.exit(1);
             }
