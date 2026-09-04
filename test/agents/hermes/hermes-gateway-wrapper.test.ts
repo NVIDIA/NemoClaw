@@ -109,6 +109,12 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     ["short option", ["-p", "research", "gateway", "run"]],
     ["long option", ["--profile", "operations", "gateway", "run"]],
     ["long equals option", ["--profile=research", "gateway", "run"]],
+    ["delimiter before gateway", ["--profile", "research", "--", "gateway", "run"]],
+    ["delimiter before launch", ["--profile", "research", "gateway", "--", "run"]],
+    [
+      "delimiters at both subparser boundaries",
+      ["--profile", "research", "--", "gateway", "--", "run"],
+    ],
   ])("refuses a named-profile gateway through the %s form (#10776)", (_form, args) => {
     const run = runWrapper(args, {});
 
@@ -179,10 +185,24 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realArgs).toBe("--profile research chat hello");
   });
 
+  it("preserves a profile token after the positional delimiter (#10776)", () => {
+    const args = ["--", "gateway", "run", "--profile", "research"];
+    const run = runWrapper(args, {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe(args.join(" "));
+  });
+
   it("refuses a named-profile gateway without reading session coalescer source", () => {
-    const run = runWrapper(["--profile", "research", "gateway", "run"], {}, {
-      sessionBoundaries: [],
-    });
+    const run = runWrapper(
+      ["--profile", "research", "gateway", "run"],
+      {},
+      {
+        sessionBoundaries: [],
+      },
+    );
 
     expect(run.status).toBe(2);
     expect(run.stderr).toContain("Refusing named-profile Hermes gateway");
@@ -190,9 +210,13 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
   });
 
   it("preserves named-profile chat without reading session coalescer source", () => {
-    const run = runWrapper(["--profile", "research", "chat", "hello"], {}, {
-      sessionBoundaries: [],
-    });
+    const run = runWrapper(
+      ["--profile", "research", "chat", "hello"],
+      {},
+      {
+        sessionBoundaries: [],
+      },
+    );
 
     expect(run.status).toBe(0);
     expect(run.stderr).toBe("");
@@ -370,11 +394,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${JSON.stringify(argvLog)}\nexit 1\n`,
         { mode: 0o755 },
       );
-      const run = runUnmodifiedWrapperWithTrustedPython(
-        dir,
-        ["gateway", "run"],
-        [stubPython],
-      );
+      const run = runUnmodifiedWrapperWithTrustedPython(dir, ["gateway", "run"], [stubPython]);
       expect(run.status).not.toBe(0);
       const argv = fs.readFileSync(argvLog, "utf-8").trim().split("\n");
       expect(argv[0]).toBe("-I");
@@ -399,11 +419,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         ].join("\n"),
         { mode: 0o755 },
       );
-      const run = runUnmodifiedWrapperWithTrustedPython(
-        dir,
-        ["config", "show"],
-        [stubPython],
-      );
+      const run = runUnmodifiedWrapperWithTrustedPython(dir, ["config", "show"], [stubPython]);
       expect(run.status).not.toBe(0);
       const argv = fs.readFileSync(argvLog, "utf-8").trim().split("\n");
       expect(argv[0]).toBe("-I");
@@ -420,20 +436,12 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       const missingB = path.join(dir, "missing-python3-b");
       const missingC = path.join(dir, "missing-python3-c");
       const candidates = [missingA, missingB, missingC];
-      const gatewayRun = runUnmodifiedWrapperWithTrustedPython(
-        dir,
-        ["gateway", "run"],
-        candidates,
-      );
+      const gatewayRun = runUnmodifiedWrapperWithTrustedPython(dir, ["gateway", "run"], candidates);
       expect(gatewayRun.status).toBe(127);
       expect(gatewayRun.stderr).toContain("[SECURITY]");
       expect(gatewayRun.stderr).toContain("no python3 at a trusted absolute path");
 
-      const configRun = runUnmodifiedWrapperWithTrustedPython(
-        dir,
-        ["config", "show"],
-        candidates,
-      );
+      const configRun = runUnmodifiedWrapperWithTrustedPython(dir, ["config", "show"], candidates);
       expect(configRun.status).toBe(127);
       expect(configRun.stderr).toContain("[SECURITY]");
       expect(configRun.stderr).toContain("no python3 at a trusted absolute path");

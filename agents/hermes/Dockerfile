@@ -733,7 +733,7 @@ RUN node --experimental-strip-types \
 # silent supply-chain tampering of the build context (an attacker rewriting a
 # file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
 # Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,hermes-cli-adapter-v1.json,validate-cli-adapter.py,validate-env-secret-boundary.py,finalize-tirith-marker.py,cron-restore-control.py}`.
-ARG NEMOCLAW_HERMES_WRAPPER_SHA256=2c89db3bda1dd9304661af344d7d4eb1c8afe98472f3f3ca45107597229198d8
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=449af9f2d8366487a987e10668d022fcba0aa840a009313985d59d2637e8efb2
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=989edf54a8c09c6efb348600a8aa2f264c0b71408eb9d7bcd579b92cbeccf9b1
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=676caae2adcd5654e33bf4acf645e8499cf801f5979c1a77d42ce764ecdcea36

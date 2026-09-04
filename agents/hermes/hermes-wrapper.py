@@ -776,12 +776,17 @@ _GATEWAY_LAUNCH_COMMANDS = frozenset({"install", "restart", "run", "start"})
 
 def _requests_named_profile_gateway_launch(argv: list[str], adapter: dict) -> bool:
     """Detect profile forms that select an unmanaged gateway."""
+    option_boundary = argv.index("--") if "--" in argv else len(argv)
     if not any(
-        arg in ("-p", "--profile") or arg.startswith("--profile=") for arg in argv
+        arg in ("-p", "--profile") or arg.startswith("--profile=")
+        for arg in argv[:option_boundary]
     ):
         return False
+    # Hermes removes its profile selector before argparse accepts `--` at the
+    # top-level or gateway subparser boundary.
+    gateway_argv = [arg for arg in argv if arg != "--"]
     gateway_adapter = {**adapter, "managed_commands": frozenset({"gateway"})}
-    parsed = _parse_managed_invocation(argv, gateway_adapter)
+    parsed = _parse_managed_invocation(gateway_argv, gateway_adapter)
     if parsed is None or parsed["command"] != "gateway":
         return False
     profiles = _occurrences(parsed, "profile")
@@ -796,13 +801,14 @@ def _requests_named_profile_gateway_launch(argv: list[str], adapter: dict) -> bo
     launch_index = next(
         (
             index
-            for index in range(command_index + 1, len(argv))
+            for index in range(command_index + 1, len(gateway_argv))
             if index not in option_indexes
         ),
         None,
     )
     return (
-        launch_index is not None and argv[launch_index] in _GATEWAY_LAUNCH_COMMANDS
+        launch_index is not None
+        and gateway_argv[launch_index] in _GATEWAY_LAUNCH_COMMANDS
     )
 
 
