@@ -96,8 +96,6 @@ describe("PR Review Advisor repair Phase 1 permissions", () => {
         sourceHeadSha,
         actor: "maintainer-one",
         triggeringActor: "maintainer-two",
-        productScopeKind: "maintainer-decision",
-        productScopeIdentity: "#10791-maintainer-comment",
         findingIdsJson: JSON.stringify(["behavior:001"]),
       },
       requestMock as unknown as SelectionGitHubRequest,
@@ -112,6 +110,10 @@ describe("PR Review Advisor repair Phase 1 permissions", () => {
       requestMock.mock.calls.filter(([apiPath]) => String(apiPath).includes("/collaborators/")),
     ).toHaveLength(3);
     expect(collected.authority.pullRequest.author).toBe("cjagwani");
+    expect(collected.authority.productScope).toEqual({
+      kind: "accepted-issue",
+      identity: "#10791",
+    });
 
     await expect(
       collectRepairSelectionAuthority(
@@ -122,8 +124,6 @@ describe("PR Review Advisor repair Phase 1 permissions", () => {
           sourceHeadSha,
           actor: "maintainer-one",
           triggeringActor: "maintainer-two",
-          productScopeKind: "maintainer-decision",
-          productScopeIdentity: "#10791-maintainer-comment",
           findingIdsJson: JSON.stringify(["behavior:001"]),
         },
         vi.fn().mockResolvedValueOnce({
@@ -158,8 +158,6 @@ describe("PR Review Advisor repair Phase 1 permissions", () => {
           sourceHeadSha,
           actor: "maintainer-one",
           triggeringActor: "maintainer-two",
-          productScopeKind: "maintainer-decision",
-          productScopeIdentity: "#10791-maintainer-comment",
           findingIdsJson: JSON.stringify(["behavior:001"]),
         },
         deniedRequest as unknown as SelectionGitHubRequest,

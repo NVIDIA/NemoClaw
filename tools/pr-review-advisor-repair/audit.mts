@@ -10,6 +10,7 @@ import { replaceControlCharacters } from "../advisors/canonical-json.mts";
 import {
   assertRepairContractSchema,
   CANONICAL_REPOSITORY,
+  PHASE1_PRODUCT_SCOPE,
   RepairContractError,
   sanitizeDiagnostic,
   sha256,
@@ -29,8 +30,8 @@ export type AttemptReceipt = {
     triggeringActor: string;
     prNumber: number | null;
     advisorRunId: number | null;
-    productScopeKind: string;
-    productScopeIdentity: string;
+    productScopeKind: typeof PHASE1_PRODUCT_SCOPE.kind;
+    productScopeIdentity: typeof PHASE1_PRODUCT_SCOPE.identity;
     findingIdsSha256: string;
     repositoryEgressAuthorized: boolean;
   };
@@ -95,8 +96,8 @@ export function createAttemptReceipt(env: NodeJS.ProcessEnv): AttemptReceipt {
       triggeringActor,
       prNumber: positiveInteger(env.PR_NUMBER),
       advisorRunId: positiveInteger(env.ADVISOR_RUN_ID),
-      productScopeKind: bounded(env.PRODUCT_SCOPE_KIND, 64),
-      productScopeIdentity: bounded(env.PRODUCT_SCOPE_IDENTITY, 256),
+      productScopeKind: PHASE1_PRODUCT_SCOPE.kind,
+      productScopeIdentity: PHASE1_PRODUCT_SCOPE.identity,
       findingIdsSha256: sha256(env.FINDING_IDS_JSON ?? ""),
       repositoryEgressAuthorized,
     },

@@ -23,17 +23,6 @@ on:
         description: Successful exact-head PR Review Advisor run ID
         required: true
         type: string
-      product_scope_kind:
-        description: Accepted product-scope evidence type
-        required: true
-        type: choice
-        options:
-          - accepted-issue
-          - maintainer-decision
-      product_scope_identity:
-        description: Issue number, URL, or maintainer decision identity
-        required: true
-        type: string
       finding_ids_json:
         description: Exact Advisor finding IDs selected by the maintainer as a JSON array
         required: true
@@ -107,8 +96,6 @@ jobs:
           GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
           PHASE1_ENABLED: ${{ vars.ADVISOR_REPAIR_PHASE1_ENABLED == 'true' }}
           PR_NUMBER: ${{ inputs.pr_number }}
-          PRODUCT_SCOPE_IDENTITY: ${{ inputs.product_scope_identity }}
-          PRODUCT_SCOPE_KIND: ${{ inputs.product_scope_kind }}
           REPOSITORY_EGRESS_AUTHORIZED: ${{ inputs.repository_egress_authorized }}
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/audit.mts"
 
@@ -130,8 +117,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           OUTPUT_DIR: ${{ env.SELECTION_OUTPUT_DIR }}
           PR_NUMBER: ${{ inputs.pr_number }}
-          PRODUCT_SCOPE_IDENTITY: ${{ inputs.product_scope_identity }}
-          PRODUCT_SCOPE_KIND: ${{ inputs.product_scope_kind }}
           REPAIR_COMMAND: collect
           SOURCE_HEAD_SHA: ${{ inputs.source_head_sha }}
           GITHUB_TRIGGERING_ACTOR: ${{ github.triggering_actor }}

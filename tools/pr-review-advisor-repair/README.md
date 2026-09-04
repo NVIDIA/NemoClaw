@@ -37,12 +37,11 @@ Select the `main` branch in the workflow-dispatch form, then start an attempt th
 
 - the PR number and its full current head SHA;
 - the successful Advisor run ID for that head;
-- `product_scope_kind` set to `accepted-issue` or `maintainer-decision` and the corresponding
-  issue number, URL, or recorded decision identifier in `product_scope_identity` (the workflow
-  records this evidence; it does not independently verify that the reference accepts the repair
-  scope);
 - a JSON array of exact canonical Advisor finding IDs from the selected run; and
 - `repository_egress_authorized` set to `true` for this dispatch.
+
+Product scope is not dispatcher-controlled. Trusted code binds every Phase 1 attempt to the
+accepted #10791 issue and its maintainer amendments.
 
 Do not rerun the repair generation workflow. A later human-authored PR head requires a new maintainer dispatch and creates a different attempt identity; the generated repair head is validation-only. If a validated attempt is interrupted during or after publication, select the `main` branch and manually dispatch **Automation / PR Review Advisor Repair Reconciliation** with the original run ID, its short-lived validation artifact ID, PR number, and original source head SHA. Reconciliation never runs Pi again.
 

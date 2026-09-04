@@ -89,10 +89,6 @@ describe("PR Review Advisor repair artifact binding", () => {
     sameInput.advisor.reviewStateDigest = `sha256:${"2".repeat(64)}`;
     sameInput.optIn.actor = "another-maintainer";
     sameInput.optIn.triggeringActor = "another-maintainer";
-    sameInput.productScope = {
-      kind: "maintainer-decision",
-      identity: "a differently formatted approval reference",
-    };
     const sameFinding = requireFixture(sameInput.findings[0], "finding");
     sameFinding.path = "src/another-safe-path.ts";
 

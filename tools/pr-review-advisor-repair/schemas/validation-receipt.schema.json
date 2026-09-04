@@ -131,8 +131,8 @@
 			"additionalProperties": false,
 			"required": ["kind", "identity"],
 			"properties": {
-				"kind": { "enum": ["accepted-issue", "maintainer-decision"] },
-				"identity": { "type": "string", "minLength": 1, "maxLength": 256 }
+				"kind": { "const": "accepted-issue" },
+				"identity": { "const": "#10791" }
 			}
 		},
 		"optIn": {

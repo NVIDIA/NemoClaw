@@ -11,6 +11,10 @@ export type { RepairContractSchemaName } from "./schemas.mts";
 
 export const CANONICAL_REPOSITORY = "NVIDIA/NemoClaw";
 export const PHASE1_PILOT_AUTHOR = "cjagwani";
+export const PHASE1_PRODUCT_SCOPE = {
+  kind: "accepted-issue",
+  identity: "#10791",
+} as const;
 export const MAX_PATCH_BYTES = 2 * 1024 * 1024;
 export const MAX_CHANGED_FILES = 20;
 export const MAX_CHANGED_FILE_BYTES = 1024 * 1024;
@@ -72,8 +76,8 @@ export type SelectionInput = {
     findingIds: string[];
   };
   productScope: {
-    kind: "accepted-issue" | "maintainer-decision";
-    identity: string;
+    kind: typeof PHASE1_PRODUCT_SCOPE.kind;
+    identity: typeof PHASE1_PRODUCT_SCOPE.identity;
   };
   findings: FindingInput[];
 };

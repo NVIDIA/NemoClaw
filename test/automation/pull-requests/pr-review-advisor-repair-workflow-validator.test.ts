@@ -39,7 +39,17 @@ function phase1Workflow(): Record<string, unknown> {
     },
   };
   return {
-    on: { workflow_dispatch: {} },
+    on: {
+      workflow_dispatch: {
+        inputs: {
+          advisor_run_id: {},
+          finding_ids_json: {},
+          pr_number: {},
+          repository_egress_authorized: {},
+          source_head_sha: {},
+        },
+      },
+    },
     permissions: {},
     jobs: {
       collect: job({ actions: "read", checks: "write", contents: "read", "pull-requests": "read" }),
@@ -113,6 +123,16 @@ describe("PR Review Advisor repair workflow validator", () => {
 
     expect(validatePhase1WorkflowAuthority(workflow)).toContain(
       "only the read-only repair job may receive the model credential",
+    );
+  });
+
+  it("rejects dispatcher-controlled product-scope authority (#10791)", () => {
+    const workflow = phase1Workflow();
+    const dispatch = (workflow.on as Record<string, Record<string, unknown>>).workflow_dispatch!;
+    (dispatch.inputs as Record<string, unknown>).product_scope_identity = {};
+
+    expect(validatePhase1WorkflowAuthority(workflow)).toContain(
+      "Phase 1 workflow must expose only its reviewed dispatch inputs",
     );
   });
 

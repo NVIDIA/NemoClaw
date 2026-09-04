@@ -23,6 +23,7 @@ import {
   CANONICAL_REPOSITORY,
   type FindingInput,
   PHASE1_PILOT_AUTHOR,
+  PHASE1_PRODUCT_SCOPE,
   parseFullSha as fullSha,
   parsePositiveInteger as positiveInteger,
   parseSelectionInput,
@@ -183,10 +184,7 @@ export type RepairSelectionAuthority = {
     headSha: string;
     findingIds: string[];
   };
-  productScope: {
-    kind: "accepted-issue" | "maintainer-decision";
-    identity: string;
-  };
+  productScope: SelectionBundle["input"]["productScope"];
 };
 
 export type CollectedSelectionAuthority = {
@@ -467,8 +465,6 @@ export async function collectRepairSelectionAuthority(
     sourceHeadSha: string;
     actor: string;
     triggeringActor: string;
-    productScopeKind: "accepted-issue" | "maintainer-decision";
-    productScopeIdentity: string;
     findingIdsJson: string;
   },
   request: GitHubRequest = githubApi,
@@ -554,10 +550,7 @@ export async function collectRepairSelectionAuthority(
       headSha: pullRequest.headSha,
       findingIds: parseFindingIds(input.findingIdsJson),
     },
-    productScope: {
-      kind: input.productScopeKind,
-      identity: input.productScopeIdentity,
-    },
+    productScope: { ...PHASE1_PRODUCT_SCOPE },
   };
   return { authority, manifest };
 }
@@ -981,10 +974,6 @@ function writeJson(file: string, value: unknown): void {
 
 async function collect(env: NodeJS.ProcessEnv): Promise<void> {
   const outputDirectory = required(env, "OUTPUT_DIR");
-  const productScopeKind = required(env, "PRODUCT_SCOPE_KIND");
-  if (!["accepted-issue", "maintainer-decision"].includes(productScopeKind)) {
-    throw new RepairContractError("PRODUCT_SCOPE_KIND is unsupported");
-  }
   const collected = await collectRepairSelectionAuthority({
     token: required(env, "GITHUB_TOKEN"),
     prNumber: positiveInteger(Number(required(env, "PR_NUMBER")), "PR_NUMBER"),
@@ -992,8 +981,6 @@ async function collect(env: NodeJS.ProcessEnv): Promise<void> {
     sourceHeadSha: required(env, "SOURCE_HEAD_SHA"),
     actor: required(env, "GITHUB_ACTOR"),
     triggeringActor: required(env, "GITHUB_TRIGGERING_ACTOR"),
-    productScopeKind: productScopeKind as "accepted-issue" | "maintainer-decision",
-    productScopeIdentity: required(env, "PRODUCT_SCOPE_IDENTITY"),
     findingIdsJson: required(env, "FINDING_IDS_JSON"),
   });
   writeJson(path.join(outputDirectory, "selection-authority.json"), collected.authority);

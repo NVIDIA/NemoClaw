@@ -50,8 +50,8 @@
 				},
 				"prNumber": { "type": ["integer", "null"], "minimum": 1 },
 				"advisorRunId": { "type": ["integer", "null"], "minimum": 1 },
-				"productScopeKind": { "type": "string", "maxLength": 64 },
-				"productScopeIdentity": { "type": "string", "maxLength": 256 },
+				"productScopeKind": { "const": "accepted-issue" },
+				"productScopeIdentity": { "const": "#10791" },
 				"findingIdsSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
 				"repositoryEgressAuthorized": { "type": "boolean" }
 			}

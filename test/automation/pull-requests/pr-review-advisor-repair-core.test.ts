@@ -166,8 +166,6 @@ describe("PR Review Advisor repair Phase 1", () => {
       GITHUB_TRIGGERING_ACTOR: "maintainer",
       GITHUB_WORKFLOW_SHA: "d".repeat(40),
       PR_NUMBER: "42",
-      PRODUCT_SCOPE_IDENTITY: "#10791",
-      PRODUCT_SCOPE_KIND: "accepted-issue",
     };
     expect(
       createAttemptReceipt({

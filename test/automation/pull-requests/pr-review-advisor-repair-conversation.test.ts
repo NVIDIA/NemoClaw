@@ -43,7 +43,6 @@ function expectSecretFree(environment: NodeJS.ProcessEnv): void {
 describe("PR Review Advisor disposable repair conversation", () => {
   it("keeps PR, commit, and run identity outside the Pi context (#10791)", () => {
     const bundle = selection();
-    bundle.input.productScope.identity = `https://github.com/${bundle.input.repository}/pull/${bundle.input.prNumber}`;
     const context = buildRepairModelContext({
       selection: bundle,
       context: {

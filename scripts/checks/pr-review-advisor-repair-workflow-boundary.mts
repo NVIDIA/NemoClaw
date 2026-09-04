@@ -22,6 +22,13 @@ const GENERATED_HEAD_WORKFLOWS = [
 ] as const;
 const PINNED_ACTION = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*@[0-9a-f]{40}$/u;
 const TRUSTED_REF = "${{ github.workflow_sha }}";
+const PHASE1_INPUTS = [
+  "advisor_run_id",
+  "finding_ids_json",
+  "pr_number",
+  "repository_egress_authorized",
+  "source_head_sha",
+] as const;
 const STANDARD_GENERATED_HEAD_INPUTS = [
   "base_sha",
   "pr_number",
@@ -151,6 +158,7 @@ function validateSharedWorkflowBoundary(workflow: Value, label: string): string[
 
 export function validatePhase1WorkflowAuthority(workflow: Value): string[] {
   const errors = validateSharedWorkflowBoundary(workflow, "Phase 1 workflow");
+  const dispatchInputs = record(record(record(workflow.on).workflow_dispatch).inputs);
   const workflowJobs = record(workflow.jobs);
   const repair = record(workflowJobs.repair);
   const publish = record(workflowJobs.publish);
@@ -160,6 +168,11 @@ export function validatePhase1WorkflowAuthority(workflow: Value): string[] {
   );
   const source = JSON.stringify(workflow);
   const modelCredentialReferences = source.match(/secrets[.]PR_REVIEW_ADVISOR_API_KEY/gu) ?? [];
+  condition(
+    errors,
+    same(Object.keys(dispatchInputs).sort(), [...PHASE1_INPUTS]),
+    "Phase 1 workflow must expose only its reviewed dispatch inputs",
+  );
   condition(
     errors,
     same(Object.keys(workflowJobs).sort(), [
