@@ -181,6 +181,25 @@ const runtime = required("NEMOCLAW_AGENT_RUNTIME");
 const python = process.env.NEMOCLAW_AGENT_PYTHON;
 const sitePackages = process.env.NEMOCLAW_AGENT_SITE_PACKAGES;
 const baseUrl = "http://127.0.0.1:" + proxyPort + "/v1";
+// Python 3.13 gives tempfile.mkdtemp() a protected owner-only Windows DACL.
+// MXC child processes need the approved writable-root capability to inherit.
+const deepAgentsTempfileShim = [
+  "import tempfile",
+  "def _nemoclaw_mkdtemp(suffix=None, prefix=None, dir=None):",
+  "    suffix = '' if suffix is None else suffix",
+  "    prefix = tempfile.template if prefix is None else prefix",
+  "    parent = tempfile.gettempdir() if dir is None else dir",
+  "    for _ in range(tempfile.TMP_MAX):",
+  "        candidate = os.path.join(parent, prefix + os.urandom(16).hex() + suffix)",
+  "        sys.audit('tempfile.mkdtemp', candidate)",
+  "        try:",
+  "            os.mkdir(candidate, 0o777)",
+  "        except FileExistsError:",
+  "            continue",
+  "        return os.path.abspath(candidate)",
+  "    raise FileExistsError('No usable temporary directory name found')",
+  "tempfile.mkdtemp = _nemoclaw_mkdtemp",
+];
 mkdirSync(home, { recursive: true });
 let executable;
 let args;
@@ -266,6 +285,7 @@ if (agent === "pi") {
   writeFileSync(runner, [
     "import os",
     "import sys",
+    ...deepAgentsTempfileShim,
     "sys.path.insert(0, os.environ['NEMOCLAW_AGENT_SITE_PACKAGES'])",
     "from deepagents_code import cli_main",
     "cli_main()",
