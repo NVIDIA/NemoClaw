@@ -11,6 +11,7 @@ import {
   NPM_AUDIT_ATTEMPT_TIMEOUT_MS,
   NPM_AUDIT_CACHE_FUTURE_SKEW_MS,
   NPM_AUDIT_CACHE_MAX_AGE_MS,
+  NPM_AUDIT_RETRY_DELAYS_MS,
   assertExceptionGraphs,
   buildAuditCacheInput,
   buildAuditProvenance,
@@ -28,6 +29,7 @@ import {
   runReviewedNpmAudit,
   vulnerabilityCounts,
 } from "../../../scripts/lib/reviewed-npm-audit.mts";
+import { reviewedNpmAuditWorkflowDeadlines } from "../../helpers/reviewed-npm-audit-workflow";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CONFIG = JSON.parse(
@@ -253,6 +255,22 @@ describe("reviewed npm audit gate", () => {
       cwd: "/tmp/audit-graph",
       timeout: 600_000,
     });
+  });
+
+  it("gives every audit workflow enough time for both attempts and evidence upload", () => {
+    const retryBudgetMs =
+      NPM_AUDIT_ATTEMPT_TIMEOUT_MS * (NPM_AUDIT_RETRY_DELAYS_MS.length + 1) +
+      NPM_AUDIT_RETRY_DELAYS_MS.reduce((total, delay) => total + delay, 0);
+    const minimumJobTimeoutMinutes = Math.ceil(retryBudgetMs / 60_000) + 4;
+    const callers = reviewedNpmAuditWorkflowDeadlines(
+      path.join(REPO_ROOT, ".github", "workflows"),
+    );
+
+    expect(callers).toHaveLength(5);
+    expect(callers.map(({ timeoutMinutes }) => timeoutMinutes)).toEqual([25, 25, 25, 25, 25]);
+    expect(Math.min(...callers.map(({ timeoutMinutes }) => timeoutMinutes))).toBeGreaterThanOrEqual(
+      minimumJobTimeoutMinutes,
+    );
   });
 
   it("retries a timed-out scanner process within the same budget", () => {

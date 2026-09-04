@@ -101,7 +101,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/u;
 const MAX_EXCEPTION_LIFETIME_DAYS = 30;
 const GHSA_ID_IN_URL = /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/gi;
 export const NPM_AUDIT_ATTEMPT_TIMEOUT_MS = 600_000;
-const NPM_AUDIT_RETRY_DELAYS_MS = [1_000] as const;
+export const NPM_AUDIT_RETRY_DELAYS_MS = [1_000] as const;
 export const NPM_AUDIT_REGISTRY = "https://registry.yarnpkg.com";
 export const NPM_AUDIT_ARGV = [
   "audit",
