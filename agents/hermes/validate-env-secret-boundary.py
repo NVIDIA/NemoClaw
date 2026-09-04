@@ -639,20 +639,10 @@ def validate_runtime_env_json(stream: BinaryIO) -> int:
     return validate_runtime_env(source)
 
 
-def validate_managed_gateway_env(supervisor_env: dict[str, str]) -> int:
-    """Validate the environment that the managed launcher gives Hermes."""
+def validate_managed_gateway_env(gateway_env: dict[str, str]) -> int:
+    """Validate the sandbox-identity environment constructed by the launcher."""
 
-    runtime_env = dict(supervisor_env)
-    # PID 1 exposes the shell's initial environment. The trusted launcher pins
-    # these values after startup and again on the Hermes gateway command.
-    runtime_env.update(
-        {
-            "HERMES_LAZY_INSTALL_TARGET": GATEWAY_LAZY_INSTALL_TARGET,
-            "HERMES_HOME": MANAGED_HERMES_HOME,
-            "HERMES_BUNDLED_PLUGINS": MANAGED_BUNDLED_PLUGINS,
-        }
-    )
-    return _validate_runtime_env(runtime_env, GATEWAY_LAZY_INSTALL_TARGET)
+    return _validate_runtime_env(dict(gateway_env), SANDBOX_LAZY_INSTALL_TARGET)
 
 
 # Config-output masking layer for the wrapper-installed `hermes config show`

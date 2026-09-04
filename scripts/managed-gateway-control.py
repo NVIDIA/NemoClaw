@@ -69,6 +69,9 @@ HERMES_GUARD_PATH = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
 HERMES_BOUNDARY_PATH = (
     "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
 )
+MANAGED_HERMES_LAZY_INSTALL_TARGET = "/sandbox/.hermes/lazy-packages"
+MANAGED_HERMES_HOME = "/sandbox/.hermes"
+MANAGED_HERMES_BUNDLED_PLUGINS = "/opt/hermes/plugins"
 OPENCLAW_GUARD_PATH = "/usr/local/lib/nemoclaw/openclaw-config-guard.py"
 OPENSHELL_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
 NEMOCLAW_START_PATH = b"/usr/local/bin/nemoclaw-start"
@@ -1590,7 +1593,7 @@ def _run_fixed_validator(
 
 
 def _validate_managed_gateway_environment(
-    script: str, supervisor_environment: dict[str, str]
+    script: str, gateway_environment: dict[str, str]
 ) -> None:
     """Validate the Hermes gateway environment without executing under untrusted input."""
 
@@ -1604,11 +1607,27 @@ def _validate_managed_gateway_environment(
     try:
         spec.loader.exec_module(module)
         validator = getattr(module, "validate_managed_gateway_env")
-        result = validator(supervisor_environment)
+        result = validator(gateway_environment)
     except (AttributeError, ImportError, OSError, RuntimeError) as exc:
         raise ControlError("SECRET_BOUNDARY_REFUSED") from exc
     if result != 0:
         raise ControlError("SECRET_BOUNDARY_REFUSED")
+
+
+def _managed_hermes_gateway_environment(
+    supervisor_environment: dict[str, str],
+) -> dict[str, str]:
+    """Construct the environment pinned by the managed Hermes launcher."""
+
+    gateway_environment = dict(supervisor_environment)
+    gateway_environment.update(
+        {
+            "HERMES_LAZY_INSTALL_TARGET": MANAGED_HERMES_LAZY_INSTALL_TARGET,
+            "HERMES_HOME": MANAGED_HERMES_HOME,
+            "HERMES_BUNDLED_PLUGINS": MANAGED_HERMES_BUNDLED_PLUGINS,
+        }
+    )
+    return gateway_environment
 
 
 def _read_regular(path: str, limit: int) -> tuple[bytes, os.stat_result]:
@@ -1724,7 +1743,10 @@ def _hermes_preflight(
         MAX_ENV_BYTES,
         recovery_deadline,
     )
-    _validate_managed_gateway_environment(validator, _parse_environment(raw_environment))
+    gateway_environment = _managed_hermes_gateway_environment(
+        _parse_environment(raw_environment)
+    )
+    _validate_managed_gateway_environment(validator, gateway_environment)
     _require_recovery_time(recovery_deadline)
     _verify_locked_hermes_hash()
     _require_recovery_time(recovery_deadline)

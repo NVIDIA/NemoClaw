@@ -183,10 +183,19 @@ function runRuntimeEnvValidationAsGateway(lazyTarget: string) {
   );
 }
 
-function runManagedGatewayEnvValidation(envOverrides: Record<string, string>) {
+function runManagedGatewayEnvValidation(
+  envOverrides: Record<string, string>,
+  includeCanonicalPaths = true,
+) {
   const environment: Record<string, string> = {
     PATH: "/usr/bin",
-    HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
+    ...(includeCanonicalPaths
+      ? {
+          HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
+          HERMES_HOME: "/sandbox/.hermes",
+          HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
+        }
+      : {}),
     ...envOverrides,
   };
   return spawnSync(
@@ -572,8 +581,21 @@ describe("Hermes durable lazy-install target", () => {
     expect(refused.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
   });
 
-  it("uses launcher-owned paths when the supervisor environment predates shell exports", () => {
-    const result = runManagedGatewayEnvValidation({});
+  it("requires the controller to supply launcher-owned sandbox paths", () => {
+    const result = runManagedGatewayEnvValidation({}, false);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
+    expect(result.stderr).toContain("HERMES_HOME");
+    expect(result.stderr).toContain("HERMES_BUNDLED_PLUGINS");
+  });
+
+  it("accepts the canonical managed-restart paths (#10963)", () => {
+    const result = runManagedGatewayEnvValidation({
+      HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
+      HERMES_HOME: "/sandbox/.hermes",
+      HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
+    });
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe("");
