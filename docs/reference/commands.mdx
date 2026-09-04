@@ -217,9 +217,7 @@ $$nemoclaw config export my-assistant --output -
 | `--force` | Replace an existing regular file. The command refuses symbolic links and other file types. |
 | `--json` | Return a machine-readable result when writing a file. It cannot be combined with `--output -`. |
 
-The export contains credential environment-variable references, not credential values. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. The command refuses symbolic links and other non-regular output types. With `--force`, it verifies that the existing destination is a regular file before replacement.
-
-With `--json` and a file output, the command returns a version 1 result with the source sandbox, output path, and document and specification digests. Standard output contains only YAML when `--output -` is used.
+The export contains credential environment-variable references, not credential values. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. With `--force`, publication checks that the existing destination is a regular file before ordinary atomic replacement.
 
 Version 1 exports managed OpenClaw sandboxes that use hosted external inference, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy. Other profiles fail with a diagnostic instead of producing an incomplete document.
 

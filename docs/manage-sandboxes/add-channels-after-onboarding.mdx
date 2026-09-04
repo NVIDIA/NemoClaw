@@ -46,6 +46,11 @@ Telegram, Discord, Slack, and Microsoft Teams prompt for credentials and configu
 WeChat runs an interactive host-side QR scan.
 WhatsApp collects no token because pairing happens inside the rebuilt sandbox.
 
+Before NemoClaw registers or reuses a channel bridge profile, it checks the complete checked-in OpenShell profile contract.
+A missing, malformed, or conflicting profile stops the operation before provider reuse.
+When a refresh bridge already matches, it keeps its working credential until the gateway mints a replacement.
+If refresh fails, NemoClaw leaves the existing bridge available.
+
 Google Chat prompts both agents for a service-account JSON key and sender access settings.
 
 <AgentOnly variant="openclaw">
