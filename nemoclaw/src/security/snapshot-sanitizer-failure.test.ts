@@ -31,7 +31,6 @@ import { sanitizeMigrationDirectory, sanitizeOpenClawConfigFile } from "./snapsh
 const roots: string[] = [];
 
 const LARGE_INSTALL_CONTENT = "x".repeat(15 * 1024 * 1024);
-const SHELL_WAIT_ATTEMPTS = 10_000;
 
 function makeRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-migration-sanitizer-failure-"));
@@ -41,17 +40,6 @@ function makeRoot(): string {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
-function boundedShellWait(condition: string, pauseCommand = "sleep 0.001"): string[] {
-  return [
-    "    wait_attempt=0",
-    `    while ${condition}; do`,
-    "      wait_attempt=$((wait_attempt + 1))",
-    `      [ "$wait_attempt" -lt ${String(SHELL_WAIT_ATTEMPTS)} ] || exit 1`,
-    `      ${pauseCommand}`,
-    "    done",
-  ];
 }
 
 function writePythonWrapper(lines: readonly string[]): string {
@@ -67,6 +55,45 @@ function requireTrustedPython(): string {
   const python = resolveTrustedSnapshotSanitizerPythonPath();
   expect(python).toEqual(expect.any(String));
   return python as string;
+}
+
+function writeInstallMutationPythonWrapper(
+  python: string,
+  targetPath: string,
+  aliasPath: string,
+  transient: boolean,
+): void {
+  const hook = [
+    "import os as _nemoclaw_os",
+    "_nemoclaw_original_write = _nemoclaw_os.write",
+    "_nemoclaw_linked = False",
+    "def _nemoclaw_write(fd, payload):",
+    "    global _nemoclaw_linked",
+    "    written = _nemoclaw_original_write(fd, payload)",
+    "    if not _nemoclaw_linked:",
+    `        _nemoclaw_os.link(${JSON.stringify(targetPath)}, ${JSON.stringify(aliasPath)})`,
+    ...(transient
+      ? [
+          `        alias_fd = _nemoclaw_os.open(${JSON.stringify(aliasPath)}, _nemoclaw_os.O_WRONLY)`,
+          '        _nemoclaw_os.pwrite(alias_fd, b"M", 0)',
+          "        _nemoclaw_os.close(alias_fd)",
+          `        _nemoclaw_os.unlink(${JSON.stringify(aliasPath)})`,
+        ]
+      : []),
+    "        _nemoclaw_linked = True",
+    "    return written",
+    "_nemoclaw_os.write = _nemoclaw_write",
+  ].join("\n");
+  const mediator = [
+    "import os, sys",
+    `hook = ${JSON.stringify(hook)}`,
+    "args = sys.argv[2:]",
+    'args[2] = hook + "\\n" + args[2]',
+    "os.execv(sys.argv[1], [sys.argv[1], *args])",
+  ].join("\n");
+  writePythonWrapper([
+    `exec ${shellQuote(python)} -c ${shellQuote(mediator)} ${shellQuote(python)} "$@"`,
+  ]);
 }
 
 afterEach(() => {
@@ -218,15 +245,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
       const root = inspectDescriptorSnapshotRoot(rootPath);
       expect(root).not.toBeNull();
       const python = requireTrustedPython();
-      writePythonWrapper([
-        `if [ "\${4-}" = install ]; then`,
-        "  (",
-        ...boundedShellWait(`[ ! -s ${shellQuote(targetPath)} ]`),
-        `    ln ${shellQuote(targetPath)} ${shellQuote(aliasPath)}`,
-        "  ) &",
-        "fi",
-        `exec ${shellQuote(python)} "$@"`,
-      ]);
+      writeInstallMutationPythonWrapper(python, targetPath, aliasPath, false);
 
       expect(
         installDescriptorSnapshotFile(
@@ -249,21 +268,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
       const root = inspectDescriptorSnapshotRoot(rootPath);
       expect(root).not.toBeNull();
       const python = requireTrustedPython();
-      writePythonWrapper([
-        `if [ "\${4-}" = install ]; then`,
-        "  (",
-        ...boundedShellWait(`[ ! -s ${shellQuote(targetPath)} ]`),
-        `    ln ${shellQuote(targetPath)} ${shellQuote(aliasPath)}`,
-        ...boundedShellWait(
-          `[ "$(wc -c < ${shellQuote(aliasPath)})" -lt ${String(LARGE_INSTALL_CONTENT.length)} ]`,
-          "sleep 0.001",
-        ),
-        `    printf M | dd of=${shellQuote(aliasPath)} bs=1 count=1 conv=notrunc 2>/dev/null`,
-        `    rm ${shellQuote(aliasPath)}`,
-        "  ) &",
-        "fi",
-        `exec ${shellQuote(python)} "$@"`,
-      ]);
+      writeInstallMutationPythonWrapper(python, targetPath, aliasPath, true);
 
       expect(
         installDescriptorSnapshotFile(

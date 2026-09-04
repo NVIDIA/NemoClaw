@@ -1005,9 +1005,14 @@ function main(): void {
 }
 
 function isMainModule(): boolean {
-  return process.argv[1]
-    ? import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
-    : false;
+  if (!process.argv[1]) return false;
+  const modulePath = fileURLToPath(import.meta.url);
+  const entrypoint = path.resolve(process.argv[1]);
+  try {
+    return fs.realpathSync.native(modulePath) === fs.realpathSync.native(entrypoint);
+  } catch {
+    return import.meta.url === pathToFileURL(entrypoint).href;
+  }
 }
 
 if (isMainModule()) {

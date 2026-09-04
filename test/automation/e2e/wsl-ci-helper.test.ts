@@ -104,6 +104,7 @@ Get-WslCheckoutSyncScript -Checkout "/mnt/d/agent work/repo's" -Workdir "/tmp/ne
       expect(result.stdout).toContain("if [ -L '/tmp/nemoclaw-wsl-workdir' ]; then");
       expect(result.stdout).toContain("git -C '/tmp/nemoclaw-wsl-workdir/123-1' reset --hard HEAD");
       expect(result.stdout).toContain("git -C '/tmp/nemoclaw-wsl-workdir/123-1' clean -ffdx");
+      expect(result.stdout).toContain("chmod -R go-w '/tmp/nemoclaw-wsl-workdir/123-1'");
       expect(result.stdout).toContain(
         "chown -R 'nemoclaw-ci:nemoclaw-ci' '/tmp/nemoclaw-wsl-workdir/123-1'",
       );

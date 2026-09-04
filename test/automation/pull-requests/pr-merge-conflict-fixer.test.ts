@@ -16,6 +16,7 @@ import {
 import { prepareMerge, writeTree } from "../../../tools/pr-merge-conflict-fixer/merge.mts";
 import {
   publishResolution,
+  pushRefWithLease,
   validatePublicationState,
   validateResolutionPatch,
 } from "../../../tools/pr-merge-conflict-fixer/publish.mts";
@@ -382,7 +383,7 @@ describe("PR merge conflict fixer", () => {
     ).toThrow(/draft/u);
   });
 
-  it("creates a verified commit from a main-relative tree before the atomic head update (#7542)", async () => {
+  it("creates a verified commit before an atomic leased head update (#7542)", async () => {
     const fixture = createConflictFixture();
     for (let index = 0; index < 100; index += 1) {
       write(fixture.repository, `stale-main/${index}.txt`, `main ${index}\n`);
@@ -394,15 +395,10 @@ describe("PR merge conflict fixer", () => {
     const patchPath = path.join(temporaryDirectory(), "resolution.patch");
     const finalTree = createResolutionPatch(fixture, patchPath);
     const commitSha = "c".repeat(40);
+    const publishRef = vi.fn();
     const requests: Array<{ body: unknown; method: string; path: string }> = [];
-    const graphql = vi.fn(async (_query: string, variables: Record<string, unknown>) => ({
-      updateRefs: {
-        clientMutationId: commitSha,
-      },
-      variables,
-    }));
     const responseHandlers: Record<string, (body: unknown) => unknown> = {
-      [`/repos/NVIDIA/NemoClaw/pulls/${entry.pr_number}`]: () => ({
+      [`GET /repos/NVIDIA/NemoClaw/pulls/${entry.pr_number}`]: () => ({
         base: {
           ref: "main",
           repo: { full_name: "NVIDIA/NemoClaw", node_id: "R_repo" },
@@ -414,31 +410,34 @@ describe("PR merge conflict fixer", () => {
         draft: false,
         state: "open",
       }),
-      "/repos/NVIDIA/NemoClaw/git/ref/heads/main": () => ({
+      "GET /repos/NVIDIA/NemoClaw/git/ref/heads/main": () => ({
         object: { sha: entry.base_sha },
       }),
-      "/repos/NVIDIA/NemoClaw/git/blobs": (body) => {
+      "POST /repos/NVIDIA/NemoClaw/git/blobs": (body) => {
         const encoded = (body as { content: string }).content;
         const content = Buffer.from(encoded, "base64");
         const header = Buffer.from(`blob ${content.length}\0`);
         return { sha: createHash("sha1").update(header).update(content).digest("hex") };
       },
-      "/repos/NVIDIA/NemoClaw/git/trees": () => ({ sha: finalTree }),
-      "/repos/NVIDIA/NemoClaw/git/commits": () => ({
+      "POST /repos/NVIDIA/NemoClaw/git/trees": () => ({ sha: finalTree }),
+      "POST /repos/NVIDIA/NemoClaw/git/commits": () => ({
         sha: commitSha,
         verification: { reason: "valid", verified: true },
       }),
     };
     const request = vi.fn(async (method: "GET" | "POST", apiPath: string, body?: unknown) => {
       requests.push({ body, method, path: apiPath });
-      return required(responseHandlers[apiPath], `unexpected request: ${method} ${apiPath}`)(body);
+      return required(
+        responseHandlers[`${method} ${apiPath}`],
+        `unexpected request: ${method} ${apiPath}`,
+      )(body);
     });
 
     await expect(
       publishResolution({
         entry,
-        graphql,
         patchPath,
+        publishRef,
         repositoryName: "NVIDIA/NemoClaw",
         request,
         sourceRepository: fixture.repository,
@@ -484,22 +483,41 @@ describe("PR merge conflict fixer", () => {
         "resolved intent\n",
       ].sort(),
     );
-    expect(graphql).toHaveBeenCalledWith(expect.stringContaining("updateRefs"), {
-      input: {
-        clientMutationId: commitSha,
-        refUpdates: [
-          {
-            afterOid: commitSha,
-            beforeOid: entry.head_sha,
-            force: false,
-            name: `refs/heads/${entry.head_ref}`,
-          },
-        ],
-        repositoryId: "R_repo",
-      },
+    expect(publishRef).toHaveBeenCalledWith({
+      commitSha,
+      expectedHeadSha: entry.head_sha,
+      headRef: entry.head_ref,
+      repository: expect.any(String),
+      repositoryName: "NVIDIA/NemoClaw",
     });
     expect(requests.filter((item) => item.path.includes("/pulls/"))).toHaveLength(1);
     expect(requests.filter((item) => item.path.endsWith("/git/ref/heads/main"))).toHaveLength(1);
+  });
+
+  it("rejects publication when the PR branch moves after validation (#7542)", () => {
+    const fixture = createConflictFixture();
+    const remote = temporaryDirectory();
+    git(remote, ["init", "--bare"]);
+    git(fixture.repository, ["push", remote, `${fixture.headSha}:refs/heads/pull-request`]);
+
+    git(fixture.repository, ["checkout", "pull-request"]);
+    write(fixture.repository, "resolution.txt", "resolved\n");
+    git(fixture.repository, ["add", "resolution.txt"]);
+    git(fixture.repository, ["commit", "-m", "merge: resolve conflicts with main"]);
+    const commitSha = git(fixture.repository, ["rev-parse", "HEAD"]);
+    const movedHead = git(fixture.repository, ["rev-parse", `${fixture.headSha}^`]);
+    git(fixture.repository, ["push", "--force", remote, `${movedHead}:refs/heads/pull-request`]);
+
+    expect(() =>
+      pushRefWithLease({
+        commitSha,
+        expectedHeadSha: fixture.headSha,
+        headRef: "pull-request",
+        remoteUrl: remote,
+        repository: fixture.repository,
+      }),
+    ).toThrow(/atomic PR branch update.*changed/u);
+    expect(git(remote, ["rev-parse", "refs/heads/pull-request"])).toBe(movedHead);
   });
 
   it("configures approved inference through a loopback gateway (#7542)", async () => {

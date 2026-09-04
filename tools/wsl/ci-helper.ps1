@@ -423,6 +423,7 @@ function Get-WslCheckoutSyncScript {
         "git config --global --add safe.directory $workdirLiteral"
         "git -C $workdirLiteral reset --hard HEAD"
         "git -C $workdirLiteral clean -ffdx"
+        "chmod -R go-w $workdirLiteral"
         $ownerCommand
         "git -C $workdirLiteral status --short"
         "echo 'WSL ext4 workspace is ready'"
