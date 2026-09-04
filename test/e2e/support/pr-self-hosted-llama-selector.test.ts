@@ -110,6 +110,8 @@ describe("generic NVIDIA GPU PR selection", () => {
     "src/lib/onboard/preflight.ts",
     "scripts/checks/llama-cpp-openclaw-agent-qualification.mts",
     "scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts",
+    "tools/e2e/exact-artifact-download.mts",
+    "tools/e2e/managed-image-cohort-contract.mts",
   ])(
     "selects the generic NVIDIA GPU E2E job when %s can change installer readiness",
     (changedFile) => {

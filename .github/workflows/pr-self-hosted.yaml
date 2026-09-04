@@ -70,6 +70,8 @@ jobs:
                   or .filename == "scripts/checks/llama-cpp-openclaw-agent-qualification.mts"
                   or .filename == "scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts"
                   or .filename == "scripts/checks/run-managed-image-openshell-e2e.ts"
+                  or .filename == "tools/e2e/exact-artifact-download.mts"
+                  or .filename == "tools/e2e/managed-image-cohort-contract.mts"
                   or .filename == "test/e2e/live/llama-cpp-generic-gpu.test.ts"
                   or .filename == "test/e2e/live/gpu-e2e-helpers.ts"
                   or .filename == "test/e2e/mock-parity.json"

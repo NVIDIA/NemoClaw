@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { createBearerAuthConfig } from "../../src/lib/adapters/http/auth-config.ts";
 import type { LocalModelRuntimeCleanupResult } from "../../src/lib/inference/local-model-profile/cleanup.ts";
 import { isLlamaCppServingRecipe } from "../../src/lib/inference/serving/adapter-registry.ts";
 import { managedInferenceDigest } from "../../src/lib/inference/serving/catalog-integrity.ts";
@@ -238,6 +239,12 @@ export async function runQwenGpuQualification(): Promise<void> {
   const baseUrlName = "NEMOCLAW_E2E_LOCAL_INFERENCE_BASE_URL";
   const priorCredential = process.env[credentialName];
   const priorBaseUrl = process.env[baseUrlName];
+  const restoreQualificationEnvironment = (): void => {
+    if (priorCredential === undefined) delete process.env[credentialName];
+    else process.env[credentialName] = priorCredential;
+    if (priorBaseUrl === undefined) delete process.env[baseUrlName];
+    else process.env[baseUrlName] = priorBaseUrl;
+  };
   let apiKey: string | undefined;
   let transactionId: string | undefined;
   let runtimeCleanup: Extract<LocalModelRuntimeCleanupResult, { ok: true }> | undefined;
@@ -362,24 +369,31 @@ export async function runQwenGpuQualification(): Promise<void> {
           if (unauthorized !== "401") {
             throw new Error("managed llama.cpp accepted an unauthenticated request");
           }
-          const hostChat = requireCommand(
-            "curl",
-            [
-              "-fsS",
-              "-H",
-              `Authorization: Bearer ${apiKey}`,
-              "-H",
-              "Content-Type: application/json",
-              `http://127.0.0.1:${String(recipe.spec.serve.port)}/v1/chat/completions`,
-              "--data",
-              JSON.stringify({
-                model: recipe.spec.model.servedName,
-                messages: [{ role: "user", content: agentPlan.prompts.normal }],
-                max_tokens: agentPlan.bounds.maxTokens,
-              }),
-            ],
-            5 * 60_000,
-          );
+          const authConfig = createBearerAuthConfig(apiKey, {
+            prefix: "nemoclaw-qwen-gpu-auth",
+          });
+          let hostChat: string;
+          try {
+            hostChat = requireCommand(
+              "curl",
+              [
+                "-fsS",
+                ...authConfig.args,
+                "-H",
+                "Content-Type: application/json",
+                `http://127.0.0.1:${String(recipe.spec.serve.port)}/v1/chat/completions`,
+                "--data",
+                JSON.stringify({
+                  model: recipe.spec.model.servedName,
+                  messages: [{ role: "user", content: agentPlan.prompts.normal }],
+                  max_tokens: agentPlan.bounds.maxTokens,
+                }),
+              ],
+              5 * 60_000,
+            );
+          } finally {
+            authConfig.cleanup();
+          }
           if (
             !responseText(hostChat)
               .toLocaleUpperCase("en-US")
@@ -400,12 +414,16 @@ export async function runQwenGpuQualification(): Promise<void> {
           };
         },
         beforeCleanup() {
-          if (!apiKey) return;
-          runtimeCleanup = requireCleanup(
-            cleanupManagedLlamaCppRuntimeForSandbox(SANDBOX_NAME, { env: process.env }),
-          );
-          if (transactionId) {
-            createDockerLlamaCppPrivateBridgeController().assertStopped(transactionId);
+          try {
+            if (!apiKey) return;
+            runtimeCleanup = requireCleanup(
+              cleanupManagedLlamaCppRuntimeForSandbox(SANDBOX_NAME, { env: process.env }),
+            );
+            if (transactionId) {
+              createDockerLlamaCppPrivateBridgeController().assertStopped(transactionId);
+            }
+          } finally {
+            restoreQualificationEnvironment();
           }
         },
       },
@@ -449,10 +467,7 @@ export async function runQwenGpuQualification(): Promise<void> {
   } catch (error) {
     primaryError = error;
   } finally {
-    if (priorCredential === undefined) delete process.env[credentialName];
-    else process.env[credentialName] = priorCredential;
-    if (priorBaseUrl === undefined) delete process.env[baseUrlName];
-    else process.env[baseUrlName] = priorBaseUrl;
+    restoreQualificationEnvironment();
     if (apiKey) {
       for (const index of installLog.keys())
         installLog[index] = installLog[index]!.replaceAll(apiKey, "<REDACTED>");
