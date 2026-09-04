@@ -38,6 +38,11 @@ $script:TiktokenSourceDigest = 'c9435714c3a84c2319499de9a300c0e604449dd0799ff246
 $script:TiktokenCargoLockDigest = '63a3cbad932c43582c3293b0c6ca2d3c74970d1a6a67c18a1712c3519da4d8ba' # gitleaks:allow -- checked-in Cargo lock integrity pin
 $script:LangGraphLoggingSourceDigest = '5754429ea54bb8cbc9b6b062c8c30b7da11d6d2de4e40d8cf149e1af815451d4' # gitleaks:allow -- public wheel source integrity pin
 $script:LangGraphLoggingPatchedDigest = '862a676aad507986ce65ba6805feae97406508f994d25b2e4fcdfafc1b366874' # gitleaks:allow -- deterministic compatibility output pin
+$script:LangGraphApiSourceDigest = '66ed5ec37771619bbb70b4408e7fba1dc626b6e40176286554530a309efb6377' # gitleaks:allow -- public wheel source integrity pin
+$script:LangGraphApiPatchedDigest = '7faa1904d664bcc1c99d69da0f44d2fd36eaca87ad72d4aa1215f83b45aadb0e' # gitleaks:allow -- deterministic compatibility output pin
+$script:JsonSchemaRsVersion = '0.44.1'
+$script:JsonSchemaRsSourceDigest = '49ca909cc3017990a732145b9a7c2f1a0727b2f95dba4190c05a514575b5f4bf' # gitleaks:allow -- public PyPI source integrity pin
+$script:JsonSchemaRsCargoLockDigest = '77170cff39f4f8bf22ecfde8c728aad659f0f4e2471e36eaffeb1eaca340e291' # gitleaks:allow -- source-supplied Cargo lock integrity pin
 $script:RustVersion = '1.95.0'
 $script:MxcSdkVersion = '0.8.0'
 $script:MxcSdkArchiveSha256 = '06bb2399d7e98ab1907acf851e12a4e44748dd467b79d3e53c2f2fbf569da14e'
@@ -291,7 +296,9 @@ try {
         -Label 'Deep Agents Code native ARM64 runtime restore'
     $langGraphPatch = Join-Path $candidate 'packaging\windows\python\langgraph-api-0.14.0.dev3-python313.patch'
     $langGraphLogging = Join-Path $deepAgentsSitePackages 'langgraph_api\logging.py'
+    $langGraphApi = Join-Path $deepAgentsSitePackages 'langgraph_api\api\__init__.py'
     Assert-Sha256 -Path $langGraphLogging -Expected $script:LangGraphLoggingSourceDigest -Label 'langgraph-api logging source'
+    Assert-Sha256 -Path $langGraphApi -Expected $script:LangGraphApiSourceDigest -Label 'langgraph-api API source'
     Invoke-Checked `
         -FilePath $git `
         -Arguments @('-c', 'core.autocrlf=false', 'apply', '--check', '--whitespace=nowarn', $langGraphPatch) `
@@ -303,6 +310,7 @@ try {
         -Label 'langgraph-api Python 3.13 compatibility patch' `
         -WorkingDirectory $deepAgentsSitePackages
     Assert-Sha256 -Path $langGraphLogging -Expected $script:LangGraphLoggingPatchedDigest -Label 'patched langgraph-api logging source'
+    Assert-Sha256 -Path $langGraphApi -Expected $script:LangGraphApiPatchedDigest -Label 'patched langgraph-api API source'
     Copy-Item -LiteralPath $langGraphPatch -Destination (Join-Path $output 'LANGGRAPH-PYTHON313-COMPATIBILITY.patch')
     $forbiddenFruitArchive = Join-Path $workRoot 'forbiddenfruit-0.1.4.tar.gz'
     Invoke-WebRequest -UseBasicParsing -Uri 'https://files.pythonhosted.org/packages/e6/79/d4f20e91327c98096d605646bdc6a5ffedae820f38d378d3515c42ec5e60/forbiddenfruit-0.1.4.tar.gz' -OutFile $forbiddenFruitArchive
@@ -314,7 +322,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $forbiddenFruitExtract 'forbiddenfruit-0.1.4\forbiddenfruit.egg-info') -Destination $deepAgentsSitePackages -Recurse
     Copy-Item -LiteralPath (Join-Path $forbiddenFruitExtract 'forbiddenfruit-0.1.4\COPYING.mit') -Destination (Join-Path $deepAgentsRoot 'FORBIDDENFRUIT-LICENSE.txt')
 
-    $tiktokenBuildDependencies = @(
+    $nativePythonBuildDependencies = @(
         @{
             File = 'setuptools-80.9.0-py3-none-any.whl'
             Uri = 'https://files.pythonhosted.org/packages/a3/dc/17031897dae0efacfea57dfd3a82fdd2a2aeb58e0ff71b77b87e44edc772/setuptools-80.9.0-py3-none-any.whl'
@@ -334,14 +342,19 @@ try {
             File = 'semantic_version-2.10.0-py2.py3-none-any.whl'
             Uri = 'https://files.pythonhosted.org/packages/6a/23/8146aad7d88f4fcb3a6218f41a60f6c2d4e3a72de72da1825dc7c8f7877c/semantic_version-2.10.0-py2.py3-none-any.whl'
             Sha256 = 'de78a3b8e0feda74cabc54aab2da702113e33ac9d9eb9d2389bcf1f58b7d9177'
+        },
+        @{
+            File = 'maturin-1.9.6-py3-none-win_arm64.whl'
+            Uri = 'https://files.pythonhosted.org/packages/65/f2/e97aaba6d0d78c5871771bf9dd71d4eb8dac15df9109cf452748d2207412/maturin-1.9.6-py3-none-win_arm64.whl'
+            Sha256 = 'ac02a30083553d2a781c10cd6f5480119bf6692fd177e743267406cad2ad198c'
         }
     )
-    $tiktokenBuildWheels = @()
-    foreach ($dependency in $tiktokenBuildDependencies) {
+    $nativePythonBuildWheels = @()
+    foreach ($dependency in $nativePythonBuildDependencies) {
         $dependencyPath = Join-Path $workRoot $dependency.File
         Invoke-WebRequest -UseBasicParsing -Uri $dependency.Uri -OutFile $dependencyPath
         Assert-Sha256 -Path $dependencyPath -Expected $dependency.Sha256 -Label $dependency.File
-        $tiktokenBuildWheels += $dependencyPath
+        $nativePythonBuildWheels += $dependencyPath
     }
     Invoke-Checked `
         -FilePath $pythonBuilder `
@@ -351,8 +364,8 @@ try {
             '--force-reinstall',
             '--no-deps',
             '--no-index'
-        ) + $tiktokenBuildWheels) `
-        -Label 'Pinned tiktoken build dependency restore'
+        ) + $nativePythonBuildWheels) `
+        -Label 'Pinned native Python build dependency restore'
     $tiktokenArchive = Join-Path $workRoot "tiktoken-$($script:TiktokenVersion).tar.gz"
     Invoke-WebRequest `
         -UseBasicParsing `
@@ -404,13 +417,61 @@ try {
         ) `
         -Label 'tiktoken native ARM64 runtime restore'
     Assert-Arm64PortableExecutable -Path (Join-Path $deepAgentsSitePackages 'tiktoken\_tiktoken.cp313-win_arm64.pyd') -Label 'tiktoken native ARM64 extension'
+    $jsonSchemaRsArchive = Join-Path $workRoot "jsonschema_rs-$($script:JsonSchemaRsVersion).tar.gz"
+    Invoke-WebRequest `
+        -UseBasicParsing `
+        -Uri 'https://files.pythonhosted.org/packages/68/88/f0cc7013ad6a3d0b86275a6d0a3112eaa705545c89134ab2a057865c054c/jsonschema_rs-0.44.1.tar.gz' `
+        -OutFile $jsonSchemaRsArchive
+    Assert-Sha256 -Path $jsonSchemaRsArchive -Expected $script:JsonSchemaRsSourceDigest -Label 'jsonschema-rs source archive'
+    $jsonSchemaRsExtract = Join-Path $workRoot 'jsonschema-rs'
+    [IO.Directory]::CreateDirectory($jsonSchemaRsExtract) | Out-Null
+    Invoke-Checked -FilePath $tar -Arguments @('-xzf', $jsonSchemaRsArchive, '-C', $jsonSchemaRsExtract) -Label 'jsonschema-rs source extraction'
+    $jsonSchemaRsSource = Join-Path $jsonSchemaRsExtract "jsonschema_rs-$($script:JsonSchemaRsVersion)"
+    Assert-Sha256 -Path (Join-Path $jsonSchemaRsSource 'Cargo.lock') -Expected $script:JsonSchemaRsCargoLockDigest -Label 'jsonschema-rs Cargo lock'
+    $jsonSchemaRsWheelRoot = Join-Path $workRoot 'jsonschema-rs-wheel'
+    [IO.Directory]::CreateDirectory($jsonSchemaRsWheelRoot) | Out-Null
+    $priorRustupToolchain = $env:RUSTUP_TOOLCHAIN
+    try {
+        $env:RUSTUP_TOOLCHAIN = $script:RustVersion
+        Invoke-Checked `
+            -FilePath $pythonBuilder `
+            -Arguments @(
+                '-m', 'pip', 'wheel',
+                '--disable-pip-version-check',
+                '--no-build-isolation',
+                '--no-deps',
+                '--no-index',
+                '--wheel-dir', $jsonSchemaRsWheelRoot,
+                $jsonSchemaRsSource
+            ) `
+            -Label 'Pinned jsonschema-rs native ARM64 wheel build'
+    } finally {
+        $env:RUSTUP_TOOLCHAIN = $priorRustupToolchain
+    }
+    $jsonSchemaRsWheels = @(Get-ChildItem -LiteralPath $jsonSchemaRsWheelRoot -Filter 'jsonschema_rs-0.44.1-cp310-abi3-win_arm64.whl' -File)
+    if ($jsonSchemaRsWheels.Count -ne 1) {
+        Fail-PayloadPreparation 'The jsonschema-rs native ARM64 build did not produce one exact wheel.'
+    }
+    Invoke-Checked `
+        -FilePath $pythonBuilder `
+        -Arguments @(
+            '-m', 'pip', 'install',
+            '--disable-pip-version-check',
+            '--no-compile',
+            '--no-deps',
+            '--no-index',
+            '--target', $deepAgentsSitePackages,
+            $jsonSchemaRsWheels[0].FullName
+        ) `
+        -Label 'jsonschema-rs native ARM64 runtime restore'
+    Assert-Arm64PortableExecutable -Path (Join-Path $deepAgentsSitePackages 'jsonschema_rs\jsonschema_rs.pyd') -Label 'jsonschema-rs native ARM64 extension'
     Invoke-Checked `
         -FilePath (Join-Path $pythonRoot 'python.exe') `
         -Arguments @('-I', '-c', 'import sys; sys.path.insert(0, sys.argv[1]); import concurrent_log_handler; import hermes_cli.main', $hermesSitePackages) `
         -Label 'Hermes native ARM64 import preflight'
     Invoke-Checked `
         -FilePath (Join-Path $pythonRoot 'python.exe') `
-        -Arguments @('-I', '-c', 'import sys; sys.path.insert(0, sys.argv[1]); import colorama; import tiktoken; import langchain_openai; import langgraph_api.logging; langgraph_api.logging.Formatter(); from deepagents_code import cli_main', $deepAgentsSitePackages) `
+        -Arguments @('-I', '-c', 'import sys; sys.path.insert(0, sys.argv[1]); import colorama; import jsonschema_rs; import tiktoken; import langchain_openai; import langgraph_api.logging; langgraph_api.logging.Formatter(); from deepagents_code import cli_main', $deepAgentsSitePackages) `
         -Label 'Deep Agents Code native ARM64 import preflight'
 
     $nodeArchivePath = Join-Path $workRoot $script:NodeArchive
@@ -516,6 +577,7 @@ debug = false
         'hermes\site-packages\concurrent_log_handler\__init__.py',
         'deepagents\site-packages\deepagents_code\main.py',
         'deepagents\site-packages\colorama\__init__.py',
+        'deepagents\site-packages\jsonschema_rs\jsonschema_rs.pyd',
         'deepagents\site-packages\tiktoken\_tiktoken.cp313-win_arm64.pyd',
         'nemocua\run_with_harness.py',
         'onboarding\index.html',
@@ -572,9 +634,17 @@ debug = false
             version = '0.1.55'
             dependencyLockSha256 = (Get-FileHash -LiteralPath $deepAgentsLock -Algorithm SHA256).Hash.ToLowerInvariant()
             langGraphPython313Compatibility = [pscustomobject]@{
-                sourceSha256 = $script:LangGraphLoggingSourceDigest
-                patchedSha256 = $script:LangGraphLoggingPatchedDigest
+                loggingSourceSha256 = $script:LangGraphLoggingSourceDigest
+                loggingPatchedSha256 = $script:LangGraphLoggingPatchedDigest
+                apiSourceSha256 = $script:LangGraphApiSourceDigest
+                apiPatchedSha256 = $script:LangGraphApiPatchedDigest
                 patchSha256 = (Get-FileHash -LiteralPath $langGraphPatch -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            jsonSchemaRs = [pscustomobject]@{
+                version = $script:JsonSchemaRsVersion
+                sourceArchiveSha256 = $script:JsonSchemaRsSourceDigest
+                cargoLockSha256 = $script:JsonSchemaRsCargoLockDigest
+                nativeExtensionSha256 = (Get-FileHash -LiteralPath (Join-Path $deepAgentsSitePackages 'jsonschema_rs\jsonschema_rs.pyd') -Algorithm SHA256).Hash.ToLowerInvariant()
             }
             tiktoken = [pscustomobject]@{
                 version = $script:TiktokenVersion
@@ -588,7 +658,6 @@ debug = false
                 'grpcio==1.81.1',
                 'grpcio-tools==1.81.1',
                 'httptools==0.8.0',
-                'jsonschema-rs==0.44.1',
                 'quickjs-rs==0.2.5',
                 'sqlite-vec==0.1.9',
                 'textual-speedups==0.2.1',

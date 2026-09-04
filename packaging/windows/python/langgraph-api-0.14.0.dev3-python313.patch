@@ -11,3 +11,24 @@ index 0d24f00..5e52f6c 100644
              raise RuntimeError("Invalid number of arguments")
          super().__init__(
              processors=[
+diff --git a/langgraph_api/api/__init__.py b/langgraph_api/api/__init__.py
+index 6c63e51..f2afd39 100644
+--- a/langgraph_api/api/__init__.py
++++ b/langgraph_api/api/__init__.py
+@@ -36,7 +36,6 @@ from langgraph_api.feature_flags import (
+     IS_POSTGRES_OR_GRPC_BACKEND,
+ )
+ from langgraph_api.graph import js_bg_tasks
+-from langgraph_api.grpc.client import get_shared_client
+ from langgraph_api.js.base import is_js_path
+ from langgraph_api.timing import profiled_import
+ from langgraph_api.validation import render_docs_html
+@@ -47,6 +46,8 @@ logger = structlog.stdlib.get_logger(__name__)
+ async def grpc_healthcheck():
+     """Check the health of the gRPC server."""
+     try:
++        from langgraph_api.grpc.client import get_shared_client
++
+         client = await get_shared_client()
+         await client.healthcheck()
+     except Exception as exc:

@@ -575,11 +575,17 @@ jobs:
             }
             $deepAgentsSitePackages = Join-Path $installRoot 'deepagents\site-packages'
             $langGraphLogging = Join-Path $deepAgentsSitePackages 'langgraph_api\logging.py'
+            $langGraphApi = Join-Path $deepAgentsSitePackages 'langgraph_api\api\__init__.py'
             $langGraphPatch = Join-Path $env:GITHUB_WORKSPACE 'candidate\packaging\windows\python\langgraph-api-0.14.0.dev3-python313.patch'
             $langGraphSourceDigest = '5754429ea54bb8cbc9b6b062c8c30b7da11d6d2de4e40d8cf149e1af815451d4' # gitleaks:allow -- public wheel source integrity pin
             $langGraphPatchedDigest = '862a676aad507986ce65ba6805feae97406508f994d25b2e4fcdfafc1b366874' # gitleaks:allow -- deterministic compatibility output pin
+            $langGraphApiSourceDigest = '66ed5ec37771619bbb70b4408e7fba1dc626b6e40176286554530a309efb6377' # gitleaks:allow -- public wheel source integrity pin
+            $langGraphApiPatchedDigest = '7faa1904d664bcc1c99d69da0f44d2fd36eaca87ad72d4aa1215f83b45aadb0e' # gitleaks:allow -- deterministic compatibility output pin
             $langGraphDigest = (Get-FileHash -LiteralPath $langGraphLogging -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($langGraphDigest -ceq $langGraphSourceDigest) {
+              if ((Get-FileHash -LiteralPath $langGraphApi -Algorithm SHA256).Hash.ToLowerInvariant() -cne $langGraphApiSourceDigest) {
+                throw 'The installed LangGraph API source does not match its pinned diagnostic state.'
+              }
               & git -c core.autocrlf=false -C $deepAgentsSitePackages apply --check --whitespace=nowarn $langGraphPatch
               if ($LASTEXITCODE -ne 0) { throw 'The diagnostic LangGraph compatibility patch check failed.' }
               & git -c core.autocrlf=false -C $deepAgentsSitePackages apply --whitespace=nowarn $langGraphPatch
@@ -589,6 +595,9 @@ jobs:
             }
             if ((Get-FileHash -LiteralPath $langGraphLogging -Algorithm SHA256).Hash.ToLowerInvariant() -cne $langGraphPatchedDigest) {
               throw 'The installed diagnostic LangGraph compatibility output is invalid.'
+            }
+            if ((Get-FileHash -LiteralPath $langGraphApi -Algorithm SHA256).Hash.ToLowerInvariant() -cne $langGraphApiPatchedDigest) {
+              throw 'The installed diagnostic LangGraph API compatibility output is invalid.'
             }
             $deepColorama = Join-Path $deepAgentsSitePackages 'colorama'
             if (-not (Test-Path -LiteralPath $deepColorama -PathType Container)) {
