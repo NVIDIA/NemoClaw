@@ -30,7 +30,7 @@ export default class ConfigExportCommand extends Command {
     help: Flags.help({ char: "h" }),
     output: Flags.string({
       char: "o",
-      description: "Write YAML to this path. Use - to write to standard output.",
+      description: "Write YAML to this path on Linux. Use - on any supported host.",
       required: true,
     }),
     name: Flags.string({ description: "Set metadata.name in the exported document" }),
@@ -59,6 +59,9 @@ export default class ConfigExportCommand extends Command {
     const json = flags.json ?? false;
     const documentName = flags.name ?? args.sandboxName;
     if (!isValidName(documentName)) this.error("The config name is invalid.");
+    if (flags.output !== "-" && process.platform !== "linux") {
+      this.error("Config export file output currently requires Linux. Use --output - instead.");
+    }
     try {
       return await runConfigExport(
         {
