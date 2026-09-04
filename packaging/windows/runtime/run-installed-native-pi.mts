@@ -48,6 +48,25 @@ function sha256(file) {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
+function deepAgentDiagnosticFiles(root) {
+  const matches = [];
+  const pending = [root];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const candidate = path.join(current, entry.name);
+      if (entry.isDirectory()) pending.push(candidate);
+      else if (
+        entry.isFile() &&
+        (entry.name === "deepagents-debug.log" ||
+          /^deepagents_server_log_.*[.]txt$/u.test(entry.name))
+      )
+        matches.push(candidate);
+    }
+  }
+  return matches;
+}
+
 function piWorkloadSource() {
   return String.raw`import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -657,6 +676,8 @@ async function main() {
     );
     if (isDeepAgents) {
       agentEnvironment = {
+        DEEPAGENTS_CODE_DEBUG: "1",
+        DEEPAGENTS_CODE_DEBUG_FILE: path.join(shareRoot, "deepagents-debug.log"),
         NEMOCLAW_DEEP_AGENTS_HOME_ROOT: path.join(shareRoot, "home"),
         NEMOCLAW_DEEP_AGENTS_MODEL_PORT: "",
         NEMOCLAW_DEEP_AGENTS_PYTHON: requiredFile(
@@ -841,7 +862,14 @@ async function main() {
       createError = `${createError}${text}`.slice(-128 * 1024);
       process.stderr.write(text);
     });
-    await waitForFileText(resultPath, finalToken, 360_000);
+    const createFailure = new Promise((_, reject) => {
+      create.once("error", reject);
+      create.once("close", (code) => {
+        if (!fs.existsSync(resultPath))
+          reject(new Error(`OpenShell request exited ${code ?? 1} before ${agentLabel} finished`));
+      });
+    });
+    await Promise.race([waitForFileText(resultPath, finalToken, 360_000), createFailure]);
     const agentResult = JSON.parse(fs.readFileSync(resultPath, "utf8"));
     const reportedVersion = isHermes
       ? agentResult.hermesVersion
@@ -931,6 +959,11 @@ async function main() {
       for (const file of [gatewayLogPath, gatewayErrorPath]) {
         if (fs.statSync(file, { throwIfNoEntry: false })?.isFile())
           diagnosticParts.push(fs.readFileSync(file, "utf8"));
+      }
+      if (isDeepAgents) {
+        for (const file of deepAgentDiagnosticFiles(shareRoot)) {
+          diagnosticParts.push(fs.readFileSync(file, "utf8").slice(-512 * 1024));
+        }
       }
       const diagnostic = sanitizedDiagnostic(diagnosticParts.filter(Boolean).join("\n"), [
         [installRoot, "<install-root>"],
