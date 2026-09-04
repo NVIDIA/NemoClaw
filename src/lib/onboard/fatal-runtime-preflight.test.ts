@@ -201,7 +201,7 @@ describe("report-backed runtime readiness (#7411)", () => {
     expect(
       assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
         explicitlyOptedOutGpuPassthrough: false,
-        allowDeferredN1xManagedVllm: true,
+        allowDeferredN1xOnboarding: true,
         exitProcess: exit as never,
       }),
     ).toBe(readiness);
@@ -226,7 +226,7 @@ describe("report-backed runtime readiness (#7411)", () => {
     expect(() =>
       assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
         explicitlyOptedOutGpuPassthrough: false,
-        allowDeferredN1xManagedVllm: false,
+        allowDeferredN1xOnboarding: false,
         exitProcess: exit as never,
       }),
     ).toThrow("exit");
