@@ -146,19 +146,20 @@ export function shouldCleanupGatewayAfterConfirmedFinalDestroy(
   const provider = input.runtimeProviderId
     ? (deps.resolveRuntimeProvider ?? resolveRegisteredRuntimeProvider)(input.runtimeProviderId)
     : null;
+  const liveProbeDeps = {
+    ...(deps.captureOpenshell ? { captureOpenshell: deps.captureOpenshell } : {}),
+    ...(deps.dockerCapture ? { dockerCapture: deps.dockerCapture } : {}),
+    timeoutMs,
+  };
   const noLiveSandboxes =
     input.deleteSucceededOrAlreadyGone &&
     input.removedRegistryEntry &&
     noRegisteredSandboxes &&
     (deps.liveSandboxProbe
-      ? liveSandboxProbe({ timeoutMs })
+      ? liveSandboxProbe(liveProbeDeps)
       : provider?.gateway.ownsHostReadiness === true
         ? hasNoLiveSandboxesWithoutDocker(timeoutMs, provider, deps.captureOpenshell)
-        : liveSandboxProbe({
-            ...(deps.captureOpenshell ? { captureOpenshell: deps.captureOpenshell } : {}),
-            ...(deps.dockerCapture ? { dockerCapture: deps.dockerCapture } : {}),
-            timeoutMs,
-          }));
+        : liveSandboxProbe(liveProbeDeps));
 
   return shouldCleanupGatewayAfterDestroy({
     deleteSucceededOrAlreadyGone: input.deleteSucceededOrAlreadyGone,

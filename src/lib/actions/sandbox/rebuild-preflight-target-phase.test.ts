@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { restoreEnvBulk } from "../../../../test/helpers/env-test-helpers";
 import type {
   ProviderRecoveryReceipt,
   RegistryInferenceRoute,
@@ -10,34 +11,91 @@ import type {
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import {
   pinRebuildTargetGatewayForReadiness,
+  resolveRebuildMcpRuntimeSelection,
   runRebuildGatewayRecoveryAfterReadiness,
   stageRebuildBaseImageResolutionHandoff,
   stageRegistryProviderRecoveryReceipt,
 } from "./rebuild-preflight-target-phase";
 
-const originalGateway = process.env.OPENSHELL_GATEWAY;
+const originalOpenShellEnv = {
+  OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY,
+  OPENSHELL_GATEWAY_ENDPOINT: process.env.OPENSHELL_GATEWAY_ENDPOINT,
+  OPENSHELL_LOCAL_TLS_DIR: process.env.OPENSHELL_LOCAL_TLS_DIR,
+  OPENSHELL_TOKEN: process.env.OPENSHELL_TOKEN,
+  OPENSHELL_WORKSPACE: process.env.OPENSHELL_WORKSPACE,
+};
 
 afterEach(() => {
-  originalGateway === undefined
-    ? Reflect.deleteProperty(process.env, "OPENSHELL_GATEWAY")
-    : (process.env.OPENSHELL_GATEWAY = originalGateway);
+  restoreEnvBulk(originalOpenShellEnv);
 });
 
 describe("rebuild readiness gateway pin", () => {
+  it("does not require runtime authority for prepared-only MCP state", () => {
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+
+    expect(
+      resolveRebuildMcpRuntimeSelection(
+        {
+          mcp: {
+            bridges: {
+              github: { addState: "prepared" },
+            },
+          },
+        } as never,
+        bail,
+      ),
+    ).toBeUndefined();
+    expect(bail).not.toHaveBeenCalled();
+  });
+
   it("pins the recorded target without selecting or recovering a gateway (#7411)", () => {
     const log = vi.fn();
+    process.env.OPENSHELL_GATEWAY = "hostile-gateway";
+    process.env.OPENSHELL_GATEWAY_ENDPOINT = "https://hostile.invalid";
+    process.env.OPENSHELL_LOCAL_TLS_DIR = "/hostile/tls";
+    process.env.OPENSHELL_TOKEN = "hostile-token";
+    process.env.OPENSHELL_WORKSPACE = "hostile-workspace";
+    const runtimeSelection = { gatewayName: "nemoclaw-9443", workspace: "default" };
 
     expect(
       pinRebuildTargetGatewayForReadiness(
         "alpha",
         { gatewayName: "nemoclaw-9443", gatewayPort: 9443 } as never,
         log,
+        runtimeSelection,
       ),
     ).toBe("nemoclaw-9443");
     expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-9443");
+    expect(process.env.OPENSHELL_WORKSPACE).toBe("default");
+    expect(process.env.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();
+    expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBeUndefined();
+    expect(process.env.OPENSHELL_TOKEN).toBeUndefined();
     expect(log).toHaveBeenCalledWith(
       "Pinned rebuild readiness probes for 'alpha' to target gateway 'nemoclaw-9443'",
     );
+  });
+
+  it("keeps non-MCP ambient selectors while pinning the recorded gateway (#10514)", () => {
+    process.env.OPENSHELL_GATEWAY = "hostile-gateway";
+    process.env.OPENSHELL_GATEWAY_ENDPOINT = "https://hostile.invalid";
+    process.env.OPENSHELL_LOCAL_TLS_DIR = "/hostile/tls";
+    process.env.OPENSHELL_TOKEN = "hostile-token";
+    process.env.OPENSHELL_WORKSPACE = "hostile-workspace";
+
+    expect(
+      pinRebuildTargetGatewayForReadiness(
+        "alpha",
+        { gatewayName: "nemoclaw-9443", gatewayPort: 9443 } as never,
+        vi.fn(),
+      ),
+    ).toBe("nemoclaw-9443");
+    expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-9443");
+    expect(process.env.OPENSHELL_GATEWAY_ENDPOINT).toBe("https://hostile.invalid");
+    expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBe("/hostile/tls");
+    expect(process.env.OPENSHELL_TOKEN).toBe("hostile-token");
+    expect(process.env.OPENSHELL_WORKSPACE).toBe("hostile-workspace");
   });
 
   it("does not select or recover the gateway when readiness rejects (#7411)", async () => {

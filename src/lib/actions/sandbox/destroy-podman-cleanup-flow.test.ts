@@ -48,6 +48,7 @@ it("passes registered Podman authority through final gateway cleanup", async () 
   );
   expect(harness.shouldCleanupGatewaySpy).toHaveBeenCalledWith(
     expect.objectContaining({ runtimeProviderId: "podman" }),
+    {},
   );
   expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
     "nemoclaw-19080",
@@ -85,6 +86,7 @@ it("recovers Podman authority when final cleanup is retried after registry remov
   );
   expect(harness.shouldCleanupGatewaySpy).toHaveBeenCalledWith(
     expect.objectContaining({ removedRegistryEntry: true, runtimeProviderId: "podman" }),
+    {},
   );
   expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw", harness.runOpenshellSpy, {
     runtimeProviderId: "podman",

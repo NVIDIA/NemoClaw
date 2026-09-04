@@ -608,6 +608,72 @@ describe("rebuild replacement journal", () => {
     expect(resumed.id).toBe(first.id);
   });
 
+  it("pins an interrupted replacement observation to its recorded OpenShell target (#10514)", () => {
+    open();
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-9090",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    const resolveRuntimeSelection = vi.fn(() => runtimeSelection);
+    mocks.captureOpenshell.mockClear();
+
+    const resumed = openRebuildRecreateJournal({
+      target: NON_DEFAULT_TARGET,
+      expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
+      agentName: "langchain-deepagents-code",
+      targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
+      log: vi.fn(),
+      resolveRuntimeSelection,
+    });
+
+    expect(resolveRuntimeSelection).toHaveBeenCalledOnce();
+    expect(resumed.runtimeSelection).toEqual(runtimeSelection);
+    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw-9090", "alpha"],
+      expect.objectContaining({
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw-9090",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+        }),
+      }),
+    );
+  });
+
+  it("pins the first replacement observation to its recorded OpenShell target (#10514)", () => {
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-9090",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    const resolveRuntimeSelection = vi.fn(() => runtimeSelection);
+
+    const journal = openRebuildRecreateJournal({
+      target: NON_DEFAULT_TARGET,
+      expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
+      agentName: "langchain-deepagents-code",
+      targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
+      log: vi.fn(),
+      resolveRuntimeSelection,
+    });
+
+    expect(resolveRuntimeSelection).toHaveBeenCalledOnce();
+    expect(journal.runtimeSelection).toEqual(runtimeSelection);
+    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw-9090", "alpha"],
+      expect.objectContaining({
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw-9090",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+        }),
+      }),
+    );
+  });
+
   it("retires the journal of a proven replacement instead of deleting it again (#7734)", () => {
     const first = open();
     proveReplacement(first.targetGeneration);
