@@ -30,7 +30,10 @@ import {
   parseInstalledSlackProof,
   SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
 } from "../live/messaging-providers-slack-runtime-proof.ts";
-import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-runtime-proof.ts";
+import {
+  parseInstalledWechatProof,
+  WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE,
+} from "../live/messaging-providers-wechat-runtime-proof.ts";
 
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
@@ -1147,6 +1150,16 @@ describe("messaging provider installed-runtime proofs", () => {
 
     expect(parseInstalledSlackProof(`diagnostic\n${JSON.stringify(proof)}`, "warning")).toEqual(
       proof,
+    );
+  });
+
+  it("routes the installed WeChat proof through a sandbox-local policy relay", () => {
+    expect(WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE).toContain(
+      'hostname: "host.openshell.internal"',
+    );
+    expect(WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("baseUrl: relay.baseUrl");
+    expect(WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE).not.toContain(
+      'baseUrl: "http://host.openshell.internal:"',
     );
   });
 

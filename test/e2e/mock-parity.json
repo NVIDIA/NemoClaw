@@ -84,6 +84,7 @@
         "src/lib/onboard/pi-candidate-rebuild.test.ts",
         "test/e2e/support/onboard-interactive-pty.test.ts",
         "test/e2e/support/pi-agent-qualification-events.test.ts",
+        "test/e2e/support/runtime-provider-fixture.test.ts",
         "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts"
       ]
     },
