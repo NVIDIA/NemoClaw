@@ -116,7 +116,7 @@ describe("Hermes accepted launch-readiness probe", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.assertHermesPortableOperatingCommandCurrentSpy).toHaveBeenCalledTimes(6);
+    expect(harness.assertHermesPortableOperatingCommandCurrentSpy).toHaveBeenCalledTimes(10);
     expect(harness.requalifyPortableAgentAuthoritySpy).not.toHaveBeenCalled();
     expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
@@ -124,7 +124,11 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.dockerStartSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
-    expect(harness.captureResolvedOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledOnce();
+    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledWith(
+      ["forward", "list", "--gateway", "nemoclaw"],
+      expect.objectContaining({ openshellBinary: "/usr/bin/openshell" }),
+    );
     expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
       /Probe timing: .*lifecycleAction=reused forwardAction=verified result=ready/,
     );
@@ -427,7 +431,7 @@ describe("Hermes accepted launch-readiness probe", () => {
       },
     });
     expect(harness.inspectLaunchReadinessSpy).toHaveBeenCalledOnce();
-    expect(harness.assertHermesPortableOperatingCommandCurrentSpy).toHaveBeenCalledTimes(6);
+    expect(harness.assertHermesPortableOperatingCommandCurrentSpy).toHaveBeenCalledTimes(10);
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.runSandboxExecChildSpy).not.toHaveBeenCalled();
   });
@@ -694,10 +698,6 @@ describe("Hermes accepted launch-readiness probe", () => {
         const marker = argv.join(" ").match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/u)?.[0];
         return { status: 0, output: `${marker ?? "missing-marker"}\nRUNNING` };
       }) as never)
-      .mockReturnValueOnce({
-        status: 0,
-        output: "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 12345 running",
-      } as never)
       .mockReturnValueOnce({ status: 0, output: "OK 200" } as never)
       .mockReturnValueOnce({
         status: 0,
@@ -734,7 +734,7 @@ describe("Hermes accepted launch-readiness probe", () => {
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
-    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledTimes(4);
+    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledTimes(5);
     const exactOptions = {
       env: {
         HOME: "/home/test",
@@ -748,6 +748,7 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.captureResolvedOpenshellSpy.mock.calls[1]?.[1]).toMatchObject(exactOptions);
     expect(harness.captureResolvedOpenshellSpy.mock.calls[2]?.[1]).toMatchObject(exactOptions);
     expect(harness.captureResolvedOpenshellSpy.mock.calls[3]?.[1]).toMatchObject(exactOptions);
+    expect(harness.captureResolvedOpenshellSpy.mock.calls[4]?.[1]).toMatchObject(exactOptions);
   });
 
   it.each(["executable", "socket"])(

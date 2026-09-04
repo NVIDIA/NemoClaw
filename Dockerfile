@@ -544,6 +544,7 @@ COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
+COPY scripts/lib/npm-audit-receipt.mts /scripts/lib/npm-audit-receipt.mts
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
@@ -635,6 +636,7 @@ ARG OPENCLAW_2026_4_24_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-20
 ARG MCPORTER_VERSION=0.7.3
 ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==
 ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz
+ARG NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=
 
 # A cross-stage root copy is accepted by Docker's legacy builder and creates one
 # final-image layer while preserving metadata on existing parent directories.
@@ -807,45 +809,21 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
         /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
 
-# Pre-install the codex-acp package so the embedded ACPx runtime can
-# call the local binary instead of `npx @zed-industries/codex-acp`.
-#
-# The sandbox's L7 proxy denies @zed-industries/* package URLs
-# (403 policy_denied), and npm still refreshes registry metadata for
-# versioned npx package specs even when the package is globally installed.
-# Installing the binary at build time and configuring ACPx to use it
-# directly keeps TC-SBX-02 off the runtime npm path.
-# The architecture-selected installer stage consumes checksum-addressed local
-# archives with the network disabled, verifies their committed SRI values, and
-# installs both the launcher and its native package together.
-#
+# Install SRI-verified ACP offline; runtime registry access is blocked.
 # hadolint ignore=DL3059,DL4006,DL3016
 COPY --from=codex-acp-runtime /usr/local/lib/node_modules/@zed-industries/ /usr/local/lib/node_modules/@zed-industries/
 COPY --from=codex-acp-runtime /usr/local/bin/codex-acp /usr/local/bin/codex-acp
 RUN command -v codex-acp >/dev/null
 
-# Upgrade OpenClaw if the base image is stale.
-# Reuse pinned OpenClaw and locked-mcporter base installs only from a published
-# NemoClaw base whose package provenance marker matches this build target;
-# otherwise reinstall both.
-#
-# The GHCR base image (sandbox-base:latest) may lag behind the version pinned in
-# Dockerfile.base, and legacy/custom bases may report the target version without
-# proving which archive and lifecycle produced it. The marker records package
-# and advisory-audit metadata, not trusted-CI signature attestation. Only a
-# digest-pinned base from the official GHCR publication path supplies that
-# independent gate. Mutable tags and local bases cannot authorize reuse even
-# when their marker matches; the existing version checks reinstall the locked
-# runtimes or reject a newer base. The final image consumes the marker before
-# applying NemoClaw patches so a custom base cannot masquerade as a pristine
-# published base.
-#
-# OPENCLAW_VERSION is the NemoClaw runtime build target. It must be at least the
-# blueprint minimum, which also supports the legacy direct-blueprint image path.
-# Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
-# basename in a fresh directory, local-archive-only install, and cleanup.
-# hadolint ignore=DL3059,DL4006,DL3016
-RUN --network=default set -eu; \
+# Upgrade stale bases. Reuse is restricted to matching provenance from an
+# official digest-pinned base; mutable/custom bases reinstall the locked graphs.
+# OPENCLAW_VERSION is the NemoClaw runtime build target and must meet the blueprint minimum.
+# Reviewed archives retain registry and packed-byte SRI, basename, local-only install, and cleanup gates.
+# hadolint ignore=DL3059,DL4006,DL3016,SC2015
+RUN --network=default \
+    --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
+    --mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false \
+    set -eu; \
     if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
         export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
         export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
@@ -1007,6 +985,21 @@ RUN --network=default set -eu; \
             'const { StreamableHTTPServerTransport } = await import("file:///usr/local/lib/nemoclaw/mcporter-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/server/streamableHttp.js"); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); await transport.close();'; \
         ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter; \
         test "$(mcporter --version)" = "$MCPORTER_VERSION"; \
+    fi; \
+    MCPORTER_RECEIPT=/run/secrets/nemoclaw-mcporter-audit-receipt; \
+    MCPORTER_RAW_REPORT=/run/secrets/nemoclaw-mcporter-audit-raw-report; \
+    if [ -f "$MCPORTER_RECEIPT" ] || [ -f "$MCPORTER_RAW_REPORT" ] || [ -n "${NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256:-}" ]; then \
+        [ -f "$MCPORTER_RECEIPT" ] && [ -f "$MCPORTER_RAW_REPORT" ] && printf %s "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" | grep -qxE '[0-9a-f]{64}' \
+            || { echo "ERROR: cached mcporter audit requires paired receipt, raw report, and receipt SHA-256" >&2; exit 1; }; \
+        printf '%s  %s\n' "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" "$MCPORTER_RECEIPT" | sha256sum -c -; \
+        node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts \
+            --receipt "$MCPORTER_RECEIPT" \
+            --package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
+            --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
+            --raw-report "$MCPORTER_RAW_REPORT" --exceptions /scripts/npm-audit-exceptions.json \
+            --graph mcporter-runtime --npm-version "$(npm --version)" \
+            --registry https://registry.npmjs.org/ --threshold high; \
+    else \
         node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
             --directory /usr/local/lib/nemoclaw/mcporter-runtime \
             --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high; \
