@@ -31,6 +31,7 @@ runs:
       id: cache-buckets
       shell: bash
       env:
+        NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIRECTORY: ${{ inputs.cache-directory }}
         NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: ${{ inputs.target-root }}
       run: |
         set -euo pipefail
@@ -70,7 +71,7 @@ runs:
         );
         NODE
         printf 'current=%s\nprevious=%s\n' "$current_bucket" "$previous_bucket" >> "$GITHUB_OUTPUT"
-        mkdir -p "${{ inputs.cache-directory }}"
+        mkdir -p "$NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIRECTORY"
 
     - name: Restore current reviewed npm audit cache bucket
       id: cache-current

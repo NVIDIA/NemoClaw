@@ -192,7 +192,9 @@ describe("mcporter image supply-chain controls", () => {
   it.each(dockerfiles)("audits the committed dependency graph in $name", ({ contents }) => {
     const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
     const auditReceiptInvocation = extractAuditReceiptInvocation(contents);
-    expect(contents).toContain("COPY ci/*npm-audit*.json /scripts/");
+    expect(contents).toContain(
+      "COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/",
+    );
     expect(
       flattenedContents.includes(
         "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",

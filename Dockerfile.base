@@ -424,7 +424,7 @@ COPY agents/openclaw/openclaw-runtime/package.json \
 COPY agents/openclaw/mcporter-runtime/package.json \
     agents/openclaw/mcporter-runtime/package-lock.json \
     /usr/local/lib/nemoclaw/mcporter-runtime/
-COPY ci/*npm-audit*.json /scripts/
+COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/
 COPY scripts/lib/reviewed-npm-archive.mts \
     scripts/lib/bundled-npm-package.mts \
     scripts/lib/reviewed-npm-audit.mts \

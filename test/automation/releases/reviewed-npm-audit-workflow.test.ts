@@ -334,11 +334,13 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     const cacheBucketStep = requiredStep(action.runs, "Resolve reviewed npm audit cache buckets");
 
     expect(cacheBucketStep.env).toEqual({
+      NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIRECTORY: "${{ inputs.cache-directory }}",
       NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: "${{ inputs.target-root }}",
     });
     expect(cacheBucketStep.run).toContain(
       "const targetRoot = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT;",
     );
+    expect(cacheBucketStep.run).not.toContain("${{ inputs.cache-directory }}");
     expect(cacheBucketStep.run).not.toContain("${{ inputs.target-root }}");
   });
 
