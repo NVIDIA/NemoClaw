@@ -55,13 +55,16 @@ import {
 import { collectMessagingDoctorChecks } from "./doctor-messaging";
 import {
   buildDoctorReport,
+  buildGlobalDoctorReport,
   type DoctorCheck,
   type DoctorReport,
+  type GlobalDoctorReport,
   renderDoctorReport,
 } from "./doctor-report";
 import {
   cloudflaredDoctorCheck,
   dockerInspectGateway,
+  gatewayDoctorStartHint,
   inspectSandboxDoctorPortableAuthority,
   ollamaDoctorCheck,
   oneLine,
@@ -71,6 +74,7 @@ import {
 import { buildToolScopeChecks } from "./doctor-tool-scope";
 
 export type { DoctorCheck, DoctorReport } from "./doctor-report";
+export { redactDoctorReport } from "./doctor-report";
 
 type RunSandboxDoctorOptions = {
   quietJson?: boolean;
@@ -81,9 +85,21 @@ type DoctorIntent = {
   wantsFix: boolean;
 };
 
-type GatewayProbe = {
+type DoctorHostProbe = {
+  checks: DoctorCheck[];
+  openshellBin: string | null;
+};
+
+type DoctorGatewayProbe = {
   checks: DoctorCheck[];
   connected: boolean;
+};
+
+type DoctorGatewayProbeOptions = {
+  gatewayPort: number;
+  ignoreProbeErrors?: boolean;
+  recoverGateway: boolean;
+  unavailableHint?: string;
 };
 
 type SandboxProbe = {
@@ -181,15 +197,11 @@ function runtimeHostCheck(sb: SandboxEntry | null | undefined): DoctorCheck {
   }
 }
 
-function collectHostChecks(sb: SandboxEntry | null | undefined): {
-  checks: DoctorCheck[];
-  openshellBin: ReturnType<typeof resolveOpenshell>;
-} {
-  const cli = cliBuildCheck();
+function collectDoctorHostChecks(sb: SandboxEntry | null | undefined): DoctorHostProbe {
   const openshellBin = resolveOpenshell();
   return {
     checks: [
-      cli,
+      cliBuildCheck(),
       runtimeHostCheck(sb),
       {
         group: "Host",
@@ -203,19 +215,49 @@ function collectHostChecks(sb: SandboxEntry | null | undefined): {
   };
 }
 
-async function collectGatewayChecks(
+async function gatewayLifecycle(gatewayName: string, options: DoctorGatewayProbeOptions) {
+  if (!options.recoverGateway) {
+    return options.ignoreProbeErrors === undefined
+      ? getNamedGatewayLifecycleState(gatewayName)
+      : getNamedGatewayLifecycleState(gatewayName, {
+          ignoreProbeErrors: options.ignoreProbeErrors,
+        });
+  }
+  const recovery = await recoverNamedGatewayRuntime({ gatewayName });
+  return recovery.after || recovery.before;
+}
+
+async function probeOpenShellGateway(
+  gatewayName: string,
+  options: DoctorGatewayProbeOptions,
+): Promise<{ check: DoctorCheck; connected: boolean }> {
+  const lifecycle = await gatewayLifecycle(gatewayName, options);
+  const cleanStatus = oneLine(stripOpenShellCliAnsi(lifecycle?.status || ""));
+  const connected = lifecycle?.state === "healthy_named";
+  return {
+    connected,
+    check: {
+      group: "Gateway",
+      label: "OpenShell status",
+      status: connected ? "ok" : "fail",
+      detail: connected
+        ? `connected to ${gatewayName}`
+        : oneLine(cleanStatus || lifecycle?.gatewayInfo || `not connected to ${gatewayName}`),
+      hint: connected
+        ? undefined
+        : lifecycle?.state === "connected_other" || !options.unavailableHint
+          ? `run \`openshell gateway select ${gatewayName}\` and retry`
+          : options.unavailableHint,
+    },
+  };
+}
+
+async function collectDoctorGatewayChecks(
   gatewayName: string,
   sb: SandboxEntry | null | undefined,
-  openshellBin: ReturnType<typeof resolveOpenshell>,
-  recoverGateway: boolean,
-): Promise<GatewayProbe> {
-  // #10223: the fail-only branch at the call site emits this label when the
-  // registered gateway binding cannot be resolved. This branch runs both
-  // when it resolved from a real sandbox entry and when the caller falls
-  // back to the ambient default gateway for an unregistered sandbox name
-  // (resolveDoctorGatewayName). Only the former is an actual registered
-  // binding, so gate the ok check on a real sandbox entry, or an
-  // unregistered sandbox name would misreport one that does not exist.
+  openshellBin: string | null,
+  options: DoctorGatewayProbeOptions,
+): Promise<DoctorGatewayProbe> {
   const checks: DoctorCheck[] = sb
     ? [
         {
@@ -227,7 +269,7 @@ async function collectGatewayChecks(
       ]
     : [];
   const gateway = openshellBin
-    ? await probeOpenShellGateway(gatewayName, recoverGateway)
+    ? await probeOpenShellGateway(gatewayName, options)
     : { check: null, connected: false };
   if (gateway.check) checks.push(gateway.check);
   if (shouldInspectLegacyGatewayContainer(sb)) {
@@ -238,41 +280,11 @@ async function collectGatewayChecks(
           namedGatewayConnected: gateway.connected,
           gatewayName,
         },
-        sb?.gatewayPort ?? GATEWAY_PORT,
+        sb?.gatewayPort ?? options.gatewayPort,
       ),
     );
   }
   return { checks, connected: gateway.connected };
-}
-
-async function gatewayLifecycle(gatewayName: string, recoverGateway: boolean) {
-  if (!recoverGateway) return getNamedGatewayLifecycleState(gatewayName);
-  const recovery = await recoverNamedGatewayRuntime({ gatewayName });
-  return recovery.after || recovery.before;
-}
-
-async function probeOpenShellGateway(
-  gatewayName: string,
-  recoverGateway: boolean,
-): Promise<{
-  check: DoctorCheck;
-  connected: boolean;
-}> {
-  const lifecycle = await gatewayLifecycle(gatewayName, recoverGateway);
-  const cleanStatus = stripOpenShellCliAnsi(lifecycle?.status || "");
-  const connected = lifecycle?.state === "healthy_named";
-  return {
-    connected,
-    check: {
-      group: "Gateway",
-      label: "OpenShell status",
-      status: connected ? "ok" : "fail",
-      detail: connected
-        ? `connected to ${gatewayName}`
-        : oneLine(cleanStatus || lifecycle?.gatewayInfo || `not connected to ${gatewayName}`),
-      hint: connected ? undefined : `run \`openshell gateway select ${gatewayName}\` and retry`,
-    },
-  };
 }
 
 function liveSandboxDetail(
@@ -362,7 +374,7 @@ async function liveSandboxCheck(sandboxName: string, gatewayName: string): Promi
 async function collectSandboxReadinessChecks(
   sandboxName: string,
   gatewayName: string | null,
-  openshellBin: ReturnType<typeof resolveOpenshell>,
+  openshellBin: string | null,
   openshellConnected: boolean,
 ): Promise<SandboxProbe> {
   if (gatewayName && openshellBin && openshellConnected) {
@@ -385,7 +397,7 @@ async function collectSandboxReadinessChecks(
 
 function resolveInferenceRoute(
   sb: SandboxEntry | null | undefined,
-  openshellBin: ReturnType<typeof resolveOpenshell>,
+  openshellBin: string | null,
   openshellConnected: boolean,
   gatewayName: string | null,
 ): DoctorInferenceRoute {
@@ -502,9 +514,12 @@ async function collectDoctorChecks(
   gatewayName: string | null,
   intent: DoctorIntent,
 ): Promise<DoctorCheck[]> {
-  const host = collectHostChecks(sb);
-  const gateway: GatewayProbe = gatewayName
-    ? await collectGatewayChecks(gatewayName, sb, host.openshellBin, !intent.asJson)
+  const host = collectDoctorHostChecks(sb);
+  const gateway: DoctorGatewayProbe = gatewayName
+    ? await collectDoctorGatewayChecks(gatewayName, sb, host.openshellBin, {
+        gatewayPort: sb?.gatewayPort ?? GATEWAY_PORT,
+        recoverGateway: !intent.asJson,
+      })
     : {
         connected: false,
         checks: [
@@ -547,6 +562,91 @@ function resolveDoctorGatewayName(sb: SandboxEntry | null | undefined): string |
   } catch {
     return null;
   }
+}
+
+function registryReadabilityCheck(): DoctorCheck {
+  try {
+    const count = registry.listSandboxes().sandboxes.length;
+    return {
+      group: "Host",
+      label: "Sandbox registry",
+      status: "ok",
+      detail: `readable (${count} registered sandbox${count === 1 ? "" : "es"})`,
+    };
+  } catch {
+    return {
+      group: "Host",
+      label: "Sandbox registry",
+      status: "fail",
+      detail: "could not read the host sandbox registry",
+      hint: "check the registry file permissions and JSON, then retry",
+    };
+  }
+}
+
+function unavailableGatewayCheck(): DoctorCheck {
+  return {
+    group: "Gateway",
+    label: "OpenShell status",
+    status: "fail",
+    detail: "skipped because the OpenShell CLI is not installed",
+    hint: "install OpenShell, then retry",
+  };
+}
+
+function globalGatewayGuidance(gatewayName: string): {
+  checks: DoctorCheck[];
+  unavailableHint: string;
+} {
+  try {
+    return { checks: [], unavailableHint: gatewayDoctorStartHint(gatewayName) };
+  } catch {
+    const hint =
+      "check the gateway-management declaration file permissions and JSON, then retry";
+    return {
+      checks: [
+        {
+          group: "Gateway",
+          label: "Gateway management",
+          status: "fail",
+          detail: "could not resolve the gateway lifecycle owner",
+          hint,
+        },
+      ],
+      unavailableHint: hint,
+    };
+  }
+}
+
+export async function runGlobalDoctor(
+  options: { quiet?: boolean } = {},
+): Promise<GlobalDoctorReport> {
+  const host = collectDoctorHostChecks(null);
+  const gatewayName = resolveGatewayName(GATEWAY_PORT);
+  const guidance = globalGatewayGuidance(gatewayName);
+  let gatewayChecks: DoctorCheck[] = [...guidance.checks];
+  if (host.openshellBin) {
+    gatewayChecks = [
+      ...gatewayChecks,
+      ...(
+        await collectDoctorGatewayChecks(gatewayName, null, host.openshellBin, {
+          gatewayPort: GATEWAY_PORT,
+          ignoreProbeErrors: true,
+          recoverGateway: false,
+          unavailableHint: guidance.unavailableHint,
+        })
+      ).checks,
+    ];
+  } else {
+    gatewayChecks.push(unavailableGatewayCheck());
+  }
+  const report = buildGlobalDoctorReport([
+    ...host.checks,
+    registryReadabilityCheck(),
+    ...gatewayChecks,
+  ]);
+  if (!options.quiet) renderDoctorReport(report, false);
+  return report;
 }
 
 export async function runSandboxDoctor(

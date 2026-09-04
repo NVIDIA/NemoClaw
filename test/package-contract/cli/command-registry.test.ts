@@ -44,6 +44,7 @@ describe("command-registry", () => {
       expect(usages).toContain("nemoclaw tunnel stop");
       expect(usages).toContain("nemoclaw tunnel status");
       expect(usages).toContain("nemoclaw status");
+      expect(usages).toContain("nemoclaw doctor");
     });
 
     it.each(globalCommands())("$usage has global scope", (cmd) => {
@@ -188,6 +189,7 @@ describe("command-registry", () => {
         "stop",
         "tunnel",
         "status",
+        "doctor",
         "debug",
         "uninstall",
         "credentials",

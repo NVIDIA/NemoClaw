@@ -90,7 +90,8 @@ vi.mock("../../lib/sandbox/config", () => ({
   SandboxConfigError: mocks.SandboxConfigError,
 }));
 
-vi.mock("../../lib/actions/sandbox/doctor", () => ({
+vi.mock("../../lib/actions/sandbox/doctor", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/actions/sandbox/doctor")>()),
   runSandboxDoctor: mocks.runSandboxDoctor,
 }));
 
