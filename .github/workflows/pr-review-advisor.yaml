@@ -1009,6 +1009,7 @@ jobs:
     steps:
       - name: Write bounded redacted receipt
         env:
+          TARGET_PR: ${{ inputs.target_pr }}
           RESOLVE_RESULT: ${{ needs.repair-resolve.result }}
           SELECT_RESULT: ${{ needs.repair-select.result }}
           VALIDATE_RESULT: ${{ needs.repair-validate.result }}
@@ -1018,9 +1019,15 @@ jobs:
           mkdir -m 700 "$RUNNER_TEMP/advisor-repair-audit"
           jq -n \
             --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg pr "$(printf '%s' "$TARGET_PR" | tr -cd '0-9' | cut -c1-10)" \
             --arg select "$SELECT_RESULT" --arg resolve "$RESOLVE_RESULT" --arg validate "$VALIDATE_RESULT" \
             --arg publish "$PUBLISH_RESULT" --arg publishRequested "$PUBLISH_REQUESTED" \
-            '{version:1, phase:(if $publishRequested == "true" then 1 else 0 end), runId:$run, runAttempt:$attempt, jobs:{select:$select, resolve:$resolve, validate:$validate, publish:$publish}}' \
+            '{version:1, phase:(if $publishRequested == "true" then 1 else 0 end), runId:$run, runAttempt:$attempt, prNumber:$pr, jobs:{select:$select, resolve:$resolve, validate:$validate, publish:$publish}} |
+             . + (if $select == "failure" or $select == "cancelled" then {failure:{stage:"select", reason:"repair selection did not produce an eligible exact-head attempt"}}
+                  elif $resolve == "failure" or $resolve == "cancelled" then {failure:{stage:"resolve", reason:"sandboxed repair did not produce a complete bounded proposal"}}
+                  elif $validate == "failure" or $validate == "cancelled" then {failure:{stage:"validate", reason:"trusted validation rejected or could not verify the candidate"}}
+                  elif $publish == "failure" or $publish == "cancelled" then {failure:{stage:"publish", reason:"current-head-safe publication did not complete"}}
+                  else {} end)' \
             > "$RUNNER_TEMP/advisor-repair-audit/attempt.json"
 
       - name: Upload audit receipt

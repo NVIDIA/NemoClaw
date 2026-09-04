@@ -563,7 +563,7 @@ describe("PR review advisor specialist prompts", () => {
     const pullRequest = {
       state: "open",
       draft: false,
-      maintainer_can_modify: false,
+      maintainer_can_modify: true,
       user: { login: "contributor" },
       head: { ref: "feature/fix", sha: headSha, repo: { full_name: "NVIDIA/NemoClaw" } },
       base: {
@@ -620,6 +620,12 @@ describe("PR review advisor specialist prompts", () => {
     expect(() => bindRepairSelection({ ...request, sourceBaseSha: "d".repeat(40) })).toThrow(
       "not eligible",
     );
+    expect(() =>
+      bindRepairSelection({
+        ...request,
+        pullRequest: { ...pullRequest, maintainer_can_modify: false },
+      }),
+    ).toThrow("not eligible");
     expect(() =>
       bindRepairSelection({ ...request, currentRunId: 78 }),
     ).toThrow("successful trusted workflow revision");

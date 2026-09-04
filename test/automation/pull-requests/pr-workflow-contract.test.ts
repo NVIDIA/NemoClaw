@@ -597,6 +597,10 @@ describe("pull request and main workflow contracts", () => {
     expect(repairVerifyText).toContain("advisor-repair-checks");
     expect(repairVerifyText).not.toContain("check-runs");
     expect(repairVerifyText).not.toMatch(/secrets[.]|contents":"write/u);
+    const auditText = JSON.stringify(audit);
+    expect(auditText).toContain('failure:{stage:');
+    expect(auditText).toContain("prNumber:$pr");
+    expect(auditText).toContain("tr -cd '0-9'");
   });
 
   // source-shape-contract: security -- Exact-SHA inputs and trusted-main dispatches prevent generated commits from inheriting old-head checks.
@@ -621,6 +625,16 @@ describe("pull request and main workflow contracts", () => {
     expect(serialized.every((workflow) => workflow.includes('^sha256:[0-9a-f]{64}$'))).toBe(true);
     expect(serialized.every((workflow) => workflow.includes('.head.sha == $head'))).toBe(true);
     expect(serialized.every((workflow) => workflow.includes('.base.sha == $base'))).toBe(true);
+    expect(String(commitLintWorkflow.concurrency?.group)).toContain(
+      "inputs.repair_attempt_key",
+    );
+    expect(String(dcoWorkflow.concurrency?.group)).toContain("inputs.repair_attempt_key");
+    expect(String(commitLintWorkflow.concurrency?.["cancel-in-progress"])).toContain(
+      "github.event_name != 'workflow_dispatch'",
+    );
+    expect(String(dcoWorkflow.concurrency?.["cancel-in-progress"])).toContain(
+      "github.event_name != 'workflow_dispatch'",
+    );
     expect(advisorWorkflow.on?.workflow_dispatch?.inputs).toHaveProperty("repair_attempt_key");
     expect(prWorkflow.on?.workflow_dispatch?.inputs).toHaveProperty("repair_source_head_sha");
     expect(advisorWorkflow["run-name"]).toContain("Repair validation");
