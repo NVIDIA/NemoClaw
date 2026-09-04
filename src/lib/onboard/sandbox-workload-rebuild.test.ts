@@ -370,7 +370,7 @@ describe("managed workload rebuild preflight", () => {
     }
   });
 
-  it("uses the qualification revision while retaining older durable authority (#10970)", async () => {
+  it("uses the GitHub Actions qualification revision and retains the previous workload receipt during rebuild (#10970)", async () => {
     const prepare = vi.fn(async () =>
       replacement("openclaw", "linux/amd64", "c".repeat(40)),
     );

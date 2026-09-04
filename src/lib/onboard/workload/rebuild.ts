@@ -199,7 +199,7 @@ export async function prepareManagedWorkloadRebuildHandoff(
       });
     } catch (error) {
       throw new ManagedWorkloadRebuildError(
-        "the current release's complete managed-image catalog is unavailable or invalid",
+        "the selected managed-image catalog is unavailable or invalid",
         { cause: error },
       );
     }
