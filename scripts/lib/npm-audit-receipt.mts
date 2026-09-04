@@ -211,13 +211,34 @@ export function canonicalAuditReceipt(receipt: AuditReceipt): string {
   return `${JSON.stringify(receipt, null, 2)}\n`;
 }
 
+export function reviewedNpmVersionFromConfig(contents: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contents);
+  } catch {
+    throw new Error("reviewed npm audit configuration is not valid JSON");
+  }
+  const npmVersion =
+    typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>).npmVersion
+      : undefined;
+  if (
+    typeof npmVersion !== "string" ||
+    !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(npmVersion) ||
+    /[\r\n]/.test(npmVersion)
+  ) {
+    throw new Error("reviewed npm audit configuration has an invalid npmVersion");
+  }
+  return npmVersion;
+}
+
 function cli(args: readonly string[]): void {
   const values = new Map<string, string>();
   for (let index = 0; index < args.length; index += 2) {
     const value = args[index + 1];
     if (!args[index]?.startsWith("--") || value === undefined)
       throw new Error(
-        "usage: npm-audit-receipt.mts --receipt FILE --package-json FILE --package-lock FILE --raw-report FILE --exceptions FILE --graph ID --npm-version VERSION --registry ORIGIN --threshold SEVERITY [--legacy-npmjs true]",
+        "usage: npm-audit-receipt.mts --receipt FILE --package-json FILE --package-lock FILE --raw-report FILE --exceptions FILE --graph ID --audit-config FILE --registry ORIGIN --threshold SEVERITY [--legacy-npmjs true] [--result FILE] [--raw-copy FILE]",
       );
     values.set(args[index], value);
   }
@@ -228,14 +249,16 @@ function cli(args: readonly string[]): void {
     "--raw-report",
     "--exceptions",
     "--graph",
-    "--npm-version",
+    "--audit-config",
     "--registry",
     "--threshold",
   ];
-  const allowed = [...required, "--result", "--legacy-npmjs"];
+  const allowed = [...required, "--result", "--raw-copy", "--legacy-npmjs"];
   exactKeys(
     Object.fromEntries(
-      [...values].filter(([key]) => key !== "--result" && key !== "--legacy-npmjs"),
+      [...values].filter(
+        ([key]) => key !== "--result" && key !== "--raw-copy" && key !== "--legacy-npmjs",
+      ),
     ),
     required,
     "verifier arguments",
@@ -246,9 +269,12 @@ function cli(args: readonly string[]): void {
   const packageLock = fs.readFileSync(values.get("--package-lock")!);
   const rawResponse = fs.readFileSync(values.get("--raw-report")!);
   const exceptionPolicy = fs.readFileSync(values.get("--exceptions")!);
+  const npmVersion = reviewedNpmVersionFromConfig(
+    fs.readFileSync(values.get("--audit-config")!, "utf8"),
+  );
   parseAndVerifyAuditReceipt(fs.readFileSync(values.get("--receipt")!, "utf8"), {
     graphId: values.get("--graph")!,
-    npmVersion: values.get("--npm-version")!,
+    npmVersion,
     exceptionPolicy,
     severityThreshold: values.get("--threshold")! as AuditReceipt["severityThreshold"],
     packageJson,
@@ -271,6 +297,8 @@ function cli(args: readonly string[]): void {
     );
   if (values.has("--result"))
     fs.writeFileSync(values.get("--result")!, `${JSON.stringify(policyResult, null, 2)}\n`);
+  if (values.has("--raw-copy"))
+    fs.copyFileSync(values.get("--raw-report")!, values.get("--raw-copy")!);
   console.log("reviewed npm audit receipt and current policy verified");
 }
 
