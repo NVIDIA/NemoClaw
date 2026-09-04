@@ -439,11 +439,9 @@ describe("OpenClaw npm remediation", () => {
     patchOpenClawPluginPackageGraph(directory, "@openclaw/slack@2026.7.1");
 
     expect(readPackageField<string>(directory, "dependencies.axios")).toBe("1.18.0");
-    expect(readPackageField<string>(directory, "dependencies.fast-uri")).toBe("3.1.6");
     expect(readPackageField<string[]>(directory, "bundledDependencies")).toEqual([
       "@slack/bolt",
       "axios",
-      "fast-uri",
     ]);
 
     const shrinkwrap = readJson<{
@@ -473,12 +471,6 @@ describe("OpenClaw npm remediation", () => {
       integrity:
         "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==",
       dependencies: { debug: "4" },
-    });
-    expect(shrinkwrap.packages["node_modules/fast-uri"]).toMatchObject({
-      version: "3.1.6",
-      resolved: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz",
-      integrity:
-        "sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==",
     });
   });
 

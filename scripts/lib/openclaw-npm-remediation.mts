@@ -156,7 +156,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   },
   "@openclaw/slack@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-WvkzDMT9uDyWZop858eli9vbkuna1JgWpTdAt9e1zm008uc9YJqcCoLxB4WqATThBg93j317bobMjDK1GGGMWA==",
+      "sha512-4ThnsNS+yBlFSkTaQn2xosxrDu1s0vrxcqka5QqFj+8dCEaTa9JVLRgNniYV/QNhO53wc7a2R5oQFElzYspT2w==",
     kind: "axios",
     version: "2026.7.1",
   },
@@ -452,7 +452,6 @@ export function patchOpenClawPluginPackageGraph(
   const versionAt = packageSpec.lastIndexOf("@");
   const expectedName = packageSpec.slice(0, versionAt);
   const expectedVersion = packageSpec.slice(versionAt + 1);
-  const addFastUri = packageSpec === "@openclaw/slack@2026.7.1";
   requirePackageIdentity(packageJson, expectedName, expectedVersion, "OpenClaw plugin");
   if (packageJson.dependencies?.axios !== undefined) {
     throw new Error(`${packageSpec} already declares axios; review the remediation boundary`);
@@ -463,19 +462,8 @@ export function patchOpenClawPluginPackageGraph(
   if (packageJson.bundledDependencies.includes("axios")) {
     throw new Error(`${packageSpec} already bundles axios; review the remediation boundary`);
   }
-  if (addFastUri && packageJson.dependencies?.["fast-uri"] !== undefined) {
-    throw new Error(`${packageSpec} already declares fast-uri; review the remediation boundary`);
-  }
-  packageJson.dependencies = sortedObject({
-    ...packageJson.dependencies,
-    axios: AXIOS_VERSION,
-    ...(addFastUri ? { "fast-uri": CURRENT_FAST_URI_VERSION } : {}),
-  });
-  packageJson.bundledDependencies = [
-    ...packageJson.bundledDependencies,
-    "axios",
-    ...(addFastUri ? ["fast-uri"] : []),
-  ];
+  packageJson.dependencies = sortedObject({ ...packageJson.dependencies, axios: AXIOS_VERSION });
+  packageJson.bundledDependencies = [...packageJson.bundledDependencies, "axios"];
 
   const shrinkwrap = readJson(shrinkwrapPath);
   if (shrinkwrap.lockfileVersion !== 3 || !shrinkwrap.packages?.[""]) {
@@ -527,22 +515,6 @@ export function patchOpenClawPluginPackageGraph(
     dependencies: { debug: "4" },
     engines: { node: ">= 6.0.0" },
   };
-  if (addFastUri) {
-    const fastUriKey = "node_modules/fast-uri";
-    if (shrinkwrap.packages[fastUriKey]) {
-      throw new Error(`${packageSpec} already has the fast-uri remediation`);
-    }
-    shrinkwrap.packages[fastUriKey] = {
-      version: CURRENT_FAST_URI_VERSION,
-      resolved: CURRENT_FAST_URI_TARBALL,
-      integrity: CURRENT_FAST_URI_INTEGRITY,
-      license: "BSD-3-Clause",
-      funding: [
-        { type: "github", url: "https://github.com/sponsors/fastify" },
-        { type: "opencollective", url: "https://opencollective.com/fastify" },
-      ],
-    };
-  }
 
   writeJson(packageJsonPath, packageJson);
   writeJson(shrinkwrapPath, shrinkwrap);
@@ -1271,16 +1243,6 @@ export function buildRemediatedOpenClawPluginArchive(
       remediationRoot,
       env,
     );
-    const fastUriArchive =
-      request.packageSpec === "@openclaw/slack@2026.7.1"
-        ? packReplacement(
-            `fast-uri@${CURRENT_FAST_URI_VERSION}`,
-            CURRENT_FAST_URI_INTEGRITY,
-            CURRENT_FAST_URI_TARBALL,
-            remediationRoot,
-            env,
-          )
-        : undefined;
     const axiosPackage = extractArchive(
       axiosArchive.archivePath,
       join(remediationRoot, "axios"),
@@ -1299,14 +1261,6 @@ export function buildRemediatedOpenClawPluginArchive(
       remediationRoot,
       env,
     );
-    const fastUriPackage = fastUriArchive
-      ? extractArchive(
-          fastUriArchive.archivePath,
-          join(remediationRoot, "fast-uri"),
-          remediationRoot,
-          env,
-        )
-      : undefined;
     const axiosPackageJson = readJson(join(axiosPackage, "package.json"));
     const httpsProxyAgentPackageJson = readJson(join(httpsProxyAgentPackage, "package.json"));
     const agentBasePackageJson = readJson(join(agentBasePackage, "package.json"));
@@ -1350,9 +1304,6 @@ export function buildRemediatedOpenClawPluginArchive(
       agentBasePackage,
       join(axiosTarget, "node_modules", "https-proxy-agent", "node_modules", "agent-base"),
     );
-    if (fastUriPackage) {
-      copyReplacementPackage(fastUriPackage, join(sourcePackage, "node_modules", "fast-uri"));
-    }
     patchOpenClawPluginPackageGraph(sourcePackage, request.packageSpec);
   } else {
     const jaegerArchive = packReplacement(
