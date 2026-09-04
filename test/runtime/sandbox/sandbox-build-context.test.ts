@@ -122,6 +122,10 @@ describe("sandbox build context staging", () => {
       path.join("ci", "npm-audit-exceptions.json"),
       `${JSON.stringify({ schemaVersion: 1, exceptions: [] })}\n`,
     );
+    writeFixture(
+      path.join("ci", "reviewed-npm-audit.json"),
+      `${JSON.stringify({ npmVersion: "10.9.4" })}\n`,
+    );
     for (const runtimeName of [
       "managed-image-messaging-runtime",
       "mcporter-runtime",
