@@ -97,6 +97,9 @@ export function buildSpecialistInvestigateTurn(
       "Do not emit more prose. If there are no P0/P1 blockers, submit an empty finding list and a concrete noFindingsReason.",
     prompt: `Review the ${specialist.label} area.
 
+Required files:
+- ${context.diffPath}
+
 ${COMMON_PROMPT}
 
 Assignment:

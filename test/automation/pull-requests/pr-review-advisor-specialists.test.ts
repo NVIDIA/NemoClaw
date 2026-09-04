@@ -216,6 +216,7 @@ describe("PR review advisor specialist prompts", () => {
       expect(turn.requireToolsBeforeText).toEqual(contextToolNames);
       expect(turn.requireAssistantText).toBe(true);
       expect(turn.requiredReadOneOfPaths).toEqual([context.diffPath]);
+      expect(turn.prompt).toContain(`Required files:\n- ${context.diffPath}`);
       expect(turn.prompt).toContain("call the repository read tool on that exact diff path");
       expect(turn.prompt).toContain("Inspect changed files and their diffs on demand");
       expect(turn.prompt).toContain("do not try to preload the complete diff");
