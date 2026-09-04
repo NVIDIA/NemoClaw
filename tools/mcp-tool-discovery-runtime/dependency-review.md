@@ -112,7 +112,7 @@ Regenerate and review the graph explicitly:
 ```console
 $ npm --prefix tools/mcp-tool-discovery-runtime install --package-lock-only --ignore-scripts
 $ npm --prefix tools/mcp-tool-discovery-runtime ci --ignore-scripts
-$ npm --prefix tools/mcp-tool-discovery-runtime audit signatures --registry=https://registry.yarnpkg.com
+$ npm --prefix tools/mcp-tool-discovery-runtime audit signatures --registry=https://registry.yarnpkg.com --omit=dev
 $ npm --prefix tools/mcp-tool-discovery-runtime test
 $ npm --prefix tools/mcp-tool-discovery-runtime run typecheck
 $ npm --prefix tools/mcp-tool-discovery-runtime run bundle
