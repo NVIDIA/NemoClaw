@@ -28,11 +28,11 @@ const expectedFastUriVersion = "3.1.6";
 const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz";
 const expectedIpAddressVersion = "10.3.1";
 const expectedIpAddressTarball = "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz";
-const expectedReviewedNpmVersion = "10.9.4";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
 const reviewedAuditConfig = JSON.parse(
   fs.readFileSync(path.join(repoRoot, "ci", "reviewed-npm-audit.json"), "utf8"),
 ) as {
+  npmVersion: string;
   lockedGraphs: Array<{
     directory: string;
     id: string;
@@ -42,6 +42,7 @@ const reviewedAuditConfig = JSON.parse(
     tarballUrl: string;
   }>;
 };
+const expectedReviewedNpmVersion = reviewedAuditConfig.npmVersion;
 const reviewedAuditDriver = fs.readFileSync(
   path.join(repoRoot, "scripts", "audit-reviewed-npm-graph.mts"),
   "utf8",
@@ -191,9 +192,7 @@ describe("mcporter image supply-chain controls", () => {
   it.each(dockerfiles)("audits the committed dependency graph in $name", ({ contents }) => {
     const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
     const auditReceiptInvocation = extractAuditReceiptInvocation(contents);
-    expect(contents).toContain(
-      "COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json",
-    );
+    expect(contents).toContain("COPY ci/*npm-audit*.json /scripts/");
     expect(
       flattenedContents.includes(
         "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
@@ -219,8 +218,10 @@ describe("mcporter image supply-chain controls", () => {
       "--package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json --raw-report",
     );
     expect(auditReceiptInvocation).toContain(
-      `--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --npm-version ${expectedReviewedNpmVersion} --registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true`,
+      "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json --registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true",
     );
+    expect(expectedReviewedNpmVersion).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
+    expect(auditReceiptInvocation).not.toContain("--npm-version");
     expect(auditReceiptInvocation).not.toMatch(/\bnpm\s+--version\b/);
     expect(auditReceiptInvocation).not.toMatch(/\$\(|`/);
     expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);

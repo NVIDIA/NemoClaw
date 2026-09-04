@@ -540,7 +540,7 @@ COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcpor
 COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json
 COPY agents/openclaw/wechat-runtime/package.json /usr/local/lib/nemoclaw/wechat-runtime/package.json
 COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json
-COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json
+COPY ci/*npm-audit*.json /scripts/
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
@@ -997,7 +997,7 @@ node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts \
             --package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
             --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
             --raw-report "$MCPORTER_RAW_REPORT" --exceptions /scripts/npm-audit-exceptions.json \
-            --graph mcporter-runtime --npm-version 10.9.4 \
+            --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json \
 --registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true; \
     else \
         node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
