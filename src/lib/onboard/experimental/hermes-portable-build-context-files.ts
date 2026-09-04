@@ -3,6 +3,7 @@
 
 /** Exact shipped files admitted by the schema-7 Hermes Dockerfile COPY contract. */
 export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
+  { path: "agents/hermes/a2a-neutral.patch", mode: "100644" },
   { path: "agents/hermes/build-mcp-digest.py", mode: "100644" },
   { path: "agents/hermes/config/build-env.ts", mode: "100644" },
   { path: "agents/hermes/config/generate.ts", mode: "100644" },
@@ -17,10 +18,13 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/cron-restore-control.py", mode: "100644" },
   { path: "agents/hermes/dashboard-external-host.patch", mode: "100644" },
   { path: "agents/hermes/Dockerfile", mode: "100644" },
+  { path: "agents/hermes/finalize-image-layout.sh", mode: "100755" },
   { path: "agents/hermes/finalize-tirith-marker.py", mode: "100755" },
   { path: "agents/hermes/generate-config.ts", mode: "100644" },
   { path: "agents/hermes/hermes-cli-adapter-v1.json", mode: "100644" },
   { path: "agents/hermes/hermes-wrapper.py", mode: "100755" },
+  { path: "agents/hermes/hindsight-client-probe-requirements.txt", mode: "100644" },
+  { path: "agents/hermes/hindsight-lazy-integrity.patch", mode: "100644" },
   { path: "agents/hermes/host/managed-tool-gateway-matrix.json", mode: "100644" },
   { path: "agents/hermes/image-build-probes.py", mode: "100644" },
   { path: "agents/hermes/managed_policy.py", mode: "100644" },
@@ -39,7 +43,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/plugin/plugin.yaml", mode: "100644" },
   { path: "agents/hermes/runtime-config-guard.py", mode: "100755" },
   { path: "agents/hermes/runtime-boundaries.patch", mode: "100644" },
-  { path: "agents/hermes/security-dependencies.patch", mode: "100644" },
+  { path: "agents/hermes/secure-dir-skip-chmod.patch", mode: "100644" },
   { path: "agents/hermes/seed-dashboard-config.py", mode: "100755" },
   { path: "agents/hermes/start.sh", mode: "100755" },
   { path: "agents/hermes/validate-cli-adapter.py", mode: "100755" },
