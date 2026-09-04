@@ -49,11 +49,12 @@ function entry(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
   };
 }
 function deps(
-  tokens = ["stable", "stable"],
+  tokens = ["stable"],
   overrides: Partial<ExportObservationDependencies> = {},
 ): ExportObservationDependencies {
   let token = 0;
   return {
+    sourceTokenFor: vi.fn(() => "stable"),
     readSourceToken: vi.fn(async () => tokens[token++] ?? tokens.at(-1)!),
     readRegistryEntry: vi.fn(async () => entry()),
     readSandboxIdentity: vi.fn(async () => ({
@@ -93,10 +94,11 @@ describe("stable config export source observation (#10938)", () => {
     const result = await observeStableExportSource("alpha", d);
     expect(result).toMatchObject({ ok: true, attempts: 1 });
     expect(result.ok && result.source.policyBasis).toBe("verified-effective-state");
-    expect(Object.keys(d).every((name) => name.startsWith("read"))).toBe(true);
+    expect(d.readSourceToken).toHaveBeenCalledTimes(1);
+    expect(d.readRegistryEntry).toHaveBeenCalledTimes(1);
   });
   it("discards one unstable attempt and retries the complete observation", async () => {
-    const d = deps(["a", "b", "c", "c"]);
+    const d = deps(["changed", "stable"]);
     await expect(observeStableExportSource("alpha", d)).resolves.toMatchObject({
       ok: true,
       attempts: 2,
@@ -106,7 +108,7 @@ describe("stable config export source observation (#10938)", () => {
   });
   it("fails as unstable-source after two changing attempts", async () => {
     await expect(
-      observeStableExportSource("alpha", deps(["a", "b", "c", "d"])),
+      observeStableExportSource("alpha", deps(["changed", "changed"])),
     ).resolves.toMatchObject({ ok: false, category: "unstable-source", attempts: 2 });
   });
   it("reports every excluded capability instead of omitting it", () => {

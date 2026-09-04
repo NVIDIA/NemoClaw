@@ -81,6 +81,13 @@ export type ExportObservationResult =
       readonly attempts: 1 | 2;
     };
 export interface ExportObservationDependencies {
+  sourceTokenFor(
+    entry: Readonly<SandboxEntry>,
+    sandbox: ObservedExportSandboxIdentity,
+    gateway: ObservedExportGateway,
+    inference: ObservedExportInference,
+    policy: ObservedExportPolicy,
+  ): string;
   readSourceToken(sandboxName: string): Promise<string>;
   readRegistryEntry(sandboxName: string): Promise<Readonly<SandboxEntry> | null>;
   readSandboxIdentity(sandboxName: string): Promise<ObservedExportSandboxIdentity>;
@@ -364,12 +371,10 @@ async function observeAttempt(
   sandboxName: string,
   deps: ExportObservationDependencies,
 ): Promise<{ stable: boolean; source?: ObservedExportSource; findings: ExportFidelityFinding[] }> {
-  const before = await deps.readSourceToken(sandboxName);
   const entry = await deps.readRegistryEntry(sandboxName);
   if (!entry) {
-    const after = await deps.readSourceToken(sandboxName);
     return {
-      stable: before === after,
+      stable: true,
       findings: [
         finding("source.registry", "missing", "not-found", "The source sandbox is not registered."),
       ],
@@ -394,8 +399,9 @@ async function observeAttempt(
       ),
     ];
   }
-  const after = await deps.readSourceToken(sandboxName);
-  if (before !== after) return { stable: false, findings: [] };
+  const observedToken = deps.sourceTokenFor(entry, sandbox, gateway, inference, policyObservation);
+  const confirmationToken = await deps.readSourceToken(sandboxName);
+  if (observedToken !== confirmationToken) return { stable: false, findings: [] };
   if (findings.length > 0 || !policy) return { stable: true, findings };
   return {
     stable: true,

@@ -210,9 +210,20 @@ function effectivePolicy(sandboxName: string, gateway: ObservedExportGateway) {
   };
 }
 
+function sourceTokenFor(
+  entry: Readonly<SandboxEntry>,
+  sandbox: ObservedExportSandboxIdentity,
+  gateway: ObservedExportGateway,
+  inference: ObservedExportInference,
+  policy: ReturnType<typeof effectivePolicy>,
+): string {
+  return digest({ entry, gateway, sandbox, inference, policy });
+}
+
 /** Concrete read-only bindings for one stable export observation. */
 export function createLiveExportObservationDependencies(): ExportObservationDependencies {
   return {
+    sourceTokenFor,
     readRegistryEntry: async (sandboxName) => loadRegistry().sandboxes[sandboxName] ?? null,
     readSandboxIdentity: async (sandboxName) => {
       const entry = loadRegistry().sandboxes[sandboxName] ?? null;
@@ -229,7 +240,7 @@ export function createLiveExportObservationDependencies(): ExportObservationDepe
       const sandbox = sandboxIdentity(sandboxName, entry);
       const inference = await inferenceFor(entry);
       const policy = effectivePolicy(sandboxName, gateway);
-      return digest({ entry, gateway, sandbox, inference, policy });
+      return sourceTokenFor(entry, sandbox, gateway, inference, policy);
     },
   };
 }
