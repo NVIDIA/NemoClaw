@@ -35,8 +35,8 @@ The gateway target depends on the container process topology.
 
 | Topology | Gateway process | Gateway lazy-install target | Access and replacement boundary |
 |---|---|---|---|
-| Direct root entrypoint | Root PID 1 launches the gateway under the separate `gateway` UID. | `/run/nemoclaw/hermes-gateway-lazy-packages` | The directory is gateway-owned with mode `0700`, so the `sandbox` UID cannot read or modify it. It lasts for the container runtime. A rebuild or container replacement recreates it, and Hindsight startup reinstalls the supported client. |
-| OpenShell-managed same identity | OpenShell is PID 1 and launches `nemoclaw-start`, the gateway, and the agent under the `sandbox` UID. | `/sandbox/.hermes/lazy-packages` | The gateway and agent share access because they use the same UID. NemoClaw declares the directory as Hermes state and preserves it across rebuilds and transactional container replacements. |
+| Direct root-entrypoint topology | Root PID 1 launches the gateway under the separate `gateway` UID. | `/run/nemoclaw/hermes-gateway-lazy-packages` | The directory is gateway-owned with mode `0700`, so the `sandbox` UID cannot read or modify it. A rebuild or replacement container receives a newly created private directory, and Hindsight startup reinstalls the supported client. |
+| OpenShell-managed same-UID topology | OpenShell is PID 1 and launches `nemoclaw-start`, the gateway, and the agent under the `sandbox` UID. | `/sandbox/.hermes/lazy-packages` | The gateway and agent share access because they use the same UID. NemoClaw declares the directory as Hermes state and preserves it across rebuilds and transactional container replacements. |
 
 Neither target modifies the root virtual environment, and neither target is declared in the generated `.env` file.
 

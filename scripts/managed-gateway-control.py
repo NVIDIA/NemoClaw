@@ -1590,9 +1590,9 @@ def _run_fixed_validator(
 
 
 def _validate_managed_gateway_environment(
-    script: str, gateway_environment: dict[str, str]
+    script: str, supervisor_environment: dict[str, str]
 ) -> None:
-    """Validate the Hermes gateway environment without executing under untrusted input."""
+    """Validate supervisor input after the validator applies managed launcher paths."""
 
     _validate_trusted_regular(script)
     spec = importlib.util.spec_from_file_location(
@@ -1604,7 +1604,7 @@ def _validate_managed_gateway_environment(
     try:
         spec.loader.exec_module(module)
         validator = getattr(module, "validate_managed_gateway_env")
-        result = validator(gateway_environment)
+        result = validator(supervisor_environment)
     except (AttributeError, ImportError, OSError, RuntimeError) as exc:
         raise ControlError("SECRET_BOUNDARY_REFUSED") from exc
     if result != 0:

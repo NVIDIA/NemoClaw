@@ -189,7 +189,7 @@ describe("Hermes MCP managed configuration assertion", () => {
 });
 
 describe("Hermes MCP gateway restart", () => {
-  it("preserves managed config and integrity through restart", async () => {
+  it("keeps the strict baseline root-owned and compatibility integrity current", async () => {
     const mcpUrl = "https://mcp.example.test/mcp";
     const hostRunner = new RecordingRunner([
       shellResult(0, "Gateway restarted\nhealth passed\n"),
@@ -201,7 +201,7 @@ describe("Hermes MCP gateway restart", () => {
       ),
     ]);
     const sandboxRunner = new RecordingRunner([
-      shellResult(0, "HERMES_MCP_INTEGRITY_CURRENT\n"),
+      shellResult(0, "HERMES_MCP_COMPAT_INTEGRITY_CURRENT\n"),
       shellResult(0, `${JSON.stringify({ state: "matched" })}\n`),
     ]);
 

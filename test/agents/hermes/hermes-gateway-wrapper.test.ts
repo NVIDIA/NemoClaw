@@ -177,7 +177,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     });
   });
 
-  it("scrubs package-manager and Python startup inputs before a same-identity gateway exec", () => {
+  it("uses only managed package-manager and Python startup values for a same-identity gateway exec", () => {
     const run = runWrapper(["gateway", "run"], {
       UV_CONFIG_FILE: "/sandbox/uv.toml",
       UV_INDEX_URL: "file:///sandbox/wheels",
