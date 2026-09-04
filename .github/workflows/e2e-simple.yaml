@@ -15,12 +15,12 @@ on:
       jobs:
         description: "Comma-separated job IDs; empty jobs and targets select every simple E2E"
         required: false
-        default: "messaging-providers,mcp-bridge,hermes-e2e"
+        default: ""
         type: string
       targets:
         description: "Comma-separated target IDs, using the main E2E selector semantics"
         required: false
-        default: "security-posture-hermes,openshell-gateway-upgrade-v0-0-55-x86-64,openshell-gateway-upgrade-v0-0-55-aarch64,openshell-gateway-upgrade-v0-0-74-x86-64,openshell-gateway-upgrade-v0-0-89-x86-64,shields-retirement-upgrade"
+        default: ""
         type: string
       image_run_id:
         description: "Optional prior successful Simple E2E run whose exact managed images should be reused"
