@@ -11,6 +11,11 @@ on:
         required: false
         default: false
         type: boolean
+      windows_native_diagnostic_source_run_id:
+        description: Diagnostic only - reuse the package artifact from this workflow run ID
+        required: false
+        default: ""
+        type: string
   push:
     branches:
       - main
@@ -230,7 +235,7 @@ jobs:
 
   windows-native-installer:
     name: Windows native installer candidate (ARM64, no WSL)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 120
     steps:
@@ -479,6 +484,104 @@ jobs:
           path: ${{ runner.temp }}/nemoclaw-windows-package/
           if-no-files-found: warn
           retention-days: 14
+
+  windows-native-package-diagnostic:
+    name: Windows native package startup diagnostic (ARM64, no WSL)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id != '' }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out diagnostic scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: candidate
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download and probe the recorded package
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.windows_native_diagnostic_source_run_id }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          if ($env:SOURCE_RUN_ID -cnotmatch '^[1-9][0-9]{5,19}$') {
+            throw 'The diagnostic source run ID is invalid.'
+          }
+          $artifactRoot = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\windows-native-package-diagnostic")
+          $packageRoot = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\windows-native-package-diagnostic-source")
+          [IO.Directory]::CreateDirectory($artifactRoot) | Out-Null
+          [IO.Directory]::CreateDirectory($packageRoot) | Out-Null
+          $run = & gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $run.head_repository.full_name -cne $env:GITHUB_REPOSITORY) {
+            throw 'The diagnostic source run is not an exact run from this repository.'
+          }
+          $artifacts = & gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN_ID/artifacts?per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Could not list diagnostic source artifacts.'
+          }
+          $matches = @($artifacts.artifacts | Where-Object {
+            $_.name.StartsWith("windows-native-download-source-$($run.head_sha)", [StringComparison]::Ordinal)
+          })
+          if ($matches.Count -ne 1 -or $matches[0].expired) {
+            throw 'The diagnostic source run does not contain one live exact-head package artifact.'
+          }
+          & gh run download $env:SOURCE_RUN_ID `
+            --repo $env:GITHUB_REPOSITORY `
+            --name $matches[0].name `
+            --dir $packageRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Could not download the diagnostic source package.'
+          }
+          $manifest = Get-Content -LiteralPath (Join-Path $packageRoot 'package-manifest.json') -Raw | ConvertFrom-Json
+          $version = [string]$manifest.productVersion
+          $setup = Join-Path $packageRoot "NemoClawSetup-$version-windows-arm64.exe"
+          if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) {
+            throw 'The exact-head diagnostic setup executable is missing.'
+          }
+          $log = Join-Path $artifactRoot 'bundle-startup.log'
+          $startedAt = [DateTime]::Now
+          $arguments = @('/install', '/quiet', '/norestart', '/log', $log)
+          $process = Start-Process -FilePath $setup -ArgumentList $arguments -PassThru
+          try {
+            if (-not $process.WaitForExit(300000)) {
+              & "$env:SystemRoot\System32\taskkill.exe" /PID $process.Id /T /F | Out-Null
+              'timed_out_after_seconds=300' | Out-File -LiteralPath (Join-Path $artifactRoot 'probe-result.txt') -Encoding utf8
+            } else {
+              "exit_code=$($process.ExitCode)" | Out-File -LiteralPath (Join-Path $artifactRoot 'probe-result.txt') -Encoding utf8
+            }
+          } finally {
+            $process.Dispose()
+          }
+          foreach ($startupLog in @(Get-ChildItem `
+            -LiteralPath ([IO.Path]::GetTempPath()) `
+            -Filter 'NemoClaw.Bootstrapper.*.startup.log' `
+            -File `
+            -ErrorAction SilentlyContinue)) {
+            Copy-Item -LiteralPath $startupLog.FullName -Destination $artifactRoot -Force
+          }
+          $events = @(Get-WinEvent `
+            -FilterHashtable @{ LogName = 'Application'; StartTime = $startedAt; Level = @(1, 2, 3) } `
+            -ErrorAction SilentlyContinue | Where-Object {
+            $_.ProviderName -in @('.NET Runtime', 'Application Error', 'SideBySide', 'Windows Error Reporting')
+          } | Select-Object TimeCreated, ProviderName, Id, LevelDisplayName, Message)
+          if ($events.Count -gt 0) {
+            [IO.File]::WriteAllText(
+              (Join-Path $artifactRoot 'application-events.json'),
+              (($events | ConvertTo-Json -Depth 4) + [Environment]::NewLine),
+              [Text.UTF8Encoding]::new($false)
+            )
+          }
+
+      - name: Upload package startup diagnostic
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-native-package-startup-diagnostic-${{ github.sha }}
+          path: ${{ runner.temp }}/windows-native-package-diagnostic/
+          if-no-files-found: error
+          retention-days: 3
 
   wsl-vitest:
     name: WSL compatibility (${{ matrix.shard }}/4)
