@@ -377,7 +377,20 @@ async function main() {
   const runtime = path.join(runtimeRoot, adapter.runtimeDirectory);
   fs.cpSync(installedRuntime, runtime, { recursive: true });
   const pythonRoot = path.join(runtimeRoot, "python");
-  if (installedPython !== null) fs.cpSync(installedPython, pythonRoot, { recursive: true });
+  if (installedPython !== null) {
+    fs.cpSync(installedPython, pythonRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(pythonRoot, "python313._pth"),
+      [
+        "python313.zip",
+        ".",
+        path.relative(pythonRoot, path.join(runtime, "site-packages")),
+        "import site",
+        "",
+      ].join("\r\n"),
+      "ascii",
+    );
+  }
   const workload = path.join(stateRoot, "run-native-agent.mjs");
   const exitReceipt = path.join(stateRoot, `native-session-${runId}.json`);
   fs.writeFileSync(workload, interactiveWorkloadSource(), "utf8");

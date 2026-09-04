@@ -644,6 +644,17 @@ async function main() {
   if (isHermes || isDeepAgents) {
     const stagedPythonRoot = path.join(runtimeRoot, "python");
     fs.cpSync(installedPythonRoot, stagedPythonRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(stagedPythonRoot, "python313._pth"),
+      [
+        "python313.zip",
+        ".",
+        path.relative(stagedPythonRoot, path.join(stagedAgentRoot, "site-packages")),
+        "import site",
+        "",
+      ].join("\r\n"),
+      "ascii",
+    );
     if (isDeepAgents) {
       agentEnvironment = {
         NEMOCLAW_DEEP_AGENTS_HOME_ROOT: path.join(shareRoot, "home"),
