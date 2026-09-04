@@ -20,7 +20,7 @@ const policyBoundary = (
 ) as typeof policyBoundaryModule;
 const { parseOpenShellPolicy } = policyBoundary;
 
-function findHermesDiscordPolicyEndpoint(
+function findFixturePolicyEndpoint(
   policy: { network_policies?: Record<string, unknown> },
   host: string,
   port: number,
@@ -39,7 +39,7 @@ function findHermesDiscordPolicyEndpoint(
       return { endpoint: endpoint as Record<string, unknown>, policyEntry };
     }
   }
-  throw new Error("fake Discord endpoint is missing from the base policy");
+  throw new Error("fixture endpoint is missing from the base policy");
 }
 
 function readPolicy(policyFile: string) {
@@ -47,7 +47,7 @@ function readPolicy(policyFile: string) {
   return parseOpenShellPolicy(source).policy;
 }
 
-export function bindHermesDiscordPolicyEndpoint(
+export function bindFixtureProviderPolicyEndpoint(
   policyFile: string,
   providerName: string,
   host: string,
@@ -55,7 +55,7 @@ export function bindHermesDiscordPolicyEndpoint(
   protocol: string,
 ): void {
   const policy = readPolicy(policyFile);
-  const { endpoint } = findHermesDiscordPolicyEndpoint(policy, host, port, protocol);
+  const { endpoint } = findFixturePolicyEndpoint(policy, host, port, protocol);
   endpoint.credential_binding = { provider: providerName };
   fs.writeFileSync(policyFile, YAML.stringify(policy));
   fs.chmodSync(policyFile, 0o600);
@@ -87,35 +87,30 @@ export function unbindProviderPolicyEndpoints(policyFile: string, providerName: 
   fs.chmodSync(policyFile, 0o600);
 }
 
-export function assertHermesDiscordPolicyEndpointBinaries(
+export function assertFixtureProviderPolicyEndpointBinaries(
   policyFile: string,
   host: string,
   port: number,
   protocol: string,
-  expectedBinaries: string[],
+  expectedBinaries: readonly string[],
 ): void {
-  const { policyEntry } = findHermesDiscordPolicyEndpoint(
-    readPolicy(policyFile),
-    host,
-    port,
-    protocol,
-  );
+  const { policyEntry } = findFixturePolicyEndpoint(readPolicy(policyFile), host, port, protocol);
   if (!Array.isArray(policyEntry.binaries)) {
-    throw new Error("fake Discord endpoint policy has no binary restrictions");
+    throw new Error("fixture endpoint policy has no binary restrictions");
   }
   const binaries = policyEntry.binaries.map((candidate) => {
     if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
-      throw new Error("fake Discord endpoint policy has an invalid binary restriction");
+      throw new Error("fixture endpoint policy has an invalid binary restriction");
     }
     const binaryPath = (candidate as { path?: unknown }).path;
     if (typeof binaryPath !== "string") {
-      throw new Error("fake Discord endpoint policy has an invalid binary path");
+      throw new Error("fixture endpoint policy has an invalid binary path");
     }
     return binaryPath;
   });
   if (JSON.stringify(binaries) !== JSON.stringify(expectedBinaries)) {
     throw new Error(
-      `fake Discord endpoint policy binaries ${JSON.stringify(binaries)} did not match ${JSON.stringify(expectedBinaries)}`,
+      `fixture endpoint policy binaries ${JSON.stringify(binaries)} did not match ${JSON.stringify(expectedBinaries)}`,
     );
   }
 }
@@ -126,10 +121,10 @@ function main(): void {
     const [, policyFile, host, rawPort, protocol, ...expectedBinaries] = args;
     if (!policyFile || !host || !rawPort || !protocol || expectedBinaries.length === 0) {
       throw new Error(
-        "usage: hermes-discord-policy-binding --assert-binaries <policy-file> <host> <port> <protocol> <binary>...",
+        "usage: gateway-provider-policy-binding --assert-binaries <policy-file> <host> <port> <protocol> <binary>...",
       );
     }
-    assertHermesDiscordPolicyEndpointBinaries(
+    assertFixtureProviderPolicyEndpointBinaries(
       policyFile,
       host,
       Number(rawPort),
@@ -143,12 +138,18 @@ function main(): void {
   const [policyFile, providerName, host, rawPort, protocol] = args.slice(unbind ? 1 : 0);
   if (!policyFile || !providerName || (!unbind && (!host || !rawPort || !protocol))) {
     throw new Error(
-      "usage: hermes-discord-policy-binding <policy-file> <provider> <host> <port> <protocol>",
+      "usage: gateway-provider-policy-binding <policy-file> <provider> <host> <port> <protocol>",
     );
   }
   unbind
     ? unbindProviderPolicyEndpoints(policyFile, providerName)
-    : bindHermesDiscordPolicyEndpoint(policyFile, providerName, host!, Number(rawPort), protocol!);
+    : bindFixtureProviderPolicyEndpoint(
+        policyFile,
+        providerName,
+        host!,
+        Number(rawPort),
+        protocol!,
+      );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

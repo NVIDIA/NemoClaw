@@ -44,6 +44,7 @@ vi.mock("../state/registry", async (importOriginal) => ({
 import {
   applyPresetContent,
   applyPresets,
+  captureRecordedSandboxBasePolicy,
   confirmAppliedPolicySetSubmission,
   excludeBaselineEntry,
   inspectPolicyMutationContext,
@@ -103,6 +104,29 @@ describe("live OpenShell policy mutations", () => {
     );
     expect(inspectPolicyMutationContext(sandboxName, "inspect policy")).not.toHaveProperty(
       "authority",
+    );
+  });
+
+  it("pins recorded policy reads to the supplied operation target (#10514)", () => {
+    const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" } as const;
+
+    expect(
+      captureRecordedSandboxBasePolicy(
+        sandboxName,
+        "capture a lifecycle policy",
+        runtimeSelection,
+      ),
+    ).toBe(livePolicy);
+    expect(mocks.inspectSandboxPolicy).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      sandboxName,
+    });
+    expect(mocks.readSandboxPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        sandboxName,
+        scope: "base",
+      }),
     );
   });
 
