@@ -54,13 +54,6 @@ function makeDifferingImageInspection(
 
 const AGENTS_DIR = path.resolve(import.meta.dirname, "../../../agents");
 
-function declaresCorporateCaBuildArg(dockerfilePath: string): boolean {
-  return (
-    fs.existsSync(dockerfilePath) &&
-    fs.readFileSync(dockerfilePath, "utf8").includes("ARG NEMOCLAW_CORPORATE_CA_B64")
-  );
-}
-
 function readManifestExpectedVersion(agentName: string): string {
   const manifestPath = path.join(AGENTS_DIR, agentName, "manifest.yaml");
   const expectedVersion = readString(loadManifestRecord(manifestPath), "expected_version");
@@ -68,18 +61,7 @@ function readManifestExpectedVersion(agentName: string): string {
   return expectedVersion ?? "";
 }
 
-// Read the agent names from the checked-in Dockerfiles so a base image that
-// starts consuming the corporate CA cannot ship without the build argument.
-const CORPORATE_CA_BASE_IMAGE_AGENTS = fs
-  .readdirSync(AGENTS_DIR)
-  .filter((agentName) =>
-    declaresCorporateCaBuildArg(path.join(AGENTS_DIR, agentName, "Dockerfile.base")),
-  );
-
-expect(
-  CORPORATE_CA_BASE_IMAGE_AGENTS,
-  "expected at least one agent base image to declare the corporate CA build arg",
-).not.toHaveLength(0);
+const CORPORATE_CA_BASE_IMAGE_AGENTS = ["langchain-deepagents-code", "pi"] as const;
 
 describe("agent base image provisioning", () => {
   beforeEach(() => {
@@ -173,6 +155,26 @@ describe("agent base image provisioning", () => {
           "--read-only",
           "pi-base:current",
           expect.stringContaining("nemoclaw-security-inventory-ok"),
+        ]),
+      );
+    });
+  });
+
+  it("initializes the lazy Hermes MCP runtime before accepting a published base", () => {
+    const imageRef = "hermes-base:current";
+
+    withMockedDocker(({ ensureAgentBaseImage, dockerCaptureMock, resolveSandboxBaseImageMock }) => {
+      ensureAgentBaseImage(makeAgent());
+      const options = resolveSandboxBaseImageMock.mock.calls[0]?.[0] as {
+        validateImage?: (candidate: string) => boolean;
+      };
+
+      expect(options.validateImage?.(imageRef)).toBe(true);
+      expect(dockerCaptureMock.mock.calls[0]?.[0]).toEqual(
+        expect.arrayContaining([
+          "/opt/hermes/.venv/bin/python",
+          imageRef,
+          expect.stringContaining("mcp_tool._ensure_mcp_sdk() or sys.exit(1)"),
         ]),
       );
     });
@@ -529,6 +531,17 @@ describe("agent base image provisioning", () => {
       });
     },
   );
+
+  it("omits corporate CA build inputs from Hermes base image builds (#8119)", () => {
+    vi.stubEnv("NEMOCLAW_CORPORATE_CA_BUNDLE", writeCa(tmpDir()));
+    withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock }) => {
+      ensureAgentBaseImage(makeAgent(), { forceBaseImageRebuild: true });
+
+      expect(dockerBuildMock.mock.calls[0]?.[3]).toEqual(
+        expect.objectContaining({ buildArgs: undefined }),
+      );
+    });
+  });
 
   it("omits corporate CA build inputs when corporate CA import is disabled (#8119)", () => {
     vi.stubEnv("NEMOCLAW_CORPORATE_CA_BUNDLE", writeCa(tmpDir()));
