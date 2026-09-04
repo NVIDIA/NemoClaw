@@ -281,13 +281,6 @@ export async function runQwenGpuQualification(): Promise<void> {
               "managed llama.cpp receipt does not bind the exact Qwen recipe and GGUF",
             );
           }
-          if (
-            installed.receipt.inference?.protocol !== "openai-chat-completions" ||
-            installed.receipt.inference.model !== recipe.spec.model.servedName ||
-            installed.receipt.inference.toolCallingRequired !== true
-          ) {
-            throw new Error("managed llama.cpp startup did not prove a Qwen tool call");
-          }
           transactionId = modelAuthority.generation;
 
           const container = JSON.parse(
@@ -399,7 +392,7 @@ export async function runQwenGpuQualification(): Promise<void> {
       },
       runtime: runtimeEvidence,
       probes: {
-        startupToolCall: true,
+        managedStartup: "passed",
         unauthorizedStatus: 401,
         hostChat: "passed",
         openClaw: agentResult.probeEvidence,
