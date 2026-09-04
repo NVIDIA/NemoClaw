@@ -993,7 +993,7 @@ node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts \
             --package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
             --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
             --raw-report "$MCPORTER_RAW_REPORT" --exceptions /scripts/npm-audit-exceptions.json \
-            --graph mcporter-runtime --npm-version "$(npm --version)" \
+            --graph mcporter-runtime --npm-version "10.9.4" \
 --registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true; \
     else \
         node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \

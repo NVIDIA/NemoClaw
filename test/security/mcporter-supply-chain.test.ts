@@ -204,7 +204,7 @@ describe("mcporter image supply-chain controls", () => {
       "--package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json --raw-report",
     );
     expect(flattenedContents).toContain(
-      "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --npm-version",
+      '--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --npm-version "10.9.4"',
     );
     expect(flattenedContents).toContain(
       "--registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true",
