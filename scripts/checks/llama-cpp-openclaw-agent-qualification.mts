@@ -157,10 +157,14 @@ for (const item of trajectoryItems) {
 const messages = [...sessionMessages, ...projectedMessages];
 const blocks = messages.flatMap((message) => Array.isArray(message.content) ? message.content : []);
 const calls = blocks.filter((block) => block?.type === "toolCall");
-const exactCalls = calls.filter((call) =>
-  (call.name === toolName || call.toolName === toolName) &&
-  (call.arguments ?? call.input ?? call.args)?.path === fixturePath
-);
+const exactCalls = calls.filter((call) => {
+  const name = call.name ?? call.toolName;
+  const argumentsValue = call.arguments ?? call.input ?? call.args;
+  if (name === toolName && argumentsValue?.path === fixturePath) return true;
+  return name === "tool_call" &&
+    (argumentsValue?.id === toolName || argumentsValue?.id === "openclaw:core:" + toolName) &&
+    argumentsValue?.args?.path === fixturePath;
+});
 const results = messages.filter((message) => message?.role === "toolResult");
 const exactCallIds = new Set(exactCalls.map((call) => call.id ?? call.toolCallId ?? call.tool_call_id).filter(Boolean));
 const matchingResults = results.filter((message) =>
@@ -171,7 +175,14 @@ const users = sessionMessages.filter((message) => message?.role === "user");
 const finalAssistant = sessionMessages.at(-1)?.role === "assistant";
 if (exactCalls.length < 1 || matchingResults.length < 1 || users.length < 2 || !finalAssistant) {
   process.stderr.write(JSON.stringify({
-    callNames: calls.map((call) => call.name ?? call.toolName ?? null),
+    calls: calls.map((call) => {
+      const argumentsValue = call.arguments ?? call.input ?? call.args;
+      return {
+        name: call.name ?? call.toolName ?? null,
+        target: argumentsValue?.id ?? null,
+        path: argumentsValue?.path ?? argumentsValue?.args?.path ?? null,
+      };
+    }),
     exactCalls: exactCalls.length,
     matchingResults: matchingResults.length,
     resultNames: results.map((message) => message.toolName ?? message.tool_name ?? message.name ?? null),

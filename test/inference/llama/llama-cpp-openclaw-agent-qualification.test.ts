@@ -60,7 +60,7 @@ function context(
 }
 
 describe("llama.cpp OpenClaw qualification probe", () => {
-  it("proves progressive-tool execution from the projected trajectory", () => {
+  it("proves progressive-tool execution from the persisted wrapper", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "llama-cpp-openclaw-session-"));
     const sessionPath = path.join(root, "tool.jsonl");
     const trajectoryPath = path.join(root, "tool.trajectory.jsonl");
@@ -69,7 +69,32 @@ describe("llama.cpp OpenClaw qualification probe", () => {
         sessionPath,
         [
           { type: "message", message: { role: "user", content: "read the fixture" } },
-          { type: "message", message: { role: "assistant", content: "done" } },
+          {
+            type: "message",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "toolCall",
+                  id: "call-wrapper",
+                  name: "tool_call",
+                  arguments: {
+                    id: "openclaw:core:read",
+                    args: { path: "/tmp/fixture.txt" },
+                  },
+                },
+              ],
+            },
+          },
+          {
+            type: "message",
+            message: {
+              role: "toolResult",
+              toolCallId: "call-wrapper",
+              toolName: "tool_call",
+              content: [{ type: "text", text: "FIXTURE_OK" }],
+            },
+          },
           { type: "message", message: { role: "user", content: "repeat it" } },
           { type: "message", message: { role: "assistant", content: "FIXTURE_OK" } },
         ]
@@ -79,28 +104,8 @@ describe("llama.cpp OpenClaw qualification probe", () => {
       fs.writeFileSync(
         trajectoryPath,
         `${JSON.stringify({
-          type: "model.completed",
-          data: {
-            messagesSnapshot: [
-              {
-                role: "assistant",
-                content: [
-                  {
-                    type: "toolCall",
-                    id: "call-read",
-                    name: "read",
-                    arguments: { path: "/tmp/fixture.txt" },
-                  },
-                ],
-              },
-              {
-                role: "toolResult",
-                toolCallId: "call-read",
-                toolName: "read",
-                content: [{ type: "text", text: "FIXTURE_OK" }],
-              },
-            ],
-          },
+          type: "trace.artifacts",
+          data: { finalStatus: "success", toolMetas: [{ toolName: "read" }] },
         })}\n`,
       );
       const result = spawnSync(
