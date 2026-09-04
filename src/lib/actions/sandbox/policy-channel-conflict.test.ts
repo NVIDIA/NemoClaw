@@ -643,7 +643,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
         },
       ],
       "nemoclaw",
-      undefined,
+      { replaceExisting: true },
       expect.objectContaining({
         channelName: "discord",
         sandboxAgent: "hermes",

@@ -661,6 +661,10 @@ describe("channels add applies a matching policy preset (#3437)", () => {
         definitions.map((definition: { name: string }) => definition.name),
       ),
     ).toEqual([["test-sb-telegram-bridge"], ["test-sb-telegram-bridge"]]);
+    expect(providerSpy.mock.calls.map(([, , options]) => options)).toEqual([
+      { replaceExisting: true },
+      { replaceExisting: true },
+    ]);
     expect(callOrder).not.toContain("promptAndRebuild");
     expect(printedText()).toContain("Rollback could not fully clean gateway-providers");
   });

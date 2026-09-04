@@ -389,7 +389,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
         },
       ],
       "nemoclaw",
-      undefined,
+      { replaceExisting: true },
       expect.objectContaining({
         channelName: "googlechat",
         sandboxName: "test-sb",

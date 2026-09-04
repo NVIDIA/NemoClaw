@@ -902,7 +902,7 @@ async function applyChannelAddToGatewayAndRegistry(
     await upsertMessagingProviders(
       tokenDefs,
       gatewayName,
-      undefined,
+      { replaceExisting: true },
       {
         plan,
         channelName,
@@ -1590,7 +1590,7 @@ async function rollbackChannelAdd(
         await policyChannelDependencies.upsertMessagingProviders(
           priorTokenDefs,
           getSandboxTargetGatewayName(sandboxName),
-          undefined,
+          { replaceExisting: true },
           {
             plan,
             channelName: canonical,
