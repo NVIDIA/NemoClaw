@@ -14,7 +14,18 @@ describe("compiled config schema consumer", () => {
   it("packs the config schema where the compiled validator resolves it (#10938)", () => {
     const fixtureRoot = createPackageFixture({
       prefix: "nemoclaw-config-schema-pack-",
-      entries: ["dist/lib", "nemoclaw/dist/shared", "schemas"],
+      entries: [
+        "dist/lib/config",
+        "dist/lib/core/endpoint-contract.js",
+        "dist/lib/core/immutable.js",
+        "dist/lib/name-validation.js",
+        "dist/lib/sandbox-name-contract.js",
+        "dist/lib/policy/sandbox-policy-validation.js",
+        "dist/lib/adapters/openshell/policy-boundary.js",
+        "dist/lib/security/credential-filter.js",
+        "nemoclaw/dist/shared",
+        "schemas",
+      ],
     });
     try {
       const report = JSON.parse(
