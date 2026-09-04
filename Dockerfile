@@ -992,13 +992,13 @@ RUN --network=default \
         [ -f "$MCPORTER_RECEIPT" ] && [ -f "$MCPORTER_RAW_REPORT" ] && printf %s "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" | grep -qxE '[0-9a-f]{64}' \
             || { echo "ERROR: cached mcporter audit requires paired receipt, raw report, and receipt SHA-256" >&2; exit 1; }; \
         printf '%s  %s\n' "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" "$MCPORTER_RECEIPT" | sha256sum -c -; \
-        node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts \
-            --receipt "$MCPORTER_RECEIPT" \
+node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts \
+           --receipt "$MCPORTER_RECEIPT" \
             --package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
             --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
             --raw-report "$MCPORTER_RAW_REPORT" --exceptions /scripts/npm-audit-exceptions.json \
             --graph mcporter-runtime --npm-version "$(npm --version)" \
-            --registry https://registry.npmjs.org/ --threshold high; \
+--registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true; \
     else \
         node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
             --directory /usr/local/lib/nemoclaw/mcporter-runtime \
