@@ -95,10 +95,10 @@ describe("Hermes portable startup contract", () => {
       devicePairing: false,
       configDir: "/sandbox/.hermes",
     });
-    expect(agent.expected_version).toBe("0.19.0");
+    expect(agent.expected_version).toBe("0.20.6");
   });
 
-  it.each([undefined, "", "0.19.1"])(
+  it.each([undefined, "", "0.19.0"])(
     "rejects Hermes manifest version %j outside the accepted portable matrix (#9203)",
     (expectedVersion) => {
       const agent = copyAgent();
@@ -121,7 +121,7 @@ describe("Hermes portable startup contract", () => {
       sandboxName: SANDBOX,
       startupArgv: startupArgv(),
     });
-    setExpectedManifestVersion(accepted, "0.19.1");
+    setExpectedManifestVersion(accepted, "0.19.0");
 
     expect(() =>
       assertCurrentHermesPortableStartupContract(contract, {

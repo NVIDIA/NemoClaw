@@ -11,9 +11,10 @@ drain token is the client-side secret proving ownership of the server-side
 persisted drain marker.
 
 Before release, the controller durably writes a separate root-owned recovery
-record. That write-ahead record survives a failed marker rollback and lets
-``prepare-recover`` reacquire the gate before host gateway repair. ``recover``
-then validates cron state before clearing NemoClaw-owned recovery state.
+record with the original gate-acquisition time. That write-ahead record survives
+a failed marker rollback and lets ``prepare-recover`` reacquire the same gate
+before host gateway repair. ``recover`` then validates cron state before
+clearing NemoClaw-owned recovery state.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -169,7 +171,12 @@ def _validate_marker_metadata(metadata: os.stat_result, label: str) -> None:
         raise ControlError(f"{label} size is invalid")
 
 
-def _read_owned_token(path: Path, label: str, *, required: bool) -> str | None:
+def _read_owned_payload(
+    path: Path,
+    label: str,
+    *,
+    required: bool,
+) -> tuple[dict[str, Any], os.stat_result] | None:
     _require_secure_directory(NEMOCLAW_HOME, "NemoClaw state root")
     flags = os.O_RDONLY | os.O_CLOEXEC
     if hasattr(os, "O_NOFOLLOW"):
@@ -194,18 +201,41 @@ def _read_owned_token(path: Path, label: str, *, required: bool) -> str | None:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeError, ValueError) as error:
         raise ControlError(f"{label} is invalid") from error
-    if not isinstance(payload, dict) or set(payload) != {"token", "version"}:
+    if not isinstance(payload, dict):
         raise ControlError(f"{label} has an invalid schema")
+    return payload, metadata
+
+
+def _validate_drain_token(payload: dict[str, Any], label: str) -> str:
     token = payload.get("token")
     if (
-        payload.get("version") != 1
-        or not isinstance(token, str)
+        not isinstance(token, str)
         or len(token) != 32
         or not token.isascii()
         or not all(character.isalnum() or character in "-_" for character in token)
     ):
         raise ControlError(f"{label} has an invalid token")
     return token
+
+
+def _read_owned_token_record(
+    path: Path,
+    label: str,
+    *,
+    required: bool,
+) -> tuple[str, os.stat_result] | None:
+    observed = _read_owned_payload(path, label, required=required)
+    if observed is None:
+        return None
+    payload, metadata = observed
+    if set(payload) != {"token", "version"} or payload.get("version") != 1:
+        raise ControlError(f"{label} has an invalid schema")
+    return _validate_drain_token(payload, label), metadata
+
+
+def _read_owned_token(path: Path, label: str, *, required: bool) -> str | None:
+    observed = _read_owned_token_record(path, label, required=required)
+    return None if observed is None else observed[0]
 
 
 def _read_owned_drain_token(*, required: bool = True) -> str | None:
@@ -216,12 +246,47 @@ def _read_owned_drain_token(*, required: bool = True) -> str | None:
     )
 
 
-def _read_release_recovery_token(*, required: bool = True) -> str | None:
-    return _read_owned_token(
+def _read_release_recovery(
+    *,
+    required: bool = True,
+) -> tuple[str, int] | None:
+    observed = _read_owned_payload(
         _release_recovery_path(),
         "NemoClaw cron restore release recovery record",
         required=required,
     )
+    if observed is None:
+        return None
+    payload, _metadata = observed
+    if (
+        set(payload) != {"drain_started_at_ns", "token", "version"}
+        or payload.get("version") != 2
+    ):
+        raise ControlError(
+            "NemoClaw cron restore release recovery record has an invalid schema"
+        )
+    started_at_ns = payload.get("drain_started_at_ns")
+    if (
+        isinstance(started_at_ns, bool)
+        or not isinstance(started_at_ns, int)
+        or started_at_ns <= 0
+        or started_at_ns > (1 << 63) - 1
+    ):
+        raise ControlError(
+            "NemoClaw cron restore release recovery record has an invalid drain time"
+        )
+    return (
+        _validate_drain_token(
+            payload,
+            "NemoClaw cron restore release recovery record",
+        ),
+        started_at_ns,
+    )
+
+
+def _read_release_recovery_token(*, required: bool = True) -> str | None:
+    observed = _read_release_recovery(required=required)
+    return None if observed is None else observed[0]
 
 
 def _require_owned_token(
@@ -246,21 +311,56 @@ def _require_owned_drain(drain_token: str) -> None:
     )
 
 
-def _write_owned_token(
+def _owned_drain_started_at_ns(drain_token: str) -> int:
+    """Return the authenticated drain marker's durable creation time."""
+    observed = _read_owned_token_record(
+        _marker_path(),
+        "NemoClaw cron restore drain marker",
+        required=True,
+    )
+    if observed is None:
+        raise ControlError("NemoClaw cron restore drain marker is not active")
+    observed_token, metadata = observed
+    if not hmac.compare_digest(observed_token, drain_token):
+        raise ControlError("NemoClaw cron restore drain ownership changed")
+    return metadata.st_mtime_ns
+
+
+def _owned_drain_started_at(drain_token: str) -> datetime:
+    started_at_ns = _owned_drain_started_at_ns(drain_token)
+    return datetime.fromtimestamp(started_at_ns / 1_000_000_000, timezone.utc)
+
+
+def _rearm_drained_oneshots(drain_token: str) -> int:
+    """Re-arm only one-shots due at or after this drain was acquired."""
+    started_at = _owned_drain_started_at(drain_token)
+    try:
+        from cron.jobs import rearm_nemoclaw_drained_oneshots
+    except Exception as error:
+        raise ControlError("Hermes cron restore re-arm helper is unavailable") from error
+    try:
+        profile_homes = [profile_home for _label, profile_home in _profile_homes(HERMES_HOME)]
+        changed = rearm_nemoclaw_drained_oneshots(started_at, profile_homes)
+    except Exception as error:
+        raise ControlError("Hermes cron restore could not re-arm delayed one-shots") from error
+    if isinstance(changed, bool) or not isinstance(changed, int) or changed < 0:
+        raise ControlError("Hermes cron restore re-arm result is invalid")
+    return changed
+
+
+def _write_owned_record(
     path: Path,
     label: str,
-    drain_token: str,
+    payload: bytes,
     *,
     temp_prefix: str,
     exists_message: str,
     write_message: str,
+    mtime_ns: int | None = None,
 ) -> None:
     _require_secure_directory(NEMOCLAW_HOME, "NemoClaw state root")
-    payload = json.dumps(
-        {"token": drain_token, "version": 1},
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+    if not payload or len(payload) > MAX_MARKER_BYTES:
+        raise ControlError(f"{label} payload is invalid")
     descriptor = -1
     staged_path: Path | None = None
     try:
@@ -274,6 +374,8 @@ def _write_owned_token(
         written = os.write(descriptor, payload)
         if written != len(payload):
             raise OSError("short marker write")
+        if mtime_ns is not None:
+            os.utime(descriptor, ns=(mtime_ns, mtime_ns))
         os.fsync(descriptor)
         os.close(descriptor)
         descriptor = -1
@@ -283,7 +385,6 @@ def _write_owned_token(
             raise ControlError(exists_message) from error
         staged_path.unlink()
         staged_path = None
-        _require_owned_token(path, label, label, drain_token)
         _fsync_directory(NEMOCLAW_HOME, "NemoClaw state root")
     except ControlError:
         raise
@@ -296,45 +397,87 @@ def _write_owned_token(
             staged_path.unlink(missing_ok=True)
 
 
-def _write_owned_drain(drain_token: str) -> None:
-    _write_owned_token(
+def _write_owned_drain(drain_token: str, *, started_at_ns: int | None = None) -> None:
+    payload = json.dumps(
+        {"token": drain_token, "version": 1},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    _write_owned_record(
         _marker_path(),
         "NemoClaw cron restore drain marker",
-        drain_token,
+        payload,
         temp_prefix=".hermes-cron-restore-drain-",
         exists_message="a NemoClaw cron restore drain already requires recovery",
         write_message="NemoClaw cron restore drain could not be acquired",
+        mtime_ns=started_at_ns,
     )
+    _require_owned_drain(drain_token)
+    if started_at_ns is not None and _owned_drain_started_at_ns(drain_token) != started_at_ns:
+        raise ControlError("NemoClaw cron restore drain time changed")
 
 
-def _write_release_recovery(drain_token: str) -> None:
-    _write_owned_token(
+def _write_release_recovery(drain_token: str, drain_started_at_ns: int) -> None:
+    payload = json.dumps(
+        {
+            "drain_started_at_ns": drain_started_at_ns,
+            "token": drain_token,
+            "version": 2,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    _write_owned_record(
         _release_recovery_path(),
         "NemoClaw cron restore release recovery record",
-        drain_token,
+        payload,
         temp_prefix=".hermes-cron-restore-release-recovery-",
         exists_message="a NemoClaw cron restore release recovery already exists",
         write_message="NemoClaw cron restore release recovery could not be recorded",
     )
+    observed = _read_release_recovery(required=True)
+    if observed != (drain_token, drain_started_at_ns):
+        raise ControlError("NemoClaw cron restore release recovery record changed")
 
 
 def _ensure_release_recovery(drain_token: str) -> None:
-    observed_token = _read_release_recovery_token(required=False)
-    if observed_token is None:
-        _write_release_recovery(drain_token)
+    drain_started_at_ns = _owned_drain_started_at_ns(drain_token)
+    observed = _read_release_recovery(required=False)
+    if observed is None:
+        _write_release_recovery(drain_token, drain_started_at_ns)
         return
+    observed_token, observed_started_at_ns = observed
     if not hmac.compare_digest(observed_token, drain_token):
         raise ControlError("NemoClaw cron restore release recovery ownership changed")
+    if observed_started_at_ns != drain_started_at_ns:
+        raise ControlError("NemoClaw cron restore release recovery drain time changed")
     _fsync_directory(NEMOCLAW_HOME, "NemoClaw state root")
 
 
-def _ensure_owned_drain(drain_token: str) -> None:
+def _ensure_owned_drain(
+    drain_token: str,
+    *,
+    started_at_ns: int | None = None,
+) -> None:
     observed_token = _read_owned_drain_token(required=False)
     if observed_token is None:
-        _write_owned_drain(drain_token)
+        recovery = _read_release_recovery(required=started_at_ns is None)
+        if recovery is not None:
+            recovery_token, recovery_started_at_ns = recovery
+            if not hmac.compare_digest(recovery_token, drain_token):
+                raise ControlError("NemoClaw cron restore release recovery ownership changed")
+            if started_at_ns is None:
+                started_at_ns = recovery_started_at_ns
+            elif started_at_ns != recovery_started_at_ns:
+                raise ControlError("NemoClaw cron restore release recovery drain time changed")
+        if started_at_ns is None:
+            raise ControlError("NemoClaw cron restore drain time is unavailable")
+        _write_owned_drain(drain_token, started_at_ns=started_at_ns)
         return
     if not hmac.compare_digest(observed_token, drain_token):
         raise ControlError("NemoClaw cron restore drain ownership changed")
+    if started_at_ns is not None and _owned_drain_started_at_ns(drain_token) != started_at_ns:
+        raise ControlError("NemoClaw cron restore drain time changed")
     _fsync_directory(NEMOCLAW_HOME, "NemoClaw state root")
 
 
@@ -365,13 +508,19 @@ def _remove_owned_drain(drain_token: str) -> None:
 
 
 def _remove_release_recovery(drain_token: str) -> None:
-    _remove_owned_token(
-        _release_recovery_path(),
-        "NemoClaw cron restore release recovery record",
-        "NemoClaw cron restore release recovery record",
-        drain_token,
-        failure_message="NemoClaw cron restore release recovery could not be cleared",
-    )
+    observed = _read_release_recovery(required=True)
+    if observed is None:
+        raise ControlError("NemoClaw cron restore release recovery record is not active")
+    observed_token, _drain_started_at_ns = observed
+    if not hmac.compare_digest(observed_token, drain_token):
+        raise ControlError("NemoClaw cron restore release recovery ownership changed")
+    try:
+        _release_recovery_path().unlink()
+    except OSError as error:
+        raise ControlError(
+            "NemoClaw cron restore release recovery could not be cleared"
+        ) from error
+    _fsync_directory(NEMOCLAW_HOME, "NemoClaw state root")
 
 
 def _profile_homes(home: Path) -> list[tuple[str, Path]]:
@@ -659,12 +808,16 @@ def _complete_release(
     **fields: Any,
 ) -> None:
     _require_drained_idle(status_module, pid, start_time)
+    drain_started_at_ns = _owned_drain_started_at_ns(drain_token)
     _ensure_release_recovery(drain_token)
+    rearmed_oneshots = 0
+    if not _operator_drain_active(drain_control):
+        rearmed_oneshots = _rearm_drained_oneshots(drain_token)
     try:
         _remove_owned_drain(drain_token)
     except ControlError as release_error:
         try:
-            _ensure_owned_drain(drain_token)
+            _ensure_owned_drain(drain_token, started_at_ns=drain_started_at_ns)
         except ControlError as rollback_error:
             raise ControlError(
                 "Hermes cron restore drain release failed and its marker could not be restored",
@@ -680,7 +833,7 @@ def _complete_release(
         )
     except Exception as release_error:
         try:
-            _ensure_owned_drain(drain_token)
+            _ensure_owned_drain(drain_token, started_at_ns=drain_started_at_ns)
         except ControlError as rollback_error:
             raise ControlError(
                 "Hermes cron restore drain release failed and its marker could not be restored",
@@ -693,7 +846,7 @@ def _complete_release(
         _remove_release_recovery(drain_token)
     except ControlError as cleanup_error:
         try:
-            _ensure_owned_drain(drain_token)
+            _ensure_owned_drain(drain_token, started_at_ns=drain_started_at_ns)
         except ControlError as rollback_error:
             raise ControlError(
                 "Hermes cron restore drain release failed and its marker could not be restored",
@@ -712,21 +865,28 @@ def _complete_release(
         disposition=disposition,
         operator_drain_active=operator_drain_active,
         preserved_drain=operator_drain_active,
+        rearmed_oneshots=rearmed_oneshots,
         **fields,
     )
 
 
 def _prepare_owned_drain() -> str | None:
     drain_token = _read_owned_drain_token(required=False)
-    recovery_token = _read_release_recovery_token(required=False)
-    if drain_token is not None and recovery_token is not None:
+    recovery = _read_release_recovery(required=False)
+    if drain_token is not None and recovery is not None:
+        recovery_token, recovery_started_at_ns = recovery
         if not hmac.compare_digest(drain_token, recovery_token):
             raise ControlError(
                 "NemoClaw cron restore drain and release recovery ownership differ"
             )
+        if _owned_drain_started_at_ns(drain_token) != recovery_started_at_ns:
+            raise ControlError(
+                "NemoClaw cron restore drain and release recovery times differ"
+            )
         _fsync_directory(NEMOCLAW_HOME, "NemoClaw state root")
-    elif drain_token is None and recovery_token is not None:
-        _write_owned_drain(recovery_token)
+    elif drain_token is None and recovery is not None:
+        recovery_token, recovery_started_at_ns = recovery
+        _write_owned_drain(recovery_token, started_at_ns=recovery_started_at_ns)
         drain_token = recovery_token
     elif drain_token is not None:
         _fsync_directory(NEMOCLAW_HOME, "NemoClaw state root")
