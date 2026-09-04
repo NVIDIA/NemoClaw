@@ -33,6 +33,9 @@ $script:HermesVersion = '0.19.0'
 $script:HermesWheelSha256 = 'bd0bac012aee38a60894781f4597dc29ee7bedb3448540249921f10d3bef327f'
 $script:RuamelYamlWheelSha256 = '9c8ba9eb3e793efdf924b60d521820869d5bf0cb9c6f1b82d82de8295e290b9d'
 $script:ForbiddenFruitArchiveSha256 = 'e3f7e66561a29ae129aac139a85d610dbf3dd896128187ed5454b6421f624253'
+$script:TiktokenVersion = '0.13.0'
+$script:TiktokenSourceDigest = 'c9435714c3a84c2319499de9a300c0e604449dd0799ff246458b3bb6a7f433c1' # gitleaks:allow -- public PyPI source integrity pin
+$script:TiktokenCargoLockDigest = '63a3cbad932c43582c3293b0c6ca2d3c74970d1a6a67c18a1712c3519da4d8ba' # gitleaks:allow -- checked-in Cargo lock integrity pin
 $script:RustVersion = '1.95.0'
 $script:MxcSdkVersion = '0.8.0'
 $script:MxcSdkArchiveSha256 = '06bb2399d7e98ab1907acf851e12a4e44748dd467b79d3e53c2f2fbf569da14e'
@@ -293,6 +296,105 @@ try {
     Copy-Item -LiteralPath (Join-Path $forbiddenFruitExtract 'forbiddenfruit-0.1.4\forbiddenfruit.egg-info') -Destination $deepAgentsSitePackages -Recurse
     Copy-Item -LiteralPath (Join-Path $forbiddenFruitExtract 'forbiddenfruit-0.1.4\COPYING.mit') -Destination (Join-Path $deepAgentsRoot 'FORBIDDENFRUIT-LICENSE.txt')
 
+    $tiktokenBuildDependencies = @(
+        @{
+            File = 'setuptools-80.9.0-py3-none-any.whl'
+            Uri = 'https://files.pythonhosted.org/packages/a3/dc/17031897dae0efacfea57dfd3a82fdd2a2aeb58e0ff71b77b87e44edc772/setuptools-80.9.0-py3-none-any.whl'
+            Sha256 = '062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922'
+        },
+        @{
+            File = 'wheel-0.45.1-py3-none-any.whl'
+            Uri = 'https://files.pythonhosted.org/packages/0b/2c/87f3254fd8ffd29e4c02732eee68a83a1d3c346ae39bc6822dcbcb697f2b/wheel-0.45.1-py3-none-any.whl'
+            Sha256 = '708e7481cc80179af0e556bbf0cc00b8444c7321e2700b8d8580231d13017248'
+        },
+        @{
+            File = 'setuptools_rust-1.12.0-py3-none-any.whl'
+            Uri = 'https://files.pythonhosted.org/packages/f9/7b/d05b1778f2d4e354d103e3421c6267d923032fefcc5ca5b7df0cb21cefd0/setuptools_rust-1.12.0-py3-none-any.whl'
+            Sha256 = '7e7db90547f224a835b45f5ad90c983340828a345554a9a660bdb2de8605dcdd'
+        },
+        @{
+            File = 'semantic_version-2.10.0-py2.py3-none-any.whl'
+            Uri = 'https://files.pythonhosted.org/packages/6a/23/8146aad7d88f4fcb3a6218f41a60f6c2d4e3a72de72da1825dc7c8f7877c/semantic_version-2.10.0-py2.py3-none-any.whl'
+            Sha256 = 'de78a3b8e0feda74cabc54aab2da702113e33ac9d9eb9d2389bcf1f58b7d9177'
+        }
+    )
+    $tiktokenBuildWheels = @()
+    foreach ($dependency in $tiktokenBuildDependencies) {
+        $dependencyPath = Join-Path $workRoot $dependency.File
+        Invoke-WebRequest -UseBasicParsing -Uri $dependency.Uri -OutFile $dependencyPath
+        Assert-Sha256 -Path $dependencyPath -Expected $dependency.Sha256 -Label $dependency.File
+        $tiktokenBuildWheels += $dependencyPath
+    }
+    Invoke-Checked `
+        -FilePath $pythonBuilder `
+        -Arguments (@(
+            '-m', 'pip', 'install',
+            '--disable-pip-version-check',
+            '--force-reinstall',
+            '--no-deps',
+            '--no-index'
+        ) + $tiktokenBuildWheels) `
+        -Label 'Pinned tiktoken build dependency restore'
+    $tiktokenArchive = Join-Path $workRoot "tiktoken-$($script:TiktokenVersion).tar.gz"
+    Invoke-WebRequest `
+        -UseBasicParsing `
+        -Uri 'https://files.pythonhosted.org/packages/e4/e5/5f3cb2159769d0f4324c0e9e87f9de3c4b1cd45848a96b2eb3566ad5ca77/tiktoken-0.13.0.tar.gz' `
+        -OutFile $tiktokenArchive
+    Assert-Sha256 -Path $tiktokenArchive -Expected $script:TiktokenSourceDigest -Label 'tiktoken source archive'
+    $tiktokenExtract = Join-Path $workRoot 'tiktoken'
+    [IO.Directory]::CreateDirectory($tiktokenExtract) | Out-Null
+    Invoke-Checked -FilePath $tar -Arguments @('-xzf', $tiktokenArchive, '-C', $tiktokenExtract) -Label 'tiktoken source extraction'
+    $tiktokenSource = Join-Path $tiktokenExtract "tiktoken-$($script:TiktokenVersion)"
+    Copy-Item -LiteralPath (Join-Path $tiktokenSource 'LICENSE') -Destination (Join-Path $deepAgentsRoot 'TIKTOKEN-LICENSE.txt')
+    $tiktokenCargoLock = Join-Path $candidate 'packaging\windows\python\tiktoken-0.13.0.Cargo.lock'
+    Assert-Sha256 -Path $tiktokenCargoLock -Expected $script:TiktokenCargoLockDigest -Label 'tiktoken Cargo lock'
+    Copy-Item -LiteralPath $tiktokenCargoLock -Destination (Join-Path $tiktokenSource 'Cargo.lock')
+    $tiktokenWheelRoot = Join-Path $workRoot 'tiktoken-wheel'
+    [IO.Directory]::CreateDirectory($tiktokenWheelRoot) | Out-Null
+    $priorRustupToolchain = $env:RUSTUP_TOOLCHAIN
+    try {
+        $env:RUSTUP_TOOLCHAIN = $script:RustVersion
+        Invoke-Checked `
+            -FilePath $pythonBuilder `
+            -Arguments @(
+                '-m', 'pip', 'wheel',
+                '--disable-pip-version-check',
+                '--no-build-isolation',
+                '--no-deps',
+                '--no-index',
+                '--wheel-dir', $tiktokenWheelRoot,
+                $tiktokenSource
+            ) `
+            -Label 'Pinned tiktoken native ARM64 wheel build'
+    } finally {
+        $env:RUSTUP_TOOLCHAIN = $priorRustupToolchain
+    }
+    $tiktokenWheels = @(Get-ChildItem -LiteralPath $tiktokenWheelRoot -Filter 'tiktoken-0.13.0-cp313-cp313-win_arm64.whl' -File)
+    if ($tiktokenWheels.Count -ne 1) {
+        Fail-PayloadPreparation 'The tiktoken native ARM64 build did not produce one exact wheel.'
+    }
+    Invoke-Checked `
+        -FilePath $pythonBuilder `
+        -Arguments @(
+            '-m', 'pip', 'install',
+            '--disable-pip-version-check',
+            '--no-compile',
+            '--no-deps',
+            '--no-index',
+            '--target', $deepAgentsSitePackages,
+            $tiktokenWheels[0].FullName
+        ) `
+        -Label 'tiktoken native ARM64 runtime restore'
+    Assert-Arm64PortableExecutable -Path (Join-Path $deepAgentsSitePackages 'tiktoken\_tiktoken.pyd') -Label 'tiktoken native ARM64 extension'
+    Invoke-Checked `
+        -FilePath (Join-Path $pythonRoot 'python.exe') `
+        -Arguments @('-I', '-c', 'import sys; sys.path.insert(0, sys.argv[1]); import concurrent_log_handler; import hermes_cli.main', $hermesSitePackages) `
+        -Label 'Hermes native ARM64 import preflight'
+    Invoke-Checked `
+        -FilePath (Join-Path $pythonRoot 'python.exe') `
+        -Arguments @('-I', '-c', 'import sys; sys.path.insert(0, sys.argv[1]); import tiktoken; import langchain_openai; from deepagents_code import cli_main', $deepAgentsSitePackages) `
+        -Label 'Deep Agents Code native ARM64 import preflight'
+
     $nodeArchivePath = Join-Path $workRoot $script:NodeArchive
     Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/v$($script:NodeVersion)/$($script:NodeArchive)" -OutFile $nodeArchivePath
     Assert-Sha256 -Path $nodeArchivePath -Expected $script:NodeArchiveSha256 -Label 'Node.js ARM64 archive'
@@ -393,7 +495,9 @@ debug = false
         'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js',
         'python\python.exe',
         'hermes\site-packages\hermes_cli\main.py',
+        'hermes\site-packages\concurrent_log_handler\__init__.py',
         'deepagents\site-packages\deepagents_code\main.py',
+        'deepagents\site-packages\tiktoken\_tiktoken.pyd',
         'nemocua\run_with_harness.py',
         'onboarding\index.html',
         'onboarding\styles.css',
@@ -447,6 +551,12 @@ debug = false
         deepAgentsCode = [pscustomobject]@{
             version = '0.1.55'
             dependencyLockSha256 = (Get-FileHash -LiteralPath $deepAgentsLock -Algorithm SHA256).Hash.ToLowerInvariant()
+            tiktoken = [pscustomobject]@{
+                version = $script:TiktokenVersion
+                sourceArchiveSha256 = $script:TiktokenSourceDigest
+                cargoLockSha256 = $script:TiktokenCargoLockDigest
+                nativeExtensionSha256 = (Get-FileHash -LiteralPath (Join-Path $deepAgentsSitePackages 'tiktoken\_tiktoken.pyd') -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
             omittedUnqualifiedNativeExtensions = @(
                 'bsdiff4==1.2.6',
                 'cryptography==50.0.0',
@@ -457,7 +567,6 @@ debug = false
                 'quickjs-rs==0.2.5',
                 'sqlite-vec==0.1.9',
                 'textual-speedups==0.2.1',
-                'tiktoken==0.13.0',
                 'uvloop==0.22.1'
             )
         }

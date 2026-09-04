@@ -6,6 +6,7 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
+import net from "node:net";
 import path from "node:path";
 
 import {
@@ -34,6 +35,155 @@ const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 
 function fail(message) {
   throw new Error(`NemoClaw native Windows NemoCUA failed: ${message}`);
+}
+
+function writeRelayFile(file, content) {
+  const temporary = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  fs.writeFileSync(temporary, content);
+  fs.renameSync(temporary, file);
+}
+
+async function startFileTcpTargetRelay(relayRoot, token, targetPort) {
+  if (fs.existsSync(relayRoot)) fail("NemoCUA relay root already exists");
+  fs.mkdirSync(relayRoot);
+  const streams = new Map();
+  let closed = false;
+  const poll = setInterval(() => {
+    for (const entry of fs.readdirSync(relayRoot).filter((name) => name.startsWith("stream-"))) {
+      if (streams.has(entry)) continue;
+      const streamRoot = path.join(relayRoot, entry);
+      const open = path.join(streamRoot, "open");
+      if (!fs.statSync(open, { throwIfNoEntry: false })?.isFile()) continue;
+      if (fs.existsSync(path.join(streamRoot, "host-close"))) continue;
+      if (fs.readFileSync(open, "utf8") !== token) continue;
+      const socket = net.createConnection({ host: "127.0.0.1", port: targetPort });
+      const state = { root: streamRoot, sequence: 0, socket };
+      streams.set(entry, state);
+      socket.on("data", (chunk) => {
+        writeRelayFile(
+          path.join(streamRoot, `host-${String(state.sequence++).padStart(10, "0")}.bin`),
+          chunk,
+        );
+      });
+      socket.once("error", () => {});
+      socket.once("close", () => {
+        streams.delete(entry);
+        try {
+          writeRelayFile(path.join(streamRoot, "host-close"), Buffer.alloc(0));
+        } catch {}
+      });
+    }
+    for (const stream of streams.values()) {
+      for (const entry of fs
+        .readdirSync(stream.root)
+        .filter((name) => /^sandbox-[0-9]{10}[.]bin$/u.test(name))
+        .sort()) {
+        const chunk = path.join(stream.root, entry);
+        stream.socket.write(fs.readFileSync(chunk));
+        fs.unlinkSync(chunk);
+      }
+      if (fs.existsSync(path.join(stream.root, "sandbox-close"))) stream.socket.end();
+    }
+  }, 10);
+  return {
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      clearInterval(poll);
+      try {
+        writeRelayFile(path.join(relayRoot, "shutdown"), token);
+      } catch {}
+      for (const stream of streams.values()) stream.socket.destroy();
+      streams.clear();
+    },
+  };
+}
+
+function relayWorkloadSource() {
+  return String.raw`import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import fs from "node:fs";
+import net from "node:net";
+import { join } from "node:path";
+
+const required = (name) => {
+  const value = process.env[name];
+  if (!value) throw new Error(name + " is required");
+  return value;
+};
+const relayRoot = required("NEMOCLAW_NEMOCUA_RELAY_ROOT");
+const relayToken = required("NEMOCLAW_NEMOCUA_RELAY_TOKEN");
+const bridgeToken = required("NEMOCLAW_NEMOCUA_BRIDGE_TOKEN");
+const python = required("NEMOCLAW_NEMOCUA_PYTHON");
+const harness = required("NEMOCLAW_NEMOCUA_HARNESS");
+const resultPath = required("NEMOCLAW_NEMOCUA_RESULT");
+const mode = required("NEMOCLAW_NEMOCUA_MODE");
+if (!fs.statSync(relayRoot, { throwIfNoEntry: false })?.isDirectory()) {
+  throw new Error("NemoCUA shared relay directory is unavailable");
+}
+const writeRelayFile = (file, content) => {
+  const temporary = file + "." + process.pid + "." + randomBytes(4).toString("hex") + ".tmp";
+  fs.writeFileSync(temporary, content);
+  fs.renameSync(temporary, file);
+};
+const streams = new Map();
+const server = net.createServer((socket) => {
+  const streamId = randomBytes(8).toString("hex");
+  const streamRoot = join(relayRoot, "stream-" + streamId);
+  fs.mkdirSync(streamRoot);
+  writeRelayFile(join(streamRoot, "open"), relayToken);
+  const state = { root: streamRoot, sequence: 0, socket };
+  streams.set(streamId, state);
+  socket.on("data", (chunk) => {
+    writeRelayFile(
+      join(streamRoot, "sandbox-" + String(state.sequence++).padStart(10, "0") + ".bin"),
+      chunk,
+    );
+  });
+  socket.once("error", () => {});
+  socket.once("close", () => {
+    streams.delete(streamId);
+    try { writeRelayFile(join(streamRoot, "sandbox-close"), Buffer.alloc(0)); } catch {}
+  });
+});
+await new Promise((resolve, reject) => {
+  server.once("error", reject);
+  server.listen(0, "127.0.0.1", resolve);
+});
+const port = server.address().port;
+const poll = setInterval(() => {
+  const shutdown = join(relayRoot, "shutdown");
+  if (fs.statSync(shutdown, { throwIfNoEntry: false })?.isFile() &&
+      fs.readFileSync(shutdown, "utf8") === relayToken) {
+    for (const stream of streams.values()) stream.socket.destroy();
+    streams.clear();
+    return;
+  }
+  for (const stream of streams.values()) {
+    for (const entry of fs.readdirSync(stream.root).filter((name) => /^host-[0-9]{10}[.]bin$/u.test(name)).sort()) {
+      const chunk = join(stream.root, entry);
+      stream.socket.write(fs.readFileSync(chunk));
+      fs.unlinkSync(chunk);
+    }
+    if (fs.existsSync(join(stream.root, "host-close"))) stream.socket.end();
+  }
+}, 10);
+const child = spawn(python, [
+  harness,
+  mode,
+  "--bridge-url", "http://127.0.0.1:" + port,
+  "--bridge-token", bridgeToken,
+  "--result-path", resultPath,
+], { env: process.env, stdio: "inherit", windowsHide: true });
+const exitCode = await new Promise((resolve, reject) => {
+  child.once("error", reject);
+  child.once("close", (code) => resolve(code ?? 1));
+});
+clearInterval(poll);
+for (const stream of streams.values()) stream.socket.destroy();
+await new Promise((resolve) => server.close(() => resolve()));
+process.exitCode = exitCode;
+`;
 }
 
 function readNativeConfiguration() {
@@ -376,6 +526,7 @@ async function main() {
   );
   const binRoot = requiredDirectory(path.join(installRoot, "bin"), "NemoClaw bin directory");
   const launcher = requiredFile(path.join(binRoot, "NemoClaw.exe"), "NemoClaw launcher");
+  const installedNode = requiredFile(path.join(binRoot, "node.exe"), "Node.js runtime");
   const openshell = requiredFile(path.join(binRoot, "openshell.exe"), "OpenShell CLI");
   const gatewayExecutable = requiredFile(
     path.join(binRoot, "openshell-gateway.exe"),
@@ -422,6 +573,8 @@ async function main() {
   fs.mkdirSync(evidenceRoot, { recursive: true });
   const pythonRoot = path.join(runtimeRoot, "python");
   const nemocuaRoot = path.join(runtimeRoot, "nemocua");
+  const node = path.join(runtimeRoot, "node.exe");
+  fs.copyFileSync(installedNode, node);
   fs.cpSync(installedPythonRoot, pythonRoot, { recursive: true });
   fs.cpSync(installedNemoCuaRoot, nemocuaRoot, { recursive: true });
   const python = requiredFile(path.join(pythonRoot, "python.exe"), "staged Python runtime");
@@ -460,6 +613,11 @@ async function main() {
     credential,
     bridgeToken,
   );
+  const relayToken = randomBytes(32).toString("base64url");
+  const relayRoot = path.join(shareRoot, "browser-relay");
+  const browserRelay = await startFileTcpTargetRelay(relayRoot, relayToken, bridge.port);
+  const relayWorkload = path.join(shareRoot, "nemocua-native-relay.mjs");
+  fs.writeFileSync(relayWorkload, relayWorkloadSource(), "utf8");
   const openShellPort = await freePort();
   const sandboxName = `nc-nc-${runId}`;
   const gatewayName = `nemoclaw-nemocua-${runId}`;
@@ -514,6 +672,13 @@ async function main() {
     const sandboxEnvironment = {
       HOME: shareRoot,
       LOCALAPPDATA: shareRoot,
+      NEMOCLAW_NEMOCUA_BRIDGE_TOKEN: bridgeToken,
+      NEMOCLAW_NEMOCUA_HARNESS: harness,
+      NEMOCLAW_NEMOCUA_MODE: qualification ? "--qualification" : "--configured",
+      NEMOCLAW_NEMOCUA_PYTHON: python,
+      NEMOCLAW_NEMOCUA_RELAY_ROOT: relayRoot,
+      NEMOCLAW_NEMOCUA_RELAY_TOKEN: relayToken,
+      NEMOCLAW_NEMOCUA_RESULT: resultPath,
       NUMBER_OF_PROCESSORS: process.env.NUMBER_OF_PROCESSORS ?? "1",
       OS: "Windows_NT",
       PATH: `${path.join(systemRoot, "System32")};${systemRoot}`,
@@ -539,19 +704,8 @@ async function main() {
       "--driver-config-json",
       JSON.stringify({
         mxc: {
-          command: [
-            python,
-            harness,
-            qualification ? "--qualification" : "--configured",
-            "--bridge-url",
-            `http://127.0.0.1:${bridge.port}`,
-            "--bridge-token",
-            bridgeToken,
-            "--result-path",
-            resultPath,
-          ],
+          command: [node, relayWorkload],
           cwd: shareRoot,
-          host_loopback: true,
         },
       }),
       "--no-tty",
@@ -628,6 +782,7 @@ async function main() {
       browser: "Microsoft Edge",
       browserVersion: bridge.browserVersion,
       interface: "NemoCUA visible browser task",
+      browserBridgeTransport: "authenticated-shared-file-tcp-relay",
       runtimeEntrypointSha256: createHash("sha256")
         .update(fs.readFileSync(path.join(installedNemoCuaRoot, "run_with_harness.py")))
         .digest("hex"),
@@ -650,6 +805,7 @@ async function main() {
       `${JSON.stringify(receipt, null, 2)}\n`,
       "utf8",
     );
+    await browserRelay.close();
     await removeDirectory(shareRoot);
     passed = true;
     console.log("NEMOCUA> PASS three real model-driven browser actions inside native MXC");
@@ -671,6 +827,7 @@ async function main() {
       fs.closeSync(gatewayLog);
       fs.closeSync(gatewayError);
     }
+    await browserRelay.close();
     await new Promise((resolve) => bridge.server.close(() => resolve()));
     if (bridge.browser.isConnected()) await bridge.browser.close();
     if (!passed) {

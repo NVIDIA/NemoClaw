@@ -6,6 +6,7 @@
 # cryptography 46.0.7 paths. Every included dependency remains version-pinned.
 
 certifi==2026.5.20
+concurrent-log-handler==0.9.29
 croniter==6.0.0
 fastapi==0.133.1
 fire==0.7.1
