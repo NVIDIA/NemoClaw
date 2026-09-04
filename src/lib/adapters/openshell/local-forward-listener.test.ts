@@ -4,6 +4,7 @@
 import { createServer } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { isLocalForwardReachable } from "../../actions/sandbox/forward-health";
 import { probeLocalForwardListener } from "./local-forward-listener";
 
 const servers: ReturnType<typeof createServer>[] = [];
@@ -20,7 +21,7 @@ afterEach(async () => {
 });
 
 describe("local forward listener probe", () => {
-  it("detects a loopback listener without sending application data (#10926)", async () => {
+  it("detects a loopback listener within the caller's timeout budget (#10926)", async () => {
     let receivedBytes = 0;
     const server = createServer((socket) => {
       socket.on("data", (chunk) => {
@@ -32,6 +33,7 @@ describe("local forward listener probe", () => {
     const address = server.address() as import("node:net").AddressInfo;
 
     expect(probeLocalForwardListener(address.port)).toBe(true);
+    expect(isLocalForwardReachable(address.port, 0)).toBe(false);
     await new Promise((resolve) => setImmediate(resolve));
     expect(receivedBytes).toBe(0);
   });
