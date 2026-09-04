@@ -108,7 +108,6 @@ export type ValidatedCandidate = {
 type PullRequestSnapshot = {
   state?: unknown;
   draft?: unknown;
-  maintainer_can_modify?: unknown;
   user?: { login?: unknown };
   head?: { ref?: unknown; sha?: unknown; repo?: { full_name?: unknown } | null };
   base?: { ref?: unknown; sha?: unknown; repo?: { full_name?: unknown; node_id?: unknown } };
@@ -414,7 +413,6 @@ export function bindRepairSelection(input: {
     input.repository !== REPAIR_REPOSITORY ||
     pull.state !== "open" ||
     pull.draft !== false ||
-    pull.maintainer_can_modify !== true ||
     pull.base?.ref !== "main" ||
     pull.base?.repo?.full_name !== input.repository ||
     pull.head?.repo?.full_name !== input.repository ||
