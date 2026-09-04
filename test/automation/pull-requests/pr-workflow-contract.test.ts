@@ -477,6 +477,9 @@ describe("pull request and main workflow contracts", () => {
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
   const codeScanningWorkflow = readYaml<CiWorkflow>(".github/workflows/code-scanning.yaml");
   const advisorWorkflow = readYaml<AdvisorWorkflow>(".github/workflows/pr-review-advisor.yaml");
+  const generatedHeadWorkflow = readYaml<AdvisorWorkflow>(
+    ".github/workflows/pr-review-advisor-generated-head.yaml",
+  );
   const sdkPackageWorkflow = readYaml<SdkPackageWorkflow>(
     ".github/workflows/openshell-sdk-package-pr.yaml",
   );
@@ -514,7 +517,8 @@ describe("pull request and main workflow contracts", () => {
     const resolve = advisorWorkflow.jobs["repair-resolve"];
     const validate = advisorWorkflow.jobs["repair-validate"];
     const repairPublish = advisorWorkflow.jobs["repair-publish"];
-    const repairVerify = advisorWorkflow.jobs["repair-verify"];
+    const repairVerify = generatedHeadWorkflow.jobs.validate;
+    const repairRequest = generatedHeadWorkflow.jobs.locate;
     const audit = advisorWorkflow.jobs["repair-audit"];
     expect(advisorWorkflow.permissions).toEqual({});
     expect(select.if).toContain("github.event_name == 'workflow_dispatch'");
@@ -535,6 +539,8 @@ describe("pull request and main workflow contracts", () => {
       contents: "write",
       "pull-requests": "read",
     });
+    expect(JSON.stringify(advisorWorkflow)).not.toContain('"actions":"write"');
+    expect(repairRequest.permissions).toEqual({ actions: "read", contents: "read" });
     expect(repairVerify.permissions).toEqual({
       actions: "write",
       checks: "write",
@@ -551,8 +557,9 @@ describe("pull request and main workflow contracts", () => {
     const validateText = JSON.stringify(validate);
     const repairPublishText = JSON.stringify(repairPublish);
     const repairVerifyText = JSON.stringify(repairVerify);
+    const repairRequestText = JSON.stringify(repairRequest);
     const selectText = JSON.stringify(select);
-    expect(JSON.stringify([resolve.env, validate.env, repairPublish.env, repairVerify.env])).not.toContain(
+    expect(JSON.stringify([resolve.env, validate.env, repairPublish.env])).not.toContain(
       "runner.temp",
     );
     expect(advisorWorkflow.concurrency).toEqual(
@@ -580,8 +587,13 @@ describe("pull request and main workflow contracts", () => {
     expect(repairPublishText).toContain("needs.repair-validate.outputs.validated-artifact-id");
     expect(repairPublishText).toContain("advisor-repair");
     expect(repairPublishText).toContain("assertRepairArtifactDirectory");
+    expect(repairPublishText).toContain("advisor-repair-generated-head-request");
     expect(repairPublishText).not.toMatch(/secrets[.]|OPENAI_API_KEY|PR_REVIEW_ADVISOR_API_KEY/u);
-    expect(repairVerifyText).toContain("needs.repair-publish.outputs.published-sha");
+    expect(repairRequestText).toContain("github.event.workflow_run.id");
+    expect(repairRequestText).toContain("pr-review-advisor.yaml");
+    expect(repairRequestText).toContain("source-artifact-pages.json");
+    expect(repairVerifyText).toContain("github.event.workflow_run.head_sha");
+    expect(repairVerifyText).toContain("needs.locate.outputs.artifact-id");
     expect(repairVerifyText).toContain("advisor-repair-checks");
     expect(repairVerifyText).not.toContain("check-runs");
     expect(repairVerifyText).not.toMatch(/secrets[.]|contents":"write/u);

@@ -881,6 +881,7 @@ jobs:
       - name: Set runner-local publication paths
         run: |
           echo "PUBLISH_INPUT_DIR=$RUNNER_TEMP/publish-inputs" >> "$GITHUB_ENV"
+          echo "PUBLISH_REPORT_DIR=$RUNNER_TEMP/generated-head-request" >> "$GITHUB_ENV"
           echo "PUBLISH_WORK_DIR=$RUNNER_TEMP/published-candidate" >> "$GITHUB_ENV"
 
       - name: Checkout trusted publisher code
@@ -977,81 +978,31 @@ jobs:
           WORK_DIRECTORY: ${{ env.PUBLISH_WORK_DIR }}
         run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-merge-conflict-fixer/publish.mts" advisor-repair
 
-  repair-verify:
-    name: Observe the real exact-head validation workflows
-    needs: [repair-select, repair-publish]
-    if: ${{ needs.repair-publish.result == 'success' && needs.repair-publish.outputs.published-sha != '' }}
-    permissions:
-      actions: write
-      checks: write
-      contents: read
-      pull-requests: read
-    runs-on: ubuntu-24.04
-    timeout-minutes: 70
-    env:
-      ADVISOR_DIR: ${{ github.workspace }}/advisor
-    steps:
-      - name: Set runner-local verification paths
-        run: |
-          echo "VERIFY_CONTEXT_DIR=$RUNNER_TEMP/verify-context" >> "$GITHUB_ENV"
-          echo "VERIFICATION_OUTPUT_DIR=$RUNNER_TEMP/generated-head" >> "$GITHUB_ENV"
-
-      - name: Checkout trusted verification code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: NVIDIA/NemoClaw
-          ref: ${{ github.workflow_sha }}
-          path: advisor
-          persist-credentials: false
-          lfs: false
-          submodules: false
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: advisor/package-lock.json
-
-      - name: Install trusted dependencies
-        run: npm --prefix "$ADVISOR_DIR" ci --ignore-scripts --no-audit --no-fund
-
-      - name: Download the exact same-run selection
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          artifact-ids: ${{ needs.repair-select.outputs.context-artifact-id }}
-          path: ${{ env.VERIFY_CONTEXT_DIR }}
-
-      - name: Verify the exact context artifact
-        run: |
-          node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
-          import { assertRepairArtifactDirectory } from "./advisor/tools/pr-review-advisor/repair-contract.mts";
-          assertRepairArtifactDirectory(process.env.VERIFY_CONTEXT_DIR, {
-            "model-context.json": 10 * 1024 * 1024,
-            "selection.json": 1024 * 1024,
-          });
-          NODE
-
-      - name: Wait for real workflows on the exact generated head
+      - name: Prepare the trusted generated-head request
         env:
-          GENERATED_HEAD_SHA: ${{ needs.repair-publish.outputs.published-sha }}
-          GITHUB_TOKEN: ${{ github.token }}
-          SELECTION_FILE: ${{ env.VERIFY_CONTEXT_DIR }}/selection.json
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-merge-conflict-fixer/publish.mts" advisor-repair-checks
+          GENERATED_HEAD_SHA: ${{ steps.publish.outputs.published-sha }}
+          SELECTION_FILE: ${{ env.PUBLISH_INPUT_DIR }}/context/selection.json
+          SOURCE_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          mkdir -m 700 "$PUBLISH_REPORT_DIR"
+          cp "$SELECTION_FILE" "$PUBLISH_REPORT_DIR/selection.json"
+          jq -n --arg head "$GENERATED_HEAD_SHA" --arg run "$GITHUB_RUN_ID" \
+            --arg attempt "$GITHUB_RUN_ATTEMPT" --arg workflow "$SOURCE_WORKFLOW_SHA" \
+            '{version:1, generatedHeadSha:$head, sourceRunId:($run|tonumber), sourceRunAttempt:($attempt|tonumber), sourceWorkflowSha:$workflow}' \
+            > "$PUBLISH_REPORT_DIR/generated-head.json"
 
-      - name: Upload bounded generated-head evidence
-        if: always()
+      - name: Upload the generated-head validation request
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: advisor-repair-generated-head-${{ github.run_id }}
-          path: ${{ env.VERIFICATION_OUTPUT_DIR }}/generated-head.json
+          name: advisor-repair-generated-head-request-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.PUBLISH_REPORT_DIR }}/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
 
   repair-audit:
     name: Preserve bounded repair audit receipt
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.repair_finding_ids_json != '[]' }}
-    needs: [repair-select, repair-resolve, repair-validate, repair-publish, repair-verify]
+    needs: [repair-select, repair-resolve, repair-validate, repair-publish]
     permissions: {}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1063,14 +1014,13 @@ jobs:
           VALIDATE_RESULT: ${{ needs.repair-validate.result }}
           PUBLISH_REQUESTED: ${{ inputs.repair_publish }}
           PUBLISH_RESULT: ${{ needs.repair-publish.result }}
-          VERIFY_RESULT: ${{ needs.repair-verify.result }}
         run: |
           mkdir -m 700 "$RUNNER_TEMP/advisor-repair-audit"
           jq -n \
             --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
             --arg select "$SELECT_RESULT" --arg resolve "$RESOLVE_RESULT" --arg validate "$VALIDATE_RESULT" \
-            --arg publish "$PUBLISH_RESULT" --arg verify "$VERIFY_RESULT" --arg publishRequested "$PUBLISH_REQUESTED" \
-            '{version:1, phase:(if $publishRequested == "true" then 1 else 0 end), runId:$run, runAttempt:$attempt, jobs:{select:$select, resolve:$resolve, validate:$validate, publish:$publish, verify:$verify}}' \
+            --arg publish "$PUBLISH_RESULT" --arg publishRequested "$PUBLISH_REQUESTED" \
+            '{version:1, phase:(if $publishRequested == "true" then 1 else 0 end), runId:$run, runAttempt:$attempt, jobs:{select:$select, resolve:$resolve, validate:$validate, publish:$publish}}' \
             > "$RUNNER_TEMP/advisor-repair-audit/attempt.json"
 
       - name: Upload audit receipt

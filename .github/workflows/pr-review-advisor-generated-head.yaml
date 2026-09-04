@@ -1,0 +1,161 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Automation / PR Review Advisor Generated Head
+
+on:
+  workflow_run:
+    workflows: [Automation / PR Review Advisor]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: advisor-repair-generated-head-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  locate:
+    name: Locate a trusted generated-head request
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.head_branch == 'main'
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      artifact-id: ${{ steps.locate.outputs.artifact-id }}
+    steps:
+      - name: Checkout the exact trusted Advisor revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - id: locate
+        name: Validate the source run and locate its exact request artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" > "$RUNNER_TEMP/source-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pr-review-advisor.yaml" > "$RUNNER_TEMP/source-workflow.json"
+          jq -e --arg repo "$GITHUB_REPOSITORY" --arg sha "$SOURCE_WORKFLOW_SHA" \
+            --argjson run "$SOURCE_RUN_ID" --argjson attempt "$SOURCE_RUN_ATTEMPT" \
+            --slurpfile workflow "$RUNNER_TEMP/source-workflow.json" '
+              .id == $run and .run_attempt == $attempt and .repository.full_name == $repo and
+              .workflow_id == $workflow[0].id and .name == "Automation / PR Review Advisor" and
+              .path == ".github/workflows/pr-review-advisor.yaml" and .event == "workflow_dispatch" and
+              .status == "completed" and .conclusion == "success" and .head_branch == "main" and .head_sha == $sha
+            ' "$RUNNER_TEMP/source-run.json" >/dev/null
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
+            --slurp > "$RUNNER_TEMP/source-artifact-pages.json"
+          name="advisor-repair-generated-head-request-$SOURCE_RUN_ID-$SOURCE_RUN_ATTEMPT"
+          jq -c '[.[].artifacts[] | select(.name == $name)]' --arg name "$name" \
+            "$RUNNER_TEMP/source-artifact-pages.json" > "$RUNNER_TEMP/request-artifacts.json"
+          count="$(jq length "$RUNNER_TEMP/request-artifacts.json")"
+          [[ "$count" == 0 ]] && exit 0
+          [[ "$count" == 1 ]]
+          jq -e --argjson run "$SOURCE_RUN_ID" '.[0].expired == false and .[0].workflow_run.id == $run' \
+            "$RUNNER_TEMP/request-artifacts.json" >/dev/null
+          echo "artifact-id=$(jq -r '.[0].id' "$RUNNER_TEMP/request-artifacts.json")" >> "$GITHUB_OUTPUT"
+
+  validate:
+    name: Dispatch and report exact generated-head checks
+    needs: locate
+    if: ${{ needs.locate.outputs.artifact-id != '' }}
+    permissions:
+      actions: write
+      checks: write
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      ADVISOR_DIR: ${{ github.workspace }}/advisor
+    steps:
+      - name: Set runner-local validation paths
+        run: |
+          echo "REQUEST_DIR=$RUNNER_TEMP/generated-head-request" >> "$GITHUB_ENV"
+          echo "VERIFICATION_OUTPUT_DIR=$RUNNER_TEMP/generated-head" >> "$GITHUB_ENV"
+
+      - name: Checkout trusted validation code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.event.workflow_run.head_sha }}
+          path: advisor
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: advisor/package-lock.json
+
+      - name: Install trusted dependencies
+        run: npm --prefix "$ADVISOR_DIR" ci --ignore-scripts --no-audit --no-fund
+
+      - name: Download the exact source-run request
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.locate.outputs.artifact-id }}
+          github-token: ${{ github.token }}
+          repository: NVIDIA/NemoClaw
+          run-id: ${{ github.event.workflow_run.id }}
+          path: ${{ env.REQUEST_DIR }}
+
+      - id: request
+        name: Verify the content-addressed generated-head request
+        env:
+          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+          import { assertRepairArtifactDirectory, parseSelection, readJson } from "./advisor/tools/pr-review-advisor/repair-contract.mts";
+          const directory = process.env.REQUEST_DIR;
+          assertRepairArtifactDirectory(directory, { "generated-head.json": 1024 * 1024, "selection.json": 1024 * 1024 });
+          const request = readJson(path.join(directory, "generated-head.json"));
+          const selection = parseSelection(readJson(path.join(directory, "selection.json")));
+          const run = Number(process.env.SOURCE_RUN_ID);
+          const attempt = Number(process.env.SOURCE_RUN_ATTEMPT);
+          const workflowSha = process.env.SOURCE_WORKFLOW_SHA;
+          if (request.version !== 1 || request.sourceRunId !== run || request.sourceRunAttempt !== attempt ||
+              request.sourceWorkflowSha !== workflowSha || selection.workflowSha !== workflowSha ||
+              typeof request.generatedHeadSha !== "string" || !/^[0-9a-f]{40}$/u.test(request.generatedHeadSha)) {
+            throw new Error("generated-head request identity is invalid");
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `head=${request.generatedHeadSha}\n`);
+          NODE
+
+      - name: Run and observe real exact-SHA validation workflows
+        env:
+          GENERATED_HEAD_SHA: ${{ steps.request.outputs.head }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SELECTION_FILE: ${{ env.REQUEST_DIR }}/selection.json
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-merge-conflict-fixer/publish.mts" advisor-repair-checks
+
+      - name: Upload bounded generated-head evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: advisor-repair-generated-head-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: ${{ env.VERIFICATION_OUTPUT_DIR }}/generated-head.json
+          if-no-files-found: error
+          retention-days: 14
