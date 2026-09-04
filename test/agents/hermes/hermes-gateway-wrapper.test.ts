@@ -177,11 +177,23 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     });
   });
 
-  it("preserves package-manager inputs for a same-identity gateway", () => {
+  it("uses only managed package-manager and Python startup values for a same-identity gateway exec", () => {
     const run = runWrapper(["gateway", "run"], {
       UV_CONFIG_FILE: "/sandbox/uv.toml",
+      UV_INDEX_URL: "file:///sandbox/wheels",
+      UV_NO_CONFIG: "0",
       PIP_CONFIG_FILE: "/sandbox/pip.conf",
+      PIP_INDEX_URL: "file:///sandbox/wheels",
+      PIP_DISABLE_PIP_VERSION_CHECK: "0",
       PYTHONPATH: "/sandbox/python",
+      PYTHONHOME: "/sandbox/python-home",
+      PYTHONSAFEPATH: "0",
+      PYTHONNOUSERSITE: "0",
+      PYTHONUTF8: "0",
+      LD_PRELOAD: "/sandbox/hostile.so",
+      BASH_ENV: "/sandbox/bash-env",
+      VIRTUAL_ENV: "/sandbox/venv",
+      PATH: "/sandbox/bin",
     });
 
     expect(run.status, run.stderr).toBe(0);
@@ -192,9 +204,27 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       "/sandbox/.hermes/lazy-packages",
     );
     expect(run.realEnv.HOME).toBe("/sandbox");
-    expect(run.realEnv.UV_CONFIG_FILE).toBe("/sandbox/uv.toml");
-    expect(run.realEnv.PIP_CONFIG_FILE).toBe("/sandbox/pip.conf");
-    expect(run.realEnv.PYTHONPATH).toBe("/sandbox/python");
+    const packageEnvironment = Object.fromEntries(
+      Object.entries(run.realEnv).filter(
+        ([name]) =>
+          name.startsWith("UV_") ||
+          name.startsWith("PIP_") ||
+          name.startsWith("PYTHON") ||
+          name.startsWith("LD_") ||
+          ["BASH_ENV", "VIRTUAL_ENV", "PATH"].includes(name),
+      ),
+    );
+    expect(packageEnvironment).toEqual({
+      UV_NO_CONFIG: "1",
+      UV_NO_CACHE: "1",
+      UV_CACHE_DIR: "/sandbox/.hermes/lazy-packages/.uv-cache",
+      PIP_CONFIG_FILE: "/dev/null",
+      PIP_DISABLE_PIP_VERSION_CHECK: "1",
+      PYTHONSAFEPATH: "1",
+      PYTHONNOUSERSITE: "1",
+      PYTHONUTF8: "1",
+      PATH: "/usr/local/bin:/opt/hermes/.venv/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    });
   });
 
   it("rejects an arbitrary gateway lazy target without exposing its value", () => {
