@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { GATEWAY_STOP_SCRIPT } from "../../../src/lib/tunnel/gateway-stop-script.ts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -31,16 +32,16 @@ import {
 } from "../fixtures/onboard-performance.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { pollUntil } from "../fixtures/polling.ts";
+import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import {
   assertSecurityPosture,
   securityPostureEnabled,
   securityPostureModeEnv,
 } from "../fixtures/security-posture.ts";
 import type { ShellProbeOutputEvent, ShellProbeResult } from "../fixtures/shell-probe.ts";
-import {
-  buildOpenClawFirstTurnLatencyEvidence,
-  extractOpenClawAgentPayloadText,
-} from "./agent-turn-latency-helpers.ts";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import { buildOpenClawFirstTurnLatencyEvidence } from "./agent-turn-latency-helpers.ts";
 import {
   FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
   fullE2eInferenceProbeEvidence,
@@ -55,7 +56,8 @@ const FULL_E2E_TARGET_ID = process.env.E2E_TARGET_ID ?? "full-e2e";
 const SETUP_MODE = process.env.NEMOCLAW_E2E_SETUP_MODE ?? "source-install";
 const USE_PREINSTALLED_LAUNCHABLE = SETUP_MODE === "preinstalled-launchable";
 const PORTABLE_PROFILE = process.env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable";
-const LIVE_TIMEOUT_MS = 50 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(50 * 60_000);
+const INSTALL_TIMEOUT_MS = execTimeout(25 * 60_000);
 const FIRST_TURN_TIMEOUT_MS = 240_000;
 const MAX_SILENCE_SECS = 60;
 const EXPECTED_FIRST_REPLY = "NEMOCLAW_E2E_READY_6002";
@@ -293,10 +295,9 @@ async function assertColdOnboardPerformance(input: {
     performanceEvaluation.rootStartToFirstTurnCompletionMs / 1_000,
   );
   const turnText = resultText(turn);
-  const assistantReply = extractOpenClawAgentPayloadText(turnText).trim();
+  const assistantReply = parseOpenClawAgentText(turnText).trim();
   const firstTurnLatency = buildOpenClawFirstTurnLatencyEvidence(turnText, firstTurnCommandMs);
-  const compactAssistantReply = assistantReply.replace(/\s+/gu, "");
-  const firstTurnSentinelMatched = compactAssistantReply.includes(EXPECTED_FIRST_REPLY);
+  const firstTurnSentinelMatched = containsAnswer(assistantReply, EXPECTED_FIRST_REPLY);
   const responseChars = assistantReply.length;
 
   await input.artifacts.writeJson("onboard-progress-budget.json", {
@@ -427,15 +428,12 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
     ],
   });
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "phase-0-docker-info",
-    env: env(),
-    timeoutMs: 30_000,
+  await ensureConfiguredRuntimeProviderAvailable({
+    artifactName: "phase-0-runtime-provider-info",
+    host,
+    scenarioLabel: FULL_E2E_TARGET_ID,
+    skip,
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
-    skip(`Docker is required: ${resultText(docker)}`);
-  }
 
   cleanupRegistry.trackGateway(host, "nemoclaw", {
     artifactName: "cleanup-openshell-gateway-destroy",
@@ -477,7 +475,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
           NEMOCLAW_PROVIDER: "build",
         }),
         redactionValues,
-        timeoutMs: 25 * 60_000,
+        timeoutMs: INSTALL_TIMEOUT_MS,
       })
     : await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
         artifactName: "phase-1-install-sh",
@@ -491,7 +489,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
           ? { onOutput: (event: ShellProbeOutputEvent) => coldOnboard.outputEvents.push(event) }
           : {}),
         redactionValues,
-        timeoutMs: 25 * 60_000,
+        timeoutMs: INSTALL_TIMEOUT_MS,
       });
   const installCompletedAtMs = Date.now();
   expect(install.exitCode, resultText(install)).toBe(0);

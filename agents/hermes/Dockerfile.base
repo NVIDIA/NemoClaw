@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates=20250419 \
         curl=8.14.1-2+deb13u4 \
         git=1:2.47.3-0+deb13u1 \
-        libssl-dev=3.5.6-1~deb13u2 \
+        libssl-dev=3.5.7-1~deb13u2 \
         openssh-server=1:10.0p1-7+deb13u4 \
         xz-utils=5.8.1-1+deb13u1 \
         zlib1g-dev=1:1.3.dfsg+really1.3.1-1+b1 \
@@ -78,6 +78,7 @@ ARG HERMES_NPM_INTEGRITY=sha512-+oVKG3lXbk2kEP+J6BXZjtmSBSaFfczIdOWQ9CUSTdTqq2uy
 ARG HERMES_UV_EXTRAS="anthropic messaging web pty mcp acp"
 ARG NODE_VERSION=24.18.1
 ARG UV_VERSION=0.11.33
+ARG NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256=9e41bed797965990bf7edf214c782c18c04d086a15042415ae7085a507873b1c
 
 # build-essential: hermes-agent >= 0.16.0 ships npm dependencies that need a
 # node-gyp native build during `npm ci`; the runtime Dockerfile purges build
@@ -99,6 +100,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iptables=1.8.11-2 \
         nftables=1.1.3-1 \
         libcap2-bin=1:2.75-10+deb13u1+b1 \
+        libssl3t64=3.5.7-1~deb13u2 \
         util-linux=2.41-5 \
         procps=2:4.0.4-9 \
         e2fsprogs=1.47.2-3+b11 \
@@ -182,6 +184,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0858-1" \
     && test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1" \
     && test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2" \
+    && test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u2" \
     && test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1" \
     && test "$(jq --version)" = "jq-1.8.2" \
     && ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5' \
@@ -216,6 +219,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "vim-common=2:9.2.0858-1" \
         "vim-tiny=2:9.2.0858-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" \
+        "libssl3t64=3.5.7-1~deb13u2" \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
         "perl-base=5.44.0-1nemoclaw1" \
         "perl=5.44.0-1nemoclaw1" \
@@ -275,7 +279,7 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
 RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# npm 11.18.0 restores affected tar 7.5.19. Replace it from the exact
+# npm 11.18.0 restores affected tar 7.5.19. Replace it from the
 # registry- and SRI-verified 7.5.21 archive before any npm consumers run.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
@@ -440,20 +444,33 @@ RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
 # intentionally hostile security-test fixtures. Remove them in the extraction
 # RUN so their bytes never enter a published image layer.
 COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
+COPY agents/hermes/runtime-boundaries.patch /tmp/hermes-runtime-boundaries.patch
 COPY agents/hermes/whatsapp-proxy.patch /tmp/hermes-whatsapp-proxy.patch
 COPY scripts/checks/download-hermes-source-archive.sh /tmp/nemoclaw-download-hermes-source-archive.sh
+# hadolint ignore=DL4006
 RUN mkdir -p /opt/hermes \
     && bash /tmp/nemoclaw-download-hermes-source-archive.sh "${HERMES_VERSION}" /tmp/hermes.tar.gz \
     && printf '%s  /tmp/hermes.tar.gz\n' "${HERMES_TARBALL_SHA256}" > /tmp/hermes.tar.gz.sha256 \
     && sha256sum -c /tmp/hermes.tar.gz.sha256 \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && rm -rf /opt/hermes/tests \
+    && printf '%s  %s\n' "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /tmp/hermes-runtime-boundaries.patch | sha256sum -c - \
     && git -C /opt/hermes apply --check /tmp/hermes-security-dependencies.patch \
     && git -C /opt/hermes apply /tmp/hermes-security-dependencies.patch \
+    && git -C /opt/hermes apply --check /tmp/hermes-runtime-boundaries.patch \
+    && git -C /opt/hermes apply /tmp/hermes-runtime-boundaries.patch \
+    && grep -Fq 'def nemoclaw_managed_gateway_plugins_only()' /opt/hermes/hermes_constants.py \
+    && grep -Fq 'nemoclaw_protected_process_control' /opt/hermes/hermes_cli/env_loader.py \
+    && grep -Fq 'nemoclaw_sanitized_installer_env' /opt/hermes/tools/lazy_deps.py \
+    && grep -Fq 'Managed gateway: user and project plugins disabled' /opt/hermes/hermes_cli/plugins.py \
+    && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/plugins/memory/__init__.py \
+    && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/plugins/cron_providers/__init__.py \
+    && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/providers/__init__.py \
     && git -C /opt/hermes apply --check /tmp/hermes-whatsapp-proxy.patch \
     && git -C /opt/hermes apply /tmp/hermes-whatsapp-proxy.patch \
     && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256 \
-        /tmp/hermes-security-dependencies.patch /tmp/hermes-whatsapp-proxy.patch \
+        /tmp/hermes-security-dependencies.patch /tmp/hermes-runtime-boundaries.patch \
+        /tmp/hermes-whatsapp-proxy.patch \
         /tmp/nemoclaw-download-hermes-source-archive.sh
 
 # Cross-check the pinned release against two independent sources before
@@ -570,7 +587,7 @@ RUN printf '%s\n' \
 # lazy-installer contract. BuildKit verifies both reviewed PyPI artifacts before
 # any build command can consume them. Install only those hash-locked wheels into
 # a temporary durable target without network or dependency resolution, import
-# them against the exact base environment, and remove the probe before
+# them against the base environment, and remove the probe before
 # publishing the base image.
 COPY --chmod=0444 agents/hermes/hindsight-client-probe-requirements.txt /tmp/nemoclaw-hindsight-client-probe-requirements.txt
 ADD --chmod=0444 --checksum=sha256:9fdda176ab50f7cec8d7339c6608c148f0cd9ad7e65d9d76192f2db730bc330a https://files.pythonhosted.org/packages/24/4f/a1d0bc33ef933ecc52e76dc1514163594d25836a5d303c256a61bb61445d/hindsight_client-0.6.1-py3-none-any.whl /tmp/nemoclaw-hindsight-client-artifacts/hindsight_client-0.6.1-py3-none-any.whl

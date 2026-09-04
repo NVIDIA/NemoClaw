@@ -9,7 +9,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
-import { detectContainerRuntimeFromDockerInfo } from "../adapters/docker/runtime";
+import {
+  detectContainerRuntimeFromDockerInfo,
+  mergeIsolatedDockerClientEnv,
+  prepareDockerBuildEnvironment,
+  type PreparedDockerBuildEnvironment,
+  warnIfDockerBuildEnvironmentCleanupFailed,
+} from "../adapters/docker";
 import { createBearerAuthConfig } from "../adapters/http/auth-config";
 import { CONTAINER_REACHABILITY_IMAGE } from "../adapters/http/container-curl-probe";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
@@ -21,13 +27,23 @@ import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 import { retryUntil } from "../core/retry";
 import { sleepSeconds } from "../core/wait";
 import { containerCanReachHostLoopback, isWsl, type WslDetectionOptions } from "../platform";
-import { type CaptureResult, runCapture, runCaptureEx, shellQuote } from "../runner";
+import { type CaptureResult, run, runCapture, runCaptureEx, shellQuote } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
 
-import { resolveSharedLocalAdapterStateRoot } from "./local-adapter-lifecycle";
+import {
+  isLocalOllamaRouteOwner,
+  OLLAMA_HOST_DOCKER_INTERNAL,
+  OLLAMA_LOCALHOST,
+  readLocalAdapterJsonFile,
+  removeLocalAdapterFile,
+  resolveSharedLocalAdapterStateRoot,
+  type OllamaRouteHolder,
+  writeLocalAdapterJsonFile,
+} from "./local-adapter-lifecycle";
 import { detectNvidiaPlatform } from "./nim";
 import {
   anyRegistryModelFits,
+  DEFAULT_OLLAMA_MODEL_TAG,
   effectiveGpuMemoryMB,
   fittableOllamaModelTags,
   largestFittableOllamaModelTag,
@@ -101,10 +117,14 @@ function assertRegistryTag(tag: string): string {
 }
 
 export const SMALL_OLLAMA_MODEL = SMALLEST_OLLAMA_MODEL_TAG;
-export const DEFAULT_OLLAMA_MODEL = assertRegistryTag("nemotron-3-nano:30b");
+export const DEFAULT_OLLAMA_MODEL = assertRegistryTag(DEFAULT_OLLAMA_MODEL_TAG);
 export const QWEN3_6_OLLAMA_MODEL = assertRegistryTag("qwen3.6:35b");
 
-export type RunCaptureFn = (cmd: readonly string[], opts?: { ignoreError?: boolean }) => string;
+export type RunCaptureFn = (
+  cmd: readonly string[],
+  opts?: { ignoreError?: boolean; env?: NodeJS.ProcessEnv },
+) => string;
+type PrepareDockerEnvironmentFn = () => PreparedDockerBuildEnvironment;
 
 export {
   getInstalledOllamaVersion,
@@ -113,13 +133,16 @@ export {
   MIN_OLLAMA_VERSION,
 } from "./ollama-version";
 
-export type RunCaptureExFn = (cmd: string[]) => CaptureResult;
+export type RunCaptureExFn = (cmd: string[], opts?: { env?: NodeJS.ProcessEnv }) => CaptureResult;
 
 // Hosts that local-provider discovery may try when probing Ollama. The Windows
 // onboarding path separately checks host.docker.internal from Docker Desktop's
 // network context because the alias may not resolve from the WSL host.
-export const OLLAMA_LOCALHOST = "127.0.0.1";
-export const OLLAMA_HOST_DOCKER_INTERNAL = "host.docker.internal";
+export {
+  isLocalOllamaRouteOwner,
+  OLLAMA_HOST_DOCKER_INTERNAL,
+  OLLAMA_LOCALHOST,
+} from "./local-adapter-lifecycle";
 
 /** Build the credential-free Docker Desktop probe for Windows-host Ollama. */
 export function getWindowsHostOllamaDockerReachabilityArgs(): string[] {
@@ -137,6 +160,22 @@ export function getWindowsHostOllamaDockerReachabilityArgs(): string[] {
 }
 
 let _resolvedOllamaHost: string | null = null;
+const OLLAMA_HOST_RECEIPT_NAME = "ollama-host.json";
+
+type OllamaHostReceipt = {
+  readonly schemaVersion: 1;
+  readonly host: typeof OLLAMA_LOCALHOST | typeof OLLAMA_HOST_DOCKER_INTERNAL;
+};
+
+function isSupportedOllamaHost(
+  host: unknown,
+): host is typeof OLLAMA_LOCALHOST | typeof OLLAMA_HOST_DOCKER_INTERNAL {
+  return host === OLLAMA_LOCALHOST || host === OLLAMA_HOST_DOCKER_INTERNAL;
+}
+
+function ollamaHostReceiptPath(stateRoot: string): string {
+  return nodePath.join(stateRoot, OLLAMA_HOST_RECEIPT_NAME);
+}
 
 function ollamaCandidateHosts(wslDetection: WslDetectionOptions = {}): string[] {
   return isWsl(wslDetection) ? [OLLAMA_LOCALHOST, OLLAMA_HOST_DOCKER_INTERNAL] : [OLLAMA_LOCALHOST];
@@ -151,15 +190,21 @@ function ollamaCandidateHosts(wslDetection: WslDetectionOptions = {}): string[] 
 export function findReachableOllamaHost(
   runCaptureImpl?: RunCaptureFn,
   wslDetection: WslDetectionOptions = {},
+  stateRoot: string = resolveSharedLocalAdapterStateRoot(),
 ): string | null {
   if (_resolvedOllamaHost !== null) return _resolvedOllamaHost;
+  const persistedHost = loadPersistedOllamaHost(stateRoot);
   const capture = runCaptureImpl ?? runCapture;
-  for (const host of ollamaCandidateHosts(wslDetection)) {
+  const candidates = [
+    ...(persistedHost ? [persistedHost] : []),
+    ...ollamaCandidateHosts(wslDetection).filter((host) => host !== persistedHost),
+  ];
+  for (const host of candidates) {
     // Explicit timeouts: a blackholed host (e.g., firewalled host.docker.internal)
     // would otherwise stall the synchronous onboard probe for the OS connect
     // timeout (~75-130s on Linux). Matches the convention used in
     // getLocalProviderHealthStatus probes.
-    const result = capture(
+    const result = createOllamaApiCapture(capture, host)(
       [
         "curl",
         "-sf",
@@ -175,6 +220,7 @@ export function findReachableOllamaHost(
       _resolvedOllamaHost = host;
       return host;
     }
+    if (host === persistedHost) clearPersistedOllamaHost(stateRoot);
   }
   return null;
 }
@@ -183,6 +229,152 @@ export function findReachableOllamaHost(
 // Used by URL-builder helpers that need a string and don't want to re-probe.
 export function getResolvedOllamaHost(): string {
   return _resolvedOllamaHost ?? OLLAMA_LOCALHOST;
+}
+
+/**
+ * Persist the accepted host-global Ollama route for later CLI processes.
+ * `ollama-local` is one gateway provider backed by one host auth proxy, so all
+ * sandboxes using that provider share the same daemon target. Discovery probes
+ * this receipt first and changes it only after the recorded target is stale.
+ */
+export function persistResolvedOllamaHost(
+  host: string = getResolvedOllamaHost(),
+  stateRoot: string = resolveSharedLocalAdapterStateRoot(),
+): () => void {
+  if (!isSupportedOllamaHost(host)) {
+    throw new Error(`Refusing to persist unexpected Ollama host: ${host}`);
+  }
+  const receiptPath = ollamaHostReceiptPath(stateRoot);
+  const previousHost = loadPersistedOllamaHost(stateRoot);
+  writeLocalAdapterJsonFile(receiptPath, {
+    schemaVersion: 1,
+    host,
+  } satisfies OllamaHostReceipt);
+  return () => {
+    if (previousHost) {
+      writeLocalAdapterJsonFile(receiptPath, {
+        schemaVersion: 1,
+        host: previousHost,
+      } satisfies OllamaHostReceipt);
+    } else {
+      removeLocalAdapterFile(receiptPath);
+    }
+  };
+}
+
+/** Read only the two fixed local Ollama routes NemoClaw can establish. */
+export function loadPersistedOllamaHost(
+  stateRoot: string = resolveSharedLocalAdapterStateRoot(),
+): typeof OLLAMA_LOCALHOST | typeof OLLAMA_HOST_DOCKER_INTERNAL | null {
+  const receipt = readLocalAdapterJsonFile(ollamaHostReceiptPath(stateRoot));
+  return receipt?.schemaVersion === 1 && isSupportedOllamaHost(receipt.host) ? receipt.host : null;
+}
+
+export function clearPersistedOllamaHost(
+  stateRoot: string = resolveSharedLocalAdapterStateRoot(),
+): void {
+  removeLocalAdapterFile(ollamaHostReceiptPath(stateRoot));
+  _resolvedOllamaHost = null;
+}
+
+export function clearPersistedOllamaHostIfUnused(
+  routes: readonly OllamaRouteHolder[],
+  stateRoot: string = resolveSharedLocalAdapterStateRoot(),
+): boolean {
+  const selectedHost = loadPersistedOllamaHost(stateRoot);
+  if (routes.some((route) => isLocalOllamaRouteOwner(route, selectedHost))) return false;
+  clearPersistedOllamaHost(stateRoot);
+  return true;
+}
+
+/** Keep Windows-host Ollama requests in Docker Desktop's verified network context. */
+export function getOllamaApiCommand(
+  curlArgs: readonly string[],
+  host: string = getResolvedOllamaHost(),
+): string[] {
+  return host === OLLAMA_HOST_DOCKER_INTERNAL
+    ? ["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE, ...curlArgs]
+    : ["curl", ...curlArgs];
+}
+
+export type PreparedOllamaApiExecution = {
+  readonly command: string[];
+  readonly env?: NodeJS.ProcessEnv;
+  cleanup(): void;
+};
+
+/** Own command translation and Docker-client isolation for one Ollama API process. */
+export function prepareOllamaApiExecution(
+  command: readonly string[],
+  host: string = getResolvedOllamaHost(),
+  options: {
+    env?: NodeJS.ProcessEnv;
+    operation?: string;
+    prepareDockerEnvironment?: PrepareDockerEnvironmentFn;
+  } = {},
+): PreparedOllamaApiExecution {
+  const [executable, ...args] = command;
+  const translated = executable === "curl" ? getOllamaApiCommand(args, host) : [...command];
+  if (translated[0] !== "docker") {
+    return { command: translated, env: options.env, cleanup: () => {} };
+  }
+  const prepared = (options.prepareDockerEnvironment ?? prepareIsolatedDockerEnvironment)();
+  let cleaned = false;
+  return {
+    command: translated,
+    env: mergeIsolatedDockerClientEnv(options.env ?? {}, prepared),
+    cleanup: () => {
+      if (cleaned) return;
+      cleaned = true;
+      warnIfDockerBuildEnvironmentCleanupFailed(
+        prepared.cleanup(),
+        options.operation ?? "Windows-host Ollama API request",
+      );
+    },
+  };
+}
+
+export function createOllamaApiCapture(
+  runCaptureImpl?: RunCaptureFn,
+  host: string = getResolvedOllamaHost(),
+  prepareDockerEnvironment: PrepareDockerEnvironmentFn = prepareIsolatedDockerEnvironment,
+): RunCaptureFn {
+  const capture = runCaptureImpl ?? runCapture;
+  return (command, options) => {
+    const execution = prepareOllamaApiExecution(command, host, {
+      env: options?.env,
+      prepareDockerEnvironment,
+    });
+    try {
+      return capture(execution.command, {
+        ...options,
+        ...(execution.env === undefined ? {} : { env: execution.env }),
+      });
+    } finally {
+      execution.cleanup();
+    }
+  };
+}
+
+export function createOllamaApiCaptureEx(
+  runCaptureExImpl: RunCaptureExFn = runCaptureEx,
+  host: string = getResolvedOllamaHost(),
+  prepareDockerEnvironment: PrepareDockerEnvironmentFn = prepareIsolatedDockerEnvironment,
+): RunCaptureExFn {
+  return (command, options) => {
+    const execution = prepareOllamaApiExecution(command, host, {
+      env: options?.env,
+      prepareDockerEnvironment,
+    });
+    try {
+      return runCaptureExImpl(execution.command, {
+        ...options,
+        ...(execution.env === undefined ? {} : { env: execution.env }),
+      });
+    } finally {
+      execution.cleanup();
+    }
+  };
 }
 
 export function resetOllamaHostCache(): void {
@@ -275,6 +467,9 @@ export interface LocalProviderHealthProbeOptions {
   /** Configured runtime model that must be present in the provider inventory. */
   model?: string | null;
   runCurlProbeImpl?: (argv: string[], opts?: CurlProbeOptions) => CurlProbeResult;
+  /** Executes the translated Windows-host Docker probe. Injectable for transport tests. */
+  ollamaRunCaptureExImpl?: RunCaptureExFn;
+  findReachableOllamaHostImpl?: () => string | null;
   /**
    * Lets callers that perform their own Ollama auth-proxy check avoid the
    * legacy inline proxy subprobe. The inline subprobe is retained for status
@@ -310,6 +505,30 @@ function defaultLoadOllamaProxyToken(): string | null {
 
 function runLocalCurlProbe(argv: string[], opts: CurlProbeOptions = {}): CurlProbeResult {
   return runCurlProbe(argv, { ...opts, env: buildSubprocessEnv(), replaceEnv: true });
+}
+
+function runOllamaLocalCurlProbe(
+  argv: string[],
+  host: string,
+  runCaptureExImpl: RunCaptureExFn = runCaptureEx,
+): CurlProbeResult {
+  const command = ["curl", ...buildValidatedCurlCommandArgs(["-f", ...argv])];
+  const result = createOllamaApiCaptureEx(runCaptureExImpl, host)(command);
+  const ok = result.exitCode === 0;
+  const stderr = String(result.stderr ?? "");
+  return {
+    ok,
+    httpStatus: ok ? 200 : 0,
+    curlStatus: result.exitCode ?? 1,
+    body: result.stdout,
+    stderr,
+    message: ok
+      ? "HTTP 200"
+      : (stderr || result.stdout || `Docker Ollama probe exited ${String(result.exitCode)}`)
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 300),
+  };
 }
 
 export interface VllmModelsProbeOptions {
@@ -762,7 +981,9 @@ export function getLocalProviderHealthCheck(provider: string): string[] | null {
       endpoint,
     ];
   }
-  return endpoint ? ["curl", ...buildValidatedCurlCommandArgs(["-sf", endpoint])] : null;
+  if (!endpoint) return null;
+  const curlArgs = buildValidatedCurlCommandArgs(["-sf", endpoint]);
+  return provider === "ollama-local" ? getOllamaApiCommand(curlArgs) : ["curl", ...curlArgs];
 }
 
 /**
@@ -782,9 +1003,10 @@ export function isLocalProviderHostHealthy(
   const command = getLocalProviderHealthCheck(provider);
   if (!command) return false;
   const capture = runCaptureImpl ?? runCapture;
+  const hostCapture = provider === "ollama-local" ? createOllamaApiCapture(capture) : capture;
   return isLocalProviderProbeOutputHealthy(
     command.at(-1) ?? "",
-    capture(command, { ignoreError: true }),
+    hostCapture(command, { ignoreError: true }),
   );
 }
 
@@ -924,6 +1146,9 @@ export function probeLocalProviderHealth(
 ): LocalProviderHealthStatus | null {
   const providerLabel = getLocalProviderLabel(provider);
   if (!providerLabel) return null;
+  if (provider === "ollama-local") {
+    (options.findReachableOllamaHostImpl ?? findReachableOllamaHost)();
+  }
 
   let managedState: ManagedVllmProviderState = { kind: "absent" };
   if (provider === "vllm-local") {
@@ -969,7 +1194,14 @@ export function probeLocalProviderHealth(
       : getLocalProviderHealthEndpoint(provider);
   if (!endpoint) return null;
 
-  const runCurlProbeImpl = options.runCurlProbeImpl ?? runLocalCurlProbe;
+  const resolvedOllamaHost =
+    provider === "ollama-local" ? getResolvedOllamaHost() : OLLAMA_LOCALHOST;
+  const runCurlProbeImpl =
+    options.runCurlProbeImpl ??
+    (provider === "ollama-local" && resolvedOllamaHost === OLLAMA_HOST_DOCKER_INTERNAL
+      ? (argv: string[]) =>
+          runOllamaLocalCurlProbe(argv, resolvedOllamaHost, options.ollamaRunCaptureExImpl)
+      : runLocalCurlProbe);
   let result: CurlProbeResult;
   if (managedBinding) {
     result = probeVllmModels(managedValidationBaseUrl!, managedBinding.apiKey, {
@@ -1115,7 +1347,10 @@ export function getLocalProviderContainerReachabilityCheck(
       // requires a Bearer token on every endpoint (#3338) and the ephemeral
       // probe container doesn't carry one, but the goal here is connectivity
       // not authorisation.
-      const containerPort = getOllamaContainerPort();
+      const containerPort =
+        getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL
+          ? OLLAMA_PORT
+          : getOllamaContainerPort();
       if (responseMode === "body" && containerPort !== OLLAMA_PORT) return null;
       return [
         "docker",
@@ -1128,9 +1363,7 @@ export function getLocalProviderContainerReachabilityCheck(
         "5",
         "--max-time",
         "10",
-        ...(responseMode === "status"
-          ? ["-s", "-o", "/dev/null", "-w", "%{http_code}"]
-          : ["-sf"]),
+        ...(responseMode === "status" ? ["-s", "-o", "/dev/null", "-w", "%{http_code}"] : ["-sf"]),
         `http://host.openshell.internal:${containerPort}/api/tags`,
       ];
     }
@@ -1144,7 +1377,7 @@ export function probeOllamaEndpointInventory(
   host: string,
   runCaptureImpl?: RunCaptureFn,
 ): string[] | null {
-  const capture = runCaptureImpl ?? runCapture;
+  const capture = createOllamaApiCapture(runCaptureImpl, host);
   const body = capture(
     [
       "curl",
@@ -1170,28 +1403,61 @@ export function probeOllamaEndpointInventory(
 export function validateSandboxFacingOllamaModel(
   model: string,
   runCaptureImpl?: RunCaptureFn,
+  prepareDockerEnvironment: PrepareDockerEnvironmentFn = prepareIsolatedDockerEnvironment,
 ): ValidationResult {
   const command = getLocalProviderContainerReachabilityCheck("ollama-local", "body");
   if (!command) return { ok: true };
   const selected = String(model ?? "").trim();
   if (!selected) return { ok: true };
 
-  const capture = runCaptureImpl ?? runCapture;
-  const inventory = parseOllamaModelInventory(capture(command, { ignoreError: true }));
-  if (!inventory || ollamaInventoryContainsModel(inventory, selected)) return { ok: true };
+  const prepared = prepareDockerEnvironment();
+  try {
+    const capture = isolateDockerClientCapture(runCaptureImpl ?? runCapture, prepared);
+    const inventory = parseOllamaModelInventory(capture(command, { ignoreError: true }));
+    if (!inventory || ollamaInventoryContainsModel(inventory, selected)) return { ok: true };
 
-  const selectedDisplay = sanitizeModelNameForDisplay(selected) || "<invalid>";
-  return {
-    ok: false,
-    message:
-      `Selected Ollama model '${selectedDisplay}' is available on ` +
-      `http://${getResolvedOllamaHost()}:${OLLAMA_PORT}, but the daemon answering ` +
-      `http://host.openshell.internal:${getOllamaContainerPort()} reports it as unavailable ` +
-      `(reported models: ${describeModelInventory(inventory)}). NemoClaw read that endpoint ` +
-      `from a Docker probe container; two Ollama daemons are answering different endpoints. ` +
-      `On WSL 2 that is a WSL daemon and a Windows-host daemon. Select a model that the ` +
-      `probed endpoint reports, or stop one daemon so one daemon answers both endpoints.`,
+    const selectedDisplay = sanitizeModelNameForDisplay(selected) || "<invalid>";
+    return {
+      ok: false,
+      message:
+        `Selected Ollama model '${selectedDisplay}' is available on ` +
+        `http://${getResolvedOllamaHost()}:${OLLAMA_PORT}, but the daemon answering ` +
+        `http://host.openshell.internal:${getOllamaContainerPort()} reports it as unavailable ` +
+        `(reported models: ${describeModelInventory(inventory)}). NemoClaw read that endpoint ` +
+        `from a Docker probe container; two Ollama daemons are answering different endpoints. ` +
+        `On WSL 2 that is a WSL daemon and a Windows-host daemon. Select a model that the ` +
+        `probed endpoint reports, or stop one daemon so one daemon answers both endpoints.`,
+    };
+  } finally {
+    warnIfDockerBuildEnvironmentCleanupFailed(
+      prepared.cleanup(),
+      `sandbox-facing Ollama model probe for '${selected}'`,
+    );
+  }
+}
+
+function prepareIsolatedDockerEnvironment(): PreparedDockerBuildEnvironment {
+  return prepareDockerBuildEnvironment({ allowCredentialIsolation: true });
+}
+
+function isolateDockerClientCapture(
+  capture: RunCaptureFn,
+  prepared: PreparedDockerBuildEnvironment,
+): RunCaptureFn {
+  return (cmd, opts) => {
+    if (cmd[0] !== "docker") return capture(cmd, opts);
+    return capture(cmd, {
+      ...opts,
+      env: mergeIsolatedDockerClientEnv(opts?.env ?? {}, prepared),
+    });
   };
+}
+
+function logIsolatedProbeImageConfig(prepared: PreparedDockerBuildEnvironment): void {
+  if (!prepared.isolatedCredentialConfig) return;
+  console.log(
+    "  Docker Desktop credential helper is unavailable in this WSL session; using an isolated credential-free config for the local-inference probe image.",
+  );
 }
 
 const CONTAINER_CHECK_MAX_ATTEMPTS = 3;
@@ -1200,6 +1466,7 @@ export function validateLocalProvider(
   provider: string,
   runCaptureImpl?: RunCaptureFn,
   sleepFn?: (seconds: number) => void,
+  prepareDockerEnvironment: PrepareDockerEnvironmentFn = prepareIsolatedDockerEnvironment,
 ): ValidationResult {
   if (provider === "ollama-local") {
     const portValidation = validateOllamaPortConfiguration();
@@ -1221,7 +1488,8 @@ export function validateLocalProvider(
     return { ok: true };
   }
 
-  const output = capture(command, { ignoreError: true });
+  const hostCapture = provider === "ollama-local" ? createOllamaApiCapture(capture) : capture;
+  const output = hostCapture(command, { ignoreError: true });
   if (!isLocalProviderProbeOutputHealthy(command.at(-1) ?? "", output)) {
     switch (provider) {
       case "vllm-local":
@@ -1252,48 +1520,57 @@ export function validateLocalProvider(
   }
 
   const sleep = sleepFn ?? sleepSeconds;
-  const containerOutput = retryUntil(
-    () => capture(containerCommand, { ignoreError: true }),
-    {
-      accept: (output) =>
-        isLocalProviderProbeOutputHealthy(containerCommand.at(-1) ?? "", output),
-      retryDelaysMs: Array.from(
-        { length: CONTAINER_CHECK_MAX_ATTEMPTS - 1 },
-        () => CONTAINER_CHECK_RETRY_DELAY_SECS * 1_000,
-      ),
-      sleep: (milliseconds) => sleep(milliseconds / 1_000),
-    },
-  );
-  if (isLocalProviderProbeOutputHealthy(containerCommand.at(-1) ?? "", containerOutput)) {
-    return { ok: true };
-  }
+  const prepared = prepareDockerEnvironment();
+  try {
+    logIsolatedProbeImageConfig(prepared);
+    const dockerCapture = isolateDockerClientCapture(capture, prepared);
+    const containerOutput = retryUntil(
+      () => dockerCapture(containerCommand, { ignoreError: true }),
+      {
+        accept: (output) =>
+          isLocalProviderProbeOutputHealthy(containerCommand.at(-1) ?? "", output),
+        retryDelaysMs: Array.from(
+          { length: CONTAINER_CHECK_MAX_ATTEMPTS - 1 },
+          () => CONTAINER_CHECK_RETRY_DELAY_SECS * 1_000,
+        ),
+        sleep: (milliseconds) => sleep(milliseconds / 1_000),
+      },
+    );
+    if (isLocalProviderProbeOutputHealthy(containerCommand.at(-1) ?? "", containerOutput)) {
+      return { ok: true };
+    }
 
-  // All retries exhausted — collect diagnostics
-  const diagnostic = collectContainerDiagnostic(containerCommand, capture);
+    const diagnostic = collectContainerDiagnostic(containerCommand, dockerCapture);
 
-  if (diagnostic.probeImageUnavailable) {
-    return probeImageUnavailableResult(provider, diagnostic.text);
-  }
+    if (diagnostic.probeImageUnavailable) {
+      return probeImageUnavailableResult(provider, diagnostic.text);
+    }
 
-  switch (provider) {
-    case "vllm-local":
-      return {
-        ok: false,
-        message: `Local vLLM is responding on the host, but the Docker container reachability check failed for ${getContainerCheckUrl(provider)}. This may be a Docker networking issue — the sandbox uses a different network path and may still work.`,
-        diagnostic: diagnostic.text,
-      };
-    case "ollama-local":
-      return {
-        ok: false,
-        message: `Local Ollama is responding on ${getResolvedOllamaHost()}, but the Docker container reachability check failed for http://host.openshell.internal:${getOllamaContainerPort()}. This may be a Docker networking issue — the sandbox uses a different network path and may still work.`,
-        diagnostic: diagnostic.text,
-      };
-    default:
-      return {
-        ok: false,
-        message: "The selected local inference provider is unavailable from containers.",
-        diagnostic: diagnostic.text,
-      };
+    switch (provider) {
+      case "vllm-local":
+        return {
+          ok: false,
+          message: `Local vLLM is responding on the host, but the Docker container reachability check failed for ${getContainerCheckUrl(provider)}. This may be a Docker networking issue — the sandbox uses a different network path and may still work.`,
+          diagnostic: diagnostic.text,
+        };
+      case "ollama-local":
+        return {
+          ok: false,
+          message: `Local Ollama is responding on ${getResolvedOllamaHost()}, but the Docker container reachability check failed for http://host.openshell.internal:${getOllamaContainerPort()}. This may be a Docker networking issue — the sandbox uses a different network path and may still work.`,
+          diagnostic: diagnostic.text,
+        };
+      default:
+        return {
+          ok: false,
+          message: "The selected local inference provider is unavailable from containers.",
+          diagnostic: diagnostic.text,
+        };
+    }
+  } finally {
+    warnIfDockerBuildEnvironmentCleanupFailed(
+      prepared.cleanup(),
+      `local-inference container probe for '${provider}'`,
+    );
   }
 }
 
@@ -1361,10 +1638,9 @@ function classifyContainerRunFailure(
   const runtimeFailure = containerRuntimeFailureDiagnostic(
     `Docker command failed (image pull error or runtime failure). Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times.`,
   );
-  const daemonVersion = capture(
-    [...dockerCommand, "version", "--format", "{{.Server.Version}}"],
-    { ignoreError: true },
-  );
+  const daemonVersion = capture([...dockerCommand, "version", "--format", "{{.Server.Version}}"], {
+    ignoreError: true,
+  });
   if (!daemonVersion) return runtimeFailure;
   const probeImageId = capture(
     [...dockerCommand, "image", "inspect", "--format", "{{.Id}}", CONTAINER_REACHABILITY_IMAGE],
@@ -1478,7 +1754,11 @@ export function probeOllamaRuntimeModelStatus(
   model: string,
   runCaptureImpl?: RunCaptureFn,
 ): OllamaRuntimeModelStatus {
-  return probeOllamaRuntimeModelStatusWithHost(model, getResolvedOllamaHost, runCaptureImpl);
+  return probeOllamaRuntimeModelStatusWithHost(
+    model,
+    getResolvedOllamaHost,
+    createOllamaApiCapture(runCaptureImpl),
+  );
 }
 
 export function resolveOllamaRuntimeContextWindow(
@@ -1490,7 +1770,7 @@ export function resolveOllamaRuntimeContextWindow(
     model,
     currentContextWindow,
     getResolvedOllamaHost,
-    runCaptureImpl,
+    createOllamaApiCapture(runCaptureImpl),
   );
 }
 
@@ -1499,9 +1779,15 @@ export { resetOllamaRuntimeContextWindowAutoState };
 /** Apply Ollama runtime context-window adoption using the resolved local host. */
 export function applyOllamaRuntimeContextWindow(
   selectedModel: string,
-  options: Pick<ApplyOllamaRuntimeContextWindowOptions, "contextWindowFloor"> = {},
+  options: Pick<
+    ApplyOllamaRuntimeContextWindowOptions,
+    "contextWindowFloor" | "env" | "logger" | "runCaptureImpl"
+  > = {},
 ): ApplyOllamaRuntimeContextWindowResult {
-  return applyOllamaRuntimeContextWindowWithHost(selectedModel, getResolvedOllamaHost, options);
+  return applyOllamaRuntimeContextWindowWithHost(selectedModel, getResolvedOllamaHost, {
+    ...options,
+    runCaptureImpl: createOllamaApiCapture(options.runCaptureImpl),
+  });
 }
 
 export function applyVllmRuntimeContextWindow(
@@ -1528,24 +1814,24 @@ export function getOllamaModelOptions(
   sleepMilliseconds: (milliseconds: number) => void = (milliseconds) =>
     sleepSeconds(milliseconds / 1_000),
 ): string[] {
-  const capture = runCaptureImpl ?? runCapture;
   const host = getResolvedOllamaHost();
+  const capture = createOllamaApiCapture(runCaptureImpl, host);
   const modelDiscoveryRetryDelaysMs = [500, 1_000] as const;
+  // Docker Desktop owns Windows-host reachability because host.docker.internal
+  // may not resolve from WSL. Keep model discovery on the verified transport.
+  const tagsCommand = [
+    "curl",
+    ...buildValidatedCurlCommandArgs([
+      "-sf",
+      "--connect-timeout",
+      "3",
+      "--max-time",
+      "5",
+      `http://${host}:${OLLAMA_PORT}/api/tags`,
+    ]),
+  ];
   const readTags = () => {
-    const tagsOutput = capture(
-      [
-        "curl",
-        ...buildValidatedCurlCommandArgs([
-          "-sf",
-          "--connect-timeout",
-          "3",
-          "--max-time",
-          "5",
-          `http://${host}:${OLLAMA_PORT}/api/tags`,
-        ]),
-      ],
-      { ignoreError: true },
-    );
+    const tagsOutput = capture(tagsCommand, { ignoreError: true });
     return parseOllamaModelInventory(String(tagsOutput || ""));
   };
   // The daemon can become unreachable after the earlier readiness check.
@@ -1626,10 +1912,7 @@ export function resolveNonInteractiveOllamaModel(
     warnNoBootstrapModelFits(gpu, log);
   }
   if (explicit) return explicit;
-  return selectDefaultOllamaModel(
-    installedModels ?? getOllamaModelOptions(runCaptureImpl),
-    gpu,
-  );
+  return selectDefaultOllamaModel(installedModels ?? getOllamaModelOptions(runCaptureImpl), gpu);
 }
 
 function warnNoBootstrapModelFits(gpu: GpuInfo | null, log: (message: string) => void): void {
@@ -1667,12 +1950,13 @@ export function selectDefaultOllamaModel(
   if (pool === null) {
     return largestFittableOllamaModelTag(gpu);
   }
-  return pool.includes(DEFAULT_OLLAMA_MODEL) && modelFitsAvailableMemory(DEFAULT_OLLAMA_MODEL, gpu)
-    ? DEFAULT_OLLAMA_MODEL
-    : pool[0];
+  // `ollama list`/`/api/tags` order reflects install/pull order, not size,
+  // so use the registry's largest-first order. Keep Ollama's list order when
+  // every installed tag is unregistered.
+  return OLLAMA_MODEL_REGISTRY.find((entry) => pool.includes(entry.tag))?.tag ?? pool[0];
 }
 
-export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string[] {
+export function getOllamaWarmupRequestCommand(model: string, keepAlive = "15m"): string[] {
   const payload = JSON.stringify({
     model,
     prompt: "Hello, reply in less than 5 words",
@@ -1681,6 +1965,25 @@ export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string
     options: { num_predict: 16 },
   });
   const host = getResolvedOllamaHost();
+  return getOllamaApiCommand(
+    [
+      "-s",
+      "--connect-timeout",
+      "10",
+      "--max-time",
+      "120",
+      `http://${host}:${OLLAMA_PORT}/api/generate`,
+      "-H",
+      "Content-Type: application/json",
+      "-d",
+      payload,
+    ],
+    host,
+  );
+}
+
+export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string[] {
+  const command = getOllamaWarmupRequestCommand(model, keepAlive);
   // backgrounding (nohup ... &) and output redirection require a shell wrapper.
   // The payload is safe: model name is JSON-serialized (escaping all special
   // chars) then shellQuote'd (single-quoted), so injection through model
@@ -1688,8 +1991,34 @@ export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string
   return [
     "bash",
     "-c",
-    `nohup curl -s http://${host}:${OLLAMA_PORT}/api/generate -H 'Content-Type: application/json' -d ${shellQuote(payload)} >/dev/null 2>&1 &`,
+    `nohup ${command.map((arg) => shellQuote(arg)).join(" ")} >/dev/null 2>&1 &`,
   ];
+}
+
+export function runOllamaWarmup(
+  model: string,
+  runImpl: (
+    command: readonly string[],
+    options?: { ignoreError?: boolean; env?: NodeJS.ProcessEnv },
+  ) => unknown = run,
+  prepareDockerEnvironment: PrepareDockerEnvironmentFn = prepareIsolatedDockerEnvironment,
+): void {
+  const windowsHost = getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL;
+  const command = windowsHost
+    ? getOllamaWarmupRequestCommand(model)
+    : getOllamaWarmupCommand(model);
+  const execution = prepareOllamaApiExecution(command, getResolvedOllamaHost(), {
+    prepareDockerEnvironment,
+    operation: `Windows-host Ollama warm-up for '${model}'`,
+  });
+  try {
+    runImpl(execution.command, {
+      ignoreError: true,
+      ...(execution.env === undefined ? {} : { env: execution.env }),
+    });
+  } finally {
+    execution.cleanup();
+  }
 }
 
 export function getOllamaProbeCommand(
@@ -1706,27 +2035,19 @@ export function getOllamaProbeCommand(
   });
   const host = getResolvedOllamaHost();
   const endpoint = `http://${host}:${OLLAMA_PORT}/api/generate`;
-  buildValidatedCurlCommandArgs([
-    "-sS",
-    "--max-time",
-    String(timeoutSeconds),
-    "-H",
-    "Content-Type: application/json",
-    "-d",
-    payload,
-    endpoint,
-  ]);
-  return [
-    "curl",
-    "-sS",
-    "--max-time",
-    String(timeoutSeconds),
-    endpoint,
-    "-H",
-    "Content-Type: application/json",
-    "-d",
-    payload,
-  ];
+  return getOllamaApiCommand(
+    buildValidatedCurlCommandArgs([
+      "-sS",
+      "--max-time",
+      String(timeoutSeconds),
+      "-H",
+      "Content-Type: application/json",
+      "-d",
+      payload,
+      endpoint,
+    ]),
+    host,
+  );
 }
 
 export function validateOllamaModel(
@@ -1737,7 +2058,7 @@ export function validateOllamaModel(
   options: { allowToolsIncompatible?: boolean } = {},
 ): ValidationResult {
   const capture = runCaptureImpl ?? runCapture;
-  const captureEx = runCaptureExImpl ?? runCaptureEx;
+  const captureEx = createOllamaApiCaptureEx(runCaptureExImpl ?? runCaptureEx);
   const isSpark = isSparkImpl ?? (() => detectNvidiaPlatform() === "spark");
   const sparkHost = isSpark();
   const probeCmd = getOllamaProbeCommand(model);
@@ -1886,7 +2207,11 @@ export function probeOllamaModelCapabilities(
   model: string,
   runCaptureImpl?: RunCaptureFn,
 ): OllamaCapabilities {
-  const metadata = fetchOllamaModelShowMetadata(model, getResolvedOllamaHost, runCaptureImpl);
+  const metadata = fetchOllamaModelShowMetadata(
+    model,
+    getResolvedOllamaHost,
+    createOllamaApiCapture(runCaptureImpl),
+  );
   if (!metadata.ok) {
     return {
       source: "unknown",
@@ -1901,7 +2226,9 @@ export function probeOllamaModelCapabilities(
     // Ollama returned a body but no capabilities array (older version,
     // custom registry, or shape change). Degrade to unknown.
     const errText =
-      typeof metadata.payload.error === "string" ? metadata.payload.error : "missing capabilities field";
+      typeof metadata.payload.error === "string"
+        ? metadata.payload.error
+        : "missing capabilities field";
     return {
       source: "unknown",
       capabilities: [],

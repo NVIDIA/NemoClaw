@@ -9,7 +9,7 @@ import { getSandboxAgentRegistryFields } from "./sandbox-agent";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 export interface SandboxRegistryMetadataDeps {
-  getOpenShellComputeDriverName(): string;
+  getCurrentRuntimeProviderId(): string;
   getInstalledOpenshellVersion(versionOutput?: string | null): string | null;
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
 }
@@ -37,7 +37,7 @@ export interface SandboxRegistryMetadataHelpers {
     dashboardPort: number,
     selectionVerified?: boolean,
     sandboxGpuConfig?: SandboxGpuConfig | null,
-    revalidatePolicyAuthority?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): void;
 }
 
@@ -83,9 +83,9 @@ export function createSandboxRegistryMetadataHelpers(
       // Only persist a proof when this run produced one; omit on reuse/update
       // paths so a prior proof result is preserved rather than nulled out.
       ...(config.sandboxGpuProof ? { sandboxGpuProof: config.sandboxGpuProof } : {}),
-      // Driver identity comes from the resolved compute plan, not the host
-      // gateway launcher; those layers may differ (#7744).
-      openshellDriver: deps.getOpenShellComputeDriverName(),
+      // Persist the selected managed provider identity. The provider may use
+      // compatibility compute plumbing internally without becoming Docker.
+      openshellDriver: deps.getCurrentRuntimeProviderId(),
       openshellVersion: deps.getInstalledOpenshellVersion(
         deps.runCaptureOpenshell(["--version"], { ignoreError: true }),
       ),
@@ -110,12 +110,12 @@ export function createSandboxRegistryMetadataHelpers(
     dashboardPort: number,
     selectionVerified = true,
     sandboxGpuConfig: SandboxGpuConfig | null = null,
-    revalidatePolicyAuthority?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): void {
     const existingEntry = registry.getSandbox(sandboxName);
     const agentFields = getSandboxAgentRegistryFields(agent, false);
     const selectionUpdates = selectionVerified ? { model, provider } : {};
-    revalidatePolicyAuthority?.(`record reused sandbox metadata for '${sandboxName}'`);
+    revalidateSandboxIdentity?.(`record reused sandbox metadata for '${sandboxName}'`);
     registry.updateSandbox(sandboxName, {
       ...selectionUpdates,
       dashboardPort,
@@ -123,7 +123,7 @@ export function createSandboxRegistryMetadataHelpers(
       agentVersion: existingEntry?.agentVersion ?? null,
       ...(sandboxGpuConfig ? getSandboxRuntimeRegistryFields(sandboxGpuConfig) : {}),
     });
-    revalidatePolicyAuthority?.(`make reused sandbox '${sandboxName}' the default`);
+    revalidateSandboxIdentity?.(`make reused sandbox '${sandboxName}' the default`);
     registry.setDefault(sandboxName);
   }
 

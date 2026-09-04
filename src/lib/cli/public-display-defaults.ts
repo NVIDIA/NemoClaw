@@ -62,13 +62,6 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--quick] [--output FILE|-o FILE] [--sandbox NAME]",
     },
   ],
-  deploy: [
-    {
-      group: "Compatibility Commands",
-      order: 31,
-      deprecated: true,
-    },
-  ],
   gc: [
     {
       group: "Cleanup",
@@ -392,7 +385,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Policy Presets",
       order: 21,
       usage: "nemoclaw <name> policy exclude <key>",
-      description: "Exclude a baseline policy entry (persisted, replayed on rebuild)",
+      description: "Remove a baseline entry from the current OpenShell policy",
       flags: "(--force, --yes, -y, --dry-run)",
     },
   ],
@@ -452,28 +445,6 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       order: 11,
       description: "Unmount a previously mounted sandbox filesystem",
       flags: "[local-mount-point]",
-    },
-  ],
-  "sandbox:shields:down": [
-    {
-      group: "Sandbox Management",
-      order: 25,
-      flags: "[--timeout 5m] [--reason <text>] [--policy permissive]",
-      hidden: true,
-    },
-  ],
-  "sandbox:shields:status": [
-    {
-      group: "Sandbox Management",
-      order: 27,
-      hidden: true,
-    },
-  ],
-  "sandbox:shields:up": [
-    {
-      group: "Sandbox Management",
-      order: 26,
-      hidden: true,
     },
   ],
   "sandbox:skill:install": [

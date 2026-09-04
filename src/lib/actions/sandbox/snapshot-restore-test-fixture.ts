@@ -3,11 +3,14 @@
 
 import { vi } from "vitest";
 import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
+import type { MutableConfigRepairResult } from "../../sandbox/mutable-config-perms";
+import type { SyncOpenShellSandboxPolicyReader } from "../../adapters/openshell/sandbox-policy";
 import type {
   SandboxEntry,
   SandboxHostLocalInferenceProvenance,
   SandboxWorkloadReceipt,
 } from "../../state/registry/types";
+import type { SnapshotRestoreOptions } from "../../state/sandbox";
 import { dcodeProbeOutput } from "./dcode-probe-test-fixture";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
@@ -26,28 +29,6 @@ export type SandboxRecord = {
   pendingRouteReservation?: true;
   reservationSessionId?: string;
   agent?: string | null;
-  baselineExclusionTransition?: {
-    id: string;
-    operation: "exclude" | "restore";
-    exclusion: {
-      version: 1;
-      agent: string;
-      key: string;
-      digest: string;
-      acknowledgedAt?: string;
-      appliedAgentVersion?: string | null;
-    };
-    startedAt: string;
-    targetLiveDigest: string | null;
-  };
-  baselineExclusions?: Array<{
-    version: 1;
-    agent: string;
-    key: string;
-    digest: string;
-    acknowledgedAt?: string;
-    appliedAgentVersion?: string | null;
-  }>;
   fromDockerfile?: string | null;
   gatewayName?: string | null;
   gatewayPort?: number | null;
@@ -63,8 +44,6 @@ export type SandboxRecord = {
   preferredInferenceApi?: string | null;
   lifecycleGeneration?: string;
   lifecycleLiveIdentityFingerprint?: string;
-  policyAuthority?: SandboxEntry["policyAuthority"];
-  policyCreationReceipt?: SandboxEntry["policyCreationReceipt"];
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   dashboardPort?: number | null;
@@ -72,6 +51,7 @@ export type SandboxRecord = {
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
+  mcp?: SandboxEntry["mcp"];
 };
 export { type DcodeProbeState, dcodeProbeOutput } from "./dcode-probe-test-fixture";
 
@@ -95,20 +75,23 @@ export function openshellResponses(
   const sandboxName = String(args.at(-1) ?? "sandbox");
   const result =
     responses[command] ??
-    (command === "sandbox get"
-      ? {
-          status: 0,
-          output: `Name: ${sandboxName}\nId: ${sandboxName}-live-id\nPhase: Ready\n`,
-        }
-      : {
-          status: 0,
-          output: "",
-        });
+    (command === "policy get"
+      ? { status: 0, output: "version: 1\nnetwork_policies: {}\n" }
+      : command === "sandbox get"
+        ? {
+            status: 0,
+            output: `Name: ${sandboxName}\nId: ${sandboxName}-live-id\nPhase: Ready\n`,
+          }
+        : {
+            status: 0,
+            output: "",
+          });
   return captureOpenshellStreams(args, result);
 }
 
 export function defaultOpenshellResponses(args: string[]): OpenshellCaptureResult {
   return openshellResponses(args, {
+    "policy get": { status: 0, output: "version: 1\nnetwork_policies: {}\n" },
     "sandbox exec": { status: 0, output: dcodeProbeOutput("no-runtime") },
     "sandbox list": {
       status: 0,
@@ -117,48 +100,48 @@ export function defaultOpenshellResponses(args: string[]): OpenshellCaptureResul
   });
 }
 
-const shieldsMock = vi.hoisted(() => {
-  const isShieldsDownMock = vi.fn(() => true);
-  const repairMutableConfigPermsMock = vi.fn(() => ({
+const mutableConfigMock = vi.hoisted(() => {
+  const repairMutableConfigPermsMock = vi.fn<() => MutableConfigRepairResult>(() => ({
     applied: true,
     verified: true,
     errors: [],
   }));
-  const shieldsUpMock = vi.fn();
-  let isShieldsDownExport: unknown = isShieldsDownMock;
-  return {
-    isShieldsDownMock,
-    repairMutableConfigPermsMock,
-    shieldsUpMock,
-    getIsShieldsDownExport: () => isShieldsDownExport,
-    setIsShieldsDownExport: (value: unknown) => {
-      isShieldsDownExport = value;
-    },
-  };
+  return { repairMutableConfigPermsMock };
 });
 
 const lifecycleMock = vi.hoisted(() => {
   const events: string[] = [];
-  return {
-    events,
-    cleanupShieldsDestroyArtifactsMock: vi.fn(() => events.push("cleanup-shields")),
-    readTimerMarkerMock: vi.fn(() => null as Record<string, unknown> | null),
-    withTimerBoundMock: vi.fn(
-      (_sandboxName: string, command: string, fn: () => unknown): unknown => {
-        events.push(`lock:${command}`);
-        return fn();
-      },
-    ),
-  };
+  return { events };
 });
 
 export const backupSandboxStateMock = vi.fn();
 export const assertHermesPortableCommandUnavailableMock = vi.fn();
-export const captureSnapshotRestoreAuthorityMock = vi.fn(() => ({
+export const captureSnapshotRestoreAuthorityMock = vi.fn((_backupPath?: string) => ({
   schemaVersion: 1 as const,
   backupPath: "/tmp/backup-alpha",
   contentSha256: "a".repeat(64),
 }));
+export const validateSnapshotRestoreMutationMock = vi.fn(
+  (backupPath: string, options: SnapshotRestoreOptions): string | null => {
+    if (options.authority) {
+      const current = captureSnapshotRestoreAuthorityMock(backupPath);
+      if (
+        !current ||
+        current.backupPath !== options.authority.backupPath ||
+        current.contentSha256 !== options.authority.contentSha256
+      ) {
+        return "Selected snapshot content changed before filesystem mutation";
+      }
+    }
+    try {
+      options.validateBeforeMutation?.();
+      return null;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return `Runtime authority changed before filesystem mutation: ${detail}`;
+    }
+  },
+);
 export const loadAgentMock = vi.fn((name: string) => ({
   name,
   policyAdditionsPath: name === "openclaw" ? null : `/repo/agents/${name}/policy-additions.yaml`,
@@ -166,13 +149,19 @@ export const loadAgentMock = vi.fn((name: string) => ({
 export const captureOpenshellMock = vi.fn<
   (args: string[], opts?: Record<string, unknown>) => OpenshellCaptureResult
 >((args) => defaultOpenshellResponses(args));
+export const readSandboxPolicyMock = vi.fn<SyncOpenShellSandboxPolicyReader["readSandboxPolicy"]>(
+  () => ({
+    ok: true,
+    value: {
+      document: "version: 1\nnetwork_policies: {}\n",
+      appliedRevision: null,
+    },
+  }),
+);
 export const dockerInspectMock = vi.fn(() => ({ status: 0, stdout: "true\n" }));
 export const establishRestoredSandboxGatewayPairingMock = vi.fn();
 export const findBackupMock = vi.fn();
 export const getAppliedPresetsMock = vi.fn(() => [] as string[]);
-export const getCustomPoliciesMock = vi.fn(
-  () => [] as Array<{ name: string; content: string; sourcePath?: string }>,
-);
 export const getLatestBackupMock = vi.fn(() => null as Record<string, unknown> | null);
 export const applyPresetMock = vi.fn((_sandbox: string, _preset: string) => true);
 export const applyPresetContentMock = vi.fn(
@@ -209,6 +198,7 @@ export const removeSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
 export const finalizePendingSandboxRegistrationMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
+export const restoreDeepAgentsManagedMcpProjectionMock = vi.fn();
 export const removeSandboxRegistryEntryOutcomeMock = vi.fn<
   (
     name: string,
@@ -231,7 +221,7 @@ export const latestBackupFixture = {
   backupPath: "/tmp/backup-alpha",
 };
 
-export { lifecycleMock, shieldsMock };
+export { lifecycleMock, mutableConfigMock };
 
 vi.mock("../../adapters/docker", () => ({
   dockerCapture: vi.fn(() => ""),
@@ -248,6 +238,15 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: runOpenshellMock,
+}));
+
+vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
+  syncCliOpenShellSandboxPolicyReader: {
+    inspectSandboxPolicy: vi.fn(),
+    readSandboxPolicy: readSandboxPolicyMock,
+    readSandboxPolicyRevision: vi.fn(),
+  },
 }));
 
 vi.mock("../../credentials/store", () => ({
@@ -272,6 +271,7 @@ vi.mock("../../policy", () => ({
   getAppliedPresets: getAppliedPresetsMock,
   getPresetContentGatewayState: getPresetContentGatewayStateMock,
   loadPresetForSandbox: loadPresetForSandboxMock,
+  parseCurrentPolicy: (raw: unknown) => String(raw),
   removePreset: removePresetMock,
   resolveAgentBaselinePolicy: resolveAgentBaselinePolicyMock,
 }));
@@ -296,22 +296,8 @@ vi.mock("../../onboard/initial-policy", () => ({
   prepareInitialSandboxCreatePolicy: prepareInitialSandboxCreatePolicyMock,
 }));
 
-vi.mock("../../shields", () => ({
-  get isShieldsDown() {
-    return shieldsMock.getIsShieldsDownExport();
-  },
-  repairMutableConfigPerms: shieldsMock.repairMutableConfigPermsMock,
-  shieldsUp: shieldsMock.shieldsUpMock,
-}));
-
-vi.mock("../../shields/timer-bound-lock", () => ({
-  withTimerBoundShieldsMutationLock: lifecycleMock.withTimerBoundMock,
-}));
-
-vi.mock("../../shields/timer-control", () => ({
-  isProcessAlive: vi.fn(() => true),
-  readProcessStartIdentity: vi.fn(() => "snapshot-test-process-start"),
-  readTimerMarker: lifecycleMock.readTimerMarkerMock,
+vi.mock("../../sandbox/mutable-config-perms", () => ({
+  repairMutableConfigPerms: mutableConfigMock.repairMutableConfigPermsMock,
 }));
 
 vi.mock("../../sandbox/create-stream", () => ({
@@ -326,9 +312,7 @@ vi.mock("../../state/gateway", () => ({
 }));
 
 vi.mock("../../state/registry", () => ({
-  getBaselineExclusions: vi.fn(() => []),
   getConfiguredMessagingChannelsFromEntry: vi.fn(() => []),
-  getCustomPolicies: getCustomPoliciesMock,
   getDisabledMessagingChannelsFromEntry: vi.fn(() => []),
   getSandbox: getSandboxMock,
   isRouteOnlySandboxReservation: (entry: SandboxRecord) =>
@@ -351,6 +335,7 @@ vi.mock("../../state/sandbox", () => ({
   getLatestBackup: getLatestBackupMock,
   listBackups: listBackupsMock,
   restoreSandboxState: restoreSandboxStateMock,
+  validateSnapshotRestoreMutation: validateSnapshotRestoreMutationMock,
 }));
 
 vi.mock("./destroy", async () => {
@@ -358,7 +343,6 @@ vi.mock("./destroy", async () => {
     typeof import("../../onboard/runtime-provider/access")
   >("../../onboard/runtime-provider/access");
   return {
-    cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
     removeSandboxRegistryEntry: vi.fn(() => true),
     removeSandboxRegistryEntryOutcome: removeSandboxRegistryEntryOutcomeMock,
     requireSandboxDestructiveCleanupAuthority: (sandboxName: string, sandbox: SandboxRecord) =>
@@ -375,6 +359,11 @@ vi.mock("./restore-gateway-pairing", () => ({
   waitForRestoredSandboxGatewaySupervisor: waitForRestoredSandboxGatewaySupervisorMock,
 }));
 
+vi.mock("./mcp-bridge-adapter-deepagents-registration", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mcp-bridge-adapter-deepagents-registration")>()),
+  restoreDeepAgentsManagedMcpProjection: restoreDeepAgentsManagedMcpProjectionMock,
+}));
+
 export function resetSnapshotRestoreMocks(): void {
   vi.clearAllMocks();
   assertHermesPortableCommandUnavailableMock.mockReset();
@@ -383,17 +372,24 @@ export function resetSnapshotRestoreMocks(): void {
     backupPath: "/tmp/backup-alpha",
     contentSha256: "a".repeat(64),
   });
-  shieldsMock.setIsShieldsDownExport(shieldsMock.isShieldsDownMock);
-  shieldsMock.isShieldsDownMock.mockReturnValue(true);
-  shieldsMock.shieldsUpMock.mockImplementation(() => lifecycleMock.events.push("harden"));
+  mutableConfigMock.repairMutableConfigPermsMock.mockReturnValue({
+    applied: true,
+    verified: true,
+    errors: [],
+  });
   lifecycleMock.events.length = 0;
-  lifecycleMock.readTimerMarkerMock.mockReturnValue(null);
   captureOpenshellMock.mockImplementation((args) => defaultOpenshellResponses(args));
+  readSandboxPolicyMock.mockReturnValue({
+    ok: true,
+    value: {
+      document: "version: 1\nnetwork_policies: {}\n",
+      appliedRevision: null,
+    },
+  });
   dockerInspectMock.mockReturnValue({ status: 0, stdout: "true\n" });
   establishRestoredSandboxGatewayPairingMock.mockReset();
   findBackupMock.mockReturnValue({ match: null });
   getAppliedPresetsMock.mockReturnValue([]);
-  getCustomPoliciesMock.mockReturnValue([]);
   getLatestBackupMock.mockReturnValue(null);
   applyPresetMock.mockReturnValue(true);
   applyPresetContentMock.mockReturnValue(true);
@@ -427,6 +423,7 @@ export function resetSnapshotRestoreMocks(): void {
     failedDirs: [],
     failedFiles: [],
   });
+  restoreDeepAgentsManagedMcpProjectionMock.mockReset();
   streamSandboxCreateMock.mockImplementation(async () => ({
     status: 0,
     output: "",

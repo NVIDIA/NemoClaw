@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
-import * as shields from "../../shields";
+import { wrapOnboardDeferredExit } from "../../onboard/session-bootstrap";
 import { decisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
 import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
@@ -13,10 +13,27 @@ import * as onboardSession from "../../state/onboard-session";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
-import { type RebuildRecreatePhaseInput, runRebuildRecreatePhase } from "./rebuild-recreate-phase";
+import {
+  describeRebuildOnboardFailure,
+  type RebuildRecreatePhaseInput,
+  runRebuildRecreatePhase,
+} from "./rebuild-recreate-phase";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
 const DCODE_AGENT = "langchain-deepagents-code";
+
+describe("rebuild onboard failure diagnostics", () => {
+  it("surfaces the first actionable AggregateError cause", () => {
+    expect(
+      describeRebuildOnboardFailure(
+        new AggregateError(
+          [new Error("exact create identity unavailable"), new Error("recovery persisted")],
+          "outer recovery wrapper",
+        ),
+      ),
+    ).toBe("exact create identity unavailable");
+  });
+});
 
 const STANDALONE_GATEWAY_AUTHORITY: CheckpointGatewayAuthority = {
   gatewayName: "nemoclaw",
@@ -67,6 +84,7 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   nonInteractive: true,
   recreateSandbox: true,
   authoritativeResumeConfig: true,
+  rebuildPolicySourcePath: "/tmp/current-policy.yaml",
   acceptThirdPartySoftware: true,
   agent: DCODE_AGENT,
   recreateProvider: "nvidia",
@@ -79,13 +97,13 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   targetGatewayName: "nemoclaw",
   targetGatewayPort: 8080,
   onboardLockAlreadyHeld: true,
+  deferProcessExit: true,
   autoYes: true,
   toolDisclosure: "progressive",
   dcodeAutoApprovalMode: "disabled",
   dcodeAutoApprovalRequestedExplicitly: false,
   observabilityEnabled: true,
   observabilityRequestedExplicitly: true,
-  policyTier: "restricted",
   baseImageResolutionHint: null,
   rebuildGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
 };
@@ -125,7 +143,6 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
       name: "alpha",
       agent: DCODE_AGENT,
       observabilityEnabled: true,
-      policyTier: "restricted",
     },
     sessionSnapshot: onboardSession.createSession({
       sandboxName: "alpha",
@@ -142,8 +159,7 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
       gatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
       targetGeneration: "generation-1",
       targetIntentFingerprint: "intent-1",
-      markDeleting: vi.fn(),
-      observeSourceForDelete: vi.fn(() => "source" as const),
+      beginDelete: vi.fn(() => "source" as const),
       confirmDeleted: vi.fn(),
       completeAcceptedTarget: vi.fn(),
     },
@@ -153,16 +169,14 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
     rebuildsHermesSandbox: false,
     hermesToolGateways: [],
     hasHermesToolGateways: false,
-    sessionPolicyPresets: ["observability-otlp-local"],
+    policySourcePath: "/tmp/current-policy.yaml",
     credentialEnv: "NVIDIA_API_KEY",
     baseImagePreflight: { ok: true, imageRef: null, overrideEnvVar: null },
     recoveryRecreate: false,
+    preparedBackupRecovery: false,
     registryRollback: { recordRemoval: vi.fn(), restoreForRetry: vi.fn() },
     backupManifest: null,
     mcpEntries: [],
-    rebuildShieldsWindow: { relocked: false, wasLocked: false },
-    relockShieldsIfNeeded: vi.fn(() => true),
-    onCreated: vi.fn(),
     log: vi.fn(),
     bail: vi.fn((message: string): never => {
       throw new Error(`bail: ${message}`);
@@ -195,26 +209,30 @@ describe("runRebuildRecreatePhase handoff", () => {
 
   it("persists enabled observability before inner onboard and through successful recreate", async () => {
     const observedAtOnboard: boolean[] = [];
-    const observedAtCreated: boolean[] = [];
     vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
       observedAtOnboard.push(onboardSession.loadSession()?.observabilityEnabled === true);
       expect(options.observabilityEnabled).toBe(true);
+      expect(options.allowRemovedImmutabilityStateRecord).toBeUndefined();
     });
-    const input = makeInput({
-      onCreated: vi.fn(() => {
-        observedAtCreated.push(onboardSession.loadSession()?.observabilityEnabled === true);
-      }),
-    });
+    const input = makeInput();
 
     await expect(runRebuildRecreatePhase(input)).resolves.toBe(true);
 
     expect(observedAtOnboard).toEqual([true]);
-    expect(observedAtCreated).toEqual([true]);
     expect(onboardSession.loadSession()?.observabilityEnabled).toBe(true);
     expect(onboardSession.loadSession()?.observabilityRequestedExplicitly).toBe(true);
-    expect(input.onCreated).toHaveBeenCalledOnce();
     expect(input.registryRollback.restoreForRetry).not.toHaveBeenCalled();
     expect(input.bail).not.toHaveBeenCalled();
+  });
+
+  it("allows a removed Shields state record only for prepared-backup recovery", async () => {
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
+      expect(options.allowRemovedImmutabilityStateRecord).toBe(true);
+    });
+
+    await expect(
+      runRebuildRecreatePhase(makeInput({ preparedBackupRecovery: true })),
+    ).resolves.toBe(true);
   });
 
   it("retains inherited observability provenance through inner onboard handoff", async () => {
@@ -338,24 +356,6 @@ describe("runRebuildRecreatePhase handoff", () => {
     expect(onboardSpy).not.toHaveBeenCalled();
   });
 
-  it("pins the authoritative restricted tier during recreate and restores ambient policy input", async () => {
-    const previousPolicyTier = process.env.NEMOCLAW_POLICY_TIER;
-    process.env.NEMOCLAW_POLICY_TIER = "open";
-    try {
-      let observedTier: string | undefined;
-      vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
-        observedTier = process.env.NEMOCLAW_POLICY_TIER;
-      });
-
-      await expect(runRebuildRecreatePhase(makeInput())).resolves.toBe(true);
-
-      expect(observedTier).toBe("restricted");
-      expect(process.env.NEMOCLAW_POLICY_TIER).toBe("open");
-    } finally {
-      restoreEnv("NEMOCLAW_POLICY_TIER", previousPolicyTier);
-    }
-  });
-
   it("does not take a second backup during the inner recreate", async () => {
     const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
     delete process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
@@ -383,6 +383,29 @@ describe("runRebuildRecreatePhase handoff", () => {
     }
   });
 
+  it("keeps the outer prepared-backup restore sentinel out of inner onboarding", async () => {
+    const previousRestoreLatestBackup = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+    try {
+      let observedRestoreSentinel: string | undefined;
+      vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+        observedRestoreSentinel = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
+      });
+
+      await expect(
+        runRebuildRecreatePhase(makeInput({ preparedBackupRecovery: true })),
+      ).resolves.toBe(true);
+
+      expect(observedRestoreSentinel).toBeUndefined();
+      expect(process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE).toBe("1");
+    } finally {
+      restoreEnv(
+        "NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE",
+        previousRestoreLatestBackup,
+      );
+    }
+  });
+
   it("carries preserved Hermes home channels to the Dockerfile patch boundary (#7803)", async () => {
     vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
       expect(options.rebuildPreservedEnv).toEqual([
@@ -400,7 +423,6 @@ describe("runRebuildRecreatePhase handoff", () => {
             name: "alpha",
             agent: "hermes",
             observabilityEnabled: true,
-            policyTier: "restricted",
           },
           rebuildAgent: "hermes",
           rebuildsHermesSandbox: true,
@@ -464,6 +486,50 @@ describe("runRebuildRecreatePhase handoff", () => {
     }
   });
 
+  it("treats an integer-string inner onboarding result as recreate failure (#10394)", async () => {
+    const previousExitCode = process.exitCode;
+    const observedExitCodes: Array<typeof process.exitCode> = [];
+    const input = makeInput();
+    try {
+      process.exitCode = 23;
+      vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+        observedExitCodes.push(process.exitCode);
+        process.exitCode = "7";
+      });
+
+      await expect(runRebuildRecreatePhase(input)).rejects.toThrow(
+        "bail: Recreate failed (stale-sandbox recovery).",
+      );
+
+      expect(observedExitCodes).toEqual([undefined]);
+      expect(process.exitCode).toBe(23);
+      expect(input.registryRollback.restoreForRetry).toHaveBeenCalledOnce();
+      expect(input.bail).toHaveBeenCalledWith("Recreate failed (stale-sandbox recovery).", 7);
+      expect(input.log).toHaveBeenCalledWith("onboard() returned with exit code 7");
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it("preserves an integer-string exit code through nested onboarding", async () => {
+    const input = makeInput();
+    const nestedOnboard = wrapOnboardDeferredExit(async () => {
+      process.exit("7");
+    });
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
+      expect(options.deferProcessExit).toBe(true);
+      await nestedOnboard(options);
+    });
+
+    await expect(runRebuildRecreatePhase(input)).rejects.toThrow(
+      "bail: Recreate failed (stale-sandbox recovery).",
+    );
+
+    expect(input.registryRollback.restoreForRetry).toHaveBeenCalledOnce();
+    expect(input.bail).toHaveBeenCalledWith("Recreate failed (stale-sandbox recovery).", 7);
+    expect(input.log).toHaveBeenCalledWith("onboard() exited with code 7");
+  });
+
   it("retains enabled observability through inner onboard failure, recovery, and bail", async () => {
     const checkpoints: Array<[string, boolean]> = [];
     vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
@@ -485,10 +551,6 @@ describe("runRebuildRecreatePhase handoff", () => {
           ]);
         }),
       },
-      relockShieldsIfNeeded: vi.fn(() => {
-        checkpoints.push(["relock", onboardSession.loadSession()?.observabilityEnabled === true]);
-        return true;
-      }),
       bail: vi.fn((message: string): never => {
         checkpoints.push(["bail", onboardSession.loadSession()?.observabilityEnabled === true]);
         throw new Error(`bail: ${message}`);
@@ -502,72 +564,10 @@ describe("runRebuildRecreatePhase handoff", () => {
     expect(checkpoints).toEqual([
       ["onboard", true],
       ["rollback", true],
-      ["relock", true],
       ["bail", true],
     ]);
     expect(onboardSession.loadSession()?.observabilityEnabled).toBe(true);
     expect(input.registryRollback.restoreForRetry).toHaveBeenCalledOnce();
-    expect(input.relockShieldsIfNeeded).toHaveBeenCalledWith(false);
-    expect(input.onCreated).not.toHaveBeenCalled();
     expect(input.bail).toHaveBeenCalledWith("Recreate failed (stale-sandbox recovery).", 1);
-  });
-});
-
-describe("rebuild recreate shields state", () => {
-  let session: Session;
-
-  beforeEach(() => {
-    session = onboardSession.createSession({
-      sandboxName: "alpha",
-      observabilityEnabled: false,
-    });
-    seedRecreateJournalCheckpoint(session);
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(onboardSession, "loadSession").mockImplementation(() => session);
-    vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator) => {
-      session = mutator(session) ?? session;
-      return session;
-    });
-    vi.spyOn(rebuildOnboardDependencies, "onboard").mockResolvedValue(undefined);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("clears prior shields state only after a recovery recreate succeeds (#8283)", async () => {
-    const clearShieldsState = vi
-      .spyOn(shields, "clearShieldsState")
-      .mockImplementation(() => undefined);
-
-    await expect(runRebuildRecreatePhase(makeInput({ recoveryRecreate: false }))).resolves.toBe(
-      true,
-    );
-    expect(clearShieldsState).not.toHaveBeenCalled();
-
-    await expect(runRebuildRecreatePhase(makeInput({ recoveryRecreate: true }))).resolves.toBe(
-      true,
-    );
-    expect(clearShieldsState).toHaveBeenCalledOnce();
-    expect(clearShieldsState).toHaveBeenCalledWith("alpha");
-  });
-
-  it("keeps prior shields state when a recovery recreate fails (#8283)", async () => {
-    const clearShieldsState = vi
-      .spyOn(shields, "clearShieldsState")
-      .mockImplementation(() => undefined);
-    vi.mocked(rebuildOnboardDependencies.onboard).mockRejectedValue(
-      new Error("inner onboard failed"),
-    );
-
-    await expect(runRebuildRecreatePhase(makeInput({ recoveryRecreate: true }))).rejects.toThrow(
-      "bail: Recreate failed (stale-sandbox recovery).",
-    );
-
-    expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining("Sandbox recreate error: inner onboard failed"),
-    );
-    expect(clearShieldsState).not.toHaveBeenCalled();
   });
 });

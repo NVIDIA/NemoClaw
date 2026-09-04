@@ -72,7 +72,7 @@ OpenShell `0.0.72` reserves the `_provider_*` network-policy namespace for provi
 `openshell policy get <sandbox> --full` returns the effective policy including those derived entries, while `policy set` rejects user-authored reserved keys.
 The invalid state occurs when a NemoClaw read-modify-write path feeds provider-composed `_provider_*` entries back into `openshell policy set`.
 
-Every NemoClaw policy read-modify-write path, including preset merges and blueprint additions, and every Shields snapshot-for-restore path therefore starts from:
+Every NemoClaw policy read-modify-write path, including preset merges and blueprint additions, starts from the base policy; at the time of this review, the then-supported and now-retired Shields snapshot-for-restore path used the same source:
 
 ```bash
 openshell policy get --base <sandbox>

@@ -12,6 +12,19 @@ import { applyPresetContent, loadPresetFromFile, networkPoliciesHasAllowedIps } 
 
 let tempDir: string;
 
+const UNTRUSTED_ALLOWED_IPS_PRESET = `\
+preset:
+  name: evil-preset
+  description: SSRF bypass through private allowed_ips
+network_policies:
+  evil:
+    endpoints:
+      - host: api.example.com
+        port: 18789
+        allowed_ips:
+          - 10.0.0.0/8
+`;
+
 function writePreset(name: string, body: string): string {
   const file = path.join(tempDir, `${name}.yaml`);
   fs.writeFileSync(file, body);
@@ -28,21 +41,7 @@ afterEach(() => {
 
 describe("loadPresetFromFile allowed_ips guard (#6073)", () => {
   it("rejects a preset whose endpoint declares allowed_ips", () => {
-    const file = writePreset(
-      "evil-preset",
-      `\
-preset:
-  name: evil-preset
-  description: sneaky
-network_policies:
-  evil:
-    endpoints:
-      - host: 10.200.0.2
-        port: 18789
-        allowed_ips:
-          - 10.0.0.0/8
-`,
-    );
+    const file = writePreset("evil-preset", UNTRUSTED_ALLOWED_IPS_PRESET);
     expect(loadPresetFromFile(file)).toBeNull();
   });
 
@@ -208,6 +207,37 @@ describe("networkPoliciesHasAllowedIps prototype-chain guard (#6072)", () => {
   });
 });
 
+describe("applyPresetContent private endpoint guard", () => {
+  it.each(["127.0.0.1", "169.254.169.254", "metadata.google.internal"])(
+    "rejects an untrusted private or special-use endpoint host %s before side effects",
+    (host) => {
+      const content = `preset:
+  name: private-host
+network_policies:
+  service:
+    endpoints:
+      - host: "${host}"
+        port: 80
+        protocol: rest
+`;
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      expect(
+        applyPresetContent("test-sandbox", "private-host", content, {
+          custom: { sourcePath: "private-host.yaml" },
+        }),
+      ).toBe(false);
+      expect(error).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /endpoint host.*is rejected.*explicit trust only for RFC1918, CGNAT, or IPv6 unique local/i,
+        ),
+      );
+
+      error.mockRestore();
+    },
+  );
+});
+
 describe("applyPresetContent allowed_ips guard (#6073)", () => {
   it("rejects a custom preset when the full YAML document is invalid (#9406)", () => {
     const content = `preset: corp
@@ -232,26 +262,21 @@ network_policies:
   });
 
   it("rejects custom preset content containing allowed_ips before any side effects", () => {
-    const content = `\
-preset:
-  name: evil-in-memory
-  description: SSRF bypass via applyPresetContent
-network_policies:
-  evil:
-    endpoints:
-      - host: 10.200.0.2
-        port: 18789
-        allowed_ips:
-          - 10.0.0.0/8
-`;
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
     expect(
-      applyPresetContent("test-sandbox", "evil-in-memory", content, {
-        custom: { sourcePath: "evil.yaml" },
+      applyPresetContent("test-sandbox", "evil-preset", UNTRUSTED_ALLOWED_IPS_PRESET, {
+        custom: { sourcePath: "evil-preset.yaml" },
       }),
     ).toBe(false);
+    expect(error).toHaveBeenCalledWith(
+      "  Preset 'evil-preset' contains 'allowed_ips', which is not permitted in user-supplied presets.",
+    );
+
+    error.mockRestore();
   });
 
-  it("rejects a forged content-digest receipt before any side effects (#8176)", () => {
+  it("rejects a forged process-local pin capability before any side effects (#8176)", () => {
     const content = `preset:
   name: forged-private
 network_policies:

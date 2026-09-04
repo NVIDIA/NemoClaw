@@ -43,7 +43,6 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
       configFile: "/tmp/agent/config.yaml",
       envFile: null,
       format: "yaml",
-      shieldsFiles: [],
     },
     inferenceProviderOptions: [],
     mcpCapability: {
@@ -57,15 +56,6 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     backupStateDirPrefixes: [],
     nonBackupStateDirs: [],
     nonBackupStateDirPrefixes: [],
-    stateLockPlan: {
-      version: 1,
-      readOnlyRoots: [],
-      confidentialRoots: [],
-      readOnlyPrefixes: [],
-      confidentialPrefixes: [],
-      writableSubpaths: [],
-    },
-    stateLockPlanInImage: false,
     stateFiles: [],
     userManagedFiles: [],
     versionCommand: "agent --version",
@@ -76,7 +66,6 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     dockerfilePath: null,
     startScriptPath: null,
     policyAdditionsPath: null,
-    policyPermissivePath: null,
     pluginDir: null,
     legacyPaths: null,
     agentDir: "/tmp/agent",
@@ -307,7 +296,7 @@ describe("agent setup session boundaries", () => {
   function createAgentSetupContext(
     runCaptureOpenshell: OnboardContext["runCaptureOpenshell"] = vi.fn(() => ""),
     timing: Pick<OnboardContext, "now" | "sleepSeconds"> = {},
-    policyRequirements: Pick<OnboardContext, "revalidatePolicyRequirements"> = {},
+    identityBoundary: Pick<OnboardContext, "revalidateSandboxIdentity"> = {},
   ) {
     return {
       context: {
@@ -320,7 +309,7 @@ describe("agent setup session boundaries", () => {
         recordStepFailed: vi.fn(async () => undefined),
         skippedStepMessage: vi.fn(),
         ...timing,
-        ...policyRequirements,
+        ...identityBoundary,
       },
     };
   }
@@ -432,7 +421,7 @@ describe("agent setup session boundaries", () => {
     expect(context.recordStepFailed).not.toHaveBeenCalled();
   });
 
-  it("refuses completion when policy authority changes during the gateway wait (#9833)", async () => {
+  it("refuses completion when sandbox identity changes during the gateway wait (#9833)", async () => {
     let nowMs = 0;
     const sleepSeconds = vi.fn((seconds: number) => {
       nowMs += seconds * 1000;
@@ -442,18 +431,16 @@ describe("agent setup session boundaries", () => {
       .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok")
       .mockReturnValueOnce("");
     const refuseCompletion = () => {
-      throw new Error("policy authority changed");
+      throw new Error("sandbox identity changed");
     };
     const policyChecks = new Map([
       ["record completed agent setup for sandbox 'sandbox-x'", refuseCompletion],
     ]);
-    const revalidatePolicyRequirements = vi.fn((operation: string) =>
-      policyChecks.get(operation)?.(),
-    );
+    const revalidateSandboxIdentity = vi.fn((operation: string) => policyChecks.get(operation)?.());
     const { context } = createAgentSetupContext(
       runCaptureOpenshell,
       { now: () => nowMs, sleepSeconds },
-      { revalidatePolicyRequirements },
+      { revalidateSandboxIdentity },
     );
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
@@ -469,7 +456,7 @@ describe("agent setup session boundaries", () => {
         null,
         context,
       ),
-    ).rejects.toThrow("policy authority changed");
+    ).rejects.toThrow("sandbox identity changed");
 
     expect(sleepSeconds).toHaveBeenCalledWith(0.25);
     expect(context.recordStepComplete).not.toHaveBeenCalled();
@@ -632,7 +619,7 @@ describe("handleAgentSetup guards", () => {
       "alpha",
       makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
       (args) => {
-        script = String(args[7] || "");
+        script = String(args.at(-1) || "");
         return "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:ok";
       },
     );
@@ -648,7 +635,7 @@ describe("handleAgentSetup guards", () => {
       "alpha",
       makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
       (args) => {
-        script = String(args[7] || "");
+        script = String(args.at(-1) || "");
         return "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:ok";
       },
     );
@@ -663,7 +650,7 @@ describe("handleAgentSetup guards", () => {
       "alpha",
       makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
       (args) => {
-        script = String(args[7] || "");
+        script = String(args.at(-1) || "");
         return "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:not_executable";
       },
     );
@@ -674,6 +661,74 @@ describe("handleAgentSetup guards", () => {
       binaryPath: "/usr/local/bin/hermes",
     });
     expect(script).toContain("[ -e '/usr/local/bin/hermes' ] && [ ! -x '/usr/local/bin/hermes' ]");
+  });
+
+  it("distinguishes an unobservable sandbox exec from a missing binary", () => {
+    const result = verifyAgentBinaryAvailable(
+      "alpha",
+      makeAgent({ name: "pi", binary_path: "/usr/local/bin/pi" }),
+      () => null,
+    );
+
+    expect(result).toEqual({
+      available: false,
+      reason: "unobservable",
+      binaryPath: "/usr/local/bin/pi",
+    });
+  });
+
+  it("accepts a marker from a successful structured OpenShell capture", () => {
+    expect(
+      verifyAgentBinaryAvailable(
+        "alpha",
+        makeAgent({ name: "pi", binary_path: "/usr/local/bin/pi" }),
+        () => ({ status: 0, output: "NEMOCLAW_AGENT_BINARY_CHECK:ok" }),
+      ),
+    ).toEqual({ available: true });
+  });
+
+  it("rejects marker text when the structured OpenShell transport failed", () => {
+    expect(
+      verifyAgentBinaryAvailable(
+        "alpha",
+        makeAgent({ name: "pi", binary_path: "/usr/local/bin/pi" }),
+        () => ({ status: 1, output: "NEMOCLAW_AGENT_BINARY_CHECK:ok" }),
+      ),
+    ).toEqual({
+      available: false,
+      reason: "unobservable",
+      binaryPath: "/usr/local/bin/pi",
+      transportStatus: 1,
+    });
+  });
+
+  it("targets the owning gateway and disables TTY allocation for the binary probe", () => {
+    const runCaptureOpenshell = vi.fn(() => "NEMOCLAW_AGENT_BINARY_CHECK:ok");
+
+    expect(
+      verifyAgentBinaryAvailable(
+        "alpha",
+        makeAgent({ name: "pi", binary_path: "/usr/local/bin/pi" }),
+        runCaptureOpenshell,
+        "nemoclaw",
+      ),
+    ).toEqual({ available: true });
+    expect(runCaptureOpenshell).toHaveBeenCalledWith(
+      [
+        "sandbox",
+        "exec",
+        "-n",
+        "alpha",
+        "-g",
+        "nemoclaw",
+        "--no-tty",
+        "--",
+        "/bin/bash",
+        "-lc",
+        expect.stringContaining("NEMOCLAW_AGENT_BINARY_CHECK"),
+      ],
+      { ignoreError: true, includeStderr: true },
+    );
   });
 });
 

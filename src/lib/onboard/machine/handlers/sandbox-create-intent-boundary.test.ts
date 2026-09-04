@@ -25,30 +25,6 @@ const resourceProfiles: [string, { cpu: string; memory: string } | null][] = [
 ];
 
 describe("sandbox create intent machine boundary", () => {
-  it("checks final policy requirements before credential provider registration (#9833)", async () => {
-    const preflightPolicyRequirements = vi.fn(() => {
-      throw new Error("external policy authority must supply the selected route");
-    });
-    const { deps, calls } = createDeps({ preflightPolicyRequirements });
-    calls.setupMessaging.mockResolvedValue(["telegram"]);
-
-    await expect(handleSandboxState(baseOptions(deps))).rejects.toThrow(
-      /external policy authority must supply/u,
-    );
-
-    expect(preflightPolicyRequirements).toHaveBeenCalledWith(
-      expect.objectContaining({
-        provider: "provider",
-        selectedMessagingChannels: ["telegram"],
-        observabilityEnabled: false,
-      }),
-    );
-    expect(calls.stageCredentialProviders).not.toHaveBeenCalled();
-    expect(calls.resolveCreateIntent).not.toHaveBeenCalled();
-    expect(calls.createSandbox).not.toHaveBeenCalled();
-    expect(calls.updateSandbox).not.toHaveBeenCalled();
-  });
-
   it("rejects deterministic create conflicts before resume recreation mutates state (#6226)", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";
@@ -109,8 +85,6 @@ describe("sandbox create intent machine boundary", () => {
             options: {
               directGpu: false,
               additionalPresets: [],
-              policyTier: null,
-              baselineExclusions: [],
             },
           },
           gpuCreateArgs: [],
@@ -141,10 +115,9 @@ describe("sandbox create intent machine boundary", () => {
     expect(resolvedIntents[2]).toEqual(resolvedIntents[0]);
   });
 
-  it("replaces a stale resumed create-intent policy with the authoritative rebuild selection (#9792)", async () => {
+  it("does not replace current create policy input from a recorded preset selection (#9792)", async () => {
     const session = createSession({
       sandboxName: "saved",
-      policyPresets: ["github"],
     });
     const { deps, calls } = createDeps();
     calls.resolveCreateIntent.mockResolvedValue({
@@ -162,8 +135,6 @@ describe("sandbox create intent machine boundary", () => {
         options: {
           directGpu: false,
           additionalPresets: ["mcp-bridge-fake"],
-          policyTier: null,
-          baselineExclusions: [],
         },
       },
       gpuCreateArgs: [],
@@ -177,15 +148,13 @@ describe("sandbox create intent machine boundary", () => {
     await handleSandboxState({
       ...baseOptions(deps, session),
       authoritativeResumeConfig: true,
-      rebuildPolicyPresets: ["github"],
       resume: true,
       sandboxName: "saved",
     });
 
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
-      rebuildPolicyPresets: ["github"],
       resolved: {
-        policy: { options: { additionalPresets: ["github"] } },
+        policy: { options: { additionalPresets: ["mcp-bridge-fake"] } },
       },
     });
   });
@@ -198,15 +167,12 @@ describe("sandbox create intent machine boundary", () => {
     async ({ authoritativeResumeConfig }) => {
       const session = createSession({
         sandboxName: "saved",
-        policyAuthority: "externally-managed",
       });
-      session.policyPresets = ["github"];
       const { deps, calls } = createDeps({}, session);
 
       await handleSandboxState({
         ...baseOptions(deps, session),
         authoritativeResumeConfig,
-        rebuildPolicyPresets: ["github"],
         resume: true,
         sandboxName: "saved",
       });
@@ -216,7 +182,6 @@ describe("sandbox create intent machine boundary", () => {
       expect(createIntent).toMatchObject({
         resolved: { policy: { options: { additionalPresets: [] } } },
       });
-      expect(session.policyPresets).toBeNull();
     },
   );
 
@@ -448,7 +413,6 @@ describe("sandbox create intent machine boundary", () => {
       requiredBindings: [
         { name: "tm-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
       ],
-      revalidatePolicyRequirements: expect.any(Function),
     });
     expect(stageSandboxCredentialProviders.mock.invocationCallOrder[0]).toBeGreaterThan(
       setupMessagingChannels.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY,
@@ -468,7 +432,6 @@ describe("sandbox create intent machine boundary", () => {
           credentialEnv: "TELEGRAM_BOT_TOKEN",
         },
       ],
-      revalidatePolicyRequirements: expect.any(Function),
     });
     expect(stageSandboxCredentialProviders.mock.invocationCallOrder[1]).toBeGreaterThan(
       setupMessagingChannels.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY,

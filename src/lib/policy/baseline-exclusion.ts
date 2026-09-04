@@ -13,10 +13,6 @@ import {
   parseNetworkPolicies,
 } from "./preset-parsing";
 
-/** Support posture disclosed whenever a sandbox has a baseline exclusion. */
-export const BASELINE_EXCLUSION_SUPPORT_IMPACT =
-  "Excluded egress leaves dependent agent features unsupported for this sandbox.";
-
 const PROTECTED_BASELINE_EXCLUSION_KEYS = new Set(["managed_inference"]);
 
 const BASELINE_EXCLUSION_FEATURE_IMPACTS: Readonly<
@@ -54,45 +50,6 @@ export function isProtectedBaselineExclusionKey(key: string): boolean {
  */
 export function getBaselineExclusionFeatureImpact(agent: string, key: string): string | null {
   return BASELINE_EXCLUSION_FEATURE_IMPACTS[agent]?.[key] ?? null;
-}
-
-export interface BaselineExclusionRequest {
-  readonly version: 1;
-  readonly agent: string;
-  readonly key: string;
-  readonly digest: string;
-}
-
-export type BaselineExclusionRuntimeStatus =
-  | "excluded"
-  | "agent-changed"
-  | "baseline-unreadable"
-  | "content-changed"
-  | "no-longer-in-baseline"
-  | "live-policy-unreadable"
-  | "live-policy-mismatch";
-
-/** Compare reviewed intent with both the release baseline and observed live policy. */
-export function evaluateBaselineExclusionRuntimeStatus(
-  exclusion: BaselineExclusionRequest,
-  currentAgent: string,
-  currentBaselineDigest: string | null | undefined,
-  liveDigest: string | null | undefined,
-): BaselineExclusionRuntimeStatus {
-  if (exclusion.agent !== currentAgent) return "agent-changed";
-  if (currentBaselineDigest === undefined) return "baseline-unreadable";
-  if (currentBaselineDigest === null) return "no-longer-in-baseline";
-  if (currentBaselineDigest !== exclusion.digest) return "content-changed";
-  if (liveDigest === undefined) return "live-policy-unreadable";
-  return liveDigest === null ? "excluded" : "live-policy-mismatch";
-}
-
-export type BaselineDriftReason = "missing" | "changed";
-
-export interface BaselineExclusionResolution {
-  readonly entry: PolicyObject | null;
-  readonly currentDigest: string | null;
-  readonly drift: BaselineDriftReason | null;
 }
 
 function canonicalize(value: PolicyValue): JsonValue {
@@ -133,108 +90,6 @@ export function getBaselineEntry(basePolicyContent: string, key: string): Policy
 export function listBaselineEntryKeys(basePolicyContent: string): string[] {
   const networkPolicies = parseNetworkPolicies(basePolicyContent);
   return networkPolicies ? Object.keys(networkPolicies) : [];
-}
-
-/**
- * Resolve an exclusion request against the current base policy: report the
- * entry, its current digest, and any drift (`missing` when the release dropped
- * the key, `changed` when its content no longer matches the approved digest).
- */
-export function resolveBaselineExclusion(
-  basePolicyContent: string,
-  request: BaselineExclusionRequest,
-): BaselineExclusionResolution {
-  const entry = getBaselineEntry(basePolicyContent, request.key);
-  if (!entry) return { entry: null, currentDigest: null, drift: "missing" };
-  const currentDigest = digestBaselineEntry(entry);
-  return {
-    entry,
-    currentDigest,
-    drift: currentDigest === request.digest ? null : "changed",
-  };
-}
-
-/**
- * Raised when a recorded exclusion no longer matches the current baseline, so
- * the create/rebuild policy generation fails closed instead of replaying a
- * stale approval against changed egress.
- */
-export class BaselineExclusionDriftError extends Error {
-  readonly key: string;
-  readonly reason: BaselineDriftReason;
-
-  constructor(key: string, reason: BaselineDriftReason) {
-    super(
-      reason === "missing"
-        ? `Baseline entry '${key}' no longer exists in the current agent baseline; its exclusion approval is stale. Clear it with 'policy restore'.`
-        : `Baseline entry '${key}' changed since it was excluded; the exclusion approval is invalid. Re-review and re-exclude it, or restore it with 'policy restore'.`,
-    );
-    this.name = "BaselineExclusionDriftError";
-    this.key = key;
-    this.reason = reason;
-  }
-}
-
-/**
- * Raised when durable state attempts to exclude an entry that the supported
- * sandbox contract requires. This check belongs in the replay path as well as
- * the CLI so imported or manually edited registry state cannot bypass it.
- */
-export class ProtectedBaselineExclusionError extends Error {
-  readonly key: string;
-
-  constructor(key: string) {
-    super(`Baseline entry '${key}' is required and cannot be excluded.`);
-    this.name = "ProtectedBaselineExclusionError";
-    this.key = key;
-  }
-}
-
-/** Raised when durable approval belongs to a different agent baseline contract. */
-export class BaselineExclusionSourceError extends Error {
-  readonly key: string;
-  readonly approvedAgent: string;
-  readonly currentAgent: string;
-
-  constructor(key: string, approvedAgent: string, currentAgent: string) {
-    super(
-      `Baseline exclusion '${key}' was approved for agent '${approvedAgent}', not '${currentAgent}'. Restore or re-approve it for the current agent before rebuilding.`,
-    );
-    this.name = "BaselineExclusionSourceError";
-    this.key = key;
-    this.approvedAgent = approvedAgent;
-    this.currentAgent = currentAgent;
-  }
-}
-
-/**
- * Apply recorded exclusions to a base policy for create/rebuild. Verifies each
- * approval's digest against the current baseline and drops the matching entry;
- * throws `BaselineExclusionDriftError` on any missing or changed entry so a
- * release that redefined the egress forces re-review.
- */
-export function applyBaselineExclusions(
-  basePolicyContent: string,
-  requests: readonly BaselineExclusionRequest[],
-  currentAgent: string,
-): { content: string; excludedKeys: string[] } {
-  let content = basePolicyContent;
-  const excludedKeys: string[] = [];
-  for (const request of requests) {
-    if (request.agent !== currentAgent) {
-      throw new BaselineExclusionSourceError(request.key, request.agent, currentAgent);
-    }
-    if (isProtectedBaselineExclusionKey(request.key)) {
-      throw new ProtectedBaselineExclusionError(request.key);
-    }
-    const resolution = resolveBaselineExclusion(content, request);
-    if (resolution.drift) throw new BaselineExclusionDriftError(request.key, resolution.drift);
-    const removal = removeBaselineEntryFromPolicy(content, request.key);
-    if (!removal.removed) throw new BaselineExclusionDriftError(request.key, "missing");
-    content = removal.policy;
-    excludedKeys.push(request.key);
-  }
-  return { content, excludedKeys };
 }
 
 function scalarText(value: PolicyValue): string {

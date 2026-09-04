@@ -69,6 +69,7 @@ control = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = control
 spec.loader.exec_module(control)
 
+harness_clock = [0.0]; control.time.monotonic = lambda: harness_clock[0]; control.time.sleep = lambda seconds: harness_clock.__setitem__(0, harness_clock[0] + seconds)
 def write_process(
     proc_root,
     namespace_path,
@@ -508,7 +509,7 @@ with tempfile.TemporaryDirectory() as root:
                 sys.argv[2],
                 {
                     "LD_PRELOAD": "/tmp/attacker.so",
-                    "SAFE": "1",
+                    "SAFE": "1", "HERMES_HOME": "/sandbox/.hermes", "HERMES_BUNDLED_PLUGINS": "/opt/hermes/plugins",
                     "HERMES_LAZY_INSTALL_TARGET": "/sandbox/.hermes/lazy-packages",
                 },
             )
@@ -1157,7 +1158,7 @@ with tempfile.TemporaryDirectory() as root:
         lambda _reader, _supervisor: diagnostic_output_events
     )
     control._control = lambda *_args: (_ for _ in ()).throw(
-        control.ControlError("SUPERVISOR_UNAVAILABLE", stage="await-replacement")
+        control.ControlError("GATEWAY_FAILED", stage="await-replacement")
     )
     staged_stderr = io.StringIO()
     try:
@@ -1178,7 +1179,8 @@ with tempfile.TemporaryDirectory() as root:
         control._read_start_log_diagnostic_excerpt = real_start_log_reader
     health_diagnostic = [health_status, health_stderr.getvalue().splitlines()]
     exact_failure_diagnostics = []
-    for failure_code in ("SUPERVISOR_BUSY", "SUPERVISOR_NOT_RUNNING"):
+    for failure_code in ("SUPERVISOR_BUSY", "SUPERVISOR_NOT_RUNNING",
+                         "SUPERVISOR_DISCOVERY_PENDING"):
         def fail_with_exact_marker(*_args, code=failure_code):
             with control._control_stage("discover-supervisor"):
                 raise control.ControlError(code)
@@ -1316,11 +1318,11 @@ describe("managed gateway root control", () => {
         gateway: [41, "333", 40],
         healthy: true,
       },
-      zombie_leader_with_live_sibling: "SUPERVISOR_UNAVAILABLE",
+      zombie_leader_with_live_sibling: "SUPERVISOR_DISCOVERY_PENDING",
       state_key_behavior: [true, false],
       mixed_namespace_rejected: true,
       transient_supervisor_retry: [40, 6],
-      persistent_supervisor_churn: ["SUPERVISOR_UNAVAILABLE", expect.any(Number), 1],
+      persistent_supervisor_churn: ["SUPERVISOR_DISCOVERY_PENDING", expect.any(Number), 1],
       transient_gateway_candidates: [41, 5],
       namespace_denied: true,
       preflight: [
@@ -1347,8 +1349,8 @@ describe("managed gateway root control", () => {
       runtime_validation: "in-process",
       missing_supervisor: "SUPERVISOR_NOT_RUNNING",
       appearing_supervisor: "SUPERVISOR_UNAVAILABLE",
-      unreadable_process: "SUPERVISOR_UNAVAILABLE",
-      empty_live_process: "SUPERVISOR_UNAVAILABLE",
+      unreadable_process: "SUPERVISOR_DISCOVERY_PENDING",
+      empty_live_process: "SUPERVISOR_DISCOVERY_PENDING",
       duplicate_supervisor: "SUPERVISOR_UNAVAILABLE",
       duplicate: "SUPERVISOR_UNAVAILABLE",
       signals: [15, 9],
@@ -1441,7 +1443,7 @@ describe("managed gateway root control", () => {
       staged_diagnostic: [
         1,
         [
-          "SUPERVISOR_UNAVAILABLE",
+          "GATEWAY_FAILED",
           "NEMOCLAW_CONTROL_STAGE=await-replacement",
           "NEMOCLAW_SUPERVISOR_PID=40",
           "NEMOCLAW_GATEWAY_PID=44",
@@ -1469,6 +1471,7 @@ describe("managed gateway root control", () => {
       exact_failure_diagnostics: [
         [1, ["SUPERVISOR_BUSY"]],
         [1, ["SUPERVISOR_NOT_RUNNING"]],
+        [1, ["SUPERVISOR_DISCOVERY_PENDING"]],
       ],
     });
     expect(output.timeout_refresh[2][2][1]).toBeGreaterThan(0);

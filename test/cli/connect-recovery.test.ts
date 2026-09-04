@@ -258,7 +258,7 @@ describe("CLI connect recovery process contracts", () => {
           "    exit 0",
           "  fi",
           "fi",
-          'if [ "$1" = "forward" ] && [ "$2" = "list" ]; then echo "alpha 127.0.0.1 18789 12345 running"; exit 0; fi',
+          'if [ "$1" = "forward" ] && [ "$2" = "list" ]; then exit 0; fi',
           'if [ "$1" = "forward" ]; then exit 99; fi',
           ...launchReadinessObservationStubLines,
           "exit 0",
@@ -339,7 +339,7 @@ describe("CLI connect recovery process contracts", () => {
           "    exit 0",
           "  fi",
           "fi",
-          'if [ "$1" = "forward" ] && [ "$2" = "list" ]; then echo "alpha 127.0.0.1 18789 12345 running"; exit 0; fi',
+          'if [ "$1" = "forward" ] && [ "$2" = "list" ]; then exit 0; fi',
           'if [ "$1" = "forward" ]; then exit 99; fi',
           ...launchReadinessObservationStubLines,
           "exit 0",
@@ -375,82 +375,6 @@ describe("CLI connect recovery process contracts", () => {
     },
   );
 
-  it("recovers a stopped Hermes Agent gateway with its assigned forwards through privileged Docker control (#9716)", async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-agent-"));
-    const localBin = path.join(home, "bin");
-    const openshellCalls = path.join(home, "openshell-calls");
-    const dockerCalls = path.join(home, "docker-calls");
-    const sshCalls = path.join(home, "ssh-calls");
-    const stateFile = path.join(home, "probe-state");
-    fs.mkdirSync(localBin, { recursive: true });
-    writeSandboxRegistry(home, {
-      ...launchReadinessRegistryFixture(),
-      agent: "hermes",
-      dashboardPort: 18790,
-      hermesApiPort: 8643,
-    });
-    fs.writeFileSync(stateFile, "stopped");
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        `calls=${JSON.stringify(openshellCalls)}`,
-        `state_file=${JSON.stringify(stateFile)}`,
-        'printf \'%s\\n\' "$*" >> "$calls"',
-        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then echo "alpha  Ready"; exit 0; fi',
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
-        "  echo 'Sandbox:'",
-        "  echo",
-        "  echo '  Id: abc'",
-        "  echo '  Name: alpha'",
-        "  echo '  Namespace: openshell'",
-        "  echo '  Phase: Ready'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
-        '  if [[ "$*" == *"inference.local/v1/models"* ]]; then echo "OK 200"; exit 0; fi',
-        '  if [[ "$*" == *"NEMOCLAW_AGENT_SMOKE_EXIT"* ]]; then echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0; fi',
-        '  if [[ "$*" == *"curl -so"* ]]; then',
-        "    echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
-        '    if [ "$(cat "$state_file")" = recovered ]; then echo RUNNING; else echo STOPPED; fi',
-        "    exit 0",
-        "  fi",
-        "fi",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "alpha" ]; then',
-        '  echo UNEXPECTED_SSH_CONFIG >> "$calls"',
-        "  exit 1",
-        "fi",
-        'if [ "$1" = "forward" ] && [ "$2" = "list" ]; then { echo "control 127.0.0.1 18789 12345 running"; echo "control 127.0.0.1 8642 12346 running"; echo "alpha 127.0.0.1 18790 12347 running"; echo "alpha 127.0.0.1 8643 12348 running"; }; exit 0; fi',
-        'if [ "$1" = "forward" ]; then exit 99; fi',
-        ...launchReadinessObservationStubLines,
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    writeGatewayControlDockerStub(localBin, { callsFile: dockerCalls, stateFile });
-    writeRecordingCommand(localBin, "ssh", sshCalls, 98);
-    const stopForwardListeners = await startForwardListeners([18790, 8643]);
-
-    try {
-      const result = runWithEnv("alpha connect --probe-only", {
-        HOME: home,
-        NODE_OPTIONS: nonWslPlatformNodeOptions(home),
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-      });
-
-      expectProbeOnlyPublicationOutcome(result);
-      expect(result.out).toContain("Probe complete: recovered Hermes Agent gateway");
-      const openshellLog = fs.readFileSync(openshellCalls, "utf8");
-      expect(openshellLog).toContain("sandbox exec --name alpha -- sh -c");
-      expect(openshellLog).not.toContain("sandbox ssh-config alpha");
-      expect(openshellLog).not.toContain("sandbox connect");
-      expect(fs.existsSync(sshCalls)).toBe(false);
-      expectGatewayControlRecovery(dockerCalls);
-    } finally {
-      await stopForwardListeners();
-    }
-  });
-
   it("connect recovers a named sandbox from the last onboard session when the registry is empty", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-recover-session-"));
     const localBin = path.join(home, "bin");
@@ -479,7 +403,6 @@ describe("CLI connect recovery process contracts", () => {
           credentialEnv: null,
           preferredInferenceApi: null,
           nimContainer: null,
-          policyPresets: null,
           metadata: { gatewayName: "nemoclaw" },
           steps: {
             preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -532,6 +455,10 @@ describe("CLI connect recovery process contracts", () => {
         "  echo '  Name: alpha'",
         "  echo '  Namespace: openshell'",
         "  echo '  Phase: Ready'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+        `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',

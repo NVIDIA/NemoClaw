@@ -56,6 +56,7 @@ export type WrapperRun = {
   realInvoked: boolean;
   realArgs: string;
   realArgv: string[];
+  realEnv: Record<string, string>;
 };
 
 export type StubBehaviour = { stdout?: string; stderr?: string; exitCode?: number };
@@ -105,13 +106,14 @@ export function runWrapper(
     fs.chmodSync(path.join(dir, "hermes"), 0o755);
 
     const marker = path.join(dir, "real-invoked.txt");
+    const envMarker = path.join(dir, "real-env.json");
     const stubStdout = opts.stub?.stdout ?? "";
     const stubStderr = opts.stub?.stderr ?? "";
     const stubExit = opts.stub?.exitCode ?? 0;
     const stubScript = [
       "#!/usr/bin/env bash",
       `if [ "\${NEMOCLAW_HERMES_ADAPTER_VERSION_PROBE:-}" = "1" ]; then printf 'Hermes Agent v${opts.upstreamVersion ?? "0.19.0"}\\n'; exit 0; fi`,
-      `node -e 'require("node:fs").writeFileSync(process.argv[1], JSON.stringify(process.argv.slice(2)))' ${JSON.stringify(marker)} "$@"`,
+      `node -e 'const fs=require("node:fs"); fs.writeFileSync(process.argv[1], JSON.stringify(process.argv.slice(3))); fs.writeFileSync(process.argv[2], JSON.stringify(process.env))' ${JSON.stringify(marker)} ${JSON.stringify(envMarker)} "$@"`,
       stubStdout ? `cat <<'__NEMOCLAW_STUB_EOF__'\n${stubStdout}\n__NEMOCLAW_STUB_EOF__` : "",
       stubStderr
         ? `cat <<'__NEMOCLAW_STUB_ERR_EOF__' >&2\n${stubStderr}\n__NEMOCLAW_STUB_ERR_EOF__`
@@ -149,6 +151,7 @@ export function runWrapper(
 
     const realInvoked = fs.existsSync(marker);
     const realArgv = realInvoked ? JSON.parse(fs.readFileSync(marker, "utf-8")) : [];
+    const realEnv = fs.existsSync(envMarker) ? JSON.parse(fs.readFileSync(envMarker, "utf-8")) : {};
     return {
       status: result.status,
       stdout: result.stdout ?? "",
@@ -156,6 +159,7 @@ export function runWrapper(
       realInvoked,
       realArgs: realArgv.join(" "),
       realArgv,
+      realEnv,
     };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

@@ -36,6 +36,8 @@ const mocks = vi.hoisted(() => ({
   ),
   stopNimContainer: vi.fn(),
   stopNimContainerByName: vi.fn(),
+  teardownSandboxDashboardForward: vi.fn(() => true),
+  restoreSandboxLaunchForwards: vi.fn(() => true),
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
@@ -66,6 +68,11 @@ vi.mock("./rebuild-flow-helpers", () => ({
   warnUnpreservedUserManagedFiles: mocks.warnUnpreservedUserManagedFiles,
 }));
 
+vi.mock("./forward-recovery", () => ({
+  teardownSandboxDashboardForward: mocks.teardownSandboxDashboardForward,
+  restoreSandboxLaunchForwards: mocks.restoreSandboxLaunchForwards,
+}));
+
 vi.mock("./rebuild-mcp-phase", () => ({
   prepareMcpForRebuild: mocks.prepareMcpForRebuild,
   reattachMcpAfterDeleteFailure: mocks.reattachMcpAfterDeleteFailure,
@@ -91,8 +98,7 @@ function stubRecreateJournal(): RebuildRecreateJournal {
     },
     targetGeneration: "generation-1",
     targetIntentFingerprint: "intent-1",
-    markDeleting: vi.fn(),
-    observeSourceForDelete: vi.fn(() => "source" as const),
+    beginDelete: vi.fn(() => "source" as const),
     confirmDeleted: vi.fn(),
     completeAcceptedTarget: vi.fn(),
   };
@@ -129,6 +135,8 @@ describe("rebuild destroy phase", () => {
     mocks.waitUntil.mockImplementation(
       (condition: () => boolean) => condition() || condition() || condition(),
     );
+    mocks.teardownSandboxDashboardForward.mockReturnValue(true);
+    mocks.restoreSandboxLaunchForwards.mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -136,50 +144,9 @@ describe("rebuild destroy phase", () => {
     vi.restoreAllMocks();
   });
 
-  it("blocks rebuild before MCP or sandbox mutation when baseline repair is pending (#7178)", async () => {
-    const bail = vi.fn((message: string): never => {
-      throw new Error(message);
-    });
-
-    await expect(
-      runRebuildDestroyPhase({
-        sandboxName: "alpha",
-        sandboxEntry: {
-          name: "alpha",
-          baselineExclusionTransition: {
-            id: "tx-1",
-            operation: "restore",
-            exclusion: {
-              version: 1,
-              agent: "openclaw",
-              key: "nous_research",
-              digest: "approved-digest",
-            },
-            targetLiveDigest: "current-digest",
-            startedAt: "2026-07-19T00:00:00.000Z",
-          },
-        },
-        staleRecovery: false,
-        recreateJournal: stubRecreateJournal(),
-        backupManifest: null,
-        log: vi.fn(),
-        bail,
-        relockShieldsIfNeeded: vi.fn(() => true),
-        onDeleted: vi.fn(),
-      }),
-    ).rejects.toThrow("Pending baseline policy restore");
-
-    expect(mocks.prepareMcpForRebuild).not.toHaveBeenCalled();
-    expect(bail).toHaveBeenCalledWith(
-      "Pending baseline policy restore for 'nous_research' blocks rebuild.",
-      1,
-    );
-  });
-
   it("retains unexpected delete-edge diagnostics without logging credentials (#6195)", async () => {
     const secret = `nvapi-${"a".repeat(32)}`;
     const log = vi.fn();
-    const relockShieldsIfNeeded = vi.fn(() => true);
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
     });
@@ -193,7 +160,6 @@ describe("rebuild destroy phase", () => {
         backupManifest: null,
         log,
         bail,
-        relockShieldsIfNeeded,
         validateAfterMcpPreparation: async () => {
           throw new Error(`route probe failed with ${secret}`);
         },
@@ -207,7 +173,6 @@ describe("rebuild destroy phase", () => {
     expect(diagnostics).toContain("<REDACTED>");
     expect(diagnostics).not.toContain(secret);
     expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledOnce();
-    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
   });
 
   it("blocks the exact delete edge when the shared inference route drifts (#7798)", async () => {
@@ -224,7 +189,6 @@ describe("rebuild destroy phase", () => {
         backupManifest: null,
         log: vi.fn(),
         bail,
-        relockShieldsIfNeeded: vi.fn(() => true),
         validateAtDeleteEdge: () => ({
           ok: false,
           message: "Shared inference route changed before sandbox deletion.",
@@ -252,7 +216,6 @@ describe("rebuild destroy phase", () => {
       force: true,
       log,
       bail,
-      relockShieldsIfNeeded: vi.fn(() => true),
       onDeleted: vi.fn(),
     });
 
@@ -261,8 +224,63 @@ describe("rebuild destroy phase", () => {
       false,
       true,
       expect.any(Function),
-      expect.any(Function),
     );
+  });
+
+  it("removes a legacy Docker orphan after confirmed OpenShell deletion and before recreation", async () => {
+    const recreateJournal = stubRecreateJournal();
+    const cleanupDockerOrphanAfterDelete = vi.fn();
+    const onDeleted = vi.fn();
+
+    await runRebuildDestroyPhase({
+      sandboxName: "alpha",
+      sandboxEntry: { name: "alpha", agent: "openclaw" },
+      staleRecovery: false,
+      recreateJournal,
+      backupManifest: null,
+      log: vi.fn(),
+      bail: vi.fn((message: string): never => {
+        throw new Error(message);
+      }),
+      cleanupDockerOrphanAfterDelete,
+      onDeleted,
+    });
+
+    expect(recreateJournal.confirmDeleted).toHaveBeenCalledOnce();
+    expect(cleanupDockerOrphanAfterDelete).toHaveBeenCalledOnce();
+    expect(onDeleted).toHaveBeenCalledOnce();
+    expect(vi.mocked(recreateJournal.confirmDeleted).mock.invocationCallOrder[0]).toBeLessThan(
+      cleanupDockerOrphanAfterDelete.mock.invocationCallOrder[0]!,
+    );
+    expect(cleanupDockerOrphanAfterDelete.mock.invocationCallOrder[0]).toBeLessThan(
+      onDeleted.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("retains the deleted recovery boundary when Docker orphan cleanup fails", async () => {
+    const recreateJournal = stubRecreateJournal();
+    const onDeleted = vi.fn();
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw" },
+        staleRecovery: false,
+        recreateJournal,
+        backupManifest: null,
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        cleanupDockerOrphanAfterDelete: () => {
+          throw new Error("container removal refused");
+        },
+        onDeleted,
+      }),
+    ).rejects.toThrow("Post-delete Docker orphan cleanup failed: container removal refused");
+
+    expect(recreateJournal.confirmDeleted).toHaveBeenCalledOnce();
+    expect(onDeleted).toHaveBeenCalledOnce();
   });
 
   it("pins deletion to the recorded gateway when ambient selection changes (#7062)", async () => {
@@ -290,7 +308,6 @@ describe("rebuild destroy phase", () => {
       bail: vi.fn((message: string): never => {
         throw new Error(message);
       }),
-      relockShieldsIfNeeded: vi.fn(() => true),
       onDeleted: vi.fn(),
     });
 
@@ -319,54 +336,54 @@ describe("rebuild destroy phase", () => {
         gatewayPort: 29080,
       },
     ],
-  ])("refuses deletion when the registry %s changes before MCP preparation (#7062)", async (_label, currentEntry) => {
-    mocks.getSandbox.mockReturnValue(currentEntry);
-    mocks.prepareMcpForRebuild.mockResolvedValue({
-      entries: [{ server: "github" }],
-      detachedProviderEntries: [{ server: "github" }],
-      scrubbedAdapterEntries: [],
-    });
-    const relockShieldsIfNeeded = vi.fn(() => true);
+  ])(
+    "refuses deletion when the registry %s changes before MCP preparation (#7062)",
+    async (_label, currentEntry) => {
+      mocks.getSandbox.mockReturnValue(currentEntry);
+      mocks.prepareMcpForRebuild.mockResolvedValue({
+        entries: [{ server: "github" }],
+        detachedProviderEntries: [{ server: "github" }],
+        scrubbedAdapterEntries: [],
+      });
 
-    await expect(
-      runRebuildDestroyPhase({
-        sandboxName: "alpha",
-        sandboxEntry: {
-          name: "alpha",
-          agent: "openclaw",
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-        },
-        staleRecovery: false,
-        recreateJournal: stubRecreateJournal(),
-        backupManifest: null,
-        force: true,
-        log: vi.fn(),
-        bail: vi.fn((message: string): never => {
-          throw new Error(message);
+      await expect(
+        runRebuildDestroyPhase({
+          sandboxName: "alpha",
+          sandboxEntry: {
+            name: "alpha",
+            agent: "openclaw",
+            gatewayName: "nemoclaw",
+            gatewayPort: 8080,
+          },
+          staleRecovery: false,
+          recreateJournal: stubRecreateJournal(),
+          backupManifest: null,
+          force: true,
+          log: vi.fn(),
+          bail: vi.fn((message: string): never => {
+            throw new Error(message);
+          }),
+          onDeleted: vi.fn(),
         }),
-        relockShieldsIfNeeded,
-        onDeleted: vi.fn(),
-      }),
-    ).rejects.toThrow("Sandbox delete target changed during rebuild preparation.");
+      ).rejects.toThrow("Sandbox delete target changed during rebuild preparation.");
 
-    expect(mocks.getSandbox).toHaveBeenCalledTimes(2);
-    expect(mocks.prepareMcpForRebuild.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.getSandbox.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
-    );
-    expect(mocks.runOpenshell).not.toHaveBeenCalled();
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
-      "alpha",
-      [{ server: "github" }],
-      [],
-    );
-    expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
-    expect(mocks.stopNimContainer).not.toHaveBeenCalled();
-    expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
-    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
-  });
+      expect(mocks.getSandbox).toHaveBeenCalledTimes(2);
+      expect(mocks.prepareMcpForRebuild.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.getSandbox.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
+      );
+      expect(mocks.runOpenshell).not.toHaveBeenCalled();
+      expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
+        "alpha",
+        [{ server: "github" }],
+        [],
+      );
+      expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
+      expect(mocks.stopNimContainer).not.toHaveBeenCalled();
+      expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
+    },
+  );
 
-  it("refuses sandbox deletion when read-only MCP state drifts at the delete edge (#7062)", async () => {
+  it("refuses sandbox deletion and invokes recovery when MCP state drifts at the delete edge", async () => {
     const revalidateBeforeDelete = vi.fn().mockRejectedValue(new Error("live policy drifted"));
     mocks.prepareMcpForRebuild.mockResolvedValue({
       entries: [{}],
@@ -374,7 +391,6 @@ describe("rebuild destroy phase", () => {
       scrubbedAdapterEntries: [],
       revalidateBeforeDelete,
     });
-    const relockShieldsIfNeeded = vi.fn(() => true);
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
     });
@@ -389,20 +405,18 @@ describe("rebuild destroy phase", () => {
         force: true,
         log: vi.fn(),
         bail,
-        relockShieldsIfNeeded,
         onDeleted: vi.fn(),
       }),
     ).rejects.toThrow(
-      "Failed to revalidate read-only MCP recovery before sandbox deletion: live policy drifted",
+      "Failed to revalidate MCP recovery before sandbox deletion: live policy drifted",
     );
 
     expect(revalidateBeforeDelete).toHaveBeenCalledOnce();
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
-    expect(mocks.reattachMcpAfterDeleteFailure).not.toHaveBeenCalled();
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], []);
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
-    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
   });
 
   it("retains read-only MCP ownership when sandbox deletion fails (#7062)", async () => {
@@ -418,7 +432,6 @@ describe("rebuild destroy phase", () => {
       .mockReturnValueOnce({ status: 9, stdout: "", stderr: "delete failed" })
       .mockReturnValueOnce({ status: 0, stdout: "Phase: Ready\n", stderr: "" });
     const onDeleted = vi.fn();
-    const relockShieldsIfNeeded = vi.fn(() => true);
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
     });
@@ -433,7 +446,6 @@ describe("rebuild destroy phase", () => {
         force: true,
         log: vi.fn(),
         bail,
-        relockShieldsIfNeeded,
         onDeleted,
       }),
     ).rejects.toThrow("Failed to delete sandbox.");
@@ -443,11 +455,12 @@ describe("rebuild destroy phase", () => {
       mocks.runOpenshell.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
     expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], []);
+    expect(mocks.teardownSandboxDashboardForward).not.toHaveBeenCalled();
+    expect(mocks.restoreSandboxLaunchForwards).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
     expect(onDeleted).not.toHaveBeenCalled();
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
-    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
     expect(mocks.runOpenshell).toHaveBeenNthCalledWith(
       2,
       ["sandbox", "get", "-g", "nemoclaw", "alpha"],
@@ -474,7 +487,6 @@ describe("rebuild destroy phase", () => {
         stderr: 'status: Internal, message: "sandbox has no spec"',
       });
     const onDeleted = vi.fn();
-    const relockShieldsIfNeeded = vi.fn(() => true);
 
     const result = await runRebuildDestroyPhase({
       sandboxName: "alpha",
@@ -487,7 +499,6 @@ describe("rebuild destroy phase", () => {
       bail: vi.fn((message: string): never => {
         throw new Error(message);
       }),
-      relockShieldsIfNeeded,
       onDeleted,
     });
 
@@ -495,7 +506,6 @@ describe("rebuild destroy phase", () => {
     expect(onDeleted).toHaveBeenCalledOnce();
     expect(mocks.stopNimContainerByName).toHaveBeenCalledWith("nim-alpha");
     expect(mocks.reattachMcpAfterDeleteFailure).not.toHaveBeenCalled();
-    expect(relockShieldsIfNeeded).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -592,7 +602,6 @@ describe("rebuild destroy phase", () => {
       .mockReturnValueOnce(probe);
     const onDeleted = vi.fn();
     const onDeleteStateAmbiguous = vi.fn();
-    const relockShieldsIfNeeded = vi.fn(() => true);
 
     await expect(
       runRebuildDestroyPhase({
@@ -606,7 +615,6 @@ describe("rebuild destroy phase", () => {
         bail: vi.fn((message: string): never => {
           throw new Error(message);
         }),
-        relockShieldsIfNeeded,
         onDeleted,
         onDeleteStateAmbiguous,
       }),
@@ -618,7 +626,6 @@ describe("rebuild destroy phase", () => {
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
     expect(mocks.reattachMcpAfterDeleteFailure).not.toHaveBeenCalled();
-    expect(relockShieldsIfNeeded).not.toHaveBeenCalled();
   });
 
   it("preserves recovery ownership when post-delete state is partial or ambiguous (#7062)", async () => {
@@ -637,7 +644,6 @@ describe("rebuild destroy phase", () => {
       .mockReturnValueOnce({ status: 0, stdout: "Phase: Terminating\n", stderr: "" });
     const onDeleted = vi.fn();
     const onDeleteStateAmbiguous = vi.fn();
-    const relockShieldsIfNeeded = vi.fn(() => true);
 
     await expect(
       runRebuildDestroyPhase({
@@ -651,7 +657,6 @@ describe("rebuild destroy phase", () => {
         bail: vi.fn((message: string): never => {
           throw new Error(message);
         }),
-        relockShieldsIfNeeded,
         onDeleted,
         onDeleteStateAmbiguous,
       }),
@@ -662,7 +667,6 @@ describe("rebuild destroy phase", () => {
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
     expect(mocks.reattachMcpAfterDeleteFailure).not.toHaveBeenCalled();
-    expect(relockShieldsIfNeeded).not.toHaveBeenCalled();
   });
 
   it("does not treat missing-looking partial output from a timed-out probe as deleted (#7062)", async () => {
@@ -686,7 +690,6 @@ describe("rebuild destroy phase", () => {
       });
     const onDeleted = vi.fn();
     const onDeleteStateAmbiguous = vi.fn();
-    const relockShieldsIfNeeded = vi.fn(() => true);
 
     await expect(
       runRebuildDestroyPhase({
@@ -700,7 +703,6 @@ describe("rebuild destroy phase", () => {
         bail: vi.fn((message: string): never => {
           throw new Error(message);
         }),
-        relockShieldsIfNeeded,
         onDeleted,
         onDeleteStateAmbiguous,
       }),
@@ -717,7 +719,6 @@ describe("rebuild destroy phase", () => {
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
     expect(mocks.reattachMcpAfterDeleteFailure).not.toHaveBeenCalled();
-    expect(relockShieldsIfNeeded).not.toHaveBeenCalled();
   });
 
   it("stops local NIM only after a read-only MCP rebuild deletes the sandbox (#7062)", async () => {
@@ -747,7 +748,6 @@ describe("rebuild destroy phase", () => {
       bail: vi.fn((message: string): never => {
         throw new Error(message);
       }),
-      relockShieldsIfNeeded: vi.fn(() => true),
       onDeleted: vi.fn(),
     });
 
@@ -882,7 +882,6 @@ describe("rebuild destroy phase", () => {
         bail: vi.fn((message: string): never => {
           throw new Error(message);
         }),
-        relockShieldsIfNeeded: vi.fn(() => true),
         onDeleted,
       }),
     ).rejects.toThrow("Sandbox deletion could not be confirmed.");
@@ -921,7 +920,6 @@ describe("rebuild destroy phase", () => {
       bail: vi.fn((message: string): never => {
         throw new Error(message);
       }),
-      relockShieldsIfNeeded: vi.fn(() => true),
       onDeleted: vi.fn(() => events.push("on-deleted")),
     });
 
@@ -934,15 +932,16 @@ describe("rebuild destroy phase", () => {
       ["sandbox", "get", "-g", "nemoclaw", "alpha"],
       expect.objectContaining({ timeout: expect.any(Number) }),
     );
-    expect(recreateJournal.markDeleting).toHaveBeenCalledOnce();
+    expect(recreateJournal.beginDelete).toHaveBeenCalledOnce();
     expect(recreateJournal.confirmDeleted).toHaveBeenCalledOnce();
   });
 
   it("journals the delete boundary before the destructive command (#7734)", async () => {
     const order: string[] = [];
     const recreateJournal = stubRecreateJournal();
-    vi.mocked(recreateJournal.markDeleting).mockImplementation(() => {
+    vi.mocked(recreateJournal.beginDelete).mockImplementation(() => {
       order.push("journal:deleting");
+      return "source";
     });
     mocks.runOpenshell.mockImplementation((args: string[]) => {
       const deleting = args[1] === "delete";
@@ -962,24 +961,15 @@ describe("rebuild destroy phase", () => {
       bail: vi.fn((message: string): never => {
         throw new Error(message);
       }),
-      relockShieldsIfNeeded: vi.fn(() => true),
       onDeleted: vi.fn(),
     });
 
     expect(order).toEqual(["journal:deleting", "openshell:delete"]);
   });
 
-  it("reattaches MCP providers when the delete boundary cannot be journaled (#7734)", async () => {
+  it("preserves recovery state when ForwardTcp ports remain after deletion", async () => {
     const recreateJournal = stubRecreateJournal();
-    vi.mocked(recreateJournal.markDeleting).mockImplementation(() => {
-      throw new Error("session store is unwritable");
-    });
-    mocks.prepareMcpForRebuild.mockResolvedValue({
-      entries: [{ server: "github" }],
-      detachedProviderEntries: [{ providerName: "nemoclaw-mcp-alpha-github" }],
-      scrubbedAdapterEntries: [{ server: "github" }],
-    });
-    const relockShieldsIfNeeded = vi.fn(() => true);
+    mocks.teardownSandboxDashboardForward.mockReturnValue(false);
 
     await expect(
       runRebuildDestroyPhase({
@@ -992,7 +982,40 @@ describe("rebuild destroy phase", () => {
         bail: vi.fn((message: string): never => {
           throw new Error(message);
         }),
-        relockShieldsIfNeeded,
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow("Sandbox host ports did not release after deletion");
+
+    expect(mocks.restoreSandboxLaunchForwards).not.toHaveBeenCalled();
+    expect(recreateJournal.beginDelete).toHaveBeenCalledOnce();
+    expect(mocks.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.any(Object),
+    );
+  });
+
+  it("reattaches MCP providers when the delete boundary cannot be journaled (#7734)", async () => {
+    const recreateJournal = stubRecreateJournal();
+    vi.mocked(recreateJournal.beginDelete).mockImplementation(() => {
+      throw new Error("session store is unwritable");
+    });
+    mocks.prepareMcpForRebuild.mockResolvedValue({
+      entries: [{ server: "github" }],
+      detachedProviderEntries: [{ providerName: "nemoclaw-mcp-alpha-github" }],
+      scrubbedAdapterEntries: [{ server: "github" }],
+    });
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
+        staleRecovery: false,
+        recreateJournal,
+        backupManifest: null,
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
         onDeleted: vi.fn(),
       }),
     ).rejects.toThrow("Sandbox deletion could not be journaled");
@@ -1002,7 +1025,6 @@ describe("rebuild destroy phase", () => {
       [{ providerName: "nemoclaw-mcp-alpha-github" }],
       [{ server: "github" }],
     );
-    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
     expect(mocks.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
       expect.anything(),
@@ -1029,7 +1051,6 @@ describe("rebuild destroy phase", () => {
         bail: vi.fn((message: string): never => {
           throw new Error(message);
         }),
-        relockShieldsIfNeeded: vi.fn(() => true),
         onDeleted,
         onDeleteStateAmbiguous,
       }),
@@ -1051,7 +1072,6 @@ describe("rebuild destroy phase", () => {
     });
     const onDeleted = vi.fn();
     const onDeleteStateAmbiguous = vi.fn();
-    const relockShieldsIfNeeded = vi.fn(() => true);
 
     await expect(
       runRebuildDestroyPhase({
@@ -1064,7 +1084,6 @@ describe("rebuild destroy phase", () => {
         bail: vi.fn((message: string): never => {
           throw new Error(message);
         }),
-        relockShieldsIfNeeded,
         onDeleted,
         onDeleteStateAmbiguous,
       }),
@@ -1072,7 +1091,6 @@ describe("rebuild destroy phase", () => {
 
     expect(onDeleted).not.toHaveBeenCalled();
     expect(onDeleteStateAmbiguous).toHaveBeenCalledOnce();
-    expect(relockShieldsIfNeeded).not.toHaveBeenCalled();
     expect(mocks.runOpenshell).toHaveBeenCalledTimes(1);
     expect(mocks.captureOpenshell).toHaveBeenCalledTimes(3);
     expect(mocks.waitUntil).toHaveBeenCalledWith(

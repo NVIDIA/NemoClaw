@@ -1,18 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
-
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import type { EndpointDnsLookupFn } from "../security/trusted-private-endpoint";
 import {
-  hasTrustedPrivatePolicyPinReceipt,
   isTrustedPrivatePolicyPinCapability,
-  normalizeTrustedPrivatePolicyPinReceipt,
   prepareTrustedPrivatePolicyPresets,
-  replayTrustedPrivatePolicyPinCapability,
 } from "./trusted-private-endpoints";
 
 function preset(content: string) {
@@ -24,6 +19,92 @@ function lookup(records: Record<string, string[]>): EndpointDnsLookupFn {
 }
 
 describe("trusted private custom policy preparation", () => {
+  it.each([
+    "10.20.30.40",
+    "127.0.0.1",
+    "169.254.169.254",
+    "fe80::1",
+    "metadata.google.internal",
+  ])("rejects an untrusted private or special-use endpoint host %s", async (host) => {
+    const input = preset(`preset:
+  name: private
+network_policies:
+  service:
+    endpoints:
+      - host: "${host}"
+        port: 80
+        protocol: rest
+`);
+
+    await expect(prepareTrustedPrivatePolicyPresets([input], [])).rejects.toThrow(
+      /endpoint host.*is rejected.*explicit trust only for RFC1918, CGNAT, or IPv6 unique local/i,
+    );
+  });
+
+  it("preserves public and OpenShell bridge endpoints without private trust", async () => {
+    const input = preset(`preset:
+  name: private
+network_policies:
+  service:
+    endpoints:
+      - { host: api.example.com, port: 443, protocol: rest }
+      - { host: host.openshell.internal, port: 8080, protocol: rest }
+`);
+
+    await expect(prepareTrustedPrivatePolicyPresets([input], [])).resolves.toEqual([{ ...input }]);
+  });
+
+  it("pins an explicitly trusted private IP literal", async () => {
+    const input = preset(`preset:
+  name: private
+network_policies:
+  service:
+    endpoints:
+      - { host: 10.20.30.40, port: 443, protocol: rest }
+`);
+
+    const [prepared] = await prepareTrustedPrivatePolicyPresets([input], ["10.20.30.40"]);
+    const document = YAML.parse(prepared.content) as {
+      network_policies: { service: { endpoints: Array<{ allowed_ips?: string[] }> } };
+    };
+
+    expect(document.network_policies.service.endpoints[0]?.allowed_ips).toEqual(["10.20.30.40"]);
+    expect(
+      isTrustedPrivatePolicyPinCapability(prepared.content, prepared.trustedPrivatePinCapability),
+    ).toBe(true);
+  });
+
+  it("rejects an explicitly declared link-local metadata IP", async () => {
+    const input = preset(`preset:
+  name: private
+network_policies:
+  service:
+    endpoints:
+      - { host: 169.254.169.254, port: 80, protocol: rest }
+`);
+
+    await expect(
+      prepareTrustedPrivatePolicyPresets([input], ["169.254.169.254"]),
+    ).rejects.toThrow(/failed destination preflight/i);
+  });
+
+  it("does not let one trusted endpoint authorize an untrusted special-use sibling", async () => {
+    const input = preset(`preset:
+  name: private
+network_policies:
+  service:
+    endpoints:
+      - { host: api.corp.example, port: 443, protocol: rest }
+      - { host: 169.254.169.254, port: 80, protocol: rest }
+`);
+
+    await expect(
+      prepareTrustedPrivatePolicyPresets([input], ["api.corp.example"], {
+        lookup: lookup({ "api.corp.example": ["10.20.30.40"] }),
+      }),
+    ).rejects.toThrow(/169\.254\.169\.254.*is rejected/i);
+  });
+
   it("pins trusted endpoints across every policy protocol (#8176)", async () => {
     const input = preset(`preset:
   name: private
@@ -49,31 +130,13 @@ network_policies:
     document.network_policies.services.endpoints.forEach((endpoint) => {
       expect(endpoint.allowed_ips).toEqual(["10.20.30.40", "fd00::40"]);
     });
-    expect(prepared.trustedPrivatePins).toMatchObject({
-      version: 1,
-      contentDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
-    });
-    expect(hasTrustedPrivatePolicyPinReceipt(prepared.content, prepared.trustedPrivatePins)).toBe(
-      true,
-    );
     expect(
       isTrustedPrivatePolicyPinCapability(prepared.content, prepared.trustedPrivatePinCapability),
     ).toBe(true);
     expect(
-      isTrustedPrivatePolicyPinCapability(prepared.content, {
-        receipt: prepared.trustedPrivatePins,
-      }),
-    ).toBe(false);
-    expect(
       isTrustedPrivatePolicyPinCapability(
-        prepared.content,
-        replayTrustedPrivatePolicyPinCapability(prepared.content, prepared.trustedPrivatePins),
-      ),
-    ).toBe(true);
-    expect(
-      hasTrustedPrivatePolicyPinReceipt(
         `${prepared.content}\n# changed`,
-        prepared.trustedPrivatePins,
+        prepared.trustedPrivatePinCapability,
       ),
     ).toBe(false);
     expect(input.content).not.toContain("allowed_ips");
@@ -101,62 +164,12 @@ network_policies:
         "10.20.30.40",
         "8.8.8.8",
       ]);
-      expect(hasTrustedPrivatePolicyPinReceipt(prepared.content, prepared.trustedPrivatePins)).toBe(
-        true,
-      );
+      expect(
+        isTrustedPrivatePolicyPinCapability(prepared.content, prepared.trustedPrivatePinCapability),
+      ).toBe(true);
       expect(input.content).not.toContain("allowed_ips");
     },
   );
-
-  it.each([
-    { version: 1, contentDigest: "a".repeat(64) },
-    { version: 2, contentDigest: "a".repeat(64) },
-    { contentDigest: "a".repeat(64) },
-    { version: 1, contentDigest: "short" },
-  ])(
-    "rejects a pin receipt that is stale, malformed, or unversioned [case %#] (#8176)",
-    (receipt) => {
-      const content = "network_policies: {}\n";
-
-      expect(() => normalizeTrustedPrivatePolicyPinReceipt(content, receipt)).toThrow(
-        /does not match its exact content/,
-      );
-    },
-  );
-
-  it("rejects durable replay receipts that pin reserved destinations (#8176)", () => {
-    const content = `network_policies:
-  private:
-    endpoints:
-      - host: metadata.local
-        allowed_ips: [169.254.169.254]
-`;
-    const receipt = {
-      version: 1,
-      contentDigest: createHash("sha256").update(content).digest("hex"),
-    };
-
-    expect(() => replayTrustedPrivatePolicyPinCapability(content, receipt)).toThrow(
-      /disallowed address pin/,
-    );
-  });
-
-  it("rejects durable replay receipts that pin only public addresses (#8176)", () => {
-    const content = `network_policies:
-  private:
-    endpoints:
-      - host: api.corp.example
-        allowed_ips: [93.184.216.34]
-`;
-    const receipt = {
-      version: 1,
-      contentDigest: createHash("sha256").update(content).digest("hex"),
-    };
-
-    expect(() => replayTrustedPrivatePolicyPinCapability(content, receipt)).toThrow(
-      /disallowed address pin/,
-    );
-  });
 
   it("preserves the reviewed host-gateway exception beside generated private pins (#8176)", async () => {
     const input = preset(`preset:
@@ -215,7 +228,6 @@ network_policies:
     });
 
     expect(prepared.content).not.toContain("allowed_ips");
-    expect(prepared.trustedPrivatePins).toBeUndefined();
     expect(prepared.trustedPrivatePinCapability).toBeUndefined();
   });
 

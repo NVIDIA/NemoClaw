@@ -10,7 +10,7 @@ describe("root help", () => {
     vi.restoreAllMocks();
   });
 
-  it("describes mutable-default config and host-side lockdown", () => {
+  it("describes mutable agent config and durable host-side settings", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
     renderRootHelp();
@@ -18,7 +18,6 @@ describe("root help", () => {
     const output = log.mock.calls.map(([line]) => String(line)).join("\n");
     expect(output).toContain("Agent config is writable in the default sandbox");
     expect(output).toContain("Use host-side commands or re-run onboard");
-    expect(output).toContain("shields up");
     expect(output).not.toContain("Agent config is read-only inside the sandbox");
     expect(output).not.toContain("Landlock enforced");
   });
@@ -86,7 +85,9 @@ describe("root help", () => {
     renderRootHelp();
 
     const output = log.mock.calls.map(([line]) => String(line)).join("\n");
-    expect(output).toMatch(/Uninstall flags:[\s\S]*--destroy-user-data/);
+    expect(output).toMatch(
+      /--destroy-user-data[^\n]*remove managed CLI shims only when no sibling gateway is confirmed/,
+    );
     expect(output).not.toMatch(/--keep-user-data/);
     expect(output).not.toMatch(/--keep-backups/);
   });

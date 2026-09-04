@@ -49,12 +49,12 @@ import {
 } from "../sandbox/config";
 import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import { isConfigObject, isConfigValue } from "../security/credential-filter";
-import { appendAuditEntry } from "../shields/audit";
-import { withTimerBoundShieldsMutationLockAsync } from "../shields/timer-bound-lock";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import * as onboardSession from "../state/onboard-session";
+import { appendAuditEntry } from "../state/audit/operational";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
+import { enforceRemovedImmutabilityMigrationBoundary } from "../state/migrations/removed-immutability";
 import { isSafeModelId } from "../validation";
 import { resolveRuntimeInferenceApi } from "./inference-route-api";
 import {
@@ -74,6 +74,7 @@ import {
 import {
   type InferenceSetSandboxRouteProbe,
   assertInferenceSetCommandAvailable,
+  assertInferenceSetProviderOwnership,
   prepareInferenceSetProviderBinding,
   probeInferenceSetSandboxRoute,
   probeInferenceSetSandboxRouteUntilConverged,
@@ -94,6 +95,8 @@ import {
   isSandboxBridgeProviderBinding,
   prepareInferenceSetRoute,
   type RegistryInferenceMetadata,
+  sandboxCustomCompatibleCredentialEnv,
+  usesLoopbackNoAuthProxyRoute,
 } from "./inference-set-route-containment";
 
 export {
@@ -132,7 +135,10 @@ interface InferenceSetMutationResult extends InferenceSetResult {
 export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
-  listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox: string | null };
+  listSandboxes: () => {
+    sandboxes: SandboxEntry[];
+    defaultSandbox: string | null;
+  };
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
   getRequestedAgent: () => string | null | undefined;
   loadSession: () => onboardSession.Session | null;
@@ -164,7 +170,6 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   validateLocalProvider: (provider: string) => ValidationResult;
   ensureLocalProviderReachable: (provider: string) => boolean;
   resolveContextWindowForModel: (provider: string, model: string) => number | null;
-  isSandboxConfigMutable: (sandboxName: string) => boolean;
   rewriteConfigUrlsWithDnsPinning: (value: ConfigValue) => Promise<ConfigValue>;
   resolveCredentialValue: (credentialEnv: string) => string;
   ensureHttpsPinRuntimeAdapter: EnsureHttpsPinRuntimeAdapterFn;
@@ -273,17 +278,21 @@ function defaultDeps(): InferenceSetDeps {
     resolveContextWindowForModel,
     rewriteConfigUrlsWithDnsPinning,
     resolveCredentialValue: (credentialEnv) => process.env[credentialEnv] ?? "",
-    ensureHttpsPinRuntimeAdapter,
+    ensureHttpsPinRuntimeAdapter: (options) => {
+      if (!options.discoverAllowedSourceCidrs) {
+        throw new Error("HTTPS Pin Runtime adapter is missing runtime-provider network authority.");
+      }
+      return ensureHttpsPinRuntimeAdapter({
+        ...options,
+        discoverAllowedSourceCidrs: options.discoverAllowedSourceCidrs,
+      });
+    },
     revokeHttpsPinRuntimeAdapterRoute,
     probeSandboxRoute: probeInferenceSetSandboxRoute,
     sleep: sleepInferenceSetRouteConvergence,
     withGatewayRouteMutationLock,
     restartSandboxGateway: defaultInferenceGatewayRestart,
     settleOpenClawPairing: settleInferenceSetOpenClawPairing,
-    isSandboxConfigMutable: (sandboxName) => {
-      const { isShieldsDown }: typeof import("../shields") = require("../shields");
-      return isShieldsDown(sandboxName, true);
-    },
   };
 }
 
@@ -304,9 +313,9 @@ function assertSupportedProvider(provider: string, model: string): void {
 function assertInferenceSetRuntimeAuthority(
   entry: SandboxEntry,
   providers: RuntimeProviderBundleRegistry | undefined,
-): void {
+): ReturnType<typeof requireInferenceSetRuntimeAuthority> {
   try {
-    requireInferenceSetRuntimeAuthority(entry, providers);
+    return requireInferenceSetRuntimeAuthority(entry, providers);
   } catch (error) {
     if (!(error instanceof RuntimeProviderSelectionError)) throw error;
     throw new InferenceSetError(error.message, 2);
@@ -386,7 +395,11 @@ function resolveTargetSandbox(
     throw new InferenceSetError(`Sandbox '${targetName}' is not registered.`, 2);
   }
   assertSandboxRouteReservationComplete(entry);
-  return { sandboxName: targetName, entry, agentName: normalizeSandboxAgent(entry.agent) };
+  return {
+    sandboxName: targetName,
+    entry,
+    agentName: normalizeSandboxAgent(entry.agent),
+  };
 }
 
 function ensureObject(record: ConfigObject, key: string): ConfigObject {
@@ -713,7 +726,9 @@ function assertHermesCompatibleAnthropicOpenAiProvider(
   provider: string,
   endpointUrl: string | null,
   deps: InferenceSetDeps,
-  httpsPinProviderBinding: { providerType: "openai" | "anthropic" } | null = null,
+  httpsPinProviderBinding: {
+    providerType: "openai" | "anthropic";
+  } | null = null,
 ): void {
   if (
     agentName !== "hermes" ||
@@ -783,6 +798,7 @@ async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps,
   expectedGatewayName: string,
+  runtimeProvider: ReturnType<typeof requireInferenceSetRuntimeAuthority>,
 ): Promise<InferenceMutation<InferenceSetMutationResult>> {
   // #6321: accept the installer-style provider name onboard uses (e.g.
   // `anthropicCompatible`) as well as the OpenShell provider name, by
@@ -897,12 +913,6 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
-  if (!deps.isSandboxConfigMutable(sandboxName)) {
-    throw new InferenceSetError(
-      `${agentName === "hermes" ? "Hermes" : "OpenClaw"} inference changes are unavailable while shields are up for '${sandboxName}'. Run '${CLI_NAME} ${sandboxName} shields down' first.`,
-      2,
-    );
-  }
   // Explicit custom routes may start an HTTPS-pin adapter during finalization,
   // so reject an unsupported API family before that first possible mutation.
   if (preparedRoute.preliminaryExplicitMetadata) {
@@ -935,7 +945,14 @@ async function runInferenceSetWithoutHostLock(
     getSandboxes: () => deps.listSandboxes().sandboxes,
     rewriteUrlWithDnsPinning: deps.rewriteConfigUrlsWithDnsPinning,
     resolveCredentialValue: deps.resolveCredentialValue,
-    ensureHttpsPinRuntimeAdapter: deps.ensureHttpsPinRuntimeAdapter,
+    ensureHttpsPinRuntimeAdapter: (adapterOptions) =>
+      deps.ensureHttpsPinRuntimeAdapter({
+        ...adapterOptions,
+        discoverAllowedSourceCidrs: () =>
+          runtimeProvider.gateway
+            .prepareHostRuntime({ environment: process.env, platform: process.platform })
+            .network.sandboxSourceCidrs(),
+      }),
     effectiveInferenceApi: preparedRoute.preliminaryExplicitMetadata?.preferredInferenceApi ?? null,
   });
 
@@ -946,7 +963,15 @@ async function runInferenceSetWithoutHostLock(
   // verify. Only a genuinely-unreachable host stack hard-fails here, before the
   // route is touched.
   let effectiveNoVerify = options.noVerify === true;
-  const probeDirectSandboxBridge = isSandboxBridgeProviderBinding(directProviderBinding);
+  // A loopback endpoint onboarded without authentication is published to the
+  // gateway through the local no-auth proxy on NemoClaw's sandbox bridge, so
+  // the provider's base URL is a `host.openshell.internal` address even though
+  // the registry records the operator's loopback URL. The host-side OpenShell
+  // verifier cannot resolve that address; verify from inside the sandbox
+  // instead, exactly like an explicit bridge route.
+  const loopbackNoAuthProxyRoute = usesLoopbackNoAuthProxyRoute(entry, provider);
+  const probeDirectSandboxBridge =
+    isSandboxBridgeProviderBinding(directProviderBinding) || loopbackNoAuthProxyRoute;
   // Adapter routes and explicit custom routes on NemoClaw's sandbox bridge
   // resolve only from inside the sandbox network. The host-side OpenShell
   // verifier cannot resolve host.openshell.internal, so its result would be a
@@ -1064,6 +1089,7 @@ async function runInferenceSetWithoutHostLock(
         providerName: provider,
         binding: providerBinding,
         captureOpenshell: deps.captureOpenshell,
+        allowCreate: !loopbackNoAuthProxyRoute,
       });
       if (directProviderBinding && providerMutation.action === "update") {
         const bindingMismatches = recordedDirectProviderBindingMismatches({
@@ -1084,6 +1110,19 @@ async function runInferenceSetWithoutHostLock(
         // not replace the provider binding.
         providerMutation = null;
       }
+    } else if (loopbackNoAuthProxyRoute) {
+      // A model-only switch builds no provider binding, so nothing above
+      // inspects the live provider. This route's credential is the local
+      // no-auth proxy token that OpenShell holds and sends on selection, and
+      // its host-side verification is skipped, so confirm the durable binding
+      // is still the one onboarding registered before selecting it.
+      assertInferenceSetProviderOwnership({
+        gatewayName: preparedRoute.gatewayName,
+        providerName: provider,
+        providerType: preMutationInferenceApi === "anthropic-messages" ? "anthropic" : "openai",
+        credentialEnv: sandboxCustomCompatibleCredentialEnv(entry, provider),
+        captureOpenshell: deps.captureOpenshell,
+      });
     }
     if (providerMutation) {
       appliedProvider = providerMutation.action === "create";
@@ -1490,27 +1529,34 @@ export async function runInferenceSet(
   // missing-binary path exits the process, which cannot be deferred safely by
   // an async lock. The inner resolution still validates the live registry entry.
   const selected = resolveTargetSandbox(options.sandboxName, deps);
+  try {
+    enforceRemovedImmutabilityMigrationBoundary(selected.sandboxName);
+  } catch (error) {
+    throw new InferenceSetError(error instanceof Error ? error.message : String(error), 2);
+  }
   assertInferenceSetRuntimeAuthority(selected.entry, deps.runtimeProviders);
   assertInferenceSetCommandAvailable(selected.sandboxName);
   deps.prepareRunOpenshell();
   return withSandboxMutationLock(selected.sandboxName, async () => {
+    enforceRemovedImmutabilityMigrationBoundary(selected.sandboxName);
     assertInferenceSetCommandAvailable(selected.sandboxName);
     const lockedSelection = resolveTargetSandbox(selected.sandboxName, deps);
-    assertInferenceSetRuntimeAuthority(lockedSelection.entry, deps.runtimeProviders);
+    const runtimeProvider = assertInferenceSetRuntimeAuthority(
+      lockedSelection.entry,
+      deps.runtimeProviders,
+    );
     const gatewayName = resolveSandboxGatewayName(lockedSelection.entry);
     const mutation = await deps.withGatewayRouteMutationLock(gatewayName, () =>
-      withTimerBoundShieldsMutationLockAsync(selected.sandboxName, "inference set", () =>
-        runInferenceSetWithoutHostLock(
-          { ...options, sandboxName: selected.sandboxName },
-          deps,
-          gatewayName,
-        ),
+      runInferenceSetWithoutHostLock(
+        { ...options, sandboxName: selected.sandboxName },
+        deps,
+        gatewayName,
+        runtimeProvider,
       ),
     );
-    // Release the config transition lock before post-commit gateway work
-    // reacquires its own route state. Retain the outer sandbox lifecycle lock
-    // so another process cannot replace this sandbox between the committed
-    // write, an optional restart, and device-scope convergence.
+    // Retain the outer sandbox lifecycle lock so another process cannot replace
+    // this sandbox between the committed write, an optional restart, and
+    // device-scope convergence.
     completeInferencePostCommit(mutation, deps);
     if (mutation.result.dashboardConverged === false) {
       throw new InferenceSetError(

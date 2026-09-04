@@ -104,7 +104,7 @@ describe("connectSandbox probe-only observe mode", () => {
         );
       },
     );
-    expect(listInvocations).toHaveLength(2);
+    expect(listInvocations).toHaveLength(3);
     const listArgs = harness.captureOpenshellSpy.mock.calls
       .map((call) => call[0])
       .filter(
@@ -114,6 +114,7 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(listArgs).toEqual([
       ["sandbox", "list", "-g", "nemoclaw-8091"],
       ["sandbox", "list", "-g", "nemoclaw-8091"],
+      ["sandbox", "list", "-g", "nemoclaw-8091"],
     ]);
     const liveLookupOrder = harness.ensureLiveSandboxSpy.mock.invocationCallOrder;
     expect(liveLookupOrder).toHaveLength(2);
@@ -121,6 +122,10 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(recoveryOrder).toHaveLength(1);
     expect(listInvocations[1]).toBeLessThan(liveLookupOrder[1]);
     expect(liveLookupOrder[1]).toBeLessThan(recoveryOrder[0]);
+    expect(recoveryOrder[0]).toBeLessThan(listInvocations[2]!);
+    expect(listInvocations[2]).toBeLessThan(
+      harness.publishLaunchReadinessSpy.mock.invocationCallOrder[0]!,
+    );
     expect(harness.logSpy).toHaveBeenCalledWith(
       expect.stringContaining("restored dashboard port forward"),
     );
@@ -137,9 +142,10 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
   });
 
-  it("starts a stopped container before readiness polling begins (#8967)", async () => {
+  it("waits through the initial Error after starting a stopped container (#10466)", async () => {
     const harness = createConnectHarness({
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      listOutputs: ["alpha Error", "alpha Provisioning", "alpha Ready"],
     });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
@@ -166,7 +172,72 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.dockerStartSpy.mock.invocationCallOrder[0]!).toBeLessThan(
       listInvocations[0]!.order,
     );
+    expect(listInvocations).toHaveLength(4);
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      condition: "Docker reports a failed start",
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      dockerStartStatus: 1,
+      expectedStartCalls: 1,
+    },
+    {
+      condition: "Docker reports no start status",
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      dockerStartStatus: null,
+      expectedStartCalls: 1,
+    },
+    {
+      condition: "the container is already running",
+      dockerRuntime: { containerName: "openshell-alpha", running: true, paused: false },
+      dockerStartStatus: 0,
+      expectedStartCalls: 0,
+    },
+    {
+      condition: "the container is paused",
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: true },
+      dockerStartStatus: 0,
+      expectedStartCalls: 0,
+    },
+    {
+      condition: "Docker cannot resolve a container",
+      dockerRuntime: { containerName: null, running: false, paused: false },
+      dockerStartStatus: 0,
+      expectedStartCalls: 0,
+    },
+  ])("keeps Error terminal when $condition (#10466)", async (testCase) => {
+    const harness = createConnectHarness({
+      dockerRuntime: testCase.dockerRuntime,
+      dockerStartStatus: testCase.dockerStartStatus,
+      listOutput: "alpha Error",
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.dockerStartSpy).toHaveBeenCalledTimes(testCase.expectedStartCalls);
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(1);
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails before recovery when the initial Error persists after Docker starts (#10466)", async () => {
+    const harness = createConnectHarness({
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      listOutputs: Array.from({ length: 21 }, () => "alpha Error"),
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.dockerStartSpy).toHaveBeenCalledOnce();
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(21);
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 
   it("continues readiness polling when Docker cannot start a stopped container (#8967)", async () => {

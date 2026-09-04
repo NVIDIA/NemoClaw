@@ -17,7 +17,6 @@ import {
   classifyPreContractProviderValidationSkip,
   isHermesTransientAgentFailure,
   parseChatContent,
-  parseOpenClawAgentText,
   parseOpenClawToolEvidence,
   projectOpenClawAgentFailureArtifact,
   projectPersonalPublicFetchToolEvidenceArtifact,
@@ -281,33 +280,6 @@ async function expectAggregatePublicFetchFailure(
 }
 
 describe("common-egress agent parsing and classification helpers", () => {
-  it("OpenClaw JSON parser accepts framed agent payloads", () => {
-    expect(
-      parseOpenClawAgentText(
-        JSON.stringify({ payloads: [{ text: "noise" }, { text: "WEATHER_AGENT_OK" }] }),
-      ),
-    ).toContain("WEATHER_AGENT_OK");
-    expect(
-      parseOpenClawAgentText(
-        JSON.stringify({ result: { payloads: [{ text: "REFERENCE_AGENT_OK" }] } }),
-      ),
-    ).toContain("REFERENCE_AGENT_OK");
-    expect(
-      parseOpenClawAgentText(
-        JSON.stringify([
-          { payloads: [{ text: "FIRST_AGENT_REPLY" }] },
-          { result: { payloads: [{ text: "SECOND_AGENT_REPLY" }] } },
-        ]),
-      ),
-    ).toBe("FIRST_AGENT_REPLY\nSECOND_AGENT_REPLY");
-    expect(
-      parseOpenClawAgentText(
-        `openclaw log line\n${JSON.stringify({
-          result: { payloads: [{ text: "HERMES_REFERENCE_AGENT_OK" }] },
-        })}\n`,
-      ),
-    ).toContain("HERMES_REFERENCE_AGENT_OK");
-  });
 
   it("reduces OpenClaw public-fetch traces without retaining fetched content or URL queries", () => {
     const source = "www.wikidata.org";
@@ -1221,6 +1193,14 @@ describe("common-egress agent parsing and classification helpers", () => {
         response: "malformed request after ETIMEDOUT",
       }),
     ).toEqual({ passed: false, failureClass: "malformed-input" });
+    expect(
+      classifyHermesAgentAssertion({
+        ...result,
+        exitCode: 0,
+        reply: "The command is waiting for your approval to execute.",
+        response: "The command is waiting for your approval to execute. Please approve it to proceed.",
+      }),
+    ).toEqual({ passed: false, failureClass: "transient-external" });
     expect(classifyHermesAgentAssertion(result)).toEqual({
       passed: false,
       failureClass: "deterministic",

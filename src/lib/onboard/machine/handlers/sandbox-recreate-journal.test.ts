@@ -150,14 +150,7 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
   );
   expect(calls.note).toHaveBeenCalledWith(expect.stringContaining("run 'nemohermes gc'"));
   const orderedPhases = phases.filter((phase, index) => index === 0 || phase !== phases[index - 1]);
-  expect(orderedPhases).toEqual([
-    null,
-    "planned",
-    "created",
-    "registry_committing",
-    "completed",
-    null,
-  ]);
+  expect(orderedPhases).toEqual([null, "created", "registry_committing", "completed", null]);
   expect(session.checkpoint?.sandboxRecreate).toBeNull();
 });
 
@@ -167,58 +160,60 @@ it.each([
   "authority-unproven",
   "no-owned-image",
   "image-reused",
-] as const)("reports the bounded %s image-retirement skip after journaled recreation", async (reason) => {
+] as const)(
+  "reports the bounded %s image-retirement skip after journaled recreation",
+  async (reason) => {
+    const session = createSession({ sandboxName: "saved", agent: "openclaw" });
+    const journal = bindJournaledRecreate(session);
+    const sourceEntry: SandboxEntry = {
+      name: "saved",
+      provider: "provider",
+      model: "model",
+      endpointUrl: null,
+      preferredInferenceApi: "openai-completions",
+      webSearchEnabled: false,
+      toolDisclosure: "progressive",
+      fromDockerfile: null,
+      hermesAuthMethod: null,
+      imageTag: "openshell/sandbox-from:old",
+      workload: {
+        schemaVersion: 1,
+        kind: "legacy-dockerfile",
+        reference: "openshell/sandbox-from:old",
+        shared: false,
+      },
+    };
+    const retireReplacedSandboxWorkload = vi.fn(() => ({
+      status: "skipped" as const,
+      reason,
+    }));
+    const { deps, calls } = createDeps(
+      {
+        getSandboxReuseState: () => "not_ready",
+        getSandboxRecreateObservation: journal.observe,
+        getSandboxRegistryEntry: () => sourceEntry,
+        createSandbox: journal.completeCreate,
+        retireReplacedSandboxWorkload,
+      },
+      session,
+    );
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    const diagnostics = calls.note.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.startsWith("  Obsolete sandbox image retirement skipped:"));
+    expect(diagnostics).toEqual([`  Obsolete sandbox image retirement skipped: ${reason}`]);
+    expect(retireReplacedSandboxWorkload).toHaveBeenCalledOnce();
+  },
+);
+
+it("does not carry a recorded preset list through post-delete onboard resume", async () => {
   const session = createSession({ sandboxName: "saved", agent: "openclaw" });
-  const journal = bindJournaledRecreate(session);
-  const sourceEntry: SandboxEntry = {
-    name: "saved",
-    provider: "provider",
-    model: "model",
-    endpointUrl: null,
-    preferredInferenceApi: "openai-completions",
-    webSearchEnabled: false,
-    toolDisclosure: "progressive",
-    fromDockerfile: null,
-    hermesAuthMethod: null,
-    imageTag: "openshell/sandbox-from:old",
-    workload: {
-      schemaVersion: 1,
-      kind: "legacy-dockerfile",
-      reference: "openshell/sandbox-from:old",
-      shared: false,
-    },
-  };
-  const retireReplacedSandboxWorkload = vi.fn(() => ({
-    status: "skipped" as const,
-    reason,
-  }));
-  const { deps, calls } = createDeps(
-    {
-      getSandboxReuseState: () => "not_ready",
-      getSandboxRecreateObservation: journal.observe,
-      getSandboxRegistryEntry: () => sourceEntry,
-      createSandbox: journal.completeCreate,
-      retireReplacedSandboxWorkload,
-    },
-    session,
-  );
-
-  await handleSandboxState({
-    ...baseOptions(deps, session),
-    resume: true,
-    sandboxName: "saved",
-  });
-
-  const diagnostics = calls.note.mock.calls
-    .map(([message]) => message)
-    .filter((message) => message.startsWith("  Obsolete sandbox image retirement skipped:"));
-  expect(diagnostics).toEqual([`  Obsolete sandbox image retirement skipped: ${reason}`]);
-  expect(retireReplacedSandboxWorkload).toHaveBeenCalledOnce();
-});
-
-it("carries filtered presets through post-delete onboard resume", async () => {
-  const session = createSession({ sandboxName: "saved", agent: "openclaw" });
-  session.policyPresets = ["github"];
   session.steps.sandbox.status = "complete";
   session.machine.state = "agent_setup";
   session.checkpoint = {
@@ -247,8 +242,6 @@ it("carries filtered presets through post-delete onboard resume", async () => {
     hermesAuthMethod: null,
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
-    policies: ["github", "mcp-bridge-fake"],
-    policyPresetsFinalized: true,
   };
   const targetIntentFingerprint = fingerprintSandboxRecreateValue({
     sandboxName: "saved",
@@ -283,9 +276,8 @@ it("carries filtered presets through post-delete onboard resume", async () => {
     expect(createIntent).toMatchObject({
       recreate: true,
       recreateJournalTargetIntentFingerprint: targetIntentFingerprint,
-      rebuildPolicyPresets: ["github"],
       resolved: {
-        policy: { options: { additionalPresets: ["github"] } },
+        policy: { options: { additionalPresets: [] } },
       },
       recreateTransaction: {
         id: transaction.id,
@@ -685,6 +677,124 @@ it("creates a missing sandbox from a preserved registry row without removing the
 
   expect(createSandbox).toHaveBeenCalledOnce();
   expect(calls.removeSandbox).not.toHaveBeenCalled();
+  expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
+});
+
+it("keeps durable state and emits no success when FSM CAS save throws (#10491)", async () => {
+  const session = createSession({ sandboxName: "saved", agent: "openclaw" });
+  session.steps.sandbox.status = "complete";
+  session.machine.state = "agent_setup";
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
+    gatewayAuthority: decisionSelected({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  };
+  const oldJournal = session.checkpoint?.sandboxRecreate ?? null;
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "not_ready",
+      getSandboxRegistryEntry: () => ({
+        name: "saved",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        provider: "provider",
+        model: "model",
+      }),
+      getSandboxRecreateObservation: () => ({
+        state: "not_ready",
+        liveIdentityFingerprint: fingerprintSandboxRecreateValue("source-id"),
+      }),
+      compareAndSwapSession: vi.fn((matches, mutator) => {
+        const transient = structuredClone(session);
+        return matches(transient)
+          ? (mutator(transient),
+            (() => {
+              throw new Error("durable CAS save failed");
+            })())
+          : ("mismatch" as const);
+      }),
+    },
+    session,
+  );
+
+  await expect(
+    handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "saved" }),
+  ).rejects.toThrow("durable CAS save failed");
+  expect(session.checkpoint?.sandboxRecreate ?? null).toEqual(oldJournal);
+  expect(calls.createSandbox).not.toHaveBeenCalled();
+  expect(calls.complete).not.toHaveBeenCalled();
+});
+
+it("opens the lifecycle journal for a fresh route reservation before creation (#9833)", async () => {
+  const session = createSession({ sandboxName: "fresh", agent: "openclaw" });
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: "fresh", agent: "openclaw" }),
+    gatewayAuthority: decisionSelected({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  };
+  const reservation: SandboxEntry = {
+    name: "fresh",
+    provider: "provider",
+    model: "model",
+    endpointUrl: null,
+    preferredInferenceApi: "openai-completions",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    pendingRouteReservation: true,
+    reservationSessionId: session.sessionId,
+  };
+  let observation: SandboxRecreateObservation = {
+    state: "missing",
+    liveIdentityFingerprint: null,
+  };
+  const createSandbox = vi.fn(async (...args: unknown[]) => {
+    const transaction = session.checkpoint?.sandboxRecreate;
+    expect(transaction).toBeDefined();
+    expect(args.at(-1)).toMatchObject({
+      recreate: true,
+      recreateTransaction: {
+        id: transaction?.id,
+        targetGeneration: transaction?.targetGeneration,
+      },
+    });
+    advanceSandboxRecreateTransaction(session, transaction!.id, "creating");
+    observation = {
+      state: "ready",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue("fresh-id"),
+    };
+    recordSandboxRecreateTargetCreated(session, transaction!.id, observation);
+    return "fresh";
+  });
+  const { deps } = createDeps(
+    {
+      getSandboxRegistryEntry: () => reservation,
+      getSandboxRecreateObservation: () => observation,
+      createSandbox,
+    },
+    session,
+  );
+
+  await handleSandboxState({ ...baseOptions(deps, session), sandboxName: "fresh" });
+
+  expect(createSandbox).toHaveBeenCalledOnce();
   expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
 });
 

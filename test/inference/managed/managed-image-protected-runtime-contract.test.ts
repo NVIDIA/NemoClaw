@@ -31,13 +31,18 @@ import {
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
   parseManagedImageOpenShellE2eInputs,
+  protectedManagedStateRootDriverConfig,
   removeManagedImageGatewayStateIfSafe,
   resolveManagedImageOnboardModule,
 } from "../../../scripts/checks/run-managed-image-openshell-e2e.ts";
 import { resolveOnboardManagedBootstrapLaunch } from "../../../src/lib/onboard/managed-workload/onboard-orchestration.js";
+import type { RuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/contract.ts";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
 const VALID_SANDBOX = "managed-openclaw";
+const MANAGED_IMAGE_ONBOARD = resolveManagedImageOnboardModule(
+  await import("../../../src/lib/onboard.ts"),
+);
 
 const SUCCESS_WITHOUT_OUTPUT: ManagedImageCommandResult = {
   status: 0,
@@ -88,6 +93,26 @@ function createManagedImageCommandRunner(
 }
 
 describe("protected managed-image runtime contract", () => {
+  it("projects declared managed state roots through the selected provider driver", () => {
+    const mount = {
+      type: "volume" as const,
+      source: "nemoclaw-hermes-state-v1-alpha",
+      target: "/sandbox/.hermes",
+      read_only: false,
+    };
+    const provider = {
+      workload: { managedStateMountDriverId: "docker" },
+    } as Pick<RuntimeProviderBundle, "workload">;
+
+    expect(JSON.parse(protectedManagedStateRootDriverConfig(provider, [mount])!)).toEqual({
+      docker: { mounts: [mount] },
+    });
+    expect(protectedManagedStateRootDriverConfig(provider, [])).toBeNull();
+    expect(() =>
+      protectedManagedStateRootDriverConfig({ workload: {} } as typeof provider, [mount]),
+    ).toThrow("provider-owned mount projection");
+  });
+
   it("binds the rollback failure adapter to the canonical managed-bootstrap state root", async () => {
     const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-protected-rollback-"));
     const journalRoot = path.join(stateRoot, "managed-bootstrap");
@@ -136,6 +161,7 @@ describe("protected managed-image runtime contract", () => {
           },
         },
       } as never,
+      sandboxName: "alpha",
       stateRoot: "/tmp/nemoclaw-state",
       bootstrapIdentity: "bootstrap-identity",
       request: {} as never,
@@ -161,12 +187,19 @@ describe("protected managed-image runtime contract", () => {
     "startGatewayForRecovery",
   ] as const)(
     "loads every OpenShell operation required before protected image launch [%s] (#7744)",
-    async (operation) => {
-      const onboard = resolveManagedImageOnboardModule(await import("../../../src/lib/onboard.ts"));
-
-      expect(onboard[operation], operation).toBeTypeOf("function");
+    (operation) => {
+      expect(MANAGED_IMAGE_ONBOARD[operation], operation).toBeTypeOf("function");
     },
   );
+
+  it("loads managed state-volume operations through the existing onboard boundary", () => {
+    expect(MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.prepareManagedStateVolumes).toBeTypeOf(
+      "function",
+    );
+    expect(MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.removeManagedStateVolumes).toBeTypeOf(
+      "function",
+    );
+  });
 
   it("rejects a missing protected OpenShell operation with a precise contract error (#8759)", () => {
     expect(() =>

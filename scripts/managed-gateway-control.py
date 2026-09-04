@@ -175,7 +175,7 @@ class ControlError(RuntimeError):
 
 @contextmanager
 def _control_stage(stage: str) -> Iterator[None]:
-    """Attach one fixed lifecycle stage to health or supervisor loss."""
+    """Attach one fixed lifecycle stage to a managed-control failure."""
 
     if stage not in CONTROL_STAGES:
         raise AssertionError(f"unknown managed-control stage: {stage}")
@@ -183,11 +183,14 @@ def _control_stage(stage: str) -> Iterator[None]:
         yield
     except ControlError as error:
         if (
-            error.code in ("GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_UNAVAILABLE")
+            error.code
+            in ("GATEWAY_FAILED", "GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_UNAVAILABLE")
             and error.stage is None
         ):
             error.stage = stage
         raise
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ControlError("GATEWAY_FAILED", stage=stage) from error
 
 
 @dataclass(frozen=True)
@@ -1010,21 +1013,31 @@ def _discover_supervisor(reader: ProcReader) -> ProcessIdentity:
     matches, inconclusive = _supervisor_candidates(reader, pid1, sandbox_uid)
     if inconclusive:
         # Busy agents can create or reap an unrelated short-lived process while
-        # /proc is being read. Retry only when one exact supervisor was already
-        # proven, and require that same pinned identity on every scan. A missing,
-        # changing, or duplicate supervisor still fails closed immediately.
-        if len(matches) != 1:
+        # /proc is being read. A restart can expose this churn before the
+        # supervisor's argv is observable, so zero matches plus an incomplete
+        # scan is not the clean two-scan absence proof below. Keep one exact
+        # supervisor pinned when it is already visible. If no supervisor was
+        # visible, require a fresh controller request after one appears rather
+        # than accepting an identity born during this ambiguous scan. The host
+        # retries only the exact SUPERVISOR_DISCOVERY_PENDING marker within its
+        # existing bound; duplicate or changing identities remain terminal.
+        if len(matches) > 1:
             raise ControlError("SUPERVISOR_UNAVAILABLE")
-        expected = matches[0].stable_key()
+        expected = matches[0].stable_key() if matches else None
         deadline = time.monotonic() + PROCESS_PROOF_GRACE_SECONDS
         while inconclusive:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise ControlError("SUPERVISOR_UNAVAILABLE")
+                raise ControlError("SUPERVISOR_DISCOVERY_PENDING")
             time.sleep(min(PROCESS_PROOF_RETRY_SECONDS, remaining))
             _recapture_exact_identity(reader, pid1, deadline=deadline)
             matches, inconclusive = _supervisor_candidates(reader, pid1, sandbox_uid)
-            if len(matches) != 1 or matches[0].stable_key() != expected:
+            if len(matches) > 1:
+                raise ControlError("SUPERVISOR_UNAVAILABLE")
+            if expected is None:
+                if matches:
+                    raise ControlError("SUPERVISOR_DISCOVERY_PENDING")
+            elif len(matches) != 1 or matches[0].stable_key() != expected:
                 raise ControlError("SUPERVISOR_UNAVAILABLE")
     if len(matches) == 0:
         # A zero-match scan is the only absence signal that may authorize the
@@ -1407,8 +1420,17 @@ def _http_healthy(
         return False
     finally:
         if response is not None:
-            response.close()
-        connection.close()
+            try:
+                response.close()
+            except OSError:
+                # The response has already been bounded and fully read. A
+                # transport-close race must not escape the health probe and
+                # abort the entire managed restart as a generic failure.
+                pass
+        try:
+            connection.close()
+        except OSError:
+            pass
 
 
 def _http_healthy_in_gateway_namespace(
@@ -1444,6 +1466,16 @@ def _http_healthy_in_gateway_namespace(
             return False
         if _recovery_deadline_reached(recovery_deadline):
             return False
+        current_namespace_stat = os.fstat(current_namespace)
+        target_namespace_stat = os.fstat(target_namespace)
+        if (
+            current_namespace_stat.st_dev == target_namespace_stat.st_dev
+            and current_namespace_stat.st_ino == target_namespace_stat.st_ino
+        ):
+            return bool(
+                _http_healthy(port, path, recovery_deadline)
+                and not _recovery_deadline_reached(recovery_deadline)
+            )
         setns(target_namespace, getattr(os, "CLONE_NEWNET", 0x40000000))
         switched = True
         healthy = _http_healthy(port, path, recovery_deadline)
@@ -2242,7 +2274,11 @@ def main(argv: list[str]) -> int:
         print(error.code, file=sys.stderr)
         if error.stage is not None:
             print(f"NEMOCLAW_CONTROL_STAGE={error.stage}", file=sys.stderr)
-            if error.code in ("GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_UNAVAILABLE"):
+            if error.code in (
+                "GATEWAY_FAILED",
+                "GATEWAY_HEALTH_TIMEOUT",
+                "SUPERVISOR_UNAVAILABLE",
+            ):
                 try:
                     diagnostics = _managed_failure_diagnostics()
                 except Exception:  # diagnostics must not hide the original failure

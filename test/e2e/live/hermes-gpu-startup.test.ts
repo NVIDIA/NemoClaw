@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { cleanupUnlessVerified } from "../fixtures/cleanup-resources.ts";
@@ -18,6 +19,7 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import {
   createHermesGpuFallbackWrapper,
   extractHermesGpuDiagnosticsDirectory,
@@ -27,7 +29,6 @@ import {
 } from "./hermes-gpu-startup-fallback.ts";
 import {
   assertHermesGpuStartupProof,
-  HERMES_GPU_EXTRA_PLACEHOLDER_KEYS,
   HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS,
 } from "./hermes-gpu-startup-proof.ts";
 
@@ -43,8 +44,6 @@ const GATEWAY_ALREADY_ABSENT =
   /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
 const FAKE_API_KEY = "e2e-hermes-gpu-startup-key";
 const FAKE_MODEL = "test-model";
-const EXTRA_PLACEHOLDER_TOKEN_A = "e2e-hermes-gpu-extra-telegram-token";
-const EXTRA_PLACEHOLDER_TOKEN_B = "e2e-hermes-gpu-extra-slack-token";
 const LIVE_TIMEOUT_MS = 70 * 60_000;
 const { route: GPU_ROUTE, scenario: GPU_STARTUP_SCENARIO } = resolveHermesGpuStartupScenario(
   process.env.E2E_HERMES_GPU_STARTUP_SCENARIO,
@@ -150,7 +149,11 @@ async function cleanupGatewayRegistrationBeforeTest(
     });
 }
 
-async function expectGatewayPortAvailable(host: HostCliClient, label: string): Promise<void> {
+async function expectGatewayPortAvailable(
+  host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
+  label: string,
+): Promise<void> {
   const gatewayPort = process.env.NEMOCLAW_GATEWAY_PORT ?? "8080";
   const portAvailable = await host.command(
     "node",
@@ -170,9 +173,15 @@ async function expectGatewayPortAvailable(host: HostCliClient, label: string): P
     `gateway port ${gatewayPort} remains occupied after cleanup: ${resultText(portAvailable)}`,
   ).toBe(0);
 
-  const labeledContainers = await host.command(
-    "docker",
-    ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`],
+  const labeledContainers = await runtimeProvider.command(
+    [
+      "container",
+      "ps",
+      "--all",
+      "--quiet",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+    ],
     {
       artifactName: `${label}-labeled-containers-absent`,
       env: buildAvailabilityProbeEnv(),
@@ -182,9 +191,8 @@ async function expectGatewayPortAvailable(host: HostCliClient, label: string): P
   expect(labeledContainers.exitCode, resultText(labeledContainers)).toBe(0);
   expect(labeledContainers.stdout.trim()).toBe("");
 
-  const namedContainers = await host.command(
-    "docker",
-    ["ps", "-a", "--filter", `name=${SANDBOX_NAME}`, "--format", "{{.Names}}"],
+  const namedContainers = await runtimeProvider.command(
+    ["container", "ps", "--all", "--filter", `name=${SANDBOX_NAME}`, "--format", "{{.Names}}"],
     {
       artifactName: `${label}-backup-containers-absent`,
       env: buildAvailabilityProbeEnv(),
@@ -201,6 +209,7 @@ async function expectGatewayPortAvailable(host: HostCliClient, label: string): P
 
 async function cleanupHermes(
   host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   sandbox: SandboxClient,
   label: string,
 ): Promise<void> {
@@ -221,11 +230,12 @@ async function cleanupHermes(
     env: commandEnv(),
     timeoutMs: 60_000,
   });
-  await expectGatewayPortAvailable(host, label);
+  await expectGatewayPortAvailable(host, runtimeProvider, label);
 }
 
 async function preCleanHermes(
   host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   sandbox: SandboxClient,
   label: string,
 ): Promise<void> {
@@ -246,16 +256,21 @@ async function preCleanHermes(
   await expectSandboxAbsent(host, label);
   await cleanupOwnedGatewayRuntime(host, label);
   await cleanupGatewayRegistrationBeforeTest(host, label);
-  await expectGatewayPortAvailable(host, label);
+  await expectGatewayPortAvailable(host, runtimeProvider, label);
 }
 
 async function captureFailedGpuContainer(
   host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   preRollbackDiagnosticsDir: string,
 ): Promise<void> {
   const sandboxFilter = `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`;
+  const runtimeInvocation = runtimeProvider.hostInvocation([]);
   const script = String.raw`set -u
+sandbox_filter="$1"
 diagnostics_dir="$2"
+shift 2
+runtime_command=("$@")
 if [ -n "$diagnostics_dir" ] && [ -d "$diagnostics_dir" ]; then
   printf '%s\n' "== pre-rollback diagnostics $diagnostics_dir =="
   for name in summary.txt patched-container-state.json docker-inspect.json docker-network-summary.txt docker-top.txt docker-logs.txt openshell-sandbox-get.txt openshell-sandbox-list.txt openshell-logs.txt; do
@@ -272,27 +287,35 @@ if [ -n "$diagnostics_dir" ] && [ -d "$diagnostics_dir" ]; then
 else
   printf '%s\n' "pre-rollback diagnostics directory unavailable: $diagnostics_dir"
 fi
-ids="$(docker ps -aq --filter "$1")"
+ids="$("\${runtime_command[@]}" container ps --all --quiet --filter "$sandbox_filter")"
 if [ -z "$ids" ]; then
-  printf '%s\n' "no Docker container found for $1"
+  printf '%s\n' "no runtime container found for $sandbox_filter"
   exit 0
 fi
 for id in $ids; do
   printf '%s\n' "== container $id inspect =="
-  docker inspect --format '{{json .Name}} {{json .Config.User}} {{json .Config.Entrypoint}} {{json .Config.Cmd}} {{json .State}} {{json .HostConfig.RestartPolicy}}' "$id" 2>&1 || true
+  "\${runtime_command[@]}" container inspect --format '{{json .Name}} {{json .Config.User}} {{json .Config.Entrypoint}} {{json .Config.Cmd}} {{json .State}} {{json .HostConfig.RestartPolicy}}' "$id" 2>&1 || true
   printf '%s\n' "== container $id top =="
-  docker top "$id" -eo user,pid,ppid,stat,args 2>&1 || true
+  "\${runtime_command[@]}" container top "$id" -eo user,pid,ppid,stat,args 2>&1 || true
   printf '%s\n' "== container $id logs =="
-  docker logs --tail 300 "$id" 2>&1 || true
+  "\${runtime_command[@]}" container logs --tail 300 "$id" 2>&1 || true
 done`;
   await captureDiagnosticsBestEffort(() =>
     host.command(
       "bash",
-      ["-lc", script, "hermes-gpu-failure-diagnostics", sandboxFilter, preRollbackDiagnosticsDir],
+      [
+        "-lc",
+        script,
+        "hermes-gpu-failure-diagnostics",
+        sandboxFilter,
+        preRollbackDiagnosticsDir,
+        runtimeInvocation.command,
+        ...runtimeInvocation.args,
+      ],
       {
         artifactName: "phase-2-hermes-gpu-startup-failure-diagnostics",
         env: buildAvailabilityProbeEnv(),
-        redactionValues: [FAKE_API_KEY, EXTRA_PLACEHOLDER_TOKEN_A, EXTRA_PLACEHOLDER_TOKEN_B],
+        redactionValues: [FAKE_API_KEY],
         timeoutMs: 30_000,
       },
     ),
@@ -302,7 +325,7 @@ done`;
 test(
   `hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches stable Ready state`,
   {
-    timeout: LIVE_TIMEOUT_MS,
+    timeout: testTimeout(LIVE_TIMEOUT_MS),
     meta: {
       e2ePhases: [
         "prepare clean Hermes GPU runner",
@@ -313,7 +336,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
     await artifacts.target.declare({
       id: "hermes-gpu-startup",
       boundary: "install.sh --non-interactive --fresh + Hermes GPU-supervised startup",
@@ -323,20 +346,17 @@ test(
       scenario: GPU_STARTUP_SCENARIO,
     });
 
-    await preCleanHermes(host, sandbox, "pre-cleanup");
+    await preCleanHermes(host, runtimeProvider, sandbox, "pre-cleanup");
 
-    const dockerInfo = await host.command("docker", ["info"], {
-      artifactName: "phase-1-docker-info",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "phase-1-runtime-info",
+      scenarioLabel: "Hermes GPU startup",
     });
-    expect(dockerInfo.exitCode, resultText(dockerInfo)).toBe(0);
 
     const hostAddress = "host.openshell.internal";
 
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey: FAKE_API_KEY,
-      forbiddenMarkers: [EXTRA_PLACEHOLDER_TOKEN_A, EXTRA_PLACEHOLDER_TOKEN_B],
       host: "0.0.0.0",
       model: FAKE_MODEL,
       progress,
@@ -362,7 +382,7 @@ test(
     // resource operations after their OpenShell gateway has been removed.
     cleanup.trackDisposable("verify Hermes GPU gateway port is available", () =>
       cleanupUnlessVerified(cleanTeardownVerified, () =>
-        expectGatewayPortAvailable(host, "cleanup"),
+        expectGatewayPortAvailable(host, runtimeProvider, "cleanup"),
       ),
     );
     cleanup.trackGateway(cleanupHost, "nemoclaw", {
@@ -424,7 +444,7 @@ test(
       );
       await artifacts.writeJson("gpu-fallback-wrapper.json", {
         behavior:
-          "create real native state while dropping GPU attachment, reject exactly the first post-create nvidia-smi proof, then delegate compatibility retry",
+          "reject the exact native --gpu create before progress, then delegate one compatibility create and GPU proof",
         eventVocabulary: HERMES_GPU_FALLBACK_EVENTS,
       });
       return wrapper;
@@ -437,25 +457,22 @@ test(
       NEMOCLAW_COMPAT_MODEL: FAKE_MODEL,
       NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
       NEMOCLAW_MODEL: FAKE_MODEL,
-      NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: HERMES_GPU_EXTRA_PLACEHOLDER_KEYS.join(","),
       NEMOCLAW_POLICY_MODE: "suggested",
       NEMOCLAW_PREFERRED_API: "openai-completions",
       NEMOCLAW_PROVIDER: "custom",
       ...(fallbackWrapper?.componentEnv ?? {}),
-      [HERMES_GPU_EXTRA_PLACEHOLDER_KEYS[0]]: EXTRA_PLACEHOLDER_TOKEN_A,
-      [HERMES_GPU_EXTRA_PLACEHOLDER_KEYS[1]]: EXTRA_PLACEHOLDER_TOKEN_B,
     });
     progress.phase("install Hermes sandbox on selected GPU route");
     const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
       artifactName: "phase-2-install-hermes-gpu-startup",
       cwd: REPO_ROOT,
       env,
-      redactionValues: [FAKE_API_KEY, EXTRA_PLACEHOLDER_TOKEN_A, EXTRA_PLACEHOLDER_TOKEN_B],
-      timeoutMs: 60 * 60_000,
+      redactionValues: [FAKE_API_KEY],
+      timeoutMs: execTimeout(60 * 60_000),
     });
     const gpuDiagnosticsDir = extractHermesGpuDiagnosticsDirectory(resultText(install));
     await (install.exitCode !== 0
-      ? captureFailedGpuContainer(host, gpuDiagnosticsDir)
+      ? captureFailedGpuContainer(host, runtimeProvider, gpuDiagnosticsDir)
       : Promise.resolve());
     expect(install.exitCode, resultText(install)).toBe(0);
     assertStockManagedImageReceipt({
@@ -468,14 +485,16 @@ test(
       const fallbackEvents = readHermesGpuFallbackEvents(wrapper.eventsPath);
       await artifacts.writeJson("gpu-fallback-events.json", fallbackEvents);
       expect(fallbackEvents).toEqual([
-        HERMES_GPU_FALLBACK_EVENTS.delegateNativeCreateWithoutGpu,
-        HERMES_GPU_FALLBACK_EVENTS.rejectNativeNvidiaSmiProof,
+        HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
         HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
-        HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterRejection,
+        HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback,
       ]);
       expect(resultText(install)).toContain("Native GPU diagnostics saved:");
-      expect(HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS.every((fragment) =>
-          resultText(install).includes(fragment))).toBe(true);
+      expect(
+        HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS.every((fragment) =>
+          resultText(install).includes(fragment),
+        ),
+      ).toBe(true);
     };
     await (fallbackWrapper ? verifyFallback(fallbackWrapper) : Promise.resolve());
 
@@ -492,6 +511,7 @@ test(
       gpuRoute: GPU_ROUTE,
       host,
       install,
+      runtimeProvider,
       sandbox,
       sandboxName: SANDBOX_NAME,
       status,
@@ -531,14 +551,9 @@ test(
     ).toBeGreaterThan(0);
     expect(inferencePosts.filter((request) => request.auth !== "ok")).toEqual([]);
     expect(inferencePosts.filter((request) => request.authorizationSent !== true)).toEqual([]);
-    expect(inferencePosts.filter((request) => (request.forbiddenMarkerMatches ?? 0) > 0)).toEqual(
-      [],
-    );
-    expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_A);
-    expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_B);
 
     progress.phase("remove Hermes GPU resources");
-    await cleanupHermes(host, sandbox, "phase-5-clean-teardown");
+    await cleanupHermes(host, runtimeProvider, sandbox, "phase-5-clean-teardown");
     cleanTeardownVerified = true;
 
     await artifacts.target.complete({
@@ -555,12 +570,10 @@ test(
         openshellReady: true,
         sandboxCudaVerified: true,
         managedWorkloadAuthorityVerified: true,
-        extraPlaceholderCommandRoundTripValid: true,
         stableSingleContainer: true,
         startupConfigHashesValid: true,
         supervisorTopologyValid: true,
         authenticatedInferenceRequestVerified: true,
-        placeholderTokensAbsentFromInference: true,
         cleanTeardownVerified,
       },
     });

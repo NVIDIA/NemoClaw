@@ -19,12 +19,12 @@ export interface HermesDashboardOnboardState {
 }
 
 type RunOpenshell = (args: string[], options: { ignoreError: true }) => unknown;
-type RevalidatePolicyAuthority = (operation: string) => void;
+type RevalidateSandboxIdentity = (operation: string) => void;
 type EnsureForward = (
   sandboxName: string,
   port: number,
   label: string,
-  revalidatePolicyAuthority?: RevalidatePolicyAuthority,
+  revalidateSandboxIdentity?: RevalidateSandboxIdentity,
 ) => boolean;
 
 export function resolveHermesDashboardOnboardState({
@@ -145,28 +145,28 @@ export function ensureHermesDashboardForwardIfEnabled({
   sandboxName,
   ensureForward,
   note,
-  revalidatePolicyAuthority,
+  revalidateSandboxIdentity,
 }: {
   state: HermesDashboardOnboardState;
   sandboxName: string;
   ensureForward: EnsureForward;
   note: (message: string) => void;
-  revalidatePolicyAuthority?: RevalidatePolicyAuthority;
+  revalidateSandboxIdentity?: RevalidateSandboxIdentity;
 }): boolean {
   if (!state.enabled || !state.config) return true;
   if (
-    !ensureForward(sandboxName, state.config.port, "Hermes dashboard", revalidatePolicyAuthority)
+    !ensureForward(sandboxName, state.config.port, "Hermes dashboard", revalidateSandboxIdentity)
   ) {
     return false;
   }
-  revalidatePolicyAuthority?.(`report Hermes dashboard forward for sandbox '${sandboxName}'`);
+  revalidateSandboxIdentity?.(`report Hermes dashboard forward for sandbox '${sandboxName}'`);
   note(`  ✓ Hermes dashboard forwarded at http://127.0.0.1:${state.config.port}/`);
   return true;
 }
 
 export function formatHermesDashboardForwardFailure(state: HermesDashboardOnboardState): string {
   const port = state.config?.port ?? "unknown";
-  return `Failed to start Hermes dashboard forward on port ${port}. NemoClaw stopped the onboarding forwards but left the sandbox running because OpenShell deletion targets a mutable name. Verify the sandbox identity before manual cleanup, then free the port and re-run onboarding, set NEMOCLAW_DASHBOARD_PORT, or pass --control-ui-port <N> to choose another port.`;
+  return `Failed to start Hermes dashboard forward on port ${port}. NemoClaw left the sandbox and any established OpenShell service forwards running. Free the port and re-run onboarding, set NEMOCLAW_DASHBOARD_PORT, or pass --control-ui-port <N> to choose another port.`;
 }
 
 export function createHermesDashboardForwardEnsurer({
@@ -181,30 +181,30 @@ export function createHermesDashboardForwardEnsurer({
   note: (message: string) => void;
   rollbackSandbox: (
     sandboxName: string,
-    revalidatePolicyAuthority?: RevalidatePolicyAuthority,
+    revalidateSandboxIdentity?: RevalidateSandboxIdentity,
   ) => void;
   fail: (message: string) => never;
 }): (
   sandboxName: string,
   rollback?: boolean,
-  revalidatePolicyAuthority?: RevalidatePolicyAuthority,
+  revalidateSandboxIdentity?: RevalidateSandboxIdentity,
 ) => void {
   return (
     sandboxName: string,
     rollback = false,
-    revalidatePolicyAuthority?: RevalidatePolicyAuthority,
+    revalidateSandboxIdentity?: RevalidateSandboxIdentity,
   ): void => {
     const ok = ensureHermesDashboardForwardIfEnabled({
       state,
       sandboxName,
       ensureForward,
       note,
-      revalidatePolicyAuthority,
+      revalidateSandboxIdentity,
     });
     if (ok) return;
     if (rollback) {
-      if (revalidatePolicyAuthority) {
-        rollbackSandbox(sandboxName, revalidatePolicyAuthority);
+      if (revalidateSandboxIdentity) {
+        rollbackSandbox(sandboxName, revalidateSandboxIdentity);
       } else {
         rollbackSandbox(sandboxName);
       }
@@ -218,8 +218,8 @@ export function createHermesDashboardOnboardForwarding({
   env,
   ensureForward,
   note,
-  runOpenshell,
-  getApiForwardPort,
+  runOpenshell: _runOpenshell,
+  getApiForwardPort: _getApiForwardPort,
   fail,
 }: {
   agentName: string | null | undefined;
@@ -236,6 +236,8 @@ export function createHermesDashboardOnboardForwarding({
       console.error(`  ${message}`);
       process.exit(1);
     });
+  void _runOpenshell;
+  void _getApiForwardPort;
   const resolveStateForPort = (effectivePort: number) =>
     resolveHermesDashboardOnboardState({ agentName, effectivePort, env, fail: failWithMessage });
 
@@ -243,30 +245,17 @@ export function createHermesDashboardOnboardForwarding({
     state: HermesDashboardOnboardState,
     sandboxName: string,
     rollback = false,
-    revalidatePolicyAuthority?: RevalidatePolicyAuthority,
+    revalidateSandboxIdentity?: RevalidateSandboxIdentity,
   ) =>
     createHermesDashboardForwardEnsurer({
       state,
       ensureForward,
       note,
       rollbackSandbox: (targetSandbox, revalidateRollback) => {
-        revalidateRollback?.(
-          `stop Hermes API forward for sandbox '${targetSandbox}' during rollback`,
-        );
-        runOpenshell(["forward", "stop", getApiForwardPort(), targetSandbox], {
-          ignoreError: true,
-        });
-        if (state.config) {
-          revalidateRollback?.(
-            `stop Hermes dashboard forward for sandbox '${targetSandbox}' during rollback`,
-          );
-          runOpenshell(["forward", "stop", String(state.config.port), targetSandbox], {
-            ignoreError: true,
-          });
-        }
+        revalidateRollback?.(`preserve OpenShell forwards for sandbox '${targetSandbox}'`);
       },
       fail: failWithMessage,
-    })(sandboxName, rollback, revalidatePolicyAuthority);
+    })(sandboxName, rollback, revalidateSandboxIdentity);
 
   return { resolveStateForPort, ensureForState };
 }

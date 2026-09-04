@@ -69,10 +69,6 @@ function stageOpenClawRuntimeGraphs(rootDir: string, buildCtx: string): void {
   const sourceAgentDir = path.join(rootDir, "agents", "openclaw");
   const stagedAgentDir = path.join(buildCtx, "agents", "openclaw");
   fs.mkdirSync(stagedAgentDir, { recursive: true });
-  fs.copyFileSync(
-    path.join(sourceAgentDir, "state-lock-plan.json"),
-    path.join(stagedAgentDir, "state-lock-plan.json"),
-  );
   for (const runtimeName of [
     "managed-image-messaging-runtime",
     "mcporter-runtime",
@@ -305,10 +301,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "managed-gateway-control.py"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "state-dir-guard.py"),
-    path.join(stagedScriptsDir, "state-dir-guard.py"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "openclaw-config-guard.py"),
     path.join(stagedScriptsDir, "openclaw-config-guard.py"),
   );
@@ -357,6 +349,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "normalize_mutable_config_perms.py"),
     path.join(stagedScriptsDir, "lib", "normalize_mutable_config_perms.py"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "refresh-openclaw-wechat-placeholder.py"),
+    path.join(stagedScriptsDir, "lib", "refresh-openclaw-wechat-placeholder.py"),
   );
   // Build-time messaging applier used by OpenClaw and Hermes Dockerfiles.
   fs.cpSync(

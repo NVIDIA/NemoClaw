@@ -595,6 +595,18 @@ describe("confirmRecoveredSandboxGatewayManaged scope", () => {
     expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("my-sandbox", "probe");
   });
 
+  it("accepts the same managed controller proof for a Podman sandbox", () => {
+    requestGatewaySupervisorAction.mockClear();
+    expect(
+      confirmRecoveredSandboxGatewayManaged("my-sandbox", {
+        getSandboxImpl: () => ({ ...openClawEntry, openshellDriver: "podman" }),
+        getSessionAgentImpl: () => null,
+        requestGatewaySupervisorActionImpl: requestGatewaySupervisorAction,
+      }),
+    ).toBe(true);
+    expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("my-sandbox", "probe");
+  });
+
   it("does not control custom agents or non-direct OpenShell drivers", () => {
     requestGatewaySupervisorAction.mockClear();
     expect(
@@ -650,7 +662,7 @@ describe("confirmRecoveredSandboxGatewayManaged scope", () => {
     ).toBe(false);
   });
 
-  it("keeps unavailable supervisor results terminal while lease contention stays transient", () => {
+  it("keeps unavailable results terminal while exact transient results stay inconclusive", () => {
     const confirm = (stderr: string) =>
       confirmRecoveredSandboxGatewayManaged("my-sandbox", {
         getSandboxImpl: () => openClawEntry,
@@ -660,6 +672,8 @@ describe("confirmRecoveredSandboxGatewayManaged scope", () => {
 
     expect(confirm("SUPERVISOR_UNAVAILABLE")).toBe(false);
     expect(confirm("SUPERVISOR_BUSY")).toBeNull();
+    expect(confirm("SUPERVISOR_DISCOVERY_PENDING")).toBeNull();
+    expect(confirm("SUPERVISOR_DISCOVERY_PENDING\nunexpected diagnostic")).toBe(false);
   });
 });
 

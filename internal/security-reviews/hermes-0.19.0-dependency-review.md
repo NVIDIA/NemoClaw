@@ -13,6 +13,14 @@ Python security refresh date: August 3, 2026.
 
 ACP packaging review date: August 20, 2026.
 
+OpenSSL base pin refresh date: August 28, 2026.
+
+Gateway lazy-dependency trust-boundary review date: August 31, 2026.
+
+Shields retirement addendum date: September 1, 2026.
+
+Shields was retired from NemoClaw after this review was written. Every Shields reference below is retained as historical evidence of the ownership, mode, and failure behavior evaluated for the original Hermes 0.19 integration; none describes a current command or supported runtime posture. The current image keeps Hermes configuration and user state mutable, while retaining the ledger relocation, online backup and restore, credential isolation, root-separated lazy-package and plugin boundaries, and sandbox/gateway identity guarantees recorded here.
+
 ## Decision
 
 Pin the NemoClaw Hermes runtime to the published, non-draft, non-prerelease `v2026.7.20` release, whose package version is `0.19.0`.
@@ -33,20 +41,28 @@ The Hermes sandbox image build fails if any selected dependency or import is una
 The base image also replaces the published `python-multipart==0.0.27` lock resolution with the hash-verified and attested `python-multipart==0.0.32`.
 The base image overlays checksum-pinned Node.js `24.18.1` archives for both supported architectures and installs exact uv `0.11.33`; build-time assertions reject version drift before Hermes is installed.
 
+Hermes activates `HERMES_LAZY_INSTALL_TARGET` with `site.addsitedir`, which executes Python statements from `.pth` files before the requested backend import.
+The sandbox-owned durable lazy-package directory therefore cannot be an input to the separated gateway: a mode change does not make sandbox-authored Python trusted.
+Root-separated startup now prepares `/run/nemoclaw/hermes-gateway-lazy-packages` beneath a root-owned runtime parent as `gateway:gateway` mode `0700`, installs the exact supported Hindsight client there as the gateway identity, and launches the gateway with only that target.
+Same-identity startup retains the sandbox target because that topology has no distinct gateway execution identity.
+The sandbox target remains available to interactive commands and captured state, but no code is promoted from it into the gateway target.
+The patched lazy installer also uses a fixed uv binary, trusted working directory, and locally sanitized environment for every uv, pip, and ensurepip subprocess, so sandbox `uv.toml`, pip-module shadowing, and interpreter startup variables cannot redirect the gateway install.
+Gateway dotenv reload preserves the launch-time interpreter, installer, proxy, certificate, home, and plugin controls; the startup validator rejects those controls in the mutable `.env` as an actionable configuration error.
+
+The same execution boundary applies to Hermes plugins.
+The managed NemoClaw plugin now ships as a root-owned bundled plugin under `/opt/hermes/plugins/nemoclaw`.
+An identity-proven root-runtime marker makes the separated gateway hardcode that bundled root and skip general user, project, and entry-point plugins plus the independent user memory, cron, and model-provider loaders.
+The sandbox-owned plugin tree remains state for same-identity Hermes compatibility, but it is inert in the separated gateway; custom images use the image-owned bundled-plugin tree for behavior that must work in both topologies.
+
+The base build downloads the checksum-pinned `hindsight-client==0.6.1` and `aiohttp-retry==2.9.1` wheels, installs them only into a temporary compatibility probe, imports them, and deletes both artifacts and the probe in the same layer.
+The final image uses a generated build-only fixture to test the real lazy installer, removes the gateway probe target, and resets the sandbox target to an empty directory before publication.
+The official Hindsight client is retrieved at runtime when the operator selects it; it is not distributed in the NemoClaw image.
+
 The ACP decision in this change is limited to installing Hermes' existing `acp` extra and proving the pinned SDK and adapter imports are available.
 `hermes acp --check` is an import-readiness check; it does not validate protocol sessions, editor compatibility, workspace or current-working-directory mapping, file and terminal permissions, or transport and authorization behavior.
 Those integration behaviors require separate product acceptance and end-to-end evidence before NemoClaw can describe them as supported.
 
-The `BASE_IMAGE` argument in `agents/hermes/Dockerfile` pins the patched multi-platform Open Container Initiative (OCI) index `sha256:212de47e723e9fec1e697d4eec1db82af2d0fb7802aade4fa5dfc3f05274d3c5`.
-GitHub Actions workflow `.github/workflows/base-image.yaml` run `32413658315`, attempt 1, built and published that ACP-enabled base image from source commit `a42a7717c8e2d13c0c16465f8d06b6aab1e86cb3`.
-It supersedes index `sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837`, which workflow run `31717470863`, attempt 1, published from source commit `d243ea62509bae7832a23fe8636e947303c19c60`.
-That superseded index had replaced index `sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c`, which workflow run `31636995117`, attempt 1, published from source commit `7c721ae4d60fd54e11f4d0c7d0482ccd6ac8cded`.
-That superseded index had replaced index `sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27`, which workflow run `31031662054`, attempt 1, published from source commit `a7a7f3e470a75c404d316d2054445e16bb63b48c`.
-Both platform base-image jobs completed successfully.
-The native package step ran the exact `dpkg` assertions for `vim-common=2:9.2.0858-1`, `vim-tiny=2:9.2.0858-1`, and `libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2`.
-The feature-branch base publication intentionally skipped the final multi-platform managed-image publisher.
-Pull request workflow run `32415993531`, attempt 1, separately built, direct-started, and published an exact digest-only `linux/amd64` capability-union candidate; its package inventory is recorded below.
-An ACP-enabled final multi-platform managed-image cohort remains a post-merge publication gate.
+The selected base image, platform manifests, attestations, producer identity, package assertions, and replacement chain are recorded in [Patched Base Image Provenance](#patched-base-image-provenance).
 The required live end-to-end (E2E) checks remain an approval gate.
 
 ## Reviewed identities
@@ -136,12 +152,12 @@ The managed light-skin source boundary is also unchanged for NemoClaw's selected
 
 Hermes 0.19 records default-profile cron execution history in an SQLite ledger and Discord replay state in `gateway/discord_message_recovery.db`.
 Upstream hard-codes the cron ledger at `cron/executions.db`.
-That location conflicts with Shields up.
-NemoClaw's Shields up transition sets the high-risk `cron` directory to `root:sandbox` mode `0755` and removes group and world write access from its cron job definitions.
+At the time of the original review, that location conflicted with the then-supported Shields-up posture.
+The now-retired Shields transition historically set the high-risk `cron` directory to `root:sandbox` mode `0755` and removed group and world write access from its cron job definitions.
 The initial NemoClaw Hermes 0.19 integration attempted to set that directory to `gateway:sandbox` mode `2770` during every gateway start.
-During a managed restart, the nonroot supervisor could not make the sealed directory group-writable, so it stopped before launching the gateway child.
+During a managed restart under that historical posture, the nonroot supervisor could not make the directory group-writable, so it stopped before launching the gateway child.
 NemoClaw now hash-binds and exact-source patches both the ledger path and Hermes quick snapshot inventory to `runtime/cron-executions.db`.
-Only the mutable audit database moves into the existing cross-identity runtime boundary; `cron` remains protected.
+Only the mutable audit database moves into the existing cross-identity runtime boundary; `cron` remains the separate mutable state-directory contract for job definitions.
 The `v0.0.97` tag predates this ledger, so tagged upgrades need no path migration.
 Snapshots made during the brief untagged-main window after the Hermes 0.19 merge retain the superseded path and are outside this release migration contract.
 Both default-profile files use SQLite online backup and restore.
@@ -158,7 +174,7 @@ The cron ledger is an audit history rather than a retry queue; an inconsistent D
 Supporting dynamic profile-local SQLite discovery safely requires generic path enumeration, validation, backup, and restore work outside this dependency-upgrade scope.
 Both default-profile ledgers cross two runtime identities: `gateway` creates and reopens them under the gateway's `0007` umask, while `sandbox` performs snapshot backup and atomic restore.
 NemoClaw maintains the writable `runtime` and `gateway` parents as `gateway:sandbox` mode `2770`.
-Shields up leaves the `cron` directory at `root:sandbox` mode `0755` and removes group write access from its cron job definitions.
+Historically, Shields up left the `cron` directory at `root:sandbox` mode `0755` and removed group write access from its cron job definitions; that ownership and mode transition is retired. The current mutable image prepares `cron` as `gateway:sandbox` mode `2770` so the sandbox and gateway identities can share job-definition state.
 Hermes' ordinary SQLite creation produces the live cron database as `gateway:sandbox` mode `0640`, which gives `sandbox` the read access needed for online backup; the sandbox-owned restored replacement is explicitly mode `0660` so `gateway` can reopen it.
 Discord instead forces its live database to `0600`, so NemoClaw exact-source patches that upstream chmod to `0660`.
 Build probes use the real cron and Discord APIs to prove gateway creation, sandbox read/online-backup/replacement, and gateway reopen/write against each restored file.
@@ -171,8 +187,8 @@ The Hermes sandbox image hash-binds the patcher and probes those installed PID, 
 The inherited workaround is not a complete upstream metadata migration.
 Hermes still force-unlinks a top-level PID during direct `gateway run --replace`, keeps planned-stop and takeover markers at the top level, and has explicit top-level PID or status readers in named-profile, multiplexer, service-manager, web, container-boot, Windows, backup, and upstream Docker paths.
 Those same direct-consumer gaps exist in base SHA `fa96c91f`'s Hermes 0.18 patch, so the 0.19 retarget does not regress NemoClaw's managed default-gateway lifecycle.
-With Shields up, direct Hermes replacement or stop and named-profile lifecycle commands can nevertheless fail or observe stale state.
-NemoClaw uses plain `gateway run` plus its host-owned managed stop/start recovery; the protected managed-restart E2E proves only that supported path.
+Under the now-retired Shields-up posture, direct Hermes replacement or stop and named-profile lifecycle commands could fail or observe stale state. That failure observation is historical and does not describe the current mutable runtime; the unretargeted consumers can still observe split metadata outside NemoClaw's supported host-managed path.
+NemoClaw currently uses plain `gateway run` plus its host-owned managed stop/start recovery; the managed-restart E2E proves only that supported path.
 Completing the upstream relocation requires a separate exact-source audit and runtime matrix for every explicit consumer rather than extending this dependency upgrade's claim.
 
 The target MCP tool names use the `mcp__server__tool` shape.
@@ -276,33 +292,49 @@ The `BASE_IMAGE` argument in `agents/hermes/Dockerfile` pins the following publi
 | Repository | `NVIDIA/NemoClaw` |
 | Workflow | `Images / Publish Base and Managed Images` |
 | Workflow path | `.github/workflows/base-image.yaml` |
-| Trigger | `workflow_dispatch` on `codex/hermes-acp` |
-| Producer run | `32413658315`, attempt 1, completed successfully |
-| Source commit | `a42a7717c8e2d13c0c16465f8d06b6aab1e86cb3` |
-| OCI index | `sha256:212de47e723e9fec1e697d4eec1db82af2d0fb7802aade4fa5dfc3f05274d3c5` |
+| Trigger | `push` on `v0.0.115` |
+| Producer run | `33139220833`, attempt 1, completed successfully |
+| Source commit | `324a886fd05b01f6756bae0371ea503c651fbd11` |
+| OCI index | `sha256:d30f58b0374c7d281df07c126cc257baaf63eb051264a575b96099ec037d5e5d` |
 
 The selected index resolves to these platform manifests:
 
 | Platform | Child manifest |
 | --- | --- |
-| `linux/amd64` | `sha256:6b12109ac756c97ca723dae50e855372204898bd066d7f303c15f9ba0709930b` |
-| `linux/arm64` | `sha256:964df75c03a6b43a2b722a47e264ba795baaf6e71661784e4632467f5d6a9182` |
+| `linux/amd64` | `sha256:c63cef760ad8bea079764bcde3678595820fcacb15d39100238760b158830374` |
+| `linux/arm64` | `sha256:c3e831704ce2d59e528a3cf33766a8c3b4cfabc0d6b60cb0ae4b2dccc251e9a9` |
 
 Each child manifest has the following per-platform Supply-chain Levels for Software Artifacts (SLSA) provenance:
 
 | Platform | Attestation manifest | SLSA provenance layer | Builder ID |
 | --- | --- | --- | --- |
-| `linux/amd64` | `sha256:c2c98bb019f2fae9631ef53cf989cececfbe62202f2a74455a1504b8234f832b` | `sha256:0114e4a9c58e0b3f0d7bef1e2eea9fec96613f2d27c6f0173679edd99a44bacc` | `https://github.com/NVIDIA/NemoClaw/actions/runs/32413658315/attempts/1` |
-| `linux/arm64` | `sha256:2d8a5a8544c1d8bdd8ff0a3b1670dfe2d78047707fc04f1df44fba678a0b5d61` | `sha256:816ecdc658db8c6296ee47816db7f4692c1789cd655d4319eafe27d958c78e2a` | `https://github.com/NVIDIA/NemoClaw/actions/runs/32413658315/attempts/1` |
+| `linux/amd64` | `sha256:95c9a078bf02d392eb964303ca7bee8c08dfea730e4c3bf4610b4efd4e5e3c49` | `sha256:a67168affbab56e56532777efebd3633b5c5ca154079849caeb57aaae2299ca4` | `https://github.com/NVIDIA/NemoClaw/actions/runs/33139220833/attempts/1` |
+| `linux/arm64` | `sha256:d15102ebaaf961450f96a950f304debc54e401ea255a1dca4b83f11422e3f69e` | `sha256:037b3d24bb780cf43fd21454e74a8d2b849ad690a856d528951e6006e7aec2e9` | `https://github.com/NVIDIA/NemoClaw/actions/runs/33139220833/attempts/1` |
 
-Both in-toto layers use predicate type `https://slsa.dev/provenance/v1` and bind source `https://github.com/NVIDIA/NemoClaw` to revision `a42a7717c8e2d13c0c16465f8d06b6aab1e86cb3`.
+Both in-toto layers use predicate type `https://slsa.dev/provenance/v1` and bind source `https://github.com/NVIDIA/NemoClaw` to revision `324a886fd05b01f6756bae0371ea503c651fbd11`.
 
-Both platform base-image jobs completed successfully.
-Each installed and checked 90 packages, identified `agent-client-protocol==0.9.0`, and printed `Hermes ACP check OK`.
-The feature-branch base workflow intentionally skipped the final multi-platform managed-image publisher, so this base evidence alone does not represent an ACP-enabled final managed image.
-The separate digest-only `linux/amd64` pull request candidate is recorded in the dependency-closure and publication evidence sections.
+Both platform base-image jobs completed successfully with the exact OpenSSL package assertions.
+The workflow also built and validated the complete Hermes managed image for both native platforms before promotion.
 
 The selected index supersedes the following historical base-image evidence:
+
+| Evidence | Value |
+| --- | --- |
+| Producer run | `32413658315`, attempt 1, completed successfully |
+| Source commit | `a42a7717c8e2d13c0c16465f8d06b6aab1e86cb3` |
+| OCI index | `sha256:212de47e723e9fec1e697d4eec1db82af2d0fb7802aade4fa5dfc3f05274d3c5` |
+
+The superseded index resolved to the following platform evidence:
+
+| Platform | Child manifest | Attestation manifest | SLSA provenance layer |
+| --- | --- | --- | --- |
+| `linux/amd64` | `sha256:6b12109ac756c97ca723dae50e855372204898bd066d7f303c15f9ba0709930b` | `sha256:c2c98bb019f2fae9631ef53cf989cececfbe62202f2a74455a1504b8234f832b` | `sha256:0114e4a9c58e0b3f0d7bef1e2eea9fec96613f2d27c6f0173679edd99a44bacc` |
+| `linux/arm64` | `sha256:964df75c03a6b43a2b722a47e264ba795baaf6e71661784e4632467f5d6a9182` | `sha256:2d8a5a8544c1d8bdd8ff0a3b1670dfe2d78047707fc04f1df44fba678a0b5d61` | `sha256:816ecdc658db8c6296ee47816db7f4692c1789cd655d4319eafe27d958c78e2a` |
+
+The superseded run built the ACP-enabled base for both platforms but predates the OpenSSL 3.5.7 package refresh.
+Its platform and final-image checks remain historical evidence for that older package inventory.
+
+That prior index had superseded this earlier base-image evidence:
 
 | Evidence | Value |
 | --- | --- |
@@ -310,15 +342,10 @@ The selected index supersedes the following historical base-image evidence:
 | Source commit | `d243ea62509bae7832a23fe8636e947303c19c60` |
 | OCI index | `sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837` |
 
-The superseded index resolved to the following platform evidence:
-
 | Platform | Child manifest | Attestation manifest | SLSA provenance layer |
 | --- | --- | --- | --- |
 | `linux/amd64` | `sha256:da722766abb3c55d20242c3c62b434fd09583e4d92b5682aa98b374a74e05fa1` | `sha256:e64caf40f33b253c8952b09a4be9bb39c1adc8fd40bfff3f193accf8c722c49e` | `sha256:d1f23fb5dc32da33eae59caa719e331633867d6ed4c8e0662f6a372316314485` |
 | `linux/arm64` | `sha256:c7fe8f5664beaf5f10ba990f1317d17a976ece1093a72f9efb0effdf93f3f48d` | `sha256:77a5dafd8d55132c2fb4ef7af213957b2eebd9b9bfaeb5e24121d6947c5a38d1` | `sha256:11dff2b05f47bc57315490c3483d896ea1b46dc31dd195c283af690ce718fba3` |
-
-The superseded run built and validated pre-ACP Hermes managed images from both exact child manifests.
-Those final-image checks remain historical evidence and do not validate ACP availability.
 
 That prior index had superseded this earlier base-image evidence:
 
@@ -389,13 +416,13 @@ Each reviewed commit in the following table is an ancestor of `bd668121e918e7b1d
 | `HERMES-3` | High | Migrate and test | Generated configuration and the doctor hash contract use schema 33 before runtime startup. |
 | `HERMES-4` | High | Migrate and test | The versioned adapter owns only top-level resumed or continued one-shot translation and separate provider and model composition. The image build validates its managed options against Hermes' machine-readable preparse, top-level, and `chat` parser metadata; public help remains runtime evidence. The wrapper reads session-name command boundaries from Hermes' installed coalescer source instead of copying its private set, parses a managed invocation once, rejects the unsupported `--usage-file` combination and ambiguous unquoted multi-word session names, and verifies Hermes 0.19.0 before translation. Unrelated commands pass through without a subcommand inventory. Each translation records its upstream source-fix constraint and removal condition. Invalid adapters, unknown adapter versions, incompatible upstream coalescer source shapes, and upstream version mismatches fail closed. |
 | `HERMES-5` | Medium | Guard and test | Every retained compatibility patch was compared with target source, retargeted, hash-bound, and exercised by a focused regression or image smoke probe. |
-| `HERMES-6` | High | Migrate, guard, test, and runtime-proof | Default-profile cron and Discord ledgers use online SQLite backup with nested-parent tests. The cron execution ledger is exact-source relocated to `runtime/cron-executions.db`, and Hermes quick snapshots follow the same path. The `cron` directory remains `root:sandbox` mode `0755` during Shields up, and its cron job definitions remain non-writable to the `sandbox` group. Descriptor-safe startup repair maintains only the writable runtime and gateway parents as `gateway:sandbox` `2770`. Gateway-to-sandbox-to-gateway image probes cover both ledgers; cron's live source is group-readable `0640` and its restored replacement is `0660`, while Discord additionally needs its guarded `0660` upstream chmod patch. Managed restart and rebuild persistence remain live E2E gates. |
+| `HERMES-6` | High | Migrate, guard, test, and runtime-proof | Default-profile cron and Discord ledgers use online SQLite backup with nested-parent tests. The cron execution ledger is exact-source relocated to `runtime/cron-executions.db`, and Hermes quick snapshots follow the same path. Historical review evidence records that the retired Shields-up transition made `cron` `root:sandbox` mode `0755` and non-writable to the `sandbox` group. The current mutable image instead prepares `cron`, `runtime`, and `gateway` as `gateway:sandbox` mode `2770`; no Shields ownership transition remains. Gateway-to-sandbox-to-gateway image probes cover both ledgers; cron's live source is group-readable `0640` and its restored replacement is `0660`, while Discord additionally needs its guarded `0660` upstream chmod patch. Managed restart and rebuild persistence remain live E2E gates. |
 | `HERMES-7` | High | Test and runtime-proof | The target's `mcp__server__tool` names are compatible by source inspection, while managed-tool discovery and invocation remain a live E2E gate. |
 | `HERMES-8` | High | Guard and runtime-proof | Optional upstream secret sources stay disabled, `--safe-mode` does not broaden the generated environment allowlist, and the live environment boundary must reject raw credentials. |
 | `HERMES-9` | High | Pin and test | The selected Python delta adds no advisory regression, and the affected multipart parser is replaced with attested `0.0.32` plus hash and runtime probes. |
 | `HERMES-10` | High | Pin and test | The exact-source patch updates Hermes metadata and its frozen lock together, selects `aiohttp==3.14.3`, `cryptography==50.0.0`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, and `tornado==6.5.7`, and fails the base image build on dependency inconsistency or installed-version drift. The `agents/hermes/Dockerfile` build checks `aiohttp==3.14.3` and `cryptography==50.0.0` in the Hermes sandbox image after messaging package installation. The check runs when `NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION` is `0` or `1`. The base image separately checksum-pins Node.js `24.18.1` and checks uv `0.11.33`. |
 | `HERMES-11` | High | Migrate, test, and runtime-proof | Root npm audit reports zero production findings, and the WhatsApp bridge removes the Baileys RC9 critical, high, and medium advisory entries. Both architectures still require native bridge and message-path evidence. |
-| `HERMES-12` | High | Pin and runtime-proof | Trusted workflow run `30779271312`, attempt 1, built source commit `340c47857596e7cc347541a0b32fe9e24f201bcd` and published OCI index `sha256:956c3d0c812ee6caa56f3b6e307819925d920604adcf73c4a9e6229788967634`. Run `31006872948`, attempt 1, published security-refreshed index `sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96` from source commit `bd668121e918e7b1dda13062bed728f18150360e`, whose platform histories check `aiohttp==3.14.3` and `cryptography==50.0.0`. Trusted workflow run `31031662054`, attempt 1, rebuilt source commit `a7a7f3e470a75c404d316d2054445e16bb63b48c` with the exact-source dashboard WhatsApp session-path patch and published replacement OCI index `sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27`. Run `31636995117`, attempt 1, rebuilt source commit `7c721ae4d60fd54e11f4d0c7d0482ccd6ac8cded` with `libexpat1==2.8.3-1` for amd64 and arm64 and published the superseded OCI index `sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c`. Run `31717470863`, attempt 1, built source commit `d243ea62509bae7832a23fe8636e947303c19c60` and published OCI index `sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837`; its managed-image validation predates ACP. Run `32413658315`, attempt 1, built GitHub-verified source commit `a42a7717c8e2d13c0c16465f8d06b6aab1e86cb3` and published replacement index `sha256:212de47e723e9fec1e697d4eec1db82af2d0fb7802aade4fa5dfc3f05274d3c5`. Both platform jobs installed and checked 90 packages, identified `agent-client-protocol==0.9.0`, and completed `hermes acp --check`; the index and both platform attestations bind the exact source revision. The `agents/hermes/Dockerfile` pins that index. Pull request run `32415993531`, attempt 1, then built and direct-started a local `linux/amd64` capability-union image before publishing digest-only candidate `sha256:0d07845fa3b02a0657d28e134eb2e1f4a96cc6260e2538f3d4eafe831c7e5c17` and verifying its anonymous pull. A separate restricted exact-digest probe confirmed its 97-distribution inventory, dependency compatibility, ACP version, and terminating check. Full multi-platform managed-image publication remains a post-merge gate. The live final-image WhatsApp evidence is recorded under `HERMES-22`. |
+| `HERMES-12` | High | Pin and runtime-proof | Trusted workflow run `30779271312`, attempt 1, built source commit `340c47857596e7cc347541a0b32fe9e24f201bcd` and published OCI index `sha256:956c3d0c812ee6caa56f3b6e307819925d920604adcf73c4a9e6229788967634`. Run `31006872948`, attempt 1, published security-refreshed index `sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96` from source commit `bd668121e918e7b1dda13062bed728f18150360e`, whose platform histories check `aiohttp==3.14.3` and `cryptography==50.0.0`. Trusted workflow run `31031662054`, attempt 1, rebuilt source commit `a7a7f3e470a75c404d316d2054445e16bb63b48c` with the exact-source dashboard WhatsApp session-path patch and published replacement OCI index `sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27`. Run `31636995117`, attempt 1, rebuilt source commit `7c721ae4d60fd54e11f4d0c7d0482ccd6ac8cded` with `libexpat1==2.8.3-1` for amd64 and arm64 and published the superseded OCI index `sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c`. Run `31717470863`, attempt 1, built source commit `d243ea62509bae7832a23fe8636e947303c19c60` and published OCI index `sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837`; its managed-image validation predates ACP. Run `32413658315`, attempt 1, built GitHub-verified source commit `a42a7717c8e2d13c0c16465f8d06b6aab1e86cb3` and published ACP-enabled index `sha256:212de47e723e9fec1e697d4eec1db82af2d0fb7802aade4fa5dfc3f05274d3c5`. Run `33139220833`, attempt 1, built source commit `324a886fd05b01f6756bae0371ea503c651fbd11` after the OpenSSL refresh and published replacement index `sha256:d30f58b0374c7d281df07c126cc257baaf63eb051264a575b96099ec037d5e5d`. Both platform builds assert `libssl3t64=3.5.7-1~deb13u2`, and the run built and validated the complete Hermes managed image for both platforms before cohort promotion. The index and both platform attestations bind the exact source revision, and `agents/hermes/Dockerfile` pins that index. The live final-image WhatsApp evidence is recorded under `HERMES-22`. |
 | `HERMES-13` | Medium | Document bounded residual | Static `state_files` entries online-back up the default profile only. Cron or Discord ledgers created by a process launched under `profiles/<name>` remain in the raw `profiles` tar capture and can be inconsistent during a concurrent snapshot. Dynamic profile-local SQLite discovery is generic snapshot work outside this upgrade PR. |
 | `HERMES-14` | High | Migrate and test | The browser evaluation denylist changed from default-on to opt-in. Generated configuration explicitly writes `browser.restrict_evaluate: true`, including when managed browser-gateway settings are merged, so the upgrade does not broaden page-context access. |
 | `HERMES-15` | Medium | Migrate and test | The omitted gateway session-reset policy changed from bounded daily and idle expiry to no automatic reset. Generated configuration explicitly writes the complete outgoing reset and notification policy to preserve the retention bound without inheriting mutable dependency defaults. |
@@ -404,7 +431,7 @@ Each reviewed commit in the following table is an ancestor of `bd668121e918e7b1d
 | `HERMES-18` | High | Migrate and test | Fresh named profiles omit `config.yaml`, so generated pins do not cover every `HERMES_HOME`. The Hermes sandbox image hash-binds the exact `v2026.7.20` config, classic-CLI config copy, raw browser-policy, TUI raw-YAML, agent-commentary, update-command, and gateway-policy sources, patches their fail-safe defaults, and creates a real config-less profile to exercise all affected installed loaders. |
 | `HERMES-19` | High | Migrate and test | The dashboard has an isolated `HERMES_HOME`, so its allowlisted routing and policy mirror is a startup security boundary. A missing gateway config remains a benign cold-start no-op, while malformed, non-mapping, unreadable, or routing-free source config and invalid existing dashboard config fail startup without changing stale dashboard bytes. Sanitized errors never include raw PyYAML parser context or credential-bearing source lines. |
 | `HERMES-20` | High | Retarget, guard, test, and runtime-proof | Base SHA `fa96c91f` adds a Hermes 0.18 gateway-runtime-metadata patch whose central helper shape does not match Hermes 0.19. The retargeted exact-source guard preserves `_get_process_hermes_home()` while moving the managed default gateway's central PID, lock, and status helpers below `runtime`, hash-binds the patcher, and adds unit and Hermes sandbox image probes. The managed-gateway restart E2E remains the PR SHA runtime gate. |
-| `HERMES-21` | Medium | Document inherited bounded residual | The base workaround does not retarget direct upstream `--replace` cleanup, planned-stop/takeover markers, named-profile and multiplexer readers, service/boot/web/Windows consumers, or upstream backup and Docker paths. With Shields up, those direct paths can fail or observe stale state, but the same limitation exists on base SHA `fa96c91f`; the 0.19 selector retarget adds no regression to NemoClaw's supported host-managed default-gateway lifecycle. A complete relocation needs separate exact-source patches and runtime proof for every explicit consumer. |
+| `HERMES-21` | Medium | Document inherited bounded residual | The base workaround does not retarget direct upstream `--replace` cleanup, planned-stop/takeover markers, named-profile and multiplexer readers, service/boot/web/Windows consumers, or upstream backup and Docker paths. Under the historical, now-retired Shields-up posture, those direct paths could fail or observe stale state; that ownership-specific failure no longer describes the current mutable runtime. The unretargeted consumers can still observe split metadata outside NemoClaw's supported host-managed default-gateway lifecycle. A complete relocation needs separate exact-source patches and runtime proof for every explicit consumer. |
 | `HERMES-22` | High | Patch, pin, test, and runtime-proof | Issue `#8087` showed that the Hermes WhatsApp WebSocket ignored the injected `HTTPS_PROXY`, attempted direct DNS resolution, and failed before OpenShell produced an Open Cybersecurity Schema Framework (OCSF) record. NemoClaw exact-source patches both Baileys proxy fields, locks the added proxy dependency graph, and fails the base image build when the patch drifts, a bridge-level `makeWASocket` mock does not receive the same proxy agent as `agent` and `fetchAgent`, or the pinned Baileys WebSocket transport does not send a `CONNECT web.whatsapp.com:443` request to a controlled HTTPS proxy. The mock also proves that both options remain unset without `HTTPS_PROXY`. Live Hermes WhatsApp evidence was captured manually on a final image built from this branch: dashboard QR pairing wrote credentials to `/sandbox/.hermes/platforms/whatsapp/session`, the bridge reported `{"status":"connected"}`, an inbound message from an allowlisted sender received an agent reply, and the OpenShell proxy audit admitted every WhatsApp flow under `policy:whatsapp`. Pull request `#8229` records that run and its reproduction steps. No target in this repository pairs a live WhatsApp account, so the trusted manual pull request E2E run remains the merge gate for that evidence. |
 | `HERMES-23` | High | Package, guard, and bound scope | The managed base selects upstream's frozen `agent-client-protocol==0.9.0` extra, checks its exact installed version, and runs the adapter's terminating import check. The final Dockerfile repeats the exact version and SDK/adapter import gate so a stale or custom base cannot silently omit ACP. Base resolution imports the pinned SDK and adapter only as the sandbox user with networking disabled, all capabilities dropped, no-new-privileges, and a read-only filesystem; isolated Python and explicit exits prevent image environment settings from disabling the checks. This proves package and adapter availability only. ACP protocol sessions, editor compatibility, workspace mapping, file and terminal permissions, and transport and authorization behavior remain outside this change and require a separate accepted design and end-to-end test. |
 
@@ -435,12 +462,12 @@ The review records the following source and test evidence.
 The review records the following publication and registry evidence.
 
 - Hermes CI run `29768400292`, PyPI publication run `29768427462`, and Docker publication run `29768440304` completed successfully.
-- GitHub Actions workflow `.github/workflows/base-image.yaml` run `32413658315`, attempt 1, published the selected ACP-enabled `linux/amd64` and `linux/arm64` base images and OCI index `sha256:212de47e723e9fec1e697d4eec1db82af2d0fb7802aade4fa5dfc3f05274d3c5`; run `31717470863`, attempt 1, published the superseded pre-ACP index; run `31636995117`, attempt 1, published the preceding index; run `31031662054`, attempt 1, published the preceding patched index; and run `31006872948`, attempt 1, published the security-refreshed index.
-- Both platform base-image jobs in run `32413658315` installed and checked 90 packages, identified `agent-client-protocol==0.9.0`, and completed `hermes acp --check`.
-- The selected index contains exact amd64 and arm64 image manifests plus SLSA provenance that binds source commit `a42a7717c8e2d13c0c16465f8d06b6aab1e86cb3` to the workflow run.
-- Pull request workflow run `32415993531`, attempt 1, built and direct-started a local `linux/amd64` Hermes candidate from source commit `6d195636e43edee177a5b67d93eae04d36e98928`, published digest-only candidate `sha256:0d07845fa3b02a0657d28e134eb2e1f4a96cc6260e2538f3d4eafe831c7e5c17`, and passed its anonymous exact-digest pull.
-- A separate post-publication probe ran that exact digest as `sandbox` with networking disabled, all capabilities dropped, no-new-privileges, and a read-only filesystem; the 97-distribution inventory, dependency compatibility, ACP version `0.9.0`, and `hermes acp --check` passed.
-- The feature-branch base workflow skipped the final multi-platform managed-image publisher. ACP-enabled multi-platform validation and publication remain post-merge gates.
+- GitHub Actions workflow `.github/workflows/base-image.yaml` run `33139220833`, attempt 1, published the selected `linux/amd64` and `linux/arm64` base images and OCI index `sha256:d30f58b0374c7d281df07c126cc257baaf63eb051264a575b96099ec037d5e5d`; run `32413658315`, attempt 1, published the superseded ACP-enabled index; run `31717470863`, attempt 1, published the preceding pre-ACP index; and the earlier runs above retain their historical evidence.
+- Both platform base-image jobs in run `33139220833` enforced the OpenSSL 3.5.7 package assertions, and the same run built and validated the complete Hermes managed image for both platforms before promotion.
+- The selected index contains exact amd64 and arm64 image manifests plus SLSA provenance that binds source commit `324a886fd05b01f6756bae0371ea503c651fbd11` to the workflow run.
+- Historical pull request workflow run `32415993531`, attempt 1, built and direct-started a local `linux/amd64` Hermes candidate from source commit `6d195636e43edee177a5b67d93eae04d36e98928`, published digest-only candidate `sha256:0d07845fa3b02a0657d28e134eb2e1f4a96cc6260e2538f3d4eafe831c7e5c17`, and passed its anonymous exact-digest pull.
+- A historical post-publication probe ran that exact digest as `sandbox` with networking disabled, all capabilities dropped, no-new-privileges, and a read-only filesystem; the 97-distribution inventory, dependency compatibility, ACP version `0.9.0`, and `hermes acp --check` passed.
+- That earlier feature-branch workflow skipped the final multi-platform managed-image publisher. Selected run `33139220833` completed the native-platform managed-image validation and cohort promotion.
 - PyPI Trusted Publisher attestations bind both `hermes-agent==0.19.0` artifacts to source commit `3ef6bbd201263d354fd83ec55b3c306ded2eb72a`.
 - The npm registry-integrity check matches the `hermes-agent==0.19.0` cross-check value recorded in this review.
 - OCI inspection records the immutable index, both child manifests, both attestation manifests, and their per-platform SLSA provenance layers.

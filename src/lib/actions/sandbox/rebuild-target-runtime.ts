@@ -13,11 +13,12 @@ import {
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
 import { enforceDockerGpuPatchPreserveNetwork } from "../../onboard/docker-gpu-local-inference";
+import { verifySandboxBridgeGatewayReachableOrExit } from "../../onboard/gateway-sandbox-reachability";
 import { initialDockerGpuRoute, resolveDockerGpuRoutePlan } from "../../onboard/docker-gpu-route";
 import { isDockerDesktopWslRuntime } from "../../onboard/docker-gpu-sandbox-create";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
-  matchesGatewayCredentialOnlyProviderBinding,
+  matchesGatewayCredentialFamilyProviderBinding,
   readGatewayProviderMetadata,
 } from "../../onboard/gateway-provider-metadata";
 import { resolveSandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
@@ -59,9 +60,13 @@ function canReuseGatewayWebSearchCredential(
   const credentialEnv = webSearchEnvFor(provider);
   if (getCredential(credentialEnv)) return false;
   const providerName = `${sb.name}-${provider}-search`;
-  const matches = matchesGatewayCredentialOnlyProviderBinding(
+  const matches = matchesGatewayCredentialFamilyProviderBinding(
     readGatewayProviderMetadata(providerName, runOpenshell, resolveSandboxGatewayName(sb)),
-    { name: providerName, type: provider, credentialKey: credentialEnv },
+    {
+      name: providerName,
+      type: provider,
+      credentialKey: credentialEnv,
+    },
   );
   if (matches) {
     log(
@@ -187,6 +192,11 @@ export async function preflightRebuildTargetRuntime(
       selectedRoute,
       gatewayPort: recreateOptions.targetGatewayPort,
       log,
+      reverifyBridgeReachability: () =>
+        verifySandboxBridgeGatewayReachableOrExit(true, {
+          skip: false,
+          port: recreateOptions.targetGatewayPort,
+        }),
     });
   } catch (err) {
     printRebuildPreflightFailure(

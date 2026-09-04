@@ -65,10 +65,15 @@ class RunnerUnsupportedCommand extends NemoClawCommand {
 }
 
 function useHermesPortableAuthority(): void {
-  vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
+  const authority = {
     kind: "hermes",
     snapshot: { receipt: { phase: "active" } } as never,
-  });
+  } as const;
+  vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue(authority);
+  vi.spyOn(
+    receiptAuthority,
+    "inspectPortableAgentReceiptAuthorityForClassification",
+  ).mockReturnValue(authority);
 }
 
 describe("Hermes portable command admission through both oclif runners", () => {
@@ -184,9 +189,9 @@ describe("runOclifArgv", () => {
     expect(config.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.options.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.plugins.get("root")?.pjson.oclif.bin).toBe("nemoclaw");
-    expect(
-      (config.pjson.oclif as Record<string, unknown>)[PUBLIC_HELP_SANDBOX_NAME_PROPERTY],
-    ).toBe("alpha");
+    expect((config.pjson.oclif as Record<string, unknown>)[PUBLIC_HELP_SANDBOX_NAME_PROPERTY]).toBe(
+      "alpha",
+    );
     expect(
       (config.plugins.get("root")?.pjson.oclif as Record<string, unknown>)[
         PUBLIC_HELP_SANDBOX_NAME_PROPERTY
@@ -314,9 +319,9 @@ describe("runOclifCommandById", () => {
     expect(config.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.options.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.plugins.get("root")?.pjson.oclif.bin).toBe("nemoclaw");
-    expect(
-      (config.pjson.oclif as Record<string, unknown>)[PUBLIC_HELP_SANDBOX_NAME_PROPERTY],
-    ).toBe("alpha");
+    expect((config.pjson.oclif as Record<string, unknown>)[PUBLIC_HELP_SANDBOX_NAME_PROPERTY]).toBe(
+      "alpha",
+    );
     expect(
       (config.plugins.get("root")?.pjson.oclif as Record<string, unknown>)[
         PUBLIC_HELP_SANDBOX_NAME_PROPERTY

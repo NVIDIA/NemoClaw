@@ -16,7 +16,6 @@ import type { McpBridgeEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { withMcpCredentialOwnershipLock } from "../../state/mcp-lifecycle-lock/credential-ownership";
 import {
-  assertAgentMcpConfigMutationAllowed,
   assertAgentMcpMutationRuntimeCapability,
   inspectAgentAdapterRegistration,
   registerAgentAdapter,
@@ -119,14 +118,6 @@ function assertPreparedMcpAddResourcesAbsent(
     );
   }
 
-  const existingPolicy = registry
-    .getCustomPolicies(sandboxName)
-    .find((policy) => policy.name === entry.policyName);
-  if (existingPolicy) {
-    throw new McpBridgeError(
-      `MCP add preflight for '${entry.server}' found an existing policy ownership record '${entry.policyName}'. The durable add manifest was preserved without claiming it.`,
-    );
-  }
   const policyContent = buildMcpBridgePolicyYaml(
     entry.server,
     entry.url,
@@ -273,10 +264,10 @@ async function addMcpBridgeUnlocked(
     adapter,
     url: normalizedUrl,
     env: envNames,
+    allowedIps: [...target.addresses],
     ...(target.trustedPrivateHost
       ? {
           trustedPrivateHost: target.trustedPrivateHost,
-          allowedIps: [...target.addresses],
         }
       : {}),
     ...(providerName ? { providerName } : {}),
@@ -306,10 +297,6 @@ async function addMcpBridgeUnlocked(
       1,
     );
   }
-  // Hermes config posture is host-visible, so reject before even the durable
-  // prepared manifest is written. The in-sandbox helper repeats the check at
-  // the actual config write so a concurrent posture change still fails closed.
-  assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
   // Bind the static credential-name deny-list to the OpenShell binary before
   // persisting ownership or mutating a provider, policy, or adapter.
   assertMcpCredentialBoundaryRuntimeVersion();

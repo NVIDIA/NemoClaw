@@ -4,7 +4,10 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadAgent } from "../../../src/lib/agent/defs";
+import {
+  buildMessagingRuntimePlanArtifact,
+  type MessagingBuildPlan,
+} from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 
 const RUNTIME_CONFIG_GUARD = path.join(
   import.meta.dirname,
@@ -30,31 +33,6 @@ guard = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = guard
 spec.loader.exec_module(guard)
 `;
-
-describe("Hermes sealed configuration contract", () => {
-  it("keeps the root guard in parity with the host manifest projection (#8006)", () => {
-    const result = runPythonHarness(String.raw`
-import importlib.util
-import json
-import sys
-import types
-
-# This contract check reads a constant only. Avoid requiring the optional host
-# PyYAML package while loading the image-owned module for that narrow purpose.
-sys.modules["yaml"] = types.ModuleType("yaml")
-spec = importlib.util.spec_from_file_location("runtime_config_guard", sys.argv[1])
-guard = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = guard
-spec.loader.exec_module(guard)
-print(json.dumps(guard.SEALED_FILE_NAMES))
-`);
-    expect(result.status, result.stderr).toBe(0);
-
-    const config = loadAgent("hermes").configPaths;
-    const manifestFiles = [config.configFile, ...config.shieldsFiles, ".config-hash"].sort();
-    expect((JSON.parse(result.stdout) as string[]).sort()).toEqual(manifestFiles);
-  });
-});
 
 describe("Hermes candidate schema validation (#8614)", () => {
   it("rejects an incomplete home_channel before a sealed write transaction starts", () => {
@@ -620,7 +598,46 @@ with tempfile.TemporaryDirectory() as tmp:
 });
 
 describe("Hermes provider placeholder diagnostics", () => {
-  it("logs only validated environment keys, never runtime-plan message content", () => {
+  it("carries image-artifact credential aliases into Hermes-native env keys (#10079)", () => {
+    const plan = {
+      schemaVersion: 1,
+      sandboxName: "test-sandbox",
+      agent: "hermes",
+      channels: [
+        { channelId: "wechat", active: true, disabled: false },
+        { channelId: "teams", active: true, disabled: false },
+      ],
+      disabledChannels: [],
+      credentialBindings: [
+        { channelId: "wechat", providerEnvKey: "WECHAT_BOT_TOKEN" },
+        { channelId: "teams", providerEnvKey: "MSTEAMS_APP_PASSWORD" },
+      ],
+      agentRender: [],
+      buildSteps: [],
+      runtimeSetup: {
+        nodePreloads: [],
+        envAliases: [
+          {
+            channelId: "wechat",
+            envKey: "WECHAT_BOT_TOKEN",
+            targetEnvKey: "WEIXIN_TOKEN",
+            match: "^openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN$",
+            value: "openshell:resolve:env:WECHAT_BOT_TOKEN",
+          },
+          {
+            channelId: "teams",
+            envKey: "MSTEAMS_APP_PASSWORD",
+            targetEnvKey: "TEAMS_CLIENT_SECRET",
+            match: "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$",
+            value: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
+          },
+        ],
+        secretScans: [],
+      },
+    } satisfies MessagingBuildPlan;
+    const runtimeArtifact = buildMessagingRuntimePlanArtifact(plan);
+    expect(runtimeArtifact).toBeTruthy();
+
     const result = runPythonHarness(`${loadGuardModule}
 import json
 import os
@@ -630,23 +647,15 @@ with tempfile.TemporaryDirectory() as tmp:
     env_path = os.path.join(tmp, ".env")
     plan_path = os.path.join(tmp, "runtime-plan.json")
     with open(env_path, "w", encoding="utf-8") as handle:
-        handle.write("SLACK_BOT_TOKEN=old-placeholder\\n")
+        handle.write("WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN\\n")
+        handle.write("TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD\\n")
     with open(plan_path, "w", encoding="utf-8") as handle:
-        json.dump({
-            "channels": [{"channelId": "slack", "active": True}],
-            "runtimeSetup": {
-                "envAliases": [{
-                    "channelId": "slack",
-                    "envKey": "SLACK_BOT_TOKEN",
-                    "match": "^openshell:resolve:env:SLACK_BOT_TOKEN$",
-                    "value": "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-                    "message": "Authorization: Bearer should-never-be-logged",
-                }],
-            },
-        }, handle)
+        json.dump(json.loads(${JSON.stringify(JSON.stringify(runtimeArtifact))}), handle)
 
-    os.environ["SLACK_BOT_TOKEN"] = "openshell:resolve:env:SLACK_BOT_TOKEN"
+    os.environ["WECHAT_BOT_TOKEN"] = "openshell:resolve:env:v222_WECHAT_BOT_TOKEN"
+    os.environ["MSTEAMS_APP_PASSWORD"] = "openshell:resolve:env:v333_MSTEAMS_APP_PASSWORD"
     guard._validate_env_text_with_boundary = lambda *_args: None
+    guard._write_existing = lambda path, text, *_args: open(path, "w", encoding="utf-8").write(text)
     guard.refresh_hashes = lambda *_args: None
     guard.provider_placeholders(
         tmp,
@@ -657,322 +666,101 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     with open(env_path, "r", encoding="utf-8") as handle:
         print(handle.read(), end="")
+    print("SOURCE_WECHAT_BOT_TOKEN=" + os.environ["WECHAT_BOT_TOKEN"])
+    print("SOURCE_MSTEAMS_APP_PASSWORD=" + os.environ["MSTEAMS_APP_PASSWORD"])
 `);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toBe("SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\n");
-    expect(result.stderr).toContain(
-      "[config] Refreshed Hermes provider placeholder for SLACK_BOT_TOKEN",
+    expect(result.stdout).toContain("WEIXIN_TOKEN=openshell:resolve:env:v222_WECHAT_BOT_TOKEN\n");
+    expect(result.stdout).toContain(
+      "TEAMS_CLIENT_SECRET=openshell:resolve:env:v333_MSTEAMS_APP_PASSWORD\n",
     );
-    expect(result.stderr).not.toContain("Authorization");
-    expect(result.stderr).not.toContain("should-never-be-logged");
+    expect(result.stdout).toContain(
+      "SOURCE_WECHAT_BOT_TOKEN=openshell:resolve:env:v222_WECHAT_BOT_TOKEN\n",
+    );
+    expect(result.stdout).toContain(
+      "SOURCE_MSTEAMS_APP_PASSWORD=openshell:resolve:env:v333_MSTEAMS_APP_PASSWORD\n",
+    );
+    expect(result.stderr).toContain(
+      "[config] Refreshed Hermes provider placeholder for WEIXIN_TOKEN",
+    );
+    expect(result.stderr).toContain(
+      "[config] Refreshed Hermes provider placeholder for TEAMS_CLIENT_SECRET",
+    );
   });
-});
 
-describe("Hermes shields outer namespace containment", () => {
   it.each([
-    {
-      label: "the installed image plan during startup recovery",
-      planJson: "",
-      planArgs: ["--plan-file", "/usr/local/share/nemoclaw/state-lock-plan.json"],
-    },
-    {
-      label: "the explicit host plan during a live transition",
-      planJson: '{"version":1}',
-      planArgs: ["--plan-json", '{"version":1}'],
-    },
-  ])("keeps the exact state worker PID alive with $label", ({ planJson, planArgs }) => {
-    const result = runPythonHarness(`${loadGuardModule}
+    ["wechat", "WECHAT_BOT_TOKEN", "WEIXIN_TOKEN"],
+    ["teams", "MSTEAMS_APP_PASSWORD", "TEAMS_CLIENT_SECRET"],
+  ] as const)(
+    "copies the %s revision-scoped provider placeholder and logs only validated keys (#10079)",
+    (channelId, envKey, targetEnvKey) => {
+      const result = runPythonHarness(`${loadGuardModule}
 import json
+import os
+import tempfile
 
-captured = {}
-guard._claim_transition_worker = lambda state, token, purpose: {
-    "shields_transition": {"mode": "locked"}
-}
-guard.os.path.isfile = lambda _path: True
-guard.signal.alarm = lambda seconds: captured.update({"alarm": seconds})
-def capture_exec(program, argv):
-    captured.update({"program": program, "argv": argv})
-    raise RuntimeError("exec captured")
-guard.os.execvp = capture_exec
-try:
-    guard.run_state_dir_transition(
-        "/sandbox/.hermes",
-        "/run/nemoclaw/hermes-restart-seal.json",
-        "a" * 64,
-        "lock",
-        ${JSON.stringify(planJson)},
+with tempfile.TemporaryDirectory() as tmp:
+    env_path = os.path.join(tmp, ".env")
+    plan_path = os.path.join(tmp, "runtime-plan.json")
+    with open(env_path, "w", encoding="utf-8") as handle:
+        handle.write(${JSON.stringify(`${targetEnvKey}=openshell:resolve:env:${envKey}\n`)})
+    with open(plan_path, "w", encoding="utf-8") as handle:
+        json.dump({
+            "channels": [{"channelId": ${JSON.stringify(channelId)}, "active": True}],
+            "credentialBindings": [{
+                "channelId": ${JSON.stringify(channelId)},
+                "providerEnvKey": ${JSON.stringify(envKey)},
+            }],
+            "runtimeSetup": {
+                "envAliases": [{
+                    "channelId": ${JSON.stringify(channelId)},
+                    "envKey": ${JSON.stringify(envKey)},
+                    "targetEnvKey": ${JSON.stringify(targetEnvKey)},
+                    "match": ${JSON.stringify(`^openshell:resolve:env:v[0-9]+_${envKey}$`)},
+                    "value": ${JSON.stringify(`openshell:resolve:env:${envKey}`)},
+                    "message": "Authorization: Bearer should-never-be-logged",
+                }],
+            },
+        }, handle)
+
+    os.environ[${JSON.stringify(envKey)}] = ${JSON.stringify(`openshell:resolve:env:v222_${envKey}`)}
+    guard._validate_env_text_with_boundary = lambda *_args: None
+    guard._write_existing = lambda path, text, *_args: open(path, "w", encoding="utf-8").write(text)
+    guard.refresh_hashes = lambda *_args: None
+    guard.provider_placeholders(
+        tmp,
+        os.path.join(tmp, ".config-hash"),
+        "compat",
+        plan_path,
+        "unused-boundary-validator",
     )
-except RuntimeError as exc:
-    captured["error"] = str(exc)
-print(json.dumps(captured))
+    with open(env_path, "r", encoding="utf-8") as handle:
+        print(handle.read(), end="")
+    os.environ[${JSON.stringify(envKey)}] = "raw-test-value"
+    raw_replacements, _provider_keys, _loaded = (
+        guard._runtime_plan_replacements_and_provider_keys(plan_path)
+    )
+    print("raw_replacements=" + json.dumps(raw_replacements, sort_keys=True))
+    os.environ[${JSON.stringify(envKey)}] = ${JSON.stringify(`openshell:resolve:env:${envKey}`)}
+    canonical_replacements, _provider_keys, _loaded = (
+        guard._runtime_plan_replacements_and_provider_keys(plan_path)
+    )
+    print("canonical_replacements=" + json.dumps(canonical_replacements, sort_keys=True))
 `);
 
-    expect(result.status, result.stderr).toBe(0);
-    const captured = JSON.parse(result.stdout);
-    expect(captured).toMatchObject({
-      alarm: 0,
-      program: "timeout",
-      error: "exec captured",
-    });
-    expect(captured.argv.slice(0, 5)).toEqual([
-      "timeout",
-      "--signal=TERM",
-      "--kill-after=5s",
-      "12m",
-      expect.stringMatching(/python(?:3(?:\.\d+)?)?$/),
-    ]);
-    expect(captured.argv.slice(5)).toEqual([
-      "/usr/local/lib/nemoclaw/state-dir-guard.py",
-      "lock",
-      "--config-dir",
-      "/sandbox/.hermes",
-      ...planArgs,
-    ]);
-  });
-
-  it("refuses mutable takeover while the exact claimed worker is live", () => {
-    const result = runPythonHarness(`${loadGuardModule}
-import json
-import os
-import tempfile
-import time
-
-with tempfile.TemporaryDirectory() as tmp:
-    os.chmod(tmp, 0o700)
-    token = "b" * 64
-    state_path = os.path.join(tmp, "state.json")
-    lock_path = os.path.join(tmp, "hermes-config-mutation.lock")
-    state = {
-        "version": 1,
-        "phase": "shields-transition-applied",
-        "mutation_lock_token": token,
-        "mutation_lock_path": lock_path,
-        "hermes_dir": "/sandbox/.hermes",
-        "hash_file": "/etc/nemoclaw/hermes.config-hash",
-        "parent": {"dev": 1, "ino": 1},
-        "hermes": {"dev": 1, "ino": 2},
-        "shields_transition": {
-            "mode": "mutable",
-            "lease_expires_ns": 1,
-        },
-    }
-    with open(state_path, "w", encoding="utf-8") as handle:
-        json.dump(state, handle)
-    os.chmod(state_path, 0o600)
-    with open(lock_path, "w", encoding="utf-8") as handle:
-        json.dump({
-            "version": 1,
-            "token": token,
-            "purpose": "state-dir-unlock",
-            "pid": 1234,
-            "pid_start_time": "99",
-        }, handle)
-    os.chmod(lock_path, 0o600)
-    guard._mutation_lock_owner_is_live = lambda _owner: True
-    try:
-        guard._takeover_expired_mutable_transition(
-            "/sandbox/.hermes",
-            "/etc/nemoclaw/hermes.config-hash",
-            state_path,
-        )
-    except guard.UnsafePathError as exc:
-        error = str(exc)
-    else:
-        error = ""
-    print(json.dumps({"error": error, "state_exists": os.path.exists(state_path)}))
-`);
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
-      error: "Hermes mutable transition worker is still active; retry locked takeover",
-      state_exists: true,
-    });
-  });
-
-  it("claims the expired mutable owner before freezing its namespace", () => {
-    const result = runPythonHarness(`${loadGuardModule}
-import json
-import os
-import tempfile
-
-with tempfile.TemporaryDirectory() as tmp:
-    os.chmod(tmp, 0o700)
-    token = "c" * 64
-    state_path = os.path.join(tmp, "state.json")
-    lock_path = os.path.join(tmp, "hermes-config-mutation.lock")
-    state = {
-        "version": 1,
-        "phase": "shields-transition-applied",
-        "mutation_lock_token": token,
-        "mutation_lock_path": lock_path,
-        "hermes_dir": "/sandbox/.hermes",
-        "hash_file": "/etc/nemoclaw/hermes.config-hash",
-        "parent": {"dev": 1, "ino": 1},
-        "hermes": {"dev": 1, "ino": 2},
-        "shields_transition": {"mode": "mutable", "lease_expires_ns": 1},
-    }
-    with open(state_path, "w", encoding="utf-8") as handle:
-        json.dump(state, handle)
-    os.chmod(state_path, 0o600)
-    with open(lock_path, "w", encoding="utf-8") as handle:
-        json.dump({
-            "version": 1,
-            "token": token,
-            "purpose": "apply-shields-transition",
-            "pid": 1234,
-            "pid_start_time": "99",
-        }, handle)
-    os.chmod(lock_path, 0o600)
-    guard._mutation_lock_owner_is_live = lambda _owner: False
-    events = []
-    def lose_claim(_state_path, _token, _purpose):
-        events.append("claim")
-        raise guard.UnsafePathError("simulated competing worker claim")
-    guard._claim_transition_worker = lose_claim
-    guard._open_directory = lambda _path: events.append("freeze")
-    try:
-        guard._takeover_expired_mutable_transition(
-            "/sandbox/.hermes",
-            "/etc/nemoclaw/hermes.config-hash",
-            state_path,
-        )
-    except guard.UnsafePathError as exc:
-        error = str(exc)
-    else:
-        error = ""
-    print(json.dumps({"error": error, "events": events}))
-`);
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
-      error: "simulated competing worker claim",
-      events: ["claim"],
-    });
-  });
-
-  it("freezes the parent before opening .hermes", () => {
-    const result = runPythonHarness(`${loadGuardModule}
-import json
-import os
-import tempfile
-
-with tempfile.TemporaryDirectory() as tmp:
-    os.chmod(tmp, 0o700)
-    sandbox = os.path.join(tmp, "sandbox")
-    hermes = os.path.join(sandbox, ".hermes")
-    os.makedirs(hermes)
-    os.chmod(sandbox, 0o770)
-    os.chmod(hermes, 0o3770)
-    with open(os.path.join(hermes, "config.yaml"), "wb") as handle:
-        handle.write(b"model: test\\n")
-    with open(os.path.join(hermes, ".env"), "wb") as handle:
-        handle.write(b"SAFE=1\\n")
-    with open(os.path.join(hermes, ".config-hash"), "wb") as handle:
-        handle.write(b"stale\\n")
-    strict = os.path.join(tmp, "strict.hash")
-    with open(strict, "wb") as handle:
-        handle.write(b"stale\\n")
-    state = os.path.join(tmp, "state.json")
-
-    original_open_child = guard._open_child_directory
-    observed = []
-    def checked_open_child(parent_fd, name, path):
-        if name == ".hermes":
-            parent = os.fstat(parent_fd)
-            observed.append({
-                "mode": oct(parent.st_mode & 0o7777),
-                "uid": parent.st_uid,
-            })
-        return original_open_child(parent_fd, name, path)
-    guard._open_child_directory = checked_open_child
-    try:
-        guard._seal_shields_locked(hermes, strict, state, "mutable")
-    finally:
-        guard._open_child_directory = original_open_child
-    print(json.dumps({
-        "observed": observed,
-        "parent_mode": oct(os.stat(sandbox).st_mode & 0o7777),
-        "hermes_mode": oct(os.stat(hermes).st_mode & 0o7777),
-    }))
-    os.chmod(hermes, 0o700)
-    os.chmod(sandbox, 0o700)
-`);
-
-    expect(result.status, result.stderr).toBe(0);
-    const proof = JSON.parse(result.stdout);
-    expect(proof.observed[0]).toMatchObject({ mode: "0o700" });
-    expect(proof).toMatchObject({
-      parent_mode: "0o700",
-      hermes_mode: "0o500",
-    });
-  });
-
-  it("rejects a cross-device .hermes without mutating the mounted child", () => {
-    const result = runPythonHarness(`${loadGuardModule}
-import json
-import os
-import stat
-import tempfile
-from types import SimpleNamespace
-
-with tempfile.TemporaryDirectory() as tmp:
-    os.chmod(tmp, 0o700)
-    sandbox = os.path.join(tmp, "sandbox")
-    hermes = os.path.join(sandbox, ".hermes")
-    os.makedirs(hermes)
-    os.chmod(sandbox, 0o770)
-    os.chmod(hermes, 0o3770)
-    strict = os.path.join(tmp, "strict.hash")
-    with open(strict, "wb") as handle:
-        handle.write(b"stale\\n")
-    state = os.path.join(tmp, "state.json")
-    original_stat = guard.os.stat
-    child_before = original_stat(hermes)
-    def cross_device_stat(path, *args, **kwargs):
-        result = original_stat(path, *args, **kwargs)
-        if path == ".hermes" and kwargs.get("dir_fd") is not None and kwargs.get("follow_symlinks") is False:
-            return SimpleNamespace(
-                st_mode=result.st_mode,
-                st_dev=result.st_dev + 1,
-                st_ino=result.st_ino,
-                st_uid=result.st_uid,
-                st_gid=result.st_gid,
-                st_nlink=result.st_nlink,
-                st_size=result.st_size,
-                st_mtime_ns=result.st_mtime_ns,
-                st_ctime_ns=result.st_ctime_ns,
-            )
-        return result
-    guard.os.stat = cross_device_stat
-    try:
-        try:
-            guard._seal_shields_locked(hermes, strict, state, "mutable")
-        except guard.UnsafePathError as exc:
-            error = str(exc)
-        else:
-            error = ""
-    finally:
-        guard.os.stat = original_stat
-    child_after = original_stat(hermes)
-    print(json.dumps({
-        "error": error,
-        "parent_mode": oct(original_stat(sandbox).st_mode & 0o7777),
-        "child_mode_unchanged": (child_before.st_mode & 0o7777) == (child_after.st_mode & 0o7777),
-        "child_inode_unchanged": child_before.st_ino == child_after.st_ino,
-    }))
-    os.chmod(sandbox, 0o700)
-`);
-
-    expect(result.status, result.stderr).toBe(0);
-    const proof = JSON.parse(result.stdout);
-    expect(proof.error).toContain("cross-device Hermes config root");
-    expect(proof).toMatchObject({
-      parent_mode: "0o700",
-      child_mode_unchanged: true,
-      child_inode_unchanged: true,
-    });
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(`${targetEnvKey}=openshell:resolve:env:v222_${envKey}\n`);
+      expect(result.stdout).toContain(`${envKey}=openshell:resolve:env:v222_${envKey}\n`);
+      expect(result.stdout).toContain("raw_replacements={}");
+      expect(result.stdout).toContain("canonical_replacements={}");
+      expect(result.stderr).toContain(
+        `[config] Refreshed Hermes provider placeholder for ${targetEnvKey}`,
+      );
+      expect(result.stderr).not.toContain("Authorization");
+      expect(result.stderr).not.toContain("should-never-be-logged");
+    },
+  );
 });
 
 describe("Hermes startup readiness lease", () => {

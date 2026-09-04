@@ -8,10 +8,12 @@
  * and gateway recovery — without introducing another target framework.
  */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
@@ -27,20 +29,29 @@ import {
   type HostedInferenceConfig,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
+import { expectSandboxProviderAttachment } from "../fixtures/gateway-providers.ts";
 import {
   RESOURCE_LIMIT_CONNECT_BEGIN_MARKER,
   RESOURCE_LIMIT_CONNECT_END_MARKER,
   resourceLimitOutputFilterScript,
 } from "../fixtures/resource-limit-diagnostics.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { ubuntuRepoDocker } from "../registry/matrix.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
+import { ubuntuRepoManagedRuntime } from "../registry/matrix.ts";
 
-const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
+const ENVIRONMENT = ubuntuRepoManagedRuntime("cloud-openclaw");
 const SANDBOX_A = "e2e-sbx-a";
 const SANDBOX_B = "e2e-sbx-b";
+const CREDENTIAL_PROVIDER = "e2e-sandbox-tavily";
+const CREDENTIAL_ENV_NAME = "TAVILY_API_KEY";
+const CREDENTIAL_VALUE = "e2e-sandbox-operations-provider-secret";
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 const GATEWAY_CONTAINER = "openshell-cluster-nemoclaw";
 const GATEWAY_PORT = process.env.NEMOCLAW_GATEWAY_PORT ?? "8080";
+const LEGACY_FORWARD_SANDBOX = "e2e-legacy-forward";
+const LEGACY_DASHBOARD_PORT = Number(process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789");
+const LEGACY_UNREGISTERED_PORT = 19_789;
 
 function numericProbe(text: string, key: string): number {
   const prefix = `${key}=`;
@@ -141,11 +152,26 @@ async function onboardSandbox(
         NEMOCLAW_RECREATE_SANDBOX: "1",
       },
       redactionValues: [hosted.apiKey],
-      timeoutMs: 20 * 60_000,
+      timeoutMs: execTimeout(20 * 60_000),
     },
   );
   expectExitZero(result, `nemoclaw onboard ${sandboxName}`);
   return result;
+}
+
+async function resetCredentialProvider(
+  host: HostCliClient,
+  artifactName: string,
+): Promise<ShellProbeResult> {
+  const reset = await host.nemoclaw(["credentials", "reset", CREDENTIAL_PROVIDER, "--yes"], {
+    artifactName,
+    env: buildAvailabilityProbeEnv(),
+    redactionValues: [CREDENTIAL_VALUE],
+    timeoutMs: 3 * 60_000,
+  });
+  expectExitZero(reset, `nemoclaw credentials reset ${CREDENTIAL_PROVIDER} --yes`);
+  expect(resultText(reset)).not.toContain(CREDENTIAL_VALUE);
+  return reset;
 }
 
 async function expectListed(host: HostCliClient, sandboxName: string, artifactName: string) {
@@ -173,109 +199,97 @@ async function execInSandbox(
   });
 }
 
-function findJsonObjectEnd(raw: string, start: number): number | null {
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = start; index < raw.length; index += 1) {
-    const char = raw[index];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (char === '"') {
-      inString = true;
-    } else if (char === "{") {
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
-      if (depth === 0) return index + 1;
-    }
-  }
-  return null;
+function credentialBoundaryProbeScript(): string {
+  const fixtureDigest = createHash("sha256").update(CREDENTIAL_VALUE, "utf8").digest("hex");
+  return `python3 - ${shellQuote(fixtureDigest)} ${CREDENTIAL_VALUE.length} <<'PY'
+from pathlib import Path
+import hashlib
+import os
+import sys
+
+secret_digest = bytes.fromhex(sys.argv[1])
+secret_length = int(sys.argv[2])
+
+def contains_secret(path):
+    try:
+        content = Path(path).read_bytes()
+    except OSError:
+        return False
+    if len(content) < secret_length:
+        return False
+    view = memoryview(content)
+    return any(
+        hashlib.sha256(view[offset:offset + secret_length]).digest() == secret_digest
+        for offset in range(len(content) - secret_length + 1)
+    )
+
+def contains_secret_bytes(content):
+    if len(content) < secret_length:
+        return False
+    view = memoryview(content)
+    return any(
+        hashlib.sha256(view[offset:offset + secret_length]).digest() == secret_digest
+        for offset in range(len(content) - secret_length + 1)
+    )
+
+environment = b"\\0".join(
+    f"{key}={value}".encode("utf-8", errors="surrogateescape")
+    for key, value in os.environ.items()
+)
+if contains_secret_bytes(environment):
+    raise SystemExit(98)
+
+managed_config_files = 0
+for root_text in ("/sandbox/.openclaw", "/etc/nemoclaw", "/tmp"):
+    root = Path(root_text)
+    if not root.exists():
+        continue
+    for path in root.rglob("*"):
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024 * 1024:
+                continue
+        except OSError:
+            continue
+        if root_text != "/tmp":
+            managed_config_files += 1
+        if contains_secret(path):
+            raise SystemExit(98)
+
+agent_environment_inspected = False
+for process in Path("/proc").iterdir():
+    if not process.name.isdigit():
+        continue
+    try:
+        command = (process / "cmdline").read_bytes()
+    except OSError:
+        continue
+    if b"openclaw" not in command.lower():
+        continue
+    try:
+        agent_environment = (process / "environ").read_bytes()
+    except OSError:
+        continue
+    agent_environment_inspected = True
+    if contains_secret_bytes(command) or contains_secret_bytes(agent_environment):
+        raise SystemExit(98)
+
+if managed_config_files == 0 or not agent_environment_inspected:
+    raise SystemExit(97)
+PY`;
 }
 
-function parseOpenClawAgentText(raw: string): string {
-  if (!raw.trim()) return "";
-  const parts: string[] = [];
-  const visited = new Set<unknown>();
-  const textKeys = new Set(["text", "content", "reasoning_content"]);
-  const containerKeys = new Set([
-    "result",
-    "payloads",
-    "payload",
-    "messages",
-    "choices",
-    "response",
-    "data",
-    "output",
-    "outputs",
-    "items",
-    "segments",
-    "delta",
-  ]);
-
-  const add = (value: unknown) => {
-    if (typeof value === "string" && value.trim()) parts.push(value.trim());
-  };
-  const collect = (value: unknown) => {
-    if (visited.has(value)) return;
-    visited.add(value);
-    if (typeof value === "string") {
-      add(value);
-      return;
-    }
-    if (Array.isArray(value)) {
-      value.forEach(collect);
-      return;
-    }
-    if (!value || typeof value !== "object") return;
-    const record = value as Record<string, unknown>;
-    for (const key of textKeys) add(record[key]);
-    const choices = record.choices;
-    if (Array.isArray(choices)) {
-      for (const choice of choices) {
-        if (!choice || typeof choice !== "object") continue;
-        collect((choice as Record<string, unknown>).message);
-        collect((choice as Record<string, unknown>).delta);
-        add((choice as Record<string, unknown>).text);
-      }
-    }
-    for (const key of containerKeys) {
-      if (key in record) collect(record[key]);
-    }
-  };
-  const collectDoc = (doc: unknown) => {
-    if (doc && typeof doc === "object" && (doc as Record<string, unknown>).result) {
-      collect((doc as Record<string, unknown>).result);
-    } else {
-      collect(doc);
-    }
-  };
-
-  try {
-    collectDoc(JSON.parse(raw));
-  } catch {
-    for (const match of raw.matchAll(/{/g)) {
-      try {
-        const before = parts.length;
-        const start = match.index;
-        const end = findJsonObjectEnd(raw, start);
-        if (end === null) continue;
-        collectDoc(JSON.parse(raw.slice(start, end)));
-        if (parts.length > before) break;
-      } catch {
-        // Continue scanning for a later JSON object, matching the legacy parser.
-      }
-    }
-  }
-  return parts.join("\n");
+async function assertCredentialRemainsOutsideSandbox(sandbox: SandboxClient): Promise<void> {
+  const probe = await execInSandbox(
+    sandbox,
+    SANDBOX_A,
+    credentialBoundaryProbeScript(),
+    "tc-sbx-14-sandbox-credential-boundary",
+    180_000,
+  );
+  expect(
+    probe.exitCode,
+    "credential fixture must remain absent from sandbox environment and managed runtime configuration",
+  ).toBe(0);
 }
 
 async function assertAgentCanAnswer(
@@ -304,7 +318,7 @@ async function assertAgentCanAnswer(
   );
   const reply = parseOpenClawAgentText(result.stdout);
   expectExitZero(result, `nemoclaw ${sandboxName} agent --json`);
-  expect(containsInteger42Answer(reply), resultText(result)).toBe(true);
+  expect(containsAnswer(reply, "42"), resultText(result)).toBe(true);
 }
 
 async function assertForcedGatewayRestart(
@@ -338,7 +352,6 @@ async function assertForcedGatewayRestart(
     "tc-sbx-08b-gateway-identity-before-forced-restart",
   );
   expectExitZero(before, "OpenClaw gateway identity before forced restart");
-  expect(before.stdout, resultText(before)).toMatch(/GATEWAY=(?:gateway|sandbox):[0-9]+:[0-9]+/);
 
   const restart = await host.nemoclaw([sandboxName, "gateway", "restart"], {
     artifactName: "tc-sbx-08b-openclaw-forced-gateway-restart",
@@ -356,7 +369,6 @@ async function assertForcedGatewayRestart(
     "tc-sbx-08b-gateway-identity-after-forced-restart",
   );
   expectExitZero(after, "OpenClaw gateway identity after forced restart");
-  expect(after.stdout, resultText(after)).toMatch(/GATEWAY=(?:gateway|sandbox):[0-9]+:[0-9]+/);
 
   const beforeGateway = before.stdout.match(/GATEWAY=(gateway|sandbox):([0-9]+:[0-9]+)/);
   const afterGateway = after.stdout.match(/GATEWAY=(gateway|sandbox):([0-9]+:[0-9]+)/);
@@ -463,7 +475,6 @@ async function assertTmuxPtyFlow(sandbox: SandboxClient, sandboxName: string): P
     );
   }
   expect(resultText(flow), `tmux lifecycle failed:\n${resultText(flow)}`).toContain("TMUX_FLOW_OK");
-  expect(resultText(flow)).toContain(session);
 }
 
 async function assertRegistryRebuild(host: HostCliClient, sandboxName: string): Promise<void> {
@@ -645,32 +656,31 @@ type GatewayRecoveryOutcome =
 
 async function assertGatewayRecovery(
   host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   sandboxName: string,
 ): Promise<GatewayRecoveryOutcome> {
-  const running = await host.command(
-    "docker",
-    ["ps", "-q", "--filter", `name=${GATEWAY_CONTAINER}`],
+  const running = await runtimeProvider.command(
+    ["container", "ps", "--filter", `name=^${GATEWAY_CONTAINER}$`, "--format", "{{.Names}}"],
     {
-      artifactName: "tc-sbx-06-gateway-container-running",
+      artifactName: "tc-sbx-06-gateway-runtime-resource-running",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 15_000,
     },
   );
-  if (!running.stdout.trim()) {
+  if (!running.stdout.split(/\r?\n/u).some((name) => name.trim() === GATEWAY_CONTAINER)) {
     return "skipped-gateway-absent";
   }
 
-  const kill = await host.command("docker", ["kill", GATEWAY_CONTAINER], {
-    artifactName: "tc-sbx-06-docker-kill-gateway",
+  const kill = await runtimeProvider.command(["container", "kill", GATEWAY_CONTAINER], {
+    artifactName: "tc-sbx-06-runtime-kill-gateway",
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 30_000,
   });
   expectExitZero(kill, "kill shared NemoClaw gateway container");
   await new Promise((resolve) => setTimeout(resolve, 5_000));
 
-  const afterKill = await host.command(
-    "docker",
-    ["inspect", "-f", "{{.State.Running}}", GATEWAY_CONTAINER],
+  const afterKill = await runtimeProvider.command(
+    ["container", "inspect", "--format", "{{.State.Running}}", GATEWAY_CONTAINER],
     {
       artifactName: "tc-sbx-06-gateway-container-after-kill",
       env: buildAvailabilityProbeEnv(),
@@ -685,9 +695,8 @@ async function assertGatewayRecovery(
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 10 * 60_000,
   });
-  const afterStatus = await host.command(
-    "docker",
-    ["inspect", "-f", "{{.State.Running}}", GATEWAY_CONTAINER],
+  const afterStatus = await runtimeProvider.command(
+    ["container", "inspect", "--format", "{{.State.Running}}", GATEWAY_CONTAINER],
     {
       artifactName: "tc-sbx-06-gateway-container-after-status",
       env: buildAvailabilityProbeEnv(),
@@ -699,10 +708,416 @@ async function assertGatewayRecovery(
   return recoveryOutcome;
 }
 
+function legacyForwardEnvironment(hosted: HostedInferenceConfig): NodeJS.ProcessEnv {
+  return {
+    ...buildAvailabilityProbeEnv(),
+    ...hosted.env,
+    NEMOCLAW_AGENT: "openclaw",
+    NEMOCLAW_DASHBOARD_PORT: String(LEGACY_DASHBOARD_PORT),
+    NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_SANDBOX_NAME: LEGACY_FORWARD_SANDBOX,
+    OPENSHELL_GATEWAY: "nemoclaw",
+  };
+}
+
+async function runLegacyForwardMigration(
+  host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
+  hosted: HostedInferenceConfig,
+): Promise<void> {
+  const migrationEnv = legacyForwardEnvironment(hosted);
+  const stopAndRelease = await host.command(
+    "bash",
+    [
+      "-lc",
+      String.raw`set -euo pipefail
+nemoclaw="$1"
+sandbox_name="$2"
+dashboard_port="$3"
+"$nemoclaw" "$sandbox_name" stop
+python3 - "$dashboard_port" <<'PY'
+import socket
+import sys
+import time
+
+port = int(sys.argv[1])
+for _ in range(120):
+    listener = socket.socket()
+    try:
+        listener.bind(("127.0.0.1", port))
+    except OSError:
+        listener.close()
+        time.sleep(0.5)
+        continue
+    listener.close()
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+printf 'DIRECT_FORWARD_RELEASED=%s\n' "$dashboard_port"`,
+      "legacy-forward-stop-and-release",
+      host.commandPath,
+      LEGACY_FORWARD_SANDBOX,
+      String(LEGACY_DASHBOARD_PORT),
+    ],
+    {
+      artifactName: "legacy-forward-stop-direct-service",
+      env: migrationEnv,
+      redactionValues: [hosted.apiKey],
+      timeoutMs: 5 * 60_000,
+    },
+  );
+  expect(stopAndRelease.exitCode, resultText(stopAndRelease)).toBe(0);
+
+  const resourceHandle = await runtimeProvider.resolveSandboxResourceHandle(
+    LEGACY_FORWARD_SANDBOX,
+    {
+      artifactName: "legacy-forward-resolve-stopped-sandbox",
+      timeoutMs: 60_000,
+    },
+  );
+  const startWorkload = await runtimeProvider.command(["container", "start", resourceHandle], {
+    artifactName: "legacy-forward-start-sandbox-workload-only",
+    timeoutMs: 120_000,
+  });
+  expect(startWorkload.exitCode, resultText(startWorkload)).toBe(0);
+
+  const migrate = await host.command(
+    "bash",
+    [
+      "-lc",
+      String.raw`set -euo pipefail
+nemoclaw="$1"
+openshell="$2"
+sandbox_name="$3"
+dashboard_port="$4"
+unregistered_port="$5"
+gateway="$6"
+
+wait_for_ready() {
+  attempts=0
+  until "$openshell" sandbox get "$sandbox_name" --gateway "$gateway" 2>&1 | grep -Eiq '\bReady\b'; do
+    attempts=$((attempts + 1))
+    (( attempts < 60 )) || return 1
+    sleep 2
+  done
+}
+
+wait_for_reachable() {
+  python3 - "$1" <<'PY'
+import socket
+import sys
+import time
+
+port = int(sys.argv[1])
+for _ in range(120):
+    try:
+        connection = socket.create_connection(("127.0.0.1", port), timeout=1)
+    except OSError:
+        time.sleep(0.5)
+        continue
+    connection.close()
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+wait_for_free() {
+  python3 - "$1" <<'PY'
+import socket
+import sys
+import time
+
+port = int(sys.argv[1])
+for _ in range(120):
+    listener = socket.socket()
+    try:
+        listener.bind(("127.0.0.1", port))
+    except OSError:
+        listener.close()
+        time.sleep(0.5)
+        continue
+    listener.close()
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+forward_is_running() {
+  awk -v sandbox="$1" -v port="$2" '
+    $1 == sandbox && $3 == port && tolower($0) ~ /(running|active)/ { found = 1 }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
+forward_is_absent() {
+  awk -v sandbox="$1" -v port="$2" '
+    $1 == sandbox && $3 == port && tolower($0) ~ /(running|active)/ { found = 1 }
+    END { exit(found ? 1 : 0) }
+  '
+}
+
+wait_for_ready
+"$openshell" forward start --background "$dashboard_port" "$sandbox_name" --gateway "$gateway"
+"$openshell" forward start --background "$unregistered_port" "$sandbox_name" --gateway "$gateway"
+seeded="$("$openshell" forward list --gateway "$gateway")"
+printf '%s\n' "$seeded"
+printf '%s\n' "$seeded" | forward_is_running "$sandbox_name" "$dashboard_port"
+printf '%s\n' "$seeded" | forward_is_running "$sandbox_name" "$unregistered_port"
+wait_for_reachable "$dashboard_port"
+wait_for_reachable "$unregistered_port"
+printf 'LEGACY_FORWARDS_SEEDED=%s,%s\n' "$dashboard_port" "$unregistered_port"
+
+"$nemoclaw" "$sandbox_name" recover
+migrated="$("$openshell" forward list --gateway "$gateway")"
+printf '%s\n' "$migrated"
+printf '%s\n' "$migrated" | forward_is_absent "$sandbox_name" "$dashboard_port"
+printf '%s\n' "$migrated" | forward_is_running "$sandbox_name" "$unregistered_port"
+wait_for_reachable "$dashboard_port"
+wait_for_reachable "$unregistered_port"
+printf 'LEGACY_REGISTERED_REMOVED=%s\n' "$dashboard_port"
+printf 'UNREGISTERED_FORWARD_PRESERVED=%s\n' "$unregistered_port"
+printf 'FORWARD_SERVICE_REACHABLE=%s\n' "$dashboard_port"
+
+"$openshell" forward stop "$unregistered_port" "$sandbox_name" --gateway "$gateway"
+wait_for_free "$unregistered_port"
+"$nemoclaw" "$sandbox_name" stop
+wait_for_free "$dashboard_port"
+printf 'MIGRATED_FORWARD_RELEASED=%s\n' "$dashboard_port"`,
+      "legacy-forward-migrate-and-stop",
+      host.commandPath,
+      host.openshellCommandPath,
+      LEGACY_FORWARD_SANDBOX,
+      String(LEGACY_DASHBOARD_PORT),
+      String(LEGACY_UNREGISTERED_PORT),
+      "nemoclaw",
+    ],
+    {
+      artifactName: "legacy-forward-migrate-and-verify",
+      env: migrationEnv,
+      redactionValues: [hosted.apiKey],
+      timeoutMs: 15 * 60_000,
+    },
+  );
+  expect(migrate.exitCode, resultText(migrate)).toBe(0);
+}
+
+test(
+  "migrates only the registered legacy dashboard forward to the direct ForwardTcp service",
+  {
+    timeout: testTimeout(45 * 60_000),
+    meta: {
+      e2ePhases: [
+        "onboard the legacy migration sandbox",
+        "seed, migrate, and release the legacy dashboard forward",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
+    const hosted = requireHostedInferenceConfig(secrets);
+    const migrationEnv = legacyForwardEnvironment(hosted);
+
+    await artifacts.target.declare({
+      id: "sandbox-operations",
+      boundary: "real-openshell-legacy-forward-to-direct-forwardtcp-service",
+      sandboxName: LEGACY_FORWARD_SANDBOX,
+      dashboardPort: LEGACY_DASHBOARD_PORT,
+      contracts: [
+        "a real tracked openshell forward start --background entry owns the registered dashboard port",
+        "normal NemoClaw recovery removes that exact legacy entry and launches ForwardTcp service",
+        "an unregistered legacy forward for the same sandbox is preserved",
+        "stopping the migrated sandbox releases the ForwardTcp service port naturally",
+        "terminal cleanup removes every sandbox, forward, listener, and gateway created by the test",
+      ],
+    });
+
+    await runtimeProvider.requireAvailable({
+      artifactName: "legacy-forward-prereq-runtime-provider-info",
+      scenarioLabel: "legacy forward migration",
+    });
+    await host.bestEffortCleanupSandbox(LEGACY_FORWARD_SANDBOX, {
+      artifactName: "legacy-forward-precleanup-nemoclaw-sandbox",
+      env: migrationEnv,
+    });
+    await sandbox
+      .cleanupSandbox(LEGACY_FORWARD_SANDBOX, {
+        artifactName: "legacy-forward-precleanup-openshell-sandbox",
+        env: migrationEnv,
+        timeoutMs: 120_000,
+      })
+      .catch(() => undefined);
+    await host
+      .cleanupForward(LEGACY_DASHBOARD_PORT, {
+        artifactName: "legacy-forward-precleanup-dashboard-forward",
+        env: migrationEnv,
+      })
+      .catch(() => undefined);
+    await host
+      .cleanupForward(LEGACY_UNREGISTERED_PORT, {
+        artifactName: "legacy-forward-precleanup-unregistered-forward",
+        env: migrationEnv,
+      })
+      .catch(() => undefined);
+
+    cleanup.trackGateway(host, "nemoclaw", {
+      env: migrationEnv,
+      redactionValues: [hosted.apiKey],
+      timeoutMs: 5 * 60_000,
+    });
+    cleanup.trackDisposable(`delete OpenShell sandbox ${LEGACY_FORWARD_SANDBOX}`, () =>
+      sandbox.cleanupSandbox(LEGACY_FORWARD_SANDBOX, {
+        artifactName: "legacy-forward-cleanup-openshell-sandbox",
+        env: migrationEnv,
+        redactionValues: [hosted.apiKey],
+        timeoutMs: 120_000,
+      }),
+    );
+    cleanup.trackForward(host, LEGACY_DASHBOARD_PORT, {
+      artifactName: "legacy-forward-cleanup-dashboard-forward",
+      env: migrationEnv,
+      timeoutMs: 60_000,
+    });
+    cleanup.trackForward(host, LEGACY_UNREGISTERED_PORT, {
+      artifactName: "legacy-forward-cleanup-unregistered-forward",
+      env: migrationEnv,
+      timeoutMs: 60_000,
+    });
+
+    progress.phase("onboard the legacy migration sandbox");
+    await onboardSandbox(
+      host,
+      cleanup,
+      LEGACY_FORWARD_SANDBOX,
+      "legacy-forward-onboard-sandbox",
+      hosted,
+      { NEMOCLAW_DASHBOARD_PORT: String(LEGACY_DASHBOARD_PORT) },
+    );
+
+    progress.phase("seed, migrate, and release the legacy dashboard forward");
+    await runLegacyForwardMigration(host, runtimeProvider, hosted);
+
+    await artifacts.target.complete({
+      id: "sandbox-operations",
+      status: "passed",
+      registeredLegacyForwardSeeded: true,
+      registeredLegacyForwardRemoved: true,
+      unregisteredLegacyForwardPreserved: true,
+      forwardTcpServiceReachable: true,
+      migratedSandboxPortReleasedAfterStop: true,
+    });
+  },
+);
+
+test(
+  "credentials reset removes a provider attached during sandbox rebuild (#9806)",
+  {
+    timeout: 45 * 60_000,
+    meta: {
+      e2ePhases: [
+        "confirm Docker and clear the credential provider fixture",
+        "onboard the credential lifecycle sandbox",
+        "add, attach, reset, and remove the credential provider",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, docker, environment, host, progress, sandbox, secrets }) => {
+    const hosted = requireHostedInferenceConfig(secrets);
+
+    await artifacts.target.declare({
+      id: "sandbox-operations",
+      boundary: "repo-cli-openshell-provider-sandbox-attachment",
+      contracts: [
+        "TC-SBX-14 credentials add/list/reset crosses the real OpenShell provider boundary, keeps the credential outside the rebuilt sandbox, and removes the attachment and provider",
+      ],
+    });
+
+    artifacts.addRedactionValues([CREDENTIAL_VALUE]);
+    await docker.requireDocker();
+    await environment.assertReady(ENVIRONMENT);
+    cleanup.trackGateway(host, "nemoclaw", {
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 5 * 60_000,
+    });
+    await host.cleanupSandbox(SANDBOX_A);
+    await resetCredentialProvider(host, "tc-sbx-14-clear-stale-credential-provider");
+    cleanup.add(`remove credential provider ${CREDENTIAL_PROVIDER}`, async () => {
+      await resetCredentialProvider(host, "cleanup-tc-sbx-14-credential-provider");
+    });
+
+    progress.phase("onboard the credential lifecycle sandbox");
+    await onboardSandbox(host, cleanup, SANDBOX_A, "tc-sbx-14-onboard-sandbox", hosted);
+
+    progress.phase("add, attach, reset, and remove the credential provider");
+    const add = await host.nemoclaw(
+      [
+        "credentials",
+        "add",
+        CREDENTIAL_PROVIDER,
+        "--type",
+        "tavily",
+        "--credential",
+        CREDENTIAL_ENV_NAME,
+      ],
+      {
+        artifactName: "tc-sbx-14-credentials-add",
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          [CREDENTIAL_ENV_NAME]: CREDENTIAL_VALUE,
+        },
+        redactionValues: [CREDENTIAL_VALUE],
+        timeoutMs: 3 * 60_000,
+      },
+    );
+    expectExitZero(add, `nemoclaw credentials add ${CREDENTIAL_PROVIDER}`);
+    expect(resultText(add)).toContain(`Registered provider '${CREDENTIAL_PROVIDER}'`);
+    expect(resultText(add)).not.toContain(CREDENTIAL_VALUE);
+
+    const beforeRebuild = await host.nemoclaw(["credentials", "list"], {
+      artifactName: "tc-sbx-14-credentials-list-before-rebuild",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
+    expectExitZero(beforeRebuild, "nemoclaw credentials list before rebuild");
+    expect(resultText(beforeRebuild)).toContain(CREDENTIAL_PROVIDER);
+
+    const rebuild = await host.nemoclaw([SANDBOX_A, "rebuild", "--yes"], {
+      artifactName: "tc-sbx-14-rebuild-with-credential-provider",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        ...hosted.env,
+      },
+      redactionValues: [hosted.apiKey, CREDENTIAL_VALUE],
+      timeoutMs: 20 * 60_000,
+    });
+    expectExitZero(rebuild, `nemoclaw ${SANDBOX_A} rebuild --yes`);
+    expect(resultText(rebuild)).not.toContain(CREDENTIAL_VALUE);
+
+    await expectSandboxProviderAttachment(sandbox, SANDBOX_A, CREDENTIAL_PROVIDER, "present", {
+      artifactName: "tc-sbx-14-provider-attached-after-rebuild",
+      env: buildAvailabilityProbeEnv(),
+    });
+    await assertCredentialRemainsOutsideSandbox(sandbox);
+
+    const reset = await resetCredentialProvider(host, "tc-sbx-14-credentials-reset-attached");
+    expect(resultText(reset)).toContain(`Removed provider '${CREDENTIAL_PROVIDER}'`);
+    await expectSandboxProviderAttachment(sandbox, SANDBOX_A, CREDENTIAL_PROVIDER, "absent", {
+      artifactName: "tc-sbx-14-provider-detached-after-reset",
+      env: buildAvailabilityProbeEnv(),
+    });
+
+    const afterReset = await host.nemoclaw(["credentials", "list"], {
+      artifactName: "tc-sbx-14-credentials-list-after-reset",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
+    expectExitZero(afterReset, "nemoclaw credentials list after reset");
+    expect(resultText(afterReset)).not.toContain(CREDENTIAL_PROVIDER);
+  },
+);
+
 test(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
   {
-    timeout: 45 * 60_000,
+    timeout: testTimeout(45 * 60_000),
     meta: {
       e2ePhases: [
         "confirm Docker and clear the sandbox operation fixtures",
@@ -717,7 +1132,16 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, docker, environment, host, progress, sandbox, secrets }) => {
+  async ({
+    artifacts,
+    cleanup,
+    environment,
+    host,
+    progress,
+    runtimeProvider,
+    sandbox,
+    secrets,
+  }) => {
     const hosted = requireHostedInferenceConfig(secrets);
 
     await artifacts.target.declare({
@@ -742,7 +1166,10 @@ test(
       ],
     });
 
-    await docker.requireDocker();
+    await runtimeProvider.requireAvailable({
+      artifactName: "prereq-runtime-provider-info",
+      scenarioLabel: "sandbox operations",
+    });
 
     await environment.assertReady(ENVIRONMENT);
     cleanup.trackGateway(host, "nemoclaw", {
@@ -787,7 +1214,7 @@ test(
     await expectListed(host, SANDBOX_A, "tc-sbx-12-survivor-listed-after-destroy-b");
     await assertAgentCanAnswer(host, SANDBOX_A, "tc-sbx-12-survivor-agent-after-destroy-b");
 
-    const gatewayRecovery = await assertGatewayRecovery(host, SANDBOX_A);
+    const gatewayRecovery = await assertGatewayRecovery(host, runtimeProvider, SANDBOX_A);
     const finalDestroyCleanupMode =
       process.platform === "darwin" ? "macos-default" : "explicit-non-macos";
 

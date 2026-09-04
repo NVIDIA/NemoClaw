@@ -37,7 +37,6 @@ export type RecorderOverrides = {
       sandboxName?: string | null;
       provider?: string | null;
       model?: string | null;
-      policyPresets?: string[] | null;
     },
   ) => Promise<void>;
   recordStepComplete?: (stepName: string, updates?: SessionUpdates) => Promise<Session>;
@@ -58,19 +57,14 @@ export type RecorderOverrides = {
     agent: Agent | null,
   ) => void;
   reportDeploymentReadiness?: (healthy: boolean) => void;
-  getActiveSandbox?: PoliciesStateOptions<Agent | null, WebSearchConfig>["deps"]["getActiveSandbox"];
+  getActiveSandbox?: PoliciesStateOptions<
+    Agent | null,
+    WebSearchConfig
+  >["deps"]["getActiveSandbox"];
   setupPoliciesWithSelection?: PoliciesStateOptions<
     Agent | null,
     WebSearchConfig
   >["deps"]["setupPoliciesWithSelection"];
-  persistAppliedPolicyPresets?: PoliciesStateOptions<
-    Agent | null,
-    WebSearchConfig
-  >["deps"]["persistAppliedPolicyPresets"];
-  revalidatePolicyRequirements?: (
-    context: OnboardFlowContext<Agent | null>,
-    operation: string,
-  ) => void;
 };
 
 function cloneSession(session: Session): Session {
@@ -89,7 +83,6 @@ export function sessionAt(state: OnboardMachineState): Session {
     sandboxName: "my-sandbox",
     provider: "nim",
     model: "nvidia/test",
-    policyAuthority: "nemoclaw-managed",
     machine: {
       version: MACHINE_SNAPSHOT_VERSION,
       state,
@@ -198,7 +191,6 @@ export function createPhases(
     VerifyDeploymentResult
   >({
     branchState,
-    revalidatePolicyRequirements: recorders.revalidatePolicyRequirements,
     agentSetupDeps: {
       handleAgentSetup: vi.fn(async () => {
         order.push("agent-setup");
@@ -217,7 +209,7 @@ export function createPhases(
       setupOpenclaw: vi.fn(async () => {
         order.push("openclaw");
       }),
-      syncNemoClawConfigInSandbox: vi.fn(),
+      configureOpenclawSandbox: vi.fn(async () => undefined),
       recordStepComplete:
         recorders.recordStepComplete ??
         vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
@@ -226,8 +218,7 @@ export function createPhases(
       toSessionUpdates: (updates) => updates as SessionUpdates,
     },
     policiesDeps: {
-      loadSession:
-        recorders.loadSession ?? (() => createSession({ policyAuthority: "nemoclaw-managed" })),
+      loadSession: recorders.loadSession ?? (() => createSession()),
       getActiveSandbox: recorders.getActiveSandbox ?? (() => null),
       mergePolicyMessagingChannels:
         recorders.mergePolicyMessagingChannels ?? ((selected) => selected),
@@ -235,7 +226,7 @@ export function createPhases(
       verifyCompatibleEndpointSandboxSmoke: vi.fn(),
       preparePolicyPresetResumeSelection: () => ({
         policyPresets: ["balanced"],
-        recordedPolicyPresetsNeedReconcile: false,
+        livePolicyPresetsNeedUpdate: false,
         disabledMessagingPolicyPresetApplied: false,
         suppressedAgentRequiredPresetsLive: false,
       }),
@@ -249,15 +240,12 @@ export function createPhases(
           order.push("policies");
           return ["balanced"];
         }),
-      updateSession:
-        recorders.updateSession ?? vi.fn((mutator) => mutator(createSession()) ?? createSession()),
       recordStepComplete:
         recorders.recordStepComplete ??
         vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
           sessionWithUpdates(updates),
         ),
       toSessionUpdates: (updates) => updates as SessionUpdates,
-      persistAppliedPolicyPresets: recorders.persistAppliedPolicyPresets ?? vi.fn(),
     },
     finalization: {
       stagedLegacyKeys: [],
@@ -266,10 +254,6 @@ export function createPhases(
       webSearchProvider: (config) => (config.provider === "tavily" ? "tavily" : "brave"),
     },
     finalizationDeps: {
-      ensureAgentDashboardForward: vi.fn(() => {
-        order.push("agent-forward");
-        return 45123;
-      }),
       setDefaultSandbox: vi.fn(() => {
         order.push("set-default");
       }),

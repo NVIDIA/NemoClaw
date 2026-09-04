@@ -9,7 +9,7 @@ import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-m
 import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
 import type { CheckpointSandboxRecreateTransaction } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
-import type { BaselineExclusionEntry, SandboxRemovalReceipt } from "../../../state/registry";
+import type { SandboxRemovalReceipt } from "../../../state/registry";
 import {
   advanceSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
@@ -168,10 +168,17 @@ export function createDeps(
   const calls = {
     checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
     note: vi.fn(),
+    loadSession: vi.fn(() => session),
     updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
       session = mutator(session) ?? session;
       return session;
     }),
+    compareAndSwapSession: vi.fn(
+      (matches: (value: Session) => boolean, mutator: (value: Session) => Session | void) =>
+        matches(session)
+          ? ((session = mutator(session) ?? session), "updated" as const)
+          : ("mismatch" as const),
+    ),
     persistMessaging: vi.fn(),
     clearPlanEnv: vi.fn(),
     removeSandbox: vi.fn((): SandboxRemovalReceipt | null => null),
@@ -183,7 +190,6 @@ export function createDeps(
     getRecordedChannels: vi.fn(() => null),
     showMessagingStage: vi.fn(),
     setupMessaging: vi.fn(async () => [] as string[]),
-    preflightPolicyRequirements: vi.fn(),
     stageCredentialProviders: vi.fn(async () => [] as CheckpointProviderBinding[]),
     promptName: vi.fn(async () => "my-assistant"),
     selectResourceProfile: vi.fn(async () => null as ResourceProfile | null),
@@ -198,7 +204,6 @@ export function createDeps(
         inferenceProvider?: string | null;
         extraProviders: readonly string[];
         staleExtraProviders: readonly string[];
-        baselineExclusions?: readonly BaselineExclusionEntry[];
       }) => ({
         sandboxName: input.sandboxName,
         inferenceProvider: input.inferenceProvider ?? null,
@@ -215,8 +220,6 @@ export function createDeps(
             directGpu: false,
             additionalPresets: [],
             policyTier: null,
-            baselineExclusions:
-              input.baselineExclusions?.map((exclusion) => ({ ...exclusion })) ?? [],
           },
         },
         gpuCreateArgs: [],
@@ -271,7 +274,9 @@ export function createDeps(
       agentSupportsWebSearch: () => true,
       note: calls.note,
       cliName: () => "nemoclaw",
+      loadSession: calls.loadSession,
       updateSession: calls.updateSession,
+      compareAndSwapSession: calls.compareAndSwapSession,
       getStoredMessagingChannelConfig: () => null,
       hydrateMessagingChannelConfig: (config: MessagingChannelConfig | null) => config,
       messagingChannelConfigsEqual: () => true,
@@ -310,11 +315,9 @@ export function createDeps(
       clearPlanEnv: calls.clearPlanEnv,
       getRegistrySandboxMessagingAuthority: () => ({ authoritative: false, plan: null }),
       providerMatchesGatewayCredential: () => true,
-      preflightPolicyRequirements: calls.preflightPolicyRequirements,
       stageSandboxCredentialProviders: calls.stageCredentialProviders,
       promptValidatedSandboxName: calls.promptName,
       selectResourceProfileForSandbox: calls.selectResourceProfile,
-      stopStaleDashboardListenersForSandbox: calls.stopStale,
       listRegistrySandboxes: () => ({ sandboxes: [{ name: "old" }] }),
       planRegisteredExtraProviders: calls.planRegisteredExtraProviders,
       resolveSandboxCreateIntent: calls.resolveCreateIntent,
@@ -331,6 +334,8 @@ export function createDeps(
       error: calls.error,
       exitProcess: calls.exit,
       ...overrides,
+      inspectGatewayCredential:
+        overrides.inspectGatewayCredential ?? (() => ({ kind: "exact" as const })),
       checkGatewayRouteCompatibility:
         overrides.checkGatewayRouteCompatibility ?? calls.checkGatewayRouteCompatibility,
       withDashboardPortReservationLock: runWithDashboardPortReservationLock,

@@ -11,15 +11,19 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
-import { GATEWAY_PORT } from "../core/ports";
+import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import {
   parseServingProfileProvenance,
   type ServingProfileProvenance,
 } from "../inference/serving/profile-provenance";
-import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
+import {
+  normalizeWebSearchConfig,
+  webSearchEnvFor,
+  webSearchProviderForConfig,
+  type WebSearchConfig,
+} from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
@@ -48,7 +52,6 @@ import {
 } from "../onboard/station-express-resume";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import { inspectCheckpoint, serializeCheckpoint } from "./onboard-checkpoint";
-import { decisionUnset } from "./onboard-checkpoint-decision";
 import type { OnboardCheckpoint } from "./onboard-checkpoint-types";
 import {
   assignSafeToolDisclosureUpdate,
@@ -57,22 +60,39 @@ import {
   type ToolDisclosure,
 } from "./onboard-session-tool-disclosure";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
+import {
+  listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
+  recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
+  retainedSandboxRecoveryAuthorityIsCurrent,
+  retainedSandboxRecoveryFile,
+  resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
+  type RecordRetainedSandboxRecoveryInput,
+  type RetainedSandboxRecoveryRecord,
+  type RetainedSandboxRecoveryReason,
+} from "./onboard-session/retained-sandbox-recovery";
 import type { SandboxHostMount } from "./registry/types";
 import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import { nemoclawStateRoot } from "./state-root";
 
 export { normalizePersistedSandboxHostMounts } from "./registry/host-mount";
+export type { RetainedSandboxRecoveryRecord } from "./onboard-session/retained-sandbox-recovery";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
+export const CANCELLATION_RECOVERY_STATUS = "recovery_required";
 const INVALID_HOST_MOUNT_SESSIONS = new WeakSet<object>();
 export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT);
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
+export const RETAINED_SANDBOX_RECOVERY_FILE = retainedSandboxRecoveryFile(SESSION_DIR);
+const LEGACY_STATE_MIGRATION_LOCK = path.join(
+  nemoclawStateRoot(process.env.HOME || "/tmp", DEFAULT_GATEWAY_PORT),
+  ".gateway-state-migration.lock",
+);
 const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
 
-export class InvalidPersistedPolicyAuthorityError extends Error {}
 export class InvalidPersistedApfInterceptorIntentError extends Error {}
+export class InvalidPersistedCancellationRecoveryError extends Error {}
 
 // Session-specific aliases for the shared JSON types.
 type SessionJsonValue = JsonValue;
@@ -105,6 +125,34 @@ export interface SessionFailure {
   message: string | null;
   recordedAt: string;
   interrupted?: boolean;
+}
+
+export interface SessionCancellationRecovery {
+  readonly reason: "cancelled_after_sandbox_creation" | "retained_after_sandbox_creation_failure";
+  readonly sandboxName: string;
+  readonly sandboxIdentityFingerprint: string | null;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly lifecycleGeneration: string;
+  readonly createAttemptNonce: string;
+  readonly recordedAt: string;
+}
+
+function sameCancellationRecovery(
+  left: SessionCancellationRecovery | null,
+  right: SessionCancellationRecovery | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  return (
+    left.reason === right.reason &&
+    left.sandboxName === right.sandboxName &&
+    left.sandboxIdentityFingerprint === right.sandboxIdentityFingerprint &&
+    left.gatewayName === right.gatewayName &&
+    left.gatewayPort === right.gatewayPort &&
+    left.lifecycleGeneration === right.lifecycleGeneration &&
+    left.createAttemptNonce === right.createAttemptNonce &&
+    left.recordedAt === right.recordedAt
+  );
 }
 
 export interface SessionMetadata {
@@ -205,6 +253,7 @@ export interface Session {
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
+  cancellationRecovery: SessionCancellationRecovery | null;
   agent: string | null;
   sandboxName: string | null;
   provider: string | null;
@@ -242,9 +291,6 @@ export interface Session {
   /** Operator-selected APF create mode; this is not observed policy provenance. */
   apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
-  policyPresets: string[] | null;
-  /** Policy authority selected from OpenShell metadata before policy-dependent effects. */
-  policyAuthority: SandboxPolicyAuthority | null;
   messagingPlan: SandboxMessagingPlan | null;
   /** Non-secret names of credential providers registered before sandbox setup completed. */
   stagedCredentialProviders: string[];
@@ -321,8 +367,6 @@ export interface SessionUpdates {
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
   hermesToolGateways?: string[] | null;
-  policyPresets?: string[] | null;
-  policyAuthority?: SandboxPolicyAuthority | null;
   messagingPlan?: SandboxMessagingPlan | null;
   migratedLegacyValueHashes?: Record<string, string>;
   gpuPassthrough?: boolean;
@@ -359,12 +403,11 @@ export interface DebugSessionSummary {
   observabilityRequestedExplicitly: boolean;
   apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
-  policyPresets: string[] | null;
-  policyAuthority: SandboxPolicyAuthority | null;
   gpuPassthrough: boolean;
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
+  cancellationRecovery: SessionCancellationRecovery | null;
   gatewayAuthority: GatewayOwnerDescription | null;
   machine: OnboardMachineSnapshot;
   steps: Record<string, StepState>;
@@ -373,7 +416,86 @@ export interface DebugSessionSummary {
 // ── Helpers ──────────────────────────────────────────────────────
 
 function ensureSessionDir(): void {
+  assertSessionDirectoryHasNoSymlinks();
   fs.mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 });
+  assertSessionDirectoryHasNoSymlinks();
+  const stat = fs.lstatSync(SESSION_DIR);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error("NemoClaw onboarding state directory is not a secure directory.");
+  }
+}
+
+function assertSessionDirectoryHasNoSymlinks(): void {
+  const home = path.resolve(process.env.HOME || "/tmp");
+  let current = path.resolve(SESSION_DIR);
+  while (current !== home && current !== path.dirname(current)) {
+    try {
+      if (fs.lstatSync(current).isSymbolicLink()) {
+        throw new Error(
+          `NemoClaw onboarding state directory cannot be a symbolic link: ${current}`,
+        );
+      }
+    } catch (error) {
+      if (!(isErrnoException(error) && error.code === "ENOENT")) throw error;
+    }
+    current = path.dirname(current);
+  }
+}
+
+interface PinnedSessionDirectory {
+  readonly descriptor: number;
+  readonly stat: fs.Stats;
+}
+
+function sameSessionFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function revalidatePinnedSessionDirectory(directory: PinnedSessionDirectory): void {
+  assertSessionDirectoryHasNoSymlinks();
+  const descriptorStat = fs.fstatSync(directory.descriptor);
+  const pathStat = fs.lstatSync(SESSION_DIR);
+  if (
+    !descriptorStat.isDirectory() ||
+    pathStat.isSymbolicLink() ||
+    !pathStat.isDirectory() ||
+    !sameSessionFileIdentity(directory.stat, descriptorStat) ||
+    !sameSessionFileIdentity(directory.stat, pathStat)
+  ) {
+    throw new Error("NemoClaw onboarding state directory changed during validation.");
+  }
+}
+
+function openPinnedSessionDirectory(): PinnedSessionDirectory {
+  ensureSessionDir();
+  const descriptor = fs.openSync(
+    SESSION_DIR,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_DIRECTORY ?? 0),
+  );
+  try {
+    const directory = { descriptor, stat: fs.fstatSync(descriptor) };
+    revalidatePinnedSessionDirectory(directory);
+    return directory;
+  } catch (error) {
+    fs.closeSync(descriptor);
+    throw error;
+  }
+}
+
+function assertSessionFileIdentity(descriptor: number, filePath: string): fs.Stats {
+  const descriptorStat = fs.fstatSync(descriptor);
+  const pathStat = fs.lstatSync(filePath);
+  if (
+    !descriptorStat.isFile() ||
+    descriptorStat.nlink !== 1 ||
+    pathStat.isSymbolicLink() ||
+    !pathStat.isFile() ||
+    pathStat.nlink !== 1 ||
+    !sameSessionFileIdentity(descriptorStat, pathStat)
+  ) {
+    throw new Error("NemoClaw onboarding session state changed during validation.");
+  }
+  return descriptorStat;
 }
 
 export function sessionPath(): string {
@@ -423,10 +545,6 @@ function parseVllmGpuDevice(value: unknown): string | null {
 
 function readHermesAuthMethod(value: SessionJsonValue | undefined): HermesAuthMethod | null {
   return value === "oauth" || value === "api_key" ? value : null;
-}
-
-function readPolicyAuthority(value: unknown): SandboxPolicyAuthority | null {
-  return value === "nemoclaw-managed" || value === "externally-managed" ? value : null;
 }
 
 function readPositiveInteger(value: SessionJsonValue | undefined): number | null {
@@ -678,6 +796,52 @@ export function sanitizeFailure(
   return step || message ? { step, message, recordedAt, interrupted } : null;
 }
 
+function parseSessionCancellationRecovery(
+  value: SessionJsonValue | undefined,
+): SessionCancellationRecovery | null {
+  if (
+    !isObject(value) ||
+    (value.reason !== "cancelled_after_sandbox_creation" &&
+      value.reason !== "retained_after_sandbox_creation_failure")
+  ) {
+    return null;
+  }
+  const sandboxName = readString(value.sandboxName);
+  const recordedAt = readCanonicalIsoTimestamp(value.recordedAt);
+  const fingerprint =
+    value.sandboxIdentityFingerprint === null ? null : readString(value.sandboxIdentityFingerprint);
+  const gatewayName = readString(value.gatewayName);
+  const gatewayPort = value.gatewayPort;
+  const lifecycleGeneration = readString(value.lifecycleGeneration);
+  const createAttemptNonce = readString(value.createAttemptNonce);
+  if (
+    !sandboxName ||
+    sandboxName.length > NAME_MAX_LENGTH ||
+    !NAME_VALID_PATTERN.test(sandboxName) ||
+    !recordedAt ||
+    (fingerprint !== null && !/^[0-9a-f]{64}$/u.test(fingerprint)) ||
+    !gatewayName ||
+    !Number.isSafeInteger(gatewayPort) ||
+    Number(gatewayPort) < 1024 ||
+    Number(gatewayPort) > 65_535 ||
+    !lifecycleGeneration ||
+    !createAttemptNonce ||
+    !/^[0-9a-f]{62}$/u.test(createAttemptNonce)
+  ) {
+    return null;
+  }
+  return {
+    reason: value.reason,
+    sandboxName,
+    sandboxIdentityFingerprint: fingerprint,
+    gatewayName,
+    gatewayPort: Number(gatewayPort),
+    lifecycleGeneration,
+    createAttemptNonce,
+    recordedAt,
+  };
+}
+
 // ── Session CRUD ─────────────────────────────────────────────────
 
 function createMachineSnapshot(
@@ -763,7 +927,6 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     ...defaultSteps(),
     ...(overrides.steps ?? {}),
   };
-  const policyAuthority = readPolicyAuthority(overrides.policyAuthority);
   const session: Session = {
     version: SESSION_VERSION,
     sessionId,
@@ -775,6 +938,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     lastStepStarted: overrides.lastStepStarted ?? null,
     lastCompletedStep: overrides.lastCompletedStep ?? null,
     failure: overrides.failure ?? null,
+    cancellationRecovery: parseSessionCancellationRecovery(
+      overrides.cancellationRecovery as SessionJsonValue | undefined,
+    ),
     agent: overrides.agent ?? null,
     sandboxName: overrides.sandboxName ?? null,
     provider: overrides.provider ?? null,
@@ -810,9 +976,6 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     observabilityRequestedExplicitly: overrides.observabilityRequestedExplicitly === true,
     apfInterceptorRequested: overrides.apfInterceptorRequested === true,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
-    policyPresets:
-      policyAuthority === "externally-managed" ? null : readStringArray(overrides.policyPresets),
-    policyAuthority,
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
     stagedCredentialProviders: readStringArray(overrides.stagedCredentialProviders) ?? [],
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
@@ -847,12 +1010,6 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   ) {
     throw new InvalidPersistedApfInterceptorIntentError(
       "Refusing to load the onboarding session: the saved APF selection is invalid.",
-    );
-  }
-  const policyAuthority = readPolicyAuthority(data.policyAuthority);
-  if (hasOwn(data, "policyAuthority") && data.policyAuthority !== null && !policyAuthority) {
-    throw new InvalidPersistedPolicyAuthorityError(
-      "Refusing to load the onboarding session: the saved policy authority is invalid.",
     );
   }
   const servingProfileProvenance = parseServingProfileProvenance(data.servingProfileProvenance);
@@ -900,6 +1057,16 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   ) {
     return null;
   }
+  const cancellationRecovery = parseSessionCancellationRecovery(data.cancellationRecovery);
+  if (
+    hasOwn(data, "cancellationRecovery") &&
+    data.cancellationRecovery !== null &&
+    !cancellationRecovery
+  ) {
+    throw new InvalidPersistedCancellationRecoveryError(
+      "Refusing to load the onboarding session: saved recovery authority is incomplete.",
+    );
+  }
 
   const normalized = createSession({
     sessionId: readString(data.sessionId) ?? undefined,
@@ -932,8 +1099,6 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     observabilityRequestedExplicitly: data.observabilityRequestedExplicitly === true,
     apfInterceptorRequested: data.apfInterceptorRequested === true,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
-    policyPresets: readStringArray(data.policyPresets),
-    policyAuthority,
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
     stagedCredentialProviders: readStringArray(data.stagedCredentialProviders) ?? [],
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
@@ -943,11 +1108,22 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     lastStepStarted: readString(data.lastStepStarted),
     lastCompletedStep: readString(data.lastCompletedStep),
     failure: sanitizeFailure(isObject(data.failure) ? data.failure : null),
+    cancellationRecovery,
     metadata: parseSessionMetadata(data.metadata),
     checkpoint: data.checkpoint as unknown as OnboardCheckpoint | null,
   });
   normalized.resumable = data.resumable !== false;
   normalized.status = readString(data.status) ?? normalized.status;
+  if (
+    (normalized.status === CANCELLATION_RECOVERY_STATUS) !== Boolean(cancellationRecovery) ||
+    (cancellationRecovery !== null &&
+      (normalized.resumable !== false ||
+        normalized.sandboxName !== cancellationRecovery.sandboxName))
+  ) {
+    throw new InvalidPersistedCancellationRecoveryError(
+      "Refusing to load the onboarding session: saved recovery authority is incomplete.",
+    );
+  }
   if (
     normalized.stationExpressIntent &&
     (data.resumable !== true ||
@@ -1014,20 +1190,43 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
 }
 
 export function loadSession(): Session | null {
+  const lockOwned = heldLockFd !== null;
+  let descriptor: number | null = null;
   try {
-    if (!fs.existsSync(SESSION_FILE)) {
-      return null;
+    if (lockOwned) assertOnboardLockOwned();
+    let contents: string;
+    if (lockOwned) {
+      try {
+        descriptor = fs.openSync(
+          SESSION_FILE,
+          fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+        );
+      } catch (error) {
+        if (isErrnoException(error) && error.code === "ENOENT") {
+          assertOnboardLockOwned();
+          return null;
+        }
+        throw error;
+      }
+      assertSessionFileIdentity(descriptor, SESSION_FILE);
+      contents = String(fs.readFileSync(descriptor, "utf-8"));
+      assertSessionFileIdentity(descriptor, SESSION_FILE);
+    } else {
+      if (!fs.existsSync(SESSION_FILE)) return null;
+      contents = fs.readFileSync(SESSION_FILE, "utf-8");
     }
-    const parsed = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
-    return normalizeSession(parsed);
+    const parsed = JSON.parse(contents);
+    const normalized = normalizeSession(parsed);
+    if (lockOwned) assertOnboardLockOwned();
+    return normalized;
   } catch (error) {
-    if (
-      error instanceof InvalidPersistedPolicyAuthorityError ||
-      error instanceof InvalidPersistedApfInterceptorIntentError
-    ) {
+    if (error instanceof InvalidPersistedApfInterceptorIntentError) {
       throw error;
     }
+    if (lockOwned) throw error;
     return null;
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
   }
 }
 
@@ -1044,25 +1243,96 @@ function serializeSessionForDisk(session: Session): Record<string, unknown> {
 export function saveSession(session: Session): Session {
   const normalized = normalizeSession(session) || createSession();
   normalized.updatedAt = new Date().toISOString();
-  ensureSessionDir();
+  const lockOwned = heldLockFd !== null;
+  if (lockOwned) assertOnboardLockOwned();
+  const directory = lockOwned ? heldLockDirectory! : openPinnedSessionDirectory();
   const tmpFile = path.join(
     SESSION_DIR,
     `.onboard-session.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
   );
-  fs.writeFileSync(tmpFile, JSON.stringify(serializeSessionForDisk(normalized), null, 2), {
-    mode: 0o600,
-  });
-  fs.renameSync(tmpFile, SESSION_FILE);
-  return normalized;
+  let descriptor: number | null = null;
+  let temporaryStat: fs.Stats | null = null;
+  try {
+    descriptor = fs.openSync(
+      tmpFile,
+      fs.constants.O_WRONLY |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        (fs.constants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+    revalidatePinnedSessionDirectory(directory);
+    temporaryStat = assertSessionFileIdentity(descriptor, tmpFile);
+    fs.writeFileSync(descriptor, JSON.stringify(serializeSessionForDisk(normalized), null, 2));
+    fs.fchmodSync(descriptor, 0o600);
+    fs.fsyncSync(descriptor);
+    temporaryStat = assertSessionFileIdentity(descriptor, tmpFile);
+    revalidatePinnedSessionDirectory(directory);
+    fs.renameSync(tmpFile, SESSION_FILE);
+    revalidatePinnedSessionDirectory(directory);
+    assertSessionFileIdentity(descriptor, SESSION_FILE);
+    fs.fsyncSync(directory.descriptor);
+    return normalized;
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+    try {
+      revalidatePinnedSessionDirectory(directory);
+      const pathStat = fs.lstatSync(tmpFile);
+      if (
+        temporaryStat !== null &&
+        pathStat.isFile() &&
+        pathStat.nlink === 1 &&
+        sameSessionFileIdentity(temporaryStat, pathStat)
+      ) {
+        fs.unlinkSync(tmpFile);
+      }
+    } catch {
+      // Preserve the original result. Ambiguous paths are left untouched.
+    }
+    if (!lockOwned) fs.closeSync(directory.descriptor);
+  }
 }
 
 export function clearSession(): void {
+  const lockOwned = heldLockFd !== null;
+  let descriptor: number | null = null;
   try {
-    if (fs.existsSync(SESSION_FILE)) {
-      fs.unlinkSync(SESSION_FILE);
+    if (lockOwned) {
+      assertOnboardLockOwned();
+      try {
+        descriptor = fs.openSync(
+          SESSION_FILE,
+          fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+        );
+      } catch (error) {
+        if (isErrnoException(error) && error.code === "ENOENT") {
+          assertOnboardLockOwned();
+          return;
+        }
+        throw error;
+      }
+      assertSessionFileIdentity(descriptor, SESSION_FILE);
     }
-  } catch {
+    try {
+      fs.unlinkSync(SESSION_FILE);
+    } catch (error) {
+      if (!(isErrnoException(error) && error.code === "ENOENT")) throw error;
+    }
+    if (lockOwned) {
+      assertOnboardLockOwned();
+      try {
+        fs.lstatSync(SESSION_FILE);
+      } catch (error) {
+        if (isErrnoException(error) && error.code === "ENOENT") return;
+        throw error;
+      }
+      throw new Error("NemoClaw onboarding session state changed during deletion.");
+    }
+  } catch (error) {
+    if (lockOwned) throw error;
     return;
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
   }
 }
 
@@ -1160,6 +1430,61 @@ function lockHolderStillMatches(lock: LockInfo): boolean {
 // window in the inode-only check by tying ownership to a live
 // descriptor rather than a value re-read from disk. See #1281.
 let heldLockFd: number | null = null;
+let heldLockDirectory: PinnedSessionDirectory | null = null;
+
+export function assertOnboardLockOwned(): void {
+  if (heldLockFd === null || heldLockDirectory === null) {
+    throw new Error("This process does not own the NemoClaw onboarding lock.");
+  }
+  revalidatePinnedSessionDirectory(heldLockDirectory);
+  assertSessionDirectoryHasNoSymlinks();
+  const descriptorStat = fs.fstatSync(heldLockFd);
+  const pathStat = fs.lstatSync(LOCK_FILE);
+  if (
+    !descriptorStat.isFile() ||
+    descriptorStat.nlink !== 1 ||
+    pathStat.isSymbolicLink() ||
+    !pathStat.isFile() ||
+    pathStat.nlink !== 1 ||
+    descriptorStat.dev !== pathStat.dev ||
+    descriptorStat.ino !== pathStat.ino
+  ) {
+    throw new Error("NemoClaw onboarding lock ownership changed during the operation.");
+  }
+}
+
+function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
+  const managesOnboardLock = heldLockFd === null;
+  if (managesOnboardLock) {
+    const lock = acquireOnboardLock(command);
+    if (!lock.acquired) {
+      throw new Error(
+        "Cannot update onboarding recovery while another onboarding run owns the lock.",
+      );
+    }
+  }
+  try {
+    assertOnboardLockOwned();
+    const result = operation();
+    assertOnboardLockOwned();
+    return result;
+  } finally {
+    if (managesOnboardLock) releaseOnboardLock();
+  }
+}
+
+/** Report whether this process holds the exclusive onboarding writer lock. */
+export function isOnboardLockHeldByCurrentProcess(): boolean {
+  if (heldLockFd === null) return false;
+  try {
+    return (
+      fs.fstatSync(heldLockFd, { bigint: true }).ino ===
+      fs.statSync(LOCK_FILE, { bigint: true }).ino
+    );
+  } catch {
+    return false;
+  }
+}
 
 export function acquireOnboardLock(command: string | null = null): LockResult {
   ensureSessionDir();
@@ -1262,6 +1587,23 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
       throw writeError;
     }
     heldLockFd = fd;
+    try {
+      heldLockDirectory = openPinnedSessionDirectory();
+      assertOnboardLockOwned();
+      // Legacy-port migration holds its lock before checking every onboard
+      // writer lock. Recheck here after atomically claiming onboard.lock so
+      // either the writer or the migrator wins, never both.
+      if (fs.existsSync(LEGACY_STATE_MIGRATION_LOCK)) {
+        releaseOnboardLock();
+        return { acquired: false, lockFile: LOCK_FILE, stale: false };
+      }
+    } catch (error) {
+      heldLockFd = null;
+      if (heldLockDirectory !== null) fs.closeSync(heldLockDirectory.descriptor);
+      heldLockDirectory = null;
+      fs.closeSync(fd);
+      throw error;
+    }
     return { acquired: true, lockFile: LOCK_FILE, stale: false };
   }
 
@@ -1310,7 +1652,9 @@ export function releaseOnboardLock(): void {
   // has already replaced the lock and we must NOT touch their file.
   if (heldLockFd !== null) {
     const fd = heldLockFd;
+    const directory = heldLockDirectory;
     heldLockFd = null;
+    heldLockDirectory = null;
     try {
       const fdStat = fs.fstatSync(fd, { bigint: true });
       let pathInode: bigint | null = null;
@@ -1339,6 +1683,13 @@ export function releaseOnboardLock(): void {
         fs.closeSync(fd);
       } catch {
         // ignore
+      }
+      if (directory !== null) {
+        try {
+          fs.closeSync(directory.descriptor);
+        } catch {
+          // ignore
+        }
       }
     }
     return;
@@ -1515,20 +1866,6 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
       (value) => typeof value === "string",
     );
   }
-  if (updates.policyPresets === null) {
-    safe.policyPresets = null;
-  } else if (Array.isArray(updates.policyPresets)) {
-    safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
-  }
-  if (updates.policyAuthority === null) {
-    safe.policyAuthority = null;
-  } else {
-    const policyAuthority = readPolicyAuthority(updates.policyAuthority);
-    if (policyAuthority) {
-      safe.policyAuthority = policyAuthority;
-      if (policyAuthority === "externally-managed") safe.policyPresets = null;
-    }
-  }
   if (updates.messagingPlan === null) {
     safe.messagingPlan = null;
   } else {
@@ -1575,6 +1912,250 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   const current = loadSession() || createSession();
   const next = typeof mutator === "function" ? mutator(current) || current : current;
   return saveSession(next);
+}
+
+export interface RetainedSandboxRecoveryContext {
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly lifecycleGeneration: string;
+  readonly createAttemptNonce: string;
+}
+
+function retainedSandboxResourceEvidence(session: Session) {
+  const messagingCredentialEnvironmentVariables =
+    session.messagingPlan?.credentialBindings.map((binding) => binding.providerEnvKey) ?? [];
+  return {
+    sharedInferenceProviders: session.provider ? [session.provider] : [],
+    sandboxScopedProviders: session.stagedCredentialProviders,
+    credentialEnvironmentVariables: [
+      ...(session.credentialEnv ? [session.credentialEnv] : []),
+      ...(session.webSearchConfig
+        ? [webSearchEnvFor(webSearchProviderForConfig(session.webSearchConfig))]
+        : []),
+      ...messagingCredentialEnvironmentVariables,
+    ],
+  };
+}
+
+function persistIndependentRetainedSandboxRecovery(
+  session: Session,
+  reason: RetainedSandboxRecoveryReason,
+  sandboxIdentityFingerprint: string | null,
+  context: RetainedSandboxRecoveryContext,
+): void {
+  writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, {
+    sandboxName: session.sandboxName!,
+    sandboxIdentityFingerprint,
+    gatewayName: context.gatewayName,
+    gatewayPort: context.gatewayPort,
+    lifecycleGeneration: context.lifecycleGeneration,
+    createAttemptNonce: context.createAttemptNonce,
+    resources: retainedSandboxResourceEvidence(session),
+    reason,
+  });
+}
+
+export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRecoveryRecord[] {
+  return withOwnedOnboardLock("nemoclaw retained sandbox recovery read", () => {
+    let records = readRetainedSandboxRecoveryRecords(RETAINED_SANDBOX_RECOVERY_FILE);
+    const current = loadSession();
+    const recovery = current?.cancellationRecovery ?? null;
+    if (
+      current &&
+      recovery &&
+      !records.some(
+        (record) =>
+          record.sandboxName === recovery.sandboxName &&
+          record.sandboxIdentityFingerprint === recovery.sandboxIdentityFingerprint &&
+          record.createAttemptNonce === recovery.createAttemptNonce,
+      )
+    ) {
+      try {
+        writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, {
+          sandboxName: recovery.sandboxName,
+          sandboxIdentityFingerprint: recovery.sandboxIdentityFingerprint,
+          gatewayName: recovery.gatewayName,
+          gatewayPort: recovery.gatewayPort,
+          lifecycleGeneration: recovery.lifecycleGeneration,
+          createAttemptNonce: recovery.createAttemptNonce,
+          resources: retainedSandboxResourceEvidence(current),
+          reason: recovery.reason,
+          recordedAt: recovery.recordedAt,
+        });
+        records = readRetainedSandboxRecoveryRecords(RETAINED_SANDBOX_RECOVERY_FILE);
+      } catch {
+        // Keep the recovery-only session authoritative. A different-name run
+        // remains blocked until a later read can durably reconstruct the
+        // independent record.
+      }
+    }
+    return records;
+  });
+}
+
+export function recordRetainedSandboxRecovery(
+  input: RecordRetainedSandboxRecoveryInput,
+): RetainedSandboxRecoveryRecord {
+  return withOwnedOnboardLock("nemoclaw retained sandbox recovery", () =>
+    writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, input),
+  );
+}
+
+export function retainedSandboxRecoveryMatchesSession(
+  record: RetainedSandboxRecoveryRecord,
+  session: Pick<Session, "cancellationRecovery"> | null | undefined,
+): boolean {
+  const recovery = session?.cancellationRecovery;
+  if (!recovery) return false;
+  return (
+    record.sandboxName === recovery.sandboxName &&
+    record.sandboxIdentityFingerprint === recovery.sandboxIdentityFingerprint &&
+    record.gatewayName === recovery.gatewayName &&
+    record.gatewayPort === recovery.gatewayPort &&
+    record.lifecycleGeneration === recovery.lifecycleGeneration &&
+    record.createAttemptNonce === recovery.createAttemptNonce
+  );
+}
+
+/** Clear one recovery-only session after destroy verifies the retained resources absent. */
+export function resolveRetainedSandboxRecovery(record: RetainedSandboxRecoveryRecord): boolean {
+  return withOwnedOnboardLock("nemoclaw retained sandbox recovery completion", () => {
+    if (!retainedSandboxRecoveryAuthorityIsCurrent(RETAINED_SANDBOX_RECOVERY_FILE, record)) {
+      return false;
+    }
+    const current = loadSession();
+    if (current && retainedSandboxRecoveryMatchesSession(record, current)) {
+      current.status = "failed";
+      current.resumable = false;
+      current.sandboxName = null;
+      current.cancellationRecovery = null;
+      saveSession(current);
+    }
+    // Release the recovery-only session first. If this write fails, the exact
+    // independent record remains available for a later completion attempt. If
+    // record retirement then fails, that record still blocks only the retained
+    // name while a different explicitly named onboarding run can proceed.
+    return retireRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, record);
+  });
+}
+
+export function markCancellationRecovery(
+  sandboxName: string,
+  sandboxIdentityFingerprint: string | undefined,
+  context: RetainedSandboxRecoveryContext,
+): Session {
+  if (
+    sandboxName.length > NAME_MAX_LENGTH ||
+    !NAME_VALID_PATTERN.test(sandboxName) ||
+    (sandboxIdentityFingerprint !== undefined &&
+      !/^[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint))
+  ) {
+    throw new Error("Cannot record cancellation recovery with invalid sandbox identity data.");
+  }
+  return withOwnedOnboardLock("nemoclaw cancellation recovery", () => {
+    const saved = updateSession((session) => {
+      if (session.sandboxName !== null && session.sandboxName !== sandboxName) {
+        throw new Error("Cannot record cancellation recovery for a different onboarding sandbox.");
+      }
+      const recordedAt = new Date().toISOString();
+      session.sandboxName = sandboxName;
+      session.resumable = false;
+      session.status = CANCELLATION_RECOVERY_STATUS;
+      session.cancellationRecovery = {
+        reason: "cancelled_after_sandbox_creation",
+        sandboxName,
+        sandboxIdentityFingerprint: sandboxIdentityFingerprint ?? null,
+        ...context,
+        recordedAt,
+      };
+      session.failure = {
+        step: session.lastStepStarted,
+        message:
+          "Onboarding was cancelled after sandbox creation; administrator recovery is required.",
+        recordedAt,
+        interrupted: true,
+      };
+      return session;
+    });
+    const reread = loadSession();
+    if (
+      reread?.sessionId !== saved.sessionId ||
+      reread.status !== CANCELLATION_RECOVERY_STATUS ||
+      reread.resumable !== false ||
+      !sameCancellationRecovery(reread.cancellationRecovery, saved.cancellationRecovery)
+    ) {
+      throw new Error("Cancellation recovery did not survive durable readback.");
+    }
+    persistIndependentRetainedSandboxRecovery(
+      reread,
+      "cancelled_after_sandbox_creation",
+      sandboxIdentityFingerprint ?? null,
+      context,
+    );
+    return saved;
+  });
+}
+
+export function markRetainedSandboxRecovery(
+  sandboxName: string,
+  message: string,
+  sandboxIdentityFingerprint: string | undefined,
+  context: RetainedSandboxRecoveryContext,
+): Session {
+  if (
+    sandboxName.length > NAME_MAX_LENGTH ||
+    !NAME_VALID_PATTERN.test(sandboxName) ||
+    (sandboxIdentityFingerprint !== undefined &&
+      !/^[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint))
+  ) {
+    throw new Error("Cannot record retained sandbox recovery with invalid identity data.");
+  }
+  return withOwnedOnboardLock("nemoclaw retained sandbox recovery", () => {
+    const saved = updateSession((session) => {
+      if (session.sandboxName !== null && session.sandboxName !== sandboxName) {
+        throw new Error(
+          "Cannot record retained sandbox recovery for a different onboarding sandbox.",
+        );
+      }
+      const recordedAt = new Date().toISOString();
+      const sanitizedMessage = redactSensitiveText(message);
+      session.sandboxName = sandboxName;
+      session.resumable = false;
+      session.status = CANCELLATION_RECOVERY_STATUS;
+      session.cancellationRecovery = {
+        reason: "retained_after_sandbox_creation_failure",
+        sandboxName,
+        sandboxIdentityFingerprint: sandboxIdentityFingerprint ?? null,
+        ...context,
+        recordedAt,
+      };
+      session.failure = {
+        step: session.lastStepStarted,
+        message: sanitizedMessage,
+        recordedAt,
+        interrupted: true,
+      };
+      const sandboxStep = session.steps.sandbox;
+      if (sandboxStep) sandboxStep.error = sanitizedMessage;
+      return session;
+    });
+    const reread = loadSession();
+    if (
+      reread?.sessionId !== saved.sessionId ||
+      reread.status !== CANCELLATION_RECOVERY_STATUS ||
+      reread.resumable !== false ||
+      !sameCancellationRecovery(reread.cancellationRecovery, saved.cancellationRecovery)
+    ) {
+      throw new Error("Retained sandbox recovery did not survive durable readback.");
+    }
+    persistIndependentRetainedSandboxRecovery(
+      reread,
+      "retained_after_sandbox_creation_failure",
+      sandboxIdentityFingerprint ?? null,
+      context,
+    );
+    return reread;
+  });
 }
 
 export type CompareAndSwapSessionResult = "updated" | "busy" | "mismatch";
@@ -1701,7 +2282,7 @@ export function markStepRejected(stepName: string): Session {
       if (session.checkpoint) {
         session.checkpoint = {
           ...session.checkpoint,
-          sandboxIdentity: decisionUnset(),
+          sandboxIdentity: { kind: "unset" },
           updatedAt: new Date().toISOString(),
         };
       }
@@ -1743,8 +2324,8 @@ export function checkpointVllmInstallModel(modelId: string): Session {
  * interrupted step, replacing the legacy step-mutation escape hatch on the
  * process-exit path. It is idempotent by construction: if the durable machine
  * is already terminal (an in-band failure or a prior backstop already recorded
- * the terminal event pair) it no-ops rather than recording a second failure, so the
- * failed transition is validated and never doubled. Performs no
+ * the terminal event pair) it returns null rather than recording a second failure,
+ * so the failed transition is validated and never doubled. Performs no
  * sandbox/provider/policy effects.
  */
 export function finalizeIncompleteOnboardStep(
@@ -1754,7 +2335,13 @@ export function finalizeIncompleteOnboardStep(
 ): Session | null {
   const existing = loadSession();
   if (!existing) return null;
-  if (isTerminalOnboardMachineState(existing.machine.state)) return existing;
+  // A cancellation after sandbox creation has its own fail-closed lifecycle.
+  // Preserve that durable marker when the ordinary process-exit backstop runs
+  // later in the same exit sequence.
+  if (existing.status === CANCELLATION_RECOVERY_STATUS && existing.cancellationRecovery !== null) {
+    return existing;
+  }
+  if (isTerminalOnboardMachineState(existing.machine.state)) return null;
 
   let emitted = false;
   const updatedSession = updateSession((session) => {
@@ -1798,7 +2385,7 @@ export function finalizeIncompleteOnboardStep(
       }),
     );
   }
-  return updatedSession;
+  return emitted ? updatedSession : null;
 }
 
 export interface CompleteSessionOptions {
@@ -1934,12 +2521,11 @@ export function summarizeForDebug(
     observabilityRequestedExplicitly: session.observabilityRequestedExplicitly,
     apfInterceptorRequested: session.apfInterceptorRequested,
     hermesToolGateways: session.hermesToolGateways,
-    policyPresets: session.policyPresets,
-    policyAuthority: session.policyAuthority,
     gpuPassthrough: session.gpuPassthrough,
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,
     failure: sanitizeFailure(session.failure),
+    cancellationRecovery: session.cancellationRecovery,
     gatewayAuthority,
     machine: session.machine,
     steps: Object.fromEntries(

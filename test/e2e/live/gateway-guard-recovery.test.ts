@@ -46,14 +46,16 @@
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { pollUntil } from "../fixtures/polling.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
+import { parseLegacyKeepaliveHandoffReceipt } from "./gateway-guard-legacy-keepalive-fixture.ts";
 
 // Reuses the standard ubuntu-repo-docker environment with the
 // `cloud-openclaw` onboarding profile (the only one the framework's
@@ -113,16 +115,6 @@ assert len(rows) == 1, rows
 uid_line=next(line for line in rows[0][1].splitlines() if line.startswith("Uid:"))
 assert uid_line.split()[1:] == [expected_uid] * 4, uid_line
 print("MANAGED_SUPERVISOR=" + rows[0][0] + ":PPID1")`;
-
-const OPENCLAW_STATE_LOCK_PLAN_PROBE = String.raw`import json, os
-path="/usr/local/share/nemoclaw/state-lock-plan.json"
-metadata=os.stat(path, follow_symlinks=False)
-assert metadata.st_uid == 0 and metadata.st_gid == 0, metadata
-assert metadata.st_mode & 0o022 == 0, oct(metadata.st_mode)
-plan=json.load(open(path, encoding="utf-8"))
-assert "workspace" in plan["readOnlyRoots"], plan
-assert "workspace-" in plan["readOnlyPrefixes"], plan
-print("OPENCLAW_STATE_LOCK_PLAN=installed")`;
 
 const CONTAINER_GATEWAY_PROCESS_STATE_SCRIPT = String.raw`from pathlib import Path
 import pwd, sys
@@ -493,14 +485,6 @@ test(
     expect(trustedRecovery.timedOut, "trusted recovery should complete before timeout").toBe(false);
     expect(trustedRecovery.exitCode, "trusted recovery should exit successfully").toBe(0);
     expectManagedGatewayState(restartManagedState);
-    const restartStateLockPlan = await sandbox.exec(
-      instance.sandboxName,
-      ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],
-      { artifactName: "restart-installed-state-lock-plan", env: buildAvailabilityProbeEnv() },
-    );
-    expect(restartStateLockPlan.exitCode, resultText(restartStateLockPlan)).toBe(0);
-    expect(restartStateLockPlan.stdout).toContain("OPENCLAW_STATE_LOCK_PLAN=installed");
-
     const recoveredContainerId = await findSandboxContainer(host, "restart-container-after");
     expect(recoveredContainerId).toBe(originalContainerId);
     const recoveredStartupCommand = await inspectStartupCommand(
@@ -554,7 +538,10 @@ test(
       },
     );
     expect(inference.exitCode, resultText(inference)).toBe(0);
-    expect(containsInteger42Answer(inference.stdout), resultText(inference)).toBe(true);
+    expect(
+      containsAnswer(parseOpenClawAgentText(inference.stdout), "42"),
+      resultText(inference),
+    ).toBe(true);
 
     progress.phase("recreate and restart sandbox container with legacy keepalive");
     // ── Assert #6635 legacy Docker restart recovery ────────────────
@@ -575,9 +562,7 @@ test(
       },
     );
     expect(createLegacyKeepalive.exitCode, resultText(createLegacyKeepalive)).toBe(0);
-    const handoffReceipt = JSON.parse(createLegacyKeepalive.stdout) as {
-      newContainerId?: unknown;
-    };
+    const handoffReceipt = parseLegacyKeepaliveHandoffReceipt(createLegacyKeepalive.stdout);
     expect(handoffReceipt.newContainerId).toMatch(/^[0-9a-f]{64}$/iu);
     // Do not overlap the fixture's recreation with the restart below. The
     // fixture runs in its own process, so the host must observe the replacement
@@ -636,17 +621,6 @@ test(
     expect(legacyRecovery.timedOut, "legacy recovery should complete before timeout").toBe(false);
     expect(legacyRecovery.exitCode, "legacy recovery should exit successfully").toBe(0);
     expectManagedGatewayState(legacyManagedState);
-    const legacyStateLockPlan = await sandbox.exec(
-      instance.sandboxName,
-      ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],
-      {
-        artifactName: "legacy-restart-installed-state-lock-plan",
-        env: buildAvailabilityProbeEnv(),
-      },
-    );
-    expect(legacyStateLockPlan.exitCode, resultText(legacyStateLockPlan)).toBe(0);
-    expect(legacyStateLockPlan.stdout).toContain("OPENCLAW_STATE_LOCK_PLAN=installed");
-
     expect(legacyRecoveredContainerId).not.toBe(legacyContainerId);
     const legacyRecoveredStartupCommand = await inspectStartupCommand(
       host,
@@ -699,6 +673,9 @@ test(
       },
     );
     expect(legacyInference.exitCode, resultText(legacyInference)).toBe(0);
-    expect(containsInteger42Answer(legacyInference.stdout), resultText(legacyInference)).toBe(true);
+    expect(
+      containsAnswer(parseOpenClawAgentText(legacyInference.stdout), "42"),
+      resultText(legacyInference),
+    ).toBe(true);
   },
 );

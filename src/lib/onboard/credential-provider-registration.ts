@@ -4,10 +4,9 @@
 import type { WebSearchConfig } from "../inference/web-search";
 import type { CheckpointProviderBinding } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
-import * as braveProviderProfile from "./brave-provider-profile";
 import * as gatewayProviderMetadata from "./gateway-provider-metadata";
 import * as messagingBridgeProvider from "./messaging-bridge-provider";
-import type { MessagingTokenDef } from "./messaging-prep";
+import { hasConfiguredMessagingCredential, type MessagingTokenDef } from "./messaging-prep";
 import type { OpenshellCliHelpers } from "./openshell-cli";
 import { createGatewayScopedOpenshellRunner } from "./setup-inference";
 
@@ -19,13 +18,15 @@ export interface StageSandboxCredentialProvidersInput<Agent> {
   webSearchConfig: WebSearchConfig | null;
   agent: Agent;
   requiredBindings: readonly CheckpointProviderBinding[];
-  revalidatePolicyRequirements?(operation: string): void;
+  replaceExisting?: boolean;
+  revalidateSandboxIdentity?(operation: string): void;
 }
 
 export interface MessagingProviderRegistrationOptions {
   replaceExisting?: boolean;
+  bestEffort?: boolean;
   allowedSandboxes?: readonly string[];
-  revalidatePolicyRequirements?(operation: string): void;
+  revalidateSandboxIdentity?(operation: string): void;
 }
 
 type PreparedCredentialProviders = {
@@ -39,10 +40,8 @@ type PrepareCredentialProviders<Agent> = (
 export interface CredentialProviderRegistrationDeps {
   root: string;
   runOpenshell: OpenshellCliHelpers["runOpenshell"];
-  redact(input: string): string;
   getGatewayName(): string;
   getCredential(name: string): string | null;
-  normalizeCredentialValue(value: unknown): string;
   updateSession(mutator: (session: Session) => Session | void): Session;
   stagedLegacyValues: ReadonlyMap<string, string>;
   migratedLegacyKeys: Set<string>;
@@ -53,7 +52,7 @@ function recordMigratedLegacyMessagingCredentials(
   tokenDefs: readonly MessagingTokenDef[],
   registeredProviderNames: readonly string[],
   deps: CredentialProviderRegistrationDeps,
-  revalidatePolicyRequirements?: (operation: string) => void,
+  revalidateSandboxIdentity?: (operation: string) => void,
 ): void {
   const registeredProviders = new Set(registeredProviderNames);
   const migrations: Array<{ envKey: string; migrated: boolean }> = [];
@@ -64,7 +63,7 @@ function recordMigratedLegacyMessagingCredentials(
     migrations.push({ envKey: def.envKey, migrated: def.token === stagedValue });
   }
   if (migrations.length === 0) return;
-  revalidatePolicyRequirements?.("record migrated messaging provider credentials");
+  revalidateSandboxIdentity?.("record migrated messaging provider credentials");
   for (const migration of migrations) {
     if (migration.migrated) deps.migratedLegacyKeys.add(migration.envKey);
     else deps.migratedLegacyKeys.delete(migration.envKey);
@@ -140,16 +139,6 @@ function validatePlannedCredentialProviderBindings(
 export function createCredentialProviderRegistration(deps: CredentialProviderRegistrationDeps) {
   const gatewayRunner = (gatewayName = deps.getGatewayName()) =>
     createGatewayScopedOpenshellRunner(deps.runOpenshell, gatewayName);
-  const ensureWebSearchProviderProfiles = (
-    tokenDefs: readonly MessagingTokenDef[],
-    runOpenshell: OpenshellCliHelpers["runOpenshell"] = deps.runOpenshell,
-  ) =>
-    braveProviderProfile.ensureWebSearchProviderProfiles(tokenDefs, {
-      root: deps.root,
-      runOpenshell,
-      redact: deps.redact,
-    });
-
   function upsertProvider(
     name: string,
     type: string,
@@ -171,7 +160,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     if (result.ok && credentialEnv) {
       const stagedValue = deps.stagedLegacyValues.get(credentialEnv);
       if (stagedValue !== undefined) {
-        options.revalidatePolicyRequirements?.(
+        options.revalidateSandboxIdentity?.(
           `record migrated credential for provider ${JSON.stringify(name)}`,
         );
         const upsertedValue = env[credentialEnv] ?? deps.getCredential(credentialEnv);
@@ -186,48 +175,66 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     return result;
   }
 
-  function upsertMessagingProviders(
+  function upsertMessagingProvidersAtGateway(
     tokenDefs: MessagingTokenDef[],
-    options: MessagingProviderRegistrationOptions = {},
-    runOpenshell: OpenshellCliHelpers["runOpenshell"] = deps.runOpenshell,
+    options: MessagingProviderRegistrationOptions,
+    gatewayName: string,
+    runOpenshell: OpenshellCliHelpers["runOpenshell"] = gatewayRunner(gatewayName),
   ): string[] {
-    const runWebSearchOpenshell = providers.policyAuthorityCheckedRunner(
-      runOpenshell,
-      options.revalidatePolicyRequirements,
-      "import a web-search provider profile",
-    );
-    ensureWebSearchProviderProfiles(tokenDefs, runWebSearchOpenshell);
     const upserted = providers.upsertMessagingProviders(
       tokenDefs,
       runOpenshell,
-      options,
+      { ...options, gatewayName },
     ) as string[];
     recordMigratedLegacyMessagingCredentials(
       tokenDefs,
       upserted,
       deps,
-      options.revalidatePolicyRequirements,
+      options.revalidateSandboxIdentity,
     );
     return upserted;
+  }
+
+  function upsertMessagingProviders(
+    tokenDefs: MessagingTokenDef[],
+    options: MessagingProviderRegistrationOptions = {},
+  ): string[] {
+    const gatewayName = deps.getGatewayName();
+    return upsertMessagingProvidersAtGateway(tokenDefs, options, gatewayName);
   }
 
   function credentialBindingMatchesGateway(
     binding: CheckpointProviderBinding,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
   ): boolean {
-    const staticProfileMatches = messagingBridgeProvider.matchesRegisteredStaticMessagingProfile(
+    return inspectGatewayCredentialBinding(binding, runOpenshell).kind === "exact";
+  }
+
+  function inspectGatewayCredentialBinding(
+    binding: CheckpointProviderBinding,
+    runOpenshell: OpenshellCliHelpers["runOpenshell"],
+  ): gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection {
+    const profileMatches = messagingBridgeProvider.matchesRegisteredMessagingBridgeProfile(
       binding.type,
       { root: deps.root, runOpenshell },
     );
-    if (staticProfileMatches === false) return false;
-    return gatewayProviderMetadata.matchesGatewayCredentialOnlyProviderBinding(
-      providers.readGatewayProviderMetadata(binding.name, runOpenshell, deps.getGatewayName()),
+    if (profileMatches === false) return { kind: "indeterminate" };
+    return gatewayProviderMetadata.inspectGatewayCredentialFamilyProviderBinding(
       {
         name: binding.name,
         type: binding.type,
         credentialKey: binding.credentialEnv,
       },
+      runOpenshell,
     );
+  }
+
+  function inspectGatewayCredential(
+    name: string,
+    type: string,
+    credentialEnv: string,
+  ): gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection {
+    return inspectGatewayCredentialBinding({ name, type, credentialEnv }, gatewayRunner());
   }
 
   function providerMatchesGatewayCredential(
@@ -242,17 +249,22 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     requiredBindings: readonly CheckpointProviderBinding[],
     plannedTokenDefs: ReadonlyMap<string, MessagingTokenDef>,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
+    replaceExisting: boolean,
   ): void {
     for (const binding of requiredBindings) {
       if (!providers.providerExistsInGateway(binding.name, runOpenshell)) {
         const tokenDef = plannedTokenDefs.get(binding.name);
-        if (!tokenDef || !deps.normalizeCredentialValue(tokenDef.token)) {
+        if (!tokenDef || !hasConfiguredMessagingCredential(tokenDef)) {
           throw new Error(MISSING_BINDING_ERROR);
         }
         continue;
       }
       const matches = credentialBindingMatchesGateway(binding, runOpenshell);
-      if (!matches) throw new Error(EXISTING_BINDING_ERROR);
+      if (matches) continue;
+      const tokenDef = plannedTokenDefs.get(binding.name);
+      if (!replaceExisting || !tokenDef || !hasConfiguredMessagingCredential(tokenDef)) {
+        throw new Error(EXISTING_BINDING_ERROR);
+      }
     }
   }
 
@@ -261,36 +273,41 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     prepareCredentialProviders: PrepareCredentialProviders<Agent>,
   ): Promise<readonly CheckpointProviderBinding[]> {
     const messaging = await prepareCredentialProviders(input);
-    input.revalidatePolicyRequirements?.("stage sandbox credential providers after planning");
+    input.revalidateSandboxIdentity?.("stage sandbox credential providers after planning");
     const plannedBindings = validatePlannedCredentialProviderBindings(
       messaging.messagingTokenDefs,
       input.requiredBindings,
-      (tokenDef) => Boolean(deps.normalizeCredentialValue(tokenDef.token)),
+      hasConfiguredMessagingCredential,
     );
     const plannedTokenDefs = new Map(
       messaging.messagingTokenDefs.map((tokenDef) => [tokenDef.name, tokenDef]),
     );
-    const tokenDefs = messaging.messagingTokenDefs.filter((tokenDef) =>
-      deps.normalizeCredentialValue(tokenDef.token),
-    );
-    const runOpenshell = gatewayRunner();
+    const tokenDefs = messaging.messagingTokenDefs.filter(hasConfiguredMessagingCredential);
+    const gatewayName = deps.getGatewayName();
+    const runOpenshell = gatewayRunner(gatewayName);
     preflightRequiredCredentialProviderBindings(
       input.requiredBindings,
       plannedTokenDefs,
       runOpenshell,
+      input.replaceExisting === true,
     );
-    input.revalidatePolicyRequirements?.("clear staged credential provider receipts");
+    input.revalidateSandboxIdentity?.("clear staged credential provider receipts");
     setStagedCredentialProviderReceipts(
       tokenDefs.map((tokenDef) => tokenDef.name),
       false,
       deps,
     );
-    const registered = upsertMessagingProviders(
+    const registered = upsertMessagingProvidersAtGateway(
       tokenDefs,
-      { revalidatePolicyRequirements: input.revalidatePolicyRequirements },
+      {
+        replaceExisting: input.replaceExisting === true,
+        allowedSandboxes: input.replaceExisting === true ? [input.sandboxName] : undefined,
+        revalidateSandboxIdentity: input.revalidateSandboxIdentity,
+      },
+      gatewayName,
       runOpenshell,
     );
-    input.revalidatePolicyRequirements?.("record staged credential provider receipts");
+    input.revalidateSandboxIdentity?.("record staged credential provider receipts");
     setStagedCredentialProviderReceipts(registered, true, deps);
     return registered.map((name) => {
       const binding = plannedBindings.get(name);
@@ -300,6 +317,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
   }
 
   return {
+    inspectGatewayCredential,
     providerMatchesGatewayCredential,
     stageSandboxCredentialProviders,
     upsertProvider,

@@ -4,6 +4,7 @@
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { scopeGatewayOpenshellArgs } from "../../adapters/openshell/gateway-scope";
 import { runHermesPortableUninstallOpenShell } from "../../adapters/openshell/hermes-portable-uninstall";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { GatewayRegistryDocument } from "../../state/gateway-registry";
@@ -47,7 +48,6 @@ import {
   readHermesPortableLifecycleReceipt,
   type HermesPortableConfiguredReceipt,
 } from "../../onboard/experimental/hermes-portable-receipt";
-import { scopeGatewayOpenshellArgs } from "../../onboard/setup-inference";
 import {
   assertPreparedHostLocalInferenceRuntimePresent,
   inspectPreparedHostLocalInferenceSharingAuthority,
@@ -350,10 +350,10 @@ function loadAuthority(
         `Hermes Portable uninstall receipt '${sandboxName}' is missing or incomplete`,
       );
     }
-    const receipt = snapshot.receipt;
+    const historicalReceipt = snapshot.receipt;
     const row = registry.sandboxes[sandboxName] as SandboxEntry | undefined;
     if (!row) throw new Error(`Hermes Portable uninstall registry row '${sandboxName}' is missing`);
-    requireSandboxRow(row, receipt);
+    requireSandboxRow(row, historicalReceipt);
     const expectedTarget = expected?.targets.find((target) => target.sandboxName === sandboxName);
     const lifecycleDeps: HermesPortableLifecycleDeps = {
       ...deps.lifecycle,
@@ -368,8 +368,8 @@ function loadAuthority(
       {
         agent: "hermes",
         openshellDriver: "docker",
-        gatewayName: receipt.gatewayName,
-        lifecycleGeneration: receipt.lifecycleGeneration,
+        gatewayName: historicalReceipt.gatewayName,
+        lifecycleGeneration: historicalReceipt.lifecycleGeneration,
       },
       lifecycleDeps,
       {
@@ -377,6 +377,7 @@ function loadAuthority(
         ...(expectedTarget ? { expectedReceiptSha256: expectedTarget.lifecycleReceiptSha256 } : {}),
       },
     );
+    const receipt = sandbox.receipt;
     const runtime = createHermesPortableOllamaRuntimeAuthority({
       receipt,
       stateDir: input.stateDir,

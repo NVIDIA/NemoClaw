@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Security / Package OpenShell SDK for PR
+
+run-name: "OpenShell SDK PR #${{ github.event.pull_request.number }} head ${{ github.event.pull_request.head.sha }} base ${{ github.event.pull_request.base.sha }}"
+
+# This workflow is loaded from the pull request base branch. It must never
+# check out or execute pull request content because its token can read packages.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openshell-sdk-package-${{ github.event.pull_request.number }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}
+  cancel-in-progress: true
+
+jobs:
+  package-openshell-sdk:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'edited' || github.event.changes.base != null) }}
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout base-controlled package verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/package-openshell-sdk-for-pr.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-audit.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node.js for reviewed package download
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          registry-url: https://npm.pkg.github.com
+          scope: "@nvidia"
+
+      - name: Download and verify exact OpenShell SDK package
+        id: package
+        env:
+          NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: ${{ runner.temp }}/openshell-sdk
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_path="$(node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts)"
+          [ -n "$artifact_path" ]
+          printf 'artifact_path=%s\n' "$artifact_path" >> "$GITHUB_OUTPUT"
+
+      - name: Upload verified OpenShell SDK archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openshell-sdk-${{ github.event.pull_request.head.sha }}
+          path: ${{ steps.package.outputs.artifact_path }}
+          if-no-files-found: error
+          retention-days: 1

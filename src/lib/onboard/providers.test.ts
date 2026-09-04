@@ -21,9 +21,8 @@ type RunOptions = {
 };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
-const messagingBridgeProvider = require(
-  "./messaging-bridge-provider"
-) as typeof import("./messaging-bridge-provider");
+const messagingBridgeProvider =
+  require("./messaging-bridge-provider") as typeof import("./messaging-bridge-provider");
 
 const DISCORD_STATIC_PROFILE_EXPORT = JSON.stringify({
   id: "discord-hermes-static-v1",
@@ -47,6 +46,31 @@ const MESSAGING_ENDPOINTLESS_PROFILE_EXPORT = JSON.stringify({
   credentials: [],
   endpoints: [],
   binaries: [],
+  inference_capable: false,
+});
+
+const BRAVE_PROFILE_EXPORT = JSON.stringify({
+  id: "brave",
+  credentials: [
+    {
+      name: "api_key",
+      env_vars: ["BRAVE_API_KEY"],
+      required: true,
+      auth_style: "header",
+      header_name: "x-subscription-token",
+      query_param: "",
+    },
+  ],
+  endpoints: [
+    {
+      host: "api.search.brave.com",
+      port: 443,
+      protocol: "rest",
+      access: "read-write",
+      enforcement: "enforce",
+    },
+  ],
+  binaries: ["/usr/local/bin/node", "/usr/bin/node", "/usr/local/bin/curl", "/usr/bin/curl"],
   inference_capable: false,
 });
 
@@ -115,7 +139,7 @@ const {
       replaceExisting?: boolean;
       allowedSandboxes?: readonly string[];
       requireExactBinding?: boolean;
-      revalidatePolicyRequirements?(operation: string): void;
+      revalidateSandboxIdentity?(operation: string): void;
     },
   ) => { ok: boolean; status?: number; message?: string; reason?: string };
   upsertMessagingProviders: (
@@ -129,8 +153,9 @@ const {
     options?: {
       allowedSandboxes?: readonly string[];
       bestEffort?: boolean;
+      gatewayName?: string;
       replaceExisting?: boolean;
-      revalidatePolicyRequirements?(operation: string): void;
+      revalidateSandboxIdentity?(operation: string): void;
       requireExactBindings?: boolean;
     },
   ) => string[];
@@ -679,8 +704,11 @@ describe("onboard provider helpers", () => {
       ],
       (command) => {
         commands.push(command.join(" "));
-        if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
-        return { status: 0, stdout: "", stderr: "" };
+        return command[1] === "profile"
+          ? { status: 0, stdout: BRAVE_PROFILE_EXPORT, stderr: "" }
+          : command.includes("get")
+            ? { status: 1, stdout: "", stderr: "" }
+            : { status: 0, stdout: "", stderr: "" };
       },
     );
 
@@ -695,6 +723,7 @@ describe("onboard provider helpers", () => {
     const credential = "discord-credential-must-not-leak";
     const calls: Array<{ command: string[]; env?: Record<string, string | undefined> }> = [];
     let created = false;
+    let profileImported = false;
     const providers = upsertMessagingProviders(
       [
         {
@@ -708,9 +737,14 @@ describe("onboard provider helpers", () => {
         calls.push({ command, env: options?.env });
         switch (command[1]) {
           case "profile":
-            return command.includes("export")
-              ? { status: 1, stdout: "", stderr: "provider profile not found" }
+            const exportingProfile = command.includes("export");
+            const profileResult = exportingProfile
+              ? profileImported
+                ? { status: 0, stdout: MESSAGING_ENDPOINTLESS_PROFILE_EXPORT, stderr: "" }
+                : { status: 1, stdout: "", stderr: "provider profile not found" }
               : { status: 0, stdout: "", stderr: "" };
+            profileImported ||= !exportingProfile;
+            return profileResult;
           case "get":
             return created
               ? {
@@ -732,13 +766,15 @@ describe("onboard provider helpers", () => {
 
     expect(providers).toEqual(["alpha-discord-bridge"]);
     expect(calls.map(({ command }) => command.join(" "))).toEqual([
+      "provider get alpha-discord-bridge",
       "provider profile export nemoclaw-mcp-v1 --output json",
       expect.stringMatching(/^provider profile import --file .*nemoclaw-mcp-v1\.yaml$/),
+      "provider profile export nemoclaw-mcp-v1 --output json",
       "provider get alpha-discord-bridge",
       "provider create --name alpha-discord-bridge --type nemoclaw-mcp-v1 --credential DISCORD_BOT_TOKEN",
       "provider get alpha-discord-bridge",
     ]);
-    expect(calls[3]?.env).toEqual({ DISCORD_BOT_TOKEN: credential });
+    expect(calls[5]?.env).toEqual({ DISCORD_BOT_TOKEN: credential });
     expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
   });
 
@@ -771,12 +807,21 @@ describe("onboard provider helpers", () => {
         (command) => {
           const joined = command.join(" ");
           commands.push(joined);
-          return profileResults[command[2] ?? ""] ?? { status: 0, stdout: "", stderr: "" };
+          return command[1] === "get"
+            ? {
+                status: 0,
+                stdout:
+                  "Name: alpha-discord-bridge\nType: nemoclaw-mcp-v1\nCredential keys: DISCORD_BOT_TOKEN\nConfig keys: <none>\n",
+              }
+            : (profileResults[command[2] ?? ""] ?? { status: 0, stdout: "", stderr: "" });
         },
         { bestEffort: true },
       ),
     ).toThrow(/does not match NemoClaw's endpointless messaging credential contract/u);
-    expect(commands).toEqual(["provider profile export nemoclaw-mcp-v1 --output json"]);
+    expect(commands).toEqual([
+      "provider get alpha-discord-bridge",
+      "provider profile export nemoclaw-mcp-v1 --output json",
+    ]);
   });
 
   it.each([
@@ -884,6 +929,7 @@ describe("onboard provider helpers", () => {
 
     expect(providers).toEqual([name]);
     expect(commands).toEqual([
+      `provider get ${name}`,
       "provider profile export nemoclaw-mcp-v1 --output json",
       `provider get ${name}`,
       `provider delete ${name}`,
@@ -905,7 +951,9 @@ describe("onboard provider helpers", () => {
       ],
       (command) => {
         commands.push(command.join(" "));
-        return { status: 0, stdout: "", stderr: "" };
+        return command[1] === "profile"
+          ? { status: 0, stdout: BRAVE_PROFILE_EXPORT, stderr: "" }
+          : { status: 0, stdout: "", stderr: "" };
       },
     );
 
@@ -913,18 +961,19 @@ describe("onboard provider helpers", () => {
     // still attached to a live sandbox, so reuse paths must use `update`.
     expect(providers).toEqual(["alpha-brave-search"]);
     expect(commands).toEqual([
+      "provider profile export brave --output json",
       "provider get alpha-brave-search",
       "provider update alpha-brave-search --credential BRAVE_API_KEY",
     ]);
   });
 
-  it("revalidates policy requirements before each messaging provider mutation (#9833)", () => {
+  it("revalidates sandbox identity before each messaging provider mutation (#9833)", () => {
     const commands: string[] = [];
     const revalidationSteps = [
       () => undefined,
       () => undefined,
       () => {
-        throw new Error("policy authority changed between providers");
+        throw new Error("sandbox identity changed between providers");
       },
     ];
 
@@ -940,21 +989,21 @@ describe("onboard provider helpers", () => {
             ? { status: 1, stdout: "", stderr: "" }
             : { status: 0, stdout: "", stderr: "" };
         },
-        { revalidatePolicyRequirements: () => revalidationSteps.shift()?.() },
+        { revalidateSandboxIdentity: () => revalidationSteps.shift()?.() },
       ),
-    ).toThrow(/authority changed between providers/);
+    ).toThrow(/sandbox identity changed between providers/);
     expect(commands).toEqual([
       "provider get alpha-first",
       "provider create --name alpha-first --type generic --credential FIRST_TOKEN",
     ]);
   });
 
-  it("rechecks policy authority after a provider probe and before its mutation (#9833)", () => {
+  it("rechecks sandbox identity after a provider probe and before its mutation (#9833)", () => {
     const commands: string[] = [];
     const revalidationSteps = [
       () => undefined,
       () => {
-        throw new Error("policy authority changed after provider probe");
+        throw new Error("sandbox identity changed after provider probe");
       },
     ];
 
@@ -969,9 +1018,9 @@ describe("onboard provider helpers", () => {
           commands.push(command.join(" "));
           return { status: 1, stdout: "", stderr: "not found" };
         },
-        { revalidatePolicyRequirements: () => revalidationSteps.shift()?.() },
+        { revalidateSandboxIdentity: () => revalidationSteps.shift()?.() },
       ),
-    ).toThrow(/authority changed after provider probe/u);
+    ).toThrow(/sandbox identity changed after provider probe/u);
     expect(commands).toEqual(["provider get alpha-discord-bridge"]);
   });
 
@@ -1044,7 +1093,6 @@ describe("onboard provider helpers", () => {
     ]);
   });
 
-
   it("throws instead of exiting when best-effort messaging provider upsert fails", () => {
     const originalExit = process.exit;
     process.exit = ((code?: number | string | null) => {
@@ -1072,22 +1120,28 @@ describe("onboard provider helpers", () => {
     }
   });
 
-  it("reports providers changed before bridge refresh throws (#9833)", () => {
+  it("reports a valid unscoped recovery command when bridge refresh throws (#9833)", () => {
+    const runResults = new Map<string, RunResult>([
+      ["get", { status: 1, stdout: "", stderr: "not found" }],
+      ["delete", { status: 1, stdout: "", stderr: "gateway unavailable" }],
+    ]);
     const configureRefreshes = vi
       .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
       .mockImplementation(() => {
-        throw new Error("policy authority changed");
+        throw new Error("sandbox identity changed");
       });
     try {
       expect(() =>
         upsertMessagingProviders(
           [{ name: "alpha-bridge", envKey: "BRIDGE_TOKEN", token: "test-token" }],
-          () => ({ status: 0, stdout: "", stderr: "" }),
+          (command) => runResults.get(command[1] ?? "") ?? { status: 0, stdout: "", stderr: "" },
           { bestEffort: true },
         ),
       ).toThrow(
         expect.objectContaining({
-          message: expect.stringMatching(/policy authority changed.*alpha-bridge/isu),
+          message: expect.stringMatching(
+            /sandbox identity changed.*alpha-bridge.*openshell provider delete "alpha-bridge"/isu,
+          ),
           mutatedProviderNames: ["alpha-bridge"],
         }),
       );
@@ -1115,6 +1169,56 @@ describe("onboard provider helpers", () => {
       );
     } finally {
       configureRefreshes.mockRestore();
+    }
+  });
+
+  it("preserves an exact existing bridge provider when refresh fails", () => {
+    const commands: string[] = [];
+    const ensureProfiles = vi
+      .spyOn(messagingBridgeProvider, "ensureMessagingBridgeProfiles")
+      .mockImplementation(() => undefined);
+    const configureRefreshes = vi
+      .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
+      .mockReturnValue({ ok: false, reason: "refresh failed" });
+    try {
+      expect(() =>
+        upsertMessagingProviders(
+          [
+            {
+              name: "alpha-googlechat-bridge",
+              envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+              token: messagingBridgeProvider.MESSAGING_BRIDGE_PENDING_VALUE,
+              providerType: "google-chat-bridge",
+            },
+          ],
+          (command) => {
+            commands.push(command.join(" "));
+            return {
+              status: 0,
+              stdout: [
+                "Name: alpha-googlechat-bridge",
+                "Type: google-chat-bridge",
+                "Credential keys: GOOGLE_CHAT_ACCESS_TOKEN",
+                "Config keys: <none>",
+              ].join("\n"),
+              stderr: "",
+            };
+          },
+          { bestEffort: true, gatewayName: "test-gateway" },
+        ),
+      ).toThrow(
+        expect.objectContaining({
+          message: expect.stringMatching(/gateway token minting/u),
+          mutatedProviderNames: ["alpha-googlechat-bridge"],
+        }),
+      );
+      expect(commands).toEqual(["provider get alpha-googlechat-bridge"]);
+      expect(commands.some((command) => /provider (create|update|delete)/u.test(command))).toBe(
+        false,
+      );
+    } finally {
+      configureRefreshes.mockRestore();
+      ensureProfiles.mockRestore();
     }
   });
 
@@ -1225,13 +1329,16 @@ describe("onboard provider helpers", () => {
       ],
       (command) => {
         commands.push(command.join(" "));
-        return { status: 0, stdout: "", stderr: "" };
+        return command[1] === "profile"
+          ? { status: 0, stdout: BRAVE_PROFILE_EXPORT, stderr: "" }
+          : { status: 0, stdout: "", stderr: "" };
       },
       { replaceExisting: true },
     );
 
     expect(providers).toEqual(["alpha-brave-search"]);
     expect(commands).toEqual([
+      "provider profile export brave --output json",
       "provider get alpha-brave-search",
       "provider delete alpha-brave-search",
       "provider create --name alpha-brave-search --type brave --credential BRAVE_API_KEY",

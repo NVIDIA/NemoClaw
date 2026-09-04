@@ -14,9 +14,10 @@ import {
 } from "./runner-mock-fixtures.js";
 import {
   blueprintWithPolicyAdditions,
+  createMutableSandboxPolicyResult,
   minimalBlueprint,
   resultForCommandFailure,
-  resultWithBlueprintPolicyAuthority,
+  resultWithBlueprintPolicy,
   routedBlueprint,
   TEST_SANDBOX_POLICY,
   TEST_SANDBOX_POLICY_PATH,
@@ -47,6 +48,7 @@ vi.mock("node:fs", async (importOriginal) => {
     openSync: memory.openSync,
     readFileSync: vi.fn(memory.readFileSync),
     renameSync: memory.renameSync,
+    unlinkSync: memory.unlinkSync,
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
   };
@@ -64,6 +66,10 @@ vi.mock("./ssrf.js", async (importOriginal) => {
     validateEndpointUrl: vi.fn(async (url: string) => resolvedEndpointFor(url)),
   };
 });
+vi.mock("./private-networks.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./private-networks.js")>()),
+  isPrivateHostname: () => false,
+}));
 
 const { validateEndpointUrl } = await import("./ssrf.js");
 const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
@@ -92,7 +98,7 @@ function mockCurrentPolicy(stdout: string): void {
     if (args.join(" ") === "policy get -g test-gateway --base test-sandbox") {
       return { exitCode: 0, stdout, stderr: "" };
     }
-    return resultWithBlueprintPolicyAuthority(args, {
+    return resultWithBlueprintPolicy(args, {
       exitCode: 0,
       stdout: "",
       stderr: "",
@@ -545,7 +551,7 @@ describe("runner", () => {
     beforeEach(() => {
       captureStdout();
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        resultWithBlueprintPolicyAuthority(args, {
+        resultWithBlueprintPolicy(args, {
           exitCode: 0,
           stdout: "",
           stderr: "",
@@ -576,6 +582,57 @@ describe("runner", () => {
       );
     });
 
+    it("binds policy-authorized OpenShell operations to the selected gateway configuration", async () => {
+      vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient-gateway.invalid");
+      vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
+      const commandResult = createMutableSandboxPolicyResult(() => {
+        const merged = [...store.entries()].find(([path]) => path.endsWith("policy-update.yaml"));
+        return YAML.parse(merged?.[1].content ?? TEST_SANDBOX_POLICY);
+      });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => commandResult(args));
+
+      await actionApply(
+        "default",
+        blueprintWithPolicyAdditions({
+          nim_service: {
+            name: "nim_service",
+            endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "full" }],
+          },
+        }),
+      );
+
+      const boundOptions = expect.objectContaining({
+        extendEnv: false,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "test-gateway",
+        }),
+      });
+      expect(mockExeca).toHaveBeenCalledWith(
+        "openshell",
+        ["policy", "get", "-g", "test-gateway", "--base", "test-sandbox"],
+        boundOptions,
+      );
+      expect(mockExeca).toHaveBeenCalledWith(
+        "openshell",
+        expect.arrayContaining(["policy", "set"]),
+        boundOptions,
+      );
+      expect(mockExeca).not.toHaveBeenCalledWith(
+        "openshell",
+        expect.anything(),
+        expect.objectContaining({
+          env: expect.objectContaining({ OPENSHELL_GATEWAY_ENDPOINT: expect.anything() }),
+        }),
+      );
+      expect(mockExeca).not.toHaveBeenCalledWith(
+        "openshell",
+        expect.anything(),
+        expect.objectContaining({
+          env: expect.objectContaining({ OPENSHELL_GATEWAY_INSECURE: expect.anything() }),
+        }),
+      );
+    });
+
     const hasPlanJson = (): boolean => [...store.keys()].some((k) => k.endsWith("plan.json"));
 
     it("rejects provider creation failure with a compensated ownership plan (#6703)", async () => {
@@ -599,7 +656,7 @@ describe("runner", () => {
           /Failed to create inference provider 'my-provider'.*provider setup failed/i,
         );
         expect((error as Error).message).toContain("OPENAI_API_KEY=<REDACTED>");
-        expect((error as Error).message).toContain("Authorization: Bearer <REDACTED>");
+        expect((error as Error).message).toContain("Authorization: <REDACTED>");
         expect((error as Error).message).not.toContain(credential);
         expect((error as Error).message).not.toContain("opaque-bearer");
         expect(hasPlanJson()).toBe(true);
@@ -627,7 +684,7 @@ describe("runner", () => {
       expect(stdoutText()).toContain("Apply complete");
     });
 
-    it("compensates an owned inference provider when inference set fails (#6703)", async () => {
+    it("preserves an owned inference provider when name-only cleanup is unsafe (#9833)", async () => {
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
         if (args.join(" ") === "provider get my-provider") {
           return {
@@ -646,14 +703,14 @@ describe("runner", () => {
       });
 
       await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
-        /Failed to set inference route .*model 'gpt-4'.*inference route rejected/i,
+        /Failed to set inference route .*inference route rejected.*automatic cleanup was refused/iu,
       );
 
       expect(hasPlanJson()).toBe(true);
-      expect(mockExeca).toHaveBeenCalledWith(
+      expect(mockExeca).not.toHaveBeenCalledWith(
         "openshell",
         ["provider", "delete", "my-provider"],
-        expect.objectContaining({ reject: false }),
+        expect.anything(),
       );
       expect(stdoutText()).not.toContain("Apply complete");
       expect(stdoutText()).not.toContain("PROGRESS:100");
@@ -748,17 +805,6 @@ describe("runner", () => {
       expect(policyCalls.some((call) => call[1][1] === "set")).toBe(false);
     });
 
-    it("refuses to claim policy ownership when sandbox already exists", async () => {
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        resultForCommandFailure(args, ["sandbox", "create"], "already exists"),
-      );
-
-      await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
-        /already exists.*cannot establish NemoClaw policy ownership/u,
-      );
-      expect(stdoutText()).not.toContain("Apply complete");
-    });
-
     it("throws when sandbox creation fails with other error", async () => {
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
         resultForCommandFailure(args, ["sandbox", "create"], "disk full"),
@@ -851,8 +897,7 @@ describe("runner", () => {
         [
           "inference",
           "inference_provider_created_by_apply",
-          "policy_additions",
-          "policy_authority",
+          "gateway",
           "profile",
           "run_id",
           "sandbox_created_by_apply",
@@ -1207,7 +1252,6 @@ describe("runner", () => {
         },
         sandbox_name: "sb",
         sandbox_created_by_apply: true,
-        policy_additions: {},
         inference: {
           provider_type: "openai",
           provider_name: "secret-provider",
@@ -1363,7 +1407,7 @@ describe("runner", () => {
     beforeEach(() => {
       captureStdout();
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        resultWithBlueprintPolicyAuthority(args, {
+        resultWithBlueprintPolicy(args, {
           exitCode: 0,
           stdout: "",
           stderr: "",
@@ -1372,14 +1416,14 @@ describe("runner", () => {
       seedBlueprintFile();
     });
 
-    it("throws on unknown action with the raw invalid token", async () => {
+    it("throws a fixed diagnostic on an unknown action", async () => {
       store.clear();
-      await expect(main(["bogus"])).rejects.toThrow(/Unknown action 'bogus'/);
+      await expect(main(["bogus"])).rejects.toThrow(/Unknown action\. Use:/);
     });
 
-    it("throws on missing action with a clear marker", async () => {
+    it("throws on missing action", async () => {
       store.clear();
-      await expect(main([])).rejects.toThrow(/Unknown action '\(missing\)'/);
+      await expect(main([])).rejects.toThrow(/Unknown action\. Use:/);
     });
 
     it("parses plan with --profile and --dry-run", async () => {

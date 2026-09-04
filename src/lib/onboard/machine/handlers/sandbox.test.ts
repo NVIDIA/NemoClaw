@@ -18,7 +18,6 @@ import {
   bindJournaledRecreate,
   createDeps,
   makeMinimalPlan,
-  withEnv,
   withTelegramCredentialHash,
 } from "./sandbox-test-fixtures";
 
@@ -79,13 +78,13 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: expect.any(String) },
+      expect.objectContaining({ sessionId: expect.any(String), selection: expect.any(Object) }),
       {
         resolved: expect.any(Object),
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
-        endpointSource: "onboard",
+        endpointSource: null,
         extraProviders: [],
       },
     );
@@ -135,9 +134,6 @@ describe("handleSandboxState", () => {
     });
 
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({ endpointSource: null });
-    expect(calls.preflightPolicyRequirements).toHaveBeenCalledWith(
-      expect.objectContaining({ hostLocalInferenceRouteOnly: true }),
-    );
   });
 
   it("records credential-provider bindings and the resource-profile decision in the checkpoint (#7022)", async () => {
@@ -236,28 +232,22 @@ describe("handleSandboxState", () => {
       ...baseOptions(deps),
       agent: { name: "langchain-deepagents-code" },
       authoritativeResumeConfig: true,
-      authoritativePolicyTier: "restricted",
     });
 
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
-      policyTier: "restricted",
-    });
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({});
   });
 
-  it("preserves an authoritative null tier in the sandbox create intent", async () => {
+  it("does not persist an authoritative policy tier in sandbox create state", async () => {
     const { deps, calls } = createDeps();
 
     await handleSandboxState({
       ...baseOptions(deps),
       agent: { name: "langchain-deepagents-code" },
       authoritativeResumeConfig: true,
-      authoritativePolicyTier: null,
     });
 
-    expect(calls.resolveCreateIntent).toHaveBeenCalledWith(
-      expect.objectContaining({ policyTier: null }),
-    );
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toHaveProperty("policyTier", null);
+    expect(calls.resolveCreateIntent.mock.calls[0]?.[0]).not.toHaveProperty("policyTier");
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).not.toHaveProperty("policyTier");
   });
 
   it("rejects observability for a selected non-DCode agent", async () => {
@@ -558,7 +548,7 @@ describe("handleSandboxState", () => {
       null,
       ["nous-audio"],
       null,
-      { sessionId: expect.any(String) },
+      expect.objectContaining({ sessionId: expect.any(String), selection: expect.any(Object) }),
       {
         resolved: expect.any(Object),
         recreate: false,
@@ -846,7 +836,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: session.sessionId },
+      expect.objectContaining({ sessionId: session.sessionId, selection: expect.any(Object) }),
       {
         resolved: expect.any(Object),
         recreate: true,
@@ -1014,7 +1004,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: session.sessionId },
+      expect.objectContaining({ sessionId: session.sessionId, selection: expect.any(Object) }),
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,
@@ -1147,7 +1137,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: session.sessionId },
+      expect.objectContaining({ sessionId: session.sessionId, selection: expect.any(Object) }),
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,
@@ -1243,33 +1233,38 @@ describe("handleSandboxState", () => {
     expect(getSession().messagingPlan).toEqual(registryPlan);
   });
 
-  it("refreshes credential hashes when reusing an env-staged rebuild plan", async () => {
+  it("validates changed credentials before refreshing an env-staged rebuild plan", async () => {
     const oldHash = hashCredential("telegram-token-a");
     const newHash = hashCredential("telegram-token-b");
     const rebuiltPlan = withTelegramCredentialHash(
       makeMinimalPlan("my-assistant", "openclaw", ["telegram"]),
       oldHash,
     );
+    const validatedPlan = withTelegramCredentialHash(rebuiltPlan, newHash);
+    let stagedPlan = rebuiltPlan;
     const session = createSession({ sandboxName: "my-assistant", messagingPlan: rebuiltPlan });
     const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
     const writePlanToEnv = vi.fn();
     const { deps, calls, getSession } = createDeps({
       getRecordedMessagingChannelsForResume,
       writePlanToEnv,
-      readMessagingPlanFromEnv: () => rebuiltPlan,
+      readMessagingPlanFromEnv: () => stagedPlan,
       getRegistrySandboxMessagingAuthority: () => ({ authoritative: false, plan: null }),
     });
-
-    await withEnv("TELEGRAM_BOT_TOKEN", "telegram-token-b", async () => {
-      await handleSandboxState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "my-assistant",
-      });
+    calls.setupMessaging.mockImplementation(async () => {
+      stagedPlan = validatedPlan;
+      return ["telegram"];
     });
 
-    expect(calls.setupMessaging).not.toHaveBeenCalled();
-    expect(writePlanToEnv).toHaveBeenCalledWith(
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      env: { TELEGRAM_BOT_TOKEN: "telegram-token-b" },
+    });
+
+    expect(calls.setupMessaging).toHaveBeenCalledOnce();
+    expect(writePlanToEnv).toHaveBeenLastCalledWith(
       expect.objectContaining({
         credentialBindings: [
           expect.objectContaining({
@@ -1282,33 +1277,38 @@ describe("handleSandboxState", () => {
     expect(getSession().messagingPlan?.credentialBindings[0]?.credentialHash).toBe(newHash);
   });
 
-  it("refreshes credential hashes when restoring a registry plan for rebuild resume", async () => {
+  it("validates changed credentials before refreshing a registry rebuild plan", async () => {
     const oldHash = hashCredential("telegram-token-a");
     const newHash = hashCredential("telegram-token-b");
     const registryPlan = withTelegramCredentialHash(
       makeMinimalPlan("my-assistant", "openclaw", ["telegram"]),
       oldHash,
     );
+    const validatedPlan = withTelegramCredentialHash(registryPlan, newHash);
+    let stagedPlan = registryPlan;
     const session = createSession({ sandboxName: "my-assistant", messagingPlan: registryPlan });
     const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
     const writePlanToEnv = vi.fn();
     const { deps, calls, getSession } = createDeps({
       getRecordedMessagingChannelsForResume,
       writePlanToEnv,
-      readMessagingPlanFromEnv: () => null,
+      readMessagingPlanFromEnv: () => stagedPlan,
       getRegistrySandboxMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
     });
-
-    await withEnv("TELEGRAM_BOT_TOKEN", "telegram-token-b", async () => {
-      await handleSandboxState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "my-assistant",
-      });
+    calls.setupMessaging.mockImplementation(async () => {
+      stagedPlan = validatedPlan;
+      return ["telegram"];
     });
 
-    expect(calls.setupMessaging).not.toHaveBeenCalled();
-    expect(writePlanToEnv).toHaveBeenCalledWith(
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      env: { TELEGRAM_BOT_TOKEN: "telegram-token-b" },
+    });
+
+    expect(calls.setupMessaging).toHaveBeenCalledOnce();
+    expect(writePlanToEnv).toHaveBeenLastCalledWith(
       expect.objectContaining({
         credentialBindings: [
           expect.objectContaining({

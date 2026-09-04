@@ -12,12 +12,13 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
-import path from "node:path";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
   closeServer,
   writeJsonResponse as jsonResponse,
@@ -35,7 +36,6 @@ import {
   cleanupMessagingState,
   cleanupOwnedGatewayRuntimeStrict,
   commandEnv,
-  parseOpenClawAgentText,
   stopGatewayRuntime,
 } from "./messaging-compatible-endpoint-helpers.ts";
 
@@ -45,8 +45,8 @@ const COMPATIBLE_KEY = process.env.NEMOCLAW_COMPAT_MOCK_API_KEY ?? "fake-compati
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "test-fake-telegram-token-e2e";
 const TELEGRAM_IDS = process.env.TELEGRAM_ALLOWED_IDS ?? "123456789";
 const MOCK_PORT = Number(process.env.NEMOCLAW_COMPAT_MOCK_PORT ?? "18089");
-const ONBOARD_TIMEOUT_MS = 25 * 60_000;
-const TEST_TIMEOUT_MS = 45 * 60_000;
+const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
+const TEST_TIMEOUT_MS = testTimeout(45 * 60_000);
 
 validateSandboxName(SANDBOX_NAME);
 
@@ -525,11 +525,13 @@ async function assertOpenClawAgentTurn(
   expect(leaked, `Proxy hop headers leaked to upstream: ${leaked.join(",")}`).toEqual([]);
 }
 
-test("messaging compatible endpoint routes Telegram-enabled OpenClaw through inference.local", {
+test(
+  "messaging compatible endpoint routes Telegram-enabled OpenClaw through inference.local",
+  {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
-      "confirm Docker and register messaging cleanup",
+      "confirm the selected runtime and register messaging cleanup",
       "clear prior messaging state and start the compatible endpoint",
       "confirm host reachability to the compatible endpoint",
       "onboard Telegram-enabled OpenClaw",
@@ -538,20 +540,12 @@ test("messaging compatible endpoint routes Telegram-enabled OpenClaw through inf
       "record authenticated traffic and proxy-header results",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "prereq-docker-info-messaging-compatible-endpoint",
-    env: commandEnv(),
-    timeoutMs: 30_000,
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    await runtimeProvider.requireAvailable({
+    artifactName: "prereq-runtime-info-messaging-compatible-endpoint",
+      scenarioLabel: "messaging compatible endpoint",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(
-        `Docker is required for messaging compatible endpoint E2E: ${resultText(docker)}`,
-      );
-    }
-    skip("Docker is required for messaging compatible endpoint E2E");
-  }
 
   await artifacts.target.declare({
     id: "messaging-compatible-endpoint",
@@ -670,7 +664,7 @@ test("messaging compatible endpoint routes Telegram-enabled OpenClaw through inf
     runner,
     endpointUrl,
     assertions: {
-      dockerRunning: docker.exitCode === 0,
+        runtimeProviderAvailable: true,
       mockReachable: hostReachability.exitCode === 0,
       onboardCompleted: onboard.exitCode === 0,
       providerRegistered: provider.exitCode === 0,
@@ -682,4 +676,5 @@ test("messaging compatible endpoint routes Telegram-enabled OpenClaw through inf
       ),
     },
   });
-});
+  },
+);
