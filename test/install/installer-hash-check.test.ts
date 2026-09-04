@@ -984,12 +984,31 @@ describe("installer hash verification", () => {
   });
 
   it.each([
-    ["installer", V00116_INSTALLER_ASSETS.length],
-    ["Brev launchable", V00116_BREV_ASSETS.length],
-  ] as const)("accepts the prospective v0.0.116 %s pin layout (#10790)", (consumer, count) => {
-    expect(
-      validateReleasePinLayout(v00116Pins(consumer), "0.0.116", consumer, consumer),
-    ).toHaveLength(count);
+    ["installer", V00116_INSTALLER_ASSETS],
+    ["Brev launchable", V00116_BREV_ASSETS],
+  ] as const)(
+    "accepts every asset in the prospective v0.0.116 %s pin layout (#10790)",
+    (consumer, expectedAssets) => {
+      const validatedAssets = validateReleasePinLayout(
+        v00116Pins(consumer),
+        "0.0.116",
+        consumer,
+        consumer,
+      ).map(({ asset }) => asset);
+
+      expect(validatedAssets.toSorted()).toEqual([...expectedAssets].toSorted());
+    },
+  );
+
+  it.each([
+    ...V00116_INSTALLER_ASSETS.map((asset) => ["installer", asset] as const),
+    ...V00116_BREV_ASSETS.map((asset) => ["Brev launchable", asset] as const),
+  ])("rejects a prospective v0.0.116 %s layout missing %s (#10790)", (consumer, asset) => {
+    const pins = v00116Pins(consumer).filter((pin) => pin.asset !== asset);
+
+    expect(() => validateReleasePinLayout(pins, "0.0.116", consumer, consumer)).toThrow(
+      `missing=[${asset}]`,
+    );
   });
 
   it.each([

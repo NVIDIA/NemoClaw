@@ -41,6 +41,14 @@ describe("checks runner", () => {
     });
   });
 
+  it("registers the live E2E assertion ratchet", () => {
+    expect(CHECKS).toContainEqual({
+      name: "e2e-assertion-census",
+      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
+      args: ["scripts/checks/e2e-assertion-census.mts", "--check"],
+    });
+  });
+
   it("registers the defaulted dependent flag check (#8883)", () => {
     expect(CHECKS).toContainEqual({
       name: "no-defaulted-dependent-flags",
