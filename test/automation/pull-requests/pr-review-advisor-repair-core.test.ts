@@ -33,6 +33,7 @@ import {
   validateAdvisorArtifacts,
   validateAdvisorRun,
 } from "../../../tools/pr-review-advisor-repair/select.mts";
+import { ADVISOR_FINDING_EXCLUSIONS } from "../../../tools/pr-review-advisor/finding-ledger.mts";
 import {
   assertLivePullRequestIdentity,
   assertLiveReviewStateIdentity,
@@ -266,6 +267,18 @@ describe("PR Review Advisor repair Phase 1", () => {
     expect(safeRelativePath("test/e2e/live.test.ts")).toBe(false);
     expect(repairClassForPath("package-lock.json")).toBeNull();
   });
+
+  it.each(ADVISOR_FINDING_EXCLUSIONS)(
+    "skips the shared Advisor exclusion %s (#10791)",
+    (exclusion) => {
+      const input = parseSelectionInput(
+        selectionInput({ findings: [finding({ exclusions: [exclusion] })] }),
+      );
+      expect(selectRepairAttempt(input).decisions).toEqual([
+        expect.objectContaining({ reason: `excluded:${exclusion}`, state: "skipped" }),
+      ]);
+    },
+  );
 
   it.each([
     ".gitattributes",

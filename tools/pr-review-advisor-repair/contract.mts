@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { canonicalJson, replaceControlCharacters, sha256 } from "../advisors/canonical-json.mts";
+import type { AdvisorFindingExclusion } from "../pr-review-advisor/finding-ledger.mts";
 import { type RepairContractSchemaName, repairContractSchemaErrors } from "./schemas.mts";
 
 export type { RepairContractSchemaName } from "./schemas.mts";
@@ -19,21 +20,6 @@ export const MAX_PATCH_BYTES = 2 * 1024 * 1024;
 export const MAX_CHANGED_FILES = 20;
 export const MAX_CHANGED_FILE_BYTES = 1024 * 1024;
 
-export const FINDING_EXCLUSIONS = [
-  "ambiguous-intent",
-  "author-attestation",
-  "commit-verification",
-  "credential-access",
-  "dco",
-  "dependency-change",
-  "external-mutation",
-  "maintainer-decision",
-  "product-scope",
-  "security-sensitive",
-  "unsupported-path",
-] as const;
-
-export type FindingExclusion = (typeof FINDING_EXCLUSIONS)[number];
 export type RepairClass = "source" | "test" | "documentation" | "unsupported";
 
 export type FindingInput = {
@@ -41,7 +27,7 @@ export type FindingInput = {
   repairClass: RepairClass;
   summary: string;
   path: string | null;
-  exclusions: FindingExclusion[];
+  exclusions: AdvisorFindingExclusion[];
 };
 
 export type SelectionInput = {
