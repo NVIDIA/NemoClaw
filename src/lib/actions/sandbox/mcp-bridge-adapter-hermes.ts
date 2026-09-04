@@ -6,10 +6,6 @@ import { getAgentBranding } from "../../cli/branding";
 import { waitUntil } from "../../core/wait";
 import type { McpBridgeEntry } from "../../state/registry";
 import {
-  classifyGatewayRestartFailure,
-  parseManagedGatewayControlCompletion,
-} from "./gateway-restart";
-import {
   type AdapterMutationOptions,
   type AdapterRegistrationInspection,
   inspectAdapterRegistrationCommand,
@@ -19,18 +15,13 @@ import {
   entryHeaders,
   HERMES_MCP_TRANSACTION_HELPER,
 } from "./mcp-bridge-adapter-status";
-import {
-  type McpAttachedCredentialRevision,
-  observeMcpCredentialRevision,
-} from "./mcp-bridge-provider-readiness";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
-import { executeGatewaySupervisorAction } from "./process-recovery";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
+import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 
 const HERMES_MCP_EXEC_TIMEOUT_SECONDS = 620;
 const HERMES_MCP_PROBE_TIMEOUT_SECONDS = 30;
-const HERMES_MCP_STARTUP_TIMEOUT_SECONDS = 90;
-const HERMES_MCP_RECOVERY_TIMEOUT_MS = 210_000;
 const HERMES_MCP_INITIAL_PROBE_ATTEMPTS = 3;
 const HERMES_MCP_GATEWAY_NOT_READY = "Hermes gateway is not running for managed MCP reload";
 const HERMES_MCP_LIFECYCLE_NOT_READY =
@@ -85,12 +76,14 @@ export function buildHermesMcpProbeCommand(): string[] {
 export function inspectHermesAdapterRegistration(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
 ): AdapterRegistrationInspection {
   return inspectAdapterRegistrationCommand(
     sandboxName,
     entry,
     buildHermesMcpStatusCommand(entry, credentialRevision),
+    runtimeSelection,
   );
 }
 
@@ -113,7 +106,10 @@ function parseLastJsonObject(output: string): Record<string, unknown> | null {
  * and can invoke it through OpenShell current main's ordinary exec path before
  * changing a global provider, policy, attachment, or adapter.
  */
-export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): void {
+export function assertHermesMcpMutationRuntimeCapability(
+  sandboxName: string,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): void {
   let lastDetail = "";
   const probe = (): boolean => {
     let result: ReturnType<typeof runOpenshellProviderCommand>;
@@ -126,6 +122,7 @@ export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): v
         ),
         {
           ignoreError: true,
+          runtimeSelection,
           stdio: ["ignore", "pipe", "pipe"],
           timeout: 45_000,
         },
@@ -161,55 +158,9 @@ export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): v
     return;
   }
 
-  let recovery: ReturnType<typeof executeGatewaySupervisorAction> = null;
-  let recoveryFailureDetail = "";
-  try {
-    recovery = executeGatewaySupervisorAction(
-      sandboxName,
-      "recover",
-      HERMES_MCP_RECOVERY_TIMEOUT_MS,
-    );
-  } catch (error) {
-    recoveryFailureDetail = error instanceof Error ? error.message : String(error);
-  }
-  const recoveryCompleted = parseManagedGatewayControlCompletion(recovery) !== null;
-  if (!recoveryCompleted) {
-    recoveryFailureDetail ||= recovery ? commandOutput(recovery).trim() : "no controller result";
-    const classification = classifyGatewayRestartFailure(recovery);
-    const claimsInvalidCompletion =
-      recovery !== null && (recovery.status === 0 || recovery.stdout.trim().length > 0);
-    const terminalIntegrityFailure =
-      claimsInvalidCompletion ||
-      classification.layer === "secret-boundary refusal" ||
-      classification.layer === "unsafe config path" ||
-      classification.layer === "config hash mismatch" ||
-      classification.layer === "relaunch quarantined" ||
-      classification.layer === "health timeout" ||
-      recoveryFailureDetail.includes("SUPERVISOR_REBUILD_REQUIRED") ||
-      recoveryFailureDetail.includes("SUPERVISOR_UNSAFE_CONTROL_DIR") ||
-      recoveryFailureDetail.includes("SUPERVISOR_BUSY") ||
-      recoveryFailureDetail.includes("SUPERVISOR_INVALID_") ||
-      recoveryFailureDetail.includes("GATEWAY_GUARDS_MISSING");
-    if (terminalIntegrityFailure) {
-      throw new McpBridgeError(
-        `Hermes sandbox '${sandboxName}' managed gateway recovery failed before MCP mutation: ${recoveryFailureDetail || classification.detail}.`,
-      );
-    }
-  }
-
-  // A privileged controller completion never authorizes mutation by itself.
-  // Even when transient controller unavailability lets the managed lifecycle
-  // finish naturally, the ordinary sandbox identity must freshly prove the
-  // packaged helper and a stable, trusted gateway topology before any MCP
-  // provider, policy, attachment, or adapter side effect.
-  if (!waitUntil(probe, HERMES_MCP_STARTUP_TIMEOUT_SECONDS, 1_000)) {
-    const recoveryDetail = recoveryFailureDetail
-      ? ` Managed recovery attempt did not complete: ${recoveryFailureDetail}.`
-      : "";
-    throw new McpBridgeError(
-      `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper after managed gateway recovery. Rebuild the sandbox before changing authenticated MCP state${lastDetail ? `: ${lastDetail}` : "."}${recoveryDetail}`,
-    );
-  }
+  throw new McpBridgeError(
+    `Hermes sandbox '${sandboxName}' gateway is not ready on recorded OpenShell target '${runtimeSelection.gatewayName}'. Run \`${getAgentBranding().cli} ${sandboxName} recover\` and retry. NemoClaw did not attempt host-local supervisor recovery.`,
+  );
 }
 
 function runHermesAdapterCommand(
@@ -217,6 +168,7 @@ function runHermesAdapterCommand(
   entry: McpBridgeEntry,
   command: readonly string[],
   failureMessage: string,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions & { requireReload?: boolean } = {},
 ): void {
   // OpenShell current main executes this fixed helper argv with ordinary
@@ -227,6 +179,7 @@ function runHermesAdapterCommand(
   try {
     result = runOpenshellProviderCommand(buildHermesMcpExecArgs(sandboxName, command), {
       ignoreError: true,
+      runtimeSelection,
       stdio: ["ignore", "pipe", "pipe"],
       // The remote supervisor enforces 620s; keep a small transport margin so
       // remote termination is observed before this local subprocess is killed.
@@ -274,9 +227,15 @@ function runHermesAdapterCommand(
 function verifyHermesAdapterRegistration(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
 ): void {
-  const inspection = inspectHermesAdapterRegistration(sandboxName, entry, credentialRevision);
+  const inspection = inspectHermesAdapterRegistration(
+    sandboxName,
+    entry,
+    runtimeSelection,
+    credentialRevision,
+  );
   if (inspection.state === "registered") return;
   const detail = inspection.state === "error" ? inspection.detail : inspection.state;
   throw new McpBridgeError(
@@ -287,6 +246,7 @@ function verifyHermesAdapterRegistration(
 export function registerHermesAdapter(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   envValues: Record<string, string> = {},
   replaceExisting = false,
   credentialRevision?: McpAttachedCredentialRevision,
@@ -296,35 +256,16 @@ export function registerHermesAdapter(
     entry,
     buildHermesMcpRegisterCommand(entry, replaceExisting, credentialRevision),
     `Hermes MCP config registration failed for '${entry.server}'.`,
+    runtimeSelection,
     { envValues, requireReload: true },
   );
-  verifyHermesAdapterRegistration(sandboxName, entry, credentialRevision);
-  if (credentialRevision === undefined) return;
-  const afterReloadRevision = observeMcpCredentialRevision(sandboxName, entry);
-  if (afterReloadRevision === credentialRevision) return;
-  if (afterReloadRevision === "absent" || afterReloadRevision === "canonical") {
-    throw new McpBridgeError(
-      `Hermes MCP credential revision was unavailable after reloading '${entry.server}'.`,
-    );
-  }
-  runHermesAdapterCommand(
-    sandboxName,
-    entry,
-    buildHermesMcpRegisterCommand(entry, true, afterReloadRevision),
-    `Hermes MCP config convergence failed for '${entry.server}'.`,
-    { envValues, requireReload: true },
-  );
-  verifyHermesAdapterRegistration(sandboxName, entry, afterReloadRevision);
-  if (observeMcpCredentialRevision(sandboxName, entry) !== afterReloadRevision) {
-    throw new McpBridgeError(
-      `Hermes MCP credential revision did not converge after reloading '${entry.server}'.`,
-    );
-  }
+  verifyHermesAdapterRegistration(sandboxName, entry, runtimeSelection, credentialRevision);
 }
 
 export function unregisterHermesAdapter(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions = {},
 ): void {
   runHermesAdapterCommand(
@@ -332,6 +273,7 @@ export function unregisterHermesAdapter(
     entry,
     buildHermesMcpRemoveCommand(entry, options.force === true),
     `Hermes MCP config removal failed for '${entry.server}'.`,
+    runtimeSelection,
     options,
   );
 }

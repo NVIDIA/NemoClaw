@@ -32,6 +32,7 @@ type FinalDestroyGatewayCleanupInput = {
 };
 
 type FinalDestroyGatewayCleanupDeps = {
+  captureOpenshell?: LiveSandboxListProbe;
   listSandboxes?: SandboxListProvider;
   liveSandboxProbe?: LiveSandboxProbe;
   timeoutMs?: number;
@@ -109,6 +110,7 @@ export function shouldCleanupGatewayAfterConfirmedFinalDestroy(
     input.removedRegistryEntry &&
     noRegisteredSandboxes &&
     liveSandboxProbe({
+      ...(deps.captureOpenshell ? { captureOpenshell: deps.captureOpenshell } : {}),
       timeoutMs,
     });
 
