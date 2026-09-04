@@ -70,7 +70,8 @@ vi.mock("../../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
   runOpenshell: testState.runOpenshell,
 }));
 
-vi.mock("../../src/lib/gateway-runtime-action", () => ({
+vi.mock("../../src/lib/gateway-runtime-action", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/gateway-runtime-action")>()),
   recoverNamedGatewayRuntime: testState.recoverNamedGatewayRuntime,
 }));
 

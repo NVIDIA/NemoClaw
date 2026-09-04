@@ -461,7 +461,10 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       statusCalls: Array<{
         sandboxName: string;
         server: string;
-        options: { probeCredentialResolution: boolean };
+        options: {
+          probeCredentialResolution: boolean;
+          runtimeSelection: { gatewayName: string; workspace: string };
+        };
       }>;
     };
   };
@@ -490,7 +493,10 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         {
           sandboxName: "alpha",
           server: "example",
-          options: { probeCredentialResolution: true },
+          options: {
+            probeCredentialResolution: true,
+            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+          },
         },
       ],
     });
@@ -520,7 +526,10 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         {
           sandboxName: "alpha",
           server: "example",
-          options: { probeCredentialResolution: true },
+          options: {
+            probeCredentialResolution: true,
+            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+          },
         },
       ],
     });
@@ -541,7 +550,10 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         {
           sandboxName: "alpha",
           server: "example",
-          options: { probeCredentialResolution: true },
+          options: {
+            probeCredentialResolution: true,
+            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+          },
         },
       ],
     });
@@ -567,7 +579,10 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         {
           sandboxName: "alpha",
           server: "example",
-          options: { probeCredentialResolution: true },
+          options: {
+            probeCredentialResolution: true,
+            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+          },
         },
       ],
     });
@@ -602,12 +617,18 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         {
           sandboxName: "alpha",
           server: "example",
-          options: { probeCredentialResolution: true },
+          options: {
+            probeCredentialResolution: true,
+            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+          },
         },
         {
           sandboxName: "alpha",
           server: "later",
-          options: { probeCredentialResolution: true },
+          options: {
+            probeCredentialResolution: true,
+            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+          },
         },
       ]),
     );

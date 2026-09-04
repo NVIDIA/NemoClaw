@@ -59,6 +59,11 @@ const providerRestore = vi.hoisted(() => {
     return { phase: "validated" };
   });
   const restoreDeepAgentsManagedMcpProjection = vi.fn();
+  const runtimeSelection = {
+    gatewayName: "nemoclaw",
+    workspace: "default",
+  };
+  const getMcpProviderInspectionRuntimeSelection = vi.fn(() => runtimeSelection);
   return {
     events,
     source,
@@ -67,7 +72,9 @@ const providerRestore = vi.hoisted(() => {
     requireCurrentSnapshotRuntimeProvider,
     prepareSandboxRuntimeRestore,
     confirmSandboxRuntimeRestore,
+    getMcpProviderInspectionRuntimeSelection,
     restoreDeepAgentsManagedMcpProjection,
+    runtimeSelection,
   };
 });
 
@@ -76,6 +83,8 @@ vi.mock("./snapshot/dependencies", () => ({
   backupSandboxStateWithManagedAuthority: vi.fn(),
   captureSandboxRuntimeSnapshot: vi.fn(),
   confirmSandboxRuntimeRestore: providerRestore.confirmSandboxRuntimeRestore,
+  getMcpProviderInspectionRuntimeSelection:
+    providerRestore.getMcpProviderInspectionRuntimeSelection,
   prepareManagedSnapshotProfileRestore: providerRestore.prepareManagedSnapshotProfileRestore,
   prepareSandboxRuntimeRestore: providerRestore.prepareSandboxRuntimeRestore,
   readManagedSnapshotProfileAuthority: providerRestore.readManagedSnapshotProfileAuthority,
@@ -122,6 +131,7 @@ beforeEach(() => {
   providerRestore.requireCurrentSnapshotRuntimeProvider.mockClear();
   providerRestore.prepareSandboxRuntimeRestore.mockClear();
   providerRestore.confirmSandboxRuntimeRestore.mockClear();
+  providerRestore.getMcpProviderInspectionRuntimeSelection.mockClear();
   providerRestore.restoreDeepAgentsManagedMcpProjection.mockClear();
   fixture.getLatestBackupMock.mockReturnValue(managedSnapshot());
   fixture.getSandboxMock.mockReturnValue({
@@ -160,12 +170,12 @@ afterEach(() => {
 
 describe("managed snapshot provider restore ordering", () => {
   it.each([
-    { agent: "openclaw" as const, providerChecks: 2 },
-    { agent: "hermes" as const, providerChecks: 2 },
-    { agent: "langchain-deepagents-code" as const, providerChecks: 3 },
+    { agent: "openclaw" as const, providerChecks: 2, projectionRepairs: 0 },
+    { agent: "hermes" as const, providerChecks: 2, projectionRepairs: 0 },
+    { agent: "langchain-deepagents-code" as const, providerChecks: 3, projectionRepairs: 1 },
   ])(
     "refreshes $agent provider authority at each mutation edge and proves the profile",
-    async ({ agent, providerChecks }) => {
+    async ({ agent, providerChecks, projectionRepairs }) => {
       fixture.getLatestBackupMock.mockReturnValue(managedSnapshot(agent));
       fixture.getSandboxMock.mockReturnValue({
         name: "alpha",
@@ -190,6 +200,12 @@ describe("managed snapshot provider restore ordering", () => {
       ]);
       expect(providerRestore.prepareSandboxRuntimeRestore).toHaveBeenCalledTimes(providerChecks);
       expect(providerRestore.confirmSandboxRuntimeRestore).toHaveBeenCalledOnce();
+      expect(providerRestore.getMcpProviderInspectionRuntimeSelection).toHaveBeenCalledTimes(
+        projectionRepairs,
+      );
+      expect(providerRestore.restoreDeepAgentsManagedMcpProjection).toHaveBeenCalledTimes(
+        projectionRepairs,
+      );
     },
   );
 
