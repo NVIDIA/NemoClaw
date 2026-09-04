@@ -84,6 +84,8 @@ export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
     waivedFindingIds: [],
   };
 };
+exports.hasExplicitDeferredN1xOnboardingIntent = (env) =>
+  env.NEMOCLAW_PROVIDER === "install-vllm" || env.NEMOCLAW_NO_EXPRESS === "1";
 `,
   );
   fs.writeFileSync(

@@ -841,6 +841,32 @@ describe("sandbox base-image warm resolution", () => {
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
+  it("rejects a local fallback when a rebuild requires the pinned image (#10903)", () => {
+    const options = resolutionOptions();
+    const provenance = `${createSandboxBaseImageBuildProvenanceKey(options)}.${"c".repeat(64)}`;
+    mockLocalFallback(options, provenance);
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...options,
+        pinnedRemoteRef: REF,
+        requirePinnedRemoteRef: true,
+        allowLocalFallback: false,
+      }),
+    ).toThrow("Local base image fallback is disabled for this operation.");
+
+    expect(dockerMocks.pull).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.imageInspect).toHaveBeenCalledTimes(1);
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
   it("rebuilds changed inputs before using a Dockerfile-pinned baseline (#4680)", () => {
     sourceMocks.inputsChanged.mockReturnValue(true);
     dockerMocks.imageInspect.mockReturnValue({ status: 1 });

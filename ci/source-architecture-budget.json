@@ -9,7 +9,7 @@
       "src/lib/adapters/openshell/client.ts": 21,
       "src/lib/adapters/openshell/command-argv.ts": 23,
       "src/lib/adapters/openshell/resolve.ts": 25,
-      "src/lib/adapters/openshell/runtime.ts": 54,
+      "src/lib/adapters/openshell/runtime.ts": 53,
       "src/lib/adapters/openshell/timeouts.ts": 33,
       "src/lib/agent/defs.ts": 32,
       "src/lib/cli/branding.ts": 80,
@@ -62,7 +62,7 @@
   "maxRootFiles": {
     "src/lib/onboard": 301,
     "src/lib/actions": 18,
-    "src/lib/actions/sandbox": 179,
+    "src/lib/actions/sandbox": 178,
     "src/lib/state": 38,
     "src/lib/inference": 63,
     "scripts": 42

@@ -171,6 +171,10 @@ describe("reviewed npm audit receipt", () => {
         fs.writeFileSync(path.join(root, "package-lock.json"), inputs.packageLock);
         fs.writeFileSync(path.join(root, "exceptions.json"), inputs.exceptionPolicy);
         fs.writeFileSync(path.join(root, "raw.json"), inputs.rawResponse);
+        fs.writeFileSync(
+          path.join(root, "reviewed-npm-audit.json"),
+          JSON.stringify({ npmVersion: inputs.npmVersion }),
+        );
         const auditReceipt = legacy
           ? {
               ...receipt(new Date()),
@@ -194,8 +198,8 @@ describe("reviewed npm audit receipt", () => {
           path.join(root, "exceptions.json"),
           "--graph",
           inputs.graphId,
-          "--npm-version",
-          inputs.npmVersion,
+          "--audit-config",
+          path.join(root, "reviewed-npm-audit.json"),
           "--registry",
           registry,
           "--threshold",
@@ -216,4 +220,59 @@ describe("reviewed npm audit receipt", () => {
       }
     },
   );
+
+  it("rejects the removed raw-copy option before writing either output", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "receipt-removed-option-"));
+    const resultFile = path.join(root, "policy.json");
+    const rawCopyFile = path.join(root, "copied-raw.json");
+    try {
+      fs.writeFileSync(path.join(root, "package.json"), inputs.packageJson);
+      fs.writeFileSync(path.join(root, "package-lock.json"), inputs.packageLock);
+      fs.writeFileSync(path.join(root, "exceptions.json"), inputs.exceptionPolicy);
+      fs.writeFileSync(path.join(root, "raw.json"), inputs.rawResponse);
+      fs.writeFileSync(
+        path.join(root, "reviewed-npm-audit.json"),
+        JSON.stringify({ npmVersion: inputs.npmVersion }),
+      );
+      fs.writeFileSync(path.join(root, "receipt.json"), canonicalAuditReceipt(receipt(new Date())));
+
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--experimental-strip-types",
+          path.join(import.meta.dirname, "../../../scripts/lib/npm-audit-receipt.mts"),
+          "--receipt",
+          path.join(root, "receipt.json"),
+          "--package-json",
+          path.join(root, "package.json"),
+          "--package-lock",
+          path.join(root, "package-lock.json"),
+          "--raw-report",
+          path.join(root, "raw.json"),
+          "--exceptions",
+          path.join(root, "exceptions.json"),
+          "--graph",
+          inputs.graphId,
+          "--audit-config",
+          path.join(root, "reviewed-npm-audit.json"),
+          "--registry",
+          inputs.registryOrigin,
+          "--threshold",
+          inputs.severityThreshold,
+          "--result",
+          resultFile,
+          "--raw-copy",
+          rawCopyFile,
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("unexpected or missing keys");
+      expect(fs.existsSync(resultFile)).toBe(false);
+      expect(fs.existsSync(rawCopyFile)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
