@@ -352,7 +352,20 @@ def _run_gateway_guard(guard_path: str) -> int:
             file=sys.stderr,
         )
         return 127
-    return subprocess.call([python3, "-I", guard_path, "runtime-env"])
+    logical_env = dict(os.environ)
+    env = dict(logical_env)
+    for key in tuple(env):
+        if key in _GATEWAY_PACKAGE_ENV_KEYS or key.startswith(_GATEWAY_PACKAGE_ENV_PREFIXES):
+            env.pop(key, None)
+    payload = json.dumps(
+        logical_env, ensure_ascii=True, separators=(",", ":")
+    ).encode("ascii")
+    return subprocess.run(
+        [python3, "-I", guard_path, "runtime-env-json"],
+        input=payload,
+        env=env,
+        check=False,
+    ).returncode
 
 
 def _harden_root_separated_gateway_package_env() -> None:
@@ -784,12 +797,12 @@ def main(argv: list[str]) -> int:
             return 1
         os.environ["HERMES_HOME"] = _MANAGED_HERMES_HOME
         os.environ["HERMES_BUNDLED_PLUGINS"] = _MANAGED_BUNDLED_PLUGINS
-        os.environ["HERMES_LAZY_INSTALL_TARGET"] = _GATEWAY_LAZY_INSTALL_TARGET
         os.environ["HOME"] = _MANAGED_HOME
-        _harden_root_separated_gateway_package_env()
         rc = _run_gateway_guard(guard_path)
         if rc != 0:
             return rc
+        if os.environ.get("HERMES_LAZY_INSTALL_TARGET") == _GATEWAY_LAZY_INSTALL_TARGET:
+            _harden_root_separated_gateway_package_env()
     try:
         adapter = _load_cli_adapter(_resolve_cli_adapter())
         adapter_result, exec_argv = _adapt_cli_argv(argv, adapter)
