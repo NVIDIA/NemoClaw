@@ -236,7 +236,7 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
       ),
     ).toEqual(recorded);
     expect(capture).not.toHaveBeenCalled();
-    expect(readFile).not.toHaveBeenCalled();
+    expect(readFile).toHaveBeenCalledOnce();
   });
 
   it("rejects retained file proof when Podman executable metadata drifts", () => {
