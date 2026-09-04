@@ -5,7 +5,7 @@ import { VLLM_PORT } from "../../core/vllm-port";
 import {
   checkOpenAiInferenceProviderProfile,
   OPENAI_GATEWAY_PROVIDER_TYPE,
-} from "../../adapters/openshell/provider-profile";
+} from "../../adapters/openshell/provider-profile-registration";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { RunOpenshell, UpsertProvider, UpsertProviderResult } from "./types";
 

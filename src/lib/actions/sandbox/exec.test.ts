@@ -304,7 +304,7 @@ describe("validateWorkdirOrFail", () => {
 // (#5978): proves the breadcrumb fires for a denied failure while the command's
 // exit code is preserved, and stays silent on success and unrelated failures.
 // All host seams are injected so the test never spawns openshell or touches the
-// registry/shields (getSandbox returns null → cleanup is a no-op).
+// registry (getSandbox returns null, so cleanup is a no-op).
 describe("execSandbox policy-denial hint wiring (#5978)", () => {
   const START_MS = 1_000_000;
   // Epoch [1000.500] parses to 1000500ms, at/after START so it is "fresh".
@@ -437,15 +437,28 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
   });
 
   it("emits after active OpenClaw cleanup and preserves the command exit code", async () => {
-    const inspectMutableConfigPerms = vi.fn(() => ({
-      applies: false as const,
-      skipReason: "locked" as const,
-      reason: "shields up",
-    }));
+    const inspectMutableConfigPerms = vi
+      .fn<SandboxExecCleanupDeps["inspectMutableConfigPerms"]>()
+      .mockReturnValueOnce({
+        applies: false,
+        skipReason: "unavailable",
+        reason: "container unavailable",
+      })
+      .mockReturnValueOnce({
+        applies: true,
+        ok: true,
+        dirMode: "2770",
+        dirOwner: "sandbox:sandbox",
+        fileMode: "660",
+        fileOwner: "sandbox:sandbox",
+        configDir: "/sandbox/.openclaw",
+        configFile: "openclaw.json",
+        issues: [],
+      });
     const repairMutableConfigPerms = vi.fn(() => ({
-      applied: false as const,
-      skipReason: "locked" as const,
-      reason: "shields up",
+      applied: true as const,
+      verified: true as const,
+      errors: [],
     }));
     const { exitCode, stderr } = await runExec(56, DENIAL_LINE, {
       cleanupDeps: {
@@ -454,7 +467,7 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
         repairMutableConfigPerms,
       },
     });
-    expect(inspectMutableConfigPerms).toHaveBeenCalledOnce();
+    expect(inspectMutableConfigPerms).toHaveBeenCalledTimes(2);
     expect(repairMutableConfigPerms).toHaveBeenCalledOnce();
     expect(exitCode).toBe(56);
     expect(stderr.join("\n")).toContain("recent network policy denial detected");

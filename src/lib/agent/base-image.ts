@@ -316,7 +316,7 @@ export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
       imageRef,
       "-I",
       "-c",
-      `import importlib.metadata as metadata; import sys; import acp; import mcp; from acp_adapter.server import HermesACPAgent; from tools import mcp_tool; metadata.version("agent-client-protocol") == "0.9.0" or sys.exit(1); getattr(mcp_tool, "_MCP_AVAILABLE", False) or sys.exit(1); getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False) or sys.exit(1); print("${HERMES_MCP_RUNTIME_PROBE_OK}")`,
+      `import importlib.metadata as metadata; import sys; import acp; import mcp; from acp_adapter.server import HermesACPAgent; from tools import mcp_tool; metadata.version("agent-client-protocol") == "0.9.0" or sys.exit(1); mcp_tool._ensure_mcp_sdk() or sys.exit(1); getattr(mcp_tool, "_MCP_AVAILABLE", False) or sys.exit(1); getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False) or sys.exit(1); print("${HERMES_MCP_RUNTIME_PROBE_OK}")`,
     ],
     { ignoreError: true, timeout: 20_000 },
   );
@@ -357,7 +357,7 @@ function createAgentBaseImageResolutionOptions(
     forceRefresh: options.forceBaseImageRefresh,
     rootDir: ROOT,
     pinnedRemoteRef,
-    preferPinnedRemoteRef: agent.name === "hermes" && pinnedRemoteRef !== undefined,
+    requirePinnedRemoteRef: agent.name === "hermes" && pinnedRemoteRef !== undefined,
     ...validationOptions,
   };
 }
@@ -624,7 +624,7 @@ export function ensureAgentBaseImage(
           `Hermes final image does not accept base image ref '${pinnedBaseImageTag}'; use the tracked official digest or a repository-built local base`,
         );
       }
-      console.log(`  \u2713 Base image built: ${pinnedBaseImageTag}`);
+      console.log("  \u2713 Base image built.");
       const resolutionMetadata = createLocalResolutionMetadata(
         resolutionOptions,
         pinnedBaseImageTag,
@@ -711,7 +711,7 @@ export function ensureAgentBaseImage(
         : ` (exit ${buildResult.status ?? "unknown"})`;
       throw new Error(`Failed to build ${agent.displayName} base image${detail}`);
     }
-    console.log(`  \u2713 Base image built: ${baseImageTag}`);
+    console.log("  \u2713 Base image built.");
     const resolutionMetadata = createLocalResolutionMetadata(resolutionOptions, baseImageTag);
     return {
       imageTag: baseImageTag,
@@ -720,7 +720,7 @@ export function ensureAgentBaseImage(
     };
   }
 
-  console.log(`  Base image exists: ${baseImageTag}`);
+  console.log("  Base image exists.");
   const resolutionMetadata = createLocalResolutionMetadata(resolutionOptions, baseImageTag);
   return {
     imageTag: baseImageTag,

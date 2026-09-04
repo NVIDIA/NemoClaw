@@ -225,14 +225,14 @@ describe("handlePreflightState", () => {
   it("rejects changed gateway ownership before cached resume probe effects (#7411)", async () => {
     const session = createSession();
     session.steps.preflight.status = "complete";
-    const assertDockerBridgeAndContainerDnsHealthy = vi.fn();
+    const assertRuntimeProviderHealthy = vi.fn();
     const detectGpu = vi.fn(() => ({ type: "nvidia" }) as Gpu);
     const harness = createDeps({
       assertGatewayReadiness: vi.fn(async () => {
         throw new Error("gateway ownership changed");
       }),
       detectGpu,
-      assertDockerBridgeAndContainerDnsHealthy,
+      assertRuntimeProviderHealthy,
     });
 
     await expect(
@@ -242,7 +242,7 @@ describe("handlePreflightState", () => {
       }),
     ).rejects.toThrow("gateway ownership changed");
     expect(detectGpu).not.toHaveBeenCalled();
-    expect(assertDockerBridgeAndContainerDnsHealthy).not.toHaveBeenCalled();
+    expect(assertRuntimeProviderHealthy).not.toHaveBeenCalled();
   });
 
   it("admits live host and gateway facts and presents advisories before a cached resume GPU proof (#7411)", async () => {
@@ -271,10 +271,8 @@ describe("handlePreflightState", () => {
         calls.push("gpu-runtime-proof");
         return { type: "nvidia" } as Gpu;
       },
-      validateSandboxGpuPreflight: () => {
+      assertRuntimeProviderHealthy: () => {
         calls.push("gpu-validation");
-      },
-      assertDockerBridgeAndContainerDnsHealthy: () => {
         calls.push("bridge-dns");
       },
     });
@@ -425,7 +423,7 @@ describe("handlePreflightState", () => {
         throw new Error("host observations are stale");
       },
       detectGpu,
-      assertDockerBridgeAndContainerDnsHealthy: bridge,
+      assertRuntimeProviderHealthy: bridge,
     });
 
     await expect(

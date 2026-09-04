@@ -5,6 +5,7 @@ import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/co
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
 import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
+export { isSandboxPolicyCredentialFree } from "../../../policy/sandbox-policy-validation";
 import type { SandboxEntry } from "../../../state/registry/types";
 
 export {
@@ -21,6 +22,8 @@ export type {
 } from "../../../onboard/workload/clone";
 export { backupSandboxStateWithManagedAuthority } from "./backup-authority";
 export { createSnapshotCloneLifecycle, fingerprintSandboxLiveIdentity } from "./clone-lifecycle";
+export { restoreDeepAgentsManagedMcpProjection } from "../mcp-bridge-adapter-deepagents-registration";
+export { getMcpProviderInspectionRuntimeSelection } from "../mcp-bridge-provider-inspection";
 export type {
   ManagedCloneProviderBinding,
   ManagedCloneProviderCleanupResult,
@@ -62,10 +65,7 @@ export function requireCurrentSnapshotRuntimeProvider(
 
 export function assertSandboxSnapshotCommandAvailable(
   sandboxName: string,
-  commandId:
-    | "sandbox:snapshot:create"
-    | "sandbox:snapshot:list"
-    | "sandbox:snapshot:restore",
+  commandId: "sandbox:snapshot:create" | "sandbox:snapshot:list" | "sandbox:snapshot:restore",
 ): void {
   assertHermesPortableCommandUnavailable(sandboxName, commandId);
 }

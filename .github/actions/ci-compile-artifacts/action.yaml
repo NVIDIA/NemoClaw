@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: ci-compile-artifacts
+description: Install dependencies, then compile and verify fixed CLI and plugin outputs.
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: "22"
+        cache: npm
+        cache-dependency-path: |
+          package-lock.json
+          nemoclaw/package-lock.json
+
+    - name: Install dependencies
+      shell: bash
+      env:
+        NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && github.token || '' }}
+      run: bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"
+
+    - name: Compile and verify outputs
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        : "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE must name the source checkout}"
+        cd -- "$GITHUB_WORKSPACE"
+
+        test -f package-lock.json
+        test -f nemoclaw/package-lock.json
+
+        npm run clean:cli
+        npm --prefix nemoclaw run clean
+        npm --prefix nemoclaw run build
+        npm run build:cli
+        npx tsx scripts/check-dist-sourcemaps.mts dist
+
+        test -s dist/nemoclaw.js
+        test -s nemoclaw/dist/index.js
+        test -s nemoclaw/dist/shared/sandbox-name.cjs

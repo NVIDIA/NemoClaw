@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
-
 import {
   openClawAgentResponseRecord,
   parseOpenClawJsonDocuments,
 } from "../../../src/lib/openclaw/agent-json-provenance.ts";
+import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -43,7 +42,7 @@ export const MAX_TURN_SECONDS = positiveInt(process.env.NEMOCLAW_TURN_LATENCY_MA
 const INSTALL_ATTEMPTS = turnLatencyInstallAttemptCount(
   process.env.NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS,
 );
-const INSTALL_TIMEOUT_MS = 30 * 60_000;
+const INSTALL_TIMEOUT_MS = execTimeout(30 * 60_000);
 
 type AgentTurnProgress = Pick<TestProgress, "activity" | "event" | "onOutput">;
 
@@ -315,7 +314,7 @@ export async function installSandbox(
     emitProgressEvent(
       progress,
       install.timedOut
-        ? `${attemptLabel} timeout fired at the 30-minute limit`
+        ? `${attemptLabel} timeout fired at the ${INSTALL_TIMEOUT_MS / 60_000}-minute limit`
         : `${attemptLabel} ${install.exitCode === 0 ? "passed" : "failed"}`,
     );
     const retry =

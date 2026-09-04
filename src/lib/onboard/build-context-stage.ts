@@ -96,6 +96,22 @@ export function stageCreateSandboxBuildContext(
     // never satisfy it. Stage it exactly like the managed build instead of
     // failing at the first COPY (#7205).
     const agentDockerfile = input.agent?.dockerfilePath ?? null;
+    const defaultDockerfile = path.join(input.root, "Dockerfile");
+    if (!input.agent && isSameFile(fromResolved, defaultDockerfile)) {
+      // OpenClaw is represented by a null agent. Treat only the exact default
+      // repository Dockerfile as the generated source that the default path
+      // already trusts; every other caller-supplied Dockerfile remains custom.
+      log(`  Using trusted OpenClaw Dockerfile: ${fromResolved}`);
+      log("  Staging the repository root as the default OpenClaw build context.");
+      build = (input.stageDefaultSandboxBuildContext ?? stageOptimizedSandboxBuildContext)(
+        input.root,
+      );
+      return {
+        ...build,
+        origin: "generated",
+        cleanupBuildCtx: createCleanupBuildContext(build.buildCtx),
+      };
+    }
     if (input.agent && agentDockerfile && isSameFile(fromResolved, agentDockerfile)) {
       log(`  Using trusted ${input.agent.displayName} Dockerfile: ${fromResolved}`);
       log(`  Staging the repository root as the managed ${input.agent.displayName} build context.`);

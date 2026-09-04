@@ -20,7 +20,7 @@ describe("getLiveGatewayInference", () => {
     });
 
     expect(getLiveGatewayInference(capture)).toEqual({
-      args: ["inference", "get", "-g", "nemoclaw"],
+      failure: null,
       inference: { provider: "nvidia-prod", model: "nvidia/model" },
       output: "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/model",
       status: 0,
@@ -37,6 +37,63 @@ describe("getLiveGatewayInference", () => {
     expect(getLiveGatewayInference(capture).inference).toEqual({
       provider: "openai-api",
       model: "gpt-5.4",
+    });
+    expect(capture.mock.calls.map(([args]) => args)).toEqual([
+      ["inference", "get", "-g", "nemoclaw"],
+      ["inference", "get"],
+    ]);
+  });
+
+  it("does not query an unscoped gateway after a named non-default lookup fails (#10671)", () => {
+    const capture = vi.fn().mockReturnValue({ status: 1, output: "" });
+
+    expect(getLiveGatewayInference(capture, { gatewayName: "nemoclaw-19090" })).toMatchObject({
+      failure: "exit",
+      inference: null,
+      status: 1,
+    });
+    expect(capture).toHaveBeenCalledExactlyOnceWith(
+      ["inference", "get", "-g", "nemoclaw-19090"],
+      { ignoreError: true, timeout: undefined },
+    );
+  });
+
+  it.each([
+    { label: "heading-free", output: "unexpected format" },
+    { label: "heading with unknown fields", output: "Gateway inference:\n  Unexpected: value" },
+  ] as const)("classifies $label successful output as a lookup failure (#10671)", ({ output }) => {
+    const capture = vi.fn().mockReturnValue({ status: 0, output });
+
+    expect(getLiveGatewayInference(capture, { gatewayName: "nemoclaw-19090" })).toMatchObject({
+      failure: "output",
+      inference: null,
+      status: 0,
+    });
+  });
+
+  it.each([
+    { label: "provider-only", output: "Gateway inference:\n  Provider: nvidia-prod" },
+    { label: "model-only", output: "Gateway inference:\n  Model: nvidia/model" },
+  ] as const)("classifies $label gateway output as a lookup failure (#10671)", ({ output }) => {
+    const capture = vi.fn().mockReturnValue({ status: 0, output });
+
+    expect(getLiveGatewayInference(capture, { gatewayName: "nemoclaw-19090" })).toMatchObject({
+      failure: "output",
+      inference: null,
+      status: 0,
+    });
+  });
+
+  it("recognizes the legacy unconfigured inference section after fallback (#10671)", () => {
+    const capture = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, output: "" })
+      .mockReturnValueOnce({ status: 0, output: "Inference:\n\n  Not configured" });
+
+    expect(getLiveGatewayInference(capture)).toMatchObject({
+      failure: null,
+      inference: null,
+      status: 0,
     });
     expect(capture.mock.calls.map(([args]) => args)).toEqual([
       ["inference", "get", "-g", "nemoclaw"],

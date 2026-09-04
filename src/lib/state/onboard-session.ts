@@ -75,6 +75,7 @@ import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import { nemoclawStateRoot } from "./state-root";
 
 export { normalizePersistedSandboxHostMounts } from "./registry/host-mount";
+export type { RetainedSandboxRecoveryRecord } from "./onboard-session/retained-sandbox-recovery";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;

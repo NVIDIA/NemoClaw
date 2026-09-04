@@ -6,7 +6,7 @@ import { isIP } from "node:net";
 
 import YAML from "yaml";
 
-import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
+import { isPrivateHostname, OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
 import {
   assertTrustedPrivateEndpointCapability,
   assertEndpointResolvesPublic,
@@ -158,6 +158,22 @@ function collectEndpointReferences(document: unknown): EndpointReference[] {
   return references;
 }
 
+export function findUntrustedPrivatePolicyEndpointHost(
+  document: unknown,
+  trustedHosts?: ReadonlySet<string>,
+): string | null {
+  for (const { host } of collectEndpointReferences(document)) {
+    if (
+      !isHostGatewayBridge(host) &&
+      isPrivateHostname(host) &&
+      trustedHosts?.has(host) !== true
+    ) {
+      return host;
+    }
+  }
+  return null;
+}
+
 function normalizeDeclarations(values: readonly string[], rejectDuplicates: boolean): string[] {
   const normalized: string[] = [];
   const seen = new Set<string>();
@@ -187,14 +203,8 @@ export async function prepareTrustedPrivatePolicyPresets(
   declarations: readonly string[],
   dependencies: TrustedPrivatePolicyPreparationDependencies = {},
 ): Promise<ExternalPolicyPreset[]> {
-  if (declarations.length === 0) return presets.map((preset) => ({ ...preset }));
-
   const trustedHosts = normalizeDeclarations(declarations, false);
-  const requiredHosts = normalizeDeclarations(
-    dependencies.requiredDeclarations ?? declarations,
-    true,
-  );
-  const requiredHostSet = new Set(requiredHosts);
+  const trustedHostSet = new Set(trustedHosts);
   const parsedPresets = presets.map((preset) => {
     const document = YAML.parse(preset.content) as unknown;
     if (!isObjectRecord(document)) {
@@ -211,8 +221,25 @@ export async function prepareTrustedPrivatePolicyPresets(
         );
       }
     }
+    const untrustedPrivateHost = findUntrustedPrivatePolicyEndpointHost(
+      document,
+      trustedHostSet,
+    );
+    if (untrustedPrivateHost) {
+      throw new Error(
+        `Preset '${preset.presetName}' endpoint host '${untrustedPrivateHost}' is rejected. Add explicit trust only for RFC1918, CGNAT, or IPv6 unique local destinations.`,
+      );
+    }
     return { preset, document, references, injectedEndpoints: new Set<Record<string, unknown>>() };
   });
+
+  if (declarations.length === 0) return presets.map((preset) => ({ ...preset }));
+
+  const requiredHosts = normalizeDeclarations(
+    dependencies.requiredDeclarations ?? declarations,
+    true,
+  );
+  const requiredHostSet = new Set(requiredHosts);
 
   const referencesByHost = new Map<string, EndpointReference[]>();
   for (const host of trustedHosts) referencesByHost.set(host, []);

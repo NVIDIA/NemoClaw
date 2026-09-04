@@ -4,10 +4,12 @@
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
+import { getPersistedSandboxTargetGatewayName } from "../actions/sandbox/gateway-target";
 import {
   type InferenceEndpointSource,
   normalizeInferenceEndpointSource,
 } from "../inference/selection";
+import { getLiveGatewayInference } from "../inference/live";
 
 export type RemoteProviderConfigEntryLike = { providerName?: string };
 
@@ -97,10 +99,8 @@ export function providerNameToOptionKey(
 }
 
 export interface ProviderRecoveryDeps {
-  parseGatewayInference(
-    output: string | null,
-  ): { provider: string | null; model: string | null } | null;
-  runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
+  captureOpenshell: Parameters<typeof getLiveGatewayInference>[0];
+  selectedGatewayName: () => string;
   warn?(message: string): void;
 }
 
@@ -259,11 +259,16 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
       // that the gateway will swap to on their next connect.
       const trustGateway = sandboxName === defaultSandbox || sandboxes.length === 0;
       if (!trustGateway) return null;
-      const output = deps.runCaptureOpenshell(["inference", "get"], { ignoreError: true });
+      const sandbox = sandboxes.find((entry) => entry.name === sandboxName);
+      const live = getLiveGatewayInference(deps.captureOpenshell, {
+        gatewayName: sandbox
+          ? getPersistedSandboxTargetGatewayName(sandbox)
+          : deps.selectedGatewayName(),
+      }).inference;
       // `openshell inference get` is a display boundary, not a typed API.
       // Accept it only when both routing fields are complete, bounded, and safe;
       // partial or malformed output must not steer a rebuild.
-      return validateLiveGatewayInference(deps.parseGatewayInference(output));
+      return validateLiveGatewayInference(live);
     } catch {
       return null;
     }

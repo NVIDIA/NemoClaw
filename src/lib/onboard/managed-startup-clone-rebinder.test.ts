@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+
 import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../messaging/manifest";
@@ -15,6 +17,7 @@ import {
   buildManagedStartupProfile,
   type ManagedStartupProfileBuilderInput,
 } from "./managed-startup/profile-builder";
+import { encodeManagedStartupProfile } from "./managed-startup/profile";
 
 function messagingPlan(agent: "openclaw" | "hermes", sandboxName = "source"): SandboxMessagingPlan {
   return {
@@ -112,6 +115,7 @@ function hermesInput(): ManagedStartupProfileBuilderInput {
       agent: "hermes",
       mode: "loopback-forwarded",
       url: "http://127.0.0.1:19189",
+      browserUrl: "https://secure-link.example/",
       publicPort: 19_189,
       internalPort: 29_189,
       tuiEnabled: true,
@@ -299,10 +303,7 @@ describe("rebindManagedStartupProfileForClone", () => {
       model: "qwen3.5:9b",
     });
 
-    expect(resolveContextWindowForModel).toHaveBeenCalledWith(
-      "ollama-local",
-      "qwen3.5:9b",
-    );
+    expect(resolveContextWindowForModel).toHaveBeenCalledWith("ollama-local", "qwen3.5:9b");
     expect(rebound.profile.tuning.contextWindow).toBe(131_072);
   });
 
@@ -329,10 +330,7 @@ describe("rebindManagedStartupProfileForClone", () => {
       model: "qwen3.5:9b",
     });
 
-    expect(resolveContextWindowForModel).toHaveBeenCalledWith(
-      "ollama-local",
-      "qwen3.5:9b",
-    );
+    expect(resolveContextWindowForModel).toHaveBeenCalledWith("ollama-local", "qwen3.5:9b");
     expect(rebound.profile.tuning.contextWindow).toBe(131_072);
   });
 
@@ -343,6 +341,7 @@ describe("rebindManagedStartupProfileForClone", () => {
       agent: "hermes",
       mode: "loopback-forwarded",
       url: "http://127.0.0.1:21189",
+      browserUrl: "https://secure-link.example",
       publicPort: 21_189,
       internalPort: 29_189,
       tuiEnabled: true,
@@ -351,6 +350,55 @@ describe("rebindManagedStartupProfileForClone", () => {
       sandboxName: "destination",
       credentialBindings: [{ providerName: "destination-telegram-bridge" }],
     });
+  });
+
+  it("rebinds a Hermes browser URL across the IPv4 loopback range", () => {
+    const input = hermesInput();
+    const dashboard = input.dashboard as Extract<
+      typeof input.dashboard,
+      { readonly agent: "hermes" }
+    >;
+    const rebound = rebind(
+      buildManagedStartupProfile({
+        ...input,
+        dashboard: {
+          ...dashboard,
+          browserUrl: "http://127.0.0.2:19189",
+        },
+      }),
+      "hermes",
+      21_189,
+    );
+
+    expect(rebound.profile.dashboard).toMatchObject({
+      url: "http://127.0.0.1:21189",
+      browserUrl: "http://127.0.0.2:21189",
+      publicPort: 21_189,
+      internalPort: 29_189,
+    });
+  });
+
+  it("refuses to clone an enabled Hermes dashboard without a recorded browser URL", () => {
+    const input = hermesInput();
+    const built = buildManagedStartupProfile(input);
+    const dashboard = built.profile.dashboard as Extract<
+      typeof built.profile.dashboard,
+      { readonly agent: "hermes" }
+    >;
+    expect(dashboard.agent).toBe("hermes");
+    const { browserUrl: _browserUrl, ...legacyDashboard } = dashboard;
+    const legacyProfile = { ...built.profile, dashboard: legacyDashboard };
+    const encodedProfile = encodeManagedStartupProfile(legacyProfile);
+    const legacyBuilt = {
+      ...built,
+      profile: legacyProfile,
+      encodedProfile,
+      startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+    } as ReturnType<typeof buildManagedStartupProfile>;
+
+    expect(() => rebind(legacyBuilt, "hermes", 21_189)).toThrow(
+      "Cannot prepare managed snapshot clone: current source Hermes dashboard has no recorded browser URL; rerun onboarding before cloning the sandbox",
+    );
   });
 
   it("rebinds managed-tool Hermes inference to the destination provider identity", () => {

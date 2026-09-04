@@ -16,7 +16,7 @@ Built-in OpenClaw and Hermes images support two direct-container lifecycle topol
 
 | Topology | Process ownership | Lifecycle and trust boundary |
 |---|---|---|
-| Direct root entrypoint | `nemoclaw-start` is root PID 1, the gateway runs under the separate `gateway` UID, and the agent runs under the `sandbox` UID. | A root-only request channel reaches PID 1. The supervisor tracks the child, applies the restart seal, validates locked config, and launches the replacement under the gateway UID. |
+| Direct root entrypoint | `nemoclaw-start` is root PID 1, the gateway runs under the separate `gateway` UID, and the agent runs under the `sandbox` UID. | A root-only request channel reaches PID 1. The supervisor tracks the child, applies the transactional restart seal, validates the config transaction, and launches the replacement under the gateway UID. |
 | OpenShell-managed | `/opt/openshell/bin/openshell-sandbox` is PID 1. It launches nonroot `nemoclaw-start`, which owns and reaps the gateway. The supervisor, gateway, and agent all use the `sandbox` UID. | A root-owned mode `0500` controller entered through sanitized registry-scoped direct-container control validates a stable process shape, authorizes one exit while the controller identity remains live, signals the observed child through a pidfd, waits for supervisor respawn, and proves replacement health. |
 
 The managed controller authenticates the host lifecycle action and prevents PID reuse from redirecting its signal.
@@ -28,7 +28,7 @@ If lock acquisition reaches that deadline, the controller returns `SUPERVISOR_BU
 Mutable managed config retains the trust and time-of-check/time-of-use limits of managed cold start.
 <AgentOnly variant="hermes">
 In the direct root-entrypoint topology, PID 1 validates the Hermes secret boundary and runtime environment and verifies the strict root-owned hash without recomputing it.
-For Hermes, the managed controller preflights the secret boundary and verifies the strict root-owned hash when the config and environment are locked.
+For Hermes, the managed controller preflights the secret boundary before it signals the observed child.
 
 Mutable config in the managed topology has no durable root-owned hash anchor, so a restart cannot promise a `config hash mismatch` for direct drift.
 </AgentOnly>

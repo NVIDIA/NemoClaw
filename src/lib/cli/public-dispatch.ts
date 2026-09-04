@@ -22,17 +22,23 @@ const {
   sandboxActionTokensForDispatch,
 } = require("./command-registry");
 
-import { migrateLegacyPortState } from "../state/legacy-port-migration";
 import {
+  hasMigratableLegacySandbox,
+  migrateLegacyPortState,
+} from "../state/legacy-port-migration";
+import {
+  isGlobalCommandInvocation,
   type NormalizedArgv,
   type NormalizedGlobalArgv,
   type NormalizedSandboxArgv,
+  type NormalizeArgvOptions,
   normalizeArgv,
   suggestCommand,
 } from "./argv-normalizer";
 import { resolveBareConnectArgv } from "./bare-connect-routing";
 import { getRegisteredOclifCommandMetadata } from "./oclif-metadata";
 import {
+  matchSandboxRoute,
   type PublicTranslationResult,
   translatePublicGlobalArgv,
   translatePublicSandboxArgv,
@@ -43,6 +49,12 @@ import {
 const GLOBAL_COMMANDS = globalCommandTokens();
 const NATIVE_OCLIF_NAMESPACES = new Set(["internal", "sandbox"]);
 const MIGRATION_RECOVERY_SANDBOX_ACTIONS = new Set(["doctor", "recover"]);
+const PUBLIC_ARGV_OPTIONS: NormalizeArgvOptions = {
+  globalCommands: GLOBAL_COMMANDS,
+  isRegisteredSandbox: hasRegisteredOrMigratableSandbox,
+  isSandboxAction: isKnownSandboxAction,
+  isSandboxConnectFlag: isPublicSandboxConnectFlag,
+};
 
 type RegistryModule = typeof import("../state/registry");
 type RegistryRecoveryModule = typeof import("../registry-recovery-action");
@@ -69,6 +81,25 @@ function sandboxConnect(): SandboxConnectModule {
 
 function isPublicSandboxConnectFlag(arg: string | undefined): boolean {
   return sandboxConnect().isSandboxConnectFlag(arg);
+}
+
+function hasRegisteredSandbox(name: string): boolean {
+  try {
+    return registry().getSandbox(name) !== null;
+  } catch {
+    // Global doctor owns the registry-readability diagnostic. If dispatch
+    // cannot inspect the registry, keep routing the bare token there.
+    return false;
+  }
+}
+
+function hasRegisteredOrMigratableSandbox(name: string): boolean {
+  if (hasRegisteredSandbox(name)) return true;
+  try {
+    return hasMigratableLegacySandbox(name);
+  } catch {
+    return false;
+  }
 }
 
 // ── Commands ─────────────────────────────────────────────────────
@@ -127,18 +158,24 @@ function isMigrationRecoveryInvocation(argv: readonly string[]): boolean {
   if (argv[0] === "sandbox") {
     return MIGRATION_RECOVERY_SANDBOX_ACTIONS.has(argv[1] ?? "");
   }
-  return (
-    argv.length > 1 &&
-    !GLOBAL_COMMANDS.has(argv[0] ?? "") &&
-    MIGRATION_RECOVERY_SANDBOX_ACTIONS.has(argv[1] ?? "")
-  );
+  if (isGlobalCommandInvocation(argv, PUBLIC_ARGV_OPTIONS)) return argv[0] === "doctor";
+  return argv.length > 1 && MIGRATION_RECOVERY_SANDBOX_ACTIONS.has(argv[1] ?? "");
+}
+
+function sandboxRegistrationNames(): { published: string[]; pending: string[] } {
+  const registryApi = registry();
+  const sandboxes = registryApi.listSandboxes().sandboxes;
+  return {
+    // Suggestions must use the same published inventory as `list` and global `status`.
+    published: sandboxes.filter(registryApi.isPublishedSandboxRegistration).map(({ name }) => name),
+    pending: sandboxes
+      .filter(({ pendingRouteReservation }) => pendingRouteReservation === true)
+      .map(({ name }) => name),
+  };
 }
 
 function registeredSandboxNames(): string[] {
-  const registryApi = registry();
-  // Suggestions must use the same published sandbox inventory as `list` and global `status`.
-  return registryApi.listSandboxes().sandboxes.filter(registryApi.isPublishedSandboxRegistration)
-    .map((sandbox) => sandbox.name);
+  return sandboxRegistrationNames().published;
 }
 
 function findRegisteredSandboxName(tokens: string[]): string | null {
@@ -201,8 +238,8 @@ function printOpenShellCommandHint(hint: OpenShellCommandHint): never {
   process.exit(1);
 }
 
-function isKnownSandboxAction(action: string): boolean {
-  return sandboxActionList().includes(action);
+function isKnownSandboxAction(action: string | undefined): boolean {
+  return typeof action === "string" && sandboxActionList().includes(action);
 }
 
 function validSandboxActionsText(): string {
@@ -267,16 +304,64 @@ function printGlobalStatusScopeHint(sandboxName: string, args: readonly string[]
   process.exit(2);
 }
 
+/**
+ * Report the sandbox-first grammar for a first token that names a sandbox action.
+ *
+ * `nemoclaw doctor` and `nemoclaw policy list` name an action, not a sandbox.
+ * Reporting a missing sandbox sends the reader to `onboard` for a sandbox they
+ * never asked for (#10212).
+ */
+function printSandboxScopeHint(action: string, remainingArgs: readonly string[]): never {
+  // Render the registered route, never the tokens the reader typed. An action
+  // argument can carry a credential, a newline that forges a diagnostic line,
+  // or an ESC byte that rewrites terminal output.
+  const route: string[] = matchSandboxRoute([action, ...remainingArgs]) ?? [action];
+  console.error(`  '${action}' is a sandbox command. It needs a sandbox name.`);
+  console.error("");
+  console.error(`  Run: ${CLI_NAME} <name> ${route.join(" ")}`);
+  const { published: allNames, pending: pendingNames } = sandboxRegistrationNames();
+  if (allNames.length > 0) {
+    console.error(`  Registered sandboxes: ${allNames.join(", ")}`);
+    console.error(`  Run '${CLI_NAME} list' to see all sandboxes.`);
+  } else if (pendingNames.length > 0) {
+    console.error(`  Sandbox setup is still pending: ${pendingNames.join(", ")}`);
+    console.error("  Wait for onboarding to finish.");
+    console.error(`  If onboarding stopped, run '${CLI_NAME} onboard --resume' to continue it.`);
+  } else {
+    console.error(`  Run '${CLI_NAME} onboard' to create one.`);
+  }
+  process.exit(1);
+}
+
+/** Recover an explicit sandbox invocation before reporting an action-like name as a grammar error. */
 async function recoverRequestedSandboxIfNeeded(
   sandboxName: string,
   action: string,
   rawArgsAfterSandboxName: string[],
 ): Promise<void> {
-  if (registry().getSandbox(sandboxName) || !isKnownSandboxAction(action)) return;
+  if (registry().getSandbox(sandboxName)) return;
+  const namesSandboxAction = isKnownSandboxAction(sandboxName);
+  const hasExplicitSandboxAction =
+    rawArgsAfterSandboxName.length > 0 && isKnownSandboxAction(rawArgsAfterSandboxName[0] ?? "");
+
+  // An action-first diagnostic must stay read-only. Seeded registry recovery
+  // can select or start a gateway and persist entries, which is inappropriate
+  // for a bare action or registered multi-token route entered without a name.
+  // Keep recovery for an explicit action-name sandbox invocation such as
+  // `doctor status`, where `doctor` can be a real sandbox with a stale entry.
+  if (namesSandboxAction && !hasExplicitSandboxAction) {
+    printSandboxScopeHint(sandboxName, rawArgsAfterSandboxName);
+  }
+  if (!namesSandboxAction && !isKnownSandboxAction(action)) return;
 
   validateName(sandboxName, "sandbox name");
   await registryRecovery().recoverRegistryEntries({ requestedSandboxName: sandboxName });
   if (registry().getSandbox(sandboxName)) return;
+
+  // Recovery runs first so a live sandbox named after an action stays reachable
+  // through the name-first grammar. A token that recovery cannot resolve is a
+  // scope error, not a missing sandbox.
+  if (namesSandboxAction) printSandboxScopeHint(sandboxName, rawArgsAfterSandboxName);
 
   if (rawArgsAfterSandboxName.length === 0) {
     const suggestion = suggestGlobalCommand(sandboxName);
@@ -517,10 +602,7 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
   }
 
   await dispatchNormalizedArgv(
-    normalizeArgv(argv, {
-      globalCommands: GLOBAL_COMMANDS,
-      isSandboxConnectFlag: isPublicSandboxConnectFlag,
-    }),
+    normalizeArgv(argv, PUBLIC_ARGV_OPTIONS),
     argv,
   );
 }

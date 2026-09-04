@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  buildGatewayInferenceGetArgs,
   getSandboxInferenceConfig,
   parseGatewayInference,
   resolveAgentInferenceApi,
@@ -39,7 +40,7 @@ export function createInferenceRouteHelpers(
 ) {
   function verifyInferenceRoute(gatewayName: string, provider: string, model: string): void {
     const live = parseGatewayInference(
-      runCaptureOpenshell(["inference", "get", "-g", gatewayName], { ignoreError: true }),
+      runCaptureOpenshell(buildGatewayInferenceGetArgs(gatewayName), { ignoreError: true }),
     );
     if (!live) {
       console.error("  OpenShell inference route was not configured.");
@@ -59,7 +60,7 @@ export function createInferenceRouteHelpers(
     model: string,
   ): InferenceRouteState {
     const live = parseGatewayInference(
-      runCaptureOpenshell(["inference", "get", "-g", gatewayName], { ignoreError: true }),
+      runCaptureOpenshell(buildGatewayInferenceGetArgs(gatewayName), { ignoreError: true }),
     );
     if (!live) return "unanswered";
     return live.provider === provider && live.model === model ? "matched" : "mismatched";

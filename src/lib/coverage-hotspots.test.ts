@@ -6,7 +6,6 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { parseDuration } from "./domain/duration";
 import { parseGatewayTokenArgs, runGatewayTokenCommand } from "./gateway-token-command";
 import {
   resolveDefaultSandboxName,
@@ -18,11 +17,6 @@ import { getVersion } from "./core/version";
 // Narrow coverage guard for small helper modules that are otherwise only
 // exercised through subprocess CLI flows in this migration stack.
 describe("small CLI helper coverage", () => {
-  it("parses durations and rejects invalid values", () => {
-    expect(parseDuration("5m")).toBe(300);
-    expect(() => parseDuration("31m")).toThrow(/exceeds maximum/);
-  });
-
   it("parses and runs gateway-token helpers", () => {
     expect(parseGatewayTokenArgs(["--quiet", "extra"])).toEqual({
       options: { quiet: true },

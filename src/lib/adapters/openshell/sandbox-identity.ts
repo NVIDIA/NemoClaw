@@ -95,10 +95,14 @@ export function fingerprintOpenShellSandboxLiveIdentity(output: string): string 
 export function resolveOpenShellSandboxId(
   sandboxName: string,
   runCaptureOpenshell: (args: string[], options?: Record<string, unknown>) => string,
+  gatewayName?: string,
 ): string {
-  const output = runCaptureOpenshell(["sandbox", "get", sandboxName], {
-    ignoreError: false,
-  });
+  const output = runCaptureOpenshell(
+    ["sandbox", "get", ...(gatewayName ? ["-g", gatewayName] : []), sandboxName],
+    {
+      ignoreError: false,
+    },
+  );
   const sandboxId = parseOpenShellSandboxId(output);
   if (!sandboxId) {
     throw new Error(

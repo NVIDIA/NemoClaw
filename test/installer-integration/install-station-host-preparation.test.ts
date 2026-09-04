@@ -431,11 +431,11 @@ ensure_cdi_runtime
       `
 NEMOCLAW_VLLM_PORT='19000'
 ps() {
-  printf '%s %s bash bash /tmp/NemoClaw/scripts/prepare-dgx-station-host.sh --apply\n' "$$" "$PPID"
-  printf '%s 1 bash bash /tmp/NemoClaw/scripts/install.sh\n' "$PPID"
-  printf '5464 1 grep grep -qi vllm\n'
-  printf '5465 1 rg rg vllm /var/log/station.log\n'
-  printf '5466 1 bash bash -c docker image ls | grep -qi vllm\n'
+  printf '%s %s %s bash bash /tmp/NemoClaw/scripts/prepare-dgx-station-host.sh --apply\n' "$EUID" "$$" "$PPID"
+  printf '%s %s 1 bash bash /tmp/NemoClaw/scripts/install.sh\n' "$EUID" "$PPID"
+  printf '%s 5464 1 grep grep -qi vllm\n' "$EUID"
+  printf '%s 5465 1 rg rg vllm /var/log/station.log\n' "$EUID"
+  printf '%s 5466 1 bash bash -c docker image ls | grep -qi vllm\n' "$EUID"
 }
 ss() { printf 'LISTEN 0 4096 127.0.0.1:8000 0.0.0.0:*\n'; }
 check_agent_and_inference_conflicts
@@ -444,15 +444,14 @@ check_agent_and_inference_conflicts
     expect(diagnostics.result.status, diagnostics.output).toBe(0);
     expect(diagnostics.output).toContain("agent_inference_workloads=none vllm_port=19000 free");
   });
-
   it("blocks vLLM executables and Python modules without exposing model names", () => {
     const active = runSourced(
       STATION_PREPARE,
       `
 ps() {
-  printf '998 1 vllm /usr/local/bin/vllm serve first-sensitive-model\n'
-  printf '999 1 python3 python3 -u -m vllm.entrypoints.openai.api_server --model second-sensitive-model\n'
-  printf '1000 1 docker-init docker-init -- /usr/bin/vllm serve third-sensitive-model\n'
+  printf '%s 998 1 vllm /usr/local/bin/vllm serve first-sensitive-model\n' "$((EUID + 1))"
+  printf '%s 999 1 python3 python3 -u -m vllm.entrypoints.openai.api_server --model second-sensitive-model\n' "$((EUID + 1))"
+  printf '%s 1000 1 docker-init docker-init -- /usr/bin/vllm serve third-sensitive-model\n' "$((EUID + 1))"
 }
 ss() { :; }
 check_agent_and_inference_conflicts
@@ -462,9 +461,9 @@ check_agent_and_inference_conflicts
     expect(active.output).toMatch(/vLLM inference workload is active: pid=998 process=vllm/);
     expect(active.output).toContain("pid=999 process=python3");
     expect(active.output).toContain("pid=1000 process=docker-init");
-    expect(active.output).toContain("stop_command='kill -- 998'");
-    expect(active.output).toContain("stop_command='kill -- 999'");
-    expect(active.output).toContain("stop_command='kill -- 1000'");
+    expect(active.output).toContain(`owner_uid=${process.getuid!() + 1}`);
+    expect(active.output).toContain("action=ask_owner_or_host_administrator_to_stop");
+    expect(active.output).not.toContain("stop_command='kill --");
     expect(active.output).not.toContain("first-sensitive-model");
     expect(active.output).not.toContain("second-sensitive-model");
     expect(active.output).not.toContain("third-sensitive-model");
@@ -483,7 +482,7 @@ check_network() { :; }
 check_failed_units() { :; }
 capture_docker_container_baseline() { printf 'DOCKER_BASELINE_CAPTURED\n'; }
 check_dgx_os_runtime_commands() { :; }
-ps() { printf '999 1 python python -m vllm serve model\n'; }
+ps() { printf '%s 999 1 python python -m vllm serve model\n' "$EUID"; }
 ss() { :; }
 run_check
 `,
@@ -512,24 +511,18 @@ check_vllm_container_conflicts
     expect(active.output).not.toContain("hidden-model-name");
   });
 
-  it("blocks an active agent before offering a vLLM container handoff (#7287)", () => {
+  it("blocks an active agent before checking a vLLM container handoff (#7287)", () => {
     const active = runSourced(
       STATION_PREPARE,
-      `
-MODE=--check
-ps() { printf '999 1 openshell openshell gateway\n'; }
+      `MODE=--check
+ps() { printf '%s 999 1 openshell openshell gateway\n' "$EUID"; }
 ss() { :; }
-docker() {
-  printf '1234567890abcdef|nvcr.io/nvidia/vllm:station|vllm serve hidden-model-name\n'
-}
-check_initial_workload_quiescence
-`,
+docker() { printf '1234567890abcdef|nvcr.io/nvidia/vllm:station|vllm serve hidden-model-name\n'; }
+check_initial_workload_quiescence`,
     );
-
     expect(active.result.status, active.output).toBe(1);
     expect(active.output).toContain("Agent workload is active: pid=999 process=openshell");
-    expect(active.output).not.toContain("container_id=1234567890ab");
-    expect(active.output).not.toContain("hidden-model-name");
+    expect(active.output).not.toMatch(/container_id=1234567890ab|hidden-model-name/);
   });
 
   it("refuses an installed CUDA keyring version that differs from the pin", () => {

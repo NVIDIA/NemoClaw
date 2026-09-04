@@ -68,6 +68,22 @@ describe("gateway recovery", () => {
     expect(deps.runOpenshell).not.toHaveBeenCalled();
   });
 
+  it("passes the frozen target into the managed gateway starter (#10514)", async () => {
+    const deps = createDeps();
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      localTlsDir: "/recorded/tls",
+    };
+
+    await startGatewayForRecovery({ runtimeSelection }, deps);
+
+    expect(deps.startGatewayWithOptions).toHaveBeenCalledWith(undefined, {
+      exitOnFailure: false,
+      runtimeSelection,
+    });
+  });
+
   it("starts and selects the named gateway using the port encoded in its name", async () => {
     vi.stubEnv("NEMOCLAW_HEALTH_POLL_COUNT", "1");
     const deps = createDeps();
@@ -172,6 +188,47 @@ describe("gateway recovery", () => {
     // First iteration only: 3 subprocess calls (status + gateway info -g +
     // gateway info); loop returns before the next iteration would start.
     expect(deps.runCaptureOpenshell).toHaveBeenCalledTimes(3);
+  });
+
+  it("replaces ambient OpenShell selectors during targeted recovery (#10514)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "1");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-8091",
+      workspace: "default",
+      localTlsDir: "/recorded/tls",
+    };
+    const deps = createDeps({
+      runCaptureOpenshell: vi.fn(() => "Connected"),
+      isGatewayHealthy: () => true,
+      isGatewayHttpReady: async () => true,
+    });
+
+    await startGatewayForRecovery({ gatewayPort: 8091, runtimeSelection }, deps);
+
+    const subprocessOptions = [
+      ...(deps.runOpenshell as ReturnType<typeof vi.fn>).mock.calls.map(([, options]) => options),
+      ...(deps.runCaptureOpenshell as ReturnType<typeof vi.fn>).mock.calls.map(
+        ([, options]) => options,
+      ),
+    ];
+    expect(subprocessOptions.length).toBeGreaterThan(0);
+    expect(
+      subprocessOptions.every(
+        (options) =>
+          options.replaceEnv === true &&
+          options.env.OPENSHELL_GATEWAY === "nemoclaw-8091" &&
+          options.env.OPENSHELL_WORKSPACE === "default" &&
+          options.env.OPENSHELL_LOCAL_TLS_DIR === "/recorded/tls" &&
+          options.env.OPENSHELL_GATEWAY_ENDPOINT === undefined &&
+          options.env.OPENSHELL_GATEWAY_INSECURE === undefined &&
+          options.env.OPENSHELL_TOKEN === undefined,
+      ),
+    ).toBe(true);
   });
 
   it("succeeds after retrying past unhealthy probes and still sets OPENSHELL_GATEWAY (#3768)", async () => {

@@ -103,4 +103,4 @@ spec:
     backend: vllm
     platform: n1x
     interactive: true
-    recipeRef: vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1
+    recipeRef: vllm.qwen3-6-35b-a3b-nvfp4.n1x-single.v1

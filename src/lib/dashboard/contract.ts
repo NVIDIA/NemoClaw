@@ -7,7 +7,7 @@
  */
 
 import { DASHBOARD_PORT } from "../core/ports";
-import { isLoopbackHostname } from "../core/url-utils";
+import { isLoopbackDashboardUrl } from "./url";
 
 export interface PlatformHints {
   chatUiUrl?: string;
@@ -68,7 +68,7 @@ function isLoopbackUrl(chatUiUrl: string): boolean {
   const raw = String(chatUiUrl || "").trim();
   if (!raw) return true;
   try {
-    return isLoopbackHostname(new URL(ensureScheme(raw)).hostname);
+    return isLoopbackDashboardUrl(ensureScheme(raw));
   } catch {
     return /localhost|::1|127(?:\.\d{1,3}){3}/i.test(raw);
   }

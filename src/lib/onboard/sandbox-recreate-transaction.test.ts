@@ -453,6 +453,9 @@ describe("sandbox recreate journal", () => {
           mutator(session);
           return session;
         },
+        compareAndSwapSession: (matches, mutator) => {
+          return matches(session) ? (mutator(session), "updated") : "mismatch";
+        },
       },
       {
         id: TX_ID,
@@ -505,6 +508,9 @@ describe("sandbox recreate journal", () => {
           mutator(session);
           return session;
         },
+        compareAndSwapSession: (matches, mutator) => {
+          return matches(session) ? (mutator(session), "updated") : "mismatch";
+        },
       },
       {
         id: TX_ID,
@@ -552,6 +558,9 @@ describe("sandbox recreate journal", () => {
           mutator(session);
           return session;
         },
+        compareAndSwapSession: (matches, mutator) => {
+          return matches(session) ? (mutator(session), "updated") : "mismatch";
+        },
       },
       {
         id: TX_ID,
@@ -576,6 +585,77 @@ describe("sandbox recreate journal", () => {
     observation = { state: "missing", liveIdentityFingerprint: null };
     expect(runtime.beginDelete()).toBe("missing");
     expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "deleting" });
+  });
+
+  it("revalidates authority and source evidence at the second delete edge (#10491)", () => {
+    const session = createSession({ sandboxName: "alpha" });
+    beginSandboxRecreateTransaction(
+      session,
+      beginInput({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+    );
+    let registryEntry = SOURCE_ENTRY;
+    let observation: SandboxRecreateObservation = {
+      state: "ready",
+      liveIdentityFingerprint: SOURCE_ID,
+    };
+    const revalidateGatewayAuthority = vi.fn();
+    const runtime = createSandboxRecreateRuntime(
+      {
+        loadSession: () => session,
+        updateSession: (mutator) => (mutator(session), session),
+        compareAndSwapSession: (matches, mutator) =>
+          matches(session) ? (mutator(session), "updated") : "mismatch",
+      },
+      { id: TX_ID, targetGeneration: TARGET_GENERATION, targetIntentFingerprint: TARGET_INTENT },
+      "alpha",
+      "nemoclaw-31818",
+      SOURCE_ENTRY,
+      () => observation,
+      () => undefined,
+      () => registryEntry,
+      revalidateGatewayAuthority,
+    );
+
+    expect(runtime.beginDelete()).toBe("source");
+    registryEntry = { ...SOURCE_ENTRY, imageTag: "foreign" };
+    observation = { state: "ready", liveIdentityFingerprint: FOREIGN_ID };
+    expect(() => runtime.beginDelete()).toThrow(/registry row changed|not the journaled source/iu);
+    expect(revalidateGatewayAuthority).toHaveBeenCalledTimes(2);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "deleting", revision: 1 });
+  });
+
+  it("refuses authority drift after the runtime opens (#10491)", () => {
+    const session = createSession({ sandboxName: "alpha" });
+    beginSandboxRecreateTransaction(
+      session,
+      beginInput({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+    );
+    let authorityMatches = true;
+    const runtime = createSandboxRecreateRuntime(
+      {
+        loadSession: () => session,
+        updateSession: (mutator) => (mutator(session), session),
+        compareAndSwapSession: (matches, mutator) =>
+          matches(session) ? (mutator(session), "updated") : "mismatch",
+      },
+      { id: TX_ID, targetGeneration: TARGET_GENERATION, targetIntentFingerprint: TARGET_INTENT },
+      "alpha",
+      "nemoclaw-31818",
+      SOURCE_ENTRY,
+      () => ({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+      () => undefined,
+      () => SOURCE_ENTRY,
+      () =>
+        authorityMatches
+          ? undefined
+          : (() => {
+              throw new Error("gateway lifecycle authority changed");
+            })(),
+    );
+    authorityMatches = false;
+
+    expect(() => runtime.beginDelete()).toThrow(/gateway lifecycle authority changed/iu);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "planned", revision: 0 });
   });
 
   it("refuses to open the delete edge when no transaction proves the source (#7736)", () => {
@@ -612,6 +692,12 @@ describe("sandbox recreate journal", () => {
       updateSession: (mutator: (current: typeof session) => void) => {
         mutator(session);
         return session;
+      },
+      compareAndSwapSession: (
+        matches: (current: typeof session) => boolean,
+        mutator: (current: typeof session) => typeof session | void,
+      ) => {
+        return matches(session) ? (mutator(session), "updated" as const) : ("mismatch" as const);
       },
     };
     const request = {

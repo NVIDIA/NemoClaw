@@ -179,7 +179,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "live",
     {
-      name: "e2e-${{ matrix.id }}",
+      name: "e2e-${{ matrix.execution_id }}",
       path: [
         "e2e-artifacts/live/${{ matrix.id }}/run-plan.json",
         "e2e-artifacts/live/${{ matrix.id }}/target.json",
@@ -237,8 +237,8 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "hermes-gpu-startup",
     {
-      name: "e2e-hermes-gpu-startup-${{ matrix.scenario }}",
-      path: "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/",
+      name: "e2e-hermes-gpu-startup-${{ matrix.scenario }}-${{ matrix.runtime_provider }}",
+      path: "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/${{ matrix.runtime_provider }}/",
     },
   ],
   [
@@ -251,15 +251,15 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "mcp-bridge",
     {
-      name: "e2e-mcp-bridge-${{ matrix.agent }}",
-      path: "e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/",
+      name: "e2e-mcp-bridge-${{ matrix.agent }}-${{ matrix.runtime_provider }}",
+      path: "e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/${{ matrix.runtime_provider }}/",
     },
   ],
   [
     "mcp-bridge-dev",
     {
-      name: "e2e-mcp-bridge-dev-${{ matrix.agent }}",
-      path: "e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/",
+      name: "e2e-mcp-bridge-dev-${{ matrix.agent }}-${{ matrix.runtime_provider }}",
+      path: "e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/${{ matrix.runtime_provider }}/",
     },
   ],
   [
@@ -272,8 +272,36 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "openshell-credential-generation-window",
     {
-      name: "e2e-openshell-credential-generation-window",
-      path: "e2e-artifacts/live/openshell-credential-generation-window/",
+      name: "e2e-openshell-credential-generation-window-${{ matrix.runtime_provider }}",
+      path: "e2e-artifacts/live/openshell-credential-generation-window/${{ matrix.runtime_provider }}/",
+    },
+  ],
+  [
+    SHARED_E2E_JOB_ID,
+    {
+      name: "e2e-${{ matrix.execution_id }}",
+      path: "e2e-artifacts/live/${{ matrix.execution_id }}/",
+    },
+  ],
+  [
+    "hermes-e2e",
+    {
+      name: "e2e-hermes-e2e-${{ matrix.runtime_provider }}",
+      path: "e2e-artifacts/live/hermes-e2e/${{ matrix.runtime_provider }}/",
+    },
+  ],
+  [
+    "cloud-onboard",
+    {
+      name: "e2e-cloud-onboard-${{ matrix.runtime_provider }}",
+      path: "e2e-artifacts/live/cloud-onboard/${{ matrix.runtime_provider }}/",
+    },
+  ],
+  [
+    "messaging-providers",
+    {
+      name: "e2e-messaging-providers-${{ matrix.runtime_provider }}",
+      path: "e2e-artifacts/live/messaging-providers/${{ matrix.runtime_provider }}/",
     },
   ],
 ]);

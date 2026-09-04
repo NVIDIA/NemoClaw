@@ -10,7 +10,7 @@
  * leaving the wrong recipe behind.
  *
  * Selection precedence in `installVllm`:
- *   1. `NEMOCLAW_VLLM_MODEL=<envValue-or-HF-id>` for automation overrides.
+ *   1. `NEMOCLAW_VLLM_MODEL=<catalog-model-alias>` for automation overrides.
  *   2. Interactive picker over the per-platform subset (via
  *      `modelsForPlatform`), defaulting to the profile's `defaultModel`.
  *   3. Non-interactive runs without an override use the profile default
@@ -577,6 +577,20 @@ export function modelsForPlatform(platform: VllmPlatform): readonly VllmModelDef
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 export const VLLM_EXTRA_ARGS_ENV = "NEMOCLAW_VLLM_EXTRA_ARGS_JSON";
 
+/** Resolve any unique model name owned by the managed inference catalog. */
+export function resolveVllmModelAlias(value: string): VllmModelDef | null {
+  const requested = value.trim().toLowerCase();
+  if (!requested) return null;
+  return (
+    VLLM_MODELS.find(
+      (model) =>
+        model.envValue.toLowerCase() === requested ||
+        model.id.toLowerCase() === requested ||
+        model.servedModelId?.toLowerCase() === requested,
+    ) ?? null
+  );
+}
+
 /**
  * Look up the requested express-vLLM model from `NEMOCLAW_VLLM_MODEL`.
  * Returns `null` when the env var is empty so the caller can fall back to
@@ -584,24 +598,20 @@ export const VLLM_EXTRA_ARGS_ENV = "NEMOCLAW_VLLM_EXTRA_ARGS_JSON";
  * the Qwen3.6-35B-A3B NVFP4 checkpoint, and the generic Linux profile prefers
  * Nemotron-Nano-4B for VRAM headroom).
  *
- * Match is case-insensitive against either the `envValue` slug or the full
- * HF id. Throws when the env var names something not in the registry so the
- * user gets a single clear message instead of a downstream vLLM startup
- * failure.
+ * Match is case-insensitive against the `envValue` slug, full Hugging Face
+ * model ID, or served model name. Throws when the environment variable names
+ * something not in the catalog so the user gets one clear message instead of
+ * a downstream vLLM startup failure.
  */
 export function selectVllmModelFromEnv(env: NodeJS.ProcessEnv = process.env): VllmModelDef | null {
-  const requested = String(env.NEMOCLAW_VLLM_MODEL ?? "")
-    .trim()
-    .toLowerCase();
+  const requested = String(env.NEMOCLAW_VLLM_MODEL ?? "").trim();
   if (!requested) return null;
-  const match = VLLM_MODELS.find(
-    (model) => model.envValue.toLowerCase() === requested || model.id.toLowerCase() === requested,
-  );
+  const match = resolveVllmModelAlias(requested);
   if (match) return match;
   const choices = VLLM_MODELS.map((model) => `'${model.envValue}'`).join(", ");
   throw new Error(
     `Unknown NEMOCLAW_VLLM_MODEL='${env.NEMOCLAW_VLLM_MODEL}'. ` +
-      `Recognised values: ${choices} (or the full Hugging Face model id).`,
+      `Recognised values: ${choices} (or the full Hugging Face model ID or served model name).`,
   );
 }
 

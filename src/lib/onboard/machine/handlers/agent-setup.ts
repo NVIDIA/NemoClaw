@@ -28,7 +28,7 @@ export interface AgentSetupStateOptions<Agent> {
       context: unknown,
     ): Promise<void>;
     agentSetupContext(): unknown;
-    ensureAgentDashboardForward(sandboxName: string, agent: Agent): Promise<number> | number;
+    ensureAgentDashboardForward(sandboxName: string, agent: Agent | null): Promise<number> | number;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
     isOpenclawReady(sandboxName: string): boolean;
@@ -133,6 +133,10 @@ export async function handleAgentSetupState<Agent>({
       "openclaw",
       deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
     );
+  }
+  const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, null);
+  if (dashboardPort > 0) {
+    deps.persistDashboardPort(sandboxName, dashboardPort);
   }
   session = await deps.recordStepSkipped("agent_setup");
   return { session, stateResult: advanceTo("policies", { metadata: { state: "openclaw" } }) };

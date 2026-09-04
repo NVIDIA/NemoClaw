@@ -1,0 +1,81 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingRecipe
+
+metadata:
+  id: vllm.qwen3-6-35b-a3b-nvfp4.n1x-single.v1
+  displayName: Qwen3.6 35B A3B NVFP4 on N1x with vLLM
+
+spec:
+  backend: vllm
+
+  modelRef: vllm.qwen3-6-35b-a3b-nvfp4.v1
+  runtime:
+    image: nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2
+    imageDownloadSizeBytes: 9603085145
+    imageUnpackedSizeBytes: 27658526720
+    minimumComputeCapability: 121
+    minimumGpuMemoryBytes: 64000000000
+    pullTimeoutSeconds: 43200
+    architecture: arm64
+    networkMode: bridge
+    ipcMode: host
+    sharedMemoryBytes: 68719476736
+    gpuRequest: all
+    devices: []
+    ulimits:
+      memlock: -1
+      stackBytes: 67108864
+    modelCache:
+      source: huggingface-cache
+      target: /root/.cache/huggingface
+    temporaryFilesystems: []
+    environment: {}
+
+  execution:
+    materializerRef: vllm.host-local/v1
+    lifecycleRef: vllm.host-local.lifecycle/v1
+    orchestrationRef: vllm.host-local.standard/v1
+
+  serve:
+    authentication: bearer
+    directInstall:
+      authentication: none
+      fixedArguments: false
+      catalogReceipt: false
+    executable: /usr/local/bin/vllm
+    arguments:
+      - name: --max-model-len
+        value: 32768
+      - name: --gpu-memory-utilization
+        value: 0.6
+      - name: --dtype
+        value: auto
+      - name: --quantization
+        value: modelopt
+      - name: --kv-cache-dtype
+        value: fp8
+      - name: --attention-backend
+        value: flashinfer
+      - name: --moe-backend
+        value: marlin
+      - name: --max-num-seqs
+        value: 1
+      - name: --max-num-batched-tokens
+        value: 4096
+      - name: --enable-chunked-prefill
+      - name: --async-scheduling
+      - name: --enable-prefix-caching
+      - name: --enable-auto-tool-choice
+      - name: --tool-call-parser
+        value: qwen3_coder
+      - name: --reasoning-parser
+        value: qwen3
+      - name: --load-format
+        value: fastsafetensors
+
+  readiness:
+    timeoutSeconds: 1800
+    expectedModel: nvidia/Qwen3.6-35B-A3B-NVFP4

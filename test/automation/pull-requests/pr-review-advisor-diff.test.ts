@@ -127,40 +127,6 @@ describe("PR review advisor diff", () => {
     }
   });
 
-  it("writes failure artifacts when trusted Git inputs are unavailable", () => {
-    const tmp = fs.mkdtempSync(path.join(tmpdir(), "nemoclaw-pr-advisor-diff-"));
-    const result = spawnSync(
-      process.execPath,
-      [
-        "--experimental-strip-types",
-        path.join(ROOT, "tools/pr-review-advisor/analyze.mts"),
-        "--base",
-        "missing-ref",
-        "--head",
-        "HEAD",
-        "--schema",
-        path.join(ROOT, "tools/pr-review-advisor/schema.json"),
-        "--out-dir",
-        tmp,
-      ],
-      { cwd: ROOT, encoding: "utf8" },
-    );
-
-    try {
-      expect(result.status).toBe(1);
-      expect(
-        JSON.parse(fs.readFileSync(path.join(tmp, "pr-review-advisor-result.json"), "utf8")),
-      ).toMatchObject({ failed: true });
-      expect(
-        JSON.parse(fs.readFileSync(path.join(tmp, "pr-review-advisor-final-result.json"), "utf8")),
-      ).toMatchObject({
-        headSha: expect.stringMatching(/^[0-9a-f]{40}$/u),
-        reviewCompleteness: { requiresHumanReview: true },
-      });
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
 });
 
 function commit(cwd: string, message: string): void {

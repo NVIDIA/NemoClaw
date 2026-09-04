@@ -9,8 +9,7 @@
  * intentionally probes the runtime helper rather than the scheduler surface.
  */
 
-import path from "node:path";
-
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -27,7 +26,7 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-cron-preflight";
 validateSandboxName(SANDBOX_NAME);
 const MODEL = process.env.NEMOCLAW_CRON_PREFLIGHT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL;
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
-const LIVE_TIMEOUT_MS = 35 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(35 * 60_000);
 const PROBE_SOURCE = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -193,7 +192,9 @@ async function preCleanCronSandbox(sandbox: SandboxClient): Promise<void> {
   );
 }
 
-test("cron preflight reaches managed inference.local provider without EAI_AGAIN", {
+test(
+  "cron preflight reaches managed inference.local provider without EAI_AGAIN",
+  {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -203,7 +204,8 @@ test("cron preflight reaches managed inference.local provider without EAI_AGAIN"
       "validate managed route availability",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
   const hosted = requireHostedInferenceConfig(secrets, process.env, { model: MODEL });
   const apiKey = hosted.apiKey;
 
@@ -221,17 +223,10 @@ test("cron preflight reaches managed inference.local provider without EAI_AGAIN"
     ],
   });
 
-  const dockerInfo = await host.command("docker", ["info"], {
-    artifactName: "phase-0-docker-info",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "phase-0-runtime-info",
+      scenarioLabel: "cron preflight",
   });
-  if (dockerInfo.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(`Docker is required for cron preflight E2E: ${resultText(dockerInfo)}`);
-    }
-    skip(`Docker is required for cron preflight E2E: ${resultText(dockerInfo)}`);
-  }
 
   const cleanupEnv = commandEnv();
   cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
@@ -270,7 +265,7 @@ test("cron preflight reaches managed inference.local provider without EAI_AGAIN"
         cwd: REPO_ROOT,
         env: commandEnv(hosted.env),
         redactionValues: [apiKey],
-        timeoutMs: 20 * 60_000,
+        timeoutMs: execTimeout(20 * 60_000),
       },
     );
     if (install.exitCode === 0) break;
@@ -302,4 +297,5 @@ test("cron preflight reaches managed inference.local provider without EAI_AGAIN"
   expect(probe.exitCode, output).toBe(0);
   expect(parsed?.result?.status, output).toBe("available");
   expect(parsed?.baseUrl, output).toBe("https://inference.local/v1");
-});
+  },
+);

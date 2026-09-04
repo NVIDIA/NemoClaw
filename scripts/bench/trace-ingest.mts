@@ -29,7 +29,7 @@ interface ValidTrace {
   spans: TraceLikeSpan[];
 }
 
-type TraceMetricId = Extract<MetricId, "sandbox-cold-start" | "policy-shield-overhead">;
+type TraceMetricId = Extract<MetricId, "sandbox-cold-start" | "policy-application-overhead">;
 type TraceInspection = { ok: true; trace: ValidTrace } | { ok: false; reason: string };
 type MetricSpan =
   | {
@@ -242,10 +242,10 @@ export function ingestSandboxColdStart(artifact: unknown): BenchMetric {
 
 export function ingestPolicyOverhead(artifact: unknown): BenchMetric {
   const inspected = inspectTraceArtifact(artifact);
-  if (!inspected.ok) return invalidTraceMetric("policy-shield-overhead", inspected.reason);
+  if (!inspected.ok) return invalidTraceMetric("policy-application-overhead", inspected.reason);
   const policy = readMetricSpan(inspected.trace, POLICY_APPLICATION_SPAN);
-  const base = traceMetricBase("policy-shield-overhead");
-  if (policy.kind === "error") return invalidTraceMetric("policy-shield-overhead", policy.reason);
+  const base = traceMetricBase("policy-application-overhead");
+  if (policy.kind === "error") return invalidTraceMetric("policy-application-overhead", policy.reason);
   if (policy.kind === "missing") {
     return {
       ...base,
@@ -257,13 +257,13 @@ export function ingestPolicyOverhead(artifact: unknown): BenchMetric {
   }
   if (policy.parentSpanId !== inspected.trace.rootSpanId) {
     return invalidTraceMetric(
-      "policy-shield-overhead",
+      "policy-application-overhead",
       `${POLICY_APPLICATION_SPAN} is not a child of the onboard root`,
     );
   }
   if (policy.durationMs > inspected.trace.rootDurationMs) {
     return invalidTraceMetric(
-      "policy-shield-overhead",
+      "policy-application-overhead",
       `${POLICY_APPLICATION_SPAN} duration exceeds the onboard root`,
     );
   }
@@ -284,7 +284,7 @@ export function ingestPolicyOverhead(artifact: unknown): BenchMetric {
     source: "none",
     context,
     reason:
-      "the onboard trace records policy application setup time, not request-path shield overhead; dedicated request-path timing is not available",
+      "the onboard trace records policy application setup time, not request-path policy enforcement overhead; dedicated request-path timing is not available",
   };
 }
 

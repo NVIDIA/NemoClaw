@@ -58,8 +58,8 @@ test("TC-INF-06 invalid API key fails with credential classification and cleanup
       "confirm credential failure and no sandbox residue",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
-  await requireLivePrerequisites(host, skip);
+}, async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    await requireLivePrerequisites(host, runtimeProvider);
   const sandboxName = inferenceSandboxName("e2e-badkey");
   cleanup.add(`remove inference-routing invalid-key residue for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
@@ -109,8 +109,8 @@ test("TC-INF-07 unreachable endpoint fails with transport classification and cle
       "confirm transport failure and no sandbox residue",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
-  await requireLivePrerequisites(host, skip);
+}, async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    await requireLivePrerequisites(host, runtimeProvider);
   const sandboxName = inferenceSandboxName("e2e-unreach");
   cleanup.add(`remove inference-routing unreachable residue for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
@@ -241,7 +241,9 @@ await main(["apply"]);
     },
   );
   const raw = resultText(result);
-  const openshellLog = fs.existsSync(commandLogPath) ? fs.readFileSync(commandLogPath, "utf8") : "";
+    const openshellLog = fs.existsSync(commandLogPath)
+      ? fs.readFileSync(commandLogPath, "utf8")
+      : "";
   await artifacts.writeText("tc-inf-10-openshell-commands.jsonl", openshellLog);
 
   progress.phase("confirm rejection before OpenShell handoff");
@@ -306,7 +308,7 @@ const RUNTIME_IDENTITY_E2E_SCENARIOS = [
 
 type RuntimeIdentityE2EContext = Pick<
   E2ETargetFixtures,
-  "artifacts" | "cleanup" | "host" | "progress" | "sandbox"
+  "artifacts" | "cleanup" | "host" | "progress" | "runtimeProvider" | "sandbox"
 > & {
   skip: (note?: string) => never;
 };
@@ -330,15 +332,13 @@ const RUNTIME_IDENTITY_E2E_OPTIONS = {
 } as const;
 
 async function runRuntimeIdentityE2EScenario(
-  _testNumber: string,
-  _providerLabel: string,
   scenario: RuntimeIdentityE2EScenario,
   context: RuntimeIdentityE2EContext,
 ): Promise<void> {
-  const { artifacts, cleanup, host, progress, sandbox, skip } = context;
+  const { artifacts, cleanup, host, progress, runtimeProvider, sandbox } = context;
   const artifactPrefix = scenario.testId.toLowerCase();
   progress.phase("confirm live runtime identity prerequisites");
-  await requireLivePrerequisites(host, skip);
+  await requireLivePrerequisites(host, runtimeProvider);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-identity-e2e-"));
   const workdir = path.join(root, "blueprint");
   const profileDir = path.join(workdir, "provider-profiles");
@@ -346,7 +346,6 @@ async function runRuntimeIdentityE2EScenario(
   cleanup.add(`remove runtime identity E2E temp root ${root}`, () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
-
   const model = "nemoclaw-e2e-runtime-identity";
   const inferenceKey = "sk-runtime-identity-TEST-NOT-A-REAL-VALUE";
   const sandboxName = inferenceSandboxName(`e2e-i${scenario.testId.slice(-2)}`);
@@ -676,14 +675,11 @@ async function runRuntimeIdentityE2EScenario(
     `Inference route 'compatible-endpoint / ${model}' is already active, reusing.`,
   );
   for (const secret of redactionValues) expect(applyText).not.toContain(secret);
-  const attachedProviders = await sandbox.openshell(
-    ["sandbox", "provider", "list", sandboxName],
-    {
+  const attachedProviders = await sandbox.openshell(["sandbox", "provider", "list", sandboxName], {
       artifactName: `${artifactPrefix}-attached-providers`,
       env: openshellEnv,
       timeoutMs: 30_000,
-    },
-  );
+  });
   expect(attachedProviders.exitCode, resultText(attachedProviders)).toBe(0);
   expect(resultText(attachedProviders)).toContain(providerName);
   expect(oauth.tokenRequests()).toEqual([
@@ -987,20 +983,21 @@ async function runRuntimeIdentityE2EScenario(
 }
 
 // OpenShell 0.0.106 does not project provider-refresh credentials into Docker sandboxes.
-test.skipIf(!OPENSHELL_V0106_QUALIFICATION.supportsRuntimeIdentityRefreshProjection).for(
-  RUNTIME_IDENTITY_E2E_SCENARIOS,
-)(
+test
+  .skipIf(!OPENSHELL_V0106_QUALIFICATION.supportsRuntimeIdentityRefreshProjection)
+  .for(RUNTIME_IDENTITY_E2E_SCENARIOS)(
   "TC-INF-%s %sruntime identity refreshes and injects a delegated bearer through real OpenShell",
   RUNTIME_IDENTITY_E2E_OPTIONS,
   async (
-    [testNumber, providerLabel, scenario],
-    { artifacts, cleanup, host, progress, sandbox, skip },
+    [, , scenario],
+    { artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip },
   ) => {
-    await runRuntimeIdentityE2EScenario(testNumber, providerLabel, scenario, {
+    await runRuntimeIdentityE2EScenario(scenario, {
       artifacts,
       cleanup,
       host,
       progress,
+      runtimeProvider,
       sandbox,
       skip,
     });
@@ -1019,13 +1016,14 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
       "request a dcode completion through the route",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
   const model = "nemoclaw-e2e-compatible";
   const apiKey = "sk-compatible-TEST-NOT-A-REAL-VALUE";
-  await requireLivePrerequisites(host, skip);
+    await requireLivePrerequisites(host, runtimeProvider);
   const sandboxName = inferenceSandboxName("e2e-compat");
-  cleanup.add(`best-effort inference-routing compatible-endpoint cleanup for ${sandboxName}`, () =>
-    cleanupSandbox(host, sandbox, sandboxName),
+    cleanup.add(
+      `best-effort inference-routing compatible-endpoint cleanup for ${sandboxName}`,
+      () => cleanupSandbox(host, sandbox, sandboxName),
   );
   cleanup.add(`strict inference-routing compatible-endpoint cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
@@ -1162,9 +1160,9 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
       "verify private redirect rejection",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
   progress.phase("confirm live inference prerequisites");
-  await requireLivePrerequisites(host, skip);
+    await requireLivePrerequisites(host, runtimeProvider);
   const model = "nemoclaw-e2e-https-pin";
   const apiKey = "sk-https-pin-TEST-NOT-A-REAL-VALUE";
   const sandboxName = inferenceSandboxName("e2e-https");

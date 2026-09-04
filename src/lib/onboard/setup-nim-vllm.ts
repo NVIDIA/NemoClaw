@@ -7,7 +7,7 @@ import {
   type TrustedPrivateEndpointCapability,
 } from "../inference/endpoint-ssrf-preflight";
 import type { RequestedServingProfileModel } from "../inference/serving/requested-profile-model";
-import { VLLM_MODELS } from "../inference/vllm-models";
+import { resolveVllmModelAlias } from "../inference/vllm-models";
 import { isLoopbackHostname } from "../private-networks";
 import { cliName } from "./branding";
 import type { SetupNimSelectionResult, SetupNimSelectionState } from "./setup-nim-flow";
@@ -151,12 +151,7 @@ function reportedModelMatchesRequest(
   if (detectedModel === requestedModel) return true;
   const root = reportedModelRoot(findVllmModelEntry(models, detectedModel));
   if (!root) return false;
-  const normalizedRequest = requestedModel.toLowerCase();
-  const registeredModel = VLLM_MODELS.find(
-    (model) =>
-      model.id.toLowerCase() === normalizedRequest ||
-      model.servedModelId?.toLowerCase() === normalizedRequest,
-  );
+  const registeredModel = resolveVllmModelAlias(requestedModel);
   return root.toLowerCase() === (registeredModel?.id ?? requestedModel).toLowerCase();
 }
 
@@ -184,13 +179,7 @@ function validatedVllmModelIdentity(
   const root = reportedModelRoot(findVllmModelEntry(models, detectedModel));
   if (root) return root;
   if (!requestedModel || detectedModel !== requestedModel) return null;
-  const normalizedRequest = requestedModel.toLowerCase();
-  const registeredModel = VLLM_MODELS.find(
-    (model) =>
-      model.envValue.toLowerCase() === normalizedRequest ||
-      model.id.toLowerCase() === normalizedRequest ||
-      model.servedModelId?.toLowerCase() === normalizedRequest,
-  );
+  const registeredModel = resolveVllmModelAlias(requestedModel);
   return registeredModel?.id ?? requestedModel;
 }
 

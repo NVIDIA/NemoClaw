@@ -8,7 +8,6 @@ export type VitestWatchTriggerPattern = {
 
 const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/base-image-publication-workflow-boundary.test.ts",
-  "test/e2e/support/cli-artifact-workflow-boundary.test.ts",
   "test/e2e/support/dcode-profile-import-gate-workflow-boundary.test.ts",
   "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
   "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
@@ -102,10 +101,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
-    pattern: /(?:^|\/)internal\/security-reviews\/hermes-0\.19\.0-dependency-review\.md$/,
-    testsToRun: runTests("test/agents/hermes/hermes-dependency-review.test.ts"),
-  },
-  {
     pattern: /(?:^|\/)\.github\/actions\/resolve-hermes-base-image\/action\.yaml$/,
     testsToRun: runTests("test/platform/images/base-image-resolver-helper.test.ts"),
   },
@@ -120,17 +115,29 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)agents\/hermes\/Dockerfile\.base$/,
     testsToRun: runTests(
-      "test/agents/hermes/hermes-dependency-review.test.ts",
       "test/agents/hermes/hermes-share-mount-deps.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/runtime/sandbox/sandbox-provisioning.test.ts",
     ),
   },
   {
+    pattern: /(?:^|\/)agents\/hermes\/image-build-probes\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-image-build-probes.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/patch-cron-restore-drain\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-cron-restore-drain-patch.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/patch-session-list-preview\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-session-list-preview-patch.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)(agents\/(?:hermes|langchain-deepagents-code)\/)?Dockerfile$/,
     testsToRun: (_file, match) => {
       if (match[1] === "agents/hermes/") {
         return [
+          "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
           "src/lib/onboard/managed-startup-profile.test.ts",
           "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
         ];
@@ -162,6 +169,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)nemoclaw-blueprint\/policies\/presets\/local-memory\.yaml$/,
+    testsToRun: runTests("test/onboarding/effective-policy-contracts.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)nemoclaw-blueprint\/policies\/presets\/nous-browser\.yaml$/,
     testsToRun: runTests("test/onboarding/effective-policy-contracts.test.ts"),
   },
   {

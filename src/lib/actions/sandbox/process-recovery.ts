@@ -2,14 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes } from "node:crypto";
-import { dockerSpawnSync } from "../../adapters/docker";
 import { stripAnsi } from "../../adapters/openshell/client";
+import { withSelectedOpenShellCommandOptions } from "../../adapters/openshell/command-argv";
 import {
+  buildOpenShellRuntimeSelectionEnv,
   captureOpenshell,
   captureOpenshellForStatus,
   captureSandboxSshConfig,
   getOpenshellBinary,
   isCommandTimeout,
+  type OpenShellRuntimeSelection,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
@@ -28,15 +30,17 @@ import { ROOT, shellQuote } from "../../runner";
 import {
   isDirectSandboxFallbackUnavailableError,
   isPinnedSandboxContainerIdentityChangedError,
-  privilegedSandboxExecArgv,
+  executePrivilegedSandboxCommand as executeProviderPrivilegedSandboxCommand,
+  resolvePrivilegedSandboxTarget,
   withPrivilegedSandboxExecutionLease,
 } from "../../sandbox/privileged-exec";
-import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
+import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../state/registry";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import {
   ensureHermesDashboardPortForwardIfEnabled,
   ensureSandboxPortForward,
+  createHermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryError,
   isSandboxForwardHealthy,
   prepareHermesPortableLaunchForwards,
@@ -44,7 +48,6 @@ import {
   recoverHermesPortableLaunchForwards,
   recoverMessagingHostForward,
   resolveSandboxDashboardPort,
-  resolveSandboxLaunchForwardPorts,
   resolveSandboxHealthProbeUrl,
   verifyHermesPortableLaunchForwards,
   type HermesPortableForwardRecoveryFailure,
@@ -65,7 +68,7 @@ import {
   type ManagedGatewayControlCompletion,
   parseManagedGatewayControlCompletion,
   printGatewayRestartFailure,
-  type RestartSandboxGatewayOptions,
+  type RestartSandboxGatewayOptions as BaseRestartSandboxGatewayOptions,
   restartSandboxGatewayWithDeps,
   sandboxAgentName,
   withUnsupportedHermesPortableGatewayRestartFence,
@@ -82,15 +85,15 @@ import {
 } from "./sandbox-exec-output";
 import {
   type ManagedSupervisorRelaunch,
+  recoverRegisteredRuntimeProviderSandbox,
   relaunchManagedSupervisorSession,
+  usesManagedGatewayController,
+  usesLegacyManagedGatewayRecovery,
 } from "./supervisor-relaunch";
-export type { SandboxForwardHealth, SandboxForwardListEntry } from "./forward-health";
-export {
-  classifyForwardHealthWithReachability,
-  classifySandboxForwardHealth,
-} from "./forward-health";
+export type { SandboxForwardHealth } from "./forward-health";
 export { resolveSandboxDashboardPort, resolveSandboxLaunchForwardPorts } from "./forward-recovery";
 export {
+  createHermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryError,
   prepareHermesPortableLaunchForwards,
   recoverHermesPortableLaunchForwards,
@@ -104,17 +107,30 @@ export type {
   HermesPortableForwardVerificationResult,
   PreparedHermesPortableForwardRecovery,
 };
+
 export type {
   GatewayRestartDeps,
   GatewayRestartFailureLayer,
   GatewayRestartResult,
   ManagedGatewayControlCompletion,
-  RestartSandboxGatewayOptions,
 } from "./gateway-restart";
+
+export type RestartSandboxGatewayOptions = BaseRestartSandboxGatewayOptions & {
+  runtimeSelection?: OpenShellRuntimeSelection;
+};
 
 export { buildSandboxExecMarkedCommand } from "./sandbox-exec-output";
 
 export type { SandboxCommandResult, SandboxExecCommandOptions };
+
+export type SandboxCommandExecutionOptions = {
+  runtimeSelection?: OpenShellRuntimeSelection;
+  timeout?: number;
+};
+
+export type SandboxExecCommandExecutionOptions = SandboxExecCommandOptions & {
+  runtimeSelection?: OpenShellRuntimeSelection;
+};
 
 type ProcessRecoveryProbeTiming = {
   measure<T>(stage: "processes" | "forward", operation: () => T): T;
@@ -126,14 +142,12 @@ function commandTransportDependencies(): CommandTransportDependencies {
     buildSandboxExecMarkedCommand,
     buildSubprocessEnv,
     captureSandboxSshConfig,
-    dockerSpawnSync,
+    executePrivilegedSandboxCommand: executeProviderPrivilegedSandboxCommand,
     extractSandboxExecCommandStdout,
     getOpenshellBinary,
     isDirectSandboxFallbackUnavailableError,
     openshellProbeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-    privilegedSandboxExecArgv,
     root: ROOT,
-    withPrivilegedSandboxExecutionLease,
   };
 }
 
@@ -174,13 +188,26 @@ function getSandboxHealthProbeUrl(sandboxName: string): string {
 export function executeSandboxCommand(
   sandboxName: string,
   command: string,
-  timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+  timeoutOrOptions: number | SandboxCommandExecutionOptions = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
 ): SandboxCommandResult | null {
+  const timeout =
+    typeof timeoutOrOptions === "number"
+      ? timeoutOrOptions
+      : (timeoutOrOptions.timeout ?? DEFAULT_SANDBOX_EXEC_TIMEOUT_MS);
+  const runtimeSelection =
+    typeof timeoutOrOptions === "number" ? undefined : timeoutOrOptions.runtimeSelection;
+  const runtimeEnv = runtimeSelection
+    ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
+    : undefined;
   return executeSandboxCommandTransport(
     commandTransportDependencies(),
     sandboxName,
     command,
     timeout,
+    {
+      ...(runtimeSelection ? { gatewayName: runtimeSelection.gatewayName } : {}),
+      runtimeEnv,
+    },
   );
 }
 
@@ -194,19 +221,15 @@ export function executePrivilegedSandboxCommand(
     sandboxName,
     "sandbox process recovery controller",
     () => {
-      const argv = privilegedSandboxExecArgv(sandboxName, [...command], false, true);
-      const result = dockerSpawnSync(argv, {
-        cwd: ROOT,
-        encoding: "utf-8",
-        env: buildSubprocessEnv(),
-        stdio: ["ignore", "pipe", "pipe"],
+      const result = executeProviderPrivilegedSandboxCommand(sandboxName, command, {
+        sanitizeEnvironment: true,
         timeout,
       });
       if (result.error) return null;
       return {
         status: result.status ?? 1,
-        stdout: String(result.stdout || ""),
-        stderr: String(result.stderr || ""),
+        stdout: result.stdout.toString("utf8"),
+        stderr: result.stderr.toString("utf8"),
       };
     },
   );
@@ -216,14 +239,27 @@ export function executeSandboxExecCommand(
   sandboxName: string,
   command: string,
   timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-  options: SandboxExecCommandOptions = {},
+  options: SandboxExecCommandExecutionOptions = {},
 ): SandboxCommandResult | null {
+  const { runtimeSelection, ...transportOptions } = options;
+  const runtimeEnv = runtimeSelection
+    ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
+    : options.runtimeEnv;
   return executeSandboxExecCommandTransport(
     commandTransportDependencies(),
     sandboxName,
     command,
     timeout,
-    options,
+    {
+      ...transportOptions,
+      ...(runtimeSelection
+        ? {
+            allowLocalDockerFallback: false,
+            gatewayName: runtimeSelection.gatewayName,
+          }
+        : {}),
+      ...(runtimeEnv ? { runtimeEnv } : {}),
+    },
   );
 }
 
@@ -236,26 +272,21 @@ function executeGatewaySupervisorActionPinned(
   const nonce = randomBytes(32).toString("hex");
   try {
     return withPrivilegedSandboxExecutionLease(sandboxName, `gateway supervisor ${action}`, () => {
-      const argv = privilegedSandboxExecArgv(
+      const targetContainerId =
+        expectedContainerId ?? resolvePrivilegedSandboxTarget(sandboxName).resourceHandle;
+      const result = executeProviderPrivilegedSandboxCommand(
         sandboxName,
         [MANAGED_GATEWAY_CONTROL_PATH, action, nonce],
-        false,
-        true,
-        expectedContainerId,
+        {
+          sanitizeEnvironment: true,
+          expectedResourceHandle: targetContainerId,
+          timeout,
+        },
       );
-      const controlPathIndex = argv.lastIndexOf(MANAGED_GATEWAY_CONTROL_PATH);
-      const targetContainerId = controlPathIndex > 0 ? argv[controlPathIndex - 1] : null;
-      const result = dockerSpawnSync(argv, {
-        cwd: ROOT,
-        encoding: "utf-8",
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout,
-      });
-      if (result.error) return null;
       const status = result.status ?? 1;
-      const stdout = String(result.stdout || "").trim();
-      let stderr = String(result.stderr || "").trim();
+      const stdout = result.stdout.toString("utf8").trim();
+      let stderr = result.stderr.toString("utf8").trim();
+      if (result.error) return null;
       const restartingContainerMatch = stderr.match(DOCKER_CONTAINER_RESTARTING_ERROR);
       const managedControlRestartingContainerId =
         status === 1 &&
@@ -309,6 +340,20 @@ export function executeGatewaySupervisorAction(
   return executeGatewaySupervisorActionPinned(sandboxName, action, timeout);
 }
 
+function refuseHostLocalSupervisorForSelectedRuntime(
+  _sandboxName: string,
+  _action: "restart" | "recover" | "probe",
+  _timeout = 210000,
+  _expectedContainerId?: string,
+): ManagedGatewaySupervisorActionResult {
+  return {
+    status: 1,
+    stdout: "",
+    stderr:
+      "PRIVILEGED_CONTROL_UNAVAILABLE\nSELECTED_RUNTIME_SUPERVISOR_UNAVAILABLE: host-local supervisor control is not valid for an explicitly selected OpenShell target",
+  };
+}
+
 async function executeSandboxExecCommandForStatus(
   sandboxName: string,
   command: string,
@@ -358,12 +403,22 @@ function parseSandboxGatewayProbe(result: SandboxCommandResult | null): boolean 
  * Fixes #2342 — previously `curl -sf` failed on 401, causing false
  * "Health Offline" readings.
  */
-function isSandboxGatewayRunning(sandboxName: string): boolean | null {
+function isSandboxGatewayRunning(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): boolean | null {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
   const probeUrl = getSandboxHealthProbeUrl(sandboxName);
   const command = `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$HTTP_CODE" in 200|401) echo RUNNING ;; *) echo STOPPED ;; esac`;
-  const execProbe = parseSandboxGatewayProbe(executeSandboxExecCommand(sandboxName, command));
+  const execProbe = parseSandboxGatewayProbe(
+    executeSandboxExecCommand(
+      sandboxName,
+      command,
+      DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+      runtimeSelection ? { runtimeSelection } : {},
+    ),
+  );
   if (execProbe !== null) return execProbe;
 
   // Built-in OpenClaw and Hermes lifecycle control is host-mediated through
@@ -374,7 +429,13 @@ function isSandboxGatewayRunning(sandboxName: string): boolean | null {
   // their recovery contract is explicitly SSH-owned until manifests can
   // declare a trusted runtime user/supervisor.
   if (!agent || agent.name === "openclaw" || agent.name === "hermes") return null;
-  return parseSandboxGatewayProbe(executeSandboxCommand(sandboxName, command));
+  return parseSandboxGatewayProbe(
+    executeSandboxCommand(
+      sandboxName,
+      command,
+      runtimeSelection ? { runtimeSelection } : DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+    ),
+  );
 }
 
 function hasGatewayRecoveryMarker(result: SandboxCommandResult | null): boolean {
@@ -654,8 +715,7 @@ export function confirmRecoveredSandboxGatewayManaged(
   const persistedAgent = entry.agent ?? "openclaw";
   if (persistedAgent !== "openclaw" && persistedAgent !== "hermes") return null;
 
-  const driver = entry.openshellDriver?.trim().toLowerCase() ?? null;
-  if (driver !== null && driver !== "docker" && driver !== "vm") return null;
+  if (!usesManagedGatewayController(entry)) return null;
 
   const getSessionAgent = options.getSessionAgentImpl ?? agentRuntime.getSessionAgent;
   const agent = getSessionAgent(sandboxName);
@@ -702,6 +762,7 @@ export async function isSandboxGatewayRunningForStatus(
 type SandboxProcessRecovery =
   | { kind: "managed"; managedControlCompletion?: ManagedGatewayControlCompletion }
   | { kind: "custom" }
+  | { kind: "provider" }
   | { kind: "relaunched"; relaunch: ManagedSupervisorRelaunch };
 
 function recoverSandboxProcesses(
@@ -712,14 +773,25 @@ function recoverSandboxProcesses(
     requestPinnedGatewaySupervisorAction = executeGatewaySupervisorActionPinned,
     relaunchManagedSupervisorSessionImpl = relaunchManagedSupervisorSession,
     onFailureLayer,
+    runtimeSelection,
   }: {
     quiet?: boolean;
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
     requestPinnedGatewaySupervisorAction?: RequestPinnedGatewaySupervisorAction;
     relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
     onFailureLayer?: (layer: GatewayRestartFailureLayer, detail: string) => void;
+    runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ): SandboxProcessRecovery | null {
+  const effectiveGatewaySupervisorAction =
+    runtimeSelection && requestGatewaySupervisorAction === executeGatewaySupervisorAction
+      ? refuseHostLocalSupervisorForSelectedRuntime
+      : requestGatewaySupervisorAction;
+  const effectivePinnedGatewaySupervisorAction =
+    runtimeSelection &&
+    requestPinnedGatewaySupervisorAction === executeGatewaySupervisorActionPinned
+      ? refuseHostLocalSupervisorForSelectedRuntime
+      : requestPinnedGatewaySupervisorAction;
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const dashboardPort = resolveSandboxDashboardPort(sandboxName);
   let persistedAgent: string | null;
@@ -733,6 +805,18 @@ function recoverSandboxProcesses(
     quiet || printGatewayRestartFailure(sandboxName, "unsupported agent", detail);
     return null;
   }
+  const persistedSandbox = registry.getSandbox(sandboxName);
+  // Providers that launch NemoClaw's managed in-sandbox controller recover the
+  // gateway through that controller. Restarting their runtime first replaces
+  // the still-healthy supervisor and changes gateway parentage.
+  if (persistedSandbox && !usesManagedGatewayController(persistedSandbox)) {
+    const result = recoverRegisteredRuntimeProviderSandbox(persistedSandbox);
+    if (result) {
+      if (result.exitCode === 0) return { kind: "provider" };
+      if (!quiet && result.message) console.error(result.message);
+      return null;
+    }
+  }
   const recoveredSsh = (result: SandboxCommandResult | null): SandboxProcessRecovery | null =>
     result && result.status === 0 && hasGatewayRecoveryMarker(result) ? { kind: "custom" } : null;
   const recoverManagedGateway = (): SandboxProcessRecovery | null => {
@@ -745,7 +829,7 @@ function recoverSandboxProcesses(
     let execResult: ManagedGatewaySupervisorActionResult | null = null;
     let busyAttempts = 0;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      execResult = requestGatewaySupervisorAction(sandboxName, "recover");
+      execResult = effectiveGatewaySupervisorAction(sandboxName, "recover");
       const managedControlCompletion = parseManagedGatewayControlCompletion(execResult);
       if (managedControlCompletion) return { kind: "managed", managedControlCompletion };
       if (hasGatewayRecoveryMarker(execResult)) return { kind: "managed" };
@@ -776,24 +860,46 @@ function recoverSandboxProcesses(
       const relaunch = relaunchManagedSupervisorSessionImpl(sandboxName, {
         quiet,
         deps: {
-          runOpenshell,
+          runOpenshell: (args, options) =>
+            runOpenshell(
+              args,
+              withSelectedOpenShellCommandOptions(options ?? {}, runtimeSelection),
+            ),
           runCaptureOpenshell: (args, options) =>
-            captureOpenshell(args, {
-              ignoreError: true,
-              includeStderr: true,
-              killProcessTreeOnTimeout: options?.killProcessTreeOnTimeout === true,
-              killSignal: options?.killSignal === "SIGKILL" ? "SIGKILL" : undefined,
-              timeout:
-                typeof options?.timeout === "number" ? options.timeout : OPENSHELL_PROBE_TIMEOUT_MS,
-            }).output,
+            captureOpenshell(
+              args,
+              withSelectedOpenShellCommandOptions(
+                {
+                  ignoreError: true,
+                  includeStderr: true,
+                  killProcessTreeOnTimeout: options?.killProcessTreeOnTimeout === true,
+                  killSignal: options?.killSignal === "SIGKILL" ? "SIGKILL" : undefined,
+                  timeout:
+                    typeof options?.timeout === "number"
+                      ? options.timeout
+                      : OPENSHELL_PROBE_TIMEOUT_MS,
+                },
+                runtimeSelection,
+              ),
+            ).output,
           confirmMissingSupervisor: (containerId) =>
             isExactlyManagedControlMarker(
-              requestPinnedGatewaySupervisorAction(sandboxName, "probe", 210000, containerId),
+              effectivePinnedGatewaySupervisorAction(
+                sandboxName,
+                "probe",
+                210000,
+                containerId,
+              ),
               "SUPERVISOR_NOT_RUNNING",
             ),
           restartRestoredManagedGateway: (containerId) => {
             const restarted = parseManagedGatewayControlCompletion(
-              requestPinnedGatewaySupervisorAction(sandboxName, "restart", 210000, containerId),
+              effectivePinnedGatewaySupervisorAction(
+                sandboxName,
+                "restart",
+                210000,
+                containerId,
+              ),
             );
             if (restarted?.disposition !== "ok") return false;
             return waitForRecoveredSandboxGateway(sandboxName, {
@@ -801,10 +907,11 @@ function recoverSandboxProcesses(
               initialManagedHealthPassed: true,
               requireManagedProbe: true,
               timeoutSeconds: gatewayRecoveryTimeoutSeconds(agent),
+              runtimeSelection,
               managedProbeImpl: (name) =>
                 confirmRecoveredSandboxGatewayManaged(name, {
                   requestGatewaySupervisorActionImpl: (name, action) =>
-                    requestPinnedGatewaySupervisorAction(name, action, 210000, containerId),
+                    effectivePinnedGatewaySupervisorAction(name, action, 210000, containerId),
                 }),
             });
           },
@@ -845,7 +952,13 @@ function recoverSandboxProcesses(
     // Non-Hermes custom manifests do not yet declare a supported host-side
     // runtime user. Recover them over SSH so the launch inherits the sandbox
     // login user instead of creating root-owned agent state under /sandbox.
-    return recoveredSsh(executeSandboxCommand(sandboxName, agentScript));
+    return recoveredSsh(
+      executeSandboxCommand(
+        sandboxName,
+        agentScript,
+        runtimeSelection ? { runtimeSelection } : DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+      ),
+    );
   }
 
   return null;
@@ -853,35 +966,57 @@ function recoverSandboxProcesses(
 
 export function restartSandboxGateway(
   sandboxName: string,
-  { quiet = false, deps = {} }: RestartSandboxGatewayOptions = {},
+  { quiet = false, deps = {}, runtimeSelection }: RestartSandboxGatewayOptions = {},
 ): GatewayRestartResult {
   return withUnsupportedHermesPortableGatewayRestartFence(sandboxName, () => {
-    return withTimerBoundShieldsMutationLock(sandboxName, "gateway restart", () =>
+    const defaultSupervisorAction = runtimeSelection
+      ? refuseHostLocalSupervisorForSelectedRuntime
+      : executeGatewaySupervisorAction;
+    return withMcpLifecycleLockSync(sandboxName, () =>
       restartSandboxGatewayWithDeps(sandboxName, {
         quiet,
         deps: {
           getSessionAgent: agentRuntime.getSessionAgent,
           getSandbox: registry.getSandbox,
           resolveSandboxDashboardPort,
-          requestGatewaySupervisorAction: executeGatewaySupervisorAction,
-          executeSandboxExecCommand,
+          requestGatewaySupervisorAction: defaultSupervisorAction,
+          executeSandboxExecCommand: (name, command, timeout) =>
+            executeSandboxExecCommand(
+              name,
+              command,
+              timeout,
+              runtimeSelection ? { runtimeSelection } : {},
+            ),
           waitForRecoveredSandboxGateway: (name, options) =>
             waitForRecoveredSandboxGateway(name, {
               ...options,
               initialManagedHealthPassed: true,
+              runtimeSelection,
               timeoutSeconds: gatewayRecoveryTimeoutSeconds(agentRuntime.getSessionAgent(name)),
               managedProbeImpl: (sandboxName) =>
                 confirmRecoveredSandboxGatewayManaged(sandboxName, {
                   requestGatewaySupervisorActionImpl:
-                    deps.requestGatewaySupervisorAction ?? executeGatewaySupervisorAction,
+                    deps.requestGatewaySupervisorAction ?? defaultSupervisorAction,
                 }),
             }),
-          ensureSandboxPortForward,
-          ensureHermesDashboardPortForwardIfEnabled,
-          recoverMessagingHostForward,
-          recoverDeclaredAgentForwardPorts,
+          ensureSandboxPortForward: (name) =>
+            ensureSandboxPortForward(name, { runtimeSelection }),
+          ensureHermesDashboardPortForwardIfEnabled: (name) =>
+            ensureHermesDashboardPortForwardIfEnabled(name, runtimeSelection),
+          recoverMessagingHostForward: (name, options) =>
+            recoverMessagingHostForward(name, { ...options, runtimeSelection }),
+          recoverDeclaredAgentForwardPorts: (name, recoveryPort, options) =>
+            recoverDeclaredAgentForwardPorts(name, recoveryPort, {
+              ...options,
+              runtimeSelection,
+            }),
           printGatewayWedgeDiagnostics,
-          inspectHermesMcpReconciliationRefusal,
+          inspectHermesMcpReconciliationRefusal: (name) =>
+            inspectHermesMcpReconciliationRefusal(
+              name,
+              undefined,
+              runtimeSelection,
+            ),
           ...deps,
         },
       }),
@@ -995,6 +1130,7 @@ type RecreatedSandboxOpenShellReadyOptions = {
   nowImpl?: () => number;
   sleepImpl?: (seconds: number) => void;
   timeoutSeconds?: number;
+  runtimeSelection?: OpenShellRuntimeSelection;
 };
 
 function recreatedSandboxOpenShellReadinessFailureDetail(
@@ -1095,12 +1231,18 @@ function waitForRecreatedSandboxOpenShellReadyResult(
         ready: false,
       };
     }
-    const result = capture(["sandbox", "exec", "--name", sandboxName, "--", "true"], {
-      ignoreError: true,
-      includeStderr: true,
-      includeStreams: true,
-      timeout: Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, remainingMs)),
-    });
+    const result = capture(
+      ["sandbox", "exec", "--name", sandboxName, "--", "true"],
+      withSelectedOpenShellCommandOptions(
+        {
+          ignoreError: true,
+          includeStderr: true,
+          includeStreams: true,
+          timeout: Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, remainingMs)),
+        },
+        options.runtimeSelection,
+      ),
+    );
     if (result.status === 0 && !result.error) return { ready: true };
     const openshellError = normalizeOpenshellStructuredError(String(result.stderr ?? ""));
     if (openshellError) lastOpenshellError = openshellError;
@@ -1265,9 +1407,12 @@ export function waitForRecoveredSandboxGateway(
     quiet?: boolean;
     timeoutSeconds?: number;
     requireManagedProbe?: boolean;
+    runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ): boolean {
-  const probe = options.probeImpl ?? isSandboxGatewayRunning;
+  const probe =
+    options.probeImpl ??
+    ((name: string) => isSandboxGatewayRunning(name, options.runtimeSelection));
   const managedProbe =
     options.managedProbeImpl ?? (options.probeImpl ? null : confirmRecoveredSandboxGatewayManaged);
   const sleep = options.sleepImpl ?? sleepSeconds;
@@ -1391,6 +1536,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     isWsl: isWslOverride,
     onRecoveryFailureLayer,
     probeTiming,
+    runtimeSelection,
   }: {
     quiet?: boolean;
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
@@ -1401,10 +1547,20 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     isWsl?: boolean;
     onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null, detail?: string) => void;
     probeTiming?: ProcessRecoveryProbeTiming;
+    runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ) {
   const measure = <T>(stage: "processes" | "forward", operation: () => T): T =>
     probeTiming ? probeTiming.measure(stage, operation) : operation();
+  const effectiveGatewaySupervisorAction =
+    runtimeSelection && requestGatewaySupervisorAction === executeGatewaySupervisorAction
+      ? refuseHostLocalSupervisorForSelectedRuntime
+      : requestGatewaySupervisorAction;
+  const effectivePinnedGatewaySupervisorAction =
+    runtimeSelection &&
+    requestPinnedGatewaySupervisorAction === executeGatewaySupervisorActionPinned
+      ? refuseHostLocalSupervisorForSelectedRuntime
+      : requestPinnedGatewaySupervisorAction;
   const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   const recoveryDisplayName = recoveryAgentDisplayName(sandboxName, recoveryAgent);
   if (recoveryAgent && !agentRuntime.hasGatewayRuntime(recoveryAgent)) {
@@ -1416,7 +1572,9 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       runtime: "terminal" as const,
     };
   }
-  const running = measure("processes", () => isSandboxGatewayRunningImpl(sandboxName));
+  const running = measure("processes", () =>
+    isSandboxGatewayRunningImpl(sandboxName, runtimeSelection),
+  );
   if (running === null) {
     return { checked: false, wasRunning: null, recovered: false, forwardRecovered: false };
   }
@@ -1425,7 +1583,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     const enforcement = enforceHermesSecretBoundaryOnRunningGateway(
       sandboxName,
       recoveryAgent,
-      requestGatewaySupervisorAction,
+      effectiveGatewaySupervisorAction,
     );
     if (enforcement?.refused) {
       return {
@@ -1437,7 +1595,12 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         secretBoundaryReason: enforcement.reason,
       };
     }
-    const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, true);
+    const mcpRefusal = processRecoveryMcpReconciliationRefusal(
+      sandboxName,
+      true,
+      undefined,
+      runtimeSelection,
+    );
     if (mcpRefusal) return mcpRefusal;
   }
   if (running) {
@@ -1445,7 +1608,10 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     // owned by another sandbox. Probe and re-establish only when
     // necessary so the live-and-healthy path stays a no-op.
     const forwardHealthy = measure("forward", () =>
-      isSandboxForwardHealthy(sandboxName, { isWsl: isWslOverride }),
+      isSandboxForwardHealthy(sandboxName, {
+        isWsl: isWslOverride,
+        runtimeSelection,
+      }),
     );
     if (forwardHealthy === false) {
       if (!quiet) {
@@ -1454,17 +1620,18 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         console.log("  Re-establishing...");
       }
       const forwardRecovered = measure("forward", () =>
-        ensureSandboxPortForward(sandboxName, { isWsl: isWslOverride }),
+        ensureSandboxPortForward(sandboxName, { isWsl: isWslOverride, runtimeSelection }),
       );
       const dashboardForwardRecovered = measure("forward", () =>
-        ensureHermesDashboardPortForwardIfEnabled(sandboxName),
+        ensureHermesDashboardPortForwardIfEnabled(sandboxName, runtimeSelection),
       );
       const messagingForwardRecovered = measure("forward", () =>
-        recoverMessagingHostForward(sandboxName, { quiet }),
+        recoverMessagingHostForward(sandboxName, { quiet, runtimeSelection }),
       );
       const declaredForwardsRecovered = measure("forward", () =>
         recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, {
           quiet,
+          runtimeSelection,
         }),
       );
       const auxiliaryResults = [
@@ -1481,9 +1648,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
         } else {
           console.error("  Failed to re-establish the dashboard port forward.");
-          console.error(
-            `  Run \`openshell forward start --background ${recoveryPort} ${sandboxName}\` manually.`,
-          );
+          console.error(`  Run \`nemoclaw ${sandboxName} recover\` after resolving the error.`);
         }
       }
       if (!forwardRecovered) {
@@ -1518,43 +1683,14 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecovered: forwardRecovered || anyAuxiliaryRecovered(auxiliaryResults),
       };
     }
-    if (forwardHealthy === "occupied") {
-      probeTiming?.setForwardAction("failed");
-      if (!quiet) {
-        console.log("");
-        console.error(`  Dashboard port forward for '${sandboxName}' is owned by another sandbox.`);
-        console.error("  Leaving the existing port forward unchanged.");
-      }
-      return {
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: false,
-        forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail:
-          "the primary dashboard/API host forward is owned by another sandbox",
-      };
-    }
-    if (forwardHealthy === null) {
-      probeTiming?.setForwardAction("failed");
-      return {
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: false,
-        forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail:
-          "the primary dashboard/API host forward could not be verified because OpenShell forward state was unavailable",
-      };
-    }
     const dashboardForwardRecovered = measure("forward", () =>
-      ensureHermesDashboardPortForwardIfEnabled(sandboxName),
+      ensureHermesDashboardPortForwardIfEnabled(sandboxName, runtimeSelection),
     );
     const messagingForwardRecovered = measure("forward", () =>
-      recoverMessagingHostForward(sandboxName, { quiet }),
+      recoverMessagingHostForward(sandboxName, { quiet, runtimeSelection }),
     );
     const declaredForwardsRecovered = measure("forward", () =>
-      recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, { quiet }),
+      recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, { quiet, runtimeSelection }),
     );
     const auxiliaryResults = [
       { label: "the Hermes dashboard host forward", recovered: dashboardForwardRecovered },
@@ -1599,9 +1735,10 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
   const recovery = measure("processes", () =>
     recoverSandboxProcesses(sandboxName, {
       quiet,
-      requestGatewaySupervisorAction,
-      requestPinnedGatewaySupervisorAction,
+      requestGatewaySupervisorAction: effectiveGatewaySupervisorAction,
+      requestPinnedGatewaySupervisorAction: effectivePinnedGatewaySupervisorAction,
       relaunchManagedSupervisorSessionImpl,
+      runtimeSelection,
       onFailureLayer: (layer, detail) => {
         managedRecoveryFailureLayer = layer;
         managedRecoveryFailureDetail = detail;
@@ -1618,8 +1755,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     const relaunch = recovery.kind === "relaunched" ? recovery.relaunch : null;
     const requestManagedProbe = relaunch
       ? (name: string, action: "restart" | "recover" | "probe", timeout = 210000) =>
-          requestPinnedGatewaySupervisorAction(name, action, timeout, relaunch.containerId)
-      : requestGatewaySupervisorAction;
+          effectivePinnedGatewaySupervisorAction(name, action, timeout, relaunch.containerId)
+      : effectiveGatewaySupervisorAction;
     const relaunchedManagedHealth = {
       failure: null as ReturnType<typeof classifyGatewayRestartFailure> | null,
     };
@@ -1659,6 +1796,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           quiet,
           initialManagedHealthPassed: recovery.kind === "managed",
           requireManagedProbe: recovery.kind === "relaunched",
+          runtimeSelection,
           // A legacy keepalive relaunch starts a new OpenClaw container. The
           // #10153 failure exhausted the ordinary 30-second health budget
           // during that full recreation. Give only this OpenClaw transition
@@ -1698,7 +1836,14 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       const rollbackUnconfirmed = recoveryFailureDetail !== gatewayWaitFailureDetail;
       if (!quiet) {
         console.error("  Gateway process started but is not responding.");
-        printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
+        printGatewayWedgeDiagnostics(sandboxName, (name, command) =>
+          executeSandboxExecCommand(
+            name,
+            command,
+            DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+            runtimeSelection ? { runtimeSelection } : {},
+          ),
+        );
         console.error("  Check /tmp/gateway.log inside the sandbox for details.");
         if (rollbackUnconfirmed) {
           console.error(
@@ -1726,12 +1871,14 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     // Host-forward recovery requires an OpenShell-ready sandbox. Managed
     // recovery has already passed its authenticated control and health gates;
     // a replacement also rechecks its pinned identity before readiness.
-    const recoveryRequiresReadiness = recovery.kind === "managed" || relaunch;
+    const recoveryRequiresReadiness =
+      recovery.kind === "managed" || recovery.kind === "provider" || relaunch;
     const waitForRecoveryReadiness = () => {
       const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
         beforeProbe: relaunch
           ? (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null
           : undefined,
+        runtimeSelection,
       };
       const readiness =
         waitForRecreatedSandboxOpenShellReadyImpl === waitForRecreatedSandboxOpenShellReady
@@ -1782,13 +1929,19 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       );
       if (finalizationFailure) return finalizationFailure;
     }
-    const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
+    const mcpRefusal = processRecoveryMcpReconciliationRefusal(
+      sandboxName,
+      false,
+      undefined,
+      runtimeSelection,
+    );
     if (mcpRefusal) return mcpRefusal;
     const forwardRecovered = measure("forward", () =>
       ensureSandboxPortForward(sandboxName, {
         afterSuccess: confirmRelaunchedManagedHealthForForward ?? undefined,
         beforeStart: confirmRelaunchedManagedHealthForForward ?? undefined,
         isWsl: isWslOverride,
+        runtimeSelection,
       }),
     );
     if (!forwardRecovered && relaunchedManagedHealth.failure) {
@@ -1805,13 +1958,13 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       };
     }
     const dashboardForwardRecovered = measure("forward", () =>
-      ensureHermesDashboardPortForwardIfEnabled(sandboxName),
+      ensureHermesDashboardPortForwardIfEnabled(sandboxName, runtimeSelection),
     );
     const messagingForwardRecovered = measure("forward", () =>
-      recoverMessagingHostForward(sandboxName, { quiet }),
+      recoverMessagingHostForward(sandboxName, { quiet, runtimeSelection }),
     );
     const declaredForwardsRecovered = measure("forward", () =>
-      recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, { quiet }),
+      recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, { quiet, runtimeSelection }),
     );
     const auxiliaryResults = [
       { label: "the Hermes dashboard host forward", recovered: dashboardForwardRecovered },
@@ -1825,9 +1978,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
       } else {
         console.error("  Failed to re-establish the dashboard port forward.");
-        console.error(
-          `  Run \`openshell forward start --background ${recoveryPort} ${sandboxName}\` manually.`,
-        );
+        console.error(`  Run \`nemoclaw ${sandboxName} recover\` after resolving the error.`);
       }
     }
     if (!forwardRecovered) {
@@ -1883,9 +2034,10 @@ export function checkAndRecoverSandboxProcesses(
     isWsl?: boolean;
     onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null, detail?: string) => void;
     probeTiming?: ProcessRecoveryProbeTiming;
+    runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ) {
-  return withTimerBoundShieldsMutationLock(sandboxName, "gateway process recovery", () =>
+  return withMcpLifecycleLockSync(sandboxName, () =>
     checkAndRecoverSandboxProcessesWithoutHostLock(sandboxName, options),
   );
 }

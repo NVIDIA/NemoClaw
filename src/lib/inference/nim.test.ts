@@ -95,8 +95,7 @@ describe("nim", () => {
   describe("listModels", () => {
     it("returns 5 models", () => {
       expect(nim.listModels().length).toBe(5);
-    });
-
+      });
     it.each(nim.listModels())("model $name has an image and positive GPU memory", (model) => {
       expect(model.name).toBeTruthy();
       expect(model.image).toBeTruthy();
@@ -426,6 +425,7 @@ describe("nim", () => {
         expect(nim.detectNvidiaPlatform()).toBe("spark");
       });
     });
+
   });
 
   describe("detectGpu", () => {

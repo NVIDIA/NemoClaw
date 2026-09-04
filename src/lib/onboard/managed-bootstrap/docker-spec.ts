@@ -34,6 +34,7 @@ const CONFIG_KEYS = new Set([
 ]);
 
 const HOST_CONFIG_KEYS = new Set([
+  "Annotations",
   "AutoRemove",
   "Binds",
   "BlkioDeviceReadBps",
@@ -169,6 +170,8 @@ const NULLABLE_HOST_CONFIG_ARRAY_KEYS = [
 ] as const;
 
 const DOCKER_DEFAULT_TMPFS_OPTIONS = new Set(["noexec", "nosuid", "nodev"]);
+const PODMAN_PIDS_LIMIT_ANNOTATION = "io.podman.annotations.pids-limit";
+const PODMAN_RUNTIME_NETNS_TMPFS = "rw,nosuid,nodev,rprivate,tmpcopyup";
 
 // Docker derives ConsoleSize, MaskedPaths, and ReadonlyPaths when it creates a
 // container. They have no corresponding create flags, but the adapter inspects
@@ -231,8 +234,10 @@ function byCodeUnit(left: string, right: string): number {
 
 function normalizedNetworkSettings(
   value: DockerContainerInspect["NetworkSettings"],
+  runtimeId: string | undefined,
 ): DockerContainerInspect["NetworkSettings"] {
   const networks = value?.Networks ?? {};
+  const normalizedRuntimeId = String(runtimeId ?? "").trim().toLowerCase();
   return {
     Networks: Object.fromEntries(
       Object.entries(networks)
@@ -240,7 +245,19 @@ function normalizedNetworkSettings(
         .map(([name, network]) => [
           name,
           {
-            Aliases: [...(network.Aliases ?? [])].sort(),
+            Aliases: [
+              ...new Set(
+                (network.Aliases ?? []).filter((alias) => {
+                  const normalizedAlias = alias.trim().toLowerCase();
+                  return !(
+                    /^[0-9a-f]{64}$/u.test(normalizedRuntimeId) &&
+                    /^[0-9a-f]{12,64}$/u.test(normalizedAlias) &&
+                    (normalizedRuntimeId.startsWith(normalizedAlias) ||
+                      normalizedAlias.startsWith(normalizedRuntimeId))
+                  );
+                }),
+              ),
+            ].sort(),
           },
         ]),
     ),
@@ -342,7 +359,36 @@ function normalizedStructuredMounts(value: unknown): unknown {
   });
 }
 
-function normalizedHostConfig(hostConfig: Record<string, unknown>): Record<string, unknown> {
+function normalizedImageMounts(value: DockerContainerInspect["Mounts"]): Array<{
+  Type: "image";
+  Source: string;
+  Target: string;
+  ReadOnly: boolean;
+}> {
+  return (value ?? [])
+    .filter((mount) => mount.Type === "image")
+    .map((mount) => {
+      const source = String(mount.Source ?? "").trim();
+      const target = String(mount.Destination ?? "").trim();
+      if (!source || !target.startsWith("/") || typeof mount.RW !== "boolean") {
+        throw new Error("Managed bootstrap Docker image mount is invalid.");
+      }
+      return { Type: "image", Source: source, Target: target, ReadOnly: !mount.RW };
+    });
+}
+
+function dockerBindTarget(bind: string): string {
+  const sourceDelimiter = bind.indexOf(":");
+  if (sourceDelimiter < 0) return "";
+  const optionsDelimiter = bind.indexOf(":", sourceDelimiter + 1);
+  return bind.slice(sourceDelimiter + 1, optionsDelimiter < 0 ? undefined : optionsDelimiter);
+}
+
+function normalizedHostConfig(
+  hostConfig: Record<string, unknown>,
+  imageMounts: ReturnType<typeof normalizedImageMounts>,
+  networkSettings: DockerContainerInspect["NetworkSettings"],
+): Record<string, unknown> {
   const normalized = { ...hostConfig };
   for (const key of NULLABLE_HOST_CONFIG_ARRAY_KEYS) {
     if (normalized[key] === null) normalized[key] = [];
@@ -354,8 +400,88 @@ function normalizedHostConfig(hostConfig: Record<string, unknown>): Record<strin
   if (normalized.PortBindings === null || normalized.PortBindings === undefined) {
     normalized.PortBindings = {};
   }
+  const annotations =
+    typeof normalized.Annotations === "object" &&
+    normalized.Annotations !== null &&
+    !Array.isArray(normalized.Annotations)
+      ? { ...(normalized.Annotations as Record<string, unknown>) }
+      : null;
+  if (
+    annotations &&
+    Number.isSafeInteger(normalized.PidsLimit) &&
+    String(annotations[PODMAN_PIDS_LIMIT_ANNOTATION] ?? "") === String(normalized.PidsLimit)
+  ) {
+    delete annotations[PODMAN_PIDS_LIMIT_ANNOTATION];
+    normalized.Annotations = annotations;
+  }
+  // The native Podman provider is rootless. Podman preserves an Engine API
+  // request of zero while stopped, then rewrites it to the current user's
+  // effective floor (500) on start. Both values describe that same enforced
+  // runtime setting; use the stable effective value in the launch contract.
+  if (
+    annotations?.["io.container.manager"] === "libpod" &&
+    normalized.OomScoreAdj === 0
+  ) {
+    normalized.OomScoreAdj = 500;
+  }
+  const tmpfs =
+    typeof normalized.Tmpfs === "object" &&
+    normalized.Tmpfs !== null &&
+    !Array.isArray(normalized.Tmpfs)
+      ? { ...(normalized.Tmpfs as Record<string, unknown>) }
+      : {};
+  if (tmpfs["/run/netns"] === PODMAN_RUNTIME_NETNS_TMPFS) delete tmpfs["/run/netns"];
+  normalized.Tmpfs = tmpfs;
+  const attachedNetworks = Object.keys(networkSettings?.Networks ?? {});
+  const configuredNetworkMode = String(normalized.NetworkMode ?? "").trim();
+  if (
+    attachedNetworks.length === 1 &&
+    ["", "bridge", "default", "podman"].includes(configuredNetworkMode) &&
+    !["bridge", "default", "podman"].includes(attachedNetworks[0]!)
+  ) {
+    normalized.NetworkMode = attachedNetworks[0];
+  }
+  // Podman reports its default private PID namespace as `private`, while the
+  // Docker CLI represents the same default by omitting `--pid` and rejects
+  // `--pid private`.
+  if (normalized.PidMode === "private") normalized.PidMode = "";
+  if (
+    typeof normalized.NanoCpus === "number" &&
+    normalized.NanoCpus > 0 &&
+    ((typeof normalized.CpuPeriod === "number" && normalized.CpuPeriod !== 0) ||
+      (typeof normalized.CpuQuota === "number" && normalized.CpuQuota !== 0))
+  ) {
+    if (
+      !Number.isSafeInteger(normalized.NanoCpus) ||
+      !Number.isSafeInteger(normalized.CpuPeriod) ||
+      !Number.isSafeInteger(normalized.CpuQuota) ||
+      (normalized.CpuPeriod as number) <= 0 ||
+      (normalized.CpuQuota as number) <= 0 ||
+      normalized.NanoCpus * (normalized.CpuPeriod as number) !==
+        (normalized.CpuQuota as number) * 1_000_000_000
+    ) {
+      throw new Error("Managed bootstrap Docker CPU limit representations conflict.");
+    }
+    // Podman exposes the quota derived from NanoCpus in all three fields. The
+    // Docker create API rejects receiving NanoCpus together with that exact
+    // derived period/quota pair, so retain the canonical NanoCpus form only.
+    normalized.CpuPeriod = 0;
+    normalized.CpuQuota = 0;
+  }
   for (const key of ["Binds", "MaskedPaths", "ReadonlyPaths"] as const) {
     if (key in normalized) normalized[key] = canonicalStringSet(normalized[key], key);
+  }
+  if (imageMounts.length > 0) {
+    const imageTargets = new Set(imageMounts.map((mount) => mount.Target));
+    const binds = Array.isArray(normalized.Binds) ? (normalized.Binds as string[]) : [];
+    normalized.Binds = binds.filter(
+      (bind) => !imageTargets.has(dockerBindTarget(bind)),
+    );
+    const existingMounts = normalizedStructuredMounts(normalized.Mounts ?? []);
+    if (!Array.isArray(existingMounts)) {
+      throw new Error("Managed bootstrap Docker HostConfig.Mounts must be an array.");
+    }
+    normalized.Mounts = [...existingMounts, ...imageMounts];
   }
   for (const key of ["CapAdd", "CapDrop"] as const) {
     if (key in normalized) normalized[key] = canonicalCapabilities(normalized[key], key);
@@ -391,6 +517,7 @@ export function normalizeDockerManagedBootstrapLaunchSpec(inspect: DockerContain
   const raw = inspect as DockerContainerInspect & Record<string, unknown>;
   const config = exactObject(raw.Config, "Config");
   const hostConfig = exactObject(raw.HostConfig, "HostConfig");
+  const imageMounts = normalizedImageMounts(inspect.Mounts);
   assertKnownKeys(config, CONFIG_KEYS, "Config");
   assertKnownKeys(hostConfig, HOST_CONFIG_KEYS, "HostConfig");
   const unsupportedConfig = [...UNSUPPORTED_CONFIG_KEYS].filter(
@@ -426,8 +553,12 @@ export function normalizeDockerManagedBootstrapLaunchSpec(inspect: DockerContain
     inspect: {
       Name: inspect.Name,
       Config: normalizedConfig(config) as DockerContainerInspect["Config"],
-      HostConfig: normalizedHostConfig(hostConfig) as DockerContainerInspect["HostConfig"],
-      NetworkSettings: normalizedNetworkSettings(inspect.NetworkSettings),
+      HostConfig: normalizedHostConfig(
+        hostConfig,
+        imageMounts,
+        inspect.NetworkSettings,
+      ) as DockerContainerInspect["HostConfig"],
+      NetworkSettings: normalizedNetworkSettings(inspect.NetworkSettings, inspect.Id),
       ...("Platform" in raw && typeof raw.Platform === "string" ? { Platform: raw.Platform } : {}),
     },
   };

@@ -180,7 +180,8 @@ describe("ensureRebuildAgentBaseImage", () => {
     const output = error.mock.calls.flat().join("\n");
     expect(output).toContain("Rebuild preflight failed");
     expect(output).toContain("agent base image could not be built");
-    expect(output).toContain("Failed to build Hermes Agent base image (exit 23)");
+    expect(output).toContain("Inspect the redacted rebuild diagnostics for details.");
+    expect(output).not.toContain("Failed to build Hermes Agent base image (exit 23)");
     expect(output).toContain("Sandbox is untouched");
   });
 

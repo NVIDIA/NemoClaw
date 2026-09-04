@@ -13,6 +13,10 @@ const canonicalOpenShellExternalTargetBoundary = path.resolve(
   import.meta.dirname,
   "src/shared/openshell-external-target-boundary.cts",
 );
+const canonicalOpenShellObservationBoundary = path.resolve(
+  import.meta.dirname,
+  "src/shared/openshell-observation-boundary.cts",
+);
 const canonicalOpenShellPolicyBoundary = path.resolve(
   import.meta.dirname,
   "src/shared/openshell-policy-boundary.cts",
@@ -67,6 +71,10 @@ const pluginVitestProjectOptions = {
       {
         find: /^.*openshell-external-target-boundary\.cjs$/,
         replacement: canonicalOpenShellExternalTargetBoundary,
+      },
+      {
+        find: /^.*openshell-observation-boundary\.cjs$/,
+        replacement: canonicalOpenShellObservationBoundary,
       },
       {
         find: /^.*openshell-policy-boundary\.cjs$/,

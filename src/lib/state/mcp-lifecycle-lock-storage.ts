@@ -13,6 +13,8 @@ import {
 } from "./mcp-lifecycle-lock-identity";
 import { resolveNemoclawStateDir } from "./paths";
 
+export { resolveNemoclawStateDir } from "./paths";
+
 export const MCP_LIFECYCLE_LOCK_DIRNAME = "mcp-lifecycle-locks";
 
 function lockFileStem(sandboxName: string): string {

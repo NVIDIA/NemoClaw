@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import {
@@ -52,6 +52,10 @@ function expectAmbiguous(
 }
 
 describe("classifyDestroyContainerIdentity", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("is clear when no container carries the sandbox-name label", () => {
     expect(classifyDestroyContainerIdentity("destroytest", observeRows([]))).toEqual({
       status: "clear",
@@ -64,6 +68,15 @@ describe("classifyDestroyContainerIdentity", () => {
       status: "clear",
       identity: MANAGED,
     });
+  });
+
+  it("does not treat native Podman ownership as Docker compatibility", () => {
+    const podmanManaged = { ...MANAGED, managedBy: "true" };
+
+    expect(
+      expectAmbiguous(classifyDestroyContainerIdentity("destroytest", observeRows([podmanManaged])))
+        .foreign,
+    ).toEqual([podmanManaged]);
   });
 
   it("refuses when a foreign container shares the sandbox-name label (#8999)", () => {

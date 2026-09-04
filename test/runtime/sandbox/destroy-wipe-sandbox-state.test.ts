@@ -6,8 +6,8 @@
 // `workspace/USER.md`) while the sandbox is still live, BEFORE
 // `openshell sandbox delete`. Otherwise the per-sandbox PVC survives the
 // delete and re-onboarding with the same name resurrects the old workspace
-// files (USER.md, SOUL.md, ...). Same bug class as #3114 (stale shields
-// state surviving destroy -> re-onboard).
+// files (USER.md, SOUL.md, ...). Same bug class as #3114: stale host state
+// survives destroy and appears after re-onboarding.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";

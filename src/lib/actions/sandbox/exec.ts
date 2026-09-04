@@ -7,7 +7,7 @@ import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gatewa
 import type {
   MutableConfigPermsInspection,
   MutableConfigRepairResult,
-} from "../../shields/mutable-config-perms";
+} from "../../sandbox/mutable-config-perms";
 import type { SandboxEntry } from "../../state/registry";
 import { type ExecPolicyHintDeps, preparePolicyHint } from "./exec-policy-hint-integration";
 import { buildSandboxExecStdio } from "./exec-stdio";
@@ -169,7 +169,6 @@ function repairFailureDetail(
   result: MutableConfigRepairResult,
 ): string | null {
   if (!result.applied) {
-    if (result.skipReason === "locked") return null;
     return `repair skipped: ${result.reason}`;
   }
   if (result.verified) return null;
@@ -184,14 +183,9 @@ function repairFailureDetail(
  * process directly, so the sandbox entrypoint's one-shot cleanup does not run
  * on this path. Hermes and custom agents are deliberately left unchanged.
  *
- * Each production inspect/repair call takes the cross-process, timer-bound
- * shields transition lock and rechecks posture while holding it. The repair is
- * idempotent, so two CLI processes may interleave only between those protected
- * steps: they can repeat a repair or make one caller report conservative drift,
- * but host-side repair mutations cannot overlap or weaken shields-up. A
- * process-local mutex would not serialize separate CLI invocations, while a
- * lock inside the sandbox-owned config tree would put lock authority on the
- * wrong trust side.
+ * Each production inspect/repair call takes the cross-process sandbox mutation
+ * lock. The repair is idempotent, and the host keeps lock authority outside the
+ * sandbox-owned config tree.
  */
 export function cleanupOpenClawAfterExec(
   sandboxName: string,
@@ -234,7 +228,6 @@ export function cleanupOpenClawAfterExec(
     return `post-repair permission verification failed: ${detail}`;
   }
   if (!verification.applies) {
-    if (verification.skipReason === "locked") return null;
     return `post-repair permission verification unavailable: ${verification.reason}`;
   }
   if (!verification.ok) {
@@ -495,11 +488,13 @@ export async function execSandbox(
       getSandbox: (name) =>
         (require("../../state/registry") as typeof import("../../state/registry")).getSandbox(name),
       inspectMutableConfigPerms: (name) =>
-        (require("../../shields") as typeof import("../../shields")).inspectMutableConfigPerms(
-          name,
-        ),
+        (
+          require("../../sandbox/mutable-config-perms") as typeof import("../../sandbox/mutable-config-perms")
+        ).inspectMutableConfigPerms(name),
       repairMutableConfigPerms: (name) =>
-        (require("../../shields") as typeof import("../../shields")).repairMutableConfigPerms(name),
+        (
+          require("../../sandbox/mutable-config-perms") as typeof import("../../sandbox/mutable-config-perms")
+        ).repairMutableConfigPerms(name),
     },
     gatewayName,
   );

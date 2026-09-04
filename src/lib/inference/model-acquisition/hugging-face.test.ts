@@ -18,15 +18,21 @@ import {
 const dockerSpawn = vi.fn();
 
 interface MockProcess extends EventEmitter {
-  readonly stderr: EventEmitter;
-  readonly stdout: EventEmitter;
+  readonly stderr: EventEmitter & { destroy: ReturnType<typeof vi.fn> };
+  readonly stdout: EventEmitter & { destroy: ReturnType<typeof vi.fn> };
+  readonly kill: ReturnType<typeof vi.fn>;
+  readonly unref: ReturnType<typeof vi.fn>;
 }
 
 function mockProcess(): MockProcess {
   const proc = new EventEmitter() as MockProcess;
+  const stderr = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+  const stdout = Object.assign(new EventEmitter(), { destroy: vi.fn() });
   Object.defineProperties(proc, {
-    stderr: { value: new EventEmitter() },
-    stdout: { value: new EventEmitter() },
+    stderr: { value: stderr },
+    stdout: { value: stdout },
+    kill: { value: vi.fn(() => true) },
+    unref: { value: vi.fn() },
   });
   return proc;
 }
@@ -49,6 +55,14 @@ function request(
 
 function observer(): HuggingFaceModelAcquisitionObserver {
   return { logLine: vi.fn(), onRateLimit: vi.fn() };
+}
+
+function forcedRemoveCall(): ReturnType<typeof dockerSpawn>["mock"]["calls"][number] {
+  const call = dockerSpawn.mock.calls.find(([args]) =>
+    Array.isArray(args) && args[0] === "rm" && args[1] === "--force",
+  );
+  expect(call).toBeDefined();
+  return call as ReturnType<typeof dockerSpawn>["mock"]["calls"][number];
 }
 
 describe("Hugging Face model acquisition", () => {
@@ -353,6 +367,192 @@ describe("Hugging Face model acquisition", () => {
     expect(events.onRateLimit).not.toHaveBeenCalled();
     expect(stderrWrite.mock.calls.flat().join("\n")).not.toContain("hf output lines");
   });
+
+  it("aborts a stalled download instead of waiting forever (#10346)", async () => {
+    vi.useFakeTimers();
+    const proc = mockProcess();
+    const cleanupProc = mockProcess();
+    dockerSpawn.mockReturnValueOnce(proc).mockReturnValueOnce(cleanupProc);
+    const events = observer();
+    const resultPromise = acquireHuggingFaceModel(request(), events);
+
+    // Heartbeats keep their fixed cadence while real progress resets only the stall deadline.
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(events.logLine).not.toHaveBeenCalledWith(expect.stringContaining("still running"));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(events.logLine).toHaveBeenCalledWith(expect.stringContaining("still running"));
+    proc.stdout.emit("data", Buffer.from("Downloading (incomplete total...): 10%\n"));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(events.logLine).toHaveBeenCalledWith(expect.stringContaining("still running"));
+    expect(proc.kill).not.toHaveBeenCalled();
+
+    // Then output stops entirely for the full stall window.
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
+    cleanupProc.emit("exit", 0);
+    proc.emit("exit", 137);
+
+    expect(dockerSpawn).toHaveBeenCalledTimes(2);
+    await expect(resultPromise).resolves.toEqual({
+      ok: false,
+      reason: expect.stringContaining("hf download stalled"),
+    });
+    expect(events.logLine).toHaveBeenCalledWith(expect.stringContaining("stalled"));
+
+    // A late exit event after the stall already resolved must not resolve again.
+    proc.emit("exit", 0);
+    await expect(resultPromise).resolves.toEqual({
+      ok: false,
+      reason: expect.stringContaining("hf download stalled"),
+    });
+  });
+
+  it("honors NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT below the heartbeat interval (#10346)", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT", "1");
+    const proc = mockProcess();
+    const cleanupProc = mockProcess();
+    dockerSpawn.mockReturnValueOnce(proc).mockReturnValueOnce(cleanupProc);
+    const events = observer();
+    const resultPromise = acquireHuggingFaceModel(request(), events);
+
+    await vi.advanceTimersByTimeAsync(999);
+    proc.stdout.emit("data", Buffer.from("Downloading: 1%\n"));
+    await vi.advanceTimersByTimeAsync(999);
+    expect(dockerSpawn).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    const downloadCall = dockerSpawn.mock.calls.find(([args]) => Array.isArray(args) && args[0] === "run");
+    const downloadArgv = downloadCall?.[0] as string[];
+    const containerName = downloadArgv[downloadArgv.indexOf("--name") + 1];
+    expect(forcedRemoveCall()).toEqual([
+      ["rm", "--force", containerName],
+      { env: { DOCKER_HOST: "ssh://spark.example.test" }, stdio: "ignore" },
+    ]);
+    cleanupProc.emit("exit", 0);
+    proc.emit("exit", 137);
+
+    await expect(resultPromise).resolves.toEqual({
+      ok: false,
+      reason: "hf download stalled: no output for 1s",
+    });
+    expect(events.logLine).not.toHaveBeenCalledWith(expect.stringContaining("still running"));
+    expect(events.logLine).not.toHaveBeenCalledWith("Model download complete");
+    expect(cleanupProc.unref).toHaveBeenCalledOnce();
+    expect(proc.stdout.destroy).toHaveBeenCalledOnce();
+    expect(proc.stderr.destroy).toHaveBeenCalledOnce();
+    expect(proc.unref).toHaveBeenCalledOnce();
+    vi.unstubAllEnvs();
+  });
+
+  it("reports the named container and recovery command when removal is unconfirmed (#10346)", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT", "1");
+    const proc = mockProcess();
+    const cleanupProc = mockProcess();
+    dockerSpawn.mockReturnValueOnce(proc).mockReturnValueOnce(cleanupProc);
+    const resultPromise = acquireHuggingFaceModel(
+      request({ dockerEnv: { DOCKER_HOST: "ssh://operator:secret@spark.example.test" } }),
+      observer(),
+    );
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    const downloadCall = dockerSpawn.mock.calls.find(([args]) => Array.isArray(args) && args[0] === "run");
+    const downloadArgv = downloadCall?.[0] as string[];
+    const containerName = downloadArgv[downloadArgv.indexOf("--name") + 1];
+    expect(forcedRemoveCall()).toEqual([
+      ["rm", "--force", containerName],
+      { env: { DOCKER_HOST: "ssh://operator:secret@spark.example.test" }, stdio: "ignore" },
+    ]);
+    let settled = false;
+    void resultPromise.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(cleanupProc.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(cleanupProc.unref).toHaveBeenCalledOnce();
+    await expect(resultPromise).resolves.toEqual({
+      ok: false,
+      reason: `hf download stalled: no output for 1s; cleanup unconfirmed for container ${containerName} on Docker endpoint Docker host ssh://spark.example.test; select that endpoint, run docker rm --force ${containerName}, and resume onboarding only after removal is confirmed`,
+    });
+    vi.unstubAllEnvs();
+  });
+
+  it("reports Docker context precedence for manual cleanup without exposing the host (#10346)", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT", "1");
+    const proc = mockProcess();
+    const cleanupProc = mockProcess();
+    dockerSpawn.mockReturnValueOnce(proc).mockReturnValueOnce(cleanupProc);
+    const resultPromise = acquireHuggingFaceModel(
+      request({
+        dockerEnv: {
+          DOCKER_CONTEXT: "remote-builder",
+          DOCKER_HOST: "ssh://operator:secret@ignored.example.test",
+        },
+      }),
+      observer(),
+    );
+
+    await vi.advanceTimersByTimeAsync(11_000);
+    proc.emit("exit", 137);
+    const result = await resultPromise;
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining("Docker context remote-builder"),
+    });
+    expect(result).toEqual({ ok: false, reason: expect.any(String) });
+    const reason = "reason" in result ? result.reason : "";
+    expect(reason).not.toContain("ignored.example.test");
+    expect(reason).not.toContain("secret");
+    expect(forcedRemoveCall()[1]).toEqual({
+      env: {
+        DOCKER_CONTEXT: "remote-builder",
+        DOCKER_HOST: "ssh://operator:secret@ignored.example.test",
+      },
+      stdio: "ignore",
+    });
+    vi.unstubAllEnvs();
+  });
+
+  it.each([
+    ["exceeds the Node.js timer limit", "2147483.648"],
+    ["scales past the representable range", "1e308"],
+    ["floors to a zero-millisecond window", "0.0001"],
+  ])(
+    "keeps the default stall window when the configured timeout %s (#10346)",
+    async (_reason, configured) => {
+      vi.useFakeTimers();
+      vi.stubEnv("NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT", configured);
+      const proc = mockProcess();
+      const cleanupProc = mockProcess();
+      dockerSpawn.mockReturnValueOnce(proc).mockReturnValueOnce(cleanupProc);
+      const events = observer();
+      const resultPromise = acquireHuggingFaceModel(request(), events);
+
+      // A zero-millisecond window would abort at the first heartbeat, and an
+      // out-of-range one would never abort at all. Pin both ends.
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(proc.kill).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(570_000);
+      cleanupProc.emit("exit", 0);
+      proc.emit("exit", 137);
+
+      expect(dockerSpawn).toHaveBeenCalledTimes(2);
+      await expect(resultPromise).resolves.toEqual({
+        ok: false,
+        reason: expect.stringContaining("hf download stalled"),
+      });
+      vi.unstubAllEnvs();
+    },
+  );
 
   it("keeps token selection and metadata behavior independent of the serving provider (#8279)", () => {
     const env = {

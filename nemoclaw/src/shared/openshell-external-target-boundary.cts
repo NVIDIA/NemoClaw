@@ -28,18 +28,25 @@ interface ExternalOpenShellTarget {
 }
 
 export interface OpenShellCompatibilityRange {
-  minVersion: string;
-  maxVersion: string;
+  readonly minVersion: string;
+  readonly maxVersion: string;
 }
 
+export const EXTERNAL_OPENSHELL_RELEASE = "0.0.106" as const;
+
 export interface SanitizedExternalOpenShellTargetPlan {
-  endpoint: string;
-  workspace: string;
-  expected_release: string;
-  lifecycle: "external";
-  authentication_source: "file";
-  ca_fingerprint: string;
+  readonly endpoint: string;
+  readonly workspace: string;
+  readonly expected_release: string;
+  readonly lifecycle: "external";
+  readonly authentication_source: "file";
+  readonly ca_fingerprint: string;
 }
+
+type ValidatedExternalOpenShellTarget = Readonly<{
+  caContents: Buffer;
+  plan: SanitizedExternalOpenShellTargetPlan;
+}>;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -203,6 +210,11 @@ function assertCompatibleRelease(
   if (compareSemver(compatibility.minVersion, compatibility.maxVersion) > 0) {
     throw new Error("OpenShell compatibility range minimum must not exceed its maximum");
   }
+  if (expectedRelease !== EXTERNAL_OPENSHELL_RELEASE) {
+    throw new Error(
+      `external OpenShell target expected_release must be ${EXTERNAL_OPENSHELL_RELEASE}`,
+    );
+  }
   if (
     compareSemver(expectedRelease, compatibility.minVersion) < 0 ||
     compareSemver(expectedRelease, compatibility.maxVersion) > 0
@@ -307,32 +319,58 @@ function validateCaBundle(contents: Buffer): readonly Buffer[] {
  * Validate one explicit external target and return only its non-secret identity.
  * File paths remain inside this boundary, and authentication contents are not read.
  */
-export function buildSanitizedExternalOpenShellTargetPlan(
+function validateExternalOpenShellTarget(
   value: unknown,
   compatibility: OpenShellCompatibilityRange,
-): SanitizedExternalOpenShellTargetPlan {
+  validateAuthenticationFile: boolean,
+): ValidatedExternalOpenShellTarget {
   const target = parseTarget(value);
   assertCompatibleRelease(target.expected_release, compatibility);
 
   const caContents = readBoundedFile(target.trust.ca_file, "CA file", MAX_TRUST_FILE_BYTES);
   const caCertificates = validateCaBundle(caContents);
 
-  validateFileReference(
-    target.authentication.credential_file,
-    "authentication file",
-    MAX_AUTHENTICATION_FILE_BYTES,
-  );
+  if (validateAuthenticationFile) {
+    validateFileReference(
+      target.authentication.credential_file,
+      "authentication file",
+      MAX_AUTHENTICATION_FILE_BYTES,
+    );
+  }
 
   const caFingerprint = createHash("sha256");
   for (const certificate of caCertificates) {
     caFingerprint.update(certificate);
   }
   return {
-    endpoint: target.endpoint,
-    workspace: target.workspace,
-    expected_release: target.expected_release,
-    lifecycle: "external",
-    authentication_source: "file",
-    ca_fingerprint: `sha256:${caFingerprint.digest("hex")}`,
+    caContents,
+    plan: Object.freeze({
+      endpoint: target.endpoint,
+      workspace: target.workspace,
+      expected_release: target.expected_release,
+      lifecycle: "external",
+      authentication_source: "file",
+      ca_fingerprint: `sha256:${caFingerprint.digest("hex")}`,
+    }),
   };
+}
+
+export function buildSanitizedExternalOpenShellTargetPlan(
+  value: unknown,
+  compatibility: OpenShellCompatibilityRange,
+): SanitizedExternalOpenShellTargetPlan {
+  return validateExternalOpenShellTarget(value, compatibility, true).plan;
+}
+
+/**
+ * Give one caller the validated CA bytes without exposing either input path.
+ * The public health path does not access the authentication file.
+ */
+export async function withExternalOpenShellTargetCa<T>(
+  value: unknown,
+  compatibility: OpenShellCompatibilityRange,
+  useTarget: (plan: SanitizedExternalOpenShellTargetPlan, caContents: Buffer) => Promise<T>,
+): Promise<T> {
+  const validated = validateExternalOpenShellTarget(value, compatibility, false);
+  return useTarget(validated.plan, Buffer.from(validated.caContents));
 }

@@ -77,6 +77,34 @@ const EXACT_MESSAGING_PROFILE: StubbedRunOpenshellResult = {
   }),
   stderr: "",
 };
+const EXACT_BRAVE_PROFILE: StubbedRunOpenshellResult = {
+  status: 0,
+  stdout: JSON.stringify({
+    id: "brave",
+    credentials: [
+      {
+        name: "api_key",
+        env_vars: ["BRAVE_API_KEY"],
+        required: true,
+        auth_style: "header",
+        header_name: "x-subscription-token",
+        query_param: "",
+      },
+    ],
+    endpoints: [
+      {
+        host: "api.search.brave.com",
+        port: 443,
+        protocol: "rest",
+        access: "read-write",
+        enforcement: "enforce",
+      },
+    ],
+    binaries: ["/usr/local/bin/node", "/usr/bin/node", "/usr/local/bin/curl", "/usr/bin/curl"],
+    inference_capable: false,
+  }),
+  stderr: "",
+};
 
 function fakeGatewayRunOpenshell() {
   const createdProviders = new Map<string, { type: string; credentialEnv: string }>();
@@ -111,8 +139,23 @@ function fakeGatewayRunOpenshell() {
     return OK_RESULT;
   };
 
+  const exactProfileExports = new Map([
+    [
+      "provider profile -g nemoclaw export brave --output json",
+      EXACT_BRAVE_PROFILE,
+    ],
+    [
+      "provider profile -g nemoclaw export nemoclaw-mcp-v1 --output json",
+      EXACT_MESSAGING_PROFILE,
+    ],
+  ]);
+  const rejectUnexpectedProfileCommand = (args: string[]): never => {
+    throw new Error(`Unexpected provider profile command: ${args.join(" ")}`);
+  };
+
   const handlersByAction: Record<string, (args: string[]) => StubbedRunOpenshellResult> = {
-    profile: () => EXACT_MESSAGING_PROFILE,
+    profile: (args) =>
+      exactProfileExports.get(args.join(" ")) ?? rejectUnexpectedProfileCommand(args),
     get: handleGet,
     create: handleCreate,
     update: () => OK_RESULT,

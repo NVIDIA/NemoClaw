@@ -18,7 +18,6 @@ import {
   bindJournaledRecreate,
   createDeps,
   makeMinimalPlan,
-  withEnv,
   withTelegramCredentialHash,
 } from "./sandbox-test-fixtures";
 
@@ -1234,33 +1233,38 @@ describe("handleSandboxState", () => {
     expect(getSession().messagingPlan).toEqual(registryPlan);
   });
 
-  it("refreshes credential hashes when reusing an env-staged rebuild plan", async () => {
+  it("validates changed credentials before refreshing an env-staged rebuild plan", async () => {
     const oldHash = hashCredential("telegram-token-a");
     const newHash = hashCredential("telegram-token-b");
     const rebuiltPlan = withTelegramCredentialHash(
       makeMinimalPlan("my-assistant", "openclaw", ["telegram"]),
       oldHash,
     );
+    const validatedPlan = withTelegramCredentialHash(rebuiltPlan, newHash);
+    let stagedPlan = rebuiltPlan;
     const session = createSession({ sandboxName: "my-assistant", messagingPlan: rebuiltPlan });
     const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
     const writePlanToEnv = vi.fn();
     const { deps, calls, getSession } = createDeps({
       getRecordedMessagingChannelsForResume,
       writePlanToEnv,
-      readMessagingPlanFromEnv: () => rebuiltPlan,
+      readMessagingPlanFromEnv: () => stagedPlan,
       getRegistrySandboxMessagingAuthority: () => ({ authoritative: false, plan: null }),
     });
-
-    await withEnv("TELEGRAM_BOT_TOKEN", "telegram-token-b", async () => {
-      await handleSandboxState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "my-assistant",
-      });
+    calls.setupMessaging.mockImplementation(async () => {
+      stagedPlan = validatedPlan;
+      return ["telegram"];
     });
 
-    expect(calls.setupMessaging).not.toHaveBeenCalled();
-    expect(writePlanToEnv).toHaveBeenCalledWith(
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      env: { TELEGRAM_BOT_TOKEN: "telegram-token-b" },
+    });
+
+    expect(calls.setupMessaging).toHaveBeenCalledOnce();
+    expect(writePlanToEnv).toHaveBeenLastCalledWith(
       expect.objectContaining({
         credentialBindings: [
           expect.objectContaining({
@@ -1273,33 +1277,38 @@ describe("handleSandboxState", () => {
     expect(getSession().messagingPlan?.credentialBindings[0]?.credentialHash).toBe(newHash);
   });
 
-  it("refreshes credential hashes when restoring a registry plan for rebuild resume", async () => {
+  it("validates changed credentials before refreshing a registry rebuild plan", async () => {
     const oldHash = hashCredential("telegram-token-a");
     const newHash = hashCredential("telegram-token-b");
     const registryPlan = withTelegramCredentialHash(
       makeMinimalPlan("my-assistant", "openclaw", ["telegram"]),
       oldHash,
     );
+    const validatedPlan = withTelegramCredentialHash(registryPlan, newHash);
+    let stagedPlan = registryPlan;
     const session = createSession({ sandboxName: "my-assistant", messagingPlan: registryPlan });
     const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
     const writePlanToEnv = vi.fn();
     const { deps, calls, getSession } = createDeps({
       getRecordedMessagingChannelsForResume,
       writePlanToEnv,
-      readMessagingPlanFromEnv: () => null,
+      readMessagingPlanFromEnv: () => stagedPlan,
       getRegistrySandboxMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
     });
-
-    await withEnv("TELEGRAM_BOT_TOKEN", "telegram-token-b", async () => {
-      await handleSandboxState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "my-assistant",
-      });
+    calls.setupMessaging.mockImplementation(async () => {
+      stagedPlan = validatedPlan;
+      return ["telegram"];
     });
 
-    expect(calls.setupMessaging).not.toHaveBeenCalled();
-    expect(writePlanToEnv).toHaveBeenCalledWith(
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      env: { TELEGRAM_BOT_TOKEN: "telegram-token-b" },
+    });
+
+    expect(calls.setupMessaging).toHaveBeenCalledOnce();
+    expect(writePlanToEnv).toHaveBeenLastCalledWith(
       expect.objectContaining({
         credentialBindings: [
           expect.objectContaining({

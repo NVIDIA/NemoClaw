@@ -3,6 +3,7 @@
 
 import os from "node:os";
 import path from "node:path";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
@@ -17,8 +18,8 @@ import {
 } from "./issue-4462-admin-approval-helper.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
-const LIVE_TIMEOUT_MS = 70 * 60_000;
-const INSTALL_TIMEOUT_MS = 30 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
+const INSTALL_TIMEOUT_MS = execTimeout(30 * 60_000);
 const AUTO_PAIR_DEADLINE_SECS = String(INSTALL_TIMEOUT_MS / 1_000);
 const GATEWAY_OBSERVATION_TIMEOUT_MS = 30_000;
 const GATEWAY_OBSERVATION_TIMEOUT_SECS = String(GATEWAY_OBSERVATION_TIMEOUT_MS / 1_000);
@@ -103,7 +104,15 @@ test(
     timeout: LIVE_TIMEOUT_MS,
     meta: { e2ePhases: ISSUE_4462_SCOPE_UPGRADE_PHASES },
   },
-  async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
+  async ({
+    artifacts,
+    cleanup: cleanupRegistry,
+    host,
+    progress,
+    runtimeProvider,
+    sandbox,
+    secrets,
+  }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     await artifacts.target.declare({
       id: "issue-4462-scope-upgrade-approval",
@@ -119,15 +128,10 @@ test(
       ],
     });
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "phase-0-docker-info",
-      env: env(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "phase-0-runtime-info",
+      scenarioLabel: "scope-upgrade approval",
     });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
-      skip(`Docker is required: ${resultText(docker)}`);
-    }
 
     cleanupRegistry.trackGateway(host, "nemoclaw", {
       artifactName: "cleanup-openshell-gateway-destroy",

@@ -81,6 +81,12 @@ vi.mock("./gateway-state", async () => {
   >("../../onboard/experimental/hermes-portable-lifecycle");
   return {
     captureHermesPortableAcceptedReadinessObservation: vi.fn(),
+    policyObservationRecoveryAction: (
+      error: { kind: string },
+      sandboxName: string,
+      gatewayName: string,
+      retryAction: string,
+    ) => `recovery:${error.kind}:${sandboxName}:${gatewayName}:${retryAction}`,
     buildHermesPortableCommandAuthority: () => ({
       env: lifecycle.hermesPortableLifecycleInternals.buildHermesPortableOpenShellEnv(
         {
@@ -1042,6 +1048,39 @@ describe("launchSandbox", () => {
 
     expect(mocks.prepareInteractiveSession).toHaveBeenCalled();
     expect(mocks.execSandbox).not.toHaveBeenCalled();
+  });
+
+  it("does not launch after final live-policy validation fails", async () => {
+      const error = {
+        kind: "transport" as const,
+        reason: "unreachable" as const,
+        message: "OpenShell could not reach the selected gateway.",
+      };
+      mocks.inspectLaunchReadiness.mockResolvedValue({
+        kind: "fallback",
+        category: "unsafe",
+        fence: { epochId: "a".repeat(64) },
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: false,
+        recoveryBlocked: false,
+      });
+      mocks.publishLaunchReadiness.mockResolvedValue({
+        kind: "policy-observation-failed",
+        error,
+      });
+
+      await expect(launchSandbox("alpha")).rejects.toThrow(
+        [
+          `Launch readiness final policy validation failed for sandbox 'alpha' on gateway 'nemoclaw': ${error.message}`,
+          `recovery:${error.kind}:alpha:nemoclaw:launch`,
+        ].join("\n"),
+      );
+
+      expect(mocks.prepareInteractiveSession).toHaveBeenCalledOnce();
+      expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
+      expect(mocks.execSandbox).not.toHaveBeenCalled();
+      expect(mocks.runSandboxExecChild).not.toHaveBeenCalled();
   });
 
   it("does not print connect's in-sandbox command hint (#6006)", async () => {

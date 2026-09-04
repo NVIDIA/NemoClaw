@@ -175,7 +175,7 @@ class ControlError(RuntimeError):
 
 @contextmanager
 def _control_stage(stage: str) -> Iterator[None]:
-    """Attach one fixed lifecycle stage to health or supervisor loss."""
+    """Attach one fixed lifecycle stage to a managed-control failure."""
 
     if stage not in CONTROL_STAGES:
         raise AssertionError(f"unknown managed-control stage: {stage}")
@@ -183,11 +183,14 @@ def _control_stage(stage: str) -> Iterator[None]:
         yield
     except ControlError as error:
         if (
-            error.code in ("GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_UNAVAILABLE")
+            error.code
+            in ("GATEWAY_FAILED", "GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_UNAVAILABLE")
             and error.stage is None
         ):
             error.stage = stage
         raise
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ControlError("GATEWAY_FAILED", stage=stage) from error
 
 
 @dataclass(frozen=True)
@@ -1417,8 +1420,17 @@ def _http_healthy(
         return False
     finally:
         if response is not None:
-            response.close()
-        connection.close()
+            try:
+                response.close()
+            except OSError:
+                # The response has already been bounded and fully read. A
+                # transport-close race must not escape the health probe and
+                # abort the entire managed restart as a generic failure.
+                pass
+        try:
+            connection.close()
+        except OSError:
+            pass
 
 
 def _http_healthy_in_gateway_namespace(
@@ -1454,6 +1466,16 @@ def _http_healthy_in_gateway_namespace(
             return False
         if _recovery_deadline_reached(recovery_deadline):
             return False
+        current_namespace_stat = os.fstat(current_namespace)
+        target_namespace_stat = os.fstat(target_namespace)
+        if (
+            current_namespace_stat.st_dev == target_namespace_stat.st_dev
+            and current_namespace_stat.st_ino == target_namespace_stat.st_ino
+        ):
+            return bool(
+                _http_healthy(port, path, recovery_deadline)
+                and not _recovery_deadline_reached(recovery_deadline)
+            )
         setns(target_namespace, getattr(os, "CLONE_NEWNET", 0x40000000))
         switched = True
         healthy = _http_healthy(port, path, recovery_deadline)
@@ -1567,8 +1589,10 @@ def _run_fixed_validator(
         raise ControlError("SECRET_BOUNDARY_REFUSED")
 
 
-def _validate_runtime_environment(script: str, environment: dict[str, str]) -> None:
-    """Validate runtime values without execing a root process under them."""
+def _validate_managed_gateway_environment(
+    script: str, supervisor_environment: dict[str, str]
+) -> None:
+    """Validate the Hermes gateway environment without executing under untrusted input."""
 
     _validate_trusted_regular(script)
     spec = importlib.util.spec_from_file_location(
@@ -1579,8 +1603,8 @@ def _validate_runtime_environment(script: str, environment: dict[str, str]) -> N
     module = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
-        validator = getattr(module, "validate_runtime_env")
-        result = validator(environment)
+        validator = getattr(module, "validate_managed_gateway_env")
+        result = validator(supervisor_environment)
     except (AttributeError, ImportError, OSError, RuntimeError) as exc:
         raise ControlError("SECRET_BOUNDARY_REFUSED") from exc
     if result != 0:
@@ -1700,7 +1724,7 @@ def _hermes_preflight(
         MAX_ENV_BYTES,
         recovery_deadline,
     )
-    _validate_runtime_environment(validator, _parse_environment(raw_environment))
+    _validate_managed_gateway_environment(validator, _parse_environment(raw_environment))
     _require_recovery_time(recovery_deadline)
     _verify_locked_hermes_hash()
     _require_recovery_time(recovery_deadline)
@@ -2252,7 +2276,11 @@ def main(argv: list[str]) -> int:
         print(error.code, file=sys.stderr)
         if error.stage is not None:
             print(f"NEMOCLAW_CONTROL_STAGE={error.stage}", file=sys.stderr)
-            if error.code in ("GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_UNAVAILABLE"):
+            if error.code in (
+                "GATEWAY_FAILED",
+                "GATEWAY_HEALTH_TIMEOUT",
+                "SUPERVISOR_UNAVAILABLE",
+            ):
                 try:
                     diagnostics = _managed_failure_diagnostics()
                 except Exception:  # diagnostics must not hide the original failure

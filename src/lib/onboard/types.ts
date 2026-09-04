@@ -132,12 +132,16 @@ export type OnboardOptions = {
     "prompt" | "sandboxName"
   >;
   authoritativeResumeConfig?: boolean;
+  /** Internal permission granted only by a validated prepared-backup rebuild. */
+  allowRemovedImmutabilityStateRecord?: true;
   /** Internal endpoint provenance preserved across an authoritative rebuild. */
   endpointSource?: import("../inference/selection").InferenceEndpointSource | null;
   /** Internal authoritative rebuild target; never exposed as a public CLI option. */
   targetGatewayName?: string | null;
   /** Internal authoritative rebuild target; must match targetGatewayName. */
   targetGatewayPort?: number | null;
+  /** Exact OpenShell client target frozen by the outer rebuild transaction. */
+  runtimeSelection?: import("../adapters/openshell/runtime-selection").OpenShellRuntimeSelection;
   /** Internal rebuild handoff: the outer destructive lifecycle owns the onboard lock. */
   onboardLockAlreadyHeld?: boolean;
   /** Internal command handoff: propagate an exit request after onboarding restores its scopes. */

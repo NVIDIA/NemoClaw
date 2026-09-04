@@ -171,6 +171,7 @@ export function authority(agent: ManagedStartupAgent = "hermes") {
     image: { repository: REPOSITORY, manifestDigest: MANIFEST },
     profile: { agent, fingerprint: inputs.request.profileFingerprint },
     agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+    managedStateRoots: [],
     intendedWorkloadArgv: ["env", "A=1", "/usr/local/bin/nemoclaw-start"],
     expectedSupervisorArgv: SUPERVISOR,
     metadata: inputs.metadata,

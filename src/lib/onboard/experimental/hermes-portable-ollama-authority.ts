@@ -330,6 +330,7 @@ function inspectPortableNetworkSnapshot(
 
 export interface PreparedPortableRegistryRecovery {
   readonly started: boolean;
+  readonly assertRetainedCurrent: () => void;
   readonly assertTransactionCurrent: () => void;
   readonly assertCurrent: () => void;
   readonly rollback: () => void;
@@ -579,8 +580,14 @@ export function preparePortableRegistryRecovery(
       transactionCurrent.assertEngineCurrent();
       authority.assertCurrent();
     };
+    const assertRetainedCurrent = () => {
+      if (released) throw new Error("Hermes Portable inference registry recovery was released.");
+      transactionCurrent.assertCallerCurrent();
+      transactionCurrent.assertEngineCurrent();
+    };
     return Object.freeze({
       started: false,
+      assertRetainedCurrent,
       assertTransactionCurrent,
       assertCurrent,
       rollback: assertCurrent,
@@ -637,6 +644,11 @@ export function preparePortableRegistryRecovery(
     transactionCurrent.assertEngineCurrent();
     authority.assertCurrent();
   };
+  const assertRetainedCurrent = () => {
+    if (released) throw new Error("Hermes Portable inference registry recovery was released.");
+    transactionCurrent.assertCallerCurrent();
+    transactionCurrent.assertEngineCurrent();
+  };
   const rollback = () => {
     if (released) throw new Error("Hermes Portable inference registry recovery was released.");
     assertEngineCurrent();
@@ -655,6 +667,7 @@ export function preparePortableRegistryRecovery(
   };
   return Object.freeze({
     started: true,
+    assertRetainedCurrent,
     assertTransactionCurrent,
     assertCurrent,
     rollback,

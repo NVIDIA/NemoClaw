@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rebindLoopbackDashboardUrlPort } from "../../../dashboard/url";
 import { resolveContextWindowForModel } from "../../../inference/context-window";
 import type { SandboxMessagingPlan } from "../../../messaging";
 import { shouldManageDashboardForAgent } from "../../../onboard/dashboard-runtime";
@@ -62,7 +63,31 @@ export function prepareManagedRebuildProfileHandoff(input: {
   const { resumeConfig, durableConfig } = targetConfig;
   const manageDashboard = shouldManageDashboardForAgent(targetConfig.agentDefinition);
   const effectiveDashboardPort = manageDashboard ? (recreateOptions.controlUiPort ?? 0) : 0;
-  const chatUiUrl = manageDashboard ? `http://127.0.0.1:${String(effectiveDashboardPort)}` : "";
+  const previousDashboard = catalogHandoff.previousProfile.dashboard;
+  const previousHermesBrowserUrl =
+    agent === "hermes" && previousDashboard.agent === "hermes"
+      ? previousDashboard.browserUrl
+      : undefined;
+  const hermesDashboardState = resolveHermesDashboardOnboardState({
+    agentName: agent,
+    effectivePort: effectiveDashboardPort,
+    env: input.environment ?? process.env,
+  });
+  if (
+    agent === "hermes" &&
+    manageDashboard &&
+    hermesDashboardState.enabled &&
+    previousHermesBrowserUrl === undefined
+  ) {
+    throw new Error(
+      "Cannot rebuild the Hermes dashboard because its managed startup profile has no recorded browser URL. Rerun onboarding, then rebuild the sandbox.",
+    );
+  }
+  const chatUiUrl = manageDashboard
+    ? previousHermesBrowserUrl === undefined
+      ? `http://127.0.0.1:${String(effectiveDashboardPort)}`
+      : rebindLoopbackDashboardUrlPort(previousHermesBrowserUrl, effectiveDashboardPort)
+    : "";
   const inference = managedRebuildProfileDependencies.resolveManagedStartupInferenceRoute(
     agent,
     resumeConfig.provider,
@@ -73,7 +98,6 @@ export function prepareManagedRebuildProfileHandoff(input: {
     agent === "hermes" && resumeConfig.provider === "hermes-provider"
       ? catalogHandoff.previousProfile.inference.upstreamProvider
       : resumeConfig.provider;
-  const previousDashboard = catalogHandoff.previousProfile.dashboard;
   const currentOpenClawContextWindow =
     agent === "openclaw"
       ? managedRebuildProfileDependencies.resolveContextWindowForModel(
@@ -114,11 +138,7 @@ export function prepareManagedRebuildProfileHandoff(input: {
           ? "0.0.0.0"
           : undefined,
       wslExposure: previousDashboard.agent === "openclaw" && previousDashboard.wslExposure,
-      hermesDashboardState: resolveHermesDashboardOnboardState({
-        agentName: agent,
-        effectivePort: effectiveDashboardPort,
-        env: input.environment ?? process.env,
-      }),
+      hermesDashboardState,
       webSearch: durableConfig.webSearchConfig,
       toolDisclosure: recreateOptions.toolDisclosure,
       hermesToolGateways: targetConfig.hermesToolGateways,

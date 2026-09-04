@@ -243,15 +243,19 @@ function provider(
 function replacement(
   agent: ShippedManagedImageAgent,
   platform: ManagedImagePlatform = "linux/amd64",
+  revision?: string,
 ) {
   const image = managedContract(agent, "new", platform);
+  const contract = revision
+    ? { ...image, source: { ...image.source, revision } }
+    : image;
   return {
     source: {
       kind: "managed-image" as const,
-      reference: image.reference,
-      contract: image,
+      reference: contract.reference,
+      contract,
     },
-    release: image.source.release,
+    release: contract.source.release,
     fallbackDiagnostic: null,
   };
 }
@@ -382,8 +386,10 @@ describe("managed workload rebuild preflight", () => {
     expect(prepare).not.toHaveBeenCalled();
   });
 
-  it("rejects a PR catalog revision that conflicts with durable authority (#9464)", async () => {
-    const prepare = vi.fn(async () => replacement("openclaw"));
+  it("accepts an exact PR replacement catalog newer than durable authority (#9464)", async () => {
+    const prepare = vi.fn(async () =>
+      replacement("openclaw", "linux/amd64", "c".repeat(40)),
+    );
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
     const catalogPath = path.join(fixtureRoot, "catalog.json");
     fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
@@ -394,14 +400,23 @@ describe("managed workload rebuild preflight", () => {
     vi.stubEnv("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG", catalogPath);
 
     try {
-      await expect(
-        prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
-          runtime: runtime(),
-          provider: provider(),
-          version: "0.0.100",
-        }),
-      ).rejects.toThrow("live qualification revision does not match the durable workload receipt");
-      expect(prepare).not.toHaveBeenCalled();
+      const handoff = await prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
+        runtime: runtime(),
+        provider: provider(),
+        version: "0.0.100",
+      });
+
+      expect(handoff?.previousReceipt.sourceRevision).toBe("a".repeat(40));
+      expect(handoff?.replacement.source.contract.source.revision).toBe("c".repeat(40));
+      expect(prepare).toHaveBeenCalledExactlyOnceWith({
+        agentName: "openclaw",
+        legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
+        runtime: runtime(),
+        version: "0.0.100",
+        policy: "require-managed",
+        catalogPath,
+        expectedCatalogRevision: "c".repeat(40),
+      });
     } finally {
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }

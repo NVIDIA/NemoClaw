@@ -53,10 +53,9 @@ function serializedToolResultBytes(result: AgentToolResult<unknown>): number {
 }
 
 /**
- * Keep native Pi tool-result session records readable by the synthesis advisor.
- * Pi's default 50 KiB truncation details repeat the visible content, and JSON escaping
- * can expand it again. Bound the serialized result instead of assuming raw text bytes
- * predict the eventual JSONL line size.
+ * Bound native Pi tool-result session records. Pi's default truncation details repeat
+ * visible content, and JSON escaping can expand it. Bound the serialized result instead
+ * of estimating its size from raw text.
  */
 function boundAdvisorToolResult<T>(
   result: AgentToolResult<T>,
@@ -146,9 +145,12 @@ function isContainedPath(root: string, candidate: string): boolean {
   );
 }
 
-function createRepoPathGuard(cwd: string): RepoPathGuard {
+function createRepoPathGuard(cwd: string, additionalRoots: string[] = []): RepoPathGuard {
   const lexicalRoot = path.resolve(cwd);
-  const realRoot = fs.realpathSync(lexicalRoot);
+  const roots = [lexicalRoot, ...additionalRoots.map((root) => path.resolve(root))].map((root) => ({
+    lexical: root,
+    real: fs.realpathSync(root),
+  }));
 
   return {
     async resolveExisting(candidate) {
@@ -161,12 +163,15 @@ function createRepoPathGuard(cwd: string): RepoPathGuard {
             ? path.join(os.homedir(), normalizedCandidate.slice(2))
             : normalizedCandidate;
       const lexicalPath = path.resolve(lexicalRoot, expandedCandidate);
-      if (!isContainedPath(lexicalRoot, lexicalPath) && !isContainedPath(realRoot, lexicalPath)) {
+      const matchingRoot = roots.find(
+        (root) => isContainedPath(root.lexical, lexicalPath) || isContainedPath(root.real, lexicalPath),
+      );
+      if (!matchingRoot) {
         throw new Error(`Advisor read-only path is outside the workspace: ${candidate}`);
       }
 
       const realPath = await fs.promises.realpath(lexicalPath);
-      if (!isContainedPath(realRoot, realPath)) {
+      if (!isContainedPath(matchingRoot.real, realPath)) {
         throw new Error(`Advisor read-only path resolves outside the workspace: ${candidate}`);
       }
       if (realPath.replace(PI_UNICODE_SPACES, " ") !== realPath) {
@@ -179,8 +184,12 @@ function createRepoPathGuard(cwd: string): RepoPathGuard {
   };
 }
 
-export async function canonicalRepoReadPath(cwd: string, candidate: string): Promise<string> {
-  return createRepoPathGuard(cwd).resolveExisting(candidate);
+export async function canonicalRepoReadPath(
+  cwd: string,
+  candidate: string,
+  additionalRoots: string[] = [],
+): Promise<string> {
+  return createRepoPathGuard(cwd, additionalRoots).resolveExisting(candidate);
 }
 
 function createGuardedLsOperations(guard: RepoPathGuard): LsOperations {
@@ -210,8 +219,9 @@ function createGuardedLsOperations(guard: RepoPathGuard): LsOperations {
 export function createRepoConfinedReadOnlyTools(
   cwd: string,
   onRead?: (observation: AdvisorReadObservation) => void,
+  additionalRoots: string[] = [],
 ): ToolDefinition[] {
-  const guard = createRepoPathGuard(cwd);
+  const guard = createRepoPathGuard(cwd, additionalRoots);
 
   const read = createReadToolDefinition(cwd);
   const executeRead = read.execute;

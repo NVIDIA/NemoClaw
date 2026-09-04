@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { openRegularFileNoFollow } from "../../../src/lib/adapters/fs/regular-file";
 
 const GUARD_PATH = path.resolve("scripts/openclaw-config-guard.py");
 const fixtures: string[] = [];
@@ -70,36 +71,6 @@ if failure in {"installed-nonroot-no-cap", "installed-nonroot-not-ready"}:
     module._pid1_effective_uid = lambda: identity.root_uid + 1
 if failure == "startup-owner":
     module.os.getppid = lambda: 1
-if failure in {"pair-race", "mutable-dir-drift"}:
-    original_snapshot = module._snapshot_file
-    raced = False
-    def race_pair(opened, name):
-        global raced
-        snapshot = original_snapshot(opened, name)
-        if name == "openclaw.json" and not raced:
-            raced = True
-            if failure == "mutable-dir-drift":
-                os.chmod(config_dir, 0o700)
-                return snapshot
-            updated = b'{"gateway":{"port":19001}}\n'
-            with open(os.path.join(config_dir, "openclaw.json"), "wb") as stream:
-                stream.write(updated)
-            digest = hashlib.sha256(updated).hexdigest()
-            with open(os.path.join(config_dir, ".config-hash"), "w", encoding="ascii") as stream:
-                stream.write(digest + "  openclaw.json\n")
-        return snapshot
-    module._snapshot_file = race_pair
-if failure.startswith("immutable"):
-    inode_flags = {}
-    flag_log = os.environ["NEMOCLAW_TEST_FLAG_LOG"]
-    def fake_get_flags(fd):
-        return inode_flags.get(os.fstat(fd).st_ino, module.FS_IMMUTABLE_FL)
-    def fake_set_flags(fd, flags):
-        inode_flags[os.fstat(fd).st_ino] = flags
-        with open(flag_log, "a", encoding="utf-8") as stream:
-            stream.write(str(flags) + "\n")
-    module._get_inode_flags = fake_get_flags
-    module._set_inode_flags = fake_set_flags
 if "second-replace" in failure:
     original_replace = module._replace_from_snapshot
     calls = 0
@@ -110,10 +81,6 @@ if "second-replace" in failure:
             raise OSError("injected second replacement failure")
         return original_replace(*args, **kwargs)
     module._replace_from_snapshot = fail_second
-if failure == "force-install-failure":
-    def fail_install(*_args, **_kwargs):
-        raise OSError("injected canonical install failure")
-    module._install_stored_pair = fail_install
 if failure == "kill-after-freeze":
     original_freeze = module._freeze
     def kill_after_freeze(*args, **kwargs):
@@ -249,10 +216,8 @@ type GuardLine = {
   code?: string;
   path?: string;
   detail?: string;
-  chattrApplied?: boolean;
   configSha256?: string;
   recovery?: string;
-  originalLocked?: boolean;
 };
 
 function shellQuote(value: string): string {
@@ -287,10 +252,7 @@ function fixture() {
   return { root, configDir, configPath, hashPath };
 }
 type GuardAction =
-  | "preflight"
   | "preflight-restart"
-  | "lock"
-  | "unlock"
   | "seal-restart"
   | "unseal-restart"
   | "revoke-startup-ready"
@@ -332,44 +294,6 @@ function mode(filePath: string): number {
   return fs.lstatSync(filePath).mode & 0o7777;
 }
 
-function fileIdentity(filePath: string): [number, Buffer] {
-  const fd = fs.openSync(filePath, "r");
-  try {
-    return [fs.fstatSync(fd).ino, fs.readFileSync(fd)];
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-function setUserXattr(filePath: string, value: string): boolean {
-  return (
-    spawnSync(
-      "python3",
-      [
-        "-c",
-        "import os,sys; os.setxattr(sys.argv[1], 'user.nemoclaw-test', sys.argv[2].encode())",
-        filePath,
-        value,
-      ],
-      { encoding: "utf-8" },
-    ).status === 0
-  );
-}
-
-function getUserXattr(filePath: string): string {
-  const result = spawnSync(
-    "python3",
-    [
-      "-c",
-      "import os,sys; print(os.getxattr(sys.argv[1], 'user.nemoclaw-test').decode())",
-      filePath,
-    ],
-    { encoding: "utf-8" },
-  );
-  expect(result.status).toBe(0);
-  return result.stdout.trim();
-}
-
 afterEach(() => {
   for (const root of fixtures.splice(0)) {
     try {
@@ -397,274 +321,6 @@ afterEach(() => {
 });
 
 describe("openclaw-config-guard", () => {
-  it("keeps an exact locked parent and pair unchanged across idempotent relock", () => {
-    const { root, configDir, configPath, hashPath } = fixture();
-    const first = runGuard("lock", configDir);
-    expect(first.status, JSON.stringify(first.lines)).toBe(0);
-    const fileIdentities = [configPath, hashPath].map(fileIdentity);
-    expect(mode(root)).toBe(0o1775);
-    const second = runGuard("lock", configDir);
-    expect(second.status, JSON.stringify(second.lines)).toBe(0);
-    expect(mode(root)).toBe(0o1775);
-    expect(mode(configDir)).toBe(0o755);
-    expect(mode(configPath)).toBe(0o444);
-    expect(mode(hashPath)).toBe(0o444);
-    expect([configPath, hashPath].map(fileIdentity)).toEqual(fileIdentities);
-  });
-  it("unlocks idempotently when the config already holds the mutable posture (#7430)", () => {
-    const { configDir, configPath, hashPath } = fixture();
-    const fileIdentities = [configPath, hashPath].map(fileIdentity);
-    const r = runGuard("unlock", configDir);
-    expect(r.status, JSON.stringify(r.lines)).toBe(0);
-    expect([mode(configDir), mode(configPath), mode(hashPath)]).toEqual([0o2770, 0o660, 0o660]);
-    expect([configPath, hashPath].map(fileIdentity)).toEqual(fileIdentities);
-    for (const invalidPath of [configPath, hashPath]) {
-      fs.chmodSync(invalidPath, 0o600);
-      try {
-        const invalid = runGuard("unlock", configDir);
-        expect(invalid.status).not.toBe(0);
-        expect(invalid.lines).toContainEqual(
-          expect.objectContaining({ code: "config-not-mutable" }),
-        );
-        expect(mode(invalidPath)).toBe(0o600);
-        expect([configPath, hashPath].map(fileIdentity)).toEqual(fileIdentities);
-      } finally {
-        fs.chmodSync(invalidPath, 0o660);
-      }
-    }
-    const drift = runGuard("unlock", configDir, "mutable-dir-drift");
-    expect(drift.lines).toContainEqual(expect.objectContaining({ code: "config-not-mutable" }));
-  });
-  it("fresh-replaces both files on lock and unlock while preserving bytes, times, and xattrs", () => {
-    const { root, configDir, configPath, hashPath } = fixture();
-    const preservedTime = new Date("2025-01-02T03:04:05.000Z");
-    fs.utimesSync(configPath, preservedTime, preservedTime);
-    fs.utimesSync(hashPath, preservedTime, preservedTime);
-    const hasXattrs = setUserXattr(configPath, "trusted-metadata");
-    const initialConfig = fs.readFileSync(configPath);
-    const initialHash = fs.readFileSync(hashPath);
-    const initialConfigStat = fs.statSync(configPath);
-    const initialHashStat = fs.statSync(hashPath);
-    const staleConfigFd = fs.openSync(configPath, "r+");
-    const staleHashFd = fs.openSync(hashPath, "r+");
-
-    try {
-      const locked = runGuard("lock", configDir);
-      expect(locked.status).toBe(0);
-      expect(locked.lines.at(-1)).toMatchObject({
-        type: "result",
-        action: "lock",
-        status: "ok",
-        chattrApplied: false,
-      });
-      expect(mode(root)).toBe(0o1775);
-      expect(mode(configDir)).toBe(0o755);
-      expect(mode(configPath)).toBe(0o444);
-      expect(mode(hashPath)).toBe(0o444);
-      expect(fs.statSync(configPath).ino).not.toBe(initialConfigStat.ino);
-      expect(fs.statSync(hashPath).ino).not.toBe(initialHashStat.ino);
-      expect(fs.statSync(configPath).mtimeMs).toBe(initialConfigStat.mtimeMs);
-      expect(fs.statSync(hashPath).mtimeMs).toBe(initialHashStat.mtimeMs);
-      expect(hasXattrs ? getUserXattr(configPath) : "trusted-metadata").toBe("trusted-metadata");
-
-      fs.writeSync(staleConfigFd, Buffer.from("MUTATED"), 0, 7, 0);
-      fs.writeSync(staleHashFd, Buffer.from("MUTATED"), 0, 7, 0);
-      fs.fsyncSync(staleConfigFd);
-      fs.fsyncSync(staleHashFd);
-      expect(fs.readFileSync(configPath)).toEqual(initialConfig);
-      expect(fs.readFileSync(hashPath)).toEqual(initialHash);
-
-      const lockedConfigInode = fs.statSync(configPath).ino;
-      const lockedHashInode = fs.statSync(hashPath).ino;
-      const unlocked = runGuard("unlock", configDir);
-      expect(unlocked.status).toBe(0);
-      expect(mode(root)).toBe(0o755);
-      expect(mode(configDir)).toBe(0o2770);
-      expect(mode(configPath)).toBe(0o660);
-      expect(mode(hashPath)).toBe(0o660);
-      expect(fs.statSync(configPath).ino).not.toBe(lockedConfigInode);
-      expect(fs.statSync(hashPath).ino).not.toBe(lockedHashInode);
-      expect(fs.readFileSync(configPath)).toEqual(initialConfig);
-      expect(fs.readFileSync(hashPath)).toEqual(initialHash);
-      expect(hasXattrs ? getUserXattr(configPath) : "trusted-metadata").toBe("trusted-metadata");
-    } finally {
-      fs.closeSync(staleConfigFd);
-      fs.closeSync(staleHashFd);
-    }
-  });
-  it.each(["symlink", "hardlink", "fifo"] as const)("rejects external %s config", (attack) => {
-    const { root, configDir, configPath, hashPath } = fixture();
-    const external = path.join(root, "external.json");
-    fs.writeFileSync(external, "outside\n");
-    fs.rmSync(configPath);
-    const arrangeAttack = {
-      symlink: () => fs.symlinkSync(external, configPath),
-      hardlink: () => fs.linkSync(external, configPath),
-      fifo: () => expect(spawnSync("mkfifo", [configPath]).status).toBe(0),
-    } satisfies Record<typeof attack, () => void>;
-    arrangeAttack[attack]();
-
-    const beforeHash = fs.readFileSync(hashPath);
-    const result = runGuard("preflight", configDir);
-
-    expect(result.status).toBe(1);
-    expect(result.lines).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: "issue",
-          code: attack === "hardlink" ? "hardlinked-config-file" : "unsafe-config-file",
-          path: configPath,
-        }),
-      ]),
-    );
-    expect(fs.readFileSync(external, "utf-8")).toBe("outside\n");
-    expect(fs.readFileSync(hashPath)).toEqual(beforeHash);
-  });
-  it("fail-closes a rename-swapped config namespace and leaves the external tree untouched", () => {
-    const { root, configDir } = fixture();
-    const realConfig = path.join(root, "real-openclaw");
-    fs.renameSync(configDir, realConfig);
-    fs.symlinkSync(realConfig, configDir);
-    const externalConfig = path.join(realConfig, "openclaw.json");
-    const before = fs.readFileSync(externalConfig);
-
-    const result = runGuard("lock", configDir);
-
-    expect(result.status).toBe(0);
-    expect(fs.readFileSync(externalConfig)).toEqual(before);
-    expect(fs.lstatSync(configDir).isDirectory()).toBe(true);
-    expect(mode(configDir)).toBe(0o755);
-    expect(mode(path.join(configDir, "openclaw.json"))).toBe(0o444);
-  });
-  it("canonicalizes a stale mutable hash while strict preflight rejects a bad record path", () => {
-    const mismatch = fixture();
-    const mismatchBytes = fs.readFileSync(mismatch.configPath);
-    fs.writeFileSync(mismatch.hashPath, `${"0".repeat(64)}  openclaw.json\n`, { mode: 0o660 });
-
-    const mismatched = runGuard("lock", mismatch.configDir);
-
-    expect(mismatched.status).toBe(0);
-    expect(fs.readFileSync(mismatch.hashPath, "utf-8")).toBe(
-      `${createHash("sha256").update(mismatchBytes).digest("hex")}  openclaw.json\n`,
-    );
-    expect(fs.readFileSync(mismatch.configPath)).toEqual(mismatchBytes);
-    expect(mode(mismatch.configDir)).toBe(0o755);
-
-    const wrongPath = fixture();
-    const digest = createHash("sha256").update(fs.readFileSync(wrongPath.configPath)).digest("hex");
-    fs.writeFileSync(wrongPath.hashPath, `${digest}  ../openclaw.json\n`);
-    const nonCanonical = runGuard("preflight", wrongPath.configDir);
-    expect(nonCanonical.status).toBe(1);
-    expect(nonCanonical.lines).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: "issue", code: "invalid-config-hash-path" }),
-      ]),
-    );
-
-    const absolute = fixture();
-    const absoluteDigest = createHash("sha256")
-      .update(fs.readFileSync(absolute.configPath))
-      .digest("hex");
-    fs.writeFileSync(absolute.hashPath, `${absoluteDigest}  ${absolute.configPath}\n`, {
-      mode: 0o660,
-    });
-    expect(runGuard("preflight", absolute.configDir).status).toBe(0);
-  });
-  it("retries config and hash as one pair when a writer interleaves their capture", () => {
-    const { configDir, configPath, hashPath } = fixture();
-    const result = runGuard("lock", configDir, "pair-race");
-    expect(result.status).toBe(0);
-    const updated = Buffer.from('{"gateway":{"port":19001}}\n');
-    expect(fs.readFileSync(configPath)).toEqual(updated);
-    expect(fs.readFileSync(hashPath, "utf-8")).toBe(
-      `${createHash("sha256").update(updated).digest("hex")}  openclaw.json\n`,
-    );
-    expect(mode(configPath)).toBe(0o444);
-    expect(mode(hashPath)).toBe(0o444);
-  });
-  it("restart preflight accepts a stable parseable config with a stale mutable hash", () => {
-    const { configDir, hashPath } = fixture();
-    fs.writeFileSync(hashPath, `${"0".repeat(64)}  openclaw.json\n`);
-    fs.chmodSync(hashPath, 0o660);
-
-    expect(runGuard("preflight-restart", configDir).status).toBe(0);
-    const strict = runGuard("preflight", configDir);
-    expect(strict.status).toBe(1);
-    expect(strict.lines).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: "issue", code: "config-hash-mismatch" }),
-      ]),
-    );
-  });
-  it("rolls a failed unlock back to the complete locked parent, config, and file posture", () => {
-    const { root, configDir, configPath, hashPath } = fixture();
-    const configBytes = fs.readFileSync(configPath);
-    const hashBytes = fs.readFileSync(hashPath);
-    expect(runGuard("lock", configDir).status).toBe(0);
-
-    const result = runGuard("unlock", configDir, "second-replace");
-
-    expect(result.status).toBe(1);
-    expect(result.lines).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: "issue", code: "transition-failed" }),
-      ]),
-    );
-    expect(mode(root)).toBe(0o1775);
-    expect(mode(configDir)).toBe(0o755);
-    expect(mode(configPath)).toBe(0o444);
-    expect(mode(hashPath)).toBe(0o444);
-    expect(fs.readFileSync(configPath)).toEqual(configBytes);
-    expect(fs.readFileSync(hashPath)).toEqual(hashBytes);
-  });
-  it("clears descriptor-bound immutable flags for replacement and restores them on rollback", () => {
-    const { root, configDir } = fixture();
-    const flagLog = path.join(root, "inode-flags.log");
-    fs.writeFileSync(flagLog, "");
-
-    const locked = runGuard("lock", configDir, "immutable", {
-      NEMOCLAW_TEST_FLAG_LOG: flagLog,
-    });
-    expect(locked.status).toBe(0);
-    expect(fs.readFileSync(flagLog, "utf-8").trim().split("\n")).toContain("0");
-
-    fs.writeFileSync(flagLog, "");
-    const failedUnlock = runGuard("unlock", configDir, "immutable-second-replace", {
-      NEMOCLAW_TEST_FLAG_LOG: flagLog,
-    });
-    expect(failedUnlock.status).toBe(1);
-    const appliedFlags = fs.readFileSync(flagLog, "utf-8").trim().split("\n").map(Number);
-    expect(appliedFlags).toContain(0);
-    expect(appliedFlags).toContain(0x10);
-    expect(mode(configDir)).toBe(0o755);
-  });
-  it("enforces the exact production path and bounded config artifact sizes", () => {
-    const { configDir, hashPath } = fixture();
-    const noPathOverride = RUN_AS_CURRENT_USER.replace(
-      "module.PRODUCTION_CONFIG_DIR = config_dir\n",
-      "",
-    );
-    const wrongPath = spawnSync(
-      "python3",
-      ["-c", noPathOverride, GUARD_PATH, "preflight", configDir, "none", ""],
-      { encoding: "utf-8", timeout: 15_000 },
-    );
-    expect(wrongPath.status).toBe(1);
-    expect(wrongPath.stdout).toContain('"code": "invalid-config-path"');
-
-    fs.writeFileSync(hashPath, Buffer.alloc(64 * 1024 + 1, 0x61));
-    const oversized = runGuard("preflight", configDir);
-    expect(oversized.status).toBe(1);
-    expect(oversized.lines).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: "issue",
-          code: "config-file-too-large",
-          path: hashPath,
-        }),
-      ]),
-    );
-  });
   it("CAS-writes a fresh mutable config/hash pair and revokes stale descriptors", () => {
     const { root, configDir, configPath, hashPath } = fixture();
     const oldConfig = fs.readFileSync(configPath);
@@ -673,10 +329,10 @@ describe("openclaw-config-guard", () => {
       `${JSON.stringify({ gateway: { port: 19001 }, agents: { defaults: { model: "nvidia/test" } } }, null, 2)}\n`,
     );
     const replacementDigest = createHash("sha256").update(replacement).digest("hex");
-    const oldConfigInode = fs.statSync(configPath).ino;
-    const oldHashInode = fs.statSync(hashPath).ino;
     const staleConfigFd = fs.openSync(configPath, "r+");
     const staleHashFd = fs.openSync(hashPath, "r+");
+    const oldConfigInode = fs.fstatSync(staleConfigFd).ino;
+    const oldHashInode = fs.fstatSync(staleHashFd).ino;
 
     try {
       const result = runGuard("write-config", configDir, "none", {}, expected, replacement);
@@ -686,24 +342,34 @@ describe("openclaw-config-guard", () => {
         type: "result",
         action: "write-config",
         status: "ok",
-        chattrApplied: false,
         configSha256: replacementDigest,
       });
       expect(mode(root)).toBe(0o755);
       expect(mode(configDir)).toBe(0o2770);
-      expect(mode(configPath)).toBe(0o660);
-      expect(mode(hashPath)).toBe(0o660);
-      expect(fs.statSync(configPath).ino).not.toBe(oldConfigInode);
-      expect(fs.statSync(hashPath).ino).not.toBe(oldHashInode);
-      expect(fs.readFileSync(configPath)).toEqual(replacement);
-      expect(fs.readFileSync(hashPath, "utf-8")).toBe(`${replacementDigest}  openclaw.json\n`);
+      const currentConfig = openRegularFileNoFollow(configPath);
+      const currentHash = openRegularFileNoFollow(hashPath);
+      try {
+        expect(currentConfig.stat().mode & 0o777).toBe(0o660);
+        expect(currentHash.stat().mode & 0o777).toBe(0o660);
+        expect(currentConfig.stat().ino).not.toBe(oldConfigInode);
+        expect(currentHash.stat().ino).not.toBe(oldHashInode);
+        expect(currentConfig.readBytes(1024 * 1024)).toEqual(replacement);
+        expect(currentHash.readUtf8(1024 * 1024)).toBe(
+          `${replacementDigest}  openclaw.json\n`,
+        );
 
-      fs.writeSync(staleConfigFd, Buffer.from("STALE!!"), 0, 7, 0);
-      fs.writeSync(staleHashFd, Buffer.from("STALE!!"), 0, 7, 0);
-      fs.fsyncSync(staleConfigFd);
-      fs.fsyncSync(staleHashFd);
-      expect(fs.readFileSync(configPath)).toEqual(replacement);
-      expect(fs.readFileSync(hashPath, "utf-8")).toBe(`${replacementDigest}  openclaw.json\n`);
+        fs.writeSync(staleConfigFd, Buffer.from("STALE!!"), 0, 7, 0);
+        fs.writeSync(staleHashFd, Buffer.from("STALE!!"), 0, 7, 0);
+        fs.fsyncSync(staleConfigFd);
+        fs.fsyncSync(staleHashFd);
+        expect(currentConfig.readBytes(1024 * 1024)).toEqual(replacement);
+        expect(currentHash.readUtf8(1024 * 1024)).toBe(
+          `${replacementDigest}  openclaw.json\n`,
+        );
+      } finally {
+        currentConfig.close();
+        currentHash.close();
+      }
     } finally {
       fs.closeSync(staleConfigFd);
       fs.closeSync(staleHashFd);
@@ -732,7 +398,7 @@ describe("openclaw-config-guard", () => {
     expect(fs.existsSync(persistentJournal)).toBe(false);
   });
 
-  it("refuses stale CAS and locked posture without changing either file", () => {
+  it("refuses a stale CAS without changing either file", () => {
     const staleCas = fixture();
     const beforeConfig = fs.readFileSync(staleCas.configPath);
     const beforeHash = fs.readFileSync(staleCas.hashPath);
@@ -755,29 +421,6 @@ describe("openclaw-config-guard", () => {
     );
     expect(fs.readFileSync(staleCas.configPath)).toEqual(beforeConfig);
     expect(fs.readFileSync(staleCas.hashPath)).toEqual(beforeHash);
-
-    const locked = fixture();
-    expect(runGuard("lock", locked.configDir).status).toBe(0);
-    const lockedConfig = fs.readFileSync(locked.configPath);
-    const lockedHash = fs.readFileSync(locked.hashPath);
-    const lockedDigest = createHash("sha256").update(lockedConfig).digest("hex");
-    const refused = runGuard(
-      "write-config",
-      locked.configDir,
-      "none",
-      {},
-      lockedDigest,
-      replacement,
-    );
-    expect(refused.status).toBe(1);
-    expect(refused.lines).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: "issue", code: "config-not-mutable" }),
-      ]),
-    );
-    expect(fs.readFileSync(locked.configPath)).toEqual(lockedConfig);
-    expect(fs.readFileSync(locked.hashPath)).toEqual(lockedHash);
-    expect(mode(locked.configPath)).toBe(0o444);
   });
 
   it("rolls back both mutable files when the second write-config replacement fails", () => {
@@ -805,53 +448,62 @@ describe("openclaw-config-guard", () => {
 
   it.each([
     ["kill-after-freeze", 88, "orphan-freeze-restored", false],
-    ["kill-after-first-replace", 89, "ambiguous-replay-locked", true],
-  ] as const)("recovers or fail-closes after %s", (failure, exitCode, recovery, locked) => {
-    const { root, configDir, configPath, hashPath } = fixture();
-    const originalConfig = fs.readFileSync(configPath);
-    const originalHash = fs.readFileSync(hashPath);
-    const expected = createHash("sha256").update(originalConfig).digest("hex");
-    const replacement = Buffer.from('{"gateway":{"port":19001}}\n');
-    const journalPath = path.join(root, ".nemoclaw-test", "transaction.json");
+    ["kill-after-first-replace", 89, "", true],
+  ] as const)(
+    "recovers or contains an interrupted config write after %s",
+    (failure, exitCode, recovery, contained) => {
+      const { root, configDir, configPath, hashPath } = fixture();
+      const originalConfig = fs.readFileSync(configPath);
+      const originalHash = fs.readFileSync(hashPath);
+      const expected = createHash("sha256").update(originalConfig).digest("hex");
+      const replacement = Buffer.from('{"gateway":{"port":19001}}\n');
+      const journalPath = path.join(root, ".nemoclaw-test", "transaction.json");
 
-    const interrupted = runGuard("write-config", configDir, failure, {}, expected, replacement);
+      const interrupted = runGuard("write-config", configDir, failure, {}, expected, replacement);
 
-    expect(interrupted.status).toBe(exitCode);
-    expect(fs.existsSync(journalPath)).toBe(true);
-    expect(mode(configDir)).toBe(0o700);
-    // Simulate container recreation: /etc-style secondary state is gone while
-    // the persistent /sandbox tree and its root-frozen discriminator survive.
-    fs.rmSync(journalPath, { force: true });
-    (failure === "kill-after-first-replace" ? [true] : []).forEach((_ambiguousReplacement) => {
-      const refused = runGuard("preflight", configDir);
-      expect(refused.status).toBe(1);
-      expect(refused.lines).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ type: "issue", code: "recovery-required" }),
-        ]),
-      );
-    });
+      expect(interrupted.status).toBe(exitCode);
+      expect(fs.existsSync(journalPath)).toBe(true);
+      expect(mode(configDir)).toBe(0o700);
+      // Simulate container recreation: /etc-style secondary state is gone while
+      // the persistent /sandbox tree and its root-frozen discriminator survive.
+      fs.rmSync(journalPath, { force: true });
+      (failure === "kill-after-first-replace" ? [true] : []).forEach((_ambiguousReplacement) => {
+        const refused = runGuard("preflight-restart", configDir);
+        expect(refused.status).toBe(1);
+        expect(refused.lines).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ type: "issue", code: "recovery-required" }),
+          ]),
+        );
+      });
 
-    const recovered = runGuard("recover", configDir);
-    expect(recovered.status).toBe(0);
-    expect(recovered.lines.at(-1)).toMatchObject({
-      type: "result",
-      action: "recover",
-      status: "ok",
-      recovery,
-    });
-    expect(fs.existsSync(journalPath)).toBe(false);
-    expect(fs.readFileSync(configPath)).toEqual(locked ? replacement : originalConfig);
-    const replacementDigest = createHash("sha256").update(replacement).digest("hex");
-    const expectedHash = locked
-      ? Buffer.from(`${replacementDigest}  openclaw.json\n`)
-      : originalHash;
-    expect(fs.readFileSync(hashPath)).toEqual(expectedHash);
-    expect(mode(root)).toBe(locked ? 0o1775 : 0o755);
-    expect(mode(configDir)).toBe(locked ? 0o755 : 0o2770);
-    expect(mode(configPath)).toBe(locked ? 0o444 : 0o660);
-    expect(mode(hashPath)).toBe(locked ? 0o444 : 0o660);
-  });
+      const recovered = runGuard("recover", configDir);
+      switch (contained) {
+        case true:
+          expect(recovered.status).toBe(1);
+          expect(recovered.lines).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ type: "issue", code: "ambiguous-replay-contained" }),
+            ]),
+          );
+          return;
+      }
+      expect(recovered.status).toBe(0);
+      expect(recovered.lines.at(-1)).toMatchObject({
+        type: "result",
+        action: "recover",
+        status: "ok",
+        recovery,
+      });
+      expect(fs.existsSync(journalPath)).toBe(false);
+      expect(fs.readFileSync(configPath)).toEqual(originalConfig);
+      expect(fs.readFileSync(hashPath)).toEqual(originalHash);
+      expect(mode(root)).toBe(0o755);
+      expect(mode(configDir)).toBe(0o2770);
+      expect(mode(configPath)).toBe(0o660);
+      expect(mode(hashPath)).toBe(0o660);
+    },
+  );
 
   it("preserves later gateway bytes and a stale hash from the prepared phase", () => {
     const { configDir, configPath, hashPath } = fixture();
@@ -914,7 +566,7 @@ describe("openclaw-config-guard", () => {
     expect(mode(configDir)).toBe(0o2770);
   });
 
-  it("finishes the committed replacement after interruption before mutable-directory commit", () => {
+  it("contains a committed replacement when its root-only journal is lost", () => {
     const { root, configDir, configPath, hashPath } = fixture();
     const originalConfig = fs.readFileSync(configPath);
     const expected = createHash("sha256").update(originalConfig).digest("hex");
@@ -936,15 +588,12 @@ describe("openclaw-config-guard", () => {
     fs.rmSync(journalPath, { force: true });
 
     const recovered = runGuard("recover", configDir);
-    expect(recovered.status).toBe(0);
-    expect(recovered.lines.at(-1)).toMatchObject({
-      type: "result",
-      action: "recover",
-      status: "ok",
-      recovery: "ambiguous-replay-locked",
-      configSha256: replacementDigest,
-    });
-    expect(fs.existsSync(journalPath)).toBe(false);
+    expect(recovered.status).toBe(1);
+    expect(recovered.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "issue", code: "ambiguous-replay-contained" }),
+      ]),
+    );
     expect(fs.readFileSync(configPath)).toEqual(replacement);
     expect(fs.readFileSync(hashPath, "utf-8")).toBe(`${replacementDigest}  openclaw.json\n`);
     expect(mode(root)).toBe(0o1775);
@@ -970,7 +619,6 @@ describe("openclaw-config-guard", () => {
     expect(mode(configDir)).toBe(0o2770);
 
     const gatewayBytes = Buffer.from('{"gateway":{"port":19002},"runtime":true}\n');
-    const gatewayDigest = createHash("sha256").update(gatewayBytes).digest("hex");
     const staleHash = fs.readFileSync(hashPath);
     fs.writeFileSync(configPath, gatewayBytes, { mode: 0o660 });
     fs.chmodSync(configPath, 0o660);
@@ -983,7 +631,6 @@ describe("openclaw-config-guard", () => {
       action: "recover",
       status: "ok",
       recovery: "none",
-      originalLocked: false,
     });
     expect(fs.readFileSync(configPath)).toEqual(gatewayBytes);
     expect(fs.readFileSync(hashPath)).toEqual(staleHash);
@@ -1038,39 +685,47 @@ describe("openclaw-config-guard", () => {
     const config = fs.readFileSync(configPath);
     const digest = createHash("sha256").update(config).digest("hex");
     fs.writeFileSync(hashPath, `${"0".repeat(64)}  openclaw.json\n`, { mode: 0o660 });
-    const oldConfigInode = fs.statSync(configPath).ino;
-    const oldHashInode = fs.statSync(hashPath).ino;
     const staleConfig = fs.openSync(configPath, "r+");
     const staleHash = fs.openSync(hashPath, "r+");
+    const oldConfigInode = fs.fstatSync(staleConfig).ino;
+    const oldHashInode = fs.fstatSync(staleHash).ino;
 
     try {
       const sealed = runGuard("seal-restart", configDir);
       expect(sealed.status, JSON.stringify(sealed.lines)).toBe(0);
       expect(sealed.lines.at(-1)).toMatchObject({
         action: "seal-restart",
-        originalLocked: false,
         configSha256: digest,
       });
       expect(mode(root)).toBe(0o1775);
       expect(mode(configDir)).toBe(0o755);
-      expect(mode(configPath)).toBe(0o444);
-      expect(mode(hashPath)).toBe(0o444);
-      expect(fs.statSync(configPath).ino).not.toBe(oldConfigInode);
-      expect(fs.statSync(hashPath).ino).not.toBe(oldHashInode);
-      expect(fs.readFileSync(hashPath, "utf-8")).toBe(`${digest}  openclaw.json\n`);
+      const currentConfig = openRegularFileNoFollow(configPath);
+      const currentHash = openRegularFileNoFollow(hashPath);
+      let sealedConfigInode = -1;
+      let sealedHashInode = -1;
+      try {
+        const currentConfigStat = currentConfig.stat();
+        const currentHashStat = currentHash.stat();
+        expect(currentConfigStat.mode & 0o777).toBe(0o444);
+        expect(currentHashStat.mode & 0o777).toBe(0o444);
+        expect(currentConfigStat.ino).not.toBe(oldConfigInode);
+        expect(currentHashStat.ino).not.toBe(oldHashInode);
+        expect(currentHash.readUtf8(1024 * 1024)).toBe(`${digest}  openclaw.json\n`);
 
-      fs.writeSync(staleConfig, Buffer.from("STALE!!"), 0, 7, 0);
-      fs.writeSync(staleHash, Buffer.from("STALE!!"), 0, 7, 0);
-      expect(fs.readFileSync(configPath)).toEqual(config);
-      expect(fs.readFileSync(hashPath, "utf-8")).toBe(`${digest}  openclaw.json\n`);
-
-      const sealedConfigInode = fs.statSync(configPath).ino;
-      const sealedHashInode = fs.statSync(hashPath).ino;
+        fs.writeSync(staleConfig, Buffer.from("STALE!!"), 0, 7, 0);
+        fs.writeSync(staleHash, Buffer.from("STALE!!"), 0, 7, 0);
+        expect(currentConfig.readBytes(1024 * 1024)).toEqual(config);
+        expect(currentHash.readUtf8(1024 * 1024)).toBe(`${digest}  openclaw.json\n`);
+        sealedConfigInode = currentConfigStat.ino;
+        sealedHashInode = currentHashStat.ino;
+      } finally {
+        currentConfig.close();
+        currentHash.close();
+      }
       const unsealed = runGuard("unseal-restart", configDir);
       expect(unsealed.status, JSON.stringify(unsealed.lines)).toBe(0);
       expect(unsealed.lines.at(-1)).toMatchObject({
         action: "unseal-restart",
-        originalLocked: false,
       });
       expect(mode(root)).toBe(0o755);
       expect(mode(configDir)).toBe(0o2770);
@@ -1085,29 +740,7 @@ describe("openclaw-config-guard", () => {
     }
   });
 
-  it("records shields-locked restart state without replacing or weakening the host seal", () => {
-    const { root, configDir, configPath, hashPath } = fixture();
-    expect(runGuard("lock", configDir).status).toBe(0);
-    const configInode = fs.statSync(configPath).ino;
-    const hashInode = fs.statSync(hashPath).ino;
-
-    const sealed = runGuard("seal-restart", configDir);
-    expect(sealed.status).toBe(0);
-    expect(sealed.lines.at(-1)).toMatchObject({ originalLocked: true });
-    expect(fs.statSync(configPath).ino).toBe(configInode);
-    expect(fs.statSync(hashPath).ino).toBe(hashInode);
-    expect(mode(root)).toBe(0o1775);
-    expect(mode(configDir)).toBe(0o755);
-
-    const unsealed = runGuard("unseal-restart", configDir);
-    expect(unsealed.status).toBe(0);
-    expect(unsealed.lines.at(-1)).toMatchObject({ originalLocked: true });
-    expect(fs.statSync(configPath).ino).toBe(configInode);
-    expect(fs.statSync(hashPath).ino).toBe(hashInode);
-    expect(mode(configPath)).toBe(0o444);
-  });
-
-  it("uses JSON5 validation for restart while locked posture still enforces hash coherence", () => {
+  it("uses JSON5 validation for restart transactions", () => {
     const json5 = fixture();
     const bytes = Buffer.from("{\n  // comment\n  gateway: { port: 18789, },\n}\n");
     fs.writeFileSync(json5.configPath, bytes, { mode: 0o660 });
@@ -1115,73 +748,80 @@ describe("openclaw-config-guard", () => {
     expect(runGuard("preflight-restart", json5.configDir).status).toBe(0);
     expect(runGuard("seal-restart", json5.configDir).status).toBe(0);
     expect(runGuard("unseal-restart", json5.configDir).status).toBe(0);
-
-    const locked = fixture();
-    expect(runGuard("lock", locked.configDir).status).toBe(0);
-    fs.chmodSync(locked.hashPath, 0o644);
-    fs.writeFileSync(locked.hashPath, `${"0".repeat(64)}  openclaw.json\n`);
-    fs.chmodSync(locked.hashPath, 0o444);
-    const rejected = runGuard("preflight-restart", locked.configDir);
-    expect(rejected.status).toBe(1);
-    expect(rejected.lines).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: "issue", code: "config-hash-mismatch" }),
-      ]),
-    );
   });
 
   it.each([
-    ["kill-seal-after-prepared", 101],
-    ["kill-seal-after-freeze-parent", 102],
-    ["kill-seal-after-freeze-config", 103],
-    ["kill-seal-after-applying", 104],
-    ["kill-seal-after-first-replace", 105],
-    ["kill-seal-after-sealed-journal", 106],
-    ["kill-seal-after-visible", 107],
-  ] as const)("recovers an interrupted restart seal at %s", (failure, exitCode) => {
-    const { root, configDir, configPath, hashPath } = fixture();
-    const original = fs.readFileSync(configPath);
-    const interrupted = runGuard("seal-restart", configDir, failure);
-    expect(interrupted.status).toBe(exitCode);
+    ["kill-seal-after-prepared", 101, false],
+    ["kill-seal-after-freeze-parent", 102, false],
+    ["kill-seal-after-freeze-config", 103, false],
+    ["kill-seal-after-applying", 104, true],
+    ["kill-seal-after-first-replace", 105, true],
+    ["kill-seal-after-sealed-journal", 106, true],
+    ["kill-seal-after-visible", 107, false],
+  ] as const)(
+    "recovers or contains an interrupted restart seal at %s",
+    (failure, exitCode, contained) => {
+      const { root, configDir, configPath, hashPath } = fixture();
+      const original = fs.readFileSync(configPath);
+      const interrupted = runGuard("seal-restart", configDir, failure);
+      expect(interrupted.status).toBe(exitCode);
 
-    fs.rmSync(path.join(root, ".nemoclaw-test", "transaction.json"), { force: true });
-    const recovered = runGuard("recover", configDir);
-    expect(recovered.status, `${failure}: ${JSON.stringify(recovered.lines)}`).toBe(0);
-    expect(fs.readFileSync(configPath)).toEqual(original);
-    const recoveredMode = mode(configDir);
-    expect([0o2770, 0o755]).toContain(recoveredMode);
-    const recoveredLocked = recoveredMode === 0o755;
-    expect(mode(configPath)).toBe(recoveredLocked ? 0o444 : 0o660);
-    expect(mode(hashPath)).toBe(recoveredLocked ? 0o444 : 0o660);
-    expect(recovered.lines.at(-1)).toMatchObject({ originalLocked: recoveredLocked });
-  });
+      fs.rmSync(path.join(root, ".nemoclaw-test", "transaction.json"), { force: true });
+      const recovered = runGuard("recover", configDir);
+      switch (contained) {
+        case true:
+          expect(recovered.status).toBe(1);
+          expect(recovered.lines).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ type: "issue", code: "ambiguous-replay-contained" }),
+            ]),
+          );
+          return;
+      }
+      expect(recovered.status, `${failure}: ${JSON.stringify(recovered.lines)}`).toBe(0);
+      expect(fs.readFileSync(configPath)).toEqual(original);
+      expect(mode(configDir)).toBe(0o2770);
+      expect(mode(configPath)).toBe(0o660);
+      expect(mode(hashPath)).toBe(0o660);
+    },
+  );
 
   it.each([
-    ["kill-unseal-after-journal", 108],
-    ["kill-unseal-after-first-replace", 109],
-    ["kill-unseal-after-committed", 110],
-    ["kill-unseal-after-visible", 111],
-  ] as const)("recovers an interrupted restart unseal at %s", (failure, exitCode) => {
-    const { root, configDir, configPath, hashPath } = fixture();
-    const original = fs.readFileSync(configPath);
-    expect(runGuard("seal-restart", configDir).status).toBe(0);
-    const interrupted = runGuard("unseal-restart", configDir, failure);
-    expect(interrupted.status).toBe(exitCode);
+    ["kill-unseal-after-journal", 108, true],
+    ["kill-unseal-after-first-replace", 109, true],
+    ["kill-unseal-after-committed", 110, true],
+    ["kill-unseal-after-visible", 111, false],
+  ] as const)(
+    "recovers or contains an interrupted restart unseal at %s",
+    (failure, exitCode, contained) => {
+      const { root, configDir, configPath, hashPath } = fixture();
+      const original = fs.readFileSync(configPath);
+      expect(runGuard("seal-restart", configDir).status).toBe(0);
+      const interrupted = runGuard("unseal-restart", configDir, failure);
+      expect(interrupted.status).toBe(exitCode);
 
-    fs.rmSync(path.join(root, ".nemoclaw-test", "transaction.json"), { force: true });
-    const recovered = runGuard("recover", configDir);
-    expect(recovered.status, `${failure}: ${JSON.stringify(recovered.lines)}`).toBe(0);
-    expect(fs.readFileSync(configPath)).toEqual(original);
-    const recoveredMode = mode(configDir);
-    expect([0o2770, 0o755]).toContain(recoveredMode);
-    const recoveredLocked = recoveredMode === 0o755;
-    expect(mode(configPath)).toBe(recoveredLocked ? 0o444 : 0o660);
-    expect(mode(hashPath)).toBe(recoveredLocked ? 0o444 : 0o660);
-    expect(recovered.lines.at(-1)).toMatchObject({ originalLocked: recoveredLocked });
-  });
+      fs.rmSync(path.join(root, ".nemoclaw-test", "transaction.json"), { force: true });
+      const recovered = runGuard("recover", configDir);
+      switch (contained) {
+        case true:
+          expect(recovered.status).toBe(1);
+          expect(recovered.lines).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ type: "issue", code: "ambiguous-replay-contained" }),
+            ]),
+          );
+          return;
+      }
+      expect(recovered.status, `${failure}: ${JSON.stringify(recovered.lines)}`).toBe(0);
+      expect(fs.readFileSync(configPath)).toEqual(original);
+      expect(mode(configDir)).toBe(0o2770);
+      expect(mode(configPath)).toBe(0o660);
+      expect(mode(hashPath)).toBe(0o660);
+    },
+  );
 
-  it("quarantines planted journal entry types and a last-moment swap without vetoing lock", () => {
-    (["symlink", "file", "directory"] as const).forEach((attack) => {
+  it("quarantines planted journal entries before a restart transaction", () => {
+    for (const attack of ["symlink", "file", "directory"] as const) {
       const current = fixture();
       const reserved = path.join(current.configDir, ".nemoclaw-config-transaction.json");
       const outside = path.join(current.root, `outside-${attack}`);
@@ -1192,46 +832,21 @@ describe("openclaw-config-guard", () => {
         directory: () => fs.mkdirSync(reserved),
       } satisfies Record<typeof attack, () => void>;
       plantJournal[attack]();
-      expect(runGuard("lock", current.configDir).status).toBe(0);
+
+      const sealed = runGuard("seal-restart", current.configDir);
+      expect(sealed.status, JSON.stringify(sealed.lines)).toBe(0);
       expect(fs.readFileSync(outside, "utf-8")).toBe("outside\n");
       expect(mode(current.configPath)).toBe(0o444);
-
-      for (const _directoryAttack of attack === "directory" ? [true] : []) {
-        expect(runGuard("unlock", current.configDir).status).toBe(0);
-        const retained = fs
-          .readdirSync(current.configDir)
-          .find((name) => name.startsWith(".nemoclaw-untrusted-journal-"));
-        expect(retained).toBeDefined();
-        fs.renameSync(path.join(current.configDir, retained!), reserved);
-        expect(runGuard("lock", current.configDir).status).toBe(0);
-      }
-    });
+      expect(runGuard("unseal-restart", current.configDir).status).toBe(0);
+      expect(mode(current.configPath)).toBe(0o660);
+    }
 
     const swapped = fixture();
     fs.writeFileSync(path.join(swapped.root, "outside"), "outside\n");
-    expect(runGuard("lock", swapped.configDir, "plant-journal-before-freeze").status).toBe(0);
+    const sealed = runGuard("seal-restart", swapped.configDir, "plant-journal-before-freeze");
+    expect(sealed.status, JSON.stringify(sealed.lines)).toBe(0);
     expect(mode(swapped.configPath)).toBe(0o444);
-  });
-
-  it("fresh-severs stale descriptors even when canonical install raises", () => {
-    const { configDir, configPath, hashPath } = fixture();
-    const config = fs.readFileSync(configPath);
-    const digest = createHash("sha256").update(config).digest("hex");
-    const configFd = fs.openSync(configPath, "r+");
-    const hashFd = fs.openSync(hashPath, "r+");
-    try {
-      const result = runGuard("lock", configDir, "force-install-failure");
-      expect(result.status).toBe(1);
-      expect(mode(configPath)).toBe(0o444);
-      expect(mode(hashPath)).toBe(0o444);
-      fs.writeSync(configFd, Buffer.from("STALE!!"), 0, 7, 0);
-      fs.writeSync(hashFd, Buffer.from("STALE!!"), 0, 7, 0);
-      expect(fs.readFileSync(configPath)).toEqual(config);
-      expect(fs.readFileSync(hashPath, "utf-8")).toBe(`${digest}  openclaw.json\n`);
-    } finally {
-      fs.closeSync(configFd);
-      fs.closeSync(hashFd);
-    }
+    expect(runGuard("unseal-restart", swapped.configDir).status).toBe(0);
   });
 
   it("does not roll back after mutable handoff when journal cleanup fails", () => {
@@ -1287,7 +902,6 @@ describe("openclaw-config-guard", () => {
     expect(recovered.lines.at(-1)).toMatchObject({
       recovery: "prepared-preserved",
       configSha256: createHash("sha256").update(gatewayBytes).digest("hex"),
-      originalLocked: false,
     });
     expect(fs.readFileSync(configPath)).toEqual(gatewayBytes);
     expect(fs.readFileSync(hashPath)).toEqual(originalHash);
@@ -1316,7 +930,7 @@ describe("openclaw-config-guard", () => {
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
       }
       expect(fs.existsSync(ready)).toBe(true);
-      const blocked = runGuard("lock", configDir);
+      const blocked = runGuard("seal-restart", configDir);
       expect(blocked.status).toBe(1);
       expect(blocked.lines).toEqual(
         expect.arrayContaining([
@@ -1327,14 +941,20 @@ describe("openclaw-config-guard", () => {
       child.kill("SIGKILL");
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
     }
-    const recoveredOwner = runGuard("lock", configDir);
+    const recoveredOwner = runGuard("seal-restart", configDir);
     expect(recoveredOwner.status, JSON.stringify(recoveredOwner.lines)).toBe(0);
     expect(mode(configPath)).toBe(0o444);
+    expect(runGuard("unseal-restart", configDir).status).toBe(0);
+    expect(mode(configPath)).toBe(0o660);
   });
 
   it("enforces the installed-helper startup lease while retaining explicit old-image fallback", () => {
     const foreignPid1 = fixture();
-    const foreignBlocked = runGuard("lock", foreignPid1.configDir, "installed-foreign-pid1");
+    const foreignBlocked = runGuard(
+      "seal-restart",
+      foreignPid1.configDir,
+      "installed-foreign-pid1",
+    );
     expect(foreignBlocked.status).toBe(1);
     expect(foreignBlocked.lines).toEqual(
       expect.arrayContaining([
@@ -1343,7 +963,7 @@ describe("openclaw-config-guard", () => {
     );
 
     const beforeRevoke = fixture();
-    const blocked = runGuard("lock", beforeRevoke.configDir, "installed-not-ready");
+    const blocked = runGuard("seal-restart", beforeRevoke.configDir, "installed-not-ready");
     expect(blocked.status).toBe(1);
     expect(blocked.lines).toEqual(
       expect.arrayContaining([
@@ -1352,15 +972,17 @@ describe("openclaw-config-guard", () => {
     );
 
     const oldImage = fixture();
-    expect(runGuard("lock", oldImage.configDir, "old-image-no-cap").status).toBe(0);
+    expect(runGuard("seal-restart", oldImage.configDir, "old-image-no-cap").status).toBe(0);
 
     const current = fixture();
     const revoked = runGuard("revoke-startup-ready", current.configDir, "startup-owner");
     expect(revoked.status, JSON.stringify(revoked.lines)).toBe(0);
-    expect(runGuard("lock", current.configDir, "installed-current").status).toBe(1);
+    expect(runGuard("seal-restart", current.configDir, "installed-current").status).toBe(1);
     expect(runGuard("publish-startup-ready", current.configDir, "startup-owner").status).toBe(0);
-    expect(runGuard("lock", current.configDir, "installed-current").status).toBe(0);
-    expect(runGuard("lock", current.configDir, "installed-remapped").status).toBe(0);
+    expect(runGuard("seal-restart", current.configDir, "installed-current").status).toBe(0);
+    expect(runGuard("unseal-restart", current.configDir, "installed-current").status).toBe(0);
+    expect(runGuard("seal-restart", current.configDir, "installed-remapped").status).toBe(0);
+    expect(runGuard("unseal-restart", current.configDir, "installed-remapped").status).toBe(0);
 
     const readyPath = path.join(current.root, ".nemoclaw-test", "ready.json");
     fs.writeFileSync(
@@ -1373,7 +995,7 @@ describe("openclaw-config-guard", () => {
       })}\n`,
     );
     fs.chmodSync(readyPath, 0o600);
-    const splitLease = runGuard("lock", current.configDir, "installed-remapped-any-live");
+    const splitLease = runGuard("seal-restart", current.configDir, "installed-remapped-any-live");
     expect(splitLease.status).toBe(1);
     expect(splitLease.lines).toEqual(
       expect.arrayContaining([
@@ -1384,12 +1006,12 @@ describe("openclaw-config-guard", () => {
 
   it("allows only authenticated no-capability non-root startup postures", () => {
     const degraded = fixture();
-    expect(runGuard("lock", degraded.configDir, "installed-nonroot-no-cap").status).toBe(0);
+    expect(runGuard("seal-restart", degraded.configDir, "installed-nonroot-no-cap").status).toBe(0);
 
     const optedIn = fixture();
     const revoked = runGuard("revoke-startup-ready", optedIn.configDir, "startup-owner");
     expect(revoked.status, JSON.stringify(revoked.lines)).toBe(0);
-    const blocked = runGuard("lock", optedIn.configDir, "installed-nonroot-not-ready");
+    const blocked = runGuard("seal-restart", optedIn.configDir, "installed-nonroot-not-ready");
     expect(blocked.status).toBe(1);
     expect(blocked.lines).toEqual(
       expect.arrayContaining([
@@ -1398,11 +1020,13 @@ describe("openclaw-config-guard", () => {
     );
 
     const supervised = fixture();
-    expect(runGuard("lock", supervised.configDir, "installed-openshell-supervised").status).toBe(0);
+    expect(
+      runGuard("seal-restart", supervised.configDir, "installed-openshell-supervised").status,
+    ).toBe(0);
 
     const staleMarker = fixture();
     const staleBlocked = runGuard(
-      "lock",
+      "seal-restart",
       staleMarker.configDir,
       "installed-openshell-stale-marker",
     );
@@ -1474,19 +1098,23 @@ raise SystemExit(main())
           path.join(path.dirname(configDir), ".injected-journal", "mutation.lock"),
         );
 
-    const result = spawnSync("python3", ["-I", "-", "preflight", "--config-dir", configDir], {
-      input: injected,
-      encoding: "utf-8",
-      timeout: 15_000,
-      cwd: maliciousCwd,
-      env: { ...process.env, PYTHONPATH: maliciousCwd },
-    });
+    const result = spawnSync(
+      "python3",
+      ["-I", "-", "preflight-restart", "--config-dir", configDir],
+      {
+        input: injected,
+        encoding: "utf-8",
+        timeout: 15_000,
+        cwd: maliciousCwd,
+        env: { ...process.env, PYTHONPATH: maliciousCwd },
+      },
+    );
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(importMarker)).toBe(false);
     expect(JSON.parse(result.stdout.trim())).toMatchObject({
       type: "result",
-      action: "preflight",
+      action: "preflight-restart",
       status: "ok",
     });
   });

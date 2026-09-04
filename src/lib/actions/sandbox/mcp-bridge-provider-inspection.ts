@@ -1,10 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { stripAnsi } from "../../adapters/openshell/client";
-import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
+import {
+  type OpenShellRuntimeSelection,
+  runOpenshellProviderCommand,
+} from "../../adapters/openshell/provider-command";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
+import { getDockerDriverGatewayLocalTlsDir } from "../../onboard/docker-driver-gateway-local-tls";
+import { reportsExactProviderNotFound } from "../../adapters/openshell/provider-diagnostic-cli";
+import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
+import { resolveGatewayCredentialMutationAuthority } from "../../onboard/gateway-teardown-authority";
+import {
+  evaluateGatewayAttachmentConfiguration,
+  isExternallySupervised,
+  type GatewayOwner,
+} from "../../onboard/gateway-ownership";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
-import { listExtraProviders, type McpBridgeEntry } from "../../state/registry";
+import { listExtraProviders, type McpBridgeEntry, type SandboxEntry } from "../../state/registry";
+import { getPersistedSandboxTargetGateway } from "./gateway-target";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
@@ -36,6 +54,71 @@ export type McpProviderAttachmentInspection = {
   error?: string;
 };
 
+export type McpProviderInspectionRuntimeSelection = OpenShellRuntimeSelection;
+
+const GATEWAY_CLIENT_TLS_FILES = ["ca.crt", "client/tls.crt", "client/tls.key"] as const;
+
+function readableGatewayClientTlsDir(localTlsDir: string, required: boolean): string | undefined {
+  const observations = GATEWAY_CLIENT_TLS_FILES.map((relativePath) => {
+    const filePath = path.join(localTlsDir, relativePath);
+    try {
+      if (!fs.statSync(filePath).isFile()) throw new Error("not a file");
+      fs.accessSync(filePath, fs.constants.R_OK);
+      return { filePath, readable: true };
+    } catch {
+      return { filePath, readable: false };
+    }
+  });
+  if (observations.every(({ readable }) => readable)) return localTlsDir;
+  if (!required && observations.every(({ filePath }) => !fs.existsSync(filePath))) {
+    return undefined;
+  }
+  const unreadable = observations.find(({ readable }) => !readable)?.filePath ?? localTlsDir;
+  throw new McpBridgeError(
+    `OpenShell gateway TLS file is missing or unreadable: ${unreadable}`,
+    1,
+  );
+}
+
+function providerRuntimeLocalTlsDir(
+  owner: GatewayOwner,
+  selectedInProcess: boolean,
+): string | undefined {
+  if (isExternallySupervised(owner)) {
+    const configuration = evaluateGatewayAttachmentConfiguration(owner, owner.gatewayPort);
+    if (!configuration.ok) throw new McpBridgeError(configuration.message, 1);
+    if (!owner.endpoint || new URL(owner.endpoint).protocol !== "https:") return undefined;
+    if (!owner.stateDir) {
+      throw new McpBridgeError("Externally supervised HTTPS gateway requires a state directory.", 1);
+    }
+    return readableGatewayClientTlsDir(path.join(owner.stateDir, "tls"), true);
+  }
+
+  const configuredStateDir = selectedInProcess
+    ? process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR
+    : undefined;
+  const stateDir = resolveGatewayStateDirForPort({
+    configured: configuredStateDir,
+    home: process.env.HOME || os.homedir(),
+    port: owner.gatewayPort,
+  });
+  return readableGatewayClientTlsDir(getDockerDriverGatewayLocalTlsDir(stateDir), false);
+}
+
+export function getMcpProviderInspectionRuntimeSelection(
+  sandbox: SandboxEntry,
+): McpProviderInspectionRuntimeSelection {
+  const providerRuntimeGateway = getPersistedSandboxTargetGateway(sandbox);
+  const { gatewayName, gatewayPort } = providerRuntimeGateway;
+  const owner = resolveGatewayCredentialMutationAuthority({ gatewayName, gatewayPort });
+  const localTlsDir = providerRuntimeLocalTlsDir(owner, providerRuntimeGateway.selectedInProcess);
+  return {
+    gatewayName,
+    ...(localTlsDir ? { localTlsDir } : {}),
+    workspace: OPENSHELL_DEFAULT_WORKSPACE,
+  };
+}
+
 const MCP_PROVIDER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
 export function parseMcpProviderMetadata(output: string): Omit<McpProviderInspection, "exists"> {
@@ -65,7 +148,10 @@ export function parseMcpProviderMetadata(output: string): Omit<McpProviderInspec
   };
 }
 
-export function inspectMcpProvider(providerName: string | undefined): McpProviderInspection {
+export function inspectMcpProvider(
+  providerName: string | undefined,
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
+): McpProviderInspection {
   if (!providerName) {
     return {
       exists: false,
@@ -77,11 +163,12 @@ export function inspectMcpProvider(providerName: string | undefined): McpProvide
   }
   const result = runOpenshellProviderCommand(["provider", "get", providerName], {
     ignoreError: true,
+    runtimeSelection,
     stdio: ["ignore", "pipe", "pipe"],
   }) as OpenShellCommandResult;
   if (result.status !== 0) {
     const output = commandOutput(result);
-    if (/not\s+found|NotFound|does\s+not\s+exist|unknown\s+provider/i.test(output)) {
+    if (result.status === 1 && reportsExactProviderNotFound(output, providerName, output.length)) {
       return {
         exists: false,
         id: null,
@@ -125,9 +212,11 @@ export function parseMcpProviderAttachmentNames(output: string): string[] {
 
 export function inspectMcpProviderAttachments(
   sandboxName: string,
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): McpProviderAttachmentInspection {
   const result = runOpenshellProviderCommand(["sandbox", "provider", "list", sandboxName], {
     ignoreError: true,
+    runtimeSelection,
     stdio: ["ignore", "pipe", "pipe"],
   }) as OpenShellCommandResult;
   const output = commandOutput(result);
@@ -139,7 +228,7 @@ export function inspectMcpProviderAttachments(
     if (/^No providers attached to sandbox\b/m.test(clean)) return { attachments: [] };
     const names = parseMcpProviderAttachmentNames(clean);
     const attachments = names.map((name) => {
-      const provider = inspectMcpProvider(name);
+      const provider = inspectMcpProvider(name, runtimeSelection);
       if (
         provider.exists !== true ||
         !provider.id ||
@@ -169,10 +258,11 @@ export function inspectMcpProviderAttachments(
 export function assertNoAttachedProviderCredentialCollisions(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
-  const inspection = inspectMcpProviderAttachments(sandboxName);
+  const inspection = inspectMcpProviderAttachments(sandboxName, runtimeSelection);
   if (!inspection.attachments) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect providers attached to sandbox '${sandboxName}'.`,
@@ -198,12 +288,15 @@ export function assertNoRegisteredProviderCredentialCollisions(
   deps: {
     listExtraProviders?: () => string[];
     inspectProvider?: (providerName: string) => McpProviderInspection;
+    runtimeSelection?: McpProviderInspectionRuntimeSelection;
   } = {},
 ): void {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
   const queryExtraProviders = deps.listExtraProviders ?? listExtraProviders;
-  const inspectProvider = deps.inspectProvider ?? inspectMcpProvider;
+  const inspectProvider =
+    deps.inspectProvider ??
+    ((providerName: string) => inspectMcpProvider(providerName, deps.runtimeSelection));
   for (const providerName of queryExtraProviders()) {
     const provider = inspectProvider(providerName);
     if (provider.exists === false) continue;
@@ -230,9 +323,10 @@ export function assertNoRegisteredProviderCredentialCollisions(
 export function assertNoProviderCredentialCollisions(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
-  assertNoAttachedProviderCredentialCollisions(sandboxName, entries);
-  assertNoRegisteredProviderCredentialCollisions(entries);
+  assertNoAttachedProviderCredentialCollisions(sandboxName, entries, runtimeSelection);
+  assertNoRegisteredProviderCredentialCollisions(entries, { runtimeSelection });
 }
 
 export function providerMatchesCredential(
@@ -306,7 +400,10 @@ export function providerShapeDetail(
   return `Expected ${MCP_BRIDGE_PROVIDER_TYPE} provider with only credential key '${expectedCredential ?? "<missing>"}', found type '${type}' with keys '${keys}'.`;
 }
 
-export function assertMcpProviderRecoverable(entry: McpBridgeEntry): McpProviderInspection {
+export function assertMcpProviderRecoverable(
+  entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): McpProviderInspection {
   assertAuthenticatedBridgeEntry(entry);
   if (!entry.providerId) {
     throw new McpBridgeError(
@@ -314,7 +411,7 @@ export function assertMcpProviderRecoverable(entry: McpBridgeEntry): McpProvider
     );
   }
   const expectedCredential = entry.env[0];
-  const inspection = inspectMcpProvider(entry.providerName);
+  const inspection = inspectMcpProvider(entry.providerName, runtimeSelection);
   if (inspection.exists === null) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect OpenShell provider '${entry.providerName}'.`,
@@ -406,9 +503,10 @@ export async function preflightMcpEntryTargets(
 export function providerAttached(
   sandboxName: string,
   providerName: string | undefined,
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): boolean | null {
   if (!providerName) return null;
-  const inspection = inspectMcpProviderAttachments(sandboxName);
+  const inspection = inspectMcpProviderAttachments(sandboxName, runtimeSelection);
   if (!inspection.attachments) return null;
   return inspection.attachments.some((attachment) => attachment.name === providerName);
 }

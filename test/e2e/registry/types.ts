@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { E2eExecutionMetadata } from "../../../tools/e2e/execution-coverage.mts";
+import type { E2eGatewayRuntimeSupport } from "../../../tools/e2e/gateway-runtime.mts";
 
 export type PhaseName = "environment" | "onboarding" | "state-validation" | "lifecycle" | "runtime";
 
@@ -208,6 +209,7 @@ export interface TargetDefinition {
   requiredSecrets?: string[];
   skippedCapabilities?: Array<Record<string, unknown>>;
   expectedFailure?: ExpectedFailureContract;
+  gatewayRuntimes?: E2eGatewayRuntimeSupport;
 }
 
 // Legacy phase-action vocabulary retained for migration metadata. New live

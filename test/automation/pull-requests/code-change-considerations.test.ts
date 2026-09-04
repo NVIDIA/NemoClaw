@@ -6,13 +6,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { preparePromptArtifacts } from "../../../tools/pr-review-advisor/analyze.mts";
-import { artifactPaths } from "../../../tools/pr-review-advisor/artifacts.mts";
 import {
   buildSystemPrompt,
   readTrustedCodeChangeConsiderations,
 } from "../../../tools/pr-review-advisor/trusted-guidance.mts";
-import { metadata } from "../../helpers/pr-review-advisor-test-fixtures";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const RESOURCE_PATH = path.join(
@@ -105,37 +102,4 @@ describe("shared code change considerations", () => {
     );
   });
 
-  it("writes visible failure artifacts for malformed Advisor input", () => {
-    const outDir = fs.mkdtempSync(path.join(tmpdir(), "advisor-considerations-failure-"));
-    const reviewMetadata = metadata();
-    mockTrustedConsiderationsRead(
-      () => "# Code Change Considerations\n\nThis lost its contract structure.",
-    );
-
-    try {
-      expect(() =>
-        preparePromptArtifacts({
-          artifacts: artifactPaths(outDir),
-          metadata: reviewMetadata,
-          diff: "",
-        }),
-      ).toThrow("Code change considerations malformed");
-      expect(
-        JSON.parse(fs.readFileSync(path.join(outDir, "pr-review-advisor-result.json"), "utf8")),
-      ).toMatchObject({
-        failed: true,
-        reason: expect.stringContaining("Code change considerations malformed"),
-      });
-      expect(
-        JSON.parse(
-          fs.readFileSync(path.join(outDir, "pr-review-advisor-final-result.json"), "utf8"),
-        ),
-      ).toMatchObject({
-        headSha: reviewMetadata.headSha,
-        reviewCompleteness: { requiresHumanReview: true },
-      });
-    } finally {
-      fs.rmSync(outDir, { recursive: true, force: true });
-    }
-  });
 });

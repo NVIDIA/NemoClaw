@@ -3,6 +3,8 @@
 
 import os from "node:os";
 
+import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
 import { DEFAULT_MODEL_ROUTER_PORT, isRoutedInferenceProvider } from "../../onboard/model-router";
@@ -27,14 +29,32 @@ import {
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
 } from "./gateway-target";
-import { assertMcpAdapterConfigMutationsAllowed } from "./mcp-bridge-runtime-capabilities";
+
+export { teardownSandboxDashboardForward } from "./forward-recovery";
 
 export type SandboxDestroyPreflight = {
   cleanupGatewayName: string;
+  runtimeSelection?: OpenShellRuntimeSelection;
   runOpenshell: DestroyRunOpenshell;
+  selectedCaptureOpenshell?: typeof import("../../adapters/openshell/runtime").captureOpenshell;
+  selectedRunOpenshell: DestroyRunOpenshell;
   sandbox: SandboxEntry | null;
   sandboxConfirmedAbsent: boolean;
 };
+
+export function resolveSandboxDestroyRuntimeSelection(
+  sandbox: SandboxEntry | null,
+): OpenShellRuntimeSelection | undefined {
+  if (
+    !sandbox ||
+    !Object.values(sandbox.mcp?.bridges ?? {}).some((entry) => entry.addState !== "prepared")
+  ) {
+    return undefined;
+  }
+  return (
+    require("./mcp-bridge-provider") as typeof import("./mcp-bridge-provider")
+  ).getMcpProviderInspectionRuntimeSelection(sandbox);
+}
 
 export function stopSandboxInferenceResources(
   sandboxName: string,
@@ -266,15 +286,19 @@ export async function stopModelRouterForDestroyedSandbox(
 export function prepareSandboxDestroy(
   sandboxName: string,
   {
-    force = false,
     retainedRecoveryGatewayName,
-  }: { force?: boolean; retainedRecoveryGatewayName?: string } = {},
+    operationRuntimeSelection,
+  }: {
+    retainedRecoveryGatewayName?: string;
+    operationRuntimeSelection?: OpenShellRuntimeSelection;
+  } = {},
 ): SandboxDestroyPreflight {
   const sandbox = registry.getSandbox(sandboxName);
   console.log(`  Deleting sandbox '${sandboxName}'...`);
-  const { runOpenshell } = require("../../adapters/openshell/runtime") as {
-    runOpenshell: DestroyRunOpenshell;
-  };
+  const { captureOpenshell, runOpenshell } = require("../../adapters/openshell/runtime") as Pick<
+    typeof import("../../adapters/openshell/runtime"),
+    "captureOpenshell" | "runOpenshell"
+  >;
 
   // Capture the sandbox gateway before destructive work, then pin every
   // following OpenShell subprocess against that same durable authority. A
@@ -292,36 +316,48 @@ export function prepareSandboxDestroy(
   }
   const cleanupGatewayName =
     retainedRecoveryGatewayName ?? registeredGatewayName ?? getSandboxTargetGatewayName();
-  selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, runOpenshell);
+  const runtimeSelection =
+    operationRuntimeSelection ?? resolveSandboxDestroyRuntimeSelection(sandbox);
+  if (runtimeSelection && runtimeSelection.gatewayName !== cleanupGatewayName) {
+    throw new Error(
+      `Refusing to destroy sandbox '${sandboxName}': recorded MCP gateway '${runtimeSelection.gatewayName}' does not match destroy gateway '${cleanupGatewayName}'.`,
+    );
+  }
+  const selectedRunOpenshell: DestroyRunOpenshell = runtimeSelection
+    ? (args, options = {}) =>
+        runOpenshell(args, {
+          ...options,
+          env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
+          replaceEnv: true,
+        })
+    : runOpenshell;
+  const selectedCaptureOpenshell = runtimeSelection
+    ? (args: string[], options: Record<string, unknown> = {}) =>
+        captureOpenshell(args, {
+          ...options,
+          env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
+          replaceEnv: true,
+        })
+    : undefined;
+  selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, selectedRunOpenshell);
   process.env.OPENSHELL_GATEWAY = cleanupGatewayName;
 
   const sandboxPresence = classifyDestroySandboxPresence(
     sandboxName,
-    runOpenshell(["sandbox", "list", "-o", "json"], {
+    selectedRunOpenshell(["sandbox", "list", "-o", "json"], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
       timeout: OPENSHELL_PROBE_TIMEOUT_MS,
     }),
   );
   const sandboxConfirmedAbsent = sandboxPresence === "absent";
-  const mcpEntriesRequiringConfigMutation = Object.values(sandbox?.mcp?.bridges ?? {}).filter(
-    (entry) => entry.addState !== "prepared",
-  );
-  if (
-    !sandboxConfirmedAbsent &&
-    sandbox &&
-    !sandbox.mcp?.destroyPreparedAt &&
-    !sandbox.mcp?.destroyPendingAt &&
-    mcpEntriesRequiringConfigMutation.length > 0 &&
-    // `--force` accepts leaving the retained-volume adapter entry in place, so
-    // this early refusal must not block it before any teardown starts. The
-    // preparation phase reclassifies the same refusal and reports what it kept.
-    !force
-  ) {
-    // Fail before stopping local services or mutating any MCP resource when
-    // the live adapter config cannot be changed safely.
-    assertMcpAdapterConfigMutationsAllowed(sandboxName, sandbox, mcpEntriesRequiringConfigMutation);
-  }
-
-  return { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent };
+  return {
+    cleanupGatewayName,
+    runOpenshell,
+    selectedRunOpenshell,
+    sandbox,
+    sandboxConfirmedAbsent,
+    ...(selectedCaptureOpenshell ? { selectedCaptureOpenshell } : {}),
+    ...(runtimeSelection ? { runtimeSelection } : {}),
+  };
 }

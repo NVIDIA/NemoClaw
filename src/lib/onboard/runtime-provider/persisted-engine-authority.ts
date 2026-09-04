@@ -26,7 +26,6 @@ const OPERATIONS = new Set<ContainerEngineOperationScope>([
   "gateway-inspection",
   "managed-bootstrap",
   "sandbox-lifecycle",
-  "state-mutation",
   "workload-cleanup",
 ]);
 

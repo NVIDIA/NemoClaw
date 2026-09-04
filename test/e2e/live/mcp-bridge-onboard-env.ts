@@ -17,6 +17,8 @@ const MCP_BRIDGE_QUALIFICATION_ENV_KEYS = [
   "E2E_MANAGED_IMAGE_COHORT_RECEIPT",
   "NEMOCLAW_E2E_EXPECTED_SHA",
   "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG",
+  "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON",
+  "NEMOCLAW_E2E_MANAGED_IMAGE_REVISION",
   "NEMOCLAW_RUN_LIVE_E2E",
   "OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
 ] as const;
@@ -48,10 +50,12 @@ export function assertMcpBridgeManagedImageReceipt(options: {
 }): void {
   const environment = options.environment ?? process.env;
   const selectedRevision = environment.E2E_MANAGED_IMAGE_REVISION?.trim();
-  const exactCandidateCatalog = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim();
+  const exactCandidateCatalog =
+    environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim() ||
+    environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON?.trim();
   if (!selectedRevision && !exactCandidateCatalog) return;
 
-  const expectedRevision = selectedRevision ?? environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
+  const expectedRevision = selectedRevision || environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() || "";
   if (!/^[0-9a-f]{40}$/u.test(expectedRevision)) {
     throw new Error("managed-image MCP qualification requires an exact cohort revision");
   }
@@ -111,6 +115,9 @@ export function buildMcpBridgeOnboardEnv(options: {
     NEMOCLAW_PROVIDER: "custom",
     NEMOCLAW_SANDBOX_NAME: options.sandboxName,
     NEMOCLAW_RECREATE_SANDBOX: "1",
+    ...(options.agent === "langchain-deepagents-code"
+      ? { NEMOCLAW_TOOL_DISCLOSURE: "direct" }
+      : {}),
   };
 }
 

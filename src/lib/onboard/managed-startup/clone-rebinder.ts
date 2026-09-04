@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 
 import { cloneAndDeepFreeze } from "../../core/immutable";
+import { rebindLoopbackDashboardUrlPort } from "../../dashboard/url";
 import { resolveContextWindowForModel } from "../../inference/context-window";
 import { rebindSandboxMessagingPlanForClone } from "../../messaging/clone-rebind";
 import { isValidName } from "../../name-validation";
@@ -249,9 +250,14 @@ function currentSourceDashboard(
     };
   }
   if (profile.dashboard.agent === "hermes") {
+    if (current.hermesDashboardEnabled === true && profile.dashboard.browserUrl === undefined) {
+      fail(
+        "current source Hermes dashboard has no recorded browser URL; rerun onboarding before cloning the sandbox",
+      );
+    }
     if (current.hermesDashboardEnabled !== true) {
       return {
-        agent: "hermes",
+        ...profile.dashboard,
         mode: "disabled",
         url: profile.dashboard.url,
         publicPort: null,
@@ -268,9 +274,12 @@ function currentSourceDashboard(
       profile.agent,
     );
     return {
-      agent: "hermes",
+      ...profile.dashboard,
       mode: "loopback-forwarded",
       url: urlAtPort(profile.dashboard.url, publicPort),
+      ...(profile.dashboard.browserUrl === undefined
+        ? {}
+        : { browserUrl: rebindLoopbackDashboardUrlPort(profile.dashboard.browserUrl, publicPort) }),
       publicPort,
       internalPort,
       tuiEnabled: current.hermesDashboardTui === true,
@@ -378,12 +387,23 @@ function destinationDashboard(
       return {
         ...dashboard,
         url: urlAtPort(dashboard.url, destinationDashboardPort),
+        ...(dashboard.browserUrl === undefined
+          ? {}
+          : {
+              browserUrl: rebindLoopbackDashboardUrlPort(
+                dashboard.browserUrl,
+                destinationDashboardPort,
+              ),
+            }),
       };
     }
     const port = requireDestinationPort(destinationDashboardPort, profile.agent);
     return {
       ...dashboard,
       url: urlAtPort(dashboard.url, port),
+      ...(dashboard.browserUrl === undefined
+        ? {}
+        : { browserUrl: rebindLoopbackDashboardUrlPort(dashboard.browserUrl, port) }),
       publicPort: port,
     };
   }

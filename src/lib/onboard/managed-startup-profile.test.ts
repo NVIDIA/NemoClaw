@@ -171,6 +171,7 @@ const HERMES_PROFILE = {
     agent: "hermes",
     mode: "loopback-forwarded",
     url: "http://127.0.0.1:19189",
+    browserUrl: "https://hermes.example.test:19189",
     publicPort: 19_189,
     internalPort: 29_189,
     tuiEnabled: true,
@@ -1173,6 +1174,7 @@ describe("managed startup profile", () => {
         dashboard: {
           ...HERMES_PROFILE.dashboard,
           url: `http://127.0.0.1:${port}`,
+          browserUrl: `https://hermes.example.test:${port}`,
           publicPort: port,
         },
       }),

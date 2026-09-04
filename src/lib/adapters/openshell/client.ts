@@ -16,6 +16,10 @@ import { processTreeBoundedOpenshellInvocation } from "./process-tree-timeout";
 import { classifyManagedGatewayEndpointBinding } from "../../../../nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs";
 
 export { classifyManagedGatewayEndpointBinding };
+export { buildSelectedOpenShellSubprocessEnv } from "./command-argv";
+export type { OpenShellRuntimeSelection } from "./runtime-selection";
+
+export { isOpenShellSandboxPolicyCredentialFree } from "./policy-boundary";
 
 export { openshellSandboxSshHost, resolveOpenshellSandboxSshHost } from "./sandbox-ssh-host";
 

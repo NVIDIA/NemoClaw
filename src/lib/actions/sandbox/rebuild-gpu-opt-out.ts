@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { loadAgent } from "../../agent/defs";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import {
   type InferenceEndpointSource,
   normalizeInferenceEndpointSource,
@@ -106,6 +107,8 @@ export type RebuildRecreateOnboardOpts = {
   nonInteractive: true;
   recreateSandbox: true;
   authoritativeResumeConfig: true;
+  /** Internal permission granted only by a validated prepared-backup recovery. */
+  allowRemovedImmutabilityStateRecord?: true;
   endpointSource?: InferenceEndpointSource | null;
   acceptThirdPartySoftware: true;
   agent: string | null | undefined;
@@ -118,6 +121,7 @@ export type RebuildRecreateOnboardOpts = {
   controlUiPort: number | null;
   targetGatewayName: string;
   targetGatewayPort: number;
+  runtimeSelection?: OpenShellRuntimeSelection;
   onboardLockAlreadyHeld: true;
   deferProcessExit: true;
   /** Target fingerprint of the replacement journal opened before deletion. */

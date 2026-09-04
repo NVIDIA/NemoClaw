@@ -97,7 +97,9 @@ const PORTABLE_PROFILE_E2E_PHASES = [
   "prepare the rootless container runtime",
   "verify immutable non-force network removal",
   "build and publish the sandbox image",
+  "prepare the staged Hermes build context",
   "build and publish the staged Hermes image",
+  "verify Hermes accepts the configured external Host",
   "start the pinned Podman gateway",
   "verify distinct same-network routes",
   "record portable environment completion",
@@ -117,6 +119,144 @@ function run(command: string, args: readonly string[]): string {
     `${command} ${args.join(" ")} failed:\n${String(result.error?.message || result.stderr || result.stdout)}`,
   );
   return String(result.stdout).trim();
+}
+
+function probeHermesDashboardHttp(containerName: string, host: string) {
+  return spawnSync(
+    "podman",
+    [
+      "exec",
+      containerName,
+      "curl",
+      "--silent",
+      "--show-error",
+      "--output",
+      "/dev/null",
+      "--write-out",
+      "%{http_code}",
+      "--max-time",
+      "2",
+      "--noproxy",
+      "*",
+      "--header",
+      `Host: ${host}`,
+      "http://127.0.0.1:29443/",
+    ],
+    {
+      encoding: "utf-8",
+      env: process.env,
+      killSignal: "SIGKILL",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15_000,
+    },
+  );
+}
+
+async function waitForHermesDashboard(containerName: string, attempt = 0): Promise<void> {
+  const timeoutDetail = attempt < 60 ? "" : `\n${run("podman", ["logs", containerName])}`;
+  assert.ok(attempt < 60, `Hermes dashboard did not become ready:${timeoutDetail}`);
+  const response = probeHermesDashboardHttp(containerName, "nemoclaw0-abc123.brevlab.com");
+  const ready = response.status === 0 && response.stdout.trim() === "200";
+  const running = ready
+    ? undefined
+    : spawnSync(
+        "podman",
+        ["container", "inspect", "--format", "{{.State.Running}}", containerName],
+        {
+          encoding: "utf-8",
+          env: process.env,
+          killSignal: "SIGKILL",
+          timeout: 15_000,
+        },
+      );
+  const runningOrReady = ready || (running?.status === 0 && running.stdout.trim() === "true");
+  const exitDetail = runningOrReady ? "" : `\n${run("podman", ["logs", containerName])}`;
+  assert.equal(
+    runningOrReady,
+    true,
+    `Hermes dashboard container exited before readiness:${exitDetail}`,
+  );
+  return ready
+    ? undefined
+    : new Promise<void>((resolve) => setTimeout(resolve, 500)).then(() =>
+        waitForHermesDashboard(containerName, attempt + 1),
+      );
+}
+
+async function probeHermesDashboardProxyRoute(imageRef: string): Promise<Record<string, number>> {
+  const containerName = `hermes-dashboard-host-${String(process.pid)}-${String(Date.now())}`;
+  const containerId = run("podman", [
+    "run",
+    "--detach",
+    "--name",
+    containerName,
+    "--network",
+    "none",
+    "--user",
+    "sandbox",
+    "--env",
+    "CHAT_UI_URL=https://NEMOCLAW0-ABC123.BREVLAB.COM.:29443/dashboard",
+    "--entrypoint",
+    "/bin/sh",
+    imageRef,
+    "-c",
+    "exec /usr/local/bin/nemoclaw-start",
+  ]);
+  assert.match(containerId, /^[a-f0-9]{64}$/u);
+  try {
+    await waitForHermesDashboard(containerName);
+
+    const hosts = {
+      external: "nemoclaw0-abc123.brevlab.com",
+      externalPort: "nemoclaw0-abc123.brevlab.com:443",
+      loopback: "localhost:29443",
+      lookalike: "nemoclaw0-abc123.brevlab.com.attacker.test",
+      other: "attacker.test",
+    } as const;
+    return Object.fromEntries(
+      Object.entries(hosts).map(([name, host]) => {
+        const response = probeHermesDashboardHttp(containerName, host);
+        assert.equal(response.status, 0, response.stderr || response.stdout);
+        return [name, Number(response.stdout.trim())];
+      }),
+    );
+  } finally {
+    run("podman", ["container", "rm", "--force", containerName]);
+  }
+}
+
+function assertHermesDashboardStartupRefusal(imageRef: string, chatUiUrl: string) {
+  const refusal = spawnSync(
+    "podman",
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--user",
+      "sandbox",
+      "--env",
+      `CHAT_UI_URL=${chatUiUrl}`,
+      "--entrypoint",
+      "/usr/local/bin/nemoclaw-start",
+      imageRef,
+      "/bin/true",
+    ],
+    {
+      encoding: "utf-8",
+      env: process.env,
+      killSignal: "SIGKILL",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30_000,
+    },
+  );
+  assert.equal(refusal.status, 1, refusal.stderr || refusal.stdout);
+  assert.match(refusal.stderr, /Invalid CHAT_UI_URL for the Hermes dashboard/u);
+  assert.match(
+    refusal.stderr,
+    /Set CHAT_UI_URL and rerun onboarding before starting the sandbox\./u,
+  );
+  assert.equal(refusal.stderr.includes(chatUiUrl), false);
 }
 
 function parseOnePodmanRecord(raw: string, label: string): Record<string, unknown> {
@@ -162,9 +302,9 @@ function selectInstallerPodmanRuntime(repoRoot: string): string {
 async function main(progress: TestProgress): Promise<void> {
   assert.equal(process.platform, "linux", "portable profile E2E requires Linux");
   assert.notEqual(process.getuid?.(), 0, "portable profile E2E must run without root privileges");
-  const sourceRevision = process.env.E2E_SOURCE_REVISION;
+  const sourceRevision = process.env.E2E_SOURCE_REVISION ?? "";
   assert.match(
-    sourceRevision ?? "",
+    sourceRevision,
     /^[a-f0-9]{40}$/u,
     "E2E_SOURCE_REVISION must identify the exact candidate commit",
   );
@@ -316,7 +456,7 @@ async function main(progress: TestProgress): Promise<void> {
       /^(?:sha256:)?[a-f0-9]{64}$/,
     );
 
-    progress.phase("build and publish the staged Hermes image");
+    progress.phase("prepare the staged Hermes build context");
     const hermesContextStateDir = path.join(root, "hermes-build-state");
     fs.mkdirSync(hermesContextStateDir, { mode: 0o700 });
     const hermesContextInput = {
@@ -344,6 +484,8 @@ async function main(progress: TestProgress): Promise<void> {
         log: console.log,
       });
       cleanupHermesTemporaryBuildContext = hermesTemporaryBuildContext.cleanupBuildCtx;
+
+      progress.phase("build and publish the staged Hermes image");
       const hermesPrebuild = await prebuildSandboxImageIfEligible({
         buildCtx: hermesTemporaryBuildContext.buildCtx,
         buildId: "hermes-rootless-e2e",
@@ -376,6 +518,33 @@ async function main(progress: TestProgress): Promise<void> {
         hermesPrebuild.imageId.replace(/^sha256:/u, ""),
       );
       hermesImageId = inspectedHermesImageId;
+      run("podman", [
+        "run",
+        "--rm",
+        "--entrypoint",
+        "/bin/sh",
+        hermesImageRef,
+        "-c",
+        "test ! -e /scripts/hermes-dashboard-external-host.patch",
+      ]);
+
+      progress.phase("verify Hermes accepts the configured external Host");
+      assert.deepEqual(await probeHermesDashboardProxyRoute(hermesImageRef), {
+        external: 200,
+        externalPort: 200,
+        loopback: 200,
+        lookalike: 400,
+        other: 400,
+      });
+
+      assertHermesDashboardStartupRefusal(hermesImageRef, "http://dashboard.example.test:29443");
+      assertHermesDashboardStartupRefusal(hermesImageRef, "https://0.0.0.0:29443");
+      assertHermesDashboardStartupRefusal(
+        hermesImageRef,
+        "https://user@dashboard.example.test:29443",
+      );
+      assertHermesDashboardStartupRefusal(hermesImageRef, "https://dashboard.example.test:invalid");
+      assertHermesDashboardStartupRefusal(hermesImageRef, "https://./");
     } finally {
       try {
         hermesImageRef && run("podman", ["image", "rm", "--force", hermesImageRef]);
@@ -596,7 +765,7 @@ async function main(progress: TestProgress): Promise<void> {
 }
 
 test(
-  "portable profile rootless environment completes distinct authenticated gateway and registry routes",
+  "portable profile rootless environment completes authenticated routes and enforces the configured Hermes dashboard Host",
   {
     meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
     timeout: 900_000,

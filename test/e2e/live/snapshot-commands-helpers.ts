@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import {
+  openClawAgentResponseRecord,
+  parseOpenClawJsonDocuments,
+} from "../../../src/lib/openclaw/agent-json-provenance.ts";
+import { sandboxCommandEnvironment } from "../fixtures/environment-profiles.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 
 export interface SnapshotInferenceFixture {
   apiKey: string;
@@ -13,6 +18,7 @@ export type SnapshotGatewayProbeClassification =
   | "authenticated"
   | "command-failure"
   | "empty-output"
+  | "invalid-response"
   | "embedded-fallback"
   | "gateway-connect-failure"
   | "scope-upgrade-pending"
@@ -23,6 +29,21 @@ export type SnapshotRestoreResultClassification =
   | "managed-clone-rebind-required"
   | "command-failure"
   | "missing-restored-marker";
+
+export function expectedSnapshotCloneRestoreResult(
+  workloadSource: string | undefined,
+): "managed-clone-rebind-required" | "restored" {
+  switch (workloadSource) {
+    case "managed-image":
+      return "managed-clone-rebind-required";
+    case "local-dockerfile":
+      return "restored";
+    default:
+      throw new Error(
+        "snapshot clone restore requires E2E_WORKLOAD_SOURCE to select managed-image or local-dockerfile setup",
+      );
+  }
+}
 
 const SNAPSHOT_GATEWAY_PROBE_REJECTIONS: ReadonlyArray<{
   pattern: RegExp;
@@ -46,6 +67,18 @@ const SNAPSHOT_GATEWAY_PROBE_REJECTIONS: ReadonlyArray<{
   },
 ];
 
+function isSuccessfulSnapshotGatewayResponse(raw: string): boolean {
+  const documents = parseOpenClawJsonDocuments(raw);
+  for (let index = documents.length - 1; index >= 0; index -= 1) {
+    const document = documents[index];
+    if (!openClawAgentResponseRecord(document)) continue;
+    const envelope = document as Record<string, unknown>;
+    if (Object.hasOwn(envelope, "status") && envelope.status !== "ok") return false;
+    return parseOpenClawAgentText(JSON.stringify(document) ?? "").trim().length > 0;
+  }
+  return false;
+}
+
 export function classifySnapshotGatewayProbe(result: {
   exitCode: number | null;
   stdout: string;
@@ -56,7 +89,7 @@ export function classifySnapshotGatewayProbe(result: {
   if (rejection) return rejection.classification;
   if (result.exitCode !== 0) return "command-failure";
   if (!output.trim()) return "empty-output";
-  return "authenticated";
+  return isSuccessfulSnapshotGatewayResponse(result.stdout) ? "authenticated" : "invalid-response";
 }
 export function classifySnapshotRestoreResult(result: {
   exitCode: number | null;
@@ -97,24 +130,19 @@ export function buildSnapshotCommandEnv(
   sandboxName: string,
   inference?: SnapshotInferenceFixture,
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
-    ...buildAvailabilityProbeEnv(),
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_RECREATE_SANDBOX: "1",
-    NEMOCLAW_SANDBOX_NAME: sandboxName,
-    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
-  };
+  const env = sandboxCommandEnvironment(
+    sandboxName,
+    inference
+      ? {
+          COMPATIBLE_API_KEY: inference.apiKey,
+          NEMOCLAW_COMPAT_MODEL: inference.model,
+          NEMOCLAW_ENDPOINT_URL: inference.endpointUrl,
+          NEMOCLAW_MODEL: inference.model,
+          NEMOCLAW_PREFERRED_API: "openai-completions",
+          NEMOCLAW_PROVIDER: "custom",
+        }
+      : {},
+  );
   delete env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE;
-  if (inference) {
-    Object.assign(env, {
-      COMPATIBLE_API_KEY: inference.apiKey,
-      NEMOCLAW_COMPAT_MODEL: inference.model,
-      NEMOCLAW_ENDPOINT_URL: inference.endpointUrl,
-      NEMOCLAW_MODEL: inference.model,
-      NEMOCLAW_PREFERRED_API: "openai-completions",
-      NEMOCLAW_PROVIDER: "custom",
-    });
-  }
   return env;
 }

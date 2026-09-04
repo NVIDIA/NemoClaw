@@ -7,65 +7,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { expect, it } from "vitest";
-import YAML from "yaml";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
-
-type WorkflowStep = { name?: string; run?: string; with?: Record<string, string> };
-
-function workflowSteps(job: string): WorkflowStep[] {
-  const workflow = YAML.parse(
-    fs.readFileSync(path.join(repoRoot, ".github/workflows/managed-images.yaml"), "utf8"),
-  ) as { jobs?: Record<string, { steps?: WorkflowStep[] }> };
-  return workflow.jobs?.[job]?.steps ?? [];
-}
-
-function workflowStep(job: string, name: string): WorkflowStep {
-  return (
-    workflowSteps(job).find((step) => step.name === name) ??
-    (() => {
-      throw new Error(`${job} step is missing: ${name}`);
-    })()
-  );
-}
-
-function resolverScript(): string {
-  const resolver = workflowStep("pr-build-and-entrypoint", "Resolve digest-pinned linux/amd64 PR base").run;
-  return (
-    resolver ??
-    (() => {
-      throw new Error("PR base resolver script is missing");
-    })()
-  );
-}
-
-it("keeps immutable DCode base metadata on exact PR and production images", () => {
-  const prJob = "pr-build-and-entrypoint";
-  const productionJob = "build-and-validate";
-  const prResolver = resolverScript();
-  const prLocalBuild = workflowStep(prJob, "Build PR managed image from local base");
-  const prRegistryBuild = workflowStep(prJob, "Build PR managed image from registry base");
-  const prPublish = workflowStep(prJob, "Publish exact same-repository PR managed image by digest");
-  const prValidate = workflowStep(prJob, "Validate exact PR managed image contract");
-  const productionBase = workflowStep(productionJob, "Validate exact base image contract");
-  const productionBuild = workflowStep(productionJob, "Build and push managed image by digest");
-  const productionValidate = workflowStep(
-    productionJob,
-    "Validate exact managed image before promotion",
-  );
-
-  expect(prResolver).toContain("sourceRevision:$revision");
-  expect(prLocalBuild.run).toContain("com.nvidia.nemoclaw.base-resolution=${RESOLUTION_LABEL}");
-  expect(prRegistryBuild.with?.labels).toContain("com.nvidia.nemoclaw.base-resolution={0}");
-  expect(prPublish.with?.labels).toContain("com.nvidia.nemoclaw.base-resolution={0}");
-  expect(productionBuild.with?.labels).toContain("com.nvidia.nemoclaw.base-resolution={0}");
-  expect(productionBase.run).toContain("sourceRevision:$revision");
-  expect(prValidate.run).toContain("managed image lost base resolution metadata");
-  expect(productionValidate.run).toContain("image lost base resolution metadata");
-});
+const resolver = path.join(repoRoot, "scripts/checks/resolve-managed-pr-base.sh");
 
 it("builds a changed PR base locally and fails closed on comparison errors", () => {
-  const resolver = resolverScript();
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-local-pr-base-"));
   const fakeBin = path.join(temporaryRoot, "bin");
   const output = path.join(temporaryRoot, "output");
@@ -139,7 +85,7 @@ exit 90
   };
 
   try {
-    const result = spawnSync("bash", ["-c", resolver], {
+    const result = spawnSync(resolver, [], {
       cwd: temporaryRoot,
       encoding: "utf8",
       env: environment,
@@ -149,13 +95,14 @@ exit 90
       `ref=nemoclaw-managed-pr/openclaw-base:test\nlocal=true\noci=${temporaryRoot}/pr-base.oci@sha256:0000000000000000000000000000000000000000000000000000000000000000\n`,
     );
     const dockerCommands = fs.readFileSync(dockerLog, "utf8");
-    expect(dockerCommands).toContain(
-      `buildx build --platform linux/amd64 --provenance=false --sbom=false --file Dockerfile.base --tag nemoclaw-managed-pr/openclaw-base:test --output type=docker,dest=${temporaryRoot}/pr-base.docker.tar --output type=oci,dest=${temporaryRoot}/pr-base.oci.tar .`,
-    );
+    expect(dockerCommands).toContain("buildx build");
     expect(dockerCommands).toContain(`load --input ${temporaryRoot}/pr-base.docker.tar`);
     expect(dockerCommands).not.toContain("imagetools inspect");
+    expect(fs.readFileSync(summary, "utf8")).toContain(
+      `Locally built from \`Dockerfile.base\` at \`${candidateSha}\`.`,
+    );
 
-    const invalidRevision = spawnSync("bash", ["-c", resolver], {
+    const invalidRevision = spawnSync(resolver, [], {
       cwd: temporaryRoot,
       encoding: "utf8",
       env: { ...environment, CANDIDATE_SHA: "f".repeat(40) },

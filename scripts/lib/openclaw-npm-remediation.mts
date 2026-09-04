@@ -90,10 +90,10 @@ const CURRENT_BRACE_EXPANSION_INTEGRITY =
   "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==";
 const CURRENT_BRACE_EXPANSION_TARBALL =
   "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz";
-const CURRENT_FAST_URI_VERSION = "3.1.5";
+const CURRENT_FAST_URI_VERSION = "3.1.6";
 const CURRENT_FAST_URI_INTEGRITY =
-  "sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==";
-const CURRENT_FAST_URI_TARBALL = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz";
+  "sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==";
+const CURRENT_FAST_URI_TARBALL = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz";
 const CURRENT_UNDICI_VERSION = "8.10.0";
 const CURRENT_UNDICI_INTEGRITY =
   "sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==";
@@ -170,7 +170,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   // publishes every corrected dependency identity in its manifest and shrinkwrap.
   "openclaw@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-OfBP5yJPR5gdGnQ1LPtvSvrn3WoRT7+vi3KMsNGyXgwM8wpzJ174dfnJTLRtn6zSX9Vrp84uDn6YffkaLyNOVg==",
+      "sha512-PzF1Lyw0yIo3mr7mNGql7azYoioDP+jQ47gERww6vgb9iyKnEWcscScsvv1IOt9yCp6BJTLxcRYYe7X0s95BnA==",
     kind: "current-core",
     version: "2026.7.1",
   },

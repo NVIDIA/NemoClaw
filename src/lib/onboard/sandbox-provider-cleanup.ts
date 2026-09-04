@@ -21,6 +21,15 @@ export function removeManagedHermesStateVolume(
   return volumeModule.removeManagedHermesStateVolume(context, deps);
 }
 
+export function removeManagedAgentStateVolumes(
+  context: import("./managed-workload/hermes-state-volume").ManagedHermesStateVolumeContext,
+  deps: import("./managed-workload/hermes-state-volume").ManagedHermesStateVolumeDeps = {},
+): readonly import("./managed-workload/hermes-state-volume").ManagedAgentStateVolumeCleanupResult[] {
+  const volumeModule =
+    require("./managed-workload/hermes-state-volume") as typeof import("./managed-workload/hermes-state-volume");
+  return volumeModule.removeManagedAgentStateVolumes(context, deps);
+}
+
 export type SandboxProviderRunOpenshell = (
   args: string[],
   opts?: Record<string, unknown>,
