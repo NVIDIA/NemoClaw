@@ -26,7 +26,7 @@ import type { AgentDefinition } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
-import { retryUntil } from "../../core/retry";
+import { retryUntil, retryUntilAsync } from "../../core/retry";
 
 import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
@@ -140,6 +140,19 @@ import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
 export { runConnectAutoPairApprovalPass, waitForManagedGatewaySupervisor };
+
+const HERMES_READINESS_PUBLICATION_SETTLE_DELAYS_MS = [100, 250] as const;
+
+async function publishHermesLaunchReadinessWithSettlement(
+  publication: Parameters<typeof publishLaunchReadiness>[0],
+  deps: Parameters<typeof publishLaunchReadiness>[1],
+) {
+  return retryUntilAsync(() => publishLaunchReadiness(publication, deps), {
+    accept: (result) => result.kind !== "validation-failed" || result.category !== "health",
+    retryDelaysMs: HERMES_READINESS_PUBLICATION_SETTLE_DELAYS_MS,
+    sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  });
+}
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
@@ -2697,7 +2710,9 @@ async function prepareConnectSandboxWithinLifecycleFence(
           probeTiming!.measure("authority", retainedCommand.assertCurrent);
         }
         const published = await probeTiming!.measureAsync("publication", () =>
-          publishLaunchReadiness(
+          (retainedCommand
+            ? publishHermesLaunchReadinessWithSettlement
+            : publishLaunchReadiness)(
             publicationRequest,
             retainedCommand
               ? hermesPortableLaunchReadinessDeps(retainedCommand, probeTiming)

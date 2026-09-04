@@ -4,7 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import {
-  assertPodmanExecutableMetadataAuthority,
+  assertPodmanExecutableAuthority,
   capturePodmanExecutableAuthority,
   createPodmanContainerEngine,
   createPodmanExecutableOperationProof,
@@ -294,7 +294,7 @@ export function captureHermesPortablePodmanExecutableFileAuthority(
   requireRuntimeAuthority(receipt.runtimeAuthority, socketAuthority, deps);
   buildHermesPortablePodmanEnvironment(receipt.runtimeAuthority, sourceEnv);
   requireResolvedExecutable(receipt.podmanExecutableAuthority, sourceEnv, deps);
-  assertPodmanExecutableMetadataAuthority(
+  assertPodmanExecutableAuthority(
     receipt.podmanExecutableAuthority.executable,
     deps.executableAuthorityDeps,
   );
