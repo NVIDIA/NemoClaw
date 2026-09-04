@@ -406,6 +406,7 @@ jobs:
       NEMOCLAW_GATEWAY_RUNTIME: docker
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_SANDBOX_BASE_IMAGE_REF: ${{ inputs.openclaw_base_image }}
       OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

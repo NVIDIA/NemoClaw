@@ -35,6 +35,7 @@ describe("configured E2E runtime provider fixture", () => {
       DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1001/bus",
       NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "a".repeat(40),
       NEMOCLAW_GATEWAY_RUNTIME: "podman",
+      NEMOCLAW_SANDBOX_BASE_IMAGE_REF: `ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${"b".repeat(64)}`,
       OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
       XDG_RUNTIME_DIR: "/run/user/1001",
     });
@@ -43,6 +44,7 @@ describe("configured E2E runtime provider fixture", () => {
       DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1001/bus",
       NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "a".repeat(40),
       NEMOCLAW_GATEWAY_RUNTIME: "podman",
+      NEMOCLAW_SANDBOX_BASE_IMAGE_REF: `ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${"b".repeat(64)}`,
       OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
       XDG_RUNTIME_DIR: "/run/user/1001",
     });
