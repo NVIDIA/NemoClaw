@@ -244,7 +244,22 @@ exit 64
     steps.splice(requireStepIndex(steps, "Run cloud-onboard live Vitest test"), 0, restore!);
 
     expect(validateE2eWorkflow(workflow)).toContain(
-      "cloud-onboard must hide Docker before the live test and restore it afterward",
+      "cloud-onboard must hide Docker through the live test and artifact upload before restoring it",
+    );
+  });
+
+  it.each([
+    ["live", "Run live E2E tests"],
+    ["shared-e2e", "Run tagged credential-free test"],
+  ] as const)("rejects Docker restoration before %s workload execution", (jobName, runStep) => {
+    const workflow = readWorkflow();
+    const steps = workflow.jobs[jobName].steps;
+    const restoreIndex = requireStepIndex(steps, "Restore Docker CLI after native Podman E2E");
+    const [restore] = steps.splice(restoreIndex, 1);
+    steps.splice(requireStepIndex(steps, runStep), 0, restore!);
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      `${jobName} must keep Docker unavailable through result artifact upload`,
     );
   });
 });

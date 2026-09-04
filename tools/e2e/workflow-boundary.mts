@@ -1079,6 +1079,12 @@ function validateCloudOnboardDockerAbsenceBoundary(
     steps,
     "Restore Docker CLI after native Podman public install",
   );
+  const uploadCloudOnboard = requireJobStep(
+    errors,
+    "cloud-onboard",
+    steps,
+    "Upload cloud-onboard artifacts",
+  );
   if (stringValue(hideDockerForPodman?.if) !== "${{ matrix.runtime_provider == 'podman' }}") {
     errors.push("cloud-onboard Docker removal must run only for native Podman");
   }
@@ -1099,13 +1105,17 @@ function validateCloudOnboardDockerAbsenceBoundary(
   if (
     hideDockerForPodman &&
     runCloudOnboard &&
+    uploadCloudOnboard &&
     restoreDockerAfterPodman &&
     !(
       steps.indexOf(hideDockerForPodman) < steps.indexOf(runCloudOnboard) &&
-      steps.indexOf(runCloudOnboard) < steps.indexOf(restoreDockerAfterPodman)
+      steps.indexOf(runCloudOnboard) < steps.indexOf(uploadCloudOnboard) &&
+      steps.indexOf(uploadCloudOnboard) < steps.indexOf(restoreDockerAfterPodman)
     )
   ) {
-    errors.push("cloud-onboard must hide Docker before the live test and restore it afterward");
+    errors.push(
+      "cloud-onboard must hide Docker through the live test and artifact upload before restoring it",
+    );
   }
 }
 
@@ -2761,6 +2771,13 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
       .filter(
         ({ step }) => step.uses === E2E_ACTION_PROVENANCE.restoreNativePodmanRuntime.reference,
       );
+    const resultUploads = jobSteps
+      .map((step, index) => ({ index, step }))
+      .filter(({ step }) => step.uses === E2E_ACTION_PROVENANCE.uploadArtifacts.reference);
+    const finalResultUploadIndex = Math.max(
+      ...resultUploads.map(({ index }) => index),
+      Number.NEGATIVE_INFINITY,
+    );
     if (
       restores.length !== 1 ||
       restores[0]!.index <= setupIndex ||
@@ -2771,6 +2788,12 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
       errors.push(
         `${jobName} must restore the Docker CLI exactly once after native Podman execution`,
       );
+    }
+    if (
+      resultUploads.length === 0 ||
+      (restores.length === 1 && restores[0]!.index <= finalResultUploadIndex)
+    ) {
+      errors.push(`${jobName} must keep Docker unavailable through result artifact upload`);
     }
   }
   return errors;
@@ -3606,12 +3629,19 @@ export function validateNativePodmanSetupAction(
   if (
     isolate?.if !== "${{ inputs.enabled == 'true' }}" ||
     steps.at(-1) !== isolate ||
-    !isolationRun.includes("NEMOCLAW_E2E_DISABLED_DOCKER_CLI") ||
-    !isolationRun.includes("NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH") ||
+    !isolationRun.includes("restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore") ||
+    !isolationRun.includes("sudo -n install -d --owner=root --group=root --mode=0700") ||
+    !isolationRun.includes('sudo -n test ! -L "$docker_cli"') ||
+    !isolationRun.includes('docker_sha256="$(sudo -n sha256sum -- "$docker_cli"') ||
+    !isolationRun.includes('sudo -n tee "$metadata_path"') ||
     !isolationRun.includes('sudo -n mv -- "$docker_cli" "$disabled_path"') ||
+    isolationRun.includes("NEMOCLAW_E2E_DISABLED_DOCKER_CLI") ||
+    isolationRun.includes("NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH") ||
     !isolationRun.includes("if command -v docker >/dev/null 2>&1")
   ) {
-    errors.push("native Podman setup must remove the Docker CLI after runtime preparation");
+    errors.push(
+      "native Podman setup must preserve Docker in a root-owned integrity-bound restore authority",
+    );
   }
   return errors;
 }
@@ -3636,12 +3666,19 @@ export function validateNativePodmanRestoreAction(
   if (
     steps.length !== 1 ||
     restore?.if !== "${{ inputs.enabled == 'true' }}" ||
-    !run.includes("${RUNNER_TEMP}/nemoclaw-disabled-docker-cli") ||
+    !run.includes("restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore") ||
+    !run.includes('[[ "$(sudo -n stat -c \'%u:%g:%a\' "$restore_root")" == "0:0:700" ]]') ||
+    !run.includes('[[ "${restore_files[*]}" == "docker metadata" ]]') ||
+    !run.includes('sudo -n test ! -L "$disabled_path"') ||
+    !run.includes('sha256sum -- "$disabled_path"') ||
     !run.includes("/usr/bin/docker | /usr/local/bin/docker | /snap/bin/docker") ||
     !run.includes('sudo -n mv -- "$disabled_path" "$restore_path"') ||
+    !run.includes('sudo -n rmdir -- "$restore_root"') ||
     !run.includes('test "$(command -v docker)" = "$restore_path"')
   ) {
-    errors.push("native Podman restore action must restore only the exact isolated Docker CLI");
+    errors.push(
+      "native Podman restore action must verify and restore only its root-owned Docker CLI",
+    );
   }
   return errors;
 }
