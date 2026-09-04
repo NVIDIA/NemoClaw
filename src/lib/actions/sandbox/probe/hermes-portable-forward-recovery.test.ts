@@ -96,6 +96,37 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.rollbackCalls).toEqual([]);
   });
 
+  it("ignores a valid non-target wildcard row while verifying the target forward (#10926)", () => {
+    const fixture = createRecoveryFixture({
+      active: [18_789],
+      listOutput:
+        "SANDBOX BIND PORT PID STATUS\n" +
+        "alpha 127.0.0.1 18789 12345 running\n" +
+        "remote-dashboard 0.0.0.0 8080 54321 running",
+    });
+
+    expect(recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
+      kind: "verified",
+      restoredPorts: [],
+    });
+    expect(fixture.currentMutationCalls).toEqual([]);
+  });
+
+  it("rejects a gateway row whose target relevance cannot be determined (#10926)", () => {
+    const fixture = createRecoveryFixture({
+      active: [18_789],
+      listOutput:
+        "SANDBOX BIND PORT PID STATUS\n" +
+        "alpha 127.0.0.1 18789 12345 running\n" +
+        "remote-dashboard 0.0.0.0 not-a-port 54321 running",
+    });
+
+    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+      expect.objectContaining({ failure: "forward-state-unavailable" }),
+    );
+    expect(fixture.currentMutationCalls).toEqual([]);
+  });
+
   it.each([
     ["stopped", { stopped: [18_789] }],
     ["dead after the host session ends", { dead: [18_789] }],

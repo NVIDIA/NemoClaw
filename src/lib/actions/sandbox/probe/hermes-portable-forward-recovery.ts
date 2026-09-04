@@ -200,7 +200,17 @@ type StrictForwardEntry = {
   readonly status: string;
 };
 
-function parseStrictForwardList(output: unknown): StrictForwardEntry[] | null {
+function parseForwardPort(parts: readonly string[]): number | null {
+  const portValue = parts[2];
+  if (!portValue || !/^\d+$/u.test(portValue)) return null;
+  const port = Number(portValue);
+  return Number.isSafeInteger(port) && port >= 1 && port <= 65_535 ? port : null;
+}
+
+function parseStrictForwardList(
+  output: unknown,
+  targetPorts: ReadonlySet<number>,
+): StrictForwardEntry[] | null {
   if (typeof output !== "string") return null;
   const lines = stripAnsi(output)
     .split("\n")
@@ -210,8 +220,14 @@ function parseStrictForwardList(output: unknown): StrictForwardEntry[] | null {
     return null;
   }
   const rows = lines.slice(1).map((line) => line.split(/\s+/u));
-  if (rows.some((parts) => !isSupportedForwardRow(parts))) return null;
-  return rows.map(([sandboxName, bind, port, pid, status]) => ({
+  const targetRows: string[][] = [];
+  for (const parts of rows) {
+    const port = parseForwardPort(parts);
+    if (port === null) return null;
+    if (targetPorts.has(port)) targetRows.push(parts);
+  }
+  if (targetRows.some((parts) => !isSupportedForwardRow(parts))) return null;
+  return targetRows.map(([sandboxName, bind, port, pid, status]) => ({
     sandboxName,
     bind,
     port,
@@ -261,7 +277,7 @@ function captureForwardEntries(
   if (result.error || result.status !== 0) {
     failure(rollback ? "restoration-unproved" : "forward-state-unavailable");
   }
-  const entries = parseStrictForwardList(result.output);
+  const entries = parseStrictForwardList(result.output, new Set(input.ports));
   if (!entries) failure(rollback ? "restoration-unproved" : "forward-state-unavailable");
   return entries;
 }
