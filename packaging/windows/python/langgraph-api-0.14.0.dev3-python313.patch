@@ -1,0 +1,13 @@
+diff --git a/langgraph_api/logging.py b/langgraph_api/logging.py
+index 0d24f00..5e52f6c 100644
+--- a/langgraph_api/logging.py
++++ b/langgraph_api/logging.py
+@@ -198,7 +198,7 @@ class Formatter(structlog.stdlib.ProcessorFormatter):
+             kwargs["fmt"] = fmt
+             kwargs["datefmt"] = datefmt
+             kwargs["style"] = style
+-        else:
++        elif args:
+             raise RuntimeError("Invalid number of arguments")
+         super().__init__(
+             processors=[

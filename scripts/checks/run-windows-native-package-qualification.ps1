@@ -704,6 +704,7 @@ foreach ($requiredPayload in @(
     'qualification\run-installed-native-pi.mts',
     'qualification\run-installed-native-nemocua.mts',
     'agent-support.json',
+    'LANGGRAPH-PYTHON313-COMPATIBILITY.patch',
     'OPENSHELL-NODE-UI-COMPATIBILITY.patch'
 )) {
     if (-not $payloadHashes.ContainsKey($requiredPayload) -or

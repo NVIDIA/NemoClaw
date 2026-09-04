@@ -36,6 +36,8 @@ $script:ForbiddenFruitArchiveSha256 = 'e3f7e66561a29ae129aac139a85d610dbf3dd8961
 $script:TiktokenVersion = '0.13.0'
 $script:TiktokenSourceDigest = 'c9435714c3a84c2319499de9a300c0e604449dd0799ff246458b3bb6a7f433c1' # gitleaks:allow -- public PyPI source integrity pin
 $script:TiktokenCargoLockDigest = '63a3cbad932c43582c3293b0c6ca2d3c74970d1a6a67c18a1712c3519da4d8ba' # gitleaks:allow -- checked-in Cargo lock integrity pin
+$script:LangGraphLoggingSourceDigest = '5754429ea54bb8cbc9b6b062c8c30b7da11d6d2de4e40d8cf149e1af815451d4' # gitleaks:allow -- public wheel source integrity pin
+$script:LangGraphLoggingPatchedDigest = '862a676aad507986ce65ba6805feae97406508f994d25b2e4fcdfafc1b366874' # gitleaks:allow -- deterministic compatibility output pin
 $script:RustVersion = '1.95.0'
 $script:MxcSdkVersion = '0.8.0'
 $script:MxcSdkArchiveSha256 = '06bb2399d7e98ab1907acf851e12a4e44748dd467b79d3e53c2f2fbf569da14e'
@@ -123,6 +125,7 @@ $node = (Get-Command node.exe -ErrorAction Stop).Source
 $npm = (Get-Command npm.cmd -ErrorAction Stop).Source
 $npx = (Get-Command npx.cmd -ErrorAction Stop).Source
 $tar = (Get-Command tar.exe -ErrorAction Stop).Source
+$git = (Get-Command git.exe -ErrorAction Stop).Source
 $rustup = (Get-Command rustup.exe -ErrorAction Stop).Source
 $pythonBuilder = (Get-Command python.exe -ErrorAction Stop).Source
 $reportedNodeVersion = (& $node --version).Trim()
@@ -286,6 +289,21 @@ try {
             '--requirement', $deepAgentsLock
         ) `
         -Label 'Deep Agents Code native ARM64 runtime restore'
+    $langGraphPatch = Join-Path $candidate 'packaging\windows\python\langgraph-api-0.14.0.dev3-python313.patch'
+    $langGraphLogging = Join-Path $deepAgentsSitePackages 'langgraph_api\logging.py'
+    Assert-Sha256 -Path $langGraphLogging -Expected $script:LangGraphLoggingSourceDigest -Label 'langgraph-api logging source'
+    Invoke-Checked `
+        -FilePath $git `
+        -Arguments @('apply', '--check', '--whitespace=nowarn', $langGraphPatch) `
+        -Label 'langgraph-api Python 3.13 compatibility patch check' `
+        -WorkingDirectory $deepAgentsSitePackages
+    Invoke-Checked `
+        -FilePath $git `
+        -Arguments @('apply', '--whitespace=nowarn', $langGraphPatch) `
+        -Label 'langgraph-api Python 3.13 compatibility patch' `
+        -WorkingDirectory $deepAgentsSitePackages
+    Assert-Sha256 -Path $langGraphLogging -Expected $script:LangGraphLoggingPatchedDigest -Label 'patched langgraph-api logging source'
+    Copy-Item -LiteralPath $langGraphPatch -Destination (Join-Path $output 'LANGGRAPH-PYTHON313-COMPATIBILITY.patch')
     $forbiddenFruitArchive = Join-Path $workRoot 'forbiddenfruit-0.1.4.tar.gz'
     Invoke-WebRequest -UseBasicParsing -Uri 'https://files.pythonhosted.org/packages/e6/79/d4f20e91327c98096d605646bdc6a5ffedae820f38d378d3515c42ec5e60/forbiddenfruit-0.1.4.tar.gz' -OutFile $forbiddenFruitArchive
     Assert-Sha256 -Path $forbiddenFruitArchive -Expected $script:ForbiddenFruitArchiveSha256 -Label 'forbiddenfruit source archive'
@@ -508,7 +526,8 @@ debug = false
         'qualification\run-installed-native-console-agent.mts',
         'qualification\run-installed-native-pi.mts',
         'qualification\run-installed-native-nemocua.mts',
-        'agent-support.json'
+        'agent-support.json',
+        'LANGGRAPH-PYTHON313-COMPATIBILITY.patch'
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $output $required) -PathType Leaf)) {
             Fail-PayloadPreparation "Prepared payload is incomplete: $required"
@@ -551,6 +570,11 @@ debug = false
         deepAgentsCode = [pscustomobject]@{
             version = '0.1.55'
             dependencyLockSha256 = (Get-FileHash -LiteralPath $deepAgentsLock -Algorithm SHA256).Hash.ToLowerInvariant()
+            langGraphPython313Compatibility = [pscustomobject]@{
+                sourceSha256 = $script:LangGraphLoggingSourceDigest
+                patchedSha256 = $script:LangGraphLoggingPatchedDigest
+                patchSha256 = (Get-FileHash -LiteralPath $langGraphPatch -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
             tiktoken = [pscustomobject]@{
                 version = $script:TiktokenVersion
                 sourceArchiveSha256 = $script:TiktokenSourceDigest

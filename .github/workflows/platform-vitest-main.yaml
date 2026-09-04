@@ -573,6 +573,23 @@ jobs:
                 -Destination (Join-Path $installedQualificationRoot $candidateQualification.Name) `
                 -Force
             }
+            $deepAgentsSitePackages = Join-Path $installRoot 'deepagents\site-packages'
+            $langGraphLogging = Join-Path $deepAgentsSitePackages 'langgraph_api\logging.py'
+            $langGraphPatch = Join-Path $env:GITHUB_WORKSPACE 'candidate\packaging\windows\python\langgraph-api-0.14.0.dev3-python313.patch'
+            $langGraphSourceDigest = '5754429ea54bb8cbc9b6b062c8c30b7da11d6d2de4e40d8cf149e1af815451d4' # gitleaks:allow -- public wheel source integrity pin
+            $langGraphPatchedDigest = '862a676aad507986ce65ba6805feae97406508f994d25b2e4fcdfafc1b366874' # gitleaks:allow -- deterministic compatibility output pin
+            $langGraphDigest = (Get-FileHash -LiteralPath $langGraphLogging -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($langGraphDigest -ceq $langGraphSourceDigest) {
+              & git -C $deepAgentsSitePackages apply --check --whitespace=nowarn $langGraphPatch
+              if ($LASTEXITCODE -ne 0) { throw 'The diagnostic LangGraph compatibility patch check failed.' }
+              & git -C $deepAgentsSitePackages apply --whitespace=nowarn $langGraphPatch
+              if ($LASTEXITCODE -ne 0) { throw 'The diagnostic LangGraph compatibility patch failed.' }
+            } elseif ($langGraphDigest -cne $langGraphPatchedDigest) {
+              throw 'The installed LangGraph logging source does not match a pinned diagnostic state.'
+            }
+            if ((Get-FileHash -LiteralPath $langGraphLogging -Algorithm SHA256).Hash.ToLowerInvariant() -cne $langGraphPatchedDigest) {
+              throw 'The installed diagnostic LangGraph compatibility output is invalid.'
+            }
             $runtimeArtifacts = Join-Path $artifactRoot 'runtime'
             [IO.Directory]::CreateDirectory($runtimeArtifacts) | Out-Null
             $runtimeStdout = Join-Path $artifactRoot 'runtime-stdout.log'
