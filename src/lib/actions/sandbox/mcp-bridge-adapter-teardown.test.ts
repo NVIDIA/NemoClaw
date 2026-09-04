@@ -10,6 +10,10 @@ const mocks = vi.hoisted(() => ({
   bridgeState: vi.fn(),
   discardSafeIncompleteMcpAdds: vi.fn(),
   ensureSandboxGatewaySelected: vi.fn(),
+  getMcpProviderInspectionRuntimeSelection: vi.fn(() => ({
+    gatewayName: "nemoclaw-8091",
+    workspace: "default",
+  })),
   getBridgeAdapter: vi.fn(),
   getSandboxAgent: vi.fn(),
   captureRecordedSandboxBasePolicy: vi.fn(),
@@ -43,10 +47,7 @@ vi.mock("./mcp-bridge-provider", () => ({
   assertNoProviderCredentialCollisions: vi.fn(),
   assertNoRegisteredProviderCredentialCollisions: vi.fn(),
   detachProvider: vi.fn(),
-  getMcpProviderInspectionRuntimeSelection: vi.fn(() => ({
-    gatewayName: "nemoclaw-8091",
-    workspace: "default",
-  })),
+  getMcpProviderInspectionRuntimeSelection: mocks.getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider: mocks.inspectMcpProvider,
   preflightMcpEntryTargets: vi.fn(),
   waitForDetachedMcpCredential: vi.fn(),
@@ -95,7 +96,11 @@ vi.mock("./mcp-bridge-validation", () => ({
 }));
 
 import { prepareMcpBridgesForDestroy } from "./mcp-bridge-destroy";
-import { prepareMcpBridgesForRebuild } from "./mcp-bridge-rebuild";
+import {
+  prepareMcpBridgesForAbsentSandboxRebuild,
+  prepareMcpBridgesForExecUnavailableRebuild,
+  prepareMcpBridgesForRebuild,
+} from "./mcp-bridge-rebuild";
 import { scrubManagedMcpAdapterOrThrow } from "./mcp-bridge-adapter-teardown";
 
 const sandbox = { agent: "hermes" } as SandboxEntry;
@@ -117,6 +122,7 @@ describe("MCP adapter teardown rollback", () => {
     mocks.bridgeState.mockReset().mockReturnValue({ github: entry });
     mocks.discardSafeIncompleteMcpAdds.mockReset().mockResolvedValue(sandbox);
     mocks.ensureSandboxGatewaySelected.mockReset().mockResolvedValue(undefined);
+    mocks.getMcpProviderInspectionRuntimeSelection.mockReset().mockReturnValue(runtimeSelection);
     mocks.getBridgeAdapter.mockReset().mockReturnValue("hermes-config");
     mocks.getSandboxAgent.mockReset().mockReturnValue("hermes");
     mocks.captureRecordedSandboxBasePolicy
@@ -182,9 +188,7 @@ describe("MCP adapter teardown rollback", () => {
       type: "nemoclaw-mcp-v1",
     });
 
-    expect(() =>
-      scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry, runtimeSelection),
-    ).toThrow(
+    expect(() => scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry, runtimeSelection)).toThrow(
       "Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server 'github'.",
     );
     expect(mocks.inspectMcpProvider).not.toHaveBeenCalled();
@@ -212,5 +216,61 @@ describe("MCP adapter teardown rollback", () => {
       "forced lifecycle failure after adapter scrub",
     );
     expect(events.slice(0, 2)).toEqual(["gateway-selected", "provider-inspected"]);
+  });
+
+  it.each([
+    ["live", prepareMcpBridgesForRebuild],
+    ["absent", prepareMcpBridgesForAbsentSandboxRebuild],
+  ] as const)(
+    "drops a prepared-only manifest before resolving runtime authority for %s rebuild (#10514)",
+    async (_kind, prepare) => {
+      const preparedEntry = { ...entry, addState: "prepared" as const };
+      const preparedSandbox = {
+        name: "alpha",
+        agent: "hermes",
+        mcp: { bridges: { github: preparedEntry } },
+      } as SandboxEntry;
+      const clearedSandbox = { name: "alpha", agent: "hermes" } as SandboxEntry;
+      mocks.getSandboxOrThrow.mockReturnValue(preparedSandbox);
+      mocks.bridgeState.mockImplementation(
+        (candidate: SandboxEntry) => candidate.mcp?.bridges ?? {},
+      );
+      mocks.discardSafeIncompleteMcpAdds.mockResolvedValue(clearedSandbox);
+      mocks.getMcpProviderInspectionRuntimeSelection.mockImplementation(() => {
+        throw new Error("runtime selection resolved for a prepared-only rebuild");
+      });
+
+      await expect(prepare("alpha")).resolves.toMatchObject({
+        entries: [],
+        detachedProviderEntries: [],
+        scrubbedAdapterEntries: [],
+      });
+
+      expect(mocks.getMcpProviderInspectionRuntimeSelection).not.toHaveBeenCalled();
+      expect(mocks.ensureSandboxGatewaySelected).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps empty exec-unavailable rebuild preparation independent of runtime authority (#10514)", async () => {
+    const emptySandbox = {
+      name: "alpha",
+      agent: "hermes",
+      gatewayName: "nemoclaw",
+    } as SandboxEntry;
+    mocks.getSandboxOrThrow.mockReturnValue(emptySandbox);
+    mocks.getSandboxAgent.mockReturnValue({ name: "hermes" });
+    mocks.bridgeState.mockReturnValue({});
+    mocks.getMcpProviderInspectionRuntimeSelection.mockImplementation(() => {
+      throw new Error("runtime selection resolved for empty rebuild state");
+    });
+
+    await expect(prepareMcpBridgesForExecUnavailableRebuild("alpha")).resolves.toMatchObject({
+      entries: [],
+      detachedProviderEntries: [],
+      scrubbedAdapterEntries: [],
+    });
+
+    expect(mocks.getMcpProviderInspectionRuntimeSelection).not.toHaveBeenCalled();
+    expect(mocks.ensureSandboxGatewaySelected).not.toHaveBeenCalled();
   });
 });
