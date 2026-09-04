@@ -1395,6 +1395,7 @@ describe("PR merge conflict fixer", () => {
     workflowHeadSha = "a".repeat(40);
     dispatchedWorkflows.clear(); // A valid but different run SHA is not evidence for this head.
     await expect(verify()).rejects.toThrow("run evidence is invalid");
+    workflowHeadSha = generatedHeadSha;
     failedWorkflow = "pr.yaml";
     dispatchedWorkflows.clear();
     await expect(verify()).rejects.toThrow("generated-head pr.yaml run failed");
@@ -1449,7 +1450,6 @@ describe("PR merge conflict fixer", () => {
       }),
     ).toThrow(message);
   });
-
   it("accepts only the exact bounded regular repair artifact files (#10791)", () => {
     const artifact = temporaryDirectory();
     fs.writeFileSync(path.join(artifact, "proposal.json"), "{}\n");
