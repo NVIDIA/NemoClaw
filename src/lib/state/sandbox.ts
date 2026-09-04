@@ -696,11 +696,19 @@ export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string):
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-export function getSshConfig(sandboxName: string): string | null {
+export function getSshConfig(
+  sandboxName: string,
+  runtimeOptions: {
+    env?: NodeJS.ProcessEnv;
+    gatewayName?: string;
+    replaceEnv?: boolean;
+  } = {},
+): string | null {
   const openshellBinary = resolveOpenshell();
   if (!openshellBinary) return null;
 
   const result = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
+    ...runtimeOptions,
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
@@ -1977,9 +1985,9 @@ export function captureSnapshotRestoreAuthority(
   }
 }
 
-function validateSnapshotRestoreMutation(
+export function validateSnapshotRestoreMutation(
   backupPath: string,
-  options: Pick<InternalRestoreOptions, "authority" | "validateBeforeMutation">,
+  options: Pick<SnapshotRestoreOptions, "authority" | "validateBeforeMutation">,
 ): string | null {
   if (options.authority) {
     const current = captureSnapshotRestoreAuthority(backupPath);
