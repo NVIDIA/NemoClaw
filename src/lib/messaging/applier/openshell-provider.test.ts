@@ -623,6 +623,58 @@ describe("messaging OpenShell provider application", () => {
     expect(JSON.stringify(result)).not.toContain(refreshSecret);
   });
 
+  it.each([
+    { phase: "before", failIndex: 0, configureCalls: 0, mutated: false },
+    { phase: "after", failIndex: 1, configureCalls: 1, mutated: true },
+  ])(
+    "rejects sandbox identity drift $phase refresh configuration (#9806)",
+    async ({ failIndex, configureCalls, mutated }) => {
+      const refreshSecret = "refresh-secret-do-not-leak";
+      const expected = definition({
+        credentials: [{ name: "TELEGRAM_BOT_TOKEN", value: "openshell-managed-pending-mint" }],
+      });
+      const refresh: MessagingProviderRefreshEphemeralInput = {
+        channelId: "telegram",
+        providerName: expected.providerName,
+        credentialKey: "TELEGRAM_BOT_TOKEN",
+        strategy: "test-refresh",
+        material: [{ key: "scope", value: "chat" }],
+        secretMaterial: [{ key: "private_key", value: refreshSecret }],
+      };
+      const adapter = providerAdapter({
+        getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>().mockResolvedValue({
+          ok: true,
+          value: metadata(expected),
+        }),
+      });
+      const passIdentityCheck = () => undefined;
+      const identityChecks = [passIdentityCheck, passIdentityCheck];
+      identityChecks[failIndex] = () => {
+        throw new Error("sandbox identity changed");
+      };
+      let identityCheck = 0;
+      const revalidateSandboxIdentity = vi.fn(() => identityChecks[identityCheck++]?.());
+
+      const failure = await applyCredentialsAtOpenShell(plan, {
+        providerAdapter: adapter,
+        target,
+        definitions: [expected],
+        refreshes: [refresh],
+        revalidateSandboxIdentity,
+      }).catch((error: unknown) => error);
+
+      expect(isMessagingProviderMutationFailure(failure)).toBe(true);
+      expect(failure).toMatchObject({
+        message: "sandbox identity changed",
+        mutatedProviderNames: mutated ? [expected.providerName] : [],
+      });
+      expect(adapter.configureProviderRefresh).toHaveBeenCalledTimes(configureCalls);
+      expect(adapter.getProviderRefreshStatus).not.toHaveBeenCalled();
+      expect((failure as Error).message).not.toContain(refreshSecret);
+      expect(JSON.stringify(failure)).not.toContain(refreshSecret);
+    },
+  );
+
   it("redacts injected adapter failures from errors and cleanup results (#9806)", async () => {
     const secret = "nvapi-secret-value";
     const expected = definition();

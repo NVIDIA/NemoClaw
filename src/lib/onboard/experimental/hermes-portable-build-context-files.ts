@@ -178,6 +178,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/applier/setup-applier.test.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/setup-applier.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/types.ts", mode: "100644" },
+  { path: "src/lib/messaging/applier/web-search-provider-profile.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/built-ins.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/channel-health.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/discord/credential-injection.test.ts", mode: "100644" },

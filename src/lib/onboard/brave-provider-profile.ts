@@ -1,26 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { registerCheckedInProviderProfile } from "../adapters/openshell/provider-profile-registration";
-import { compactText } from "../core/url-utils";
 import { isWebSearchEnabled } from "../inference/web-search";
-import {
-  BRAVE_PROVIDER_PROFILE_ID,
-  HERMES_TAVILY_PROVIDER_PROFILE_ID,
-  TAVILY_PROVIDER_PROFILE_ID,
-  WEB_SEARCH_PROVIDER_PROFILE_IDS,
-  webSearchProviderProfilePath,
-  type WebSearchProviderProfileId,
-} from "../messaging/applier/web-search-provider-profile";
-
-export {
-  BRAVE_PROVIDER_PROFILE_ID,
-  HERMES_TAVILY_PROVIDER_PROFILE_ID,
-  TAVILY_PROVIDER_PROFILE_ID,
-  WEB_SEARCH_PROVIDER_PROFILE_IDS,
-  webSearchProviderProfilePath,
-  type WebSearchProviderProfileId,
-};
 
 /**
  * Single source of truth for "the user opted in to Brave Search at runtime."
@@ -34,70 +15,4 @@ export function shouldEnableWebSearch(
   webSearchConfig: { fetchEnabled?: boolean | null } | null | undefined,
 ): boolean {
   return isWebSearchEnabled(webSearchConfig as { fetchEnabled: boolean } | null | undefined);
-}
-
-export type BraveProviderProfileDeps = {
-  root: string;
-  runOpenshell: (
-    args: string[],
-    // The runner accepts a wider options shape; we only set ignoreError +
-    // stdio here, so erase the type at the boundary to keep this module
-    // free of the runner.ts internals.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    opts: any,
-  ) => { status: number | null; stderr?: string | Buffer | null; stdout?: string | Buffer | null };
-  redact: (input: string) => string;
-  log?: (message?: string) => void;
-  exit?: (code?: number) => never;
-};
-
-type TokenDefShape = { providerType?: string; token: string | null };
-
-export function braveProviderProfilePath(root: string): string {
-  return webSearchProviderProfilePath(root, "brave");
-}
-
-/** Register every selected web-search provider profile before token upsert. */
-export function ensureWebSearchProviderProfiles(
-  tokenDefs: readonly TokenDefShape[],
-  deps: BraveProviderProfileDeps,
-): void {
-  const neededProviders = new Set<WebSearchProviderProfileId>();
-  for (const { providerType, token } of tokenDefs) {
-    if (!token) continue;
-    if (
-      typeof providerType === "string" &&
-      (WEB_SEARCH_PROVIDER_PROFILE_IDS as readonly string[]).includes(providerType)
-    ) {
-      neededProviders.add(providerType as WebSearchProviderProfileId);
-    }
-  }
-  if (neededProviders.size === 0) return;
-
-  const errorLog = deps.log ?? console.error;
-  const exit = deps.exit ?? ((code?: number) => process.exit(code));
-
-  for (const provider of neededProviders) {
-    let failureStatus = 1;
-    const result = registerCheckedInProviderProfile({
-      profilePath: webSearchProviderProfilePath(deps.root, provider),
-      runOpenshell: (args, options) => {
-        const command = deps.runOpenshell(args, options);
-        failureStatus =
-          Number.isInteger(command.status) && command.status !== 0
-            ? (command.status ?? 1)
-            : failureStatus;
-        return command;
-      },
-    });
-    if (result.ok) continue;
-
-    const diagnostic = compactText(deps.redact(result.error.message));
-    errorLog(
-      `\n  ✗ Failed to register the ${provider} web-search provider profile with OpenShell.`,
-    );
-    if (diagnostic) errorLog(`    ${diagnostic.slice(0, 500)}`);
-    errorLog("    Update OpenShell with scripts/install-openshell.sh and re-run onboarding.");
-    exit(failureStatus);
-  }
 }

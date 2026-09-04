@@ -683,19 +683,34 @@ async function configureRefreshes(
   const sleep = options.sleep ?? defaultSleep;
   const now = options.now ?? Date.now;
   for (const refresh of refreshes) {
-    const configured = await providerAdapter.configureProviderRefresh({
-      target,
-      providerName: refresh.providerName,
-      credentialKey: refresh.credentialKey,
-      strategy: refresh.strategy,
-      material: refresh.material,
-      secretMaterial: refresh.secretMaterial,
-    });
+    options.revalidateSandboxIdentity?.(
+      `configure gateway token minting for messaging provider ${JSON.stringify(refresh.providerName)}`,
+    );
+    let configured: Awaited<ReturnType<OpenShellProviderAdapter["configureProviderRefresh"]>>;
+    try {
+      configured = await providerAdapter.configureProviderRefresh({
+        target,
+        providerName: refresh.providerName,
+        credentialKey: refresh.credentialKey,
+        strategy: refresh.strategy,
+        material: refresh.material,
+        secretMaterial: refresh.secretMaterial,
+      });
+    } catch (error) {
+      throw withMutationEvidence(error, [refresh.providerName], []);
+    }
     if (!configured.ok) {
       throw new MessagingProviderApplyError({
         message: `Could not configure gateway token minting for messaging provider '${refresh.providerName}': ${providerErrorMessage(configured.error)}`,
         mutatedProviderNames: [refresh.providerName],
       });
+    }
+    try {
+      options.revalidateSandboxIdentity?.(
+        `confirm gateway token minting configuration for messaging provider ${JSON.stringify(refresh.providerName)}`,
+      );
+    } catch (error) {
+      throw withMutationEvidence(error, [refresh.providerName], []);
     }
     options.log?.(`Waiting for the gateway to mint ${refresh.credentialKey}.`);
     const deadline = now() + REFRESH_DEADLINE_MS;
