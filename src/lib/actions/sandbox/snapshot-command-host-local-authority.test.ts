@@ -73,7 +73,8 @@ const provider = createInMemoryRuntimeProviderBundle({
   hostLocalInference: { services: ["vllm"], createOperation: () => operation },
 });
 
-vi.mock("../../adapters/openshell/runtime", () => ({
+vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/runtime")>()),
   captureOpenshell: vi.fn((args: string[]) => ({
     status: 0,
     output: args[0] === "policy" ? "version: 1\nnetwork_policies: {}\n" : "alpha Ready\n",
