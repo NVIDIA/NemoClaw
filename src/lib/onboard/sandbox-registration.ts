@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
 import type { AgentDefinition } from "../agent/defs";
 import type {
   InferenceEndpointSource,
@@ -21,17 +22,21 @@ import {
   cloneSandboxHostLocalInferenceReceipt,
   requireSandboxHostLocalInferenceProvenance,
 } from "../state/registry/host-local-inference";
+import { cloneSandboxHostMounts } from "../state/registry/host-mount";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
-import { cloneSandboxHostMounts } from "../state/registry/host-mount";
+import {
+  classifyPortableLifecycleReceipt,
+  portableLifecycleReceiptMatchesGeneration,
+} from "./experimental/portable-runtime-receipt-readiness";
 import { resolveOnboardHermesApiPort } from "./hermes-api-port";
-import { isManagedImageAgent, MANAGED_IMAGE_REPOSITORIES } from "./managed-image/contract";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
 } from "./hermes-dashboard";
+import { isManagedImageAgent, MANAGED_IMAGE_REPOSITORIES } from "./managed-image/contract";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   RuntimeProviderBundleRegistry,
@@ -40,10 +45,6 @@ import {
   requireRuntimeProviderMutationAuthority,
 } from "./runtime-provider/access";
 import { getRequestedSandboxAgentName, getSandboxAgentRegistryFields } from "./sandbox-agent";
-import {
-  classifyPortableLifecycleReceipt,
-  portableLifecycleReceiptMatchesGeneration,
-} from "./experimental/portable-runtime-receipt-readiness";
 
 export type CreatedSandboxRuntimeFields = Pick<
   SandboxEntry,
@@ -300,7 +301,10 @@ export function loadOnboardCommandResumeSession(): {
     : null;
 }
 
-export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
+/** Build and validate the exact registry row without publishing it. */
+export function prepareCreatedSandboxRegistration(
+  input: CreatedSandboxRegistrationInput,
+): SandboxEntry {
   const pending = input.inferenceRouteReservation?.entry ?? registry.getSandbox(input.sandboxName);
   const pendingRoute =
     input.reservationSessionId && pending
@@ -353,6 +357,27 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
       `Runtime provider '${provider.identity.id}' does not accept the registered workload receipt.`,
     );
   }
+  return structuredClone(entry);
+}
+
+/** Prove that a prepared row still matches every source used to derive it. */
+export function revalidatePreparedCreatedSandboxRegistration(
+  input: CreatedSandboxRegistrationInput,
+  prepared: SandboxEntry,
+): SandboxEntry {
+  const current = prepareCreatedSandboxRegistration(input);
+  if (!isDeepStrictEqual(current, prepared)) {
+    throw new RuntimeProviderSelectionError(
+      `Sandbox registration authority for '${input.sandboxName}' changed before publication.`,
+    );
+  }
+  return prepared;
+}
+
+function publishCreatedSandboxRegistration(
+  input: CreatedSandboxRegistrationInput,
+  entry: SandboxEntry,
+): SandboxEntry {
   const writeRegistry = input.registerSandbox ?? registry.registerSandbox;
   const pendingOptions =
     input.reservationSessionId && !input.verifiedCreate
@@ -369,4 +394,17 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
       ? writeRegistry(entry, input.inferenceRouteReservation, registrationOptions)
       : writeRegistry(entry);
   return registered ?? entry;
+}
+
+/** Publish one previously prepared row after revalidating its source authority. */
+export function registerPreparedCreatedSandbox(
+  input: CreatedSandboxRegistrationInput,
+  prepared: SandboxEntry,
+): SandboxEntry {
+  revalidatePreparedCreatedSandboxRegistration(input, prepared);
+  return publishCreatedSandboxRegistration(input, prepared);
+}
+
+export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
+  return publishCreatedSandboxRegistration(input, prepareCreatedSandboxRegistration(input));
 }
