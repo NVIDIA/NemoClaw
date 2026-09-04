@@ -899,12 +899,10 @@ async function applyChannelAddToGatewayAndRegistry(
   }
   policyChannelDependencies.revalidateChannelProviderPolicy(sandboxName, gatewayName);
   try {
-    // bestEffort: failures throw (instead of process.exit inside the helper)
-    // so a partial add can be torn down below before exiting.
     await upsertMessagingProviders(
       tokenDefs,
       gatewayName,
-      { bestEffort: true, requireExactBindings: true },
+      undefined,
       {
         plan,
         channelName,
@@ -1592,9 +1590,7 @@ async function rollbackChannelAdd(
         await policyChannelDependencies.upsertMessagingProviders(
           priorTokenDefs,
           getSandboxTargetGatewayName(sandboxName),
-          {
-            bestEffort: true,
-          },
+          undefined,
           {
             plan,
             channelName: canonical,

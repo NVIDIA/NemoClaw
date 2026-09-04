@@ -25,9 +25,6 @@ type MessagingProviderTokenDefinition = {
 
 type MessagingProviderUpsertOptions = {
   replaceExisting?: boolean;
-  bestEffort?: boolean;
-  requireExactBindings?: boolean;
-  gatewayName?: string;
 };
 
 type RebuildModule = typeof import("./rebuild");
