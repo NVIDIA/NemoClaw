@@ -33,7 +33,6 @@ export interface StageSandboxCredentialProvidersInput<Agent> {
 
 export interface MessagingProviderRegistrationOptions {
   replaceExisting?: boolean;
-  bestEffort?: boolean;
   allowedSandboxes?: readonly string[];
   revalidateSandboxIdentity?(operation: string): void;
 }
@@ -119,9 +118,6 @@ async function rethrowAfterCreatedProviderCleanup(
   const existingCreatedProviderNames = providerMutationNames(error, "createdProviderNames");
   const existingMutatedProviderNames = providerMutationNames(error, "mutatedProviderNames");
   const existingReplacedProviderNames = providerMutationNames(error, "replacedProviderNames");
-  const cleanupAttemptedProviderNames = new Set(
-    providerMutationNames(error, "cleanupAttemptedProviderNames"),
-  );
   const createdProviderNames = uniqueProviderNames([
     ...existingCreatedProviderNames,
     ...(input.createdProviderNames ?? []),
@@ -141,31 +137,17 @@ async function rethrowAfterCreatedProviderCleanup(
     replacedProviderNames,
     cause: error,
   });
-  const cleanupCandidates = createdProviderNames.filter(
-    (providerName) => !cleanupAttemptedProviderNames.has(providerName),
-  );
-  const cleanup =
-    cleanupCandidates.length > 0
-      ? await MessagingSetupApplier.cleanupProvidersAtOpenShell(cleanupCandidates, {
-          providerAdapter: input.providerAdapter,
-          target: namedOpenShellGateway(input.gatewayName),
-          allowedSandboxes: input.allowedSandboxes,
-          revalidateSandboxIdentity: input.revalidateSandboxIdentity,
-        })
-      : {
-          removedProviderNames: [],
-          absentProviderNames: [],
-          detachedAttachments: [],
-          residualProviders: [],
-        };
+  const cleanup = await MessagingSetupApplier.cleanupProvidersAtOpenShell(createdProviderNames, {
+    providerAdapter: input.providerAdapter,
+    target: namedOpenShellGateway(input.gatewayName),
+    allowedSandboxes: input.allowedSandboxes,
+    revalidateSandboxIdentity: input.revalidateSandboxIdentity,
+  });
   const createdProviders = new Set(createdProviderNames);
   const replacedProviders = new Set(replacedProviderNames);
-  const residualProviderNames = uniqueProviderNames([
-    ...existingCreatedProviderNames.filter((providerName) =>
-      cleanupAttemptedProviderNames.has(providerName),
-    ),
-    ...cleanup.residualProviders.map(({ providerName }) => providerName),
-  ]);
+  const residualProviderNames = uniqueProviderNames(
+    cleanup.residualProviders.map(({ providerName }) => providerName),
+  );
   const residualMessage = cleanup.residualProviders
     .map(
       ({ providerName, error: cleanupError }) =>
@@ -190,16 +172,9 @@ async function rethrowAfterCreatedProviderCleanup(
 
 function providerMutationNames(
   error: unknown,
-  field:
-    | "cleanupAttemptedProviderNames"
-    | "createdProviderNames"
-    | "mutatedProviderNames"
-    | "replacedProviderNames",
+  field: "createdProviderNames" | "mutatedProviderNames" | "replacedProviderNames",
 ): string[] {
-  if (
-    !(error instanceof Error) ||
-    (field !== "cleanupAttemptedProviderNames" && !isMessagingProviderMutationFailure(error))
-  ) {
+  if (!(error instanceof Error) || !isMessagingProviderMutationFailure(error)) {
     return [];
   }
   const value = Reflect.get(error, field);
