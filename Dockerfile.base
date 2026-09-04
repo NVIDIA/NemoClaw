@@ -424,7 +424,7 @@ COPY agents/openclaw/openclaw-runtime/package.json \
 COPY agents/openclaw/mcporter-runtime/package.json \
     agents/openclaw/mcporter-runtime/package-lock.json \
     /usr/local/lib/nemoclaw/mcporter-runtime/
-COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json
+COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/
 COPY scripts/lib/reviewed-npm-archive.mts \
     scripts/lib/bundled-npm-package.mts \
     scripts/lib/reviewed-npm-audit.mts \
@@ -593,11 +593,11 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
             --package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
             --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
             --raw-report "$MCPORTER_RAW_REPORT" --exceptions /scripts/npm-audit-exceptions.json \
-            --graph mcporter-runtime --npm-version "$(npm --version)" \
+            --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json \
             --registry https://registry.yarnpkg.com --threshold high \
             --legacy-npmjs true \
-            --result /tmp/mcporter-npm-audit-policy.json; \
-        cp "$MCPORTER_RAW_REPORT" /tmp/mcporter-npm-audit.json; \
+            --result /tmp/mcporter-npm-audit-policy.json \
+            --raw-copy /tmp/mcporter-npm-audit.json; \
       else \
         node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
             --directory /usr/local/lib/nemoclaw/mcporter-runtime \

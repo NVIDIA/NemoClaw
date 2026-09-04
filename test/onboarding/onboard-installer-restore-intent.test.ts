@@ -165,7 +165,7 @@ childProcess.spawn = (...args) => {
 };
 
 const { createSandbox } = require(${onboardPath});
-const { runSandboxExecCommand } = require(${execActionPath});
+const { execSandbox } = require(${execActionPath});
 
 const MARKER_PATH = "/sandbox/workspace/marker.txt";
 const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -181,27 +181,53 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
 
   // Prove the recreated + restored sandbox is reachable through the real
   // "nemoclaw <name> exec" boundary and can read a preserved workspace marker.
-  const completion = await runSandboxExecCommand(
-    "openshell",
-    sandboxName,
-    ["sha256sum", MARKER_PATH],
-    {},
-    async (binary, args) => {
-      const joined = _n([binary, ...args]);
-      const reads =
-        joined.includes("sandbox exec") &&
-        joined.includes("--name " + sandboxName) &&
-        joined.includes("sha256sum " + MARKER_PATH);
-      events.push({ kind: "exec", cmd: joined, marker: reads ? MARKER_SHA : null });
-      return { status: reads ? 0 : 1 };
-    },
-    {
-      getSandbox: () => ({ agent: "openclaw" }),
-      inspectMutableConfigPerms: () => ({ applies: true, ok: true }),
-      repairMutableConfigPerms: () => ({ applied: false }),
-    },
-  );
-  console.log(JSON.stringify({ sandboxName, events, execCode: completion.code }));
+  let execCode = null;
+  const execFinished = new Error("__exec_finished__");
+  try {
+    await execSandbox(
+      sandboxName,
+      ["sha256sum", MARKER_PATH],
+      {},
+      {
+        selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
+        commandExecutor: {
+          probeDirectory: async () => ({ state: "present" }),
+          runStreaming: async (request) => {
+            const joined = _n([
+              "openshell",
+              "sandbox",
+              "exec",
+              "--name",
+              request.sandboxName,
+              "--",
+              ...request.command,
+            ]);
+            const reads =
+              joined.includes("sandbox exec") &&
+              joined.includes("--name " + sandboxName) &&
+              joined.includes("sha256sum " + MARKER_PATH);
+            events.push({ kind: "exec", cmd: joined, marker: reads ? MARKER_SHA : null });
+            return {
+              outcome: { kind: "completed", exitCode: reads ? 0 : 1 },
+              release: () => {},
+            };
+          },
+        },
+        cleanupDeps: {
+          getSandbox: () => ({ agent: "openclaw" }),
+          inspectMutableConfigPerms: () => ({ applies: true, ok: true }),
+          repairMutableConfigPerms: () => ({ applied: false }),
+        },
+        exit: (code) => {
+          execCode = code;
+          throw execFinished;
+        },
+      },
+    );
+  } catch (error) {
+    if (error !== execFinished) throw error;
+  }
+  console.log(JSON.stringify({ sandboxName, events, execCode }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
