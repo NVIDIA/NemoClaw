@@ -35,10 +35,7 @@ const ENVIRONMENT_DETAIL_KEYS = new Set([
 ]);
 
 function bounded(value: string, maxLength: number): string {
-  return sanitizeReadinessText(
-    String(redactForLog(value)).replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1<REDACTED>@"),
-    maxLength,
-  );
+  return sanitizeReadinessText(String(redactForLog(value)), maxLength);
 }
 
 function scalar(value: EvidenceScalar): EvidenceScalar {
