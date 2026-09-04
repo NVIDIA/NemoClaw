@@ -112,6 +112,8 @@ const registry = require("./src/lib/state/registry.js");
 registry.registerSandbox({
   name: "alpha",
   agent: "openclaw",
+  gatewayName: "nemoclaw-9090",
+  gatewayPort: 9090,
   mcp: { bridges: { local: {
     server: "local",
     agent: "openclaw",
