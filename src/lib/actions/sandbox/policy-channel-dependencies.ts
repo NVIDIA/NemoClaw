@@ -132,9 +132,6 @@ export const policyChannelDependencies = {
       normalizeCredentialValue: (value) => normalizeCredentialValue(value as string | undefined),
       channelIdForCredential: () => context.channelName,
     });
-    if (application.otherTokenDefs.length > 0) {
-      throw new Error("Channel add produced a non-messaging provider definition.");
-    }
     return MessagingSetupApplier.applyCredentialsAtOpenShell(context.plan, {
       providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
       target: namedOpenShellGateway(gatewayName),

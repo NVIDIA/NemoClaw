@@ -41,7 +41,6 @@ describe("messaging provider application planning", () => {
       profiles: [googlechatProfile],
     });
 
-    expect(result.otherTokenDefs).toEqual([]);
     expect(result.definitions).toEqual([
       {
         channelId: "googlechat",
@@ -72,7 +71,7 @@ describe("messaging provider application planning", () => {
     ]);
   });
 
-  it("leaves non-messaging providers for their existing owner (#9806)", () => {
+  it("routes a checked-in web-search profile through the typed application (#9806)", () => {
     const result = buildMessagingProviderApplication({
       tokenDefs: [
         {
@@ -88,9 +87,45 @@ describe("messaging provider application planning", () => {
       profiles: [googlechatProfile],
     });
 
-    expect(result.messagingTokenDefs).toEqual([]);
-    expect(result.definitions).toEqual([]);
+    expect(result.definitions).toEqual([
+      {
+        channelId: "messaging",
+        credentialId: "BRAVE_API_KEY",
+        providerName: "alpha-brave-search",
+        providerType: "brave",
+        credentials: [{ name: "BRAVE_API_KEY", value: "brave-secret" }],
+        profile: {
+          profilePath: "/repo/nemoclaw-blueprint/provider-profiles/brave.yaml",
+          profileType: "brave",
+        },
+      },
+    ]);
     expect(result.refreshes).toEqual([]);
-    expect(result.otherTokenDefs.map(({ name }) => name)).toEqual(["alpha-brave-search"]);
+  });
+
+  it("routes an OpenShell built-in type without importing a custom profile (#9806)", () => {
+    const result = buildMessagingProviderApplication({
+      tokenDefs: [
+        {
+          name: "legacy-openai",
+          envKey: "OPENAI_API_KEY",
+          token: "openai-secret",
+        },
+      ],
+      root: "/repo",
+      agent: "openclaw",
+      getCredential: () => null,
+      profiles: [googlechatProfile],
+    });
+
+    expect(result.definitions).toEqual([
+      {
+        channelId: "messaging",
+        credentialId: "OPENAI_API_KEY",
+        providerName: "legacy-openai",
+        providerType: "generic",
+        credentials: [{ name: "OPENAI_API_KEY", value: "openai-secret" }],
+      },
+    ]);
   });
 });

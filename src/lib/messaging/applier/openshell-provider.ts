@@ -179,6 +179,18 @@ export async function applyCredentialsAtOpenShell(
     }
 
     const action = state === "exact" ? "update" : "create";
+    try {
+      options.revalidateSandboxIdentity?.(
+        `${action} messaging provider ${JSON.stringify(definition.providerName)}`,
+      );
+    } catch (error) {
+      throw withMutationEvidence(
+        error,
+        mutatedProviderNames,
+        createdProviderNames,
+        replacedProviderNames,
+      );
+    }
     const result =
       action === "create"
         ? await providerAdapter.createProvider({
@@ -218,6 +230,18 @@ export async function applyCredentialsAtOpenShell(
     if (classifyProviderDefinition(verification, definition) !== "exact") {
       throw withMutationEvidence(
         `OpenShell did not confirm messaging provider '${definition.providerName}' after ${action}.`,
+        mutatedProviderNames,
+        createdProviderNames,
+        replacedProviderNames,
+      );
+    }
+    try {
+      options.revalidateSandboxIdentity?.(
+        `confirm messaging provider ${JSON.stringify(definition.providerName)} after ${action}`,
+      );
+    } catch (error) {
+      throw withMutationEvidence(
+        error,
         mutatedProviderNames,
         createdProviderNames,
         replacedProviderNames,
@@ -404,7 +428,7 @@ function assertUniqueDefinitions(
     }
     names.add(definition.providerName);
     if (
-      definition.profile.profileType !== definition.providerType ||
+      (definition.profile && definition.profile.profileType !== definition.providerType) ||
       definition.credentials.length === 0 ||
       new Set(definition.credentials.map(({ name }) => name)).size !== definition.credentials.length
     ) {
@@ -412,6 +436,7 @@ function assertUniqueDefinitions(
         message: `Messaging provider '${definition.providerName}' has an invalid credential profile definition.`,
       });
     }
+    if (!definition.profile) continue;
     const existingPath = profilePaths.get(definition.profile.profileType);
     if (existingPath && existingPath !== definition.profile.profilePath) {
       throw new MessagingProviderApplyError({
@@ -471,7 +496,9 @@ async function prepareProfiles(
   providerAdapter: OpenShellProviderAdapter,
 ): Promise<void> {
   const profiles = new Map(
-    definitions.map(({ profile }) => [profile.profileType, profile.profilePath]),
+    definitions.flatMap(({ profile }) =>
+      profile ? [[profile.profileType, profile.profilePath] as const] : [],
+    ),
   );
   for (const [profileType, profilePath] of profiles) {
     const imported = await providerAdapter.importProviderProfile({ target, profilePath });

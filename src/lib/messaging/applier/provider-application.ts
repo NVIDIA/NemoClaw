@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  WEB_SEARCH_PROVIDER_PROFILE_IDS,
+  webSearchProviderProfilePath,
+  type WebSearchProviderProfileId,
+} from "../../onboard/brave-provider-profile";
+import {
   buildMessagingBridgeRefreshMaterial,
   listMessagingBridgeProfiles,
   messagingBridgeProfilesForAgent,
@@ -32,8 +37,6 @@ export interface BuildMessagingProviderApplicationInput {
 
 /** Process-memory-only inputs for one immediate provider application. */
 export interface MessagingProviderEphemeralInputs {
-  readonly messagingTokenDefs: readonly MessagingTokenDef[];
-  readonly otherTokenDefs: readonly MessagingTokenDef[];
   readonly definitions: readonly MessagingCredentialProviderEphemeralInput[];
   readonly refreshes: readonly MessagingProviderRefreshEphemeralInput[];
 }
@@ -46,19 +49,13 @@ export function buildMessagingProviderApplication(
     input.profiles ?? listMessagingBridgeProfiles({ root: input.root }),
   );
   const profilesByType = new Map(profiles.map((profile) => [profile.profileId, profile]));
-  const messagingTokenDefs: MessagingTokenDef[] = [];
-  const otherTokenDefs: MessagingTokenDef[] = [];
   const definitions: MessagingCredentialProviderEphemeralInput[] = [];
   const refreshes: MessagingProviderRefreshEphemeralInput[] = [];
 
   for (const tokenDef of input.tokenDefs) {
     const providerType = tokenDef.providerType ?? "generic";
     const bridgeProfile = profilesByType.get(providerType);
-    if (providerType !== MESSAGING_CREDENTIAL_PROVIDER_TYPE && !bridgeProfile) {
-      otherTokenDefs.push(tokenDef);
-      continue;
-    }
-    messagingTokenDefs.push(tokenDef);
+    const profile = providerProfile(input.root, providerType, bridgeProfile);
     const channelId =
       bridgeProfile?.channelId ??
       input.channelIdForCredential?.(tokenDef.envKey, tokenDef.name) ??
@@ -75,11 +72,7 @@ export function buildMessagingProviderApplication(
           value: normalizeToken(token),
         })),
       ],
-      profile: {
-        profilePath:
-          bridgeProfile?.profilePath ?? messagingCredentialProviderProfilePath(input.root),
-        profileType: providerType,
-      },
+      ...(profile ? { profile } : {}),
     });
     if (bridgeProfile?.strategy) {
       refreshes.push(
@@ -92,7 +85,30 @@ export function buildMessagingProviderApplication(
     }
   }
 
-  return { messagingTokenDefs, otherTokenDefs, definitions, refreshes };
+  return { definitions, refreshes };
+}
+
+function providerProfile(
+  root: string,
+  providerType: string,
+  bridgeProfile: MessagingBridgeProfile | undefined,
+): MessagingCredentialProviderEphemeralInput["profile"] {
+  if (bridgeProfile) {
+    return { profilePath: bridgeProfile.profilePath, profileType: providerType };
+  }
+  if (providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) {
+    return {
+      profilePath: messagingCredentialProviderProfilePath(root),
+      profileType: providerType,
+    };
+  }
+  if ((WEB_SEARCH_PROVIDER_PROFILE_IDS as readonly string[]).includes(providerType)) {
+    return {
+      profilePath: webSearchProviderProfilePath(root, providerType as WebSearchProviderProfileId),
+      profileType: providerType,
+    };
+  }
+  return undefined;
 }
 
 function buildRefreshDefinition(

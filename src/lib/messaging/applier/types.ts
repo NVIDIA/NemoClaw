@@ -90,7 +90,8 @@ export type MessagingCredentialProviderEphemeralInput = Readonly<{
   providerName: string;
   providerType: string;
   credentials: readonly Readonly<{ name: string; value: string | null }>[];
-  profile: MessagingCredentialProviderProfile;
+  /** Checked-in custom profile to prepare. Built-in OpenShell types omit this. */
+  profile?: MessagingCredentialProviderProfile;
 }>;
 
 /**

@@ -122,7 +122,7 @@ describe("messaging OpenShell provider application", () => {
     });
     expect(adapter.importProviderProfile).toHaveBeenCalledWith({
       target,
-      profilePath: expected.profile.profilePath,
+      profilePath: expected.profile!.profilePath,
     });
     expect(adapter.createProvider).not.toHaveBeenCalled();
     expect(adapter.updateProvider).not.toHaveBeenCalled();
@@ -131,6 +131,30 @@ describe("messaging OpenShell provider application", () => {
       reused: [{ providerName: expected.providerName }],
       providerNames: [expected.providerName],
     });
+  });
+
+  it("does not import a profile for an OpenShell built-in provider type (#9806)", async () => {
+    const expected = definition({
+      providerType: "generic",
+      credentials: [{ name: "TELEGRAM_BOT_TOKEN", value: null }],
+      profile: undefined,
+    });
+    const adapter = providerAdapter({
+      getProvider: vi
+        .fn<OpenShellProviderAdapter["getProvider"]>()
+        .mockResolvedValue({ ok: true, value: metadata(expected) }),
+    });
+
+    const result = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [expected],
+    });
+
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+    expect(adapter.updateProvider).not.toHaveBeenCalled();
+    expect(result.providerNames).toEqual([expected.providerName]);
   });
 
   it.each([
@@ -285,8 +309,10 @@ describe("messaging OpenShell provider application", () => {
     { checkpoint: 2, deletes: 1, detaches: 0, creates: 0, attaches: 0, mutated: false },
     { checkpoint: 3, deletes: 1, detaches: 1, creates: 0, attaches: 0, mutated: true },
     { checkpoint: 4, deletes: 1, detaches: 1, creates: 0, attaches: 0, mutated: true },
-    { checkpoint: 5, deletes: 2, detaches: 1, creates: 1, attaches: 0, mutated: true },
-    { checkpoint: 6, deletes: 2, detaches: 1, creates: 1, attaches: 1, mutated: true },
+    { checkpoint: 5, deletes: 2, detaches: 1, creates: 0, attaches: 0, mutated: true },
+    { checkpoint: 6, deletes: 2, detaches: 1, creates: 1, attaches: 0, mutated: true },
+    { checkpoint: 7, deletes: 2, detaches: 1, creates: 1, attaches: 0, mutated: true },
+    { checkpoint: 8, deletes: 2, detaches: 1, creates: 1, attaches: 1, mutated: true },
   ])(
     "returns exact evidence when identity changes at replacement checkpoint $checkpoint (#9806)",
     async ({ checkpoint, deletes, detaches, creates, attaches, mutated }) => {
@@ -320,6 +346,8 @@ describe("messaging OpenShell provider application", () => {
         passIdentityCheck,
         passIdentityCheck,
         passIdentityCheck,
+        passIdentityCheck,
+        passIdentityCheck,
       ];
       identityChecks[checkpoint - 1] = () => {
         throw new Error("sandbox identity changed");
@@ -343,7 +371,7 @@ describe("messaging OpenShell provider application", () => {
         message: "sandbox identity changed",
         mutatedProviderNames: mutated ? [expected.providerName] : [],
         createdProviderNames: creates > 0 ? [expected.providerName] : [],
-        replacedProviderNames: creates > 0 ? [expected.providerName] : [],
+        replacedProviderNames: deletes > 1 ? [expected.providerName] : [],
       });
       expect(adapter.deleteProvider).toHaveBeenCalledTimes(deletes);
       expect(adapter.detachProvider).toHaveBeenCalledTimes(detaches);
@@ -427,9 +455,13 @@ describe("messaging OpenShell provider application", () => {
         })
         .mockResolvedValueOnce({ ok: true, value: metadata(expected) }),
     });
-    const revalidateSandboxIdentity = vi.fn(() => {
-      throw new Error("sandbox identity changed");
-    });
+    const revalidateSandboxIdentity = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("sandbox identity changed");
+      });
 
     const failure = await applyCredentialsAtOpenShell(plan, {
       providerAdapter: adapter,

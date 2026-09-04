@@ -10,20 +10,12 @@ import type { Session } from "../state/onboard-session";
 import { requiredMessagingProviderBindings } from "./checkpoint-replay";
 import {
   type CredentialProviderRegistrationDeps,
-  type MessagingProviderRegistrationOptions,
   createCredentialProviderRegistration,
 } from "./credential-provider-registration";
 import type { MessagingTokenDef } from "./messaging-prep";
 
 const messagingBridgeProvider =
   require("./messaging-bridge-provider") as typeof import("./messaging-bridge-provider");
-const providers = require("./providers") as {
-  upsertMessagingProviders(
-    tokenDefs: MessagingTokenDef[],
-    runOpenshell: CredentialProviderRegistrationDeps["runOpenshell"],
-    options?: MessagingProviderRegistrationOptions,
-  ): string[];
-};
 
 const BRAVE_SECRET = "brv-resume-secret";
 const DISCORD_SECRET = "discord-resume-secret";
@@ -181,12 +173,18 @@ function bridgeRefreshCleanupScenario(deleteStatus: number, deleteError: string)
     token: messagingBridgeProvider.MESSAGING_BRIDGE_PENDING_VALUE,
     providerType: "google-chat-bridge",
   };
-  const ensureProfiles = vi
-    .spyOn(messagingBridgeProvider, "ensureMessagingBridgeProfiles")
-    .mockImplementation(() => undefined);
-  const configureRefreshes = vi
-    .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
-    .mockReturnValue({ ok: false, reason: "token minting failed" });
+  const apply = vi
+    .spyOn(MessagingSetupApplier, "applyCredentialsAtOpenShell")
+    .mockImplementation(() => {
+      providerExists = true;
+      return Promise.reject(
+        new MessagingProviderApplyError({
+          message: "token minting failed",
+          mutatedProviderNames: [tokenDef.name],
+          createdProviderNames: [tokenDef.name],
+        }),
+      );
+    });
   const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
     throw new Error(`exit:${code ?? 0}`);
   });
@@ -199,8 +197,7 @@ function bridgeRefreshCleanupScenario(deleteStatus: number, deleteError: string)
     restore: () => {
       errorLog.mockRestore();
       exit.mockRestore();
-      configureRefreshes.mockRestore();
-      ensureProfiles.mockRestore();
+      apply.mockRestore();
     },
     runOpenshell,
     session,
@@ -573,9 +570,14 @@ describe("credential provider registration", () => {
   it("creates a missing messaging provider and records its receipt (#6743)", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const success = { status: 0, stdout: "", stderr: "" };
-    const runOpenshell = vi.fn((args: string[]) =>
-      args[0] === "provider" && args[1] === "get" ? providerMissing(String(args.at(-1))) : success,
-    );
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce(providerMissing("alpha-discord-bridge"))
+      .mockReturnValueOnce(providerMissing("alpha-discord-bridge"))
+      .mockReturnValueOnce(success)
+      .mockReturnValueOnce(
+        providerMetadata("alpha-discord-bridge", "generic", "DISCORD_BOT_TOKEN"),
+      );
     const registration = createCredentialProviderRegistration(
       registrationDeps(runOpenshell, session),
     );
@@ -739,99 +741,83 @@ describe("credential provider registration", () => {
     }
   });
 
-  it("reconciles typed and fallback creations when fallback registration fails (#9806)", async () => {
-    const typedProviderName = "alpha-discord-bridge";
-    const fallbackProviderName = "alpha-brave-search";
+  it("routes messaging and web-search providers through one typed application (#9806)", async () => {
+    const messagingProviderName = "alpha-discord-bridge";
+    const webSearchProviderName = "alpha-brave-search";
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
-    const apply = vi
-      .spyOn(MessagingSetupApplier, "applyCredentialsAtOpenShell")
-      .mockImplementation(async (_plan, options) => {
-        await options.providerAdapter!.deleteProvider({
-          target: { kind: "named", gatewayName: "test-gateway" },
-          providerName: typedProviderName,
-        });
-        return {
-          upserted: [
-            {
-              channelId: "discord",
-              credentialId: "DISCORD_BOT_TOKEN",
-              providerName: typedProviderName,
-              envKey: "DISCORD_BOT_TOKEN",
-              action: "create",
-            },
-          ],
-          reused: [],
-          missing: [],
-          providerNames: [typedProviderName],
-          sandboxCreateProviderArgs: ["--provider", typedProviderName],
-        };
-      });
-    const fallback = vi.spyOn(providers, "upsertMessagingProviders").mockImplementation(() => {
-      throw Object.assign(new Error("fallback registration failed"), {
-        code: "NEMOCLAW_MESSAGING_PROVIDER_MUTATION_FAILURE",
-        mutatedProviderNames: [fallbackProviderName],
-        createdProviderNames: [fallbackProviderName],
-      });
+    const apply = vi.spyOn(MessagingSetupApplier, "applyCredentialsAtOpenShell").mockResolvedValue({
+      upserted: [
+        {
+          channelId: "discord",
+          credentialId: "DISCORD_BOT_TOKEN",
+          providerName: messagingProviderName,
+          envKey: "DISCORD_BOT_TOKEN",
+          action: "create",
+        },
+        {
+          channelId: "messaging",
+          credentialId: "BRAVE_API_KEY",
+          providerName: webSearchProviderName,
+          envKey: "BRAVE_API_KEY",
+          action: "create",
+        },
+      ],
+      reused: [],
+      missing: [],
+      providerNames: [messagingProviderName, webSearchProviderName],
+      sandboxCreateProviderArgs: [
+        "--provider",
+        messagingProviderName,
+        "--provider",
+        webSearchProviderName,
+      ],
     });
-    const cleanup = vi
-      .spyOn(MessagingSetupApplier, "cleanupProvidersAtOpenShell")
-      .mockResolvedValue({
-        removedProviderNames: [typedProviderName, fallbackProviderName],
-        absentProviderNames: [],
-        detachedAttachments: [],
-        residualProviders: [],
-      });
     const registration = createCredentialProviderRegistration(
       registrationDeps(runOpenshell, { stagedCredentialProviders: [] } as unknown as Session),
     );
 
     try {
-      const failure = await registration
-        .applyMessagingProviders(
-          [
-            {
-              name: typedProviderName,
-              envKey: "DISCORD_BOT_TOKEN",
-              token: DISCORD_SECRET,
-              providerType: "nemoclaw-mcp-v1",
-            },
-            {
-              name: fallbackProviderName,
-              envKey: "BRAVE_API_KEY",
-              token: BRAVE_SECRET,
-              providerType: "brave",
-            },
-          ],
-          { replaceExisting: true, allowedSandboxes: ["alpha"] },
-        )
-        .catch((error: unknown) => error);
+      const registered = await registration.applyMessagingProviders([
+        {
+          name: messagingProviderName,
+          envKey: "DISCORD_BOT_TOKEN",
+          token: DISCORD_SECRET,
+          providerType: "nemoclaw-mcp-v1",
+        },
+        {
+          name: webSearchProviderName,
+          envKey: "BRAVE_API_KEY",
+          token: BRAVE_SECRET,
+          providerType: "brave",
+        },
+      ]);
 
-      expect(fallback).toHaveBeenCalledWith(
-        expect.any(Array),
-        expect.any(Function),
-        expect.objectContaining({ bestEffort: true, gatewayName: "test-gateway" }),
-      );
-      expect(cleanup).toHaveBeenCalledExactlyOnceWith(
-        [fallbackProviderName, typedProviderName],
+      expect(registered).toEqual([messagingProviderName, webSearchProviderName]);
+      expect(apply).toHaveBeenCalledExactlyOnceWith(
+        expect.any(Object),
         expect.objectContaining({
-          target: { kind: "named", gatewayName: "test-gateway" },
-          allowedSandboxes: ["alpha"],
+          definitions: [
+            expect.objectContaining({
+              providerName: messagingProviderName,
+              providerType: "nemoclaw-mcp-v1",
+            }),
+            expect.objectContaining({
+              providerName: webSearchProviderName,
+              providerType: "brave",
+              profile: {
+                profilePath: "/repo/nemoclaw-blueprint/provider-profiles/brave.yaml",
+                profileType: "brave",
+              },
+            }),
+          ],
         }),
       );
-      expect(failure).toMatchObject({
-        message: "fallback registration failed",
-        mutatedProviderNames: [typedProviderName],
-        createdProviderNames: [],
-        replacedProviderNames: [typedProviderName],
-      });
     } finally {
-      cleanup.mockRestore();
-      fallback.mockRestore();
       apply.mockRestore();
     }
   });
 
-  it("reconciles successful fallback creation when migration authority changes (#9806)", async () => {
+  it("reconciles all typed creations when migration authority changes (#9806)", async () => {
     const typedProviderName = "alpha-discord-bridge";
     const fallbackProviderName = "alpha-brave-search";
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
@@ -844,30 +830,24 @@ describe("credential provider registration", () => {
           envKey: "DISCORD_BOT_TOKEN",
           action: "create",
         },
+        {
+          channelId: "messaging",
+          credentialId: "BRAVE_API_KEY",
+          providerName: fallbackProviderName,
+          envKey: "BRAVE_API_KEY",
+          action: "create",
+        },
       ],
       reused: [],
       missing: [],
-      providerNames: [typedProviderName],
-      sandboxCreateProviderArgs: ["--provider", typedProviderName],
+      providerNames: [typedProviderName, fallbackProviderName],
+      sandboxCreateProviderArgs: [
+        "--provider",
+        typedProviderName,
+        "--provider",
+        fallbackProviderName,
+      ],
     });
-    const fallback = vi
-      .spyOn(providers, "upsertMessagingProviders")
-      .mockImplementation((_tokenDefs, run) => {
-        run(
-          [
-            "provider",
-            "create",
-            "--name",
-            fallbackProviderName,
-            "--type",
-            "brave",
-            "--credential",
-            "BRAVE_API_KEY",
-          ],
-          { env: { BRAVE_API_KEY: BRAVE_SECRET }, ignoreError: true },
-        );
-        return [fallbackProviderName];
-      });
     const cleanup = vi
       .spyOn(MessagingSetupApplier, "cleanupProvidersAtOpenShell")
       .mockResolvedValue({
@@ -915,7 +895,6 @@ describe("credential provider registration", () => {
       });
     } finally {
       cleanup.mockRestore();
-      fallback.mockRestore();
       apply.mockRestore();
     }
   });
@@ -1312,11 +1291,16 @@ describe("credential provider registration", () => {
 
   it("stops provider registration when authority changes after the first provider (#9833)", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const runOpenshell = vi.fn((args: string[]) =>
-      args[1] === "get"
-        ? providerMissing(String(args.at(-1)))
-        : { status: 0, stdout: "", stderr: "" },
-    );
+    const success = { status: 0, stdout: "", stderr: "" };
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce(providerMissing("alpha-first"))
+      .mockReturnValueOnce(providerMissing("alpha-second"))
+      .mockReturnValueOnce(providerMissing("alpha-first"))
+      .mockReturnValueOnce(providerMissing("alpha-second"))
+      .mockReturnValueOnce(success)
+      .mockReturnValueOnce(providerMetadata("alpha-first", "generic", "FIRST_TOKEN"))
+      .mockReturnValueOnce(success);
     const deps = registrationDeps(runOpenshell, session);
     const registration = createCredentialProviderRegistration(deps);
     const tokenDefs: MessagingTokenDef[] = [
@@ -1324,7 +1308,7 @@ describe("credential provider registration", () => {
       { name: "alpha-second", envKey: "SECOND_TOKEN", token: "second-secret" },
     ];
     const revalidateSandboxIdentity = vi.fn((operation: string) =>
-      operation === 'inspect or change provider "alpha-second"'
+      operation === 'create messaging provider "alpha-second"'
         ? refuseAuthorityChange()
         : undefined,
     );

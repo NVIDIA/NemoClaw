@@ -226,27 +226,6 @@ function trackSuccessfulProviderReplacements(
   };
 }
 
-function trackSuccessfulProviderCreations(
-  runOpenshell: OpenshellCliHelpers["runOpenshell"],
-  createdProviderNames: Set<string>,
-): OpenshellCliHelpers["runOpenshell"] {
-  return (args, options) => {
-    const result = runOpenshell(args, options);
-    const nameIndex = args.indexOf("--name");
-    const providerName = nameIndex >= 0 ? args[nameIndex + 1] : undefined;
-    if (
-      result.status === 0 &&
-      args[0] === "provider" &&
-      args[1] === "create" &&
-      typeof providerName === "string" &&
-      providerName.length > 0
-    ) {
-      createdProviderNames.add(providerName);
-    }
-    return result;
-  };
-}
-
 function isCanonicalBinding(binding: CheckpointProviderBinding): boolean {
   return [binding.name, binding.type, binding.credentialEnv].every(
     (field) => typeof field === "string" && field.length > 0 && field.trim() === field,
@@ -375,21 +354,9 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     const typedReplacedProviderNames = typedCreatedProviderNames.filter((providerName) =>
       replacedProviderNames.has(providerName),
     );
-    const legacyCreatedProviderNames = new Set<string>();
     try {
       if (typedResult.missing.length > 0) throw new Error(MISSING_BINDING_ERROR);
-      const otherProviderNames =
-        application.otherTokenDefs.length > 0
-          ? (providers.upsertMessagingProviders(
-              application.otherTokenDefs,
-              trackSuccessfulProviderCreations(
-                createGatewayScopedOpenshellRunner(runOpenshell, gatewayName),
-                legacyCreatedProviderNames,
-              ),
-              { ...options, bestEffort: true, gatewayName },
-            ) as string[])
-          : [];
-      const appliedNames = new Set([...otherProviderNames, ...typedResult.providerNames]);
+      const appliedNames = new Set(typedResult.providerNames);
       const applied = tokenDefs.map(({ name }) => name).filter((name) => appliedNames.has(name));
       recordMigratedLegacyMessagingCredentials(
         tokenDefs,
@@ -404,7 +371,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
         gatewayName,
         allowedSandboxes: options.allowedSandboxes,
         revalidateSandboxIdentity: options.revalidateSandboxIdentity,
-        createdProviderNames: [...typedCreatedProviderNames, ...legacyCreatedProviderNames],
+        createdProviderNames: typedCreatedProviderNames,
         replacedProviderNames: typedReplacedProviderNames,
       });
     }
@@ -504,7 +471,10 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     const plannedTokenDefs = new Map(
       messaging.messagingTokenDefs.map((tokenDef) => [tokenDef.name, tokenDef]),
     );
-    const tokenDefs = messaging.messagingTokenDefs;
+    const tokenDefs = messaging.messagingTokenDefs.filter(({ name }) => plannedBindings.has(name));
+    const configuredProviderNames = new Set(
+      tokenDefs.filter(hasConfiguredMessagingCredential).map((tokenDef) => tokenDef.name),
+    );
     const runOpenshell = deps.runOpenshell;
     const applicationPlan =
       MessagingSetupApplier.readPlanFromEnv() ??
@@ -521,7 +491,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       false,
       deps,
     );
-    const registered = await applyMessagingProviders(
+    const applied = await applyMessagingProviders(
       tokenDefs,
       {
         replaceExisting: input.replaceExisting === true,
@@ -531,6 +501,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       runOpenshell,
       applicationPlan,
     );
+    const registered = applied.filter((name) => configuredProviderNames.has(name));
     input.revalidateSandboxIdentity?.("record staged credential provider receipts");
     setStagedCredentialProviderReceipts(registered, true, deps);
     return registered.map((name) => {
