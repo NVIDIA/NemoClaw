@@ -48,7 +48,7 @@ describe("authoritative rebuild sandbox flow options", () => {
 });
 
 describe("authoritative rebuild runtime preflight options", () => {
-  it("carries only target GPU state and recorded N1x provider intent (#11041)", () => {
+  it("carries only target GPU state and recorded N1x preview intent (#9292)", () => {
     const options = {
       authoritativeResumeConfig: true,
       sandboxName: "alpha",
@@ -60,22 +60,22 @@ describe("authoritative rebuild runtime preflight options", () => {
       sandboxGpu: "enable",
       sandboxGpuDevice: "nvidia.com/gpu=all",
       noGpu: false,
-      allowDeferredN1xOnboarding: true,
+      allowDeferredN1xManagedVllm: true,
     } satisfies AuthoritativeRebuildPreflightOptions;
 
     expect(authoritativeRebuildRuntimePreflightOptions(options)).toEqual({
       sandboxGpu: "enable",
       sandboxGpuDevice: "nvidia.com/gpu=all",
       noGpu: false,
-      allowDeferredN1xOnboarding: true,
+      allowDeferredN1xManagedVllm: true,
     });
 
-    const { allowDeferredN1xOnboarding: _recordedIntent, ...withoutRecordedIntent } = options;
+    const { allowDeferredN1xManagedVllm: _recordedIntent, ...withoutRecordedIntent } = options;
     expect(authoritativeRebuildRuntimePreflightOptions(withoutRecordedIntent)).toEqual({
       sandboxGpu: "enable",
       sandboxGpuDevice: "nvidia.com/gpu=all",
       noGpu: false,
-      allowDeferredN1xOnboarding: false,
+      allowDeferredN1xManagedVllm: false,
     });
   });
 });

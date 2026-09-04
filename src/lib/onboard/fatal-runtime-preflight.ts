@@ -53,7 +53,7 @@ export type FatalRuntimePreflightOptions = Pick<
   "sandboxGpu" | "sandboxGpuDevice" | "gpu" | "noGpu"
 > & {
   /** Explicit false prevents ambient provider intent from crossing a rebuild boundary. */
-  allowDeferredN1xOnboarding?: boolean;
+  allowDeferredN1xManagedVllm?: boolean;
   optedOutGpuPassthrough?: boolean;
 };
 
@@ -315,7 +315,7 @@ function collectOnboardHostReadiness(
     wslDockerDesktopGpuProofPassed: runtimeGpu?.wslDockerDesktopGpuProofPassed,
     resuming: context.resuming,
     allowStorageRemediation,
-    allowDeferredN1xOnboarding: options.allowDeferredN1xOnboarding,
+    allowDeferredN1xOnboarding: options.allowDeferredN1xManagedVllm,
     // The initial host readiness gate already presented warning advisories.
     presentAdvisories: false,
     exitProcess: context.exitProcess,
@@ -410,7 +410,7 @@ async function collectAdmittedReadinessPair(
       host.result.sandboxGpuConfig.mode === "0" || options.optedOutGpuPassthrough === true,
     resuming: context.resuming,
     allowStorageRemediation: isManagedGatewayReadiness(gateway),
-    allowDeferredN1xOnboarding: options.allowDeferredN1xOnboarding,
+    allowDeferredN1xOnboarding: options.allowDeferredN1xManagedVllm,
     presentAdvisories: false,
     exitProcess,
   });
@@ -593,7 +593,7 @@ export function runFatalOnboardRuntimePreflight(
     explicitlyOptedOutGpuPassthrough,
     resuming: context.resuming,
     allowStorageRemediation: context.allowStorageRemediation,
-    allowDeferredN1xOnboarding: options.allowDeferredN1xOnboarding,
+    allowDeferredN1xOnboarding: options.allowDeferredN1xManagedVllm,
     exitProcess,
     observedAt,
     now,

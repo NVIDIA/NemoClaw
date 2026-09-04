@@ -53,7 +53,7 @@ export interface InitialOnboardFlowPhaseOptions<
   sandboxGpuDevice?: string | null;
   gpuRequested: boolean;
   noGpu: boolean;
-  allowDeferredN1xOnboarding?: boolean;
+  allowDeferredN1xManagedVllm?: boolean;
   env: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   recordedGpuPassthroughBeforePreflight: boolean;
@@ -145,7 +145,7 @@ export function createInitialOnboardFlowPhases<
         sandboxGpuDevice: options.sandboxGpuDevice ?? null,
         gpuRequested: options.gpuRequested,
         noGpu: options.noGpu,
-        allowDeferredN1xOnboarding: options.allowDeferredN1xOnboarding,
+        allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
         env: options.env,
         deps: {
           ...options.preflightDeps,

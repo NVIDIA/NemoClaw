@@ -62,7 +62,7 @@ import {
   prepareRebuildTargetConfig,
   type RebuildTargetConfig,
   stageRebuildHermesDashboardConfig,
-  stageRecordedDeferredN1xIntent,
+  stageRecordedManagedVllmIntent,
 } from "./rebuild-target-preflight";
 
 /** Upper bound on how long a minted provider-recovery receipt stays valid. */
@@ -267,7 +267,7 @@ export async function prepareRebuildTargetPreflights(args: {
   recreateOptions.observabilityEnabled =
     requestedObservabilityEnabled ?? recreateOptions.observabilityEnabled;
   recreateOptions.observabilityRequestedExplicitly = requestedObservabilityEnabled !== undefined;
-  stageRecordedDeferredN1xIntent(recreateOptions, sandboxEntry, resumeConfig);
+  stageRecordedManagedVllmIntent(recreateOptions, sandboxEntry, resumeConfig);
   if (
     !stageRebuildHermesDashboardConfig(
       rebuildAgent,

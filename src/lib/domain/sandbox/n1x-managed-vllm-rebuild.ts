@@ -6,14 +6,6 @@ import { VLLM_PORT } from "../../core/vllm-port";
 const N1X_EXPRESS_PROVIDER = "vllm-local";
 const N1X_EXPRESS_MODEL = "nvidia/Qwen3.6-35B-A3B-NVFP4";
 
-/** True only for the provider/model identity reserved by N1x Express. */
-export function isN1xManagedVllmProviderModel(
-  provider: string | null | undefined,
-  model: string | null | undefined,
-): boolean {
-  return provider === N1X_EXPRESS_PROVIDER && model === N1X_EXPRESS_MODEL;
-}
-
 export interface RecordedN1xManagedVllmRoute {
   provider?: string | null;
   model?: string | null;
@@ -50,7 +42,8 @@ export function isRecordedN1xManagedVllmRebuildEligible(
   const recordedEndpointUsesCanonicalLocalRoute =
     sandboxEntry.endpointUrl === null || sandboxEntry.endpointUrl === canonicalEndpointUrl;
   if (
-    !isN1xManagedVllmProviderModel(sandboxEntry.provider, sandboxEntry.model) ||
+    sandboxEntry.provider !== N1X_EXPRESS_PROVIDER ||
+    sandboxEntry.model !== N1X_EXPRESS_MODEL ||
     !recordedEndpointUsesCanonicalLocalRoute ||
     sandboxEntry.endpointSource !== "onboard" ||
     sandboxEntry.openshellDriver !== "docker" ||
