@@ -75,6 +75,12 @@ const TARGET_REPO_ROOT = fs.realpathSync(
 );
 const CONFIG_PATH = resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT);
 const SEVERITIES: readonly Severity[] = ["info", "low", "moderate", "high", "critical"];
+export const NPM_AUDIT_SIGNATURE_ARGV = [
+  "audit",
+  "signatures",
+  `--registry=${NPM_AUDIT_REGISTRY}`,
+  "--omit=dev",
+] as const;
 const SEMVER_NUMERIC_IDENTIFIER = String.raw`(?:0|[1-9][0-9]*)`;
 const SEMVER_PRERELEASE_IDENTIFIER = String.raw`(?:${SEMVER_NUMERIC_IDENTIFIER}|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)`;
 const EXACT_NPM_PACKAGE_SPEC = new RegExp(
@@ -593,15 +599,11 @@ export function verifySignaturesWithReviewedRetry(
   directory: string,
   evidenceFile: string,
   runner: (directory: string) => CommandResult = (cwd) => {
-    const result = spawnSync(
-      "npm",
-      ["audit", "signatures", `--registry=${NPM_AUDIT_REGISTRY}`, "--omit=dev"],
-      {
-        cwd,
-        encoding: "utf-8",
-        env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
-      },
-    );
+    const result = spawnSync("npm", NPM_AUDIT_SIGNATURE_ARGV, {
+      cwd,
+      encoding: "utf-8",
+      env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
+    });
     if (result.error) throw result.error;
     return { status: result.status, stderr: result.stderr, stdout: result.stdout };
   },
@@ -727,11 +729,7 @@ function auditLockedGraph(
       path.join(artifactDirectory, `locked-graph-${index + 1}-signatures.txt`),
     );
   } else {
-    run(
-      "npm",
-      ["audit", "signatures", `--registry=${NPM_AUDIT_REGISTRY}`, "--omit=dev"],
-      directory,
-    );
+    run("npm", NPM_AUDIT_SIGNATURE_ARGV, directory);
   }
   if (graph.inputValidation === "wechat-runtime") {
     verifyWechatInstallCacheBoundary(graph, tempRoot, config.registryOrigin);
@@ -804,12 +802,7 @@ export function auditMaterializedSourceGraph(
   });
   (
     dependencies.verifySignatures ??
-    ((directory) =>
-      run(
-        "npm",
-        ["audit", "signatures", `--registry=${NPM_AUDIT_REGISTRY}`, "--omit=dev"],
-        directory,
-      ))
+    ((directory) => run("npm", NPM_AUDIT_SIGNATURE_ARGV, directory))
   )(options.directory);
   return result;
 }

@@ -10,6 +10,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   assertReviewedAuditReportsPass,
+  NPM_AUDIT_SIGNATURE_ARGV,
   auditMaterializedSourceGraph,
   emitAuditReceipt,
   materializeSourceGraph,
@@ -372,6 +373,16 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
         "https://registry.npmjs.org/",
       ),
     ).not.toThrow();
+  });
+
+  it("pins every signature audit to the reviewed Yarn registry", () => {
+    expect(NPM_AUDIT_SIGNATURE_ARGV).toEqual([
+      "audit",
+      "signatures",
+      "--registry=https://registry.yarnpkg.com",
+      "--omit=dev",
+    ]);
+    expect(NPM_AUDIT_SIGNATURE_ARGV).not.toEqual(["audit", "signatures", "--omit=dev"]);
   });
 
   it("retries signature downloads only three times and records evidence", () => {

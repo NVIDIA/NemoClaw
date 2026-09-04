@@ -228,8 +228,6 @@ describe("mcporter image supply-chain controls", () => {
 
     const lockfile = fs.readFileSync(path.join(runtimeDirectory, "package-lock.json"));
     expect(createHash("sha256").update(lockfile).digest("hex")).toBe(graph?.lockSha256);
-    expect(reviewedAuditDriver).toContain(
-      '["audit", "signatures", `--registry=${NPM_AUDIT_REGISTRY}`, "--omit=dev"],',
-    );
+    expect(reviewedAuditDriver).toContain("NPM_AUDIT_SIGNATURE_ARGV");
   });
 });
