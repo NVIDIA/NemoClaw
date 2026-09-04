@@ -54,6 +54,8 @@ export type FatalRuntimePreflightOptions = Pick<
 > & {
   /** Explicit false prevents ambient provider intent from crossing a rebuild boundary. */
   allowDeferredN1xManagedVllm?: boolean;
+  /** Verified legacy rebuild authority; never inferred from ambient process state. */
+  allowLegacyDgxStationQualification?: boolean;
   optedOutGpuPassthrough?: boolean;
 };
 
@@ -120,6 +122,7 @@ export interface OnboardHostReadinessOptions {
   allowStorageRemediation?: boolean;
   allowPortableHostPreparation?: boolean;
   allowDeferredN1xManagedVllm?: boolean;
+  allowLegacyDgxStationQualification?: boolean;
   /** Print warning-severity host advisories before returning an admitted report. */
   presentAdvisories?: boolean;
   exitProcess?: (code: number) => never;
@@ -181,6 +184,7 @@ export function assertOnboardSystemReadiness(
     allowDeferredN1xManagedVllm:
       options.allowDeferredN1xManagedVllm ??
       process.env.NEMOCLAW_PROVIDER === MANAGED_VLLM_PROVIDER_KEY,
+    allowLegacyDgxStationQualification: options.allowLegacyDgxStationQualification === true,
   });
   const advisories = planHostAdvisories(host, {
     providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
@@ -316,6 +320,7 @@ function collectOnboardHostReadiness(
     resuming: context.resuming,
     allowStorageRemediation,
     allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
+    allowLegacyDgxStationQualification: options.allowLegacyDgxStationQualification,
     // The initial host readiness gate already presented warning advisories.
     presentAdvisories: false,
     exitProcess: context.exitProcess,
@@ -411,6 +416,7 @@ async function collectAdmittedReadinessPair(
     resuming: context.resuming,
     allowStorageRemediation: isManagedGatewayReadiness(gateway),
     allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
+    allowLegacyDgxStationQualification: options.allowLegacyDgxStationQualification,
     presentAdvisories: false,
     exitProcess,
   });
@@ -594,6 +600,7 @@ export function runFatalOnboardRuntimePreflight(
     resuming: context.resuming,
     allowStorageRemediation: context.allowStorageRemediation,
     allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
+    allowLegacyDgxStationQualification: options.allowLegacyDgxStationQualification,
     exitProcess,
     observedAt,
     now,

@@ -22,6 +22,7 @@ import {
 import { resolveSandboxWorkloadRuntimeCapabilities } from "../../onboard/workload/runtime";
 import { readSandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as registry from "../../state/registry";
+import * as sandboxState from "../../state/sandbox";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import { prepareManagedRebuildProfileHandoff } from "./agents/managed-workload-rebuild-profile";
 import {
@@ -230,6 +231,9 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   );
   if (!recreateOptions) return null;
+  if (sandboxState.hasLegacyDgxStationQualificationAuthority(sandboxEntry)) {
+    recreateOptions.allowLegacyDgxStationQualification = true;
+  }
   if (mcpRuntimeSelection) recreateOptions.runtimeSelection = mcpRuntimeSelection;
   let managedWorkloadRebuildCatalog: Awaited<
     ReturnType<typeof prepareManagedWorkloadRebuildHandoff>

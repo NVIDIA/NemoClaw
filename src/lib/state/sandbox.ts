@@ -49,6 +49,7 @@ import { isObjectRecord, type UnknownRecord } from "../core/json-types.js";
 import { GATEWAY_PORT } from "../core/ports.js";
 import {
   BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
+  BACKUP_FAILURE_PERMISSION_DENIED,
   classifyFailedDirsFromTarStderr,
 } from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
@@ -185,6 +186,12 @@ export interface BackupOptions {
    * identity, and stable-read constraints before returning bytes.
    */
   captureStateFile?: StateFileCapture;
+  /**
+   * Internal privileged retry for state directories that the restricted tar
+   * path classified as permission denied. The state layer owns the temporary
+   * archive fd and validates the returned archive before publishing it.
+   */
+  captureStateDirectories?: StateDirectoryCapture;
 }
 
 export interface InstanceBackup {
@@ -213,7 +220,20 @@ export type StateFileCaptureResult =
   | { outcome: "missing" }
   | { outcome: "failed"; error?: string; unreachable?: boolean };
 
+export interface StateDirectoryCaptureRequest {
+  sandboxName: string;
+  dir: string;
+  dirs: readonly string[];
+}
+
+export type StateDirectoryCaptureResult =
+  { outcome: "backed_up" } | { outcome: "failed"; error?: string; unreachable?: boolean };
+
 export type StateFileCapture = (request: StateFileCaptureRequest) => StateFileCaptureResult | null;
+export type StateDirectoryCapture = (
+  request: StateDirectoryCaptureRequest,
+  archiveFd: number,
+) => StateDirectoryCaptureResult | null;
 
 export interface BackupResult {
   success: boolean;
@@ -791,7 +811,10 @@ export function sanitizeBackupDirectory(
   dirPath: string,
   overrides: Partial<BackupSanitizationOperations> = {},
 ): void {
-  const operations = { ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS, ...overrides };
+  const operations = {
+    ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS,
+    ...overrides,
+  };
 
   try {
     operations.sanitizeDirectory(dirPath);
@@ -978,6 +1001,37 @@ function normalizeStateFileSpecs(
   return normalized;
 }
 
+/** Check privileged snapshot requests against the owning agent manifest. */
+export function isDeclaredAgentStateFile(
+  agentName: string,
+  dir: string,
+  spec: StateFileSpec,
+): boolean {
+  const agent = loadAgent(agentName);
+  return (
+    dir === agent.configPaths.dir &&
+    ((agentName === "hermes" && spec.path === ".env" && spec.strategy === "copy") ||
+      agent.stateFiles.some(
+        (entry) => entry.path === spec.path && entry.strategy === spec.strategy,
+      ))
+  );
+}
+
+/** Check privileged directory requests against the owning agent manifest. */
+export function areDeclaredAgentStateDirectories(
+  agentName: string,
+  dir: string,
+  names: readonly string[],
+): boolean {
+  if (names.length === 0) return false;
+  const agent = loadAgent(agentName);
+  const allowed = new Set(agent.backupStateDirs);
+  return (
+    dir === agent.configPaths.dir &&
+    names.every((name) => allowed.has(name) && /^[A-Za-z0-9._-]+$/.test(name))
+  );
+}
+
 function stateFileRemotePath(dir: string, filePath: string): string {
   return `${dir.replace(/\/+$/, "")}/${filePath}`;
 }
@@ -1006,6 +1060,7 @@ export function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): s
       `src=${quotedRemotePath}`,
       '[ ! -e "$src" ] && exit 2',
       '[ -f "$src" ] && [ ! -L "$src" ] || { echo "unsafe sqlite state file: $src" >&2; exit 10; }',
+      '[ -r "$src" ] || { echo "permission denied: $src" >&2; exit 1; }',
       'hardlink_count="$(find "$src" -maxdepth 0 -type f -links +1 -print 2>/dev/null | wc -l | tr -d " ")"',
       '[ "${hardlink_count:-0}" = "0" ] || { echo "hard-linked sqlite state file rejected: $src" >&2; exit 11; }',
       'tmp="$(mktemp /tmp/nemoclaw-sqlite-backup.XXXXXX)"',
@@ -1041,7 +1096,12 @@ function capturePreservedEnvFile(
   sandboxName: string,
   dir: string,
   inventory: PreservedEnvInventory,
-): { outcome: StateFileBackupOutcome; file?: PreservedEnvFile; unreachable: boolean } {
+  captureFallback?: StateFileCapture,
+): {
+  outcome: StateFileBackupOutcome;
+  file?: PreservedEnvFile;
+  unreachable: boolean;
+} {
   const command = buildStateFileBackupCommand(dir, {
     path: inventory.path,
     strategy: "copy",
@@ -1053,16 +1113,48 @@ function capturePreservedEnvFile(
     maxBuffer: 1024 * 1024,
   });
   if (result.status === 2) return { outcome: "missing", unreachable: false };
-  if (result.status !== 0 || result.error || result.signal || !result.stdout) {
+  let captured: StateFileCaptureResult | null = null;
+  if (
+    result.status === 1 &&
+    !result.error &&
+    !result.signal &&
+    /permission denied/i.test(result.stderr?.toString() ?? "") &&
+    captureFallback !== undefined
+  ) {
+    try {
+      captured = captureFallback({
+        sandboxName,
+        dir,
+        spec: { path: inventory.path, strategy: "copy" },
+      });
+    } catch (error) {
+      captured = {
+        outcome: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  if (captured?.outcome === "missing") return { outcome: "missing", unreachable: false };
+  const data = captured?.outcome === "backed_up" ? captured.data : null;
+  if ((result.status !== 0 || result.error || result.signal || !result.stdout) && data === null) {
     const detail =
+      (captured?.outcome === "failed" ? captured.error : undefined) ||
       (result.stderr?.toString() || "").trim() ||
       result.error?.message ||
       (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
     _log(`FAILED: preserved environment capture ${inventory.path}: ${detail.substring(0, 200)}`);
-    return { outcome: "failed", unreachable: isSshTransportFailure(result) };
+    return {
+      outcome: "failed",
+      unreachable:
+        (captured?.outcome === "failed" && captured.unreachable === true) ||
+        isSshTransportFailure(result),
+    };
   }
   try {
-    const assignments = extractPreservedEnvAssignments(result.stdout.toString("utf8"), inventory);
+    const assignments = extractPreservedEnvAssignments(
+      (data ?? result.stdout).toString("utf8"),
+      inventory,
+    );
     _log(
       `Captured ${assignments.length} preserved environment ${assignments.length === 1 ? "key" : "keys"} from ${inventory.path}`,
     );
@@ -1084,12 +1176,19 @@ function capturePreservedEnvFiles(
   sandboxName: string,
   dir: string,
   inventories: readonly PreservedEnvInventory[],
+  captureFallback?: StateFileCapture,
 ): { files: PreservedEnvFile[]; failedPaths: string[]; unreachable: boolean } {
   const files: PreservedEnvFile[] = [];
   const failedPaths: string[] = [];
   let unreachable = false;
   for (const inventory of inventories) {
-    const result = capturePreservedEnvFile(configFile, sandboxName, dir, inventory);
+    const result = capturePreservedEnvFile(
+      configFile,
+      sandboxName,
+      dir,
+      inventory,
+      captureFallback,
+    );
     if (result.outcome === "backed_up" && result.file) {
       files.push(result.file);
     } else if (result.outcome === "failed") {
@@ -1107,6 +1206,7 @@ function captureAgentPreservedEnvFiles(
   dir: string,
   manifest: RebuildManifest,
   failedFiles: string[],
+  captureFallback?: StateFileCapture,
 ): boolean {
   if (agentName !== "hermes") return false;
   const preserved = capturePreservedEnvFiles(
@@ -1114,6 +1214,7 @@ function captureAgentPreservedEnvFiles(
     sandboxName,
     dir,
     HERMES_PRESERVED_ENV_INVENTORY,
+    captureFallback,
   );
   manifest.preservedEnv = preserved.files;
   failedFiles.push(...preserved.failedPaths);
@@ -1139,7 +1240,13 @@ function backupStateFile(
   if (result.status === 2) return { outcome: "missing", unreachable: false };
   const emptySqliteBackup = spec.strategy === "sqlite_backup" && result.stdout?.length === 0;
   let captured: StateFileCaptureResult | null = null;
-  if (result.status === 1 && !result.error && !result.signal && captureFallback !== undefined) {
+  if (
+    result.status === 1 &&
+    !result.error &&
+    !result.signal &&
+    (dir === "/sandbox/.openclaw" || /permission denied/i.test(result.stderr?.toString() ?? "")) &&
+    captureFallback !== undefined
+  ) {
     try {
       captured = captureFallback({ sandboxName, dir, spec });
     } catch (error) {
@@ -1183,6 +1290,78 @@ function backupStateFile(
   return { outcome: "backed_up", unreachable: false };
 }
 
+function retryPermissionDeniedDirectories(
+  captureFallback: StateDirectoryCapture | undefined,
+  sandboxName: string,
+  dir: string,
+  backupPath: string,
+  failedDirs: string[],
+  backedUpDirs: string[],
+  failedDirReasons: Record<string, string>,
+): void {
+  if (!captureFallback) return;
+  const denied = failedDirs.filter(
+    (name) => failedDirReasons[name] === BACKUP_FAILURE_PERMISSION_DENIED,
+  );
+  if (denied.length === 0) return;
+  let stagingDir: string | undefined;
+  let archivePath = "";
+  let archiveFd: number | undefined;
+  try {
+    stagingDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-privileged-"));
+    archivePath = path.join(stagingDir, "archive.tar");
+    archiveFd = openSync(archivePath, "wx", 0o600);
+    const capture = captureFallback({ sandboxName, dir, dirs: denied }, archiveFd);
+    closeSync(archiveFd);
+    archiveFd = undefined;
+    if (capture?.outcome !== "backed_up" || statSync(archivePath).size === 0) {
+      _log(
+        `FAILED: privileged state directory capture: ${capture?.outcome === "failed" ? (capture.error ?? "failed") : "no archive"}`,
+      );
+      return;
+    }
+    const allowedTopLevelEntries = new Set(denied);
+    const archiveValidation = validateTarEntries({ filePath: archivePath }, backupPath);
+    const undeclaredEntry = archiveValidation.entries.find((entry) => {
+      const normalized = entry.replace(/^\.\/+/, "");
+      const topLevel = normalized.split("/", 1)[0];
+      return !topLevel || !allowedTopLevelEntries.has(topLevel);
+    });
+    if (!archiveValidation.safe || undeclaredEntry) {
+      const detail = undeclaredEntry
+        ? `undeclared archive entry: ${undeclaredEntry}`
+        : archiveValidation.violations.join("; ");
+      _log(`FAILED: privileged state directory capture: ${detail}`);
+      return;
+    }
+    for (const name of denied) {
+      const target = path.join(backupPath, name);
+      rejectSymlinksOnPath(target);
+      rmSync(target, { recursive: true, force: true });
+    }
+    const extracted = safeTarExtract({ filePath: archivePath }, backupPath);
+    if (!extracted.success) {
+      _log(`FAILED: privileged state directory capture: ${extracted.error}`);
+      return;
+    }
+    const recovered = new Set(existingBackupDirs(backupPath, denied));
+    for (const name of denied) {
+      if (!recovered.has(name)) continue;
+      const index = failedDirs.indexOf(name);
+      if (index >= 0) failedDirs.splice(index, 1);
+      delete failedDirReasons[name];
+      if (!backedUpDirs.includes(name)) backedUpDirs.push(name);
+    }
+  } catch (error) {
+    _log(
+      `FAILED: privileged state directory capture: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  } finally {
+    if (archiveFd !== undefined) closeSync(archiveFd);
+    if (stagingDir) rmSync(stagingDir, { recursive: true, force: true });
+  }
+}
+
 // ── Backup ─────────────────────────────────────────────────────────
 
 /**
@@ -1216,7 +1395,9 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
     options.hostLocalInferenceProvenance,
   );
   if (options.runtimeSnapshot !== undefined && runtimeSnapshot === undefined) {
-    return { error: "snapshot runtime state is invalid or cannot be represented" };
+    return {
+      error: "snapshot runtime state is invalid or cannot be represented",
+    };
   }
   if (options.workload !== undefined && workload === undefined) {
     return { error: "snapshot workload authority is invalid" };
@@ -1475,7 +1656,14 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     }
     manifest.backupComplete = true;
     writeManifest(backupPath, manifest);
-    return { success: true, manifest, backedUpDirs, failedDirs, backedUpFiles, failedFiles };
+    return {
+      success: true,
+      manifest,
+      backedUpDirs,
+      failedDirs,
+      backedUpFiles,
+      failedFiles,
+    };
   }
 
   // SSH+tar single-roundtrip download
@@ -1797,10 +1985,28 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
             failedDirs.push(...existingDirs);
           }
         } else {
-          failedDirs.push(...existingDirs);
+          const tarFailedDirs = classifyFailedDirsFromTarStderr(
+            result.stderr?.toString() || "",
+            existingDirs,
+          );
+          for (const name of existingDirs) {
+            failedDirs.push(name);
+            const reason = tarFailedDirs.get(name);
+            if (reason !== undefined) failedDirReasons[name] = reason;
+          }
         }
       }
     }
+
+    retryPermissionDeniedDirectories(
+      options.captureStateDirectories,
+      sandboxName,
+      dir,
+      backupPath,
+      failedDirs,
+      backedUpDirs,
+      failedDirReasons,
+    );
 
     for (const spec of stateFiles) {
       const result = backupStateFile(
@@ -1830,6 +2036,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         dir,
         manifest,
         failedFiles,
+        options.captureStateFile,
       ) || unreachable;
   } finally {
     try {
@@ -2283,7 +2490,13 @@ function restoreSandboxStateInternal(
       return failRestoreContract(mutationAuthorityError);
     }
     _log("No dirs or files to restore");
-    return { success: true, restoredDirs, failedDirs, restoredFiles, failedFiles };
+    return {
+      success: true,
+      restoredDirs,
+      failedDirs,
+      restoredFiles,
+      failedFiles,
+    };
   }
 
   _log("Getting SSH config for restore");
@@ -2547,7 +2760,10 @@ function writeManifest(
   try {
     // A snapshot becomes recoverable only after its complete, private manifest
     // is atomically renamed into place.
-    ops.write(tempPath, JSON.stringify(manifest, null, 2), { mode: 0o600, flag: "wx" });
+    ops.write(tempPath, JSON.stringify(manifest, null, 2), {
+      mode: 0o600,
+      flag: "wx",
+    });
     ops.rename(tempPath, manifestPath);
     published = true;
   } finally {
@@ -2616,7 +2832,11 @@ export function writeRebuildPolicyHandoff(
   let published = false;
   try {
     try {
-      writeFileSync(filePath, policyDocument, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      writeFileSync(filePath, policyDocument, {
+        encoding: "utf8",
+        mode: 0o600,
+        flag: "wx",
+      });
       created = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -2669,7 +2889,10 @@ export function clearRebuildPolicyHandoff(
   const write = ops.write ?? writeManifest;
   const remove = ops.remove ?? rmSync;
   if (handoff.retired !== true) {
-    const retired = { ...manifest, rebuildPolicyHandoff: { ...handoff, retired: true as const } };
+    const retired = {
+      ...manifest,
+      rebuildPolicyHandoff: { ...handoff, retired: true as const },
+    };
     try {
       write(manifest.backupPath, retired);
     } catch {
@@ -2717,7 +2940,10 @@ function readManifest(backupPath: string): RebuildManifest | null {
   try {
     const parsed = readManifestPayload(backupPath);
     if (!isRebuildManifest(parsed)) return null;
-    const manifest = parsed as RebuildManifest & { dir?: string; writableDir?: string };
+    const manifest = parsed as RebuildManifest & {
+      dir?: string;
+      writableDir?: string;
+    };
     const dir = manifest.dir ?? manifest.writableDir;
     if (!dir) return null;
     const runtimeSnapshot =
@@ -2752,8 +2978,7 @@ function readManifest(backupPath: string): RebuildManifest | null {
 // ── Listing ────────────────────────────────────────────────────────
 
 export type RebuildRecoveryManifestValidation =
-  | { ok: true; manifest: RebuildManifest }
-  | { ok: false; reason: string };
+  { ok: true; manifest: RebuildManifest } | { ok: false; reason: string };
 
 function legacyStateFilesArePresent(backupPath: string, manifest: RebuildManifest): boolean {
   if (manifest.backupComplete !== undefined) return true;
@@ -2824,7 +3049,10 @@ export function validateRebuildRecoveryManifest(
 
   const persisted = readManifest(candidateBackupPath);
   if (!persisted || persisted.version !== MANIFEST_VERSION) {
-    return { ok: false, reason: "latest backup manifest is missing, malformed, or unsupported" };
+    return {
+      ok: false,
+      reason: "latest backup manifest is missing, malformed, or unsupported",
+    };
   }
   if (persisted.sandboxName !== sandboxName) {
     return {
@@ -2842,7 +3070,10 @@ export function validateRebuildRecoveryManifest(
     persisted.timestamp !== candidate.timestamp ||
     path.resolve(persisted.backupPath) !== candidateBackupPath
   ) {
-    return { ok: false, reason: "persisted backup identity changed during validation" };
+    return {
+      ok: false,
+      reason: "persisted backup identity changed during validation",
+    };
   }
 
   return { ok: true, manifest: persisted };
@@ -2862,6 +3093,23 @@ export function hasPositiveManagedImageEvidence(
   sandbox: Pick<registry.SandboxEntry, "nemoclawVersion">,
 ): boolean {
   return typeof sandbox.nemoclawVersion === "string" && sandbox.nemoclawVersion.trim().length > 0;
+}
+
+/**
+ * The DGX Station qualification projection was introduced in v0.0.97. A Hermes
+ * sandbox stamped by an earlier managed release may be rebuilt once without
+ * reapplying that later admission rule. Version-shaped text is not authority.
+ */
+export function hasLegacyDgxStationQualificationAuthority(
+  sandbox: Pick<registry.SandboxEntry, "agent" | "fromDockerfile" | "nemoclawVersion">,
+): boolean {
+  if (sandbox.agent !== "hermes" || sandbox.fromDockerfile != null) return false;
+  const match = /^(?:v)?0\.0\.(0|[1-9]\d*)(?:-[1-9]\d*-g[0-9a-f]{7,40})?$/i.exec(
+    sandbox.nemoclawVersion ?? "",
+  );
+  if (!match) return false;
+  const patch = Number(match[1]);
+  return Number.isSafeInteger(patch) && patch < 97;
 }
 
 /**

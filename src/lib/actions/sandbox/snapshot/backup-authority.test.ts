@@ -6,14 +6,20 @@ import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const privilegedCaptureMocks = vi.hoisted(() => ({
+  dockerSpawnSync: vi.fn(),
   executePrivilegedSandboxCommand: vi.fn(),
+  privilegedSandboxExecArgv: vi.fn(() => ["exec", "container", "python3"]),
   withPrivilegedSandboxExecutionLease: vi.fn(
     (_sandboxName: string, _operation: string, run: () => unknown) => run(),
   ),
 }));
 
+vi.mock("../../../adapters/docker/exec", () => ({
+  dockerSpawnSync: privilegedCaptureMocks.dockerSpawnSync,
+}));
 vi.mock("../../../sandbox/privileged-exec", () => ({
   executePrivilegedSandboxCommand: privilegedCaptureMocks.executePrivilegedSandboxCommand,
+  privilegedSandboxExecArgv: privilegedCaptureMocks.privilegedSandboxExecArgv,
   withPrivilegedSandboxExecutionLease: privilegedCaptureMocks.withPrivilegedSandboxExecutionLease,
 }));
 
@@ -33,6 +39,8 @@ import { createSandboxHostLocalInferenceProvenance } from "../../../state/regist
 import type { BackupOptions, BackupResult } from "../../../state/sandbox";
 import {
   backupSandboxStateWithManagedAuthority,
+  captureHermesStateDirectories,
+  captureHermesStateFile,
   captureOpenClawStateFile,
 } from "./backup-authority";
 
@@ -182,7 +190,9 @@ function explicitLlamaSandbox(agent: "openclaw" | "hermes" | "langchain-deepagen
 
 describe("managed snapshot backup authority", () => {
   beforeEach(() => {
+    privilegedCaptureMocks.dockerSpawnSync.mockReset();
     privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReset();
+    privilegedCaptureMocks.privilegedSandboxExecArgv.mockClear();
     privilegedCaptureMocks.withPrivilegedSandboxExecutionLease.mockClear();
   });
 
@@ -334,6 +344,120 @@ describe("managed snapshot backup authority", () => {
     expect(privilegedCaptureMocks.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
   });
 
+  it("captures declared Hermes files and rejects arbitrary paths", () => {
+    privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
+      status: 0,
+      signal: null,
+      error: undefined,
+      stdout: Buffer.from("state"),
+      stderr: Buffer.alloc(0),
+    } as never);
+    expect(
+      captureHermesStateFile("alpha", {
+        sandboxName: "alpha",
+        dir: "/sandbox/.hermes",
+        spec: { path: "SOUL.md", strategy: "copy" },
+      }),
+    ).toEqual({ outcome: "backed_up", data: Buffer.from("state") });
+    expect(privilegedCaptureMocks.dockerSpawnSync).toHaveBeenLastCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ maxBuffer: 256 * 1024 * 1024 }),
+    );
+    expect(
+      captureHermesStateFile("alpha", {
+        sandboxName: "alpha",
+        dir: "/sandbox/.hermes",
+        spec: { path: "credentials/token", strategy: "copy" },
+      }),
+    ).toBeNull();
+  });
+
+  it.each([
+    [2, { outcome: "missing" }],
+    [
+      1,
+      {
+        outcome: "failed",
+        error: "privileged Hermes state capture failed: exit 1",
+      },
+    ],
+  ] as const)(
+    "propagates Hermes state capture exit %i without publishing bytes",
+    (status, expected) => {
+      privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
+        status,
+        signal: null,
+        error: undefined,
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+      } as never);
+
+      expect(
+        captureHermesStateFile("alpha", {
+          sandboxName: "alpha",
+          dir: "/sandbox/.hermes",
+          spec: { path: "SOUL.md", strategy: "copy" },
+        }),
+      ).toEqual(expected);
+    },
+  );
+
+  it("streams only declared Hermes directories to the state-owned archive fd", () => {
+    privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
+      status: 0,
+      signal: null,
+      error: undefined,
+      stdout: null,
+      stderr: Buffer.alloc(0),
+    } as never);
+    expect(
+      captureHermesStateDirectories(
+        "alpha",
+        { sandboxName: "alpha", dir: "/sandbox/.hermes", dirs: ["workspace"] },
+        42,
+      ),
+    ).toEqual({ outcome: "backed_up" });
+    expect(privilegedCaptureMocks.dockerSpawnSync).toHaveBeenLastCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ stdio: ["ignore", 42, "pipe"] }),
+    );
+    expect(
+      captureHermesStateDirectories(
+        "alpha",
+        { sandboxName: "other", dir: "/sandbox/.hermes", dirs: ["workspace"] },
+        42,
+      ),
+    ).toBeNull();
+    expect(
+      captureHermesStateDirectories(
+        "alpha",
+        { sandboxName: "alpha", dir: "/sandbox/.hermes", dirs: ["../outside"] },
+        42,
+      ),
+    ).toBeNull();
+  });
+
+  it("does not execute privileged capture when a normal Hermes backup succeeds", () => {
+    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+    const result = backupSandboxStateWithManagedAuthority(
+      "alpha",
+      {},
+      {
+        getSandbox: () => ({ name: "alpha", agent: "hermes" }) as SandboxEntry,
+        backup,
+      },
+    );
+    expect(result.success).toBe(true);
+    expect(backup).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        captureStateFile: expect.any(Function),
+        captureStateDirectories: expect.any(Function),
+      }),
+    );
+    expect(privilegedCaptureMocks.dockerSpawnSync).not.toHaveBeenCalled();
+  });
+
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "captures and republishes exact %s provider authority",
     (agent) => {
@@ -457,7 +581,10 @@ describe("managed snapshot backup authority", () => {
     expect(result.success).toBe(true);
     expect(backup).toHaveBeenCalledWith(
       "alpha",
-      expect.objectContaining({ name: "legacy", captureStateFile: expect.any(Function) }),
+      expect.objectContaining({
+        name: "legacy",
+        captureStateFile: expect.any(Function),
+      }),
     );
     expect(requireProvider).not.toHaveBeenCalled();
     expect(captureRuntime).not.toHaveBeenCalled();
