@@ -13,7 +13,9 @@ import {
   verifyBundledNpmTar,
 } from "../../scripts/patch-bundled-npm-tar.mts";
 import {
+  REVIEWED_NPM_INTEGRITY,
   REVIEWED_NPM_PACKAGES,
+  REVIEWED_NPM_TARBALL,
   REVIEWED_NPM_VERSION,
   upgradeBundledNpm,
   verifyReviewedNpm,
@@ -37,12 +39,13 @@ function writePackage(root: string, location: string, name: string, version: str
   writeJson(path.join(root, "node_modules", location, "package.json"), { name, version });
 }
 
-function affectedNpm(version: "10.9.8" | "11.13.0" | "11.16.0"): string {
+function affectedNpm(version: "10.9.8" | "11.13.0" | "11.16.0" | "11.18.0"): string {
   const root = path.join(temporaryDirectory(), "npm");
   writeJson(path.join(root, "package.json"), { name: "npm", version });
   writePackage(root, "brace-expansion", "brace-expansion", "2.0.2");
   writePackage(root, "picomatch", "picomatch", "4.0.3");
   writePackage(root, "sigstore", "sigstore", version === "10.9.8" ? "3.1.0" : "4.0.0");
+  writePackage(root, "ip-address", "ip-address", "10.1.0");
   writePackage(root, "tar", "tar", "7.5.20");
   return root;
 }
@@ -62,6 +65,7 @@ function reviewedNpm(): string {
     "brace-expansion",
     REVIEWED_NPM_PACKAGES["brace-expansion"],
   );
+  writePackage(root, "ip-address", "ip-address", REVIEWED_NPM_PACKAGES["ip-address"]);
   writePackage(
     root,
     path.join("tinyglobby", "node_modules", "picomatch"),
@@ -89,6 +93,14 @@ afterEach(() => {
 });
 
 describe("reviewed bundled npm upgrade", () => {
+  it("binds the reviewed npm release to its immutable registry artifact", () => {
+    expect(REVIEWED_NPM_VERSION).toBe("12.0.2");
+    expect(REVIEWED_NPM_INTEGRITY).toBe(
+      "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==",
+    );
+    expect(REVIEWED_NPM_TARBALL).toBe("https://registry.npmjs.org/npm/-/npm-12.0.2.tgz");
+  });
+
   it("verifies the complete reviewed dependency set", () => {
     const state = verifyReviewedNpm(reviewedNpm());
 
@@ -96,6 +108,7 @@ describe("reviewed bundled npm upgrade", () => {
       npmVersion: REVIEWED_NPM_VERSION,
       packages: {
         "brace-expansion": [REVIEWED_NPM_PACKAGES["brace-expansion"]],
+        "ip-address": [REVIEWED_NPM_PACKAGES["ip-address"]],
         picomatch: [REVIEWED_NPM_PACKAGES.picomatch],
         sigstore: [REVIEWED_NPM_PACKAGES.sigstore],
         tar: [REVIEWED_NPM_PACKAGES.tar],
@@ -116,7 +129,7 @@ describe("reviewed bundled npm upgrade", () => {
     expect(verifyBundledNpmTar(npmRoot).tarVersion).toBe("7.5.21");
   });
 
-  it.each(["10.9.8", "11.13.0", "11.16.0"] as const)(
+  it.each(["10.9.8", "11.13.0", "11.16.0", "11.18.0"] as const)(
     "replaces npm %s before running npm or npx",
     (version) => {
       const npmRoot = affectedNpm(version);
@@ -170,8 +183,8 @@ describe("reviewed bundled npm upgrade", () => {
 
   it("fails closed on reviewed-package drift", () => {
     const drifted = reviewedNpm();
-    writePackage(drifted, "sigstore", "sigstore", "4.1.0");
-    expect(() => verifyReviewedNpm(drifted)).toThrow("expected only 4.1.1");
+    writePackage(drifted, "sigstore", "sigstore", "4.1.1");
+    expect(() => verifyReviewedNpm(drifted)).toThrow("expected only 5.0.0");
   });
 
   it("fails closed on an unreviewed current npm version", () => {

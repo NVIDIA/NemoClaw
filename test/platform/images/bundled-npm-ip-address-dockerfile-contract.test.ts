@@ -44,7 +44,7 @@ const tarPatchArgumentsByDockerfile = {
 describe("bundled npm ip-address image remediation contract", () => {
   it("binds the replacement to the reviewed npm and registry artifact", () => {
     expect(REVIEWED_NPM_VERSION).toBe(UPGRADED_NPM_VERSION);
-    expect(REVIEWED_NPM_VERSION).toBe("11.18.0");
+    expect(REVIEWED_NPM_VERSION).toBe("12.0.2");
     expect(FIXED_IP_ADDRESS_VERSION).toBe("10.3.1");
     expect(FIXED_IP_ADDRESS_INTEGRITY).toBe(
       "sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==",

@@ -3,7 +3,7 @@
 #
 # NemoClaw sandbox base image — expensive, rarely-changing layers.
 #
-# Contains: node:22-trixie-slim, apt packages, setpriv, user/group setup,
+# Contains: node:24.18.1-trixie-slim, apt packages, setpriv, user/group setup,
 # .openclaw directory structure, OpenClaw CLI, and PyYAML.
 #
 # Built on main merges and pushed to GHCR. The production Dockerfile
@@ -15,11 +15,11 @@
 # structural (users, directories, symlinks) that doesn't depend on
 # NemoClaw application code. Specifically:
 #
-#   node:22-trixie-slim — pinned by sha256 digest, checked weekly by
+#   node:24.18.1-trixie-slim — pinned by sha256 digest, checked weekly by
 #                          docker-pin-check.yaml
 #   apt packages        — pinned to Debian trixie versions
 #   util-linux          — pinned Debian package providing setpriv
-#   npm 11.18.0         — reviewed archive + sha512 integrity
+#   npm 12.0.2         — reviewed archive + sha512 integrity
 #   gateway/sandbox     — OS users and groups; names and UIDs are a
 #     users               stable contract with OpenShell
 #   .openclaw dirs      — directory structure is dictated by the OpenClaw
@@ -40,7 +40,7 @@
 #   1. OpenClaw CLI version bump    — update OPENCLAW_VERSION default below, or override via --build-arg / workflow_dispatch
 #   2. New apt package needed       — add it to the apt-get install list
 #   3. util-linux upgrade           — update the pinned apt package version
-#   4. node:22-trixie-slim digest rotated — update-docker-pin.sh updates all
+#   4. node:24.18.1-trixie-slim digest rotated — update-docker-pin.sh updates all
 #                                      Dockerfile and Dockerfile.base
 #   5. npm upgrade                  — update upgrade-bundled-npm.mts
 #   6. New .openclaw subdirectory   — add mkdir below
@@ -59,7 +59,7 @@ ARG PERL_PACKAGE_REVISION=1nemoclaw1
 # Debian trixie has not published libssh2 or Python packages containing the
 # reviewed upstream fixes. Build native packages once and install the same
 # artifacts into the managed OpenClaw image.
-FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS native-security-builder
+FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS native-security-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential=12.12 \
@@ -97,7 +97,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN bash /scripts/security/build-perl-security-packages.sh \
     /out "${PERL_VERSION}" "${PERL_SHA256}" "${PERL_PACKAGE_REVISION}"
 
-FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c
+FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc
 
 COPY --from=perl-builder /out /tmp/nemoclaw-native-security
 
@@ -447,19 +447,19 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
 RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# npm 11.18.0 restores affected tar 7.5.19. Replace it from the
+# npm 12.0.2 restores affected tar 7.5.19. Replace it from the
 # registry- and SRI-verified 7.5.21 archive before any npm consumers run.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# npm 11.18.0 contains brace-expansion 5.0.7. Replace only that private
+# npm 12.0.2 contains brace-expansion 5.0.7. Replace only that private
 # package from the reviewed 5.0.9 archive after the complete npm upgrade.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# npm 11.18.0 contains ip-address 10.2.0. Replace only that private package
+# npm 12.0.2 contains ip-address 10.2.0. Replace only that private package
 # with the reviewed 10.3.1 archive after the complete npm upgrade.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \

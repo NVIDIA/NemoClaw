@@ -33,7 +33,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.18.1"
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - id: scan
         name: Reproduce PR merges
@@ -72,7 +75,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.18.1"
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - id: prepare
         name: Reproduce the recorded conflict
@@ -144,7 +150,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.18.1"
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - id: download
         name: Download the resolution patch

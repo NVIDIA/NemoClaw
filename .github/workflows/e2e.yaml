@@ -130,6 +130,8 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/checks/package-openshell-sdk-for-pr.mts
@@ -142,9 +144,12 @@ jobs:
       - name: Set up Node for reviewed package download
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.18.1"
           registry-url: https://npm.pkg.github.com
           scope: "@nvidia"
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - id: package
         name: Download and verify exact OpenShell SDK package
@@ -236,7 +241,10 @@ jobs:
       - name: Set up Node for publication verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - id: select_pr_source
         name: Resolve exact PR managed-image publication
@@ -670,7 +678,10 @@ jobs:
       - name: Set up Node for trusted E2E planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Install trusted E2E planner dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -919,6 +930,8 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
             test/e2e/registry/native-runtime-qualification.ts
             tools/e2e/native-runtime-qualification-producer-plan.mts
@@ -936,7 +949,10 @@ jobs:
       - name: Set up Node for trusted qualification planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - id: source
         name: Authenticate the candidate and dispatch artifact
@@ -1268,6 +1284,8 @@ jobs:
           path: .qualification-workflow
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
             scripts/checks/run-native-runtime-installer-qualification.sh
             test/e2e/registry/native-runtime-qualification.ts
@@ -1287,7 +1305,10 @@ jobs:
       - name: Set up Node for candidate execution
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Require a reviewed Ubuntu runtime host
         shell: bash
@@ -2481,6 +2502,8 @@ jobs:
           path: .qualification-aggregate
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
             test/e2e/registry/native-runtime-qualification.ts
             tools/e2e/native-runtime-qualification-producer-plan.mts
@@ -2539,7 +2562,10 @@ jobs:
       - name: Set up Node for qualification aggregation
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Validate and aggregate all 24 case receipts
         working-directory: .qualification-aggregate
@@ -3957,13 +3983,18 @@ jobs:
           path: .trusted-openshell-dev-artifact
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
             scripts/install-openshell.sh
             tools/e2e/openshell-dev-artifact.mts
 
       - name: Set up Node for OpenShell dev artifact resolution
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - id: resolve_openshell_dev_artifact
         name: Resolve immutable OpenShell dev artifact
@@ -4023,8 +4054,11 @@ jobs:
       - name: Set up Node.js for trusted OpenShell verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24.18.1
           package-manager-cache: false
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -4043,6 +4077,8 @@ jobs:
           path: .trusted-openshell-dev-artifact
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
             .github/scripts/copy-openshell-dev-asset.sh
             .github/scripts/docker-auth-cleanup.sh
             scripts/install-openshell.sh
@@ -4661,8 +4697,11 @@ jobs:
       - name: Set up Node for trusted llama.cpp plan compilation
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24.18.1
           cache: npm
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Install trusted llama.cpp plan dependencies
         run: npm ci --ignore-scripts
@@ -5425,7 +5464,10 @@ jobs:
           ENV: /dev/null
           NODE_OPTIONS: ""
         with:
-          node-version: "22"
+          node-version: "24.18.1"
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Prepare native Podman E2E runtime
         uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
@@ -5597,7 +5639,10 @@ jobs:
       - name: Set up Node for Jetson controller
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Dispatch exact commit to Jetson through operator backend
         env:

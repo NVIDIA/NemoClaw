@@ -95,6 +95,8 @@ jobs:
           path: .trusted-reviewed-npm-audit
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
             .github/actions/ci-reviewed-npm-audit
             ci/npm-audit-exceptions.json
             ci/reviewed-npm-audit.json
@@ -159,7 +161,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Validate staging QA source
         shell: bash
@@ -486,7 +491,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Validate Deep Agents PR base build arguments
         if: matrix.agent == 'langchain-deepagents-code'
@@ -958,7 +966,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Bind E2E correlation identity
         shell: bash
@@ -1060,7 +1071,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Bind E2E correlation identity
         shell: bash
@@ -1190,10 +1204,13 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
       # Pi has no published base alias yet, so the candidate lane builds its own
       # base on the target architecture. The activation change adds the shared
       # published-base contract with the rest of the release cohort.
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
       - name: Build the exact Pi candidate base
         id: base
         shell: bash

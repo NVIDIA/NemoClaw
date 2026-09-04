@@ -62,6 +62,8 @@ jobs:
           path: trusted
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
             scripts/lib/read-artifact-zip.mts
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
             test/e2e/registry/native-runtime-qualification.ts
@@ -71,7 +73,10 @@ jobs:
       - name: Set up pinned Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.23.1
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Authenticate and consume protected qualification evidence
         id: collect

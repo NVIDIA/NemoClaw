@@ -78,10 +78,10 @@ function reviewedConfigSource(packageIdentity: ReviewedSourceRegistryPackage = r
     artifactDirectory: "artifacts/reviewed-npm-audit",
     exceptionFile: "ci/npm-audit-exceptions.json",
     lockedGraphs: [],
-    nodeVersion: "22.23.2",
+    nodeVersion: "24.18.1",
     npmIntegrity:
       "sha512-OnUGvKW3lJs/ooPKDKUNfz1UmMfF48YWbjNA20QdiWrCVnZaAPppOfHPnfGiPb+1lKIsxjKXQ4UAfDI7PcvLPg==",
-    npmVersion: "10.9.4",
+    npmVersion: "12.0.2",
     registryOrigin: "https://registry.npmjs.org/",
     schemaVersion: 2,
     severityThreshold: "high",

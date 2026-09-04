@@ -36,7 +36,7 @@ export const FIXED_IP_ADDRESS_INTEGRITY =
   "sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==";
 export const FIXED_IP_ADDRESS_TARBALL =
   "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz";
-export const REVIEWED_NPM_VERSION = "11.18.0";
+export const REVIEWED_NPM_VERSION = "12.0.2";
 
 const REVIEWED_IP_ADDRESS_VERSIONS = new Set([
   AFFECTED_IP_ADDRESS_VERSION,

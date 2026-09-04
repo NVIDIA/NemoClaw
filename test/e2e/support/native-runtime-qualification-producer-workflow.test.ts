@@ -574,7 +574,7 @@ describe("native runtime qualification producer workflow", () => {
     expect(identity.run).toContain('.status == "in_progress"');
     expect(identity.run).toContain("select(length == 1)");
     expect(identity.run).toContain("Aggregate job lookup exceeds the bounded 100-job page");
-    expect(setupNode.with?.["node-version"]).toBe("22.19.0");
+    expect(setupNode.with?.["node-version"]).toBe("24.18.1");
     expect(collect.run).toContain("native-runtime-qualification-producer-aggregate.mts");
     expect(collect.env?.QUALIFICATION_PLAN).toBe(
       "${{ needs.native-runtime-qualification-producer-plan.outputs.matrix }}",

@@ -80,7 +80,7 @@ export function inspectBundledNpmTar(npmRoot: string): BundledNpmTarState {
   const bundleDependencies = manifest.bundleDependencies;
   if (
     manifest.name !== "npm" ||
-    (npmMajor !== 10 && npmMajor !== 11) ||
+    (npmMajor !== 10 && npmMajor !== 11 && npmMajor !== 12) ||
     typeof tarRange !== "string" ||
     !/^\^7\.5\.(0|[1-9]\d*)$/u.test(tarRange) ||
     !Array.isArray(bundleDependencies) ||

@@ -63,13 +63,18 @@ jobs:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.workflow_sha }}
           path: trusted-shellcheck-converter
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
             scripts/shellcheck-json1-to-sarif.mts
           sparse-checkout-cone-mode: false
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Install ShellCheck
         run: |

@@ -31,3 +31,9 @@ fi
 npm install --global "$archive" \
   --userconfig /dev/null \
   --ignore-scripts --no-audit --no-fund --offline
+
+installed_version="$(npm --version)"
+if [ "$installed_version" != "$version" ]; then
+  echo "ERROR: installed npm@$installed_version does not match reviewed npm@$version." >&2
+  exit 1
+fi

@@ -24,22 +24,23 @@ import {
   requireRealDirectory as realDirectory,
 } from "./lib/bundled-npm-package.mts";
 
-export const REVIEWED_NPM_VERSION = "11.18.0";
+export const REVIEWED_NPM_VERSION = "12.0.2";
 export const REVIEWED_NPM_INTEGRITY =
-  "sha512-T67M4L5wNm0cZ7EBLErcEkY1SmzEW/WJ+SADBzsFUY1UdAPfFHXFQtZ6SEXiK0+vzXysCvAsepbMaBTwnrAD+w==";
-export const REVIEWED_NPM_TARBALL = "https://registry.npmjs.org/npm/-/npm-11.18.0.tgz";
+  "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==";
+export const REVIEWED_NPM_TARBALL = "https://registry.npmjs.org/npm/-/npm-12.0.2.tgz";
 
 // This is the immutable upstream archive inventory, not the completed image
-// state. npm 11.18.0 includes affected tar 7.5.19, so every image composition
+// state. npm 12.0.2 includes affected tar 7.5.19, so every image composition
 // patches the private tar tree again after installing this reviewed archive.
 export const REVIEWED_NPM_PACKAGES = {
   "brace-expansion": "5.0.7",
-  picomatch: "4.0.4",
-  sigstore: "4.1.1",
+  "ip-address": "10.2.0",
+  picomatch: "4.0.5",
+  sigstore: "5.0.0",
   tar: "7.5.19",
 } as const;
 
-const REPLACEABLE_NPM_VERSIONS = new Set(["10.9.8", "11.13.0", "11.16.0"]);
+const REPLACEABLE_NPM_VERSIONS = new Set(["10.9.8", "11.13.0", "11.16.0", "11.18.0"]);
 
 function npmVersion(npmRoot: string): string {
   const manifest = readJson(join(npmRoot, "package.json"), "npm package manifest");
@@ -111,6 +112,7 @@ export function verifyReviewedNpm(npmRoot: string): ReviewedNpmState {
     npmVersion: version,
     packages: {
       "brace-expansion": packages.get("brace-expansion") ?? [],
+      "ip-address": packages.get("ip-address") ?? [],
       picomatch: packages.get("picomatch") ?? [],
       sigstore: packages.get("sigstore") ?? [],
       tar: packages.get("tar") ?? [],

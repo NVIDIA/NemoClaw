@@ -6,10 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import {
-  FIXED_TAR_VERSION,
-  NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH,
-} from "../../../scripts/patch-bundled-npm-tar.mts";
+import { FIXED_TAR_VERSION } from "../../../scripts/patch-bundled-npm-tar.mts";
+import { REVIEWED_NPM_VERSION } from "../../../scripts/upgrade-bundled-npm.mts";
 import {
   dockerfileRunCommandPositions,
   requireReviewedDockerfileRunCommands,
@@ -76,7 +74,55 @@ const pinnedBaseDockerfiles = [
   "agents/langchain-deepagents-code/Dockerfile.base",
   "agents/pi/Dockerfile.base",
 ] as const;
-const reviewedNodeBases = new Set<string>(NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH);
+const REVIEWED_NODE_BASE =
+  "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
+const reviewedNodeBases = new Set<string>([REVIEWED_NODE_BASE]);
+const directNodeDockerfiles = [
+  "Dockerfile",
+  "Dockerfile.base",
+  "agents/hermes/Dockerfile",
+  "agents/hermes/Dockerfile.base",
+  "agents/langchain-deepagents-code/Dockerfile",
+  "agents/langchain-deepagents-code/Dockerfile.base",
+  "agents/pi/Dockerfile",
+  "agents/pi/Dockerfile.base",
+] as const;
+const npmHelperInvocationMarkers = [
+  /\/opt\/nemoclaw-build-tools\/npm-ci-locked\.sh/gu,
+  /node --experimental-strip-types \/opt\/[^\s]*reviewed-npm-archive\.mts/gu,
+  /node --experimental-strip-types \/opt\/[^\s]*seed-reviewed-npm-cache\.mts/gu,
+] as const;
+
+interface DirectNodeStage {
+  readonly file: string;
+  readonly name: string;
+  readonly source: string;
+}
+
+function directNodeStages(file: string, source: string): DirectNodeStage[] {
+  const starts = [...source.matchAll(/^FROM\s+([^\s]+)(?:\s+AS\s+(\S+))?$/gmu)];
+  return starts.flatMap((match, index) =>
+    match[1]!.startsWith("node:24.18.1-") || match[1] === "npm12"
+      ? [
+          {
+            file,
+            name: match[2] ?? "<final>",
+            source: source.slice(match.index, starts[index + 1]?.index ?? source.length),
+          },
+        ]
+      : [],
+  );
+}
+
+function firstNpmInvocation(stage: DirectNodeStage): number {
+  const commandPositions = ["npm", "npx"].flatMap((command) =>
+    dockerfileRunCommandPositions(stage.source, command),
+  );
+  const helperPositions = npmHelperInvocationMarkers.flatMap((marker) =>
+    [...stage.source.matchAll(marker)].map((match) => match.index!),
+  );
+  return Math.min(...commandPositions, ...helperPositions, Number.POSITIVE_INFINITY);
+}
 
 interface ShellToken {
   end: number;
@@ -264,20 +310,15 @@ describe("node-tar image remediation contract", () => {
       assertReviewedNodeBases(file, source);
       for (const base of nodeBaseReferences(source)) observedBases.add(base);
     });
-    expect([...observedBases].sort()).toEqual(
-      [...NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH].sort(),
-    );
+    expect([...observedBases]).toEqual([REVIEWED_NODE_BASE]);
   });
 
   // source-shape-contract: security -- Each managed Dockerfile must remain bound to a reviewed Node base digest.
   it("rejects an isolated unreviewed Deep Agents Code Node base pin", () => {
     const file = "agents/langchain-deepagents-code/Dockerfile.base";
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
-    const reviewedBase = NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH.find((base) =>
-      base.startsWith("node:22-"),
-    );
-    assert(reviewedBase !== undefined, "the reviewed Node 22 base must be registered");
-    const unreviewedBase = `node:22-trixie-slim@sha256:${"0".repeat(64)}`;
+    const reviewedBase = REVIEWED_NODE_BASE;
+    const unreviewedBase = `node:24.18.1-trixie-slim@sha256:${"0".repeat(64)}`;
     const changedSource = source.replaceAll(reviewedBase, unreviewedBase);
 
     expect(() => assertReviewedNodeBases(file, changedSource)).toThrow(
@@ -388,6 +429,55 @@ describe("node-tar image remediation contract", () => {
 });
 
 describe("reviewed npm image remediation contract", () => {
+  // source-shape-contract: security -- Direct Node stages must upgrade reviewed npm before any npm-backed build boundary executes.
+  it("upgrades and verifies reviewed npm before every direct Node stage npm boundary", () => {
+    const stages = directNodeDockerfiles.flatMap((file) =>
+      directNodeStages(file, fs.readFileSync(path.join(repoRoot, file), "utf8")),
+    );
+    const invokingStages = stages.filter((stage) => Number.isFinite(firstNpmInvocation(stage)));
+    const upgrade = "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts";
+
+    expect(stages.map(({ file, name }) => `${file}:${name}`)).toEqual([
+      "Dockerfile:npm12",
+      "Dockerfile:builder",
+      "Dockerfile:managed-bootstrap-entrypoint-builder",
+      "Dockerfile:codex-acp-runtime",
+      "Dockerfile:wechat-npm-cache",
+      "Dockerfile:openclaw-managed-messaging-npm-cache-0",
+      "Dockerfile:openclaw-managed-messaging-npm-cache-1",
+      "Dockerfile.base:native-security-builder",
+      "Dockerfile.base:<final>",
+      "agents/hermes/Dockerfile:managed-bootstrap-entrypoint-builder",
+      "agents/hermes/Dockerfile.base:native-security-builder",
+      "agents/hermes/Dockerfile.base:<final>",
+      "agents/langchain-deepagents-code/Dockerfile:managed-bootstrap-entrypoint-builder",
+      "agents/langchain-deepagents-code/Dockerfile.base:native-security-builder",
+      "agents/langchain-deepagents-code/Dockerfile.base:<final>",
+      "agents/pi/Dockerfile:managed-bootstrap-entrypoint-builder",
+      "agents/pi/Dockerfile.base:native-security-builder",
+      "agents/pi/Dockerfile.base:<final>",
+    ]);
+    expect(invokingStages.map(({ file, name }) => `${file}:${name}`)).toEqual([
+      "Dockerfile:builder",
+      "Dockerfile:codex-acp-runtime",
+      "Dockerfile:wechat-npm-cache",
+      "Dockerfile:openclaw-managed-messaging-npm-cache-1",
+      "Dockerfile.base:<final>",
+      "agents/hermes/Dockerfile.base:<final>",
+      "agents/pi/Dockerfile.base:<final>",
+    ]);
+    expect(
+      invokingStages.every((stage) => {
+        const position = stage.source.indexOf(upgrade);
+        return (
+          (position >= 0 || stage.source.startsWith("FROM npm12 AS ")) &&
+          position < firstNpmInvocation(stage)
+        );
+      }),
+    ).toBe(true);
+    expect(REVIEWED_NPM_VERSION).toBe("12.0.2");
+  });
+
   it.each([
     ["a flag-only global option", "npm --silent ci"],
     ["mixed global options", "npm --prefix /work --silent install"],

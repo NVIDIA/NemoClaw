@@ -28,6 +28,8 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
             test/e2e/
             test/helpers/
             tools/e2e/
@@ -61,8 +63,11 @@ jobs:
         timeout-minutes: 10
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.18.1"
           cache: npm
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Install dependencies
         timeout-minutes: 10

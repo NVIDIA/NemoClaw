@@ -39,10 +39,13 @@ jobs:
       - name: Set up trusted installer hash parser runtime
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
 
       # The checkout of the latest PR commit supplies data only. The checker and
       # pin parser execute from the checkout of the PR base SHA below.
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
       - name: Checkout pull request head
         if: github.event_name == 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

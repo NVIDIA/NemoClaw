@@ -25,7 +25,7 @@ COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-im
 # Compile the bootstrap boundary on the target platform. The output is a
 # freestanding static ELF; only its reviewed, non-executable Bash body remains
 # interpreted at runtime after the native boundary has scrubbed process control.
-FROM node:22-trixie@sha256:a566dd560283ae5615c8bb86b58fa8a1b6f3c82b492473a061672416266625da AS managed-bootstrap-entrypoint-builder
+FROM node:24.18.1-trixie@sha256:dfa43abae25030f5456007944f725379d1f5be4bb723bd501ac39ac72ffa5474 AS managed-bootstrap-entrypoint-builder
 ARG TARGETARCH
 WORKDIR /opt/nemoclaw-managed-bootstrap-build
 COPY scripts/managed-bootstrap-entrypoint.c ./

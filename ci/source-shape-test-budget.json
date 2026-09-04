@@ -102,6 +102,16 @@
       "category": "security"
     },
     {
+      "file": "test/platform/images/node-tar-dockerfile-contract.test.ts",
+      "test": "upgrades and verifies reviewed npm before every direct Node stage npm boundary",
+      "category": "security"
+    },
+    {
+      "file": "test/repository/github-actions-node-npm-invariant.test.ts",
+      "test": "selects the reviewed Node and npm identities before further steps",
+      "category": "security"
+    },
+    {
       "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
       "test": "rebuilds a guarded core archive with the patched fs-safe package bundled",
       "category": "security"

@@ -17,8 +17,10 @@ ARG CODEX_ACP_0_11_1_INTEGRITY=sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLr
 ARG CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY=sha512-30vSoZuW1DP6Nuz24Gg3jgVC37IYe0bZ/Fgc5+372gc0h72NN4zHYAbu5bRd/gUJ9GdwABKrrEPCoFPlOTVTnQ==
 ARG CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY=sha512-I1f6WoSLbLlsWq4zH+vtwdoc4Y41mqRXPpSkfgIifxBw34QmWJmi37etZ7lKTYp6R+J/Z4PUN0rsmnsmKpBZTw==
 
-# Stage 1: Build TypeScript plugin from source
-FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS builder
+FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS npm12
+COPY scripts/lib/bundled-npm-package.mts scripts/upgrade-bundled-npm.mts /scripts/
+RUN apt-get update && apt-get install -y --no-install-recommends curl=8.14.1-2+deb13u4 && rm -rf /var/lib/apt/lists/* && node --experimental-strip-types /scripts/upgrade-bundled-npm.mts --npm-root /usr/local/lib/node_modules/npm
+FROM npm12 AS builder
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
@@ -40,8 +42,6 @@ RUN npm run build \
     && node --experimental-strip-types \
         /opt/nemoclaw-build-checks/verify-openshell-policy-boundary-dependencies.mts \
         /opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs
-
-# Stage 2: Build TypeScript messaging runtime preloads.
 FROM builder AS runtime-preload-builder
 WORKDIR /opt/nemoclaw-root
 COPY tsconfig.runtime-preloads.json /opt/nemoclaw-root/
@@ -62,7 +62,7 @@ COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-im
 # Compile the bootstrap boundary on the target platform. The output is a
 # freestanding static ELF; only its reviewed, non-executable Bash body remains
 # interpreted at runtime after the native boundary has scrubbed process control.
-FROM node:22-trixie@sha256:a566dd560283ae5615c8bb86b58fa8a1b6f3c82b492473a061672416266625da AS managed-bootstrap-entrypoint-builder
+FROM node:24.18.1-trixie@sha256:dfa43abae25030f5456007944f725379d1f5be4bb723bd501ac39ac72ffa5474 AS managed-bootstrap-entrypoint-builder
 ARG TARGETARCH
 WORKDIR /opt/nemoclaw-managed-bootstrap-build
 COPY scripts/managed-bootstrap-entrypoint.c ./
@@ -139,7 +139,7 @@ FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
 
 # Reviewed-archive invariants (#5896): checksum-addressed source archives,
 # committed SRI verification, offline installation, and architecture selection.
-FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS codex-acp-runtime
+FROM npm12 AS codex-acp-runtime
 ARG TARGETARCH
 ARG CODEX_ACP_0_11_1_INTEGRITY
 ARG CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY
@@ -162,7 +162,7 @@ RUN --network=none set -eu; \
     rm -rf /tmp/codex-acp; \
     command -v codex-acp >/dev/null
 
-FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS wechat-npm-cache
+FROM npm12 AS wechat-npm-cache
 COPY agents/openclaw/wechat-runtime/package.json agents/openclaw/wechat-runtime/package-lock.json /opt/wechat-runtime/
 COPY scripts/checks/materialize-locked-npm-cache-seed.mts /opt/checks/
 COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/seed-reviewed-npm-cache.mts /opt/nemoclaw-build-tools/
@@ -487,10 +487,10 @@ FROM openclaw-managed-messaging-npm-${TARGETARCH}-archives AS openclaw-managed-m
 
 # Keep the complete managed-image messaging dependency graph inert for normal
 # Dockerfile builds. Release-image builds select the lock cache stage.
-FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS openclaw-managed-messaging-npm-cache-0
+FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS openclaw-managed-messaging-npm-cache-0
 RUN install -d -o root -g root -m 0755 /out/npm-cache
 
-FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS openclaw-managed-messaging-npm-cache-1
+FROM npm12 AS openclaw-managed-messaging-npm-cache-1
 ARG TARGETARCH
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
