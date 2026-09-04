@@ -8,6 +8,21 @@ import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
+const OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS = 2;
+const TRANSIENT_PROVIDER_AVAILABILITY_RE =
+  /\bServiceUnavailable(?:Error)?\b|\bHTTP(?: status(?: code)?)?[:= ]+5\d{2}\b|\bstatus(?: code)?[:= ]+5\d{2}\b|\b5\d{2} (?:Bad Gateway|Gateway Timeout|Internal Server Error|Service Unavailable)\b/iu;
+const TERMINAL_LAUNCH_FAILURE_RE =
+  /authentication failed|authorization failed|unauthorized|forbidden|HTTP(?: status)?[:= ]+40[13]\b|\b40[13]\b|invalid[^\r\n]*(?:api[_ -]?key|credential|JSON|response)|denied by network policy|network policy denied|policy [^\r\n]*failed|routing [^\r\n]*failed|route [^\r\n]*failed|proxy [^\r\n]*failed|malformed|structured session evidence was invalid|launch final structured session evidence did not qualify|message_(?:content_empty|order_invalid)|session_(?:record_incomplete|removed|rewritten|truncated)|multiple_sessions_changed|extra_message|verifier_failed|PTY [^\r\n]*(?:failed|invalid|unavailable)|structured session baseline cleanup failed|launch host session cleanup failed|launch PTY monitor cleanup failed|launch could not remove/iu;
+
+function isTransientProviderAvailabilityFailure(
+  result: Pick<ShellProbeResult, "stdout" | "stderr">,
+): boolean {
+  const output = resultText(result);
+  return (
+    TRANSIENT_PROVIDER_AVAILABILITY_RE.test(output) && !TERMINAL_LAUNCH_FAILURE_RE.test(output)
+  );
+}
+
 export const OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT =
   'if [ -r "/tmp/nemoclaw-proxy-env.sh" ]; then builtin source "/tmp/nemoclaw-proxy-env.sh" || exit $?; fi; builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"';
 
@@ -1346,35 +1361,48 @@ export async function runOpenClawLaunchSession(
   if (!options.host.openshellCommandPath.startsWith("/")) {
     throw new Error("launch session coverage requires an absolute OpenShell command path");
   }
-  const inputs = uniqueTurnInputs();
-  const result = await options.host.command("bash", ["-lc", LAUNCH_TURN_SCRIPT], {
-    artifactName: options.artifactName,
-    env: {
-      ...options.env,
-      NEMOCLAW_LAUNCH_COMMAND: options.cliCommand,
-      NEMOCLAW_LAUNCH_ENTRYPOINT: options.cliEntrypoint ?? "",
-      NEMOCLAW_LAUNCH_EXIT_COMMAND: options.exitCommand ?? "",
-      NEMOCLAW_LAUNCH_FIRST_INPUT: inputs.first,
-      NEMOCLAW_LAUNCH_HOST_TMP_ROOT: resolve(options.env.TMPDIR || "/tmp"),
-      NEMOCLAW_LAUNCH_RUN_ID: randomUUID().replaceAll("-", ""),
-      NEMOCLAW_LAUNCH_SANDBOX: options.sandboxName,
-      NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: "230",
-      NEMOCLAW_LAUNCH_SECOND_INPUT: inputs.second,
-      NEMOCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
-      NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT: OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
-      NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
-      NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-      NEMOCLAW_LAUNCH_SESSION_ROOT: "/sandbox/.openclaw/agents/main/sessions",
-      NEMOCLAW_OPENSHELL_COMMAND: options.host.openshellCommandPath,
-      TERM: "xterm-256color",
-    },
-    redactionValues: options.redactionValues,
-    timeoutMs: 280_000,
-  });
-  if (result.exitCode !== 0) {
-    throw new Error(`launch session failed: ${resultText(result)}`);
+  let finalFailure: ShellProbeResult | undefined;
+  let providerUnavailable = false;
+  for (let attempt = 1; attempt <= OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS; attempt += 1) {
+    const inputs = uniqueTurnInputs();
+    const result = await options.host.command("bash", ["-lc", LAUNCH_TURN_SCRIPT], {
+      artifactName:
+        attempt === 1
+          ? options.artifactName
+          : `${options.artifactName}-provider-retry-${String(attempt).padStart(2, "0")}`,
+      env: {
+        ...options.env,
+        NEMOCLAW_LAUNCH_COMMAND: options.cliCommand,
+        NEMOCLAW_LAUNCH_ENTRYPOINT: options.cliEntrypoint ?? "",
+        NEMOCLAW_LAUNCH_EXIT_COMMAND: options.exitCommand ?? "",
+        NEMOCLAW_LAUNCH_FIRST_INPUT: inputs.first,
+        NEMOCLAW_LAUNCH_HOST_TMP_ROOT: resolve(options.env.TMPDIR || "/tmp"),
+        NEMOCLAW_LAUNCH_RUN_ID: randomUUID().replaceAll("-", ""),
+        NEMOCLAW_LAUNCH_SANDBOX: options.sandboxName,
+        NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: "230",
+        NEMOCLAW_LAUNCH_SECOND_INPUT: inputs.second,
+        NEMOCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
+        NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT: OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
+        NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
+        NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
+        NEMOCLAW_LAUNCH_SESSION_ROOT: "/sandbox/.openclaw/agents/main/sessions",
+        NEMOCLAW_OPENSHELL_COMMAND: options.host.openshellCommandPath,
+        TERM: "xterm-256color",
+      },
+      redactionValues: options.redactionValues,
+      timeoutMs: 280_000,
+    });
+    if (result.exitCode === 0) return result;
+    finalFailure = result;
+    providerUnavailable = isTransientProviderAvailabilityFailure(result);
+    if (!providerUnavailable) break;
   }
-  return result;
+  const detail = finalFailure ? resultText(finalFailure) : "launch attempt was not executed";
+  throw new Error(
+    providerUnavailable
+      ? `OpenClaw launch provider unavailable after ${OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS} attempts: ${detail}`
+      : `launch session failed: ${detail}`,
+  );
 }
 
 export async function runOpenClawLaunchReadinessLeaseTurns(
