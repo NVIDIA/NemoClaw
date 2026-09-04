@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   observeOnboardLock,
+  systemOnboardLockEvidence,
   type OnboardLockEvidence,
   type OnboardLockOwner,
 } from "./lock-observation";
@@ -47,6 +48,7 @@ function writeOwner(lock: string, owner: OnboardLockOwner): void {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -133,6 +135,22 @@ describe("onboarding lock observation", () => {
     expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "busy", reason: "publishing" });
   });
 
+  it("keeps a short lock read busy", () => {
+    const { evidence, lock, owner } = fixture();
+    const ownerBytes = Buffer.from(JSON.stringify(owner));
+    fs.writeFileSync(lock, Buffer.concat([ownerBytes, Buffer.from(" invalid")]), { mode: 0o600 });
+    vi.spyOn(fs, "readSync").mockImplementation(((
+      _fd: number,
+      buffer: NodeJS.ArrayBufferView,
+      offset: number,
+    ) => {
+      ownerBytes.copy(buffer as Buffer, offset);
+      return ownerBytes.length;
+    }) as typeof fs.readSync);
+
+    expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "busy", reason: "publishing" });
+  });
+
   it("keeps a lock replaced between descriptor and path checks unsafe", () => {
     const { evidence, lock, owner } = fixture();
     writeOwner(lock, owner);
@@ -152,6 +170,30 @@ describe("onboarding lock observation", () => {
       kind: "busy",
       reason: "unverified",
     });
+  });
+
+  it("keeps an out-of-range PID unverified", () => {
+    const { evidence, lock, owner } = fixture();
+    writeOwner(lock, { ...owner, pid: Number.MAX_SAFE_INTEGER });
+    expect(observeOnboardLock(lock, evidence)).toEqual({
+      kind: "busy",
+      reason: "unverified",
+    });
+  });
+
+  it("does not report departure when the process probe fails without ESRCH", () => {
+    const { evidence, lock, owner } = fixture();
+    writeOwner(lock, owner);
+    vi.spyOn(process, "kill").mockImplementation(() => {
+      throw Object.assign(new Error("probe failed"), { code: "EIO" });
+    });
+
+    expect(
+      observeOnboardLock(lock, {
+        ...evidence,
+        processAlive: systemOnboardLockEvidence.processAlive,
+      }),
+    ).toEqual({ kind: "busy", reason: "active", owner });
   });
 
   it("keeps an empty process generation unverified", () => {

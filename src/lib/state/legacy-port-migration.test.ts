@@ -482,6 +482,23 @@ describe("legacy non-default gateway state migration", () => {
     expect(fs.existsSync(path.join(selected, "onboard-session.json"))).toBe(true);
   });
 
+  it("refuses an onboarding lock below a symbolic-link state root", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    const outside = path.join(home, "outside");
+    recordRecovery(path.join(shared, "retained-sandbox-recovery.json"), "port-box", 9123, "d");
+    fs.mkdirSync(path.dirname(selected), { recursive: true });
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, "onboard.lock"), "outside lock");
+    fs.symlinkSync(outside, selected, "dir");
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(/symbolic link/);
+    expect(observeOnboardLock).toHaveBeenCalledOnce();
+    expect(observeOnboardLock).toHaveBeenCalledWith(path.join(shared, "onboard.lock"));
+    expect(fs.readFileSync(path.join(outside, "onboard.lock"), "utf8")).toBe("outside lock");
+  });
+
   it.each(["ollama-proxy-token", "ollama-proxy-port", "ollama-auth-proxy.pid"])(
     "keeps host-shared Ollama proxy state out of a non-default gateway migration [%s]",
     (entry) => {

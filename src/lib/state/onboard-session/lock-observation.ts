@@ -4,6 +4,7 @@
 import fs from "node:fs";
 
 const MAX_LOCK_BYTES = 64 * 1024;
+const MAX_PROCESS_ID = 0x7fffffff;
 
 export interface OnboardLockOwner {
   pid: number;
@@ -54,7 +55,7 @@ function defaultProcessAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return errnoCode(error) === "EPERM";
+    return errnoCode(error) !== "ESRCH";
   }
 }
 
@@ -121,6 +122,7 @@ function parseOwner(value: unknown): OnboardLockOwner | null {
     typeof record.pid !== "number" ||
     !Number.isSafeInteger(record.pid) ||
     record.pid <= 0 ||
+    record.pid > MAX_PROCESS_ID ||
     typeof record.processGeneration !== "string" ||
     record.processGeneration.length === 0 ||
     typeof record.hostIdentity !== "string" ||
@@ -173,6 +175,7 @@ export function observeOnboardLock(
     const after = fs.fstatSync(fd);
     if (
       length > MAX_LOCK_BYTES ||
+      length !== before.size ||
       before.dev !== after.dev ||
       before.ino !== after.ino ||
       before.size !== after.size ||

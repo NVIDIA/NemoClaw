@@ -746,6 +746,7 @@ function acquireDirectoryLock(home: string, lock: string): string {
 function assertOnboardStateUnlocked(home: string, stateRoots: readonly string[]): void {
   for (const stateRoot of stateRoots) {
     const activeLock = path.join(stateRoot, "onboard.lock");
+    assertGatewayStatePathSafe(home, activeLock);
     const lock = observeOnboardLock(activeLock);
     if (lock.kind === "busy") {
       const owner = lock.owner ? ` recorded for PID ${String(lock.owner.pid)}` : "";
