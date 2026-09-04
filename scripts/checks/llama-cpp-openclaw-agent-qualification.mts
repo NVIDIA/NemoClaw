@@ -140,25 +140,47 @@ if (!streaming) {
 }
 `;
 
-const SESSION_PROBE_SOURCE = String.raw`
+export const LLAMA_CPP_OPENCLAW_SESSION_PROBE_SOURCE = String.raw`
 const fs = require("node:fs");
-const [sessionPath, toolName, fixturePath, fixtureValue] = process.argv.slice(1);
+const [sessionPath, trajectoryPath, toolName, fixturePath, fixtureValue] = process.argv.slice(1);
 const items = fs.readFileSync(sessionPath, "utf8").split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
-const messages = items.filter((item) => item?.type === "message" && item?.message).map((item) => item.message);
+const sessionMessages = items.filter((item) => item?.type === "message" && item?.message).map((item) => item.message);
+const trajectoryItems = fs.existsSync(trajectoryPath)
+  ? fs.readFileSync(trajectoryPath, "utf8").split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line))
+  : [];
+let projectedMessages = [];
+for (const item of trajectoryItems) {
+  if (item?.type === "model.completed" && Array.isArray(item?.data?.messagesSnapshot)) {
+    projectedMessages = item.data.messagesSnapshot.map((value) => value?.message ?? value);
+  }
+}
+const messages = [...sessionMessages, ...projectedMessages];
 const blocks = messages.flatMap((message) => Array.isArray(message.content) ? message.content : []);
 const calls = blocks.filter((block) => block?.type === "toolCall");
 const exactCalls = calls.filter((call) =>
   (call.name === toolName || call.toolName === toolName) &&
-  call.arguments && call.arguments.path === fixturePath
+  (call.arguments ?? call.input ?? call.args)?.path === fixturePath
 );
 const results = messages.filter((message) => message?.role === "toolResult");
-const resultText = JSON.stringify(results);
-const users = messages.filter((message) => message?.role === "user");
-const finalAssistant = messages.at(-1)?.role === "assistant";
-if (exactCalls.length < 1 || results.length < 1 || !resultText.includes(fixtureValue) || users.length < 2 || !finalAssistant) {
+const exactCallIds = new Set(exactCalls.map((call) => call.id ?? call.toolCallId ?? call.tool_call_id).filter(Boolean));
+const matchingResults = results.filter((message) =>
+  exactCallIds.has(message.toolCallId ?? message.tool_call_id ?? message.id) &&
+  JSON.stringify(message).includes(fixtureValue)
+);
+const users = sessionMessages.filter((message) => message?.role === "user");
+const finalAssistant = sessionMessages.at(-1)?.role === "assistant";
+if (exactCalls.length < 1 || matchingResults.length < 1 || users.length < 2 || !finalAssistant) {
+  process.stderr.write(JSON.stringify({
+    callNames: calls.map((call) => call.name ?? call.toolName ?? null),
+    exactCalls: exactCalls.length,
+    matchingResults: matchingResults.length,
+    resultNames: results.map((message) => message.toolName ?? message.tool_name ?? message.name ?? null),
+    users: users.length,
+    finalAssistant,
+  }));
   throw new Error("OpenClaw session did not prove the declared tool-call continuation flow");
 }
-process.stdout.write(JSON.stringify({ calls: exactCalls.length, results: results.length, users: users.length }));
+process.stdout.write(JSON.stringify({ calls: exactCalls.length, results: matchingResults.length, users: users.length }));
 `;
 
 function parseJson(value: string, label: string): Record<string, unknown> {
@@ -287,8 +309,9 @@ export async function runLlamaCppOpenClawAgentQualification(
     [
       "node",
       "-e",
-      SESSION_PROBE_SOURCE,
+      LLAMA_CPP_OPENCLAW_SESSION_PROBE_SOURCE,
       `/sandbox/.openclaw/agents/main/sessions/${config.sessions.tool}.jsonl`,
+      `/sandbox/.openclaw/agents/main/sessions/${config.sessions.tool}.trajectory.jsonl`,
       config.tool.name,
       config.fixture.path,
       config.fixture.value,
