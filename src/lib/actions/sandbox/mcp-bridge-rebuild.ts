@@ -106,13 +106,18 @@ async function getCompleteMcpRebuildEntries(
   } = {},
 ): Promise<{
   entries: McpBridgeEntry[];
-  runtimeSelection: McpProviderInspectionRuntimeSelection;
+  runtimeSelection?: McpProviderInspectionRuntimeSelection;
 }> {
   validateSandboxName(sandboxName);
   const currentSandbox = getSandboxOrThrow(sandboxName);
   assertMcpDestroyNotPending(currentSandbox);
-  const runtimeSelection =
-    options.runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(currentSandbox);
+  const entriesRequiringExternalCleanup = Object.values(bridgeState(currentSandbox)).filter(
+    (entry) => entry.addState !== "prepared",
+  );
+  let runtimeSelection = options.runtimeSelection;
+  if (entriesRequiringExternalCleanup.length > 0) {
+    runtimeSelection ??= getMcpProviderInspectionRuntimeSelection(currentSandbox);
+  }
   const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, currentSandbox, {
     ...options,
     runtimeSelection,
@@ -123,6 +128,9 @@ async function getCompleteMcpRebuildEntries(
     throw new McpBridgeError(
       `MCP server '${incompleteAdd.server}' has an incomplete add transaction (${incompleteAdd.addState}). Re-run the original mcp add command or remove it with --force before rebuilding the sandbox.`,
     );
+  }
+  if (entries.length > 0) {
+    runtimeSelection ??= getMcpProviderInspectionRuntimeSelection(sandbox);
   }
   return { entries, runtimeSelection };
 }
@@ -146,6 +154,9 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
       scrubbedAdapterEntries: [],
       runtimeSelection: providerRuntimeSelection,
     };
+  }
+  if (!providerRuntimeSelection) {
+    throw new McpBridgeError(`Could not resolve MCP runtime authority for '${sandboxName}'.`);
   }
   await preflightMcpEntryTargets(entries);
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
@@ -178,6 +189,9 @@ export async function prepareMcpBridgesForRebuild(
       scrubbedAdapterEntries: [],
       runtimeSelection: providerRuntimeSelection,
     };
+  }
+  if (!providerRuntimeSelection) {
+    throw new McpBridgeError(`Could not resolve MCP runtime authority for '${sandboxName}'.`);
   }
   await preflightMcpEntryTargets(entries);
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
@@ -253,11 +267,7 @@ export async function prepareMcpBridgesForRebuild(
       // reattached if sandbox deletion later aborts.
       detached.push(entry);
     }
-    assertMcpTeardownPolicyUnchanged(
-      sandboxName,
-      expectedTeardownPolicy,
-      providerRuntimeSelection,
-    );
+    assertMcpTeardownPolicyUnchanged(sandboxName, expectedTeardownPolicy, providerRuntimeSelection);
   } catch (error) {
     const rollbackFailures: string[] = [];
     let runtimeRestored = false;

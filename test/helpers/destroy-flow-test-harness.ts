@@ -37,6 +37,7 @@ export type DestroyHarness = {
   killStaleProxySpy: MockInstance;
   lifecycleLockEvents: string[];
   logSpy: MockInstance;
+  mcpRuntimeSelectionSpy: MockInstance;
   prepareMcpBridgesForAbsentSandboxDestroySpy: MockInstance;
   prepareMcpBridgesForDestroySpy: MockInstance;
   prepareManagedLlamaCppRuntimeCleanupSpy: MockInstance;
@@ -600,18 +601,16 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     gatewayName: "nemoclaw-19080",
     workspace: "default",
   };
-  vi.spyOn(mcpBridgeProvider, "getMcpProviderInspectionRuntimeSelection").mockReturnValue(
-    resolvedMcpRuntimeSelection,
-  );
+  const mcpRuntimeSelectionSpy = vi
+    .spyOn(mcpBridgeProvider, "getMcpProviderInspectionRuntimeSelection")
+    .mockReturnValue(resolvedMcpRuntimeSelection);
   const mcpPreparation = {
     entries: preparedServers.map((server) => ({ server })),
     detachedProviderEntries: preparedServers.map((server) => ({ server })),
     scrubbedAdapterEntries: preparedServers.map((server) => ({ server })),
     destroyAlreadyPrepared: false,
     destroyAlreadyPending: false,
-    ...(options.mcpServers?.length
-      ? { runtimeSelection: resolvedMcpRuntimeSelection }
-      : {}),
+    ...(preparedServers.length ? { runtimeSelection: resolvedMcpRuntimeSelection } : {}),
     ...(options.mcpAdapterScrubSkipped ? { adapterScrubSkipped: true as const } : {}),
   };
   const gatewayPinsAtMcpPrepare: Array<string | undefined> = [];
@@ -673,6 +672,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     killStaleProxySpy,
     lifecycleLockEvents,
     logSpy,
+    mcpRuntimeSelectionSpy,
     prepareMcpBridgesForAbsentSandboxDestroySpy,
     prepareMcpBridgesForDestroySpy,
     prepareManagedLlamaCppRuntimeCleanupSpy,

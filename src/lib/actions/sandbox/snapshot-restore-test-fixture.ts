@@ -199,6 +199,10 @@ export const updateSandboxMock = vi.fn();
 export const finalizePendingSandboxRegistrationMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
 export const restoreDeepAgentsManagedMcpProjectionMock = vi.fn();
+export const getMcpProviderInspectionRuntimeSelectionMock = vi.fn(() => ({
+  gatewayName: "nemoclaw-8091",
+  workspace: "default",
+}));
 export const removeSandboxRegistryEntryOutcomeMock = vi.fn<
   (
     name: string,
@@ -364,6 +368,11 @@ vi.mock("./mcp-bridge-adapter-deepagents-registration", async (importOriginal) =
   restoreDeepAgentsManagedMcpProjection: restoreDeepAgentsManagedMcpProjectionMock,
 }));
 
+vi.mock("./mcp-bridge-provider-inspection", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mcp-bridge-provider-inspection")>()),
+  getMcpProviderInspectionRuntimeSelection: getMcpProviderInspectionRuntimeSelectionMock,
+}));
+
 export function resetSnapshotRestoreMocks(): void {
   vi.clearAllMocks();
   assertHermesPortableCommandUnavailableMock.mockReset();
@@ -424,6 +433,7 @@ export function resetSnapshotRestoreMocks(): void {
     failedFiles: [],
   });
   restoreDeepAgentsManagedMcpProjectionMock.mockReset();
+  getMcpProviderInspectionRuntimeSelectionMock.mockClear();
   streamSandboxCreateMock.mockImplementation(async () => ({
     status: 0,
     output: "",

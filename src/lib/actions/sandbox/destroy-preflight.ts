@@ -45,7 +45,12 @@ export type SandboxDestroyPreflight = {
 export function resolveSandboxDestroyRuntimeSelection(
   sandbox: SandboxEntry | null,
 ): OpenShellRuntimeSelection | undefined {
-  if (!sandbox || Object.keys(sandbox.mcp?.bridges ?? {}).length === 0) return undefined;
+  if (
+    !sandbox ||
+    !Object.values(sandbox.mcp?.bridges ?? {}).some((entry) => entry.addState !== "prepared")
+  ) {
+    return undefined;
+  }
   return (
     require("./mcp-bridge-provider") as typeof import("./mcp-bridge-provider")
   ).getMcpProviderInspectionRuntimeSelection(sandbox);
