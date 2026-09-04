@@ -105,6 +105,12 @@ describe("OpenClaw managed extension symlink policy", () => {
   it("allows exact image links and extension-local npm executable links", () => {
     expect(
       isAllowedStateSymlink(
+        "extensions/openclaw-weixin",
+        "/sandbox/.openclaw/npm/projects/tencent-weixin-openclaw-weixin-7783ac86ba/node_modules/@tencent-weixin/openclaw-weixin",
+      ),
+    ).toBe(true);
+    expect(
+      isAllowedStateSymlink(
         "extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal",
         "../qrcode-terminal/bin/qrcode-terminal.js",
       ),
@@ -127,6 +133,12 @@ describe("OpenClaw managed extension symlink policy", () => {
   });
 
   it("rejects tampered, absolute, empty, and escaping npm link targets", () => {
+    expect(
+      isAllowedStateSymlink(
+        "extensions/openclaw-weixin",
+        "/sandbox/.openclaw/npm/projects/tencent-weixin-openclaw-weixin-../../etc/node_modules/@tencent-weixin/openclaw-weixin",
+      ),
+    ).toBe(false);
     expect(
       isAllowedStateSymlink(
         "extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal",
@@ -184,6 +196,31 @@ describe("OpenClaw managed extension symlink policy", () => {
 });
 
 describe("OpenClaw managed extension cleanup", () => {
+  it("accepts only the reviewed managed WeChat project link", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-wechat-link-"));
+    const extension = path.join(root, "extensions", "openclaw-weixin");
+    fs.mkdirSync(path.dirname(extension), { recursive: true });
+    fs.symlinkSync(
+      "/sandbox/.openclaw/npm/projects/tencent-weixin-openclaw-weixin-7783ac86ba/node_modules/@tencent-weixin/openclaw-weixin",
+      extension,
+    );
+    const command = buildRestoreCleanupCommand(
+      root,
+      ["extensions"],
+      OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS,
+      new Set(["openclaw-weixin"]),
+    );
+
+    expect(command).toContain("refusing unsafe image-managed WeChat extension link");
+    expect(command).toContain("tencent-weixin-openclaw-weixin-[0-9a-f]{10}");
+    execFileSync("bash", ["-c", command], { stdio: "pipe" });
+
+    fs.unlinkSync(extension);
+    fs.symlinkSync("/etc/passwd", extension);
+    expect(() => execFileSync("bash", ["-c", command], { stdio: "pipe" })).toThrow();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
   it.each(EXPECTED_MANAGED_EXTENSIONS)(
     "removes ordinary state while preserving and validating managed extension directories [case %#]",
     (extensionName) => {

@@ -22,6 +22,9 @@ const EXTENSION_NPM_BIN_RE = /^extensions\/[A-Za-z0-9][A-Za-z0-9._-]*\/node_modu
 // target; source-only matching would permit repointing it to an arbitrary file.
 const OPENCLAW_EXTENSION_PEER_LINK_RE =
   /^extensions\/[A-Za-z0-9][A-Za-z0-9._-]*\/node_modules\/openclaw$/;
+const OPENCLAW_WEIXIN_EXTENSION_LINK = "extensions/openclaw-weixin";
+const OPENCLAW_WEIXIN_PROJECT_TARGET_RE =
+  /^\/sandbox\/[.]openclaw\/npm\/projects\/tencent-weixin-openclaw-weixin-[0-9a-f]{10}\/node_modules\/@tencent-weixin\/openclaw-weixin$/;
 const OPENCLAW_IMAGE_PACKAGE_PATHS: ReadonlySet<string> = new Set([
   // Legacy global install used by older sandboxes that still need to rebuild.
   "/usr/local/lib/node_modules/openclaw",
@@ -72,10 +75,21 @@ function isAllowedOpenClawExtensionPeerSymlink(relPath: string, linkTarget: stri
   );
 }
 
+function isAllowedOpenClawWeixinExtensionSymlink(
+  relPath: string,
+  linkTarget: string,
+): boolean {
+  return (
+    relPath.split(path.sep).join("/") === OPENCLAW_WEIXIN_EXTENSION_LINK &&
+    OPENCLAW_WEIXIN_PROJECT_TARGET_RE.test(linkTarget)
+  );
+}
+
 export function isAllowedStateSymlink(relPath: string, linkTarget: string): boolean {
   const exactTarget = AUDIT_SYMLINK_WHITELIST.get(relPath.split(path.sep).join("/"));
   if (exactTarget !== undefined) return exactTarget === linkTarget;
   return (
+    isAllowedOpenClawWeixinExtensionSymlink(relPath, linkTarget) ||
     isAllowedOpenClawExtensionPeerSymlink(relPath, linkTarget) ||
     isAllowedExtensionNpmBinSymlink(relPath, linkTarget)
   );
@@ -115,6 +129,18 @@ function buildOpenClawExtensionsCleanupCommand(
   const validationCommands = managedExtensionDirs
     .map((extensionName) => {
       const managedPath = `${extensionsDir}/${extensionName}`;
+      if (extensionName === "openclaw-weixin") {
+        const absent = requiredExtensionDirs.has(extensionName)
+          ? 'echo "refusing missing image-managed extension: $p" >&2; exit 20'
+          : ":";
+        return (
+          `p=${shellQuote(managedPath)}; ` +
+          'if [ -L "$p" ]; then target="$(readlink "$p")"; ' +
+          `node -e 'process.exit(/${OPENCLAW_WEIXIN_PROJECT_TARGET_RE.source}/u.test(process.argv[1])?0:1)' "$target" || ` +
+          '{ echo "refusing unsafe image-managed WeChat extension link: $p" >&2; exit 20; }; ' +
+          `elif [ ! -d "$p" ]; then ${absent}; fi`
+        );
+      }
       if (requiredExtensionDirs.has(extensionName)) {
         return (
           `p=${shellQuote(managedPath)}; ` +
