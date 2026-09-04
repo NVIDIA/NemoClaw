@@ -121,6 +121,7 @@ export type ManagedImageOpenShellE2eInputs = {
   sandbox: string;
   gpu?: true;
   localProvider?: ManagedImageLocalInferenceKind;
+  maxTokens?: number;
   model?: string;
   failureInjection?: "bootstrap-completion";
 };
@@ -1040,6 +1041,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
             baseProfile,
             resolveManagedImageLocalInferenceRoute(input.localProvider),
             input.model,
+            input.maxTokens === undefined ? {} : { maxTokens: input.maxTokens },
           )
         : baseProfile;
     const profile = encodeManagedStartupProfile(protectedProfile);

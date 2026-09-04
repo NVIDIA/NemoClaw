@@ -98,7 +98,16 @@ export function withManagedImageLocalInferenceProfile(
   profile: ManagedStartupProfile,
   route: ManagedImageLocalInferenceRoute,
   model: string,
+  options: { readonly maxTokens?: number } = {},
 ): ManagedStartupProfile {
+  if (
+    options.maxTokens !== undefined &&
+    (profile.agent !== "openclaw" ||
+      !Number.isSafeInteger(options.maxTokens) ||
+      options.maxTokens < 1)
+  ) {
+    throw new Error("managed-image local inference maxTokens requires a positive OpenClaw bound");
+  }
   const primaryModelRef =
     profile.agent === "openclaw" ? `inference/${model}` : profile.inference.primaryModelRef;
   return {
@@ -113,6 +122,9 @@ export function withManagedImageLocalInferenceProfile(
       upstreamEndpointUrl: null,
       api: "openai-completions",
     },
+    ...(options.maxTokens === undefined
+      ? {}
+      : { tuning: { ...profile.tuning, maxTokens: options.maxTokens } }),
   } as ManagedStartupProfile;
 }
 

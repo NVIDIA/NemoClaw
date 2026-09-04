@@ -262,6 +262,7 @@ export async function runQwenGpuQualification(): Promise<void> {
         agent: "openclaw",
         image: agentPlan.image.reference,
         localProvider: "llama-cpp",
+        maxTokens: recipe.spec.serve.limits.maxOutputTokens,
         model: recipe.spec.model.servedName,
         sandbox: SANDBOX_NAME,
       },
