@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   qwenGpuAgentPlan,
   validateQwenGpuStartupLog,
-} from "../../../scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts";
+} from "../../../scripts/checks/llama-cpp-qwen-gpu-contract.ts";
 
 const IMAGE = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
 const REVISION = "b".repeat(40);
