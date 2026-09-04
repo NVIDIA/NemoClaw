@@ -219,7 +219,10 @@ export function detectInferenceProviderHostState(
   const wslNetworkingMode =
     isWsl && discoveredOllamaHost === "127.0.0.1" && windowsOllamaReachable
       ? deps
-          .runCapture(["wslinfo", "--networking-mode"], { ignoreError: true })
+          .runCapture(["wslinfo", "--networking-mode"], {
+            ignoreError: true,
+            timeout: 5_000,
+          })
           .trim()
           .toLowerCase()
       : null;

@@ -424,6 +424,9 @@ describe("detectInferenceProviderHostState", () => {
 
   it("keeps a mirrored WSL-local daemon on the Linux upgrade path (#9300)", () => {
     const logs: string[] = [];
+    const runCapture = vi.fn((command: readonly string[]) =>
+      command.join(" ").includes("wslinfo --networking-mode") ? "mirrored\n" : "",
+    );
     const deps = buildDeps({
       isWsl: vi.fn(() => true),
       hostCommandExists: vi.fn((command) => command === "ollama"),
@@ -433,9 +436,7 @@ describe("detectInferenceProviderHostState", () => {
         installedPath: "C:\\Ollama\\ollama.exe",
         loopbackOnly: false,
       })),
-      runCapture: vi.fn((command) =>
-        command.join(" ").includes("wslinfo --networking-mode") ? "mirrored\n" : "",
-      ),
+      runCapture,
       dockerCapture: vi.fn((command) =>
         command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? VALID_OLLAMA_TAGS_BODY : "",
       ),
@@ -461,6 +462,10 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.ollamaInstallMenu.entry?.key).toBe("install-ollama");
     expect(state.ollamaInstallMenu.hasUpgradableOllama).toBe(true);
     expect(logs.join("\n")).toContain("Ollama is running on both WSL and the Windows host");
+    expect(runCapture).toHaveBeenCalledWith(["wslinfo", "--networking-mode"], {
+      ignoreError: true,
+      timeout: 5_000,
+    });
   });
 
   it("fails closed when mirrored listener identity is unavailable (#9300)", () => {

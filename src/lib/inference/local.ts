@@ -414,6 +414,7 @@ export function findReachableOllamaHost(
       if (runningOnWsl) {
         const networkingMode = capture(["wslinfo", "--networking-mode"], {
           ignoreError: true,
+          timeout: WINDOWS_HOST_OLLAMA_PROBE_TIMEOUT_MS,
         })
           .trim()
           .toLowerCase();
