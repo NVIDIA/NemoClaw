@@ -39,6 +39,12 @@ describe("OpenShell forward service", () => {
     ]);
   });
 
+  it("builds the direct ForwardTcp command for a selected non-default workspace", () => {
+    expect(buildForwardServiceArgs({ ...target, workspace: "review-workspace" })).toContain(
+      "review-workspace",
+    );
+  });
+
   it("detaches the OpenShell child and waits for its local port", () => {
     const unref = vi.fn();
     const spawnDetached = vi.fn(() => ({ unref }));
