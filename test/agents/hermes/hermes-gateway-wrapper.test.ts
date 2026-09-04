@@ -192,7 +192,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.status).toBe(0);
     expect(run.stderr).toBe("");
     expect(run.realInvoked).toBe(true);
-    expect(run.realArgs).toBe(args.join(" "));
+    expect(run.realArgv).toEqual(args);
   });
 
   it("refuses a named-profile gateway without reading session coalescer source", () => {
