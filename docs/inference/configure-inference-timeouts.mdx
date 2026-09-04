@@ -75,7 +75,8 @@ Deep Agents does not consume the OpenClaw-only `NEMOCLAW_AGENT_TIMEOUT` setting.
 
 ## Increase the Provider Validation Timeout
 
-On WSL2, increase `NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS` when an OpenAI-compatible provider validation request times out before the provider replies.
+On any platform, increase `NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS` when an applicable non-streaming OpenAI-compatible provider validation request times out before the provider replies.
+NemoClaw automatically prints this recovery advice after WSL2 transport failures.
 
 ```bash
 NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS=360 $$nemoclaw onboard
