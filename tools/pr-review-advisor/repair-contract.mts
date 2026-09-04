@@ -13,11 +13,7 @@ import { canonicalJson } from "../advisors/canonical-json.mts";
 import { readBoundedFile } from "../post-merge-docs/contract.mts";
 import { applyResolutionPatch, requireSha, writeTree } from "../pr-merge-conflict-fixer/merge.mts";
 import type { AdvisorFinding } from "./finding-ledger.mts";
-import {
-  advisorFindingLedgerDigest,
-  type AdvisorFindingLedger,
-  parseAdvisorFindingLedger,
-} from "./finding-ledger.mts";
+import { advisorFindingLedgerDigest, type AdvisorFindingLedger } from "./finding-ledger.mts";
 import { ADVISOR_INTERESTS } from "./specialist-catalog.mts";
 
 export const REPAIR_REPOSITORY = "NVIDIA/NemoClaw";
