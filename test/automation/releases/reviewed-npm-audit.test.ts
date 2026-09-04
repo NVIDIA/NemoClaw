@@ -19,6 +19,7 @@ import {
   exceedsAuditThreshold,
   extractAdvisoryIds,
   parseAuditExceptionRegistry,
+  npmAuditProcessOptions,
   parseAuditReport,
   provenanceSidecarPath,
   readAuditCache,
@@ -183,17 +184,8 @@ describe("reviewed npm audit gate", () => {
     };
     const sensitiveStderr =
       "request failed for https://audit-user:secret-token@registry.example/\n\u001b[31mstderr detail";
-    const sensitiveErrorBody = {
-      summary: "request failed for https://json-user:json-secret@registry.example/",
-      detail: "first line\n\u001b[31msecond line",
-    };
     const responses = [
       { status: 1, stderr: sensitiveStderr, stdout: "" },
-      {
-        status: 1,
-        stderr: "",
-        stdout: JSON.stringify({ error: sensitiveErrorBody }),
-      },
       { status: 0, stderr: "", stdout: JSON.stringify(completeReport) },
     ];
     const delays: number[] = [];
@@ -206,22 +198,19 @@ describe("reviewed npm audit gate", () => {
       warn: (message) => warnings.push(message),
     });
 
-    expect(attempt).toBe(3);
-    expect(delays).toEqual([1_000, 2_000]);
+    expect(attempt).toBe(2);
+    expect(delays).toEqual([1_000]);
     expect(warnings).toEqual([
-      "npm audit scan incomplete on attempt 1/3; retrying in 1000 ms (reason=empty-output)",
-      "npm audit scan incomplete on attempt 2/3; retrying in 2000 ms (reason=incomplete-report)",
+      "npm audit scan incomplete on attempt 1/2; retrying in 1000 ms (reason=empty-output)",
     ]);
     const warningOutput = warnings.join("\n");
     expect(warningOutput).not.toContain("audit-user");
     expect(warningOutput).not.toContain("secret-token");
-    expect(warningOutput).not.toContain("json-user");
-    expect(warningOutput).not.toContain("json-secret");
     expect(warningOutput).not.toContain("registry.example");
     expect(warningOutput).not.toContain("\u001b");
     expect(audit.failure).toBeUndefined();
     expect(audit.report).toEqual(completeReport);
-    expect(audit.result).toEqual(responses[2]);
+    expect(audit.result).toEqual(responses[1]);
   });
 
   it("does not retry a complete blocking vulnerability report", () => {
@@ -258,8 +247,12 @@ describe("reviewed npm audit gate", () => {
     });
   });
 
-  it("allows one slow advisory response to complete within a three-minute attempt", () => {
-    expect(NPM_AUDIT_ATTEMPT_TIMEOUT_MS).toBe(180_000);
+  it("gives each audit process ten minutes to complete", () => {
+    expect(NPM_AUDIT_ATTEMPT_TIMEOUT_MS).toBe(600_000);
+    expect(npmAuditProcessOptions("/tmp/audit-graph")).toMatchObject({
+      cwd: "/tmp/audit-graph",
+      timeout: 600_000,
+    });
   });
 
   it("retries a timed-out scanner process within the same budget", () => {
@@ -279,7 +272,7 @@ describe("reviewed npm audit gate", () => {
         },
       }),
     };
-    const responses = [timeoutResult, timeoutResult, completeResult];
+    const responses = [timeoutResult, completeResult];
     let attempts = 0;
 
     const audit = runNpmAuditWithRetry({
@@ -288,8 +281,8 @@ describe("reviewed npm audit gate", () => {
       warn: () => {},
     });
 
-    expect(attempts).toBe(3);
-    expect(delays).toEqual([1_000, 2_000]);
+    expect(attempts).toBe(2);
+    expect(delays).toEqual([1_000]);
     expect(audit.failure).toBeUndefined();
   });
 
@@ -342,11 +335,11 @@ describe("reviewed npm audit gate", () => {
       warn: () => {},
     });
 
-    expect(attempts).toBe(3);
-    expect(delays).toEqual([1_000, 2_000]);
+    expect(attempts).toBe(2);
+    expect(delays).toEqual([1_000]);
     expect(audit.report).toBeUndefined();
     expect(audit.failure?.message).toBe(
-      "npm audit scan remained incomplete after 3 attempts (reason=incomplete-report)",
+      "npm audit scan remained incomplete after 2 attempts (reason=incomplete-report)",
     );
     expect(audit.failure?.message).not.toContain("terminal-stderr-secret");
     expect(audit.failure?.message).not.toContain("terminal-summary-secret");
@@ -727,12 +720,12 @@ describe("reviewed npm audit provenance", () => {
           reportFile: reportPath,
           threshold: "high",
         }),
-      ).toThrow("npm audit scan remained incomplete after 3 attempts (reason=incomplete-report)");
+      ).toThrow("npm audit scan remained incomplete after 2 attempts (reason=incomplete-report)");
       const sidecar = JSON.parse(
         fs.readFileSync(path.join(tempRoot, "graph.provenance.json"), "utf-8"),
       ) as Record<string, unknown>;
       expect(sidecar.failure).toBe(
-        "npm audit scan remained incomplete after 3 attempts (reason=incomplete-report)",
+        "npm audit scan remained incomplete after 2 attempts (reason=incomplete-report)",
       );
       expect(sidecar.failure).not.toContain("ECONNREFUSED");
       expect(sidecar.failure).not.toContain("registry unreachable");

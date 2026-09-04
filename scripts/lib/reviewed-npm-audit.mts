@@ -100,8 +100,8 @@ const GRAPH_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/u;
 const MAX_EXCEPTION_LIFETIME_DAYS = 30;
 const GHSA_ID_IN_URL = /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/gi;
-export const NPM_AUDIT_ATTEMPT_TIMEOUT_MS = 180_000;
-const NPM_AUDIT_RETRY_DELAYS_MS = [1_000, 2_000] as const;
+export const NPM_AUDIT_ATTEMPT_TIMEOUT_MS = 600_000;
+const NPM_AUDIT_RETRY_DELAYS_MS = [1_000] as const;
 export const NPM_AUDIT_REGISTRY = "https://registry.yarnpkg.com";
 export const NPM_AUDIT_ARGV = [
   "audit",
@@ -111,6 +111,17 @@ export const NPM_AUDIT_ARGV = [
 ] as const;
 export const NPM_AUDIT_CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 export const NPM_AUDIT_CACHE_FUTURE_SKEW_MS = 5 * 60 * 1000;
+
+export function npmAuditProcessOptions(directory: string) {
+  return {
+    cwd: directory,
+    encoding: "utf-8" as const,
+    env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
+    timeout: NPM_AUDIT_ATTEMPT_TIMEOUT_MS,
+  };
+}
 const NPM_AUDIT_CACHE_MAX_BYTES = 64 * 1024 * 1024;
 const NPM_AUDIT_CACHE_SCHEMA_VERSION = 1;
 const NPM_AUDIT_PARSER_IDENTITY = "reviewed-npm-audit-report-v1";
@@ -877,14 +888,7 @@ export function runReviewedNpmAudit(
     ? runNpmAuditWithRetry({ run: () => cached.result, wait: () => {}, warn: () => {} })
     : runNpmAuditWithRetry({
         run: () =>
-          spawnSync("npm", NPM_AUDIT_ARGV, {
-            cwd: options.directory,
-            encoding: "utf-8",
-            env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
-            maxBuffer: 64 * 1024 * 1024,
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: NPM_AUDIT_ATTEMPT_TIMEOUT_MS,
-          }),
+          spawnSync("npm", NPM_AUDIT_ARGV, npmAuditProcessOptions(options.directory)),
       });
   const finishedAt = new Date().toISOString();
   if (!cached && cacheFile && cacheInput && audit.report)
