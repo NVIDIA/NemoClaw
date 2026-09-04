@@ -687,8 +687,9 @@ cleanup and unsafe-file rejection live in
 shared and per-agent SQLite permission patches, update-check migration bypass,
 and SQLite sidecar permission handling live in
 `test/agents/openclaw/openclaw-shared-state-permissions-patch.test.ts`. The live
-test does not assert database schemas, third-party migration checkpoints, or
-installer and platform identity beyond the pinned fixture inputs.
+test does not assert database schemas or third-party migration checkpoints. It
+verifies the pinned historical fixture inputs and current OpenShell version.
+Deterministic tests own other installer and platform-selection details.
 
 During image assembly, the shared-state repair rejects symbolic links,
 non-regular entries, and multiply linked files before it changes the ownership
