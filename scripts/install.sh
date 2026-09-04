@@ -329,34 +329,55 @@ candidate_gateway_port_is_available() {
   local port="$1"
   validate_gateway_port_candidate "$port" || return 1
 
-  if command_exists lsof; then
-    if lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t >/dev/null 2>&1; then
-      return 1
-    fi
-  elif command_exists ss; then
-    if ss -H -t -l -n "sport = :${port}" 2>/dev/null | grep -q .; then
-      return 1
-    fi
-  elif command_exists fuser; then
-    if fuser "${port}/tcp" >/dev/null 2>&1; then
-      return 1
-    fi
-  fi
-
-  local state_root state_dir pid_file pid
+  local state_root state_dir
   state_root="$(nemoclaw_state_root 2>/dev/null || true)"
   if [[ -n "$state_root" ]]; then
     state_dir="${state_root}/gateways/${port}"
     if [[ -d "$state_dir" ]]; then
-      pid_file="${state_dir}/openshell-gateway.pid"
-      if [[ -f "$pid_file" ]]; then
-        if IFS= read -r pid <"$pid_file" 2>/dev/null && [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
-          if kill -0 "$pid" 2>/dev/null; then
-            return 1
-          fi
-        fi
-      fi
+      # Reject any existing per-port gateway state directory, including state
+      # with a missing or stale PID, so fallback selection cannot reuse ambiguous state.
+      return 1
     fi
+  fi
+
+  local probe_output probe_status
+  if command_exists lsof; then
+    probe_output="$(lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null)"
+    probe_status=$?
+    if [ "$probe_status" -eq 0 ]; then
+      # A listener is confirmed present.
+      return 1
+    elif [ "$probe_status" -ne 1 ]; then
+      # Probe command failed with an unexpected error. Fail closed.
+      return 1
+    fi
+    if [[ -n "$probe_output" ]]; then
+      return 1
+    fi
+  elif command_exists ss; then
+    probe_output="$(ss -H -t -l -n "sport = :${port}" 2>/dev/null)"
+    probe_status=$?
+    if [ "$probe_status" -ne 0 ]; then
+      # ss failed or returned an error. Fail closed.
+      return 1
+    fi
+    if [[ -n "$probe_output" ]]; then
+      return 1
+    fi
+  elif command_exists fuser; then
+    probe_output="$(fuser "${port}/tcp" 2>/dev/null)"
+    probe_status=$?
+    if [ "$probe_status" -eq 0 ]; then
+      return 1
+    elif [ "$probe_status" -ne 1 ]; then
+      return 1
+    fi
+    if [[ -n "$probe_output" ]]; then
+      return 1
+    fi
+  else
+    # None of lsof, ss, or fuser is available. Fail closed.
+    return 1
   fi
 
   return 0

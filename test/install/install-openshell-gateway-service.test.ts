@@ -528,6 +528,54 @@ describe("install.sh OpenShell gateway service", () => {
     expect(result.stderr).toContain("Could not automatically select a safe alternate gateway port");
   });
 
+  it("rejects candidate port when per-port gateway state directory exists with missing or stale PID (#10824, #10936)", () => {
+    const home = makeTempRoot();
+    const stateDir = path.join(home, ".nemoclaw", "gateways", "8990");
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    const result = runInstallHelper(
+      home,
+      [
+        'candidate_gateway_port_is_available 8990 && echo "AVAILABLE" || echo "UNAVAILABLE"',
+      ].join("\n"),
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("UNAVAILABLE");
+  });
+
+  it("fails closed when none of lsof, ss, or fuser is available (#10824, #10936)", () => {
+    const home = makeTempRoot();
+    const result = runInstallHelper(
+      home,
+      [
+        "command_exists() { return 1; }",
+        'candidate_gateway_port_is_available 8990 && echo "AVAILABLE" || echo "UNAVAILABLE"',
+      ].join("\n"),
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("UNAVAILABLE");
+  });
+
+  it("fails closed when probe command exits with an error status (#10824, #10936)", () => {
+    const home = makeTempRoot();
+    const probeBin = path.join(home, "probe-bin");
+    fs.mkdirSync(probeBin, { recursive: true });
+    writeExecutable(path.join(probeBin, "lsof"), "#!/usr/bin/env bash\nexit 2\n");
+
+    const result = runInstallHelper(
+      home,
+      [
+        'candidate_gateway_port_is_available 8990 && echo "AVAILABLE" || echo "UNAVAILABLE"',
+      ].join("\n"),
+      { PATH: `${probeBin}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("UNAVAILABLE");
+  });
+
   it.each([
     ["user data", ".local/share/systemd/user/session.target.wants"],
     ["user runtime", "runtime/systemd/user/default.target.wants"],
