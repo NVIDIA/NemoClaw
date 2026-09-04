@@ -476,7 +476,7 @@ Accepting the preview prompt sets explicit managed-vLLM intent for the narrow pe
 Declining the prompt continues with ordinary interactive onboarding.
 Setting `NEMOCLAW_NO_EXPRESS=1` also enters ordinary onboarding when no provider is preselected or the explicit provider is recognized and is not Local NVIDIA NIM.
 An invalid or Local NVIDIA NIM provider remains blocked.
-Set a recognized provider other than Local NVIDIA NIM to enter ordinary onboarding directly.
+Set a recognized provider other than Local NVIDIA NIM or `install-vllm` to enter ordinary onboarding directly.
 Set `NEMOCLAW_PROVIDER=install-vllm` when you need to bypass the prompt with the same explicit preview intent.
 
 On a host that still meets the N1x identity checks, `rebuild` reuses the recorded route as explicit preview intent only when all of these conditions hold:

@@ -17,6 +17,7 @@ describe("installer express install prompt (sourced)", () => {
 
     expect(result.error, output).toBeUndefined();
     expect(result.status, output).toBe(0);
+    expect(output).toContain("Skipping express install. Continuing with interactive flow.");
     expect(output.match(/Detected container runtime: docker/g)).toHaveLength(1);
     expect(output).not.toContain("Host preflight found issues");
     expect(output.match(/ONBOARD NO_EXPRESS=1 PROVIDER= ARGS=onboard/g)).toHaveLength(1);
