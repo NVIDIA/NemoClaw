@@ -2,12 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncReturns } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  isTestProcessAlive,
+  killTestProcess,
+} from "../../../../test/support/process-liveness-test-support";
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
   captureOpenshellCommand,
@@ -20,7 +25,10 @@ import {
   stripAnsi,
   versionGte,
 } from "./client";
-import { processTreeBoundedOpenshellInvocation } from "./process-tree-timeout";
+import {
+  processTreeBoundedOpenshellInvocation,
+  supportsBoundedOpenshellProcessTree,
+} from "./process-tree-timeout";
 
 interface SpawnResultSpec {
   status: number | null;
@@ -55,6 +63,27 @@ function exitWithCode(code: number): never {
 }
 
 describe("openshell helpers", () => {
+  it("reports whether the host can enforce a process-tree timeout (#10238)", () => {
+    expect(
+      supportsBoundedOpenshellProcessTree({
+        platform: "linux",
+        timeoutExecutableExists: () => true,
+      }),
+    ).toBe(true);
+    expect(
+      supportsBoundedOpenshellProcessTree({
+        platform: "darwin",
+        timeoutExecutableExists: () => true,
+      }),
+    ).toBe(false);
+    expect(
+      supportsBoundedOpenshellProcessTree({
+        platform: "linux",
+        timeoutExecutableExists: () => false,
+      }),
+    ).toBe(false);
+  });
+
   it("wraps a synchronous Linux probe in a process-group timeout (#10238)", () => {
     expect(
       processTreeBoundedOpenshellInvocation(
@@ -191,6 +220,45 @@ describe("openshell helpers", () => {
       rmSync(fixtureDirectory, { force: true, recursive: true });
     }
   });
+
+  it.runIf(process.platform === "linux" && existsSync("/usr/bin/timeout"))(
+    "kills descendant processes before a bounded capture returns (#10238)",
+    async () => {
+      const fixtureDirectory = mkdtempSync(join(tmpdir(), "nemoclaw-openshell-timeout-tree-"));
+      const fixturePath = join(fixtureDirectory, "openshell");
+      const childPidPath = join(fixtureDirectory, "child.pid");
+      let childPid: number | undefined;
+      writeFileSync(
+        fixturePath,
+        `#!${process.execPath}\n` +
+          `const { spawn } = require("node:child_process");\n` +
+          `const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], { stdio: "inherit" });\n` +
+          `require("node:fs").writeFileSync(${JSON.stringify(childPidPath)}, String(child.pid));\n` +
+          `setTimeout(() => {}, 5000);\n`,
+        { mode: 0o500 },
+      );
+      chmodSync(fixturePath, 0o500);
+      try {
+        const startedAt = Date.now();
+        const result = captureOpenshellCommand(fixturePath, ["sandbox", "list"], {
+          ignoreError: true,
+          killProcessTreeOnTimeout: true,
+          timeout: 1_000,
+        });
+        const elapsedMs = Date.now() - startedAt;
+        childPid = Number.parseInt(readFileSync(childPidPath, "utf8"), 10);
+
+        expect(elapsedMs).toBeLessThan(2_500);
+        expect((result.error as NodeJS.ErrnoException | undefined)?.code).not.toBe("ETIMEDOUT");
+        expect(Number.isInteger(childPid)).toBe(true);
+        await delay(100);
+        expect(isTestProcessAlive(childPid)).toBe(false);
+      } finally {
+        killTestProcess(childPid);
+        rmSync(fixtureDirectory, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("redirects inherited stdout while the JSONL stdout guard is active", async () => {
     const observedStdio: unknown[] = [];

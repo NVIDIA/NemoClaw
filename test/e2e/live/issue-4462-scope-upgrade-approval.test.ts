@@ -315,17 +315,16 @@ test(
       {
         captureLimitBytes: 64 * 1024,
         env: env(),
-        persistArtifacts: false,
         redactionValues: [apiKey],
         timeoutMs: 90_000,
       },
     );
-    const cronTriggerEvidence = preApprovalAdminProbeEvidence(cronTrigger);
+    const cronTriggerEvidence = preApprovalAdminProbeEvidence(cronTrigger, SANDBOX_NAME);
     await artifacts.writeJson("phase-3-trigger-admin-cron.json", cronTriggerEvidence);
     expect(
       cronTriggerEvidence.outcome,
       "The operator.admin probe did not stop at the explicit approval boundary",
-    ).toBe("approval-required");
+    ).toBe("approval-required-with-confirmed-hint");
 
     const adminConnect = await host.command(
       "bash",

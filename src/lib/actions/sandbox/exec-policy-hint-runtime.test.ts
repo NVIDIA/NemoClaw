@@ -1,11 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { captureOpenshell } = vi.hoisted(() => ({ captureOpenshell: vi.fn() }));
+const { captureOpenshell, supportsBoundedOpenshellProcessTree } = vi.hoisted(() => ({
+  captureOpenshell: vi.fn(),
+  supportsBoundedOpenshellProcessTree: vi.fn(),
+}));
 
 vi.mock("../../adapters/openshell/runtime", () => ({ captureOpenshell }));
+vi.mock("../../adapters/openshell/process-tree-timeout", () => ({
+  supportsBoundedOpenshellProcessTree,
+}));
 
 import {
   maybeEmitPolicyDenialHint,
@@ -14,6 +20,8 @@ import {
   POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS,
   POLICY_HINT_TAIL_LINES,
 } from "./exec-policy-hint";
+import { buildOpenshellExecArgs } from "./exec";
+import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 const DENIAL_TIME_MS = 1783046573602;
 const DENIED_LINE =
@@ -110,12 +118,16 @@ describe("policy-denial hint runtime adapter integration (#5978)", () => {
 });
 
 describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
+  beforeEach(() => {
+    supportsBoundedOpenshellProcessTree.mockReturnValue(true);
+  });
+
   afterEach(() => {
     vi.resetAllMocks();
     vi.unstubAllEnvs();
   });
 
-  it("reads pending devices through one bounded read-only OpenShell exec", async () => {
+  it("uses the public exec request shape for the bounded pending-device probe", async () => {
     captureOpenshell.mockReturnValueOnce({
       output: JSON.stringify({ pending: [{ requestId: "req-1" }] }),
       status: 0,
@@ -133,24 +145,15 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
     );
 
     expect(captureOpenshell).toHaveBeenCalledTimes(1);
-    expect(captureOpenshell.mock.calls[0]?.[0]).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
-      "oc-fresh",
-      "-g",
-      "nemoclaw-8091",
-      "--no-tty",
-      "--",
-      "openclaw",
-      "devices",
-      "list",
-      "--json",
-    ]);
+    const argv = captureOpenshell.mock.calls[0]?.[0] as string[];
+    const wrappedCommand = wrapExecCommandWithRuntimeEnv(["openclaw", "devices", "list", "--json"]);
+    expect(argv).toEqual(
+      buildOpenshellExecArgs("oc-fresh", wrappedCommand, { tty: false }, "nemoclaw-8091"),
+    );
     // The probe enters the sandbox and starts the OpenClaw CLI, so it needs a
     // budget the host-side audit-log read ceiling does not give it. Under that
     // ceiling the probe timed out before the OpenClaw CLI could print, and a
-    // timed-out probe is silent (#10070).
+    // timed-out probe cannot confirm whether a request is pending (#10070).
     // Asserted against the shared ceiling, not only the new budget, so this
     // still fails if the probe is put back on `runtimeTimeoutMs()`.
     expect(captureOpenshell.mock.calls[0]?.[1]?.timeout).toBeGreaterThan(
@@ -159,7 +162,34 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
     expect(captureOpenshell.mock.calls[0]?.[1]?.timeout).toBeGreaterThanOrEqual(
       POLICY_HINT_DEVICE_PROBE_TIMEOUT_MS,
     );
+    // Unlike the host-side audit-log/log-tail reads above, this probe starts a
+    // real process tree inside the sandbox (a bash wrapper, then the OpenClaw
+    // CLI) once it can actually resolve the managed gateway. Without this, a
+    // probe that outlasts its own timeout can leave that tree running and
+    // holding captured pipes past the advertised budget (#10070).
+    expect(captureOpenshell.mock.calls[0]?.[1]?.killProcessTreeOnTimeout).toBe(true);
+    expect(captureOpenshell.mock.calls[0]?.[1]?.killSignal).toBe("SIGKILL");
     expect(stderr).toEqual([hint]);
+  });
+
+  it("gives macOS a manual recovery path without starting an unbounded probe", async () => {
+    supportsBoundedOpenshellProcessTree.mockReturnValue(false);
+    const stderr: string[] = [];
+
+    const hint = await maybeEmitScopeUpgradeHint(
+      "nemoclaw",
+      "oc-fresh",
+      1,
+      false,
+      ["openclaw", "cron", "add"],
+      { env: {}, writeStderr: (line: string) => stderr.push(line) },
+    );
+
+    expect(hint).toContain("pending device requests could not be inspected safely");
+    expect(hint).toContain("nemoclaw oc-fresh exec -- openclaw devices list");
+    expect(hint).toContain("nemoclaw oc-fresh exec -- openclaw devices approve <requestId>");
+    expect(stderr).toEqual([hint]);
+    expect(captureOpenshell).not.toHaveBeenCalled();
   });
 
   it("emits the review path when the in-sandbox probe outlasts the log-read ceiling (#10070)", async () => {
@@ -215,7 +245,7 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
     expect(captureOpenshell.mock.calls[0]?.[1]?.timeout).toBe(POLICY_HINT_DEVICE_PROBE_TIMEOUT_MS);
   });
 
-  it("stays silent when the pending-devices probe exceeds its budget (#10070)", async () => {
+  it("retains conditional recovery when the pending-devices probe exceeds its budget (#10070)", async () => {
     const timeout = Object.assign(new Error("OpenShell exec timed out"), { code: "ETIMEDOUT" });
     captureOpenshell.mockReturnValueOnce({ error: timeout, output: "", status: null });
     const stderr: string[] = [];
@@ -230,11 +260,13 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
       "nemoclaw-8091",
     );
 
-    expect(hint).toBeNull();
-    expect(stderr).toEqual([]);
+    expect(hint).toContain("pending device requests could not be inspected safely");
+    expect(hint).toContain("nemoclaw oc-fresh exec -- openclaw devices list");
+    expect(hint).toContain("nemoclaw oc-fresh exec -- openclaw devices approve <requestId>");
+    expect(stderr).toEqual([hint]);
   });
 
-  it("stays silent when the pending-devices probe exits non-zero", async () => {
+  it("retains conditional recovery when the pending-devices probe exits non-zero", async () => {
     captureOpenshell.mockReturnValueOnce({ output: "", status: 1 });
     const stderr: string[] = [];
 
@@ -247,7 +279,9 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
       { env: {}, writeStderr: (line: string) => stderr.push(line) },
     );
 
-    expect(hint).toBeNull();
-    expect(stderr).toEqual([]);
+    expect(hint).toContain("pending device requests could not be inspected safely");
+    expect(hint).toContain("nemoclaw oc-fresh exec -- openclaw devices list");
+    expect(hint).toContain("nemoclaw oc-fresh exec -- openclaw devices approve <requestId>");
+    expect(stderr).toEqual([hint]);
   });
 });

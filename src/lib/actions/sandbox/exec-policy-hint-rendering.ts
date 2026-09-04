@@ -92,6 +92,15 @@ export function hasPendingDeviceRequest(devicesListOutput: string): boolean {
   return Array.isArray(pending) && pending.length > 0;
 }
 
+function scopeUpgradeActionLines(cliName: string, sandboxName: string): string[] {
+  return [
+    `  Review pending requests: ${cliName} ${sandboxName} exec -- openclaw devices list`,
+    `  Approve the one you recognize, after checking its device and requested scopes:`,
+    `                           ${cliName} ${sandboxName} exec -- openclaw devices approve ${SCOPE_UPGRADE_REQUEST_PLACEHOLDER}`,
+    `  Silence this hint:       export ${POLICY_HINT_SUPPRESS_ENV}=1`,
+  ];
+}
+
 /**
  * Render the review stanza for a gateway scope upgrade waiting on approval.
  * The approve line carries the literal placeholder, never a resolved id; see
@@ -102,9 +111,19 @@ export function buildScopeUpgradeExecHint(cliName: string, rawSandboxName: strin
   return [
     `${cliName}: a device scope upgrade is waiting for approval inside sandbox '${sandboxName}'.`,
     "  The OpenClaw gateway refused the command until the requested scopes are approved.",
-    `  Review pending requests: ${cliName} ${sandboxName} exec -- openclaw devices list`,
-    `  Approve the one you recognize, after checking its device and requested scopes:`,
-    `                           ${cliName} ${sandboxName} exec -- openclaw devices approve ${SCOPE_UPGRADE_REQUEST_PLACEHOLDER}`,
-    `  Silence this hint:       export ${POLICY_HINT_SUPPRESS_ENV}=1`,
+    ...scopeUpgradeActionLines(cliName, sandboxName),
+  ].join("\n");
+}
+
+/** Render a recovery-only stanza when the host cannot safely run the presence probe. */
+export function buildUnprobedScopeUpgradeRecoveryHint(
+  cliName: string,
+  rawSandboxName: string,
+): string {
+  const sandboxName = displaySandboxName(rawSandboxName);
+  return [
+    `${cliName}: pending device requests could not be inspected safely on this host.`,
+    "  If the OpenClaw failure above reports a scope upgrade, review pending requests:",
+    ...scopeUpgradeActionLines(cliName, sandboxName),
   ].join("\n");
 }

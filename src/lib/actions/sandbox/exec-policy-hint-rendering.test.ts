@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPolicyDenialExecHint,
   buildScopeUpgradeExecHint,
+  buildUnprobedScopeUpgradeRecoveryHint,
   hasPendingDeviceRequest,
   POLICY_HINT_SUPPRESS_ENV,
   SCOPE_UPGRADE_REQUEST_PLACEHOLDER,
@@ -89,6 +90,11 @@ describe("buildScopeUpgradeExecHint (#9744)", () => {
   it("never resolves the placeholder to a concrete request id", () => {
     expect(hint).not.toContain(REQUEST_ID);
     expect(buildScopeUpgradeExecHint("nemoclaw", "my-assistant")).toBe(hint);
+  });
+
+  it("keeps the confirmed and conditional action stanzas identical", () => {
+    const recovery = buildUnprobedScopeUpgradeRecoveryHint("nemoclaw", "my-assistant");
+    expect(hint.split("\n").slice(-4)).toEqual(recovery.split("\n").slice(-4));
   });
 });
 

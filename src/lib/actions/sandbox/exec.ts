@@ -9,12 +9,14 @@ import type {
   MutableConfigRepairResult,
 } from "../../sandbox/mutable-config-perms";
 import type { SandboxEntry } from "../../state/registry";
+import { buildOpenshellExecArgs } from "./exec-argv";
 import { type ExecPolicyHintDeps, preparePolicyHint } from "./exec-policy-hint-integration";
 import { buildSandboxExecStdio } from "./exec-stdio";
 import type { GatewaySelectResult } from "./gateway-select";
 import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 export { buildSandboxExecStdio, shouldInheritSandboxExecStdin } from "./exec-stdio";
+export { buildOpenshellExecArgs } from "./exec-argv";
 export {
   wrapExecCommandWithRuntimeEnv,
   wrapOpenClawAgentCommandWithRuntimeEnv,
@@ -95,33 +97,12 @@ export type WorkdirProbeOutcome = "ok" | "missing" | "unclear";
 
 export type WorkdirProbeRunner = (binary: string, args: readonly string[]) => WorkdirProbeResult;
 
-export function buildOpenshellExecArgs(
-  sandboxName: string,
-  command: readonly string[],
-  options: SandboxExecOptions = {},
-  gatewayName?: string,
-): string[] {
-  const argv = ["sandbox", "exec", "--name", sandboxName];
-  if (gatewayName) argv.push("-g", gatewayName);
-  if (options.workdir) argv.push("--workdir", options.workdir);
-  if (options.tty === true) argv.push("--tty");
-  if (options.tty === false) argv.push("--no-tty");
-  if (typeof options.timeoutSeconds === "number") {
-    argv.push("--timeout", String(options.timeoutSeconds));
-  }
-  argv.push("--", ...command);
-  return argv;
-}
-
 export function buildWorkdirProbeArgs(
   sandboxName: string,
   workdir: string,
   gatewayName?: string,
 ): string[] {
-  const argv = ["sandbox", "exec", "--name", sandboxName];
-  if (gatewayName) argv.push("-g", gatewayName);
-  argv.push("--", "test", "-d", workdir);
-  return argv;
+  return buildOpenshellExecArgs(sandboxName, ["test", "-d", workdir], {}, gatewayName);
 }
 
 // OpenShell accepts LF/CR in command argv while retaining field-specific
