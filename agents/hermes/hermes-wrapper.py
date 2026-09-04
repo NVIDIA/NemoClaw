@@ -352,7 +352,11 @@ def _run_gateway_guard(guard_path: str) -> int:
             file=sys.stderr,
         )
         return 127
-    return subprocess.call([python3, "-I", guard_path, "runtime-env"])
+    env = dict(os.environ)
+    for key in tuple(env):
+        if key in _GATEWAY_PACKAGE_ENV_KEYS or key.startswith(_GATEWAY_PACKAGE_ENV_PREFIXES):
+            env.pop(key, None)
+    return subprocess.call([python3, "-I", guard_path, "runtime-env"], env=env)
 
 
 def _harden_root_separated_gateway_package_env() -> None:

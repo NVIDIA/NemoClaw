@@ -129,7 +129,18 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         VIRTUAL_ENV: "/sandbox/venv",
         PATH: "/sandbox/bin",
       },
-      { validatorScript: "raise SystemExit(0)\n" },
+      {
+        validatorScript: [
+          "import os",
+          "assert os.environ.get('HERMES_LAZY_INSTALL_TARGET') == '/run/nemoclaw/hermes-gateway-lazy-packages'",
+          "blocked = ('BASH_ENV', 'ENV', 'PATH', 'VIRTUAL_ENV')",
+          "prefixes = ('DYLD_', 'LD_', 'UV_', 'PIP_', 'PYTHON')",
+          "assert not any(key in os.environ for key in blocked)",
+          "assert not any(key.startswith(prefixes) for key in os.environ)",
+          "raise SystemExit(0)",
+          "",
+        ].join("\n"),
+      },
     );
 
     expect(run.status, run.stderr).toBe(0);
@@ -192,6 +203,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.status).toBe(1);
     expect(run.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
     expect(run.stderr).not.toContain(arbitraryTarget);
+    expect(run.stdout).not.toContain(arbitraryTarget);
     expect(run.realInvoked).toBe(false);
   });
 
