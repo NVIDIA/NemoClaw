@@ -37,6 +37,7 @@ import type {
 const NOW = new Date("2026-08-02T18:00:00.000Z");
 const SOURCE_REVISION = "a".repeat(40);
 const N1X_VLLM_PRESET_ID = "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4";
+const N1X_VLLM_MINIMUM_GPU_MEMORY_BYTES = 64_000_000_000;
 const LINUX_VLLM_PROFILES = [
   {
     presetId: "vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4",
@@ -218,6 +219,21 @@ function readinessReport(
     exitCode: 0,
     ...overrides,
   } as SystemReadinessReport;
+}
+
+function withGpuMemoryCapacity(
+  report: SystemReadinessReport,
+  memoryBytes: number,
+): SystemReadinessReport {
+  return {
+    ...report,
+    observations: report.observations.map((observation) =>
+      observation.id === "host.gpu.memory_total_bytes" ||
+      observation.id === "host.gpu.memory_per_device_bytes"
+        ? { ...observation, value: memoryBytes }
+        : observation,
+    ),
+  };
 }
 
 function readinessSources(): ManagedInferenceReadinessSource[] {
@@ -780,6 +796,38 @@ describe("managed inference resolver", () => {
     });
   });
 
+  it("reports the highest-priority applicable runtime failure", () => {
+    const { catalog: baseCatalog, secondRecipeId } = catalogWithSecondProfile({
+      firstPriority: 100,
+      secondPriority: 200,
+    });
+    const firstRecipeId = shippedCompiledRecipe(baseCatalog).metadata.id;
+    const minimums = new Map([
+      [firstRecipeId, 600_000_000_000],
+      [secondRecipeId, 700_000_000_000],
+    ]);
+    const catalog: CompiledManagedInferenceCatalog = {
+      ...baseCatalog,
+      recipes: baseCatalog.recipes.map((recipe) => {
+        const minimumGpuMemoryBytes = minimums.get(recipe.metadata.id)!;
+        return {
+          ...recipe,
+          spec: {
+            ...recipe.spec,
+            runtime: { ...recipe.spec.runtime, minimumGpuMemoryBytes },
+          },
+        } as CompiledManagedInferenceCatalog["recipes"][number];
+      }),
+    };
+
+    expect(resolveManagedInferenceServing(resolverInput(), catalog)).toMatchObject({
+      outcome: "no-match",
+      code: "requirements-not-met",
+      message:
+        "spark-head: GPU memory capacity 500000000000 is below the recipe minimum 700000000000 bytes.",
+    });
+  });
+
   it("rejects equal-priority automatic matches as ambiguous", () => {
     const { catalog, secondPresetId } = catalogWithSecondProfile({
       firstPriority: 100,
@@ -1043,7 +1091,11 @@ describe("managed inference resolver", () => {
         resolverInput({ readinessReports: reports }),
         customizedCatalog,
       ),
-    ).toMatchObject({ outcome: "no-match", code: "requirements-not-met" });
+    ).toMatchObject({
+      outcome: "no-match",
+      code: "requirements-not-met",
+      message: "No automatic managed inference preset matched.",
+    });
   });
 
   it("returns an immutable topology snapshot", () => {
@@ -1188,9 +1240,13 @@ describe("managed inference resolver", () => {
   });
 
   it("selects the N1x managed-vLLM preset with explicit Deferred preview intent (#9902)", () => {
+    const report = withGpuMemoryCapacity(
+      deferredN1xReadinessReport(),
+      N1X_VLLM_MINIMUM_GPU_MEMORY_BYTES,
+    );
     expect(
       resolveManagedInferenceServing({
-        readinessReports: [{ nodeId: "n1x-host", report: deferredN1xReadinessReport() }],
+        readinessReports: [{ nodeId: "n1x-host", report }],
         topologyQualifications: [],
         intent: { provider: "vllm" },
         now: NOW,
@@ -1201,6 +1257,24 @@ describe("managed inference resolver", () => {
       recipe: {
         metadata: { id: "vllm.qwen3-6-35b-a3b-nvfp4.n1x-single.v1" },
       },
+    });
+  });
+
+  it("surfaces the N1x memory failure during automatic selection", () => {
+    const availableMemoryBytes = N1X_VLLM_MINIMUM_GPU_MEMORY_BYTES - 1;
+    const report = withGpuMemoryCapacity(deferredN1xReadinessReport(), availableMemoryBytes);
+
+    expect(
+      resolveManagedInferenceServing({
+        readinessReports: [{ nodeId: "n1x-host", report }],
+        topologyQualifications: [],
+        intent: { provider: "vllm" },
+        now: NOW,
+      }),
+    ).toMatchObject({
+      outcome: "no-match",
+      code: "requirements-not-met",
+      message: `n1x-host: GPU memory capacity ${String(availableMemoryBytes)} is below the recipe minimum ${String(N1X_VLLM_MINIMUM_GPU_MEMORY_BYTES)} bytes.`,
     });
   });
 

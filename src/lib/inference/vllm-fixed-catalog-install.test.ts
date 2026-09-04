@@ -153,6 +153,50 @@ describe("fixed catalog vLLM installs", () => {
     process.env = { ...originalEnv };
   });
 
+  it("reports automatic GPU memory rejection before install effects", async () => {
+    const profile = detectVllmProfile({ platform: "n1x", type: "nvidia" })!;
+    const availableMemoryBytes = 23_730_323_456;
+    const readinessReports = vllmInstallTestReadiness(profile).map(({ nodeId, report }) => ({
+      nodeId,
+      report: {
+        ...report,
+        observations: report.observations.map((observation) =>
+          observation.id === "host.gpu.memory_total_bytes" ||
+          observation.id === "host.gpu.memory_per_device_bytes"
+            ? { ...observation, value: availableMemoryBytes }
+            : observation,
+        ),
+      },
+    }));
+    const actualSelection = await vi.importActual<
+      typeof import("./serving/host-local-vllm-selection")
+    >("./serving/host-local-vllm-selection");
+    const selection = actualSelection.resolveHostLocalVllmSelection(
+      profile,
+      {},
+      {
+        automatic: true,
+        readinessReports,
+      },
+    );
+    const reason = `vllm-install-test-host: GPU memory capacity ${String(availableMemoryBytes)} is below the recipe minimum 64000000000 bytes.`;
+    expect(selection).toEqual({ kind: "rejected", reason });
+    mocks.resolveHostLocalVllmSelection.mockReturnValue(selection);
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      readinessReports,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(spies.errSpy).toHaveBeenCalledWith(`  vLLM install failed: ${reason}`);
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+  });
+
   it.each([
     { platform: "spark", model: "muse-glimmer-30b" },
     { platform: "linux", model: "inferact/muse-glimmer-30b-nvfp4-w4a4" },
