@@ -108,3 +108,19 @@ export function buildScopeUpgradeExecHint(cliName: string, rawSandboxName: strin
     `  Silence this hint:       export ${POLICY_HINT_SUPPRESS_ENV}=1`,
   ].join("\n");
 }
+
+/** Render a recovery-only stanza when the host cannot safely run the presence probe. */
+export function buildUnprobedScopeUpgradeRecoveryHint(
+  cliName: string,
+  rawSandboxName: string,
+): string {
+  const sandboxName = displaySandboxName(rawSandboxName);
+  return [
+    `${cliName}: pending device requests could not be inspected safely on this host.`,
+    "  If the OpenClaw failure above reports a scope upgrade, review pending requests:",
+    `  Review pending requests: ${cliName} ${sandboxName} exec -- openclaw devices list`,
+    `  Approve the one you recognize, after checking its device and requested scopes:`,
+    `                           ${cliName} ${sandboxName} exec -- openclaw devices approve ${SCOPE_UPGRADE_REQUEST_PLACEHOLDER}`,
+    `  Silence this hint:       export ${POLICY_HINT_SUPPRESS_ENV}=1`,
+  ].join("\n");
+}

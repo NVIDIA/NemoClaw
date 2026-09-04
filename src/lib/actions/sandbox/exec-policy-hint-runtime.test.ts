@@ -184,8 +184,9 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
     expect(stderr).toEqual([hint]);
   });
 
-  it("skips the optional probe when its process tree cannot be bounded", async () => {
+  it("gives macOS a manual recovery path without starting an unbounded probe", async () => {
     supportsBoundedOpenshellProcessTree.mockReturnValue(false);
+    const stderr: string[] = [];
 
     const hint = await maybeEmitScopeUpgradeHint(
       "nemoclaw",
@@ -193,10 +194,13 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
       1,
       false,
       ["openclaw", "cron", "add"],
-      { env: {} },
+      { env: {}, writeStderr: (line: string) => stderr.push(line) },
     );
 
-    expect(hint).toBeNull();
+    expect(hint).toContain("pending device requests could not be inspected safely");
+    expect(hint).toContain("nemoclaw oc-fresh exec -- openclaw devices list");
+    expect(hint).toContain("nemoclaw oc-fresh exec -- openclaw devices approve <requestId>");
+    expect(stderr).toEqual([hint]);
     expect(captureOpenshell).not.toHaveBeenCalled();
   });
 

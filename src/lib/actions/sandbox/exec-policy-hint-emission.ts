@@ -13,6 +13,7 @@ import { findRecentPolicyDenial, type PolicyDenialMatch } from "./exec-policy-hi
 import {
   buildPolicyDenialExecHint,
   buildScopeUpgradeExecHint,
+  buildUnprobedScopeUpgradeRecoveryHint,
   hasPendingDeviceRequest,
   shouldProbePolicyDenial,
   shouldProbeScopeUpgrade,
@@ -133,6 +134,18 @@ function defaultProbePendingDevices(sandboxName: string, gatewayName?: string): 
   return String(result.output ?? "");
 }
 
+function emitScopeUpgradeHint(
+  hint: string,
+  writeStderr: PolicyDenialHintDeps["writeStderr"],
+): string | null {
+  try {
+    (writeStderr ?? ((line: string) => console.error(line)))(hint);
+    return hint;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Emit the scope-upgrade remedy after a failed in-sandbox OpenClaw command.
  * #5324 added `openclaw devices approve`; this names it at the point of failure
@@ -157,6 +170,13 @@ export async function maybeEmitScopeUpgradeHint(
   const env = deps.env ?? process.env;
   if (!shouldProbeScopeUpgrade(commandCode, hadInvocationError, command, env)) return null;
 
+  if (!deps.probePendingDevices && !supportsBoundedOpenshellProcessTree()) {
+    return emitScopeUpgradeHint(
+      buildUnprobedScopeUpgradeRecoveryHint(cliName, sandboxName),
+      deps.writeStderr,
+    );
+  }
+
   let devicesOutput: string;
   try {
     devicesOutput = (deps.probePendingDevices ?? defaultProbePendingDevices)(
@@ -171,13 +191,7 @@ export async function maybeEmitScopeUpgradeHint(
 
   if (!hasPendingDeviceRequest(devicesOutput)) return null;
 
-  try {
-    const hint = buildScopeUpgradeExecHint(cliName, sandboxName);
-    (deps.writeStderr ?? ((line: string) => console.error(line)))(hint);
-    return hint;
-  } catch {
-    return null;
-  }
+  return emitScopeUpgradeHint(buildScopeUpgradeExecHint(cliName, sandboxName), deps.writeStderr);
 }
 
 /**
