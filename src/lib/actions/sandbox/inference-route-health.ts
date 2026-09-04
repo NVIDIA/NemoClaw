@@ -5,6 +5,7 @@ import { captureOpenshellForStatus, isCommandTimeout } from "../../adapters/open
 import { OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import type { ProviderHealthStatus } from "../../inference/health";
+import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../inference/probe/transient-http-policy";
 import {
   buildSandboxInferenceRouteProbeArgs,
   classifyInferenceRouteFailureLabel,
@@ -152,6 +153,22 @@ function classifyInferenceInvocationFailureLabel(
   if (httpStatus === null) return "unreachable";
   if (httpStatus === 401 || httpStatus === 403) return "unauthorized";
   return "unhealthy";
+}
+
+/**
+ * True only when the inference request itself was declined with a transient
+ * gateway or availability status, so sending it again is worthwhile.
+ *
+ * HTTP 401, 403, 404, and 500, an invalid 2xx response body, and a request
+ * that never reached an HTTP status all return false: those describe the route
+ * as it is, so a caller must report them without retrying. A null invocation
+ * also returns false, because no inference request was sent.
+ */
+export function isTransientInferenceInvocationFailure(
+  invocation: SandboxInferenceInvocationResult | null,
+): boolean {
+  if (invocation === null || invocation.ok) return false;
+  return invocation.httpStatus !== null && RETRIABLE_HTTP_PROBE_STATUSES.has(invocation.httpStatus);
 }
 
 /**
