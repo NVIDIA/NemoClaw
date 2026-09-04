@@ -23,7 +23,7 @@ const inputs = {
   packageLock: "lock",
   rawResponse:
     '{"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}',
-  registryOrigin: "https://registry.yarnpkg.com/",
+  registryOrigin: "https://registry.yarnpkg.com",
   now: NOW,
 } as const;
 function receipt(createdAt = NOW) {
@@ -146,44 +146,58 @@ describe("reviewed npm audit receipt", () => {
     ).toThrow(/packageLockSha256/);
   });
 
-  it("provides a local CLI verifier suitable for a BuildKit secret mount", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "receipt-cli-"));
-    try {
-      fs.writeFileSync(path.join(root, "package.json"), inputs.packageJson);
-      fs.writeFileSync(path.join(root, "package-lock.json"), inputs.packageLock);
-      fs.writeFileSync(path.join(root, "exceptions.json"), inputs.exceptionPolicy);
-      fs.writeFileSync(path.join(root, "raw.json"), inputs.rawResponse);
-      fs.writeFileSync(path.join(root, "receipt.json"), canonicalAuditReceipt(receipt(new Date())));
-      const result = spawnSync(
-        process.execPath,
-        [
-          "--experimental-strip-types",
-          path.join(import.meta.dirname, "../../../scripts/lib/npm-audit-receipt.mts"),
-          "--receipt",
-          path.join(root, "receipt.json"),
-          "--package-json",
-          path.join(root, "package.json"),
-          "--package-lock",
-          path.join(root, "package-lock.json"),
-          "--raw-report",
-          path.join(root, "raw.json"),
-          "--exceptions",
-          path.join(root, "exceptions.json"),
-          "--graph",
-          inputs.graphId,
-          "--npm-version",
-          inputs.npmVersion,
-          "--registry",
-          inputs.registryOrigin,
-          "--threshold",
-          inputs.severityThreshold,
-        ],
-        { encoding: "utf8" },
-      );
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("current policy verified");
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+  it.each([
+    { legacy: false, registry: inputs.registryOrigin },
+    { legacy: true, registry: "https://registry.npmjs.org/" },
+  ])(
+    "provides a local CLI verifier for a BuildKit secret mount ($legacy)",
+    ({ legacy, registry }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "receipt-cli-"));
+      try {
+        fs.writeFileSync(path.join(root, "package.json"), inputs.packageJson);
+        fs.writeFileSync(path.join(root, "package-lock.json"), inputs.packageLock);
+        fs.writeFileSync(path.join(root, "exceptions.json"), inputs.exceptionPolicy);
+        fs.writeFileSync(path.join(root, "raw.json"), inputs.rawResponse);
+        const auditReceipt = legacy
+          ? {
+              ...receipt(new Date()),
+              argv: ["audit", "--omit=dev", "--json"],
+              registryOrigin: registry,
+            }
+          : receipt(new Date());
+        fs.writeFileSync(path.join(root, "receipt.json"), canonicalAuditReceipt(auditReceipt));
+        const result = spawnSync(
+          process.execPath,
+          [
+            "--experimental-strip-types",
+            path.join(import.meta.dirname, "../../../scripts/lib/npm-audit-receipt.mts"),
+            "--receipt",
+            path.join(root, "receipt.json"),
+            "--package-json",
+            path.join(root, "package.json"),
+            "--package-lock",
+            path.join(root, "package-lock.json"),
+            "--raw-report",
+            path.join(root, "raw.json"),
+            "--exceptions",
+            path.join(root, "exceptions.json"),
+            "--graph",
+            inputs.graphId,
+            "--npm-version",
+            inputs.npmVersion,
+            "--registry",
+            registry,
+            "--threshold",
+            inputs.severityThreshold,
+            ...(legacy ? ["--legacy-npmjs", "true"] : []),
+          ],
+          { encoding: "utf8" },
+        );
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toContain("current policy verified");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });

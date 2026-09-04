@@ -232,7 +232,9 @@ function cli(args: readonly string[]): void {
   ];
   const allowed = [...required, "--result", "--legacy-npmjs"];
   exactKeys(
-    Object.fromEntries([...values].filter(([key]) => key !== "--result")),
+    Object.fromEntries(
+      [...values].filter(([key]) => key !== "--result" && key !== "--legacy-npmjs"),
+    ),
     required,
     "verifier arguments",
   );
