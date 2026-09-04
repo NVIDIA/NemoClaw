@@ -1291,15 +1291,33 @@ describe("PR merge conflict fixer", () => {
     };
     const runName = `Repair validation ${selection.attemptKey} head ${generatedHeadSha}`;
     let failedWorkflow: string | undefined;
+    let correlationMode: "one" | "zero" | "ambiguous" = "one";
+    const dispatchedWorkflows = new Set<string>();
     const request = vi.fn(async (method: string, apiPath: string, body?: unknown) => {
       const workflow = ADVISOR_REPAIR_HEAD_WORKFLOWS.find(({ workflow }) =>
         apiPath.includes(`/workflows/${workflow}/dispatches`),
       );
+      const workflowRunsMatch = apiPath.match(/\/actions\/workflows\/([^/]+)\/runs[?]/u);
       const runMatch = apiPath.match(/\/actions\/runs\/(\d+)$/u);
       const jobsMatch = apiPath.match(/\/actions\/runs\/(\d+)\/jobs/u);
       switch (true) {
         case apiPath.endsWith(`/pulls/${selection.prNumber}`):
           return pull;
+        case method === "GET" && workflowRunsMatch !== null: {
+          const workflowName = workflowRunsMatch[1]!;
+          const runId =
+            ADVISOR_REPAIR_HEAD_WORKFLOWS.findIndex((item) => item.workflow === workflowName) + 1;
+          const run = (await request(
+            "GET",
+            `/repos/${selection.repository}/actions/runs/${runId}`,
+          )) as Record<string, unknown>;
+          const runs =
+            dispatchedWorkflows.has(workflowName) && correlationMode !== "zero" ? [run] : [];
+          return {
+            workflow_runs:
+              correlationMode === "ambiguous" && runs.length === 1 ? [...runs, run] : runs,
+          };
+        }
         case method === "POST" && workflow !== undefined: {
           const dispatch = body as { ref?: unknown; inputs?: Record<string, unknown> };
           expect(dispatch.ref).toBe("main");
@@ -1313,12 +1331,8 @@ describe("PR merge conflict fixer", () => {
               ? dispatch.inputs?.repair_source_head_sha
               : selection.sourceHeadSha,
           ).toBe(selection.sourceHeadSha);
-          const runId = ADVISOR_REPAIR_HEAD_WORKFLOWS.indexOf(workflow!) + 1;
-          return {
-            workflow_run_id: runId,
-            run_url: `https://api.github.com/repos/${selection.repository}/actions/runs/${runId}`,
-            html_url: `https://github.com/${selection.repository}/actions/runs/${runId}`,
-          };
+          dispatchedWorkflows.add(workflow.workflow);
+          return {};
         }
         case method === "GET" && runMatch !== null: {
           const runId = Number(runMatch?.[1]);
@@ -1365,8 +1379,7 @@ describe("PR merge conflict fixer", () => {
           throw new Error(`unexpected request: ${method} ${apiPath}`);
       }
     });
-
-    await expect(
+    const verify = () =>
       waitForAdvisorRepairHead({
         prNumber: selection.prNumber,
         sourceHeadSha: selection.sourceHeadSha,
@@ -1375,27 +1388,22 @@ describe("PR merge conflict fixer", () => {
         attemptKey: selection.attemptKey,
         request: request as GitHubRequest,
         attempts: 1,
-      }),
-    ).resolves.toMatchObject({
+      });
+    await expect(verify()).resolves.toMatchObject({
       outcome: "success",
       workflows: { length: 6 },
       checks: { length: 5 },
     });
-
     failedWorkflow = "pr.yaml";
-    await expect(
-      waitForAdvisorRepairHead({
-        prNumber: selection.prNumber,
-        sourceHeadSha: selection.sourceHeadSha,
-        baseSha: selection.baseSha,
-        generatedHeadSha,
-        attemptKey: selection.attemptKey,
-        request: request as GitHubRequest,
-        attempts: 1,
-      }),
-    ).rejects.toThrow("generated-head pr.yaml run failed");
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("generated-head pr.yaml run failed");
+    correlationMode = "zero";
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("did not finish");
+    correlationMode = "ambiguous";
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("run identity is ambiguous");
   });
-
   it.each([
     [
       "an unselected path",
@@ -1447,7 +1455,6 @@ describe("PR merge conflict fixer", () => {
     fs.writeFileSync(path.join(artifact, "repair.patch"), "patch\n");
     const expected = { "proposal.json": 512 * 1024, "repair.patch": 2 * 1024 * 1024 };
     expect(() => assertRepairArtifactDirectory(artifact, expected)).not.toThrow();
-
     fs.writeFileSync(path.join(artifact, "extra"), "unexpected");
     expect(() => assertRepairArtifactDirectory(artifact, expected)).toThrow("unexpected file set");
     fs.rmSync(path.join(artifact, "extra"));
@@ -1455,7 +1462,6 @@ describe("PR merge conflict fixer", () => {
     fs.symlinkSync("proposal.json", path.join(artifact, "repair.patch"));
     expect(() => assertRepairArtifactDirectory(artifact, expected)).toThrow("bounded regular file");
   });
-
   it("deletes the named sandbox when listing is unavailable", () => {
     const tools = resolverTools();
     vi.mocked(tools.run)
@@ -1463,11 +1469,9 @@ describe("PR merge conflict fixer", () => {
         throw new Error("sandbox listing unavailable");
       })
       .mockImplementationOnce(() => "");
-
     expect(() => deleteResolutionSandbox(resolverEnvironment(), tools)).not.toThrow();
     expect(vi.mocked(tools.run).mock.calls[1]?.[1]).toEqual(["sandbox", "delete", "sandbox-test"]);
   });
-
   it("reports the named sandbox when listing and deletion both fail", () => {
     const tools = resolverTools();
     vi.mocked(tools.run)
@@ -1477,13 +1481,11 @@ describe("PR merge conflict fixer", () => {
       .mockImplementationOnce(() => {
         throw new Error("sandbox deletion unavailable");
       });
-
     expect(() => deleteResolutionSandbox(resolverEnvironment(), tools)).toThrow(
       "Failed to delete OpenShell sandbox sandbox-test: sandbox deletion unavailable; sandbox listing also failed: sandbox listing unavailable",
     );
     expect(tools.run).toHaveBeenCalledTimes(2);
   });
-
   it("configures Pi for credential-free OpenShell inference (#7542)", () => {
     const config = JSON.parse(resolverModelConfiguration());
     expect(config.providers.openshell).toMatchObject({

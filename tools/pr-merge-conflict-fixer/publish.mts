@@ -466,11 +466,17 @@ export function githubClient(token: string): { graphql: GraphqlRequest; request:
     "X-GitHub-Api-Version": "2026-03-10",
   };
   const parse = async (response: Response): Promise<unknown> => {
-    const body = (await response.json()) as {
+    const text = await response.text();
+    let body: {
       data?: unknown;
       errors?: Array<{ message?: string }>;
       message?: string;
     };
+    try {
+      body = text === "" ? {} : (JSON.parse(text) as typeof body);
+    } catch {
+      throw new ConflictFixerError(`GitHub API returned invalid JSON (HTTP ${response.status})`);
+    }
     if (!response.ok || body.errors?.length) {
       const message =
         body.errors
@@ -541,23 +547,55 @@ function repairValidationInputs(
 async function dispatchRepairValidation(
   workflow: string,
   input: Parameters<typeof repairValidationInputs>[1],
+  runName: string,
   request: GitHubRequest,
-): Promise<{ workflow: string; runId: number; url: string }> {
+): Promise<{ workflow: string; priorRunIds: Set<number>; runName: string }> {
+  const prior = await listRepairValidationRuns(workflow, request);
+  await request("POST", `/repos/${REPAIR_REPOSITORY}/actions/workflows/${workflow}/dispatches`, {
+    ref: "main",
+    inputs: repairValidationInputs(workflow, input),
+  });
+  return { workflow, priorRunIds: new Set(prior.map(({ id }) => Number(id))), runName };
+}
+
+async function listRepairValidationRuns(
+  workflow: string,
+  request: GitHubRequest,
+): Promise<WorkflowRun[]> {
   const response = (await request(
-    "POST",
-    `/repos/${REPAIR_REPOSITORY}/actions/workflows/${workflow}/dispatches`,
-    { ref: "main", inputs: repairValidationInputs(workflow, input) },
-  )) as { workflow_run_id?: unknown; run_url?: unknown; html_url?: unknown };
+    "GET",
+    `/repos/${REPAIR_REPOSITORY}/actions/workflows/${workflow}/runs?branch=main&event=workflow_dispatch&per_page=100`,
+  )) as { workflow_runs?: unknown };
   if (
-    !Number.isSafeInteger(response.workflow_run_id) ||
-    Number(response.workflow_run_id) < 1 ||
-    response.run_url !==
-      `https://api.github.com/repos/${REPAIR_REPOSITORY}/actions/runs/${response.workflow_run_id}` ||
-    response.html_url !==
-      `https://github.com/${REPAIR_REPOSITORY}/actions/runs/${response.workflow_run_id}`
+    !Array.isArray(response.workflow_runs) ||
+    response.workflow_runs.length > 100 ||
+    response.workflow_runs.some(
+      (run: WorkflowRun) => !Number.isSafeInteger(run.id) || Number(run.id) < 1,
+    )
   )
-    throw new ConflictFixerError(`generated-head ${workflow} dispatch identity is invalid`);
-  return { workflow, runId: Number(response.workflow_run_id), url: response.html_url };
+    throw new ConflictFixerError(`generated-head ${workflow} run listing is invalid`);
+  return response.workflow_runs as WorkflowRun[];
+}
+
+async function discoverRepairValidationRun(
+  pending: Awaited<ReturnType<typeof dispatchRepairValidation>>,
+  request: GitHubRequest,
+): Promise<{ workflow: string; runId: number; url: string } | null> {
+  const matches = (await listRepairValidationRuns(pending.workflow, request)).filter(
+    (run) =>
+      !pending.priorRunIds.has(Number(run.id)) &&
+      run.path === `.github/workflows/${pending.workflow}` &&
+      run.event === "workflow_dispatch" &&
+      run.head_branch === "main" &&
+      run.display_title === pending.runName &&
+      run.html_url === `https://github.com/${REPAIR_REPOSITORY}/actions/runs/${run.id}`,
+  );
+  if (matches.length > 1)
+    throw new ConflictFixerError(`generated-head ${pending.workflow} run identity is ambiguous`);
+  const [match] = matches;
+  return match
+    ? { workflow: pending.workflow, runId: Number(match.id), url: String(match.html_url) }
+    : null;
 }
 
 async function completedWorkflowEvidence(
@@ -683,11 +721,12 @@ export async function waitForAdvisorRepairHead(input: {
   const wait = input.wait ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const attempts = input.attempts ?? 120;
   const runName = repairValidationRunName(input.attemptKey, input.generatedHeadSha);
-  const dispatches = await Promise.all(
+  const pendingDispatches = await Promise.all(
     ADVISOR_REPAIR_HEAD_WORKFLOWS.map(({ workflow }) =>
-      dispatchRepairValidation(workflow, input, input.request),
+      dispatchRepairValidation(workflow, input, runName, input.request),
     ),
   );
+  const dispatches = new Map<string, { workflow: string; runId: number; url: string }>();
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const pull = (await input.request(
       "GET",
@@ -704,12 +743,15 @@ export async function waitForAdvisorRepairHead(input: {
       pull.base.repo.full_name !== REPAIR_REPOSITORY
     )
       throw new ConflictFixerError("pull request changed during generated-head validation");
+    for (const pending of pendingDispatches) {
+      if (dispatches.has(pending.workflow)) continue;
+      const dispatch = await discoverRepairValidationRun(pending, input.request);
+      if (dispatch) dispatches.set(pending.workflow, dispatch);
+    }
     const workflows: AdvisorRepairHeadReceipt["workflows"] = [];
-    for (const dispatch of dispatches) {
-      const specification = ADVISOR_REPAIR_HEAD_WORKFLOWS.find(
-        ({ workflow }) => workflow === dispatch.workflow,
-      );
-      if (!specification) throw new ConflictFixerError("unknown generated-head workflow");
+    for (const specification of ADVISOR_REPAIR_HEAD_WORKFLOWS) {
+      const dispatch = dispatches.get(specification.workflow);
+      if (!dispatch) continue;
       const evidence = await completedWorkflowEvidence(
         dispatch,
         specification.checks,

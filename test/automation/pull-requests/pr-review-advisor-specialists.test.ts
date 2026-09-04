@@ -563,7 +563,7 @@ describe("PR review advisor specialist prompts", () => {
     const pullRequest = {
       state: "open",
       draft: false,
-      maintainer_can_modify: true,
+      maintainer_can_modify: false,
       user: { login: "contributor" },
       head: { ref: "feature/fix", sha: headSha, repo: { full_name: "NVIDIA/NemoClaw" } },
       base: {
@@ -632,7 +632,10 @@ describe("PR review advisor specialist prompts", () => {
     expect(() =>
       bindRepairSelection({
         ...request,
-        pullRequest: { ...pullRequest, maintainer_can_modify: false },
+        pullRequest: {
+          ...pullRequest,
+          head: { ...pullRequest.head, repo: { full_name: "contributor/NemoClaw" } },
+        },
       }),
     ).toThrow("not eligible");
     expect(() =>
