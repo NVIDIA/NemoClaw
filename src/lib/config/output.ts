@@ -185,15 +185,12 @@ function removeOwnedStagingPath(temporary: string, stagedFile: fs.Stats): boolea
 }
 
 function assertPublishedLocation(
-  parent: ReturnType<typeof openParent>,
-  destination: string,
   stagedFile: fs.Stats,
   outputPath: string,
 ): void {
-  assertParentStable(parent, outputPath);
   let current: fs.Stats;
   try {
-    current = fs.lstatSync(destination);
+    current = fs.lstatSync(outputPath);
   } catch {
     throw new YamlExportOutputError(
       "unsafe-output",
@@ -298,7 +295,7 @@ export function publishExportFile(
         );
       }
       try {
-        assertPublishedLocation(parent, destination, stagedFile, outputPath);
+        assertPublishedLocation(stagedFile, outputPath);
         locationConfirmed = true;
       } catch (error) {
         primaryError ??= error;

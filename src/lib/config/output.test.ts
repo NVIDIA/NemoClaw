@@ -367,6 +367,45 @@ describe("publishExportFile", () => {
     expect(temporaryEntries(movedParent)).toEqual([]);
   });
 
+  it("checks the requested path during the final publication observation (#10938)", () => {
+    const root = temporaryRoot();
+    const outputParent = path.join(root, "output");
+    const movedParent = path.join(root, "moved");
+    const outputPath = path.join(outputParent, "selected.yaml");
+    fs.mkdirSync(outputParent);
+    const linkSync = fs.linkSync;
+    const lstatSync = fs.lstatSync;
+    let publicationComplete = false;
+    vi.spyOn(fs, "linkSync").mockImplementationOnce((source, destination) => {
+      linkSync(source, destination);
+      publicationComplete = true;
+    });
+    vi.spyOn(fs, "lstatSync").mockImplementation((candidate) =>
+      publicationComplete && String(candidate) === outputPath
+        ? (() => {
+            fs.renameSync(outputParent, movedParent);
+            fs.mkdirSync(outputParent);
+            return lstatSync(candidate);
+          })()
+        : lstatSync(candidate),
+    );
+
+    expect(() => publishExportFile(outputPath, "content")).toThrowError(
+      expect.objectContaining<Partial<YamlExportOutputError>>({
+        category: "unsafe-output",
+        fileState: {
+          publication: "published",
+          durability: "confirmed",
+          location: "unknown",
+          stagingCleanup: "complete",
+        },
+        outputPath,
+      }),
+    );
+    expect(fs.existsSync(outputPath)).toBe(false);
+    expect(fs.readFileSync(path.join(movedParent, "selected.yaml"), "utf8")).toBe("content");
+  });
+
   it("reports an uncertain committed location when the destination changes after publication (#10938)", () => {
     const root = temporaryRoot();
     const outputPath = path.join(root, "selected.yaml");
