@@ -23,6 +23,7 @@ import {
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { createSession } from "../../state/onboard-session";
 import { makeDeps, makeHostState, unexpected } from "../__test-helpers__/setup-nim-flow";
+import { GatewayStateConflictError } from "../gateway-management";
 import { handleProviderInferenceState } from "../machine/handlers/provider-inference";
 import { baseOptions, createDeps } from "../machine/handlers/provider-inference.test-support";
 import {
@@ -1068,7 +1069,13 @@ describe("Hermes Portable Ollama inference activation", () => {
     rename.mockRestore();
     expect(gatewayJournal(fixture)).toMatchObject({ phase: "creating", providerAuthority: null });
 
-    const restarted = fixture.resolve()!;
+    const interruptedTransactionId = gatewayJournal(fixture).intent.transactionId;
+    const reboundResolver = createHermesPortableOllamaInferenceResolver({
+      ...fixture.resolverOptions,
+      getReservationSessionId: () => "portable-session-fresh",
+    });
+    const restarted = reboundResolver(freshPortableInput)!;
+    expect(gatewayJournal(fixture).intent.transactionId).toBe(interruptedTransactionId);
     expect(restarted.request).toMatchObject({ recover: true });
     const recoveredRoute = prepareManagedRoute(fixture, restarted);
     recoveredRoute.prepared.validateBeforeCommit();
@@ -1110,11 +1117,17 @@ describe("Hermes Portable Ollama inference activation", () => {
     createExactGatewayProvider(mutation);
     await mutation.commit();
 
-    const restarted = fixture.resolve({
+    const interruptedTransactionId = gatewayJournal(fixture).intent.transactionId;
+    const reboundResolver = createHermesPortableOllamaInferenceResolver({
+      ...fixture.resolverOptions,
+      getReservationSessionId: () => "portable-session-fresh",
+    });
+    const restarted = reboundResolver({
       ...freshPortableInput,
       allowPublishedResume: true,
       recover: true,
     })!;
+    expect(gatewayJournal(fixture).intent.transactionId).toBe(interruptedTransactionId);
     expect(restarted.request).toMatchObject({ recover: true });
     const recoveredRoute = prepareManagedRoute(fixture, restarted);
     recoveredRoute.prepared.validateBeforeCommit();
@@ -1208,6 +1221,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     expect(() => createExactGatewayProvider(mutation)).toThrow(
       "ambiguous gateway provider authority",
     );
+    expect(() => createExactGatewayProvider(mutation)).toThrow(GatewayStateConflictError);
 
     expect(gatewayJournal(fixture)).toMatchObject({
       phase: "creating",
@@ -1215,6 +1229,61 @@ describe("Hermes Portable Ollama inference activation", () => {
     });
     expect(fixture.gatewayProvider.isPresent()).toBe(true);
     expect(fixture.events.some((event) => event.includes("provider delete"))).toBe(false);
+  });
+
+  it.each([
+    {
+      name: "different journal intent",
+      serialize: (journal: ReturnType<typeof gatewayJournal>) => {
+        journal.intent.model = "other-model";
+        return `${JSON.stringify(journal)}\n`;
+      },
+      expected: "gateway provider journal authority changed",
+    },
+    {
+      name: "malformed journal",
+      serialize: () => "{\n",
+      expected: "gateway provider journal is malformed",
+    },
+    {
+      name: "malformed transaction identity",
+      serialize: (journal: ReturnType<typeof gatewayJournal>) => {
+        journal.intent.transactionId = "invalid";
+        return `${JSON.stringify(journal)}\n`;
+      },
+      expected: "gateway provider journal identity is malformed",
+    },
+  ])("preserves $name across a fresh session", async ({ serialize, expected }) => {
+    const fixture = createRuntimeFixture();
+    const selection = fixture.resolve()!;
+    const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
+    createExactGatewayProvider(mutation);
+    const journalPath = gatewayJournalPath(fixture);
+    const serialized = serialize(gatewayJournal(fixture));
+    fs.writeFileSync(journalPath, serialized, { mode: 0o600 });
+    const mutationsBefore = fixture.events.filter(
+      (event) => event.includes("provider create") || event.includes("provider delete"),
+    );
+    const reboundResolver = createHermesPortableOllamaInferenceResolver({
+      ...fixture.resolverOptions,
+      getReservationSessionId: () => "portable-session-fresh",
+    });
+
+    let error: unknown;
+    try {
+      reboundResolver(freshPortableInput);
+    } catch (cause) {
+      error = cause;
+    }
+    expect(error).toBeInstanceOf(GatewayStateConflictError);
+    expect((error as Error).message).toContain(expected);
+    expect((error as Error).message).toContain("Existing state was preserved");
+    expect(
+      fixture.events.filter(
+        (event) => event.includes("provider create") || event.includes("provider delete"),
+      ),
+    ).toEqual(mutationsBefore);
+    expect(fs.readFileSync(journalPath, "utf8")).toBe(serialized);
   });
 
   it("adopts an exact transaction-marked provider after create transport ambiguity (#9596)", async () => {

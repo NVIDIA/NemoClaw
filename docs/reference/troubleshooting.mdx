@@ -4190,6 +4190,22 @@ systemctl --user cat app.slice
 
 The output must not list any NemoClaw CPU-controller drop-in. Another administrator-owned drop-in can still configure `cpu`; do not remove it as part of this rollback. Removing the NemoClaw drop-ins can make the portable CPU delegation preflight fail again.
 
+<AgentOnly variant="hermes">
+
+### Portable Onboarding State Conflicts
+
+An interrupted Hermes Portable Ollama run can leave a private gateway-provider journal before it publishes its inference receipt.
+A later `--fresh` run has a new onboarding session identifier, but NemoClaw reuses the recorded transaction only when the complete canonical journal intent still matches the sandbox, model, provider, credential name, and receipt target.
+NemoClaw reconciles the recorded phase with live authority, then creates, adopts, or deletes only the provider proven by that transaction.
+
+If onboarding reports a gateway-provider journal or provider-authority conflict, the recorded state is malformed, belongs to different intent, or no longer matches the live provider.
+NemoClaw preserves both sides rather than guessing ownership.
+Do not edit the journal or delete the provider manually.
+To start an isolated attempt without changing the preserved state, choose a different sandbox name, an unused `NEMOCLAW_GATEWAY_PORT`, and a separate `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR`.
+Retire the preserved resources only through the lifecycle authority that created them.
+
+</AgentOnly>
+
 ### Portable Podman Readiness Fails
 
 Portable commands use the current user's rootless Podman socket authority recorded in NemoClaw state. They ignore ambient Docker and Podman runtime selectors, including named connections. Do not export another `DOCKER_HOST`, `DOCKER_CONTEXT`, `CONTAINER_HOST`, or `CONTAINER_CONNECTION` to bypass a readiness failure.

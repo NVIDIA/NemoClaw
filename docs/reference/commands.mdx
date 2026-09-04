@@ -359,7 +359,28 @@ NemoClaw records onboarding progress so interrupted runs can continue. Use `--re
 
 Checkpoint schema 4 records whether onboarding uses the default profile or the portable experimental profile. For the portable profile, it also records the current user's canonical home reported by the operating system, that home's exact `.config` directory, the runtime root, rootless Podman endpoint path, and runtime ownership. It does not record ambient Docker or Podman runtime selector values. The runtime authority record contains no credentials. A plain `--resume` restores the recorded profile. You can also run `$$nemoclaw onboard --experimental-profile portable --resume` when the recorded profile is portable. NemoClaw rejects an explicit profile that conflicts with the checkpoint before it changes portable configuration, activates the user-scoped Podman socket, or changes gateway and sandbox resources.
 
-Portable resume derives `DOCKER_HOST`, `CONTAINERS_CONF`, and `NETAVARK_FW` again while it holds the onboarding lock. It ignores ambient Docker and Podman runtime selectors during that derivation. NemoClaw scopes the derived values to onboarding and restores the process environment after success or failure. It verifies the current user, canonical roots, socket path and ownership, Podman identity and version, and required configuration before a resumed onboarding step changes resources. Resume stops before writes or activation if an existing socket or configuration path is a symlink, has the wrong owner, or has an unsafe type or mode. NemoClaw can create missing descendants beneath a validated current-user root and reconcile content drift in its own portable configuration files. A missing user-scoped socket after a host reboot can be activated and verified at the recorded path. A new socket inode or a supported Podman upgrade does not invalidate the checkpoint. Portable onboarding always uses the `.config` directory beneath the canonical home reported by the operating system. `HOME` and `XDG_CONFIG_HOME` never select or override this authority. NemoClaw ignores ambient `XDG_CONFIG_HOME` during onboarding and restores its exact prior presence and value afterward. Resume rejects a checkpoint that records another configuration root. It also rejects stored authority or filesystem ownership drift without falling back to Docker.
+<AgentOnly variant="hermes">
+
+For Hermes Portable Ollama, `--fresh` replaces the onboarding checkpoint without automatically deleting a private unfinished gateway-provider transaction.
+When the recorded journal is canonical and its sandbox, model, provider, credential name, and receipt target match the new run, NemoClaw retains its transaction identity and resumes its exact phase.
+This prevents a new session identifier from stranding a provider created by the interrupted run or creating that provider twice.
+If the journal is malformed or describes different intent, NemoClaw preserves it and exits with a redacted CLI diagnostic without a Node.js stack trace instead of mutating ambiguous authority.
+
+</AgentOnly>
+
+Portable resume derives `DOCKER_HOST`, `CONTAINERS_CONF`, and `NETAVARK_FW` again while it holds the onboarding lock.
+It ignores ambient Docker and Podman runtime selectors during that derivation.
+NemoClaw scopes the derived values to onboarding and restores the process environment after success or failure.
+It verifies the current user, canonical roots, socket path and ownership, Podman identity and version, and required configuration before a resumed onboarding step changes resources.
+Resume stops before writes or activation if an existing socket or configuration path is a symlink, has the wrong owner, or has an unsafe type or mode.
+NemoClaw can create missing descendants beneath a validated current-user root and reconcile content drift in its own portable configuration files.
+A missing user-scoped socket after a host reboot can be activated and verified at the recorded path.
+A new socket inode or a supported Podman upgrade does not invalidate the checkpoint.
+Portable onboarding always uses the `.config` directory beneath the canonical home reported by the operating system.
+`HOME` and `XDG_CONFIG_HOME` never select or override this authority.
+NemoClaw ignores ambient `XDG_CONFIG_HOME` during onboarding and restores its exact prior presence and value afterward.
+Resume rejects a checkpoint that records another configuration root.
+It also rejects stored authority or filesystem ownership drift without falling back to Docker.
 
 <AgentOnly variant="openclaw">
 
@@ -511,7 +532,8 @@ For Hermes, warm-hint and candidate validation reruns a container probe for the 
 
 </AgentOnly>
 
-Bypassing the recorded hint does not clear Docker's local image store or require a network pull. Only `--fresh` also discards the saved onboarding session; the refresh environment variable affects base-image selection only.
+Bypassing the recorded hint does not clear Docker's local image store or require a network pull.
+Only `--fresh` also discards the saved onboarding checkpoint; the refresh environment variable affects base-image selection only.
 
 <Warning>
   For NemoClaw-managed environments, use `$$nemoclaw onboard` when you need to create or recreate
@@ -520,7 +542,8 @@ Bypassing the recorded hint does not clear Docker's local image store or require
   rerun `$$nemoclaw onboard`.
 </Warning>
 
-Use `--fresh` to ignore any saved onboarding session and restart the wizard from scratch. This is useful after an interrupted `$$nemoclaw onboard` run when you want to discard saved state instead of continuing it with `--resume`.
+Use `--fresh` to ignore any saved onboarding checkpoint and restart the wizard from scratch. This is useful after an interrupted `$$nemoclaw onboard` run when you want to discard that checkpoint instead of continuing it with `--resume`.
+Hermes Portable Ollama keeps an independently journalled unfinished gateway-provider transaction eligible for exact recovery as described under [`--resume` and `--fresh`](#--resume-and---fresh).
 
 The installer detects existing sandbox sessions before onboarding and prints a warning if any are found. To make the installer abort instead of continuing, set `NEMOCLAW_SINGLE_SESSION=1`:
 

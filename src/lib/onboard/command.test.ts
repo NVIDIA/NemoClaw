@@ -16,16 +16,21 @@ import type { SystemReadinessReport } from "../readiness/types";
 import { resolveOnboardOptions, runOnboardCommand, servingProfileProviderKey } from "./command";
 import type { OnboardFlags } from "./command-support";
 import { PortableInferenceDescriptorError } from "./experimental/portable-inference-descriptor";
-import { invalidGatewayManagementDeclarationError } from "./gateway-management";
+import {
+  GatewayStateConflictError,
+  invalidGatewayManagementDeclarationError,
+} from "./gateway-management";
 import { GatewayAuthorityError } from "./gateway-teardown-authority";
 import {
   LOCAL_MODEL_PROFILE_ENABLED_ENV,
   LOCAL_MODEL_PROFILE_RUNTIME_ENV,
 } from "./local-model-profile/plan";
+import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "./resume-hint";
 import { OnboardResumeIntentError, OnboardResumeIntentRaceError } from "./session-bootstrap";
 import { MANAGED_VLLM_PROVIDER_KEY } from "./vllm-menu";
 
 afterEach(() => {
+  resetOnboardResumeHintForTests();
   vi.unstubAllEnvs();
 });
 
@@ -1305,6 +1310,33 @@ describe("onboard command options", () => {
     expect(errors.join("\n")).toContain("Invalid gateway management declaration");
     expect(errors.join("\n")).toContain("NVIDIA_API_KEY=<REDACTED>");
     expect(errors.join("\n")).not.toContain("nvapi-secret-value");
+  });
+
+  it("prints a clean CLI error for an onboarding state conflict", async () => {
+    const errors: string[] = [];
+    await expect(
+      runOnboardCommand({
+        flags: { "experimental-profile": "portable" },
+        env: {},
+        runOnboard: async () => {
+          throw new GatewayStateConflictError(
+            "Portable gateway state conflicts with this run.\nOPENAI_API_KEY=state-secret",
+          );
+        },
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    const output = errors.join("\n");
+    expect(output).toContain("Portable gateway state conflicts with this run");
+    expect(output).toContain("OPENAI_API_KEY=<REDACTED>");
+    expect(output).not.toContain("state-secret");
+    expect(output).not.toContain(".js:");
+    expect(output).not.toContain("    at ");
+    printOnboardResumeHint(true, (message) => errors.push(message));
+    expect(errors.join("\n")).not.toContain("onboard --resume");
+    expect(errors.join("\n")).not.toContain("onboard --experimental-profile portable --fresh");
   });
 
   it.each(RECREATE_SELECTIONS)(
