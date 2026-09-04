@@ -246,14 +246,14 @@ describe("handlePreflightState", () => {
   });
 
   it.each([
-    ["an excluded NIM provider", "nim", undefined, false],
-    ["an excluded NIM provider selection", "nim-local", undefined, false],
-    ["an excluded NIM inference provider", "nvidia-nim", undefined, false],
-    ["an explicit rebuild denial", "ollama-local", false, false],
+    ["persisted Local NIM", "vllm-local", "nemoclaw-nim", undefined, false],
+    ["an unknown persisted provider", "obsolete-provider", null, undefined, false],
+    ["legacy NVIDIA Endpoints", "nvidia-nim", null, undefined, true],
+    ["an explicit rebuild denial", "ollama-local", null, false, false],
   ] as const)(
-    "does not reuse %s for Deferred N1x resume (#11041)",
-    async (_case, provider, authority, expected) => {
-      const session = createSession({ provider });
+    "classifies %s for Deferred N1x resume (#11041)",
+    async (_case, provider, nimContainer, authority, expected) => {
+      const session = createSession({ provider, nimContainer });
       session.steps.preflight.status = "complete";
       const assertOnboardHostReadiness = vi.fn();
       const harness = createDeps({ assertOnboardHostReadiness });

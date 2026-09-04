@@ -15,7 +15,9 @@ export type OnboardReadinessAdmissionReasonId =
 export function hasExplicitDeferredN1xOnboardingIntent(
   env: Readonly<Record<string, string | undefined>>,
 ): boolean {
-  return env.NEMOCLAW_NO_EXPRESS === "1" || isN1xOnboardingProviderKey(env.NEMOCLAW_PROVIDER);
+  const provider = String(env.NEMOCLAW_PROVIDER ?? "").trim();
+  if (provider) return isN1xOnboardingProviderKey(provider);
+  return env.NEMOCLAW_NO_EXPRESS === "1";
 }
 
 export const ONBOARD_READINESS_FINDING_IDS = {

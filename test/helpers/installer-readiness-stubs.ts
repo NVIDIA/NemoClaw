@@ -7,28 +7,6 @@ import os from "node:os";
 import path from "node:path";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH, writeExecutable } from "./installer-sourced-env";
 
-export const DEFERRED_N1X_INTENT_STUB = `
-const deferredN1xProviderAliases = new Map([
-  ["cloud", "build"], ["nim", "nim-local"], ["open-router", "openrouter"],
-  ["openrouterai", "openrouter"], ["anthropiccompatible", "anthropicCompatible"],
-  ["hermes", "hermesProvider"], ["hermes-provider", "hermesProvider"],
-  ["hermesprovider", "hermesProvider"], ["nous", "hermesProvider"],
-  ["nous-portal", "hermesProvider"],
-]);
-const deferredN1xProviderKeys = new Set([
-  "build", "openrouter", "openai", "anthropic", "anthropicCompatible", "gemini",
-  "hermesProvider", "ollama", "llama-cpp", "install-llama-cpp", "custom", "nim-local",
-  "vllm", "routed", "install-vllm", "install-ollama", "install-windows-ollama",
-  "start-windows-ollama",
-]);
-exports.hasExplicitDeferredN1xOnboardingIntent = (env) => {
-  if (env.NEMOCLAW_NO_EXPRESS === "1") return true;
-  const raw = String(env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
-  const normalized = deferredN1xProviderAliases.get(raw) || raw;
-  return deferredN1xProviderKeys.has(normalized) && normalized !== "nim-local";
-};
-`;
-
 /** Fake node that reports v22.19.0. */
 export function writeNodeStub(fakeBin: string): void {
   writeExecutable(
@@ -106,7 +84,7 @@ export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
     waivedFindingIds: [],
   };
 };
-${DEFERRED_N1X_INTENT_STUB}
+exports.hasExplicitDeferredN1xOnboardingIntent = () => false;
 `,
   );
   fs.writeFileSync(

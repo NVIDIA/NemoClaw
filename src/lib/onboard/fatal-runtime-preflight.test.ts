@@ -254,6 +254,21 @@ describe("report-backed runtime readiness (#7411)", () => {
         exitProcess: exit as never,
       }),
     ).toThrow("exit");
+    vi.stubEnv("NEMOCLAW_NO_EXPRESS", "1");
+    vi.stubEnv("NEMOCLAW_PROVIDER", "nim");
+    expect(() =>
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit as never,
+      }),
+    ).toThrow("exit");
+    vi.stubEnv("NEMOCLAW_PROVIDER", "nim-local");
+    expect(() =>
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit as never,
+      }),
+    ).toThrow("exit");
   });
 
   it("rejects ambiguous gateway ownership before the caller can run effects", () => {

@@ -36,6 +36,22 @@ export const NON_INTERACTIVE_PROVIDER_KEYS: ReadonlySet<string> = new Set([
   "start-windows-ollama",
 ]);
 
+const PERSISTED_PROVIDER_SELECTION_KEYS: Readonly<Record<string, string>> = {
+  "nvidia-router": "routed",
+  "ollama-local": "ollama",
+  "nvidia-prod": "build",
+  // This legacy name identifies NVIDIA Endpoints, not Local NVIDIA NIM.
+  "nvidia-nim": "build",
+  "openai-api": "openai",
+  "openrouter-api": "openrouter",
+  "anthropic-prod": "anthropic",
+  "compatible-anthropic-endpoint": "anthropicCompatible",
+  "gemini-api": "gemini",
+  "compatible-endpoint": "custom",
+  "llama-cpp-local": "llama-cpp",
+  "hermes-provider": "hermesProvider",
+};
+
 export function normalizeNonInteractiveProviderKey(
   value: string | null | undefined,
 ): string | null {
@@ -51,4 +67,26 @@ export function normalizeNonInteractiveProviderKey(
 export function isN1xOnboardingProviderKey(value: string | null | undefined): boolean {
   const normalized = normalizeNonInteractiveProviderKey(value);
   return normalized !== null && normalized !== "nim-local";
+}
+
+/** Resolve the provider representation persisted in an onboarding session. */
+export function persistedProviderNameToSelectionKey(
+  value: string | null | undefined,
+  options: { hasNimContainer?: boolean } = {},
+): string | null {
+  const name = String(value ?? "").trim();
+  if (!name) return null;
+  // Local NIM and standalone vLLM both persist as vllm-local. Only the
+  // owner-only NIM container record distinguishes the excluded NIM route.
+  if (name === "vllm-local") return options.hasNimContainer ? "nim-local" : "vllm";
+  return PERSISTED_PROVIDER_SELECTION_KEYS[name] ?? normalizeNonInteractiveProviderKey(name);
+}
+
+/** True only for a recognized persisted provider route that N1x permits. */
+export function isN1xOnboardingRecordedProvider(
+  value: string | null | undefined,
+  options: { hasNimContainer?: boolean } = {},
+): boolean {
+  const selection = persistedProviderNameToSelectionKey(value, options);
+  return selection !== null && selection !== "nim-local";
 }

@@ -110,6 +110,16 @@ describe("onboarding readiness admission (#7411)", () => {
     ["unknown provider", { NEMOCLAW_PROVIDER: "unknown-provider" }, false],
     ["N1x-excluded provider", { NEMOCLAW_PROVIDER: "nim-local" }, false],
     ["N1x-excluded provider alias", { NEMOCLAW_PROVIDER: "nim" }, false],
+    [
+      "disabled Express with N1x-excluded provider",
+      { NEMOCLAW_NO_EXPRESS: "1", NEMOCLAW_PROVIDER: "nim-local" },
+      false,
+    ],
+    [
+      "disabled Express with N1x-excluded alias",
+      { NEMOCLAW_NO_EXPRESS: "1", NEMOCLAW_PROVIDER: "nim" },
+      false,
+    ],
     ["blank provider", { NEMOCLAW_PROVIDER: "  " }, false],
     ["disabled Express override", { NEMOCLAW_NO_EXPRESS: "0" }, false],
     ["no intent", {}, false],

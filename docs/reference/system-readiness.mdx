@@ -177,7 +177,9 @@ Generic DMI values do not satisfy either requirement.
 
 A matching identity produces a `qualified` `host.platform.n1x` qualification, but `host.platform.supported` remains `absent` while N1x is Deferred.
 The blocking `host.platform.n1x_validation_pending` finding records the remaining physical NemoClaw Express E2E gate.
-Accepting Express, declining or disabling Express, or setting `NEMOCLAW_PROVIDER` lets onboarding waive only that finding after `host.platform.n1x` is `present`.
+After `host.platform.n1x` is `present`, accepting Express lets onboarding waive only that finding.
+Declining or disabling Express can apply the same waiver when no provider is preselected or the explicit provider is recognized and is not Local NVIDIA NIM.
+An invalid or Local NVIDIA NIM provider remains blocked.
 The read-only `host probe` report remains `incompatible` and does not apply that onboarding exception.
 
 Invalid marker metadata, invalid or ambiguous contents, the wrong PCI identity, the wrong architecture, or an unavailable NVIDIA GPU produces an `unqualified` qualification and the blocking `host.platform.n1x_unqualified` finding.

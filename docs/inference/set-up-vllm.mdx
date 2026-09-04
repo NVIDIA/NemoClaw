@@ -473,7 +473,10 @@ Generic DMI values, such as `SKU 1` and `JMJWOA-Generic`, do not establish N1x i
 
 N1x Express does not activate DGX Spark cluster discovery, the fixed catalog path, managed llama.cpp, or NVIDIA NIM.
 Accepting the preview prompt sets explicit managed-vLLM intent for the narrow pending-validation readiness exception.
-Declining the prompt or setting only `NEMOCLAW_NO_EXPRESS=1` stops the installer before onboarding; neither path opens interactive provider selection.
+Declining the prompt continues with ordinary interactive onboarding.
+Setting `NEMOCLAW_NO_EXPRESS=1` also enters ordinary onboarding when no provider is preselected or the explicit provider is recognized and is not Local NVIDIA NIM.
+An invalid or Local NVIDIA NIM provider remains blocked.
+Set a recognized provider other than Local NVIDIA NIM to enter ordinary onboarding directly.
 Set `NEMOCLAW_PROVIDER=install-vllm` when you need to bypass the prompt with the same explicit preview intent.
 
 On a host that still meets the N1x identity checks, `rebuild` reuses the recorded route as explicit preview intent only when all of these conditions hold:
