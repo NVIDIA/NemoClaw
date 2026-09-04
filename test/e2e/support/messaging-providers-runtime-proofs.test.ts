@@ -11,9 +11,9 @@ import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
-import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { applyFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
+import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import {
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,

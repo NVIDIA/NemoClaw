@@ -177,7 +177,7 @@ def expire_runtime_validation(_script, _environment):
     preflight_clock[0] = 1.0
 
 
-control._validate_runtime_environment = expire_runtime_validation
+control._validate_managed_gateway_environment = expire_runtime_validation
 control._verify_locked_hermes_hash = lambda: hash_checks.append("called")
 preflight_after_validation = error_code(
     lambda: control._hermes_preflight(EnvironmentReader(), supervisor, 1.0)

@@ -154,8 +154,13 @@ exit 2`);
       "-I",
       "-c",
     ]);
-    expect(runtimeProbe?.at(-1)).toContain("or sys.exit(1)");
-    expect(runtimeProbe?.at(-1)).not.toContain("assert ");
+    const probe = runtimeProbe?.at(-1) ?? "";
+    const initializer = "mcp_tool._ensure_mcp_sdk() or sys.exit(1)";
+    expect(probe).toContain("or sys.exit(1)");
+    expect(probe).not.toContain("assert ");
+    expect(probe).toContain(initializer);
+    expect(probe.indexOf(initializer)).toBeLessThan(probe.indexOf("_MCP_AVAILABLE"));
+    expect(probe.indexOf(initializer)).toBeLessThan(probe.indexOf("_MCP_HTTP_AVAILABLE"));
   });
 
   it("rejects a Hermes candidate that has MCP but lacks ACP and builds locally", () => {
