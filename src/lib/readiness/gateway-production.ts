@@ -781,10 +781,10 @@ export function createProductionGatewayReadinessDependencies(
     let legacyClusterImageRef: string | null = null;
     if (!portCheck.ok && managedGatewayCanBeRunning) {
       try {
-        if (options.isLegacyClusterBound) {
-          legacyClusterBound = options.isLegacyClusterBound();
-        } else if (resolveRuntimeProviderGateway().ownsHostReadiness) {
+        if (resolveRuntimeProviderGateway().ownsHostReadiness) {
           legacyClusterBound = false;
+        } else if (options.isLegacyClusterBound) {
+          legacyClusterBound = options.isLegacyClusterBound();
         } else {
           const legacyCluster = inspectLegacyCluster(
             gatewayName,
