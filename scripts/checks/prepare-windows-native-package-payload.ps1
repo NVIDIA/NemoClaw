@@ -410,7 +410,7 @@ try {
         -Label 'Hermes native ARM64 import preflight'
     Invoke-Checked `
         -FilePath (Join-Path $pythonRoot 'python.exe') `
-        -Arguments @('-I', '-c', 'import sys; sys.path.insert(0, sys.argv[1]); import tiktoken; import langchain_openai; from deepagents_code import cli_main', $deepAgentsSitePackages) `
+        -Arguments @('-I', '-c', 'import sys; sys.path.insert(0, sys.argv[1]); import colorama; import tiktoken; import langchain_openai; import langgraph_api.logging; langgraph_api.logging.Formatter(); from deepagents_code import cli_main', $deepAgentsSitePackages) `
         -Label 'Deep Agents Code native ARM64 import preflight'
 
     $nodeArchivePath = Join-Path $workRoot $script:NodeArchive
@@ -515,6 +515,7 @@ debug = false
         'hermes\site-packages\hermes_cli\main.py',
         'hermes\site-packages\concurrent_log_handler\__init__.py',
         'deepagents\site-packages\deepagents_code\main.py',
+        'deepagents\site-packages\colorama\__init__.py',
         'deepagents\site-packages\tiktoken\_tiktoken.cp313-win_arm64.pyd',
         'nemocua\run_with_harness.py',
         'onboarding\index.html',

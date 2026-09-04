@@ -590,6 +590,16 @@ jobs:
             if ((Get-FileHash -LiteralPath $langGraphLogging -Algorithm SHA256).Hash.ToLowerInvariant() -cne $langGraphPatchedDigest) {
               throw 'The installed diagnostic LangGraph compatibility output is invalid.'
             }
+            $deepColorama = Join-Path $deepAgentsSitePackages 'colorama'
+            if (-not (Test-Path -LiteralPath $deepColorama -PathType Container)) {
+              Copy-Item `
+                -LiteralPath (Join-Path $installRoot 'hermes\site-packages\colorama') `
+                -Destination $deepColorama `
+                -Recurse
+            }
+            if (-not (Test-Path -LiteralPath (Join-Path $deepColorama '__init__.py') -PathType Leaf)) {
+              throw 'The installed diagnostic Deep colorama runtime is incomplete.'
+            }
             $runtimeArtifacts = Join-Path $artifactRoot 'runtime'
             [IO.Directory]::CreateDirectory($runtimeArtifacts) | Out-Null
             $runtimeStdout = Join-Path $artifactRoot 'runtime-stdout.log'
