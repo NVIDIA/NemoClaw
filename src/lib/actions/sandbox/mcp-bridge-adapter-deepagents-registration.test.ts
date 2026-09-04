@@ -354,6 +354,12 @@ describe("Deep Agents MCP config adapter registration", () => {
     restoreDeepAgentsManagedMcpProjection("alpha", entries, runtimeSelection);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(5);
+    expect(
+      executeSandboxCommandMock.mock.calls.every((call) => {
+        const options = call[2];
+        return typeof options === "object" && options?.runtimeSelection === runtimeSelection;
+      }),
+    ).toBe(true);
     const commands = executeSandboxCommandMock.mock.calls.map(([, command]) => command);
     expect(commands[1]).toBe("/usr/local/bin/deepagents-code --nemoclaw-mcp-capability");
     expect(commands[2]).toContain("github");
