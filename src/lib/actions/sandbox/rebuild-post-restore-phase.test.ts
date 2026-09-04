@@ -6,6 +6,7 @@ import * as agentDefs from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import * as mutableConfigPerms from "../../sandbox/mutable-config-perms";
 import * as registry from "../../state/registry";
+import * as sandboxVersion from "../../sandbox/version";
 import * as messagingHostForward from "./messaging-host-forward-lifecycle";
 import * as processRecovery from "./process-recovery";
 import * as rebuildConfigHash from "./rebuild-config-hash";
@@ -107,6 +108,14 @@ describe("rebuild post-restore phase", () => {
       () => ({ agent: agentName === "openclaw" ? null : agentName }) as never,
     );
     vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+    vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
+      sandboxVersion: null,
+      expectedVersion: null,
+      isStale: false,
+      verificationFailed: true,
+      detectionMethod: "unavailable",
+      unavailableReason: "no-expected-version",
+    });
     vi.spyOn(messagingHostForward, "ensureMessagingHostForwardAfterRebuild").mockImplementation(
       () => {
         order.push("host-forward");
@@ -339,6 +348,90 @@ describe("rebuild post-restore phase", () => {
     expect(processRecovery.executeSandboxExecCommand).not.toHaveBeenCalled();
     expect(mutableConfigPerms.inspectMutableHermesConfigPerms).toHaveBeenCalledWith("alpha");
     expect(verification).toEqual({ mutableConfigPermissionsVerified: true });
+  });
+
+  it("rejects a replacement whose live version does not match the rebuild target", async () => {
+    agentName = "hermes";
+    vi.mocked(agentDefs.loadAgent).mockReturnValue({
+      name: "hermes",
+      displayName: "Hermes Agent",
+      expectedVersion: "0.20.6",
+    } as never);
+    vi.mocked(sandboxVersion.checkAgentVersion).mockReturnValue({
+      sandboxVersion: "0.19.0",
+      expectedVersion: "0.20.6",
+      isStale: true,
+      verificationFailed: false,
+      detectionMethod: "ssh-exec",
+    });
+    const args = {
+      ...input(),
+      versionCheck: { expectedVersion: "0.20.6" } as never,
+      hermesCronRestoreIdentity: {
+        pid: 41,
+        start_time: 902,
+        drain_token: "restore-token",
+      },
+    };
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(sandboxVersion.checkAgentVersion).toHaveBeenCalledWith("alpha", { forceProbe: true });
+    expect(registry.updateSandbox).toHaveBeenNthCalledWith(1, "alpha", {
+      agentVersion: null,
+    });
+    expect(registry.updateSandbox).toHaveBeenNthCalledWith(2, "alpha", {
+      agentVersion: null,
+    });
+    expect(registry.updateSandbox).not.toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ agentVersion: expect.stringMatching(/.+/) }),
+    );
+    expect(args.bail).toHaveBeenCalledWith(
+      "Replacement agent version did not match the authoritative rebuild target.",
+    );
+    expect(
+      rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
+    ).not.toHaveBeenCalled();
+    expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
+      "Hermes cron dispatch remains drained",
+    );
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
+      "rebuilt successfully",
+    );
+  });
+
+  it("records the live replacement version only after an exact forced probe", async () => {
+    agentName = "hermes";
+    vi.mocked(agentDefs.loadAgent).mockReturnValue({
+      name: "hermes",
+      displayName: "Hermes Agent",
+      expectedVersion: "0.20.6",
+    } as never);
+    vi.mocked(sandboxVersion.checkAgentVersion).mockReturnValue({
+      sandboxVersion: "0.20.6",
+      expectedVersion: "0.20.6",
+      isStale: false,
+      verificationFailed: false,
+      detectionMethod: "ssh-exec",
+    });
+    const args = {
+      ...input(),
+      versionCheck: { expectedVersion: "0.20.6" } as never,
+    };
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(sandboxVersion.checkAgentVersion).toHaveBeenCalledWith("alpha", { forceProbe: true });
+    expect(registry.updateSandbox).toHaveBeenLastCalledWith(
+      "alpha",
+      expect.objectContaining({ agentVersion: "0.20.6" }),
+    );
+    expect(args.bail).not.toHaveBeenCalled();
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).toContain(
+      "Sandbox 'alpha' rebuild completed",
+    );
   });
 
   it("does not claim mutable Hermes posture without the exact sandbox proof", async () => {

@@ -112,13 +112,13 @@ Regenerate and review the graph explicitly:
 ```console
 $ npm --prefix tools/mcp-tool-discovery-runtime install --package-lock-only --ignore-scripts
 $ npm --prefix tools/mcp-tool-discovery-runtime ci --ignore-scripts
-$ npm --prefix tools/mcp-tool-discovery-runtime audit signatures
+$ npm --prefix tools/mcp-tool-discovery-runtime audit signatures --registry=https://registry.yarnpkg.com --omit=dev
 $ npm --prefix tools/mcp-tool-discovery-runtime test
 $ npm --prefix tools/mcp-tool-discovery-runtime run typecheck
 $ npm --prefix tools/mcp-tool-discovery-runtime run bundle
 $ npm --prefix tools/mcp-tool-discovery-runtime run bundle:reviewed
 $ npm --prefix tools/mcp-tool-discovery-runtime run bundle:reviewed:check
-$ npm --prefix tools/mcp-tool-discovery-runtime audit --omit=dev --audit-level=low
+$ npm --prefix tools/mcp-tool-discovery-runtime audit --registry=https://registry.yarnpkg.com --omit=dev --audit-level=low
 ```
 
 Update this review, the exact package pin, and the committed lock together. Do not replace the lock with a floating install or reuse an agent-specific dependency tree.
