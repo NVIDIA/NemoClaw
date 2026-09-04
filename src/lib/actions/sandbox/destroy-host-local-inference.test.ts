@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
 import { llamaCppHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import type { HostLocalInferenceOperation } from "../../onboard/runtime-provider/host-local-inference";
 import {
   type HostLocalInferenceDestroyResult,
@@ -185,7 +186,14 @@ async function runDestroy(
     sandboxConfirmedAbsent?: boolean;
     force?: boolean;
     includeRegistryReaders?: boolean;
-    inspectSandboxIdentityFingerprint?: () => string;
+    inspectSandboxIdentityFingerprint?: NonNullable<
+      NonNullable<
+        Parameters<typeof executeSandboxDestroy>[0]["deps"]
+      >["inspectOpenShellSandboxIdentityFingerprint"]
+    >;
+    mcpRuntimeSelection?: NonNullable<
+      Parameters<typeof executeSandboxDestroy>[0]["mcpRuntimeSelection"]
+    >;
     lifecycleOptions?: NonNullable<
       NonNullable<
         Parameters<typeof executeSandboxDestroy>[0]["deps"]
@@ -209,7 +217,10 @@ async function runDestroy(
   const runOpenshell = vi.fn((args: string[]) => {
     const command = args.join(" ");
     runtimeProvider.events.push(command);
-    current = command === "sandbox delete alpha" ? afterDelete : current;
+    current =
+      args[0] === "sandbox" && args[1] === "delete" && args.at(-1) === "alpha"
+        ? afterDelete
+        : current;
     return (
       options.deleteResult ?? {
         status: 0,
@@ -226,6 +237,7 @@ async function runDestroy(
     sandboxConfirmedAbsent: options.sandboxConfirmedAbsent ?? false,
     sandboxName: "alpha",
     stopInferenceResources,
+    ...(options.mcpRuntimeSelection ? { mcpRuntimeSelection: options.mcpRuntimeSelection } : {}),
     runtimeProviders: { mxc: runtimeProvider.bundle },
     deps: {
       ...(options.lifecycleOptions
@@ -293,15 +305,36 @@ describe("sandbox destroy host-local inference transaction", () => {
     const entry = sandbox("alpha", receipt(), {
       pendingCreateIdentity: pendingCreateIdentity(),
     });
-    const inspect = vi.fn(() => SANDBOX_FINGERPRINT);
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    const inspect = vi.fn(
+      (_options: {
+        readonly sandboxName: string;
+        readonly gatewayName: string;
+        readonly runtimeSelection?: OpenShellRuntimeSelection;
+      }) => SANDBOX_FINGERPRINT,
+    );
 
     const { getSandbox, result, runOpenshell } = await runDestroy(runtimeProvider, {
       entry,
       inspectSandboxIdentityFingerprint: inspect,
+      mcpRuntimeSelection: runtimeSelection,
     });
 
     expect(result).toMatchObject({ ok: true });
     expect(inspect.mock.calls.length).toBeGreaterThanOrEqual(5);
+    expect(inspect.mock.calls.map(([options]) => options)).toEqual(
+      new Array(inspect.mock.calls.length).fill(
+        expect.objectContaining({
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          runtimeSelection,
+        }),
+      ),
+    );
     expect(getSandbox.mock.calls.length).toBeGreaterThanOrEqual(10);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
