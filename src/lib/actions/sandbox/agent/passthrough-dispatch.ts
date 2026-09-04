@@ -31,7 +31,7 @@
 //      non-interactive one-shot, yet PR #8191 moved the non-JSON transport
 //      off `execSandbox` onto a raw `spawnSync` with a hard-coded
 //      `stdio[0] = "inherit"`, dropping the TTY-aware stdin guard that
-//      `buildSandboxExecStdio` applies to every other sandbox exec. The JSON
+//      `buildSandboxCommandStdio` applies to every other sandbox exec. The JSON
 //      transport has carried the same hard-coded inherit since #5683. The
 //      result is a live terminal on fd 0 handed to a dispatch whose stdout
 //      and stderr are pipes and whose argv says `--no-tty`.
