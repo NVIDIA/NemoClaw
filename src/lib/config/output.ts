@@ -441,6 +441,7 @@ function publishYamlExport(options: PublishYamlExportOptions): PublishExportFile
       throw error;
     }
     fs.unlinkSync(temporary);
+    fs.fsyncSync(parent.descriptor);
     if (expected !== null) {
       try {
         fs.unlinkSync(moved);

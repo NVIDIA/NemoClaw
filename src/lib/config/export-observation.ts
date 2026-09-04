@@ -6,6 +6,7 @@ import YAML from "yaml";
 import { fingerprintOpenShellSandboxId } from "../adapters/openshell/sandbox-identity";
 import { parseAndValidateSandboxPolicy } from "../policy/sandbox-policy-validation";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../state/registry/types";
+import { isCredentialEnvironmentReferenceName } from "./schema";
 
 export type ExportFidelity =
   | "exact"
@@ -90,12 +91,6 @@ export interface ExportObservationDependencies {
   ): Promise<ObservedExportPolicy>;
 }
 
-const CREDENTIAL_ENV = /^[A-Z_][A-Z0-9_]*$/u;
-const FORBIDDEN_CREDENTIAL_ENV =
-  /^(?:NEMOCLAW_(?:E2E|TEST|TRACE|MESSAGING_PLAN_B64|STARTUP_PROFILE_B64|CORPORATE_CA_B64|EXTRA_AGENTS_JSON_B64|INFERENCE_INPUTS|MINIMAL_BOOTSTRAP|OLLAMA_PROXY_TOKEN|MANAGED_HERMES_HASH_B64|ACCEPT_|OPENSHELL_UPGRADE_PREPARED|CONFIRM_|RECREATE_)|CI$|HOME$|PATH$|TMPDIR$|XDG_)/u;
-export function isExportableCredentialEnvironmentIdentifier(value: string): boolean {
-  return CREDENTIAL_ENV.test(value) && !FORBIDDEN_CREDENTIAL_ENV.test(value);
-}
 function finding(
   field: string,
   fidelity: ExportFidelity,
@@ -331,7 +326,7 @@ function validateAgreement(
     );
   if (
     inference.credentialEnv !== null &&
-    !isExportableCredentialEnvironmentIdentifier(inference.credentialEnv)
+    !isCredentialEnvironmentReferenceName(inference.credentialEnv)
   )
     findings.push(
       finding(

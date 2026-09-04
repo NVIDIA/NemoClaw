@@ -275,10 +275,17 @@ describe("publishExportFile", () => {
     const root = temporaryRoot();
     const outputPath = path.join(root, "selected.yaml");
     fs.writeFileSync(outputPath, "validated");
+    const calls: string[] = [];
+    const fsyncSync = fs.fsyncSync;
+    vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
+      calls.push("fsync");
+      fsyncSync(descriptor);
+    });
     const unlinkSync = fs.unlinkSync;
     vi.spyOn(fs, "unlinkSync").mockImplementation((candidate) =>
       String(candidate).endsWith(".previous")
         ? (() => {
+            calls.push("cleanup-previous");
             throw Object.assign(new Error("injected prior cleanup failure"), { code: "EIO" });
           })()
         : unlinkSync(candidate),
@@ -302,6 +309,7 @@ describe("publishExportFile", () => {
     );
     expect(fs.readFileSync(outputPath, "utf8")).toBe("content");
     expect(fs.readFileSync(recoveryPath, "utf8")).toBe("validated");
+    expect(calls.slice(-2)).toEqual(["fsync", "cleanup-previous"]);
   });
 
   it("closes the parent descriptor when its fstat fails (#10938)", () => {
@@ -338,6 +346,6 @@ describe("publishExportFile", () => {
 
     publishExportFile(outputPath, "content");
 
-    expect(calls).toEqual(["fsync", "publish", "fsync"]);
+    expect(calls).toEqual(["fsync", "publish", "fsync", "fsync"]);
   });
 });

@@ -7,7 +7,6 @@ import type { SandboxEntry } from "../state/registry/types";
 import {
   canonicalizeEffectivePolicy,
   classifyExportRegistryFidelity,
-  isExportableCredentialEnvironmentIdentifier,
   observeStableExportSource,
   type ExportObservationDependencies,
 } from "./export-observation";
@@ -178,11 +177,31 @@ describe("stable config export source observation (#10938)", () => {
       ]),
     );
   });
-  it("validates credential identifiers without resolving their values", () => {
-    expect(isExportableCredentialEnvironmentIdentifier("OPENAI_API_KEY")).toBe(true);
-    expect(isExportableCredentialEnvironmentIdentifier("NEMOCLAW_TEST_SECRET")).toBe(false);
-    expect(isExportableCredentialEnvironmentIdentifier("bad-name")).toBe(false);
-  });
+  it.each(["_KEY", "DSH_TOKEN", "OPENSHELL_TOKEN", "VITEST_TOKEN", "NEMOCLAW_TEST_SECRET"])(
+    "rejects reserved credential identifier %s during observation",
+    async (credentialEnv) => {
+      const result = await observeStableExportSource(
+        "alpha",
+        deps(["stable", "stable"], {
+          readInference: vi.fn(async () => ({
+            topology: "hosted" as const,
+            provider: "openai-api",
+            model: "gpt-5",
+            api: "openai-responses",
+            endpoint: "https://api.openai.com/v1",
+            credentialEnv,
+            identity: "route-1",
+          })),
+        }),
+      );
+      expect(result.ok).toBe(false);
+      expect(!result.ok && result.findings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: "spec.inferenceProviders[].credential.env" }),
+        ]),
+      );
+    },
+  );
   it("canonicalizes policy losslessly and rejects malformed policy", () => {
     expect(canonicalizeEffectivePolicy(policy)).toEqual({
       filesystem_policy: { include_workdir: false, read_only: ["/usr"], read_write: ["/sandbox"] },

@@ -28,6 +28,7 @@ import { load as loadRegistry } from "../state/registry/persistence";
 import {
   LiveExportObservationError,
   createLiveExportObservationDependencies,
+  observeLiveExportSource,
 } from "./export-live-adapters";
 
 const id = "123e4567-e89b-42d3-a456-426614174000";
@@ -76,7 +77,51 @@ function inventory(resourceVersion = 7, policyVersion = 3) {
   ]);
 }
 
+function mockSupportedLiveSource(policyVersion = 3, appliedRevision = 3): void {
+  vi.mocked(loadRegistry).mockReturnValue({ sandboxes: { alpha: entry }, defaultSandbox: null });
+  vi.mocked(getSandboxEntryInference).mockReturnValue({
+    kind: "configured",
+    provider: "nvidia",
+    model: "model-a",
+  });
+  vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
+    status: 0,
+    output: inventory(7, policyVersion),
+    stdout: inventory(7, policyVersion),
+    stderr: "",
+  });
+  vi.mocked(inspectOpenShellSandboxIdentityFingerprint).mockReturnValue(identityFingerprint);
+  vi.mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy).mockReturnValue({
+    ok: true,
+    value: {
+      document:
+        "version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\nnetwork_policies:\n  api:\n    name: api\n    endpoints: [{host: api.example.com, port: 443}]\n    binaries: [{path: /usr/bin/curl}]\nfilesystem_policy:\n  include_workdir: false\n  read_only: [/usr]\n  read_write: [/sandbox]\n",
+      appliedRevision,
+    },
+  });
+}
+
 describe("live export observation dependencies", () => {
+  it("hands one verified live observation to the export builder (#10938)", async () => {
+    mockSupportedLiveSource();
+    const observed = await observeLiveExportSource("alpha");
+    expect(observed).toMatchObject({
+      sandboxName: "alpha",
+      inference: { provider: "nvidia", credentialEnv: "NVIDIA_API_KEY" },
+      gateway: { name: "nemoclaw", port: 8080 },
+      workload: { reference: expect.stringContaining("@sha256:") },
+      policy: { version: 1, network_policies: { api: expect.any(Object) } },
+    });
+  });
+
+  it("blocks the live handoff when the policy revision disagrees (#10938)", async () => {
+    mockSupportedLiveSource(4, 3);
+    await expect(observeLiveExportSource("alpha")).rejects.toMatchObject({
+      name: "LiveExportObservationError",
+      category: "live-verification-failed",
+    });
+  });
+
   it("binds tokens to live sandbox and policy revisions without reading credential values", async () => {
     vi.mocked(loadRegistry).mockReturnValue({ sandboxes: { alpha: entry }, defaultSandbox: null });
     vi.mocked(getSandboxEntryInference).mockReturnValue({
