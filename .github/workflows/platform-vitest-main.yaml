@@ -489,7 +489,7 @@ jobs:
     name: Windows native package/runtime diagnostic (ARM64, no WSL)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id != '' }}
     runs-on: windows-11-vs2026-arm
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Check out diagnostic scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -567,6 +567,7 @@ jobs:
             $runtimeStderr = Join-Path $artifactRoot 'runtime-stderr.log'
             $launcher = Join-Path $installRoot 'bin\NemoClaw.exe'
             $runtimeArguments = @('--wait', '--qualification', '--artifact-directory', $runtimeArtifacts)
+            $runtimeExitCode = $null
             $runtime = Start-Process `
               -FilePath $launcher `
               -ArgumentList $runtimeArguments `
@@ -580,10 +581,38 @@ jobs:
               } else {
                 $runtime.WaitForExit()
                 $runtime.Refresh()
-                "runtime_exit_code=$($runtime.ExitCode)" | Out-File -LiteralPath (Join-Path $artifactRoot 'probe-result.txt') -Encoding utf8 -Append
+                $runtimeExitCode = $runtime.ExitCode
+                "runtime_exit_code=$runtimeExitCode" | Out-File -LiteralPath (Join-Path $artifactRoot 'probe-result.txt') -Encoding utf8 -Append
               }
             } finally {
               $runtime.Dispose()
+            }
+            if ($runtimeExitCode -eq 0) {
+              foreach ($agent in @('pi', 'hermes', 'langchain-deepagents-code', 'nemocua')) {
+                $agentArtifacts = Join-Path $artifactRoot "runtime-$agent"
+                [IO.Directory]::CreateDirectory($agentArtifacts) | Out-Null
+                $agentStdout = Join-Path $artifactRoot "runtime-$agent-stdout.log"
+                $agentStderr = Join-Path $artifactRoot "runtime-$agent-stderr.log"
+                $agentArguments = @('--wait', '--qualification', '--agent', $agent, '--artifact-directory', $agentArtifacts)
+                $agentProcess = Start-Process `
+                  -FilePath $launcher `
+                  -ArgumentList $agentArguments `
+                  -RedirectStandardOutput $agentStdout `
+                  -RedirectStandardError $agentStderr `
+                  -PassThru
+                try {
+                  if (-not $agentProcess.WaitForExit(600000)) {
+                    & "$env:SystemRoot\System32\taskkill.exe" /PID $agentProcess.Id /T /F | Out-Null
+                    "runtime_${agent}_timed_out_after_seconds=600" | Out-File -LiteralPath (Join-Path $artifactRoot 'probe-result.txt') -Encoding utf8 -Append
+                  } else {
+                    $agentProcess.WaitForExit()
+                    $agentProcess.Refresh()
+                    "runtime_${agent}_exit_code=$($agentProcess.ExitCode)" | Out-File -LiteralPath (Join-Path $artifactRoot 'probe-result.txt') -Encoding utf8 -Append
+                  }
+                } finally {
+                  $agentProcess.Dispose()
+                }
+              }
             }
           }
           foreach ($startupLog in @(Get-ChildItem `
