@@ -30,15 +30,21 @@ runs:
     - name: Resolve reviewed npm audit cache buckets
       id: cache-buckets
       shell: bash
+      env:
+        NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: ${{ inputs.target-root }}
       run: |
         set -euo pipefail
         current_bucket="$(( $(date -u +%s) / 43200 ))"
         previous_bucket="$(( current_bucket - 1 ))"
-        node --input-type=module - '${{ inputs.target-root }}' "$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json" <<'NODE'
+        node --input-type=module - "$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json" <<'NODE'
         import { createHash } from "node:crypto";
         import { appendFileSync, readFileSync } from "node:fs";
         import { join } from "node:path";
-        const [targetRoot, configFile] = process.argv.slice(2);
+        const targetRoot = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT;
+        const [configFile] = process.argv.slice(2);
+        if (!targetRoot) {
+          throw new Error("reviewed npm audit target root is required");
+        }
         const configSource = readFileSync(configFile, "utf8");
         const config = JSON.parse(configSource);
         if (!/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(config.npmVersion) || /[\r\n]/.test(config.npmVersion)) {

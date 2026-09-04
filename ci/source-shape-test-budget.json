@@ -203,6 +203,11 @@
     },
     {
       "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
+      "test": "passes the cache identity target root without interpolating it into shell source",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
       "test": "rejects the removed plural source-registry package shape",
       "category": "security"
     },
