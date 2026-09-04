@@ -29,7 +29,7 @@ type ValidationProbeOptions =
   | undefined;
 
 const ONBOARD_VALIDATION_TIMEOUT_ENV = "NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS";
-const MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS = 600;
+export const MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS = 600;
 const STANDARD_VALIDATION_TIMING: ValidationProbeTimingProfile = {
   connectTimeoutSeconds: 10,
   maxTimeSeconds: 15,

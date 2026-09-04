@@ -204,11 +204,24 @@ describe("WSL2 inference verification timeouts (#987)", () => {
       expect(calls.length).toBe(2);
     });
 
-    it("doubles timeout values for the retry attempt", () => {
-      const { calls } = runProbeWithCurlStatuses([28, 28, 0]);
-      expect(calls[2]).toEqual(
-        expect.arrayContaining(["--connect-timeout", "20", "--max-time", "30"]),
-      );
+    it.each([
+      { label: "default budget", override: "", expectedSeconds: ["20", "30"] },
+      { label: "maximum override", override: "600", expectedSeconds: ["600", "600"] },
+    ])("bounds the retry timing for the $label", ({ override, expectedSeconds }) => {
+      vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", override);
+      try {
+        const { calls } = runProbeWithCurlStatuses([28, 28, 0]);
+        expect(calls[2]).toEqual(
+          expect.arrayContaining([
+            "--connect-timeout",
+            expectedSeconds[0],
+            "--max-time",
+            expectedSeconds[1],
+          ]),
+        );
+      } finally {
+        vi.unstubAllEnvs();
+      }
     });
 
     it("appends WSL2 hint when retry fails on WSL2", () => {

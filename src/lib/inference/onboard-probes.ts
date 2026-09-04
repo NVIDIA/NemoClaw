@@ -89,6 +89,7 @@ const {
   getStreamingEventProbeCurlArgs,
   getCurlMaxTimeSeconds,
   getProbeProcessTimeoutMs,
+  MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS,
 } = require("./probe-http-helpers");
 const {
   getCurlTimingArgs,
@@ -620,9 +621,9 @@ function runChatCompletionsProbe({
 }
 
 // Extracted from probeOpenAiLikeEndpoint so the chat-completions retry path
-// can be tested independently. Doubles the timing args (--connect-timeout,
-// --max-time) and replays through the same backoff schedule as transient HTTP
-// statuses. See PR #5975 review note PRA-8.
+// can be tested independently. Increases the timing args (--connect-timeout,
+// --max-time) up to the validation cap and replays through the same backoff
+// schedule as transient HTTP statuses. See PR #5975 review note PRA-8.
 function runDoubledTimeoutChatCompletionsRetry({
   endpointUrl,
   model,
@@ -633,7 +634,11 @@ function runDoubledTimeoutChatCompletionsRetry({
 }) {
   const platformOptions = getProbeTimingOptions(options);
   const baseArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
-  const doubledArgs = baseArgs.map((arg) => (/^\d+$/.test(arg) ? String(Number(arg) * 2) : arg));
+  const doubledArgs = baseArgs.map((arg) =>
+    /^\d+$/.test(arg)
+      ? String(Math.min(Number(arg) * 2, MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS))
+      : arg,
+  );
   const buildRetryArgs = () => [
     "-sS",
     ...buildResolvePinArgs(`${baseUrl}/chat/completions`, options.pinnedAddresses),
