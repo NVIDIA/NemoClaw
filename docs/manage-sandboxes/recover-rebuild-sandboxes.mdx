@@ -247,6 +247,11 @@ $$nemoclaw <sandbox-name> rebuild
 
 On WSL with Docker Desktop, a generated replacement image build uses a temporary credential-free Docker configuration when the configured Docker Desktop credential helper is unavailable. NemoClaw removes the temporary configuration after the build and does not modify your Docker configuration. An explicit custom Dockerfile continues to use your configured Docker credentials because its base image or build steps might require a private registry. If that custom rebuild cannot reach the credential helper, restore the Docker Desktop session or credential-helper access before retrying.
 
+Rebuild creates the replacement from the base image selected during preflight, even when the source sandbox records an older base-image hint.
+When the target manifest declares an agent version, NemoClaw runs a fresh live version probe after state restoration.
+It records the replacement version and reports success only when the observed version matches the rebuild target.
+An unavailable or different version ends the rebuild with a nonzero status instead of recording the target version as observed.
+
 <AgentOnly variant="openclaw">
 
 After post-restore writes, rebuild verifies that the final `openclaw.json` and `.config-hash` pair match.
@@ -298,15 +303,50 @@ If that required provider is missing or incompatible, restore or re-add the chan
 A rebuild creates a new sandbox home and a new Hermes API bearer token.
 After the rebuild succeeds, retrieve the replacement token before reconnecting API clients:
 
+<Warning>
+The command prints the replacement Hermes API bearer token to standard output.
+The token remains valid while the sandbox exists and its `API_SERVER_KEY` stays unchanged and valid.
+A rebuild replaces the token.
+Gateway startup also generates a new token when `API_SERVER_KEY` is missing or is not exactly 64 lowercase hexadecimal characters.
+If API authentication fails after a gateway restart, retrieve the current token again with `nemohermes <sandbox-name> gateway-token --quiet`.
+Do not log, share, or commit the token.
+</Warning>
+
 ```bash
-$$nemoclaw <sandbox-name> gateway-token --quiet
+nemohermes <sandbox-name> gateway-token --quiet
 ```
 
 Before post-restore repairs, NemoClaw verifies that the recreated sandbox still identifies as Hermes and exits nonzero if its identity does not match the rebuild target. After state restore, NemoClaw restarts the Hermes gateway so it reads the restored durable state, then restores managed MCP configuration through the normal lifecycle. MCP restoration performs an acknowledged gateway reload, so NemoClaw finishes by verifying the final running gateway and its managed MCP state without replacing that verified process again. The gateway starts during recreation and reads its durable state before the restore replaces it, which is why the first post-restore restart must happen before managed MCP restoration. `rebuild` exits nonzero instead of reporting success when it cannot verify final gateway health or managed MCP state. Follow the printed recovery guidance, using `$$nemoclaw <sandbox-name> gateway restart` first for gateway health, `$$nemoclaw <sandbox-name> recover` when the restart does not restore verified health, and `$$nemoclaw <sandbox-name> mcp restart` for incomplete managed MCP restoration.
 
 When the rebuild backup contains active Hermes cron jobs that reference scripts, NemoClaw validates those script references before it deletes the existing sandbox. The check covers the default profile and named profiles. Each referenced script must exist, be readable, be a regular file, and remain inside its profile's `scripts` directory. Disabled and paused jobs do not require their referenced scripts. If this validation fails, the rebuild keeps the existing sandbox and reports the preserved backup path.
 
-After NemoClaw creates the replacement, it acquires an independent root-owned gate that blocks new Hermes turns and cron dispatch. The gate remains active across gateway and container restarts in the replacement sandbox. NemoClaw waits for active agent work to finish before restoring state. It validates the restored jobs and scripts before the gateway replacement, then keeps dispatch blocked while it restarts and verifies that replacement. It records the replacement process identity around managed health verification and clears the gate only if that same live process completes the final cron validation. If an operator already drained the gateway, NemoClaw clears its gate and release recovery record while leaving the operator drain active. If state restore, managed MCP restoration, gateway replacement, or cron validation fails after gate acquisition, the command exits nonzero and preserves the backup. Those failures retain the NemoClaw gate unless the output explicitly reports that release rollback could not restore its marker. In that exceptional case, NemoClaw preserves a root-owned release recovery record, but you must not assume dispatch is blocked. Run `$$nemoclaw <sandbox-name> recover` immediately so it can reacquire the gate before validating the restored cron state. If gate reacquisition fails, recovery exits nonzero and leaves the recovery record in place for another attempt. Failures before gate acquisition do not create a new gate. Do not manually remove the root-owned cron restore marker or release recovery record because removal bypasses restored cron validation. If managed MCP restoration failed, correct the reported cause and run `$$nemoclaw <sandbox-name> mcp restart` first. Then run `$$nemoclaw <sandbox-name> recover` to repair and probe the gateway, validate the restored cron tree, and clear NemoClaw-owned cron restore recovery state.
+After NemoClaw creates the replacement, it acquires an independent root-owned gate that blocks new Hermes turns and cron dispatch.
+The gate remains active across gateway and container restarts in the replacement sandbox.
+NemoClaw waits for active agent work to finish before restoring state.
+It validates the restored jobs and scripts before the gateway replacement.
+NemoClaw keeps dispatch blocked while it restarts and verifies that replacement.
+It records the replacement process identity around managed health verification.
+NemoClaw clears the gate only if that same live process completes the final cron validation.
+If an operator already drained the gateway, NemoClaw clears its gate and release recovery record while leaving the operator drain active.
+
+If state restore, managed MCP restoration, gateway replacement, agent-version verification, or cron validation fails after gate acquisition, `rebuild` exits nonzero and preserves the backup.
+`rebuild` keeps the NemoClaw gate active after these failures unless release rollback cannot restore the drain marker.
+Failures before gate acquisition do not create a new gate.
+
+<Warning title="Recover an Unverified Cron Dispatch State">
+If the output includes `Hermes cron restore drain release failed and its marker could not be restored`, cron dispatch state is unverified.
+Do not assume that new Hermes turns or cron dispatch remain blocked.
+NemoClaw preserves the root-owned release recovery record in this state.
+Run `$$nemoclaw <sandbox-name> recover` immediately.
+`recover` uses that record to reacquire the gate before it validates the restored cron state.
+If gate reacquisition fails, `recover` exits nonzero and leaves the recovery record for another attempt.
+Do not manually remove the cron restore marker or release recovery record because removal bypasses restored cron validation.
+</Warning>
+
+If managed MCP restoration failed, correct the reported cause and run `$$nemoclaw <sandbox-name> mcp restart` first.
+Then run `$$nemoclaw <sandbox-name> recover` to repair the gateway, validate the restored cron tree, and clear NemoClaw-owned recovery state.
+
+When NemoClaw is ready to reopen dispatch and no operator drain remains, its root-owned controller reschedules only enabled one-shot jobs that became due at or after the NemoClaw gate was acquired, have never run, and carry no dispatch or fire claim. It persists that update before removing the gate. If the update fails, rebuild or recovery exits nonzero and leaves the gate active.
 
 </AgentOnly>
 

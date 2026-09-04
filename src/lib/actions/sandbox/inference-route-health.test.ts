@@ -8,6 +8,7 @@ import {
 } from "./connect-inference-route-probe";
 import {
   buildSandboxInferenceRouteHealth,
+  isTransientInferenceInvocationFailure,
   probeSandboxInferenceGatewayHealth,
   type SandboxInferenceRouteHealth,
 } from "./inference-route-health";
@@ -276,5 +277,61 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     );
 
     expect(result.ok).toBe(true);
+  });
+});
+
+describe("transient inference invocation failures", () => {
+  it.each([429, 502, 503, 504])(
+    "treats HTTP %i as a transient inference request failure (#10709)",
+    (httpStatus) => {
+      expect(
+        isTransientInferenceInvocationFailure({
+          ok: false,
+          detail: `sandbox inference invocation probe returned HTTP ${httpStatus}`,
+          httpStatus,
+        }),
+      ).toBe(true);
+    },
+  );
+
+  it.each([400, 401, 403, 404, 405, 500, 501])(
+    "treats HTTP %i as a settled inference request failure (#10709)",
+    (httpStatus) => {
+      expect(
+        isTransientInferenceInvocationFailure({
+          ok: false,
+          detail: `sandbox inference invocation probe returned HTTP ${httpStatus}`,
+          httpStatus,
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it("treats a served request as no failure at all (#10709)", () => {
+    expect(isTransientInferenceInvocationFailure({ ok: true })).toBe(false);
+  });
+
+  it("treats an invalid 2xx response body as a settled failure (#10709)", () => {
+    expect(
+      isTransientInferenceInvocationFailure({
+        ok: false,
+        detail: "sandbox inference invocation probe returned an invalid response body",
+        httpStatus: 200,
+      }),
+    ).toBe(false);
+  });
+
+  it("treats a request that reached no HTTP status as a settled failure (#10709)", () => {
+    expect(
+      isTransientInferenceInvocationFailure({
+        ok: false,
+        detail: "sandbox inference invocation probe was unavailable",
+        httpStatus: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("reports no failure when no inference request was sent (#10709)", () => {
+    expect(isTransientInferenceInvocationFailure(null)).toBe(false);
   });
 });

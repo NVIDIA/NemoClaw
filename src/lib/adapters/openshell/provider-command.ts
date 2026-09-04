@@ -4,14 +4,17 @@
 import type { StdioOptions } from "node:child_process";
 
 import { PROVIDER_NAME_MAX_LENGTH, PROVIDER_NAME_VALID_PATTERN } from "../../name-validation";
-import { buildSubprocessEnv } from "../../subprocess-env";
+import { buildOpenShellCommandEnv } from "./command-argv";
+import type { OpenShellRuntimeSelection } from "./runtime-selection";
 import { OPENSHELL_OPERATION_TIMEOUT_MS, runOpenshell } from "./runtime";
 
+export type { OpenShellRuntimeSelection } from "./runtime-selection";
 export { OPENSHELL_OPERATION_TIMEOUT_MS };
 
 export type ProviderCommandOptions = {
   env?: Record<string, string | undefined>;
   ignoreError?: boolean;
+  runtimeSelection?: OpenShellRuntimeSelection;
   stdio?: StdioOptions;
   suppressOutput?: boolean;
   timeout?: number;
@@ -44,14 +47,15 @@ export function parseCliOpenShellProviderNames(output: unknown): string[] | null
 }
 
 export function runOpenshellProviderCommand(args: string[], opts?: ProviderCommandOptions) {
+  const { runtimeSelection, ...runtimeOptions } = opts ?? {};
   const explicitEnv = Object.fromEntries(
-    Object.entries(opts?.env ?? {}).filter(
+    Object.entries(runtimeOptions.env ?? {}).filter(
       (entry): entry is [string, string] => entry[1] !== undefined,
     ),
   );
   const providerOpts = {
-    ...opts,
-    env: buildSubprocessEnv(explicitEnv),
+    ...runtimeOptions,
+    env: buildOpenShellCommandEnv(runtimeSelection, explicitEnv),
     replaceEnv: true,
   };
   const commandRunner = runtimeHooks.runOpenshell ?? runOpenshell;

@@ -1,0 +1,48 @@
+diff --git a/tools/lazy_deps.py b/tools/lazy_deps.py
+index 4a71f70..1fe4b15 100644
+--- a/tools/lazy_deps.py
++++ b/tools/lazy_deps.py
+@@ -385,3 +385,6 @@ _LAZY_TARGET_ENV = "HERMES_LAZY_INSTALL_TARGET"
+ _TARGET_STAMP_NAME = ".python-abi"
+
++_NEMOCLAW_HINDSIGHT_REQUIREMENTS = Path(
++    "/opt/nemoclaw-hermes-config/hindsight-client-requirements.txt"
++)
+
+@@ -716,6 +719,18 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
+     if not specs:
+         return _InstallResult(True, "", "")
+
++    install_args = list(specs)
++    if specs == ("hindsight-client==0.6.1",):
++        # NemoClaw supports Hindsight through this lazy boundary. Bind both
++        # wheels to the reviewed hashes so a same-version artifact from an
++        # ambient index or find-links directory cannot enter durable state.
++        install_args = [
++            "--no-deps",
++            "--require-hashes",
++            "--requirement",
++            str(_NEMOCLAW_HINDSIGHT_REQUIREMENTS),
++        ]
++
+     target = _lazy_install_target()
+     constraints: Optional[Path] = None
+
+@@ -758,7 +773,7 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
+         if uv_bin:
+             try:
+                 r = subprocess.run(
+-                    [uv_bin, "pip", "install", *target_args, *constraint_args, *specs],
++                    [uv_bin, "pip", "install", *target_args, *constraint_args, *install_args],
+                     capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout, env=uv_env,
+                     stdin=subprocess.DEVNULL,
+                     creationflags=windows_hide_flags(),
+@@ -802,7 +817,7 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
+
+         try:
+             r = subprocess.run(
+-                pip_cmd + ["install", *target_args, *constraint_args, *specs],
++                pip_cmd + ["install", *target_args, *constraint_args, *install_args],
+                 capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout,
+                 stdin=subprocess.DEVNULL,
+                 creationflags=windows_hide_flags(),

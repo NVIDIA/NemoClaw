@@ -230,19 +230,23 @@
     },
     {
       "live": "test/e2e/live/network-policy.test.ts",
-      "liveSources": [
-        "test/e2e/live/package-database-read-only.ts",
-        "test/e2e/live/restricted-onboard-helpers.ts",
-        "test/e2e/live/policy-list-state.ts"
-      ],
+      "liveSources": ["test/e2e/live/restricted-onboard-helpers.ts"],
       "fast": [
+        "src/lib/actions/sandbox/exec-policy-hint-detection.test.ts",
         "src/lib/actions/sandbox/policy-channel-add-drift.test.ts",
+        "src/lib/actions/sandbox/policy-channel-policy.test.ts",
+        "src/lib/actions/sandbox/policy-list-render.test.ts",
+        "src/lib/onboard/initial-policy-real-policy.test.ts",
+        "src/lib/policy/preset-allowed-ips.test.ts",
+        "nemoclaw/src/blueprint/ssrf.test.ts",
         "test/channels/channels-add-preset.test.ts",
-        "test/runtime/policy/policy-channel-agent-resolution.test.ts",
-        "test/onboarding/validate-blueprint.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/runtime-provider-fixture.test.ts"
+        "test/e2e/support/runtime-provider-fixture.test.ts",
+        "test/onboarding/validate-blueprint.test.ts",
+        "test/runtime/policy/policies.test.ts",
+        "test/runtime/policy/policy-channel-agent-resolution.test.ts",
+        "test/runtime/policy/policy-tiers-onboard.test.ts"
       ]
     },
     {
@@ -489,6 +493,7 @@
       ],
       "fast": [
         "test/e2e/support/gpu-e2e-helpers.test.ts",
+        "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
@@ -507,6 +512,8 @@
         "src/lib/onboard/messaging-policy-presets.test.ts",
         "test/channels/channels-add-preset.test.ts",
         "test/e2e/support/hermes-discord-policy-binding.test.ts",
+        "test/e2e/support/hermes-discord-proxy-request.test.ts",
+        "test/onboarding/effective-policy-contracts.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
         "test/onboarding/onboard-preset-diff.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -520,6 +527,7 @@
         "test/e2e/live/hermes-e2e-phases.ts"
       ],
       "fast": [
+        "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
@@ -583,6 +591,7 @@
         "test/e2e/live/mcp-bridge-hermes-http.ts",
         "test/e2e/live/mcp-bridge-onboard-env.ts",
         "test/e2e/live/mcp-bridge-reliability.ts",
+        "test/e2e/live/mcp-bridge-servers.ts",
         "test/e2e/live/mcp-bridge-hermes-lifecycle.ts",
         "test/e2e/live/mcp-bridge-phases.ts",
         "test/e2e/live/mcp-bridge-sandbox.ts",

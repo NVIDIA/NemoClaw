@@ -79,7 +79,7 @@ createdSandbox.installRuntimeObservation();
 runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
-  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete")) {
     createdSandbox.delete();

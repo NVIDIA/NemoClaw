@@ -782,19 +782,28 @@ describe("Hermes deferred MCP tool discovery", () => {
     const firstSearch = expectToolCall(
       await requestCompatibleMessage(compatibleMock, messages),
       "tool_search",
-      { query: DEFERRED_TOOL_NAME },
+      { queries: [DEFERRED_TOOL_NAME] },
     );
     expect(firstSearch.id).toBe("call_hermes_tool_search");
-    recordToolResult(messages, firstSearch, { matches: [{ name: DEFERRED_TOOL_NAME }] });
+    recordToolResult(messages, firstSearch, {
+      queries: [DEFERRED_TOOL_NAME],
+      total_available: 1,
+      results: [{ query: DEFERRED_TOOL_NAME, matches: [DEFERRED_TOOL_NAME] }],
+      tools: { [DEFERRED_TOOL_NAME]: { description: "Deferred echo" } },
+    });
 
     const description = expectToolCall(
       await requestCompatibleMessage(compatibleMock, messages),
       "tool_describe",
-      { name: DEFERRED_TOOL_NAME },
+      { names: [DEFERRED_TOOL_NAME] },
     );
     recordToolResult(messages, description, {
-      name: DEFERRED_TOOL_NAME,
-      parameters: { properties: { challenge: { type: "string" } } },
+      tools: {
+        [DEFERRED_TOOL_NAME]: {
+          description: "Deferred echo",
+          parameters: { properties: { challenge: { type: "string" } } },
+        },
+      },
     });
 
     const deferredCall = expectToolCall(
@@ -812,6 +821,27 @@ describe("Hermes deferred MCP tool discovery", () => {
     expect(finalMessage.tool_calls).toBeUndefined();
   });
 
+  it("accepts the Hermes 0.20.6 multi-query tool_search result", async () => {
+    compatibleMock = await startDeferredCompatibleMock();
+    const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
+
+    const firstSearch = expectToolCall(
+      await requestCompatibleMessage(compatibleMock, messages),
+      "tool_search",
+      { queries: [DEFERRED_TOOL_NAME] },
+    );
+    recordToolResult(messages, firstSearch, {
+      queries: [DEFERRED_TOOL_NAME],
+      total_available: 1,
+      results: [{ query: DEFERRED_TOOL_NAME, matches: [DEFERRED_TOOL_NAME] }],
+      tools: { [DEFERRED_TOOL_NAME]: { description: "Deferred echo" } },
+    });
+
+    expectToolCall(await requestCompatibleMessage(compatibleMock, messages), "tool_describe", {
+      names: [DEFERRED_TOOL_NAME],
+    });
+  });
+
   it("stops after one well-formed tool_search miss", async () => {
     compatibleMock = await startDeferredCompatibleMock();
     const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
@@ -819,10 +849,15 @@ describe("Hermes deferred MCP tool discovery", () => {
     const firstSearch = expectToolCall(
       await requestCompatibleMessage(compatibleMock, messages),
       "tool_search",
-      { query: DEFERRED_TOOL_NAME },
+      { queries: [DEFERRED_TOOL_NAME] },
     );
     expect(firstSearch.id).toBe("call_hermes_tool_search");
-    recordToolResult(messages, firstSearch, { matches: [] });
+    recordToolResult(messages, firstSearch, {
+      queries: [DEFERRED_TOOL_NAME],
+      total_available: 1,
+      results: [{ query: DEFERRED_TOOL_NAME, matches: [] }],
+      tools: {},
+    });
 
     const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);
     expect(terminalMessage).toMatchObject({
@@ -839,10 +874,102 @@ describe("Hermes deferred MCP tool discovery", () => {
     const firstSearch = expectToolCall(
       await requestCompatibleMessage(compatibleMock, messages),
       "tool_search",
-      { query: DEFERRED_TOOL_NAME },
+      { queries: [DEFERRED_TOOL_NAME] },
     );
     expect(firstSearch.id).toBe("call_hermes_tool_search");
-    recordToolResult(messages, firstSearch, { matches: [{ unexpected: true }] });
+    recordToolResult(messages, firstSearch, {
+      queries: [DEFERRED_TOOL_NAME],
+      total_available: 1,
+      results: [{ query: DEFERRED_TOOL_NAME, matches: [{ unexpected: true }] }],
+      tools: {},
+    });
+
+    const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);
+    expect(terminalMessage).toMatchObject({
+      role: "assistant",
+      content: "mock protocol error: Hermes returned an unexpected deferred tool result sequence",
+    });
+    expect(terminalMessage.tool_calls).toBeUndefined();
+  });
+
+  it("rejects ambiguous legacy and multi-query tool_search results", async () => {
+    compatibleMock = await startDeferredCompatibleMock();
+    const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
+
+    const firstSearch = expectToolCall(
+      await requestCompatibleMessage(compatibleMock, messages),
+      "tool_search",
+      { queries: [DEFERRED_TOOL_NAME] },
+    );
+    recordToolResult(messages, firstSearch, {
+      matches: [{ name: DEFERRED_TOOL_NAME }],
+      results: [{ query: DEFERRED_TOOL_NAME, matches: [DEFERRED_TOOL_NAME] }],
+    });
+
+    const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);
+    expect(terminalMessage).toMatchObject({
+      role: "assistant",
+      content: "mock protocol error: Hermes returned an unexpected deferred tool result sequence",
+    });
+    expect(terminalMessage.tool_calls).toBeUndefined();
+  });
+
+  it("rejects a legacy-only Hermes tool_search result", async () => {
+    compatibleMock = await startDeferredCompatibleMock();
+    const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
+
+    const firstSearch = expectToolCall(
+      await requestCompatibleMessage(compatibleMock, messages),
+      "tool_search",
+      { queries: [DEFERRED_TOOL_NAME] },
+    );
+    recordToolResult(messages, firstSearch, {
+      matches: [{ name: DEFERRED_TOOL_NAME }],
+    });
+
+    const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);
+    expect(terminalMessage).toMatchObject({
+      role: "assistant",
+      content: "mock protocol error: Hermes returned an unexpected deferred tool result sequence",
+    });
+    expect(terminalMessage.tool_calls).toBeUndefined();
+  });
+
+  it.each([
+    [
+      "missing total",
+      {
+        queries: [DEFERRED_TOOL_NAME],
+        results: [{ query: DEFERRED_TOOL_NAME, matches: [] }],
+        tools: {},
+      },
+    ],
+    [
+      "missing tools",
+      {
+        queries: [DEFERRED_TOOL_NAME],
+        total_available: 1,
+        results: [{ query: DEFERRED_TOOL_NAME, matches: [] }],
+      },
+    ],
+    [
+      "wrong query echo",
+      {
+        queries: ["different query"],
+        total_available: 1,
+        results: [{ query: DEFERRED_TOOL_NAME, matches: [] }],
+        tools: {},
+      },
+    ],
+  ])("rejects a Hermes tool_search result with %s", async (_condition, result) => {
+    compatibleMock = await startDeferredCompatibleMock();
+    const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
+    const firstSearch = expectToolCall(
+      await requestCompatibleMessage(compatibleMock, messages),
+      "tool_search",
+      { queries: [DEFERRED_TOOL_NAME] },
+    );
+    recordToolResult(messages, firstSearch, result);
 
     const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);
     expect(terminalMessage).toMatchObject({
