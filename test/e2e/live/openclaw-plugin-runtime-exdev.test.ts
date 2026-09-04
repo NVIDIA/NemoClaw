@@ -49,6 +49,7 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-exdev";
 const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
 const LIVE_TIMEOUT_MS = testTimeout(65 * 60_000);
 const PROBE_TIMEOUT_MS = 60_000;
+const EXDEV_API_KEY = "nemoclaw-exdev-dummy-key";
 const EXDEV_TMPFS_MOUNT = "/tmp/nemoclaw-exdev-tmpfs";
 const EXDEV_TMPFS_SOURCE = `${EXDEV_TMPFS_MOUNT}/source`;
 const EXDEV_TMPFS_MOUNT_CONFIG = {
@@ -296,7 +297,7 @@ async function startDeploymentFixture(
   progress: TestProgress,
 ): Promise<NodeJS.ProcessEnv> {
   const fake = await startFakeOpenAiCompatibleServer({
-    apiKey: "nemoclaw-exdev-dummy-key",
+    apiKey: EXDEV_API_KEY,
     host: "0.0.0.0",
     model: "nemoclaw-exdev-probe",
     progress,
@@ -313,10 +314,10 @@ async function startDeploymentFixture(
   });
 
   return liveEnv({
-    COMPATIBLE_API_KEY: "nemoclaw-exdev-dummy-key",
+    COMPATIBLE_API_KEY: EXDEV_API_KEY,
     NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
     NEMOCLAW_MODEL: "nemoclaw-exdev-probe",
-    NEMOCLAW_PROVIDER_KEY: "nemoclaw-exdev-dummy-key",
+    NEMOCLAW_PROVIDER_KEY: EXDEV_API_KEY,
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     NEMOCLAW_POLICY_MODE: "skip",
     NEMOCLAW_PREFERRED_API: "openai-completions",
@@ -445,7 +446,7 @@ test(
     const capturePairingDiagnostics = () =>
       captureIssue4462FailureDiagnostics(sandbox, {
         env: sandboxEnv,
-        redactionValues: ["nemoclaw-exdev-dummy-key"],
+        redactionValues: [EXDEV_API_KEY],
         sandboxName: SANDBOX_NAME,
       });
 

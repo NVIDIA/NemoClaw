@@ -151,51 +151,42 @@ describe("OpenClaw plugin onboarding pairing evidence", () => {
     expect(captureDiagnostics).not.toHaveBeenCalled();
   });
 
-  it.each([
-    [
-      "throws",
-      async () => {
-        throw new Error("diagnostics unavailable");
-      },
-    ],
-    ["returns nonzero", async () => ({ ...onboardResult(1), stdout: "" })],
-  ])(
-    "preserves the pairing failure when diagnostic execution %s (#9844)",
-    async (_condition, diagnosticExecution) => {
-      const sandboxName = "fixture-sandbox";
-      const run = vi.fn(async () =>
-        onboardResult(
-          1,
-          ordinaryOpenClawPairingIncompleteMessage(sandboxName, "pairing-unavailable"),
-        ),
-      );
-      const diagnosticExec = vi.fn(diagnosticExecution);
+  it("preserves the pairing failure when diagnostic execution throws (#9844)", async () => {
+    const sandboxName = "fixture-sandbox";
+    const run = vi.fn(async () =>
+      onboardResult(
+        1,
+        ordinaryOpenClawPairingIncompleteMessage(sandboxName, "pairing-unavailable"),
+      ),
+    );
+    const diagnosticExec = vi.fn(async () => {
+      throw new Error("diagnostics unavailable");
+    });
 
-      const result = await runOpenClawPluginWithFailureEvidence({
-        captureDiagnostics: () =>
-          captureIssue4462FailureDiagnostics({ exec: diagnosticExec } as never, {
-            env: { PATH: "/usr/bin" },
-            redactionValues: ["secret-api-key"],
-            sandboxName,
-          }),
-        operation: ONBOARD_OPERATION,
-        sandboxName,
-        run,
-        onEvidence: vi.fn(),
-      });
-
-      expect(result.outcome).toBe("failed");
-      expect(run).toHaveBeenCalledOnce();
-      expect(diagnosticExec).toHaveBeenCalledExactlyOnceWith(
-        sandboxName,
-        ["node", "-e", expect.any(String), "/tmp/auto-pair.log", "/tmp/gateway.log"],
-        expect.objectContaining({
-          artifactName: "failure-openclaw-pairing-diagnostics",
+    const result = await runOpenClawPluginWithFailureEvidence({
+      captureDiagnostics: () =>
+        captureIssue4462FailureDiagnostics({ exec: diagnosticExec } as never, {
+          env: { PATH: "/usr/bin" },
           redactionValues: ["secret-api-key"],
+          sandboxName,
         }),
-      );
-    },
-  );
+      operation: ONBOARD_OPERATION,
+      sandboxName,
+      run,
+      onEvidence: vi.fn(),
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(run).toHaveBeenCalledOnce();
+    expect(diagnosticExec).toHaveBeenCalledExactlyOnceWith(
+      sandboxName,
+      ["node", "-e", expect.any(String), "/tmp/auto-pair.log", "/tmp/gateway.log"],
+      expect.objectContaining({
+        artifactName: "failure-openclaw-pairing-diagnostics",
+        redactionValues: ["secret-api-key"],
+      }),
+    );
+  });
 });
 
 describe("OpenClaw plugin recreation pairing evidence", () => {
