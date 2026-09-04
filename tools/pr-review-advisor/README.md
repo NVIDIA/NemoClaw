@@ -57,6 +57,11 @@ records the approved exact-generated-SHA checks without starting another repair 
 The repair path retains bounded proposal, validation, publication, generated-head, and diagnostic
 artifacts. Ordinary `pull_request_target` review runs remain advisory-only and read-only.
 
+The Advisor owns eligibility, finding identity, and lifecycle orchestration in
+`repair-contract.mts` and the two Advisor workflows. It deliberately reuses the conflict-fixer's
+existing OpenShell patch executor and verified Git publication primitives instead of introducing a
+second sandbox or branch-publication subsystem.
+
 Required-check status is point-in-time context, not a settled-CI gate. Earlier
 `PR_REVIEW_ADVISOR_WAIT_*` workflow variables were inert and have been removed; any future waiting
 behavior must be implemented and tested before the workflow claims to provide it.
