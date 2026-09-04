@@ -31,11 +31,11 @@ export function dockerRunCommandBetween(startMarker: string, endMarker: string):
     .slice(runIndex, end)
     .trim()
     .replace(/^RUN\s+/, "")
-    .replace(/^(?:--[a-z-]+=[^\s]+\s+)+/u, "")
     .split("\n")
     .filter((line) => !line.trimStart().startsWith("#"))
     .join("\n")
     .replace(/\\\n/g, " ")
+    .replace(/^(?:--[a-z-]+=[^\s]+\s+)+/u, "")
     .replace(/\\\s*$/, "")
     .replaceAll(
       "/usr/local/lib/nemoclaw/extract-semver",

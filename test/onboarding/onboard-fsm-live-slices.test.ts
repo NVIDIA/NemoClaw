@@ -656,14 +656,13 @@ describe("live onboard FSM slice boundaries", () => {
     assert.deepEqual(runSliceProbe({ slice: "final" }), ["initial:init", "core", "final"]);
   });
 
-  it("returns the post-recovery dashboard port after agent onboarding (#8214)", () => {
+  it("keeps the single dashboard port established during agent onboarding (#8214)", () => {
     assert.deepEqual(runSliceProbe({ slice: "final", mode: "dashboard-port-composition" }), [
       "initial:init",
       "core",
       "forward-port:18791",
-      "forward-port:18792",
-      "registry-port:18792",
-      "dashboard-url:http://127.0.0.1:18792/",
+      "registry-port:18791",
+      "dashboard-url:http://127.0.0.1:18791/",
     ]);
   }, 60_000);
 

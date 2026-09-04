@@ -32,6 +32,7 @@ concurrency:
 
 jobs:
   cli-parity:
+    name: Docs / Verify CLI and installer reference parity
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

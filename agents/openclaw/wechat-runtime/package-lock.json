@@ -29,6 +29,11 @@
       },
       "peerDependencies": {
         "openclaw": ">=2026.3.22"
+      },
+      "peerDependenciesMeta": {
+        "openclaw": {
+          "optional": true
+        }
       }
     },
     "node_modules/qrcode-terminal": {

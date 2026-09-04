@@ -72,6 +72,10 @@ export interface PodmanContainerEngineOptions {
   ) => void;
 }
 
+export interface PodmanExecutablePathTiming {
+  readonly measure: <T>(stage: "podmanPathResolution", operation: () => T) => T;
+}
+
 const podmanExecutableOperationProofs = new WeakSet<object>();
 
 export interface PodmanExecutableOperationProof {
@@ -166,23 +170,29 @@ export interface PodmanBoundContainerEngine extends PodmanContainerEngine {
   }) => PodmanManagedVolumeRootReceipt;
 }
 
-export function resolvePodmanExecutablePath(env: NodeJS.ProcessEnv = process.env): string {
-  const searchPath = env.PATH;
-  if (!searchPath) {
-    throw new Error("Podman executable authority could not resolve podman from PATH.");
-  }
-  for (const directory of searchPath.split(path.delimiter)) {
-    if (!path.isAbsolute(directory) || path.normalize(directory) !== directory) continue;
-    const candidate = path.join(directory, "podman");
-    try {
-      fs.accessSync(candidate, fs.constants.X_OK);
-      const resolved = fs.realpathSync(candidate);
-      if (path.isAbsolute(resolved) && path.normalize(resolved) === resolved) return resolved;
-    } catch {
-      // Continue to the next absolute PATH entry.
+export function resolvePodmanExecutablePath(
+  env: NodeJS.ProcessEnv = process.env,
+  timing?: PodmanExecutablePathTiming,
+): string {
+  const resolve = () => {
+    const searchPath = env.PATH;
+    if (!searchPath) {
+      throw new Error("Podman executable authority could not resolve podman from PATH.");
     }
-  }
-  throw new Error("Podman executable authority could not resolve podman from PATH.");
+    for (const directory of searchPath.split(path.delimiter)) {
+      if (!path.isAbsolute(directory) || path.normalize(directory) !== directory) continue;
+      const candidate = path.join(directory, "podman");
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        const resolved = fs.realpathSync(candidate);
+        if (path.isAbsolute(resolved) && path.normalize(resolved) === resolved) return resolved;
+      } catch {
+        // Continue to the next absolute PATH entry.
+      }
+    }
+    throw new Error("Podman executable authority could not resolve podman from PATH.");
+  };
+  return timing?.measure("podmanPathResolution", resolve) ?? resolve();
 }
 
 export function localPodmanEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -447,6 +457,8 @@ export function createPodmanContainerEngine(
 export type {
   PodmanExecutableAuthority,
   PodmanExecutableAuthorityDeps,
+  PodmanExecutableAuthorityTiming,
+  PodmanExecutableAuthorityTimingStage,
   PodmanExecutableDirectoryAuthority,
   PodmanExecutableStat,
 } from "./executable-authority";

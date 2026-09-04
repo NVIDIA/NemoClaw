@@ -393,10 +393,10 @@ Use these details when your first-run path needs more control.
     curl -sf http://127.0.0.1:8642/health
     ```
 
-    If that command cannot connect after a reboot or terminal restart, restart the forward.
+    If that command cannot connect after a reboot or terminal restart, restore the managed forward.
 
     ```bash
-    openshell forward start --background 8642 my-hermes
+    nemohermes my-hermes recover
     ```
 
     Configure OpenAI-compatible clients with `http://127.0.0.1:8642/v1`.

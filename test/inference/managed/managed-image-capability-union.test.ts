@@ -75,7 +75,9 @@ describe("managed-image capability union", () => {
     });
     expect(MANAGED_IMAGE_HERMES_SUPPORTED_PLATFORMS).toEqual(hermesPlatforms);
     expect(MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS).toEqual([
+      "a2a",
       "bluebubbles",
+      "buzz",
       "dingtalk",
       "discord",
       "email",
