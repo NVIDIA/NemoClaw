@@ -7,7 +7,6 @@ import fs from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import net from "node:net";
-import { networkInterfaces } from "node:os";
 import path from "node:path";
 
 import {
@@ -43,146 +42,84 @@ function sha256(file) {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
-const RELAY_OPEN = 1;
-const RELAY_DATA = 2;
-const RELAY_CLOSE = 3;
-const RELAY_MAX_FRAME = 16 * 1024 * 1024;
-
-function relayFrame(streamId, type, payload = Buffer.alloc(0)) {
-  const frame = Buffer.allocUnsafe(9 + payload.length);
-  frame.writeUInt32BE(streamId, 0);
-  frame.writeUInt8(type, 4);
-  frame.writeUInt32BE(payload.length, 5);
-  payload.copy(frame, 9);
-  return frame;
+function writeRelayFile(file, content) {
+  const temporary = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  fs.writeFileSync(temporary, content);
+  fs.renameSync(temporary, file);
 }
 
-async function startReverseTcpRelay(token) {
-  const controlHosts = [
-    "127.0.0.1",
-    ...Object.values(networkInterfaces())
-      .flat()
-      .filter(
-        (address) =>
-          address?.family === "IPv4" &&
-          !address.internal &&
-          !address.address.startsWith("169.254."),
-      )
-      .map((address) => address.address),
-  ].filter((address, index, values) => values.indexOf(address) === index);
-  if (controlHosts.length < 2) fail("Windows does not expose a host IPv4 adapter for MXC UI relay");
-  let controlPort;
-  let browserPort;
-  const streams = new Map();
-  let control = null;
-  let controlBuffer = Buffer.alloc(0);
-  let closed = false;
-  let nextStreamId = 1;
-  let resolveReady;
-  let rejectReady;
-  const ready = new Promise((resolve, reject) => {
-    resolveReady = resolve;
-    rejectReady = reject;
-  });
-  const closeStreams = () => {
-    for (const socket of streams.values()) socket.destroy();
-    streams.clear();
-  };
-  const handleFrames = (chunk) => {
-    controlBuffer = Buffer.concat([controlBuffer, chunk]);
-    while (controlBuffer.length >= 9) {
-      const streamId = controlBuffer.readUInt32BE(0);
-      const type = controlBuffer.readUInt8(4);
-      const length = controlBuffer.readUInt32BE(5);
-      if (length > RELAY_MAX_FRAME) throw new Error("MXC UI relay frame exceeded its limit");
-      if (controlBuffer.length < 9 + length) return;
-      const payload = controlBuffer.subarray(9, 9 + length);
-      controlBuffer = controlBuffer.subarray(9 + length);
-      const stream = streams.get(streamId);
-      if (type === RELAY_DATA && stream !== undefined) stream.write(payload);
-      else if (type === RELAY_CLOSE && stream !== undefined) {
-        streams.delete(streamId);
-        stream.end();
-      }
-    }
-  };
-  const controlServer = net.createServer((socket) => {
-    if (control !== null) {
-      socket.destroy();
-      return;
-    }
-    let authenticated = false;
-    let handshake = Buffer.alloc(0);
-    socket.on("data", (chunk) => {
-      if (authenticated) {
-        handleFrames(chunk);
-        return;
-      }
-      handshake = Buffer.concat([handshake, chunk]);
-      if (handshake.length > 512) {
-        socket.destroy();
-        return;
-      }
-      const newline = handshake.indexOf(0x0a);
-      if (newline < 0) return;
-      const supplied = handshake.subarray(0, newline).toString("utf8");
-      if (supplied !== `NEMOCLAW ${token}`) {
-        socket.destroy();
-        return;
-      }
-      authenticated = true;
-      control = socket;
-      resolveReady();
-      const remaining = handshake.subarray(newline + 1);
-      if (remaining.length > 0) handleFrames(remaining);
-    });
-    socket.once("error", (error) => {
-      if (!authenticated) rejectReady(error);
-    });
-    socket.once("close", () => {
-      if (control === socket) control = null;
-      closeStreams();
-    });
-  });
-  await new Promise((resolve, reject) => {
-    controlServer.once("error", reject);
-    controlServer.listen(0, "0.0.0.0", resolve);
-  });
-  controlPort = controlServer.address().port;
+async function startFileTcpRelay(relayRoot, token) {
+  if (fs.existsSync(relayRoot)) fail("MXC UI relay root already exists");
+  fs.mkdirSync(relayRoot);
   const browserServer = net.createServer((socket) => {
-    if (control === null) {
-      socket.destroy();
-      return;
-    }
-    const streamId = nextStreamId++;
-    streams.set(streamId, socket);
-    control.write(relayFrame(streamId, RELAY_OPEN));
-    socket.on("data", (chunk) => control?.write(relayFrame(streamId, RELAY_DATA, chunk)));
+    const streamId = randomBytes(8).toString("hex");
+    const streamRoot = path.join(relayRoot, `stream-${streamId}`);
+    fs.mkdirSync(streamRoot);
+    writeRelayFile(path.join(streamRoot, "open"), token);
+    let sequence = 0;
+    streams.set(streamId, { root: streamRoot, socket });
+    socket.on("data", (chunk) => {
+      writeRelayFile(
+        path.join(streamRoot, `host-${String(sequence++).padStart(10, "0")}.bin`),
+        chunk,
+      );
+    });
     socket.once("error", () => {});
     socket.once("close", () => {
-      if (!streams.delete(streamId)) return;
-      control?.write(relayFrame(streamId, RELAY_CLOSE));
+      try {
+        writeRelayFile(path.join(streamRoot, "host-close"), Buffer.alloc(0));
+      } catch {}
     });
   });
+  const streams = new Map();
+  let browserPort;
+  let closed = false;
   await new Promise((resolve, reject) => {
     browserServer.once("error", reject);
     browserServer.listen(0, "127.0.0.1", resolve);
   });
   browserPort = browserServer.address().port;
+  const poll = setInterval(() => {
+    for (const [streamId, stream] of streams) {
+      if (!fs.existsSync(stream.root)) continue;
+      for (const entry of fs
+        .readdirSync(stream.root)
+        .filter((name) => /^sandbox-[0-9]{10}[.]bin$/u.test(name))
+        .sort()) {
+        const chunk = path.join(stream.root, entry);
+        stream.socket.write(fs.readFileSync(chunk));
+        fs.unlinkSync(chunk);
+      }
+      if (fs.existsSync(path.join(stream.root, "sandbox-close"))) {
+        streams.delete(streamId);
+        stream.socket.end();
+      }
+    }
+  }, 10);
+  const ready = (async () => {
+    const marker = path.join(relayRoot, "ready");
+    while (!closed) {
+      if (fs.statSync(marker, { throwIfNoEntry: false })?.isFile()) {
+        if (fs.readFileSync(marker, "utf8") !== token) fail("MXC UI relay authentication failed");
+        return;
+      }
+      await sleep(25);
+    }
+    fail("MXC UI relay closed before it became ready");
+  })();
   return {
     browserPort,
-    controlHosts,
-    controlPort,
     ready,
     close: async () => {
       if (closed) return;
       closed = true;
-      closeStreams();
-      control?.destroy();
-      await Promise.all([
-        new Promise((resolve) => controlServer.close(() => resolve())),
-        new Promise((resolve) => browserServer.close(() => resolve())),
-      ]);
+      clearInterval(poll);
+      for (const stream of streams.values()) stream.socket.destroy();
+      streams.clear();
+      try {
+        writeRelayFile(path.join(relayRoot, "shutdown"), token);
+      } catch {}
+      await new Promise((resolve) => browserServer.close(() => resolve()));
     },
   };
 }
@@ -470,9 +407,8 @@ const modelPort = Number(required("NEMOCLAW_MXC_MODEL_PORT"));
 const modelId = required("NEMOCLAW_MXC_MODEL_ID");
 const modelToken = required("NEMOCLAW_MXC_MODEL_TOKEN");
 const qualification = required("NEMOCLAW_MXC_QUALIFICATION") === "1";
-const tunnelHosts = required("NEMOCLAW_MXC_TUNNEL_HOSTS").split(",").filter(Boolean);
-const tunnelPort = Number(required("NEMOCLAW_MXC_TUNNEL_PORT"));
-const tunnelToken = required("NEMOCLAW_MXC_TUNNEL_TOKEN");
+const relayRoot = required("NEMOCLAW_MXC_RELAY_ROOT");
+const relayToken = required("NEMOCLAW_MXC_RELAY_TOKEN");
 const uiPort = Number(required("NEMOCLAW_MXC_UI_PORT"));
 const sleep = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
 const readBody = async (request) => {
@@ -513,88 +449,61 @@ const waitForUi = async () => {
   }
   throw new Error("OpenClaw Control UI did not become ready inside MXC");
 };
-const relayOpen = 1;
-const relayData = 2;
-const relayClose = 3;
-const relayMaxFrame = 16 * 1024 * 1024;
-const relayFrame = (streamId, type, payload = Buffer.alloc(0)) => {
-  const frame = Buffer.allocUnsafe(9 + payload.length);
-  frame.writeUInt32BE(streamId, 0);
-  frame.writeUInt8(type, 4);
-  frame.writeUInt32BE(payload.length, 5);
-  payload.copy(frame, 9);
-  return frame;
+const writeRelayFile = (file, content) => {
+  const temporary = file + "." + process.pid + "." + Math.random().toString(16).slice(2) + ".tmp";
+  fs.writeFileSync(temporary, content);
+  fs.renameSync(temporary, file);
 };
-const startTunnel = async () => {
+const startFileTunnel = async () => {
   await waitForUi();
-  let tunnel = null;
-  for (const host of tunnelHosts) {
-    try {
-      tunnel = await new Promise((resolvePromise, reject) => {
-        const candidate = net.createConnection({ host, port: tunnelPort });
-        const timeout = setTimeout(() => {
-          candidate.destroy();
-          reject(new Error("MXC UI relay host timed out: " + host));
-        }, 3000);
-        candidate.once("connect", () => {
-          clearTimeout(timeout);
-          resolvePromise(candidate);
-        });
-        candidate.once("error", (error) => {
-          clearTimeout(timeout);
-          reject(error);
-        });
-      });
-      break;
-    } catch {}
+  if (!fs.statSync(relayRoot, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error("MXC UI relay directory is unavailable");
   }
-  if (tunnel === null) throw new Error("MXC could not connect to an authenticated host UI relay");
   const streams = new Map();
-  let buffer = Buffer.alloc(0);
-  tunnel.write("NEMOCLAW " + tunnelToken + "\n");
-  tunnel.on("data", (chunk) => {
-    buffer = Buffer.concat([buffer, chunk]);
-    while (buffer.length >= 9) {
-      const streamId = buffer.readUInt32BE(0);
-      const type = buffer.readUInt8(4);
-      const length = buffer.readUInt32BE(5);
-      if (length > relayMaxFrame) throw new Error("MXC UI relay frame exceeded its limit");
-      if (buffer.length < 9 + length) return;
-      const payload = buffer.subarray(9, 9 + length);
-      buffer = buffer.subarray(9 + length);
-      if (type === relayOpen) {
-        const stream = net.createConnection({ host: "127.0.0.1", port: uiPort });
-        const state = { connected: false, queue: [] };
-        streams.set(streamId, { socket: stream, state });
-        stream.once("connect", () => {
-          state.connected = true;
-          for (const queued of state.queue) stream.write(queued);
-          state.queue.length = 0;
-        });
-        stream.on("data", (data) => tunnel.write(relayFrame(streamId, relayData, data)));
-        stream.once("error", () => {});
-        stream.once("close", () => {
-          if (!streams.delete(streamId)) return;
-          tunnel.write(relayFrame(streamId, relayClose));
-        });
-      } else if (type === relayData) {
-        const stream = streams.get(streamId);
-        if (stream === undefined) continue;
-        if (stream.state.connected) stream.socket.write(payload);
-        else stream.state.queue.push(Buffer.from(payload));
-      } else if (type === relayClose) {
-        const stream = streams.get(streamId);
-        if (stream === undefined) continue;
-        streams.delete(streamId);
-        stream.socket.end();
+  writeRelayFile(join(relayRoot, "ready"), relayToken);
+  return new Promise((resolvePromise) => {
+    const poll = setInterval(() => {
+      const shutdown = join(relayRoot, "shutdown");
+      if (fs.statSync(shutdown, { throwIfNoEntry: false })?.isFile()) {
+        if (fs.readFileSync(shutdown, "utf8") !== relayToken) return;
+        clearInterval(poll);
+        for (const stream of streams.values()) stream.socket.destroy();
+        streams.clear();
+        resolvePromise();
+        return;
       }
-    }
+      for (const entry of fs.readdirSync(relayRoot).filter((name) => name.startsWith("stream-"))) {
+        if (streams.has(entry)) continue;
+        const streamRoot = join(relayRoot, entry);
+        const open = join(streamRoot, "open");
+        if (!fs.statSync(open, { throwIfNoEntry: false })?.isFile()) continue;
+        if (fs.existsSync(join(streamRoot, "sandbox-close"))) continue;
+        if (fs.readFileSync(open, "utf8") !== relayToken) continue;
+        const socket = net.createConnection({ host: "127.0.0.1", port: uiPort });
+        const state = { root: streamRoot, sequence: 0, socket };
+        streams.set(entry, state);
+        socket.on("data", (chunk) => {
+          writeRelayFile(
+            join(streamRoot, "sandbox-" + String(state.sequence++).padStart(10, "0") + ".bin"),
+            chunk,
+          );
+        });
+        socket.once("error", () => {});
+        socket.once("close", () => {
+          streams.delete(entry);
+          try { writeRelayFile(join(streamRoot, "sandbox-close"), Buffer.alloc(0)); } catch {}
+        });
+      }
+      for (const stream of streams.values()) {
+        for (const entry of fs.readdirSync(stream.root).filter((name) => /^host-[0-9]{10}[.]bin$/u.test(name)).sort()) {
+          const chunk = join(stream.root, entry);
+          stream.socket.write(fs.readFileSync(chunk));
+          fs.unlinkSync(chunk);
+        }
+        if (fs.existsSync(join(stream.root, "host-close"))) stream.socket.end();
+      }
+    }, 10);
   });
-  tunnel.once("close", () => {
-    for (const stream of streams.values()) stream.socket.destroy();
-    streams.clear();
-  });
-  return new Promise((resolvePromise) => tunnel.once("close", resolvePromise));
 };
 const mock = qualification ? createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/v1/models") {
@@ -721,9 +630,9 @@ Object.assign(process.env, {
   USERPROFILE: home,
 });
 process.argv = [process.execPath, launcher, "gateway", "run", "--allow-unconfigured", "--port", String(uiPort), "--bind", "loopback", "--auth", "none"];
-const tunnelTask = startTunnel();
+const fileTunnelTask = startFileTunnel();
 await import(pathToFileURL(launcher).href);
-await tunnelTask;
+await fileTunnelTask;
 `;
 }
 
@@ -1320,8 +1229,6 @@ async function main() {
   const inferenceBroker = configuredIdentity
     ? await startHostInferenceBroker(configuredIdentity.config, credential, modelToken)
     : null;
-  const tunnelToken = randomBytes(32).toString("base64url");
-  const uiRelay = await startReverseTcpRelay(tunnelToken);
 
   const systemDrive = process.env.SystemDrive;
   if (!systemDrive || !/^[A-Za-z]:$/u.test(systemDrive)) fail("SystemDrive is invalid");
@@ -1334,6 +1241,9 @@ async function main() {
     if (fs.existsSync(directory)) fail("qualification root already exists");
     fs.mkdirSync(directory);
   }
+  const relayToken = randomBytes(32).toString("base64url");
+  const relayRoot = path.join(shareRoot, "ui-relay");
+  const uiRelay = await startFileTcpRelay(relayRoot, relayToken);
   const evidenceRoot = selectedEvidenceRoot;
   const node = path.join(runtimeRoot, "node.exe");
   const openClawRoot = path.join(runtimeRoot, "openclaw");
@@ -1442,9 +1352,8 @@ async function main() {
       NEMOCLAW_MXC_MODEL_TOKEN: modelToken,
       NEMOCLAW_MXC_OPENCLAW_ENTRY: openClawEntry,
       NEMOCLAW_MXC_QUALIFICATION: qualification ? "1" : "0",
-      NEMOCLAW_MXC_TUNNEL_HOSTS: uiRelay.controlHosts.join(","),
-      NEMOCLAW_MXC_TUNNEL_PORT: String(uiRelay.controlPort),
-      NEMOCLAW_MXC_TUNNEL_TOKEN: tunnelToken,
+      NEMOCLAW_MXC_RELAY_ROOT: relayRoot,
+      NEMOCLAW_MXC_RELAY_TOKEN: relayToken,
       NEMOCLAW_MXC_UI_PORT: String(uiPort),
       NODE_DISABLE_COMPILE_CACHE: "1",
       NUMBER_OF_PROCESSORS: process.env.NUMBER_OF_PROCESSORS ?? "1",
@@ -1468,7 +1377,11 @@ async function main() {
       policyPath,
       "--driver-config-json",
       JSON.stringify({
-        mxc: { command: [node, gatewayScript], cwd: shareRoot, host_loopback: true },
+        mxc: {
+          command: [node, gatewayScript],
+          cwd: shareRoot,
+          host_loopback: configuredIdentity !== null,
+        },
       }),
       "--no-tty",
     ];
@@ -1487,7 +1400,7 @@ async function main() {
       createError = `${createError}${chunk.toString("utf8")}`.slice(-64 * 1024);
     });
     console.log("WEB UI> Waiting for the real OpenClaw Control UI");
-    await withTimeout(uiRelay.ready, 180_000, "MXC reverse UI relay");
+    await withTimeout(uiRelay.ready, 180_000, "MXC file UI relay");
     const uiUrl = `http://127.0.0.1:${uiRelay.browserPort}`;
     let browserProof;
     let onboardingSelection = null;
@@ -1618,7 +1531,7 @@ async function main() {
       if (availableDiagnostics.length > 0) {
         const diagnostic = sanitizedDiagnostic(availableDiagnostics.join("\n"), [
           [modelToken, "<model-token>"],
-          [tunnelToken, "<tunnel-token>"],
+          [relayToken, "<relay-token>"],
           [installRoot, "<install-root>"],
           [runtimeRoot, "<runtime-root>"],
           [shareRoot, "<share-root>"],
