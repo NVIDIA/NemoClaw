@@ -701,7 +701,9 @@ describe("pull request and main workflow contracts", () => {
     expect(job.if).toBe("needs.changes.outputs.hugging_face_models == 'true'");
     expect(stepUses(job)).toEqual([trustedCheckoutAction, trustedSetupNodeAction]);
     expect(requiredWorkflowStep(job, "Checkout").with?.["persist-credentials"]).toBe(false);
-    expect(requiredWorkflowStep(job, "Install dependencies").run).toBe("npm ci --ignore-scripts");
+    expect(requiredWorkflowStep(job, "Install dependencies").run).toBe(
+      "npm ci --ignore-scripts --no-audit --no-fund",
+    );
     expect(requiredWorkflowStep(job, "Verify Hugging Face model references").run).toBe(
       "npm run catalog:verify-hugging-face",
     );
