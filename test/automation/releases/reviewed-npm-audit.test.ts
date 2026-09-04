@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   type AuditExceptionRegistry,
   NPM_AUDIT_ARGV,
+  NPM_AUDIT_ATTEMPT_TIMEOUT_MS,
   NPM_AUDIT_CACHE_FUTURE_SKEW_MS,
   NPM_AUDIT_CACHE_MAX_AGE_MS,
   assertExceptionGraphs,
@@ -255,6 +256,10 @@ describe("reviewed npm audit gate", () => {
         }).status,
       ).toBe("blocked");
     });
+  });
+
+  it("allows one slow advisory response to complete within a three-minute attempt", () => {
+    expect(NPM_AUDIT_ATTEMPT_TIMEOUT_MS).toBe(180_000);
   });
 
   it("retries a timed-out scanner process within the same budget", () => {
@@ -733,11 +738,7 @@ describe("reviewed npm audit provenance", () => {
       expect(sidecar.failure).not.toContain("registry unreachable");
       expect(sidecar.advisoryIds).toEqual([]);
       expect(sidecar.rawReportPath).toBe("graph.json");
-      expect(sidecar.registry).toEqual({
-        configuredRegistry: null,
-        bulkAdvisoryEndpoint: null,
-        note: expect.stringMatching(/registry could not be safely recorded/),
-      });
+      expect(sidecar.registry).toEqual(deriveAuditEndpoints("https://registry.yarnpkg.com"));
     } finally {
       process.env.PATH = originalPath;
       fs.rmSync(tempRoot, { recursive: true, force: true });
