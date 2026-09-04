@@ -294,12 +294,12 @@ try {
     Assert-Sha256 -Path $langGraphLogging -Expected $script:LangGraphLoggingSourceDigest -Label 'langgraph-api logging source'
     Invoke-Checked `
         -FilePath $git `
-        -Arguments @('apply', '--check', '--whitespace=nowarn', $langGraphPatch) `
+        -Arguments @('-c', 'core.autocrlf=false', 'apply', '--check', '--whitespace=nowarn', $langGraphPatch) `
         -Label 'langgraph-api Python 3.13 compatibility patch check' `
         -WorkingDirectory $deepAgentsSitePackages
     Invoke-Checked `
         -FilePath $git `
-        -Arguments @('apply', '--whitespace=nowarn', $langGraphPatch) `
+        -Arguments @('-c', 'core.autocrlf=false', 'apply', '--whitespace=nowarn', $langGraphPatch) `
         -Label 'langgraph-api Python 3.13 compatibility patch' `
         -WorkingDirectory $deepAgentsSitePackages
     Assert-Sha256 -Path $langGraphLogging -Expected $script:LangGraphLoggingPatchedDigest -Label 'patched langgraph-api logging source'
