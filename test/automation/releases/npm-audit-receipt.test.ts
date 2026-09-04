@@ -56,6 +56,23 @@ describe("reviewed npm audit receipt", () => {
     expect(new Date(parsed.expiresAt).getTime() - NOW.getTime()).toBeLessThan(12 * 60 * 60 * 1000);
   });
 
+  it("accepts a legacy npmjs receipt only through the explicit transition option", () => {
+    const legacy = {
+      ...receipt(),
+      argv: ["audit", "--omit=dev", "--json"],
+      registryOrigin: "https://registry.npmjs.org/",
+    };
+    expect(() => parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), inputs)).toThrow(
+      /registry/,
+    );
+    expect(
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), {
+        ...inputs,
+        allowLegacyNpmjsReceipt: true,
+      }).registryOrigin,
+    ).toBe("https://registry.npmjs.org/");
+  });
+
   it("rejects a receipt whose registry identity differs from its audit command", () => {
     expect(() =>
       parseAndVerifyAuditReceipt(canonicalAuditReceipt(receipt()), {
