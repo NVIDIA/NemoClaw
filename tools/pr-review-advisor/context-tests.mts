@@ -31,7 +31,7 @@ export function classifyTestDepth(
       verdict: "unit_sufficient",
       rationale:
         "Changes are limited to tests, documentation, or metadata that cannot affect runtime behavior directly.",
-      suggestedTests: ["Run the relevant existing unit/doc validation for the touched files."],
+      suggestedTests: ["Existing unit or documentation validation candidate for the touched files."],
     };
   }
   if (riskPlan.requiredJobs.length > 0 || riskPlan.requiredTargets.length > 0) {
@@ -41,14 +41,14 @@ export function classifyTestDepth(
       suggestedTests: [
         ...riskPlan.requiredJobs.map(
           (job) =>
-            `Run the \`${job.id}\` E2E job for ${job.reasons.join("; ")} Matched files: ${job.matchedFiles
+            `Existing \`${job.id}\` E2E job validation candidate for ${job.reasons.join("; ")} Matched files: ${job.matchedFiles
               .slice(0, 5)
               .map((file) => `\`${file}\``)
               .join(", ")}.`,
         ),
         ...riskPlan.requiredTargets.map(
           (target) =>
-            `Run the \`${target.id}\` typed E2E target for ${target.reasons.join("; ")} Matched files: ${target.matchedFiles
+            `Existing \`${target.id}\` typed E2E target validation candidate for ${target.reasons.join("; ")} Matched files: ${target.matchedFiles
               .slice(0, 5)
               .map((file) => `\`${file}\``)
               .join(", ")}.`,
@@ -104,7 +104,7 @@ export function classifyTestDepth(
   return {
     verdict: "unit_sufficient",
     rationale: "Changed files look like deterministic logic that can be covered with unit tests.",
-    suggestedTests: ["Run targeted unit tests for the changed modules."],
+    suggestedTests: ["Targeted unit validation candidate for the changed modules."],
   };
 }
 

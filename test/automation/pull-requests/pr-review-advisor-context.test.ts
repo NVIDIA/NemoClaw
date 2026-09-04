@@ -98,13 +98,20 @@ describe("PR review advisor", () => {
 +spawn("command");`;
 
     expect({
+      testOrDocs: classifyTestDepth(["test/example.test.ts"]).suggestedTests,
+      requiredRiskIsCandidate: classifyTestDepth(["src/lib/state/registry.ts"]).suggestedTests.every(
+        (candidate) => candidate.startsWith("Existing "),
+      ),
       runtimePath: classifyTestDepth(["src/lib/example-sandbox.ts"]).suggestedTests,
       runtimeBoundary: classifyTestDepth(["src/lib/example.ts"], undefined, runtimeBoundaryDiff)
         .suggestedTests,
       mockedBoundary: classifyTestDepth(["src/lib/example-provider.ts"]).suggestedTests,
       unchangedTests: collectStaticTestInventory(["tools/pr-review-advisor/context-tests.mts"])
         .candidateExistingCoverage,
+      defaultUnit: classifyTestDepth(["src/lib/example.ts"]).suggestedTests,
     }).toEqual({
+      testOrDocs: ["Existing unit or documentation validation candidate for the touched files."],
+      requiredRiskIsCandidate: true,
       runtimePath: [
         "Runtime or integration validation candidate for the changed behavior; external E2E job results are outside this context.",
       ],
@@ -117,6 +124,7 @@ describe("PR review advisor", () => {
       unchangedTests: [
         "No changed test files were detected for changed source files: tools/pr-review-advisor/context-tests.mts.",
       ],
+      defaultUnit: ["Targeted unit validation candidate for the changed modules."],
     });
   });
 
