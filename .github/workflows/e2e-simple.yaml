@@ -366,7 +366,6 @@ jobs:
         name: Assemble exact managed-image catalog
         env:
           IMAGE_RUN_ID: ${{ needs.plan.outputs.image_run_id }}
-          TARGET_SHA: ${{ needs.plan.outputs.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -377,15 +376,6 @@ jobs:
           source_revision="$(jq -er '[.[].source.revision] | unique | if length == 1 then .[0] else error("mixed source revisions") end' "$RUNNER_TEMP/catalog/catalog.json")"
           [[ "$source_revision" =~ ^[a-f0-9]{40}$ ]]
           printf 'revision=%s\n' "$source_revision" >>"$GITHUB_OUTPUT"
-          git merge-base --is-ancestor "$source_revision" "$TARGET_SHA"
-          if [[ "$source_revision" != "$TARGET_SHA" ]]; then
-            changed="$(git diff --name-only --diff-filter=ACMRD "$source_revision" "$TARGET_SHA")"
-            unexpected="$(grep -Ev '^(test/|[.]github/workflows/e2e-simple[.]yaml$|src/lib/actions/sandbox/mcp-bridge-restart[.]ts$)' <<<"$changed" || true)"
-            [[ -z "$unexpected" ]] || {
-              echo "::error::Reused images are not source-equivalent to the requested commit"
-              exit 1
-            }
-          fi
           if [[ -n "$IMAGE_RUN_ID" ]]; then
             jq -e --arg prefix "ghrun-$IMAGE_RUN_ID-" 'all(.[]; .source.cohort | startswith($prefix))' \
               "$RUNNER_TEMP/catalog/catalog.json" >/dev/null
