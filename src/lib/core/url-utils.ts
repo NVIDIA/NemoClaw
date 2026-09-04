@@ -6,13 +6,13 @@
  * formatting helpers used across the CLI.
  */
 
-import { MAX_CANONICAL_ENDPOINT_LENGTH } from "./endpoint-contract";
+import { MAX_CANONICAL_ENDPOINT_LENGTH } from "./endpoint-contract.ts";
 export {
   endpointUrlHasUserinfoQueryOrFragment,
   MAX_CANONICAL_ENDPOINT_LENGTH,
   unsafeEndpointUrlViolation,
-} from "./endpoint-contract";
-export type { EndpointUrlViolation } from "./endpoint-contract";
+} from "./endpoint-contract.ts";
+export type { EndpointUrlViolation } from "./endpoint-contract.ts";
 
 export function compactText(value = ""): string {
   return String(value).replace(/\s+/g, " ").trim();
