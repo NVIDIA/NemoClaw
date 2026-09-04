@@ -490,7 +490,11 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         {
           sandboxName: "alpha",
           server: "example",
-          options: { probeCredentialResolution: true, allowAdapterRepairProbe: true },
+          options: {
+            probeCredentialResolution: true,
+            allowAdapterRepairProbe: true,
+            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+          },
         },
       ],
     });
@@ -520,7 +524,11 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         {
           sandboxName: "alpha",
           server: "example",
-          options: { probeCredentialResolution: true, allowAdapterRepairProbe: true },
+          options: {
+            probeCredentialResolution: true,
+            allowAdapterRepairProbe: true,
+            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+          },
         },
       ],
     });
@@ -541,7 +549,11 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         {
           sandboxName: "alpha",
           server: "example",
-          options: { probeCredentialResolution: true, allowAdapterRepairProbe: true },
+          options: {
+            probeCredentialResolution: true,
+            allowAdapterRepairProbe: true,
+            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+          },
         },
       ],
     });
@@ -567,7 +579,11 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         {
           sandboxName: "alpha",
           server: "example",
-          options: { probeCredentialResolution: true, allowAdapterRepairProbe: true },
+          options: {
+            probeCredentialResolution: true,
+            allowAdapterRepairProbe: true,
+            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+          },
         },
       ],
     });
@@ -602,12 +618,20 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         {
           sandboxName: "alpha",
           server: "example",
-          options: { probeCredentialResolution: true, allowAdapterRepairProbe: true },
+          options: {
+            probeCredentialResolution: true,
+            allowAdapterRepairProbe: true,
+            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+          },
         },
         {
           sandboxName: "alpha",
           server: "later",
-          options: { probeCredentialResolution: true, allowAdapterRepairProbe: true },
+          options: {
+            probeCredentialResolution: true,
+            allowAdapterRepairProbe: true,
+            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+          },
         },
       ]),
     );
