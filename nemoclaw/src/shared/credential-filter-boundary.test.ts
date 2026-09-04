@@ -20,6 +20,7 @@ import {
   stripCredentials,
   STRUCTURED_TOKEN_PATTERNS,
   TOKEN_PREFIX_PATTERNS,
+  URL_TOKEN_PATTERN_SOURCE,
   valueLooksLikeSecret,
 } from "./credential-filter-boundary.cjs";
 
@@ -28,6 +29,18 @@ function asConfigValue(value: ConfigValue): ConfigValue {
 }
 
 describe("shared credential filter", () => {
+  it.each([
+    ["ordinary", "https://example.test/path"],
+    ["single-quote-split userinfo", "https://operator:secret'fragment@example.test/path"],
+    ["double-quote-split userinfo", 'https://operator:secret"fragment@example.test/path'],
+    ["credential query", "https://example.test/path?apiKey=opaque"],
+    ["credential fragment", "https://example.test/path#token=opaque"],
+    ["delimiter suffix", "https://example.test/path)."],
+    ["malformed authority", "https://operator:secret@[not-an-ip/path"],
+  ])("matches the complete %s URL token", (_case, value) => {
+    expect(value.match(new RegExp(URL_TOKEN_PATTERN_SOURCE, "giu"))).toEqual([value]);
+  });
+
   it("preserves the ConfigValue return contract (#8291)", () => {
     const value = asConfigValue({ token: "opaque-secret-value" });
     const result = stripCredentials(value);
@@ -129,6 +142,16 @@ describe("shared credential filter", () => {
     expect(queryAndHash).not.toContain("opaque-query-credential");
     expect(queryAndHash).not.toContain("opaque-hash-credential");
     expect(redactCredentialText("failed at https://%")).toBe("failed at <REDACTED>");
+  });
+
+  it.each(["'", '"'])("fully redacts URL userinfo split by %s", (quote) => {
+    const credential = "opaque-url-credential";
+
+    expect(
+      redactCredentialText(
+        `failed at https://operator:${credential}${quote}fragment@example.test/path`,
+      ),
+    ).toBe("failed at https://example.test/path");
   });
 
   it.each([

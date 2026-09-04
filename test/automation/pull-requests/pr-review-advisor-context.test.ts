@@ -6,7 +6,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { githubGraphql, upsertStickyComment } from "../../../tools/advisors/github.mts";
-import { collectStaticTestInventory } from "../../../tools/pr-review-advisor/deterministic-context.mts";
+import {
+  classifyTestDepth,
+  collectStaticTestInventory,
+} from "../../../tools/pr-review-advisor/deterministic-context.mts";
 import {
   declaresReplacement,
   extractIssueRefs,
@@ -61,11 +64,78 @@ describe("PR review advisor", () => {
   });
 
   it("collects static test inventory from changed test files", () => {
-    const inventory = collectStaticTestInventory(["test/automation/pull-requests/pr-review-advisor-context.test.ts"]);
+    const inventory = collectStaticTestInventory([
+      "test/automation/pull-requests/pr-review-advisor-context.test.ts",
+    ]);
 
-    expect(inventory.changedTestFiles).toContain("test/automation/pull-requests/pr-review-advisor-context.test.ts");
+    expect(inventory.changedTestFiles).toContain(
+      "test/automation/pull-requests/pr-review-advisor-context.test.ts",
+    );
     expect(inventory.nearbyTestNames.some((name) => name.includes("PR review advisor"))).toBe(true);
     expect(inventory.candidateExistingCoverage.join("\n")).toContain("named test block");
+  });
+
+  it("requires test ownership evidence before recommending more coverage", () => {
+    const prompt = buildSystemPrompt();
+
+    expect(
+      [
+        "testDepth.suggestedTests and staticTestInventory are internal starting points for selecting existing validation, not proof that coverage is absent or authorization to add or modify tests.",
+        "Prefer, in order: cite existing coverage unchanged; extend an existing owner with one missing case; add a new test only when no existing owner can express the behavior; or state why automated coverage does not apply.",
+        "A changed source file without a changed test file does not establish a gap.",
+        "Review every invariant listed in riskPlan against the diff and checked-in test evidence under the general regression-evidence rule above. After applying that rule, report a finding when a changed invariant lacks applicable checked-in regression evidence, unless a more specific finding already covers the same gap.",
+        "Selecting an existing E2E selector identifies applicable validation; only its revision-bound result can validate the PR. It does not authorize adding or modifying E2E tests, assertions, fixtures, selectors, matrix entries, jobs, or workflow fan-out.",
+        "Propose a new live E2E test only when the changed behavior crosses a real external boundary that no existing live proof reaches.",
+        "If a real boundary gap is outside the accepted scope of the current PR, record it as a limitation instead of asking this PR to add coverage.",
+        "missingRegressionTest with exactly one decision",
+      ].filter((clause) => !prompt.includes(clause)),
+    ).toEqual([]);
+  });
+
+  it("keeps heuristic test-depth outputs factual while the prompt owns coverage decisions", () => {
+    const runtimeBoundaryDiff = `diff --git a/src/lib/example.ts b/src/lib/example.ts
++++ b/src/lib/example.ts
++spawn("command");`;
+    const requiredRiskCandidates = classifyTestDepth([
+      "agents/langchain-deepagents-code/patch-managed-deepagents-code.py",
+    ]).suggestedTests;
+
+    expect({
+      testOrDocs: classifyTestDepth(["test/example.test.ts"]).suggestedTests,
+      requiredRiskUsesFactualJobAndTarget:
+        requiredRiskCandidates.some((candidate) => candidate.includes("E2E job validation candidate")) &&
+        requiredRiskCandidates.some((candidate) =>
+          candidate.includes("typed E2E target validation candidate"),
+        ) &&
+        requiredRiskCandidates.every(
+          (candidate) =>
+            candidate.startsWith("Existing ") &&
+            !/\b(?:add|modify|run)\b/i.test(candidate),
+        ),
+      runtimePath: classifyTestDepth(["src/lib/example-sandbox.ts"]).suggestedTests,
+      runtimeBoundary: classifyTestDepth(["src/lib/example.ts"], undefined, runtimeBoundaryDiff)
+        .suggestedTests,
+      mockedBoundary: classifyTestDepth(["src/lib/example-provider.ts"]).suggestedTests,
+      unchangedTests: collectStaticTestInventory(["tools/pr-review-advisor/context-tests.mts"])
+        .candidateExistingCoverage,
+      defaultUnit: classifyTestDepth(["src/lib/example.ts"]).suggestedTests,
+    }).toEqual({
+      testOrDocs: ["Unit or documentation validation candidate for the touched files."],
+      requiredRiskUsesFactualJobAndTarget: true,
+      runtimePath: [
+        "Runtime or integration validation candidate for the changed behavior; external E2E job results are outside this context.",
+      ],
+      runtimeBoundary: [
+        "Integration validation candidate for the changed process or container behavior.",
+      ],
+      mockedBoundary: [
+        "Behavioral validation candidate with mocked filesystem, network, or process boundaries.",
+      ],
+      unchangedTests: [
+        "No changed test files were detected for changed source files: tools/pr-review-advisor/context-tests.mts.",
+      ],
+      defaultUnit: ["Targeted unit validation candidate for the changed modules."],
+    });
   });
 
   it("recognizes issue relations used by the PR template and common PR prose (#6446)", () => {

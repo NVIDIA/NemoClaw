@@ -56,6 +56,30 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
     ).toBe(false);
   });
 
+  it("passes the selected OpenShell capture boundary to the final live-sandbox probe (#10514)", () => {
+    const captureOpenshell = vi.fn(() => ({ status: 0, output: "" }));
+    const liveSandboxProbe = vi.fn(() => true);
+
+    expect(
+      shouldCleanupGatewayAfterConfirmedFinalDestroy(
+        {
+          deleteSucceededOrAlreadyGone: true,
+          removedRegistryEntry: true,
+        },
+        {
+          captureOpenshell,
+          listSandboxes: () => ({ sandboxes: [] }),
+          liveSandboxProbe,
+          timeoutMs: 1_000,
+        },
+      ),
+    ).toBe(true);
+    expect(liveSandboxProbe).toHaveBeenCalledWith({
+      captureOpenshell,
+      timeoutMs: 1_000,
+    });
+  });
+
   it("preserves the gateway when a live sandbox appears after the empty-registry check", () => {
     const events: string[] = [];
     expect(

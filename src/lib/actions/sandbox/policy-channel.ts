@@ -454,7 +454,9 @@ async function addSandboxPolicyUnlocked(
     policies.logOpenClawNpmCompatibilityDisclosure();
   }
 
-  const presetWarning = policies.getPresetValidationWarning(answer);
+  const messagingAgent =
+    sandboxAgent === "openclaw" || sandboxAgent === "hermes" ? sandboxAgent : undefined;
+  const presetWarning = policies.getPresetValidationWarning(answer, { agent: messagingAgent });
   if (presetWarning) {
     console.log("");
     console.log(`  ${presetWarning}`);

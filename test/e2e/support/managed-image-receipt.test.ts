@@ -411,7 +411,7 @@ describe("stock E2E managed-image receipt assertion", () => {
     ).toThrow("exact agent image from the selected cohort");
   });
 
-  it("asserts normal stock onboarding and excludes an explicit custom Dockerfile", () => {
+  it("uses managed-image authority for stock onboarding and excludes custom Dockerfiles", () => {
     expect(
       shouldAssertStockManagedImageReceipt("/workspace/bin/nemoclaw.js", ["onboard"], {
         E2E_MANAGED_IMAGE_REVISION: REVISION,
@@ -451,6 +451,13 @@ describe("stock E2E managed-image receipt assertion", () => {
       shouldAssertStockManagedImageReceipt(
         "/workspace/bin/nemoclaw.js",
         ["onboard", "--from", "/workspace/CustomDockerfile"],
+        { E2E_MANAGED_IMAGE_REVISION: REVISION },
+      ),
+    ).toBe(false);
+    expect(
+      shouldAssertStockManagedImageReceipt(
+        "node",
+        ["/workspace/bin/nemoclaw.js", "onboard", "--help"],
         { E2E_MANAGED_IMAGE_REVISION: REVISION },
       ),
     ).toBe(false);
