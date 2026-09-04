@@ -173,7 +173,7 @@ control._run_fixed_validator = (
 )
 
 
-def expire_runtime_validation(_script, _environment, **_options):
+def expire_runtime_validation(_script, _environment):
     preflight_clock[0] = 1.0
 
 
@@ -207,13 +207,13 @@ with tempfile.TemporaryDirectory() as root:
     proc_root = os.path.join(root, "proc")
     system_root = os.path.join(root, "system")
     os.makedirs(proc_root)
-    os.makedirs(os.path.join(system_root, "etc/nemoclaw"), exist_ok=True)
+    os.makedirs(os.path.join(system_root, "run"))
     os.environ["NEMOCLAW_MANAGED_CONTROL_ALLOW_NONROOT_TEST"] = "1"
     os.environ["NEMOCLAW_MANAGED_CONTROL_PROC_ROOT"] = proc_root
     os.environ["NEMOCLAW_MANAGED_CONTROL_SYSTEM_ROOT"] = system_root
     marker_path = os.path.join(
         system_root,
-        "etc/nemoclaw/gateway-control",
+        "run/nemoclaw",
         control.EXPECTED_EXIT_MARKER_NAME,
     )
     marker_clock = [0.0]

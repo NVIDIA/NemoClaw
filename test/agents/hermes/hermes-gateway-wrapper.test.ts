@@ -108,7 +108,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     );
   });
 
-  it("scrubs package-manager and Python startup inputs before a same-identity gateway exec", () => {
+  it("scrubs package-manager and Python startup inputs before a root-separated gateway exec", () => {
     const run = runWrapper(
       ["gateway", "run"],
       {
@@ -135,7 +135,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
           "logical_env = json.load(sys.stdin)",
           "assert logical_env.get('PIP_CONFIG_FILE') == '/sandbox/pip.conf'",
           "assert logical_env.get('LD_PRELOAD') == '/sandbox/hostile.so'",
-          "assert os.environ.get('HERMES_LAZY_INSTALL_TARGET') == '/sandbox/.hermes/lazy-packages'",},{
+          "assert os.environ.get('HERMES_LAZY_INSTALL_TARGET') == '/run/nemoclaw/hermes-gateway-lazy-packages'",
           "blocked = ('BASH_ENV', 'ENV', 'PATH', 'VIRTUAL_ENV')",
           "prefixes = ('DYLD_', 'LD_', 'UV_', 'PIP_', 'PYTHON')",
           "assert not any(key in os.environ for key in blocked)",
@@ -151,7 +151,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realEnv.HERMES_HOME).toBe("/sandbox/.hermes");
     expect(run.realEnv.HERMES_BUNDLED_PLUGINS).toBe("/opt/hermes/plugins");
     expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe(
-      "/sandbox/.hermes/lazy-packages",
+      "/run/nemoclaw/hermes-gateway-lazy-packages",
     );
     expect(run.realEnv.HOME).toBe("/sandbox");
     const packageEnvironment = Object.fromEntries(
@@ -167,7 +167,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(packageEnvironment).toEqual({
       UV_NO_CONFIG: "1",
       UV_NO_CACHE: "1",
-      UV_CACHE_DIR: "/sandbox/.hermes/lazy-packages/.uv-cache",
+      UV_CACHE_DIR: "/run/nemoclaw/hermes-gateway-lazy-packages/.uv-cache",
       PIP_CONFIG_FILE: "/dev/null",
       PIP_DISABLE_PIP_VERSION_CHECK: "1",
       PYTHONSAFEPATH: "1",

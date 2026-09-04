@@ -7,7 +7,6 @@ import {
   sanitizeHermesMcpReconciliationDetail,
 } from "./mcp-bridge-hermes-reconciliation";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
-export { selectedRuntimeAllowsHostLocalSupervisor } from "./gateway-target";
 
 export type McpReconciliationRefusalRecoveryResult = {
   checked: true;

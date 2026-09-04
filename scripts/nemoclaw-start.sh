@@ -5807,48 +5807,6 @@ handle_openclaw_gateway_control_request() {
   gateway_control_complete ok "$old_pid" "$GATEWAY_PID"
 }
 
-restore_openclaw_weixin_extension_link() {
-  local state_root=/sandbox/.openclaw
-  local extension="$state_root/extensions/openclaw-weixin"
-  local projects="$state_root/npm/projects"
-  local project candidate selected=""
-
-  if [ -e "$extension" ]; then
-    [ -d "$extension" ] || {
-      echo "[SECURITY] refusing non-directory OpenClaw WeChat extension path" >&2
-      return 1
-    }
-    return 0
-  fi
-  if [ -L "$extension" ]; then
-    echo "[SECURITY] refusing broken OpenClaw WeChat extension link" >&2
-    return 1
-  fi
-  if [ ! -d "$projects" ] || [ -L "$projects" ]; then
-    return 0
-  fi
-
-  for project in "$projects"/*; do
-    if [ ! -d "$project" ] || [ -L "$project" ]; then
-      continue
-    fi
-    candidate="$project/node_modules/@tencent-weixin/openclaw-weixin"
-    if [ ! -f "$candidate/package.json" ] || [ -L "$candidate/package.json" ]; then
-      continue
-    fi
-    node -e 'const p=require(process.argv[1]); process.exit(p.name==="@tencent-weixin/openclaw-weixin"&&p.version==="2.4.3"?0:1)' \
-      "$candidate/package.json" || continue
-    [ -z "$selected" ] || {
-      echo "[SECURITY] refusing ambiguous OpenClaw WeChat package projects" >&2
-      return 1
-    }
-    selected="$candidate"
-  done
-  [ -n "$selected" ] || return 0
-  mkdir -p "$state_root/extensions"
-  ln -s "$selected" "$extension"
-}
-
 # ── Main ─────────────────────────────────────────────────────────
 
 # OpenClaw 2026.7.1 enforces owner-only SQLite and models-file modes on every
@@ -5876,7 +5834,6 @@ fi
 # Migrate legacy symlink layout before anything else reads .openclaw
 migrate_legacy_layout "/sandbox/.openclaw" "/sandbox/.openclaw-data" "openclaw" || exit 1
 remove_openclaw_legacy_update_check_state || exit 1
-restore_openclaw_weixin_extension_link || exit 1
 
 echo 'Setting up NemoClaw...' >&2
 # Best-effort: .env may not exist.

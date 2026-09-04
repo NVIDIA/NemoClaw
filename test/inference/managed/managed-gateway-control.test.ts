@@ -671,12 +671,12 @@ with tempfile.TemporaryDirectory() as root:
     real_terminate = control._terminate_gateway
     lease_path = os.path.join(
         system_root,
-        "etc/nemoclaw/gateway-control",
+        "run/nemoclaw",
         control.EXPECTED_EXIT_MARKER_NAME,
     )
     lock_path = os.path.join(
         system_root,
-        "etc/nemoclaw/gateway-control",
+        "run/nemoclaw",
         control.EXPECTED_EXIT_LOCK_NAME,
     )
     lease_observations = []

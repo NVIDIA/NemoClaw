@@ -82,7 +82,6 @@
 import ast
 import json
 import os
-import pwd
 import re
 import stat
 import subprocess
@@ -103,7 +102,6 @@ _API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 _CLI_ADAPTER_DEV_FILENAME = "hermes-cli-adapter-v1.json"
 _HERMES_MAIN_DEV_FILENAME = "hermes-main.py"
 _GATEWAY_LAZY_INSTALL_TARGET = "/run/nemoclaw/hermes-gateway-lazy-packages"
-_SANDBOX_LAZY_INSTALL_TARGET = "/sandbox/.hermes/lazy-packages"
 _MANAGED_BUNDLED_PLUGINS = "/opt/hermes/plugins"
 _MANAGED_HERMES_HOME = "/sandbox/.hermes"
 _MANAGED_HOME = "/sandbox"
@@ -367,17 +365,6 @@ def _run_gateway_guard(guard_path: str) -> int:
         env=env,
         check=False,
     ).returncode
-
-
-def _managed_gateway_lazy_install_target() -> str:
-    """Return the identity-specific reviewed lazy-install directory."""
-
-    try:
-        if os.geteuid() == pwd.getpwnam("gateway").pw_uid:
-            return _GATEWAY_LAZY_INSTALL_TARGET
-    except KeyError:
-        pass
-    return _SANDBOX_LAZY_INSTALL_TARGET
 
 
 def _harden_gateway_package_env(lazy_install_target: str) -> None:
@@ -808,15 +795,13 @@ def main(argv: list[str]) -> int:
                 file=sys.stderr,
             )
             return 1
-        lazy_install_target = _managed_gateway_lazy_install_target()
         os.environ["HERMES_HOME"] = _MANAGED_HERMES_HOME
         os.environ["HERMES_BUNDLED_PLUGINS"] = _MANAGED_BUNDLED_PLUGINS
-        os.environ["HERMES_LAZY_INSTALL_TARGET"] = lazy_install_target
         os.environ["HOME"] = _MANAGED_HOME
         rc = _run_gateway_guard(guard_path)
         if rc != 0:
             return rc
-        _harden_gateway_package_env(lazy_install_target)
+        _harden_gateway_package_env(os.environ["HERMES_LAZY_INSTALL_TARGET"])
     try:
         adapter = _load_cli_adapter(_resolve_cli_adapter())
         adapter_result, exec_argv = _adapt_cli_argv(argv, adapter)

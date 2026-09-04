@@ -1139,10 +1139,6 @@ repair_hermes_startup_layout() {
   fi
 
   ensure_hermes_config_root_mode || return 1
-  # Cron definitions are sandbox-owned mutable state. Hermes can recreate this
-  # directory with a private umask; restore the shared sandbox-group mode before
-  # each managed gateway launch so the sandbox identity can back it up.
-  ensure_hermes_state_dir "${HERMES_DIR}/cron" 2770 || return 1
   repair_hermes_log_permissions || return 1
   ensure_hermes_state_dir "${HERMES_DIR}/hooks" 770 || return 1
   ensure_hermes_state_dir "${HERMES_DIR}/image_cache" 770 || return 1
@@ -2953,7 +2949,7 @@ launch_hermes_gateway_current_user() {
 
 HERMES_MANAGED_GATEWAY_EXIT_TIMES=()
 HERMES_MANAGED_GATEWAY_EXIT_COUNT=0
-readonly HERMES_MANAGED_EXPECTED_EXIT_DIR="/etc/nemoclaw/gateway-control"
+readonly HERMES_MANAGED_EXPECTED_EXIT_DIR="/run/nemoclaw"
 readonly HERMES_MANAGED_EXPECTED_EXIT_MARKER="managed-gateway-expected-exit"
 readonly HERMES_MANAGED_CONTROLLER_PATH="/usr/local/lib/nemoclaw/managed-gateway-control.py"
 

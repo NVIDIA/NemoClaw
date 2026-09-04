@@ -188,7 +188,10 @@ RUN --network=none install -d -o root -g root -m 0755 /out/wechat-npm-cache \
     && chown -R root:root /out/wechat-npm-cache \
     && chmod -R a+rX,go-w /out/wechat-npm-cache
 
-# Offline messaging archives.
+# Fetch every locked messaging archive outside RUN instructions. BuildKit
+# verifies the committed SHA-256 source pins before the selected architecture
+# enters the cache stage; SHA-512 verification against package-lock.json and
+# every package-materialization command then execute with networking disabled.
 FROM scratch AS openclaw-managed-messaging-npm-common-archives-1
 
 ADD --chmod=0444 --checksum=sha256:d98ffa76628ea162ddf7539b7b84ab851ef889689b16d454483456ba2e166d84 https://registry.npmjs.org/@azure/abort-controller/-/abort-controller-2.1.2.tgz /abort-controller-2.1.2.tgz
@@ -262,7 +265,6 @@ ADD --chmod=0444 --checksum=sha256:703cdecfa6951d9ad258f615ab96895750add3cb2d95e
 ADD --chmod=0444 --checksum=sha256:21d4a36175672b9e6640c39a68613af73f9a4c47a4a4da39993e8cd085564eb6 https://registry.npmjs.org/eventemitter3/-/eventemitter3-5.0.4.tgz /eventemitter3-5.0.4.tgz
 ADD --chmod=0444 --checksum=sha256:1773a16c02b4422653479b9c4d211268f7022bdac0d817b5698535bb485dd005 https://registry.npmjs.org/express/-/express-5.2.1.tgz /express-5.2.1.tgz
 ADD --chmod=0444 --checksum=sha256:1d91d0b0faa50cba223fa937c7b5a4a662968b1d78b3e59dca5c917dd5cf72b2 https://registry.npmjs.org/extend/-/extend-3.0.2.tgz /extend-3.0.2.tgz
-ADD --chmod=0444 --checksum=sha256:264af0e32c4b7b7bcb9ce5b4623c82469ee3e69ba5d171920f1762d626db1064 https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz /fast-uri-3.1.6.tgz
 ADD --chmod=0444 --checksum=sha256:54481d9c62debce1c38b0239f2358eeb3b73f7bb1ba3105bd6123fd81b8b7268 https://registry.npmjs.org/@protobufjs/fetch/-/fetch-1.1.1.tgz /fetch-1.1.1.tgz
 ADD --chmod=0444 --checksum=sha256:4abf0d58a4977fce2240e08c280a2bc59f5363e9553a4f236cea6d74cce40c52 https://registry.npmjs.org/fetch-blob/-/fetch-blob-3.2.0.tgz /fetch-blob-3.2.0.tgz
 ADD --chmod=0444 --checksum=sha256:87fdc6557e71ec47373edfbde774165e976c760845d02733f81fbfe1ad232780 https://registry.npmjs.org/file-type/-/file-type-22.0.1.tgz /file-type-22.0.1.tgz
@@ -918,7 +920,9 @@ RUN --network=default \
         echo "ERROR: Base image has OpenClaw $CUR_VER, which is newer than reviewed target $OPENCLAW_VERSION" >&2; exit 1; \
     else \
         echo "INFO: Base image OpenClaw $CUR_VER lacks matching reviewed provenance; installing $OPENCLAW_VERSION"; \
-        # Remove the stale overlayfs install before replacement.
+        # npm 10's atomic-move install can hit EROFS on overlayfs when the prior
+        # install spans image layers. Removing it first also prevents unreviewed
+        # files from surviving a same-version reinstall.
         rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
         if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
             node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-lock \
@@ -960,7 +964,6 @@ RUN --network=default \
             rm -rf "$OPENCLAW_PACK_DIR"; \
         fi; \
     fi; \
-    if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then rm -rf /usr/local/lib/node_modules/fast-uri; ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/fast-uri /usr/local/lib/node_modules/fast-uri; node -e 'require.resolve("fast-uri", { paths: ["/usr/local/lib/node_modules/openclaw"] })'; fi; \
     case "$OPENCLAW_VERSION" in \
         2026.3.11) npm ls -g --depth=1 openclaw tar >/dev/null ;; \
     esac; \
@@ -970,7 +973,8 @@ RUN --network=default \
         node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-only \
             --package-spec "mcporter@${MCPORTER_VERSION}" --integrity "$MCPORTER_EXPECTED_INTEGRITY" \
             --tarball-url "$MCPORTER_EXPECTED_TARBALL" --label "mcporter ${MCPORTER_VERSION}"; \
-        # Reinstall the committed lock when base provenance is unavailable.
+        # Reinstall from the committed lock when matching protected base provenance
+        # is unavailable; matching top-level versions can hide transitive drift.
         echo "INFO: Installing locked mcporter $MCPORTER_VERSION dependency graph"; \
         rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter; \
         npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci \
@@ -988,13 +992,13 @@ RUN --network=default \
         [ -f "$MCPORTER_RECEIPT" ] && [ -f "$MCPORTER_RAW_REPORT" ] && printf %s "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" | grep -qxE '[0-9a-f]{64}' \
             || { echo "ERROR: cached mcporter audit requires paired receipt, raw report, and receipt SHA-256" >&2; exit 1; }; \
         printf '%s  %s\n' "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" "$MCPORTER_RECEIPT" | sha256sum -c -; \
-        node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts \
-            --receipt "$MCPORTER_RECEIPT" \
-            --package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
-            --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
-            --raw-report "$MCPORTER_RAW_REPORT" --exceptions /scripts/npm-audit-exceptions.json \
-            --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json \
-            --registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true; \
+node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts \
+--receipt "$MCPORTER_RECEIPT" \
+--package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
+--package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
+--raw-report "$MCPORTER_RAW_REPORT" --exceptions /scripts/npm-audit-exceptions.json \
+--graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json \
+--registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true; \
     else \
         node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
             --directory /usr/local/lib/nemoclaw/mcporter-runtime \
@@ -1913,7 +1917,7 @@ RUN managed_runtime_assertion_failed() { \
     && test -f /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = '0:0:444' \
-    && install -d -o root -g root -m 0755 /run/nemoclaw /etc/nemoclaw
+    && install -d -o root -g root -m 0755 /run/nemoclaw
 
 # Copy startup script and shared sandbox initialisation library.
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \

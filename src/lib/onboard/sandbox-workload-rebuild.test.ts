@@ -370,16 +370,16 @@ describe("managed workload rebuild preflight", () => {
     }
   });
 
-  it("uses the qualification revision for a replacement newer than durable authority (#9385)", async () => {
+  it("uses the qualification revision while retaining older durable authority (#10970)", async () => {
     const prepare = vi.fn(async () =>
-      replacement("langchain-deepagents-code", "linux/amd64", "c".repeat(40)),
+      replacement("openclaw", "linux/amd64", "c".repeat(40)),
     );
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
     vi.stubEnv("GITHUB_ACTIONS", "true");
     vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", "c".repeat(40));
 
     const handoff = await prepareManagedWorkloadRebuildHandoff(
-      entry("langchain-deepagents-code"),
+      entry("openclaw"),
       {
         runtime: runtime(),
         provider: provider(),
@@ -390,7 +390,7 @@ describe("managed workload rebuild preflight", () => {
     expect(handoff?.previousReceipt.sourceRevision).toBe("a".repeat(40));
     expect(handoff?.replacement.source.contract.source.revision).toBe("c".repeat(40));
     expect(prepare).toHaveBeenCalledExactlyOnceWith({
-      agentName: "langchain-deepagents-code",
+      agentName: "openclaw",
       legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
       runtime: runtime(),
       version: "0.0.100",

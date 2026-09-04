@@ -53,7 +53,7 @@ function dcodeOptions(
 }
 
 describe("handleSandboxState live DCode selection", () => {
-  it("carries durable observability intent in the sandbox create intent", async () => {
+  it("carries durable observability intent and preserves the create callback slot (#10964)", async () => {
     const session = createSession({
       observabilityEnabled: true,
       observabilityRequestedExplicitly: true,
