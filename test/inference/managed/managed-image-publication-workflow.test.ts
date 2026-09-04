@@ -85,6 +85,66 @@ function managedPrOpenClawMcpDiscovery(workflow: Workflow): Job {
 }
 
 describe("complete managed-image publication workflow", () => {
+  it("restricts reviewed npm audit cache publication to trusted callers (#11028)", () => {
+    const action = readAction("ci-reviewed-npm-audit") as ReturnType<typeof readAction> & {
+      inputs: Record<string, { default?: string; required?: boolean }>;
+    };
+    const actionSteps = action.runs?.steps ?? [];
+    const restores = actionSteps.filter((candidate) =>
+      candidate.uses?.startsWith("actions/cache/restore@"),
+    );
+    expect(action.inputs).toMatchObject({
+      "cache-directory": { required: true },
+      "trusted-cache-write": { default: "false", required: false },
+    });
+    expect(restores).toHaveLength(2);
+    expect(restores.map(({ uses }) => uses)).toEqual([
+      "actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809",
+      "actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809",
+    ]);
+    expect(restores.map(({ with: inputs }) => inputs)).toEqual([
+      {
+        key: "reviewed-npm-audit-v1-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.current }}",
+        path: "${{ inputs.cache-directory }}",
+      },
+      {
+        key: "reviewed-npm-audit-v1-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.previous }}",
+        path: "${{ inputs.cache-directory }}",
+      },
+    ]);
+    const save = step(
+      { steps: actionSteps },
+      "Save current reviewed npm audit cache bucket",
+      "reviewed npm audit action",
+    );
+    expect(save).toMatchObject({
+      if: "inputs.trusted-cache-write == 'true' && steps.cache-current.outputs.cache-hit != 'true'",
+      uses: "actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809",
+      with: restores[0]?.with,
+    });
+    expect(
+      step(
+        { steps: actionSteps },
+        "Materialize and audit reviewed npm graphs",
+        "reviewed npm audit action",
+      ).env,
+    ).toMatchObject({
+      NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIR: "${{ inputs.cache-directory }}",
+      NPM_CONFIG_USERCONFIG: "/dev/null",
+    });
+
+    const prAudit = step(required(readWorkflow("pr.yaml").jobs?.["reviewed-npm-audit"], "missing PR audit"), "Audit reviewed production npm graphs");
+    const mainAudit = step(required(readWorkflow("main.yaml").jobs?.["reviewed-npm-audit"], "missing main audit"), "Audit reviewed production npm graphs");
+    const managedAudit = step(managedPrReviewedAudit(readWorkflow("managed-images.yaml")), "Audit exact PR production npm graphs");
+    expect(prAudit.with?.["cache-directory"]).toBeUndefined();
+    expect(managedAudit.with?.["cache-directory"]).toBeUndefined();
+    expect(prAudit.with?.["trusted-cache-write"]).toBeUndefined();
+    expect(managedAudit.with?.["trusted-cache-write"]).toBeUndefined();
+    expect(mainAudit.with).toMatchObject({
+      "cache-directory": "${{ runner.temp }}/reviewed-npm-audit-cache",
+      "trusted-cache-write": "true",
+    });
+  });
   it("rejects managed package paths redirected outside node_modules", () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-plugin-"));
     try {
@@ -153,8 +213,10 @@ describe("complete managed-image publication workflow", () => {
     expect(step(reviewedAudit, "Audit reviewed production npm graphs")).toMatchObject({
       uses: "./.github/actions/ci-reviewed-npm-audit",
       with: {
+        "cache-directory": "${{ runner.temp }}/reviewed-npm-audit-cache",
         "report-dir": "artifacts/reviewed-npm-audit",
         "target-root": "${{ github.workspace }}",
+        "trusted-cache-write": "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}",
       },
     });
   });
@@ -1037,6 +1099,14 @@ fi
     expect(contract.run).not.toContain("aliases:");
   });
 
+  it("binds non-PR OpenClaw publication to same-run reviewed audit evidence", () => {
+    const workflow = readWorkflow("managed-images.yaml"), publisher = managedPublisher(workflow), action = readAction("publish-managed-image-digest"), source = JSON.stringify(workflow);
+    expect(workflow.jobs?.["reviewed-npm-audit"]?.if).toBe("github.event_name != 'pull_request'");
+    expect(publisher.needs).toEqual(["publication-identity", "reviewed-npm-audit"]);
+    expect(["Download same-run reviewed npm audit evidence", "Prepare same-run mcporter audit evidence", "mcporter-runtime.receipt.json", "mcporter-runtime.raw.json", "nemoclaw-mcporter-audit-receipt", "nemoclaw-mcporter-audit-raw-report", "NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256"].filter((marker) => !source.includes(marker))).toEqual([]);
+    expect(source).not.toContain("NEMOCLAW_MCPORTER_AUDIT_RAW_REPORT_SHA256");
+    const actionSource = JSON.stringify(action); expect([actionSource.includes('"secret-files":{"description"'), actionSource.includes('"secret-files":"${{ inputs.secret-files }}"')]).toEqual([true, true]);
+  });
   it("holds every alias behind the exact six-candidate aggregate barrier (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const identity = workflow.jobs?.["publication-identity"];
@@ -1058,7 +1128,7 @@ fi
     );
 
     expect(identity?.outputs).toEqual({ cohort: "${{ steps.identity.outputs.cohort }}" });
-    expect(publisher.needs).toBe("publication-identity");
+    expect(publisher.needs).toEqual(["publication-identity", "reviewed-npm-audit"]);
     expect(publisher.outputs).toBeUndefined();
     expect(publisher.steps?.map((candidate) => candidate.name)).not.toContain(
       "Export validated managed image candidate output",

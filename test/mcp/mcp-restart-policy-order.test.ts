@@ -461,13 +461,19 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       statusCalls: Array<{
         sandboxName: string;
         server: string;
-        options: {
-          probeCredentialResolution: boolean;
-          runtimeSelection: { gatewayName: string; workspace: string };
-        };
+        options: { probeCredentialResolution: boolean };
       }>;
     };
   };
+
+  const expectedStatusCall = (server: string) => ({
+    sandboxName: "alpha",
+    server,
+    options: {
+      probeCredentialResolution: true,
+      runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+    },
+  });
 
   it("refuses a hostless restart whose stored credential is not verified (#10750)", () => {
     const payload = runCredentialRestart({
@@ -489,16 +495,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],
-      statusCalls: [
-        {
-          sandboxName: "alpha",
-          server: "example",
-          options: {
-            probeCredentialResolution: true,
-            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
-          },
-        },
-      ],
+      statusCalls: [expectedStatusCall("example")],
     });
   }, 75_000);
 
@@ -522,16 +519,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],
-      statusCalls: [
-        {
-          sandboxName: "alpha",
-          server: "example",
-          options: {
-            probeCredentialResolution: true,
-            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
-          },
-        },
-      ],
+      statusCalls: [expectedStatusCall("example")],
     });
   }, 75_000);
 
@@ -546,16 +534,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       outcome: "refreshed",
       policyApplyCalls: 2,
       providerCalls: ["provider update alpha-mcp-example"],
-      statusCalls: [
-        {
-          sandboxName: "alpha",
-          server: "example",
-          options: {
-            probeCredentialResolution: true,
-            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
-          },
-        },
-      ],
+      statusCalls: [expectedStatusCall("example")],
     });
   }, 75_000);
 
@@ -575,16 +554,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],
-      statusCalls: [
-        {
-          sandboxName: "alpha",
-          server: "example",
-          options: {
-            probeCredentialResolution: true,
-            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
-          },
-        },
-      ],
+      statusCalls: [expectedStatusCall("example")],
     });
   }, 75_000);
 
@@ -610,27 +580,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],
+      statusCalls: [expectedStatusCall("example"), expectedStatusCall("later")],
     });
-    expect(payload.statusCalls).toHaveLength(2);
-    expect(payload.statusCalls).toEqual(
-      expect.arrayContaining([
-        {
-          sandboxName: "alpha",
-          server: "example",
-          options: {
-            probeCredentialResolution: true,
-            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
-          },
-        },
-        {
-          sandboxName: "alpha",
-          server: "later",
-          options: {
-            probeCredentialResolution: true,
-            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
-          },
-        },
-      ]),
-    );
   }, 75_000);
 });

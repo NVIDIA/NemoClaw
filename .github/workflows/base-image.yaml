@@ -75,6 +75,7 @@ on:
       # Dockerfile.base validates min_openclaw_version from this file at build time.
       - "nemoclaw-blueprint/blueprint.yaml"
       - "scripts/lib/openclaw-npm-remediation.mts"
+      - "scripts/lib/npm-audit-receipt.mts"
       - "scripts/lib/reviewed-npm-audit.mts"
       - "scripts/security/build-native-security-packages.sh"
       - "scripts/security/build-perl-security-packages.sh"
@@ -122,6 +123,8 @@ jobs:
         with:
           target-root: ${{ github.workspace }}
           report-dir: artifacts/reviewed-npm-audit
+          cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
+          trusted-cache-write: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
 
   # A failed-job rerun can reuse either successful platform job from an earlier
   # attempt. Keep each digest on a distinct job output so completion order cannot

@@ -135,6 +135,8 @@ jobs:
         with:
           target-root: ${{ github.workspace }}
           report-dir: artifacts/reviewed-npm-audit
+          cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
+          trusted-cache-write: "true"
 
   real-openclaw-dist-harness:
     runs-on: ubuntu-latest

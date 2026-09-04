@@ -64,6 +64,16 @@ vi.mock("../../src/lib/adapters/dns/resolve", () => ({
   resolveHostAddresses: testState.resolveHostAddresses,
 }));
 
+vi.mock(
+  "../../src/lib/actions/sandbox/mcp-bridge-provider-inspection",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../src/lib/actions/sandbox/mcp-bridge-provider-inspection")
+    >()),
+    getMcpProviderInspectionRuntimeSelection: () => testState.runtimeSelection,
+  }),
+);
+
 vi.mock("../../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/lib/adapters/openshell/runtime")>()),
   captureOpenshell: testState.captureOpenshell,
@@ -73,6 +83,8 @@ vi.mock("../../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
 vi.mock("../../src/lib/gateway-runtime-action", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/lib/gateway-runtime-action")>()),
   recoverNamedGatewayRuntime: testState.recoverNamedGatewayRuntime,
+  replaceOpenShellRuntimeSelectionEnv: () => undefined,
+  snapshotOpenShellEnv: () => () => undefined,
 }));
 
 vi.mock("../../src/lib/policy", async (importOriginal) => ({
