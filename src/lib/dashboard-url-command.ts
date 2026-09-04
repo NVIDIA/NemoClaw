@@ -17,7 +17,7 @@ export interface DashboardUrlCommandDeps {
   /** Pull gateway.auth.token from the sandbox config (host-side helper). */
   fetchToken: (sandboxName: string) => string | null;
   /** Read sandbox metadata such as agent name and recorded dashboard port. */
-  getSandbox?: (sandboxName: string) => Pick<SandboxEntry, "agent" | "dashboardPort"> | null;
+  getSandbox?: (sandboxName: string) => Pick<SandboxEntry, "agent" | "dashboardPort" | "dashboardBindAddress"> | null;
   /** Resolve the browser-facing dashboard base URL for this host, when known. */
   getAccessUrl?: (port: number) => string | null;
   /** Resolve a registered agent's dashboard auth contract. */
@@ -56,6 +56,21 @@ const SECURITY_WARNING = "Treat this URL like a password -- do not log, share, o
 
 function dashboardUrlFail(lines: string | readonly string[], exitCode = 1): never {
   throw new DashboardUrlCommandError(lines, exitCode);
+}
+
+/**
+ * Prefer the bind this sandbox was created with over one recomputed here.
+ * `CHAT_UI_URL` decides the bind at onboard time and is rarely set for later
+ * commands, so recomputing reports a loopback address for a dashboard that is
+ * listening on every interface (#10861). Rows written before the field was
+ * recorded keep the recomputed answer.
+ */
+function recordedAccessUrl(
+  sandbox: Pick<SandboxEntry, "dashboardBindAddress"> | null,
+  port: number,
+): string | null {
+  const bindAddress = sandbox?.dashboardBindAddress;
+  return bindAddress ? `http://${bindAddress}:${String(port)}` : null;
 }
 
 function resolveDashboardPort(sandbox: Pick<SandboxEntry, "dashboardPort"> | null): number {
@@ -141,7 +156,7 @@ export function runDashboardUrlCommand(
     for (const line of hint) log(line);
   };
 
-  let sandbox: Pick<SandboxEntry, "agent" | "dashboardPort"> | null = null;
+  let sandbox: Pick<SandboxEntry, "agent" | "dashboardPort" | "dashboardBindAddress"> | null = null;
   if (deps.getSandbox) {
     try {
       sandbox = deps.getSandbox(sandboxName);
@@ -170,7 +185,7 @@ export function runDashboardUrlCommand(
   }
   if (dashboardAuth === "session" || dashboardAuth === "none") {
     const port = resolveDashboardPort(sandbox);
-    const accessUrl = deps.getAccessUrl?.(port) ?? null;
+    const accessUrl = recordedAccessUrl(sandbox, port) ?? deps.getAccessUrl?.(port) ?? null;
     const url = buildPlainDashboardUrl(port, accessUrl ?? undefined);
     if (options.quiet) {
       log(url);
@@ -197,7 +212,7 @@ export function runDashboardUrlCommand(
   }
 
   const port = resolveDashboardPort(sandbox);
-  const accessUrl = deps.getAccessUrl?.(port) ?? null;
+  const accessUrl = recordedAccessUrl(sandbox, port) ?? deps.getAccessUrl?.(port) ?? null;
   const url = buildDashboardUrl(token, port, accessUrl ?? undefined);
   if (options.quiet) {
     log(url);

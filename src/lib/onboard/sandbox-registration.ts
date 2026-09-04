@@ -88,6 +88,8 @@ export interface CreatedSandboxRegistryEntryInput {
   /** True only when schema-5 receipt authority owns this Hermes registration. */
   hermesPortableLifecycle?: boolean;
   dashboardPort: number;
+  /** Address the dashboard forward was bound to at creation (#10861). */
+  dashboardBindAddress?: string | null;
   dashboardRemoteBindPrepared?: boolean;
   lifecycleGeneration?: string;
   lifecycleLiveIdentityFingerprint?: string;
@@ -275,6 +277,7 @@ export function buildCreatedSandboxRegistryEntry(
             }))
         : undefined,
     dashboardPort: input.dashboardPort,
+    dashboardBindAddress: input.dashboardBindAddress ?? null,
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
