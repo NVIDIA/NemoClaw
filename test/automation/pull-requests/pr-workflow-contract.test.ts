@@ -418,6 +418,9 @@ function installerHashTrustViolations(workflow: CiWorkflow): string[] {
     "./.trusted-installer-hash/.github/actions/ci-installer-hash-check",
     "./.github/actions/ci-installer-hash-check",
   ]);
+  const latestActionConditions = new Set([
+    "github.event_name != 'pull_request' && !(github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '')",
+  ]);
 
   return [
     ...(baseCheckout ? [] : ["missing base-trusted installer hash checkout"]),
@@ -436,7 +439,7 @@ function installerHashTrustViolations(workflow: CiWorkflow): string[] {
       : ["pull request installer hashes must use only the base-trusted action"]),
     ...steps.flatMap((step) => [
       ...(step.uses === "./.github/actions/ci-installer-hash-check" &&
-      step.if !== "github.event_name != 'pull_request'"
+      !latestActionConditions.has(String(step.if))
         ? ["installer hash action from the latest PR commit must not execute for pull requests"]
         : []),
       ...(step.uses?.includes("ci-installer-hash-check") && !allowedExecutors.has(step.uses)
@@ -582,13 +585,14 @@ describe("pull request and main workflow contracts", () => {
     expect(packageJob.permissions).toEqual({ actions: "read", contents: "read" });
     expect(packageJob.outputs).toEqual({ required: "${{ steps.locate.outputs.required }}" });
     expect(requiredWorkflowStep(packageJob, "Checkout base package decision").with).toMatchObject({
-      ref: "${{ github.event.pull_request.base.sha }}",
+      ref: "${{ env.CI_BASE_SHA }}",
       path: ".trusted-sdk-package-decision",
     });
     const locate = requiredWorkflowStep(packageJob, "Locate exact base-controlled SDK package run");
-    expect(locate.env?.HEAD_REPOSITORY).toBe(
-      "${{ github.event.pull_request.head.repo.full_name }}",
-    );
+    expect(locate.env?.HEAD_REPOSITORY).toBe("${{ env.CI_HEAD_REPOSITORY }}");
+    expect(locate.env?.HEAD_SHA).toBe("${{ env.CI_HEAD_SHA }}");
+    expect(locate.env?.BASE_SHA).toBe("${{ env.CI_BASE_SHA }}");
+    expect(locate.env?.PR_NUMBER).toBe("${{ env.CI_PR_NUMBER }}");
     expect(locate.run).toContain(
       "trusted_inspector=.trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts",
     );

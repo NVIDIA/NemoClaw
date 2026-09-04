@@ -1,0 +1,43 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://github.com/NVIDIA/NemoClaw/tools/pr-review-advisor-repair/schemas/publication-receipt.schema.json",
+	"title": "Trusted PR Review Advisor repair Phase 1 publication receipt",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"version",
+		"attemptKey",
+		"sourceHeadSha",
+		"candidateTreeSha",
+		"commitSha",
+		"headRef",
+		"dispatchedWorkflows"
+	],
+	"properties": {
+		"version": { "const": 1 },
+		"attemptKey": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+		"sourceHeadSha": { "$ref": "#/$defs/sha" },
+		"candidateTreeSha": { "$ref": "#/$defs/sha" },
+		"commitSha": { "$ref": "#/$defs/sha" },
+		"headRef": { "type": "string", "minLength": 1, "maxLength": 255 },
+		"dispatchedWorkflows": {
+			"type": "array",
+			"minItems": 6,
+			"maxItems": 6,
+			"uniqueItems": true,
+			"items": {
+				"enum": [
+					"pr.yaml",
+					"commit-lint.yaml",
+					"dco-check.yaml",
+					"installer-hash-check.yaml",
+					"code-scanning.yaml",
+					"pr-review-advisor.yaml"
+				]
+			}
+		}
+	},
+	"$defs": {
+		"sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+	}
+}

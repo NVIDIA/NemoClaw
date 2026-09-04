@@ -3,23 +3,87 @@
 
 name: CI / Pull Request
 
-run-name: "CI PR #${{ github.event.pull_request.number }} head ${{ github.event.pull_request.head.sha }} base ${{ github.event.pull_request.base.sha }} gate ${{ github.event.action != 'edited' || github.event.changes.base != null }}"
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' &&
+  format('Generated-head CI {0} {1}', inputs.repair_attempt_key, inputs.source_head_sha) ||
+  format('CI PR #{0} head {1} base {2} gate {3}', github.event.pull_request.number,
+  github.event.pull_request.head.sha, github.event.pull_request.base.sha,
+  github.event.action != 'edited' || github.event.changes.base != null) }}
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      source_head_sha:
+        required: true
+        type: string
+      base_sha:
+        required: true
+        type: string
+      repair_attempt_key:
+        required: true
+        type: string
 
 permissions:
   contents: read
 
+env:
+  CI_BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+  CI_CHECKOUT_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.source_head_sha || github.sha }}
+  CI_HEAD_REPOSITORY: ${{ github.event_name == 'workflow_dispatch' && github.repository || github.event.pull_request.head.repo.full_name }}
+  CI_HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.source_head_sha || github.event.pull_request.head.sha }}
+  CI_PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number }}
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && format('repair-{0}-{1}', inputs.pr_number, inputs.repair_attempt_key) || github.ref }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}
   cancel-in-progress: true
 
 jobs:
+  generated-head-context:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Keep the pull-request path unchanged
+        if: github.event_name == 'pull_request'
+        run: "true"
+
+      - name: Checkout trusted generated-head verifier
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node for generated-head verification
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Verify generated-head dispatch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          GENERATED_HEAD_COMMAND: verify
+          GENERATED_HEAD_CONTEXT_FILE: ${{ runner.temp }}/generated-head-context.json
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
+          SOURCE_HEAD_SHA: ${{ inputs.source_head_sha }}
+        run: node --experimental-strip-types --no-warnings tools/pr-review-advisor-repair/generated-head-context.mts
+
   # Detect which files changed so we can skip expensive jobs for docs-only PRs.
   changes:
-    if: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
+    needs: generated-head-context
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.action != 'edited' || github.event.changes.base != null }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
@@ -31,12 +95,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Detect changed paths
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
+          base: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || '' }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_head_sha || '' }}
           predicate-quantifier: every
           filters: |
             code:
@@ -57,6 +124,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -83,9 +151,11 @@ jobs:
 
       - name: Resolve checked-out merge base for docs-only checks
         shell: bash
+        env:
+          VALIDATION_BASE: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || format('origin/{0}', github.base_ref) }}
         run: |
           set -euo pipefail
-          DOCS_ONLY_FROM_REF="$(git merge-base HEAD "origin/${GITHUB_BASE_REF}")"
+          DOCS_ONLY_FROM_REF="$(git merge-base HEAD "$VALIDATION_BASE")"
           [ -n "$DOCS_ONLY_FROM_REF" ]
           echo "DOCS_ONLY_FROM_REF=$DOCS_ONLY_FROM_REF" >> "$GITHUB_ENV"
 
@@ -107,13 +177,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ env.CI_BASE_SHA }}
           path: .trusted-ci-actions
           persist-credentials: false
           sparse-checkout: |
@@ -153,6 +224,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -181,6 +253,7 @@ jobs:
       - name: Checkout pull request lockfiles
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
           sparse-checkout: |
             package-lock.json
@@ -190,7 +263,7 @@ jobs:
       - name: Checkout base package decision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ env.CI_BASE_SHA }}
           path: .trusted-sdk-package-decision
           persist-credentials: false
           sparse-checkout: |
@@ -207,11 +280,11 @@ jobs:
       - name: Locate exact base-controlled SDK package run
         id: locate
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ env.CI_BASE_SHA }}
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ env.CI_HEAD_SHA }}
+          HEAD_REPOSITORY: ${{ env.CI_HEAD_REPOSITORY }}
+          PR_NUMBER: ${{ env.CI_PR_NUMBER }}
         run: |
           set -euo pipefail
 
@@ -341,7 +414,7 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ steps.locate.outputs.run_id }}
-          name: openshell-sdk-${{ github.event.pull_request.head.sha }}
+          name: openshell-sdk-${{ env.CI_HEAD_SHA }}
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Publish SDK archive inside this CI run
@@ -364,12 +437,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ env.CI_BASE_SHA }}
           path: .trusted-ci-actions
           persist-credentials: false
           sparse-checkout: |
@@ -430,12 +504,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ env.CI_BASE_SHA }}
           path: .trusted-ci-actions
           persist-credentials: false
           sparse-checkout: |
@@ -489,12 +564,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ env.CI_BASE_SHA }}
           path: .trusted-ci-actions
           persist-credentials: false
           sparse-checkout: |
@@ -528,12 +604,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Checkout trusted reviewed npm audit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ env.CI_BASE_SHA }}
           path: .trusted-reviewed-npm-audit
           persist-credentials: false
           sparse-checkout: |
@@ -572,13 +649,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ env.CI_BASE_SHA }}
           path: .trusted-ci-actions
           persist-credentials: false
           sparse-checkout: |
@@ -700,12 +778,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ env.CI_BASE_SHA }}
           path: .trusted-ci-actions
           persist-credentials: false
           sparse-checkout: |
@@ -751,12 +830,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ env.CI_BASE_SHA }}
           path: .trusted-ci-actions
           persist-credentials: false
           sparse-checkout: |
@@ -807,7 +887,7 @@ jobs:
     steps:
       - name: Verify required PR checks
         env:
-          CI_REQUIRED: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
+          CI_REQUIRED: ${{ github.event_name == 'workflow_dispatch' || github.event.action != 'edited' || github.event.changes.base != null }}
           CODE_CHANGED: ${{ needs.changes.outputs.code }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           DOCS_ONLY_RESULT: ${{ needs['docs-only-checks'].result }}

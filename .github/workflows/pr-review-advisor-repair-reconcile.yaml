@@ -1,0 +1,214 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Automation / PR Review Advisor Repair Reconciliation
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Open canonical PR number from the original repair attempt
+        required: true
+        type: number
+      source_head_sha:
+        description: Exact source head SHA from the validated repair receipt
+        required: true
+        type: string
+      source_run_id:
+        description: Original PR Review Advisor Repair workflow run ID
+        required: true
+        type: string
+      validation_artifact_id:
+        description: Short-lived validation bundle artifact ID from the original run
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: pr-review-advisor-repair-phase1-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    name: Bind the original validated repair bundle
+    if: ${{ github.ref == 'refs/heads/main' && vars.ADVISOR_REPAIR_PHASE1_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      attempt_key: ${{ steps.bind.outputs.attempt_key }}
+      base_sha: ${{ steps.bind.outputs.base_sha }}
+      head_ref: ${{ steps.bind.outputs.head_ref }}
+      source_head_sha: ${{ steps.bind.outputs.source_head_sha }}
+      validation_artifact_id: ${{ steps.source.outputs.validation_artifact_id }}
+    env:
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - &trusted-checkout
+        name: Checkout trusted reconciliation code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+          lfs: false
+          submodules: false
+          sparse-checkout: |
+            /tools/advisors/
+            /tools/pr-review-advisor/
+            /tools/pr-review-advisor-repair/
+          sparse-checkout-cone-mode: false
+
+      - &setup-node
+        name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Bind runner-local directories
+        run: printf '%s\n' "VALIDATION_DIR=$RUNNER_TEMP/validation" >> "$GITHUB_ENV"
+
+      - id: source
+        name: Verify maintainer authority and the original source-run artifact
+        env:
+          ADVISOR_REPAIR_PHASE1_ENABLED: ${{ vars.ADVISOR_REPAIR_PHASE1_ENABLED }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          RECONCILE_COMMAND: collect
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          VALIDATION_ARTIFACT_ID: ${{ inputs.validation_artifact_id }}
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/reconcile.mts"
+
+      - name: Download the exact original validation artifact ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.source.outputs.validation_artifact_id }}
+          github-token: ${{ github.token }}
+          repository: NVIDIA/NemoClaw
+          run-id: ${{ inputs.source_run_id }}
+          path: ${{ env.VALIDATION_DIR }}
+          merge-multiple: true
+
+      - id: bind
+        name: Bind the strict receipt and patch to the authorized exact head
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          RECONCILE_COMMAND: bind
+          SOURCE_HEAD_SHA: ${{ inputs.source_head_sha }}
+          VALIDATED_PATCH_FILE: ${{ env.VALIDATION_DIR }}/validated.patch
+          VALIDATION_RECEIPT_FILE: ${{ env.VALIDATION_DIR }}/validation-receipt.json
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/reconcile.mts"
+
+  publish:
+    name: Resume deterministic repair publication
+    needs: collect
+    if: ${{ needs.collect.result == 'success' && vars.ADVISOR_REPAIR_PHASE1_ENABLED == 'true' }}
+    environment: advisor-repair-publication
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      checks: write
+      contents: write
+      pull-requests: read
+    outputs:
+      commit_sha: ${{ steps.publish.outputs.commit_sha }}
+      head_ref: ${{ steps.publish.outputs.head_ref }}
+    env:
+      SOURCE_CHECKOUT: ${{ github.workspace }}/source
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - *trusted-checkout
+
+      - name: Checkout the exact original source head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.source_head_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - *setup-node
+
+      - name: Bind runner-local directories
+        run: |
+          {
+            printf '%s\n' "PUBLICATION_OUTPUT_DIR=$RUNNER_TEMP/publication"
+            printf '%s\n' "PUBLISH_STAGING_ROOT=$RUNNER_TEMP/publisher"
+            printf '%s\n' "VALIDATION_DIR=$RUNNER_TEMP/validation"
+          } >> "$GITHUB_ENV"
+
+      - name: Download the exact original validation artifact ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.collect.outputs.validation_artifact_id }}
+          github-token: ${{ github.token }}
+          repository: NVIDIA/NemoClaw
+          run-id: ${{ inputs.source_run_id }}
+          path: ${{ env.VALIDATION_DIR }}
+          merge-multiple: true
+
+      - id: publish
+        name: Reconcile the verified commit, atomic update, and validation dispatches
+        env:
+          ADVISOR_REPAIR_PHASE1_ENABLED: ${{ vars.ADVISOR_REPAIR_PHASE1_ENABLED }}
+          GITHUB_TOKEN: ${{ github.token }}
+          VALIDATED_PATCH_FILE: ${{ env.VALIDATION_DIR }}/validated.patch
+          VALIDATION_RECEIPT_FILE: ${{ env.VALIDATION_DIR }}/validation-receipt.json
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/publish.mts"
+
+      - name: Upload the reconciliation publication receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-review-advisor-repair-phase1-reconciliation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.PUBLICATION_OUTPUT_DIR }}/publication-receipt.json
+          if-no-files-found: error
+          retention-days: 14
+
+  verify-generated-head:
+    name: Verify every generated-head gate on the exact commit
+    needs:
+      - collect
+      - publish
+    if: ${{ needs.publish.result == 'success' && needs.publish.outputs.commit_sha != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+    env:
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - *trusted-checkout
+
+      - *setup-node
+
+      - name: Bind the generated-head verification receipt directory
+        run: printf '%s\n' "VERIFICATION_OUTPUT_DIR=$RUNNER_TEMP/generated-head-verification" >> "$GITHUB_ENV"
+
+      - name: Wait for the exact required checks, CodeQL, and Advisor run
+        env:
+          ATTEMPT_KEY: ${{ needs.collect.outputs.attempt_key }}
+          BASE_SHA: ${{ needs.collect.outputs.base_sha }}
+          COMMIT_SHA: ${{ needs.publish.outputs.commit_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_HEAD_SHA: ${{ needs.collect.outputs.source_head_sha }}
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/verify-generated-head.mts"
+
+      - name: Upload the generated-head verification receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-review-advisor-repair-phase1-reconciliation-generated-head-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.VERIFICATION_OUTPUT_DIR }}/generated-head-verification-receipt.json
+          if-no-files-found: error
+          retention-days: 14

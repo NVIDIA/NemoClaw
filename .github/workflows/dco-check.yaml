@@ -3,15 +3,35 @@
 
 name: Governance / Require PR DCO Declaration
 
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' &&
+  format('Generated-head DCO {0} {1}', inputs.repair_attempt_key, inputs.source_head_sha) ||
+  format('DCO PR {0}', github.event.pull_request.number) }}
+
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      source_head_sha:
+        required: true
+        type: string
+      base_sha:
+        required: true
+        type: string
+      repair_attempt_key:
+        required: true
+        type: string
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && format('repair-{0}-{1}', inputs.pr_number, inputs.repair_attempt_key) || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -20,8 +40,10 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      pull-requests: read
     steps:
       - name: Check Dependabot DCO bypass
+        if: github.event_name == 'pull_request'
         id: dco-bypass
         env:
           USERNAME: ${{ github.event.pull_request.user.login }}
@@ -37,7 +59,7 @@ jobs:
           fi
 
       - name: Check PR body for Signed-off-by
-        if: ${{ steps.dco-bypass.outputs.bypass != 'true' }}
+        if: ${{ github.event_name == 'pull_request' && steps.dco-bypass.outputs.bypass != 'true' }}
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
@@ -50,3 +72,36 @@ jobs:
           fi
 
           echo "PR description contains a DCO sign-off."
+
+      - name: Checkout generated-head verifier
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node for generated-head verification
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Verify generated-head dispatch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          GENERATED_HEAD_COMMAND: verify
+          GENERATED_HEAD_CONTEXT_FILE: ${{ runner.temp }}/generated-head-context.json
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
+          SOURCE_HEAD_SHA: ${{ inputs.source_head_sha }}
+        run: node --experimental-strip-types --no-warnings tools/pr-review-advisor-repair/generated-head-context.mts
+
+      - name: Check generated-head PR body for Signed-off-by
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GENERATED_HEAD_COMMAND: check-dco
+          GENERATED_HEAD_CONTEXT_FILE: ${{ runner.temp }}/generated-head-context.json
+        run: node --experimental-strip-types --no-warnings tools/pr-review-advisor-repair/generated-head-context.mts

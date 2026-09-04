@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { gitIsolationEnvironment } from "../advisors/hermetic-git.mts";
 import { type ConflictMatrixEntry, parseConflictMatrixEntry } from "./discover.mts";
 import {
   applyResolutionPatch,
@@ -106,6 +107,10 @@ export function validateResolutionPatch(input: {
 function gitBuffer(repository: string, args: readonly string[]): Buffer {
   return execFileSync("git", args, {
     cwd: repository,
+    env: {
+      ...process.env,
+      ...gitIsolationEnvironment("/nonexistent"),
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
@@ -168,7 +173,7 @@ function parentContainsBlob(repository: string, parent: string, entry: GitTreeEn
   return parentEntry?.type === "blob" && parentEntry.sha === entry.sha;
 }
 
-async function createGitHubTree(input: {
+export async function createGitHubTree(input: {
   baseSha: string;
   finalTree: string;
   headSha: string;

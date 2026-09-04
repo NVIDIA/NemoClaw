@@ -11,7 +11,9 @@
 name: Security / Verify Installer Hashes
 
 run-name: >-
-  ${{ github.event_name == 'pull_request' &&
+  ${{ github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '' &&
+  format('Generated-head installer hash {0} {1}', inputs.repair_attempt_key,
+  inputs.source_head_sha) || github.event_name == 'pull_request' &&
   format('Installer Hash PR #{0} head {1} base {2} gate true',
   github.event.pull_request.number, github.event.pull_request.head.sha,
   github.event.pull_request.base.sha) ||
@@ -26,9 +28,27 @@ on:
     # Weekly fallback in case upstream changes between PRs
     - cron: "30 9 * * 1"
   workflow_dispatch:
+    inputs:
+      pr_number:
+        required: false
+        type: string
+        default: ""
+      source_head_sha:
+        required: false
+        type: string
+        default: ""
+      base_sha:
+        required: false
+        type: string
+        default: ""
+      repair_attempt_key:
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   check-hash:
@@ -55,6 +75,27 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '' && github.workflow_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify generated-head dispatch
+        if: github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != ''
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          GENERATED_HEAD_COMMAND: verify
+          GENERATED_HEAD_CONTEXT_FILE: ${{ runner.temp }}/generated-head-context.json
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
+          SOURCE_HEAD_SHA: ${{ inputs.source_head_sha }}
+        run: node --experimental-strip-types --no-warnings tools/pr-review-advisor-repair/generated-head-context.mts
+
+      - name: Checkout the exact generated head
+        if: github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_head_sha }}
           persist-credentials: false
 
       - name: Checkout base-trusted installer hash action
@@ -76,8 +117,27 @@ jobs:
         with:
           repo-root: ${{ github.workspace }}
 
+      - name: Checkout base-trusted generated-head installer hash action
+        if: github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.base_sha }}
+          path: .trusted-installer-hash
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-installer-hash-check
+            scripts/check-installer-hash.sh
+            scripts/checks/extract-installer-pins.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Verify generated-head installer hashes from base-trusted code
+        if: github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != ''
+        uses: ./.trusted-installer-hash/.github/actions/ci-installer-hash-check
+        with:
+          repo-root: ${{ github.workspace }}
+
       - name: Verify trusted event installer hashes
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && !(github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '')
         uses: ./.github/actions/ci-installer-hash-check
         with:
           repo-root: ${{ github.workspace }}

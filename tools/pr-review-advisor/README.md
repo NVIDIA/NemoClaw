@@ -21,11 +21,11 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 1. Runs on `pull_request_target` for internal and fork PRs, plus trusted manual dispatch.
 2. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
 3. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
-4. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence and records a native session trace.
-5. Each specialist publishes its complete Markdown review as the job summary and uploads the Markdown and native session trace as one artifact.
-6. After every specialist completes successfully, one publisher attempts to post a sticky comment that links to the workflow run. A failed specialist keeps the workflow failed and suppresses publication.
+4. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence, records a native session trace, and terminally commits one typed exact-head P0/P1 finding ledger through the trusted `pr_review_record_findings` tool.
+5. Each specialist publishes its complete Markdown review as the job summary and uploads the Markdown, native session trace, and canonical finding ledger as one artifact. An empty ledger requires an explicit no-findings reason; trusted automation never derives findings by parsing review prose.
+6. After every specialist completes successfully, one publisher posts a sticky comment that links to the workflow run. A failed specialist keeps the workflow failed and suppresses publication.
 
-`investigate-turn.mts` owns the shared investigation turn and deterministic context contract. `specialist-tools.mts` owns specialist tool policy and implementations. `specialists.mts` applies each specialist prompt and tool policy. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `run-specialist.mts` composes these modules and writes each specialist's Markdown review and native session trace.
+`investigate-turn.mts` owns the shared investigation turn and deterministic context contract. `specialist-tools.mts` owns specialist tool policy and implementations. `specialists.mts` applies each specialist prompt and tool policy. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence, including exact-head issue comments, submitted reviews, and complete inline-thread resolution state within enforced item limits. Each comment or review body retains at most 4,000 characters from its beginning and end around an explicit truncation marker, while a SHA-256 digest binds the full GitHub body. The canonical review-state digest covers that bounded text, the full-body digests, and the remaining thread metadata. If complete bounded state cannot be collected, the context records the failure and repair selection rejects the run instead of accepting partial authority. `run-specialist.mts` composes these modules and writes each specialist's Markdown review, native session trace, and canonical finding ledger.
 
 `tools/pr-review-advisor/specialist-lifecycle.mts` owns the advisor-specific prepare, configure,
 complete, and cleanup sequence. `tools/pr-review-advisor/openshell.mts` exports its OpenShell
@@ -125,7 +125,8 @@ The discovered specialists use the workflow-configured model and share the same 
 
 ## Artifacts
 
-Each specialist artifact contains a Markdown review and Pi's unchanged native JSONL session. The
+Each specialist artifact contains a Markdown review, Pi's unchanged native JSONL session, and the
+typed exact-head finding ledger. The
 workflow run also displays each Markdown review as a job summary. Replace `<interest>` with the
 specialist interest and `<attempt>` with the workflow run attempt number, then download the artifact
 with `gh run download <run-id> --name pr-review-specialist-<interest>-<attempt>`.
@@ -143,7 +144,7 @@ npm run review:local
 
 The command snapshots the committed branch delta from `origin/main`, staged and unstaged final
 content, and nonignored untracked files. It runs every checked-in specialist separately through
-OpenShell. It writes each specialist's Markdown review and native JSONL session under
+OpenShell. It writes each specialist's Markdown review, typed exact-head finding ledger, and native JSONL session under
 `artifacts/pr-review-advisor-local/`. The command does not run tests, inspect CI state, use GitHub
 context, or combine findings. Test recommendations are advisory targets verified against the
 repository inventory, not executed test results.
