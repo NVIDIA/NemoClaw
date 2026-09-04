@@ -17,6 +17,7 @@ vi.mock("./process-recovery", () => ({
 }));
 
 const executeSandboxCommandMock = vi.mocked(executeSandboxCommand);
+const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" } as const;
 
 function jiraEntry(): McpBridgeEntry {
   return {
@@ -350,9 +351,15 @@ describe("Deep Agents MCP config adapter registration", () => {
       .mockReturnValueOnce({ status: 0, stdout: "registered\n", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: "registered\n", stderr: "" });
 
-    restoreDeepAgentsManagedMcpProjection("alpha", entries);
+    restoreDeepAgentsManagedMcpProjection("alpha", entries, runtimeSelection);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(5);
+    expect(
+      executeSandboxCommandMock.mock.calls.every((call) => {
+        const options = call[2];
+        return typeof options === "object" && options?.runtimeSelection === runtimeSelection;
+      }),
+    ).toBe(true);
     const commands = executeSandboxCommandMock.mock.calls.map(([, command]) => command);
     expect(commands[1]).toBe("/usr/local/bin/deepagents-code --nemoclaw-mcp-capability");
     expect(commands[2]).toContain("github");
@@ -360,6 +367,9 @@ describe("Deep Agents MCP config adapter registration", () => {
     expect(commands[3]).toContain("github");
     expect(commands[4]).toContain("jira");
     expect(commands.filter((command) => command.includes("allowRevisioned"))).toHaveLength(2);
+    expect(executeSandboxCommandMock.mock.calls.map(([, , options]) => options)).toEqual(
+      Array.from({ length: 5 }, () => ({ runtimeSelection })),
+    );
   });
 
   it("resets the managed v2 projection when the registry has no Deep Agents bridges (#10756)", () => {
@@ -372,7 +382,7 @@ describe("Deep Agents MCP config adapter registration", () => {
       })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
 
-    restoreDeepAgentsManagedMcpProjection("alpha", []);
+    restoreDeepAgentsManagedMcpProjection("alpha", [], runtimeSelection);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
     expect(executeSandboxCommandMock.mock.calls[2]?.[1]).toContain('\\"expectedServers\\":{}');
@@ -385,7 +395,7 @@ describe("Deep Agents MCP config adapter registration", () => {
       stderr: "",
     });
 
-    expect(() => restoreDeepAgentsManagedMcpProjection("alpha", [])).toThrow(
+    expect(() => restoreDeepAgentsManagedMcpProjection("alpha", [], runtimeSelection)).toThrow(
       "Could not identify the managed Deep Agents MCP runtime.",
     );
     expect(executeSandboxCommandMock).toHaveBeenCalledOnce();
@@ -398,7 +408,7 @@ describe("Deep Agents MCP config adapter registration", () => {
       stderr: "",
     });
 
-    restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry]);
+    restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry], runtimeSelection);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledOnce();
   });
@@ -412,9 +422,9 @@ describe("Deep Agents MCP config adapter registration", () => {
         stderr: "",
       });
 
-    expect(() => restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry])).toThrow(
-      "does not contain managed MCP capability v2",
-    );
+    expect(() =>
+      restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry], runtimeSelection),
+    ).toThrow("does not contain managed MCP capability v2");
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(2);
     expect(executeSandboxCommandMock.mock.calls[1]?.[1]).toBe(
       "/usr/local/bin/deepagents-code --nemoclaw-mcp-capability",
@@ -448,9 +458,9 @@ describe("Deep Agents MCP config adapter registration", () => {
       })
       .mockReturnValueOnce({ status: 2, stdout: "", stderr: "projection is unsafe" });
 
-    expect(() => restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry, jiraEntry()])).toThrow(
-      "projection is unsafe",
-    );
+    expect(() =>
+      restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry, jiraEntry()], runtimeSelection),
+    ).toThrow("projection is unsafe");
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
   });
 
@@ -466,9 +476,9 @@ describe("Deep Agents MCP config adapter registration", () => {
       .mockReturnValueOnce({ status: 0, stdout: "registered\n", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: "mismatch\n", stderr: "" });
 
-    expect(() => restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry, jiraEntry()])).toThrow(
-      "config verification failed after adding 'jira': mismatch",
-    );
+    expect(() =>
+      restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry, jiraEntry()], runtimeSelection),
+    ).toThrow("config verification failed after adding 'jira': mismatch");
   });
 
   it.each([
@@ -489,9 +499,9 @@ describe("Deep Agents MCP config adapter registration", () => {
       entry: { ...baseEntry, agent: "openclaw" },
     },
   ])("rejects $label before running a sandbox command (#10756)", ({ entry }) => {
-    expect(() => restoreDeepAgentsManagedMcpProjection("alpha", [entry as McpBridgeEntry])).toThrow(
-      "requires Deep Agents registry entries",
-    );
+    expect(() =>
+      restoreDeepAgentsManagedMcpProjection("alpha", [entry as McpBridgeEntry], runtimeSelection),
+    ).toThrow("requires Deep Agents registry entries");
     expect(executeSandboxCommandMock).not.toHaveBeenCalled();
   });
 });

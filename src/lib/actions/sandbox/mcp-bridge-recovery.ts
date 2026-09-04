@@ -6,6 +6,7 @@ import {
   inspectHermesMcpRuntimeIntent,
   sanitizeHermesMcpReconciliationDetail,
 } from "./mcp-bridge-hermes-reconciliation";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 
 export type McpReconciliationRefusalRecoveryResult = {
   checked: true;
@@ -23,8 +24,12 @@ type InspectHermesMcpRuntimeIntent = (sandboxName: string) => HermesMcpReconcili
 export function inspectHermesMcpReconciliationRefusal(
   sandboxName: string,
   inspect: InspectHermesMcpRuntimeIntent = inspectHermesMcpRuntimeIntent,
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): { detail: string } | null {
-  const reconciliation = inspect(sandboxName);
+  const reconciliation =
+    inspect === inspectHermesMcpRuntimeIntent
+      ? inspectHermesMcpRuntimeIntent(sandboxName, { runtimeSelection })
+      : inspect(sandboxName);
   if (reconciliation.ok) return null;
   return { detail: sanitizeHermesMcpReconciliationDetail(reconciliation.detail) };
 }
@@ -33,8 +38,9 @@ export function processRecoveryMcpReconciliationRefusal(
   sandboxName: string,
   wasRunning: boolean,
   inspect: InspectHermesMcpRuntimeIntent = inspectHermesMcpRuntimeIntent,
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): McpReconciliationRefusalRecoveryResult | null {
-  const refusal = inspectHermesMcpReconciliationRefusal(sandboxName, inspect);
+  const refusal = inspectHermesMcpReconciliationRefusal(sandboxName, inspect, runtimeSelection);
   if (!refusal) return null;
   return {
     checked: true,

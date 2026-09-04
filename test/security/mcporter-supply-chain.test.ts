@@ -190,6 +190,25 @@ describe("mcporter image supply-chain controls", () => {
     expect(flattenedContents).toContain(
       "node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
     );
+    expect(contents).toContain("ARG NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=");
+    expect(contents).toContain(
+      "--mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false",
+    );
+    expect(contents).toContain(
+      "--mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false",
+    );
+    expect(flattenedContents).toContain(
+      "node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts --receipt",
+    );
+    expect(flattenedContents).toContain(
+      "--package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json --raw-report",
+    );
+    expect(flattenedContents).toContain(
+      "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --npm-version",
+    );
+    expect(flattenedContents).toContain(
+      "--registry https://registry.npmjs.org/ --threshold high",
+    );
     expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
     expect(contents).not.toContain(`${runtimePrefix} audit signatures`);
     expect(flattenedContents).toContain(
