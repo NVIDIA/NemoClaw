@@ -595,7 +595,7 @@ describe("Hermes durable lazy-install target", () => {
       HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
       HERMES_HOME: "/sandbox/.hermes",
       HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
-    });
+    }, false);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe("");
