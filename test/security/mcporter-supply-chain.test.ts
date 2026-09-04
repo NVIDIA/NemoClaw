@@ -207,7 +207,7 @@ describe("mcporter image supply-chain controls", () => {
       "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --npm-version",
     );
     expect(flattenedContents).toContain(
-      "--registry https://registry.npmjs.org/ --threshold high",
+      "--registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true",
     );
     expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
     expect(contents).not.toContain(`${runtimePrefix} audit signatures`);
@@ -230,8 +230,6 @@ describe("mcporter image supply-chain controls", () => {
 
     const lockfile = fs.readFileSync(path.join(runtimeDirectory, "package-lock.json"));
     expect(createHash("sha256").update(lockfile).digest("hex")).toBe(graph?.lockSha256);
-    expect(reviewedAuditDriver).toContain(
-      'run("npm", ["audit", "signatures", "--omit=dev"], directory);',
-    );
+    expect(reviewedAuditDriver).toContain("NPM_AUDIT_SIGNATURE_ARGV");
   });
 });

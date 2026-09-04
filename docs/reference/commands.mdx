@@ -194,6 +194,33 @@ $$nemoclaw completion fish > ~/.config/fish/completions/$$nemoclaw.fish
 
 Start a new shell session to refresh the cached sandbox names after creating or removing a sandbox.
 
+### `$$nemoclaw config export <sandbox>`
+
+Export a supported registered OpenClaw sandbox as a secret-free `NemoClawConfig` document. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
+
+Write a file on Linux:
+
+```bash
+$$nemoclaw config export my-assistant --output nemoclaw.yaml
+```
+
+Use `--output -` to write YAML to standard output on another supported host or in a pipeline:
+
+```bash
+$$nemoclaw config export my-assistant --output -
+```
+
+| Option | Description |
+| --- | --- |
+| `--output <path>`, `-o <path>` | Required. Write YAML to a Linux file path, or use `-` for standard output. |
+| `--name <name>` | Set `metadata.name` in the exported document. |
+| `--force` | Replace an existing regular file. The command refuses symbolic links and other file types. |
+| `--json` | Return a machine-readable result when writing a file. It cannot be combined with `--output -`. |
+
+The export contains credential environment-variable references, not credential values. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. With `--force`, publication checks that the existing destination is a regular file before ordinary atomic replacement.
+
+Version 1 exports managed OpenClaw sandboxes that use hosted external inference, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy. Other profiles fail with a diagnostic instead of producing an incomplete document.
+
 ### `$$nemoclaw resources`
 
 Display host hardware inventory and configured sandbox resource profiles. Use `--json` for machine-readable CPU, memory, GPU, Kubernetes allocatable-capacity, and profile data.
