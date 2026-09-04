@@ -12,6 +12,7 @@ export type DirectPublicDispatchHarness = {
   getSandbox: ReturnType<typeof vi.fn>;
   listSandboxes: ReturnType<typeof vi.fn>;
   migrateLegacyPortState: ReturnType<typeof vi.fn>;
+  printSandboxConnectHelp: ReturnType<typeof vi.fn>;
   recoverRegistryEntries: ReturnType<typeof vi.fn>;
   resetObservedCalls: () => void;
   runOclifArgv: ReturnType<typeof vi.fn>;
@@ -115,6 +116,7 @@ export async function withDirectPublicDispatch(
   });
   const runOclifArgv = vi.fn(async () => undefined);
   const runOclifCommandById = vi.fn(async () => undefined);
+  const printSandboxConnectHelp = vi.fn();
   const stderr: string[] = [];
   const previousExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
@@ -150,7 +152,7 @@ export async function withDirectPublicDispatch(
       typeof arg === "string" ? connectFlags.has(arg) : false,
     ),
     parseSandboxConnectArgs: vi.fn(),
-    printSandboxConnectHelp: vi.fn(),
+    printSandboxConnectHelp,
   });
 
   try {
@@ -165,6 +167,7 @@ export async function withDirectPublicDispatch(
       getSandbox,
       listSandboxes,
       migrateLegacyPortState,
+      printSandboxConnectHelp,
       recoverRegistryEntries,
       resetObservedCalls,
       runOclifArgv,

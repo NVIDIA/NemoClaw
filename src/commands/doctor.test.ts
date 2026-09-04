@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
   runGlobalDoctor: vi.fn(),
 }));
 
-vi.mock("../lib/actions/sandbox/doctor", () => ({
+vi.mock("../lib/actions/sandbox/doctor", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/actions/sandbox/doctor")>()),
   runGlobalDoctor: mocks.runGlobalDoctor,
 }));
 

@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runGlobalDoctor } from "../lib/actions/sandbox/doctor";
-import { redactForLog, withStdoutRedirectedToStderr } from "../lib/cli/doctor-command-support";
+import { redactDoctorReport, runGlobalDoctor } from "../lib/actions/sandbox/doctor";
 import { NemoClawCommand } from "../lib/cli/nemoclaw-oclif-command";
+import { withStdoutRedirectedToStderr } from "../lib/cli/stdout-guard";
 
 export default class DoctorCommand extends NemoClawCommand {
   static id = "doctor";
@@ -23,6 +23,6 @@ export default class DoctorCommand extends NemoClawCommand {
       ? await withStdoutRedirectedToStderr(() => runGlobalDoctor({ quiet: true }))
       : await runGlobalDoctor();
     if (report.failed > 0) process.exitCode = 1;
-    return json ? redactForLog(report) : undefined;
+    return json ? redactDoctorReport(report) : undefined;
   }
 }

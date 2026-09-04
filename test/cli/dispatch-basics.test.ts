@@ -938,20 +938,37 @@ describe("CLI dispatch", () => {
     );
   });
 
-  it("keeps bare connect for a sandbox literally named doctor (#10212)", async () => {
+  it.each([
+    { label: "bare", args: [] as string[], migrationCalls: 1, helpCalls: 0 },
+    { label: "help", args: ["--help"], migrationCalls: 0, helpCalls: 1 },
+    { label: "probe-only", args: ["--probe-only"], migrationCalls: 1, helpCalls: 0 },
+  ])("keeps $label connect for a sandbox literally named doctor (#10212)", async (testCase) => {
     await withDirectPublicDispatch(
-      async ({ dispatchCli, migrateLegacyPortState, runOclifCommandById, stderr }) => {
-        await dispatchCli(["doctor"]);
+      async ({
+        dispatchCli,
+        migrateLegacyPortState,
+        printSandboxConnectHelp,
+        runOclifCommandById,
+        stderr,
+      }) => {
+        await dispatchCli(["doctor", ...testCase.args]);
 
-        expect(migrateLegacyPortState).toHaveBeenCalledTimes(1);
-        expect(runOclifCommandById).toHaveBeenCalledWith(
-          "sandbox:connect",
-          ["doctor"],
-          expect.anything(),
-        );
-        expect(stderr).toEqual([]);
+        expect({
+          migrationCalls: migrateLegacyPortState.mock.calls.length,
+          helpCalls: printSandboxConnectHelp.mock.calls.length,
+          oclifCall: runOclifCommandById.mock.calls[0]?.slice(0, 2) ?? null,
+          stderr,
+        }).toEqual({
+          migrationCalls: testCase.migrationCalls,
+          helpCalls: testCase.helpCalls,
+          oclifCall:
+            testCase.helpCalls > 0
+              ? null
+              : ["sandbox:connect", ["doctor", ...testCase.args]],
+          stderr: [],
+        });
       },
-      { sandboxNames: ["doctor"] },
+      { sandboxNames: ["doctor"], connectFlags: ["--help", "--probe-only"] },
     );
   });
 

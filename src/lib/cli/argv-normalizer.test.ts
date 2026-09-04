@@ -105,9 +105,14 @@ describe("normalizeArgv", () => {
     });
   });
 
-  it("preserves bare connect for a registered sandbox named doctor (#10212)", () => {
+  it.each([
+    { label: "bare", firstArg: undefined, connectHelpRequested: false },
+    { label: "help", firstArg: "--help", connectHelpRequested: true },
+    { label: "probe-only", firstArg: "--probe-only", connectHelpRequested: false },
+  ])("preserves $label connect for a registered sandbox named doctor (#10212)", (testCase) => {
+    const argv = testCase.firstArg ? ["doctor", testCase.firstArg] : ["doctor"];
     expect(
-      normalizeArgv(["doctor"], {
+      normalizeArgv(argv, {
         ...normalizerOptions,
         isRegisteredSandbox: (name) => name === "doctor",
       }),
@@ -115,8 +120,8 @@ describe("normalizeArgv", () => {
       kind: "sandbox",
       sandboxName: "doctor",
       action: "connect",
-      actionArgs: [],
-      connectHelpRequested: false,
+      actionArgs: testCase.firstArg ? [testCase.firstArg] : [],
+      connectHelpRequested: testCase.connectHelpRequested,
     });
   });
 });

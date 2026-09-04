@@ -36,6 +36,10 @@ export type GlobalDoctorReport = {
 
 type RenderableDoctorReport = DoctorReport | GlobalDoctorReport;
 
+export function redactDoctorReport<T extends RenderableDoctorReport | undefined>(report: T): T {
+  return redactForLog(report) as T;
+}
+
 function summarizeChecks(checks: DoctorCheck[]): {
   status: DoctorReportStatus;
   failed: number;
@@ -121,7 +125,7 @@ function renderSummary(report: RenderableDoctorReport): void {
 }
 
 export function renderDoctorReport(report: RenderableDoctorReport, asJson: boolean): number {
-  const displayReport = redactForLog(report) as RenderableDoctorReport;
+  const displayReport = redactDoctorReport(report);
   if (asJson) {
     // Parity with `sandbox status --json` (#4310): this console.log egress
     // bypasses the oclif logJson redaction boundary (#3657), so route the

@@ -34,8 +34,9 @@ export function isGlobalCommandInvocation(
   const [command, firstArg] = argv;
   if (!command || !opts.globalCommands.has(command)) return false;
   if (command !== "doctor") return true;
-  if (firstArg) return !opts.isSandboxAction(firstArg);
-  return !opts.isRegisteredSandbox(command);
+  if (!firstArg) return !opts.isRegisteredSandbox(command);
+  if (opts.isSandboxConnectFlag(firstArg) && opts.isRegisteredSandbox(command)) return false;
+  return !opts.isSandboxAction(firstArg);
 }
 
 export function normalizeArgv(argv: readonly string[], opts: NormalizeArgvOptions): NormalizedArgv {

@@ -2,12 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Args, Flags } from "@oclif/core";
-import { runSandboxDoctor } from "../../lib/actions/sandbox/doctor";
-import {
-  redactForLog,
-  withStdoutRedirectedToStderr,
-} from "../../lib/cli/doctor-command-support";
+import { redactDoctorReport, runSandboxDoctor } from "../../lib/actions/sandbox/doctor";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
+import { withStdoutRedirectedToStderr } from "../../lib/cli/stdout-guard";
 
 export default class SandboxDoctorCliCommand extends NemoClawCommand {
   static id = "sandbox:doctor";
@@ -55,7 +52,7 @@ export default class SandboxDoctorCliCommand extends NemoClawCommand {
       // report itself so programmatic consumers of the resolved value — not
       // just the logJson-printed stdout (#3657) — never see token-shaped
       // values in check details.
-      return redactForLog(report);
+      return redactDoctorReport(report);
     }
     const doctorArgs = flags.fix ? ["--fix"] : [];
     await runSandboxDoctor(args.sandboxName, doctorArgs, { quietJson: false });

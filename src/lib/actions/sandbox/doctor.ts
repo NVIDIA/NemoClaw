@@ -74,6 +74,7 @@ import {
 import { buildToolScopeChecks } from "./doctor-tool-scope";
 
 export type { DoctorCheck, DoctorReport } from "./doctor-report";
+export { redactDoctorReport } from "./doctor-report";
 
 type RunSandboxDoctorOptions = {
   quietJson?: boolean;
