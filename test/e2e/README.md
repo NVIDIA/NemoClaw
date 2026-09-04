@@ -189,6 +189,12 @@ NemoClaw restore behavior, and Dockerfile patch behavior. The live target does n
 assert OpenClaw database tables, migration checkpoints, or other third-party
 storage details.
 
+The retained live target owns the released-gateway upgrade and usable-survivor
+boundary. Deterministic rebuild-flow tests own post-backup recreate failure,
+preserved backup and registry state, recovery-journal retention, and successful
+retry; stale-recovery tests own fail-closed behavior when no authoritative live
+policy remains.
+
 ### Hermes Sandbox Image Artifact
 
 The sandbox image workflow builds the Hermes production image in the dedicated

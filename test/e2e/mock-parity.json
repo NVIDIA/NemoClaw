@@ -737,6 +737,9 @@
         "test/e2e/live/openshell-gateway-upgrade-old-installer.ts"
       ],
       "fast": [
+        "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
+        "src/lib/actions/sandbox/rebuild-flow-recovery.test.ts",
+        "src/lib/actions/sandbox/rebuild-flow-target-image.test.ts",
         "src/lib/actions/upgrade-sandboxes-recovery.test.ts",
         "src/lib/onboard/dockerfile-patch.test.ts",
         "src/lib/state/openclaw-plugin-restore.test.ts",
