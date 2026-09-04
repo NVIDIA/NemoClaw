@@ -262,9 +262,14 @@ describe("OpenClaw plugin recreation pairing evidence", () => {
 
 function createWrapperFixture(
   canonicalCapabilityMarkers: readonly string[] = REQUIRED_OPENSHELL_MCP_FEATURES,
+  options: { imageInspectorTimeoutMs?: number } = {},
 ) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-wrapper-test-"));
   const delegate = path.join(directory, "real-openshell");
+  const imageInspector = path.join(directory, "image-inspector");
+  const imageInspectorArgsPath = path.join(directory, "image-inspector-args.jsonl");
+  const imageInspectorFailurePath = path.join(directory, "image-inspector-failure");
+  const imageInspectorHangPath = path.join(directory, "image-inspector-hang");
   const imageIdPath = path.join(directory, "resolved-image-id");
   const nextImageIdPath = path.join(directory, "next-resolved-image-id");
   const gateway = path.join(directory, "openshell-gateway");
@@ -272,13 +277,6 @@ function createWrapperFixture(
   fs.writeFileSync(imageIdPath, `${IMAGE_ID}\n`, { encoding: "utf8", mode: 0o600 });
   const executableSource = `#!/bin/sh
 if [ "\${1:-}" = "--version" ]; then echo 'openshell 0.0.106'; exit 0; fi
-if [ "\${1:-}" = "image" ]; then
-  cat ${JSON.stringify(imageIdPath)}
-  if [ -f ${JSON.stringify(nextImageIdPath)} ]; then
-    mv ${JSON.stringify(nextImageIdPath)} ${JSON.stringify(imageIdPath)}
-  fi
-  exit 0
-fi
 printf '%s\\n' "$@"
 `;
   const canonicalCapabilityComments = canonicalCapabilityMarkers
@@ -293,12 +291,30 @@ printf '%s\\n' "$@"
     encoding: "utf8",
     mode: 0o700,
   });
+  fs.writeFileSync(
+    imageInspector,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(imageInspectorArgsPath)}, JSON.stringify(args) + "\\n");
+if (fs.existsSync(${JSON.stringify(imageInspectorFailurePath)})) process.exit(70);
+if (fs.existsSync(${JSON.stringify(imageInspectorHangPath)})) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000);
+}
+process.stdout.write(fs.readFileSync(${JSON.stringify(imageIdPath)}, "utf8"));
+if (fs.existsSync(${JSON.stringify(nextImageIdPath)})) {
+  fs.renameSync(${JSON.stringify(nextImageIdPath)}, ${JSON.stringify(imageIdPath)});
+}
+`,
+    { encoding: "utf8", mode: 0o700 },
+  );
   const components = resolveOpenShellSiblingComponents(delegate);
   let wrapper: ReturnType<typeof createOpenShellTrustedImageWrapper>;
   try {
     wrapper = createOpenShellTrustedImageWrapper({
       driverConfigJson: DRIVER_CONFIG_JSON,
-      imageInspectorPath: components.cli,
+      imageInspectorPath: imageInspector,
+      imageInspectorTimeoutMs: options.imageInspectorTimeoutMs,
       realOpenshellPath: components.cli,
     });
   } catch (error) {
@@ -308,6 +324,18 @@ printf '%s\\n' "$@"
   return {
     components,
     directory,
+    failNextInspection: () => {
+      fs.writeFileSync(imageInspectorFailurePath, "fail\n", { encoding: "utf8", mode: 0o600 });
+    },
+    hangNextInspection: () => {
+      fs.writeFileSync(imageInspectorHangPath, "hang\n", { encoding: "utf8", mode: 0o600 });
+    },
+    readInspectorInvocations: (): string[][] =>
+      fs
+        .readFileSync(imageInspectorArgsPath, "utf8")
+        .trimEnd()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]),
     remove: () => {
       wrapper.remove();
       fs.rmSync(directory, { force: true, recursive: true });
@@ -348,6 +376,9 @@ describe("trusted EXDEV OpenShell wrapper", () => {
       expect(valuesFor("--driver-config-json")).toEqual([DRIVER_CONFIG_JSON]);
       expect(valuesFor("--from")).toEqual([IMAGE_ID]);
       expect(valuesFor("--name")).toEqual(["demo"]);
+      expect(fixture.readInspectorInvocations()).toEqual([
+        ["image", "inspect", "--format", "{{.Id}}", imageRef],
+      ]);
     } finally {
       fixture.remove();
     }
@@ -435,6 +466,56 @@ describe("trusted EXDEV OpenShell wrapper", () => {
       expect(result.status).toBe(64);
       expect(result.stdout).toBe("");
       expect(result.stderr).toContain("immutable identity mismatch");
+      expect(fixture.readInspectorInvocations()).toEqual([
+        ["image", "inspect", "--format", "{{.Id}}", imageRef],
+      ]);
+    } finally {
+      fixture.remove();
+    }
+  });
+
+  it("fails closed without delegation when image inspection fails", () => {
+    const fixture = createWrapperFixture();
+    try {
+      const imageRef = trustedExdevImageRef("wrapper-contract-v1");
+      fixture.wrapper.selectImage({ imageId: IMAGE_ID, imageRef });
+      fixture.failNextInspection();
+
+      const result = spawnSync(
+        fixture.wrapper.executable,
+        ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
+        { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
+      );
+
+      expect(result.status).toBe(64);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("immutable identity mismatch");
+      expect(fixture.readInspectorInvocations()).toEqual([
+        ["image", "inspect", "--format", "{{.Id}}", imageRef],
+      ]);
+    } finally {
+      fixture.remove();
+    }
+  });
+
+  it("times out image inspection with a redacted error and no delegation", () => {
+    const fixture = createWrapperFixture(REQUIRED_OPENSHELL_MCP_FEATURES, {
+      imageInspectorTimeoutMs: 25,
+    });
+    try {
+      const imageRef = trustedExdevImageRef("wrapper-contract-v1");
+      fixture.wrapper.selectImage({ imageId: IMAGE_ID, imageRef });
+      fixture.hangNextInspection();
+
+      const result = spawnSync(
+        fixture.wrapper.executable,
+        ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
+        { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
+      );
+
+      expect(result.status).toBe(64);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("trusted EXDEV image inspection timed out\n");
     } finally {
       fixture.remove();
     }

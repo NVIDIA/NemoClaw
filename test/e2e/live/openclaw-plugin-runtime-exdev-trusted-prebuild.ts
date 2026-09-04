@@ -126,6 +126,7 @@ export function trustedExdevImageRef(tag: string): string {
 export function createOpenShellTrustedImageWrapper(options: {
   driverConfigJson: string;
   imageInspectorPath?: string;
+  imageInspectorTimeoutMs?: number;
   realOpenshellPath: string;
 }): OpenShellTrustedImageWrapper {
   const canonicalComponents = resolveOpenShellSiblingComponents(options.realOpenshellPath);
@@ -145,6 +146,7 @@ export function createOpenShellTrustedImageWrapper(options: {
   });
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-image-wrapper-"));
   const imageInspectorPath = options.imageInspectorPath ?? "docker";
+  const imageInspectorTimeoutMs = options.imageInspectorTimeoutMs ?? 30_000;
   const imageSelectionPath = path.join(directory, "selected-image.json");
   const rewriterPath = path.join(directory, "rewrite-from.cjs");
   const executable = path.join(directory, "openshell");
@@ -173,14 +175,21 @@ if (args[0] === "sandbox" && args[1] === "create") {
   const inspected =
     invalidImageRef || invalidImageId
       ? { error: undefined, status: 64, stdout: "" }
-      : spawnSync(${JSON.stringify(imageInspectorPath)}, inspectArgs, { encoding: "utf8" });
+      : spawnSync(${JSON.stringify(imageInspectorPath)}, inspectArgs, {
+          encoding: "utf8",
+          killSignal: "SIGKILL",
+          timeout: ${imageInspectorTimeoutMs},
+        });
+  const inspectionTimedOut = inspected.error?.code === "ETIMEDOUT";
   const rejection = invalidImageRef
     ? "trusted EXDEV image handoff rejected the selected image ref"
-    : invalidImageId
+      : invalidImageId
       ? "trusted EXDEV image handoff rejected the selected image ID"
-      : inspected.error || inspected.status !== 0 || inspected.stdout.trim() !== imageId
-        ? "trusted EXDEV image handoff detected an immutable identity mismatch"
-        : "";
+      : inspectionTimedOut
+        ? "trusted EXDEV image inspection timed out"
+        : inspected.error || inspected.status !== 0 || inspected.stdout.trim() !== imageId
+          ? "trusted EXDEV image handoff detected an immutable identity mismatch"
+          : "";
   if (rejection) {
     process.stderr.write(rejection + "\\n");
     process.exit(64);
