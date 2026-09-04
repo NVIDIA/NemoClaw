@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   executeGatewaySupervisorAction: vi.fn(),
-  isShieldsDown: vi.fn(),
   runOpenshellProviderCommand: vi.fn(),
   sleepMs: vi.fn(),
   waitUntil: vi.fn(),
@@ -26,29 +25,29 @@ vi.mock("../../../src/lib/core/wait", () => ({
   waitUntil: mocks.waitUntil,
 }));
 
-vi.mock("../../../src/lib/shields", () => ({
-  isShieldsDown: mocks.isShieldsDown,
-}));
-
 import { assertAgentMcpMutationRuntimeCapability } from "../../../src/lib/actions/sandbox/mcp-bridge-adapters";
 
 type ProbeResult = { status: number; stdout: string; stderr: string };
-type SupervisorResult = ProbeResult | null;
 
-function runHermesProbe(
-  results: ProbeResult[],
-  shieldsDown = true,
-  supervisorResults: SupervisorResult[] = [],
-) {
+function runHermesProbe(results: ProbeResult[]) {
+  const runtimeSelection = {
+    gatewayName: "nemoclaw-8091",
+    workspace: "default",
+  } as const;
   let calls = 0;
-  let recoveryCalls = 0;
   const recoveryActions: Array<{ action: string; timeout: number }> = [];
 
-  mocks.runOpenshellProviderCommand.mockImplementation(() => results[calls++]);
+  mocks.runOpenshellProviderCommand.mockImplementation((_args, options) => {
+    expect(options?.runtimeSelection).toEqual({
+      gatewayName: "nemoclaw-8091",
+      workspace: "default",
+    });
+    return results[calls++];
+  });
   mocks.executeGatewaySupervisorAction.mockImplementation(
     (_sandbox: string, action: string, timeout: number) => {
       recoveryActions.push({ action, timeout });
-      return supervisorResults[recoveryCalls++] ?? null;
+      return null;
     },
   );
   mocks.waitUntil.mockImplementation(
@@ -66,11 +65,9 @@ function runHermesProbe(
       return ready;
     },
   );
-  mocks.isShieldsDown.mockReturnValue(shieldsDown);
-
   let message = "";
   try {
-    assertAgentMcpMutationRuntimeCapability("hermes-box", "hermes-config");
+    assertAgentMcpMutationRuntimeCapability("hermes-box", "hermes-config", runtimeSelection);
   } catch (error) {
     message = error instanceof Error ? error.message : String(error);
   }
@@ -92,22 +89,7 @@ const ready: ProbeResult = {
   stdout: '{"ok":true}\n',
   stderr: "",
 };
-const recovered: SupervisorResult = {
-  status: 0,
-  stdout: `v1 ${"a".repeat(64)} complete ok 0 4242\nGATEWAY_PID=4242`,
-  stderr: "",
-};
-
 describe("Hermes managed MCP startup probe", () => {
-  it("refuses shields-up config before invoking the sandbox helper", () => {
-    const result = runHermesProbe([ready], false);
-
-    expect(result.calls).toBe(0);
-    expect(result.recoveryActions).toEqual([]);
-    expect(result.message).toContain("has shields up or an unreadable shields posture");
-    expect(result.message).toContain("nemohermes hermes-box shields down");
-  });
-
   it("retries only the exact transient gateway-starting result", () => {
     expect(runHermesProbe([starting, ready])).toEqual({
       calls: 2,
@@ -124,78 +106,13 @@ describe("Hermes managed MCP startup probe", () => {
     });
   });
 
-  it("uses one host-authenticated recovery after repeated exact not-ready probes", () => {
-    expect(runHermesProbe([starting, starting, starting, ready], true, [recovered])).toEqual({
-      calls: 4,
-      recoveryActions: [{ action: "recover", timeout: 210_000 }],
-      message: "",
-    });
-  });
-
-  it("keeps the fresh helper wait when privileged recovery is unavailable", () => {
-    expect(runHermesProbe([starting, starting, starting, ready])).toEqual({
-      calls: 4,
-      recoveryActions: [{ action: "recover", timeout: 210_000 }],
-      message: "",
-    });
-  });
-
-  it("does not treat controller success as transaction-helper readiness", () => {
-    const result = runHermesProbe([starting, starting, starting, starting, starting], true, [
-      recovered,
-    ]);
-
-    expect(result.calls).toBe(5);
-    expect(result.recoveryActions).toEqual([{ action: "recover", timeout: 210_000 }]);
-    expect(result.message).toContain("after managed gateway recovery");
-  });
-
-  it.each([
-    "GATEWAY_CONFIG_HASH_MISMATCH",
-    "SUPERVISOR_REBUILD_REQUIRED",
-    "SUPERVISOR_UNSAFE_CONTROL_DIR",
-    "SUPERVISOR_INVALID_STATUS",
-    "GATEWAY_HEALTH_TIMEOUT",
-    "SUPERVISOR_TIMEOUT",
-    "SUPERVISOR_BUSY",
-  ])("fails typed managed-recovery integrity refusal %s without another sandbox probe", (marker) => {
-    const result = runHermesProbe([starting, starting, starting, ready], true, [
-      { status: 1, stdout: "", stderr: marker },
-    ]);
+  it("fails closed on the selected target without host-local supervisor recovery", () => {
+    const result = runHermesProbe([starting, starting, starting, ready]);
 
     expect(result.calls).toBe(3);
-    expect(result.recoveryActions).toEqual([{ action: "recover", timeout: 210_000 }]);
-    expect(result.message).toContain("managed gateway recovery failed before MCP mutation");
-    expect(result.message).toContain(marker);
-  });
-
-  it.each([
-    {
-      label: "non-numeric PID",
-      result: { status: 0, stdout: "GATEWAY_PID=garbage", stderr: "" },
-    },
-    {
-      label: "failure output beside a completion",
-      result: { ...recovered!, stderr: "SUPERVISOR_UNSAFE_CONTROL_DIR" },
-    },
-    {
-      label: "failure status beside a completion",
-      result: { ...recovered!, status: 1 },
-    },
-    {
-      label: "partial completion protocol",
-      result: {
-        status: 1,
-        stdout: `v1 ${"a".repeat(64)} complete ok 0 4242`,
-        stderr: "",
-      },
-    },
-  ])("rejects invalid controller response: $label", ({ result: invalidResult }) => {
-    const result = runHermesProbe([starting, starting, starting, ready], true, [invalidResult]);
-
-    expect(result.calls).toBe(3);
-    expect(result.recoveryActions).toEqual([{ action: "recover", timeout: 210_000 }]);
-    expect(result.message).toContain("managed gateway recovery failed before MCP mutation");
+    expect(result.recoveryActions).toEqual([]);
+    expect(result.message).toContain("recorded OpenShell target 'nemoclaw-8091'");
+    expect(result.message).toContain("NemoClaw did not attempt host-local supervisor recovery");
   });
 
   it("fails immediately on trust and topology errors", () => {
@@ -234,8 +151,7 @@ describe("Hermes managed MCP startup probe", () => {
     const result = runHermesProbe([starting, starting, starting]);
 
     expect(result.calls).toBe(3);
-    expect(result.recoveryActions).toEqual([{ action: "recover", timeout: 210_000 }]);
-    expect(result.message).toContain("after managed gateway recovery");
-    expect(result.message).toContain("no controller result");
+    expect(result.recoveryActions).toEqual([]);
+    expect(result.message).toContain("recorded OpenShell target 'nemoclaw-8091'");
   });
 });

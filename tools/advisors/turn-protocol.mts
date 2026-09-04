@@ -42,8 +42,6 @@ export type AdvisorPromptTurn = {
   requiredToolNames?: string[];
   /** Tools that must finish before the assistant emits text. Context tools are included. */
   requireToolsBeforeText?: string[];
-  /** Ordinary read-tool paths that must finish successfully before assistant text. */
-  requiredReadPaths?: string[];
   /** Require at least one ordinary read from these paths before assistant text. */
   requiredReadOneOfPaths?: string[];
   /** Fail the turn when it completes without non-whitespace assistant analysis. */
@@ -86,7 +84,6 @@ export type AdvisorTurnTools = {
   activeToolNames: string[];
   requiredToolNames: string[];
   requireToolsBeforeText: string[];
-  requiredReadPaths?: string[];
   requiredReadOneOfPaths?: string[];
   requireAssistantText: boolean;
   atomicTerminalToolName?: string;
@@ -171,7 +168,6 @@ export function resolveAdvisorTurnTools(
     activeToolNames,
     requiredToolNames,
     requireToolsBeforeText,
-    requiredReadPaths: [...new Set(turn.requiredReadPaths ?? [])],
     requiredReadOneOfPaths: [...new Set(turn.requiredReadOneOfPaths ?? [])],
     requireAssistantText: turn.requireAssistantText === true,
     atomicTerminalToolName,
@@ -339,37 +335,6 @@ function atomicTerminalToolErrors(
   return errors;
 }
 
-export function requiredReadPreparationPrompt(turn: AdvisorPromptTurn): string {
-  const paths = [...new Set(turn.requiredReadPaths ?? [])];
-  return `Prepare ${turn.name} by reading every required file with ordinary \`read\` calls. Read each file contiguously from line 1 through EOF. If a read is truncated, continue at the next unread line until that file reaches EOF. Emit only \`read\` calls and no text. Do not use any other tool.\n\nRequired files:\n${paths.map((requiredPath) => `- ${requiredPath}`).join("\n")}`;
-}
-
-export function requiredReadPreparationErrors(
-  turnName: string,
-  events: AdvisorTurnFlowEvent[],
-  tools: AdvisorTurnTools,
-): string[] {
-  const errors = advisorTurnFlowErrors(turnName, events, {
-    ...tools,
-    requireAssistantText: false,
-    atomicTerminalToolName: undefined,
-    terminalSubmitToolName: undefined,
-  });
-  if (events.some((event) => event.type === "text" && event.text.trim())) {
-    errors.push(`${turnName} required-read preparation emitted text`);
-  }
-  const requiredPaths = new Set(tools.requiredReadPaths ?? []);
-  for (const event of events) {
-    if (event.type === "read" && !requiredPaths.has(event.path)) {
-      errors.push(`${turnName} required-read preparation read unexpected path: ${event.path}`);
-    }
-    if (event.type !== "text" && event.type !== "read" && event.toolName !== "read") {
-      errors.push(`${turnName} required-read preparation called ${event.toolName}`);
-    }
-  }
-  return [...new Set(errors)];
-}
-
 export function advisorTurnFlowErrors(
   turnName: string,
   events: AdvisorTurnFlowEvent[],
@@ -410,60 +375,6 @@ export function advisorTurnFlowErrors(
     oneOfReads.every(({ index }) => index > firstText)
   ) {
     errors.push(`${turnName} emitted text before specialist evidence read`);
-  }
-  const requiredReadCompletionIndexes = new Map<string, number>();
-  for (const requiredPath of tools.requiredReadPaths ?? []) {
-    const reads = events.flatMap((event, index) =>
-      event.type === "read" && event.path === requiredPath ? [{ event, index }] : [],
-    );
-    if (reads.length === 0) {
-      errors.push(`${turnName} omitted required read: ${requiredPath}`);
-      continue;
-    }
-    const fileSizes = new Set(reads.map(({ event }) => event.fileSize));
-    const ranges: Array<{ start: number; end: number }> = [];
-    const endOffsets: number[] = [];
-    let completedAt: number | undefined;
-    for (const { event, index } of reads) {
-      if (event.endOffset !== null) {
-        ranges.push({ start: event.offset, end: event.endOffset });
-        ranges.sort((left, right) => left.start - right.start);
-      }
-      // An empty required file is complete when the first read reaches EOF.
-      if (event.reachesEnd) endOffsets.push(event.offset);
-      let coveredThrough = 0;
-      for (const range of ranges) {
-        if (range.start > coveredThrough + 1) break;
-        coveredThrough = Math.max(coveredThrough, range.end);
-      }
-      if (fileSizes.size === 1 && endOffsets.some((offset) => offset <= coveredThrough + 1)) {
-        completedAt ??= index;
-      }
-    }
-    if (completedAt === undefined) {
-      errors.push(`${turnName} incompletely read required path: ${requiredPath}`);
-    } else {
-      requiredReadCompletionIndexes.set(requiredPath, completedAt);
-    }
-    if (firstText >= 0 && (completedAt === undefined || completedAt > firstText)) {
-      errors.push(`${turnName} emitted text before required read completed: ${requiredPath}`);
-    }
-  }
-  if ((tools.requiredReadPaths?.length ?? 0) > 0) {
-    const allReadsCompletedAt =
-      requiredReadCompletionIndexes.size === tools.requiredReadPaths!.length
-        ? Math.max(...requiredReadCompletionIndexes.values())
-        : Number.POSITIVE_INFINITY;
-    const earlyTool = events.find(
-      (event, index) =>
-        index < allReadsCompletedAt &&
-        event.type !== "text" &&
-        event.type !== "read" &&
-        event.toolName !== "read",
-    );
-    if (earlyTool && earlyTool.type !== "text" && earlyTool.type !== "read") {
-      errors.push(`${turnName} called ${earlyTool.toolName} before required reads completed`);
-    }
   }
   if (tools.atomicTerminalToolName) {
     errors.push(...atomicTerminalToolErrors(turnName, events, tools.atomicTerminalToolName));

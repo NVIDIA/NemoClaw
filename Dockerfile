@@ -544,6 +544,7 @@ COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
+COPY scripts/lib/npm-audit-receipt.mts /scripts/lib/npm-audit-receipt.mts
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
@@ -581,8 +582,6 @@ COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/open
 COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py
 COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
 COPY scripts/lib/refresh-openclaw-wechat-placeholder.py /usr/local/lib/nemoclaw/refresh-openclaw-wechat-placeholder.py
-COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
-COPY agents/openclaw/state-lock-plan.json /usr/local/share/nemoclaw/state-lock-plan.json
 COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py
 COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
@@ -637,6 +636,7 @@ ARG OPENCLAW_2026_4_24_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-20
 ARG MCPORTER_VERSION=0.7.3
 ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==
 ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz
+ARG NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=
 
 # A cross-stage root copy is accepted by Docker's legacy builder and creates one
 # final-image layer while preserving metadata on existing parent directories.
@@ -717,7 +717,7 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
 # The conditional install keeps stale bases usable while fresh bases skip apt.
 # tmux is required by OpenClaw's bundled tmux-session flow (#4513); a stale base
 # without it makes that flow fail with `tmux: command not found`.
-# Refs: #2343, #4513, shields-up chattr hardening
+# Refs: #2343, #4513, config transaction hardening
 # hadolint ignore=DL3001
 RUN set -eu; \
     apt-mark manual procps e2fsprogs tmux 2>/dev/null || true; \
@@ -809,45 +809,21 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
         /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
 
-# Pre-install the codex-acp package so the embedded ACPx runtime can
-# call the local binary instead of `npx @zed-industries/codex-acp`.
-#
-# The sandbox's L7 proxy denies @zed-industries/* package URLs
-# (403 policy_denied), and npm still refreshes registry metadata for
-# versioned npx package specs even when the package is globally installed.
-# Installing the binary at build time and configuring ACPx to use it
-# directly keeps TC-SBX-02 off the runtime npm path.
-# The architecture-selected installer stage consumes checksum-addressed local
-# archives with the network disabled, verifies their committed SRI values, and
-# installs both the launcher and its native package together.
-#
+# Install SRI-verified ACP offline; runtime registry access is blocked.
 # hadolint ignore=DL3059,DL4006,DL3016
 COPY --from=codex-acp-runtime /usr/local/lib/node_modules/@zed-industries/ /usr/local/lib/node_modules/@zed-industries/
 COPY --from=codex-acp-runtime /usr/local/bin/codex-acp /usr/local/bin/codex-acp
 RUN command -v codex-acp >/dev/null
 
-# Upgrade OpenClaw if the base image is stale.
-# Reuse pinned OpenClaw and locked-mcporter base installs only from a published
-# NemoClaw base whose package provenance marker matches this build target;
-# otherwise reinstall both.
-#
-# The GHCR base image (sandbox-base:latest) may lag behind the version pinned in
-# Dockerfile.base, and legacy/custom bases may report the target version without
-# proving which archive and lifecycle produced it. The marker records package
-# and advisory-audit metadata, not trusted-CI signature attestation. Only a
-# digest-pinned base from the official GHCR publication path supplies that
-# independent gate. Mutable tags and local bases cannot authorize reuse even
-# when their marker matches; the existing version checks reinstall the locked
-# runtimes or reject a newer base. The final image consumes the marker before
-# applying NemoClaw patches so a custom base cannot masquerade as a pristine
-# published base.
-#
-# OPENCLAW_VERSION is the NemoClaw runtime build target. It must be at least the
-# blueprint minimum, which also supports the legacy direct-blueprint image path.
-# Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
-# basename in a fresh directory, local-archive-only install, and cleanup.
-# hadolint ignore=DL3059,DL4006,DL3016
-RUN --network=default set -eu; \
+# Upgrade stale bases. Reuse is restricted to matching provenance from an
+# official digest-pinned base; mutable/custom bases reinstall the locked graphs.
+# OPENCLAW_VERSION is the NemoClaw runtime build target and must meet the blueprint minimum.
+# Reviewed archives retain registry and packed-byte SRI, basename, local-only install, and cleanup gates.
+# hadolint ignore=DL3059,DL4006,DL3016,SC2015
+RUN --network=default \
+    --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
+    --mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false \
+    set -eu; \
     if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
         export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
         export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
@@ -875,7 +851,7 @@ RUN --network=default set -eu; \
     OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
     if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
-        OPENCLAW_LOCK_SHA256=60f816dcff6f35179b1c48b4c06db9473497760d45ca1831252c27e8b1d2d665; \
+        OPENCLAW_LOCK_SHA256=248d881ca125bb83da293c4b3f40b46d057095a9fe90b5165255da0de78af9f9; \
         ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
         [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
             || { echo "ERROR: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)" >&2; exit 1; }; \
@@ -1009,6 +985,21 @@ RUN --network=default set -eu; \
             'const { StreamableHTTPServerTransport } = await import("file:///usr/local/lib/nemoclaw/mcporter-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/server/streamableHttp.js"); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); await transport.close();'; \
         ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter; \
         test "$(mcporter --version)" = "$MCPORTER_VERSION"; \
+    fi; \
+    MCPORTER_RECEIPT=/run/secrets/nemoclaw-mcporter-audit-receipt; \
+    MCPORTER_RAW_REPORT=/run/secrets/nemoclaw-mcporter-audit-raw-report; \
+    if [ -f "$MCPORTER_RECEIPT" ] || [ -f "$MCPORTER_RAW_REPORT" ] || [ -n "${NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256:-}" ]; then \
+        [ -f "$MCPORTER_RECEIPT" ] && [ -f "$MCPORTER_RAW_REPORT" ] && printf %s "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" | grep -qxE '[0-9a-f]{64}' \
+            || { echo "ERROR: cached mcporter audit requires paired receipt, raw report, and receipt SHA-256" >&2; exit 1; }; \
+        printf '%s  %s\n' "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" "$MCPORTER_RECEIPT" | sha256sum -c -; \
+        node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts \
+            --receipt "$MCPORTER_RECEIPT" \
+            --package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
+            --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
+            --raw-report "$MCPORTER_RAW_REPORT" --exceptions /scripts/npm-audit-exceptions.json \
+            --graph mcporter-runtime --npm-version "$(npm --version)" \
+            --registry https://registry.npmjs.org/ --threshold high; \
+    else \
         node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
             --directory /usr/local/lib/nemoclaw/mcporter-runtime \
             --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high; \
@@ -1490,7 +1481,7 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-tool-
 # avoids a non-owner chmod when a reviewed shared database mode is already
 # safe, keeps generated models files readable by the shared group, and ignores
 # the obsolete update-check cache migration that cannot archive across a
-# shields-protected parent.
+# root-owned parent.
 #
 # Removal criteria: drop when upstream OpenClaw supports a split-user,
 # group-shared state databases and split-user cache migrations without
@@ -1552,15 +1543,14 @@ ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
 ARG NEMOCLAW_INFERENCE_INPUTS=text
 # Per-request inference timeout (seconds) baked into agents.defaults.timeoutSeconds
 # and models.providers.<provider-id>.timeoutSeconds.
-# Increase for slow local inference (e.g., CPU Ollama). openclaw.json is
-# immutable at runtime (Landlock read-only), so this can only be changed by
-# rebuilding via `nemoclaw onboard`. Ref: issue #2281
+# Increase for slow local inference (e.g., CPU Ollama). The host CLI manages
+# runtime changes to the mutable OpenClaw config. Ref: issue #2281
 ARG NEMOCLAW_AGENT_TIMEOUT=600
 # Cadence for OpenClaw's periodic heartbeat
 # (agents.defaults.heartbeat.every). Accepts Go-style durations like "30m",
 # "5m", "1h"; "0m" disables heartbeat. Empty default preserves the OpenClaw
-# built-in cadence. openclaw.json is immutable at runtime, so this can only
-# change at image build time. Ref: issue #2880
+# built-in cadence. The image value is the initial default; the mutable runtime
+# config can be changed through the host CLI. Ref: issue #2880
 ARG NEMOCLAW_AGENT_HEARTBEAT_EVERY=
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 # Base64-encoded messaging build plan for messaging build inputs and agent
@@ -1684,8 +1674,7 @@ USER sandbox
 #   Non-root mode: $XDG_RUNTIME_DIR/nemoclaw/gateway-token (sandbox:sandbox 0400)
 # See: scripts/nemoclaw-start.sh generate_gateway_token()
 #
-# Config is mutable by default (group-writable sandbox:sandbox). Immutability
-# is opt-in via `shields up` (DAC 444 root:root + chattr +i).
+# Config remains mutable at runtime (group-writable sandbox:sandbox).
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 #
 # Generate base openclaw.json from environment variables. Messaging build
@@ -1941,15 +1930,11 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
     && chown root:root /usr/local/bin/nemoclaw-gateway-control \
         /usr/local/lib/nemoclaw/gateway-supervisor.sh \
-        /usr/local/lib/nemoclaw/state-dir-guard.py \
-        /usr/local/share/nemoclaw/state-lock-plan.json \
         /usr/local/lib/nemoclaw/openclaw-config-guard.py \
         /usr/local/lib/nemoclaw/managed-gateway-control.py \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
-    && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py \
-        /usr/local/lib/nemoclaw/openclaw-config-guard.py \
+    && chmod 500 /usr/local/lib/nemoclaw/openclaw-config-guard.py \
         /usr/local/lib/nemoclaw/managed-gateway-control.py \
-    && chmod 444 /usr/local/share/nemoclaw/state-lock-plan.json \
     && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh \
         /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
         /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
@@ -2366,8 +2351,6 @@ RUN check_metadata() { \
     && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && check_metadata /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh 'root:root:444' \
     && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root:700' \
-    && check_metadata /usr/local/lib/nemoclaw/state-dir-guard.py 'root:root:500' \
-    && check_metadata /usr/local/share/nemoclaw/state-lock-plan.json 'root:root:444' \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'
 
 # Health check: poll the gateway's /health endpoint so Docker (and Compose)

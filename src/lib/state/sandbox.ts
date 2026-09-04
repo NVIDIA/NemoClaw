@@ -36,9 +36,12 @@ import { spawnSync } from "child_process";
 
 import {
   captureSandboxSshConfigCommand,
+  isOpenShellSandboxPolicyCredentialFree,
   resolveOpenshellSandboxSshHost,
 } from "../adapters/openshell/client.js";
+import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
@@ -270,6 +273,8 @@ export interface RecreatedSandboxRestoreOptions extends SnapshotRestoreOptions {
   allowCustomImageWholeStateFileRestore?: true;
   /** Pre-captured baseline avoids a second remote read during onboarding finalization. */
   freshOpenClawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
+  /** Exact OpenShell target frozen by the enclosing rebuild transaction. */
+  runtimeSelection?: OpenShellRuntimeSelection;
 }
 
 interface InternalRestoreOptions {
@@ -277,6 +282,7 @@ interface InternalRestoreOptions {
   allowCustomImageWholeStateFileRestore?: true;
   discoverFreshOpenClawImagePluginInstalls?: true;
   freshOpenClawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
+  runtimeSelection?: OpenShellRuntimeSelection;
   authority?: SnapshotRestoreAuthority;
   validateBeforeMutation?: () => void;
 }
@@ -695,16 +701,36 @@ export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string):
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-export function getSshConfig(sandboxName: string): string | null {
+export function getSshConfig(
+  sandboxName: string,
+  runtimeOptions: {
+    env?: NodeJS.ProcessEnv;
+    gatewayName?: string;
+    replaceEnv?: boolean;
+  } = {},
+): string | null {
   const openshellBinary = resolveOpenshell();
   if (!openshellBinary) return null;
 
   const result = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
+    ...runtimeOptions,
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (result.status !== 0) return null;
   return result.output;
+}
+
+function selectedSshConfigOptions(
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Parameters<typeof getSshConfig>[1] {
+  return runtimeSelection
+    ? {
+        env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
+        gatewayName: runtimeSelection.gatewayName,
+        replaceEnv: true,
+      }
+    : undefined;
 }
 
 export function sshArgs(configFile: string, sandboxName: string): string[] {
@@ -1976,9 +2002,9 @@ export function captureSnapshotRestoreAuthority(
   }
 }
 
-function validateSnapshotRestoreMutation(
+export function validateSnapshotRestoreMutation(
   backupPath: string,
-  options: Pick<InternalRestoreOptions, "authority" | "validateBeforeMutation">,
+  options: Pick<SnapshotRestoreOptions, "authority" | "validateBeforeMutation">,
 ): string | null {
   if (options.authority) {
     const current = captureSnapshotRestoreAuthority(backupPath);
@@ -2043,6 +2069,7 @@ export function restoreRecreatedSandboxState(
       ? { discoverFreshOpenClawImagePluginInstalls: true }
       : {}),
     freshOpenClawImagePluginInstalls: options.freshOpenClawImagePluginInstalls,
+    ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
     ...(options.authority ? { authority: options.authority } : {}),
     ...(options.validateBeforeMutation
       ? { validateBeforeMutation: options.validateBeforeMutation }
@@ -2056,6 +2083,9 @@ function restoreSandboxStateInternal(
   options: InternalRestoreOptions,
 ): RestoreResult {
   _log(`restoreSandboxState: sandbox=${sandboxName}, backupPath=${backupPath}`);
+  const selectedSshEnv = options.runtimeSelection
+    ? buildSelectedOpenShellSubprocessEnv(options.runtimeSelection)
+    : undefined;
   const manifest = readManifest(backupPath);
   if (!manifest) {
     _log("FAILED: Could not read rebuild-manifest.json");
@@ -2229,7 +2259,12 @@ function restoreSandboxStateInternal(
   } else if (options.discoverFreshOpenClawImagePluginInstalls === true) {
     const discovery = discoverFreshOpenClawImagePluginInstalls(
       sandboxName,
-      { getSshConfig, sshArgs },
+      {
+        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
+        getSshConfig: (name) =>
+          getSshConfig(name, selectedSshConfigOptions(options.runtimeSelection)),
+        sshArgs,
+      },
       targetAgent.configPaths.dir,
     );
     if (!discovery.ok) {
@@ -2252,7 +2287,10 @@ function restoreSandboxStateInternal(
   }
 
   _log("Getting SSH config for restore");
-  const sshConfig = getSshConfig(sandboxName);
+  const sshConfig = getSshConfig(
+    sandboxName,
+    selectedSshConfigOptions(options.runtimeSelection),
+  );
   if (!sshConfig) {
     _log("FAILED: Could not get SSH config for restore");
     return {
@@ -2358,6 +2396,7 @@ function restoreSandboxStateInternal(
       );
       _log(`Cleaning target dirs before restore: ${rmCmd}`);
       const rmResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), rmCmd], {
+        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 30000,
       });
@@ -2381,6 +2420,7 @@ function restoreSandboxStateInternal(
     if (restoreTar !== undefined) {
       const extractCmd = `tar --no-same-owner -xf - -C ${shellQuote(dir)}`;
       const sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
+        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
         input: restoreTar,
         stdio: ["pipe", "pipe", "pipe"],
         timeout: 120000,
@@ -2396,6 +2436,7 @@ function restoreSandboxStateInternal(
         const chownCmd = `chown -R sandbox:sandbox -- ${restoredPaths.map(shellQuote).join(" ")} 2>/dev/null || true`;
         _log(`Best-effort ownership repair: ${chownCmd}`);
         const chownResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), chownCmd], {
+          ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
           stdio: ["ignore", "pipe", "pipe"],
           timeout: 30000,
         });
@@ -2419,6 +2460,7 @@ function restoreSandboxStateInternal(
           "ssh",
           [...sshArgs(configFile, sandboxName), usabilityCmd],
           {
+            ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
             stdio: ["ignore", "pipe", "pipe"],
             timeout: 30000,
           },
@@ -2455,6 +2497,7 @@ function restoreSandboxStateInternal(
           _log,
           configFreshOpenClawImagePluginInstalls,
           previousOpenClawImagePluginInstalls,
+          selectedSshEnv,
         )
       ) {
         restoredFiles.push(spec.path);
@@ -2525,12 +2568,24 @@ function readBoundRebuildPolicyHandoff(filePath: string): string | null {
   try {
     descriptor = openSync(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
     const before = fstatSync(descriptor, { bigint: true });
-    if (!before.isFile() || before.size > 8n * 1024n * 1024n) return null;
+    const uid = process.getuid?.();
+    if (
+      !before.isFile() ||
+      before.nlink !== 1n ||
+      (uid !== undefined && before.uid !== BigInt(uid)) ||
+      (before.mode & 0o777n) !== 0o600n ||
+      before.size > 8n * 1024n * 1024n
+    ) {
+      return null;
+    }
     const content = readFileSync(descriptor, "utf8");
     const after = fstatSync(descriptor, { bigint: true });
     if (
       before.dev !== after.dev ||
       before.ino !== after.ino ||
+      before.uid !== after.uid ||
+      before.mode !== after.mode ||
+      before.nlink !== after.nlink ||
       before.size !== after.size ||
       before.mtimeNs !== after.mtimeNs ||
       before.ctimeNs !== after.ctimeNs
@@ -2551,6 +2606,9 @@ export function writeRebuildPolicyHandoff(
   policyDocument: string,
 ): RebuildManifest {
   if (!policyDocument.trim()) throw new Error("Cannot persist an empty rebuild policy handoff");
+  if (!isOpenShellSandboxPolicyCredentialFree(policyDocument)) {
+    throw new Error("Cannot persist a credential-bearing rebuild policy handoff");
+  }
   const sha256 = createHash("sha256").update(policyDocument).digest("hex");
   const file = `rebuild-policy-handoff.${sha256}.yaml`;
   const filePath = path.join(manifest.backupPath, file);
@@ -2603,6 +2661,7 @@ export function clearRebuildPolicyHandoff(
   ops: {
     write?: typeof writeManifest;
     remove?: typeof rmSync;
+    retainRetirement?: boolean;
   } = {},
 ): boolean {
   const handoff = manifest.rebuildPolicyHandoff;
@@ -2623,6 +2682,7 @@ export function clearRebuildPolicyHandoff(
   } catch {
     return false;
   }
+  if (ops.retainRetirement === true) return true;
   const cleared = { ...manifest };
   delete cleared.rebuildPolicyHandoff;
   try {

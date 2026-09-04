@@ -38,8 +38,10 @@ function runInstallerHostAdmissionTest(
   forcedRejection?: { findingIds: string[]; capabilityIds: string[] },
   options: {
     experimentalProfile?: string;
+    gatewayRuntime?: string;
     gatewayManagementMode?: string;
     portableProfileArtifact?: "present" | "missing";
+    providerResolutionFailure?: string;
   } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-host-admission-"));
@@ -63,7 +65,16 @@ function runInstallerHostAdmissionTest(
       ...host,
     })};
 exports.assessHost = () => host;
-exports.planHostAdvisories = () => [];
+exports.planHostAdvisories = (_host, options = {}) =>
+  !options.providerOwnsHostReadiness &&
+  host.additionalFindingIds?.includes("host.docker.unavailable")
+    ? [{
+        id: "install_docker",
+        title: "Install Docker",
+        reason: "Docker is required before onboarding can create a gateway or sandbox.",
+        commands: ["Install Docker Engine, then rerun \`nemoclaw onboard\`."],
+      }]
+    : [];
 `,
   );
   fs.writeFileSync(
@@ -87,6 +98,15 @@ exports.loadGatewayManagementDeclaration = () => ({
   for (const [artifactPath, contents] of portableProfileArtifacts) {
     fs.writeFileSync(artifactPath, contents);
   }
+  fs.writeFileSync(
+    path.join(onboardDir, "docker-driver-gateway-env.js"),
+    `const resolutionFailure = ${JSON.stringify(options.providerResolutionFailure ?? null)};
+exports.configuredRuntimeProviderOwnsHostReadiness = ({ environment = process.env } = {}) => {
+  if (resolutionFailure) throw new Error(resolutionFailure);
+  return environment.NEMOCLAW_EXPERIMENTAL_PROFILE !== "portable" &&
+    environment.NEMOCLAW_GATEWAY_RUNTIME === "podman";
+};\n`,
+  );
   fs.writeFileSync(
     path.join(readinessDir, "host.js"),
     `exports.createHostReadinessReport = (_options, collection) => {
@@ -120,8 +140,26 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
   if (forcedRejection) {
     return { admitted: false, reasonIds: [], ...forcedRejection, waivedFindingIds: [] };
   }
+  const providerOwnedDockerFindings = new Set([
+    "host.docker.unavailable",
+    "host.docker.host_invalid",
+    "host.docker.daemon_unreachable",
+    "host.docker.runtime_unsupported",
+    "host.docker.storage_incompatible",
+  ]);
+  const providerOwnedDockerCapabilities = new Set([
+    "host.docker.available",
+    "host.docker.daemon_reachable",
+    "host.docker.runtime_supported",
+    "host.docker.storage_compatible",
+    "host.docker.storage_remediation_available",
+  ]);
   const findingIds = report.findings
     .filter((finding) => {
+      if (
+        options.providerOwnsHostReadiness &&
+        providerOwnedDockerFindings.has(finding.id)
+      ) return false;
       if (
         finding.id === "host.docker.runtime_unsupported" &&
         options.allowUnsupportedRuntime
@@ -140,10 +178,11 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
     .map((finding) => finding.id);
   const capabilityIds = report.capabilityIds.filter(
     (id) =>
-      !options.allowPortableHostPreparation ||
-      (id !== "host.docker.daemon_reachable" &&
-        id !== "host.docker.runtime_supported" &&
-        id !== "host.docker.storage_compatible")
+      !(options.providerOwnsHostReadiness && providerOwnedDockerCapabilities.has(id)) &&
+      (!options.allowPortableHostPreparation ||
+        (id !== "host.docker.daemon_reachable" &&
+          id !== "host.docker.runtime_supported" &&
+          id !== "host.docker.storage_compatible"))
   );
   return findingIds.length === 0 && capabilityIds.length === 0
     ? { admitted: true, waivedFindingIds: [] }
@@ -155,6 +194,7 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
 
   const {
     NEMOCLAW_EXPERIMENTAL_PROFILE: _experimentalProfile,
+    NEMOCLAW_GATEWAY_RUNTIME: _gatewayRuntime,
     TEST_GATEWAY_MANAGEMENT_MODE: _gatewayManagementMode,
     ...inheritedEnv
   } = process.env;
@@ -167,6 +207,7 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
     ...(options.experimentalProfile
       ? { NEMOCLAW_EXPERIMENTAL_PROFILE: options.experimentalProfile }
       : {}),
+    ...(options.gatewayRuntime ? { NEMOCLAW_GATEWAY_RUNTIME: options.gatewayRuntime } : {}),
     TEST_GATEWAY_MANAGEMENT_MODE: options.gatewayManagementMode ?? "",
   };
 
@@ -224,6 +265,61 @@ describe("installer host preflight package contract", () => {
     expect(result.status).toBe(1);
     expect(output).toMatch(/Host preflight found issues/);
     expect(output).toMatch(/The detected container runtime is unsupported\./);
+  });
+
+  it("admits the unsupported host classifier through the selected managed runtime provider", () => {
+    const { output, result } = runInstallerHostAdmissionTest(
+      {
+        runtime: "podman",
+        isUnsupportedRuntime: true,
+      },
+      undefined,
+      { gatewayRuntime: "podman" },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).not.toMatch(/Host preflight found issues/);
+  });
+
+  it("admits a Docker-less host through the selected managed runtime provider (#10891)", () => {
+    const dockerCapabilityIds = [
+      "host.docker.available",
+      "host.docker.daemon_reachable",
+      "host.docker.runtime_supported",
+      "host.docker.storage_compatible",
+      "host.docker.storage_remediation_available",
+    ];
+    const host = {
+      runtime: "unknown",
+      additionalFindingIds: ["host.docker.unavailable"],
+      unknownCapabilityIds: dockerCapabilityIds,
+    };
+
+    const admitted = runInstallerHostAdmissionTest(host, undefined, {
+      gatewayRuntime: "podman",
+    });
+    expect(admitted.result.status, admitted.output).toBe(0);
+    expect(admitted.output).not.toMatch(/Host preflight found issues/);
+    expect(admitted.output).not.toContain("Install Docker");
+
+    const rejected = runInstallerHostAdmissionTest(host);
+    expect(rejected.result.status).toBe(1);
+    expect(rejected.output).toContain("host.docker.unavailable");
+    expect(rejected.output).toContain("Install Docker");
+  });
+
+  it("fails closed when selected provider resolution throws", () => {
+    const { output, result } = runInstallerHostAdmissionTest(
+      { runtime: "podman", isUnsupportedRuntime: true },
+      undefined,
+      {
+        gatewayRuntime: "podman",
+        providerResolutionFailure: "native Podman provider resolution failed",
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(output).toContain("native Podman provider resolution failed");
   });
 
   it("keeps an unsupported runtime blocked without the portable classifier artifact (#9007)", () => {

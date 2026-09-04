@@ -23,6 +23,7 @@ import {
 import {
   inspectPortableAgentReceiptDisposition,
   captureHermesPortableAcceptedReadinessObservation,
+  policyObservationRecoveryAction,
   qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyHermesPortableOperatingCommandAuthority,
   requalifyPortableAgentSandboxAuthority,
@@ -357,6 +358,20 @@ export async function launchSandbox(
     if (gated.kind === "unsafe") {
       throw new Error(
         `${LAUNCH_READINESS_FENCE_FAILURE}${formatLaunchReadinessUnsafeAuthorityEvidence(gated.evidence)}`,
+      );
+    }
+    if (gated.value.publication?.kind === "policy-observation-failed") {
+      const gatewayName = publicationRequest.gatewayName ?? "the recorded gateway";
+      throw new Error(
+        [
+          `Launch readiness final policy validation failed for sandbox '${sandboxName}' on gateway '${gatewayName}': ${gated.value.publication.error.message}`,
+          policyObservationRecoveryAction(
+            gated.value.publication.error,
+            sandboxName,
+            publicationRequest.gatewayName ?? undefined,
+            "launch",
+          ),
+        ].join("\n"),
       );
     }
     if (gated.value.publication?.kind === "validation-failed") {
