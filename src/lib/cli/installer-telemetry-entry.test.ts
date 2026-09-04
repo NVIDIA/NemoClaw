@@ -5,22 +5,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const sendInstallerTelemetry = vi.hoisted(() => vi.fn());
 
-vi.mock("../../../lib/actions/telemetry/send", () => ({ sendInstallerTelemetry }));
+vi.mock("../actions/telemetry/send", () => ({ sendInstallerTelemetry }));
 
-import InternalInstallerTelemetryCommand from "./telemetry";
+import { TELEMETRY_OPERATIONS } from "../domain/telemetry/event";
+import { runInstallerTelemetryEntry } from "./installer-telemetry-entry";
 
-const rootDir = process.cwd();
-
-describe("internal installer telemetry command", () => {
+describe("installer telemetry entry", () => {
   beforeEach(() => {
-    sendInstallerTelemetry.mockReset();
+    vi.clearAllMocks();
     sendInstallerTelemetry.mockResolvedValue("disabled");
   });
 
-  it.each(["install", "update"] as const)(
-    "forwards only the %s operation to TypeScript (#10440)",
+  it.each(TELEMETRY_OPERATIONS)(
+    "forwards only the %s operation to the telemetry client (#10440)",
     async (operation) => {
-      await InternalInstallerTelemetryCommand.run([operation], rootDir);
+      await runInstallerTelemetryEntry([operation]);
 
       expect(sendInstallerTelemetry).toHaveBeenCalledExactlyOnceWith(operation);
     },
@@ -30,8 +29,8 @@ describe("internal installer telemetry command", () => {
     { scenario: "a missing operation", args: [] },
     { scenario: "an unsupported operation", args: ["upgrade"] },
     { scenario: "an extra argument", args: ["install", "extra"] },
-  ])("rejects $scenario (#10440)", async ({ args }) => {
-    await expect(InternalInstallerTelemetryCommand.run(args, rootDir)).rejects.toThrow();
+  ])("rejects $scenario before sending (#10440)", async ({ args }) => {
+    await expect(runInstallerTelemetryEntry(args)).rejects.toThrow();
     expect(sendInstallerTelemetry).not.toHaveBeenCalled();
   });
 });

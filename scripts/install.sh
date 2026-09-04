@@ -6419,16 +6419,19 @@ clear_station_resume_after_completed_onboarding() {
 }
 
 # Keep the installer boundary closed: update.ts provides one private marker,
-# and the TypeScript telemetry client receives only the resulting operation.
+# and the TypeScript telemetry entry receives only the resulting operation.
 # Delivery is best-effort and must never change the installer's exit status.
 send_install_telemetry() {
-  local operation="install"
+  local operation="install" telemetry_entry
   if [[ "${NEMOCLAW_UPDATE_INVOKED:-}" == "1" ]]; then
     operation="update"
   fi
 
+  telemetry_entry="${NEMOCLAW_SOURCE_ROOT}/dist/lib/cli/installer-telemetry-entry.js"
   [[ -n "${_CLI_PATH:-}" && -x "$_CLI_PATH" ]] || return 0
-  "$_CLI_PATH" internal installer telemetry "$operation" >/dev/null 2>&1 || true
+  command_exists node || return 0
+  [[ -f "$telemetry_entry" ]] || return 0
+  node "$telemetry_entry" "$operation" >/dev/null 2>&1 || true
 }
 
 # Print the completion summary, then propagate a fatal/non-zero result when the

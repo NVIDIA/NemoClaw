@@ -3431,7 +3431,6 @@ For contributor guidance on how these command files are structured, refer to `sr
 | `$$nemoclaw internal installer plan` | `install.sh` | Build a deterministic installer plan from environment and probe inputs without applying it. |
 | `$$nemoclaw internal installer normalize-env` | `install.sh` | Normalize installer ref and provider environment values without applying installation changes. |
 | `$$nemoclaw internal installer resolve-release-tag` | `install.sh` | Resolve the installer ref using the same precedence as `install.sh`. |
-| `$$nemoclaw internal installer telemetry <install\|update>` | `install.sh` | Pass one closed successful operation to the shared telemetry client. Production delivery remains disabled until its configuration is provisioned. |
 | `$$nemoclaw internal uninstall plan` | `uninstall.sh` / `$$nemoclaw uninstall` | Build a deterministic uninstall plan without applying it. |
 | `$$nemoclaw internal uninstall run-plan` | `uninstall.sh` / `$$nemoclaw uninstall` | Remove host-side NemoClaw resources from a previously built plan. |
 | `$$nemoclaw internal uninstall classify-shim` | `uninstall.sh` / `$$nemoclaw uninstall` | Classify whether a shim path is safe for the uninstaller to remove. |

@@ -23,36 +23,33 @@ function runInstallerBody(body: string, extraEnv: Record<string, string> = {}) {
   return run;
 }
 
-function telemetryCliStub(exitStatus: number): string {
-  return `#!/usr/bin/env bash
-printf '%s\\n' "$*" >>"$TELEMETRY_CALLS"
-exit ${exitStatus}
-`;
-}
-
-function runTelemetryAttempt(extraEnv: Record<string, string>, exitStatus = 0) {
+function runMainHarness(
+  onboardStatus: 0 | 1,
+  extraEnv: Record<string, string> = {},
+  telemetryExitStatus = 0,
+) {
   const run = runInstallerBody(
     `
+ORDER_TRACE="$HOME/order.trace"
 TELEMETRY_CALLS="$HOME/telemetry.calls"
-export TELEMETRY_CALLS
+TELEMETRY_EXIT_STATUS="${telemetryExitStatus}"
+export ORDER_TRACE TELEMETRY_CALLS TELEMETRY_EXIT_STATUS
+NEMOCLAW_SOURCE_ROOT="$HOME/source"
+TELEMETRY_ENTRY="$NEMOCLAW_SOURCE_ROOT/dist/lib/cli/installer-telemetry-entry.js"
+mkdir -p "$(dirname "$TELEMETRY_ENTRY")"
+cat >"$TELEMETRY_ENTRY" <<'STUB'
+const fs = require("node:fs");
+fs.appendFileSync(process.env.TELEMETRY_CALLS, process.argv.slice(2).join(" ") + "\\n");
+fs.appendFileSync(process.env.ORDER_TRACE, "telemetry\\n");
+process.exit(Number(process.env.TELEMETRY_EXIT_STATUS));
+STUB
 _CLI_PATH="$HOME/nemoclaw"
 cat >"$_CLI_PATH" <<'STUB'
-${telemetryCliStub(exitStatus)}STUB
+#!/usr/bin/env bash
+exit 0
+STUB
 chmod +x "$_CLI_PATH"
-send_install_telemetry
-printf 'STATUS=%s\\n' "$?"
-`,
-    extraEnv,
-  );
-  const callsPath = path.join(run.home, "telemetry.calls");
-  const calls = fs.existsSync(callsPath) ? fs.readFileSync(callsPath, "utf8") : "";
-  return { ...run, calls };
-}
-
-function runMainHarness(onboardStatus: 0 | 1) {
-  return runInstallerBody(
-    `
-record_order() { printf '%s\\n' "$1" >>"$HOME/order.trace"; }
+record_order() { printf '%s\\n' "$1" >>"$ORDER_TRACE"; }
 resolve_nemoclaw_gateway_port() { printf '18789'; }
 preflight_explicit_express_flags() { :; }
 print_banner() { :; }
@@ -69,12 +66,17 @@ run_onboard() { record_order onboard; return "$ONBOARD_STATUS"; }
 restore_onboard_forward_after_post_checks() { return 0; }
 finalize_install() { record_order finalize; }
 clear_station_resume_after_completed_onboarding() { record_order cleanup; }
-send_install_telemetry() { record_order telemetry; }
-_CLI_PATH='/usr/bin/true'
 main --non-interactive --yes-i-accept-third-party-software
 `,
-    { ONBOARD_STATUS: String(onboardStatus) },
+    { ONBOARD_STATUS: String(onboardStatus), ...extraEnv },
   );
+  const callsPath = path.join(run.home, "telemetry.calls");
+  const orderPath = path.join(run.home, "order.trace");
+  return {
+    ...run,
+    calls: fs.existsSync(callsPath) ? fs.readFileSync(callsPath, "utf8") : "",
+    order: fs.existsSync(orderPath) ? fs.readFileSync(orderPath, "utf8") : "",
+  };
 }
 
 function runBootstrapHelp() {
@@ -109,35 +111,30 @@ describe("installer telemetry boundary", () => {
     ["a direct install", {}, "install"],
     ["an update invocation", { NEMOCLAW_UPDATE_INVOKED: "1" }, "update"],
     ["an unrecognized marker", { NEMOCLAW_UPDATE_INVOKED: "unexpected" }, "install"],
-  ])("passes only the closed operation for %s (#10440)", (_scenario, env, operation) => {
-    const run = runTelemetryAttempt(env);
+  ])(
+    "passes only the closed operation after successful cleanup for %s (#10440)",
+    (_scenario, env, operation) => {
+      const run = runMainHarness(0, env);
+
+      expect(run.result.status, run.output).toBe(0);
+      expect(run.order).toBe("install\nonboard\nfinalize\ncleanup\ntelemetry\n");
+      expect(run.calls).toBe(`${operation}\n`);
+    },
+  );
+
+  it("preserves installer success when the single telemetry call fails (#10440)", () => {
+    const run = runMainHarness(0, { NEMOCLAW_UPDATE_INVOKED: "1" }, 73);
 
     expect(run.result.status, run.output).toBe(0);
-    expect(run.calls).toBe(`internal installer telemetry ${operation}\n`);
-    expect(run.output).toContain("STATUS=0");
-  });
-
-  it("ignores one failed telemetry command without retrying (#10440)", () => {
-    const run = runTelemetryAttempt({ NEMOCLAW_UPDATE_INVOKED: "1" }, 73);
-
-    expect(run.result.status, run.output).toBe(0);
-    expect(run.calls).toBe("internal installer telemetry update\n");
-    expect(run.output).toContain("STATUS=0");
-  });
-
-  it("attempts telemetry once after all successful installer cleanup (#10440)", () => {
-    const run = runMainHarness(0);
-
-    expect(run.result.status, run.output).toBe(0);
-    expect(fs.readFileSync(path.join(run.home, "order.trace"), "utf8")).toBe(
-      "install\nonboard\nfinalize\ncleanup\ntelemetry\n",
-    );
+    expect(run.order).toBe("install\nonboard\nfinalize\ncleanup\ntelemetry\n");
+    expect(run.calls).toBe("update\n");
   });
 
   it("does not attempt telemetry after an installer failure (#10440)", () => {
     const run = runMainHarness(1);
 
     expect(run.result.status, run.output).not.toBe(0);
-    expect(fs.readFileSync(path.join(run.home, "order.trace"), "utf8")).toBe("install\nonboard\n");
+    expect(run.order).toBe("install\nonboard\n");
+    expect(run.calls).toBe("");
   });
 });

@@ -16,7 +16,7 @@ export interface InstallCompletedEvent {
 export type TelemetryEvent = InstallCompletedEvent;
 
 export function isTelemetryOperation(value: unknown): value is TelemetryOperation {
-  return value === "install" || value === "update";
+  return TELEMETRY_OPERATIONS.some((operation) => operation === value);
 }
 
 export function parseInstallCompletedEvent(value: unknown): InstallCompletedEvent | null {
