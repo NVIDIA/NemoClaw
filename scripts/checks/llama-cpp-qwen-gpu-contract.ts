@@ -61,34 +61,47 @@ export function qwenGpuAgentPlan(
   } satisfies LlamaCppOpenClawAgentQualificationPlan);
 }
 
-export function validateQwenGpuStartupLog(log: string): {
-  readonly offloadedLayers: number;
-  readonly totalLayers: number;
+export function validateQwenGpuProcessEvidence(
+  containerProcesses: string,
+  computeApplications: string,
+  modelSizeBytes: number,
+): {
+  readonly processName: string;
+  readonly usedGpuMemoryMiB: number;
+  readonly minimumFullOffloadMemoryMiB: number;
 } {
-  if (Buffer.byteLength(log) < 1 || Buffer.byteLength(log) > QWEN_GPU_MAX_COMMAND_BYTES) {
-    throw new Error("Qwen llama.cpp startup evidence is missing or exceeds its bound");
+  if (!Number.isSafeInteger(modelSizeBytes) || modelSizeBytes < 1) {
+    throw new Error("Qwen GGUF size is invalid");
   }
-  if (
-    /no usable GPU|gpu-layers[^\n]*ignored|compiled without[^\n]*GPU|CPU fallback|fallback to CPU|falling back to CPU/iu.test(
-      log,
-    )
-  ) {
-    throw new Error("Qwen llama.cpp startup reports a rejected GPU or CPU fallback");
+  const llamaProcesses = containerProcesses
+    .trim()
+    .split("\n")
+    .slice(1)
+    .map((line) => line.trim().split(/\s+/u))
+    .filter(([, processName]) => processName === "llama-server");
+  if (llamaProcesses.length !== 1) {
+    throw new Error("Qwen container does not expose one exact llama-server process");
   }
-  const matches = [
-    ...log.matchAll(/offloaded\s+([1-9][0-9]*)\/([1-9][0-9]*)\s+layers?\s+to\s+GPU/giu),
-  ];
-  if (matches.length < 1) throw new Error("Qwen llama.cpp startup is missing GPU offload evidence");
-  const counts = matches.map((match) => ({
-    offloadedLayers: Number.parseInt(match[1] ?? "0", 10),
-    totalLayers: Number.parseInt(match[2] ?? "0", 10),
-  }));
-  if (counts.some(({ offloadedLayers, totalLayers }) => offloadedLayers !== totalLayers)) {
-    throw new Error("Qwen llama.cpp startup reports partial GPU offload");
+  const llamaPid = Number(llamaProcesses[0]?.[0]);
+  if (!Number.isSafeInteger(llamaPid) || llamaPid < 1) {
+    throw new Error("Qwen llama-server process identity is invalid");
   }
-  const uniqueCounts = new Set(counts.map(({ offloadedLayers }) => offloadedLayers));
-  if (uniqueCounts.size !== 1) {
-    throw new Error("Qwen llama.cpp startup reports inconsistent GPU offload counts");
+  const matchingApplications = computeApplications
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => line.split(",").map((value) => value.trim()))
+    .filter(
+      ([pid, processName]) => Number(pid) === llamaPid && /llama-server$/u.test(processName ?? ""),
+    );
+  if (matchingApplications.length !== 1) {
+    throw new Error("Qwen llama-server is not the exact NVIDIA compute process");
   }
-  return counts[0] as { offloadedLayers: number; totalLayers: number };
+  const processName = matchingApplications[0]?.[1] ?? "";
+  const usedGpuMemoryMiB = Number(matchingApplications[0]?.[2]);
+  const minimumFullOffloadMemoryMiB = Math.floor((modelSizeBytes / 1024 ** 2) * 0.75);
+  if (!Number.isSafeInteger(usedGpuMemoryMiB) || usedGpuMemoryMiB < minimumFullOffloadMemoryMiB) {
+    throw new Error("Qwen llama-server GPU memory is below the full-offload threshold");
+  }
+  return { processName, usedGpuMemoryMiB, minimumFullOffloadMemoryMiB };
 }

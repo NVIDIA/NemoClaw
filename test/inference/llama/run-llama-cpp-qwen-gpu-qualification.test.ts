@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   qwenGpuAgentPlan,
-  validateQwenGpuStartupLog,
+  validateQwenGpuProcessEvidence,
 } from "../../../scripts/checks/llama-cpp-qwen-gpu-contract.ts";
 
 const IMAGE = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
@@ -34,16 +34,32 @@ describe("Qwen llama.cpp RTX qualification plan", () => {
     );
   });
 
-  it("requires complete and consistent Qwen GPU offload", () => {
-    expect(validateQwenGpuStartupLog("offloaded 49/49 layers to GPU")).toEqual({
-      offloadedLayers: 49,
-      totalLayers: 49,
+  it("binds the Qwen container process to full-offload NVIDIA memory", () => {
+    const modelSizeBytes = 20 * 1024 ** 3;
+    expect(
+      validateQwenGpuProcessEvidence(
+        "PID COMMAND\n123 llama-server\n",
+        "123, /usr/local/bin/llama-server, 16000\n",
+        modelSizeBytes,
+      ),
+    ).toEqual({
+      processName: "/usr/local/bin/llama-server",
+      usedGpuMemoryMiB: 16000,
+      minimumFullOffloadMemoryMiB: 15360,
     });
-    expect(() => validateQwenGpuStartupLog("offloaded 48/49 layers to GPU")).toThrow(
-      "Qwen llama.cpp startup reports partial GPU offload",
-    );
-    expect(() => validateQwenGpuStartupLog("CPU fallback")).toThrow(
-      "Qwen llama.cpp startup reports a rejected GPU or CPU fallback",
-    );
+    expect(() =>
+      validateQwenGpuProcessEvidence(
+        "PID COMMAND\n123 llama-server\n",
+        "456, /usr/local/bin/llama-server, 16000\n",
+        modelSizeBytes,
+      ),
+    ).toThrow("Qwen llama-server is not the exact NVIDIA compute process");
+    expect(() =>
+      validateQwenGpuProcessEvidence(
+        "PID COMMAND\n123 llama-server\n",
+        "123, /usr/local/bin/llama-server, 15000\n",
+        modelSizeBytes,
+      ),
+    ).toThrow("Qwen llama-server GPU memory is below the full-offload threshold");
   });
 });

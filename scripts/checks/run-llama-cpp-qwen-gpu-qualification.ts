@@ -17,7 +17,7 @@ import {
   qwenGpuAgentPlan,
   QWEN_GPU_MAX_COMMAND_BYTES,
   QWEN_GPU_SHA_PATTERN,
-  validateQwenGpuStartupLog,
+  validateQwenGpuProcessEvidence,
 } from "./llama-cpp-qwen-gpu-contract.ts";
 import { runManagedImageOpenShellE2e } from "./run-managed-image-openshell-e2e.ts";
 
@@ -237,10 +237,11 @@ export async function runQwenGpuQualification(): Promise<void> {
     | {
         readonly fullGpuOffload: true;
         readonly image: string;
+        readonly minimumFullOffloadMemoryMiB: number;
         readonly noDockerPublishedPort: true;
-        readonly offloadedLayers: number;
         readonly platform: "linux/amd64";
-        readonly totalLayers: number;
+        readonly processName: string;
+        readonly usedGpuMemoryMiB: number;
       }
     | undefined;
   let qualificationEvidence: Record<string, unknown> | undefined;
@@ -305,8 +306,19 @@ export async function runQwenGpuQualification(): Promise<void> {
           if (imagePlatform[0]?.Architecture !== "amd64" || imagePlatform[0]?.Os !== "linux") {
             throw new Error("managed llama.cpp did not select the Linux amd64 runtime image");
           }
-          const offload = validateQwenGpuStartupLog(
-            requireCommand("docker", ["logs", "--tail", "20000", MANAGED_LLAMA_CPP_CONTAINER_NAME]),
+          const offload = validateQwenGpuProcessEvidence(
+            requireCommand("docker", [
+              "container",
+              "top",
+              MANAGED_LLAMA_CPP_CONTAINER_NAME,
+              "-eo",
+              "pid,comm",
+            ]),
+            requireCommand("nvidia-smi", [
+              "--query-compute-apps=pid,process_name,used_gpu_memory",
+              "--format=csv,noheader,nounits",
+            ]),
+            setting.modelFile.sizeBytes,
           );
           const unauthorized = requireCommand("curl", [
             "-sS",
@@ -346,8 +358,9 @@ export async function runQwenGpuQualification(): Promise<void> {
             image: recipe.spec.runtime.image,
             platform: "linux/amd64",
             fullGpuOffload: true,
-            offloadedLayers: offload.offloadedLayers,
-            totalLayers: offload.totalLayers,
+            processName: offload.processName,
+            usedGpuMemoryMiB: offload.usedGpuMemoryMiB,
+            minimumFullOffloadMemoryMiB: offload.minimumFullOffloadMemoryMiB,
             noDockerPublishedPort: true,
           };
         },
