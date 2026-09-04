@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { setPolicyDocument } from "../../policy";
+import * as registry from "../../state/registry";
 import { inspectOpenShellSandboxIdentityFingerprint } from "./sandbox-identity-cli";
 import { namedOpenShellGateway } from "./sandbox-observer";
 import {
@@ -55,6 +57,7 @@ function nodeExecutable(name: string, source: string): string {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const directory of directories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -175,5 +178,100 @@ describe("sanitized OpenShell capture", () => {
       XDG_CONFIG_HOME: path.join(directory, "config"),
     });
     expect(environments[0]).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
+  });
+
+  it("keeps a policy mutation on one selected OpenShell runtime", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-runtime-test-"));
+    directories.push(directory);
+    const captureLog = path.join(directory, "capture.jsonl");
+    const policyState = path.join(directory, "policy.json");
+    const sandboxName = "runtime-policy";
+    fs.writeFileSync(policyState, JSON.stringify({ version: 1, network_policies: {} }));
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      localTlsDir: path.join(directory, "authority-tls"),
+      workspace: path.join(directory, "authority-workspace"),
+    } as const;
+    const openshell = nodeExecutable(
+      "openshell",
+      [
+        'const fs = require("node:fs");',
+        "const argv = process.argv.slice(2);",
+        `const captureLog = ${JSON.stringify(captureLog)};`,
+        `const policyState = ${JSON.stringify(policyState)};`,
+        'fs.appendFileSync(captureLog, JSON.stringify({ argv, gateway: process.env.OPENSHELL_GATEWAY, localTlsDir: process.env.OPENSHELL_LOCAL_TLS_DIR, workspace: process.env.OPENSHELL_WORKSPACE, ambient: process.env.OPENSHELL_AMBIENT ?? null, secret: process.env.AWS_SECRET_ACCESS_KEY ?? null }) + "\\n");',
+        'if (argv[0] !== "policy") process.exit(2);',
+        'if (argv[1] === "set") {',
+        '  const policyPath = argv[argv.indexOf("--policy") + 1];',
+        '  fs.writeFileSync(policyState, fs.readFileSync(policyPath, "utf8"));',
+        "  process.exit(0);",
+        "}",
+        'const document = fs.readFileSync(policyState, "utf8");',
+        'const activeVersion = document.includes("selected") ? 2 : 1;',
+        'if (argv.includes("--output")) {',
+        '  process.stdout.write(JSON.stringify({ scope: "sandbox", sandbox: "runtime-policy", status: "effective", policy_source: "sandbox", hash: `sha256:${activeVersion}`, active_version: activeVersion, policy: JSON.parse(document) }));',
+        "} else {",
+        '  process.stdout.write(`Version: ${activeVersion}\\nActive: ${activeVersion}\\n---\\n${document}\\n`);',
+        "}",
+      ].join("\n"),
+    );
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: sandboxName,
+      gatewayName: "nemoclaw",
+    } as never);
+    vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", openshell);
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", path.join(directory, "ambient-tls"));
+    vi.stubEnv("OPENSHELL_WORKSPACE", path.join(directory, "ambient-workspace"));
+    vi.stubEnv("OPENSHELL_AMBIENT", "must-not-reach-openshell");
+    vi.stubEnv("AWS_SECRET_ACCESS_KEY", "must-not-reach-openshell");
+
+    const desiredPolicy = JSON.stringify({
+      version: 1,
+      network_policies: { selected: { endpoints: [{ host: "example.com", port: 443 }] } },
+    });
+    expect(
+      setPolicyDocument(sandboxName, desiredPolicy, { nonFatal: true, runtimeSelection }),
+    ).toBe(true);
+
+    const records = fs
+      .readFileSync(captureLog, "utf8")
+      .trim()
+      .split("\n")
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            argv: string[];
+            gateway: string;
+            localTlsDir: string;
+            workspace: string;
+            ambient: string | null;
+            secret: string | null;
+          },
+      );
+    const commands = records.map(({ argv }) =>
+      argv.map((value, index) => (argv[index - 1] === "--policy" ? "<policy>" : value)),
+    );
+    const environments = [
+      ...new Set(records.map(({ argv: _argv, ...environment }) => JSON.stringify(environment))),
+    ].map((environment) => JSON.parse(environment) as Record<string, string | null>);
+    expect({ commands, environments }).toEqual({
+      commands: [
+        ["policy", "get", "-g", "nemoclaw", "--full", "--output", "json", sandboxName],
+        ["policy", "get", "-g", "nemoclaw", "--base", sandboxName],
+        ["policy", "set", "-g", "nemoclaw", "--policy", "<policy>", "--wait", sandboxName],
+        ["policy", "get", "-g", "nemoclaw", "--full", "--output", "json", sandboxName],
+        ["policy", "get", "-g", "nemoclaw", "--base", sandboxName],
+      ],
+      environments: [
+        {
+          gateway: runtimeSelection.gatewayName,
+          localTlsDir: runtimeSelection.localTlsDir,
+          workspace: runtimeSelection.workspace,
+          ambient: null,
+          secret: null,
+        },
+      ],
+    });
   });
 });
