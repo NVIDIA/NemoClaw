@@ -1592,7 +1592,7 @@ def _run_fixed_validator(
 def _validate_managed_gateway_environment(
     script: str, supervisor_environment: dict[str, str]
 ) -> None:
-    """Validate the Hermes gateway environment without executing under untrusted input."""
+    """Validate supervisor input after the validator applies managed launcher paths."""
 
     _validate_trusted_regular(script)
     spec = importlib.util.spec_from_file_location(
@@ -1724,7 +1724,9 @@ def _hermes_preflight(
         MAX_ENV_BYTES,
         recovery_deadline,
     )
-    _validate_managed_gateway_environment(validator, _parse_environment(raw_environment))
+    _validate_managed_gateway_environment(
+        validator, _parse_environment(raw_environment)
+    )
     _require_recovery_time(recovery_deadline)
     _verify_locked_hermes_hash()
     _require_recovery_time(recovery_deadline)
