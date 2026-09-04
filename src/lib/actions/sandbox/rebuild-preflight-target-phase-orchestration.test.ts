@@ -16,7 +16,8 @@ const mocks = vi.hoisted(() => ({
   stageManagedWorkloadRebuildProfile: vi.fn(),
 }));
 
-vi.mock("./rebuild-mcp-phase", () => ({
+vi.mock("./rebuild-mcp-phase", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./rebuild-mcp-phase")>()),
   getMcpPreparationRuntimeSelection: mocks.getMcpPreparationRuntimeSelection,
 }));
 

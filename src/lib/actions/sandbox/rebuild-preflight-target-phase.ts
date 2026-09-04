@@ -42,7 +42,10 @@ import {
   type RebuildSandboxEntry,
 } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
-import { getMcpPreparationRuntimeSelection } from "./rebuild-mcp-phase";
+import {
+  getMcpPreparationRuntimeSelection,
+  mcpRebuildRequiresRuntimeSelection,
+} from "./rebuild-mcp-phase";
 import { preflightRebuildMessagingConflicts } from "./rebuild-messaging-conflict-preflight";
 import { stageRebuildMessagingPlanOrBail } from "./rebuild-messaging-phase";
 import {
@@ -101,7 +104,7 @@ export function resolveRebuildMcpRuntimeSelection(
   sandboxEntry: RebuildSandboxEntry,
   bail: RebuildBail,
 ): OpenShellRuntimeSelection | undefined {
-  if (Object.keys(sandboxEntry.mcp?.bridges ?? {}).length === 0) return undefined;
+  if (!mcpRebuildRequiresRuntimeSelection(sandboxEntry)) return undefined;
   try {
     return getMcpPreparationRuntimeSelection(sandboxEntry);
   } catch (error) {

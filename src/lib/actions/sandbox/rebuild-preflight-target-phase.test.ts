@@ -11,6 +11,7 @@ import type {
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import {
   pinRebuildTargetGatewayForReadiness,
+  resolveRebuildMcpRuntimeSelection,
   runRebuildGatewayRecoveryAfterReadiness,
   stageRebuildBaseImageResolutionHandoff,
   stageRegistryProviderRecoveryReceipt,
@@ -29,6 +30,26 @@ afterEach(() => {
 });
 
 describe("rebuild readiness gateway pin", () => {
+  it("does not require runtime authority for prepared-only MCP state", () => {
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+
+    expect(
+      resolveRebuildMcpRuntimeSelection(
+        {
+          mcp: {
+            bridges: {
+              github: { addState: "prepared" },
+            },
+          },
+        } as never,
+        bail,
+      ),
+    ).toBeUndefined();
+    expect(bail).not.toHaveBeenCalled();
+  });
+
   it("pins the recorded target without selecting or recovering a gateway (#7411)", () => {
     const log = vi.fn();
     process.env.OPENSHELL_GATEWAY = "hostile-gateway";

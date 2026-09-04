@@ -28,11 +28,16 @@ export function getMcpPreparationRuntimeSelection(
   return getMcpProviderInspectionRuntimeSelection(sandbox);
 }
 
+/** Prepared-only MCP adds own no external runtime state and need no target authority. */
+export function mcpRebuildRequiresRuntimeSelection(sandbox: RebuildSandboxEntry): boolean {
+  return Object.values(sandbox.mcp?.bridges ?? {}).some((entry) => entry.addState !== "prepared");
+}
+
 export function resolveMcpPreparationRuntimeSelection(
   sandboxName: string,
 ): ReturnType<typeof getMcpProviderInspectionRuntimeSelection> | undefined {
   const sandbox = registry.getSandbox(sandboxName);
-  if (!sandbox) return undefined;
+  if (!sandbox || !mcpRebuildRequiresRuntimeSelection(sandbox)) return undefined;
   try {
     return getMcpPreparationRuntimeSelection(sandbox);
   } catch {
@@ -63,6 +68,8 @@ export async function prepareMcpForRebuild(
   bail: RebuildBail,
   frozenRuntimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation | null> {
+  const sandbox = staleRecovery ? undefined : registry.getSandbox(sandboxName);
+  const requiresRuntimeSelection = sandbox ? mcpRebuildRequiresRuntimeSelection(sandbox) : false;
   const runtimeSelection =
     frozenRuntimeSelection ??
     (staleRecovery ? undefined : resolveMcpPreparationRuntimeSelection(sandboxName));
@@ -81,6 +88,7 @@ export async function prepareMcpForRebuild(
   if (
     force &&
     !staleRecovery &&
+    requiresRuntimeSelection &&
     (!runtimeSelection || !canExecuteMcpPreparation(sandboxName, runtimeSelection))
   ) {
     console.error(`  ${YW}⚠${R} MCP transport probe failed; --force using host-side MCP recovery`);

@@ -37,6 +37,7 @@ import {
   removeStaleRebuildDockerOrphan,
   snapshotOpenShellEnv,
 } from "./rebuild-flow-helpers";
+import { mcpRebuildRequiresRuntimeSelection } from "./rebuild-mcp-phase";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import {
   type HermesCronRestoreIdentity,
@@ -240,9 +241,11 @@ async function rebuildSandboxUnlocked(
       recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
       const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
       const mcpEntries = Object.values(sandboxEntry.mcp?.bridges ?? {});
-      const mcpRuntimeSelection =
-        mcpEntries.length > 0 ? recreateOptions.runtimeSelection : undefined;
-      if (mcpEntries.length > 0 && !mcpRuntimeSelection) {
+      const mcpRuntimeSelectionRequired = mcpRebuildRequiresRuntimeSelection(sandboxEntry);
+      const mcpRuntimeSelection = mcpRuntimeSelectionRequired
+        ? recreateOptions.runtimeSelection
+        : undefined;
+      if (mcpRuntimeSelectionRequired && !mcpRuntimeSelection) {
         bail("MCP rebuild preflight did not retain its recorded OpenShell runtime target.");
         return;
       }
@@ -509,7 +512,7 @@ async function rebuildSandboxUnlocked(
 
       const recreateJournal = openRecreateJournal();
       if (!recreateJournal) return;
-      if (mcpEntries.length > 0 && !recreateJournal.runtimeSelection) {
+      if (mcpRuntimeSelectionRequired && !recreateJournal.runtimeSelection) {
         bail("The rebuild journal did not retain its recorded OpenShell runtime target.");
         return;
       }
