@@ -977,7 +977,10 @@ describe("CLI dispatch", () => {
     );
   });
 
-  it("migrates a legacy sandbox named doctor before probe-only connect (#10212)", async () => {
+  it.each([
+    { label: "bare", args: [] as string[] },
+    { label: "probe-only", args: ["--probe-only"] },
+  ])("migrates a legacy sandbox named doctor before $label connect (#10212)", async (testCase) => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, migrateLegacyPortState, runOclifCommandById, sandboxes, stderr }) => {
         migrateLegacyPortState.mockImplementation(() => {
@@ -989,7 +992,7 @@ describe("CLI dispatch", () => {
           };
         });
 
-        await dispatchCli(["doctor", "--probe-only"]);
+        await dispatchCli(["doctor", ...testCase.args]);
 
         expect({
           migrationCalls: migrateLegacyPortState.mock.calls.length,
@@ -997,11 +1000,11 @@ describe("CLI dispatch", () => {
           stderr,
         }).toEqual({
           migrationCalls: 1,
-          oclifCall: ["sandbox:connect", ["doctor", "--probe-only"]],
+          oclifCall: ["sandbox:connect", ["doctor", ...testCase.args]],
           stderr: [expect.stringContaining("Migrated legacy state")],
         });
       },
-      { connectFlags: ["--probe-only"] },
+      { connectFlags: ["--probe-only"], migratableSandboxNames: ["doctor"] },
     );
   });
 

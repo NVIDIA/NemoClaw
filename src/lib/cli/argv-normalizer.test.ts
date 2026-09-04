@@ -98,11 +98,18 @@ describe("normalizeArgv", () => {
     { argv: ["doctor", "--help"], kind: "global", action: undefined },
     { argv: ["doctor", "--json"], kind: "global", action: undefined },
     { argv: ["doctor", "--text"], kind: "global", action: undefined },
+    { argv: ["doctor", "--json"], kind: "global", action: undefined, registered: true },
+    { argv: ["doctor", "--text"], kind: "global", action: undefined, registered: true },
     { argv: ["doctor", "--probe-only"], kind: "sandbox", action: "connect" },
     { argv: ["doctor", "status"], kind: "sandbox", action: "status" },
     { argv: ["doctor", "policy-add"], kind: "sandbox", action: "policy-add" },
-  ])("classifies $argv from one doctor scope rule", ({ argv, kind, action }) => {
-    expect(normalizeArgv(argv, normalizerOptions)).toMatchObject({
+  ])("classifies $argv from one doctor scope rule", ({ argv, kind, action, registered }) => {
+    expect(
+      normalizeArgv(argv, {
+        ...normalizerOptions,
+        isRegisteredSandbox: () => registered === true,
+      }),
+    ).toMatchObject({
       kind,
       ...(action ? { sandboxName: "doctor", action } : {}),
     });

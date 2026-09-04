@@ -29,6 +29,8 @@ type DirectPublicDispatchOptions = {
   pendingSandboxNames?: readonly string[];
   /** Args the sandbox-connect stub treats as connect flags (default: none). */
   connectFlags?: readonly string[];
+  /** Legacy sandbox rows that belong to the selected gateway but are not migrated yet. */
+  migratableSandboxNames?: readonly string[];
   /** Error injected by the pre-dispatch legacy-state migration seam. */
   migrationError?: Error;
   /** Error injected by sandbox registry lookups. */
@@ -114,6 +116,8 @@ export async function withDirectPublicDispatch(
     if (options.migrationError) throw options.migrationError;
     return { migratedSandboxNames: [], migratedSession: false, warnings: [] };
   });
+  const migratableSandboxNames = new Set(options.migratableSandboxNames ?? []);
+  const hasMigratableLegacySandbox = vi.fn((name: string) => migratableSandboxNames.has(name));
   const runOclifArgv = vi.fn(async () => undefined);
   const runOclifCommandById = vi.fn(async () => undefined);
   const printSandboxConnectHelp = vi.fn();
@@ -143,7 +147,7 @@ export async function withDirectPublicDispatch(
     isPublishedSandboxRegistration,
     listSandboxes,
   });
-  cacheModule(legacyPortMigrationPath, { migrateLegacyPortState });
+  cacheModule(legacyPortMigrationPath, { hasMigratableLegacySandbox, migrateLegacyPortState });
   cacheModule(registryRecoveryPath, { recoverRegistryEntries });
   cacheModule(oclifRunnerPath, { runOclifArgv, runOclifCommandById });
   const connectFlags = new Set(options.connectFlags ?? []);

@@ -22,7 +22,10 @@ const {
   sandboxActionTokensForDispatch,
 } = require("./command-registry");
 
-import { migrateLegacyPortState } from "../state/legacy-port-migration";
+import {
+  hasMigratableLegacySandbox,
+  migrateLegacyPortState,
+} from "../state/legacy-port-migration";
 import {
   isGlobalCommandInvocation,
   type NormalizedArgv,
@@ -48,7 +51,7 @@ const NATIVE_OCLIF_NAMESPACES = new Set(["internal", "sandbox"]);
 const MIGRATION_RECOVERY_SANDBOX_ACTIONS = new Set(["doctor", "recover"]);
 const PUBLIC_ARGV_OPTIONS: NormalizeArgvOptions = {
   globalCommands: GLOBAL_COMMANDS,
-  isRegisteredSandbox: hasRegisteredSandbox,
+  isRegisteredSandbox: hasRegisteredOrMigratableSandbox,
   isSandboxAction: isKnownSandboxAction,
   isSandboxConnectFlag: isPublicSandboxConnectFlag,
 };
@@ -86,6 +89,15 @@ function hasRegisteredSandbox(name: string): boolean {
   } catch {
     // Global doctor owns the registry-readability diagnostic. If dispatch
     // cannot inspect the registry, keep routing the bare token there.
+    return false;
+  }
+}
+
+function hasRegisteredOrMigratableSandbox(name: string): boolean {
+  if (hasRegisteredSandbox(name)) return true;
+  try {
+    return hasMigratableLegacySandbox(name);
+  } catch {
     return false;
   }
 }
