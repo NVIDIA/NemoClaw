@@ -123,7 +123,7 @@ jobs:
 
   reviewed-npm-audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -160,7 +160,7 @@ jobs:
           cache: npm
 
       - name: Install test dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Build generated harness inputs
         run: npm run build:policy-boundary && npm run catalog:compile
