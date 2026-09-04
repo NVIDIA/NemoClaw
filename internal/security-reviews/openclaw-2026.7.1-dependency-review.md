@@ -673,8 +673,8 @@ follows:
 - a root entrypoint starts the `gateway` user with `HOME=/sandbox`, so startup
   migrations do not probe the inaccessible `/root/.openclaw` path.
 
-Installed-base coverage is the `v0.0.89-x86_64` row in the
-`openshell-gateway-upgrade` E2E matrix. It installs the immutable v0.0.89
+Installed-base coverage is the `openshell-gateway-upgrade-v0-0-89-x86-64` E2E
+target. It installs the immutable v0.0.89
 release with OpenClaw `2026.6.10`, upgrades through the current installer, and
 proves that the surviving sandbox becomes ready, preserves a workspace marker,
 keeps the raw gateway credential out of the sandbox environment,

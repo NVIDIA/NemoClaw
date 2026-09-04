@@ -21,16 +21,10 @@ type ReviewedOldInstallerProfile = OldInstallerFixtureIdentity &
     expectedAdvisoryAuditCount: 0 | 1;
   }>;
 
-const REVIEWED_OLD_OPENCLAW_ARCHIVES: Readonly<Record<string, ReviewedOldOpenClawArchive>> =
-  Object.freeze({
-    "2026.6.10": {
-      expectedIntegrity:
-        "sha512-LcooND2tBQw8A+kc1Ujltu3lg30bJ0w7XaeRy7eYzobb8BBdcW6DOGbwJL4vpj1vl9+gjRceOtlh5nh9OARcug==",
-      label: "historical fixture OpenClaw 2026.6.10",
-      packageSpec: "openclaw@2026.6.10",
-      tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.6.10.tgz",
-    },
-  });
+type ReviewedOldInstallerFixture = ReviewedOldInstallerProfile &
+  Readonly<{
+    openClawArchive: ReviewedOldOpenClawArchive;
+  }>;
 
 export const OLD_INSTALLER_BOOTSTRAP_NEEDLE = '  legacy_script="${source_root}/install.sh"\n';
 export const OLD_INSTALLER_CLONE_NEEDLE =
@@ -39,30 +33,33 @@ export const OLD_INSTALLER_ADVISORY_AUDIT =
   "    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \\\n";
 export const OLD_INSTALLER_ARCHIVE_CONTEXT_PATH = "nemoclaw/src/.nemoclaw-e2e-old-openclaw.tgz";
 
-const REVIEWED_OLD_INSTALLER_PROFILES: Readonly<Record<string, ReviewedOldInstallerProfile>> =
-  Object.freeze({
-    "v0.0.89": Object.freeze({
-      expectedAdvisoryAuditCount: 1,
-      nemoclawCommit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e",
-      nemoclawRef: "v0.0.89",
-      openclawVersion: "2026.6.10",
-    }),
-  });
+const REVIEWED_OLD_INSTALLER_FIXTURE: ReviewedOldInstallerFixture = Object.freeze({
+  expectedAdvisoryAuditCount: 1,
+  nemoclawCommit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e",
+  nemoclawRef: "v0.0.89",
+  openclawVersion: "2026.6.10",
+  openClawArchive: Object.freeze({
+    expectedIntegrity:
+      "sha512-LcooND2tBQw8A+kc1Ujltu3lg30bJ0w7XaeRy7eYzobb8BBdcW6DOGbwJL4vpj1vl9+gjRceOtlh5nh9OARcug==",
+    label: "historical fixture OpenClaw 2026.6.10",
+    packageSpec: "openclaw@2026.6.10",
+    tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.6.10.tgz",
+  }),
+});
 
 export function reviewedOldOpenClawArchive(version: string): ReviewedOldOpenClawArchive {
-  const reviewedArchive = REVIEWED_OLD_OPENCLAW_ARCHIVES[version];
-  if (!reviewedArchive) {
+  if (version !== REVIEWED_OLD_INSTALLER_FIXTURE.openclawVersion) {
     throw new Error(`Historical gateway upgrade OpenClaw ${version} has no reviewed archive pin`);
   }
-  return reviewedArchive;
+  return REVIEWED_OLD_INSTALLER_FIXTURE.openClawArchive;
 }
 
 export function reviewedOldInstallerProfile(
   identity: OldInstallerFixtureIdentity,
 ): ReviewedOldInstallerProfile {
-  const profile = REVIEWED_OLD_INSTALLER_PROFILES[identity.nemoclawRef];
+  const profile = REVIEWED_OLD_INSTALLER_FIXTURE;
   if (
-    !profile ||
+    profile.nemoclawRef !== identity.nemoclawRef ||
     profile.nemoclawCommit !== identity.nemoclawCommit ||
     profile.openclawVersion !== identity.openclawVersion
   ) {
