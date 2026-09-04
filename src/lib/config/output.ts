@@ -186,10 +186,11 @@ function removeIfSame(candidate: string, expected: fs.Stats): void {
 }
 
 function preserveRecovery(moved: string, outputPath: string): never {
+  const recoverable = path.join(path.dirname(outputPath), path.basename(moved));
   throw new YamlExportOutputError(
     "unsafe-output",
     outputPath,
-    `Publication failed and the destination remains recoverable at: ${moved}`,
+    `Publication failed and the destination remains recoverable at: ${recoverable}`,
   );
 }
 

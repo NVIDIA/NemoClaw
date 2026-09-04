@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ observeLiveExportSource: vi.fn() }));
 
@@ -16,13 +16,15 @@ describe("config export command", () => {
   beforeEach(() => {
     mocks.observeLiveExportSource.mockReset();
   });
+  afterEach(() => {
+    process.exitCode = 0;
+  });
 
   it("rejects JSON on YAML stdout before reading source state (#10938)", async () => {
     await expect(
       ConfigExportCommand.run(["alpha", "--output", "-", "--json"], process.cwd()),
     ).resolves.toBeUndefined();
     expect(process.exitCode).toBe(1);
-    process.exitCode = 0;
     expect(mocks.observeLiveExportSource).not.toHaveBeenCalled();
   });
 

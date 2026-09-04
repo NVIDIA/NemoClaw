@@ -19,6 +19,7 @@ function entry(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
   return {
     name: "alpha",
     agent: "openclaw",
+    openshellDriver: "docker",
     lifecycleGeneration: "generation-1",
     lifecycleLiveIdentityFingerprint: fingerprint,
     gatewayName: "nemoclaw",
@@ -202,6 +203,14 @@ describe("stable config export source observation (#10938)", () => {
       );
     },
   );
+  it("classifies missing gateway and runtime driver provenance", () => {
+    const findings = classifyExportRegistryFidelity(
+      entry({ gatewayName: undefined, gatewayPort: undefined, openshellDriver: null }),
+    );
+    expect(findings.map(({ field }) => field)).toEqual(
+      expect.arrayContaining(["spec.gateway", "spec.sandboxes[].runtime.provider"]),
+    );
+  });
   it("canonicalizes policy losslessly and rejects malformed policy", () => {
     expect(canonicalizeEffectivePolicy(policy)).toEqual({
       filesystem_policy: { include_workdir: false, read_only: ["/usr"], read_write: ["/sandbox"] },

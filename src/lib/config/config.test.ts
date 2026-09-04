@@ -91,6 +91,25 @@ describe("NemoClawConfig v1", () => {
     },
   );
 
+  it("uses fixed code-unit ordering for non-ASCII mapping keys (#10938)", () => {
+    const value = config();
+    (value.spec.sandboxes[0]!.network.policy.explicit as Record<string, any>).network_policies = {
+      ä: {
+        name: "ä",
+        endpoints: [{ host: "z.example.com", port: 443 }],
+        binaries: [{ path: "/usr/bin/z" }],
+      },
+      z: {
+        name: "z",
+        endpoints: [{ host: "a.example.com", port: 443 }],
+        binaries: [{ path: "/usr/bin/a" }],
+      },
+    };
+    const yaml = serializeCanonicalNemoClawConfig(value);
+    expect(yaml.indexOf("      z:")).toBeLessThan(yaml.indexOf("      ä:"));
+    expect(digestNemoClawConfig(value)).toEqual(digestNemoClawConfig(structuredClone(value)));
+  });
+
   it("emits the same canonical YAML for mapping insertion order changes (#10938)", () => {
     const value = config();
     const reordered = {

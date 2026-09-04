@@ -19,7 +19,10 @@ function temporaryRoot(): string {
 function temporaryEntries(root: string): string[] {
   return fs
     .readdirSync(root)
-    .filter((entry) => entry.endsWith(".tmp") || entry.endsWith(".previous"));
+    .filter(
+      (entry) =>
+        entry.endsWith(".tmp") || entry.endsWith(".previous") || entry.endsWith(".rollback"),
+    );
 }
 
 afterEach(() => {

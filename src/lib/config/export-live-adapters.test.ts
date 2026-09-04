@@ -36,6 +36,7 @@ const identityFingerprint = fingerprintOpenShellSandboxId(id)!;
 const entry = {
   name: "alpha",
   agent: "openclaw",
+  openshellDriver: "docker",
   gatewayName: "nemoclaw",
   gatewayPort: 8080,
   lifecycleGeneration: "generation-1",

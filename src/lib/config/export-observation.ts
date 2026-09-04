@@ -172,6 +172,24 @@ export function classifyExportRegistryFidelity(
         "Lifecycle generation and live identity provenance are required.",
       ),
     );
+  if (typeof entry.gatewayPort !== "number" || !entry.gatewayName)
+    findings.push(
+      finding(
+        "spec.gateway",
+        "missing",
+        "missing-provenance",
+        "A persisted gateway name and port are required.",
+      ),
+    );
+  if (!entry.openshellDriver)
+    findings.push(
+      finding(
+        "spec.sandboxes[].runtime.provider",
+        "missing",
+        "missing-provenance",
+        "The persisted OpenShell runtime driver is required.",
+      ),
+    );
   if (!entry.workload)
     findings.push(
       finding(
