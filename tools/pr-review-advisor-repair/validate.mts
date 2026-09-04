@@ -30,6 +30,7 @@ import {
   assertRepairContractSchema,
   CANONICAL_REPOSITORY,
   type ChangedPath,
+  isDeniedRepairControlPath,
   MAX_CHANGED_FILE_BYTES,
   MAX_CHANGED_FILES,
   MAX_PATCH_BYTES,
@@ -200,33 +201,6 @@ function assertExactCleanSource(
   }
 }
 
-const GENERATED_HEAD_DENIED_PREFIXES = [
-  ".agents/",
-  ".claude/",
-  ".github/",
-  "ci/",
-  "scripts/",
-  "test/e2e/",
-  "tools/",
-] as const;
-
-const GENERATED_HEAD_DENIED_BASENAMES = new Set([
-  ".gitattributes",
-  ".gitmodules",
-  ".npmrc",
-  "AGENTS.md",
-  "biome.json",
-  "CODEOWNERS",
-  "SECURITY.md",
-  "package.json",
-  "package-lock.json",
-  "npm-shrinkwrap.json",
-  "pnpm-lock.yaml",
-  "tsconfig.json",
-  "vitest.config.ts",
-  "yarn.lock",
-]);
-
 export function assertEligibleSourceDiff(
   repository: string,
   selection: SelectionBundle,
@@ -249,11 +223,7 @@ export function assertEligibleSourceDiff(
   const paths = output.split("\0").filter(Boolean);
   const denied = paths.find((changedPath) => {
     const basename = path.posix.basename(changedPath);
-    return (
-      GENERATED_HEAD_DENIED_BASENAMES.has(basename) ||
-      /^tsconfig(?:[.].+)?[.]json$/u.test(basename) ||
-      GENERATED_HEAD_DENIED_PREFIXES.some((prefix) => changedPath.startsWith(prefix))
-    );
+    return isDeniedRepairControlPath(changedPath) || /^tsconfig(?:[.].+)?[.]json$/u.test(basename);
   });
   if (denied) {
     throw new RepairContractError(

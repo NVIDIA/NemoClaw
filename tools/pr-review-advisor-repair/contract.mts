@@ -308,6 +308,23 @@ const DENIED_BASENAMES = new Set([
   "yarn.lock",
 ]);
 
+const DENIED_PREFIXES = [
+  ".agents/",
+  ".claude/",
+  ".github/",
+  "ci/",
+  "scripts/",
+  "test/e2e/",
+  "tools/",
+] as const;
+
+export function isDeniedRepairControlPath(value: string): boolean {
+  return (
+    value.split("/").some((segment) => DENIED_BASENAMES.has(segment)) ||
+    DENIED_PREFIXES.some((prefix) => value.startsWith(prefix))
+  );
+}
+
 export function safeRelativePath(value: string): boolean {
   if (
     value.length === 0 ||
@@ -326,10 +343,7 @@ export function safeRelativePath(value: string): boolean {
   ) {
     return false;
   }
-  if (segments.some((segment) => DENIED_BASENAMES.has(segment))) return false;
-  return ![".agents/", ".claude/", ".github/", "ci/", "scripts/", "test/e2e/", "tools/"].some(
-    (prefix) => value.startsWith(prefix),
-  );
+  return !isDeniedRepairControlPath(value);
 }
 
 export function repairClassForPath(value: string): Exclude<RepairClass, "unsupported"> | null {

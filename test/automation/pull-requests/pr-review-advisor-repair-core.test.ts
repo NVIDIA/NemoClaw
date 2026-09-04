@@ -14,6 +14,7 @@ import {
 import { createAttemptReceipt } from "../../../tools/pr-review-advisor-repair/audit.mts";
 import {
   assertRepairContractSchema,
+  isDeniedRepairControlPath,
   parseSelectionInput,
   repairClassForPath,
   type SelectionBundle,
@@ -266,6 +267,21 @@ describe("PR Review Advisor repair Phase 1", () => {
     expect(safeRelativePath(".github/workflows/ci.yaml")).toBe(false);
     expect(safeRelativePath("test/e2e/live.test.ts")).toBe(false);
     expect(repairClassForPath("package-lock.json")).toBeNull();
+  });
+
+  it.each([
+    ".gitattributes",
+    "AGENTS.md",
+    "package-lock.json",
+    ".agents/review.md",
+    ".github/workflows/ci.yaml",
+    "ci/policy.json",
+    "scripts/check.mts",
+    "test/e2e/live.test.ts",
+    "tools/check.mts",
+  ])("shares one control-path denial for %s (#10791)", (changedPath) => {
+    expect(isDeniedRepairControlPath(changedPath)).toBe(true);
+    expect(safeRelativePath(changedPath)).toBe(false);
   });
 
   it("binds one successful canonical Advisor run and its ten artifacts (#10791)", () => {
