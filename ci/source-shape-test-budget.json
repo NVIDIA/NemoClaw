@@ -222,6 +222,11 @@
       "category": "security"
     },
     {
+      "file": "test/agents/hermes/hermes-image-build-probes.test.ts",
+      "test": "binds the Hermes wrapper to its source digest",
+      "category": "security"
+    },
+    {
       "file": "test/agents/hermes/reviewed-hermes-platform-action.test.ts",
       "test": "publishes the verified native manifest digest",
       "category": "security"
