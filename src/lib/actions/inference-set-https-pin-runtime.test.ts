@@ -351,6 +351,78 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     );
   });
 
+  it("restores the prior selection when provider profile preparation fails (#9806)", async () => {
+    vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
+    const capture = providerCapture({
+      providerName: "compatible-endpoint",
+      providerType: "openai",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "old-model",
+      },
+      session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+      ensureHttpsPinRuntimeAdapter: mockAdapter(),
+      captureOpenshell: capture,
+    });
+    vi.spyOn(deps.providerAdapter, "importProviderProfile").mockResolvedValue({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "redacted profile failure",
+      },
+    });
+
+    const failure = await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "new-model",
+        endpointUrl: "https://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-completions",
+      },
+      deps,
+    ).catch((error: Error) => error);
+
+    expect(failure).toBeInstanceOf(InferenceSetError);
+    const message = (failure as Error).message;
+    expect(message).toContain("redacted profile failure");
+    expect(message).toContain(
+      "The previous OpenShell inference selection was restored. The provider binding was not changed.",
+    );
+
+    const selectionMutations = capture.mock.calls.filter(
+      ([args]) => args[0] === "inference" && args[1] === "set",
+    );
+    expect(selectionMutations).toHaveLength(2);
+    expect(selectionMutations[0]?.[0]).toEqual(
+      expect.arrayContaining([
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        "new-model",
+        "--no-verify",
+      ]),
+    );
+    expect(selectionMutations[1]?.[0]).toEqual(
+      expect.arrayContaining(["--provider", "nvidia-prod", "--model", "old-model", "--no-verify"]),
+    );
+    expect(
+      capture.mock.calls.filter(([args]) => args[0] === "provider" && args[1] === "update"),
+    ).toHaveLength(0);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
+    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
+  });
+
   it("reports reconciliation when provider update and selection restore both fail (#9806)", async () => {
     vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
     const capture = providerCapture({
