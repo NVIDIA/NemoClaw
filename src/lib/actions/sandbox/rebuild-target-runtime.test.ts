@@ -209,11 +209,17 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
 describe("authoritative rebuild readiness", () => {
   it("passes recorded managed-vLLM intent to the pre-delete readiness gate (#9292)", async () => {
     const authority = { checkpoint: "gateway-authority" };
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      localTlsDir: "/authority/tls",
+      workspace: "default",
+    };
     mocks.preflightAuthoritativeRebuildTarget.mockResolvedValue(authority);
     const recreateOptions = {
       ...RECREATE_OPTIONS,
       allowDeferredN1xManagedVllm: true,
       allowLegacyDgxStationQualification: true,
+      runtimeSelection,
     } as RebuildRecreateOnboardOpts;
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
@@ -234,6 +240,7 @@ describe("authoritative rebuild readiness", () => {
         allowLegacyDgxStationQualification: true,
         provider: "vllm-local",
         model: "test-model",
+        runtimeSelection,
         sandboxName: "alpha",
       }),
     );

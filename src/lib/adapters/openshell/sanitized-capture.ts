@@ -13,6 +13,8 @@ type SanitizedCaptureOptions = Readonly<{
   includeStreams: true;
   maxBuffer: number;
   timeout: number;
+  env?: Record<string, string>;
+  replaceEnv?: true;
 }>;
 
 /** Capture a bounded OpenShell read with a credential-minimizing environment. */
