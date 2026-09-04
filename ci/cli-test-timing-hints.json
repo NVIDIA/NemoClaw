@@ -76,7 +76,6 @@
     "test/automation/pull-requests/pr-review-advisor-writing-guide.test.ts": 8835,
     "test/automation/releases/release-latest-tag.test.ts": 20264,
     "test/automation/releases/retire-release-label.test.ts": 5642,
-    "test/automation/releases/wechat-runtime-audit-workflow.test.ts": 26307,
     "test/channels/channels-remove-full-teardown.test.ts": 9727,
     "test/cli/cli-oclif-compatibility.test.ts": 7416,
     "test/cli/connect-recovery.test.ts": 14143,
