@@ -486,10 +486,10 @@ jobs:
           retention-days: 14
 
   windows-native-package-diagnostic:
-    name: Windows native package startup diagnostic (ARM64, no WSL)
+    name: Windows native package/runtime diagnostic (ARM64, no WSL)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id != '' }}
     runs-on: windows-11-vs2026-arm
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - name: Check out diagnostic scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -544,15 +544,45 @@ jobs:
           $startedAt = [DateTime]::Now
           $arguments = @('/install', '/quiet', '/norestart', '/log', $log)
           $process = Start-Process -FilePath $setup -ArgumentList $arguments -PassThru
+          $setupExitCode = $null
           try {
-            if (-not $process.WaitForExit(300000)) {
+            if (-not $process.WaitForExit(1200000)) {
               & "$env:SystemRoot\System32\taskkill.exe" /PID $process.Id /T /F | Out-Null
-              'timed_out_after_seconds=300' | Out-File -LiteralPath (Join-Path $artifactRoot 'probe-result.txt') -Encoding utf8
+              'setup_timed_out_after_seconds=1200' | Out-File -LiteralPath (Join-Path $artifactRoot 'probe-result.txt') -Encoding utf8
             } else {
-              "exit_code=$($process.ExitCode)" | Out-File -LiteralPath (Join-Path $artifactRoot 'probe-result.txt') -Encoding utf8
+              $setupExitCode = $process.ExitCode
+              "setup_exit_code=$setupExitCode" | Out-File -LiteralPath (Join-Path $artifactRoot 'probe-result.txt') -Encoding utf8
             }
           } finally {
             $process.Dispose()
+          }
+          if ($setupExitCode -eq 0) {
+            $installRoot = Join-Path $env:ProgramFiles 'NVIDIA\NemoClaw'
+            $installedQualification = Join-Path $installRoot 'qualification\run-installed-native-web-ui.mts'
+            $candidateQualification = Join-Path $env:GITHUB_WORKSPACE 'candidate\packaging\windows\runtime\run-installed-native-web-ui.mts'
+            Copy-Item -LiteralPath $candidateQualification -Destination $installedQualification -Force
+            $runtimeArtifacts = Join-Path $artifactRoot 'runtime'
+            [IO.Directory]::CreateDirectory($runtimeArtifacts) | Out-Null
+            $runtimeStdout = Join-Path $artifactRoot 'runtime-stdout.log'
+            $runtimeStderr = Join-Path $artifactRoot 'runtime-stderr.log'
+            $launcher = Join-Path $installRoot 'bin\NemoClaw.exe'
+            $runtimeArguments = @('--wait', '--qualification', '--artifact-directory', $runtimeArtifacts)
+            $runtime = Start-Process `
+              -FilePath $launcher `
+              -ArgumentList $runtimeArguments `
+              -RedirectStandardOutput $runtimeStdout `
+              -RedirectStandardError $runtimeStderr `
+              -PassThru
+            try {
+              if (-not $runtime.WaitForExit(1200000)) {
+                & "$env:SystemRoot\System32\taskkill.exe" /PID $runtime.Id /T /F | Out-Null
+                'runtime_timed_out_after_seconds=1200' | Out-File -LiteralPath (Join-Path $artifactRoot 'probe-result.txt') -Encoding utf8 -Append
+              } else {
+                "runtime_exit_code=$($runtime.ExitCode)" | Out-File -LiteralPath (Join-Path $artifactRoot 'probe-result.txt') -Encoding utf8 -Append
+              }
+            } finally {
+              $runtime.Dispose()
+            }
           }
           foreach ($startupLog in @(Get-ChildItem `
             -LiteralPath ([IO.Path]::GetTempPath()) `

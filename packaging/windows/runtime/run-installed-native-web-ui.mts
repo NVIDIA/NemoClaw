@@ -41,6 +41,19 @@ function sha256(file) {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
+async function waitForBrowserReceipt(file, predicate, timeout) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (fs.statSync(file, { throwIfNoEntry: false })?.isFile()) {
+      const receipt = JSON.parse(fs.readFileSync(file, "utf8"));
+      if (receipt.verdict === "fail") fail(receipt.error ?? "the MXC Control UI proof failed");
+      if (predicate(receipt)) return receipt;
+    }
+    await sleep(250);
+  }
+  fail("the MXC Control UI receipt did not reach its expected state");
+}
+
 const PROVIDER_CONFIGURATION = {
   nvidia: {
     endpoint: "https://integrate.api.nvidia.com/v1",
@@ -292,9 +305,11 @@ async function startHostInferenceBroker(configuration, credential, brokerToken) 
 }
 
 function gatewaySource() {
-  return String.raw`import { mkdirSync, writeFileSync } from "node:fs";
+  return String.raw`import fs, { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { join } from "node:path";
+import net from "node:net";
+import { createRequire, syncBuiltinESMExports } from "node:module";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const required = (name) => {
@@ -303,12 +318,22 @@ const required = (name) => {
   return value;
 };
 const launcher = required("NEMOCLAW_MXC_OPENCLAW_ENTRY");
+const browserReceipt = required("NEMOCLAW_MXC_BROWSER_RECEIPT");
+const edge = required("NEMOCLAW_MXC_EDGE");
+const evidenceRoot = required("NEMOCLAW_MXC_EVIDENCE_ROOT");
 const home = required("NEMOCLAW_MXC_HOME");
 const modelPort = Number(required("NEMOCLAW_MXC_MODEL_PORT"));
 const modelId = required("NEMOCLAW_MXC_MODEL_ID");
 const modelToken = required("NEMOCLAW_MXC_MODEL_TOKEN");
+const playwrightRoot = required("NEMOCLAW_MXC_PLAYWRIGHT_ROOT");
 const qualification = required("NEMOCLAW_MXC_QUALIFICATION") === "1";
 const uiPort = Number(required("NEMOCLAW_MXC_UI_PORT"));
+const turnProofs = [
+  ["Reply exactly with NATIVE_WINDOWS_TURN_1_OK", "NATIVE_WINDOWS_TURN_1_OK"],
+  ["Reply exactly with NATIVE_WINDOWS_TURN_2_OK", "NATIVE_WINDOWS_TURN_2_OK"],
+  ["Reply exactly with NATIVE_WINDOWS_TURN_3_OK", "NATIVE_WINDOWS_TURN_3_OK"],
+];
+const sleep = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
 const readBody = async (request) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
@@ -323,6 +348,95 @@ const responseFor = (body) => {
   const text = body.messages.map((message) => contentText(message?.content)).join("\n");
   const turn = text.match(/NATIVE_WINDOWS_TURN_([123])_OK/u)?.[1];
   return turn ? "NATIVE_WINDOWS_TURN_" + turn + "_OK" : "NEMOCLAW_NATIVE_PREVIEW_OK";
+};
+const waitForUi = async () => {
+  const deadline = Date.now() + 180_000;
+  while (Date.now() < deadline) {
+    const connected = await new Promise((resolvePromise) => {
+      const socket = net.createConnection({ host: "127.0.0.1", port: uiPort });
+      socket.once("connect", () => {
+        socket.destroy();
+        resolvePromise(true);
+      });
+      socket.once("error", () => {
+        socket.destroy();
+        resolvePromise(false);
+      });
+      socket.setTimeout(500, () => {
+        socket.destroy();
+        resolvePromise(false);
+      });
+    });
+    if (connected) return;
+    await sleep(250);
+  }
+  throw new Error("OpenClaw Control UI did not become ready inside MXC");
+};
+const writeBrowserReceipt = (value) => {
+  mkdirSync(dirname(browserReceipt), { recursive: true });
+  const temporaryReceipt = browserReceipt + "." + process.pid + ".tmp";
+  writeFileSync(temporaryReceipt, JSON.stringify(value, null, 2) + "\n", "utf8");
+  fs.renameSync(temporaryReceipt, browserReceipt);
+};
+const driveControlUi = async () => {
+  let browser = null;
+  try {
+    await waitForUi();
+    const require = createRequire(import.meta.url);
+    const { chromium } = require(playwrightRoot);
+    browser = await chromium.launch({
+      executablePath: edge,
+      headless: false,
+      args: ["--no-first-run", "--no-default-browser-check", "--window-position=20,10", "--window-size=1440,810"],
+    });
+    const context = await browser.newContext({ viewport: { width: 1400, height: 730 } });
+    const page = await context.newPage();
+    await page.goto("http://127.0.0.1:" + uiPort + "/chat", { waitUntil: "domcontentloaded", timeout: 90_000 });
+    const composer = page.locator(".agent-chat__composer-combobox > textarea").first();
+    await composer.waitFor({ state: "visible", timeout: 90_000 });
+    await page.waitForFunction(() => {
+      const input = document.querySelector(".agent-chat__composer-combobox > textarea");
+      return input instanceof HTMLTextAreaElement && !input.disabled;
+    }, undefined, { timeout: 90_000 });
+    await page.evaluate(() => {
+      document.title = "NemoClaw Native Windows · OpenClaw Control UI";
+    });
+    await page.screenshot({ path: join(evidenceRoot, "web-ui-ready.png") });
+    if (!qualification) {
+      writeBrowserReceipt({ verdict: "ready", browserVersion: browser.version(), closed: false, turns: [] });
+      await new Promise((resolvePromise) => browser.once("disconnected", resolvePromise));
+      writeBrowserReceipt({ verdict: "pass", browserVersion: "Microsoft Edge", closed: true, turns: [] });
+      process.exit(0);
+    }
+    const turns = [];
+    for (let index = 0; index < turnProofs.length; index += 1) {
+      const [prompt, expected] = turnProofs[index];
+      console.log("WEB UI> TURN " + (index + 1) + " typing in the real OpenClaw Control UI inside MXC");
+      await composer.fill("");
+      await composer.pressSequentially(prompt, { delay: 20 });
+      await sleep(750);
+      await composer.press("Enter");
+      await page.getByText(expected, { exact: true }).last().waitFor({ state: "visible", timeout: 120_000 });
+      await page.screenshot({ path: join(evidenceRoot, "web-ui-turn-" + (index + 1) + ".png"), fullPage: false });
+      console.log("WEB UI> TURN " + (index + 1) + " PASS " + expected);
+      turns.push({ prompt, expected, visible: true });
+      await sleep(2000);
+    }
+    await sleep(3000);
+    writeBrowserReceipt({ verdict: "pass", browserVersion: browser.version(), closed: true, turns });
+    await browser.close();
+    process.exit(0);
+  } catch (error) {
+    writeBrowserReceipt({
+      verdict: "fail",
+      closed: true,
+      error: error instanceof Error ? error.message : "OpenClaw Control UI proof failed",
+      turns: [],
+    });
+    if (browser?.isConnected()) await browser.close();
+    console.error(error instanceof Error ? error.stack : String(error));
+    process.exit(1);
+  }
 };
 const mock = qualification ? createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/v1/models") {
@@ -369,7 +483,62 @@ if (mock !== null) await new Promise((resolve, reject) => {
 });
 const configDirectory = join(home, ".openclaw");
 mkdirSync(configDirectory, { recursive: true });
-mkdirSync(join(configDirectory, "agents", "main", "agent"), { recursive: true });
+const agentDirectory = join(configDirectory, "agents", "main", "agent");
+mkdirSync(agentDirectory, { recursive: true });
+const canonicalAgentDirectory = resolve(agentDirectory);
+const canUseAgentDirectoryFallback = (target, error) => {
+  if (error?.code !== "EPERM" || typeof target !== "string") return false;
+  if (resolve(target).toLowerCase() !== canonicalAgentDirectory.toLowerCase()) return false;
+  const entry = fs.lstatSync(canonicalAgentDirectory);
+  return entry.isDirectory() && !entry.isSymbolicLink();
+};
+const encodedAgentDirectory = (options) =>
+  options === "buffer" || options?.encoding === "buffer"
+    ? Buffer.from(canonicalAgentDirectory)
+    : canonicalAgentDirectory;
+const originalPromiseRealpath = fs.promises.realpath.bind(fs.promises);
+fs.promises.realpath = async (target, options) => {
+  try {
+    return await originalPromiseRealpath(target, options);
+  } catch (error) {
+    if (!canUseAgentDirectoryFallback(target, error)) throw error;
+    return encodedAgentDirectory(options);
+  }
+};
+const originalRealpath = fs.realpath.bind(fs);
+const patchedRealpath = (target, options, callback) => {
+  const resolvedCallback = typeof options === "function" ? options : callback;
+  const resolvedOptions = typeof options === "function" ? undefined : options;
+  return originalRealpath(target, resolvedOptions, (error, value) => {
+    if (error && canUseAgentDirectoryFallback(target, error)) {
+      resolvedCallback(null, encodedAgentDirectory(resolvedOptions));
+      return;
+    }
+    resolvedCallback(error, value);
+  });
+};
+const originalRealpathSync = fs.realpathSync.bind(fs);
+const originalNativeRealpathSync = fs.realpathSync.native.bind(fs.realpathSync);
+const patchedRealpathSync = (target, options) => {
+  try {
+    return originalRealpathSync(target, options);
+  } catch (error) {
+    if (!canUseAgentDirectoryFallback(target, error)) throw error;
+    return encodedAgentDirectory(options);
+  }
+};
+patchedRealpathSync.native = (target, options) => {
+  try {
+    return originalNativeRealpathSync(target, options);
+  } catch (error) {
+    if (!canUseAgentDirectoryFallback(target, error)) throw error;
+    return encodedAgentDirectory(options);
+  }
+};
+patchedRealpath.native = patchedRealpath;
+fs.realpath = patchedRealpath;
+fs.realpathSync = patchedRealpathSync;
+syncBuiltinESMExports();
 writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
   gateway: {
     mode: "local",
@@ -394,7 +563,9 @@ Object.assign(process.env, {
   USERPROFILE: home,
 });
 process.argv = [process.execPath, launcher, "gateway", "run", "--allow-unconfigured", "--port", String(uiPort), "--bind", "loopback", "--auth", "none"];
+const browserTask = driveControlUi();
 await import(pathToFileURL(launcher).href);
+await browserTask;
 `;
 }
 
@@ -491,7 +662,7 @@ async function startOnboardingServer(
         response.end(
           JSON.stringify({
             redirect:
-              qualification && submitted.agent === "openclaw"
+              qualification && submitted.agent === "openclaw" && openClawUrl
                 ? `${openClawUrl}/chat`
                 : `/launching.html?agent=${encodeURIComponent(submitted.agent)}`,
           }),
@@ -655,14 +826,16 @@ async function driveBrowser(
     });
     await sleep(2500);
     await page.locator("#launch").click();
-    if (targetAgent !== "openclaw") {
+    if (targetAgent !== "openclaw" || !openClawUrl) {
       await page.waitForURL(`${onboardingOrigin}/launching.html?agent=${targetAgent}`, {
         timeout: 30_000,
       });
-      await page.screenshot({
-        path: path.join(evidenceRoot, `onboarding-${targetAgent}-launching.png`),
-        fullPage: false,
-      });
+      if (targetAgent !== "openclaw") {
+        await page.screenshot({
+          path: path.join(evidenceRoot, `onboarding-${targetAgent}-launching.png`),
+          fullPage: false,
+        });
+      }
       await sleep(3000);
       return { browserVersion, demonstratedAgentChoices, disabledAgentChoices, turns: [] };
     }
@@ -758,40 +931,6 @@ async function runInitialOnboarding(
   });
   child.unref();
   console.log(`WEB UI> Opened the authentic ${agentNamesForLaunch[selection.agent]} surface`);
-}
-
-async function driveConfiguredOpenClaw(openClawRoot, openClawUrl) {
-  const playwrightRoot = requiredDirectory(
-    path.join(openClawRoot, "node_modules", "openclaw", "node_modules", "playwright-core"),
-    "installed Playwright browser driver",
-  );
-  const require = createRequire(import.meta.url);
-  const { chromium } = require(playwrightRoot);
-  const browser = await chromium.launch({
-    executablePath: resolveEdge(),
-    headless: false,
-    args: [
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--window-position=20,10",
-      "--window-size=1440,810",
-    ],
-  });
-  try {
-    const context = await browser.newContext({ viewport: { width: 1400, height: 730 } });
-    const page = await context.newPage();
-    await page.goto(`${openClawUrl}/chat`, { waitUntil: "domcontentloaded", timeout: 90_000 });
-    const composer = page.locator(".agent-chat__composer-combobox > textarea").first();
-    await composer.waitFor({ state: "visible", timeout: 90_000 });
-    await page.evaluate(() => {
-      document.title = "NemoClaw Native Windows · OpenClaw Control UI";
-    });
-    console.log("WEB UI> OpenClaw Control UI is ready inside native MXC");
-    await new Promise((resolve) => browser.once("disconnected", resolve));
-  } catch (error) {
-    if (browser.isConnected()) await browser.close();
-    throw error;
-  }
 }
 
 async function runSelectedNonOpenClaw(
@@ -1004,6 +1143,8 @@ async function main() {
   const evidenceRoot = selectedEvidenceRoot;
   const node = path.join(runtimeRoot, "node.exe");
   const openClawRoot = path.join(runtimeRoot, "openclaw");
+  const edge = resolveEdge();
+  const edgeRoot = path.dirname(edge);
   console.log("WEB UI> Staging the exact installed OpenClaw runtime for MXC");
   fs.copyFileSync(installedNode, node);
   fs.cpSync(installedOpenClawRoot, openClawRoot, { recursive: true });
@@ -1011,6 +1152,11 @@ async function main() {
     path.join(openClawRoot, "node_modules", "openclaw", "openclaw.mjs"),
     "staged OpenClaw entrypoint",
   );
+  const playwrightRoot = requiredDirectory(
+    path.join(openClawRoot, "node_modules", "openclaw", "node_modules", "playwright-core"),
+    "installed Playwright browser driver",
+  );
+  const browserReceiptPath = path.join(evidenceRoot, `openclaw-mxc-browser-${runId}.json`);
   if (!fs.readFileSync(openClawEntry).equals(fs.readFileSync(installedOpenClawEntry)))
     fail("staged OpenClaw entrypoint does not match the installed payload");
   const gatewayScript = path.join(shareRoot, "openclaw-native-ui.mjs");
@@ -1025,8 +1171,10 @@ async function main() {
       "  include_workdir: false",
       "  read_only:",
       `    - ${quoteYamlPath(runtimeRoot)}`,
+      `    - ${quoteYamlPath(edgeRoot)}`,
       "  read_write:",
       `    - ${quoteYamlPath(shareRoot)}`,
+      `    - ${quoteYamlPath(evidenceRoot)}`,
       ...(configuredIdentity === null
         ? []
         : [`    - ${quoteYamlPath(configuredIdentity.stateRoot)}`]),
@@ -1103,11 +1251,15 @@ async function main() {
     );
     const sandboxEnvironment = {
       LOCALAPPDATA: home,
+      NEMOCLAW_MXC_BROWSER_RECEIPT: browserReceiptPath,
+      NEMOCLAW_MXC_EDGE: edge,
+      NEMOCLAW_MXC_EVIDENCE_ROOT: evidenceRoot,
       NEMOCLAW_MXC_HOME: home,
       NEMOCLAW_MXC_MODEL_ID: modelId,
       NEMOCLAW_MXC_MODEL_PORT: String(modelPort),
       NEMOCLAW_MXC_MODEL_TOKEN: modelToken,
       NEMOCLAW_MXC_OPENCLAW_ENTRY: openClawEntry,
+      NEMOCLAW_MXC_PLAYWRIGHT_ROOT: playwrightRoot,
       NEMOCLAW_MXC_QUALIFICATION: qualification ? "1" : "0",
       NEMOCLAW_MXC_UI_PORT: String(uiPort),
       NODE_DISABLE_COMPILE_CACHE: "1",
@@ -1151,23 +1303,15 @@ async function main() {
       createError = `${createError}${chunk.toString("utf8")}`.slice(-64 * 1024);
     });
     console.log("WEB UI> Waiting for the real OpenClaw Control UI");
-    await waitForPort(uiPort, create, "OpenClaw Control UI", 180_000);
-    const uiUrl = `http://127.0.0.1:${uiPort}`;
     let browserProof;
     let onboardingSelection = null;
     if (qualification) {
-      onboarding = await startOnboardingServer(
-        installRoot,
-        uiUrl,
-        evidenceRoot,
-        true,
-        launcherPath,
-      );
+      onboarding = await startOnboardingServer(installRoot, "", evidenceRoot, true, launcherPath);
       console.log(`WEB UI> Launching the NemoClaw graphical onboarder at ${onboarding.origin}`);
       browserProof = await driveBrowser(
         openClawRoot,
         onboarding.url,
-        uiUrl,
+        "",
         evidenceRoot,
         true,
         targetAgent,
@@ -1179,14 +1323,34 @@ async function main() {
       onboarding = null;
       if (onboardingSelection?.agent !== "openclaw")
         fail("graphical onboarding did not select OpenClaw");
-    } else {
+      const mxcBrowserProof = await waitForBrowserReceipt(
+        browserReceiptPath,
+        (receipt) => receipt.verdict === "pass" && receipt.closed === true,
+        600_000,
+      );
       browserProof = {
-        browserVersion: "Microsoft Edge",
+        ...browserProof,
+        browserVersion: mxcBrowserProof.browserVersion,
+        turns: mxcBrowserProof.turns,
+      };
+    } else {
+      const ready = await waitForBrowserReceipt(
+        browserReceiptPath,
+        (receipt) => receipt.verdict === "ready" && receipt.closed === false,
+        180_000,
+      );
+      console.log("WEB UI> OpenClaw Control UI is ready inside native MXC");
+      const closed = await waitForBrowserReceipt(
+        browserReceiptPath,
+        (receipt) => receipt.verdict === "pass" && receipt.closed === true,
+        24 * 60 * 60_000,
+      );
+      browserProof = {
+        browserVersion: closed.browserVersion ?? ready.browserVersion,
         demonstratedAgentChoices: [],
         disabledAgentChoices: [],
         turns: [],
       };
-      await driveConfiguredOpenClaw(openClawRoot, uiUrl);
     }
     await run(
       openshell,
