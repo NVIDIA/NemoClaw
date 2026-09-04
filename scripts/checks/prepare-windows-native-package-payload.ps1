@@ -385,7 +385,7 @@ try {
             $tiktokenWheels[0].FullName
         ) `
         -Label 'tiktoken native ARM64 runtime restore'
-    Assert-Arm64PortableExecutable -Path (Join-Path $deepAgentsSitePackages 'tiktoken\_tiktoken.pyd') -Label 'tiktoken native ARM64 extension'
+    Assert-Arm64PortableExecutable -Path (Join-Path $deepAgentsSitePackages 'tiktoken\_tiktoken.cp313-win_arm64.pyd') -Label 'tiktoken native ARM64 extension'
     Invoke-Checked `
         -FilePath (Join-Path $pythonRoot 'python.exe') `
         -Arguments @('-I', '-c', 'import sys; sys.path.insert(0, sys.argv[1]); import concurrent_log_handler; import hermes_cli.main', $hermesSitePackages) `
@@ -497,7 +497,7 @@ debug = false
         'hermes\site-packages\hermes_cli\main.py',
         'hermes\site-packages\concurrent_log_handler\__init__.py',
         'deepagents\site-packages\deepagents_code\main.py',
-        'deepagents\site-packages\tiktoken\_tiktoken.pyd',
+        'deepagents\site-packages\tiktoken\_tiktoken.cp313-win_arm64.pyd',
         'nemocua\run_with_harness.py',
         'onboarding\index.html',
         'onboarding\styles.css',
@@ -555,7 +555,7 @@ debug = false
                 version = $script:TiktokenVersion
                 sourceArchiveSha256 = $script:TiktokenSourceDigest
                 cargoLockSha256 = $script:TiktokenCargoLockDigest
-                nativeExtensionSha256 = (Get-FileHash -LiteralPath (Join-Path $deepAgentsSitePackages 'tiktoken\_tiktoken.pyd') -Algorithm SHA256).Hash.ToLowerInvariant()
+                nativeExtensionSha256 = (Get-FileHash -LiteralPath (Join-Path $deepAgentsSitePackages 'tiktoken\_tiktoken.cp313-win_arm64.pyd') -Algorithm SHA256).Hash.ToLowerInvariant()
             }
             omittedUnqualifiedNativeExtensions = @(
                 'bsdiff4==1.2.6',

@@ -286,7 +286,7 @@ foreach ($requiredPayload in @(
     'hermes\site-packages\hermes_cli\main.py',
     'hermes\site-packages\concurrent_log_handler\__init__.py',
     'deepagents\site-packages\deepagents_code\main.py',
-    'deepagents\site-packages\tiktoken\_tiktoken.pyd',
+    'deepagents\site-packages\tiktoken\_tiktoken.cp313-win_arm64.pyd',
     'nemocua\run_with_harness.py',
     'onboarding\index.html',
     'onboarding\styles.css',
