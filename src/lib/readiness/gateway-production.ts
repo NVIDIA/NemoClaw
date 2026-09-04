@@ -21,7 +21,10 @@ import {
 } from "../adapters/openshell/gateway-drift";
 export { classifyManagedGatewayEndpointBinding };
 import { cliName as resolveCliName } from "../onboard/branding";
-import { getConfiguredGatewayPort } from "../onboard/docker-driver-gateway-env";
+import {
+  getConfiguredGatewayPort,
+  observeConfiguredGatewayHostRuntime,
+} from "../onboard/docker-driver-gateway-env";
 import { getDockerDriverGatewayLocalTlsDir } from "../onboard/docker-driver-gateway-local-tls";
 import { createDockerDriverGatewayPortListenerHelpers } from "../onboard/docker-driver-gateway-port-listener";
 import {
@@ -595,10 +598,10 @@ export function createProductionGatewayReadinessDependencies(
       resolveConfiguredRuntimeProvider(platform, architecture, environment).gateway);
   let gatewayHostRuntime: RuntimeProviderGatewayHostRuntime | null = null;
   const observeGatewayHostRuntime = () =>
-    (gatewayHostRuntime ??= resolveRuntimeProviderGateway().observeHostRuntime({
-      environment,
-      platform,
-    }));
+    (gatewayHostRuntime ??=
+      options.resolveRuntimeProviderGateway !== undefined
+        ? resolveRuntimeProviderGateway().observeHostRuntime({ environment, platform })
+        : observeConfiguredGatewayHostRuntime({ architecture, environment, platform }));
   const probeEnv = buildGatewayReadinessProbeEnv(environment, {
     gatewayName,
     localTlsDir: resolveManagedGatewayProbeTlsDir(gatewayPort, environment),

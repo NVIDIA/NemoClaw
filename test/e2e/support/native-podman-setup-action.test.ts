@@ -33,7 +33,9 @@ function restoreRunScript(): string {
   );
 }
 
-function runTamperedRestore(kind: "regular-file" | "symlink") {
+type RestoreFixtureKind = "valid" | "regular-file" | "symlink";
+
+function runRestoreFixture(kind: RestoreFixtureKind) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-restore-"));
   const restoreRoot = path.join(root, "authority");
   const destination = path.join(root, "bin", "docker");
@@ -45,15 +47,16 @@ function runTamperedRestore(kind: "regular-file" | "symlink") {
   fs.writeFileSync(path.join(restoreRoot, "metadata"), `${destination}\n${expectedSha256}\n`, {
     mode: 0o600,
   });
-  const prepareTamperedSource = {
+  const prepareSource = {
+    valid: () => fs.writeFileSync(disabled, original, { mode: 0o755 }),
     "regular-file": () => fs.writeFileSync(disabled, "#!/bin/sh\necho tampered\n", { mode: 0o755 }),
     symlink: () => {
       const malicious = path.join(root, "malicious-docker");
       fs.writeFileSync(malicious, original, { mode: 0o755 });
       fs.symlinkSync(malicious, disabled);
     },
-  } satisfies Record<typeof kind, () => void>;
-  prepareTamperedSource[kind]();
+  } satisfies Record<RestoreFixtureKind, () => void>;
+  prepareSource[kind]();
 
   const commandShims = [
     "sudo() {",
@@ -83,9 +86,13 @@ function runTamperedRestore(kind: "regular-file" | "symlink") {
     );
   const result = spawnSync("bash", ["--noprofile", "--norc", "-c", `${commandShims}\n${script}`], {
     encoding: "utf8",
-    env: { ...process.env, NODE_BINARY: process.execPath },
+    env: {
+      ...process.env,
+      NODE_BINARY: process.execPath,
+      PATH: `${path.dirname(destination)}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+    },
   });
-  return { destination, result, root };
+  return { destination, expectedSha256, restoreRoot, result, root };
 }
 
 describe("native Podman E2E setup boundary", () => {
@@ -97,10 +104,30 @@ describe("native Podman E2E setup boundary", () => {
     expect(validateNativePodmanRestoreAction()).toEqual([]);
   });
 
+  it("restores an unchanged Docker CLI and retires its authority", () => {
+    const { destination, expectedSha256, restoreRoot, result, root } = runRestoreFixture("valid");
+
+    try {
+      expect(result.status, result.stderr).toBe(0);
+      expect(createHash("sha256").update(fs.readFileSync(destination)).digest("hex")).toBe(
+        expectedSha256,
+      );
+      expect(
+        spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v docker"], {
+          encoding: "utf8",
+          env: { ...process.env, PATH: `${path.dirname(destination)}:/usr/bin:/bin` },
+        }).stdout.trim(),
+      ).toBe(destination);
+      expect(fs.existsSync(restoreRoot)).toBe(false);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it.each(["regular-file", "symlink"] as const)(
     "rejects a tampered %s restore source without modifying the Docker destination",
     (kind) => {
-      const { destination, result, root } = runTamperedRestore(kind);
+      const { destination, result, root } = runRestoreFixture(kind);
 
       try {
         expect(result.status).not.toBe(0);

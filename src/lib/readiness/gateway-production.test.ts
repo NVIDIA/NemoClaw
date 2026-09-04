@@ -560,6 +560,72 @@ describe("managed gateway port readiness (#7411)", () => {
     }
   });
 
+  it("keeps portable readiness on the portable gateway topology", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-readiness-"));
+    const openshell = path.join(root, "openshell");
+    fs.writeFileSync(openshell, "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+    const environment = {
+      HOME: root,
+      PATH: root,
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+      NEMOCLAW_OPENSHELL_BIN: openshell,
+    };
+    const listen = vi.fn((_port: number, _host: string, ready: () => void) => ready());
+    vi.spyOn(net, "createServer").mockReturnValue({
+      close: (done: () => void) => done(),
+      listen,
+      once: vi.fn(),
+    } as never);
+    const results = new Map([
+      [
+        ["sh", "-c", 'command -v "$1"', "--", "openshell"].join("\0"),
+        commandResult(`${openshell}\n`, 0),
+      ],
+      [
+        [openshell, "status", "-g", "nemoclaw-readiness-test"].join("\0"),
+        commandResult("", 1, "No active gateway"),
+      ],
+      [
+        [openshell, "gateway", "info", "-g", "nemoclaw-readiness-test"].join("\0"),
+        commandResult("", 1, "No gateway metadata found"),
+      ],
+      [
+        [openshell, "gateway", "info"].join("\0"),
+        commandResult("", 1, "No gateway metadata found"),
+      ],
+    ]);
+    subprocess.spawnSync.mockImplementation(
+      (command: string, args: readonly string[] = []) =>
+        results.get([command, ...args].join("\0")) ?? commandResult(),
+    );
+    const deps = createProductionGatewayReadinessDependencies({
+      architecture: "x64",
+      environment,
+      gatewayName: () => "nemoclaw-readiness-test",
+      gatewayPort: () => 0,
+      platform: "linux",
+    });
+
+    try {
+      const now = new Date("2026-09-04T03:00:00.000Z");
+      const snapshot = await collectGatewayObservations(deps, { now: () => now });
+      const projection = projectGatewayReadiness(snapshot, { now: () => now });
+
+      expect(snapshot.failure).toBeUndefined();
+      expect(projection.capabilities).toEqual(
+        expect.arrayContaining(
+          ["gateway.reuse.ready", "gateway.version.compatible", "gateway.port.uncontested"].map(
+            (id) => expect.objectContaining({ id, state: "present" }),
+          ),
+        ),
+      );
+      expect(listen).toHaveBeenCalledWith(0, "0.0.0.0", expect.any(Function));
+      expect(subprocess.spawnSync.mock.calls.some(([command]) => command === "docker")).toBe(false);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it("does not write an onboard trace for a public external attachment probe (#7411)", async () => {
     const traceDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-readiness-trace-"));
     const tracePath = path.join(traceDir, "unexpected.json");
