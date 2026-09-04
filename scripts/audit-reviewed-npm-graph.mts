@@ -39,8 +39,12 @@ type LockedGraph = ReviewedPackage &
   Readonly<{
     directory: string;
     id: string;
+    inputValidation?: "wechat-runtime";
+    installMode?: "legacy-peer-deps";
     lockSha256: string;
     replacementLockSha256?: string;
+    severityThreshold?: Severity;
+    signatureAudit?: "retry-download-failures";
   }>;
 type AuditConfig = Readonly<{
   archivePackages: readonly ReviewedPackage[];
@@ -57,7 +61,11 @@ type AuditConfig = Readonly<{
   sourceRegistryPackage: SourceRegistryPackage;
   sourceRegistryPackagesWithoutIntegrity: readonly PackageWithoutIntegrity[];
 }>;
-type ReviewedAuditReport = Readonly<{ label: string; result: AuditPolicyResult }>;
+type ReviewedAuditReport = Readonly<{
+  label: string;
+  result: AuditPolicyResult;
+  threshold?: Severity;
+}>;
 
 const TRUSTED_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET_REPO_ROOT = fs.realpathSync(
@@ -159,9 +167,7 @@ export function parseAuditConfig(contents: string): AuditConfig {
     !Array.isArray(parsed.lockedGraphs) ||
     !Array.isArray(parsed.sourceNestedShrinkwrapPackages) ||
     parsed.sourceNestedShrinkwrapPackages.some(
-      (packageSpec) =>
-        typeof packageSpec !== "string" ||
-        !EXACT_NPM_PACKAGE_SPEC.test(packageSpec),
+      (packageSpec) => typeof packageSpec !== "string" || !EXACT_NPM_PACKAGE_SPEC.test(packageSpec),
     ) ||
     new Set(parsed.sourceNestedShrinkwrapPackages).size !==
       parsed.sourceNestedShrinkwrapPackages.length ||
@@ -198,11 +204,26 @@ export function parseAuditConfig(contents: string): AuditConfig {
         !graph.directory ||
         typeof graph.lockSha256 !== "string" ||
         !/^[0-9a-f]{64}$/.test(graph.lockSha256) ||
+        (graph.inputValidation !== undefined && graph.inputValidation !== "wechat-runtime") ||
+        (graph.installMode !== undefined && graph.installMode !== "legacy-peer-deps") ||
+        (graph.severityThreshold !== undefined && !SEVERITIES.includes(graph.severityThreshold)) ||
+        (graph.signatureAudit !== undefined &&
+          graph.signatureAudit !== "retry-download-failures") ||
+        (graph.inputValidation === "wechat-runtime" &&
+          (graph.id !== "wechat-runtime" ||
+            graph.installMode !== "legacy-peer-deps" ||
+            graph.severityThreshold !== "low" ||
+            graph.signatureAudit !== "retry-download-failures")) ||
+        (graph.inputValidation !== "wechat-runtime" &&
+          (graph.installMode !== undefined ||
+            graph.severityThreshold !== undefined ||
+            graph.signatureAudit !== undefined)) ||
         (graph.replacementLockSha256 !== undefined &&
           (typeof graph.replacementLockSha256 !== "string" ||
             !/^[0-9a-f]{64}$/.test(graph.replacementLockSha256) ||
             graph.replacementLockSha256 === graph.lockSha256)),
-    )
+    ) ||
+    new Set(parsed.lockedGraphs.map(({ id }) => id)).size !== parsed.lockedGraphs.length
   ) {
     throw new Error("ci/reviewed-npm-audit.json is invalid");
   }
@@ -265,6 +286,56 @@ function materializeArchiveGraph(
   return graphDirectory;
 }
 
+export function validateWechatRuntimeInputs(
+  packageFile: string,
+  lockFile: string,
+  registryOrigin: string,
+): void {
+  const manifest = readJsonObject(packageFile, "WeChat runtime package manifest");
+  const lock = readJsonObject(lockFile, "WeChat runtime lockfile");
+  const dependencies = manifest.dependencies as Record<string, unknown> | undefined;
+  const names = dependencies ? Object.keys(dependencies) : [];
+  if (names.length !== 1 || names[0] !== "@tencent-weixin/openclaw-weixin") {
+    throw new Error(
+      "WeChat runtime package manifest must contain exactly the reviewed plugin dependency",
+    );
+  }
+  const version = dependencies?.[names[0]!];
+  if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error("WeChat runtime dependency must use an exact numeric version");
+  }
+  if (lock.lockfileVersion !== 3) throw new Error("WeChat runtime lockfileVersion must be 3");
+  const packages = lock.packages as Record<string, any> | undefined;
+  const plugin = packages?.["node_modules/@tencent-weixin/openclaw-weixin"];
+  if (packages?.[""]?.dependencies?.[names[0]!] !== version || plugin?.version !== version) {
+    throw new Error("WeChat runtime package and lock identities do not match");
+  }
+  if (typeof plugin.integrity !== "string" || !plugin.integrity.startsWith("sha512-")) {
+    throw new Error("WeChat runtime plugin lock entry must carry sha512 integrity");
+  }
+  if (typeof plugin.peerDependencies?.openclaw !== "string" || !plugin.peerDependencies.openclaw) {
+    throw new Error("WeChat runtime plugin lock entry must declare its OpenClaw peer range");
+  }
+  const expectedOrigin = new URL(registryOrigin).origin;
+  for (const [location, record] of Object.entries(packages ?? {})) {
+    if (!location.startsWith("node_modules/")) continue;
+    if (typeof record.version !== "string" || typeof record.integrity !== "string") {
+      throw new Error(`locked package lacks version or integrity: ${location}`);
+    }
+    let resolved: URL;
+    try {
+      resolved = new URL(record.resolved);
+    } catch {
+      throw new Error(`locked package has an invalid resolved URL: ${location}`);
+    }
+    if (resolved.origin !== expectedOrigin || resolved.username || resolved.password) {
+      throw new Error(
+        `locked package must resolve from the reviewed npm registry origin: ${location}`,
+      );
+    }
+  }
+}
+
 function materializeLockedGraph(
   graph: LockedGraph,
   tempRoot: string,
@@ -278,6 +349,20 @@ function materializeLockedGraph(
     path.join(graph.directory, "package-lock.json"),
     `${graph.label} lockfile`,
   );
+  if (graph.inputValidation === "wechat-runtime") {
+    for (const npmrc of [
+      targetRepositoryPath(".npmrc", "target npm config"),
+      targetRepositoryPath(path.join(graph.directory, ".npmrc"), "runtime npm config"),
+    ]) {
+      if (
+        fs.existsSync(npmrc) ||
+        fs.lstatSync(npmrc, { throwIfNoEntry: false })?.isSymbolicLink()
+      ) {
+        throw new Error(`WeChat runtime audit refuses target-controlled npm config: ${npmrc}`);
+      }
+    }
+    validateWechatRuntimeInputs(sourcePackage, sourceLock, registryOrigin);
+  }
   const expectedLockSha256 = selectReviewedLockSha256(
     sourceLock,
     graph.lockSha256,
@@ -297,7 +382,9 @@ function materializeLockedGraph(
   fs.mkdirSync(destination);
   fs.copyFileSync(sourcePackage, path.join(destination, "package.json"));
   fs.copyFileSync(sourceLock, path.join(destination, "package-lock.json"));
-  run("npm", ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"], destination);
+  const installArgs = ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"];
+  if (graph.installMode === "legacy-peer-deps") installArgs.push("--legacy-peer-deps");
+  run("npm", installArgs, destination);
   verifyMaterializedLockedGraph({ destination, expectedLockSha256, label: graph.label });
   return destination;
 }
@@ -472,6 +559,107 @@ export function normalizeOpenClawSignatureAlias(directory: string): void {
   fs.writeFileSync(requesterManifestFile, `${JSON.stringify(requesterManifest, null, 2)}\n`);
 }
 
+type CommandResult = Readonly<{ status: number | null; stdout: string; stderr: string }>;
+
+export function verifySignaturesWithReviewedRetry(
+  directory: string,
+  evidenceFile: string,
+  runner: (directory: string) => CommandResult = (cwd) => {
+    const result = spawnSync("npm", ["audit", "signatures", "--omit=dev"], {
+      cwd,
+      encoding: "utf-8",
+      env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
+    });
+    if (result.error) throw result.error;
+    return { status: result.status, stderr: result.stderr, stdout: result.stdout };
+  },
+): void {
+  const evidence: string[] = [];
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const result = runner(directory);
+    const output = `attempt=${attempt} status=${result.status ?? "signal"}\n${result.stdout}${result.stderr}`;
+    evidence.push(output);
+    fs.writeFileSync(evidenceFile, evidence.join("\n"));
+    if (result.status === 0) return;
+    if (!output.includes("npm error Failed to download") || attempt === 3) {
+      throw new Error(
+        `npm audit signatures failed after ${attempt} attempt(s): ${result.stderr || result.stdout}`,
+      );
+    }
+    evidence.push(`retrying transient signature download after attempt ${attempt}\n`);
+  }
+}
+
+function assertTreeReadOnly(root: string): void {
+  const pending = [root];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    const stat = fs.lstatSync(current);
+    if ((stat.mode & 0o222) !== 0)
+      throw new Error(`trusted npm cache entry remained writable: ${current}`);
+    if (stat.isDirectory()) {
+      for (const child of fs.readdirSync(current)) pending.push(path.join(current, child));
+    }
+  }
+}
+
+function makeTreeOwnerWritable(root: string): void {
+  const pending = [root];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    const stat = fs.lstatSync(current);
+    fs.chmodSync(current, stat.isDirectory() ? 0o700 : 0o600);
+    if (stat.isDirectory()) {
+      for (const child of fs.readdirSync(current)) pending.push(path.join(current, child));
+    }
+  }
+}
+
+function verifyWechatInstallCacheBoundary(
+  graph: LockedGraph,
+  tempRoot: string,
+  registryOrigin: string,
+): void {
+  const trustedCache = path.join(tempRoot, "wechat-trusted-cache");
+  const installCache = path.join(tempRoot, "wechat-install-cache");
+  const packDirectory = path.join(tempRoot, "wechat-pack");
+  fs.mkdirSync(trustedCache);
+  fs.mkdirSync(installCache);
+  fs.mkdirSync(packDirectory);
+  const env = {
+    ...process.env,
+    NPM_CONFIG_CACHE: trustedCache,
+    NPM_CONFIG_REGISTRY: registryOrigin,
+    NPM_CONFIG_USERCONFIG: "/dev/null",
+  };
+  const cache = spawnSync("npm", ["cache", "add", graph.packageSpec], {
+    encoding: "utf-8",
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (cache.error) throw cache.error;
+  if (cache.status !== 0) throw new Error(`npm cache add failed: ${cache.stderr || cache.stdout}`);
+  fs.chmodSync(trustedCache, 0o555);
+  for (const entry of fs.readdirSync(trustedCache, { recursive: true })) {
+    fs.chmodSync(
+      path.join(trustedCache, entry.toString()),
+      fs.lstatSync(path.join(trustedCache, entry.toString())).isDirectory() ? 0o555 : 0o444,
+    );
+  }
+  assertTreeReadOnly(trustedCache);
+  fs.cpSync(trustedCache, installCache, { recursive: true, force: true });
+  makeTreeOwnerWritable(installCache);
+  packReviewedNpmArchive({
+    env: { ...env, NPM_CONFIG_CACHE: installCache, NPM_CONFIG_OFFLINE: "true" },
+    expectedIntegrity: graph.integrity,
+    label: graph.label,
+    packageSpec: graph.packageSpec,
+    tarballUrl: graph.tarballUrl,
+    tempDirectory: packDirectory,
+  });
+  assertTreeReadOnly(trustedCache);
+}
+
 function auditLockedGraph(
   graph: LockedGraph,
   index: number,
@@ -494,13 +682,23 @@ function auditLockedGraph(
     },
     reportFile: path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
     resultFile: path.join(artifactDirectory, `locked-graph-${index + 1}-policy.json`),
-    threshold: config.severityThreshold,
+    threshold: graph.severityThreshold ?? config.severityThreshold,
     throwOnBlock: false,
   });
   if (graph.id === "openclaw-runtime") {
     normalizeOpenClawSignatureAlias(directory);
   }
-  run("npm", ["audit", "signatures", "--omit=dev"], directory);
+  if (graph.signatureAudit === "retry-download-failures") {
+    verifySignaturesWithReviewedRetry(
+      directory,
+      path.join(artifactDirectory, `locked-graph-${index + 1}-signatures.txt`),
+    );
+  } else {
+    run("npm", ["audit", "signatures", "--omit=dev"], directory);
+  }
+  if (graph.inputValidation === "wechat-runtime") {
+    verifyWechatInstallCacheBoundary(graph, tempRoot, config.registryOrigin);
+  }
   return result;
 }
 
@@ -580,8 +778,8 @@ export function assertReviewedAuditReportsPass(
   const failures = reports
     .filter(({ result }) => result.unacceptedBlockingAdvisories.length > 0)
     .map(
-      ({ label, result }) =>
-        `${label}: ${result.unacceptedBlockingAdvisories.length} unaccepted at or above ${threshold}`,
+      ({ label, result, threshold: reportThreshold }) =>
+        `${label}: ${result.unacceptedBlockingAdvisories.length} unaccepted at or above ${reportThreshold ?? threshold}`,
     );
   if (failures.length > 0)
     throw new Error(`reviewed npm audit threshold failed\n${failures.join("\n")}`);
@@ -641,6 +839,7 @@ function main(): void {
       },
       ...config.lockedGraphs.map((graph, index) => ({
         label: graph.label,
+        threshold: graph.severityThreshold ?? config.severityThreshold,
         result: auditLockedGraph(
           graph,
           index,
