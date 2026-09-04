@@ -162,6 +162,27 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realArgs).toBe("--profile research chat hello");
   });
 
+  it("refuses a named-profile gateway without reading session coalescer source", () => {
+    const run = runWrapper(["--profile", "research", "gateway", "run"], {}, {
+      sessionBoundaries: [],
+    });
+
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain("Refusing named-profile Hermes gateway");
+    expect(run.realInvoked).toBe(false);
+  });
+
+  it("preserves named-profile chat without reading session coalescer source", () => {
+    const run = runWrapper(["--profile", "research", "chat", "hello"], {}, {
+      sessionBoundaries: [],
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--profile research chat hello");
+  });
+
   it("preserves a child command profile selector after mcp add --args", () => {
     const args = [
       "mcp",

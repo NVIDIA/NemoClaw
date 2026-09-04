@@ -780,7 +780,7 @@ def _requests_named_profile_gateway_launch(argv: list[str], adapter: dict) -> bo
         arg in ("-p", "--profile") or arg.startswith("--profile=") for arg in argv
     ):
         return False
-    gateway_adapter = {**adapter, "managed_commands": _session_name_boundaries(adapter)}
+    gateway_adapter = {**adapter, "managed_commands": frozenset({"gateway"})}
     parsed = _parse_managed_invocation(argv, gateway_adapter)
     if parsed is None or parsed["command"] != "gateway":
         return False
