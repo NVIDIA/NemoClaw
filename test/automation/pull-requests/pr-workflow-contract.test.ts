@@ -17,7 +17,10 @@ import {
 
 type CiWorkflow = {
   "run-name"?: string;
-  on?: { pull_request?: { paths?: string[]; types?: string[] } };
+  on?: {
+    pull_request?: { paths?: string[]; types?: string[] };
+    workflow_dispatch?: { inputs?: Record<string, unknown> };
+  };
   concurrency?: { group?: string; "cancel-in-progress"?: boolean };
   permissions?: Record<string, string>;
   jobs: Record<string, WorkflowJob & { if?: string; needs?: string | string[] }>;
@@ -36,6 +39,14 @@ type InstallerHashAction = CompositeAction & {
 
 type CodebaseGrowthGuardrailsWorkflow = {
   jobs: Record<string, WorkflowJob>;
+};
+
+type AdvisorWorkflow = {
+  "run-name"?: string;
+  on?: { workflow_dispatch?: { inputs?: Record<string, unknown> } };
+  concurrency?: { group?: string; "cancel-in-progress"?: boolean };
+  permissions?: Record<string, string>;
+  jobs: Record<string, WorkflowJob & { if?: string; needs?: string | string[] }>;
 };
 
 type PrekConfig = {
@@ -418,8 +429,17 @@ function installerHashTrustViolations(workflow: CiWorkflow): string[] {
     "./.trusted-installer-hash/.github/actions/ci-installer-hash-check",
     "./.github/actions/ci-installer-hash-check",
   ]);
-  const latestActionConditions = new Set([
-    "github.event_name != 'pull_request' && !(github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '')",
+  const trustedBaseRefs = new Set([
+    "${{ github.event.pull_request.base.sha }}",
+    "${{ inputs.repair_attempt_key != '' && github.workflow_sha || github.event.pull_request.base.sha }}",
+  ]);
+  const trustedPrConditions = new Set([
+    "github.event_name == 'pull_request'",
+    "${{ github.event_name == 'pull_request' || inputs.repair_attempt_key != '' }}",
+  ]);
+  const trustedEventConditions = new Set([
+    "github.event_name != 'pull_request'",
+    "${{ github.event_name != 'pull_request' && inputs.repair_attempt_key == '' }}",
   ]);
 
   return [
@@ -427,19 +447,19 @@ function installerHashTrustViolations(workflow: CiWorkflow): string[] {
     ...(baseCheckout?.uses === trustedCheckoutAction
       ? []
       : ["base-trusted installer hash checkout must use the pinned checkout action"]),
-    ...(baseCheckout?.with?.ref === "${{ github.event.pull_request.base.sha }}"
+    ...(trustedBaseRefs.has(String(baseCheckout?.with?.ref))
       ? []
       : ["base-trusted installer hash checkout must use the PR base SHA"]),
     ...(baseCheckout?.with?.path === ".trusted-installer-hash"
       ? []
       : ["base-trusted installer hash checkout must use the trusted action path"]),
-    ...(prCheck?.if === "github.event_name == 'pull_request'" &&
-    prCheck.uses === "./.trusted-installer-hash/.github/actions/ci-installer-hash-check"
+    ...(trustedPrConditions.has(String(prCheck?.if)) &&
+    prCheck?.uses === "./.trusted-installer-hash/.github/actions/ci-installer-hash-check"
       ? []
       : ["pull request installer hashes must use only the base-trusted action"]),
     ...steps.flatMap((step) => [
       ...(step.uses === "./.github/actions/ci-installer-hash-check" &&
-      !latestActionConditions.has(String(step.if))
+      !trustedEventConditions.has(String(step.if))
         ? ["installer hash action from the latest PR commit must not execute for pull requests"]
         : []),
       ...(step.uses?.includes("ci-installer-hash-check") && !allowedExecutors.has(step.uses)
@@ -453,7 +473,10 @@ describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
   const dcoWorkflow = readYaml<CiWorkflow>(".github/workflows/dco-check.yaml");
+  const commitLintWorkflow = readYaml<CiWorkflow>(".github/workflows/commit-lint.yaml");
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
+  const codeScanningWorkflow = readYaml<CiWorkflow>(".github/workflows/code-scanning.yaml");
+  const advisorWorkflow = readYaml<AdvisorWorkflow>(".github/workflows/pr-review-advisor.yaml");
   const sdkPackageWorkflow = readYaml<SdkPackageWorkflow>(
     ".github/workflows/openshell-sdk-package-pr.yaml",
   );
@@ -484,6 +507,137 @@ describe("pull request and main workflow contracts", () => {
       ".github/actions/ci-installer-integration/action.yaml",
     ),
   };
+
+  // source-shape-contract: security -- Job permissions and artifact routing are the executable privilege boundary for Advisor repair.
+  it("keeps Phase 0 Advisor repair manual, credential-separated, and non-publishing (#10791)", () => {
+    const select = advisorWorkflow.jobs["repair-select"];
+    const resolve = advisorWorkflow.jobs["repair-resolve"];
+    const validate = advisorWorkflow.jobs["repair-validate"];
+    const repairPublish = advisorWorkflow.jobs["repair-publish"];
+    const repairVerify = advisorWorkflow.jobs["repair-verify"];
+    const audit = advisorWorkflow.jobs["repair-audit"];
+    expect(advisorWorkflow.permissions).toEqual({});
+    expect(select.if).toContain("github.event_name == 'workflow_dispatch'");
+    expect(select.if).toContain("vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true'");
+    expect(select.permissions).toEqual({
+      actions: "read",
+      checks: "write",
+      contents: "read",
+      "pull-requests": "read",
+    });
+    expect(resolve.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(validate.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(audit.permissions).toEqual({});
+    expect(repairPublish.environment).toBe("advisor-repair-publish");
+    expect(repairPublish.if).toContain("inputs.repair_publish");
+    expect(repairPublish.permissions).toEqual({
+      actions: "read",
+      contents: "write",
+      "pull-requests": "read",
+    });
+    expect(repairVerify.permissions).toEqual({
+      actions: "write",
+      checks: "write",
+      contents: "read",
+      "pull-requests": "read",
+    });
+    expect(
+      Object.entries(advisorWorkflow.jobs)
+        .filter(([name]) => name !== "publish" && name !== "repair-publish")
+        .filter(([, job]) => job.permissions?.contents === "write")
+        .map(([name]) => name),
+    ).toEqual([]);
+    const resolveText = JSON.stringify(resolve);
+    const validateText = JSON.stringify(validate);
+    const repairPublishText = JSON.stringify(repairPublish);
+    const repairVerifyText = JSON.stringify(repairVerify);
+    const selectText = JSON.stringify(select);
+    expect(advisorWorkflow.concurrency).toEqual(
+      expect.objectContaining({ "cancel-in-progress": false }),
+    );
+    expect(String(advisorWorkflow.concurrency?.group)).toContain(
+      "github.event_name == 'workflow_dispatch'",
+    );
+    expect(String(advisorWorkflow.concurrency?.group)).toContain("github.run_id");
+    expect(selectText).toContain("PR Review Advisor repair attempt");
+    expect(selectText).toContain("external_id");
+    expect(resolveText).toContain("secrets.PR_REVIEW_ADVISOR_API_KEY");
+    expect(validateText).not.toMatch(/secrets[.]|OPENAI_API_KEY|GITHUB_TOKEN/u);
+    expect(resolveText.match(/run-advisor-repair/gu)).toHaveLength(1);
+    expect(resolveText).toContain("assertRepairArtifactDirectory");
+    expect(resolveText).toContain("export-advisor-repair");
+    expect(resolveText).toContain('if":"always()"');
+    expect(validateText).toContain("needs.repair-select.outputs.context-artifact-id");
+    expect(validateText).toContain("needs.repair-resolve.outputs.candidate-artifact-id");
+    expect(validateText).toContain("run check:diff");
+    expect(validateText).toContain("run test:changed");
+    expect(validateText).not.toContain("test:live-e2e");
+    expect(validateText).not.toContain("publishAdvisorRepair");
+    expect(repairPublishText).toContain("needs.repair-select.outputs.context-artifact-id");
+    expect(repairPublishText).toContain("needs.repair-validate.outputs.validated-artifact-id");
+    expect(repairPublishText).toContain("advisor-repair");
+    expect(repairPublishText).toContain("assertRepairArtifactDirectory");
+    expect(repairPublishText).not.toMatch(/secrets[.]|OPENAI_API_KEY|PR_REVIEW_ADVISOR_API_KEY/u);
+    expect(repairVerifyText).toContain("needs.repair-publish.outputs.published-sha");
+    expect(repairVerifyText).toContain("advisor-repair-checks");
+    expect(repairVerifyText).not.toContain("check-runs");
+    expect(repairVerifyText).not.toMatch(/secrets[.]|contents":"write/u);
+  });
+
+  // source-shape-contract: security -- Exact-SHA inputs and trusted-main dispatches prevent generated commits from inheriting old-head checks.
+  it("runs generated-head validation only through trusted exact-SHA dispatches (#10791)", () => {
+    const standard = [prWorkflow, commitLintWorkflow, dcoWorkflow, installerHashWorkflow, codeScanningWorkflow];
+    const standardInputs = standard.map((workflow) =>
+      Object.keys(workflow.on?.workflow_dispatch?.inputs ?? {}),
+    );
+    expect(
+      standardInputs.map((inputs) =>
+        ["repair_pr_number", "repair_head_sha", "repair_base_sha", "repair_attempt_key"].every(
+          (name) => inputs.includes(name),
+        ),
+      ),
+    ).toEqual([true, true, true, true, true]);
+    const serialized = standard.map((workflow) => JSON.stringify(workflow));
+    expect(standard.every((workflow) => workflow["run-name"]?.includes("Repair validation"))).toBe(
+      true,
+    );
+    expect(serialized.every((workflow) => workflow.includes("refs/heads/main"))).toBe(true);
+    expect(serialized.every((workflow) => workflow.includes("REPAIR_ATTEMPT_KEY"))).toBe(true);
+    expect(serialized.every((workflow) => workflow.includes('^sha256:[0-9a-f]{64}$'))).toBe(true);
+    expect(serialized.every((workflow) => workflow.includes('.head.sha == $head'))).toBe(true);
+    expect(serialized.every((workflow) => workflow.includes('.base.sha == $base'))).toBe(true);
+    expect(advisorWorkflow.on?.workflow_dispatch?.inputs).toHaveProperty("repair_attempt_key");
+    expect(prWorkflow.on?.workflow_dispatch?.inputs).toHaveProperty("repair_source_head_sha");
+    expect(advisorWorkflow["run-name"]).toContain("Repair validation");
+    const advisor = JSON.stringify(advisorWorkflow);
+    expect(advisor).toContain("PUBLISH_REQUESTED");
+    expect(advisor).toContain("FINDING_IDS");
+    expect(advisor).not.toContain('${{ inputs.repair_finding_ids_json }}" ==');
+    expect(JSON.stringify(prWorkflow)).toContain(
+      "inputs.repair_attempt_key != '' && inputs.repair_head_sha",
+    );
+    const generatedHeadGuard = requiredWorkflowStep(
+      prWorkflow.jobs.changes,
+      "Bind validation to the live generated head",
+    );
+    expect(generatedHeadGuard.run).toContain('commits/$HEAD_SHA');
+    expect(generatedHeadGuard.run).toContain('.parents[0].sha == $parent');
+    const packageLookup = requiredWorkflowStep(
+      prWorkflow.jobs["openshell-sdk-package"],
+      "Locate exact base-controlled SDK package run",
+    );
+    expect(packageLookup.env?.HEAD_SHA).toContain("inputs.repair_source_head_sha");
+    expect(
+      requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Download exact base-controlled SDK archive",
+      ).with?.name,
+    ).toContain("inputs.repair_source_head_sha");
+    expect(JSON.stringify(codeScanningWorkflow)).toContain(
+      "inputs.repair_attempt_key != '' && inputs.repair_head_sha",
+    );
+    expect(JSON.stringify(codeScanningWorkflow)).toContain("refs/pull/{0}/head");
+  });
 
   it.each([
     ["pull_request", prWorkflow],
@@ -585,14 +739,11 @@ describe("pull request and main workflow contracts", () => {
     expect(packageJob.permissions).toEqual({ actions: "read", contents: "read" });
     expect(packageJob.outputs).toEqual({ required: "${{ steps.locate.outputs.required }}" });
     expect(requiredWorkflowStep(packageJob, "Checkout base package decision").with).toMatchObject({
-      ref: "${{ env.CI_BASE_SHA }}",
+      ref: "${{ inputs.repair_attempt_key != '' && github.workflow_sha || github.event.pull_request.base.sha }}",
       path: ".trusted-sdk-package-decision",
     });
     const locate = requiredWorkflowStep(packageJob, "Locate exact base-controlled SDK package run");
-    expect(locate.env?.HEAD_REPOSITORY).toBe("${{ env.CI_HEAD_REPOSITORY }}");
-    expect(locate.env?.HEAD_SHA).toBe("${{ env.CI_HEAD_SHA }}");
-    expect(locate.env?.BASE_SHA).toBe("${{ env.CI_BASE_SHA }}");
-    expect(locate.env?.PR_NUMBER).toBe("${{ env.CI_PR_NUMBER }}");
+    expect(locate.env?.HEAD_REPOSITORY).toBe("NVIDIA/NemoClaw");
     expect(locate.run).toContain(
       "trusted_inspector=.trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts",
     );

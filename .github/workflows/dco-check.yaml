@@ -4,50 +4,79 @@
 name: Governance / Require PR DCO Declaration
 
 run-name: >-
-  ${{ github.event_name == 'workflow_dispatch' &&
-  format('Generated-head DCO {0} {1}', inputs.repair_attempt_key, inputs.source_head_sha) ||
-  format('DCO PR {0}', github.event.pull_request.number) }}
+  ${{ inputs.repair_attempt_key != '' &&
+  format('Repair validation {0} head {1}', inputs.repair_attempt_key, inputs.repair_head_sha) ||
+  github.event.pull_request.title }}
 
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
   workflow_dispatch:
     inputs:
-      pr_number:
-        required: true
+      repair_pr_number:
+        required: false
         type: string
-      source_head_sha:
-        required: true
+        default: ""
+      repair_head_sha:
+        required: false
         type: string
-      base_sha:
-        required: true
+        default: ""
+      repair_base_sha:
+        required: false
         type: string
+        default: ""
       repair_attempt_key:
-        required: true
+        required: false
         type: string
+        default: ""
 
 permissions:
   contents: read
-  pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && format('repair-{0}-{1}', inputs.pr_number, inputs.repair_attempt_key) || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   dco-check:
+    if: ${{ github.event_name == 'pull_request' || inputs.repair_attempt_key != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
     steps:
+      - name: Bind validation to the live generated head
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          BASE_SHA: ${{ inputs.repair_base_sha }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ inputs.repair_head_sha }}
+          PR_NUMBER: ${{ inputs.repair_pr_number }}
+          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REPAIR_ATTEMPT_KEY" =~ ^sha256:[0-9a-f]{64}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/repair-pr.json"
+          jq -e --arg head "$HEAD_SHA" --arg base "$BASE_SHA" '
+            .state == "open" and .draft == false and
+            .head.sha == $head and .head.repo.full_name == "NVIDIA/NemoClaw" and
+            .base.sha == $base and .base.ref == "main" and
+            .base.repo.full_name == "NVIDIA/NemoClaw"
+          ' "$RUNNER_TEMP/repair-pr.json" >/dev/null
+
       - name: Check Dependabot DCO bypass
-        if: github.event_name == 'pull_request'
         id: dco-bypass
         env:
-          USERNAME: ${{ github.event.pull_request.user.login }}
+          USERNAME: ${{ github.event.pull_request.user.login || '' }}
         run: |
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            USERNAME="$(jq -r .user.login "$RUNNER_TEMP/repair-pr.json")"
+          fi
           # GitHub exposes the same trusted app as dependabot[bot] in event
           # payloads and app/dependabot through some GraphQL PR surfaces.
           if [[ "$USERNAME" == "dependabot[bot]" || "$USERNAME" == "app/dependabot" ]]; then
@@ -59,10 +88,13 @@ jobs:
           fi
 
       - name: Check PR body for Signed-off-by
-        if: ${{ github.event_name == 'pull_request' && steps.dco-bypass.outputs.bypass != 'true' }}
+        if: ${{ steps.dco-bypass.outputs.bypass != 'true' }}
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
         run: |
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            PR_BODY="$(jq -r '.body // ""' "$RUNNER_TEMP/repair-pr.json")"
+          fi
           normalized_body="$(printf '%s\n' "$PR_BODY" | tr -d '\r')"
 
           if ! printf '%s\n' "$normalized_body" | grep -qP '^Signed-off-by:\s+.+\s+<[^<>]+>$'; then
@@ -72,36 +104,3 @@ jobs:
           fi
 
           echo "PR description contains a DCO sign-off."
-
-      - name: Checkout generated-head verifier
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
-
-      - name: Setup Node for generated-head verification
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.19.0
-
-      - name: Verify generated-head dispatch
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          BASE_SHA: ${{ inputs.base_sha }}
-          GENERATED_HEAD_COMMAND: verify
-          GENERATED_HEAD_CONTEXT_FILE: ${{ runner.temp }}/generated-head-context.json
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
-          SOURCE_HEAD_SHA: ${{ inputs.source_head_sha }}
-        run: node --experimental-strip-types --no-warnings tools/pr-review-advisor-repair/generated-head-context.mts
-
-      - name: Check generated-head PR body for Signed-off-by
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          GENERATED_HEAD_COMMAND: check-dco
-          GENERATED_HEAD_CONTEXT_FILE: ${{ runner.temp }}/generated-head-context.json
-        run: node --experimental-strip-types --no-warnings tools/pr-review-advisor-repair/generated-head-context.mts

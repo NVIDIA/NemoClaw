@@ -13,10 +13,6 @@ import {
   stringOrDefault,
   stringOrUndefined,
 } from "../advisors/json.mts";
-import {
-  collectPullRequestReviewState,
-  type PullRequestReviewState,
-} from "./review-state.mts";
 
 export const MAX_PREPARED_GITHUB_CONTEXT_BYTES = 5 * 1024 * 1024;
 const OPEN_PR_OVERLAP_LIMIT = 80;
@@ -54,8 +50,6 @@ export type GitHubReviewContext = {
   issueReferenceLines?: string[];
   linkedIssues?: LinkedIssue[];
   openPrOverlaps?: OpenPrOverlap[];
-  reviewState?: PullRequestReviewState;
-  reviewStateFetchError?: string;
 };
 
 export function serializePreparedGitHubContext(context: GitHubReviewContext | null): string {
@@ -156,11 +150,6 @@ export async function collectGitHubReviewContext(
       ),
     ]);
     context.pullRequest = summarizePullRequest(rawPullRequest);
-    try {
-      context.reviewState = await collectPullRequestReviewState(repo, prNumber, token);
-    } catch (error: unknown) {
-      context.reviewStateFetchError = error instanceof Error ? error.message : String(error);
-    }
     const prTitle = stringOrUndefined(getPath<unknown>(rawPullRequest, ["title"])) || "";
     const prBody = stringOrUndefined(getPath<unknown>(rawPullRequest, ["body"])) || "";
     const prText = [

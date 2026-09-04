@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version", "attemptKey", "repository", "prNumber", "headRef", "sourceHeadSha",
+    "baseSha", "workflowSha", "advisor", "findingIds", "selectedPaths", "changedPaths",
+    "patchSha256", "candidateTreeSha", "candidateDigestBefore", "candidateDigestAfter",
+    "commands", "stateDigest", "reviewDigest", "productScope", "optIn", "outcome"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "attemptKey": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "repository": { "const": "NVIDIA/NemoClaw" },
+    "prNumber": { "type": "integer", "minimum": 1 },
+    "headRef": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "sourceHeadSha": { "$ref": "#/$defs/sha" },
+    "baseSha": { "$ref": "#/$defs/sha" },
+    "workflowSha": { "$ref": "#/$defs/sha" },
+    "advisor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runId", "runAttempt", "workflowSha", "artifactIds", "ledgerDigest"],
+      "properties": {
+        "runId": { "type": "integer", "minimum": 1 },
+        "runAttempt": { "type": "integer", "minimum": 1 },
+        "workflowSha": { "$ref": "#/$defs/sha" },
+        "artifactIds": { "type": "array", "minItems": 10, "maxItems": 10, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } },
+        "ledgerDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "findingIds": { "$ref": "#/$defs/strings" },
+    "selectedPaths": { "$ref": "#/$defs/strings" },
+    "changedPaths": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "status", "mode", "type", "bytes"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "status": { "enum": ["A", "D", "M"] },
+          "mode": { "const": "100644" },
+          "type": { "const": "blob" },
+          "bytes": { "type": "integer", "minimum": 0, "maximum": 1048576 }
+        }
+      }
+    },
+    "patchSha256": { "$ref": "#/$defs/digest" },
+    "candidateTreeSha": { "$ref": "#/$defs/sha" },
+    "candidateDigestBefore": { "$ref": "#/$defs/digest" },
+    "candidateDigestAfter": { "$ref": "#/$defs/digest" },
+    "commands": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "exitCode"],
+        "properties": {
+          "command": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "exitCode": { "const": 0 }
+        }
+      }
+    },
+    "stateDigest": { "$ref": "#/$defs/digest" },
+    "reviewDigest": { "$ref": "#/$defs/digest" },
+    "productScope": { "const": "accepted:#10791" },
+    "optIn": { "const": "manual-exact-head" },
+    "outcome": { "const": "validated" }
+  },
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "strings": { "type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 512 } }
+  }
+}

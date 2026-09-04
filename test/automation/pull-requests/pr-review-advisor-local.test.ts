@@ -110,7 +110,6 @@ function artifactLifecycle(stop = async (): Promise<void> => undefined): LocalRe
         env.PR_REVIEW_ADVISOR_ARTIFACT_DIR as string,
       );
       fs.mkdirSync(output, { recursive: true });
-      fs.writeFileSync(path.join(output, "pr-review-" + interest + "-findings.json"), "{}\n");
       fs.writeFileSync(path.join(output, "pr-review-" + interest + "-summary.md"), "review\n");
       fs.writeFileSync(path.join(output, "pr-review-" + interest + "-session.jsonl"), "{}\n");
     },
@@ -465,7 +464,7 @@ describe("local PR review advisor", () => {
     expect(fs.existsSync(marker)).toBe(false);
   });
 
-  it("runs every specialist and publishes only its findings, Markdown, and JSONL (#10610)", async () => {
+  it("runs each catalogued specialist through the existing lifecycle and publishes only Markdown and JSONL (#10610)", async () => {
     const source = repository();
     const root = temporaryDirectory();
     const before = sourceState(source);
@@ -498,7 +497,6 @@ describe("local PR review advisor", () => {
           env.PR_REVIEW_ADVISOR_ARTIFACT_DIR as string,
         );
         fs.mkdirSync(out, { recursive: true });
-        fs.writeFileSync(path.join(out, "pr-review-" + interest + "-findings.json"), "{}\n");
         fs.writeFileSync(path.join(out, "pr-review-" + interest + "-summary.md"), "review\n");
         fs.writeFileSync(path.join(out, "pr-review-" + interest + "-session.jsonl"), "{}\n");
       },
@@ -820,7 +818,7 @@ describe("local PR review advisor", () => {
     ).rejects.toMatchObject({
       message: expect.stringContaining("failed during validate"),
       cause: expect.objectContaining({
-        message: "Specialist artifacts do not match the findings, Markdown, and JSONL contract",
+        message: "Specialist artifacts do not match the existing Markdown and JSONL contract",
       }),
     });
   });

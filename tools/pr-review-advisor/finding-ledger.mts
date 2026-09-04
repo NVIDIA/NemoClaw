@@ -199,7 +199,7 @@ export function buildAdvisorFindingLedger(input: {
       regressionTest: boundedText(candidate.regressionTest, "regressionTest", 1000),
       exclusions: [...exclusions].sort(),
     } as const;
-    const id = `F-${input.interest}-${sha256(canonicalJson({ headSha, ...normalized })).slice(0, 20)}`;
+    const id = `F-${input.interest}-${sha256(canonicalJson(normalized)).slice(0, 20)}`;
     return Object.freeze({ id, ...normalized });
   });
   findings.sort((left, right) => left.id.localeCompare(right.id));

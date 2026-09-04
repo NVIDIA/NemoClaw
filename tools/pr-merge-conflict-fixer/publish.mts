@@ -3,12 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { gitIsolationEnvironment } from "../advisors/hermetic-git.mts";
 import { type ConflictMatrixEntry, parseConflictMatrixEntry } from "./discover.mts";
 import {
   applyResolutionPatch,
@@ -19,14 +18,27 @@ import {
   samePaths,
   writeTree,
 } from "./merge.mts";
+import {
+  assertLiveRepairState,
+  assertValidatedRepair,
+  parseSelection,
+  parseValidationReceipt,
+  readJson,
+  REPAIR_REPOSITORY,
+  sanitizeDiagnostic,
+  validateRepairPatch,
+} from "../pr-review-advisor/repair-contract.mts";
 
 type LivePullRequest = {
+  number?: number;
   base: {
     ref: string;
-    repo: { full_name: string; node_id: string };
+    sha?: string;
+    repo: { full_name: string; node_id?: string };
   };
   head: {
     ref: string;
+    sha?: string;
     repo: { full_name: string } | null;
   };
   draft: boolean;
@@ -44,9 +56,70 @@ type GitTreeEntry = {
   type: "blob" | "commit";
 };
 
-type GitHubRequest = (method: "GET" | "POST", path: string, body?: unknown) => Promise<unknown>;
+export type GitHubRequest = (
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown,
+) => Promise<unknown>;
 
-type GraphqlRequest = (query: string, variables: Record<string, unknown>) => Promise<unknown>;
+export type GraphqlRequest = (
+  query: string,
+  variables: Record<string, unknown>,
+) => Promise<unknown>;
+
+export const ADVISOR_REPAIR_HEAD_WORKFLOWS = [
+  { workflow: "pr.yaml", checks: ["changes", "checks"] },
+  { workflow: "commit-lint.yaml", checks: ["commit-lint"] },
+  { workflow: "dco-check.yaml", checks: ["dco-check"] },
+  { workflow: "installer-hash-check.yaml", checks: ["check-hash"] },
+  { workflow: "code-scanning.yaml", checks: [] },
+  { workflow: "pr-review-advisor.yaml", checks: [] },
+] as const;
+
+type WorkflowRun = {
+  id?: unknown;
+  event?: unknown;
+  path?: unknown;
+  status?: unknown;
+  conclusion?: unknown;
+  display_title?: unknown;
+  head_branch?: unknown;
+  head_sha?: unknown;
+  html_url?: unknown;
+  run_attempt?: unknown;
+};
+
+type WorkflowJob = {
+  id?: unknown;
+  name?: unknown;
+  status?: unknown;
+  conclusion?: unknown;
+  html_url?: unknown;
+};
+
+type PublishedCheck = {
+  id: number;
+  name: string;
+  url: string;
+};
+
+export type AdvisorRepairHeadReceipt = {
+  version: 1;
+  attemptKey: string;
+  sourceHeadSha: string;
+  baseSha: string;
+  generatedHeadSha: string;
+  prNumber: number;
+  outcome: "success" | "manual-remediation-required";
+  workflows: Array<{
+    workflow: string;
+    runId: number;
+    url: string;
+    jobs: Array<{ name: string; url: string }>;
+  }>;
+  checks: PublishedCheck[];
+  failure: string | null;
+};
 
 function required(value: string | undefined, name: string): string {
   if (!value) throw new ConflictFixerError(`${name} is required`);
@@ -107,10 +180,6 @@ export function validateResolutionPatch(input: {
 function gitBuffer(repository: string, args: readonly string[]): Buffer {
   return execFileSync("git", args, {
     cwd: repository,
-    env: {
-      ...process.env,
-      ...gitIsolationEnvironment("/nonexistent"),
-    },
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
@@ -216,6 +285,113 @@ export async function createGitHubTree(input: {
   return input.finalTree;
 }
 
+export async function publishVerifiedCommit(input: {
+  finalTree: string;
+  graphql: GraphqlRequest;
+  headRef: string;
+  headSha: string;
+  message: string;
+  repository: string;
+  repositoryId: string;
+  repositoryName: string;
+  request: GitHubRequest;
+  sleep?: (milliseconds: number) => Promise<void>;
+}): Promise<string> {
+  const tree = await createGitHubTree({
+    baseSha: input.headSha,
+    finalTree: input.finalTree,
+    headSha: input.headSha,
+    repository: input.repository,
+    repositoryName: input.repositoryName,
+    request: input.request,
+  });
+  const created = (await input.request("POST", `/repos/${input.repositoryName}/git/commits`, {
+    message: input.message,
+    parents: [input.headSha],
+    tree,
+  })) as { sha?: string };
+  const commitSha = requireSha(created.sha ?? "", "created commit SHA");
+  const sleep = input.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  let verified = false;
+  let reason = "verification timed out";
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const commit = (await input.request(
+      "GET",
+      `/repos/${input.repositoryName}/git/commits/${commitSha}`,
+    )) as { sha?: string; verification?: { reason?: string; verified?: boolean } };
+    if (commit.sha !== commitSha) throw new ConflictFixerError("GitHub returned a different commit");
+    if (commit.verification?.verified) {
+      verified = true;
+      break;
+    }
+    reason = commit.verification?.reason ?? "unknown reason";
+    if (attempt < 11) await sleep(5_000);
+  }
+  if (!verified) throw new ConflictFixerError(`GitHub did not verify the repair commit: ${reason}`);
+
+  const clientMutationId = commitSha;
+  const result = (await input.graphql(
+    `mutation UpdateAdvisorRepairRef($input: UpdateRefsInput!) {
+      updateRefs(input: $input) { clientMutationId }
+    }`,
+    {
+      input: {
+        clientMutationId,
+        refUpdates: [
+          {
+            afterOid: commitSha,
+            beforeOid: input.headSha,
+            force: false,
+            name: `refs/heads/${input.headRef}`,
+          },
+        ],
+        repositoryId: input.repositoryId,
+      },
+    },
+  )) as { updateRefs?: { clientMutationId?: string } };
+  if (result.updateRefs?.clientMutationId !== clientMutationId) {
+    throw new ConflictFixerError("GitHub did not confirm the atomic PR branch update");
+  }
+  return commitSha;
+}
+
+export async function publishAdvisorRepair(input: {
+  graphql: GraphqlRequest;
+  request: GitHubRequest;
+  sourceRepository: string;
+  selectionPath: string;
+  patchPath: string;
+  receiptPath: string;
+  state: unknown;
+  reviews: unknown;
+  workDirectory: string;
+}): Promise<string> {
+  const selection = parseSelection(readJson(input.selectionPath));
+  if (selection.repository !== REPAIR_REPOSITORY)
+    throw new ConflictFixerError("Advisor repair target is not NVIDIA/NemoClaw");
+  assertLiveRepairState(selection, input.state, input.reviews);
+  const receipt = parseValidationReceipt(readJson(input.receiptPath));
+  const candidate = validateRepairPatch({
+    sourceCheckout: input.sourceRepository,
+    destination: input.workDirectory,
+    selection,
+    patchFile: input.patchPath,
+    expectedChangedPaths: receipt.changedPaths.map(({ path: file }) => file),
+  });
+  assertValidatedRepair(selection, receipt, candidate);
+  return publishVerifiedCommit({
+    finalTree: candidate.candidateTreeSha,
+    graphql: input.graphql,
+    headRef: selection.headRef,
+    headSha: selection.sourceHeadSha,
+    message: `fix: address PR Review Advisor findings\n\n${selection.findingIds.join("\n")}\n\nAdvisor-Repair-Attempt: ${selection.attemptKey}`,
+    repository: candidate.repository,
+    repositoryId: selection.repositoryId,
+    repositoryName: REPAIR_REPOSITORY,
+    request: input.request,
+  });
+}
+
 async function publishValidatedTree(input: {
   entry: ConflictMatrixEntry;
   finalTree: string;
@@ -278,12 +454,12 @@ async function publishValidatedTree(input: {
   return commitSha;
 }
 
-function githubClient(token: string): { graphql: GraphqlRequest; request: GitHubRequest } {
+export function githubClient(token: string): { graphql: GraphqlRequest; request: GitHubRequest } {
   const headers = {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
-    "X-GitHub-Api-Version": "2022-11-28",
+    "X-GitHub-Api-Version": "2026-03-10",
   };
   const parse = async (response: Response): Promise<unknown> => {
     const body = (await response.json()) as {
@@ -321,6 +497,258 @@ function githubClient(token: string): { graphql: GraphqlRequest; request: GitHub
         }),
       ),
   };
+}
+
+function repairValidationRunName(attemptKey: string, generatedHeadSha: string): string {
+  return `Repair validation ${attemptKey} head ${generatedHeadSha}`;
+}
+
+function repairValidationInputs(
+  workflow: string,
+  input: {
+    prNumber: number;
+    sourceHeadSha: string;
+    generatedHeadSha: string;
+    baseSha: string;
+    attemptKey: string;
+  },
+): Record<string, string> {
+  if (workflow === "pr-review-advisor.yaml")
+    return {
+      target_repo: REPAIR_REPOSITORY,
+      target_pr: String(input.prNumber),
+      target_base: "main",
+      repair_head_sha: input.generatedHeadSha,
+      repair_base_sha: input.baseSha,
+      repair_finding_ids_json: "[]",
+      repair_egress_authorized: "false",
+      repair_publish: "false",
+      repair_attempt_key: input.attemptKey,
+    };
+  return {
+    repair_pr_number: String(input.prNumber),
+    ...(workflow === "pr.yaml" ? { repair_source_head_sha: input.sourceHeadSha } : {}),
+    repair_head_sha: input.generatedHeadSha,
+    repair_base_sha: input.baseSha,
+    repair_attempt_key: input.attemptKey,
+  };
+}
+
+async function dispatchRepairValidation(
+  workflow: string,
+  input: Parameters<typeof repairValidationInputs>[1],
+  request: GitHubRequest,
+): Promise<{ workflow: string; runId: number; url: string }> {
+  const response = (await request(
+    "POST",
+    `/repos/${REPAIR_REPOSITORY}/actions/workflows/${workflow}/dispatches`,
+    { ref: "main", inputs: repairValidationInputs(workflow, input) },
+  )) as { workflow_run_id?: unknown; run_url?: unknown; html_url?: unknown };
+  if (
+    !Number.isSafeInteger(response.workflow_run_id) ||
+    Number(response.workflow_run_id) < 1 ||
+    response.run_url !==
+      `https://api.github.com/repos/${REPAIR_REPOSITORY}/actions/runs/${response.workflow_run_id}` ||
+    response.html_url !==
+      `https://github.com/${REPAIR_REPOSITORY}/actions/runs/${response.workflow_run_id}`
+  )
+    throw new ConflictFixerError(`generated-head ${workflow} dispatch identity is invalid`);
+  return { workflow, runId: Number(response.workflow_run_id), url: response.html_url };
+}
+
+async function completedWorkflowEvidence(
+  dispatch: { workflow: string; runId: number; url: string },
+  requiredJobs: readonly string[],
+  runName: string,
+  request: GitHubRequest,
+): Promise<AdvisorRepairHeadReceipt["workflows"][number] | null> {
+  const run = (await request(
+    "GET",
+    `/repos/${REPAIR_REPOSITORY}/actions/runs/${dispatch.runId}`,
+  )) as WorkflowRun;
+  if (
+    run.id !== dispatch.runId ||
+    run.path !== `.github/workflows/${dispatch.workflow}` ||
+    run.event !== "workflow_dispatch" ||
+    run.head_branch !== "main" ||
+    run.display_title !== runName ||
+    run.html_url !== dispatch.url ||
+    typeof run.head_sha !== "string" ||
+    !/^[0-9a-f]{40}$/u.test(run.head_sha) ||
+    !Number.isSafeInteger(run.run_attempt) ||
+    Number(run.run_attempt) < 1
+  )
+    throw new ConflictFixerError(`generated-head ${dispatch.workflow} run evidence is invalid`);
+  if (run.status !== "completed") return null;
+  if (run.conclusion !== "success")
+    throw new ConflictFixerError(`generated-head ${dispatch.workflow} run failed`);
+  const response = (await request(
+    "GET",
+    `/repos/${REPAIR_REPOSITORY}/actions/runs/${dispatch.runId}/jobs?per_page=100`,
+  )) as { jobs?: unknown };
+  if (!Array.isArray(response.jobs) || response.jobs.length > 100)
+    throw new ConflictFixerError(`generated-head ${dispatch.workflow} job listing is invalid`);
+  const jobs = requiredJobs.map((name) => {
+    const matches = (response.jobs as WorkflowJob[]).filter((job) => job.name === name);
+    if (matches.length !== 1)
+      throw new ConflictFixerError(`generated-head ${dispatch.workflow} job ${name} is ambiguous`);
+    const [job] = matches;
+    if (
+      job.status !== "completed" ||
+      job.conclusion !== "success" ||
+      !Number.isSafeInteger(job.id) ||
+      Number(job.id) < 1 ||
+      typeof job.html_url !== "string" ||
+      !job.html_url.startsWith(`${dispatch.url}/job/`)
+    )
+      throw new ConflictFixerError(
+        `generated-head ${dispatch.workflow} job ${name} did not succeed`,
+      );
+    return { name, url: job.html_url };
+  });
+  return { ...dispatch, jobs };
+}
+
+async function publishRepairChecks(
+  generatedHeadSha: string,
+  attemptKey: string,
+  workflows: AdvisorRepairHeadReceipt["workflows"],
+  request: GitHubRequest,
+): Promise<PublishedCheck[]> {
+  const response = (await request(
+    "GET",
+    `/repos/${REPAIR_REPOSITORY}/commits/${generatedHeadSha}/check-runs?per_page=100`,
+  )) as { check_runs?: unknown };
+  if (!Array.isArray(response.check_runs) || response.check_runs.length > 100)
+    throw new ConflictFixerError("generated-head check listing is invalid");
+  const existing = response.check_runs as Array<{
+    id?: unknown;
+    name?: unknown;
+    external_id?: unknown;
+    conclusion?: unknown;
+    details_url?: unknown;
+    html_url?: unknown;
+  }>;
+  const published: PublishedCheck[] = [];
+  for (const job of workflows.flatMap(({ jobs }) => jobs)) {
+    const externalId = `${attemptKey}:${job.name}`;
+    const matches = existing.filter((check) => check.external_id === externalId);
+    if (matches.length > 1)
+      throw new ConflictFixerError(`generated-head check ${job.name} is ambiguous`);
+    let check = matches[0];
+    if (!check) {
+      check = (await request("POST", `/repos/${REPAIR_REPOSITORY}/check-runs`, {
+        name: job.name,
+        head_sha: generatedHeadSha,
+        status: "completed",
+        conclusion: "success",
+        details_url: job.url,
+        external_id: externalId,
+        output: {
+          title: "Exact generated-head validation passed",
+          summary: `The trusted validation job succeeded for ${generatedHeadSha}. Evidence: ${job.url}`,
+        },
+      })) as (typeof existing)[number];
+      existing.push(check);
+    }
+    if (
+      check.name !== job.name ||
+      check.conclusion !== "success" ||
+      check.details_url !== job.url ||
+      !Number.isSafeInteger(check.id) ||
+      Number(check.id) < 1 ||
+      typeof check.html_url !== "string" ||
+      !check.html_url.startsWith(`https://github.com/${REPAIR_REPOSITORY}/`)
+    )
+      throw new ConflictFixerError(`generated-head check ${job.name} evidence is invalid`);
+    published.push({ id: Number(check.id), name: job.name, url: check.html_url });
+  }
+  return published;
+}
+
+export async function waitForAdvisorRepairHead(input: {
+  prNumber: number;
+  sourceHeadSha: string;
+  baseSha: string;
+  generatedHeadSha: string;
+  attemptKey: string;
+  request: GitHubRequest;
+  wait?: (milliseconds: number) => Promise<void>;
+  attempts?: number;
+}): Promise<AdvisorRepairHeadReceipt> {
+  const wait = input.wait ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  const attempts = input.attempts ?? 120;
+  const runName = repairValidationRunName(input.attemptKey, input.generatedHeadSha);
+  const dispatches = await Promise.all(
+    ADVISOR_REPAIR_HEAD_WORKFLOWS.map(({ workflow }) =>
+      dispatchRepairValidation(workflow, input, input.request),
+    ),
+  );
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const pull = (await input.request(
+      "GET",
+      `/repos/${REPAIR_REPOSITORY}/pulls/${input.prNumber}`,
+    )) as LivePullRequest;
+    if (
+      pull.number !== input.prNumber ||
+      pull.state !== "open" ||
+      pull.draft ||
+      pull.head.sha !== input.generatedHeadSha ||
+      pull.head.repo?.full_name !== REPAIR_REPOSITORY ||
+      pull.base.sha !== input.baseSha ||
+      pull.base.ref !== "main" ||
+      pull.base.repo.full_name !== REPAIR_REPOSITORY
+    )
+      throw new ConflictFixerError("pull request changed during generated-head validation");
+    const workflows: AdvisorRepairHeadReceipt["workflows"] = [];
+    for (const dispatch of dispatches) {
+      const specification = ADVISOR_REPAIR_HEAD_WORKFLOWS.find(
+        ({ workflow }) => workflow === dispatch.workflow,
+      );
+      if (!specification) throw new ConflictFixerError("unknown generated-head workflow");
+      const evidence = await completedWorkflowEvidence(
+        dispatch,
+        specification.checks,
+        runName,
+        input.request,
+      );
+      if (evidence) workflows.push(evidence);
+    }
+    if (workflows.length === ADVISOR_REPAIR_HEAD_WORKFLOWS.length) {
+      const checks = await publishRepairChecks(
+        input.generatedHeadSha,
+        input.attemptKey,
+        workflows,
+        input.request,
+      );
+      return {
+        version: 1,
+        attemptKey: input.attemptKey,
+        sourceHeadSha: input.sourceHeadSha,
+        baseSha: input.baseSha,
+        generatedHeadSha: input.generatedHeadSha,
+        prNumber: input.prNumber,
+        outcome: "success",
+        workflows,
+        checks,
+        failure: null,
+      };
+    }
+    if (attempt < attempts) await wait(30_000);
+  }
+  throw new ConflictFixerError("generated-head validation did not finish within sixty minutes");
+}
+
+function writeAdvisorRepairHeadReceipt(
+  directory: string,
+  receipt: AdvisorRepairHeadReceipt,
+): void {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  writeFileSync(
+    path.join(directory, "generated-head.json"),
+    `${JSON.stringify(receipt)}\n`,
+    { flag: "wx", mode: 0o600 },
+  );
 }
 
 export async function publishResolution(input: {
@@ -364,6 +792,63 @@ export async function publishResolution(input: {
 }
 
 async function main(): Promise<void> {
+  if (process.argv[2] === "advisor-repair-checks") {
+    const selection = parseSelection(
+      readJson(required(process.env.SELECTION_FILE, "SELECTION_FILE")),
+    );
+    const generatedHeadSha = requireSha(
+      required(process.env.GENERATED_HEAD_SHA, "GENERATED_HEAD_SHA"),
+      "generated head SHA",
+    );
+    const output = required(process.env.VERIFICATION_OUTPUT_DIR, "VERIFICATION_OUTPUT_DIR");
+    try {
+      const token = required(process.env.GITHUB_TOKEN, "GITHUB_TOKEN");
+      const receipt = await waitForAdvisorRepairHead({
+        prNumber: selection.prNumber,
+        sourceHeadSha: selection.sourceHeadSha,
+        baseSha: selection.baseSha,
+        generatedHeadSha,
+        attemptKey: selection.attemptKey,
+        request: githubClient(token).request,
+      });
+      writeAdvisorRepairHeadReceipt(output, receipt);
+      console.log(`Verified all generated-head workflows on ${generatedHeadSha}.`);
+    } catch (error) {
+      writeAdvisorRepairHeadReceipt(output, {
+        version: 1,
+        attemptKey: selection.attemptKey,
+        sourceHeadSha: selection.sourceHeadSha,
+        baseSha: selection.baseSha,
+        generatedHeadSha,
+        prNumber: selection.prNumber,
+        outcome: "manual-remediation-required",
+        workflows: [],
+        checks: [],
+        failure: sanitizeDiagnostic(error),
+      });
+      throw error;
+    }
+    return;
+  }
+  if (process.argv[2] === "advisor-repair") {
+    const token = required(process.env.GITHUB_TOKEN, "GITHUB_TOKEN");
+    const client = githubClient(token);
+    const commitSha = await publishAdvisorRepair({
+      graphql: client.graphql,
+      request: client.request,
+      sourceRepository: required(process.env.SOURCE_REPOSITORY, "SOURCE_REPOSITORY"),
+      selectionPath: required(process.env.SELECTION_FILE, "SELECTION_FILE"),
+      patchPath: required(process.env.PATCH_FILE, "PATCH_FILE"),
+      receiptPath: required(process.env.RECEIPT_FILE, "RECEIPT_FILE"),
+      state: readJson(required(process.env.STATE_FILE, "STATE_FILE")),
+      reviews: readJson(required(process.env.REVIEWS_FILE, "REVIEWS_FILE")),
+      workDirectory: required(process.env.WORK_DIRECTORY, "WORK_DIRECTORY"),
+    });
+    if (process.env.GITHUB_OUTPUT)
+      appendFileSync(process.env.GITHUB_OUTPUT, `published-sha=${commitSha}\n`);
+    console.log(`Published verified Advisor repair commit ${commitSha}.`);
+    return;
+  }
   const entry = parseConflictMatrixEntry(required(process.env.MATRIX_ENTRY, "MATRIX_ENTRY"));
   const token = required(process.env.GITHUB_TOKEN, "GITHUB_TOKEN");
   const repositoryName = required(process.env.GITHUB_REPOSITORY, "GITHUB_REPOSITORY");

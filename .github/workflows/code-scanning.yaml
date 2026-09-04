@@ -7,9 +7,9 @@
 name: Security / Code Scanning
 
 run-name: >-
-  ${{ github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '' &&
-  format('Generated-head CodeQL {0} {1}', inputs.repair_attempt_key, inputs.source_head_sha) ||
-  format('Code scanning {0} {1}', github.event_name, github.sha) }}
+  ${{ inputs.repair_attempt_key != '' &&
+  format('Repair validation {0} head {1}', inputs.repair_attempt_key, inputs.repair_head_sha) ||
+  github.event.pull_request.title || github.workflow }}
 
 on:
   pull_request:
@@ -20,15 +20,15 @@ on:
     - cron: "23 6 * * 1"
   workflow_dispatch:
     inputs:
-      pr_number:
+      repair_pr_number:
         required: false
         type: string
         default: ""
-      source_head_sha:
+      repair_head_sha:
         required: false
         type: string
         default: ""
-      base_sha:
+      repair_base_sha:
         required: false
         type: string
         default: ""
@@ -43,41 +43,39 @@ permissions:
   security-events: write
 
 jobs:
-  generated-head-context:
+  validate-repair-target:
+    if: ${{ inputs.repair_attempt_key != '' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 2
     permissions:
       contents: read
       pull-requests: read
     steps:
-      - name: Checkout
-        if: github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != ''
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
-
-      - name: Setup Node for generated-head verification
-        if: github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != ''
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.19.0
-
-      - name: Verify generated-head dispatch
-        if: github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != ''
+      - name: Bind validation to the live generated head
         env:
-          BASE_SHA: ${{ inputs.base_sha }}
-          GENERATED_HEAD_COMMAND: verify
-          GENERATED_HEAD_CONTEXT_FILE: ${{ runner.temp }}/generated-head-context.json
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          PR_NUMBER: ${{ inputs.pr_number }}
+          BASE_SHA: ${{ inputs.repair_base_sha }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ inputs.repair_head_sha }}
+          PR_NUMBER: ${{ inputs.repair_pr_number }}
           REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
-          SOURCE_HEAD_SHA: ${{ inputs.source_head_sha }}
-        run: node --experimental-strip-types --no-warnings tools/pr-review-advisor-repair/generated-head-context.mts
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REPAIR_ATTEMPT_KEY" =~ ^sha256:[0-9a-f]{64}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" |
+            jq -e --arg head "$HEAD_SHA" --arg base "$BASE_SHA" '
+              .state == "open" and .draft == false and
+              .head.sha == $head and .head.repo.full_name == "NVIDIA/NemoClaw" and
+              .base.sha == $base and .base.ref == "main" and
+              .base.repo.full_name == "NVIDIA/NemoClaw"
+            ' >/dev/null
 
   codeql:
-    needs: generated-head-context
+    needs: validate-repair-target
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.repair_attempt_key == '' || needs.validate-repair-target.result == 'success') }}
     name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -90,7 +88,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '' && inputs.source_head_sha || github.sha }}
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
           persist-credentials: false
 
       - name: Initialize CodeQL
@@ -101,9 +100,13 @@ jobs:
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        with:
+          ref: ${{ inputs.repair_attempt_key != '' && format('refs/pull/{0}/head', inputs.repair_pr_number) || '' }}
+          sha: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
 
   shellcheck:
-    needs: generated-head-context
+    needs: validate-repair-target
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.repair_attempt_key == '' || needs.validate-repair-target.result == 'success') }}
     name: ShellCheck SARIF
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -111,7 +114,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '' && inputs.source_head_sha || github.sha }}
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
           persist-credentials: false
           path: source
 
@@ -231,3 +235,5 @@ jobs:
         with:
           sarif_file: shellcheck.sarif
           checkout_path: source
+          ref: ${{ inputs.repair_attempt_key != '' && format('refs/pull/{0}/head', inputs.repair_pr_number) || '' }}
+          sha: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}

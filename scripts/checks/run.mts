@@ -128,11 +128,6 @@ export const CHECKS: readonly CheckCommand[] = [
     command: TSX,
     args: ["scripts/checks/growth-guardrails-workflow-boundary.mts"],
   },
-  {
-    name: "pr-review-advisor-repair-workflow-boundary",
-    command: TSX,
-    args: ["scripts/checks/pr-review-advisor-repair-workflow-boundary.mts"],
-  },
 ];
 
 type RunChecksOptions = {

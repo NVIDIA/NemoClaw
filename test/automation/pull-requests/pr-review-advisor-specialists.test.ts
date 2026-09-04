@@ -11,9 +11,16 @@ import { canonicalRepoReadPath } from "../../../tools/advisors/repo-read-only-to
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import {
+  buildAdvisorFindingLedger,
   createAdvisorFindingToolController,
   RECORD_ADVISOR_FINDINGS_TOOL,
 } from "../../../tools/pr-review-advisor/finding-ledger.mts";
+import {
+  allowedRepairPath,
+  bindRepairSelection,
+  parseProposal,
+  selectRepairFindings,
+} from "../../../tools/pr-review-advisor/repair-contract.mts";
 import { TERMINOLOGY_TRACE_TOOL } from "../../../tools/pr-review-advisor/terminology.mts";
 import { runSpecialistAdvisor, writeSpecialistSummary } from "../../../tools/pr-review-advisor/run-specialist.mts";
 import { writeSpecialistDiff } from "../../../tools/pr-review-advisor/specialist-context.mts";
@@ -389,6 +396,33 @@ describe("PR review advisor specialist prompts", () => {
       noFindingsReason: null,
     });
     expect(ledger.findings[0]?.id).toMatch(/^F-behavior-[0-9a-f]{20}$/u);
+    const nextHead = createAdvisorFindingToolController({
+      headSha: "b".repeat(40),
+      interest: "behavior",
+    });
+    await (nextHead.tools[0] as CallableTool).execute(
+      "record-next-head",
+      {
+        findings: [
+          {
+            severity: "P1",
+            kind: "correctness",
+            summary: "The fallback loses the recorded value.",
+            path: "src/lib/example.ts",
+            line: 42,
+            impact: "A valid invocation returns the wrong state.",
+            smallestSafeFix: "Preserve the value when the fallback runs.",
+            regressionTest: "Add a focused fallback-state regression.",
+            exclusions: [],
+          },
+        ],
+        noFindingsReason: null,
+      },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    expect(nextHead.snapshot().findings[0]?.id).toBe(ledger.findings[0]?.id);
     await expect(
       record.execute(
         "record-2",
@@ -398,5 +432,226 @@ describe("PR review advisor specialist prompts", () => {
         undefined as never,
       ),
     ).rejects.toThrow("already has a committed receipt");
+  });
+
+  it("selects only exact opted-in source, test, and documentation findings (#10791)", async () => {
+    const headSha = "a".repeat(40);
+    const controller = createAdvisorFindingToolController({ headSha, interest: "behavior" });
+    const record = controller.tools[0] as CallableTool;
+    await record.execute(
+      "record",
+      {
+        findings: [
+          {
+            severity: "P1",
+            kind: "correctness",
+            summary: "Source behavior is wrong.",
+            path: "src/lib/example.ts",
+            line: 4,
+            impact: "The result is wrong.",
+            smallestSafeFix: "Correct the expression.",
+            regressionTest: "Cover the corrected result.",
+            exclusions: [],
+          },
+          {
+            severity: "P1",
+            kind: "dependency",
+            summary: "The lockfile is old.",
+            path: "package-lock.json",
+            line: 1,
+            impact: "Dependencies differ.",
+            smallestSafeFix: "Update the lockfile.",
+            regressionTest: "Run the dependency gate.",
+            exclusions: ["dependency-change"],
+          },
+        ],
+        noFindingsReason: null,
+      },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    const ledger = controller.snapshot();
+    const eligible = ledger.findings.find(({ path: file }) => file.startsWith("src/"))!;
+    const excluded = ledger.findings.find(({ path: file }) => file === "package-lock.json")!;
+    const selection = selectRepairFindings({
+      version: 1,
+      repository: "NVIDIA/NemoClaw",
+      prNumber: 42,
+      sourceHeadSha: headSha,
+      baseSha: "b".repeat(40),
+      headRef: "feature/fix",
+      repositoryId: "R_repo",
+      author: "maintainer",
+      actor: "maintainer",
+      triggeringActor: "maintainer",
+      workflowSha: "c".repeat(40),
+      advisor: {
+        runId: 7,
+        runAttempt: 1,
+        workflowSha: "d".repeat(40),
+        artifactIds: Array.from({ length: 10 }, (_, index) => index + 1),
+      },
+      stateDigest: `sha256:${"e".repeat(64)}`,
+      reviewDigest: `sha256:${"f".repeat(64)}`,
+      ledgers: [ledger],
+      optedFindingIds: [eligible.id, excluded.id],
+      productScope: "accepted:#10791",
+      optIn: "manual-exact-head",
+    });
+
+    expect(selection.findingIds).toEqual([eligible.id]);
+    expect(selection.selectedPaths).toEqual(["src/lib/example.ts"]);
+    expect(selection.decisions).toContainEqual({
+      id: excluded.id,
+      selected: false,
+      reason: "excluded:dependency-change",
+    });
+    expect(() =>
+      parseProposal(
+        {
+          version: 1,
+          findingIds: selection.findingIds,
+          unresolvedFindingIds: [],
+          changedPaths: [".github/workflows/pr.yaml"],
+          summary: "Changed workflow controls.",
+          outcome: "proposed",
+        },
+        selection,
+      ),
+    ).toThrow("selected findings");
+    expect(allowedRepairPath("test/example.test.ts")).toBe(true);
+    expect(allowedRepairPath("docs/example.mdx")).toBe(true);
+    expect(allowedRepairPath("tools/example.mts")).toBe(false);
+    expect(allowedRepairPath("test/e2e/example.test.ts")).toBe(false);
+  });
+
+  it("binds Phase 0 to the exact manual run, PR revisions, artifacts, and owner (#10791)", () => {
+    const headSha = "a".repeat(40);
+    const baseSha = "b".repeat(40);
+    const workflowSha = "c".repeat(40);
+    const ledgers = ADVISOR_INTERESTS.map((interest) =>
+      buildAdvisorFindingLedger({
+        headSha,
+        interest,
+        input:
+          interest === ADVISOR_INTERESTS[0]
+            ? {
+                findings: [
+                  {
+                    severity: "P1",
+                    kind: "correctness",
+                    summary: "The selected behavior is wrong.",
+                    path: "src/lib/example.ts",
+                    line: 4,
+                    impact: "The command returns the wrong value.",
+                    smallestSafeFix: "Correct the selected expression.",
+                    regressionTest: "Cover the corrected result.",
+                    exclusions: [],
+                  },
+                ],
+                noFindingsReason: null,
+              }
+            : { findings: [], noFindingsReason: "No blocker in this specialist area." },
+      }),
+    );
+    const findingId = ledgers.flatMap(({ findings }) => findings)[0]!.id;
+    const artifactNames = [
+      "pr-review-advisor-context-77",
+      ...ADVISOR_INTERESTS.map((interest) => `pr-review-specialist-${interest}-1`),
+    ];
+    const pullRequest = {
+      state: "open",
+      draft: false,
+      maintainer_can_modify: true,
+      user: { login: "contributor" },
+      head: { ref: "feature/fix", sha: headSha, repo: { full_name: "NVIDIA/NemoClaw" } },
+      base: {
+        ref: "main",
+        sha: baseSha,
+        repo: { full_name: "NVIDIA/NemoClaw", node_id: "R_repo" },
+      },
+    };
+    const request = {
+      repository: "NVIDIA/NemoClaw",
+      prNumber: 42,
+      sourceHeadSha: headSha,
+      sourceBaseSha: baseSha,
+      workflowSha,
+      actor: "maintainer",
+      triggeringActor: "maintainer",
+      currentRunId: 77,
+      currentRunAttempt: 1,
+      optedFindingIds: [findingId],
+      pullRequest,
+      sourceCommit: { commit: { message: "fix: correct the selected behavior" } },
+      advisorRun: {
+        id: 77,
+        run_attempt: 1,
+        event: "workflow_dispatch",
+        status: "in_progress",
+        conclusion: null,
+        path: ".github/workflows/pr-review-advisor.yaml",
+        workflow_sha: workflowSha,
+        repository: { full_name: "NVIDIA/NemoClaw" },
+        pull_requests: [],
+      },
+      artifacts: artifactNames.map((name, index) => ({
+        id: index + 100,
+        name,
+        expired: false,
+        workflow_run: { id: 77 },
+      })),
+      ledgers,
+      state: { open: true },
+      reviews: [],
+      permissions: {
+        actor: { permission: "maintain" },
+        triggeringActor: { permission: "admin" },
+      },
+    };
+
+    expect(bindRepairSelection(request)).toMatchObject({
+      sourceHeadSha: headSha,
+      baseSha,
+      findingIds: [findingId],
+      optIn: "manual-exact-head",
+    });
+    expect(() => bindRepairSelection({ ...request, sourceBaseSha: "d".repeat(40) })).toThrow(
+      "not eligible",
+    );
+    expect(() =>
+      bindRepairSelection({ ...request, currentRunId: 78 }),
+    ).toThrow("successful trusted workflow revision");
+    expect(() =>
+      bindRepairSelection({
+        ...request,
+        permissions: { ...request.permissions, triggeringActor: { permission: "write" } },
+      }),
+    ).toThrow("not eligible");
+    expect(() =>
+      bindRepairSelection({
+        ...request,
+        pullRequest: { ...pullRequest, maintainer_can_modify: false },
+      }),
+    ).toThrow("not eligible");
+    expect(() =>
+      bindRepairSelection({
+        ...request,
+        sourceCommit: {
+          commit: {
+            message: `fix: generated repair\n\nAdvisor-Repair-Attempt: sha256:${"0".repeat(64)}`,
+          },
+        },
+      }),
+    ).toThrow("not eligible");
+    expect(() =>
+      bindRepairSelection({
+        ...request,
+        artifacts: request.artifacts.map((artifact, index) =>
+          index === 0 ? { ...artifact, expired: true } : artifact,
+        ),
+      }),
+    ).toThrow("artifact set is incomplete");
   });
 });

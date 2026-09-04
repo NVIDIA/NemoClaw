@@ -41,14 +41,6 @@ describe("checks runner", () => {
     });
   });
 
-  it("registers the Advisor repair workflow boundary check (#10791)", () => {
-    expect(CHECKS).toContainEqual({
-      name: "pr-review-advisor-repair-workflow-boundary",
-      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
-      args: ["scripts/checks/pr-review-advisor-repair-workflow-boundary.mts"],
-    });
-  });
-
   it("registers the live E2E assertion ratchet", () => {
     expect(CHECKS).toContainEqual({
       name: "e2e-assertion-census",
