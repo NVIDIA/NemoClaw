@@ -31,6 +31,7 @@ import {
   V00116_BREV_ASSETS,
   V00116_CHECKSUM_MANIFESTS,
   V00116_INSTALLER_ASSETS,
+  V00116_SANDBOX_BUILD_DIGESTS,
   v00116Pins,
   withSandboxAbi,
 } from "../helpers/openshell-release-fixtures";
@@ -447,12 +448,14 @@ const CHECKSUM_MANIFESTS_BY_VERSION = new Map([
   ["0.0.101", V00101_CHECKSUM_MANIFESTS],
   ["0.0.103", V00103_CHECKSUM_MANIFESTS],
   ["0.0.106", V00106_CHECKSUM_MANIFESTS],
+  ["0.0.116", V00116_CHECKSUM_MANIFESTS],
 ]);
 const ASSET_DIGESTS_BY_VERSION = new Map([
   ["0.0.99", V0099_ASSET_DIGESTS],
   ["0.0.101", V00101_ASSET_DIGESTS],
   ["0.0.103", V00103_ASSET_DIGESTS],
   ["0.0.106", V00106_ASSET_DIGESTS],
+  ["0.0.116", V00116_ASSET_DIGESTS],
 ]);
 const trustAlternateRelease = (source: string): string => {
   const digests = SYNTHETIC_SANDBOX_BUILD_DIGESTS;
@@ -696,6 +699,8 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
         ? V00103_SANDBOX_BUILD_DIGESTS
         : openshellVersion === "0.0.106"
           ? V00106_SANDBOX_BUILD_DIGESTS
+          : openshellVersion === "0.0.116"
+            ? V00116_SANDBOX_BUILD_DIGESTS
           : openshellVersion === "9.9.9"
             ? SYNTHETIC_SANDBOX_BUILD_DIGESTS
             : undefined;
@@ -737,6 +742,9 @@ function createFixture(
   const checksumManifests =
     CHECKSUM_MANIFESTS_BY_VERSION.get(openshellVersion) ?? CHECKSUM_MANIFESTS;
   const assetDigests = ASSET_DIGESTS_BY_VERSION.get(openshellVersion) ?? ASSET_DIGESTS;
+  const installerAssets =
+    openshellVersion === "0.0.116" ? [...V00116_INSTALLER_ASSETS] : INSTALLER_ASSETS;
+  const brevAssets = openshellVersion === "0.0.116" ? [...V00116_BREV_ASSETS] : ASSETS.slice(0, 2);
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-hash-"));
   const scriptsDir = path.join(fixtureRoot, "scripts");
   const checksDir = path.join(scriptsDir, "checks");
@@ -777,7 +785,7 @@ function createFixture(
       openshellVersion,
       renderPinFunction(
         "openshell_pinned_sha256",
-        INSTALLER_ASSETS,
+        installerAssets,
         openshellVersion,
         formatting,
         assetDigests,
@@ -790,7 +798,7 @@ function createFixture(
       openshellVersion,
       renderPinFunction(
         "openshell_cli_pinned_sha256",
-        ASSETS.slice(0, 2),
+        brevAssets,
         openshellVersion,
         formatting,
         assetDigests,
@@ -1147,6 +1155,7 @@ describe("installer hash verification", () => {
     ["0.0.101", V00101_CHECKSUM_MANIFESTS, V00101_ASSET_DIGESTS],
     ["0.0.103", V00103_CHECKSUM_MANIFESTS, V00103_ASSET_DIGESTS],
     ["0.0.106", V00106_CHECKSUM_MANIFESTS, V00106_ASSET_DIGESTS],
+    ["0.0.116", V00116_CHECKSUM_MANIFESTS, V00116_ASSET_DIGESTS],
   ] as const)(
     "accepts the complete trusted OpenShell %s release identity",
     (version, manifests, assets) => {
