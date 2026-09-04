@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Build-only compatibility probe. Keep these hashes synchronized with the
-# checksum-pinned PyPI wheels in Dockerfile.base.
+# Production Hindsight lazy-install lock and base-image compatibility probe.
+# Keep these hashes synchronized with the checksum-pinned PyPI wheels in
+# Dockerfile.base.
 hindsight-client==0.6.1 \
     --hash=sha256:9fdda176ab50f7cec8d7339c6608c148f0cd9ad7e65d9d76192f2db730bc330a
 aiohttp-retry==2.9.1 \

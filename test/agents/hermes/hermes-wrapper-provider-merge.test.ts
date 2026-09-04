@@ -345,7 +345,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
 
     expect(run.status).toBe(2);
     expect(run.realInvoked).toBe(false);
-    expect(run.stderr).toContain("adapter targets Hermes 0.19.0");
+    expect(run.stderr).toContain("adapter targets Hermes 0.20.6");
     expect(run.stderr).toContain("installed CLI reports 0.20.0");
   });
 

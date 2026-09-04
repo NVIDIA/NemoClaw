@@ -192,6 +192,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     "../../src/lib/onboard/experimental/hermes-portable-ollama-inference.js",
   );
   const processRecovery = requireDist("../../src/lib/actions/sandbox/process-recovery.js");
+  const forwardHealth = requireDist("../../src/lib/actions/sandbox/forward-health.js");
   const autoPairApproval = requireDist("../../src/lib/actions/sandbox/auto-pair-approval.js");
   const connectVllmPreflight = requireDist(
     "../../src/lib/actions/sandbox/connect-vllm-preflight.js",
@@ -470,6 +471,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const checkAndRecoverSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockReturnValue(options.processCheck ?? { checked: true, wasRunning: true, recovered: false });
+  vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
   const verifyHermesPortableLaunchForwardsSpy = vi
     .spyOn(processRecovery, "verifyHermesPortableLaunchForwards")
     .mockReturnValue({ kind: "healthy" });

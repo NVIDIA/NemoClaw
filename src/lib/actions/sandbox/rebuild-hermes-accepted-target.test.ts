@@ -193,7 +193,7 @@ describe("Hermes accepted replacement recovery", () => {
     vi.restoreAllMocks();
   });
 
-  it("recovers a stranded cron gate without a current gate plan before accepting the replacement (#7806)", async () => {
+  it("restores accepted replacement state before reopening cron dispatch (#7806)", async () => {
     const events: string[] = [];
     phaseMocks.recoverCronRestore.mockImplementation(() => {
       events.push("recover");
@@ -223,9 +223,9 @@ describe("Hermes accepted replacement recovery", () => {
     ).resolves.toBeUndefined();
 
     expect(events).toEqual([
-      "recover",
       "restore",
       "post-restore",
+      "recover",
       "retire-removed-immutability",
       "clear-recovery",
       "complete",

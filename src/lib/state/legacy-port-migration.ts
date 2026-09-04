@@ -67,6 +67,27 @@ export interface LegacyPortMigrationResult {
   warnings: string[];
 }
 
+/** Read-only collision check used before deciding whether public argv needs migration. */
+export function hasMigratableLegacySandbox(
+  sandboxName: string,
+  options: { gatewayPort?: number; home?: string } = {},
+): boolean {
+  const gatewayPort = options.gatewayPort ?? GATEWAY_PORT;
+  if (gatewayPort === DEFAULT_GATEWAY_PORT) return false;
+  const home = path.resolve(options.home || resolveHome());
+  const sharedRoot = nemoclawStateRoot(home, DEFAULT_GATEWAY_PORT);
+  const pendingIntent = readMigrationIntent(home, sharedRoot);
+  if (
+    pendingIntent?.metadata.gatewayPort === gatewayPort &&
+    pendingIntent.metadata.selectedSandboxNames.includes(sandboxName)
+  ) {
+    return true;
+  }
+  const legacyRegistry = readGatewayRegistryFile(home, path.join(sharedRoot, "sandboxes.json"));
+  const entry = legacyRegistry?.sandboxes[sandboxName];
+  return entry ? registryEntryGatewayPort(entry) === gatewayPort : false;
+}
+
 interface LegacyPortMigrationIntentMetadata {
   version: typeof MIGRATION_INTENT_VERSION;
   gatewayPort: number;
