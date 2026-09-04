@@ -99,6 +99,17 @@ printf '%s\n' '{"worker":"worker-17"}' | dcode tools call-read-only worker_task_
 
 The hosted installer accepts options after `bash -s --`. These options control installation and the onboarding run that follows it.
 
+### Disable Installer Telemetry
+
+Set `NEMOCLAW_DISABLE_TELEMETRY` to the exact value `1` on the receiving `bash` command to stop the post-success installer telemetry attempt.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_DISABLE_TELEMETRY=1 bash
+```
+
+The telemetry client checks this control before it loads telemetry configuration, builds the event, or sends a telemetry request.
+Production delivery remains disabled until the client ID, schemas, and endpoints are provisioned.
+
 ### `--local-model-runtime=vllm`
 
 Enable the fixed vLLM local model profile. The flag accepts only `vllm`. It makes the remaining onboarding non-interactive and disables Express profile selection.
@@ -3609,10 +3620,7 @@ installer commands: the git ref to install from. A nonempty value takes preceden
 `NEMOCLAW_INSTALL_TAG`. Overridden by the `--install-ref` flag. | | `NEMOCLAW_INSTALL_TAG` | release
 tag | For internal installer commands: the release tag to install when `NEMOCLAW_INSTALL_REF` is
 unset or empty. Defaults to the admin-promoted `lkg` tag when unset. Overridden by the
-`--install-tag` flag. | | `NEMOCLAW_DISABLE_TELEMETRY` | exactly `1` | Stops the post-success
-installer telemetry attempt before production configuration lookup, event construction, or network
-access. Production delivery remains disabled until the client ID, schemas, and endpoints are
-provisioned. | | `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE` | `1` to enable | Enables the fixed
+`--install-tag` flag. | | `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE` | `1` to enable | Enables the fixed
 vLLM local model profile. Requires `NEMOCLAW_LOCAL_MODEL_RUNTIME=vllm`. Direct `$$nemoclaw onboard`
 use also requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer makes onboarding
 non-interactive, disables Express selection, and sets this value automatically when it receives
