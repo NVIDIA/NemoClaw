@@ -207,6 +207,29 @@ describe("Hermes image build probes", () => {
     );
   });
 
+  // source-shape-contract: security -- The final image must execute the reviewed Hermes wrapper bytes
+  it("binds the Hermes wrapper to its source digest", () => {
+    const imageDockerfile = fs.readFileSync(
+      path.join(process.cwd(), "agents", "hermes", "Dockerfile"),
+      "utf8",
+    );
+    const hermesWrapper = fs.readFileSync(
+      path.join(process.cwd(), "agents", "hermes", "hermes-wrapper.py"),
+    );
+    const digest = createHash("sha256").update(hermesWrapper).digest("hex");
+    const digestBinding = `ARG NEMOCLAW_HERMES_WRAPPER_SHA256=${digest}`;
+    const integrityCheck =
+      '"$NEMOCLAW_HERMES_WRAPPER_SHA256" /usr/local/lib/nemoclaw/hermes-wrapper.py';
+    const bindingIndex = imageDockerfile.indexOf(digestBinding);
+    const integrityCheckIndex = imageDockerfile.indexOf(integrityCheck, bindingIndex);
+
+    expect(bindingIndex).toBeGreaterThan(-1);
+    expect(integrityCheckIndex).toBeGreaterThan(bindingIndex);
+    expect(imageDockerfile.indexOf("| sha256sum -c -", integrityCheckIndex)).toBeGreaterThan(
+      integrityCheckIndex,
+    );
+  });
+
   it("removes the Hindsight probe wheel after staging its temporary copy", () => {
     const probeWheel = "/opt/nemoclaw-hermes-config/hindsight-probe-aiohttp-retry.whl";
     const copyIndex = dockerfile.indexOf(`cp ${probeWheel}`);

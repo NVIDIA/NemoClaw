@@ -788,7 +788,7 @@ RUN node --experimental-strip-types \
 # file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
 # Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,hermes-cli-adapter-v1.json,validate-cli-adapter.py,validate-env-secret-boundary.py,finalize-tirith-marker.py,cron-restore-control.py}`.
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=3c769f05292b840424a8feec9a9eb441e393a48bf0212bd824b0db8a33a66331
-ARG NEMOCLAW_HERMES_WRAPPER_SHA256=b008a27a53c8ddc1189d3ba03490e29e48c5a026f412deeb73b0bc3098923214
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=ef6051859986987c74eaf771ce1cfdbd3e06f236f019830730e7f92536d82081
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=6937ddb650532e473b84a5e56fb26573491d1bc20230ba6c2bfd2e6f6d777edb
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
