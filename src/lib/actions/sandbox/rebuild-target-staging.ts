@@ -6,12 +6,12 @@ import {
   isN1xManagedVllmProviderModel,
   isRecordedN1xManagedVllmRebuildEligible,
 } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
-import { isN1xOnboardingProviderKey } from "../../onboard/inference-providers/provider-selection-keys";
-import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import {
-  providerNameToOptionKey,
+  isN1xOnboardingProviderKey,
+  persistedProviderNameToSelectionKey,
   type RemoteProviderConfigEntryLike,
-} from "../../onboard/provider-recovery";
+} from "../../onboard/inference-providers/provider-selection-keys";
+import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import {
   createRebuildRouteHandoff,
   type RegistryInferenceRoute,
@@ -129,9 +129,11 @@ export function stageRecordedDeferredN1xIntent(
     selectionMatchesRecord &&
     !isManagedVllmIdentity &&
     isN1xOnboardingProviderKey(
-      providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, sandboxEntry.provider, {
-        hasNimContainer: Boolean(sandboxEntry.nimContainer),
-      }),
+      persistedProviderNameToSelectionKey(
+        sandboxEntry.provider,
+        { hasNimContainer: Boolean(sandboxEntry.nimContainer) },
+        REMOTE_PROVIDER_CONFIG,
+      ),
     );
   const recordedManagedVllmIsEligible =
     !sandboxEntry.nimContainer &&
