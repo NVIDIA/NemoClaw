@@ -442,9 +442,8 @@ test(
       openshellWrapper,
       openshell,
     );
-    const capturePairingDiagnostics = (artifactName: string) =>
+    const capturePairingDiagnostics = () =>
       captureIssue4462FailureDiagnostics(sandbox, {
-        artifactName,
         env: sandboxEnv,
         redactionValues: ["nemoclaw-exdev-dummy-key"],
         sandboxName: SANDBOX_NAME,
@@ -512,8 +511,7 @@ test(
             timeoutMs: ONBOARD_TIMEOUT_MS,
           },
         ),
-      captureDiagnostics: () =>
-        capturePairingDiagnostics("openclaw-plugin-exdev-onboard-pairing-diagnostics"),
+      captureDiagnostics: capturePairingDiagnostics,
       onEvidence: async (evidence) => {
         await artifacts.writeJson("retry/openclaw-plugin-exdev-onboard-retry.json", evidence);
       },
@@ -568,8 +566,7 @@ test(
     openshellWrapper.selectImage(pluginImageV2);
     const recreate = await runOpenClawPluginWithFailureEvidence({
       operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
-      captureDiagnostics: () =>
-        capturePairingDiagnostics("openclaw-weather-plugin-recreate-pairing-diagnostics"),
+      captureDiagnostics: capturePairingDiagnostics,
       run: () =>
         host.command(
           "node",

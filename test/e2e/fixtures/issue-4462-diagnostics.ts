@@ -5,7 +5,6 @@ import type { SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 
 interface Issue4462FailureDiagnosticsOptions {
-  artifactName?: string;
   env: NodeJS.ProcessEnv;
   redactionValues: readonly string[];
   sandboxName: string;
@@ -136,7 +135,7 @@ export async function captureIssue4462FailureDiagnostics(
 ): Promise<void> {
   try {
     await sandbox.exec(options.sandboxName, buildIssue4462DiagnosticsCommand(), {
-      artifactName: options.artifactName ?? "failure-openclaw-pairing-diagnostics",
+      artifactName: "failure-openclaw-pairing-diagnostics",
       captureLimitBytes: 1024 * 1024,
       env: options.env,
       redactionValues: [...options.redactionValues],
