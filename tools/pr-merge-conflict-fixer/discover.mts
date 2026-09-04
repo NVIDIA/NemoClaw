@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { ConflictFixerError, prepareMerge, requireSha } from "./merge.mts";
+import { ConflictFixerError, listTreeChanges, prepareMerge, requireSha } from "./merge.mts";
 
 export type PullRequest = {
   base: { ref: string };
@@ -46,8 +46,13 @@ export function parseConflictMatrixEntry(value: string): ConflictMatrixEntry {
   return parsed;
 }
 
+type ConflictInspection = {
+  conflictPaths: string[];
+  mergePaths: string[];
+};
+
 type DiscoverOptions = {
-  checkConflict?: (pullRequest: PullRequest, baseSha: string) => string[] | null;
+  checkConflict?: (pullRequest: PullRequest, baseSha: string) => ConflictInspection | null;
 };
 
 function required(value: string | undefined, name: string): string {
@@ -82,13 +87,13 @@ export function selectConflictingPullRequests(
     });
 
   return eligibleSameRepositoryPullRequests(pullRequests, repository).flatMap((pullRequest) => {
-    const conflictPaths = checkConflict(pullRequest, baseSha);
-    if (!conflictPaths) return [];
-    if (conflictPaths.some((file) => file.startsWith(".github/workflows/"))) return [];
+    const conflict = checkConflict(pullRequest, baseSha);
+    if (!conflict) return [];
+    if (conflict.mergePaths.some((file) => file.startsWith(".github/workflows/"))) return [];
     return [
       {
         base_sha: baseSha,
-        conflict_paths: conflictPaths,
+        conflict_paths: conflict.conflictPaths,
         head_ref: pullRequest.head.ref,
         head_sha: requireSha(pullRequest.head.sha, "PR head SHA"),
         pr_number: pullRequest.number,
@@ -145,7 +150,12 @@ export async function discoverConflicts(env = process.env): Promise<ConflictMatr
           pullRequest.head.sha,
           baseSha,
         );
-        return merge?.conflictPaths ?? null;
+        return merge
+          ? {
+              conflictPaths: merge.conflictPaths,
+              mergePaths: listTreeChanges(merge.repository, merge.headSha, merge.conflictTree),
+            }
+          : null;
       } finally {
         rmSync(temporaryDirectory, { force: true, recursive: true });
       }

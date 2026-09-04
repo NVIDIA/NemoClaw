@@ -15,10 +15,7 @@ import {
 } from "../../../tools/pr-merge-conflict-fixer/discover.mts";
 import { prepareMerge, writeTree } from "../../../tools/pr-merge-conflict-fixer/merge.mts";
 import {
-  type GitRunner,
-  githubRefPublisher,
   publishResolution,
-  pushRefWithLease,
   validatePublicationState,
   validateResolutionPatch,
 } from "../../../tools/pr-merge-conflict-fixer/publish.mts";
@@ -60,14 +57,6 @@ function required<T>(value: T | null | undefined, message: string): T {
   expect(value, message).not.toBeNull();
   expect(value, message).toBeDefined();
   return value as T;
-}
-
-function failGitCommand(): never {
-  throw new Error("simulated Git failure");
-}
-
-function mockGitRunner() {
-  return vi.fn<GitRunner>(() => "");
 }
 
 function resolverEnvironment(): NodeJS.ProcessEnv {
@@ -233,7 +222,10 @@ afterEach(() => {
 
 describe("PR merge conflict fixer", () => {
   it("skips fork PRs before Git conflict analysis (#7542)", () => {
-    const checkConflict = vi.fn(() => ["conflict.txt"]);
+    const checkConflict = vi.fn(() => ({
+      conflictPaths: ["conflict.txt"],
+      mergePaths: ["conflict.txt"],
+    }));
     const selected = selectConflictingPullRequests(
       [
         pullRequest({ number: 1 }),
@@ -256,22 +248,30 @@ describe("PR merge conflict fixer", () => {
       [pullRequest({ draft: true, number: 1 }), pullRequest({ number: 2 })],
       "NVIDIA/NemoClaw",
       "b".repeat(40),
-      { checkConflict: () => ["conflict.txt"] },
+      {
+        checkConflict: () => ({
+          conflictPaths: ["conflict.txt"],
+          mergePaths: ["conflict.txt"],
+        }),
+      },
     );
 
     expect(selected.map((item) => item.pr_number)).toEqual([2]);
   });
 
-  it("skips GitHub workflow conflicts before model selection (#7542)", () => {
+  it("skips merges that would change GitHub workflows before model selection (#7542)", () => {
     const selected = selectConflictingPullRequests(
       [pullRequest({ number: 1 }), pullRequest({ number: 2 })],
       "NVIDIA/NemoClaw",
       "b".repeat(40),
       {
-        checkConflict: (candidate) =>
-          candidate.number === 1
-            ? ["conflict.txt", ".github/workflows/e2e.yaml"]
-            : ["conflict.txt"],
+        checkConflict: (candidate) => ({
+          conflictPaths: ["conflict.txt"],
+          mergePaths:
+            candidate.number === 1
+              ? ["conflict.txt", ".github/workflows/e2e.yaml"]
+              : ["conflict.txt"],
+        }),
       },
     );
 
@@ -393,7 +393,7 @@ describe("PR merge conflict fixer", () => {
     ).toThrow(/draft/u);
   });
 
-  it("creates a verified commit before an atomic leased head update (#7542)", async () => {
+  it("creates a verified commit from a main-relative tree before the atomic head update (#7542)", async () => {
     const fixture = createConflictFixture();
     for (let index = 0; index < 100; index += 1) {
       write(fixture.repository, `stale-main/${index}.txt`, `main ${index}\n`);
@@ -405,10 +405,15 @@ describe("PR merge conflict fixer", () => {
     const patchPath = path.join(temporaryDirectory(), "resolution.patch");
     const finalTree = createResolutionPatch(fixture, patchPath);
     const commitSha = "c".repeat(40);
-    const publishRef = vi.fn(async () => undefined);
     const requests: Array<{ body: unknown; method: string; path: string }> = [];
+    const graphql = vi.fn(async (_query: string, variables: Record<string, unknown>) => ({
+      updateRefs: {
+        clientMutationId: commitSha,
+      },
+      variables,
+    }));
     const responseHandlers: Record<string, (body: unknown) => unknown> = {
-      [`GET /repos/NVIDIA/NemoClaw/pulls/${entry.pr_number}`]: () => ({
+      [`/repos/NVIDIA/NemoClaw/pulls/${entry.pr_number}`]: () => ({
         base: {
           ref: "main",
           repo: { full_name: "NVIDIA/NemoClaw", node_id: "R_repo" },
@@ -420,34 +425,31 @@ describe("PR merge conflict fixer", () => {
         draft: false,
         state: "open",
       }),
-      "GET /repos/NVIDIA/NemoClaw/git/ref/heads/main": () => ({
+      "/repos/NVIDIA/NemoClaw/git/ref/heads/main": () => ({
         object: { sha: entry.base_sha },
       }),
-      "POST /repos/NVIDIA/NemoClaw/git/blobs": (body) => {
+      "/repos/NVIDIA/NemoClaw/git/blobs": (body) => {
         const encoded = (body as { content: string }).content;
         const content = Buffer.from(encoded, "base64");
         const header = Buffer.from(`blob ${content.length}\0`);
         return { sha: createHash("sha1").update(header).update(content).digest("hex") };
       },
-      "POST /repos/NVIDIA/NemoClaw/git/trees": () => ({ sha: finalTree }),
-      "POST /repos/NVIDIA/NemoClaw/git/commits": () => ({
+      "/repos/NVIDIA/NemoClaw/git/trees": () => ({ sha: finalTree }),
+      "/repos/NVIDIA/NemoClaw/git/commits": () => ({
         sha: commitSha,
         verification: { reason: "valid", verified: true },
       }),
     };
     const request = vi.fn(async (method: "GET" | "POST", apiPath: string, body?: unknown) => {
       requests.push({ body, method, path: apiPath });
-      return required(
-        responseHandlers[`${method} ${apiPath}`],
-        `unexpected request: ${method} ${apiPath}`,
-      )(body);
+      return required(responseHandlers[apiPath], `unexpected request: ${method} ${apiPath}`)(body);
     });
 
     await expect(
       publishResolution({
         entry,
+        graphql,
         patchPath,
-        publishRef,
         repositoryName: "NVIDIA/NemoClaw",
         request,
         sourceRepository: fixture.repository,
@@ -493,298 +495,22 @@ describe("PR merge conflict fixer", () => {
         "resolved intent\n",
       ].sort(),
     );
-    expect(publishRef).toHaveBeenCalledWith({
-      commitSha,
-      expectedHeadSha: entry.head_sha,
-      headRef: entry.head_ref,
-      repository: expect.any(String),
-      repositoryName: "NVIDIA/NemoClaw",
+    expect(graphql).toHaveBeenCalledWith(expect.stringContaining("updateRefs"), {
+      input: {
+        clientMutationId: commitSha,
+        refUpdates: [
+          {
+            afterOid: commitSha,
+            beforeOid: entry.head_sha,
+            force: false,
+            name: `refs/heads/${entry.head_ref}`,
+          },
+        ],
+        repositoryId: "R_repo",
+      },
     });
     expect(requests.filter((item) => item.path.includes("/pulls/"))).toHaveLength(1);
     expect(requests.filter((item) => item.path.endsWith("/git/ref/heads/main"))).toHaveLength(1);
-  });
-
-  it("rejects publication when the PR branch moves after validation (#7542)", () => {
-    const fixture = createConflictFixture();
-    const remote = temporaryDirectory();
-    git(remote, ["init", "--bare"]);
-    git(fixture.repository, ["push", remote, `${fixture.headSha}:refs/heads/pull-request`]);
-
-    git(fixture.repository, ["checkout", "pull-request"]);
-    write(fixture.repository, "resolution.txt", "resolved\n");
-    git(fixture.repository, ["add", "resolution.txt"]);
-    git(fixture.repository, ["commit", "-m", "merge: resolve conflicts with main"]);
-    const commitSha = git(fixture.repository, ["rev-parse", "HEAD"]);
-    const movedHead = git(fixture.repository, ["rev-parse", `${fixture.headSha}^`]);
-    git(fixture.repository, ["push", "--force", remote, `${movedHead}:refs/heads/pull-request`]);
-
-    expect(() =>
-      pushRefWithLease({
-        commitSha,
-        environment: {
-          ...process.env,
-          GIT_CONFIG_GLOBAL: "/dev/null",
-          GIT_CONFIG_SYSTEM: "/dev/null",
-        },
-        expectedHeadSha: fixture.headSha,
-        headRef: "pull-request",
-        remoteUrl: remote,
-        repository: fixture.repository,
-      }),
-    ).toThrow(/atomic PR branch update.*changed/u);
-    expect(git(remote, ["rev-parse", "refs/heads/pull-request"])).toBe(movedHead);
-  });
-
-  it("stages, publishes, and removes the verified GitHub commit through authenticated leases (#7542)", async () => {
-    const commitSha = "c".repeat(40);
-    const expectedHeadSha = "b".repeat(40);
-    const repository = "/publisher/repository";
-    const remoteUrl = "https://github.com/NVIDIA/NemoClaw.git";
-    const stagingRef = `refs/heads/nemoclaw-conflict-fixer-stage/123-1-${commitSha}`;
-    const runGit = mockGitRunner();
-    const request = vi.fn(async (_method: "GET" | "POST", _path: string, body?: unknown) => {
-      const ref = (body as { ref: string; sha: string }).ref;
-      const sha = (body as { ref: string; sha: string }).sha;
-      return { object: { sha }, ref };
-    });
-
-    await githubRefPublisher(
-      "credential-sentinel",
-      request,
-      "123-1",
-      runGit,
-    )({
-      commitSha,
-      expectedHeadSha,
-      headRef: "feature",
-      repository,
-      repositoryName: "NVIDIA/NemoClaw",
-    });
-
-    expect(request).toHaveBeenCalledWith("POST", "/repos/NVIDIA/NemoClaw/git/refs", {
-      ref: stagingRef,
-      sha: commitSha,
-    });
-
-    expect(runGit.mock.calls.map((call) => call[1])).toEqual([
-      ["check-ref-format", stagingRef],
-      ["fetch", "--no-tags", "--no-write-fetch-head", remoteUrl, stagingRef],
-      ["cat-file", "-e", `${commitSha}^{commit}`],
-      ["check-ref-format", "refs/heads/feature"],
-      [
-        "push",
-        "--porcelain",
-        `--force-with-lease=refs/heads/feature:${expectedHeadSha}`,
-        remoteUrl,
-        `${commitSha}:refs/heads/feature`,
-      ],
-      [
-        "push",
-        "--porcelain",
-        `--force-with-lease=${stagingRef}:${commitSha}`,
-        remoteUrl,
-        `:${stagingRef}`,
-      ],
-    ]);
-    const fetchEnvironment = required<NodeJS.ProcessEnv>(
-      runGit.mock.calls[1]?.[2],
-      "missing fetch environment",
-    );
-    const pushEnvironment = required<NodeJS.ProcessEnv>(
-      runGit.mock.calls[4]?.[2],
-      "missing push environment",
-    );
-    const cleanupEnvironment = required<NodeJS.ProcessEnv>(
-      runGit.mock.calls[5]?.[2],
-      "missing cleanup environment",
-    );
-    expect(fetchEnvironment).toBe(pushEnvironment);
-    expect(fetchEnvironment).toBe(cleanupEnvironment);
-    expect(fetchEnvironment).toMatchObject({
-      GIT_CONFIG_COUNT: "1",
-      GIT_CONFIG_GLOBAL: "/dev/null",
-      GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_TERMINAL_PROMPT: "0",
-    });
-    expect(
-      Buffer.from(
-        required(fetchEnvironment.GIT_CONFIG_VALUE_0, "missing Git credential").slice(
-          "AUTHORIZATION: basic ".length,
-        ),
-        "base64",
-      ).toString("utf8"),
-    ).toBe("x-access-token:credential-sentinel");
-    expect(JSON.stringify(runGit.mock.calls.map((call) => call[1]))).not.toContain(
-      "credential-sentinel",
-    );
-  });
-
-  it.each([
-    {
-      createRunner: () =>
-        mockGitRunner()
-          .mockImplementationOnce(() => "")
-          .mockImplementationOnce(failGitCommand)
-          .mockImplementationOnce(() => ""),
-      expected: /could not fetch.*simulated Git failure/u,
-      expectedCalls: 3,
-      label: "fetch",
-    },
-    {
-      createRunner: () =>
-        mockGitRunner()
-          .mockImplementationOnce(() => "")
-          .mockImplementationOnce(() => "")
-          .mockImplementationOnce(failGitCommand),
-      expected: /could not fetch.*simulated Git failure/u,
-      expectedCalls: 4,
-      label: "commit verification",
-    },
-    {
-      createRunner: () =>
-        mockGitRunner()
-          .mockImplementationOnce(() => "")
-          .mockImplementationOnce(() => "")
-          .mockImplementationOnce(() => "")
-          .mockImplementationOnce(() => "")
-          .mockImplementationOnce(failGitCommand),
-      expected: /atomic PR branch update.*simulated Git failure/u,
-      expectedCalls: 6,
-      label: "leased push",
-    },
-  ])(
-    "removes the temporary ref when production $label fails (#7542)",
-    async ({ createRunner, expected, expectedCalls }) => {
-      const runGit = createRunner();
-      const request = vi.fn(async (_method: "GET" | "POST", _path: string, body?: unknown) => {
-        const { ref, sha } = body as { ref: string; sha: string };
-        return { object: { sha }, ref };
-      });
-      const publish = githubRefPublisher("credential-sentinel", request, "123-1", runGit);
-
-      await expect(
-        publish({
-          commitSha: "c".repeat(40),
-          expectedHeadSha: "b".repeat(40),
-          headRef: "feature",
-          repository: "/publisher/repository",
-          repositoryName: "NVIDIA/NemoClaw",
-        }),
-      ).rejects.toThrow(expected);
-      expect(runGit).toHaveBeenCalledTimes(expectedCalls);
-      expect(runGit.mock.calls.at(-1)?.[1]?.at(-1)).toMatch(/^:refs\/heads\/nemoclaw/u);
-    },
-  );
-
-  it("redacts credentials from Git publication failures (#7542)", async () => {
-    const token = "credential-sentinel";
-    const encodedCredential = Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
-    const gitError = Object.assign(new Error("Git command failed"), {
-      status: 128,
-      stderr: Buffer.from(
-        `fatal: AUTHORIZATION: basic ${encodedCredential}\nremote: x-access-token:${token}\n`,
-      ),
-    });
-    const runGit = mockGitRunner()
-      .mockImplementationOnce(() => "")
-      .mockImplementationOnce(() => {
-        throw gitError;
-      })
-      .mockImplementationOnce(() => "");
-    const request = vi.fn(async (_method: "GET" | "POST", _path: string, body?: unknown) => {
-      const { ref, sha } = body as { ref: string; sha: string };
-      return { object: { sha }, ref };
-    });
-
-    let failure: unknown;
-    try {
-      await githubRefPublisher(
-        token,
-        request,
-        "123-1",
-        runGit,
-      )({
-        commitSha: "c".repeat(40),
-        expectedHeadSha: "b".repeat(40),
-        headRef: "feature",
-        repository: "/publisher/repository",
-        repositoryName: "NVIDIA/NemoClaw",
-      });
-    } catch (error) {
-      failure = error;
-    }
-
-    const message = required(
-      failure instanceof Error ? failure : undefined,
-      "expected publication failure",
-    ).toString();
-    expect(message).toContain("authorization: [REDACTED]");
-    expect(message).toContain("x-access-token:[REDACTED]");
-    expect(message).not.toContain(token);
-    expect(message).not.toContain(encodedCredential);
-  });
-
-  it("continues when Git confirms an ambiguously created temporary ref (#7542)", async () => {
-    const commitSha = "c".repeat(40);
-    const stagingRef = `refs/heads/nemoclaw-conflict-fixer-stage/123-1-${commitSha}`;
-    const runGit = mockGitRunner()
-      .mockImplementationOnce(() => "")
-      .mockImplementationOnce(() => `${commitSha}\t${stagingRef}\n`);
-    const request = vi.fn(async () => {
-      throw new Error("simulated response loss");
-    });
-
-    await expect(
-      githubRefPublisher(
-        "credential-sentinel",
-        request,
-        "123-1",
-        runGit,
-      )({
-        commitSha,
-        expectedHeadSha: "b".repeat(40),
-        headRef: "feature",
-        repository: "/publisher/repository",
-        repositoryName: "NVIDIA/NemoClaw",
-      }),
-    ).resolves.toBeUndefined();
-    expect(runGit.mock.calls[1]?.[1]).toEqual([
-      "ls-remote",
-      "--refs",
-      "https://github.com/NVIDIA/NemoClaw.git",
-      stagingRef,
-    ]);
-    expect(runGit).toHaveBeenCalledTimes(7);
-  });
-
-  it("reports a published branch when temporary-ref cleanup fails (#7542)", async () => {
-    const runGit = mockGitRunner()
-      .mockImplementationOnce(() => "")
-      .mockImplementationOnce(() => "")
-      .mockImplementationOnce(() => "")
-      .mockImplementationOnce(() => "")
-      .mockImplementationOnce(() => "")
-      .mockImplementationOnce(failGitCommand);
-    const request = vi.fn(async (_method: "GET" | "POST", _path: string, body?: unknown) => {
-      const { ref, sha } = body as { ref: string; sha: string };
-      return { object: { sha }, ref };
-    });
-
-    await expect(
-      githubRefPublisher(
-        "credential-sentinel",
-        request,
-        "123-1",
-        runGit,
-      )({
-        commitSha: "c".repeat(40),
-        expectedHeadSha: "b".repeat(40),
-        headRef: "feature",
-        repository: "/publisher/repository",
-        repositoryName: "NVIDIA/NemoClaw",
-      }),
-    ).rejects.toThrow(/PR branch was published.*could not remove/u);
   });
 
   it("configures approved inference through a loopback gateway (#7542)", async () => {

@@ -45,19 +45,7 @@ type GitTreeEntry = {
 
 type GitHubRequest = (method: "GET" | "POST", path: string, body?: unknown) => Promise<unknown>;
 
-type PublishRef = (input: {
-  commitSha: string;
-  expectedHeadSha: string;
-  headRef: string;
-  repository: string;
-  repositoryName: string;
-}) => Promise<void>;
-
-export type GitRunner = (
-  repository: string,
-  args: readonly string[],
-  environment?: NodeJS.ProcessEnv,
-) => string;
+type GraphqlRequest = (query: string, variables: Record<string, unknown>) => Promise<unknown>;
 
 function required(value: string | undefined, name: string): string {
   if (!value) throw new ConflictFixerError(`${name} is required`);
@@ -120,230 +108,6 @@ function gitBuffer(repository: string, args: readonly string[]): Buffer {
     cwd: repository,
     stdio: ["ignore", "pipe", "pipe"],
   });
-}
-
-function gitText(
-  repository: string,
-  args: readonly string[],
-  environment: NodeJS.ProcessEnv = process.env,
-): string {
-  return execFileSync("git", args, {
-    cwd: repository,
-    encoding: "utf8",
-    env: environment,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-}
-
-function gitFailureDetail(error: unknown, redactions: readonly string[] = []): string {
-  if (!(error instanceof Error)) return "unknown Git failure";
-  const stderr =
-    "stderr" in error && (typeof error.stderr === "string" || Buffer.isBuffer(error.stderr))
-      ? String(error.stderr).trim()
-      : "";
-  let detail = stderr || error.message;
-  for (const secret of redactions) {
-    if (secret) detail = detail.replaceAll(secret, "[REDACTED]");
-  }
-  const message = detail
-    .replace(/authorization:\s*(?:basic|bearer)?\s*\S+/giu, "authorization: [REDACTED]")
-    .replace(/x-access-token:\S+/gu, "x-access-token:[REDACTED]")
-    .replace(/\s+/gu, " ")
-    .slice(0, 500);
-  const status =
-    "status" in error && typeof error.status === "number" ? `exit ${error.status}: ` : "";
-  return `${status}${message || "Git command failed"}`;
-}
-
-export function pushRefWithLease(
-  input: {
-    commitSha: string;
-    environment?: NodeJS.ProcessEnv;
-    expectedHeadSha: string;
-    headRef: string;
-    redactions?: readonly string[];
-    remoteUrl: string;
-    repository: string;
-  },
-  runGit: GitRunner = gitText,
-): void {
-  const commitSha = requireSha(input.commitSha, "published commit SHA");
-  const expectedHeadSha = requireSha(input.expectedHeadSha, "expected PR head SHA");
-  const remoteRef = `refs/heads/${input.headRef}`;
-  try {
-    runGit(input.repository, ["check-ref-format", remoteRef], input.environment);
-    runGit(
-      input.repository,
-      [
-        "push",
-        "--porcelain",
-        `--force-with-lease=${remoteRef}:${expectedHeadSha}`,
-        input.remoteUrl,
-        `${commitSha}:${remoteRef}`,
-      ],
-      input.environment,
-    );
-  } catch (error) {
-    throw new ConflictFixerError(
-      `Git rejected the atomic PR branch update; the branch may have changed before publication (${gitFailureDetail(error, input.redactions)})`,
-    );
-  }
-}
-
-function githubGitEnvironment(token: string): NodeJS.ProcessEnv {
-  const credential = Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
-  return {
-    ...process.env,
-    GIT_CONFIG_COUNT: "1",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${credential}`,
-    GIT_CURL_VERBOSE: "0",
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_TRACE: "0",
-    GIT_TRACE_CURL: "0",
-    GIT_TRACE_PACKET: "0",
-  };
-}
-
-function remoteRefSha(input: {
-  environment: NodeJS.ProcessEnv;
-  ref: string;
-  remoteUrl: string;
-  repository: string;
-  runGit: GitRunner;
-}): string | null {
-  const output = input
-    .runGit(
-      input.repository,
-      ["ls-remote", "--refs", input.remoteUrl, input.ref],
-      input.environment,
-    )
-    .trim();
-  if (!output) return null;
-  const [sha, ref, ...extra] = output.split(/\s+/u);
-  if (extra.length > 0 || ref !== input.ref) {
-    throw new ConflictFixerError("Git returned an invalid temporary ref observation");
-  }
-  return requireSha(sha ?? "", "temporary ref SHA");
-}
-
-export function githubRefPublisher(
-  token: string,
-  request: GitHubRequest,
-  runIdentity: string,
-  runGit: GitRunner = gitText,
-): PublishRef {
-  return async (input) => {
-    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(input.repositoryName)) {
-      throw new ConflictFixerError("GITHUB_REPOSITORY is invalid");
-    }
-    if (!/^[0-9]+-[0-9]+$/u.test(runIdentity)) {
-      throw new ConflictFixerError("GitHub run identity is invalid");
-    }
-    const commitSha = requireSha(input.commitSha, "published commit SHA");
-    const environment = githubGitEnvironment(token);
-    const redactions = [token, Buffer.from(`x-access-token:${token}`, "utf8").toString("base64")];
-    const remoteUrl = `https://github.com/${input.repositoryName}.git`;
-    const stagingRef = `refs/heads/nemoclaw-conflict-fixer-stage/${runIdentity}-${commitSha}`;
-    runGit(input.repository, ["check-ref-format", stagingRef], environment);
-
-    let staged = false;
-    let published = false;
-    let failure: unknown;
-    try {
-      try {
-        const created = (await request("POST", `/repos/${input.repositoryName}/git/refs`, {
-          ref: stagingRef,
-          sha: commitSha,
-        })) as LiveRef & { ref?: string };
-        staged = true;
-        if (created.ref !== stagingRef || created.object?.sha !== commitSha) {
-          throw new ConflictFixerError("GitHub returned an unexpected temporary ref");
-        }
-      } catch (error) {
-        if (staged) throw error;
-        let observedSha: string | null;
-        try {
-          observedSha = remoteRefSha({
-            environment,
-            ref: stagingRef,
-            remoteUrl,
-            repository: input.repository,
-            runGit,
-          });
-        } catch (observationError) {
-          throw new ConflictFixerError(
-            `GitHub may have created ${stagingRef}, but Git could not confirm its state (${gitFailureDetail(observationError, redactions)})`,
-          );
-        }
-        if (observedSha === null) throw error;
-        if (observedSha !== commitSha) {
-          throw new ConflictFixerError("The temporary ref points to an unexpected commit");
-        }
-        staged = true;
-      }
-
-      try {
-        runGit(
-          input.repository,
-          ["fetch", "--no-tags", "--no-write-fetch-head", remoteUrl, stagingRef],
-          environment,
-        );
-        runGit(input.repository, ["cat-file", "-e", `${commitSha}^{commit}`], environment);
-      } catch (error) {
-        throw new ConflictFixerError(
-          `Git could not fetch the verified merge commit from GitHub (${gitFailureDetail(error, redactions)})`,
-        );
-      }
-      pushRefWithLease(
-        {
-          commitSha,
-          environment,
-          expectedHeadSha: input.expectedHeadSha,
-          headRef: input.headRef,
-          redactions,
-          remoteUrl,
-          repository: input.repository,
-        },
-        runGit,
-      );
-      published = true;
-    } catch (error) {
-      failure = error;
-    }
-
-    if (staged) {
-      try {
-        runGit(
-          input.repository,
-          [
-            "push",
-            "--porcelain",
-            `--force-with-lease=${stagingRef}:${commitSha}`,
-            remoteUrl,
-            `:${stagingRef}`,
-          ],
-          environment,
-        );
-      } catch (cleanupError) {
-        const result = published
-          ? "The PR branch was published"
-          : "The PR branch was not published";
-        const priorFailure =
-          failure instanceof Error
-            ? ` after ${gitFailureDetail(failure, redactions)}`
-            : failure
-              ? " after a failure"
-              : "";
-        throw new ConflictFixerError(
-          `${result}${priorFailure}, but Git could not remove ${stagingRef} (${gitFailureDetail(cleanupError, redactions)})`,
-        );
-      }
-    }
-    if (failure) throw failure;
-  };
 }
 
 function changedPathStatuses(
@@ -450,7 +214,8 @@ async function createGitHubTree(input: {
 async function publishValidatedTree(input: {
   entry: ConflictMatrixEntry;
   finalTree: string;
-  publishRef: PublishRef;
+  graphql: GraphqlRequest;
+  pullRequest: LivePullRequest;
   repository: string;
   repositoryName: string;
   request: GitHubRequest;
@@ -478,17 +243,37 @@ async function publishValidatedTree(input: {
     );
   }
 
-  await input.publishRef({
-    commitSha,
-    expectedHeadSha: input.entry.head_sha,
-    headRef: input.entry.head_ref,
-    repository: input.repository,
-    repositoryName: input.repositoryName,
-  });
+  const clientMutationId = commitSha;
+  const mutation = `
+    mutation UpdateConflictFixerRef($input: UpdateRefsInput!) {
+      updateRefs(input: $input) {
+        clientMutationId
+      }
+    }
+  `;
+  const result = (await input.graphql(mutation, {
+    input: {
+      clientMutationId,
+      refUpdates: [
+        {
+          afterOid: commitSha,
+          beforeOid: input.entry.head_sha,
+          force: false,
+          name: `refs/heads/${input.entry.head_ref}`,
+        },
+      ],
+      repositoryId: input.pullRequest.base.repo.node_id,
+    },
+  })) as {
+    updateRefs?: { clientMutationId?: string };
+  };
+  if (result.updateRefs?.clientMutationId !== clientMutationId) {
+    throw new ConflictFixerError("GitHub did not confirm the atomic PR branch update");
+  }
   return commitSha;
 }
 
-function githubClient(token: string): { request: GitHubRequest } {
+function githubClient(token: string): { graphql: GraphqlRequest; request: GitHubRequest } {
   const headers = {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${token}`,
@@ -514,6 +299,14 @@ function githubClient(token: string): { request: GitHubRequest } {
     return body.data ?? body;
   };
   return {
+    graphql: async (query, variables) =>
+      parse(
+        await fetch("https://api.github.com/graphql", {
+          body: JSON.stringify({ query, variables }),
+          headers,
+          method: "POST",
+        }),
+      ),
     request: async (method, apiPath, body) =>
       parse(
         await fetch(`https://api.github.com${apiPath}`, {
@@ -527,8 +320,8 @@ function githubClient(token: string): { request: GitHubRequest } {
 
 export async function publishResolution(input: {
   entry: ConflictMatrixEntry;
+  graphql: GraphqlRequest;
   patchPath: string;
-  publishRef: PublishRef;
   repositoryName: string;
   request: GitHubRequest;
   sourceRepository: string;
@@ -554,7 +347,8 @@ export async function publishResolution(input: {
     return await publishValidatedTree({
       entry: input.entry,
       finalTree: validated.finalTree,
-      publishRef: input.publishRef,
+      graphql: input.graphql,
+      pullRequest,
       repository: validated.repository,
       repositoryName: input.repositoryName,
       request: input.request,
@@ -573,12 +367,8 @@ async function main(): Promise<void> {
   const client = githubClient(token);
   const commitSha = await publishResolution({
     entry,
+    graphql: client.graphql,
     patchPath,
-    publishRef: githubRefPublisher(
-      token,
-      client.request,
-      `${required(process.env.GITHUB_RUN_ID, "GITHUB_RUN_ID")}-${required(process.env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT")}`,
-    ),
     repositoryName,
     request: client.request,
     sourceRepository: required(process.env.TRUSTED_CHECKOUT, "TRUSTED_CHECKOUT"),
