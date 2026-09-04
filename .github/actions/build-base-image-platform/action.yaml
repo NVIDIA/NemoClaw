@@ -44,6 +44,14 @@ inputs:
     description: Optional OpenClaw version build argument.
     required: false
     default: ""
+  mcporter-audit-receipt:
+    description: Optional same-run reviewed mcporter audit receipt path.
+    required: false
+    default: ""
+  mcporter-audit-raw-report:
+    description: Optional same-run reviewed mcporter raw audit report path.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -64,6 +72,8 @@ runs:
       env:
         AGENT: ${{ inputs.agent }}
         OPENCLAW_VERSION_INPUT: ${{ inputs.openclaw-version }}
+        MCPORTER_AUDIT_RECEIPT: ${{ inputs.mcporter-audit-receipt }}
+        MCPORTER_AUDIT_RAW_REPORT: ${{ inputs.mcporter-audit-raw-report }}
       run: |
         set -euo pipefail
         build_args=()
@@ -87,7 +97,16 @@ runs:
             exit 1
           fi
         fi
+        audit_build_args=""
+        if [ "$AGENT" = "openclaw" ] && [ -n "${MCPORTER_AUDIT_RECEIPT:-}" ]; then
+          test -f "$MCPORTER_AUDIT_RECEIPT"
+          test -f "${MCPORTER_AUDIT_RAW_REPORT:-}"
+          audit_build_args="NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=$(sha256sum "$MCPORTER_AUDIT_RECEIPT" | cut -d' ' -f1)"
+        fi
         printf 'openclaw_build_arg=%s\n' "$openclaw_build_arg" >> "$GITHUB_OUTPUT"
+        if [ -n "$audit_build_args" ]; then
+          printf 'audit_build_args<<EOF\n%s\nEOF\n' "$audit_build_args" >> "$GITHUB_OUTPUT"
+        fi
 
     - name: Build and push platform digest
       id: build
@@ -102,7 +121,12 @@ runs:
         outputs: type=image,name=${{ inputs.registry }}/${{ inputs.image }},push-by-digest=true,name-canonical=true,push=true
         cache-from: type=registry,ref=${{ inputs.registry }}/${{ inputs.image }}:buildcache-${{ inputs.arch }}
         cache-to: type=registry,ref=${{ inputs.registry }}/${{ inputs.image }}:buildcache-${{ inputs.arch }},mode=max
-        build-args: ${{ steps.production-build-args.outputs.openclaw_build_arg }}
+        build-args: |
+          ${{ steps.production-build-args.outputs.openclaw_build_arg }}
+          ${{ steps.production-build-args.outputs.audit_build_args }}
+        secret-files: |
+          ${{ inputs.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', inputs.mcporter-audit-receipt) || '' }}
+          ${{ inputs.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', inputs.mcporter-audit-raw-report) || '' }}
 
     - name: Validate Deep Agents Code dos2unix executable
       if: ${{ inputs.agent == 'langchain-deepagents-code' }}

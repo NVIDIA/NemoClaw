@@ -10,6 +10,6 @@ export type SandboxForwardHealth = boolean;
  * evidence only. Launch refuses a port that was reachable before the detached
  * OpenShell child started.
  */
-export function isLocalForwardReachable(port: number): boolean {
-  return probeLocalForwardListener(port);
+export function isLocalForwardReachable(port: number, timeoutMs?: number): boolean {
+  return probeLocalForwardListener(port, timeoutMs);
 }

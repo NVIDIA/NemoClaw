@@ -12,7 +12,7 @@ Update it whenever `agents/pi/pi-runtime/package-lock.json` changes.
 - Lockfile: `agents/pi/pi-runtime/package-lock.json`
 - Lockfile SHA-256: `6267ec58e69fc6cd53d3c753f28b0e25c00f4befdcae63e8e4924bee2abf0712`
 - Locked packages: 144
-- Audit command: `npm --prefix agents/pi/pi-runtime audit --omit=dev`
+- Audit command: `npm --prefix agents/pi/pi-runtime audit --registry=https://registry.yarnpkg.com --omit=dev`
 - Audit date: August 14, 2026
 - Audit result: `found 0 vulnerabilities`
 - Registry metadata independently queried from npm: August 14, 2026
