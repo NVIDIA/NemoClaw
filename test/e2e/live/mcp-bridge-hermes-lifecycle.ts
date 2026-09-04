@@ -48,7 +48,8 @@ export async function assertHermesConfig(
 /**
  * Focused #7499 live regression after the supported managed add has executed
  * the real unprivileged Hermes transaction: restart the real gateway, then
- * prove the config and transaction state remain current.
+ * prove the strict baseline remains root-owned while the compatibility hash
+ * matches the managed config and transaction state.
  */
 export async function assertHermesManagedAddSurvivesGatewayRestartAndStateLayout(
   host: HostCliClient,
@@ -66,7 +67,7 @@ export async function assertHermesManagedAddSurvivesGatewayRestartAndStateLayout
   expect(resultText(restart)).toContain("Gateway restarted");
   expect(resultText(restart)).toContain("health passed");
 
-  const integrity = await sandbox.execShell(
+  const compatibilityIntegrity = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(
       [
@@ -83,18 +84,21 @@ export async function assertHermesManagedAddSurvivesGatewayRestartAndStateLayout
         "! cmp -s /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
         'test "$strict_status" -ne 0',
         'test "$compat_status" -eq 0',
-        "echo HERMES_MCP_INTEGRITY_CURRENT",
+        "echo HERMES_MCP_COMPAT_INTEGRITY_CURRENT",
       ].join("\n"),
     ),
     {
-      artifactName: "hermes-mcp-integrity-after-add-gateway-restart",
+      artifactName: "hermes-mcp-compat-integrity-after-add-gateway-restart",
       env: buildAvailabilityProbeEnv(),
       redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
       timeoutMs: 60_000,
     },
   );
-  expectExitZero(integrity, "Hermes MCP integrity anchors after gateway restart");
-  expect(integrity.stdout).toContain("HERMES_MCP_INTEGRITY_CURRENT");
+  expectExitZero(
+    compatibilityIntegrity,
+    "Hermes MCP strict baseline and compatibility integrity after gateway restart",
+  );
+  expect(compatibilityIntegrity.stdout).toContain("HERMES_MCP_COMPAT_INTEGRITY_CURRENT");
 
   const list = await host.nemoclaw([sandboxName, "mcp", "list", "--json"], {
     artifactName: "hermes-mcp-list-after-add-gateway-restart",
