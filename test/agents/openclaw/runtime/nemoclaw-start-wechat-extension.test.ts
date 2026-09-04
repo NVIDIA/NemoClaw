@@ -36,11 +36,17 @@ function writeProject(stateRoot: string, name: string): string {
 
 function runRepair(stateRoot: string) {
   const source = fs.readFileSync(START_SCRIPT, "utf8");
-  const repair = extractShellFunctionFromSource(source, "restore_openclaw_weixin_extension_link")
-    .replace("local state_root=/sandbox/.openclaw", `local state_root=${shellQuote(stateRoot)}`);
-  return spawnSync("bash", ["-c", `set -euo pipefail\n${repair}\nrestore_openclaw_weixin_extension_link`], {
-    encoding: "utf8",
-  });
+  const repair = extractShellFunctionFromSource(
+    source,
+    "restore_openclaw_weixin_extension_link",
+  ).replace("local state_root=/sandbox/.openclaw", `local state_root=${shellQuote(stateRoot)}`);
+  return spawnSync(
+    "bash",
+    ["-c", `set -euo pipefail\n${repair}\nrestore_openclaw_weixin_extension_link`],
+    {
+      encoding: "utf8",
+    },
+  );
 }
 
 afterEach(() => {
@@ -56,9 +62,9 @@ describe("OpenClaw managed WeChat extension restoration", () => {
     const result = runRepair(stateRoot);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(
-      fs.realpathSync(path.join(stateRoot, "extensions", "openclaw-weixin")),
-    ).toBe(fs.realpathSync(pluginRoot));
+    expect(fs.realpathSync(path.join(stateRoot, "extensions", "openclaw-weixin"))).toBe(
+      fs.realpathSync(pluginRoot),
+    );
   });
 
   it("refuses ambiguous reviewed npm projects", () => {

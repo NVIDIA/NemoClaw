@@ -292,8 +292,10 @@ describe("fixture redaction entry point", () => {
     sink.write("visible TOKEN=nvapi-split");
     expect(output).toEqual([]);
     sink.write("AcrossChunks123456\nexplicit=explicit-");
-    sink.write("secret-value\n-----BEGIN PRIVATE KEY-----\nprivate-material\n");
-    sink.write("-----END PRIVATE KEY-----\nfinished\n");
+    const privateKeyHeader = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
+    const privateKeyFooter = ["-----END", "PRIVATE KEY-----"].join(" ");
+    sink.write(`secret-value\n${privateKeyHeader}\nprivate-material\n`);
+    sink.write(`${privateKeyFooter}\nfinished\n`);
     sink.end();
 
     const streamed = output.join("");
