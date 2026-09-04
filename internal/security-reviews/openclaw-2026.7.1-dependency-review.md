@@ -676,7 +676,7 @@ follows:
 Installed-base coverage is the `openshell-gateway-upgrade-v0-0-89-x86-64` E2E
 target. It installs the immutable v0.0.89
 release with OpenClaw `2026.6.10`, upgrades through the current installer, and
-proves that the surviving sandbox becomes ready, preserves a workspace marker,
+proves that the surviving sandbox reaches `Ready`, preserves a workspace marker,
 keeps the raw gateway credential out of the sandbox environment,
 `openclaw.json`, and recursive `auth-profiles.json` files, and completes
 authenticated agent turns before and after the upgrade.
