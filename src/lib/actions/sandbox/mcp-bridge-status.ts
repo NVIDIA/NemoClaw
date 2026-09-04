@@ -161,6 +161,13 @@ export interface McpBridgeStatusOptions {
    */
   probeCredentialResolution?: boolean;
   /**
+   * Let a lifecycle repair verify the attached credential even when the
+   * managed adapter is stale. The wire probe still requires the exact
+   * registry-owned provider, attachment, policy, URL, and observed credential
+   * revision; it does not execute or trust the stale adapter configuration.
+   */
+  allowAdapterRepairProbe?: boolean;
+  /**
    * Enumerate names advertised by one managed MCP endpoint. The dispatch
    * layer restricts this live operation to an explicitly named server.
    */
@@ -373,7 +380,7 @@ export async function statusMcpBridge(
             }
           : observationDetail
             ? { ok: null, detail: `probe skipped: ${observationDetail}` }
-            : adapterRegistration.registered !== true
+            : adapterRegistration.registered !== true && !options.allowAdapterRepairProbe
               ? {
                   ok: null,
                   detail:

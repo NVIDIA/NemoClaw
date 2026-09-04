@@ -490,7 +490,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         {
           sandboxName: "alpha",
           server: "example",
-          options: { probeCredentialResolution: true },
+          options: { probeCredentialResolution: true, allowAdapterRepairProbe: true },
         },
       ],
     });
@@ -520,7 +520,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         {
           sandboxName: "alpha",
           server: "example",
-          options: { probeCredentialResolution: true },
+          options: { probeCredentialResolution: true, allowAdapterRepairProbe: true },
         },
       ],
     });
@@ -541,7 +541,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         {
           sandboxName: "alpha",
           server: "example",
-          options: { probeCredentialResolution: true },
+          options: { probeCredentialResolution: true, allowAdapterRepairProbe: true },
         },
       ],
     });
@@ -567,7 +567,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         {
           sandboxName: "alpha",
           server: "example",
-          options: { probeCredentialResolution: true },
+          options: { probeCredentialResolution: true, allowAdapterRepairProbe: true },
         },
       ],
     });
@@ -602,12 +602,12 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         {
           sandboxName: "alpha",
           server: "example",
-          options: { probeCredentialResolution: true },
+          options: { probeCredentialResolution: true, allowAdapterRepairProbe: true },
         },
         {
           sandboxName: "alpha",
           server: "later",
-          options: { probeCredentialResolution: true },
+          options: { probeCredentialResolution: true, allowAdapterRepairProbe: true },
         },
       ]),
     );

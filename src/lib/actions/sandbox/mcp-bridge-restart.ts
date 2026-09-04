@@ -87,6 +87,7 @@ async function assertRestartCredentialsAvailable(
     try {
       const [status] = await statusMcpBridge(sandboxName, entry.server, {
         probeCredentialResolution: true,
+        allowAdapterRepairProbe: true,
       });
       const probe = status?.provider.credentialResolution;
       if (probe?.ok === true) continue;

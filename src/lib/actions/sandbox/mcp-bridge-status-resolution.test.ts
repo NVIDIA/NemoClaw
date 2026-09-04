@@ -345,6 +345,35 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     expect(JSON.stringify(outcomes)).not.toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
   });
 
+  it("lets restart verify a stored credential while repairing a stale adapter", () => {
+    const home = createTempHome("nemoclaw-mcp-status-repair-probe-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  providerCredentialObservation = "v12";
+  persistedCredentialRevision = "v11";
+  const [status] = await bridge.statusMcpBridge("alpha", "github", {
+    probeCredentialResolution: true,
+    allowAdapterRepairProbe: true,
+  });
+  writeHarnessResult(JSON.stringify({
+    adapter: status.adapter,
+    resolution: status.provider.credentialResolution,
+    probed: executedSandboxCommands.some((command) => command.includes("NEMOCLAW_MCP_PROBE")),
+  }));
+`,
+    );
+    const payload = JSON.parse(stdout) as {
+      adapter: { registered: boolean | null };
+      resolution: { ok: boolean | null; httpStatus?: number };
+      probed: boolean;
+    };
+
+    expect(payload.adapter.registered).toBe(false);
+    expect(payload.probed).toBe(true);
+    expect(payload.resolution).toMatchObject({ ok: null, httpStatus: 401 });
+  });
+
   it("reports an unsafe Deep Agents projection when credential handling would hide it (#10754)", () => {
     const home = createTempHome("nemoclaw-mcp-unsafe-deepagents-projection-");
     const { stdout } = runHarness(
