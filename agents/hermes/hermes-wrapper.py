@@ -517,6 +517,7 @@ def _parse_managed_invocation(argv: list[str], adapter: dict) -> dict | None:
     occurrences: list[dict] = []
     occurrence_ids: dict[str, int] = {}
     command: str | None = None
+    command_index: int | None = None
     session_boundaries: frozenset[str] | None = None
     unknown_option = False
     terminated = False
@@ -604,6 +605,7 @@ def _parse_managed_invocation(argv: list[str], adapter: dict) -> dict | None:
             return None
         if arg in adapter["managed_commands"]:
             command = arg
+            command_index = i
             i += 1
             continue
         if session_boundaries is not None and arg in session_boundaries:
@@ -619,6 +621,7 @@ def _parse_managed_invocation(argv: list[str], adapter: dict) -> dict | None:
     return {
         "argv": argv,
         "command": command,
+        "command_index": command_index,
         "occurrences": occurrences,
         "terminated": terminated,
         "unknown_option": unknown_option,
@@ -771,35 +774,31 @@ def _report_cli_adapter_error(exc: _CliAdapterError) -> int:
 _GATEWAY_LAUNCH_COMMANDS = frozenset({"install", "restart", "run", "start"})
 
 
-def _requests_named_profile_gateway_launch(argv: list[str]) -> bool:
-    """Detect upstream profile forms before a gateway launch command."""
-    if len(argv) >= 4 and argv[0] in ("-p", "--profile"):
-        return (
-            bool(argv[1])
-            and argv[2] == "gateway"
-            and argv[3] in _GATEWAY_LAUNCH_COMMANDS
-        )
-    if len(argv) >= 3 and argv[0].startswith("--profile="):
-        return (
-            bool(argv[0].partition("=")[2])
-            and argv[1] == "gateway"
-            and argv[2] in _GATEWAY_LAUNCH_COMMANDS
-        )
-    return False
+def _requests_named_profile_gateway_launch(argv: list[str], adapter: dict) -> bool:
+    """Detect profile forms that select an unmanaged gateway."""
+    if not any(
+        arg in ("-p", "--profile") or arg.startswith("--profile=") for arg in argv
+    ):
+        return False
+    gateway_adapter = {**adapter, "managed_commands": _session_name_boundaries(adapter)}
+    parsed = _parse_managed_invocation(argv, gateway_adapter)
+    if parsed is None or parsed["command"] != "gateway":
+        return False
+    profiles = _occurrences(parsed, "profile")
+    command_index = parsed["command_index"]
+    if len(profiles) != 1 or command_index is None:
+        return False
+    launch_index = command_index + 1
+    if profiles[0]["start"] == launch_index:
+        launch_index = profiles[0]["end"]
+    return (
+        launch_index < len(argv) and argv[launch_index] in _GATEWAY_LAUNCH_COMMANDS
+    )
 
 
 def main(argv: list[str]) -> int:
     real_hermes = _resolve_real_hermes()
     guard_path = _resolve_guard()
-    if _requests_named_profile_gateway_launch(argv):
-        print(
-            "[COMPATIBILITY] Refusing named-profile Hermes gateway: NemoClaw "
-            "manages only the default-profile gateway. Use a separate NemoClaw "
-            "sandbox for another supervised gateway; named-profile gateway "
-            "processes have no managed restart, crash quarantine, or protected log.",
-            file=sys.stderr,
-        )
-        return 2
     if argv[:1] == ["dashboard"] and not _load_dashboard_api_server_key():
         return 1
     if argv[:2] == ["config", "show"]:
@@ -821,6 +820,15 @@ def main(argv: list[str]) -> int:
             _harden_root_separated_gateway_package_env()
     try:
         adapter = _load_cli_adapter(_resolve_cli_adapter())
+        if _requests_named_profile_gateway_launch(argv, adapter):
+            print(
+                "[COMPATIBILITY] Refusing named-profile Hermes gateway: NemoClaw "
+                "manages only the default-profile gateway. Use a separate NemoClaw "
+                "sandbox for another supervised gateway; named-profile gateway "
+                "processes have no managed restart, crash quarantine, or protected log.",
+                file=sys.stderr,
+            )
+            return 2
         adapter_result, exec_argv = _adapt_cli_argv(argv, adapter)
         if adapter_result == "translated":
             _require_upstream_cli_version(real_hermes, adapter["upstream_cli_version"])

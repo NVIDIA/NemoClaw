@@ -65,7 +65,8 @@ The managed lifecycle does not include a gateway that uses `-p` or `--profile`.
 The Hermes wrapper rejects named-profile `gateway run`, `gateway start`, `gateway restart`, and `gateway install` commands because their processes would have no managed health checks, restart, crash quarantine, or teardown.
 
 Create another NemoClaw Hermes sandbox when you need another managed gateway.
-Do not bypass the wrapper and launch the upstream binary in the background.
+The upstream binary behind the wrapper is an internal implementation detail.
+Direct invocation is unsupported and bypasses the compatibility refusal and the managed lifecycle.
 NemoClaw protects the default gateway log at `/tmp/gateway.log` with mode `0600`, but it does not create or protect logs for an unmanaged process.
 Do not redirect gateway output to a shared or world-readable file.
 </AgentOnly>

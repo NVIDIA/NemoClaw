@@ -108,13 +108,25 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
   it.each([
     ["short option", ["-p", "research", "gateway", "run"]],
     ["long option", ["--profile", "operations", "gateway", "run"]],
-    ["equals option", ["--profile=research", "gateway", "run"]],
+    ["long equals option", ["--profile=research", "gateway", "run"]],
   ])("refuses a named-profile gateway through the %s form (#10776)", (_form, args) => {
     const run = runWrapper(args, {});
 
     expect(run.status).toBe(2);
     expect(run.stderr).toContain("Refusing named-profile Hermes gateway");
     expect(run.stderr).toContain("separate NemoClaw sandbox");
+    expect(run.realInvoked).toBe(false);
+  });
+
+  it.each([
+    ["after another option", ["--yolo", "--profile", "research", "gateway", "run"]],
+    ["after the gateway command", ["gateway", "--profile", "research", "run"]],
+    ["after the launch command", ["gateway", "run", "--profile", "research"]],
+  ])("refuses a named-profile gateway with the selector %s (#10776)", (_form, args) => {
+    const run = runWrapper(args, {});
+
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain("Refusing named-profile Hermes gateway");
     expect(run.realInvoked).toBe(false);
   });
 
@@ -148,6 +160,26 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stderr).toBe("");
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe("--profile research chat hello");
+  });
+
+  it("preserves a child command profile selector after mcp add --args", () => {
+    const args = [
+      "mcp",
+      "add",
+      "child",
+      "--args",
+      "worker",
+      "--profile",
+      "research",
+      "gateway",
+      "run",
+    ];
+    const run = runWrapper(args, {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe(args.join(" "));
   });
 
   it("scrubs package-manager and Python startup inputs before a root-separated gateway exec", () => {
