@@ -713,6 +713,48 @@ describe("messaging OpenShell provider application", () => {
     expect(cleanup.residualProviders[0]?.error.message).toContain("<REDACTED>");
   });
 
+  it("redacts rejected refresh configuration errors without retaining their cause (#9806)", async () => {
+    const secret = "nvapi-refresh-rejection-secret";
+    const expected = definition({
+      credentials: [{ name: "TELEGRAM_BOT_TOKEN", value: "openshell-managed-pending-mint" }],
+    });
+    const refresh: MessagingProviderRefreshEphemeralInput = {
+      channelId: "telegram",
+      providerName: expected.providerName,
+      credentialKey: "TELEGRAM_BOT_TOKEN",
+      strategy: "test-refresh",
+      material: [{ key: "scope", value: "chat" }],
+      secretMaterial: [{ key: "private_key", value: secret }],
+    };
+    const adapter = providerAdapter({
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>().mockResolvedValue({
+        ok: true,
+        value: metadata(expected),
+      }),
+      configureProviderRefresh: vi
+        .fn<OpenShellProviderAdapter["configureProviderRefresh"]>()
+        .mockRejectedValue(new Error(`refresh rejected: ${secret}`)),
+    });
+
+    const failure = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [expected],
+      refreshes: [refresh],
+    }).catch((error: unknown) => error);
+
+    expect(isMessagingProviderMutationFailure(failure)).toBe(true);
+    expect(failure).toMatchObject({
+      message: expect.stringContaining(expected.providerName),
+      mutatedProviderNames: [expected.providerName],
+    });
+    expect((failure as Error).message).toContain("<REDACTED>");
+    expect((failure as Error).message).not.toContain(secret);
+    expect((failure as Error).cause).toBeUndefined();
+    expect(JSON.stringify(failure)).not.toContain(secret);
+    expect(adapter.getProviderRefreshStatus).not.toHaveBeenCalled();
+  });
+
   it.each(["configuration", "observation"] as const)(
     "reports %s refresh failure with mutation evidence (#9806)",
     async (failureKind) => {

@@ -697,7 +697,13 @@ async function configureRefreshes(
         secretMaterial: refresh.secretMaterial,
       });
     } catch (error) {
-      throw withMutationEvidence(error, [refresh.providerName], []);
+      const message = redactStandaloneSecretsFull(
+        error instanceof Error ? error.message : String(error),
+      );
+      throw new MessagingProviderApplyError({
+        message: `Could not configure gateway token minting for messaging provider '${refresh.providerName}': ${message}`,
+        mutatedProviderNames: [refresh.providerName],
+      });
     }
     if (!configured.ok) {
       throw new MessagingProviderApplyError({
@@ -843,6 +849,9 @@ function withMutationEvidence(
     mutatedProviderNames: [...existingMutated, ...mutatedProviderNames],
     createdProviderNames: [...existingCreated, ...createdProviderNames],
     replacedProviderNames: [...existingReplaced, ...replacedProviderNames],
-    cause: error,
+    cause:
+      error instanceof MessagingProviderApplyError && error.cause === undefined
+        ? undefined
+        : error,
   });
 }

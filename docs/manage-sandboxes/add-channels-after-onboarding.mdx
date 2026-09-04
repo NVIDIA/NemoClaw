@@ -69,10 +69,10 @@ It exits without prompting for a rebuild.
 If a gateway-side cleanup step fails, rollback continues and prints `Rollback could not fully clean <surfaces>` so you can clean up manually.
 
 When the same failure happens while re-adding an enabled channel, NemoClaw restores the prior `messagingChannels` entry, staged environment credentials when available, and registry credential hashes.
-It cannot guarantee the prior bridge provider state.
-An incompatible provider can be removed or changed during replacement, and refresh material available only during the command cannot be restored.
+An existing provider can be changed during re-add.
+NemoClaw attempts to restore stored provider credentials, but it cannot restore prior gateway refresh material that was available only during the earlier setup command.
 NemoClaw flags `gateway-providers` as residual.
-Inspect each named provider, restore the preset YAML, correct the gateway failure, and rerun the original command.
+Inspect the channel's gateway providers, restore the preset YAML, correct the gateway failure, and rerun the original command.
 
 Choose the rebuild so the running sandbox image picks up the new channel.
 For Telegram, Discord, and Slack, `channels add` checks the rebuilt runtime for the selected bridge and reports startup, credential, or missing-plugin warnings before returning.
