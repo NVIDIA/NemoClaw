@@ -788,11 +788,21 @@ def _requests_named_profile_gateway_launch(argv: list[str], adapter: dict) -> bo
     command_index = parsed["command_index"]
     if len(profiles) != 1 or command_index is None:
         return False
-    launch_index = command_index + 1
-    if profiles[0]["start"] == launch_index:
-        launch_index = profiles[0]["end"]
+    option_indexes = {
+        index
+        for occurrence in parsed["occurrences"]
+        for index in range(occurrence["start"], occurrence["end"])
+    }
+    launch_index = next(
+        (
+            index
+            for index in range(command_index + 1, len(argv))
+            if index not in option_indexes
+        ),
+        None,
+    )
     return (
-        launch_index < len(argv) and argv[launch_index] in _GATEWAY_LAUNCH_COMMANDS
+        launch_index is not None and argv[launch_index] in _GATEWAY_LAUNCH_COMMANDS
     )
 
 

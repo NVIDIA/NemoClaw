@@ -130,6 +130,23 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realInvoked).toBe(false);
   });
 
+  it.each([
+    [
+      "before the profile selector",
+      ["gateway", "--accept-hooks", "--profile", "research", "run"],
+    ],
+    [
+      "after the profile selector",
+      ["--profile", "research", "gateway", "--accept-hooks", "run"],
+    ],
+  ])("refuses a named-profile gateway with its parent option %s (#10776)", (_form, args) => {
+    const run = runWrapper(args, {});
+
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain("Refusing named-profile Hermes gateway");
+    expect(run.realInvoked).toBe(false);
+  });
+
   it.each(["install", "restart", "start"])(
     "refuses the named-profile gateway %s launch path (#10776)",
     (command) => {
