@@ -13,7 +13,8 @@ Choose a provider based on where the model runs, which API it exposes, and which
 NemoClaw validates the provider and model before it creates the sandbox.
 
 <Warning>
-On native N1x FASTOS, accept the Deferred managed-vLLM preview or enter standard onboarding by declining Express, disabling Express without an excluded provider, or setting a recognized `NEMOCLAW_PROVIDER` value other than Local NVIDIA NIM.
+On native N1x FASTOS, accept the Deferred managed-vLLM preview or enter standard onboarding by declining Express.
+You can also set `NEMOCLAW_NO_EXPRESS=1` without a provider, or set a recognized `NEMOCLAW_PROVIDER` value other than Local NVIDIA NIM.
 N1x remains Deferred, each standard provider keeps its existing requirements, and local NVIDIA NIM remains unavailable.
 On a qualifying Windows WSL N1x host, Windows Express uses managed llama.cpp after Docker Desktop GPU passthrough succeeds.
 Other Windows WSL hosts retain Windows-host or WSL-local Ollama.
