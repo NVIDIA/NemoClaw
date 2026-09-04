@@ -20,7 +20,7 @@ runs:
         cache: npm
 
     - name: Install reviewed npm
-      uses: ./.github/actions/setup-reviewed-npm
+      uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e
 
     - name: Install root dependencies
       shell: bash
