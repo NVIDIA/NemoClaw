@@ -4,11 +4,13 @@
 import { randomBytes } from "node:crypto";
 import { stripAnsi } from "../../adapters/openshell/client";
 import {
+  buildOpenShellRuntimeSelectionEnv,
   captureOpenshell,
   captureOpenshellForStatus,
   captureSandboxSshConfig,
   getOpenshellBinary,
   isCommandTimeout,
+  type OpenShellRuntimeSelection,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
@@ -117,6 +119,15 @@ export { buildSandboxExecMarkedCommand } from "./sandbox-exec-output";
 
 export type { SandboxCommandResult, SandboxExecCommandOptions };
 
+export type SandboxCommandExecutionOptions = {
+  runtimeSelection?: OpenShellRuntimeSelection;
+  timeout?: number;
+};
+
+export type SandboxExecCommandExecutionOptions = SandboxExecCommandOptions & {
+  runtimeSelection?: OpenShellRuntimeSelection;
+};
+
 type ProcessRecoveryProbeTiming = {
   measure<T>(stage: "processes" | "forward", operation: () => T): T;
   setForwardAction(action: "skipped" | "verified" | "restored" | "failed"): void;
@@ -173,13 +184,26 @@ function getSandboxHealthProbeUrl(sandboxName: string): string {
 export function executeSandboxCommand(
   sandboxName: string,
   command: string,
-  timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+  timeoutOrOptions: number | SandboxCommandExecutionOptions = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
 ): SandboxCommandResult | null {
+  const timeout =
+    typeof timeoutOrOptions === "number"
+      ? timeoutOrOptions
+      : (timeoutOrOptions.timeout ?? DEFAULT_SANDBOX_EXEC_TIMEOUT_MS);
+  const runtimeSelection =
+    typeof timeoutOrOptions === "number" ? undefined : timeoutOrOptions.runtimeSelection;
+  const runtimeEnv = runtimeSelection
+    ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
+    : undefined;
   return executeSandboxCommandTransport(
     commandTransportDependencies(),
     sandboxName,
     command,
     timeout,
+    {
+      ...(runtimeSelection ? { gatewayName: runtimeSelection.gatewayName } : {}),
+      runtimeEnv,
+    },
   );
 }
 
@@ -211,14 +235,27 @@ export function executeSandboxExecCommand(
   sandboxName: string,
   command: string,
   timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-  options: SandboxExecCommandOptions = {},
+  options: SandboxExecCommandExecutionOptions = {},
 ): SandboxCommandResult | null {
+  const { runtimeSelection, ...transportOptions } = options;
+  const runtimeEnv = runtimeSelection
+    ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
+    : options.runtimeEnv;
   return executeSandboxExecCommandTransport(
     commandTransportDependencies(),
     sandboxName,
     command,
     timeout,
-    options,
+    {
+      ...transportOptions,
+      ...(runtimeSelection
+        ? {
+            allowLocalDockerFallback: false,
+            gatewayName: runtimeSelection.gatewayName,
+          }
+        : {}),
+      ...(runtimeEnv ? { runtimeEnv } : {}),
+    },
   );
 }
 
