@@ -560,6 +560,88 @@ describe("managed gateway port readiness (#7411)", () => {
     }
   });
 
+  it("skips Docker inspection for an occupied native Podman gateway (#10984)", async () => {
+    const gatewayListener = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      gatewayListener.once("error", reject);
+      gatewayListener.listen(0, "127.0.0.1", resolve);
+    });
+    const gatewayPort = (gatewayListener.address() as AddressInfo).port;
+    const gatewayName = `nemoclaw-${String(gatewayPort)}`;
+    const endpoint = `https://169.254.2.2:${String(gatewayPort)}`;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-readiness-"));
+    const openshell = path.join(root, "openshell");
+    fs.writeFileSync(openshell, "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+    const environment = {
+      HOME: root,
+      PATH: root,
+      NEMOCLAW_GATEWAY_RUNTIME: "podman",
+      NEMOCLAW_OPENSHELL_BIN: openshell,
+      NEMOCLAW_OPENSHELL_GATEWAY_BIN: process.execPath,
+      OPENSHELL_PODMAN_SOCKET: "/nonexistent/run/podman/podman.sock",
+    };
+    const gateway = createCurrentPodmanRuntimeProviderBundle(environment).gateway;
+    const statusOutput = [
+      "Server Status",
+      `Gateway: ${gatewayName}`,
+      `Server: ${endpoint}/`,
+      "Connected",
+    ].join("\n");
+    const gatewayInfo = [
+      "Gateway Info",
+      `Gateway: ${gatewayName}`,
+      `Gateway endpoint: ${endpoint}/`,
+    ].join("\n");
+    const results = new Map([
+      [
+        ["sh", "-c", 'command -v "$1"', "--", "openshell"].join("\0"),
+        commandResult(`${openshell}\n`, 0),
+      ],
+      [[openshell, "status", "-g", gatewayName].join("\0"), commandResult(statusOutput, 0)],
+      [[openshell, "gateway", "info", "-g", gatewayName].join("\0"), commandResult(gatewayInfo, 0)],
+      [[openshell, "gateway", "info"].join("\0"), commandResult(gatewayInfo, 0)],
+      [["lsof", "-ti", `:${String(gatewayPort)}`, "-sTCP:LISTEN"].join("\0"), commandResult("", 1)],
+    ]);
+    subprocess.spawnSync.mockImplementation(
+      (command: string, args: readonly string[] = []) =>
+        results.get([command, ...args].join("\0")) ?? commandResult(),
+    );
+    const isLegacyClusterBound = vi.fn(() => {
+      throw new Error("native Podman readiness reached Docker legacy inspection");
+    });
+    const deps = createProductionGatewayReadinessDependencies({
+      architecture: "x64",
+      environment,
+      gatewayName: () => gatewayName,
+      gatewayPort: () => gatewayPort,
+      isLegacyClusterBound,
+      platform: "linux",
+      resolveRuntimeProviderGateway: () => gateway,
+    });
+
+    try {
+      const now = new Date("2026-09-04T03:30:00.000Z");
+      const snapshot = await collectGatewayObservations(deps, { now: () => now });
+      const projection = projectGatewayReadiness(snapshot, { now: () => now });
+
+      expect(snapshot.failure).toBeUndefined();
+      expect(projection.capabilities).toEqual(
+        expect.arrayContaining(
+          [
+            ["gateway.reuse.ready", "present"],
+            ["gateway.version.compatible", "unknown"],
+            ["gateway.port.uncontested", "absent"],
+          ].map(([id, state]) => expect.objectContaining({ id, state })),
+        ),
+      );
+      expect(isLegacyClusterBound).not.toHaveBeenCalled();
+      expect(subprocess.spawnSync.mock.calls.some(([command]) => command === "docker")).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => gatewayListener.close(() => resolve()));
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  }, 30_000);
+
   it("keeps portable readiness on the portable gateway topology", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-readiness-"));
     const openshell = path.join(root, "openshell");
