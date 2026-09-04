@@ -1,18 +1,63 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { LlamaCppDgxSparkAgentQualificationPlan } from "./llama-cpp-dgx-spark-qualification-contract.mts";
 import type {
   ManagedImageOpenShellE2eProbeContext,
   ManagedImageOpenShellE2eProbeResult,
 } from "./run-managed-image-openshell-e2e.ts";
+
+export type LlamaCppOpenClawAgentQualificationPlan = {
+  readonly agent: "openclaw";
+  readonly bounds: {
+    readonly commandTimeoutSeconds: number;
+    readonly maxResponseBytes: number;
+    readonly maxStreamEvents: number;
+    readonly maxTokens: number;
+  };
+  readonly execution: "disabled" | "enabled";
+  readonly fixture: {
+    readonly path: string;
+    readonly value: string;
+  };
+  readonly expectations: {
+    readonly normal: string;
+  };
+  readonly image: {
+    readonly reference: string;
+    readonly sourceRevision: string;
+  };
+  readonly probes: readonly string[];
+  readonly prompts: {
+    readonly continuation: string;
+    readonly normal: string;
+    readonly tool: string;
+  };
+  readonly route: {
+    readonly api: "openai-completions";
+    readonly provider: "llama-cpp-local";
+    readonly routedBaseUrl: "https://inference.local/v1";
+    readonly upstreamBaseUrl: "http://host.openshell.internal:8081/v1";
+  };
+  readonly runtimeProvider: "docker";
+  readonly sandbox: {
+    readonly gpuAccess: "disabled";
+    readonly name: string;
+  };
+  readonly sessions: {
+    readonly normal: string;
+    readonly tool: string;
+  };
+  readonly tool: {
+    readonly name: "read";
+  };
+};
 
 export type LlamaCppOpenClawAgentQualificationEvidence = {
   readonly agentMultiTurn: true;
   readonly agentNormalTurn: true;
   readonly agentToolCall: {
     readonly argumentsValid: true;
-    readonly name: LlamaCppDgxSparkAgentQualificationPlan["tool"]["name"];
+    readonly name: LlamaCppOpenClawAgentQualificationPlan["tool"]["name"];
   };
   readonly agentToolResultContinuation: true;
   readonly streamingChat: {
@@ -125,7 +170,7 @@ function parseJson(value: string, label: string): Record<string, unknown> {
 }
 
 export async function runLlamaCppOpenClawAgentQualification(
-  config: LlamaCppDgxSparkAgentQualificationPlan,
+  config: LlamaCppOpenClawAgentQualificationPlan,
   context: ManagedImageOpenShellE2eProbeContext,
 ): Promise<LlamaCppOpenClawAgentQualificationEvidence> {
   if (

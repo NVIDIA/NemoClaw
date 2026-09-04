@@ -23,7 +23,9 @@ type WorkflowJob = {
   env?: Record<string, string>;
   outputs?: Record<string, string>;
   permissions?: Record<string, string>;
+  "runs-on"?: string;
   steps?: WorkflowStep[];
+  "timeout-minutes"?: number;
 };
 
 type Workflow = {
@@ -106,6 +108,8 @@ describe("generic NVIDIA GPU PR selection", () => {
     "src/lib/onboard/fatal-runtime-preflight.ts",
     "src/lib/onboard/overlayfs-auto-fix.ts",
     "src/lib/onboard/preflight.ts",
+    "scripts/checks/llama-cpp-openclaw-agent-qualification.mts",
+    "scripts/checks/run-llama-cpp-qwen-gpu-qualification.mts",
   ])(
     "selects the generic NVIDIA GPU E2E job when %s can change installer readiness",
     (changedFile) => {
@@ -137,6 +141,7 @@ describe("generic NVIDIA GPU PR selection", () => {
     expect(selector?.permissions).toEqual({ actions: "read", contents: "read" });
     expect(selector?.outputs).toMatchObject({
       base_sha: "${{ steps.changed.outputs.base_sha }}",
+      managed_image_receipt: "${{ steps.validate_managed_cohort.outputs.receipt }}",
       managed_image_revision: "${{ steps.publication.outputs.head_sha }}",
     });
 
@@ -170,8 +175,35 @@ describe("generic NVIDIA GPU PR selection", () => {
       "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
     );
 
+    const cohort = selector?.steps?.find((step) => step.id === "validate_managed_cohort");
+    expect(cohort).toMatchObject({
+      env: {
+        PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
+        PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
+        PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
+      },
+      if: "${{ steps.changed.outputs.selected == 'true' }}",
+    });
+
     expect(value.jobs["llama-cpp-generic-gpu"]?.env?.E2E_MANAGED_IMAGE_REVISION).toBe(
       "${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_revision }}",
     );
+    expect(value.jobs["llama-cpp-qwen-gpu"]).toMatchObject({
+      env: {
+        E2E_TARGET_ID: "llama-cpp-qwen-gpu",
+        NEMOCLAW_E2E_MANAGED_IMAGE_COHORT_RECEIPT:
+          "${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_receipt }}",
+        NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ github.sha }}",
+      },
+      if: "${{ needs.select-llama-cpp-generic-gpu.outputs.selected == 'true' }}",
+      needs: "select-llama-cpp-generic-gpu",
+      "runs-on": "linux-amd64-gpu-rtxpro6000-latest-1",
+      "timeout-minutes": 150,
+    });
+    expect(
+      value.jobs["llama-cpp-qwen-gpu"]?.steps?.find(
+        (step) => step.name === "Run N1x Qwen llama.cpp recipe on RTX GPU",
+      )?.run,
+    ).toContain("npx tsx scripts/checks/run-llama-cpp-qwen-gpu-qualification.mts");
   });
 });
