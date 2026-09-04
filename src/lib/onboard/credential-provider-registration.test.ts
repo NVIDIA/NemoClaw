@@ -764,6 +764,7 @@ describe("credential provider registration", () => {
       ],
       reused: [],
       missing: [],
+      replacedProviderNames: [],
       providerNames: [messagingProviderName, webSearchProviderName],
       sandboxCreateProviderArgs: [
         "--provider",
@@ -840,6 +841,7 @@ describe("credential provider registration", () => {
       ],
       reused: [],
       missing: [],
+      replacedProviderNames: [typedProviderName],
       providerNames: [typedProviderName, fallbackProviderName],
       sandboxCreateProviderArgs: [
         "--provider",
@@ -889,9 +891,9 @@ describe("credential provider registration", () => {
       );
       expect(failure).toMatchObject({
         message: "authority changed",
-        mutatedProviderNames: [],
+        mutatedProviderNames: [typedProviderName],
         createdProviderNames: [],
-        replacedProviderNames: [],
+        replacedProviderNames: [typedProviderName],
       });
     } finally {
       cleanup.mockRestore();

@@ -303,6 +303,7 @@ export async function applyCredentialsAtOpenShell(
     upserted,
     reused,
     missing,
+    replacedProviderNames,
     providerNames,
     sandboxCreateProviderArgs: providerNames.flatMap((providerName) => [
       "--provider",

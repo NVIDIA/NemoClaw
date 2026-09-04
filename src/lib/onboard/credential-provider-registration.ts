@@ -212,20 +212,6 @@ function uniqueProviderNames(names: readonly string[]): string[] {
   return [...new Set(names)];
 }
 
-function trackSuccessfulProviderReplacements(
-  providerAdapter: ReturnType<typeof createCliOpenShellProviderAdapter>,
-  replacedProviderNames: Set<string>,
-): ReturnType<typeof createCliOpenShellProviderAdapter> {
-  return {
-    ...providerAdapter,
-    async deleteProvider(request) {
-      const result = await providerAdapter.deleteProvider(request);
-      if (result.ok) replacedProviderNames.add(request.providerName);
-      return result;
-    },
-  };
-}
-
 function isCanonicalBinding(binding: CheckpointProviderBinding): boolean {
   return [binding.name, binding.type, binding.credentialEnv].every(
     (field) => typeof field === "string" && field.length > 0 && field.trim() === field,
@@ -324,12 +310,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
         channelIdForProvider(applicationPlan, envKey, providerName),
     });
     const gatewayName = deps.getGatewayName();
-    const cleanupProviderAdapter = createCliOpenShellProviderAdapter({ run: runOpenshell });
-    const replacedProviderNames = new Set<string>();
-    const providerAdapter = trackSuccessfulProviderReplacements(
-      cleanupProviderAdapter,
-      replacedProviderNames,
-    );
+    const providerAdapter = createCliOpenShellProviderAdapter({ run: runOpenshell });
     const typedResult = await MessagingSetupApplier.applyCredentialsAtOpenShell(applicationPlan, {
       providerAdapter,
       target: namedOpenShellGateway(gatewayName),
@@ -342,7 +323,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       log: (message) => console.error(`  ${message}`),
     }).catch((error: unknown) =>
       rethrowAfterCreatedProviderCleanup(error, {
-        providerAdapter: cleanupProviderAdapter,
+        providerAdapter,
         gatewayName,
         allowedSandboxes: options.allowedSandboxes,
         revalidateSandboxIdentity: options.revalidateSandboxIdentity,
@@ -351,9 +332,6 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     const typedCreatedProviderNames = typedResult.upserted
       .filter(({ action }) => action === "create")
       .map(({ providerName }) => providerName);
-    const typedReplacedProviderNames = typedCreatedProviderNames.filter((providerName) =>
-      replacedProviderNames.has(providerName),
-    );
     try {
       if (typedResult.missing.length > 0) throw new Error(MISSING_BINDING_ERROR);
       const appliedNames = new Set(typedResult.providerNames);
@@ -367,12 +345,12 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       return applied;
     } catch (error) {
       return rethrowAfterCreatedProviderCleanup(error, {
-        providerAdapter: cleanupProviderAdapter,
+        providerAdapter,
         gatewayName,
         allowedSandboxes: options.allowedSandboxes,
         revalidateSandboxIdentity: options.revalidateSandboxIdentity,
         createdProviderNames: typedCreatedProviderNames,
-        replacedProviderNames: typedReplacedProviderNames,
+        replacedProviderNames: typedResult.replacedProviderNames,
       });
     }
   }

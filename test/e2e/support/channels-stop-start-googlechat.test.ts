@@ -55,6 +55,7 @@ describe("channels stop/start Google Chat live composition", () => {
       upserted: [],
       reused: [],
       missing: [],
+      replacedProviderNames: [],
       providerNames: [providerName],
       sandboxCreateProviderArgs: ["--provider", providerName],
     } as const;

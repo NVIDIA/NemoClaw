@@ -165,6 +165,7 @@ export interface MessagingCredentialApplyResult {
     readonly providerName: string;
     readonly envKey: string;
   }[];
+  readonly replacedProviderNames: readonly string[];
   readonly providerNames: readonly string[];
   readonly sandboxCreateProviderArgs: readonly string[];
 }

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
+import type { MessagingBridgeProfile } from "../../onboard/messaging-bridge-provider";
 import type { SandboxMessagingPlan } from "../manifest";
 import {
   applyCredentialsAtOpenShell,
@@ -13,6 +14,7 @@ import {
   isMessagingProviderMutationFailure,
   type MessagingProviderApplyError,
 } from "./openshell-provider";
+import { buildMessagingProviderApplication } from "./provider-application";
 import type {
   MessagingCredentialProviderEphemeralInput,
   MessagingProviderRefreshEphemeralInput,
@@ -301,6 +303,7 @@ describe("messaging OpenShell provider application", () => {
       providerName: expected.providerName,
       sandboxName: "alpha",
     });
+    expect(result.replacedProviderNames).toEqual([expected.providerName]);
     expect(result.providerNames).toEqual([expected.providerName]);
   });
 
@@ -621,6 +624,98 @@ describe("messaging OpenShell provider application", () => {
     );
     expect(JSON.stringify(result)).not.toContain(credentialSecret);
     expect(JSON.stringify(result)).not.toContain(refreshSecret);
+  });
+
+  it("carries planned Google Chat refresh material through before attachment (#9806)", async () => {
+    const privateKey = "test-private-key-material";
+    const profile: MessagingBridgeProfile = {
+      channelId: "googlechat",
+      agent: "openclaw",
+      profilePath: "/repo/googlechat/openclaw.yaml",
+      profileId: "google-chat-bridge",
+      credentialKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+      strategy: "google-service-account-jwt",
+      scopes: ["https://www.googleapis.com/auth/chat.bot"],
+      secretMaterialKeys: ["private_key"],
+      sourceSecretEnv: "GOOGLECHAT_SERVICE_ACCOUNT",
+    };
+    const application = buildMessagingProviderApplication({
+      tokenDefs: [
+        {
+          name: "alpha-googlechat-bridge",
+          envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+          token: "openshell-managed-pending-mint",
+          providerType: "google-chat-bridge",
+        },
+      ],
+      root: "/repo",
+      agent: "openclaw",
+      getCredential: () =>
+        JSON.stringify({ client_email: "bot@example.test", private_key: privateKey }),
+      profiles: [profile],
+    });
+    const expected = application.definitions[0]!;
+    const exactProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>().mockResolvedValue({
+      ok: true,
+      value: metadata(expected),
+    });
+    const pendingAdapter = providerAdapter({
+      getProvider: exactProvider,
+      getProviderRefreshStatus: vi
+        .fn<OpenShellProviderAdapter["getProviderRefreshStatus"]>()
+        .mockResolvedValue({ ok: true, value: { status: null } }),
+    });
+    const nowValues = [0, 0, 300_000];
+
+    const failure = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: pendingAdapter,
+      target,
+      definitions: application.definitions,
+      refreshes: application.refreshes,
+      allowedSandboxes: ["alpha"],
+      attachToSandbox: "alpha",
+      now: () => nowValues.shift() ?? 300_000,
+      sleep: async () => {},
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      message: expect.stringContaining("last status 'unknown'"),
+      mutatedProviderNames: [expected.providerName],
+    });
+    expect(pendingAdapter.configureProviderRefresh).toHaveBeenCalledWith({
+      target,
+      providerName: expected.providerName,
+      credentialKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+      strategy: "google-service-account-jwt",
+      material: [
+        { key: "client_email", value: "bot@example.test" },
+        { key: "scope", value: "https://www.googleapis.com/auth/chat.bot" },
+      ],
+      secretMaterial: [{ key: "private_key", value: privateKey }],
+    });
+    expect(pendingAdapter.attachProvider).not.toHaveBeenCalled();
+
+    const refreshedAdapter = providerAdapter({ getProvider: exactProvider });
+    const result = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: refreshedAdapter,
+      target,
+      definitions: application.definitions,
+      refreshes: application.refreshes,
+      allowedSandboxes: ["alpha"],
+      attachToSandbox: "alpha",
+    });
+
+    expect(refreshedAdapter.getProviderRefreshStatus).toHaveBeenCalledOnce();
+    expect(refreshedAdapter.attachProvider).toHaveBeenCalledWith({
+      target,
+      providerName: expected.providerName,
+      sandboxName: "alpha",
+    });
+    expect(
+      vi.mocked(refreshedAdapter.getProviderRefreshStatus).mock.invocationCallOrder[0]!,
+    ).toBeLessThan(vi.mocked(refreshedAdapter.attachProvider).mock.invocationCallOrder[0]!);
+    expect(result.providerNames).toEqual([expected.providerName]);
+    expect(JSON.stringify(result)).not.toContain(privateKey);
   });
 
   it.each([
