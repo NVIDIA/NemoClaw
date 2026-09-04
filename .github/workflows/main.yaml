@@ -135,6 +135,8 @@ jobs:
         with:
           target-root: ${{ github.workspace }}
           report-dir: artifacts/reviewed-npm-audit
+          cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
+          trusted-cache-write: "true"
 
   real-openclaw-dist-harness:
     runs-on: ubuntu-latest
@@ -158,7 +160,7 @@ jobs:
           cache: npm
 
       - name: Install test dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Build generated harness inputs
         run: npm run build:policy-boundary && npm run catalog:compile
