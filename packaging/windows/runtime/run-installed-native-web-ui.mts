@@ -422,7 +422,13 @@ const contentText = (value) => {
   return value.map((part) => typeof part === "string" ? part : part?.text ?? "").join(" ");
 };
 const responseFor = (body) => {
-  const text = body.messages.map((message) => contentText(message?.content)).join("\n");
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  let text = "";
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role !== "user") continue;
+    text = contentText(messages[index]?.content);
+    break;
+  }
   const turn = text.match(/NATIVE_WINDOWS_TURN_([123])_OK/u)?.[1];
   return turn ? "NATIVE_WINDOWS_TURN_" + turn + "_OK" : "NEMOCLAW_NATIVE_PREVIEW_OK";
 };

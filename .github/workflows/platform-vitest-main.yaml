@@ -578,6 +578,8 @@ jobs:
                 & "$env:SystemRoot\System32\taskkill.exe" /PID $runtime.Id /T /F | Out-Null
                 'runtime_timed_out_after_seconds=1200' | Out-File -LiteralPath (Join-Path $artifactRoot 'probe-result.txt') -Encoding utf8 -Append
               } else {
+                $runtime.WaitForExit()
+                $runtime.Refresh()
                 "runtime_exit_code=$($runtime.ExitCode)" | Out-File -LiteralPath (Join-Path $artifactRoot 'probe-result.txt') -Encoding utf8 -Append
               }
             } finally {
