@@ -23,6 +23,7 @@ import {
   probeWindowsHostOllamaRouteProtection,
   resetOllamaHostCache,
   resetOllamaRuntimeContextWindowAutoState,
+  type RunCaptureFn,
   runOllamaWarmup,
   setResolvedOllamaHost,
   validateLocalProvider,
@@ -84,7 +85,7 @@ describe("Windows-host Ollama transport", () => {
   });
 
   it("accepts route protection only when both probes use Docker Desktop", () => {
-    const capture = vi.fn((command: readonly string[]) => {
+    const capture = vi.fn<RunCaptureFn>((command) => {
       const usesDockerDesktop =
         command[0] === "docker" &&
         command[1] === "run" &&
