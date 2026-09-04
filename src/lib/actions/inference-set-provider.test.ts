@@ -124,6 +124,10 @@ describe("inference set provider binding", () => {
       .mockResolvedValueOnce({
         ok: true,
         value: metadata({ revision: { id: PROVIDER_ID, resourceVersion: 1 } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: metadata({ revision: { id: PROVIDER_ID, resourceVersion: 1 } }),
       });
     const createProvider = vi.fn(async () => ({ ok: true as const }));
     const adapter = providerAdapter({ getProvider, createProvider });
@@ -136,6 +140,7 @@ describe("inference set provider binding", () => {
     });
 
     expect(mutation.action).toBe("create");
+    await mutation.assertCurrent();
     expect(createProvider).toHaveBeenCalledExactlyOnceWith({
       target: TARGET,
       name: "compatible-endpoint",
@@ -148,6 +153,131 @@ describe("inference set provider binding", () => {
         },
       ],
       fromExisting: false,
+    });
+    expect(getProvider.mock.calls).toEqual([
+      [{ target: TARGET, providerName: "compatible-endpoint" }],
+      [{ target: TARGET, providerName: "compatible-endpoint" }],
+      [{ target: TARGET, providerName: "compatible-endpoint" }],
+    ]);
+  });
+
+  it("refuses a changed created-provider revision before route selection (#9806)", async () => {
+    const getProvider = vi
+      .fn<OpenShellProviderAdapter["getProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "provider not found" },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: metadata({ revision: { id: PROVIDER_ID, resourceVersion: 1 } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: metadata({ revision: { id: PROVIDER_ID, resourceVersion: 2 } }),
+      });
+    const createProvider = vi.fn(async () => ({ ok: true as const }));
+    const adapter = providerAdapter({ getProvider, createProvider });
+
+    const mutation = await prepareInferenceSetProviderBinding({
+      gatewayName: "nemoclaw",
+      providerName: "compatible-endpoint",
+      binding: binding(),
+      providerAdapter: adapter,
+    });
+
+    await expect(mutation.assertCurrent()).rejects.toThrow(
+      "Could not verify newly created provider 'compatible-endpoint' immediately before inference route mutation",
+    );
+    expect(createProvider).toHaveBeenCalledOnce();
+    expect(getProvider.mock.calls).toEqual([
+      [{ target: TARGET, providerName: "compatible-endpoint" }],
+      [{ target: TARGET, providerName: "compatible-endpoint" }],
+      [{ target: TARGET, providerName: "compatible-endpoint" }],
+    ]);
+  });
+
+  it("removes a newly created provider when post-create inspection fails (#9806)", async () => {
+    const getProvider = vi
+      .fn<OpenShellProviderAdapter["getProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "provider not found" },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "timeout", message: "safe post-create inspection timeout" },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: metadata({ revision: { id: PROVIDER_ID, resourceVersion: 1 } }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "provider not found" },
+      });
+    const createProvider = vi.fn(async () => ({ ok: true as const }));
+    const deleteProvider = vi.fn(async () => ({ ok: true as const }));
+
+    await expect(
+      prepareInferenceSetProviderBinding({
+        gatewayName: "nemoclaw",
+        providerName: "compatible-endpoint",
+        binding: binding(),
+        providerAdapter: providerAdapter({ getProvider, createProvider, deleteProvider }),
+      }),
+    ).rejects.toThrow(
+      "The provider created by this attempt was removed; no inference route was changed.",
+    );
+
+    expect(createProvider).toHaveBeenCalledOnce();
+    expect(deleteProvider).toHaveBeenCalledExactlyOnceWith({
+      target: TARGET,
+      providerName: "compatible-endpoint",
+    });
+    expect(getProvider).toHaveBeenCalledTimes(4);
+  });
+
+  it("reports an unremoved provider when post-create cleanup fails (#9806)", async () => {
+    const createdMetadata = metadata({ revision: { id: PROVIDER_ID, resourceVersion: 1 } });
+    const getProvider = vi
+      .fn<OpenShellProviderAdapter["getProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "provider not found" },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "timeout", message: "safe post-create inspection timeout" },
+      })
+      .mockResolvedValueOnce({ ok: true, value: createdMetadata })
+      .mockResolvedValueOnce({ ok: true, value: createdMetadata });
+    const deleteProvider = vi.fn(async () => ({
+      ok: false as const,
+      error: {
+        kind: "command" as const,
+        reason: "failed" as const,
+        message: "safe cleanup failure",
+      },
+    }));
+
+    const failure = await prepareInferenceSetProviderBinding({
+      gatewayName: "nemoclaw",
+      providerName: "compatible-endpoint",
+      binding: binding(),
+      providerAdapter: providerAdapter({ getProvider, deleteProvider }),
+    }).catch((error: Error) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(
+      "Provider 'compatible-endpoint' did not converge to the expected type and binding-key shape after create.",
+    );
+    expect((failure as Error).message).toContain("Cleanup could not confirm removal");
+    expect((failure as Error).message).toContain("The provider remains registered");
+    expect((failure as Error).message).toContain("safe cleanup failure");
+    expect(deleteProvider).toHaveBeenCalledExactlyOnceWith({
+      target: TARGET,
+      providerName: "compatible-endpoint",
     });
   });
 

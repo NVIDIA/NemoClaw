@@ -1090,6 +1090,7 @@ async function runInferenceSetWithoutHostLock(
   let restoredSelectionAfterProviderFailure = false;
   let providerMutation: Awaited<ReturnType<typeof prepareInferenceSetProviderBinding>> | null =
     null;
+  let assertProviderCurrentBeforeSelection: (() => Promise<void>) | null = null;
   const restorePreviousInferenceSelection = (): string | null => {
     let restoreResult: CaptureOpenshellResult;
     try {
@@ -1125,6 +1126,7 @@ async function runInferenceSetWithoutHostLock(
         providerAdapter: deps.providerAdapter,
         allowCreate: !loopbackNoAuthProxyRoute,
       });
+      assertProviderCurrentBeforeSelection = providerMutation.assertCurrent;
       if (directProviderBinding && providerMutation.action === "update") {
         const bindingMismatches = recordedDirectProviderBindingMismatches({
           entry,
@@ -1150,13 +1152,14 @@ async function runInferenceSetWithoutHostLock(
       // no-auth proxy token that OpenShell holds and sends on selection, and
       // its host-side verification is skipped, so confirm the durable binding
       // is still the one onboarding registered before selecting it.
-      await assertInferenceSetProviderOwnership({
-        gatewayName: preparedRoute.gatewayName,
-        providerName: provider,
-        providerType: preMutationInferenceApi === "anthropic-messages" ? "anthropic" : "openai",
-        credentialEnv: sandboxCustomCompatibleCredentialEnv(entry, provider),
-        providerAdapter: deps.providerAdapter,
-      });
+      assertProviderCurrentBeforeSelection = async () =>
+        assertInferenceSetProviderOwnership({
+          gatewayName: preparedRoute.gatewayName,
+          providerName: provider,
+          providerType: preMutationInferenceApi === "anthropic-messages" ? "anthropic" : "openai",
+          credentialEnv: sandboxCustomCompatibleCredentialEnv(entry, provider),
+          providerAdapter: deps.providerAdapter,
+        });
     }
     if (providerMutation) {
       appliedProvider = providerMutation.action === "create";
@@ -1169,6 +1172,7 @@ async function runInferenceSetWithoutHostLock(
       }
     }
 
+    await assertProviderCurrentBeforeSelection?.();
     deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
     const setInferenceRoute = () =>
       deps.captureOpenshell(

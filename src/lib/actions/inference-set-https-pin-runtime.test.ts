@@ -284,6 +284,79 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     expect(providerUpdates).toHaveLength(0);
   });
 
+  it("fails before route selection when the provider revision becomes stale (#9806)", async () => {
+    vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
+    const capture = providerCapture({
+      providerName: "compatible-endpoint",
+      providerType: "openai",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "old-model",
+      },
+      session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+      ensureHttpsPinRuntimeAdapter: mockAdapter(),
+      captureOpenshell: capture,
+    });
+    const getProvider = vi
+      .spyOn(deps.providerAdapter, "getProvider")
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          name: "compatible-endpoint",
+          type: "openai",
+          credentialKeys: ["COMPATIBLE_API_KEY"],
+          configKeys: ["OPENAI_BASE_URL"],
+          revision: { id: PROVIDER_ID, resourceVersion: 4 },
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          name: "compatible-endpoint",
+          type: "openai",
+          credentialKeys: ["COMPATIBLE_API_KEY"],
+          configKeys: ["OPENAI_BASE_URL"],
+          revision: { id: PROVIDER_ID, resourceVersion: 5 },
+        },
+      });
+    const importProviderProfile = vi.spyOn(deps.providerAdapter, "importProviderProfile");
+    const updateProvider = vi.spyOn(deps.providerAdapter, "updateProvider");
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "new-model",
+          endpointUrl: "https://compatible.example/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-completions",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("changed after it was inspected; no provider mutation was attempted");
+
+    expect(getProvider.mock.calls).toEqual([
+      [{ target: { kind: "named", gatewayName: "nemoclaw" }, providerName: "compatible-endpoint" }],
+      [{ target: { kind: "named", gatewayName: "nemoclaw" }, providerName: "compatible-endpoint" }],
+    ]);
+    expect(importProviderProfile).not.toHaveBeenCalled();
+    expect(updateProvider).not.toHaveBeenCalled();
+    expect(
+      capture.mock.calls.filter(([args]) => args[0] === "inference" && args[1] === "set"),
+    ).toHaveLength(0);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
+    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
+  });
+
   it("restores the prior selection and reports partial state after a failed provider command (#9806)", async () => {
     vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
     const capture = providerCapture({
@@ -554,6 +627,13 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       "The previous OpenShell inference selection was restored. Provider state may still be partial.",
     );
     expect(message).toContain("safe uncertain failure");
+    const selectionMutations = capture.mock.calls.filter(
+      ([args]) => args[0] === "inference" && args[1] === "set",
+    );
+    expect(selectionMutations).toHaveLength(2);
+    expect(selectionMutations[1]?.[0]).toEqual(
+      expect.arrayContaining(["--provider", "nvidia-prod", "--model", "old-model", "--no-verify"]),
+    );
   });
 
   it("reports committed provider and selection state when registry convergence fails", async () => {
