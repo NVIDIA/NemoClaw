@@ -64,7 +64,8 @@ It uses Pub/Sub REST pull and does not create or configure a public webhook endp
 A missing or malformed preset aborts before token prompts, registry writes, or the rebuild prompt, so the sandbox never advertises a channel without matching policy.
 With the preset present, the command applies it before rebuild.
 
-When policy application fails after a fresh add writes registry state, NemoClaw attempts to roll back the bridge providers, `messagingChannels` entry, and staged environment credentials.
+When final policy application fails after provider registration during a fresh add, NemoClaw attempts to roll back the bridge providers, preset, and staged environment credentials.
+The registry has not been updated at that point.
 It exits without prompting for a rebuild.
 If a gateway-side cleanup step fails, rollback continues and prints `Rollback could not fully clean <surfaces>` so you can clean up manually.
 
