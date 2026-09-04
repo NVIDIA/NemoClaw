@@ -151,18 +151,25 @@ describe("Hermes cross-UID ledger permissions", () => {
   });
 
   it.each([baseDockerfile, dockerfile])(
-    "prepares both setgid cross-UID parents in both image layouts [case %#]",
+    "prepares the setgid shared state directories in both image layouts [case %#]",
     (source) => {
       expect(source).toContain("/sandbox/.hermes/cron");
       expect(source).toContain("/sandbox/.hermes/gateway");
-      expect(source).toMatch(
-        /chown gateway:sandbox \\\n\s+\/sandbox\/[.]hermes\/cron \\\n\s+\/sandbox\/[.]hermes\/gateway \\\n\s+\/sandbox\/[.]hermes\/runtime/,
-      );
+      expect(source).toContain("chown gateway:sandbox");
       expect(source).toMatch(
         /chmod 2770 \\\n(?:[\s\S]*?)\/sandbox\/[.]hermes\/cron \\\n\s+\/sandbox\/[.]hermes\/gateway \\\n\s+\/sandbox\/[.]hermes\/runtime/,
       );
     },
   );
+
+  it("keeps managed cron definitions sandbox-owned while gateway state stays gateway-owned", () => {
+    expect(baseDockerfile).toContain(
+      "chown gateway:sandbox \\\n        /sandbox/.hermes/cron \\\n        /sandbox/.hermes/gateway \\\n        /sandbox/.hermes/runtime",
+    );
+    expect(dockerfile).toContain(
+      "chown -R sandbox:sandbox /sandbox/.hermes \\\n    && chown gateway:sandbox \\\n        /sandbox/.hermes/gateway \\\n        /sandbox/.hermes/runtime",
+    );
+  });
 
   it("requires a Dockerfile cross-identity probe for the cron ledger lifecycle", () => {
     expect(dockerfile).toContain(

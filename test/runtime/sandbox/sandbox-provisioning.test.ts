@@ -1260,20 +1260,26 @@ describe("Hermes sandbox provisioning", () => {
 
   it("grants the Hermes gateway group write access to runtime state directories", () => {
     const runs = [
-      runHermesLayoutBlock(
-        HERMES_DOCKERFILE_BASE,
-        "# Create .hermes with mutable integration dirs",
-        "# Pre-create shell init files",
-      ),
-      runHermesLayoutBlock(
-        HERMES_DOCKERFILE,
-        "# Flatten stale published base images",
-        "# Pin config hash at build time",
-        { precreateConfig: true },
-      ),
+      {
+        cronOwnedByGateway: true,
+        run: runHermesLayoutBlock(
+          HERMES_DOCKERFILE_BASE,
+          "# Create .hermes with mutable integration dirs",
+          "# Pre-create shell init files",
+        ),
+      },
+      {
+        cronOwnedByGateway: false,
+        run: runHermesLayoutBlock(
+          HERMES_DOCKERFILE,
+          "# Flatten stale published base images",
+          "# Pin config hash at build time",
+          { precreateConfig: true },
+        ),
+      },
     ];
     try {
-      runs.forEach((run) => {
+      runs.forEach(({ cronOwnedByGateway, run }) => {
         expect(run.result.status).toBe(0);
         const hermesDir = path.join(run.sandboxRoot, ".hermes");
         expect((fs.statSync(hermesDir).mode & 0o7777).toString(8)).toBe("3770");
@@ -1295,15 +1301,19 @@ describe("Hermes sandbox provisioning", () => {
           "runtime/gateway_state.json",
         );
         expect(() => fs.lstatSync(path.join(hermesDir, "gateway.pid"))).toThrow();
-        expect(run.calls).toContain(
-          `chown gateway:sandbox ${path.join(hermesDir, "cron")} ${path.join(
-            hermesDir,
-            "gateway",
-          )} ${path.join(hermesDir, "runtime")}`,
-        );
+        const gatewayOwnership = cronOwnedByGateway
+          ? `chown gateway:sandbox ${path.join(hermesDir, "cron")} ${path.join(
+              hermesDir,
+              "gateway",
+            )} ${path.join(hermesDir, "runtime")}`
+          : `chown gateway:sandbox ${path.join(hermesDir, "gateway")} ${path.join(
+              hermesDir,
+              "runtime",
+            )}`;
+        expect(run.calls).toContain(gatewayOwnership);
       });
     } finally {
-      runs.forEach((run) => {
+      runs.forEach(({ run }) => {
         fs.rmSync(run.tmp, { recursive: true, force: true });
       });
     }
