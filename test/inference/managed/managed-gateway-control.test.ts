@@ -428,7 +428,7 @@ with tempfile.TemporaryDirectory() as root:
             "script": script,
             "arguments": ["runtime-env"],
             "runtime_port": environment.get("NEMOCLAW_DASHBOARD_PORT"),
-            "managed_paths": "|".join(environment.get(key, "") for key in ("HERMES_LAZY_INSTALL_TARGET", "HERMES_HOME", "HERMES_BUNDLED_PLUGINS")),
+            "managed_paths_present": any(key in environment for key in ("HERMES_LAZY_INSTALL_TARGET", "HERMES_HOME", "HERMES_BUNDLED_PLUGINS")),
         })
         control._verify_locked_hermes_hash = lambda: preflight_steps.append({"hash": "checked"})
         try:
@@ -1336,8 +1336,7 @@ describe("managed gateway root control", () => {
           ),
           arguments: ["runtime-env"],
           runtime_port: "18789",
-          managed_paths:
-            "/sandbox/.hermes/lazy-packages|/sandbox/.hermes|/opt/hermes/plugins",
+          managed_paths_present: false,
         },
         { hash: "checked" },
       ],

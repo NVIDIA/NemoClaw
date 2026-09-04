@@ -144,6 +144,15 @@ function runDirectRuntimeEnvValidation(envOverrides: Record<string, string | und
   });
 }
 
+function runRuntimeEnvJsonValidation(input: string | Buffer) {
+  return spawnSync("python3", [VALIDATOR, "runtime-env-json"], {
+    encoding: "utf-8",
+    timeout: 5000,
+    input,
+    env: { HOME: os.tmpdir(), PATH: process.env.PATH ?? "" },
+  });
+}
+
 function runRuntimeEnvValidationAsRoot(lazyTarget: string) {
   return spawnSync(
     "python3",
@@ -533,6 +542,51 @@ wait "$child"
 });
 
 describe("Hermes durable lazy-install target", () => {
+  it("accepts a valid environment snapshot at the JSON payload limit", () => {
+    const environment = {
+      HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
+      HERMES_HOME: "/sandbox/.hermes",
+      HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
+      SAFE_PADDING: "",
+    };
+    const emptyPayload = JSON.stringify(environment);
+    environment.SAFE_PADDING = "x".repeat(MAX_ENV_BYTES - Buffer.byteLength(emptyPayload));
+    const payload = JSON.stringify(environment);
+
+    expect(Buffer.byteLength(payload)).toBe(MAX_ENV_BYTES);
+    const result = runRuntimeEnvJsonValidation(payload);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("rejects malformed JSON environment snapshots", () => {
+    const result = runRuntimeEnvJsonValidation("{");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("process environment snapshot is invalid");
+  });
+
+  it("rejects non-string JSON environment values", () => {
+    const result = runRuntimeEnvJsonValidation(
+      JSON.stringify({
+        HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
+        HERMES_HOME: "/sandbox/.hermes",
+        HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
+        SAFE_VALUE: 1,
+      }),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("process environment snapshot is invalid");
+  });
+
+  it("rejects JSON environment snapshots over the payload limit", () => {
+    const result = runRuntimeEnvJsonValidation(Buffer.alloc(MAX_ENV_BYTES + 1, 0x20));
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`${MAX_ENV_BYTES}-byte limit`);
+  });
+
   it("accepts the provider-assigned Hermes API port in the runtime environment", () => {
     const result = runRuntimeEnvValidation({ NEMOCLAW_HERMES_API_PORT: "8645" });
 
@@ -581,21 +635,22 @@ describe("Hermes durable lazy-install target", () => {
     expect(refused.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
   });
 
-  it("requires the controller to supply launcher-owned sandbox paths", () => {
+  it("derives launcher-owned sandbox paths for managed restart validation", () => {
     const result = runManagedGatewayEnvValidation({}, false);
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
-    expect(result.stderr).toContain("HERMES_HOME");
-    expect(result.stderr).toContain("HERMES_BUNDLED_PLUGINS");
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
   });
 
-  it("accepts the canonical managed-restart paths (#10963)", () => {
-    const result = runManagedGatewayEnvValidation({
-      HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
-      HERMES_HOME: "/sandbox/.hermes",
-      HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
-    }, false);
+  it("replaces supervisor path values with the canonical managed-restart paths (#10963)", () => {
+    const result = runManagedGatewayEnvValidation(
+      {
+        HERMES_LAZY_INSTALL_TARGET: "/tmp/untrusted-packages",
+        HERMES_HOME: "/sandbox/other-home",
+        HERMES_BUNDLED_PLUGINS: "/sandbox/hostile-plugins",
+      },
+      false,
+    );
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe("");

@@ -69,9 +69,6 @@ HERMES_GUARD_PATH = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
 HERMES_BOUNDARY_PATH = (
     "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
 )
-MANAGED_HERMES_LAZY_INSTALL_TARGET = "/sandbox/.hermes/lazy-packages"
-MANAGED_HERMES_HOME = "/sandbox/.hermes"
-MANAGED_HERMES_BUNDLED_PLUGINS = "/opt/hermes/plugins"
 OPENCLAW_GUARD_PATH = "/usr/local/lib/nemoclaw/openclaw-config-guard.py"
 OPENSHELL_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
 NEMOCLAW_START_PATH = b"/usr/local/bin/nemoclaw-start"
@@ -1614,22 +1611,6 @@ def _validate_managed_gateway_environment(
         raise ControlError("SECRET_BOUNDARY_REFUSED")
 
 
-def _managed_hermes_gateway_environment(
-    supervisor_environment: dict[str, str],
-) -> dict[str, str]:
-    """Construct the environment pinned by the managed Hermes launcher."""
-
-    gateway_environment = dict(supervisor_environment)
-    gateway_environment.update(
-        {
-            "HERMES_LAZY_INSTALL_TARGET": MANAGED_HERMES_LAZY_INSTALL_TARGET,
-            "HERMES_HOME": MANAGED_HERMES_HOME,
-            "HERMES_BUNDLED_PLUGINS": MANAGED_HERMES_BUNDLED_PLUGINS,
-        }
-    )
-    return gateway_environment
-
-
 def _read_regular(path: str, limit: int) -> tuple[bytes, os.stat_result]:
     flags = (
         os.O_RDONLY
@@ -1743,10 +1724,9 @@ def _hermes_preflight(
         MAX_ENV_BYTES,
         recovery_deadline,
     )
-    gateway_environment = _managed_hermes_gateway_environment(
-        _parse_environment(raw_environment)
+    _validate_managed_gateway_environment(
+        validator, _parse_environment(raw_environment)
     )
-    _validate_managed_gateway_environment(validator, gateway_environment)
     _require_recovery_time(recovery_deadline)
     _verify_locked_hermes_hash()
     _require_recovery_time(recovery_deadline)

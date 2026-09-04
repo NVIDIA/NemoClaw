@@ -222,5 +222,10 @@ describe("Hermes MCP gateway restart", () => {
         args: ["hermes-e2e", "mcp", "list", "--json"],
       }),
     ]);
+    expect(sandboxRunner.calls[0]?.args.at(-1)).toContain(
+      "! cmp -s /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
+    );
+    expect(sandboxRunner.calls[0]?.args.at(-1)).toContain('test "$strict_status" -ne 0');
+    expect(sandboxRunner.calls[0]?.args.at(-1)).toContain('test "$compat_status" -eq 0');
   });
 });
