@@ -260,6 +260,11 @@
       "file": "test/runtime/policy/repro-5978-policy-denial-hint.test.ts",
       "test": "prints only once when the file is sourced twice in one login shell",
       "category": "compatibility"
+    },
+    {
+      "file": "test/automation/releases/reviewed-npm-audit.test.ts",
+      "test": "gives every audit workflow enough time for both attempts and evidence upload",
+      "category": "compatibility"
     }
   ]
 }

@@ -35,6 +35,7 @@ const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
 ) as {
+  lockedGraphs: unknown[];
   severityThreshold: "info" | "low" | "moderate" | "high" | "critical";
 };
 const CHECKED_IN_POLICY = parseAuditExceptionRegistry(
@@ -257,17 +258,21 @@ describe("reviewed npm audit gate", () => {
     });
   });
 
+  // source-shape-contract: compatibility -- Every audit caller must preserve enough job time for all configured graphs to exhaust the reviewed retry policy and publish evidence
   it("gives every audit workflow enough time for both attempts and evidence upload", () => {
-    const retryBudgetMs =
+    const graphCount = CONFIG.lockedGraphs.length + 2;
+    const retryBudgetPerGraphMs =
       NPM_AUDIT_ATTEMPT_TIMEOUT_MS * (NPM_AUDIT_RETRY_DELAYS_MS.length + 1) +
       NPM_AUDIT_RETRY_DELAYS_MS.reduce((total, delay) => total + delay, 0);
-    const minimumJobTimeoutMinutes = Math.ceil(retryBudgetMs / 60_000) + 4;
+    const setupAndEvidenceAllowanceMinutes = 10;
+    const minimumJobTimeoutMinutes =
+      Math.ceil((retryBudgetPerGraphMs * graphCount) / 60_000) + setupAndEvidenceAllowanceMinutes;
     const callers = reviewedNpmAuditWorkflowDeadlines(
       path.join(REPO_ROOT, ".github", "workflows"),
     );
 
     expect(callers).toHaveLength(5);
-    expect(callers.map(({ timeoutMinutes }) => timeoutMinutes)).toEqual([25, 25, 25, 25, 25]);
+    expect(callers.map(({ timeoutMinutes }) => timeoutMinutes)).toEqual([135, 135, 135, 135, 135]);
     expect(Math.min(...callers.map(({ timeoutMinutes }) => timeoutMinutes))).toBeGreaterThanOrEqual(
       minimumJobTimeoutMinutes,
     );
