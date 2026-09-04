@@ -594,7 +594,9 @@ export function createProductionGatewayReadinessDependencies(
 ): GatewayReadinessDependencies {
   const gatewayPort = options.gatewayPort?.() ?? getConfiguredGatewayPort();
   const gatewayName = options.gatewayName?.() ?? resolveDockerDriverGatewayName(gatewayPort);
-  const containerEngineId = options.containerEngineId?.() ?? resolveGatewayInspectionEngineId();
+  const containerEngineId = options.containerEngineId
+    ? options.containerEngineId()
+    : resolveGatewayInspectionEngineId();
   const probeEnv = buildGatewayReadinessProbeEnv(process.env, {
     gatewayName,
     localTlsDir: resolveManagedGatewayProbeTlsDir(gatewayPort, process.env),

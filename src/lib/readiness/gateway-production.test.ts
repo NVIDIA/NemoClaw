@@ -523,6 +523,117 @@ describe("managed gateway port readiness (#7411)", () => {
     expect(subprocess.spawnSync).not.toHaveBeenCalled();
   });
 
+  it("threads an injected engine into legacy-cluster inspection reached through the public entrypoint", async () => {
+    vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", "/bin/sh");
+    const gatewayName = "nemoclaw-readiness-test";
+    const openshell = "/bin/sh";
+    const containerName = `openshell-cluster-${gatewayName}`;
+    const foreignListener = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      foreignListener.once("error", reject);
+      foreignListener.listen(0, "127.0.0.1", resolve);
+    });
+    const gatewayPort = (foreignListener.address() as AddressInfo).port;
+    const resultByInvocation = new Map([
+      [
+        [openshell, "status", "-g", gatewayName].join("\0"),
+        commandResult(`Gateway: ${gatewayName}\nStatus: Connected\n`, 0),
+      ],
+      [[openshell, "gateway", "info", "-g", gatewayName].join("\0"), commandResult("", 0)],
+      [
+        [openshell, "gateway", "info"].join("\0"),
+        commandResult(`Gateway endpoint: http://127.0.0.1:${gatewayPort}\n`, 0),
+      ],
+      [
+        ["podman", "inspect", "--format", "{{.State.Running}}", containerName].join("\0"),
+        commandResult("true", 0),
+      ],
+      [
+        [
+          "podman",
+          "inspect",
+          "--format",
+          "{{json .NetworkSettings.Ports}}",
+          containerName,
+        ].join("\0"),
+        commandResult(JSON.stringify({ "8080/tcp": [{ HostPort: String(gatewayPort) }] }), 0),
+      ],
+      [
+        ["podman", "inspect", "--format", "{{.Config.Image}}", containerName].join("\0"),
+        commandResult("ghcr.io/nvidia/openshell/gateway:latest", 0),
+      ],
+    ]);
+    subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      return resultByInvocation.get([command, ...args].join("\0")) ?? commandResult();
+    });
+
+    try {
+      const deps = createProductionGatewayReadinessDependencies({
+        gatewayName: () => gatewayName,
+        gatewayPort: () => gatewayPort,
+        containerEngineId: () => "podman",
+      });
+
+      await deps.observeManagedGateway(managedOwner(gatewayPort));
+
+      expect(subprocess.spawnSync.mock.calls.some(([command]) => command === "podman")).toBe(true);
+      expect(subprocess.spawnSync.mock.calls.some(([command]) => command === "docker")).toBe(
+        false,
+      );
+    } finally {
+      await new Promise<void>((resolve) => foreignListener.close(() => resolve()));
+    }
+  });
+
+  it("honors an explicit null engine override instead of falling back to the resolved default", async () => {
+    vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", "/bin/sh");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "docker");
+    const gatewayName = "nemoclaw-readiness-test";
+    const openshell = "/bin/sh";
+    const foreignListener = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      foreignListener.once("error", reject);
+      foreignListener.listen(0, "127.0.0.1", resolve);
+    });
+    const gatewayPort = (foreignListener.address() as AddressInfo).port;
+    const resultByInvocation = new Map([
+      [
+        [openshell, "status", "-g", gatewayName].join("\0"),
+        commandResult(`Gateway: ${gatewayName}\nStatus: Connected\n`, 0),
+      ],
+      [[openshell, "gateway", "info", "-g", gatewayName].join("\0"), commandResult("", 0)],
+      [
+        [openshell, "gateway", "info"].join("\0"),
+        commandResult(`Gateway endpoint: http://127.0.0.1:${gatewayPort}\n`, 0),
+      ],
+    ]);
+    subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      return resultByInvocation.get([command, ...args].join("\0")) ?? commandResult();
+    });
+
+    try {
+      const deps = createProductionGatewayReadinessDependencies({
+        gatewayName: () => gatewayName,
+        gatewayPort: () => gatewayPort,
+        containerEngineId: () => null,
+      });
+
+      await deps.observeManagedGateway(managedOwner(gatewayPort));
+
+      // Before the fix, `options.containerEngineId?.() ?? resolveGatewayInspectionEngineId()`
+      // treated an explicit `null` return as "not provided" and fell back to the
+      // resolved default ("docker" here), silently overriding the caller's opt-out.
+      expect(subprocess.spawnSync.mock.calls.some(([command]) => command === "docker")).toBe(
+        false,
+      );
+      expect(subprocess.spawnSync.mock.calls.some(([command]) => command === "podman")).toBe(
+        false,
+      );
+    } finally {
+      await new Promise<void>((resolve) => foreignListener.close(() => resolve()));
+    }
+  });
+
   it("collects production port evidence without attempting sudo", async () => {
     vi.stubEnv("GITHUB_TOKEN", "github-secret");
     vi.stubEnv("OPENSHELL_GATEWAY_AUTH_TOKEN", "gateway-secret");
