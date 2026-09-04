@@ -84,7 +84,10 @@ process.exit(2);`,
         `import { NemoClawConfigSchema, type NemoClawConfig } from "./dist/lib/config/model.js";
 declare const config: NemoClawConfig;
 const apiVersion: "nemoclaw.nvidia.com/v1" = config.apiVersion;
+// @ts-expect-error The emitted config type must not degrade to any.
+const invalidApiVersion: "invalid" = config.apiVersion;
 void apiVersion;
+void invalidApiVersion;
 void NemoClawConfigSchema;
 `,
       );
@@ -93,6 +96,7 @@ void NemoClawConfigSchema;
         [
           "--noEmit",
           "--strict",
+          "--skipLibCheck",
           "--target",
           "ES2022",
           "--module",
