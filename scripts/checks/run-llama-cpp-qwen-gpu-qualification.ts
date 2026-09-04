@@ -303,6 +303,7 @@ export async function runQwenGpuQualification(): Promise<void> {
   const setting = loadQwenGpuSetting();
   const managedImage = loadManagedImageReceipt();
   const agentPlan = qwenGpuAgentPlan(managedImage.openClawAmd64, managedImage.revision);
+  requireCommand("docker", ["pull", agentPlan.image.reference], 30 * 60_000);
   const recipe = setting.selection.recipe;
   const statePaths = managedLlamaCppStatePaths(os.homedir());
   const cacheEntry = modelCacheEntry(setting);
