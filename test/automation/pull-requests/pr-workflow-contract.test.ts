@@ -552,6 +552,9 @@ describe("pull request and main workflow contracts", () => {
     const repairPublishText = JSON.stringify(repairPublish);
     const repairVerifyText = JSON.stringify(repairVerify);
     const selectText = JSON.stringify(select);
+    expect(JSON.stringify([resolve.env, validate.env, repairPublish.env, repairVerify.env])).not.toContain(
+      "runner.temp",
+    );
     expect(advisorWorkflow.concurrency).toEqual(
       expect.objectContaining({ "cancel-in-progress": false }),
     );

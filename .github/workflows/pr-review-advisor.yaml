@@ -605,17 +605,22 @@ jobs:
       candidate-artifact-id: ${{ steps.upload.outputs.artifact-id }}
     env:
       ADVISOR_DIR: ${{ github.workspace }}/advisor
-      ARTIFACT_DIR: ${{ runner.temp }}/repair-artifact
       OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
       PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
-      REPAIR_BASE_DIR: ${{ runner.temp }}/repo-base
-      REPAIR_DOWNLOAD_DIR: ${{ runner.temp }}/download
-      REPAIR_OUTPUT_DIR: ${{ runner.temp }}/output
-      RESOLUTION_WORKDIR: ${{ runner.temp }}/repo
-      RESOLVER_CONFIG_DIR: ${{ runner.temp }}/pi-config
       RESOLVER_MODE: advisor-repair
       SANDBOX_NAME: advisor-repair-${{ github.run_id }}
     steps:
+      - name: Set runner-local repair paths
+        run: |
+          {
+            echo "ARTIFACT_DIR=$RUNNER_TEMP/repair-artifact"
+            echo "REPAIR_BASE_DIR=$RUNNER_TEMP/repo-base"
+            echo "REPAIR_DOWNLOAD_DIR=$RUNNER_TEMP/download"
+            echo "REPAIR_OUTPUT_DIR=$RUNNER_TEMP/output"
+            echo "RESOLUTION_WORKDIR=$RUNNER_TEMP/repo"
+            echo "RESOLVER_CONFIG_DIR=$RUNNER_TEMP/pi-config"
+          } >> "$GITHUB_ENV"
+
       - name: Checkout trusted resolver code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -730,9 +735,12 @@ jobs:
       validated-artifact-id: ${{ steps.upload.outputs.artifact-id }}
     env:
       ADVISOR_DIR: ${{ github.workspace }}/advisor
-      CANDIDATE_DIR: ${{ runner.temp }}/candidate
-      INPUT_DIR: ${{ runner.temp }}/repair-inputs
     steps:
+      - name: Set runner-local validation paths
+        run: |
+          echo "CANDIDATE_DIR=$RUNNER_TEMP/candidate" >> "$GITHUB_ENV"
+          echo "INPUT_DIR=$RUNNER_TEMP/repair-inputs" >> "$GITHUB_ENV"
+
       - name: Checkout trusted validator code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -871,10 +879,13 @@ jobs:
       published-sha: ${{ steps.publish.outputs.published-sha }}
     env:
       ADVISOR_DIR: ${{ github.workspace }}/advisor
-      PUBLISH_INPUT_DIR: ${{ runner.temp }}/publish-inputs
       PUBLISH_SOURCE_DIR: ${{ github.workspace }}/source
-      PUBLISH_WORK_DIR: ${{ runner.temp }}/published-candidate
     steps:
+      - name: Set runner-local publication paths
+        run: |
+          echo "PUBLISH_INPUT_DIR=$RUNNER_TEMP/publish-inputs" >> "$GITHUB_ENV"
+          echo "PUBLISH_WORK_DIR=$RUNNER_TEMP/published-candidate" >> "$GITHUB_ENV"
+
       - name: Checkout trusted publisher code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -982,9 +993,12 @@ jobs:
     timeout-minutes: 70
     env:
       ADVISOR_DIR: ${{ github.workspace }}/advisor
-      VERIFY_CONTEXT_DIR: ${{ runner.temp }}/verify-context
-      VERIFICATION_OUTPUT_DIR: ${{ runner.temp }}/generated-head
     steps:
+      - name: Set runner-local verification paths
+        run: |
+          echo "VERIFY_CONTEXT_DIR=$RUNNER_TEMP/verify-context" >> "$GITHUB_ENV"
+          echo "VERIFICATION_OUTPUT_DIR=$RUNNER_TEMP/generated-head" >> "$GITHUB_ENV"
+
       - name: Checkout trusted verification code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
