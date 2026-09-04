@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   launchForwardService,
   type ForwardServiceTarget,
 } from "../../adapters/openshell/forward-service";
+import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { isLegacySandboxForwardListed } from "../../adapters/openshell/forward-service-migration";
-import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
+import {
+  captureOpenshell,
+  captureResolvedOpenshell,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../../core/ports";
@@ -76,40 +80,43 @@ export function createHermesPortableForwardRecoveryInput(input: {
     deps: {
       assertCurrent: input.assertCurrent,
       assertRollbackCurrent: input.assertRollbackCurrent,
-      isReachable: isLocalForwardReachable,
-      launch: (port) =>
-        launchForwardService(
-          forwardServiceTarget(
-            input.commandAuthority.executablePath,
-            input.gatewayName,
-            input.sandboxName,
-            port,
-            "127.0.0.1",
-          ),
-          { sourceEnvironment: input.commandAuthority.env },
-        ),
-      migrateLegacy: (ports) =>
-        retireProductionLegacySandboxForwards(input.sandboxName, input.gatewayName, ports, {
-          capture: (gatewayName) =>
-            captureOpenshell(["forward", "list", "--gateway", gatewayName], {
-              env: input.commandAuthority.env,
-              openshellBinary: input.commandAuthority.executablePath,
-              replaceEnv: true,
-              ignoreError: true,
-              includeStreams: true,
-              timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-            }),
-          isReachable: isLocalForwardReachable,
-          run: (gatewayName, sandboxName, port) =>
-            runOpenshell(["forward", "stop", String(port), sandboxName, "--gateway", gatewayName], {
-              env: input.commandAuthority.env,
-              openshellBinary: input.commandAuthority.executablePath,
-              replaceEnv: true,
-              ignoreError: true,
-              stdio: "ignore",
-              timeout: 30_000,
-            }),
+      captureCurrentList: (args, timeout) =>
+        captureResolvedOpenshell([...args], {
+          env: input.commandAuthority.env,
+          openshellBinary: input.commandAuthority.executablePath,
+          replaceEnv: true,
+          ignoreError: true,
+          includeStreams: true,
+          timeout,
         }),
+      captureRollbackList: (args, timeout) =>
+        captureResolvedOpenshell([...args], {
+          env: input.commandAuthority.env,
+          openshellBinary: input.commandAuthority.executablePath,
+          replaceEnv: true,
+          ignoreError: true,
+          includeStreams: true,
+          timeout,
+        }),
+      runCurrentMutation: (args, timeout) =>
+        runOpenshell([...args], {
+          env: input.commandAuthority.env,
+          openshellBinary: input.commandAuthority.executablePath,
+          replaceEnv: true,
+          ignoreError: true,
+          stdio: "ignore",
+          timeout,
+        }),
+      runRollbackMutation: (args, timeout) =>
+        runOpenshell([...args], {
+          env: input.commandAuthority.env,
+          openshellBinary: input.commandAuthority.executablePath,
+          replaceEnv: true,
+          ignoreError: true,
+          stdio: "ignore",
+          timeout,
+        }),
+      isPortReachable: isLocalForwardReachable,
     },
   };
 }
