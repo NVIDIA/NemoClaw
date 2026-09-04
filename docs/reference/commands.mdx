@@ -198,6 +198,12 @@ Start a new shell session to refresh the cached sandbox names after creating or 
 
 Export a supported registered OpenClaw sandbox as a secret-free `NemoClawConfig` document. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
+<Warning title="Endpoint Evidence Required">
+  OpenShell provider metadata currently exposes configuration key names, but not an independently
+  read endpoint value. Config export does not treat its registry endpoint as independent evidence, so
+  current live exports stop with `missing-provenance` and do not write output.
+</Warning>
+
 Write a file on Linux:
 
 ```bash
