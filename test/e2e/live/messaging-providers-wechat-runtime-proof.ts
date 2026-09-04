@@ -20,6 +20,7 @@ export type InstalledWechatRuntimeProof = {
 export const WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -57,6 +58,53 @@ function resolveOpenClawRoot() {
     }
   } catch {}
   return candidates.find((candidate) => packageName(candidate) === "openclaw") || null;
+}
+
+function startPolicyRelay() {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((request, response) => {
+      const headers = { ...request.headers };
+      headers.host = "host.openshell.internal:" + process.env.FAKE_WECHAT_API_PORT;
+      delete headers.connection;
+      delete headers["proxy-connection"];
+      const upstream = http.request(
+        {
+          hostname: "host.openshell.internal",
+          port: Number(process.env.FAKE_WECHAT_API_PORT),
+          path: request.url,
+          method: request.method,
+          headers,
+        },
+        (upstreamResponse) => {
+          response.writeHead(upstreamResponse.statusCode || 502, upstreamResponse.headers);
+          upstreamResponse.pipe(response);
+        },
+      );
+      upstream.on("error", () => {
+        if (!response.headersSent) response.writeHead(502);
+        response.end("WeChat fixture relay failed");
+      });
+      request.pipe(upstream);
+    });
+    const rejectStartup = (error) => reject(error);
+    server.once("error", rejectStartup);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", rejectStartup);
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        server.close();
+        reject(new Error("WeChat fixture relay did not expose an IPv4 port"));
+        return;
+      }
+      resolve({ server, baseUrl: "http://127.0.0.1:" + address.port });
+    });
+  });
+}
+
+function stopPolicyRelay(server) {
+  return new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
 }
 
 const stateDir = process.env.OPENCLAW_STATE_DIR || "/sandbox/.openclaw";
@@ -110,16 +158,22 @@ try {
 
   const target = process.env.OPENCLAW_WECHAT_TARGET || "e2e-user@im.wechat";
   const text = process.env.OPENCLAW_WECHAT_TEXT || "NemoClaw OpenClaw WeChat plugin mock E2E";
-  const result = await sendModule.sendMessageWeixin({
-    to: target,
-    text,
-    opts: {
-      baseUrl: "http://host.openshell.internal:" + process.env.FAKE_WECHAT_API_PORT,
-      token: account.token,
-      contextToken: "nemoclaw-e2e-context",
-      timeoutMs: 30_000,
-    },
-  });
+  const relay = await startPolicyRelay();
+  let result;
+  try {
+    result = await sendModule.sendMessageWeixin({
+      to: target,
+      text,
+      opts: {
+        baseUrl: relay.baseUrl,
+        token: account.token,
+        contextToken: "nemoclaw-e2e-context",
+        timeoutMs: 30_000,
+      },
+    });
+  } finally {
+    await stopPolicyRelay(relay.server);
+  }
   invariant(typeof result.messageId === "string" && result.messageId, "WeChat send emitted no ID");
   console.log(
     JSON.stringify({
