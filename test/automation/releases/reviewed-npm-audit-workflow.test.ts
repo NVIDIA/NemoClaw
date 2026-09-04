@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 import {
   assertReviewedAuditReportsPass,
   NPM_AUDIT_SIGNATURE_ARGV,
@@ -43,6 +44,8 @@ type WorkflowJob = {
 type Workflow = {
   readonly jobs: Record<string, WorkflowJob>;
 };
+
+type CompositeAction = { readonly runs: WorkflowJob };
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const REVIEWED_AUDIT_CONFIG_SOURCE = fs.readFileSync(
@@ -322,23 +325,21 @@ function writeProductionSourceGraph(
 describe("trusted reviewed npm audit workflow (#5896)", () => {
   // source-shape-contract: security -- Composite audit inputs must cross into executable shell only through the step environment
   it("passes the cache identity target root without interpolating it into shell source", () => {
-    const actionSource = fs.readFileSync(
-      path.join(REPO_ROOT, ".github", "actions", "ci-reviewed-npm-audit", "action.yaml"),
-      "utf8",
-    );
-    const cacheBucketStep = actionSource.slice(
-      actionSource.indexOf("    - name: Resolve reviewed npm audit cache buckets"),
-      actionSource.indexOf("    - name: Restore current reviewed npm audit cache bucket"),
-    );
-    const runSource = cacheBucketStep.slice(cacheBucketStep.indexOf("      run: |"));
+    const action = YAML.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, ".github", "actions", "ci-reviewed-npm-audit", "action.yaml"),
+        "utf8",
+      ),
+    ) as CompositeAction;
+    const cacheBucketStep = requiredStep(action.runs, "Resolve reviewed npm audit cache buckets");
 
-    expect(cacheBucketStep).toContain(
-      "NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: ${{ inputs.target-root }}",
-    );
-    expect(cacheBucketStep).toContain(
+    expect(cacheBucketStep.env).toEqual({
+      NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: "${{ inputs.target-root }}",
+    });
+    expect(cacheBucketStep.run).toContain(
       "const targetRoot = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT;",
     );
-    expect(runSource).not.toContain("${{ inputs.target-root }}");
+    expect(cacheBucketStep.run).not.toContain("${{ inputs.target-root }}");
   });
 
   it("rejects audit production when installed npm differs from the reviewed identity", () => {
