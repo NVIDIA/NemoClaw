@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  redact,
   redactForLog,
   redactFull,
   redactFullWithUrls,
@@ -20,12 +21,37 @@ describe("redactFullWithUrls", () => {
     ],
     ["userinfo only", "https://service-token@example.com/path", "https://example.com/path"],
     [
+      "single-quote-split userinfo",
+      "https://service-user:service-password'opaque@example.com/path",
+      "https://example.com/path",
+    ],
+    [
+      "double-quote-split userinfo",
+      'https://service-user:service-password"opaque@example.com/path',
+      "https://example.com/path",
+    ],
+    [
       "malformed URL fallback",
       "https://fallback-user:fallback-password@[not-an-ip/path",
       "https://[not-an-ip/path",
     ],
   ])("fully redacts URL credentials for %s", (_case, value, expected) => {
     expect(redactFullWithUrls(value)).toBe(expected);
+  });
+});
+
+describe("redact", () => {
+  it.each(["'", '"'])("partially redacts URL userinfo split by %s", (quote) => {
+    const username = "service-user";
+    const password = "service-password";
+
+    const result = redact(
+      `failed at https://${username}:${password}${quote}opaque@example.com/path`,
+    );
+
+    expect(result).toBe("failed at https://****:****@example.com/path");
+    expect(result).not.toContain(username);
+    expect(result).not.toContain(password);
   });
 });
 

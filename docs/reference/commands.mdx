@@ -194,6 +194,35 @@ $$nemoclaw completion fish > ~/.config/fish/completions/$$nemoclaw.fish
 
 Start a new shell session to refresh the cached sandbox names after creating or removing a sandbox.
 
+### `$$nemoclaw config export <sandbox>`
+
+Export a supported registered OpenClaw sandbox as a secret-free `NemoClawConfig` document. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
+
+Write a file on Linux:
+
+```bash
+$$nemoclaw config export my-assistant --output nemoclaw.yaml
+```
+
+Use `--output -` to write YAML to standard output on another supported host or in a pipeline:
+
+```bash
+$$nemoclaw config export my-assistant --output -
+```
+
+| Option | Description |
+| --- | --- |
+| `--output <path>`, `-o <path>` | Required. Write YAML to a Linux file path, or use `-` for standard output. |
+| `--name <name>` | Set `metadata.name` in the exported document. |
+| `--force` | Replace an existing regular file. The command refuses symbolic links and other file types. |
+| `--json` | Return a machine-readable result when writing a file. It cannot be combined with `--output -`. |
+
+The export contains credential environment-variable references, not credential values. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. The command refuses symbolic links and other non-regular output types. With `--force`, it verifies that the existing destination is a regular file before replacement.
+
+With `--json` and a file output, the command returns a version 1 result with the source sandbox, output path, and document and specification digests. Standard output contains only YAML when `--output -` is used.
+
+Version 1 exports managed OpenClaw sandboxes that use hosted external inference, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy. Other profiles fail with a diagnostic instead of producing an incomplete document.
+
 ### `$$nemoclaw resources`
 
 Display host hardware inventory and configured sandbox resource profiles. Use `--json` for machine-readable CPU, memory, GPU, Kubernetes allocatable-capacity, and profile data.
@@ -2266,7 +2295,7 @@ unset LOCAL_MCP_TOKEN
 
 ### `$$nemoclaw <name> mcp status`
 
-Inspect MCP server state for one server or for all configured servers. Status includes OpenShell provider presence and credential-key shape, provider attachment, generated policy content match, adapter registration, current host-variable availability, and the selected agent's MCP support mode. For Deep Agents, it exits with status `2` and prints no healthy server status when the managed projection path is a symbolic link, FIFO, or another non-regular file. For a trusted private endpoint, status also compares current DNS answers with recorded pins without changing the policy. Text output reports `private address pins: match`, `drift`, or `unresolved`. JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins. When a single server is named, status requests a differential wire-level credential-resolution probe. It sends no probe traffic unless the exact generated policy matches the effective gateway policy, the expected provider attachment is confirmed, and the live provider has the recorded ID, `nemoclaw-mcp-v1` type, a valid resource version, and exactly one credential key matching the recorded key; a readiness failure reports `unknown` with a `probe skipped` detail. When ready, the same MCP `initialize` is sent from inside the sandbox once with the recorded resolver placeholder header and once with a deliberately-unresolvable control bearer. Classification uses the two HTTP status codes plus curl exit codes for transport, timeout, and policy-denial outcomes; response bodies are never captured or printed. A `verified` verdict requires the placeholder request to be accepted (HTTP 2xx) while the control is rejected — the only outcome that proves a valid credential was on the wire. Identical HTTP 400, 401, or 403 rejections raise a warning that names the hypotheses — the placeholder forwarded verbatim, an expired or revoked credential that resolved correctly, or (for HTTP 400) endpoint request validation — and tells you to verify the stored credential first. For HTTP 401 or 403, a confirmed-valid credential means the host is not rewriting placeholders and agent runtimes receive the same auth failure and skip the server; HTTP 400 remains inconclusive because the endpoint may reject the probe request itself. Every other outcome — differing rejections (an endpoint may reject two different literal bearers differently), endpoints that skip authentication, endpoint outages, policy denials, and unreachable sandboxes — reports as `unknown` rather than blaming the credential rewrite, and a persisted URL that fails the current authenticated-endpoint boundary is never probed.
+Inspect MCP server state for one server or for all configured servers. Status includes OpenShell provider presence and credential-key shape, provider attachment, generated policy content match, adapter registration, current host-variable availability, and the selected agent's MCP support mode. For a trusted private endpoint, status also compares current DNS answers with recorded pins without changing the policy. Text output reports `private address pins: match`, `drift`, or `unresolved`. JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins. When a single server is named, status requests a differential wire-level credential-resolution probe. It sends no probe traffic unless the exact generated policy matches the effective gateway policy, the expected provider attachment is confirmed, and the live provider has the recorded ID, `nemoclaw-mcp-v1` type, a valid resource version, and exactly one credential key matching the recorded key; a readiness failure reports `unknown` with a `probe skipped` detail. When ready, the same MCP `initialize` is sent from inside the sandbox once with the recorded resolver placeholder header and once with a deliberately-unresolvable control bearer. Classification uses the two HTTP status codes plus curl exit codes for transport, timeout, and policy-denial outcomes; response bodies are never captured or printed. A `verified` verdict requires the placeholder request to be accepted (HTTP 2xx) while the control is rejected — the only outcome that proves a valid credential was on the wire. Identical HTTP 400, 401, or 403 rejections raise a warning that names the hypotheses — the placeholder forwarded verbatim, an expired or revoked credential that resolved correctly, or (for HTTP 400) endpoint request validation — and tells you to verify the stored credential first. For HTTP 401 or 403, a confirmed-valid credential means the host is not rewriting placeholders and agent runtimes receive the same auth failure and skip the server; HTTP 400 remains inconclusive because the endpoint may reject the probe request itself. Every other outcome — differing rejections (an endpoint may reject two different literal bearers differently), endpoints that skip authentication, endpoint outages, policy denials, and unreachable sandboxes — reports as `unknown` rather than blaming the credential rewrite, and a persisted URL that fails the current authenticated-endpoint boundary is never probed.
 
 Pass `--tools` with one server name to request a live tool inventory. The shared client runs through the managed registration's existing OpenShell credential provider and policy; OpenShell injects the credential at that boundary, and the runtime never accepts it as an argument, environment value, or authorization option. It performs `initialize`, `notifications/initialized`, and paginated `tools/list`, then attempts to close the MCP session and transport. Cleanup errors do not replace the bounded discovery result. It retains and returns deterministic tool names only, never prints the other tool-definition fields returned by `tools/list`, and never calls a tool. The operation is bounded by total and per-request timeouts plus response-byte, page, tool-count, cursor-length, and tool-name limits.
 
