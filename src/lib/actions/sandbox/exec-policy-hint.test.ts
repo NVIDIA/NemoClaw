@@ -301,9 +301,7 @@ describe("maybeEmitScopeUpgradeHint (#9744)", () => {
         OPENCLAW_CRON_ADD,
         h.base,
       );
-      expect(hint).toContain(
-        "nemoclaw my-assistant exec -- openclaw devices approve <requestId>",
-      );
+      expect(hint).toContain("nemoclaw my-assistant exec -- openclaw devices approve <requestId>");
       expect(hint).not.toContain(leakedId);
       expect(hint).not.toContain("operator.admin");
       expect(hint).not.toContain("unrelated-device-fingerprint");
@@ -336,12 +334,6 @@ describe("maybeEmitScopeUpgradeHint (#9744)", () => {
   it.each([
     ["nothing is pending", () => JSON.stringify({ pending: [] })],
     ["only paired devices are reported", () => JSON.stringify({ paired: [{ scopes: ["a"] }] })],
-    [
-      "the probe fails",
-      () => {
-        throw new Error("exec failed");
-      },
-    ],
   ])("stays silent when %s", async (_label, probePendingDevices) => {
     const h = harness();
     const hint = await maybeEmitScopeUpgradeHint(
@@ -354,5 +346,25 @@ describe("maybeEmitScopeUpgradeHint (#9744)", () => {
     );
     expect(hint).toBeNull();
     expect(h.lines).toEqual([]);
+  });
+
+  it("retains conditional recovery when the probe fails", async () => {
+    const h = harness();
+    const hint = await maybeEmitScopeUpgradeHint(
+      "nemoclaw",
+      "my-assistant",
+      1,
+      false,
+      OPENCLAW_CRON_ADD,
+      {
+        ...h.base,
+        probePendingDevices: () => {
+          throw new Error("exec failed");
+        },
+      },
+    );
+    expect(hint).toContain("pending device requests could not be inspected safely");
+    expect(hint).toContain("nemoclaw my-assistant exec -- openclaw devices list");
+    expect(h.lines).toEqual([hint]);
   });
 });

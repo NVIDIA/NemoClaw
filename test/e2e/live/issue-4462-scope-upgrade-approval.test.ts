@@ -315,24 +315,16 @@ test(
       {
         captureLimitBytes: 64 * 1024,
         env: env(),
-        persistArtifacts: false,
         redactionValues: [apiKey],
         timeoutMs: 90_000,
       },
     );
-    const cronTriggerOutput = resultText(cronTrigger);
-    const cronTriggerEvidence = preApprovalAdminProbeEvidence(cronTrigger);
+    const cronTriggerEvidence = preApprovalAdminProbeEvidence(cronTrigger, SANDBOX_NAME);
     await artifacts.writeJson("phase-3-trigger-admin-cron.json", cronTriggerEvidence);
     expect(
       cronTriggerEvidence.outcome,
       "The operator.admin probe did not stop at the explicit approval boundary",
-    ).toBe("approval-required");
-    expect(cronTriggerOutput).toContain(
-      `nemoclaw ${SANDBOX_NAME} exec -- openclaw devices list`,
-    );
-    expect(cronTriggerOutput).toContain(
-      `nemoclaw ${SANDBOX_NAME} exec -- openclaw devices approve <requestId>`,
-    );
+    ).toBe("approval-required-with-recovery-hint");
 
     const adminConnect = await host.command(
       "bash",

@@ -181,6 +181,20 @@ describe("prepared connect-shell administrative approval", () => {
       "approval boundary",
       {
         exitCode: 1,
+        stderr: [
+          `scope upgrade pending approval requestId=${EXPECTED_REQUEST_ID} device=${EXPECTED_DEVICE_ID}`,
+          "nemoclaw e2e-issue-4462 exec -- openclaw devices list",
+          "nemoclaw e2e-issue-4462 exec -- openclaw devices approve <requestId>",
+        ].join("\n"),
+        stdout: "",
+        timedOut: false,
+      },
+      "approval-required-with-recovery-hint",
+    ],
+    [
+      "approval boundary without recovery hint",
+      {
+        exitCode: 1,
         stderr: `scope upgrade pending approval requestId=${EXPECTED_REQUEST_ID} device=${EXPECTED_DEVICE_ID}`,
         stdout: "",
         timedOut: false,
@@ -225,7 +239,7 @@ describe("prepared connect-shell administrative approval", () => {
   ] as const)(
     "records a fixed, redacted pre-approval outcome for %s (#5324)",
     (_case, result, outcome) => {
-      const evidence = preApprovalAdminProbeEvidence(result);
+      const evidence = preApprovalAdminProbeEvidence(result, "e2e-issue-4462");
       const artifact = JSON.stringify(evidence);
 
       expect(evidence).toEqual({ outcome });

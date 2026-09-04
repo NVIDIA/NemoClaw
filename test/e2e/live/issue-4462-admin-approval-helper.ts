@@ -10,6 +10,7 @@ export const ISSUE_4462_SCOPE_UPGRADE_PHASES = [
 ] as const;
 
 export type PreApprovalAdminProbeOutcome =
+  | "approval-required-with-recovery-hint"
   | "approval-required"
   | "command-failed"
   | "gateway-unavailable"
@@ -23,7 +24,10 @@ interface PreApprovalAdminProbeResult {
   timedOut: boolean;
 }
 
-export function preApprovalAdminProbeEvidence(result: PreApprovalAdminProbeResult): {
+export function preApprovalAdminProbeEvidence(
+  result: PreApprovalAdminProbeResult,
+  sandboxName: string,
+): {
   outcome: PreApprovalAdminProbeOutcome;
 } {
   if (result.timedOut) return { outcome: "timeout" };
@@ -35,6 +39,11 @@ export function preApprovalAdminProbeEvidence(result: PreApprovalAdminProbeResul
       output,
     )
   ) {
+    const listCommand = `nemoclaw ${sandboxName} exec -- openclaw devices list`;
+    const approveCommand = `nemoclaw ${sandboxName} exec -- openclaw devices approve <requestId>`;
+    if (output.includes(listCommand) && output.includes(approveCommand)) {
+      return { outcome: "approval-required-with-recovery-hint" };
+    }
     return { outcome: "approval-required" };
   }
   if (

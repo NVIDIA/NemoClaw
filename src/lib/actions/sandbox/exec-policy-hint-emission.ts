@@ -182,9 +182,13 @@ export async function maybeEmitScopeUpgradeHint(
       gatewayName,
     );
   } catch {
-    // Deliberately silent: a failed optional probe must not append host
-    // diagnostics to the child's error output.
-    return null;
+    // The request state is unknown, so retain the same conditional recovery
+    // used on hosts that cannot safely run the probe. This never claims a
+    // request is pending or replaces the failed command's result.
+    return emitScopeUpgradeHint(
+      buildUnprobedScopeUpgradeRecoveryHint(cliName, sandboxName),
+      deps.writeStderr,
+    );
   }
 
   if (!hasPendingDeviceRequest(devicesOutput)) return null;

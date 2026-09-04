@@ -1822,7 +1822,11 @@ Read `openclaw devices list`, confirm the requesting device and the requested sc
 
 The hint never names a request id. NemoClaw cannot tell which pending request belongs to the failed command, so naming one would present an unrelated request — for example a different device asking for `operator.admin` — as this command's remedy. You make that decision from `devices list`.
 
-The probe runs only for a failed `openclaw` command. A command that succeeds, a non-`openclaw` command, and a transport failure all print no hint. If the probe fails, or nothing is pending, no hint is added. An invalid sandbox name is shown as `<name>`. `NEMOCLAW_NO_POLICY_HINT` suppresses this hint on the same terms as the network-policy breadcrumb above.
+On a supported host, NemoClaw runs the pending-request probe with bounded process-tree cleanup. If the probe completes and finds no pending request, no hint is added.
+
+If the bounded probe cannot start or complete, or the host cannot guarantee cleanup, NemoClaw does not claim that a request is pending. It appends a conditional manual recovery path instead. Use those commands only when the preceding OpenClaw error reports a scope upgrade.
+
+The probe or fallback runs only for a failed `openclaw` command. A command that succeeds, a non-`openclaw` command, and a transport failure all print no hint. An invalid sandbox name is shown as `<name>`. `NEMOCLAW_NO_POLICY_HINT` suppresses this hint on the same terms as the network-policy breadcrumb above.
 
 </AgentOnly>
 
