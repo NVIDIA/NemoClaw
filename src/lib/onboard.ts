@@ -362,6 +362,7 @@ const {
   ...onboardPromptHelpers
 }: typeof import("./onboard/prompt-helpers") = require("./onboard/prompt-helpers");
 const providerRecovery: typeof import("./onboard/provider-recovery") = require("./onboard/provider-recovery");
+const providerKey = providerRecovery.providerNameToOptionKey.bind(null, REMOTE_PROVIDER_CONFIG);
 const openclawSetup: typeof import("./onboard/openclaw-setup") = require("./onboard/openclaw-setup");
 const {
   createWebSearchFlowHelpers,
@@ -2918,6 +2919,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           detectGpu: nim.detectGpu,
           runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
           assessHost,
+          providerNameToOptionKey: providerKey,
           assertOnboardHostReadiness: (host, gpu, options) =>
             fatalRuntimePreflight.assertOnboardHostReadiness(host, gpu ?? null, {
               ...options,
@@ -3480,10 +3482,7 @@ module.exports = {
   MESSAGING_CHANNELS,
   selectOnboardAgent,
   setupNim,
-  providerNameToOptionKey: (
-    name: string | null | undefined,
-    opts: { hasNimContainer?: boolean } = {},
-  ) => providerRecovery.providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, name, opts),
+  providerNameToOptionKey: providerKey,
   readRecordedProvider,
   readRecordedModel,
   readRecordedNimContainer,
