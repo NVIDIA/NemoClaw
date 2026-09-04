@@ -7,11 +7,13 @@ import type { ChannelManifest } from "../messaging/manifest";
 import {
   bridgeProviderNamesForChannel,
   bridgeSecretEnvsForChannel,
+  buildMessagingBridgeRefreshMaterial,
   collectMessagingBridgeTokenDefs,
   listMessagingBridgeProfiles,
   matchesRegisteredMessagingBridgeProfile,
   MESSAGING_BRIDGE_PENDING_VALUE,
   type MessagingBridgeProfile,
+  type RefreshingMessagingBridgeProfile,
 } from "./messaging-bridge-provider";
 
 const SA_JSON = JSON.stringify({
@@ -22,7 +24,7 @@ const normalizeCredentialValue = (v: unknown) => String(v ?? "").trim();
 
 // Injected in-memory profile mirroring the co-located google-chat-bridge profile,
 // so the unit tests do not touch the filesystem or the manifest registry.
-const GC_PROFILE: MessagingBridgeProfile = {
+const GC_PROFILE: RefreshingMessagingBridgeProfile = {
   channelId: "googlechat",
   agent: "openclaw",
   profilePath: "/repo/src/lib/messaging/channels/googlechat/provider-profile/openclaw.yaml",
@@ -332,5 +334,21 @@ describe("bridgeSecretEnvsForChannel", () => {
     expect(
       bridgeSecretEnvsForChannel("googlechat", [GC_PROFILE, { ...GC_PROFILE, agent: "hermes" }]),
     ).toEqual(["GOOGLECHAT_SERVICE_ACCOUNT"]);
+  });
+});
+
+describe("buildMessagingBridgeRefreshMaterial", () => {
+  it.each([
+    ["malformed JSON", "{", "service account JSON could not be parsed"],
+    [
+      "missing required fields",
+      JSON.stringify({}),
+      "service account JSON missing client_email/private_key",
+    ],
+  ])("rejects %s without producing refresh material", (_case, secret, reason) => {
+    const result = buildMessagingBridgeRefreshMaterial(GC_PROFILE, secret);
+
+    expect(result).toEqual({ ok: false, reason });
+    expect(result).not.toHaveProperty("material");
   });
 });
