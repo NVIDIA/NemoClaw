@@ -4,9 +4,12 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { emitAuditReceipt } from "../../scripts/audit-reviewed-npm-graph.mts";
+import { sha256 } from "../../scripts/lib/npm-audit-receipt.mts";
 import { type DependencyNode, findDependency } from "../fixtures/dependency-graph.ts";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
@@ -102,6 +105,93 @@ function runIntegrityGate(contents: string, version: string) {
     "printf 'gate-passed\\n'",
   ].join("\n");
   return spawnSync("bash", ["-c", script], { encoding: "utf8" });
+}
+
+function runAuditReceiptHandoff(contents: string, npmVersion: string) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcporter-receipt-"));
+  const exceptionPolicy = '{"schemaVersion":1,"exceptions":[]}\n';
+  const rawResponse =
+    '{"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}\n';
+  const packageJsonFile = path.join(runtimeDirectory, "package.json");
+  const packageLockFile = path.join(runtimeDirectory, "package-lock.json");
+  const rawReportFile = path.join(root, "audit.json");
+  const exceptionFile = path.join(root, "exceptions.json");
+  const auditConfigFile = path.join(root, "reviewed-npm-audit.json");
+  const resultFile = path.join(root, "policy.json");
+  const rawCopyFile = path.join(root, "copied-raw.json");
+  try {
+    fs.writeFileSync(rawReportFile, rawResponse);
+    fs.writeFileSync(
+      path.join(root, "audit.provenance.json"),
+      JSON.stringify({ run: { startedAt: new Date().toISOString() } }),
+    );
+    fs.writeFileSync(exceptionFile, exceptionPolicy);
+    fs.writeFileSync(auditConfigFile, JSON.stringify({ npmVersion }));
+    const receiptFile = emitAuditReceipt({
+      artifactDirectory: root,
+      graphId: "mcporter-runtime",
+      npmVersion: expectedReviewedNpmVersion,
+      packageJsonFile,
+      packageLockFile,
+      rawReportFile,
+      registryOrigin: "https://registry.yarnpkg.com",
+      result: {
+        acceptedAdvisories: [],
+        blockingThreshold: "high",
+        exceptionPolicySha256: sha256(exceptionPolicy),
+        graph: "mcporter-runtime",
+        reported: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
+        schemaVersion: 1,
+        status: "clean",
+        unacceptedBlockingAdvisories: [],
+      },
+      threshold: "high",
+    });
+    const transportRawFile = path.join(root, "mcporter-runtime.raw.json");
+    const writesPolicyResult = contents.includes("--result /tmp/mcporter-npm-audit-policy.json");
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        path.join(repoRoot, "scripts", "lib", "npm-audit-receipt.mts"),
+        "--receipt",
+        receiptFile,
+        "--package-json",
+        packageJsonFile,
+        "--package-lock",
+        packageLockFile,
+        "--raw-report",
+        transportRawFile,
+        "--exceptions",
+        exceptionFile,
+        "--graph",
+        "mcporter-runtime",
+        "--audit-config",
+        auditConfigFile,
+        "--registry",
+        "https://registry.yarnpkg.com",
+        "--threshold",
+        "high",
+        "--legacy-npmjs",
+        "true",
+        ...(writesPolicyResult ? ["--result", resultFile] : []),
+      ],
+      { encoding: "utf8" },
+    );
+    result.status === 0 && writesPolicyResult
+      ? fs.copyFileSync(transportRawFile, rawCopyFile)
+      : undefined;
+    return {
+      copiedRaw: fs.existsSync(rawCopyFile) ? fs.readFileSync(rawCopyFile, "utf8") : undefined,
+      policy: fs.existsSync(resultFile)
+        ? (JSON.parse(fs.readFileSync(resultFile, "utf8")) as Record<string, unknown>)
+        : undefined,
+      result,
+      writesPolicyResult,
+    };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 }
 
 describe("mcporter image supply-chain controls", () => {
@@ -243,6 +333,32 @@ describe("mcporter image supply-chain controls", () => {
       '--result /tmp/mcporter-npm-audit-policy.json && cp "$MCPORTER_RAW_REPORT" /tmp/mcporter-npm-audit.json;',
     );
   });
+
+  it.each(dockerfiles)(
+    "accepts producer output and rejects an npm mismatch at the $name consumer boundary",
+    ({ contents }) => {
+      const accepted = runAuditReceiptHandoff(contents, expectedReviewedNpmVersion);
+      expect(accepted.result.status, accepted.result.stderr).toBe(0);
+      expect(
+        accepted.policy === undefined
+          ? undefined
+          : { graph: accepted.policy.graph, status: accepted.policy.status },
+      ).toEqual(
+        accepted.writesPolicyResult ? { graph: "mcporter-runtime", status: "clean" } : undefined,
+      );
+      expect(accepted.copiedRaw?.includes('"vulnerabilities":{}')).toBe(
+        accepted.writesPolicyResult ? true : undefined,
+      );
+
+      const rejected = runAuditReceiptHandoff(contents, "11.18.0");
+      expect(rejected.result.status).not.toBe(0);
+      expect(rejected.result.stderr).toContain(
+        "receipt identity does not match expected graph and npm",
+      );
+      expect(rejected.policy).toBeUndefined();
+      expect(rejected.copiedRaw).toBeUndefined();
+    },
+  );
 
   it("verifies the exact committed dependency graph signatures in trusted CI (#8925)", () => {
     const graph = reviewedAuditConfig.lockedGraphs.find(
