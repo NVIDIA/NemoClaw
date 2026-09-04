@@ -314,9 +314,31 @@ describe("CLI OpenShell provider adapter", () => {
       error: {
         kind: "command",
         reason: "failed",
-        message: "Error: gateway 'nemoclaw' not found while checking provider 'search-prod'",
+        message: "OpenShell could not inspect the provider.",
       },
     });
+  });
+
+  it("does not return stored credential values from provider lookup failures (#9806)", async () => {
+    const storedCredential = "stored-provider-secret"; // gitleaks:allow
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(1, "", `provider lookup failed with credential ${storedCredential}`),
+    });
+
+    const result = await adapter.getProvider({
+      target: selectedOpenShellGateway(),
+      providerName: "search-prod",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "OpenShell could not inspect the provider.",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(storedCredential);
   });
 
   it("does not classify signaled lookup output as exact absence (#9806)", async () => {
@@ -337,7 +359,7 @@ describe("CLI OpenShell provider adapter", () => {
       error: {
         kind: "command",
         reason: "failed",
-        message: "Error: provider 'search-prod' not found",
+        message: "OpenShell could not inspect the provider.",
       },
     });
   });

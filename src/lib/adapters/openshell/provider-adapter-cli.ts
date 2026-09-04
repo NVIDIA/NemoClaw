@@ -499,8 +499,12 @@ export function createCliOpenShellProviderAdapter(
     const error = commandError(result);
     if (error) {
       return failure(
-        error.kind === "command" && error.reason === "not_found"
-          ? { ...error, reason: "failed" }
+        error.kind === "command"
+          ? {
+              ...error,
+              reason: error.reason === "not_found" ? "failed" : error.reason,
+              message: "OpenShell could not inspect the provider.",
+            }
           : error,
       );
     }
