@@ -12,12 +12,14 @@ import {
 import { inspectOpenShellSandboxIdentityFingerprint } from "../adapters/openshell/sandbox-identity-cli";
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { syncCliOpenShellSandboxPolicyReader } from "../adapters/openshell/sandbox-policy-cli";
+import { getLiveGatewayInference } from "../inference/live";
 import { normalizeInferenceSelection } from "../inference/selection";
 import { resolveGatewayName } from "../onboard/gateway-binding/identity";
 import {
   managedGatewayStateRootOwnershipFailure,
   resolveGatewayStateDirForPort,
 } from "../onboard/gateway/state-dir";
+import { isSandboxPolicyCredentialFree } from "../policy/sandbox-policy-validation";
 import { getSandboxEntryInference } from "../state/registry-entry-view";
 import { load as loadRegistry } from "../state/registry/persistence";
 import type { SandboxEntry } from "../state/registry/types";
@@ -119,6 +121,26 @@ function sandboxIdentity(
 function inferenceFor(entry: Readonly<SandboxEntry>): ObservedExportInference {
   const selected = getSandboxEntryInference(entry);
   const normalized = normalizeInferenceSelection(entry);
+  const gateway = resolveGatewayBinding(entry);
+  const live = getLiveGatewayInference(
+    (args, options) =>
+      captureSanitizedResolvedOpenshell(args, {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        maxBuffer: CAPTURE_MAX_BYTES,
+        timeout: options?.timeout ?? CAPTURE_TIMEOUT_MS,
+      }),
+    { gatewayName: gateway.name, timeout: CAPTURE_TIMEOUT_MS },
+  );
+  if (live.failure || !live.inference)
+    throw new Error("The live gateway inference route could not be read.");
+  if (
+    selected.kind !== "configured" ||
+    live.inference.provider !== selected.provider ||
+    live.inference.model !== selected.model
+  )
+    throw new Error("The live gateway inference route does not match the registry.");
   return {
     topology:
       entry.hostLocalInferenceReceipt || entry.hostLocalInferenceProvenance || entry.nimContainer
@@ -150,6 +172,9 @@ function effectivePolicy(sandboxName: string, gateway: ObservedExportGateway) {
   });
   if (!result.ok || result.value.appliedRevision === null) {
     throw new Error("The effective OpenShell policy and its applied revision could not be read.");
+  }
+  if (!isSandboxPolicyCredentialFree(result.value.document)) {
+    throw new Error("The effective OpenShell policy is not credential-free.");
   }
   if (row.current_policy_version !== result.value.appliedRevision) {
     throw new Error("The effective OpenShell policy revision does not match the live sandbox.");

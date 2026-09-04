@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../state/registry/persistence", () => ({ load: vi.fn() }));
 vi.mock("../state/registry-entry-view", () => ({ getSandboxEntryInference: vi.fn() }));
+vi.mock("../inference/live", () => ({ getLiveGatewayInference: vi.fn() }));
 vi.mock("../adapters/openshell/sanitized-capture", () => ({
   captureSanitizedResolvedOpenshell: vi.fn(),
 }));
@@ -23,6 +24,7 @@ import { captureSanitizedResolvedOpenshell } from "../adapters/openshell/sanitiz
 import { fingerprintOpenShellSandboxId } from "../adapters/openshell/sandbox-identity";
 import { inspectOpenShellSandboxIdentityFingerprint } from "../adapters/openshell/sandbox-identity-cli";
 import { syncCliOpenShellSandboxPolicyReader } from "../adapters/openshell/sandbox-policy-cli";
+import { getLiveGatewayInference } from "../inference/live";
 import { getSandboxEntryInference } from "../state/registry-entry-view";
 import { load as loadRegistry } from "../state/registry/persistence";
 import {
@@ -85,6 +87,12 @@ function mockSupportedLiveSource(policyVersion = 3, appliedRevision = 3): void {
     provider: "nvidia",
     model: "model-a",
   });
+  vi.mocked(getLiveGatewayInference).mockReturnValue({
+    failure: null,
+    inference: { provider: "nvidia", model: "model-a" },
+    output: "",
+    status: 0,
+  });
   vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
     status: 0,
     output: inventory(7, policyVersion),
@@ -112,6 +120,34 @@ describe("live export observation dependencies", () => {
       gateway: { name: "nemoclaw", port: 8080 },
       workload: { reference: expect.stringContaining("@sha256:") },
       policy: { version: 1, network_policies: { api: expect.any(Object) } },
+    });
+  });
+
+  it("rejects credential-bearing effective policy without exposing its value (#10938)", async () => {
+    mockSupportedLiveSource();
+    const canary = "credential-canary-value";
+    vi.mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy).mockReturnValue({
+      ok: true,
+      value: {
+        document: `version: 1\nenv: {TOKEN: \"${canary}\"}\nnetwork_policies: {}\n`,
+        appliedRevision: 3,
+      },
+    });
+    const result = await observeLiveExportSource("alpha").catch((error: unknown) => error);
+    expect(result).toMatchObject({ category: "live-verification-failed" });
+    expect(JSON.stringify(result)).not.toContain(canary);
+  });
+
+  it("rejects a live inference route that disagrees with the registry (#10938)", async () => {
+    mockSupportedLiveSource();
+    vi.mocked(getLiveGatewayInference).mockReturnValue({
+      failure: null,
+      inference: { provider: "nvidia", model: "model-b" },
+      output: "",
+      status: 0,
+    });
+    await expect(observeLiveExportSource("alpha")).rejects.toMatchObject({
+      category: "live-verification-failed",
     });
   });
 
