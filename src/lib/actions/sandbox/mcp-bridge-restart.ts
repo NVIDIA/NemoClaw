@@ -17,9 +17,11 @@ import {
   attachProvider,
   detachMissingProviderReference,
   ensureMcpBridgeProviderProfile,
+  getMcpProviderInspectionRuntimeSelection,
   refreshMcpProviderEnvironment,
   type McpCredentialRevisionObservation,
   type McpProviderInspection,
+  type McpProviderInspectionRuntimeSelection,
   observeMcpCredentialRevision,
   preflightMcpEntryTargets,
   upsertMcpProvider,
@@ -79,6 +81,7 @@ function resolvedTargetPins(
 async function assertRestartCredentialsAvailable(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<void> {
   for (const entry of entries) {
     const exported = resolveCredentialEnv(entry.env.map((name) => ({ name })));
@@ -87,6 +90,7 @@ async function assertRestartCredentialsAvailable(
     try {
       const [status] = await statusMcpBridge(sandboxName, entry.server, {
         probeCredentialResolution: true,
+        runtimeSelection,
       });
       const probe = status?.provider.credentialResolution;
       if (probe?.ok === true) continue;
@@ -120,7 +124,12 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   const bridges = bridgeState(sandbox);
   const targets = server ? [[server, bridges[server]] as const] : Object.entries(bridges);
   if (targets.length === 0) {
-    if (adapter === "hermes-config") assertHermesMcpRuntimeIntent(sandboxName);
+    if (adapter === "hermes-config") {
+      const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
+      assertHermesMcpRuntimeIntent(sandboxName, {
+        runtimeSelection: providerRuntimeSelection,
+      });
+    }
     console.log(`  No MCP servers for sandbox '${sandboxName}'.`);
     return;
   }
@@ -138,18 +147,26 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   const targetEntries = targets
     .map(([, entry]) => entry)
     .filter((entry): entry is McpBridgeEntry => !!entry);
+  const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   const resolvedByServer = await preflightMcpEntryTargets(targetEntries);
   assertMcpCredentialBoundaryRuntimeVersion();
-  await ensureSandboxGatewaySelected(sandboxName);
+  await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   // A hostless restart may reuse an attached stored credential only after the
   // existing wire probe verifies it. Check every target before policy or
   // provider mutation so a multi-server restart cannot half-apply (#10750).
-  await assertRestartCredentialsAvailable(sandboxName, targetEntries);
+  await assertRestartCredentialsAvailable(
+    sandboxName,
+    targetEntries,
+    providerRuntimeSelection,
+  );
   // Validate every generated policy name before inspecting or updating any provider.
   for (const entry of targetEntries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const providerInspectionByServer = new Map<string, McpProviderInspection>();
   for (const entry of targetEntries) {
-    providerInspectionByServer.set(entry.server, assertMcpProviderRecoverable(entry));
+    providerInspectionByServer.set(
+      entry.server,
+      assertMcpProviderRecoverable(entry, providerRuntimeSelection),
+    );
   }
   const missingProviderEntries = targetEntries.filter(
     (entry) => providerInspectionByServer.get(entry.server)?.exists === false,
@@ -160,15 +177,20 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   // already proven absent; no live credential is removed before the runtime
   // capability probe, and the durable bridge manifest is retained on failure.
   for (const entry of missingProviderEntries) {
-    detachMissingProviderReference(sandboxName, entry);
+    detachMissingProviderReference(sandboxName, entry, providerRuntimeSelection);
   }
-  assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, targetEntries);
+  assertMcpAdapterMutationRuntimeCapabilities(
+    sandboxName,
+    sandbox,
+    targetEntries,
+    providerRuntimeSelection,
+  );
   for (const entry of missingProviderEntries) {
-    waitForDetachedMcpCredential(sandboxName, entry);
+    waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
   }
   // Inspect registered providers once before the first mutation. Per-entry
   // checks below inspect only attached providers at each mutation edge.
-  assertNoProviderCredentialCollisions(sandboxName, targetEntries);
+  assertNoProviderCredentialCollisions(sandboxName, targetEntries, providerRuntimeSelection);
   for (const [name, storedEntry] of targets) {
     // Validated as a complete authenticated entry before gateway side effects.
     if (!storedEntry) continue;
@@ -177,18 +199,26 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     const adapterEnvValues = resolveCredentialEnv(envRefs);
     const target = resolvedTargetPins(resolvedByServer, entry);
     let previousCredentialRevision: McpCredentialRevisionObservation | undefined;
-    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
+    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
     // Revalidate the actual running supervisor before rotating or recreating
     // credentials. The temporary policy cannot bind the provider until an
     // endpointless profile is attached.
-    ensureMcpBridgeProviderProfile();
-    applyGeneratedPolicy(sandboxName, entry, target, { bindCredential: false });
+    ensureMcpBridgeProviderProfile(providerRuntimeSelection);
+    applyGeneratedPolicy(sandboxName, entry, target, {
+      bindCredential: false,
+      runtimeSelection: providerRuntimeSelection,
+    });
     const providerResult = upsertMcpProvider(entry.providerName ?? "", envRefs, {
       allowExisting: true,
       expectedProviderId: entry.providerId,
+      runtimeSelection: providerRuntimeSelection,
       prepareMutation: (action) => {
         if (action === "update") {
-          previousCredentialRevision = observeMcpCredentialRevision(sandboxName, entry);
+          previousCredentialRevision = observeMcpCredentialRevision(
+            sandboxName,
+            entry,
+            providerRuntimeSelection,
+          );
         }
       },
     });
@@ -206,25 +236,33 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       writeBridgeEntry(sandboxName, refreshedEntry);
       entry = refreshedEntry;
     }
-    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
+    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
     if (providerResult.action === "updated" && previousCredentialRevision === undefined) {
       throw new McpBridgeError(
         `Could not retain the prior OpenShell credential revision for provider '${entry.providerName}'.`,
       );
     }
-    attachProvider(sandboxName, entry);
-    applyGeneratedPolicy(sandboxName, entry, target);
-    refreshMcpProviderEnvironment(entry);
-    const entryAdapter = (entry.adapter as AgentMcpAdapter | undefined) ?? adapter;
-    const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
-      ...(providerResult.action === "updated"
-        ? { previousRevision: previousCredentialRevision }
-        : {}),
+    attachProvider(sandboxName, entry, providerRuntimeSelection);
+    applyGeneratedPolicy(sandboxName, entry, target, {
+      runtimeSelection: providerRuntimeSelection,
     });
+    refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
+    const entryAdapter = (entry.adapter as AgentMcpAdapter | undefined) ?? adapter;
+    const credentialRevision = waitForAttachedMcpCredential(
+      sandboxName,
+      entry,
+      providerRuntimeSelection,
+      {
+        ...(providerResult.action === "updated"
+          ? { previousRevision: previousCredentialRevision }
+          : {}),
+      },
+    );
     registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       entryAdapter,
       entry,
+      providerRuntimeSelection,
       adapterEnvValues,
       credentialRevision,
       { replaceExisting: true },
@@ -236,7 +274,11 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     });
     console.log(`  Refreshed MCP server '${name}'.`);
   }
-  if (adapter === "hermes-config") assertHermesMcpRuntimeIntent(sandboxName);
+  if (adapter === "hermes-config") {
+    assertHermesMcpRuntimeIntent(sandboxName, {
+      runtimeSelection: providerRuntimeSelection,
+    });
+  }
 }
 
 export async function restoreExistingMcpBridgeRuntime(
@@ -245,6 +287,7 @@ export async function restoreExistingMcpBridgeRuntime(
   options: {
     lifecyclePhase?: "active-mutation" | "teardown-rollback";
     applyPolicy?: boolean;
+    runtimeSelection?: McpProviderInspectionRuntimeSelection;
   } = {},
 ): Promise<void> {
   if (entries.length === 0) return;
@@ -253,22 +296,34 @@ export async function restoreExistingMcpBridgeRuntime(
   if (options.lifecyclePhase !== "teardown-rollback") {
     assertMcpCredentialBoundaryRuntimeVersion();
   }
-  await ensureSandboxGatewaySelected(sandboxName);
   const sandbox = getSandboxOrThrow(sandboxName);
+  const providerRuntimeSelection =
+    options.runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
+  await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   assertMcpDestroyNotPending(sandbox);
   if (options.lifecyclePhase === "teardown-rollback") {
     // A failed delete/rebuild must be able to restore a backward-compatible
     // Deep Agents entry on the same old image it just scrubbed. New/rebuilt
     // images use the default path and must prove the current marker before any
     // policy, provider, attachment, or adapter mutation.
-    assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
+    assertMcpAdapterTeardownRuntimeCapabilities(
+      sandboxName,
+      sandbox,
+      entries,
+      providerRuntimeSelection,
+    );
   } else {
-    assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, entries);
+    assertMcpAdapterMutationRuntimeCapabilities(
+      sandboxName,
+      sandbox,
+      entries,
+      providerRuntimeSelection,
+    );
   }
   const defaultAdapter = getBridgeAdapter(getSandboxAgent(sandbox));
   for (const entry of entries) {
     assertGeneratedPolicyMutationSafe(sandboxName, entry);
-    const provider = assertMcpProviderRecoverable(entry);
+    const provider = assertMcpProviderRecoverable(entry, providerRuntimeSelection);
     if (provider.exists !== true) {
       throw new McpBridgeError(
         `OpenShell provider '${entry.providerName}' is missing. Runtime restoration refuses to create or rotate credentials; run explicit MCP restart after exporting '${entry.env[0]}'.`,
@@ -279,26 +334,34 @@ export async function restoreExistingMcpBridgeRuntime(
   // pre-existing collision on a later entry cannot follow an earlier restore
   // mutation. Per-entry attached-provider checks detect new collisions at each
   // restore mutation edge.
-  assertNoProviderCredentialCollisions(sandboxName, entries);
+  assertNoProviderCredentialCollisions(sandboxName, entries, providerRuntimeSelection);
   for (const entry of entries) {
-    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
-    ensureMcpBridgeProviderProfile();
+    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
+    ensureMcpBridgeProviderProfile(providerRuntimeSelection);
     if (options.applyPolicy !== false) {
       applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
         bindCredential: false,
+        runtimeSelection: providerRuntimeSelection,
       });
     }
-    attachProvider(sandboxName, entry);
+    attachProvider(sandboxName, entry, providerRuntimeSelection);
     if (options.applyPolicy !== false) {
-      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
+      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
+        runtimeSelection: providerRuntimeSelection,
+      });
     }
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
-    refreshMcpProviderEnvironment(entry);
-    const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry);
+    refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
+    const credentialRevision = waitForAttachedMcpCredential(
+      sandboxName,
+      entry,
+      providerRuntimeSelection,
+    );
     registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       adapter,
       entry,
+      providerRuntimeSelection,
       {},
       credentialRevision,
       {
@@ -312,6 +375,9 @@ export async function restoreExistingMcpBridgeRuntime(
     defaultAdapter === "hermes-config" ||
     entries.some((entry) => entry.adapter === "hermes-config")
   ) {
-    assertHermesMcpRuntimeIntent(sandboxName, { entries });
+    assertHermesMcpRuntimeIntent(sandboxName, {
+      entries,
+      runtimeSelection: providerRuntimeSelection,
+    });
   }
 }

@@ -48,8 +48,7 @@ export function createGatewayRegistration(deps: GatewayRegistrationDeps): Gatewa
     const runCaptureOpenshell: GatewayRegistrationDeps["runCaptureOpenshell"] = (
       args,
       options = {},
-    ) =>
-      deps.runCaptureOpenshell(args, { ...options, ...runtimeOptions });
+    ) => deps.runCaptureOpenshell(args, { ...options, ...runtimeOptions });
     const runOpenshell: GatewayRegistrationDeps["runOpenshell"] = (args, options = {}) =>
       deps.runOpenshell(args, { ...options, ...runtimeOptions });
     const runQuietOpenshell = (args: string[]) =>
