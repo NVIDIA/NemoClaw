@@ -35,11 +35,13 @@ function buildAddProcessScript(
   crashAfter: CrashBoundary,
   includeSecret = true,
   initializeSandbox = true,
+  forbidRuntimeSelection = false,
 ): string {
   return String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 const includeSecret = ${JSON.stringify(includeSecret)};
 const initializeSandbox = ${JSON.stringify(initializeSandbox)};
+const forbidRuntimeSelection = ${JSON.stringify(forbidRuntimeSelection)};
 includeSecret ? (process.env.FAKE_MCP_SECRET = "host-only-secret") : delete process.env.FAKE_MCP_SECRET;
 const fs = require("node:fs");
 const path = require("node:path");
@@ -86,6 +88,7 @@ let credentialObservationAfterRepublishCountThisProcess = 0;
 
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
 const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const runner = require("./src/lib/runner.js");
@@ -102,6 +105,13 @@ runner.run = (args) => {
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const ownershipLocks = require("./src/lib/state/mcp-lifecycle-lock/credential-ownership.js");
+
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => {
+  if (forbidRuntimeSelection) {
+    throw new Error("runtime selection resolved before local MCP add validation");
+  }
+  return { gatewayName: "nemoclaw", workspace: "default" };
+};
 
 if (crashAfter === "credential-command-race") {
   const withMcpCredentialOwnershipLock = ownershipLocks.withMcpCredentialOwnershipLock;
@@ -134,7 +144,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     if (crashAfter === "late-race" && providerGetCount === 3) mark("provider");
     return marked("provider")
       ? { status: 0, stdout: "Id: " + (marked("foreign-provider") ? foreignProviderId : providerId) + "\nType: nemoclaw-mcp-v1\nResource version: " + providerVersion() + "\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" }
-      : { status: 1, stdout: "", stderr: "NotFound: provider" };
+      : { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   if (args[0] === "provider" && (args[1] === "create" || args[1] === "update")) {
     if (credentialProjectionScenario) {
@@ -421,8 +431,19 @@ function initializeSandboxRegistry(home: string): void {
   ).toBe(0);
 }
 
-function runAddProcess(home: string, crashAfter: CrashBoundary, includeSecret = true) {
-  const script = buildAddProcessScript(home, crashAfter, includeSecret);
+function runAddProcess(
+  home: string,
+  crashAfter: CrashBoundary,
+  includeSecret = true,
+  forbidRuntimeSelection = false,
+) {
+  const script = buildAddProcessScript(
+    home,
+    crashAfter,
+    includeSecret,
+    true,
+    forbidRuntimeSelection,
+  );
   return spawnSync(process.execPath, ["-e", script], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -529,10 +550,16 @@ const providerId = "11111111-2222-4333-8444-555555555555";
 let observedProviderName = null;
 
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
 const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => ({
+  gatewayName: "nemoclaw",
+  workspace: "default",
+});
 
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   recovered: true,
@@ -551,7 +578,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     observedProviderName = args[2];
     return marked("provider")
       ? { status: 0, stdout: "Id: " + providerId + "\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" }
-      : { status: 1, stdout: "", stderr: "NotFound: provider" };
+      : { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
     observedProviderName = args[4];
@@ -581,7 +608,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   }
   if (args[0] === "provider" && args[1] === "delete") {
     if (!marked("provider")) {
-      return { status: 1, stdout: "", stderr: "NotFound: provider" };
+      return { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
     }
     fs.rmSync(marker("provider"), { force: true });
     if (crashAfterProviderDelete) process.exit(87);
@@ -629,10 +656,16 @@ function runStatusProcess(home: string) {
   const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
 const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => ({
+  gatewayName: "nemoclaw",
+  workspace: "default",
+});
 
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   recovered: true,
@@ -830,7 +863,7 @@ describe("MCP add crash consistency", () => {
   it("rejects a missing host credential before creating durable MCP state", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-missing-secret-"));
     try {
-      const result = runAddProcess(home, "", false);
+      const result = runAddProcess(home, "", false, true);
 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(2);
       expect(result.stderr).toContain("Host environment variable 'FAKE_MCP_SECRET' is required");

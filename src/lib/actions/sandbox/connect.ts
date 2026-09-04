@@ -26,7 +26,7 @@ import type { AgentDefinition } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
-import { retryUntil } from "../../core/retry";
+import { retryUntil, retryUntilAsync } from "../../core/retry";
 
 import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
@@ -58,7 +58,7 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
-import { runConnectChildWithShieldsRelockNotice } from "./agent/connect-shields-relock-notice";
+import { runSandboxExecChild } from "./exec";
 import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
   exitOnMcpReconciliationRefusal,
@@ -116,6 +116,7 @@ import type {
 import type { HermesPortableContainerInspectionTimingEvidence } from "../../onboard/experimental/hermes-portable-container";
 import {
   checkAndRecoverSandboxProcesses,
+  createHermesPortableForwardRecoveryInput,
   executeSandboxExecCommand,
   type GatewayRestartFailureLayer,
   HermesPortableForwardRecoveryError,
@@ -139,6 +140,19 @@ import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
 export { runConnectAutoPairApprovalPass, waitForManagedGatewaySupervisor };
+
+const HERMES_READINESS_PUBLICATION_SETTLE_DELAYS_MS = [100, 250] as const;
+
+async function publishHermesLaunchReadinessWithSettlement(
+  publication: Parameters<typeof publishLaunchReadiness>[0],
+  deps: Parameters<typeof publishLaunchReadiness>[1],
+) {
+  return retryUntilAsync(() => publishLaunchReadiness(publication, deps), {
+    accept: (result) => result.kind !== "validation-failed" || result.category !== "health",
+    retryDelaysMs: HERMES_READINESS_PUBLICATION_SETTLE_DELAYS_MS,
+    sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  });
+}
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
@@ -258,9 +272,7 @@ export function parseSandboxConnectArgs(
     }
     switch (arg) {
       case "--dangerously-skip-permissions":
-        console.error(
-          "  --dangerously-skip-permissions was removed; use shields commands instead.",
-        );
+        console.error("  --dangerously-skip-permissions is not supported.");
         printSandboxConnectHelp(sandboxName);
         process.exit(1);
         break;
@@ -288,7 +300,7 @@ function exitOnForwardRecoveryFailure(
     `  Probe failed: ${agentName} gateway is running in '${sandboxName}', but ${detail ?? "the dashboard/API host forward could not be restored"}.`,
   );
   console.error(
-    `  Run \`openshell forward start --background ${port} ${sandboxName}\` manually and re-run \`nemoclaw ${sandboxName} recover\`.`,
+    `  Run \`nemoclaw ${sandboxName} recover\` after resolving the reported ForwardTcp error.`,
   );
   process.exit(1);
 }
@@ -680,43 +692,16 @@ function hermesPortableForwardInputForConnectProbe(
     throw new HermesPortableForwardRecoveryError("forward-state-unavailable");
   }
 
-  const capture = (args: readonly string[], timeout: number) => {
-    return captureResolvedOpenshell([...args], {
-      env: commandAuthority.env,
-      openshellBinary: commandAuthority.executablePath,
-      replaceEnv: true,
-      ignoreError: true,
-      timeout,
-    });
-  };
-  const runMutation = (args: readonly string[], timeout: number) => {
-    return runOpenshell([...args], {
-      env: commandAuthority.env,
-      openshellBinary: commandAuthority.executablePath,
-      replaceEnv: true,
-      ignoreError: true,
-      stdio: "ignore",
-      timeout,
-    });
-  };
-
-  return {
-    intent: input.intent,
-    sandboxName: input.sandboxName,
+  return createHermesPortableForwardRecoveryInput({
+    assertCurrent: assertProductCurrent,
+    assertRollbackCurrent: assertCommandCurrent,
+    commandAuthority,
     gatewayName: input.authority.gatewayName,
-    operationTimeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+    intent: input.intent,
+    onTiming: writeHermesPortableForwardRecoveryTiming,
     ports,
-    probeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-    timing: { onComplete: writeHermesPortableForwardRecoveryTiming },
-    deps: {
-      assertCurrent: assertProductCurrent,
-      assertRollbackCurrent: assertCommandCurrent,
-      captureCurrentList: capture,
-      captureRollbackList: capture,
-      runCurrentMutation: runMutation,
-      runRollbackMutation: runMutation,
-    },
-  } as const;
+    sandboxName: input.sandboxName,
+  });
 }
 
 /** Restore the launch-readiness forwards through current Hermes command authority. */
@@ -2263,16 +2248,11 @@ export async function connectSandbox(
       );
       if (!prepared) return null;
       return {
-        completion: runConnectChildWithShieldsRelockNotice(
-          prepared.binary,
-          prepared.args,
-          {
-            hostCwd: ROOT,
-            stdin: true,
-            ...(prepared.hostEnv ? { hostEnv: prepared.hostEnv } : {}),
-          },
-          sandboxName,
-        ),
+        completion: runSandboxExecChild(prepared.binary, prepared.args, {
+          hostCwd: ROOT,
+          stdin: true,
+          ...(prepared.hostEnv ? { hostEnv: prepared.hostEnv } : {}),
+        }),
       };
     });
     if (!started) {
@@ -2730,7 +2710,9 @@ async function prepareConnectSandboxWithinLifecycleFence(
           probeTiming!.measure("authority", retainedCommand.assertCurrent);
         }
         const published = await probeTiming!.measureAsync("publication", () =>
-          publishLaunchReadiness(
+          (retainedCommand
+            ? publishHermesLaunchReadinessWithSettlement
+            : publishLaunchReadiness)(
             publicationRequest,
             retainedCommand
               ? hermesPortableLaunchReadinessDeps(retainedCommand, probeTiming)

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { GatewayClient } from "../fixtures/clients/gateway.ts";
@@ -28,12 +29,13 @@ const SANDBOX_B = process.env.NEMOCLAW_DOUBLE_ONBOARD_SANDBOX_B ?? "e2e-double-b
 const INSTALL_SANDBOX_NAME = process.env.NEMOCLAW_E2E_INSTALL_SANDBOX_NAME ?? "";
 const ALT_GATEWAY_NAME = "e2e-double-alt";
 const PHASE_TIMEOUT_MS = Number(process.env.NEMOCLAW_E2E_PHASE_TIMEOUT_MS ?? 1_200) * 1_000;
+const ONBOARD_TIMEOUT_MS = execTimeout(PHASE_TIMEOUT_MS);
 const PROBE_ATTEMPTS = Number(process.env.NEMOCLAW_E2E_PROBE_ATTEMPTS ?? 3);
 const PROBE_DELAY_MS = Number(process.env.NEMOCLAW_E2E_PROBE_DELAY_SECONDS ?? 3) * 1_000;
 const PROBE_TIMEOUT_MS = Number(process.env.NEMOCLAW_E2E_PROBE_TIMEOUT_SECONDS ?? 180) * 1_000;
 const RECOVERY_PROBE_TIMEOUT_MS =
   Number(process.env.NEMOCLAW_E2E_RECOVERY_PROBE_TIMEOUT_SECONDS ?? 180) * 1_000;
-const TEST_TIMEOUT_MS = 90 * 60_000;
+const TEST_TIMEOUT_MS = testTimeout(90 * 60_000);
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 validateSandboxName(SANDBOX_A);
@@ -108,7 +110,7 @@ async function runOnboard(
   return await command(host, ["onboard", "--non-interactive"], {
     artifactName,
     env: onboardEnv(sandboxName, fakeBaseUrl, recreate),
-    timeoutMs: PHASE_TIMEOUT_MS,
+    timeoutMs: ONBOARD_TIMEOUT_MS,
   });
 }
 

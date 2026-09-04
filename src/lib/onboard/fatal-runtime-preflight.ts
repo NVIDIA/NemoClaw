@@ -28,6 +28,7 @@ import {
   isLinuxDockerDriverGatewayEnabled,
   isPortableExperimentalProfile,
 } from "./docker-driver-platform";
+import { configuredRuntimeProviderOwnsHostReadiness } from "./docker-driver-gateway-env";
 import { warnIfHostProxyMissesLoopback } from "./http-proxy-preflight";
 import { assertConfiguredRuntimeProviderHealthy } from "./machine/runtime-effectful-preflight";
 import { assessHost, type HostAssessment, planHostAdvisories } from "./preflight";
@@ -38,7 +39,6 @@ import {
 } from "./preflight-messages";
 import { printRemediationActions } from "./remediation";
 import { resolveSandboxGpuConfig, type SandboxGpuConfig } from "./sandbox-gpu-mode";
-import { resolveConfiguredRuntimeProvider } from "./runtime-provider/selection";
 import {
   exitOnSandboxGpuConfigErrors,
   printJetsonNvidiaRuntimeUnavailableError,
@@ -166,32 +166,26 @@ export function assertOnboardSystemReadiness(
   const portable = isPortableExperimentalProfile();
   const managedLocalGatewayEnabled =
     host.platform === "linux" && isLinuxDockerDriverGatewayEnabled("linux");
-  const selectedRuntimeUsesProviderHostRoute =
-    !portable && managedLocalGatewayEnabled
-      ? (() => {
-          const provider = resolveConfiguredRuntimeProvider("linux");
-          return (
-            provider.gateway.supported &&
-            provider.gateway.prepareHostRuntime({
-              environment: process.env,
-              platform: "linux",
-            }).sandboxHostAddress !== null
-          );
-        })()
-      : false;
+  const selectedRuntimeOwnsHostReadiness = managedLocalGatewayEnabled
+    ? configuredRuntimeProviderOwnsHostReadiness({
+        environment: process.env,
+        platform: "linux",
+      })
+    : false;
   const admission = evaluateOnboardReadinessAdmission(readinessReport, {
     explicitlyOptedOutGpuPassthrough: options.explicitlyOptedOutGpuPassthrough,
-    allowUnsupportedRuntime:
-      portable ||
-      selectedRuntimeUsesProviderHostRoute ||
-      !managedLocalGatewayEnabled,
+    allowUnsupportedRuntime: portable || !managedLocalGatewayEnabled,
+    providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
     allowStorageRemediation: options.allowStorageRemediation === true,
     allowPortableHostPreparation: options.allowPortableHostPreparation,
     allowDeferredN1xManagedVllm:
       options.allowDeferredN1xManagedVllm ??
       process.env.NEMOCLAW_PROVIDER === MANAGED_VLLM_PROVIDER_KEY,
   });
-  const advisories = planHostAdvisories(host, { resuming: options.resuming });
+  const advisories = planHostAdvisories(host, {
+    providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
+    resuming: options.resuming,
+  });
   if (admission.admitted) {
     if (options.presentAdvisories !== false) {
       printRemediationActions(advisories.filter(({ severity }) => severity === "warning"));

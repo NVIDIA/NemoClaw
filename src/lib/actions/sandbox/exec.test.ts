@@ -15,15 +15,12 @@ vi.mock("node:child_process", async (importOriginal) => ({
 // and the workdir probe.
 import {
   buildOpenshellExecArgs,
-  buildWorkdirProbeArgs,
   computeExitCode,
-  evaluateWorkdirProbe,
   execSandbox,
   runSandboxExecChild,
   type SandboxExecChild,
   type SandboxExecCleanupDeps,
   type SandboxExecSignalSource,
-  validateWorkdirOrFail,
   workdirMissingMessage,
 } from "./exec";
 
@@ -194,26 +191,6 @@ describe("computeExitCode", () => {
   });
 });
 
-describe("buildWorkdirProbeArgs", () => {
-  it("targets the sandbox by name and probes the directory with test -d", () => {
-    expect(buildWorkdirProbeArgs("alpha", "/sandbox/workspace")).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
-      "alpha",
-      "--",
-      "test",
-      "-d",
-      "/sandbox/workspace",
-    ]);
-  });
-
-  it("does not split a path argument that contains whitespace", () => {
-    const argv = buildWorkdirProbeArgs("alpha", "/sandbox/with spaces/dir");
-    expect(argv[argv.length - 1]).toBe("/sandbox/with spaces/dir");
-  });
-});
-
 describe("workdirMissingMessage", () => {
   it("renders a user-facing CLI error with the offending path", () => {
     expect(workdirMissingMessage("/sandbox/workspace")).toBe(
@@ -222,89 +199,11 @@ describe("workdirMissingMessage", () => {
   });
 });
 
-describe("evaluateWorkdirProbe", () => {
-  it("returns 'ok' when the probe exits 0", () => {
-    expect(evaluateWorkdirProbe({ status: 0 })).toBe("ok");
-  });
-
-  it("returns 'missing' only for the canonical test -d failure (exit 1)", () => {
-    expect(evaluateWorkdirProbe({ status: 1 })).toBe("missing");
-  });
-
-  it("returns 'unclear' for any other exit code so the main exec surfaces it", () => {
-    expect(evaluateWorkdirProbe({ status: 2 })).toBe("unclear");
-    expect(evaluateWorkdirProbe({ status: 127 })).toBe("unclear");
-    expect(evaluateWorkdirProbe({ status: null })).toBe("unclear");
-  });
-
-  it("returns 'unclear' when spawn reports a transport error", () => {
-    expect(evaluateWorkdirProbe({ status: null, error: new Error("ENOENT") })).toBe("unclear");
-  });
-});
-
-describe("validateWorkdirOrFail", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("passes through when the directory exists", () => {
-    const run = vi.fn(() => ({ status: 0 }));
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
-      throw new Error("process.exit should not be called for ok outcome");
-    }) as never);
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    validateWorkdirOrFail("openshell", "alpha", "/sandbox/workspace", run);
-
-    expect(run).toHaveBeenCalledWith("openshell", [
-      "sandbox",
-      "exec",
-      "--name",
-      "alpha",
-      "--",
-      "test",
-      "-d",
-      "/sandbox/workspace",
-    ]);
-    expect(exitSpy).not.toHaveBeenCalled();
-    expect(errSpy).not.toHaveBeenCalled();
-  });
-
-  it("prints a friendly error and exits 1 when the directory is missing", () => {
-    const run = vi.fn(() => ({ status: 1 }));
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
-      throw new Error("exit");
-    }) as never);
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    expect(() => validateWorkdirOrFail("openshell", "alpha", "/sandbox/workspace", run)).toThrow(
-      "exit",
-    );
-    expect(errSpy).toHaveBeenCalledWith(
-      "error: --workdir: /sandbox/workspace does not exist inside the sandbox",
-    );
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
-  it("does not abort when the probe outcome is unclear (lets main exec surface it)", () => {
-    const run = vi.fn(() => ({ status: 127 }));
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
-      throw new Error("process.exit should not be called for unclear outcome");
-    }) as never);
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    validateWorkdirOrFail("openshell", "alpha", "/sandbox/workspace", run);
-
-    expect(exitSpy).not.toHaveBeenCalled();
-    expect(errSpy).not.toHaveBeenCalled();
-  });
-});
-
 // End-to-end wiring of the post-exec policy-denial hint through execSandbox
 // (#5978): proves the breadcrumb fires for a denied failure while the command's
 // exit code is preserved, and stays silent on success and unrelated failures.
 // All host seams are injected so the test never spawns openshell or touches the
-// registry/shields (getSandbox returns null → cleanup is a no-op).
+// registry (getSandbox returns null, so cleanup is a no-op).
 describe("execSandbox policy-denial hint wiring (#5978)", () => {
   const START_MS = 1_000_000;
   // Epoch [1000.500] parses to 1000500ms, at/after START so it is "fresh".
@@ -354,11 +253,21 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
       ["curl", "-sS", "https://example.com/"],
       {},
       {
-        resolveBinary: () => "openshell",
         selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
-        run: async () => {
-          options.onRun?.();
-          return { status, ...(options.error ? { error: options.error } : {}) };
+        commandExecutor: {
+          probeDirectory: async () => ({ state: "present" }),
+          runStreaming: async () => {
+            options.onRun?.();
+            return {
+              outcome: options.error
+                ? {
+                    kind: "failed" as const,
+                    error: { kind: "invocation" as const, message: options.error.message },
+                  }
+                : { kind: "completed" as const, exitCode: status ?? 1 },
+              release: () => {},
+            };
+          },
         },
         cleanupDeps: options.cleanupDeps ?? cleanupSkipped,
         exit,
@@ -437,15 +346,28 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
   });
 
   it("emits after active OpenClaw cleanup and preserves the command exit code", async () => {
-    const inspectMutableConfigPerms = vi.fn(() => ({
-      applies: false as const,
-      skipReason: "locked" as const,
-      reason: "shields up",
-    }));
+    const inspectMutableConfigPerms = vi
+      .fn<SandboxExecCleanupDeps["inspectMutableConfigPerms"]>()
+      .mockReturnValueOnce({
+        applies: false,
+        skipReason: "unavailable",
+        reason: "container unavailable",
+      })
+      .mockReturnValueOnce({
+        applies: true,
+        ok: true,
+        dirMode: "2770",
+        dirOwner: "sandbox:sandbox",
+        fileMode: "660",
+        fileOwner: "sandbox:sandbox",
+        configDir: "/sandbox/.openclaw",
+        configFile: "openclaw.json",
+        issues: [],
+      });
     const repairMutableConfigPerms = vi.fn(() => ({
-      applied: false as const,
-      skipReason: "locked" as const,
-      reason: "shields up",
+      applied: true as const,
+      verified: true as const,
+      errors: [],
     }));
     const { exitCode, stderr } = await runExec(56, DENIAL_LINE, {
       cleanupDeps: {
@@ -454,7 +376,7 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
         repairMutableConfigPerms,
       },
     });
-    expect(inspectMutableConfigPerms).toHaveBeenCalledOnce();
+    expect(inspectMutableConfigPerms).toHaveBeenCalledTimes(2);
     expect(repairMutableConfigPerms).toHaveBeenCalledOnce();
     expect(exitCode).toBe(56);
     expect(stderr.join("\n")).toContain("recent network policy denial detected");
@@ -516,9 +438,14 @@ describe("execSandbox scope-upgrade hint wiring (#9744)", () => {
       ["openclaw", "cron", "add"],
       {},
       {
-        resolveBinary: () => "openshell",
         selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
-        run: async () => ({ status }),
+        commandExecutor: {
+          probeDirectory: async () => ({ state: "present" }),
+          runStreaming: async () => ({
+            outcome: { kind: "completed", exitCode: status },
+            release: () => {},
+          }),
+        },
         cleanupDeps: cleanupSkipped,
         exit,
         policyHint: {

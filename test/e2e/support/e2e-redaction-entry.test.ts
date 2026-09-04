@@ -19,11 +19,16 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
-import { buildChildEnv, isValidSecretEnvKey, redactString } from "../fixtures/redaction.ts";
+import {
+  buildChildEnv,
+  createBoundarySafeRedactedSink,
+  isValidSecretEnvKey,
+  redactString,
+} from "../fixtures/redaction.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
 
@@ -54,6 +59,30 @@ describe("fixture redaction entry point", () => {
         { fixtureOverlay: {}, additionalAllowedEnv: ["COMPASS", "BYPASS"] },
       ),
     ).toMatchObject({ COMPASS: "north", BYPASS: "allowed" });
+  });
+
+  it("rejects secret-shaped names from the non-secret child env channel", () => {
+    expect(() =>
+      buildChildEnv(
+        { CUSTOM_TOKEN: "must-not-pass" },
+        { fixtureOverlay: {}, additionalAllowedEnv: ["CUSTOM_TOKEN"] },
+      ),
+    ).toThrow(/looks secret-bearing; use secretEnv/);
+  });
+
+  it("does not let fixture prefixes or overlays bypass the declared-secret channel", () => {
+    const childEnv = buildChildEnv(
+      { E2E_TARGET_ID: "target-a", E2E_PROVIDER_TOKEN: "must-not-pass" },
+      { fixtureOverlay: {} },
+    );
+    expect(childEnv).toMatchObject({ E2E_TARGET_ID: "target-a" });
+    expect(childEnv.E2E_PROVIDER_TOKEN).toBeUndefined();
+    expect(() =>
+      buildChildEnv(
+        {},
+        { fixtureOverlay: { E2E_PROVIDER_TOKEN: "must-not-pass" } },
+      ),
+    ).toThrow(/fixtureOverlay entry 'E2E_PROVIDER_TOKEN' looks secret-bearing/);
   });
 
   it("passes only the workflow-owned trace directory through child env", () => {
@@ -251,6 +280,65 @@ describe("fixture redaction entry point", () => {
   it("returns empty input verbatim", () => {
     expect(redactString("")).toBe("");
     expect(redactString("", ["anything"])).toBe("");
+  });
+
+  it("streams complete lines without leaking chunk-split credentials or private keys", () => {
+    const output: string[] = [];
+    const sink = createBoundarySafeRedactedSink({
+      redact: (text) => redactString(text, ["explicit-secret-value"]),
+      write: (text) => output.push(text),
+    });
+
+    sink.write("visible TOKEN=nvapi-split");
+    expect(output).toEqual([]);
+    sink.write("AcrossChunks123456\nexplicit=explicit-");
+    const privateKeyHeader = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
+    const privateKeyFooter = ["-----END", "PRIVATE KEY-----"].join(" ");
+    sink.write(`secret-value\n${privateKeyHeader}\nprivate-material\n`);
+    sink.write(`${privateKeyFooter}\nfinished\n`);
+    sink.end();
+
+    const streamed = output.join("");
+    expect(streamed).toContain("visible TOKEN=<REDACTED>\n");
+    expect(streamed).toContain("explicit=[REDACTED]\n");
+    expect(streamed).toContain("<REDACTED>\nfinished\n");
+    expect(streamed).not.toContain("nvapi-splitAcrossChunks123456");
+    expect(streamed).not.toContain("explicit-secret-value");
+    expect(streamed).not.toContain("private-material");
+    expect(streamed).not.toContain("PRIVATE KEY");
+  });
+
+  it("tees redacted child output to the console only for live E2E", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-e2e-live-console-"));
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
+    try {
+      const artifacts = new ArtifactSink(path.join(rootDir, "artifacts"));
+      await artifacts.ensureRoot();
+      const probe = new ShellProbe({
+        artifacts,
+        progress: supportProgress(),
+        redact: (text, extra) => redactString(text, extra),
+        signal: new AbortController().signal,
+      });
+      const secret = "explicit-live-console-secret";
+      await probe.run(
+        trustedShellCommand({
+          command: "bash",
+          args: ["-lc", 'printf "live:%s\\n" "$LIVE_SECRET"'],
+          reason: "prove live ShellProbe output reaches the redacted console boundary",
+        }),
+        { env: { LIVE_SECRET: secret }, redactionValues: [secret] },
+      );
+
+      const consoleText = stdout.mock.calls.map(([value]) => String(value)).join("");
+      expect(consoleText).toContain("live:[REDACTED]");
+      expect(consoleText).not.toContain(secret);
+    } finally {
+      vi.unstubAllEnvs();
+      stdout.mockRestore();
+      await fs.rm(rootDir, { recursive: true, force: true });
+    }
   });
 
   it("redacts generated private-key blocks without preregistration", () => {

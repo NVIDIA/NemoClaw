@@ -216,84 +216,6 @@ export function runGuard(action: "seal-restart" | "unseal-restart", fixture: Res
   });
 }
 
-export function runShieldsTransition(fixture: RestartFixture, shieldsMode: "locked" | "mutable") {
-  const begun = runShieldsTransactionAction(fixture, "begin-shields-transition", {
-    mode: shieldsMode,
-  });
-  switch (begun.status) {
-    case 0:
-      break;
-    default:
-      return begun;
-  }
-  const token = shieldsTransactionToken(begun.stdout);
-  switch (token) {
-    case undefined:
-      throw new Error("Expected begin-shields-transition to emit a token");
-    default:
-      break;
-  }
-  switch (shieldsMode) {
-    case "locked":
-      // The production host restores 0755 only after the recursive state guard's
-      // independent verification pass. This focused top-guard fixture has no
-      // recursive state, so model that successful handoff explicitly.
-      fs.chmodSync(fixture.hermesDir, 0o755);
-      break;
-    case "mutable":
-      break;
-  }
-  const applied = runShieldsTransactionAction(fixture, "apply-shields-transition", {
-    token,
-  });
-  switch (applied.status) {
-    case 0:
-      break;
-    default:
-      return applied;
-  }
-  return runShieldsTransactionAction(fixture, "finish-shields-transition", {
-    token,
-  });
-}
-
-export function runShieldsTransactionAction(
-  fixture: RestartFixture,
-  action:
-    | "begin-shields-transition"
-    | "apply-shields-transition"
-    | "finish-shields-transition"
-    | "prepare-shields-abort"
-    | "abort-shields-transition"
-    | "inspect-mutation-owner",
-  options: {
-    mode?: "locked" | "mutable";
-    rollbackMode?: "locked" | "mutable";
-    token?: string;
-  } = {},
-) {
-  const args = [
-    RUNTIME_CONFIG_GUARD,
-    action,
-    "--hermes-dir",
-    fixture.hermesDir,
-    "--state-file",
-    fixture.statePath,
-  ];
-  args.push(
-    ...(action === "begin-shields-transition" || action === "finish-shields-transition"
-      ? ["--hash-file", fixture.hashPath]
-      : []),
-    ...(options.mode ? ["--shields-mode", options.mode] : []),
-    ...(options.rollbackMode ? ["--rollback-shields-mode", options.rollbackMode] : []),
-    ...(options.token ? ["--lock-token", options.token] : []),
-  );
-  return spawnSync("python3", args, {
-    encoding: "utf-8",
-    timeout: HERMES_GUARD_TIMEOUT_MS,
-  });
-}
-
 export function strictHashIsValid(fixture: RestartFixture): boolean {
   return (
     spawnSync("sha256sum", ["-c", fixture.hashPath, "--status"], {
@@ -301,10 +223,6 @@ export function strictHashIsValid(fixture: RestartFixture): boolean {
       timeout: 5000,
     }).status === 0
   );
-}
-
-export function shieldsTransactionToken(output: string): string | undefined {
-  return /^lock_token=([0-9a-f]{64}) original_locked=[01]\s*$/.exec(output)?.[1];
 }
 
 export function overwriteThroughOldFd(fd: number, originalSize: number, byte: string): void {

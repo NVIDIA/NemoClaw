@@ -3,9 +3,13 @@
 
 import { createHash } from "node:crypto";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createSyncCliOpenShellSandboxIdentityInspector } from "./sandbox-identity-cli";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function captured(status: number | null, stdout = "", stderr = "", error?: Error) {
   return {
@@ -38,6 +42,43 @@ describe("CLI OpenShell sandbox identity inspector", () => {
         timeout: 4_321,
       },
     );
+  });
+
+  it("uses the complete recorded target and discards ambient endpoint credentials", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    const capture = vi.fn((_args: string[], _options: Record<string, unknown>) =>
+      captured(0, "ID: sandbox-alpha\n"),
+    );
+    const inspect = createSyncCliOpenShellSandboxIdentityInspector({ capture });
+
+    const result = inspect({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw-18080",
+      runtimeSelection: {
+        gatewayName: "nemoclaw-18080",
+        workspace: "default",
+        localTlsDir: "/authority/tls",
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    const options = capture.mock.calls[0]?.[1] as
+      | { env?: Record<string, string>; replaceEnv?: boolean }
+      | undefined;
+    expect(options).toMatchObject({
+      replaceEnv: true,
+      env: {
+        OPENSHELL_GATEWAY: "nemoclaw-18080",
+        OPENSHELL_WORKSPACE: "default",
+        OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+      },
+    });
+    expect(options?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(options?.env).not.toHaveProperty("OPENSHELL_TOKEN");
   });
 
   it("rejects invalid names before invoking OpenShell", () => {

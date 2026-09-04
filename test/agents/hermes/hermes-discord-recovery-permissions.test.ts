@@ -151,18 +151,25 @@ describe("Hermes cross-UID ledger permissions", () => {
   });
 
   it.each([baseDockerfile, dockerfile])(
-    "prepares both setgid cross-UID parents in both image layouts [case %#]",
+    "prepares the setgid shared state directories in both image layouts [case %#]",
     (source) => {
       expect(source).toContain("/sandbox/.hermes/cron");
       expect(source).toContain("/sandbox/.hermes/gateway");
-      expect(source).toMatch(
-        /chown gateway:sandbox \\\n\s+\/sandbox\/[.]hermes\/cron \\\n\s+\/sandbox\/[.]hermes\/gateway \\\n\s+\/sandbox\/[.]hermes\/runtime/,
-      );
+      expect(source).toContain("chown gateway:sandbox");
       expect(source).toMatch(
         /chmod 2770 \\\n(?:[\s\S]*?)\/sandbox\/[.]hermes\/cron \\\n\s+\/sandbox\/[.]hermes\/gateway \\\n\s+\/sandbox\/[.]hermes\/runtime/,
       );
     },
   );
+
+  it("keeps managed cron definitions sandbox-owned while gateway state stays gateway-owned", () => {
+    expect(baseDockerfile).toContain(
+      "chown gateway:sandbox \\\n        /sandbox/.hermes/cron \\\n        /sandbox/.hermes/gateway \\\n        /sandbox/.hermes/runtime",
+    );
+    expect(dockerfile).toContain(
+      "chown -R sandbox:sandbox /sandbox/.hermes \\\n    && chown gateway:sandbox \\\n        /sandbox/.hermes/gateway \\\n        /sandbox/.hermes/runtime",
+    );
+  });
 
   it("requires a Dockerfile cross-identity probe for the cron ledger lifecycle", () => {
     expect(dockerfile).toContain(
@@ -209,7 +216,6 @@ describe("Hermes cross-UID ledger permissions", () => {
     expect(startScript).toContain("os.fchown(gateway_fd, gateway_uid, sandbox_gid)");
     expect(startScript).toContain("os.fchmod(gateway_fd, desired_mode)");
     const repairStart = startScript.indexOf("repair_hermes_startup_layout() {");
-    const lockedBranch = startScript.indexOf("if hermes_config_root_is_locked; then", repairStart);
     const gatewayRepair = startScript.indexOf(
       "if ! ensure_hermes_cross_uid_state_dir gateway; then",
       repairStart,
@@ -218,15 +224,13 @@ describe("Hermes cross-UID ledger permissions", () => {
       "if ! ensure_hermes_cross_uid_state_dir runtime; then",
       repairStart,
     );
+    const configRootRepair = startScript.indexOf("ensure_hermes_config_root_mode", repairStart);
     expect(repairStart).toBeGreaterThanOrEqual(0);
-    expect(lockedBranch).toBeGreaterThan(repairStart);
     expect(gatewayRepair).toBeGreaterThan(repairStart);
-    expect(gatewayRepair).toBeLessThan(
-      startScript.indexOf("if hermes_config_root_is_locked; then", repairStart),
-    );
     expect(runtimeRepair).toBeGreaterThan(gatewayRepair);
-    expect(runtimeRepair).toBeLessThan(lockedBranch);
+    expect(runtimeRepair).toBeLessThan(configRootRepair);
     expect(startScript).not.toContain("ensure_hermes_cross_uid_state_dir cron");
+    expect(startScript).toContain('ensure_hermes_state_dir "${HERMES_DIR}/cron" 2770');
   });
 
   it.each([

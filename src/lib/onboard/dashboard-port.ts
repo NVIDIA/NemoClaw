@@ -133,11 +133,10 @@ export function probePortBoundSync(port: number): boolean {
  *      macOS) that the unprivileged lsof can't see. Silently no-ops when
  *      the user can't escalate non-interactively.
  *   3. Node `net` bind probe — authoritative fallback when both lsof
- *      invocations come up empty, mirroring what `openshell forward start`
- *      will actually attempt.
+ *      invocations come up empty, mirroring the direct ForwardTcp bind.
  *
- * Returns false (optimistic) when every probe is inconclusive — the
- * downstream forward-start check is the final authority (#3260).
+ * Returns false (optimistic) when every probe is inconclusive. The detached
+ * OpenShell launch performs the final bind check.
  */
 export function isPortBoundOnHost(port: number): boolean {
   try {

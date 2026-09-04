@@ -41,7 +41,6 @@ export function configureDcodeSession(harness: RebuildFlowHarness): void {
 }
 
 export function expectNoDcodeMutation(harness: RebuildFlowHarness): void {
-  expect(harness.openShieldsSpy).not.toHaveBeenCalled();
   expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
   expectNoSandboxDelete(harness.runOpenshellSpy);
   expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();

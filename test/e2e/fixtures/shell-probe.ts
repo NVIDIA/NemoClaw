@@ -9,6 +9,7 @@ import {
 } from "../../../src/lib/agent/candidate.ts";
 import { CUA_FEATURE_ENV } from "../../../src/lib/cua/feature.ts";
 import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
+import { createBoundarySafeRedactedSink } from "./redaction.ts";
 import { superviseChild } from "./shell/supervisor.ts";
 import type { TrustedShellCommand } from "./shell/trusted-command.ts";
 
@@ -47,13 +48,39 @@ export interface ShellProbeOutputEvent {
 export type { TrustedShellCommand, TrustedShellCommandInput } from "./shell/trusted-command.ts";
 export { trustedShellCommand } from "./shell/trusted-command.ts";
 
+export type LiveE2EAgentName =
+  | "hermes"
+  | "langchain-deepagents-code"
+  | "nemocua"
+  | "openclaw"
+  | "pi";
+
+export function normalizeLiveE2EAgentName(value: string): LiveE2EAgentName {
+  switch (value) {
+    case "hermes":
+      return "hermes";
+    case "langchain-deepagents-code":
+      return "langchain-deepagents-code";
+    case "nemocua":
+      return "nemocua";
+    case "openclaw":
+      return "openclaw";
+    case "pi":
+      return "pi";
+    default:
+      throw new Error("Unsupported E2E agent selector.");
+  }
+}
+
 export function resolveLiveE2eWorkloadSourceEnv(input: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const targetId = input.E2E_TARGET_ID ?? process.env.E2E_TARGET_ID;
   const source = input.E2E_WORKLOAD_SOURCE ?? process.env.E2E_WORKLOAD_SOURCE;
   if (!targetId || source !== "local-dockerfile") return input;
   const localBuildEnvironment = { ...input, NEMOCLAW_SANDBOX_PREBUILD: "1" };
   if (input.NEMOCLAW_FROM_DOCKERFILE) return localBuildEnvironment;
-  const agentName = input.NEMOCLAW_AGENT ?? process.env.NEMOCLAW_AGENT ?? "openclaw";
+  const agentName = normalizeLiveE2EAgentName(
+    input.NEMOCLAW_AGENT ?? process.env.NEMOCLAW_AGENT ?? "openclaw",
+  );
   const agent = loadAgent(agentName, {
     [CANDIDATE_AGENT_FEATURE_ENV]:
       input[CANDIDATE_AGENT_FEATURE_ENV] ?? process.env[CANDIDATE_AGENT_FEATURE_ENV],
@@ -241,6 +268,19 @@ export class ShellProbe {
 
     const stdout = createTextCapture(options.captureLimitBytes);
     const stderr = createTextCapture(options.captureLimitBytes);
+    const streamLiveOutput = process.env.NEMOCLAW_RUN_LIVE_E2E === "1";
+    const stdoutLive = streamLiveOutput
+      ? createBoundarySafeRedactedSink({
+          redact: redactProbeText,
+          write: (text) => process.stdout.write(text),
+        })
+      : undefined;
+    const stderrLive = streamLiveOutput
+      ? createBoundarySafeRedactedSink({
+          redact: redactProbeText,
+          write: (text) => process.stderr.write(text),
+        })
+      : undefined;
     const startedAtMs = Date.now();
     const commandOutputObserver =
       options.onOutput === this.progress.onOutput ? undefined : options.onOutput;
@@ -265,6 +305,11 @@ export class ShellProbe {
       onStdout: (chunk) => {
         stdout.append(chunk);
         try {
+          stdoutLive?.write(chunk);
+        } catch {
+          // Console diagnostics must not change command execution.
+        }
+        try {
           commandOutputObserver?.({ stream: "stdout", atMs: Date.now() });
         } catch {
           // Test instrumentation must not change command execution.
@@ -273,12 +318,23 @@ export class ShellProbe {
       onStderr: (chunk) => {
         stderr.append(chunk);
         try {
+          stderrLive?.write(chunk);
+        } catch {
+          // Console diagnostics must not change command execution.
+        }
+        try {
           commandOutputObserver?.({ stream: "stderr", atMs: Date.now() });
         } catch {
           // Test instrumentation must not change command execution.
         }
       },
     });
+    try {
+      stdoutLive?.end();
+      stderrLive?.end();
+    } catch {
+      // Console diagnostics must not change command completion.
+    }
 
     const redactedStdout = renderCapturedText(stdout);
     const redactedStderr = renderCapturedText(stderr);

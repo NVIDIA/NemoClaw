@@ -68,7 +68,7 @@ with tempfile.TemporaryDirectory() as root:
     proc_root = os.path.join(root, "proc")
     system_root = os.path.join(root, "system")
     os.makedirs(os.path.join(proc_root, "net"))
-    os.makedirs(os.path.join(system_root, "run"))
+    os.makedirs(os.path.join(system_root, "etc/nemoclaw"), exist_ok=True)
     os.makedirs(os.path.join(system_root, "usr/local/lib/nemoclaw"))
     namespace_path = os.path.join(root, "pid-namespace")
     with open(namespace_path, "wb") as stream:
@@ -137,7 +137,7 @@ with tempfile.TemporaryDirectory() as root:
     os.environ["NEMOCLAW_MANAGED_CONTROL_SYSTEM_ROOT"] = system_root
     os.environ["NEMOCLAW_MANAGED_CONTROL_PROC_ROOT"] = proc_root
 
-    lease_path = os.path.join(system_root, "run/nemoclaw", control.EXPECTED_EXIT_MARKER_NAME)
+    lease_path = os.path.join(system_root, control.NEMOCLAW_RUNTIME_DIR.lstrip("/"), control.EXPECTED_EXIT_MARKER_NAME)
     observed = {
         "lease_live_during_terminate": False,
         "payload": None,

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/index.ts";
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -27,8 +28,10 @@ const WORKSPACE_FILES = ["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md", "MEMO
 const MEMORY_FILE = "memory/2026-04-20.md";
 const TEST_SANDBOX_PREFIX = "e2e-state-backup";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? TEST_SANDBOX_PREFIX;
-const TEST_TIMEOUT_MS = Number(process.env.NEMOCLAW_E2E_TIMEOUT_SECONDS ?? 3_600) * 1_000;
-const ONBOARD_TIMEOUT_MS = 30 * 60_000;
+const TEST_TIMEOUT_MS = testTimeout(
+  Number(process.env.NEMOCLAW_E2E_TIMEOUT_SECONDS ?? 3_600) * 1_000,
+);
+const ONBOARD_TIMEOUT_MS = execTimeout(30 * 60_000);
 const BACKUP_RESTORE_TIMEOUT_MS = 5 * 60_000;
 const DESTROY_ATTEMPTS = 3;
 const DESTROY_RETRY_DELAY_MS = 10_000;

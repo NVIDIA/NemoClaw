@@ -745,6 +745,10 @@ async function installOldNemoclawAndClaw(
   const reviewedOpenClaw = packReviewedNpmArchive(reviewedOldOpenClawArchive(OLD_OPENCLAW_VERSION));
 
   const installEnv = liveEnv({
+    // The historical bootstrap owns its pinned source Dockerfile. An explicit
+    // empty value prevents the surrounding candidate local-Dockerfile plan
+    // from replacing that fixture at the ShellProbe boundary.
+    E2E_WORKLOAD_SOURCE: "",
     PATH: `${wrapperDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
     COMPATIBLE_API_KEY: "dummy",
     NEMOCLAW_REAL_DOCKER: process.env.NEMOCLAW_REAL_DOCKER ?? "/usr/bin/docker",

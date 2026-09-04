@@ -24,9 +24,11 @@ const PREVIOUS_COMMAND_SOURCE_MAP = "dist/commands/deploy.js.map";
 const PREVIOUS_ACTION_ARTIFACT = "dist/lib/actions/deploy.js";
 const PREVIOUS_ACTION_DECLARATION_MAP = "dist/lib/actions/deploy.d.ts.map";
 const PREVIOUS_IMPLEMENTATION_ARTIFACT = "dist/lib/deploy/index.js";
+const PREVIOUS_SHIELDS_ROOT_ARTIFACT = "dist/lib/shields/index.js";
+const PREVIOUS_SHIELDS_PLUGIN_ARTIFACT = "dist/commands/shields-status.js";
 
 describe("CLI source-checkout upgrade build", () => {
-  it("prunes compiled deploy artifacts before the normal build (#10572)", () => {
+  it("prunes compiled deploy and Shields artifacts before the normal build (#10572, #10696)", () => {
     const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-cli-upgrade-build-"));
     try {
       copyFileSync(
@@ -103,15 +105,18 @@ describe("CLI source-checkout upgrade build", () => {
         PREVIOUS_ACTION_DECLARATION_MAP,
       );
       const previousImplementationPath = path.join(fixtureRoot, PREVIOUS_IMPLEMENTATION_ARTIFACT);
+      const previousShieldsRootPath = path.join(fixtureRoot, PREVIOUS_SHIELDS_ROOT_ARTIFACT);
       mkdirSync(path.dirname(previousCommandPath), { recursive: true });
       mkdirSync(path.dirname(previousActionPath), { recursive: true });
       mkdirSync(path.dirname(previousImplementationPath), { recursive: true });
+      mkdirSync(path.dirname(previousShieldsRootPath), { recursive: true });
       writeFileSync(previousCommandPath, "module.exports = {};\n");
       writeFileSync(previousCommandDeclarationPath, "export {};\n");
       writeFileSync(previousCommandSourceMapPath, "{}\n");
       writeFileSync(previousActionPath, "module.exports = {};\n");
       writeFileSync(previousActionDeclarationMapPath, "{}\n");
       writeFileSync(previousImplementationPath, "module.exports = {};\n");
+      writeFileSync(previousShieldsRootPath, "module.exports = {};\n");
 
       const staleMetadataPath = path.join(
         fixtureRoot,
@@ -140,6 +145,7 @@ describe("CLI source-checkout upgrade build", () => {
         false,
       );
       expect(existsSync(previousImplementationPath), PREVIOUS_IMPLEMENTATION_ARTIFACT).toBe(false);
+      expect(existsSync(previousShieldsRootPath), PREVIOUS_SHIELDS_ROOT_ARTIFACT).toBe(false);
       const routing = spawnSync(
         process.execPath,
         [
@@ -168,4 +174,51 @@ describe("CLI source-checkout upgrade build", () => {
       rmSync(fixtureRoot, { force: true, recursive: true });
     }
   }, 150_000);
+
+  it("prunes compiled Shields output in a standalone plugin build (#10696)", () => {
+    const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-plugin-upgrade-build-"));
+    const pluginRoot = path.join(fixtureRoot, "package");
+    try {
+      mkdirSync(pluginRoot);
+      copyFileSync(
+        path.join(REPOSITORY_ROOT, "nemoclaw", "package.json"),
+        path.join(pluginRoot, "package.json"),
+      );
+      copyFileSync(
+        path.join(REPOSITORY_ROOT, "nemoclaw", "tsconfig.json"),
+        path.join(pluginRoot, "tsconfig.json"),
+      );
+      symlinkSync(
+        path.join(REPOSITORY_ROOT, "nemoclaw", "node_modules"),
+        path.join(pluginRoot, "node_modules"),
+        "junction",
+      );
+      symlinkSync(
+        path.join(REPOSITORY_ROOT, "nemoclaw", "src"),
+        path.join(pluginRoot, "src"),
+        "junction",
+      );
+
+      const previousShieldsPluginPath = path.join(
+        pluginRoot,
+        PREVIOUS_SHIELDS_PLUGIN_ARTIFACT,
+      );
+      mkdirSync(path.dirname(previousShieldsPluginPath), { recursive: true });
+      writeFileSync(previousShieldsPluginPath, "module.exports = {};\n");
+
+      const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
+      const build = spawnSync(npmExecutable, ["run", "build"], {
+        cwd: pluginRoot,
+        encoding: "utf8",
+        env: process.env,
+        timeout: 60_000,
+      });
+      expect(build.status, `${build.stdout}\n${build.stderr}`).toBe(0);
+
+      expect(existsSync(previousShieldsPluginPath), PREVIOUS_SHIELDS_PLUGIN_ARTIFACT).toBe(false);
+      expect(existsSync(path.join(pluginRoot, "dist", "index.js"))).toBe(true);
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  }, 90_000);
 });

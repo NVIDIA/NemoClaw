@@ -510,7 +510,7 @@ print(json.dumps([
     },
   );
 
-  it("refuses a locked config snapshot", () => {
+  it("refuses a non-writable config snapshot", () => {
     const result = runPython(`
 import importlib.util, sys, types
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
@@ -527,7 +527,7 @@ else:
 `);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("locked");
+    expect(result.stdout).toContain("not writable");
   });
 
   it("blocks symlink, hardlink, permission, inode-race, and atomic-write guard bypasses", () => {

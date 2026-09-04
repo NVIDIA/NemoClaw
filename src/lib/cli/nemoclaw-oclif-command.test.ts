@@ -14,8 +14,6 @@ import {
   isMcpLifecycleLockHeld,
   withMcpLifecycleLock,
 } from "../state/mcp-lifecycle-lock-acquisition";
-import * as mcpLifecycleLock from "../state/mcp-lifecycle-lock-acquisition";
-import { getMcpLifecycleLockPath } from "../state/mcp-lifecycle-lock-storage";
 import { log } from "./logger";
 import { type CommandExitResult, NemoClawCommand } from "./nemoclaw-oclif-command";
 
@@ -45,32 +43,6 @@ class ParsingTestCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     await this.parse(ParsingTestCommand);
-  }
-}
-
-class ShieldsSentinelCommand extends NemoClawCommand {
-  static id = "shields-sentinel-test";
-  static flags = {};
-
-  public async run(): Promise<void> {
-    await this.parse(ShieldsSentinelCommand);
-    throw Object.assign(new Error("Config remains unlocked — already printed"), {
-      name: "DeferredShieldsExit",
-      exitCode: 1,
-    });
-  }
-}
-
-class DriftSentinelCommand extends NemoClawCommand {
-  static id = "drift-sentinel-test";
-  static flags = {};
-
-  public async run(): Promise<void> {
-    await this.parse(DriftSentinelCommand);
-    throw Object.assign(new Error("Locked shields state has filesystem drift"), {
-      name: "DeferredShieldsExit",
-      exitCode: 2,
-    });
   }
 }
 
@@ -196,6 +168,8 @@ describe("NemoClawCommand", () => {
 
   beforeEach(() => {
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oclif-command-"));
+    vi.stubEnv("HOME", stateDir);
+    vi.stubEnv("NEMOCLAW_TEST_BASE_HOME", stateDir);
     vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", stateDir);
   });
 
@@ -269,23 +243,44 @@ describe("NemoClawCommand", () => {
     expect(log.level).toBe("debug");
   });
 
-  it("translates a shields exit sentinel into an exit code without reprinting (#7382)", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    await expect(ShieldsSentinelCommand.run([], process.cwd())).resolves.toBeUndefined();
-
-    expect(process.exitCode).toBe(1);
-    expect(error).not.toHaveBeenCalled();
-  });
-
-  it("keeps the sentinel's non-default exit code", async () => {
-    await expect(DriftSentinelCommand.run([], process.cwd())).resolves.toBeUndefined();
-
-    expect(process.exitCode).toBe(2);
-  });
-
   it("passes non-sentinel failures to the default oclif handler", async () => {
     await expect(PlainFailureCommand.run([], process.cwd())).rejects.toThrow("real failure");
+  });
+
+  it("refuses a sandbox command when removed immutability recovery may still be active", async () => {
+    fs.writeFileSync(path.join(stateDir, "shields-timer-alpha.json"), "{}\n");
+    const operation = vi.fn(async () => undefined);
+    ParsedSupportedSandboxCommand.operation = operation;
+
+    await expect(ParsedSupportedSandboxCommand.run(["alpha"], process.cwd())).rejects.toThrow(
+      /removed Shields feature.*older detached process/u,
+    );
+    expect(operation).not.toHaveBeenCalled();
+  });
+
+  it("announces retirement but does not interpret an inert removed-immutability state record", async () => {
+    fs.writeFileSync(path.join(stateDir, "shields-alpha.json"), "not trusted or parsed\n");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const operation = vi.fn(async () => undefined);
+    ParsedSupportedSandboxCommand.operation = operation;
+
+    await expect(
+      ParsedSupportedSandboxCommand.run(["alpha"], process.cwd()),
+    ).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("has been retired"));
+    expect(operation).toHaveBeenCalledOnce();
+  });
+
+  it("blocks ordinary mutations until a legacy state record is remediated", async () => {
+    fs.writeFileSync(path.join(stateDir, "shields-alpha.json"), "{}\n");
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(RawUnsupportedSandboxCommand.run(["alpha"], process.cwd())).rejects.toThrow(
+      /mutable posture cannot be proven.*no command that can restore or lower/u,
+    );
+
+    expect(RawUnsupportedSandboxCommand.ran).toBe(false);
   });
 
   it("rejects schema-5 unsupported parsed commands before the action body (#9203)", async () => {
@@ -535,47 +530,5 @@ describe("NemoClawCommand", () => {
     expect(fence).toHaveBeenCalledOnce();
     expect(classify).toHaveBeenCalledWith(expect.any(String), "use");
     expect(GlobalUseMutationCommand.ran).toBe(false);
-  });
-
-  it("recovers sandbox:destroy through the abandoned-timer deadline fence (#10066)", async () => {
-    vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
-      kind: "none",
-    });
-    fs.writeFileSync(
-      path.join(stateDir, "shields-timer-alpha.json"),
-      JSON.stringify({
-        pid: 2_147_483_647,
-        sandboxName: "alpha",
-        snapshotPath: path.join(stateDir, "snapshot.yaml"),
-        restoreAt: new Date(Date.now() - 1_000).toISOString(),
-        processToken: "d".repeat(32),
-      }),
-    );
-    const realLock = mcpLifecycleLock.withMcpLifecycleLock.bind(mcpLifecycleLock);
-    const lock = vi
-      .spyOn(mcpLifecycleLock, "withMcpLifecycleLock")
-      .mockImplementation((sandboxName, operation, options) =>
-        realLock(sandboxName, operation, {
-          ...options,
-          pollIntervalMs: 1,
-          timeoutMs: 5_000,
-          corruptLockGraceMs: 1,
-        }),
-      );
-
-    await expect(
-      ParsedUnsupportedSandboxCommand.run(["alpha"], process.cwd()),
-    ).resolves.toBeUndefined();
-
-    expect(lock).toHaveBeenCalledWith(
-      "alpha",
-      expect.any(Function),
-      expect.objectContaining({ recoverAbandonedExpiredTimer: true }),
-    );
-    expect(ParsedUnsupportedSandboxCommand.ran).toBe(true);
-    const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
-    expect(fs.existsSync(lockPath)).toBe(false);
-    expect(fs.existsSync(`${lockPath}.containment`)).toBe(false);
-    expect(fs.existsSync(`${lockPath}.deadline`)).toBe(false);
   });
 });

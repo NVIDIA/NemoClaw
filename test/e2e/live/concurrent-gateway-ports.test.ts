@@ -11,6 +11,7 @@
 
 import fs from "node:fs";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -27,10 +28,12 @@ const SANDBOX_B = process.env.NEMOCLAW_CGP_SANDBOX_B ?? "e2e-cgp-b";
 const GATEWAY_PORT_A = process.env.NEMOCLAW_E2E_GATEWAY_PORT_A ?? "8080";
 const GATEWAY_PORT_B = process.env.NEMOCLAW_E2E_GATEWAY_PORT_B ?? "18080";
 const DASHBOARD_PORT_A = process.env.NEMOCLAW_E2E_DASHBOARD_PORT_A ?? "18789";
-const PHASE_TIMEOUT_MS = Number(process.env.NEMOCLAW_E2E_PHASE_TIMEOUT_MS ?? 1_200) * 1_000;
+const PHASE_TIMEOUT_MS = execTimeout(
+  Number(process.env.NEMOCLAW_E2E_PHASE_TIMEOUT_MS ?? 1_200) * 1_000,
+);
 const PROBE_ATTEMPTS = Number(process.env.NEMOCLAW_E2E_PROBE_ATTEMPTS ?? 12);
 const PROBE_DELAY_MS = Number(process.env.NEMOCLAW_E2E_PROBE_DELAY_SECONDS ?? 5) * 1_000;
-const TEST_TIMEOUT_MS = 90 * 60_000;
+const TEST_TIMEOUT_MS = testTimeout(90 * 60_000);
 const POST_UNINSTALL_HEALTH_PROBES = 3;
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;

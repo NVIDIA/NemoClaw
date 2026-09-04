@@ -551,54 +551,6 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
-  it("rejects an assigned Buildx push flag in an image consumer", () => {
-    const { imageWorkflow, mainWorkflow } = readWorkflows();
-    imageWorkflow.jobs["state-dir-guard-metadata"].steps!.push({
-      name: "Publish from metadata consumer",
-      run: "docker buildx build --push=true -t registry.example.invalid/nemoclaw .",
-    });
-
-    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
-      "state-dir-guard-metadata step \x27Publish from metadata consumer\x27 must not write images to a registry",
-    );
-  });
-
-  it("rejects a mixed-case assigned Buildx push flag in an image consumer", () => {
-    const { imageWorkflow, mainWorkflow } = readWorkflows();
-    imageWorkflow.jobs["state-dir-guard-metadata"].steps!.push({
-      name: "Publish from metadata consumer",
-      run: "docker buildx build --push=True -t registry.example.invalid/nemoclaw .",
-    });
-
-    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
-      "state-dir-guard-metadata step \x27Publish from metadata consumer\x27 must not write images to a registry",
-    );
-  });
-
-  it("rejects a shell-expanded Buildx push flag in an image consumer", () => {
-    const { imageWorkflow, mainWorkflow } = readWorkflows();
-    imageWorkflow.jobs["state-dir-guard-metadata"].steps!.push({
-      name: "Publish from expanded metadata consumer",
-      run: 'docker buildx build --push="${PUSH_IMAGES}" -t registry.example.invalid/nemoclaw .',
-    });
-
-    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
-      "state-dir-guard-metadata step \x27Publish from expanded metadata consumer\x27 must not write images to a registry",
-    );
-  });
-
-  it("treats an explicit false Buildx push assignment as non-writing", () => {
-    const { imageWorkflow, mainWorkflow } = readWorkflows();
-    imageWorkflow.jobs["state-dir-guard-metadata"].steps!.push({
-      name: "Disable publishing from metadata consumer",
-      run: "docker buildx build --push=false -t nemoclaw-metadata-consumer .",
-    });
-
-    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).not.toContain(
-      "state-dir-guard-metadata step \x27Disable publishing from metadata consumer\x27 must not write images to a registry",
-    );
-  });
-
   it("requires the Hermes artifact download before its load", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
@@ -616,22 +568,15 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
-  it("rejects non-canonical Hermes artifact upload and metadata download pins", () => {
+  it("rejects a non-canonical Hermes artifact upload pin", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const upload = imageWorkflow.jobs["build-hermes-sandbox-image"].steps!.find(
       (step) => step.name === "Upload Hermes isolation image",
     )!;
     upload.uses = `actions/upload-artifact@${"0".repeat(40)}`;
-    const download = imageWorkflow.jobs["state-dir-guard-metadata"].steps!.find(
-      (step) => step.name === "Download Hermes production image",
-    )!;
-    download.uses = `actions/download-artifact@${"0".repeat(40)}`;
 
-    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
-      expect.arrayContaining([
-        "Hermes producer must upload the saved production image before auth cleanup",
-        "state-dir guard metadata must download the saved Hermes production image",
-      ]),
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes producer must upload the saved production image before auth cleanup",
     );
   });
 
@@ -925,7 +870,7 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
-  it("rejects rebuilding, incomplete handoff, or weak metadata-probe tooling", () => {
+  it("rejects an incomplete Hermes image handoff", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
     const hermesSave = hermes.steps!.find((step) => step.name === "Save Hermes production image")!;
@@ -935,51 +880,10 @@ describe("sandbox image workflow boundary", () => {
     )!;
     hermesUpload.with!.name = "wrong-image";
 
-    const metadata = imageWorkflow.jobs["state-dir-guard-metadata"];
-    metadata.needs = ["build-sandbox-images"];
-    metadata["timeout-minutes"] = 15;
-    metadata.env!.NEMOCLAW_HERMES_TEST_IMAGE = "rebuilt-hermes";
-    metadata.steps!.push({
-      ...imageWorkflow.jobs["build-sandbox-images"].steps!.find(
-        (step) => step.name === "Authenticate to Docker Hub",
-      )!,
-    });
-    const openclawDownload = metadata.steps!.find(
-      (step) => step.name === "Download OpenClaw production image",
-    )!;
-    openclawDownload.with!.name = "wrong-image";
-    const load = metadata.steps!.find((step) => step.name === "Load production images")!;
-    load.run = "echo skipped";
-    const tools = metadata.steps!.find(
-      (step) => step.name === "Install filesystem metadata tools",
-    )!;
-    tools.run = "sudo apt-get install acl";
-    const probe = metadata.steps!.find(
-      (step) => step.name === "Run installed state-dir guard metadata test",
-    )!;
-    probe["timeout-minutes"] = 5;
-    probe.run = `${probe.run}\ndocker build -t rebuilt-hermes .`;
-    hermes.steps!.push({ ...probe });
-    const upload = metadata.steps!.find(
-      (step) => step.name === "Upload state-dir guard metadata artifacts",
-    )!;
-    delete upload.if;
-
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
         "Hermes producer must save and verify its production image exactly once",
         "Hermes producer must upload the saved production image before auth cleanup",
-        "state-dir guard metadata must depend on both production image producers",
-        "state-dir guard metadata job must retain its 30-minute budget",
-        "state-dir guard metadata must consume both named prebuilt production images",
-        "state-dir guard metadata must not authenticate to Docker Hub",
-        "state-dir guard metadata must not rebuild either production image",
-        "build-hermes-sandbox-image must not run the failure-isolated state-dir guard probe",
-        "state-dir guard metadata must download the saved OpenClaw production image",
-        "state-dir guard metadata image load must include /tmp/isolation-image.tar.gz | docker load",
-        "state-dir guard metadata tool setup must include sudo apt-get install --yes --no-install-recommends acl attr",
-        "state-dir guard metadata probe must retain its 15-minute budget",
-        "state-dir guard metadata must always use the shared E2E artifact uploader",
       ]),
     );
   });

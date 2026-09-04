@@ -9,6 +9,7 @@ import {
   isPolicyObservationError,
   PolicyObservationError,
 } from "../../adapters/openshell/policy-state";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { formatOpenShellPolicyRecoveryAction } from "../../gateway-start-guidance";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging";
@@ -44,7 +45,7 @@ export interface RebuildBackupPhaseInput {
   webSearchConfig: WebSearchConfig | null;
   log: RebuildLog;
   bail: RebuildBail;
-  relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
+  runtimeSelection?: OpenShellRuntimeSelection;
 }
 
 export interface RebuildBackupPhaseResult {
@@ -60,16 +61,20 @@ function bailForUnsafeOpenClawPluginProvenance(input: RebuildBackupPhaseInput): 
   console.error(
     "  To preserve state, onboard the custom image under a new sandbox name and manually migrate only user-owned state.",
   );
-  input.relockShieldsIfNeeded(!input.staleRecovery);
   return input.bail("Custom-image OpenClaw plugin provenance is unavailable.");
 }
 
-export function captureRebuildPolicyDocument(sandboxName: string, gatewayName: string): string {
+export function captureRebuildPolicyDocument(
+  sandboxName: string,
+  gatewayName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): string {
   let policy: string;
   try {
     policy = captureRecordedSandboxBasePolicy(
       sandboxName,
       "capture the live policy before sandbox replacement",
+      runtimeSelection,
     );
   } catch (error) {
     if (!isPolicyObservationError(error)) throw error;
@@ -138,7 +143,11 @@ export function runRebuildBackupPhase(
   const capturedPolicy =
     input.staleRecovery || preparedRetainedPolicy
       ? null
-      : captureRebuildPolicyDocument(input.sandboxName, input.gatewayName);
+      : captureRebuildPolicyDocument(
+          input.sandboxName,
+          input.gatewayName,
+          input.runtimeSelection,
+        );
   let backupManifest =
     preparedRecoveryManifest ??
     backupStateForRebuild(
@@ -146,7 +155,6 @@ export function runRebuildBackupPhase(
       input.sandboxEntry,
       input.staleRecovery,
       input.log,
-      input.relockShieldsIfNeeded,
       input.bail,
     );
   if (backupManifest === undefined) return null;
@@ -203,7 +211,8 @@ export function runRebuildBackupPhase(
     };
   }
   const policy =
-    capturedPolicy ?? captureRebuildPolicyDocument(input.sandboxName, input.gatewayName);
+    capturedPolicy ??
+    captureRebuildPolicyDocument(input.sandboxName, input.gatewayName, input.runtimeSelection);
   if (backupManifest && !retainedPolicy) {
     try {
       backupManifest = writeRebuildPolicyHandoff(backupManifest, policy);

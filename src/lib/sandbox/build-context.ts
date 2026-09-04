@@ -69,10 +69,6 @@ function stageOpenClawRuntimeGraphs(rootDir: string, buildCtx: string): void {
   const sourceAgentDir = path.join(rootDir, "agents", "openclaw");
   const stagedAgentDir = path.join(buildCtx, "agents", "openclaw");
   fs.mkdirSync(stagedAgentDir, { recursive: true });
-  fs.copyFileSync(
-    path.join(sourceAgentDir, "state-lock-plan.json"),
-    path.join(stagedAgentDir, "state-lock-plan.json"),
-  );
   for (const runtimeName of [
     "managed-image-messaging-runtime",
     "mcporter-runtime",
@@ -227,6 +223,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "ci", "npm-audit-exceptions.json"),
     path.join(stagedCiDir, "npm-audit-exceptions.json"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "ci", "reviewed-npm-audit.json"),
+    path.join(stagedCiDir, "reviewed-npm-audit.json"),
+  );
   normalizeReadModesForDockerCopy(stagedCiDir);
 
   fs.mkdirSync(stagedNemoclawDir, { recursive: true });
@@ -303,10 +303,6 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "managed-gateway-control.py"),
     path.join(stagedScriptsDir, "managed-gateway-control.py"),
-  );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "state-dir-guard.py"),
-    path.join(stagedScriptsDir, "state-dir-guard.py"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "openclaw-config-guard.py"),
@@ -456,6 +452,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-audit.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-audit.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "npm-audit-receipt.mts"),
+    path.join(stagedScriptsDir, "lib", "npm-audit-receipt.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "openclaw-npm-remediation.mts"),

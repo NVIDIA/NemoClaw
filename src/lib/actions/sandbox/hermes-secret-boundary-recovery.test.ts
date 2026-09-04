@@ -94,6 +94,45 @@ describe("enforceHermesSecretBoundaryOnRunningGateway", () => {
     expect(result).toEqual({ refused: false });
   });
 
+  it("retries the exact post-create privileged-control publication race", () => {
+    mockSandboxAgent("hermes");
+    const exec = vi
+      .fn()
+      .mockReturnValueOnce(makeExecResult("", "PRIVILEGED_CONTROL_UNAVAILABLE", 1))
+      .mockReturnValueOnce(makeExecResult("", "PRIVILEGED_CONTROL_UNAVAILABLE", 1))
+      .mockReturnValueOnce(makeExecResult("GATEWAY_PID=4242\n"));
+    const sleep = vi.fn();
+
+    const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec, {
+      sleep,
+    });
+
+    expect(result).toEqual({ refused: false });
+    expect(exec).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(100);
+  });
+
+  it("does not retry detailed privileged-control integrity failures", () => {
+    mockSandboxAgent("hermes");
+    const exec = vi.fn(() =>
+      makeExecResult("", "PRIVILEGED_CONTROL_UNAVAILABLE: identity changed", 1),
+    );
+    const sleep = vi.fn();
+
+    const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec, {
+      sleep,
+    });
+
+    expect(result).toEqual({
+      refused: true,
+      reason: "unexpected-marker",
+      stderr: "PRIVILEGED_CONTROL_UNAVAILABLE: identity changed",
+    });
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("rejects a legacy-script ALREADY_RUNNING marker on the supervisor protocol", () => {
     mockSandboxAgent("hermes");
     const exec = vi.fn(() => makeExecResult("ALREADY_RUNNING\n"));

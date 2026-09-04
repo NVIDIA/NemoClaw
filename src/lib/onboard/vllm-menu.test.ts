@@ -183,6 +183,38 @@ describe("buildVllmMenuEntries", () => {
     assert.match(entries[0].label, /no profile detected/);
   });
 
+  it("rejects explicit managed vLLM before install when Docker is absent (#10891)", () => {
+    const logs: string[] = [];
+    const entries = buildVllmMenuEntries({
+      vllmRunning: false,
+      vllmProfile: { name: "DGX Spark" },
+      experimental: false,
+      platform: "spark",
+      hasVllmImage: false,
+      dockerAvailable: false,
+      env: { NEMOCLAW_PROVIDER: "install-vllm" },
+      log: (message) => logs.push(message),
+    });
+
+    assert.deepEqual(entries, []);
+    assert.deepEqual(logs, ["  Managed vLLM install/start requires Docker on PATH."]);
+  });
+
+  it("omits interactive managed vLLM before install when Docker is absent (#10891)", () => {
+    const entries = buildVllmMenuEntries({
+      vllmRunning: false,
+      vllmProfile: { name: "DGX Spark" },
+      experimental: false,
+      platform: "spark",
+      hasVllmImage: false,
+      dockerAvailable: false,
+      env: {},
+      log: () => {},
+    });
+
+    assert.deepEqual(entries, []);
+  });
+
   it("does NOT surface install-vllm when no profile matches and the user did not explicitly opt in", () => {
     const entries = buildVllmMenuEntries({
       vllmRunning: false,

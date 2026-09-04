@@ -336,9 +336,8 @@ function lifecycleDeps(
   const captureSocketAuthority = vi.fn(() => ({ ...receipt.socketAuthority, inode: "102" }));
   const captureOpenShellExecutableAuthority = vi.fn(() => receipt.openshellExecutableAuthority);
   const capturePodmanExecutableAuthority = vi.fn(() => receipt.podmanExecutableAuthority);
-  const assertOpenShellExecutableFileAuthority = vi.fn(
-    () => receipt.openshellExecutableAuthority.executable.executablePath,
-  );
+  const assertOpenShellExecutableAuthority = vi.fn(() => "/usr/bin/openshell");
+  const assertOpenShellExecutableFileAuthority = vi.fn(() => "/usr/bin/openshell");
   const capturePodmanExecutableFileAuthority = vi.fn(() => receipt.podmanExecutableAuthority);
   return {
     deps: {
@@ -362,7 +361,7 @@ function lifecycleDeps(
         }) as SandboxEntry,
       captureOpenShell,
       launchOpenShell,
-      assertOpenShellExecutableAuthority: vi.fn(() => "/usr/bin/openshell"),
+      assertOpenShellExecutableAuthority,
       operatingAuthority: {
         env: {
           HOME: receipt.runtimeAuthority.homeDir,
@@ -385,6 +384,7 @@ function lifecycleDeps(
     captureSocketAuthority,
     captureOpenShellExecutableAuthority,
     capturePodmanExecutableAuthority,
+    assertOpenShellExecutableAuthority,
     assertOpenShellExecutableFileAuthority,
     capturePodmanExecutableFileAuthority,
   };
@@ -695,6 +695,18 @@ describe("Hermes portable lifecycle", () => {
     );
   });
 
+  it("enables durable authority only for the exact baked GFN kiosk identity", () => {
+    const gfnReceipt = activeReceipt("/home/kiosk");
+
+    expect(hermesPortableLifecycleInternals.trustsDurableGfnAuthority(gfnReceipt)).toBe(true);
+    expect(
+      hermesPortableLifecycleInternals.trustsDurableGfnAuthority({
+        ...gfnReceipt,
+        runtimeAuthority: { ...gfnReceipt.runtimeAuthority, homeDir: "/home/other" },
+      }),
+    ).toBe(false);
+  });
+
   it("constructs production Podman dependencies from the receipt identity (#9203)", () => {
     const receipt = activeReceipt();
     const capture = vi.fn<ContainerEngineCommandCapture>(
@@ -817,7 +829,9 @@ describe("Hermes portable lifecycle", () => {
       ],
       20_000,
     );
-    expect(captureOpenShell.mock.calls.flat(2)).toContain(hermesPortableContainerInternals.authenticatedHealthScript);
+    expect(captureOpenShell.mock.calls.flat(2)).toContain(
+      hermesPortableContainerInternals.authenticatedHealthScript,
+    );
   });
 
   it("starts through the exact OpenShell Stopped phase before proving Ready health (#9203)", () => {
@@ -904,7 +918,7 @@ describe("Hermes portable lifecycle", () => {
     expect(healthAttempts).toBe(1);
     expect(healthBoundaries).toHaveLength(1);
     expect(healthRunInspects.length).toBeGreaterThan(healthBoundaries[0]!);
-    expect(sleepBoundaries).toEqual([]); expect(launchOpenShell).toHaveBeenCalledTimes(1);
+    expect([sleepBoundaries, launchOpenShell.mock.calls]).toEqual([[], [expect.any(Array)]]);
     expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
   });
 
@@ -1200,6 +1214,31 @@ describe("Hermes portable lifecycle", () => {
     });
   });
 
+  it("waits through OpenShell Provisioning for the exact stopped container (#9203)", () => {
+    const receipt = activeReceipt();
+    let now = 0;
+    const { deps, podman } = lifecycleDeps(receipt, true, {
+      sandboxPhase: (running) => (running ? "Ready" : now === 0 ? "Provisioning" : "Error"),
+    });
+
+    const result = withMcpLifecycleLockSync(
+      SANDBOX,
+      () =>
+        stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), {
+          ...deps,
+          now: () => now,
+          sleep: (milliseconds) => {
+            now += milliseconds;
+          },
+        }),
+      { stateDir: path.join(stateDir, "state") },
+    );
+
+    expect(result).toEqual({ kind: "stopped" });
+    expect(now).toBe(100);
+    expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(1);
+  });
+
   it("accepts the exact already-stopped Podman container and OpenShell Error phase without another stop (#9203)", () => {
     const receipt = activeReceipt();
     const { deps, podman } = lifecycleDeps(receipt, false);
@@ -1258,13 +1297,21 @@ describe("Hermes portable lifecycle", () => {
         : defaultCapture(args),
     );
 
+    let now = 0;
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
-        () => stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), deps),
+        () =>
+          stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), {
+            ...deps,
+            now: () => now,
+            sleep: (milliseconds) => {
+              now += milliseconds;
+            },
+          }),
         { stateDir: path.join(stateDir, "state") },
       ),
-    ).toThrow("OpenShell sandbox identity disagrees");
+    ).toThrow("OpenShell sandbox phase did not settle after exact container stop");
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([]);
   });
 
@@ -1278,13 +1325,21 @@ describe("Hermes portable lifecycle", () => {
         : defaultCapture(args),
     );
 
+    let now = 0;
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
-        () => stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), deps),
+        () =>
+          stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), {
+            ...deps,
+            now: () => now,
+            sleep: (milliseconds) => {
+              now += milliseconds;
+            },
+          }),
         { stateDir: path.join(stateDir, "state") },
       ),
-    ).toThrow("OpenShell sandbox identity disagrees");
+    ).toThrow("OpenShell sandbox phase did not settle after exact container stop");
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(1);
   });
 

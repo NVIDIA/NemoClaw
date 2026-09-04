@@ -9,8 +9,8 @@ import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupAcquiredResource,
   cleanupExistingPath,
@@ -71,8 +71,8 @@ const COMPATIBLE_KEY =
 const AGENT = process.env.NEMOCLAW_AGENT ?? "openclaw";
 const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ?? (AGENT === "hermes" ? "e2e-hm-bedrock" : "e2e-oc-bedrock");
-const ONBOARD_TIMEOUT_MS = 30 * 60_000;
-const TEST_TIMEOUT_MS = 60 * 60_000;
+const ONBOARD_TIMEOUT_MS = execTimeout(30 * 60_000);
+const TEST_TIMEOUT_MS = testTimeout(60 * 60_000);
 const SANDBOX_TIMEOUT_MS = 180_000;
 
 type AgentName = "openclaw" | "hermes";

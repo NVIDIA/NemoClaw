@@ -235,6 +235,57 @@ describe("onboarding readiness admission (#7411)", () => {
     });
   });
 
+  it("defers standard Docker readiness only to a selected provider-owned host route", () => {
+    const capabilities = [
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerAvailable,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerDaemonReachable,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
+    ].reduce(
+      (current, id) => withCapabilityState(current, id, "unknown"),
+      requiredCapabilities(),
+    );
+    const dockerFindings = [
+      finding(ONBOARD_READINESS_FINDING_IDS.dockerUnavailable),
+      finding(ONBOARD_READINESS_FINDING_IDS.dockerHostInvalid),
+      finding(ONBOARD_READINESS_FINDING_IDS.dockerDaemonUnreachable),
+      finding(ONBOARD_READINESS_FINDING_IDS.runtimeUnsupported),
+      finding(ONBOARD_READINESS_FINDING_IDS.storageIncompatible),
+    ];
+
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({ capabilities, findings: dockerFindings, status: "incompatible" }),
+        { ...DEFAULT_OPTIONS, providerOwnsHostReadiness: true },
+      ),
+    ).toEqual({
+      admitted: true,
+      waivedFindingIds: dockerFindings.map(({ id }) => id),
+    });
+
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({ capabilities, findings: dockerFindings, status: "incompatible" }),
+        DEFAULT_OPTIONS,
+      ),
+    ).toMatchObject({
+      admitted: false,
+      findingIds: dockerFindings.map(({ id }) => id),
+    });
+
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({
+          capabilities,
+          findings: [...dockerFindings, finding("host.example.blocked")],
+          status: "incompatible",
+        }),
+        { ...DEFAULT_OPTIONS, providerOwnsHostReadiness: true },
+      ),
+    ).toMatchObject({ admitted: false, findingIds: ["host.example.blocked"] });
+  });
+
   it.each(
     [
         ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported,

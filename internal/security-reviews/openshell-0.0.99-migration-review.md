@@ -5,6 +5,10 @@
 
 > Internal engineering evidence. This file is not part of the public documentation set.
 
+Shields retirement addendum date: September 1, 2026.
+
+Shields was retired from NemoClaw after this review was written. Every Shields reference below is retained as historical evidence of the ownership regression, compatibility correction, and exact-version qualification performed for the OpenShell 0.0.99 migration; none describes a current command, supported runtime posture, live lane, or merge gate. The Docker recreation identity correction, workspace-qualified container authority, exact metadata checks, and mutable runtime lifecycle guarantees remain active independently of the retired Shields ownership transition.
+
 ## Status and Decision
 
 This review covers the complete public source boundary from the previously supported OpenShell
@@ -18,10 +22,10 @@ after the exact pinned artifacts pass NemoClaw's managed activation and live E2E
 previously observed `0.0.85` activation mismatch remains part of this upgrade's completion. It is
 not a waived unrelated failure.
 
-Later Shields lifecycle evidence found an escaped compatibility regression in upstream commit `537805568d8ebed1f057e035e09dbc4a71976d2c`.
+Historical Shields lifecycle evidence later found an escaped compatibility regression in upstream commit `537805568d8ebed1f057e035e09dbc4a71976d2c`.
 When OCI image-user metadata is present, OpenShell prepares its default `/sandbox` working directory by changing the directory owner to the policy-selected process identity.
 This preparation runs before OpenShell exposes SSH and starts the workload.
-It breaks the Shields up requirement that `/sandbox` remain `root:sandbox` with mode `1775`.
+It broke the then-supported, now-retired Shields-up requirement that `/sandbox` remain `root:sandbox` with mode `1775`.
 
 ## Audit Method and Exact Boundary
 
@@ -125,7 +129,7 @@ than enabling optional upstream behavior implicitly.
 | `OS99-15` | The Docker driver records the immutable image content ID in `Config.Image` | Managed bootstrap accepts either the reviewed `repository@manifestDigest` or its exact runtime content ID, while separately requiring Docker to prove that the manifest resolves to that content ID. |
 | `OS99-16` | The Docker driver appends `--workdir /sandbox` to the supervisor command | Managed bootstrap requires that exact v0.0.99 supervisor argv. The managed clone preserves only that tuple, or the empty v0.0.85 migration form, and rejects other supervisor arguments before mutation. |
 | `OS99-17` | Overlapping endpoint selectors with conflicting connection or request metadata are rejected before policy activation | The OpenClaw baseline npm route remains GET-only in Restricted and temporarily adopts the reviewed npm preset's L4 metadata while that preset is active. An approved baseline exclusion remains absent, and unexpected live drift stops the npm change. Homebrew's overlapping GitHub routes use automatic TLS, and Outlook matches Microsoft Teams' request-body credential-rewrite setting on shared Microsoft endpoints. Focused composition coverage protects each compatibility decision. |
-| `OS99-18` | Docker and Podman container identity is workspace-qualified | Podman mutation requires the exact v0.0.99 labels, empty namespace, `default` workspace, full immutable container ID, and matching container name. Privileged Docker lifecycle routing recognizes `openshell-default--<sandbox>-<id>` only when the trusted labels and resolved owner agree; it rejects another workspace qualifier or ambiguous ownership. Final-destroy cleanup scans all OpenShell container names and applies the same resolver to the live sandbox list, so a matching v0.0.99 container or failed Docker probe preserves the gateway. The Shields live lane discovers its sandbox from the OpenShell management and sandbox-name labels instead of a legacy name prefix. The resolver retains the v0.0.85 forms for migration. |
+| `OS99-18` | Docker and Podman container identity is workspace-qualified | Podman mutation requires the exact v0.0.99 labels, empty namespace, `default` workspace, full immutable container ID, and matching container name. Privileged Docker lifecycle routing recognizes `openshell-default--<sandbox>-<id>` only when the trusted labels and resolved owner agree; it rejects another workspace qualifier or ambiguous ownership. Final-destroy cleanup scans all OpenShell container names and applies the same resolver to the live sandbox list, so a matching v0.0.99 container or failed Docker probe preserves the gateway. The historical, now-retired Shields live lane discovered its sandbox from the OpenShell management and sandbox-name labels instead of a legacy name prefix. The resolver retains the v0.0.85 forms for migration. |
 | `OS99-19` | The Podman gateway must use the prepared rootless socket | The portable gateway writes the normalized absolute socket path into the OpenShell Podman driver configuration. The pinned Ubuntu 26.04 live lane disables Docker and keeps the production `pasta` helper. Before activation, it adds the upstream-recommended `signal (receive) peer=podman,` rule at the packaged profile's expected abstraction boundary and reloads only that AppArmor profile. The workflow fails closed if the profile shape or rule count differs. This preserves AppArmor enforcement while permitting confined Podman to terminate the shared rootless network helper. The lane then verifies `pasta`, authenticated gateway health, sandbox creation, and repeated lifecycle operations. |
 | `OS99-20` | A failed v0.0.99 status probe omits the selected gateway name | Gateway reuse scopes the status probe to the requested gateway. It classifies a connection failure as stale only when the requested or reported active gateway matches; other status failures remain non-reusable. |
 | `OS99-21` | Sandbox SSH aliases include the workspace | NemoClaw selects only an exact alias declared by the captured OpenShell SSH configuration. It prefers the v0.0.99 default-workspace alias `openshell-<sandbox>.default` and otherwise accepts the exact legacy alias `openshell-<sandbox>`. The upgrade uses that fallback to back up a pre-upgrade sandbox. Wildcard, negated, and unrelated declarations cannot authorize it. |
@@ -140,7 +144,7 @@ conditional skips and expected failures do not count as qualification evidence.
 OpenShell commit `537805568d8ebed1f057e035e09dbc4a71976d2c` made the OCI image working directory part of the process identity preparation path.
 For NemoClaw images, the supervisor runs as root while the explicit policy selects the `sandbox:sandbox` workload identity.
 The new preparation interpreted `OPENSHELL_OCI_IMAGE_USER` as a request to change `/sandbox` to that identity before the workload started.
-Shields up then rejected startup because the untrusted workload user owned its protected parent directory.
+The then-supported, now-retired Shields-up startup check rejected startup because the untrusted workload user owned its protected parent directory.
 
 The compatibility correction applies only when the inspected Docker workload matches all reviewed NemoClaw boundaries:
 
@@ -230,8 +234,8 @@ invalidates every earlier receipt and proof check.
 - The `v0.0.99` credential-boundary manifest is the active manifest and its source commit is exact.
 - Static checks, focused lifecycle tests, CLI and plugin builds, and documentation checks pass.
 - The reviewed Docker recreation omits only `OPENSHELL_OCI_IMAGE_USER` at the exact NemoClaw startup boundary and rejects every unreviewed metadata shape.
-- The OpenClaw and Hermes Shields lanes restart successfully under Shields up.
-  The OpenClaw lane verifies that `/sandbox` remains `1775 root:sandbox` after restart.
+- Historical acceptance evidence required the now-retired OpenClaw and Hermes Shields lanes to restart successfully under Shields up; those lanes and that posture are not current merge gates.
+  The historical OpenClaw lane verified that `/sandbox` remained `1775 root:sandbox` after restart.
 - Default OpenClaw policy composition activates without endpoint-metadata ambiguity while retaining
   the reviewed binary scopes for npm, Homebrew, and pricing traffic.
 - Managed Docker and Podman activation, lifecycle, policy, credential, inference, and MCP E2E run

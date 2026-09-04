@@ -3,10 +3,29 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ preparePortableExperimentalHost: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  preparePortableExperimentalHost: vi.fn(),
+  prepareRuntimeHost: vi.fn(({ environment }: { environment: NodeJS.ProcessEnv }) => ({
+    sandboxHostAddress: environment.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "169.254.2.2" : null,
+  })),
+}));
 
 vi.mock("./experimental/portable-host-preparation", () => ({
   preparePortableExperimentalHost: mocks.preparePortableExperimentalHost,
+}));
+
+vi.mock("./runtime-provider/selection", () => ({
+  resolveConfiguredRuntimeProvider: (
+    _platform: NodeJS.Platform,
+    _architecture: NodeJS.Architecture,
+    environment: NodeJS.ProcessEnv,
+  ) => ({
+    gateway: {
+      supported: true,
+      ownsHostReadiness: environment.NEMOCLAW_GATEWAY_RUNTIME === "podman",
+      prepareHostRuntime: mocks.prepareRuntimeHost,
+    },
+  }),
 }));
 
 import type { DetectGpuDeps, GpuDetection } from "../inference/nim";
@@ -45,6 +64,15 @@ function hostWithRuntime(runtime: HostAssessment["runtime"]): HostAssessment {
     cdiNvidiaGpuSpecMissing: false,
     nvidiaContainerToolkitInstalled: false,
     notes: [],
+  };
+}
+
+function hostWithoutDocker(): HostAssessment {
+  return {
+    ...hostWithRuntime("unknown"),
+    dockerInstalled: false,
+    dockerRunning: false,
+    dockerReachable: false,
   };
 }
 
@@ -425,15 +453,55 @@ describe("report-backed runtime readiness (#7411)", () => {
   );
 
   it.skipIf(!isLinuxDockerDriverGatewayEnabled())(
-    "allows Podman when the native gateway runtime is explicit",
+    "allows Docker-less onboarding when the native Podman gateway runtime is explicit",
     () => {
       vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
       const exit = vi.fn();
-      assertOnboardHostReadiness(hostWithRuntime("podman"), null, {
+      assertOnboardHostReadiness(hostWithoutDocker(), null, {
         explicitlyOptedOutGpuPassthrough: false,
         exitProcess: exit as never,
       });
       expect(exit).not.toHaveBeenCalled();
+    },
+  );
+
+  it.skipIf(!isLinuxDockerDriverGatewayEnabled())(
+    "rejects unrelated blockers before native Podman host preparation",
+    () => {
+      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+      const exit = vi.fn((_code: number): never => {
+        throw new Error("exit");
+      });
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const host = {
+        ...hostWithMissingGpuIntegration(),
+        dockerInstalled: false,
+        dockerReachable: false,
+        dockerRunning: false,
+        runtime: "unknown" as const,
+      };
+      const gpu: GpuDetection = {
+        type: "nvidia",
+        platform: "linux",
+        count: 1,
+        totalMemoryMB: 24_576,
+        perGpuMB: 24_576,
+        nimCapable: true,
+      };
+
+      expect(() =>
+        assertOnboardHostReadiness(host, gpu, {
+          explicitlyOptedOutGpuPassthrough: false,
+          exitProcess: exit,
+        }),
+      ).toThrow("exit");
+      expect(mocks.prepareRuntimeHost).not.toHaveBeenCalled();
+      expect(
+        vi
+          .mocked(console.error)
+          .mock.calls.map(([line]) => line)
+          .join("\n"),
+      ).not.toContain("Install Docker");
     },
   );
 });

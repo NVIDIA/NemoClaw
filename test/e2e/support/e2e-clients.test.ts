@@ -113,6 +113,17 @@ describe("E2E fixture clients", () => {
     ]);
   });
 
+  it("does not require a stock-image receipt for onboarding help", async () => {
+    const runner = new FakeRunner();
+    const host = new HostCliClient(runner);
+
+    await expect(
+      host.command("node", ["/workspace/bin/nemoclaw.js", "onboard", "--help"], {
+        env: { E2E_MANAGED_IMAGE_REVISION: "a".repeat(40) },
+      }),
+    ).resolves.toMatchObject({ exitCode: 0 });
+  });
+
   it.each([
     { exitCode: 0, expected: true, label: "available" },
     { exitCode: 1, expected: false, label: "missing" },

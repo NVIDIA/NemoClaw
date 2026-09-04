@@ -295,8 +295,8 @@ def _assert_mutable_snapshot(snapshot: object) -> None:
         owner_matches = uid == os.geteuid()
     if not owner_matches or not (mode & stat.S_IWUSR):
         raise RuntimeError(
-            "Hermes config is locked or is not owned by the sandbox identity. "
-            "Lower shields before changing managed MCP servers."
+            "Hermes config is not writable or is not owned by the sandbox identity. "
+            "Rebuild or recreate the sandbox before changing managed MCP servers."
         )
 
 

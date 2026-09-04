@@ -13,6 +13,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { registerSandboxCleanupUnlessKept } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -26,10 +27,10 @@ import { parseJsonFromText } from "./json-envelope.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-sessions-cli";
 const TEST_AGENT_ID = process.env.NEMOCLAW_E2E_AGENT_ID ?? "work";
-const ONBOARD_TIMEOUT_MS = 40 * 60_000;
+const ONBOARD_TIMEOUT_MS = execTimeout(40 * 60_000);
 const AGENT_TURN_TIMEOUT_MS = 5 * 60_000;
 const GATEWAY_RPC_TIMEOUT_MS = 120_000;
-const TEST_TIMEOUT_MS = 60 * 60_000;
+const TEST_TIMEOUT_MS = testTimeout(60 * 60_000);
 const SCOPE_RETRY_ATTEMPTS = 5;
 const SCOPE_RETRY_DELAY_MS = 4_000;
 const SCOPE_PENDING_PATTERN =

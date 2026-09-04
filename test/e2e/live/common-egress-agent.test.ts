@@ -7,6 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { describe } from "vitest";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { parseOpenShellPolicy } from "../../../src/lib/adapters/openshell/policy-boundary.ts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -62,7 +63,7 @@ Do not invoke any other target tool. Do not use web_search, Brave Search, or Tav
 Set web_fetch maxChars to no more than 8000.
 After web_fetch returns, reply exactly PERSONAL_PUBLIC_FETCH_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.`;
 const CHAT_MODEL = process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
-const ONBOARD_TIMEOUT_MS = 25 * 60_000;
+const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
 const HERMES_AGENT_TIMEOUT_MS = 150_000;
 const HERMES_AGENT_ATTEMPTS = 3;
 const KEEP_SANDBOX =
@@ -596,7 +597,7 @@ describe.sequential("common-egress agent live targets", () => {
   openClawTest(
     "C1 OpenClaw balanced excludes weather until explicitly added, then permits a verified wttr.in curl",
     {
-      timeout: COMMON_EGRESS_TEST_TIMEOUT_MS,
+      timeout: testTimeout(COMMON_EGRESS_TEST_TIMEOUT_MS),
       meta: {
         e2ePhases: [
           "validate hosted OpenClaw prerequisites",
@@ -739,7 +740,7 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
   openClawTest(
     "C2 OpenClaw open includes public reference and agent fetches Wikidata",
     {
-      timeout: COMMON_EGRESS_TEST_TIMEOUT_MS,
+      timeout: testTimeout(COMMON_EGRESS_TEST_TIMEOUT_MS),
       meta: {
         e2ePhases: [
           "validate hosted OpenClaw prerequisites",
@@ -798,7 +799,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
   hermesTest(
     "C3 Hermes open includes public reference plus Nous presets and agent fetches Wikidata",
     {
-      timeout: COMMON_EGRESS_TEST_TIMEOUT_MS,
+      timeout: testTimeout(COMMON_EGRESS_TEST_TIMEOUT_MS),
       meta: {
         e2ePhases: [
           "validate hosted Hermes prerequisites",
@@ -860,7 +861,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
   openClawTest(
     "C4 Personal permits a public fetch without Brave Search or Tavily Search API keys",
     {
-      timeout: COMMON_EGRESS_TEST_TIMEOUT_MS,
+      timeout: testTimeout(COMMON_EGRESS_TEST_TIMEOUT_MS),
       meta: {
         e2ePhases: [
           "validate hosted representative-agent prerequisites",

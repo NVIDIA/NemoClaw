@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -27,8 +28,8 @@ import {
 } from "./gpu-e2e-helpers.ts";
 import { assertHermesFollowUpReplies } from "./hermes-cli-adapter-live.ts";
 
-const TIMEOUT_MS = 75 * 60_000;
-const HERMES_RESPONSE_TIMEOUT_MS = 90 * 60_000;
+const TIMEOUT_MS = testTimeout(75 * 60_000);
+const HERMES_RESPONSE_TIMEOUT_MS = testTimeout(90 * 60_000);
 
 function hermesResponseEnv(): NodeJS.ProcessEnv {
   return env({
@@ -118,7 +119,7 @@ test(
       artifactName: "install-gpu-ollama",
       cwd: REPO_ROOT,
       env: env(),
-      timeoutMs: 55 * 60_000,
+      timeoutMs: execTimeout(55 * 60_000),
     });
     expect(install.exitCode, resultText(install)).toBe(0);
     await artifacts.writeText("install-gpu-ollama.log", resultText(install));
@@ -400,7 +401,7 @@ test(
         artifactName: "install-gpu-hermes-ollama",
         cwd: REPO_ROOT,
         env: hermesResponseEnv(),
-        timeoutMs: 60 * 60_000,
+        timeoutMs: execTimeout(60 * 60_000),
       },
     );
     expect(install.exitCode, resultText(install)).toBe(0);

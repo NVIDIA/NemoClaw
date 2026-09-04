@@ -4,9 +4,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
 import * as agentRuntime from "../../agent/runtime";
+import { GATEWAY_PORT } from "../../core/ports";
+import { resolveGatewayName } from "../../onboard/gateway-binding";
 import * as portableAgentLifecycle from "../../onboard/experimental/portable-agent-lifecycle";
 import * as registry from "../../state/registry";
 import { classifyGatewayRestartFailure } from "./gateway-restart";
+import { selectedRuntimeAllowsHostLocalSupervisor } from "./gateway-target";
 import { restartSandboxGateway } from "./process-recovery";
 
 afterEach(() => {
@@ -183,6 +186,78 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     expect(errorSpy).toHaveBeenCalledWith(
       "  Failure layer: privileged control unavailable - gateway restart failed for 'openclaw-box'.",
     );
+  });
+
+  it("fails closed instead of using host-local supervisor control for a selected runtime", () => {
+    const deps = baseDeps();
+    const { requestGatewaySupervisorAction: hostLocalSupervisorAction, ...nonSupervisorDeps } =
+      deps;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = restartSandboxGateway("alpha", {
+      quiet: true,
+      runtimeSelection: { gatewayName: "remote-gateway", workspace: "remote-workspace" },
+      deps: nonSupervisorDeps,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      failureLayer: "privileged control unavailable",
+      detail: expect.stringContaining("SELECTED_RUNTIME_SUPERVISOR_UNAVAILABLE"),
+    });
+    expect(hostLocalSupervisorAction).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Failure layer: privileged control unavailable"),
+    );
+  });
+
+  it("allows selected-runtime control only for the exact local NemoClaw-owned gateway", () => {
+    const gatewayName = resolveGatewayName(GATEWAY_PORT);
+    const runtimeSelection = { gatewayName, workspace: "default" };
+    const managedOwner = {
+      endpoint: null,
+      gatewayName,
+      gatewayPort: GATEWAY_PORT,
+      mode: "nemoclaw-managed" as const,
+      requiredCapabilities: [],
+      source: "standalone" as const,
+      stateDir: null,
+      supervisor: null,
+    };
+
+    expect(
+      selectedRuntimeAllowsHostLocalSupervisor("alpha", runtimeSelection, {
+        getSandbox: () => ({ name: "alpha", gatewayName, gatewayPort: GATEWAY_PORT }),
+        resolveGatewayOwner: () => managedOwner,
+      }),
+    ).toBe(true);
+    expect(
+      selectedRuntimeAllowsHostLocalSupervisor(
+        "alpha",
+        { ...runtimeSelection, workspace: "remote-workspace" },
+        {
+          getSandbox: () => ({ name: "alpha", gatewayName, gatewayPort: GATEWAY_PORT }),
+          resolveGatewayOwner: () => managedOwner,
+        },
+      ),
+    ).toBe(false);
+    expect(
+      selectedRuntimeAllowsHostLocalSupervisor("alpha", runtimeSelection, {
+        getSandbox: () => ({ name: "alpha", gatewayName, gatewayPort: GATEWAY_PORT }),
+        resolveGatewayOwner: () => ({
+          ...managedOwner,
+          mode: "externally-supervised",
+          source: "declared",
+          endpoint: "https://gateway.example.test",
+          stateDir: "/var/lib/openshell",
+          supervisor: {
+            kind: "systemd-system",
+            serviceName: "openshell-gateway.service",
+            execPath: "/usr/local/bin/openshell-gateway",
+          },
+        }),
+      }),
+    ).toBe(false);
   });
 
   it("prints a bounded sanitized Hermes gateway-log tail after supervisor failure (#8614)", () => {

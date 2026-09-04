@@ -217,19 +217,6 @@ export function qualifyHermesPortableOperatingAuthority(
         sourceEnv,
         podmanAuthorityDeps,
       ));
-  const assertOpenShellFile =
-    deps.assertOpenShellExecutableFileAuthority ??
-    ((expected: HermesPortableOpenShellExecutableAuthority, resolutionEnv: NodeJS.ProcessEnv) =>
-      assertHermesPortableOpenShellExecutableFileAuthority(expected, resolutionEnv));
-  const capturePodmanFile =
-    deps.capturePodmanExecutableFileAuthority ??
-    ((socketAuthority, receipt, sourceEnv) =>
-      captureHermesPortablePodmanExecutableFileAuthority(
-        socketAuthority,
-        receipt,
-        sourceEnv,
-        podmanAuthorityDeps,
-      ));
   const capture = () => {
     const socket = measure("socketAuthority", () =>
       captureSocket(
@@ -264,6 +251,19 @@ export function qualifyHermesPortableOperatingAuthority(
       } satisfies HermesPortableConfiguredReceipt,
     };
   };
+  const assertOpenShellFile =
+    deps.assertOpenShellExecutableFileAuthority ??
+    ((expected: HermesPortableOpenShellExecutableAuthority, resolutionEnv: NodeJS.ProcessEnv) =>
+      assertHermesPortableOpenShellExecutableFileAuthority(expected, resolutionEnv));
+  const capturePodmanFile =
+    deps.capturePodmanExecutableFileAuthority ??
+    ((socketAuthority, receipt, sourceEnv) =>
+      captureHermesPortablePodmanExecutableFileAuthority(
+        socketAuthority,
+        receipt,
+        sourceEnv,
+        podmanAuthorityDeps,
+      ));
   const initial = capture();
   const assertTransactionCurrent = (): void => {
     const socket = measure("socketAuthority", () =>

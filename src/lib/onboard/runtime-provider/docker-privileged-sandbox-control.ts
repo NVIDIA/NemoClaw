@@ -4,6 +4,7 @@
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { dockerCapture } from "../../adapters/docker/run";
 import { resolvePortableDemoPrivilegedExecTarget } from "../experimental/portable-demo-lifecycle";
+import { isPortableExperimentalProfile } from "../experimental/portable-profile";
 import { compareAndSetSandboxLifecycleGeneration } from "../../state/registry/lifecycle-generation-cas";
 import type {
   RuntimeProviderPrivilegedSandboxCommandInput,
@@ -25,6 +26,8 @@ import {
 
 const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 const OPENSHELL_MANAGED_BY_VALUE = "openshell";
+const PORTABLE_OPENSHELL_MANAGED_LABEL = "openshell.managed";
+const PORTABLE_OPENSHELL_MANAGED_VALUE = "true";
 const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
 const SANITIZED_PRIVILEGED_ENV = [
@@ -53,6 +56,9 @@ function findDirectSandboxContainer(
   sandboxName: string,
   registeredSandboxNames: readonly string[],
 ): string | null {
+  const managedLabel = isPortableExperimentalProfile()
+    ? `${PORTABLE_OPENSHELL_MANAGED_LABEL}=${PORTABLE_OPENSHELL_MANAGED_VALUE}`
+    : `${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`;
   let output: string;
   try {
     output = dockerCapture(
@@ -60,7 +66,7 @@ function findDirectSandboxContainer(
         "ps",
         "--no-trunc",
         "--filter",
-        `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
+        `label=${managedLabel}`,
         "--filter",
         `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
         "--format",

@@ -23,6 +23,18 @@ type GatewaySupervisorRequest = (
   timeout?: number,
 ) => SandboxCommandResult | null;
 
+const READY_PUBLICATION_RETRY_ATTEMPTS = 31;
+const READY_PUBLICATION_RETRY_INTERVAL_MS = 100;
+const readyPublicationSleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+
+function isExactlyPrivilegedControlUnavailable(result: SandboxCommandResult | null): boolean {
+  return (
+    result?.status === 1 &&
+    result.stdout.trim() === "" &&
+    result.stderr.trim() === "PRIVILEGED_CONTROL_UNAVAILABLE"
+  );
+}
+
 function isHermesAgent(agent: ReturnType<typeof agentRuntime.getSessionAgent>): boolean {
   return !!agent && agent.name === "hermes";
 }
@@ -44,6 +56,10 @@ export function enforceHermesSecretBoundaryOnRunningGateway(
   sandboxName: string,
   agent: ReturnType<typeof agentRuntime.getSessionAgent>,
   requestGatewaySupervisorAction: GatewaySupervisorRequest,
+  options: {
+    readonly maxReadyPublicationAttempts?: number;
+    readonly sleep?: (milliseconds: number) => void;
+  } = {},
 ): HermesSecretBoundaryEnforcement | null {
   const persistedAgent = registry.getSandbox(sandboxName)?.agent;
   if (persistedAgent !== "hermes") return null;
@@ -55,7 +71,20 @@ export function enforceHermesSecretBoundaryOnRunningGateway(
     console.error("  Refusing recovery to keep the validator-enforced boundary intact.");
     return { refused: true, reason: "agent-missing", stderr: "" };
   }
-  const result = requestGatewaySupervisorAction(sandboxName, "recover");
+  const maxAttempts = Math.max(
+    1,
+    Math.floor(options.maxReadyPublicationAttempts ?? READY_PUBLICATION_RETRY_ATTEMPTS),
+  );
+  const sleep =
+    options.sleep ??
+    ((milliseconds: number) =>
+      Atomics.wait(readyPublicationSleepBuffer, 0, 0, milliseconds));
+  let result: SandboxCommandResult | null = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    result = requestGatewaySupervisorAction(sandboxName, "recover");
+    if (!isExactlyPrivilegedControlUnavailable(result) || attempt === maxAttempts) break;
+    sleep(READY_PUBLICATION_RETRY_INTERVAL_MS);
+  }
   if (!result) {
     console.error("");
     console.error(

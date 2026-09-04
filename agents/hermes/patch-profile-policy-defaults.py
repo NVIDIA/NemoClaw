@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Pin fail-safe defaults for every Hermes v0.19.0 profile home.
+"""Pin fail-safe defaults for every Hermes v0.20.6 profile home.
 
 Fresh Hermes named profiles intentionally omit ``config.yaml``. The upstream
-v2026.7.20 defaults would therefore enable smart command approval, browser
+v2026.8.27 defaults would therefore enable smart command approval, browser
 evaluation of sensitive primitives, reasoning/commentary display, update-time
 state mutation, and indefinite gateway sessions outside NemoClaw's generated
 default home.
@@ -15,7 +15,8 @@ homes. It also fixes independent config copies and loaders that bypass
 ``DEFAULT_CONFIG``:
 
 * ``tools.browser_tool`` reads raw per-home YAML, so its missing-key and error
-  fallbacks must keep the sensitive-expression denylist enabled.
+  fallbacks must keep the sensitive-expression denylist enabled. Its runtime
+  npx fallback must also remain offline after all ambient values are copied.
 * ``gateway.config.SessionResetPolicy`` constructs its own defaults, so both
   its dataclass and ``from_dict`` fallback must retain the prior 24-hour/daily
   reset policy.
@@ -26,9 +27,10 @@ homes. It also fixes independent config copies and loaders that bypass
 * ``hermes_cli.main`` independently defaults update backups and CUA refresh
   on when configuration is missing or unreadable.
 
-Every input file is bound to the exact upstream v2026.7.20 source hash before
-any edit. A Hermes upgrade must deliberately refresh these hashes and source
-shapes instead of silently carrying the patch forward.
+Every input file is bound to its exact reviewed v2026.8.27 source state before
+any edit. The browser source hash includes NemoClaw's preceding exact
+``agent-browser`` dependency pin. A Hermes upgrade must deliberately refresh
+these hashes and source shapes instead of silently carrying the patch forward.
 
 Delete this compatibility patch only when the pinned Hermes release applies
 the managed-policy values to a config-less named profile across
@@ -56,13 +58,14 @@ from managed_policy import (  # noqa: E402
 )
 
 EXPECTED_SOURCE_SHA256 = {
-    "config": "172b78ecb923048859ca177d96f5b010b44ec74bb1d13553577ff49bde1a071d",
-    "browser": "02b4a0a0c8fc8b204c8f818dff1dd64295a817e5543b8a643198bcedbfbbcba2",
-    "gateway": "7221ee05798566ca7cf570035615a9b29034cf92ce5a6eaa5eec0693040c08aa",
-    "cli": "cbcf1780174a03b225508244575915225a36502f54ad4cddf1da644d9174fec4",
-    "tui": "5d00832327e4362ac75032f95003e1fa49aead4756cf7927dcfd66447b205a59",
-    "agent": "85b7cb13d6e6306e75d5eec46f193433df680425533b7d35ee99e0f7eab9512a",
-    "main": "d6bf89a33fb708376a7ab354cff8081a3c3726dbfb91d84bbb679cd667db596c",
+    "config": "3fa2c9f02a76d77602f9b09b7b01f72ca45a40eea92dbac33cc3a1fc5071bff8",
+    "browser": "b43608826bb10f9bf919ca97757bf36fc95247bd8b14fa8626a113c639cfd73e",
+    "gateway": "d88dcda8c5a14b79d84afcc1d5784c165858ab5d6f289ba59fe421502d2c63a3",
+    "cli": "85c95927002a77602b0fb0384413357b6ee0149dfc5b31e048c29d59654a22a9",
+    "tui": "6fdeca2133b22a88c527a63764eb201c24a27fc2e894045e9bdb647f89ea7d26",
+    "tui_config": "2ffe5fae39e8962a086d4eea7ec26c3f1d29f2bb8a97422d5606eecaa2b3f116",
+    "agent": "883168664a89bcf8954bbe486b672ab01c96fc0c06c88acdaf21559905a60276",
+    "main": "fb4ee75ebcf12bd9bc014d212c7abc110e1afbcf0c2cb79caa7230dd58006911",
 }
 
 CONFIG_REQUIRED_UNCHANGED = ('"allow_unsafe_evaluate": False',)
@@ -160,6 +163,14 @@ def patch_browser_source(source: str, values: dict[str, object]) -> str:
             "        # NemoClaw compatibility override: config errors fail restricted.\n"
             f"        return {expected}",
         ),
+        (
+            "            env[_key] = os.environ[_key]\n"
+            "    return env",
+            "            env[_key] = os.environ[_key]\n"
+            "    # NemoClaw compatibility override: runtime npx never uses the network.\n"
+            '    env["npm_config_offline"] = "true"\n'
+            "    return env",
+        ),
     )
     return _replace_exact(source, replacements, label="Hermes browser policy")
 
@@ -192,34 +203,30 @@ def patch_cli_source(source: str, values: dict[str, object]) -> str:
 
 def patch_tui_source(source: str, values: dict[str, object]) -> str:
     expected = _literal(values["display.show_reasoning"])
-    replacements = (
-        (
+    return _replace_exact(
+        source,
+        ((
             "# Fallback True — keep in sync with DEFAULT_CONFIG display.show_reasoning\n"
             "    # (this loader reads the raw user YAML without the DEFAULT_CONFIG merge).\n"
             '    return bool((_load_cfg().get("display") or {}).get("show_reasoning", True))',
             "# NemoClaw compatibility override: missing raw YAML keeps reasoning hidden.\n"
             f'    return bool((_load_cfg().get("display") or {{}}).get("show_reasoning", {expected}))',
-            1,
-        ),
-        (
+        ),),
+        label="Hermes TUI policy",
+    )
+
+
+def patch_tui_config_source(source: str, values: dict[str, object]) -> str:
+    expected = _literal(values["display.show_reasoning"])
+    return _replace_exact(
+        source,
+        ((
             'if bool((cfg.get("display") or {}).get("show_reasoning", True))',
             "# NemoClaw compatibility override: missing raw YAML stays hidden.\n"
             f'            if bool((cfg.get("display") or {{}}).get("show_reasoning", {expected}))',
-            1,
-        ),
+        ),),
+        label="Hermes TUI config policy",
     )
-    patched = source
-    for old, new, expected_count in replacements:
-        old_count = patched.count(old)
-        new_count = patched.count(new)
-        if old_count != expected_count or new_count != 0:
-            raise ValueError(
-                f"Hermes TUI policy source shape changed for {old!r}: "
-                f"expected {expected_count} unpatched occurrences, found {old_count}; "
-                f"prepatched occurrences: {new_count}"
-            )
-        patched = patched.replace(old, new)
-    return patched
 
 
 def patch_agent_source(source: str, values: dict[str, object]) -> str:
@@ -285,7 +292,7 @@ def patch_file(path: Path, kind: str, values: dict[str, object]) -> None:
     expected_sha256 = EXPECTED_SOURCE_SHA256[kind]
     if actual_sha256 != expected_sha256:
         raise SystemExit(
-            f"ERROR: {path} is not the reviewed Hermes v2026.7.20 {kind} source; "
+            f"ERROR: {path} is not the reviewed Hermes v2026.8.27 {kind} source; "
             f"expected sha256 {expected_sha256}, got {actual_sha256}"
         )
 
@@ -295,6 +302,7 @@ def patch_file(path: Path, kind: str, values: dict[str, object]) -> None:
         "gateway": patch_gateway_source,
         "cli": patch_cli_source,
         "tui": patch_tui_source,
+        "tui_config": patch_tui_config_source,
         "agent": patch_agent_source,
         "main": patch_main_source,
     }[kind]
@@ -315,7 +323,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--config",
-        default="/opt/hermes/hermes_cli/config.py",
+        default="/opt/hermes/hermes_cli/config_defaults.py",
         help="Pinned Hermes configuration module",
     )
     parser.add_argument(
@@ -344,8 +352,13 @@ def main() -> int:
         help="Pinned Hermes agent initialization module",
     )
     parser.add_argument(
+        "--tui-config",
+        default="/opt/hermes/tui_gateway/methods_config.py",
+        help="Pinned Hermes TUI configuration methods module",
+    )
+    parser.add_argument(
         "--main",
-        default="/opt/hermes/hermes_cli/main.py",
+        default="/opt/hermes/hermes_cli/update_cmd.py",
         help="Pinned Hermes main/update module",
     )
     args = parser.parse_args()
@@ -359,6 +372,7 @@ def main() -> int:
     patch_file(Path(args.gateway), "gateway", values)
     patch_file(Path(args.cli), "cli", values)
     patch_file(Path(args.tui), "tui", values)
+    patch_file(Path(args.tui_config), "tui_config", values)
     patch_file(Path(args.agent), "agent", values)
     patch_file(Path(args.main), "main", values)
     return 0

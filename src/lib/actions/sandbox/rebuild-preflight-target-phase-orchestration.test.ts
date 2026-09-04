@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   bail: vi.fn(),
+  getMcpPreparationRuntimeSelection: vi.fn(),
   preflightAuthoritativeOnboardRuntime: vi.fn(async (..._args: unknown[]) => false),
   prepareManagedWorkloadRebuildHandoff: vi.fn(),
   prepareSandboxWorkloadSourceFromRebuildHandoff: vi.fn(),
@@ -13,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   resolveContextWindowForModel: vi.fn(() => 131_072),
   resolveManagedStartupInferenceRoute: vi.fn(),
   stageManagedWorkloadRebuildProfile: vi.fn(),
+}));
+
+vi.mock("./rebuild-mcp-phase", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./rebuild-mcp-phase")>()),
+  getMcpPreparationRuntimeSelection: mocks.getMcpPreparationRuntimeSelection,
 }));
 
 vi.mock("../../onboard/workload/rebuild", async (importOriginal) => ({
@@ -49,16 +55,25 @@ vi.mock("./rebuild-messaging-conflict-preflight", () => ({
 }));
 
 import { managedRebuildProfileDependencies } from "./agents/managed-workload-rebuild-profile";
+import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { prepareRebuildTargetPreflights } from "./rebuild-preflight-target-phase";
 
 describe("prepareRebuildTargetPreflights", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getMcpPreparationRuntimeSelection.mockReturnValue({
+      gatewayName: "nemoclaw",
+      localTlsDir: "/authority/tls",
+      workspace: "default",
+    });
     mocks.prepareManagedWorkloadRebuildHandoff.mockResolvedValue(null);
     mocks.preflightAuthoritativeOnboardRuntime.mockResolvedValue(false);
   });
 
-  async function prepareN1xTarget(endpointSource: "onboard" | "inference-set") {
+  async function prepareN1xTarget(
+    endpointSource: "onboard" | "inference-set",
+    mcp: { bridges: Record<string, { server: string }> } | null = null,
+  ) {
     const resumeConfig = {
       provider: "vllm-local",
       model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
@@ -100,13 +115,16 @@ describe("prepareRebuildTargetPreflights", () => {
         model: resumeConfig.model,
         endpointUrl: "http://host.openshell.internal:8000/v1",
         endpointSource,
+        mcp,
       } as never,
       rebuildAgent: "openclaw",
       autoYes: true,
       log: vi.fn(),
       bail: mocks.bail as never,
     });
-    return mocks.preflightAuthoritativeOnboardRuntime.mock.calls[0]?.[2];
+    return mocks.preflightAuthoritativeOnboardRuntime.mock.calls[0]?.[2] as
+      | RebuildRecreateOnboardOpts
+      | undefined;
   }
 
   it("resolves the Ollama context window through target preparation", async () => {
@@ -194,5 +212,21 @@ describe("prepareRebuildTargetPreflights", () => {
     const readinessOptions = await prepareN1xTarget("inference-set");
 
     expect(readinessOptions).not.toHaveProperty("allowDeferredN1xManagedVllm");
+  });
+
+  it("freezes one MCP runtime target before authoritative readiness (#10514)", async () => {
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      localTlsDir: "/authority/tls",
+      workspace: "default",
+    };
+    mocks.getMcpPreparationRuntimeSelection.mockReturnValue(runtimeSelection);
+
+    const readinessOptions = await prepareN1xTarget("onboard", {
+      bridges: { github: { server: "github" } },
+    });
+
+    expect(mocks.getMcpPreparationRuntimeSelection).toHaveBeenCalledOnce();
+    expect(readinessOptions?.runtimeSelection).toBe(runtimeSelection);
   });
 });
