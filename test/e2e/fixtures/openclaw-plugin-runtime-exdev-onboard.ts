@@ -9,31 +9,20 @@ import {
   type RetryEvidence,
 } from "../../../tools/e2e/retry-evidence.mts";
 
-const ONBOARD_OPERATION = "openclaw-plugin-runtime-exdev.onboard-pairing";
-const RECREATE_OPERATION = "openclaw-plugin-runtime-exdev.recreate-pairing";
 const OWNER = "openclaw-plugin-runtime-exdev";
-const RECREATE_ARTIFACT = "openclaw-weather-plugin-recreate";
-const RECREATE_DIAGNOSTICS_ARTIFACT = "openclaw-weather-plugin-recreate-pairing-diagnostics";
-const RECREATE_RETRY_EVIDENCE_ARTIFACT = "openclaw-weather-plugin-recreate-retry.json";
 const DIAGNOSTIC_PAIRING_FAILURE_REASONS = [
   "pairing-unavailable",
   "scope-warmup-failed",
 ] as const satisfies readonly Parameters<typeof ordinaryOpenClawPairingIncompleteMessage>[1][];
 
-type OnboardPairingEvidenceOptions<T extends CommandExitResult> = {
+type PairingEvidenceOptions<T extends CommandExitResult> = {
   captureDiagnostics(): Promise<unknown>;
+  operation:
+    | "openclaw-plugin-runtime-exdev.onboard-pairing"
+    | "openclaw-plugin-runtime-exdev.recreate-pairing";
   sandboxName: string;
   run(): Promise<T>;
   onEvidence(evidence: RetryEvidence): Promise<void> | void;
-};
-
-type RecreatePairingEvidenceOptions<T extends CommandExitResult> = {
-  captureDiagnostics(artifactName: string): Promise<unknown>;
-  cliEntrypoint: string;
-  fromDockerfile: string;
-  runCommand(args: string[], artifactName: string): Promise<T>;
-  sandboxName: string;
-  writeEvidence(artifactName: string, evidence: RetryEvidence): Promise<void> | void;
 };
 
 export function classifyOpenClawPluginOnboard<T extends CommandExitResult>(
@@ -72,12 +61,12 @@ async function capturePairingFailure<T extends CommandExitResult>(
   return value;
 }
 
-function runOpenClawPluginWithFailureEvidence<T extends CommandExitResult>(
-  options: OnboardPairingEvidenceOptions<T>,
-  operation: string,
+/** Run one pairing-sensitive lifecycle operation and retain its bounded evidence. */
+export function runOpenClawPluginWithFailureEvidence<T extends CommandExitResult>(
+  options: PairingEvidenceOptions<T>,
 ): Promise<BoundedRetryResult<T>> {
   return runBoundedRetry({
-    operation,
+    operation: options.operation,
     owner: OWNER,
     idempotence: "reconciled-mutation",
     maxAttempts: 1,
@@ -85,44 +74,4 @@ function runOpenClawPluginWithFailureEvidence<T extends CommandExitResult>(
     classify: (value, error) => classifyOpenClawPluginOnboard(value, error, options.sandboxName),
     onEvidence: options.onEvidence,
   });
-}
-
-/** Run initial onboarding once and retain evidence for any canonical pairing failure. */
-export function runOpenClawPluginOnboardWithFailureEvidence<T extends CommandExitResult>(
-  options: OnboardPairingEvidenceOptions<T>,
-): Promise<BoundedRetryResult<T>> {
-  return runOpenClawPluginWithFailureEvidence(options, ONBOARD_OPERATION);
-}
-
-/** Run sandbox recreation once and retain evidence for any canonical pairing failure. */
-export function runOpenClawPluginRecreateWithFailureEvidence<T extends CommandExitResult>(
-  options: RecreatePairingEvidenceOptions<T>,
-): Promise<BoundedRetryResult<T>> {
-  return runOpenClawPluginWithFailureEvidence(
-    {
-      sandboxName: options.sandboxName,
-      run: () =>
-        options.runCommand(
-          [
-            options.cliEntrypoint,
-            "onboard",
-            "--fresh",
-            "--recreate-sandbox",
-            "--non-interactive",
-            "--yes",
-            "--yes-i-accept-third-party-software",
-            "--name",
-            options.sandboxName,
-            "--agent",
-            "openclaw",
-            "--from",
-            options.fromDockerfile,
-          ],
-          RECREATE_ARTIFACT,
-        ),
-      captureDiagnostics: () => options.captureDiagnostics(RECREATE_DIAGNOSTICS_ARTIFACT),
-      onEvidence: (evidence) => options.writeEvidence(RECREATE_RETRY_EVIDENCE_ARTIFACT, evidence),
-    },
-    RECREATE_OPERATION,
-  );
 }

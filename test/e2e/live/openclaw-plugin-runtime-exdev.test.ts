@@ -23,10 +23,7 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
-import {
-  runOpenClawPluginOnboardWithFailureEvidence,
-  runOpenClawPluginRecreateWithFailureEvidence,
-} from "../fixtures/openclaw-plugin-runtime-exdev-onboard.ts";
+import { runOpenClawPluginWithFailureEvidence } from "../fixtures/openclaw-plugin-runtime-exdev-onboard.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
@@ -492,7 +489,8 @@ test(
       version: "v1",
     });
     openshellWrapper.selectImage(pluginImageV1);
-    const onboard = await runOpenClawPluginOnboardWithFailureEvidence({
+    const onboard = await runOpenClawPluginWithFailureEvidence({
+      operation: "openclaw-plugin-runtime-exdev.onboard-pairing",
       sandboxName: SANDBOX_NAME,
       run: () =>
         host.command(
@@ -568,19 +566,37 @@ test(
       version: "v2",
     });
     openshellWrapper.selectImage(pluginImageV2);
-    const recreate = await runOpenClawPluginRecreateWithFailureEvidence({
-      cliEntrypoint: CLI_ENTRYPOINT,
-      fromDockerfile: customPluginContext.dockerfilePath,
-      captureDiagnostics: (artifactName) => capturePairingDiagnostics(artifactName),
-      runCommand: (args, artifactName) =>
-        host.command("node", args, {
-          artifactName,
-          env: sandboxEnv,
-          timeoutMs: ONBOARD_TIMEOUT_MS,
-        }),
+    const recreate = await runOpenClawPluginWithFailureEvidence({
+      operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
+      captureDiagnostics: () =>
+        capturePairingDiagnostics("openclaw-weather-plugin-recreate-pairing-diagnostics"),
+      run: () =>
+        host.command(
+          "node",
+          [
+            CLI_ENTRYPOINT,
+            "onboard",
+            "--fresh",
+            "--recreate-sandbox",
+            "--non-interactive",
+            "--yes",
+            "--yes-i-accept-third-party-software",
+            "--name",
+            SANDBOX_NAME,
+            "--agent",
+            "openclaw",
+            "--from",
+            customPluginContext.dockerfilePath,
+          ],
+          {
+            artifactName: "openclaw-weather-plugin-recreate",
+            env: sandboxEnv,
+            timeoutMs: ONBOARD_TIMEOUT_MS,
+          },
+        ),
       sandboxName: SANDBOX_NAME,
-      writeEvidence: async (artifactName, evidence) => {
-        await artifacts.writeJson(artifactName, evidence);
+      onEvidence: async (evidence) => {
+        await artifacts.writeJson("openclaw-weather-plugin-recreate-retry.json", evidence);
       },
     });
     const recreateText = recreate.value

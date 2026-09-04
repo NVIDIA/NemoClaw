@@ -16,10 +16,7 @@ import {
 import { ordinaryOpenClawPairingIncompleteMessage } from "../../../src/lib/onboard/machine/finalization-deps.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
-import {
-  runOpenClawPluginOnboardWithFailureEvidence,
-  runOpenClawPluginRecreateWithFailureEvidence,
-} from "../fixtures/openclaw-plugin-runtime-exdev-onboard.ts";
+import { runOpenClawPluginWithFailureEvidence } from "../fixtures/openclaw-plugin-runtime-exdev-onboard.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   acceptTrustedPluginFixturePrebuild,
@@ -34,6 +31,8 @@ import {
 } from "../live/openshell-driver-config-test-wrapper.ts";
 
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
+const ONBOARD_OPERATION = "openclaw-plugin-runtime-exdev.onboard-pairing";
+const RECREATE_OPERATION = "openclaw-plugin-runtime-exdev.recreate-pairing";
 const DRIVER_CONFIG_JSON = JSON.stringify({
   docker: { mounts: [{ options: ["noexec"], target: "/tmp/exdev", type: "tmpfs" }] },
   podman: { mounts: [{ options: ["noexec"], target: "/tmp/exdev", type: "tmpfs" }] },
@@ -81,8 +80,9 @@ describe("OpenClaw plugin onboarding pairing evidence", () => {
     const captureDiagnostics = vi.fn(async () => true);
     const onEvidence = vi.fn();
 
-    const result = await runOpenClawPluginOnboardWithFailureEvidence({
+    const result = await runOpenClawPluginWithFailureEvidence({
       captureDiagnostics,
+      operation: ONBOARD_OPERATION,
       sandboxName: "fixture-sandbox",
       run,
       onEvidence,
@@ -92,7 +92,11 @@ describe("OpenClaw plugin onboarding pairing evidence", () => {
     expect(run).toHaveBeenCalledOnce();
     expect(captureDiagnostics).not.toHaveBeenCalled();
     expect(onEvidence).toHaveBeenCalledWith(
-      expect.objectContaining({ maxAttempts: 1, outcome: "passed-first-attempt" }),
+      expect.objectContaining({
+        maxAttempts: 1,
+        operation: ONBOARD_OPERATION,
+        outcome: "passed-first-attempt",
+      }),
     );
   });
 
@@ -107,8 +111,9 @@ describe("OpenClaw plugin onboarding pairing evidence", () => {
     const captureDiagnostics = vi.fn(async () => false);
     const onEvidence = vi.fn();
 
-    const result = await runOpenClawPluginOnboardWithFailureEvidence({
+    const result = await runOpenClawPluginWithFailureEvidence({
       captureDiagnostics,
+      operation: ONBOARD_OPERATION,
       sandboxName,
       run,
       onEvidence,
@@ -134,8 +139,9 @@ describe("OpenClaw plugin onboarding pairing evidence", () => {
   it("does not capture diagnostics for another onboarding failure (#9844)", async () => {
     const captureDiagnostics = vi.fn(async () => true);
 
-    const result = await runOpenClawPluginOnboardWithFailureEvidence({
+    const result = await runOpenClawPluginWithFailureEvidence({
       captureDiagnostics,
+      operation: ONBOARD_OPERATION,
       sandboxName: "fixture-sandbox",
       run: vi.fn(async () => onboardResult(1, "provider registration failed")),
       onEvidence: vi.fn(),
@@ -165,13 +171,14 @@ describe("OpenClaw plugin onboarding pairing evidence", () => {
       );
       const diagnosticExec = vi.fn(diagnosticExecution);
 
-      const result = await runOpenClawPluginOnboardWithFailureEvidence({
+      const result = await runOpenClawPluginWithFailureEvidence({
         captureDiagnostics: () =>
           captureIssue4462FailureDiagnostics({ exec: diagnosticExec } as never, {
             env: { PATH: "/usr/bin" },
             redactionValues: ["secret-api-key"],
             sandboxName,
           }),
+        operation: ONBOARD_OPERATION,
         sandboxName,
         run,
         onEvidence: vi.fn(),
@@ -192,71 +199,55 @@ describe("OpenClaw plugin onboarding pairing evidence", () => {
 });
 
 describe("OpenClaw plugin recreation pairing evidence", () => {
-  const recreateOptions = () => ({
-    captureDiagnostics: vi.fn(async () => true),
-    cliEntrypoint: "/repo/bin/nemoclaw.js",
-    fromDockerfile: "/tmp/fixture/Dockerfile",
-    sandboxName: "fixture-sandbox",
-    writeEvidence: vi.fn(),
-  });
+  it("records the recreation operation without diagnostics (#9844)", async () => {
+    const captureDiagnostics = vi.fn(async () => true);
+    const run = vi.fn(async () => onboardResult(0));
+    const onEvidence = vi.fn();
 
-  it("runs the exact recreation command once (#9844)", async () => {
-    const options = recreateOptions();
-    const runCommand = vi.fn(async () => onboardResult(0));
-
-    const result = await runOpenClawPluginRecreateWithFailureEvidence({
-      ...options,
-      runCommand,
+    const result = await runOpenClawPluginWithFailureEvidence({
+      captureDiagnostics,
+      operation: RECREATE_OPERATION,
+      run,
+      sandboxName: "fixture-sandbox",
+      onEvidence,
     });
 
     expect(result.outcome).toBe("passed");
-    expect(runCommand).toHaveBeenCalledExactlyOnceWith(
-      [
-        options.cliEntrypoint,
-        "onboard",
-        "--fresh",
-        "--recreate-sandbox",
-        "--non-interactive",
-        "--yes",
-        "--yes-i-accept-third-party-software",
-        "--name",
-        options.sandboxName,
-        "--agent",
-        "openclaw",
-        "--from",
-        options.fromDockerfile,
-      ],
-      "openclaw-weather-plugin-recreate",
-    );
-    expect(options.captureDiagnostics).not.toHaveBeenCalled();
-    expect(options.writeEvidence).toHaveBeenCalledWith(
-      "openclaw-weather-plugin-recreate-retry.json",
-      expect.objectContaining({ outcome: "passed-first-attempt" }),
+    expect(run).toHaveBeenCalledOnce();
+    expect(captureDiagnostics).not.toHaveBeenCalled();
+    expect(onEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: RECREATE_OPERATION,
+        outcome: "passed-first-attempt",
+      }),
     );
   });
 
   it("captures recreation diagnostics and fails without resuming (#9844)", async () => {
-    const options = recreateOptions();
-    const runCommand = vi.fn(async () =>
+    const sandboxName = "fixture-sandbox";
+    const captureDiagnostics = vi.fn(async () => true);
+    const onEvidence = vi.fn();
+    const run = vi.fn(async () =>
       onboardResult(
         1,
-        ordinaryOpenClawPairingIncompleteMessage(options.sandboxName, "scope-warmup-failed"),
+        ordinaryOpenClawPairingIncompleteMessage(sandboxName, "scope-warmup-failed"),
       ),
     );
 
-    const result = await runOpenClawPluginRecreateWithFailureEvidence({
-      ...options,
-      runCommand,
+    const result = await runOpenClawPluginWithFailureEvidence({
+      captureDiagnostics,
+      operation: RECREATE_OPERATION,
+      run,
+      sandboxName,
+      onEvidence,
     });
 
     expect(result.outcome).toBe("failed");
-    expect(runCommand).toHaveBeenCalledOnce();
-    expect(options.captureDiagnostics).toHaveBeenCalledExactlyOnceWith(
-      "openclaw-weather-plugin-recreate-pairing-diagnostics",
-    );
-    expect(options.writeEvidence).toHaveBeenCalledWith(
-      "openclaw-weather-plugin-recreate-retry.json",
+    expect(run).toHaveBeenCalledOnce();
+    expect(captureDiagnostics).toHaveBeenCalledOnce();
+    expect(onEvidence).toHaveBeenCalledWith(
       expect.objectContaining({
+        operation: RECREATE_OPERATION,
         outcome: "failed-no-retry",
         attempts: [
           expect.objectContaining({
