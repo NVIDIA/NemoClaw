@@ -36,20 +36,33 @@ export const NON_INTERACTIVE_PROVIDER_KEYS: ReadonlySet<string> = new Set([
   "start-windows-ollama",
 ]);
 
+export const NON_INTERACTIVE_PROVIDER_VALID_VALUES = `Valid values: ${Array.from(
+  NON_INTERACTIVE_PROVIDER_KEYS,
+  (key) => (key === "hermesProvider" ? "hermes-provider" : key),
+).join(", ")}`;
+
+/** Gateway provider names declared by built-in provider selection keys. */
+export const REMOTE_PROVIDER_NAMES_BY_SELECTION_KEY: Readonly<Record<string, string>> = {
+  build: "nvidia-prod",
+  openrouter: "openrouter-api",
+  openai: "openai-api",
+  anthropic: "anthropic-prod",
+  anthropicCompatible: "compatible-anthropic-endpoint",
+  gemini: "gemini-api",
+  hermesProvider: "hermes-provider",
+  custom: "compatible-endpoint",
+  "llama-cpp": "llama-cpp-local",
+};
+
 const PERSISTED_PROVIDER_SELECTION_KEYS: Readonly<Record<string, string>> = {
+  ...Object.fromEntries(
+    Object.entries(REMOTE_PROVIDER_NAMES_BY_SELECTION_KEY).map(([key, name]) => [name, key]),
+  ),
   "nvidia-router": "routed",
   "ollama-local": "ollama",
-  "nvidia-prod": "build",
+  "vllm-local": "vllm",
   // This legacy name identifies NVIDIA Endpoints, not Local NVIDIA NIM.
   "nvidia-nim": "build",
-  "openai-api": "openai",
-  "openrouter-api": "openrouter",
-  "anthropic-prod": "anthropic",
-  "compatible-anthropic-endpoint": "anthropicCompatible",
-  "gemini-api": "gemini",
-  "compatible-endpoint": "custom",
-  "llama-cpp-local": "llama-cpp",
-  "hermes-provider": "hermesProvider",
 };
 
 export function normalizeNonInteractiveProviderKey(

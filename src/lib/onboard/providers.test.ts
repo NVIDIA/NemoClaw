@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { persistedProviderNameToSelectionKey } from "./inference-providers/provider-selection-keys";
 
 type RunResult = {
   error?: unknown;
@@ -203,6 +204,16 @@ function withProviderEnv(next: Record<string, string | undefined>, testBody: () 
 }
 
 describe("onboard provider helpers", () => {
+  it.each(Object.entries(REMOTE_PROVIDER_CONFIG))(
+    "maps declared provider %s back from its persisted name (#11041)",
+    (key, provider) => {
+      expect(
+        persistedProviderNameToSelectionKey(provider.providerName),
+        provider.providerName,
+      ).toBe(key);
+    },
+  );
+
   it("uses Gemini 3.6 Flash as the onboarding default (#9298)", () => {
     expect(REMOTE_PROVIDER_CONFIG.gemini.defaultModel).toBe("gemini-3.6-flash");
   });
