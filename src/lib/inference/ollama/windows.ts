@@ -6,6 +6,8 @@
 // Detection lives in onboard.ts; this module owns the action side.
 
 const { spawn } = require("child_process");
+const { detectContainerRuntimeFromDockerInfo } = require("../../adapters/docker/runtime");
+const { isWsl } = require("../../platform");
 const { run, runCapture } = require("../../runner");
 const {
   getWindowsHostOllamaDockerHostValidationArgs,
@@ -135,8 +137,8 @@ function awaitWindowsOllamaReady(
   for (let attempt = 0; attempt < 15; attempt++) {
     delay(2);
     const protection = probeWindowsHostOllamaRouteProtection(runCapture, {
-      runtime: "docker-desktop",
-      wslDetection: { isWsl: true },
+      runtime: detectContainerRuntimeFromDockerInfo(),
+      wslDetection: { isWsl: isWsl() },
       prepareDockerEnvironment: opts.prepareDockerEnvironment,
     });
     if (protection.protected) {

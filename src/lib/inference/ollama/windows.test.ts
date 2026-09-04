@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const WINDOWS_DIST_PATH = require.resolve("./windows");
+const DOCKER_ADAPTER_PATH = require.resolve("../../adapters/docker/runtime");
+const PLATFORM_PATH = require.resolve("../../platform");
 const RUNNER_PATH = require.resolve("../../runner");
 const LOCAL_INFERENCE_PATH = require.resolve("../local");
 const WINDOWS_OLLAMA_TAGS_URL = "http://host.docker.internal:11434/api/tags";
@@ -19,9 +21,18 @@ function loadWindowsOllamaWithMocks(
   run: ReturnType<typeof vi.fn>,
   runCapture: ReturnType<typeof vi.fn>,
   spawnImpl?: ReturnType<typeof vi.fn>,
+  observerOverrides: {
+    detectContainerRuntimeFromDockerInfo?: ReturnType<typeof vi.fn>;
+    isWsl?: ReturnType<typeof vi.fn>;
+  } = {},
 ) {
+  const dockerAdapter = require(DOCKER_ADAPTER_PATH);
+  const platform = require(PLATFORM_PATH);
   const runner = require(RUNNER_PATH);
   const childProcess = require("child_process");
+  const originalDetectContainerRuntimeFromDockerInfo =
+    dockerAdapter.detectContainerRuntimeFromDockerInfo;
+  const originalIsWsl = platform.isWsl;
   const originalRun = runner.run;
   const originalRunCapture = runner.runCapture;
   const originalSpawn = childProcess.spawn;
@@ -29,6 +40,9 @@ function loadWindowsOllamaWithMocks(
   const atomicsWaitStub = vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
 
   delete require.cache[WINDOWS_DIST_PATH];
+  dockerAdapter.detectContainerRuntimeFromDockerInfo =
+    observerOverrides.detectContainerRuntimeFromDockerInfo ?? vi.fn(() => "docker-desktop");
+  platform.isWsl = observerOverrides.isWsl ?? vi.fn(() => true);
   runner.run = run;
   runner.runCapture = runCapture;
   childProcess.spawn = spawnImpl ?? originalSpawn;
@@ -37,6 +51,9 @@ function loadWindowsOllamaWithMocks(
     windows: require(WINDOWS_DIST_PATH),
     restore() {
       delete require.cache[WINDOWS_DIST_PATH];
+      dockerAdapter.detectContainerRuntimeFromDockerInfo =
+        originalDetectContainerRuntimeFromDockerInfo;
+      platform.isWsl = originalIsWsl;
       runner.run = originalRun;
       runner.runCapture = originalRunCapture;
       childProcess.spawn = originalSpawn;
@@ -100,6 +117,29 @@ describe("Windows Ollama helper", () => {
       restore();
       logSpy.mockRestore();
     }
+  });
+
+  it("rejects readiness when the active runtime changes away from Docker Desktop", () => {
+    const run = vi.fn();
+    const runCapture = vi.fn();
+    const detectContainerRuntimeFromDockerInfo = vi.fn(() => "docker");
+    const currentIsWsl = vi.fn(() => true);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture, undefined, {
+      detectContainerRuntimeFromDockerInfo,
+      isWsl: currentIsWsl,
+    });
+
+    try {
+      expect(windows.awaitWindowsOllamaReady({ delay: vi.fn() })).toBe(false);
+    } finally {
+      restore();
+      logSpy.mockRestore();
+    }
+
+    expect(detectContainerRuntimeFromDockerInfo).toHaveBeenCalledTimes(15);
+    expect(currentIsWsl).toHaveBeenCalledTimes(15);
+    expect(runCapture).not.toHaveBeenCalled();
   });
 
   it("rejects a reachable daemon that accepts a rebinding Host header", () => {
