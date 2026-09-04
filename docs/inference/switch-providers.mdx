@@ -138,7 +138,8 @@ Provider updates occur after OpenShell selects the new route.
 If an update fails, NemoClaw attempts to restore the previously recorded provider and model.
 A definite failure leaves the provider binding unchanged.
 If the error says that provider state may be partial, rerun onboarding to reconcile the provider before using the route or rerunning `inference set`.
-If NemoClaw cannot restore the previous selection, do not use the route until you rerun onboarding.
+If NemoClaw cannot restore the previous selection, resolve the reported restore failure.
+Then rerun onboarding before you use the route.
 
 </AgentOnly>
 
