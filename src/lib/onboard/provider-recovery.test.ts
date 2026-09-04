@@ -15,6 +15,10 @@ import {
   validateLiveGatewayInference,
 } from "./provider-recovery";
 
+const { REMOTE_PROVIDER_CONFIG } = require("./providers") as {
+  REMOTE_PROVIDER_CONFIG: Record<string, { providerName?: string }>;
+};
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -37,8 +41,8 @@ describe("persisted provider selection", () => {
     ["an unknown provider", "unknown-provider", false],
   ] as const)("uses the shared mapping for %s (#11041)", (_label, provider, hasNimContainer) => {
     const options = { hasNimContainer };
-    expect(providerNameToOptionKey({}, provider, options)).toBe(
-      persistedProviderNameToSelectionKey(provider, options),
+    expect(providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, provider, options)).toBe(
+      persistedProviderNameToSelectionKey(provider, options, REMOTE_PROVIDER_CONFIG),
     );
   });
 });

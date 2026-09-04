@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { GpuDetection } from "../../../inference/nim";
 import { createSession, type Session } from "../../../state/onboard-session";
+import { persistedProviderNameToSelectionKey } from "../../inference-providers/provider-selection-keys";
 import { resolveSandboxGpuConfig } from "../../sandbox-gpu-mode";
 import { handlePreflightState, type PreflightStateOptions } from "./preflight";
 
@@ -54,6 +55,10 @@ function createDeps(
       detectGpu: () => ({ type: "nvidia" }) as Gpu,
       runPreflight: async () => ({ type: "nvidia" }) as Gpu,
       assessHost: () => ({ cdiNvidiaGpuSpecMissing: false }),
+      providerNameToOptionKey: (
+        name: string | null | undefined,
+        options?: { hasNimContainer?: boolean },
+      ) => persistedProviderNameToSelectionKey(name, options),
       assertOnboardHostReadiness: vi.fn(),
       assertGatewayReadiness: vi.fn(async () => undefined),
       resolveSandboxGpuConfig: (

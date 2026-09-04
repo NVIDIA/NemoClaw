@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../../../state/onboard-session";
-import { isN1xOnboardingRecordedProvider } from "../../inference-providers/provider-selection-keys";
+import { isN1xOnboardingProviderKey } from "../../inference-providers/provider-selection-keys";
 import { withPreflightTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
@@ -49,6 +49,10 @@ export interface PreflightStateOptions<
     detectGpu(): Gpu;
     runPreflight(options: { optedOutGpuPassthrough?: boolean }): Promise<Gpu>;
     assessHost(): Host;
+    providerNameToOptionKey(
+      name: string | null | undefined,
+      options?: { hasNimContainer?: boolean },
+    ): string | null;
     assertOnboardHostReadiness(
       host: Host,
       gpu: Gpu,
@@ -152,9 +156,11 @@ export async function handlePreflightState<
     : { flag: null, device: null };
   const effectiveSandboxGpuFlag = explicitSandboxGpuFlag ?? resumedSandboxGpuOverrides.flag;
   const effectiveSandboxGpuDevice = sandboxGpuDevice ?? resumedSandboxGpuOverrides.device;
-  const recordedProviderAllowsDeferredN1x = isN1xOnboardingRecordedProvider(session?.provider, {
-    hasNimContainer: Boolean(session?.nimContainer),
-  });
+  const recordedProviderAllowsDeferredN1x = isN1xOnboardingProviderKey(
+    deps.providerNameToOptionKey(session?.provider, {
+      hasNimContainer: Boolean(session?.nimContainer),
+    }),
+  );
   // An explicit false is authoritative for rebuilds. Ordinary resume may use
   // the provider that this owner-only session already validated and recorded.
   const allowDeferredN1xOnboarding =

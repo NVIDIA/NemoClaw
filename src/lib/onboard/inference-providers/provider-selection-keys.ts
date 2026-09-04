@@ -41,29 +41,15 @@ export const NON_INTERACTIVE_PROVIDER_VALID_VALUES = `Valid values: ${Array.from
   (key) => (key === "hermesProvider" ? "hermes-provider" : key),
 ).join(", ")}`;
 
-/** Gateway provider names declared by built-in provider selection keys. */
-export const REMOTE_PROVIDER_NAMES_BY_SELECTION_KEY: Readonly<Record<string, string>> = {
-  build: "nvidia-prod",
-  openrouter: "openrouter-api",
-  openai: "openai-api",
-  anthropic: "anthropic-prod",
-  anthropicCompatible: "compatible-anthropic-endpoint",
-  gemini: "gemini-api",
-  hermesProvider: "hermes-provider",
-  custom: "compatible-endpoint",
-  "llama-cpp": "llama-cpp-local",
-};
-
 const PERSISTED_PROVIDER_SELECTION_KEYS: Readonly<Record<string, string>> = {
-  ...Object.fromEntries(
-    Object.entries(REMOTE_PROVIDER_NAMES_BY_SELECTION_KEY).map(([key, name]) => [name, key]),
-  ),
   "nvidia-router": "routed",
   "ollama-local": "ollama",
   "vllm-local": "vllm",
   // This legacy name identifies NVIDIA Endpoints, not Local NVIDIA NIM.
   "nvidia-nim": "build",
 };
+
+export type RemoteProviderConfigEntryLike = { providerName?: string };
 
 export function normalizeNonInteractiveProviderKey(
   value: string | null | undefined,
@@ -86,20 +72,17 @@ export function isN1xOnboardingProviderKey(value: string | null | undefined): bo
 export function persistedProviderNameToSelectionKey(
   value: string | null | undefined,
   options: { hasNimContainer?: boolean } = {},
+  remoteProviderConfig: Readonly<Record<string, RemoteProviderConfigEntryLike>> = {},
 ): string | null {
   const name = String(value ?? "").trim();
   if (!name) return null;
   // Local NIM and standalone vLLM both persist as vllm-local. Only the
   // owner-only NIM container record distinguishes the excluded NIM route.
   if (name === "vllm-local") return options.hasNimContainer ? "nim-local" : "vllm";
-  return PERSISTED_PROVIDER_SELECTION_KEYS[name] ?? normalizeNonInteractiveProviderKey(name);
-}
-
-/** True only for a recognized persisted provider route that N1x permits. */
-export function isN1xOnboardingRecordedProvider(
-  value: string | null | undefined,
-  options: { hasNimContainer?: boolean } = {},
-): boolean {
-  const selection = persistedProviderNameToSelectionKey(value, options);
-  return selection !== null && selection !== "nim-local";
+  const localOrLegacy = PERSISTED_PROVIDER_SELECTION_KEYS[name];
+  if (localOrLegacy) return localOrLegacy;
+  for (const [key, config] of Object.entries(remoteProviderConfig)) {
+    if (config.providerName === name) return normalizeNonInteractiveProviderKey(key);
+  }
+  return normalizeNonInteractiveProviderKey(name);
 }

@@ -6,8 +6,12 @@ import {
   isN1xManagedVllmProviderModel,
   isRecordedN1xManagedVllmRebuildEligible,
 } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
-import { isN1xOnboardingRecordedProvider } from "../../onboard/inference-providers/provider-selection-keys";
+import { isN1xOnboardingProviderKey } from "../../onboard/inference-providers/provider-selection-keys";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
+import {
+  providerNameToOptionKey,
+  type RemoteProviderConfigEntryLike,
+} from "../../onboard/provider-recovery";
 import {
   createRebuildRouteHandoff,
   type RegistryInferenceRoute,
@@ -26,6 +30,10 @@ import {
   type RebuildRecreateOnboardOpts,
 } from "./rebuild-gpu-opt-out";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
+
+const { REMOTE_PROVIDER_CONFIG } = require("../../onboard/providers") as {
+  REMOTE_PROVIDER_CONFIG: Record<string, RemoteProviderConfigEntryLike>;
+};
 
 export function prepareRebuildRecreateOptions(
   sandboxName: string,
@@ -120,9 +128,11 @@ export function stageRecordedDeferredN1xIntent(
   const recordedStandardProviderIsEligible =
     selectionMatchesRecord &&
     !isManagedVllmIdentity &&
-    isN1xOnboardingRecordedProvider(sandboxEntry.provider, {
-      hasNimContainer: Boolean(sandboxEntry.nimContainer),
-    });
+    isN1xOnboardingProviderKey(
+      providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, sandboxEntry.provider, {
+        hasNimContainer: Boolean(sandboxEntry.nimContainer),
+      }),
+    );
   const recordedManagedVllmIsEligible =
     !sandboxEntry.nimContainer &&
     isRecordedN1xManagedVllmRebuildEligible(

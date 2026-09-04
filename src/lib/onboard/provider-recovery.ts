@@ -10,9 +10,12 @@ import {
   normalizeInferenceEndpointSource,
 } from "../inference/selection";
 import { getLiveGatewayInference } from "../inference/live";
-import { persistedProviderNameToSelectionKey } from "./inference-providers/provider-selection-keys";
+import {
+  persistedProviderNameToSelectionKey,
+  type RemoteProviderConfigEntryLike,
+} from "./inference-providers/provider-selection-keys";
 
-export type RemoteProviderConfigEntryLike = { providerName?: string };
+export type { RemoteProviderConfigEntryLike } from "./inference-providers/provider-selection-keys";
 
 interface VllmInstallResumeSession {
   readonly vllmInstallModel?: string | null;
@@ -77,12 +80,7 @@ export function providerNameToOptionKey(
   opts: { hasNimContainer?: boolean } = {},
 ): string | null {
   if (!name) return null;
-  const builtIn = persistedProviderNameToSelectionKey(name, opts);
-  if (builtIn) return builtIn;
-  for (const [key, cfg] of Object.entries(remoteProviderConfig)) {
-    if (cfg.providerName === name) return key;
-  }
-  return null;
+  return persistedProviderNameToSelectionKey(name, opts, remoteProviderConfig);
 }
 
 export interface ProviderRecoveryDeps {

@@ -19,6 +19,7 @@ const { compactText } = require("../core/url-utils");
 const {
   LLAMA_CPP_CREDENTIAL_ENV,
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
+  LLAMA_CPP_PROVIDER_NAME,
 } = require("../inference/llama-cpp/contract");
 const {
   inspectGatewayCredentialFamilyProviderBinding,
@@ -35,9 +36,9 @@ const {
   NON_INTERACTIVE_PROVIDER_ALIASES,
   NON_INTERACTIVE_PROVIDER_KEYS,
   NON_INTERACTIVE_PROVIDER_VALID_VALUES,
-  REMOTE_PROVIDER_NAMES_BY_SELECTION_KEY,
   normalizeNonInteractiveProviderKey,
 } = require("./inference-providers/provider-selection-keys");
+const { HERMES_PROVIDER_NAME } = require("./inference-providers/hermes-provider-identity");
 
 const MESSAGING_PROVIDER_BINDING_CONFLICT = "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT";
 const MESSAGING_PROVIDER_MUTATION_FAILURE = "NEMOCLAW_MESSAGING_PROVIDER_MUTATION_FAILURE";
@@ -181,7 +182,7 @@ const PROVIDER_KEY_ROUTE_VALUES = new Set(
 const REMOTE_PROVIDER_CONFIG = {
   build: {
     label: "NVIDIA Endpoints",
-    providerName: REMOTE_PROVIDER_NAMES_BY_SELECTION_KEY.build,
+    providerName: "nvidia-prod",
     providerType: "nvidia",
     credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     endpointUrl: BUILD_ENDPOINT_URL,
@@ -192,7 +193,7 @@ const REMOTE_PROVIDER_CONFIG = {
   },
   openrouter: {
     label: "OpenRouter",
-    providerName: REMOTE_PROVIDER_NAMES_BY_SELECTION_KEY.openrouter,
+    providerName: openrouter.OPENROUTER_PROVIDER_NAME,
     providerType: openrouter.OPENROUTER_PROVIDER_TYPE,
     credentialEnv: openrouter.OPENROUTER_CREDENTIAL_ENV,
     endpointUrl: openrouter.OPENROUTER_ENDPOINT_URL,
@@ -203,7 +204,7 @@ const REMOTE_PROVIDER_CONFIG = {
   },
   openai: {
     label: "OpenAI",
-    providerName: REMOTE_PROVIDER_NAMES_BY_SELECTION_KEY.openai,
+    providerName: "openai-api",
     providerType: "openai",
     credentialEnv: "OPENAI_API_KEY",
     endpointUrl: OPENAI_ENDPOINT_URL,
@@ -214,7 +215,7 @@ const REMOTE_PROVIDER_CONFIG = {
   },
   anthropic: {
     label: "Anthropic",
-    providerName: REMOTE_PROVIDER_NAMES_BY_SELECTION_KEY.anthropic,
+    providerName: "anthropic-prod",
     providerType: "anthropic",
     credentialEnv: "ANTHROPIC_API_KEY",
     endpointUrl: ANTHROPIC_ENDPOINT_URL,
@@ -224,7 +225,7 @@ const REMOTE_PROVIDER_CONFIG = {
   },
   anthropicCompatible: {
     label: "Other Anthropic-compatible endpoint",
-    providerName: REMOTE_PROVIDER_NAMES_BY_SELECTION_KEY.anthropicCompatible,
+    providerName: "compatible-anthropic-endpoint",
     providerType: "anthropic",
     credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
     endpointUrl: "",
@@ -234,7 +235,7 @@ const REMOTE_PROVIDER_CONFIG = {
   },
   gemini: {
     label: "Google Gemini",
-    providerName: REMOTE_PROVIDER_NAMES_BY_SELECTION_KEY.gemini,
+    providerName: "gemini-api",
     providerType: "openai",
     credentialEnv: "GEMINI_API_KEY",
     endpointUrl: GEMINI_ENDPOINT_URL,
@@ -252,7 +253,7 @@ const REMOTE_PROVIDER_CONFIG = {
   // without first selecting the entry.
   hermesProvider: {
     label: "Hermes Provider (Moonshot, Z-AI, MiniMax, Qwen, Xiaomi, Tencent, StepFun, xAI, Arcee)",
-    providerName: REMOTE_PROVIDER_NAMES_BY_SELECTION_KEY.hermesProvider,
+    providerName: HERMES_PROVIDER_NAME,
     providerType: "openai",
     credentialEnv: "OPENAI_API_KEY",
     endpointUrl: HERMES_INFERENCE_ENDPOINT_URL,
@@ -263,7 +264,7 @@ const REMOTE_PROVIDER_CONFIG = {
   },
   custom: {
     label: "Other OpenAI-compatible endpoint",
-    providerName: REMOTE_PROVIDER_NAMES_BY_SELECTION_KEY.custom,
+    providerName: "compatible-endpoint",
     providerType: "openai",
     credentialEnv: "COMPATIBLE_API_KEY",
     endpointUrl: "",
@@ -274,7 +275,7 @@ const REMOTE_PROVIDER_CONFIG = {
   },
   "llama-cpp": {
     label: "Local llama.cpp",
-    providerName: REMOTE_PROVIDER_NAMES_BY_SELECTION_KEY["llama-cpp"],
+    providerName: LLAMA_CPP_PROVIDER_NAME,
     providerType: "openai",
     credentialEnv: LLAMA_CPP_CREDENTIAL_ENV,
     endpointUrl: LLAMA_CPP_HOST_OPENAI_BASE_URL,
