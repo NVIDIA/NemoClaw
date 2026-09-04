@@ -183,6 +183,29 @@ function runRuntimeEnvValidationAsGateway(lazyTarget: string) {
   );
 }
 
+function runManagedGatewayEnvValidation(envOverrides: Record<string, string>) {
+  const environment: Record<string, string> = {
+    PATH: "/usr/bin",
+    HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
+    ...envOverrides,
+  };
+  return spawnSync(
+    "python3",
+    [
+      "-I",
+      "-c",
+      [
+        "import json, runpy, sys",
+        "module = runpy.run_path(sys.argv[1], run_name='nemoclaw_managed_gateway_env_test')",
+        "raise SystemExit(module['validate_managed_gateway_env'](json.loads(sys.argv[2])))",
+      ].join("; "),
+      VALIDATOR,
+      JSON.stringify(environment),
+    ],
+    { encoding: "utf-8", timeout: 5000 },
+  );
+}
+
 describe("Hermes env secret-boundary resource limits", () => {
   it("accepts the normal 0640 mutable env-file mode", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-mode-"));
@@ -547,6 +570,28 @@ describe("Hermes durable lazy-install target", () => {
     expect(accepted.status, accepted.stderr).toBe(0);
     expect(refused.status).toBe(1);
     expect(refused.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
+  });
+
+  it("uses launcher-owned paths when the supervisor environment predates shell exports", () => {
+    const result = runManagedGatewayEnvValidation({});
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it.each([
+    {
+      case: "runtime path control",
+      key: "HERMES_CONFIG",
+      value: "/sandbox/hostile-config.yaml",
+    },
+    { case: "raw credential", key: "AWS_SECRET_ACCESS_KEY", value: "raw-secret-value" },
+  ])("rejects a $case after applying launcher-owned paths", ({ key, value }) => {
+    const result = runManagedGatewayEnvValidation({ [key]: value });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(key);
+    expect(result.stderr).not.toContain(value);
   });
 
   it.each([

@@ -194,7 +194,10 @@ with tempfile.TemporaryDirectory() as root:
         "usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
     )
     with open(boundary_path, "w", encoding="utf-8") as stream:
-        stream.write("# trusted validator fixture\n")
+        stream.write(
+            "def validate_managed_gateway_env(environment):\n"
+            "    return int('HERMES_ENABLE_PROJECT_PLUGINS' in environment)\n"
+        )
     os.chmod(boundary_path, 0o755)
 
     with control.ProcReader(proc_root) as reader:
@@ -416,13 +419,13 @@ with tempfile.TemporaryDirectory() as root:
 
         preflight_steps = []
         real_validator = control._run_fixed_validator
-        real_runtime_validator = control._validate_runtime_environment
+        real_runtime_validator = control._validate_managed_gateway_environment
         real_hash_check = control._verify_locked_hermes_hash
         control._run_fixed_validator = lambda script, arguments, _recovery_deadline=None: preflight_steps.append({
             "script": script,
             "arguments": arguments,
         })
-        control._validate_runtime_environment = lambda script, environment: preflight_steps.append({
+        control._validate_managed_gateway_environment = lambda script, environment: preflight_steps.append({
             "script": script,
             "arguments": ["runtime-env"],
             "runtime_port": environment.get("NEMOCLAW_DASHBOARD_PORT"),
@@ -431,7 +434,6 @@ with tempfile.TemporaryDirectory() as root:
         try:
             control._hermes_preflight(reader, supervisor)
             verified_preflight_steps = list(preflight_steps)
-
             real_read_stable_file = reader.read_stable_file
             real_monotonic = control.time.monotonic
             real_sleep = control.time.sleep
@@ -453,7 +455,6 @@ with tempfile.TemporaryDirectory() as root:
                 ]
             finally:
                 reader.read_stable_file = real_read_stable_file
-
             persistent_preflight_reads = []
             fake_clock[0] = 0.0
             def persistent_preflight_read(identity, _name, _limit):
@@ -471,7 +472,6 @@ with tempfile.TemporaryDirectory() as root:
                 ]
             finally:
                 reader.read_stable_file = real_read_stable_file
-
             identity_change_reads = []
             fake_clock[0] = 0.0
             real_capture = reader.capture
@@ -495,27 +495,26 @@ with tempfile.TemporaryDirectory() as root:
                 reader.capture = real_capture
                 control.time.monotonic = real_monotonic
                 control.time.sleep = real_sleep
+            control._validate_managed_gateway_environment = real_runtime_validator
+            control._hermes_preflight(reader, supervisor)
+            supervisor_environment_path = os.path.join(proc_root, "40", "environ")
+            with open(supervisor_environment_path, "wb") as stream: stream.write(
+                b"PATH=/usr/bin\0HERMES_ENABLE_PROJECT_PLUGINS=1\0"
+            )
+            try:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    control._hermes_preflight(reader, supervisor)
+                real_preflight_validation = ["accepted", "accepted"]
+            except control.ControlError as error:
+                real_preflight_validation = ["accepted", error.code]
+            finally:
+                with open(supervisor_environment_path, "wb") as stream: stream.write(
+                    b"PATH=/usr/bin\0NEMOCLAW_DASHBOARD_PORT=18789\0NEMOCLAW_HERMES_API_PORT=8645\0"
+                )
         finally:
             control._run_fixed_validator = real_validator
-            control._validate_runtime_environment = real_runtime_validator
+            control._validate_managed_gateway_environment = real_runtime_validator
             control._verify_locked_hermes_hash = real_hash_check
-
-        real_subprocess_run = control.subprocess.run
-        control.subprocess.run = lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("runtime boundary must not exec with untrusted env")
-        )
-        try:
-            control._validate_runtime_environment(
-                sys.argv[2],
-                {
-                    "LD_PRELOAD": "/tmp/attacker.so",
-                    "SAFE": "1", "HERMES_HOME": "/sandbox/.hermes", "HERMES_BUNDLED_PLUGINS": "/opt/hermes/plugins",
-                    "HERMES_LAZY_INSTALL_TARGET": "/sandbox/.hermes/lazy-packages",
-                },
-            )
-            runtime_validation = "in-process"
-        finally:
-            control.subprocess.run = real_subprocess_run
 
         write_process(
             proc_root,
@@ -1210,7 +1209,7 @@ with tempfile.TemporaryDirectory() as root:
             persistent_preflight_retry,
             changed_preflight_identity,
         ],
-        "runtime_validation": runtime_validation,
+        "real_preflight_validation": real_preflight_validation,
         "missing_supervisor": missing_supervisor,
         "appearing_supervisor": appearing_supervisor,
         "unreadable_process": unreadable_process,
@@ -1301,7 +1300,7 @@ describe("managed gateway root control", () => {
   it("pins the OpenShell process tree, rejects ambiguity/reuse, and proves restart/recover", () => {
     const result = spawnSync("python3", ["-c", PROCESS_HARNESS, HELPER, BOUNDARY_VALIDATOR], {
       encoding: "utf-8",
-      timeout: 10_000,
+      timeout: 15_000,
       env: {
         ...process.env,
         HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
@@ -1346,7 +1345,7 @@ describe("managed gateway root control", () => {
         ["SUPERVISOR_UNAVAILABLE", true, 1],
         ["SUPERVISOR_UNAVAILABLE", 0],
       ],
-      runtime_validation: "in-process",
+      real_preflight_validation: ["accepted", "SECRET_BOUNDARY_REFUSED"],
       missing_supervisor: "SUPERVISOR_NOT_RUNNING",
       appearing_supervisor: "SUPERVISOR_UNAVAILABLE",
       unreadable_process: "SUPERVISOR_DISCOVERY_PENDING",

@@ -171,6 +171,10 @@ describe("reviewed npm audit receipt", () => {
         fs.writeFileSync(path.join(root, "package-lock.json"), inputs.packageLock);
         fs.writeFileSync(path.join(root, "exceptions.json"), inputs.exceptionPolicy);
         fs.writeFileSync(path.join(root, "raw.json"), inputs.rawResponse);
+        fs.writeFileSync(
+          path.join(root, "reviewed-npm-audit.json"),
+          JSON.stringify({ npmVersion: inputs.npmVersion }),
+        );
         const auditReceipt = legacy
           ? {
               ...receipt(new Date()),
@@ -194,8 +198,8 @@ describe("reviewed npm audit receipt", () => {
           path.join(root, "exceptions.json"),
           "--graph",
           inputs.graphId,
-          "--npm-version",
-          inputs.npmVersion,
+          "--audit-config",
+          path.join(root, "reviewed-npm-audit.json"),
           "--registry",
           registry,
           "--threshold",
@@ -211,6 +215,95 @@ describe("reviewed npm audit receipt", () => {
         });
         expect(withoutMigrationFlag.status).toBe(unflaggedStatus);
         expect(withoutMigrationFlag.stderr).toContain(unflaggedStderr);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
+    {
+      error: "",
+      label: "the canonical npm version",
+      npmVersion: inputs.npmVersion,
+      policy: { graph: inputs.graphId, status: "clean" },
+      rawCopy: inputs.rawResponse,
+      status: 0,
+    },
+    {
+      error: "receipt identity does not match expected graph and npm",
+      label: "a mismatched npm version",
+      npmVersion: "11.18.0",
+      policy: undefined,
+      rawCopy: undefined,
+      status: 1,
+    },
+  ])(
+    "executes the receipt producer-to-Docker-consumer contract for $label",
+    ({ error, npmVersion, policy, rawCopy, status }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "receipt-docker-contract-"));
+      const resultFile = path.join(root, "policy.json");
+      const rawCopyFile = path.join(root, "copied-raw.json");
+      try {
+        fs.writeFileSync(path.join(root, "package.json"), inputs.packageJson);
+        fs.writeFileSync(path.join(root, "package-lock.json"), inputs.packageLock);
+        fs.writeFileSync(path.join(root, "exceptions.json"), inputs.exceptionPolicy);
+        fs.writeFileSync(path.join(root, "raw.json"), inputs.rawResponse);
+        fs.writeFileSync(
+          path.join(root, "receipt.json"),
+          canonicalAuditReceipt(receipt(new Date())),
+        );
+        fs.writeFileSync(
+          path.join(root, "reviewed-npm-audit.json"),
+          JSON.stringify({ npmVersion }),
+        );
+
+        const result = spawnSync(
+          process.execPath,
+          [
+            "--experimental-strip-types",
+            path.join(import.meta.dirname, "../../../scripts/lib/npm-audit-receipt.mts"),
+            "--receipt",
+            path.join(root, "receipt.json"),
+            "--package-json",
+            path.join(root, "package.json"),
+            "--package-lock",
+            path.join(root, "package-lock.json"),
+            "--raw-report",
+            path.join(root, "raw.json"),
+            "--exceptions",
+            path.join(root, "exceptions.json"),
+            "--graph",
+            inputs.graphId,
+            "--audit-config",
+            path.join(root, "reviewed-npm-audit.json"),
+            "--registry",
+            inputs.registryOrigin,
+            "--threshold",
+            inputs.severityThreshold,
+            "--result",
+            resultFile,
+            "--raw-copy",
+            rawCopyFile,
+          ],
+          { encoding: "utf8" },
+        );
+
+        expect(result.status, result.stderr).toBe(status);
+        expect(fs.existsSync(resultFile)).toBe(status === 0);
+        expect(fs.existsSync(rawCopyFile)).toBe(status === 0);
+        const observedPolicy = fs.existsSync(resultFile)
+          ? (JSON.parse(fs.readFileSync(resultFile, "utf8")) as Record<string, unknown>)
+          : undefined;
+        expect(
+          observedPolicy === undefined
+            ? undefined
+            : { graph: observedPolicy.graph, status: observedPolicy.status },
+        ).toEqual(policy);
+        expect(fs.existsSync(rawCopyFile) ? fs.readFileSync(rawCopyFile, "utf8") : undefined).toBe(
+          rawCopy,
+        );
+        expect(result.stderr).toContain(error);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

@@ -49,6 +49,7 @@ interface HermesCronRestoreReceipt {
   profiles?: number;
   active_jobs?: number;
   script_jobs?: number;
+  rearmed_oneshots?: number;
   disposition: HermesCronRestoreDisposition;
   operator_drain_active: boolean;
   preserved_drain?: boolean;
@@ -139,31 +140,6 @@ export interface HermesPostRestoreGatewayVerification {
  * identity whose MCP load just converged. A gated rebuild keeps the root-owned
  * cron drain active across restart, MCP restoration, and final verification.
  */
-export function ensureHermesGatewayAfterStateRestore(
-  sandboxName: string,
-  agentName: string,
-  deps: HermesPostRestoreGatewayDeps = {},
-): HermesPostRestoreGatewayState {
-  const restartState = restartHermesGatewayAfterStateRestore(sandboxName, agentName, deps);
-  return verifyHermesGatewayAfterStateRestore(sandboxName, agentName, restartState, deps);
-}
-
-export function ensureHermesGatewayAfterStateRestoreForCronGate(
-  sandboxName: string,
-  agentName: string,
-  originalIdentity: HermesCronRestoreIdentity,
-  deps: HermesPostRestoreGatewayDeps = {},
-): HermesPostRestoreGatewayVerification {
-  const restartState = restartHermesGatewayAfterStateRestore(sandboxName, agentName, deps);
-  return verifyHermesGatewayAfterStateRestoreForCronGate(
-    sandboxName,
-    agentName,
-    restartState,
-    originalIdentity,
-    deps,
-  );
-}
-
 export function restartHermesGatewayAfterStateRestore(
   sandboxName: string,
   agentName: string,
@@ -400,6 +376,7 @@ function parseCronRestoreReceipt(
         isNonNegativeInteger(receipt.profiles) &&
         isNonNegativeInteger(receipt.active_jobs) &&
         isNonNegativeInteger(receipt.script_jobs) &&
+        isNonNegativeInteger(receipt.rearmed_oneshots) &&
         isReleaseDispositionValid(receipt) &&
         hasExactReceiptFields(receipt, [
           ...baseFields,
@@ -408,6 +385,7 @@ function parseCronRestoreReceipt(
           "profiles",
           "active_jobs",
           "script_jobs",
+          "rearmed_oneshots",
           "preserved_drain",
         ]);
       break;
@@ -418,6 +396,7 @@ function parseCronRestoreReceipt(
           isNonNegativeInteger(receipt.profiles) &&
           isNonNegativeInteger(receipt.active_jobs) &&
           isNonNegativeInteger(receipt.script_jobs) &&
+          isNonNegativeInteger(receipt.rearmed_oneshots) &&
           isReleaseDispositionValid(receipt) &&
           hasExactReceiptFields(receipt, [
             ...baseFields,
@@ -426,6 +405,7 @@ function parseCronRestoreReceipt(
             "profiles",
             "active_jobs",
             "script_jobs",
+            "rearmed_oneshots",
             "preserved_drain",
           ]);
       } else {

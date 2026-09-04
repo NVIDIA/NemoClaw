@@ -51,6 +51,12 @@ function npmEnvironment(
   };
 }
 
+function rootPackagePackEnvironment(
+  environment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return { ...npmEnvironment(environment), NEMOCLAW_INSTALLING: "1" };
+}
+
 function writeRuntimeProbe(probePath: string): void {
   fs.writeFileSync(
     probePath,
@@ -169,6 +175,12 @@ type ProbeEvidence = Readonly<{
 }>;
 
 describe("packaged Blueprint Runner npm cache", () => {
+  it("marks root package packing as installer-owned so prepare cannot race the build", () => {
+    const environment = rootPackagePackEnvironment({ NEMOCLAW_INSTALLING: "" });
+
+    expect(environment.NEMOCLAW_INSTALLING).toBe("1");
+  });
+
   it("uses the populated trusted runner cache before npm exec's default", () => {
     const runnerTemp = path.join(os.tmpdir(), "trusted-runner");
     const environment = npmEnvironment(
@@ -227,7 +239,7 @@ describe.sequential("packaged Blueprint Runner external target", () => {
     const pack = spawnSync(
       "npm",
       ["pack", "--ignore-scripts", "--silent", "--pack-destination", archiveRoot],
-      { cwd: REPOSITORY_ROOT, encoding: "utf8", env: npmEnvironment() },
+      { cwd: REPOSITORY_ROOT, encoding: "utf8", env: rootPackagePackEnvironment() },
     );
     assertCommandSucceeded(pack, "root package archive creation");
     const archives = fs.readdirSync(archiveRoot).filter((entry) => entry.endsWith(".tgz"));

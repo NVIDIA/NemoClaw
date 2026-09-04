@@ -784,12 +784,12 @@ def main(argv: list[str]) -> int:
             return 1
         os.environ["HERMES_HOME"] = _MANAGED_HERMES_HOME
         os.environ["HERMES_BUNDLED_PLUGINS"] = _MANAGED_BUNDLED_PLUGINS
+        os.environ["HERMES_LAZY_INSTALL_TARGET"] = _GATEWAY_LAZY_INSTALL_TARGET
         os.environ["HOME"] = _MANAGED_HOME
+        _harden_root_separated_gateway_package_env()
         rc = _run_gateway_guard(guard_path)
         if rc != 0:
             return rc
-        if os.environ.get("HERMES_LAZY_INSTALL_TARGET") == _GATEWAY_LAZY_INSTALL_TARGET:
-            _harden_root_separated_gateway_package_env()
     try:
         adapter = _load_cli_adapter(_resolve_cli_adapter())
         adapter_result, exec_argv = _adapt_cli_argv(argv, adapter)

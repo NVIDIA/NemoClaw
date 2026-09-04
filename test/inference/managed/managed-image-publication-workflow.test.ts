@@ -207,7 +207,7 @@ describe("complete managed-image publication workflow", () => {
       if: "github.repository == 'NVIDIA/NemoClaw'",
       permissions: { contents: "read" },
       "runs-on": "ubuntu-latest",
-      "timeout-minutes": 15,
+      "timeout-minutes": 25,
     });
     expect(step(reviewedAudit, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(reviewedAudit, "Audit reviewed production npm graphs")).toMatchObject({
@@ -410,7 +410,7 @@ describe("complete managed-image publication workflow", () => {
       if: "github.event_name == 'pull_request'",
       permissions: { contents: "read" },
       "runs-on": "ubuntu-latest",
-      "timeout-minutes": 15,
+      "timeout-minutes": 25,
     });
     const candidateCheckout = step(reviewedAudit, "Checkout commit under review");
     expect(candidateCheckout.with).toMatchObject({

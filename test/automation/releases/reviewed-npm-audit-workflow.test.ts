@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 import {
   assertReviewedAuditReportsPass,
   NPM_AUDIT_SIGNATURE_ARGV,
@@ -23,7 +24,6 @@ import {
   verifySignaturesWithReviewedRetry,
 } from "../../../scripts/audit-reviewed-npm-graph.mts";
 import { verifyInstalledNpmLock } from "../../../scripts/lib/reviewed-npm-archive.mts";
-import { parseAndVerifyAuditReceipt } from "../../../scripts/lib/npm-audit-receipt.mts";
 import type { AuditPolicyResult } from "../../../scripts/lib/reviewed-npm-audit.mts";
 
 type WorkflowStep = {
@@ -45,7 +45,14 @@ type Workflow = {
   readonly jobs: Record<string, WorkflowJob>;
 };
 
+type CompositeAction = { readonly runs: WorkflowJob };
+
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
+const REVIEWED_AUDIT_CONFIG_SOURCE = fs.readFileSync(
+  path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"),
+  "utf8",
+);
+const REVIEWED_AUDIT_CONFIG = parseAuditConfig(REVIEWED_AUDIT_CONFIG_SOURCE);
 
 type ConsolidatedAuditFixture = Readonly<{
   npmCalls: readonly string[];
@@ -55,6 +62,7 @@ type ConsolidatedAuditFixture = Readonly<{
   lockedPackageLock: Buffer;
   provenance?: Record<string, unknown>;
   result: ReturnType<typeof spawnSync>;
+  trustedCacheModes?: { directory: number; entry: number };
 }>;
 
 function runConsolidatedAuditFixture(
@@ -64,11 +72,14 @@ function runConsolidatedAuditFixture(
     metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 } },
   }),
   auditStatus = 0,
+  offlinePackStatus = 0,
+  observedNpmVersion = REVIEWED_AUDIT_CONFIG.npmVersion,
 ): ConsolidatedAuditFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-audit-entry-"));
   const trustedRoot = path.join(root, "trusted");
   const targetRoot = path.join(root, "target");
   const bin = path.join(root, "bin");
+  const cacheModesFile = path.join(root, "cache-modes");
   const callsFile = path.join(root, "npm-calls");
   const artifactDirectory = path.join(targetRoot, "artifacts", "reviewed-npm-audit");
   try {
@@ -122,6 +133,8 @@ function runConsolidatedAuditFixture(
           },
         ],
         nodeVersion: process.version.slice(1),
+        npmIntegrity: REVIEWED_AUDIT_CONFIG.npmIntegrity,
+        npmVersion: REVIEWED_AUDIT_CONFIG.npmVersion,
         registryOrigin: "https://registry.npmjs.org/",
         schemaVersion: 2,
         severityThreshold: "high",
@@ -157,13 +170,22 @@ function runConsolidatedAuditFixture(
 const fs = require("node:fs");
 fs.appendFileSync(process.env.NEMOCLAW_TEST_NPM_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
 const args = process.argv.slice(2);
-if (args[0] === "--version") { console.log("10.9.4"); process.exit(0); }
+if (args[0] === "--version") { console.log(process.env.NEMOCLAW_TEST_NPM_VERSION); process.exit(0); }
 if (args[0] === "config") { console.log("https://registry.npmjs.org/"); process.exit(0); }
 if (args[0] === "view") {
   console.log(args.includes("dist.tarball") ? process.env.NEMOCLAW_TEST_REVIEWED_TARBALL : process.env.NEMOCLAW_TEST_REVIEWED_INTEGRITY);
   process.exit(0);
 }
 if (args[0] === "pack") {
+  if (process.env.NPM_CONFIG_OFFLINE === "true") {
+    const trustedCache = process.env.NPM_CONFIG_CACHE.replace(/wechat-install-cache$/, "wechat-trusted-cache");
+    fs.writeFileSync(process.env.NEMOCLAW_TEST_CACHE_MODES_FILE, JSON.stringify({
+      directory: fs.statSync(trustedCache).mode & 0o777,
+      entry: fs.statSync(trustedCache + "/_cacache/fixture").mode & 0o777,
+    }));
+    const status = Number(process.env.NEMOCLAW_TEST_OFFLINE_PACK_STATUS);
+    if (status !== 0) { console.error("simulated offline pack failure"); process.exit(status); }
+  }
   const destination = args[args.indexOf("--pack-destination") + 1];
   const filename = "fixture.tgz";
   fs.writeFileSync(destination + "/" + filename, "fixture");
@@ -172,6 +194,11 @@ if (args[0] === "pack") {
 }
 if (args[0] === "audit" && args[1] === "signatures") process.exit(0);
 if (args[0] === "audit") { process.stdout.write(process.env.NEMOCLAW_TEST_AUDIT_OUTPUT); process.exit(Number(process.env.NEMOCLAW_TEST_AUDIT_STATUS)); }
+if (args[0] === "cache" && args[1] === "add") {
+  fs.mkdirSync(process.env.NPM_CONFIG_CACHE + "/_cacache", { recursive: true });
+  fs.writeFileSync(process.env.NPM_CONFIG_CACHE + "/_cacache/fixture", "cached");
+  process.exit(0);
+}
 if (args[0] === "ci" && !fs.existsSync("package-lock.json")) {
   console.error("npm ci requires an existing package-lock.json");
   process.exit(1);
@@ -202,7 +229,7 @@ process.exit(0);
       process.execPath,
       [
         "--experimental-strip-types",
-        path.join(trustedRoot, "scripts/audit-reviewed-npm-graph.mts"),
+        fs.realpathSync(path.join(trustedRoot, "scripts/audit-reviewed-npm-graph.mts")),
       ],
       {
         cwd: trustedRoot,
@@ -213,7 +240,10 @@ process.exit(0);
           NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: targetRoot,
           NEMOCLAW_TEST_AUDIT_OUTPUT: auditOutput,
           NEMOCLAW_TEST_AUDIT_STATUS: String(auditStatus),
+          NEMOCLAW_TEST_CACHE_MODES_FILE: cacheModesFile,
           NEMOCLAW_TEST_NPM_CALLS: callsFile,
+          NEMOCLAW_TEST_NPM_VERSION: observedNpmVersion,
+          NEMOCLAW_TEST_OFFLINE_PACK_STATUS: String(offlinePackStatus),
           NEMOCLAW_TEST_REVIEWED_INTEGRITY: integrity,
           NEMOCLAW_TEST_REVIEWED_TARBALL:
             "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
@@ -237,6 +267,12 @@ process.exit(0);
         ? (JSON.parse(fs.readFileSync(provenanceFile, "utf-8")) as Record<string, unknown>)
         : undefined,
       result,
+      trustedCacheModes: fs.existsSync(cacheModesFile)
+        ? (JSON.parse(fs.readFileSync(cacheModesFile, "utf-8")) as {
+            directory: number;
+            entry: number;
+          })
+        : undefined,
     };
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -287,33 +323,51 @@ function writeProductionSourceGraph(
 }
 
 describe("trusted reviewed npm audit workflow (#5896)", () => {
-  it("emits a current Yarn receipt accepted by the image verifier contract", () => {
-    const fixture = runConsolidatedAuditFixture(() => {});
-    expect(fixture.result.status, fixture.result.stderr.toString()).toBe(0);
-    expect(fixture.lockedReceipt).toBeDefined();
-    expect(fixture.lockedRawReport).toBeDefined();
-    const verified = parseAndVerifyAuditReceipt(fixture.lockedReceipt!, {
-      graphId: "wechat-runtime",
-      npmVersion: "10.9.4",
-      exceptionPolicy: '{"schemaVersion":1,"exceptions":[]}\n',
-      severityThreshold: "low",
-      packageJson: fixture.lockedPackageJson,
-      packageLock: fixture.lockedPackageLock,
-      rawResponse: fixture.lockedRawReport!,
-      registryOrigin: "https://registry.yarnpkg.com",
+  // source-shape-contract: security -- Composite audit inputs must cross into executable shell only through the step environment
+  it("passes the cache identity target root without interpolating it into shell source", () => {
+    const action = YAML.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, ".github", "actions", "ci-reviewed-npm-audit", "action.yaml"),
+        "utf8",
+      ),
+    ) as CompositeAction;
+    const cacheBucketStep = requiredStep(action.runs, "Resolve reviewed npm audit cache buckets");
+
+    expect(cacheBucketStep.env).toEqual({
+      NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIRECTORY: "${{ inputs.cache-directory }}",
+      NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: "${{ inputs.target-root }}",
     });
-    expect(verified.registryOrigin).toBe("https://registry.yarnpkg.com");
-    expect(verified.argv).toEqual([
-      "audit",
-      "--registry=https://registry.yarnpkg.com",
-      "--omit=dev",
-      "--json",
-    ]);
-    expect(fixture.npmCalls.filter((call) => call.startsWith('["audit"'))).toSatisfy(
-      (calls: string[]) =>
-        calls.length > 0 &&
-        calls.every((call) => call.includes("--registry=https://registry.yarnpkg.com")),
+    expect(cacheBucketStep.run).toContain(
+      "const targetRoot = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT;",
     );
+    expect(cacheBucketStep.run).not.toContain("${{ inputs.cache-directory }}");
+    expect(cacheBucketStep.run).not.toContain("${{ inputs.target-root }}");
+  });
+
+  it("rejects audit production when installed npm differs from the reviewed identity", () => {
+    const fixture = runConsolidatedAuditFixture(() => {}, undefined, 0, 0, "11.18.0");
+
+    expect(fixture.result.status).not.toBe(0);
+    expect(fixture.result.stderr).toContain(
+      `reviewed npm audit requires npm ${REVIEWED_AUDIT_CONFIG.npmVersion}; running npm 11.18.0`,
+    );
+    expect(fixture.lockedReceipt).toBeUndefined();
+  });
+
+  it("restores the read-only trusted cache after offline packing fails", () => {
+    const fixture = runConsolidatedAuditFixture(() => {}, undefined, 0, 9);
+
+    expect({
+      status: fixture.result.status,
+      stderr: fixture.result.stderr.toString(),
+      trustedCacheModes: fixture.trustedCacheModes,
+      cleanupPermissionFailure: fixture.result.stderr.includes("EACCES"),
+    }).toEqual({
+      status: 1,
+      stderr: expect.stringContaining("simulated offline pack failure"),
+      trustedCacheModes: { directory: 0o555, entry: 0o444 },
+      cleanupPermissionFailure: false,
+    });
   });
 
   it("rejects a target-controlled npm registry override", () => {
@@ -438,7 +492,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
         id: "wechat-runtime",
         inputValidation: "wechat-runtime",
         installMode: "legacy-peer-deps",
-        lockSha256: "27fcc4abe6707d5d710c691b25b942a269ebe2b652c6591174ee01fe06a5df35",
+        lockSha256: "09a91cabd559ed2294fb263602009f9f79259e765281992e56961eed0e8c1ed9",
         severityThreshold: "low",
         signatureAudit: "retry-download-failures",
       }),
@@ -529,6 +583,8 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
         },
       ],
       nodeVersion: "22.23.2",
+      npmIntegrity: REVIEWED_AUDIT_CONFIG.npmIntegrity,
+      npmVersion: REVIEWED_AUDIT_CONFIG.npmVersion,
       registryOrigin: "https://registry.npmjs.org/",
       schemaVersion: 2,
       severityThreshold: "high",

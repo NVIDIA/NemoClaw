@@ -1,13 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Hardens the pinned Hermes gateway boundary against sandbox-controlled plugin
-# discovery, mutable dotenv process controls, and package-installer inputs.
+# Hardens the pinned Hermes v2026.8.27 gateway boundary against sandbox-controlled
+# plugin discovery, mutable dotenv process controls, and package-installer inputs.
 diff --git a/hermes_cli/env_loader.py b/hermes_cli/env_loader.py
-index 9dea6e5fe9..e5e75594a9 100644
+index f926c6e..82b0219 100644
 --- a/hermes_cli/env_loader.py
 +++ b/hermes_cli/env_loader.py
-@@ -160,10 +160,29 @@ def _sanitize_loaded_credentials() -> None:
+@@ -340,18 +340,37 @@ def _sanitize_loaded_credentials() -> None:
 
 
  def _load_dotenv_with_fallback(path: Path, *, override: bool) -> None:
@@ -24,13 +24,29 @@ index 9dea6e5fe9..e5e75594a9 100644
 +            if nemoclaw_protected_process_control(key)
 +        }
      try:
--        load_dotenv(dotenv_path=path, override=override, encoding="utf-8")
+-        # utf-8-sig strips a leading UTF-8 BOM if present (PowerShell 5.1
+-        # Set-Content -Encoding UTF8 / Notepad) and is a no-op for BOM-less
+-        # UTF-8. Plain "utf-8" would keep U+FEFF on the first key name and
+-        # silently drop it from os.environ under its canonical name.
+-        load_dotenv(dotenv_path=path, override=override, encoding="utf-8-sig")
 -    except UnicodeDecodeError:
--        load_dotenv(dotenv_path=path, override=override, encoding="latin-1")
+-        # utf-8-sig can't strip a BOM once we fall back to latin-1 decode.
+-        raw = path.read_bytes()
+-        if raw.startswith(codecs.BOM_UTF8):
+-            raw = raw[len(codecs.BOM_UTF8) :]
+-        load_dotenv(stream=io.StringIO(raw.decode("latin-1")), override=override)
 +        try:
-+            load_dotenv(dotenv_path=path, override=override, encoding="utf-8")
++            # utf-8-sig strips a leading UTF-8 BOM if present (PowerShell 5.1
++            # Set-Content -Encoding UTF8 / Notepad) and is a no-op for BOM-less
++            # UTF-8. Plain "utf-8" would keep U+FEFF on the first key name and
++            # silently drop it from os.environ under its canonical name.
++            load_dotenv(dotenv_path=path, override=override, encoding="utf-8-sig")
 +        except UnicodeDecodeError:
-+            load_dotenv(dotenv_path=path, override=override, encoding="latin-1")
++            # utf-8-sig can't strip a BOM once we fall back to latin-1 decode.
++            raw = path.read_bytes()
++            if raw.startswith(codecs.BOM_UTF8):
++                raw = raw[len(codecs.BOM_UTF8) :]
++            load_dotenv(stream=io.StringIO(raw.decode("latin-1")), override=override)
 +    finally:
 +        if protected is not None:
 +            for key in tuple(os.environ):
@@ -41,19 +57,18 @@ index 9dea6e5fe9..e5e75594a9 100644
      # loaded.  API keys must be pure ASCII since they're sent as HTTP
      # header values (httpx encodes headers as ASCII).  Non-ASCII chars
 diff --git a/hermes_cli/plugins.py b/hermes_cli/plugins.py
-index 6ca393fca5..f798e33ec7 100644
+index 0d6dc6a..c7422bc 100644
 --- a/hermes_cli/plugins.py
 +++ b/hermes_cli/plugins.py
-@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
- from pathlib import Path
- from typing import Any, Callable, Dict, List, Optional, Set, Union
-
--from hermes_constants import get_hermes_home
-+from hermes_constants import get_hermes_home, nemoclaw_managed_gateway_plugins_only
- from utils import env_var_enabled, fast_safe_load
- from hermes_cli.config import cfg_get
- from hermes_cli.middleware import OBSERVER_SCHEMA_VERSION, VALID_MIDDLEWARE
-@@ -59,6 +59,8 @@ def get_bundled_plugins_dir() -> Path:
+@@ -58,6 +58,7 @@ from typing import (Any, Callable, Dict, Iterable, List, Mapping, Optional, Set,
+ from hermes_constants import (
+     get_hermes_home,
+     hermes_home_key,
++    nemoclaw_managed_gateway_plugins_only,
+     reset_hermes_home_override,
+     set_hermes_home_override,
+ )
+@@ -87,6 +88,8 @@ def get_bundled_plugins_dir() -> Path:
      installs) so read-only store paths are consulted first.  Falls back to
      the in-repo path used during development.
      """
@@ -62,7 +77,21 @@ index 6ca393fca5..f798e33ec7 100644
      env_override = os.getenv("HERMES_BUNDLED_PLUGINS")
      if env_override:
          return Path(env_override)
-@@ -1346,29 +1348,36 @@ class PluginManager:
+@@ -4200,9 +4203,10 @@ class PluginManager:
+         # Directory plugins are collected above. Pip / entry-point plugins
+         # are intentionally separate: portable packages are directory-only
+         # and the startup MCP probe must not import or register entry points.
+-        ep_manifests = self._scan_entry_points()
+-        logger.debug("  entrypoints: %d manifest(s)", len(ep_manifests))
+-        manifests.extend(ep_manifests)
++        if not nemoclaw_managed_gateway_plugins_only():
++            ep_manifests = self._scan_entry_points()
++            logger.debug("  entrypoints: %d manifest(s)", len(ep_manifests))
++            manifests.extend(ep_manifests)
+
+         # Load each manifest (skip user-disabled plugins).
+         # Later sources override earlier ones on key collision — user
+@@ -4423,25 +4427,29 @@ class PluginManager:
          logger.debug("  bundled/platforms: %d manifest(s)", len(bundled_platforms))
          manifests.extend(bundled_platforms)
 
@@ -73,7 +102,8 @@ index 6ca393fca5..f798e33ec7 100644
 -        logger.debug("  user: %d manifest(s)", len(user_manifests))
 -        manifests.extend(user_manifests)
 -
--        # 3. Project plugins (./.hermes/plugins/)
+-        # 3. Project plugins (./.hermes/plugins/), only when explicitly opted
+-        # in. This must match the full discovery gate exactly.
 -        if _env_enabled("HERMES_ENABLE_PROJECT_PLUGINS"):
 -            project_dir = Path.cwd() / ".hermes" / "plugins"
 -            logger.debug("Scanning project plugins: %s", project_dir)
@@ -94,7 +124,8 @@ index 6ca393fca5..f798e33ec7 100644
 +            logger.debug("  user: %d manifest(s)", len(user_manifests))
 +            manifests.extend(user_manifests)
 +
-+            # 3. Project plugins (./.hermes/plugins/)
++            # 3. Project plugins (./.hermes/plugins/), only when explicitly opted
++            # in. This must match the full discovery gate exactly.
 +            if _env_enabled("HERMES_ENABLE_PROJECT_PLUGINS"):
 +                project_dir = Path.cwd() / ".hermes" / "plugins"
 +                logger.debug("Scanning project plugins: %s", project_dir)
@@ -106,25 +137,13 @@ index 6ca393fca5..f798e33ec7 100644
 +                    "Project plugins disabled (set HERMES_ENABLE_PROJECT_PLUGINS=1 to enable)"
 +                )
 
--        # 4. Pip / entry-point plugins
--        ep_manifests = self._scan_entry_points()
--        logger.debug("  entrypoints: %d manifest(s)", len(ep_manifests))
--        manifests.extend(ep_manifests)
-+        # 4. Pip / entry-point plugins. The managed gateway admits only the
-+        # image-owned bundled tree; same-identity Hermes retains upstream entry
-+        # point discovery.
-+        if not bundled_only:
-+            ep_manifests = self._scan_entry_points()
-+            logger.debug("  entrypoints: %d manifest(s)", len(ep_manifests))
-+            manifests.extend(ep_manifests)
+         return manifests
 
-         # Load each manifest (skip user-disabled plugins).
-         # Later sources override earlier ones on key collision — user
 diff --git a/hermes_constants.py b/hermes_constants.py
-index 639d6d48f0..bd442e7ec2 100644
+index 34cc6f8..6f9c7a6 100644
 --- a/hermes_constants.py
 +++ b/hermes_constants.py
-@@ -18,6 +18,152 @@ _UNSET = object()
+@@ -17,6 +17,152 @@ _UNSET = object()
  _HERMES_HOME_OVERRIDE: ContextVar[str | object] = ContextVar(
      "_HERMES_HOME_OVERRIDE", default=_UNSET
  )
@@ -275,10 +294,10 @@ index 639d6d48f0..bd442e7ec2 100644
 +    )
 +    return clean
 
-
- def set_hermes_home_override(path: str | Path | None) -> Token:
+ # ── TUI busy-indicator styles ─────────────────────────────────────────
+ # Single source of truth shared by the CLI /indicator command, the TUI
 diff --git a/plugins/cron_providers/__init__.py b/plugins/cron_providers/__init__.py
-index 456c81b41e..abd1afb6ce 100644
+index 79dd1a2..f00b6d6 100644
 --- a/plugins/cron_providers/__init__.py
 +++ b/plugins/cron_providers/__init__.py
 @@ -69,7 +69,9 @@ def _register_synthetic_package(name: str, search_locations: List[str]) -> None:
@@ -293,10 +312,10 @@ index 456c81b41e..abd1afb6ce 100644
          return d if d.is_dir() else None
      except Exception:
 diff --git a/plugins/memory/__init__.py b/plugins/memory/__init__.py
-index cccda75ce8..f08e41aa37 100644
+index a24029a..92c44b7 100644
 --- a/plugins/memory/__init__.py
 +++ b/plugins/memory/__init__.py
-@@ -64,7 +64,9 @@ def _register_synthetic_package(name: str, search_locations: List[str]) -> None:
+@@ -80,7 +80,9 @@ def _register_synthetic_package(name: str, search_locations: List[str]) -> None:
  def _get_user_plugins_dir() -> Optional[Path]:
      """Return ``$HERMES_HOME/plugins/`` or None if unavailable."""
      try:
@@ -308,10 +327,10 @@ index cccda75ce8..f08e41aa37 100644
          return d if d.is_dir() else None
      except Exception:
 diff --git a/providers/__init__.py b/providers/__init__.py
-index a394e74b33..8c9144c90f 100644
+index 011e84a..f50d326 100644
 --- a/providers/__init__.py
 +++ b/providers/__init__.py
-@@ -91,7 +91,9 @@ def list_providers() -> list[ProviderProfile]:
+@@ -100,7 +100,9 @@ def list_providers() -> list[ProviderProfile]:
  def _user_plugins_dir() -> Path | None:
      """Return ``$HERMES_HOME/plugins/model-providers/`` if it exists."""
      try:
@@ -323,10 +342,10 @@ index a394e74b33..8c9144c90f 100644
          d = get_hermes_home() / "plugins" / "model-providers"
          return d if d.is_dir() else None
 diff --git a/tools/lazy_deps.py b/tools/lazy_deps.py
-index ec5692ecd5..943f1904db 100644
+index 05ff08d..37b12d6 100644
 --- a/tools/lazy_deps.py
 +++ b/tools/lazy_deps.py
-@@ -322,6 +322,10 @@ def _lazy_install_target() -> Optional[Path]:
+@@ -403,6 +403,10 @@ def _lazy_install_target() -> Optional[Path]:
      Returns a path only when :data:`_LAZY_TARGET_ENV` is set to a non-empty
      value. The directory is created on demand by :func:`_ensure_target_ready`.
      """
@@ -337,7 +356,7 @@ index ec5692ecd5..943f1904db 100644
      raw = os.environ.get(_LAZY_TARGET_ENV, "").strip()
      if not raw:
          return None
-@@ -654,20 +658,37 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
+@@ -735,10 +739,26 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
      if constraints is not None:
          constraint_args = ["--constraint", str(constraints)]
 
@@ -364,38 +383,50 @@ index ec5692ecd5..943f1904db 100644
          uv_env["VIRTUAL_ENV"] = str(venv_root)
 
          # Tier 1: uv (preferred — fast, doesn't need pip in the venv)
--        uv_bin = shutil.which("uv")
-+        uv_bin = "/usr/local/bin/uv" if managed_gateway else shutil.which("uv")
+@@ -751,9 +771,13 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
+         try:
+             from hermes_cli.managed_uv import resolve_uv
+
+-            uv_bin = resolve_uv() or shutil.which("uv")
++            uv_bin = (
++                "/usr/local/bin/uv"
++                if managed_gateway
++                else (resolve_uv() or shutil.which("uv"))
++            )
+         except Exception:
+-            uv_bin = shutil.which("uv")
++            uv_bin = "/usr/local/bin/uv" if managed_gateway else shutil.which("uv")
          if uv_bin:
              try:
                  r = subprocess.run(
-                     [uv_bin, "pip", "install", *target_args, *constraint_args, *specs],
-                     capture_output=True, text=True, timeout=timeout, env=uv_env,
+@@ -761,6 +785,7 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
+                     capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout, env=uv_env,
                      stdin=subprocess.DEVNULL,
+                     creationflags=windows_hide_flags(),
 +                    cwd=trusted_cwd,
                  )
                  if r.returncode == 0:
                      if target is not None:
-@@ -684,6 +705,7 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
-                 pip_cmd + ["--version"],
-                 capture_output=True, text=True, timeout=15,
+@@ -788,6 +813,7 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
+                 capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=15,
                  stdin=subprocess.DEVNULL,
+                 creationflags=windows_hide_flags(),
 +                env=pip_env, cwd=trusted_cwd,
              )
              if probe.returncode != 0:
                  raise FileNotFoundError("pip not in venv")
-@@ -693,6 +715,7 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
-                     [sys.executable, "-m", "ensurepip", "--upgrade", "--default-pip"],
-                     capture_output=True, text=True, timeout=120, check=True,
+@@ -798,6 +824,7 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
+                     capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120, check=True,
                      stdin=subprocess.DEVNULL,
+                     creationflags=windows_hide_flags(),
 +                    env=pip_env, cwd=trusted_cwd,
                  )
              except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                  return _InstallResult(False, "",
-@@ -703,6 +726,7 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
-                 pip_cmd + ["install", *target_args, *constraint_args, *specs],
-                 capture_output=True, text=True, timeout=timeout,
+@@ -809,6 +836,7 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
+                 capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout,
                  stdin=subprocess.DEVNULL,
+                 creationflags=windows_hide_flags(),
 +                env=pip_env, cwd=trusted_cwd,
              )
              if r.returncode == 0 and target is not None:

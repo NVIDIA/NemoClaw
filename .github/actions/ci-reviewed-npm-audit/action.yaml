@@ -30,21 +30,34 @@ runs:
     - name: Resolve reviewed npm audit cache buckets
       id: cache-buckets
       shell: bash
+      env:
+        NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIRECTORY: ${{ inputs.cache-directory }}
+        NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: ${{ inputs.target-root }}
       run: |
         set -euo pipefail
         current_bucket="$(( $(date -u +%s) / 43200 ))"
         previous_bucket="$(( current_bucket - 1 ))"
-        input_digest="$(node --input-type=module - '${{ inputs.target-root }}' "$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json" <<'NODE'
+        node --input-type=module - "$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json" <<'NODE'
         import { createHash } from "node:crypto";
-        import { readFileSync } from "node:fs";
+        import { appendFileSync, readFileSync } from "node:fs";
         import { join } from "node:path";
-        const [targetRoot, configFile] = process.argv.slice(2);
+        const targetRoot = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT;
+        const [configFile] = process.argv.slice(2);
+        if (!targetRoot) {
+          throw new Error("reviewed npm audit target root is required");
+        }
         const configSource = readFileSync(configFile, "utf8");
         const config = JSON.parse(configSource);
+        if (!/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(config.npmVersion) || /[\r\n]/.test(config.npmVersion)) {
+          throw new Error("reviewed npm audit configuration has an invalid npmVersion");
+        }
+        if (!/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(config.npmIntegrity) || /[\r\n]/.test(config.npmIntegrity)) {
+          throw new Error("reviewed npm audit configuration has an invalid npmIntegrity");
+        }
         const directories = ["", ...config.lockedGraphs.map((graph) => graph.directory)].sort();
         const hash = createHash("sha256");
         hash.update(configSource);
-        hash.update(JSON.stringify({ argv: ["audit", "--registry=https://registry.yarnpkg.com", "--omit=dev", "--json"], npmVersion: "10.9.4", registry: "https://registry.yarnpkg.com/", schemaVersion: 1 }));
+        hash.update(JSON.stringify({ argv: ["audit", "--registry=https://registry.yarnpkg.com", "--omit=dev", "--json"], npmVersion: config.npmVersion, registry: "https://registry.yarnpkg.com/", schemaVersion: 1 }));
         for (const directory of directories) {
           for (const file of ["package.json", "package-lock.json"]) {
             const relative = join(directory, file);
@@ -52,11 +65,13 @@ runs:
             hash.update(readFileSync(join(targetRoot, relative)));
           }
         }
-        process.stdout.write(hash.digest("hex"));
+        appendFileSync(
+          process.env.GITHUB_OUTPUT,
+          `input-digest=${hash.digest("hex")}\nnpm-version=${config.npmVersion}\nnpm-integrity=${config.npmIntegrity}\n`,
+        );
         NODE
-        )"
-        printf 'current=%s\nprevious=%s\ninput-digest=%s\n' "$current_bucket" "$previous_bucket" "$input_digest" >> "$GITHUB_OUTPUT"
-        mkdir -p "${{ inputs.cache-directory }}"
+        printf 'current=%s\nprevious=%s\n' "$current_bucket" "$previous_bucket" >> "$GITHUB_OUTPUT"
+        mkdir -p "$NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIRECTORY"
 
     - name: Restore current reviewed npm audit cache bucket
       id: cache-current
@@ -75,9 +90,8 @@ runs:
     - name: Download and verify production npm
       shell: bash
       env:
-        NEMOCLAW_REVIEWED_NPM_VERSION: "10.9.4"
-        NEMOCLAW_REVIEWED_NPM_INTEGRITY: >-
-          sha512-OnUG836FwboQIbqtefDNlyR0gTHzIfwRfE3DuiNewBvnMnWEpB0VEXwBlFVgqpNzIgYo/MHh3d2Hel/pszapAA==
+        NEMOCLAW_REVIEWED_NPM_VERSION: ${{ steps.cache-buckets.outputs.npm-version }}
+        NEMOCLAW_REVIEWED_NPM_INTEGRITY: ${{ steps.cache-buckets.outputs.npm-integrity }}
       run: env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN "$GITHUB_ACTION_PATH/verify-and-install-npm.sh"
 
     - name: Materialize and audit reviewed npm graphs

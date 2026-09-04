@@ -38,6 +38,8 @@ HERMES_API_PORT_RANGE_START = 8642
 HERMES_API_PORT_RANGE_END = 8652
 MANAGED_HERMES_HOME = "/sandbox/.hermes"
 MANAGED_BUNDLED_PLUGINS = "/opt/hermes/plugins"
+SANDBOX_LAZY_INSTALL_TARGET = "/sandbox/.hermes/lazy-packages"
+GATEWAY_LAZY_INSTALL_TARGET = "/run/nemoclaw/hermes-gateway-lazy-packages"
 ENV_FILE_DENIED_CONTROL_KEYS = frozenset(
     {
         "BASH_ENV",
@@ -145,15 +147,15 @@ def _sandbox_identity() -> tuple[int, int] | None:
 def _expected_lazy_install_target() -> str:
     effective_uid = os.geteuid()
     if effective_uid == 0:
-        return "/run/nemoclaw/hermes-gateway-lazy-packages"
+        return GATEWAY_LAZY_INSTALL_TARGET
     try:
         if effective_uid == pwd.getpwnam("gateway").pw_uid:
-            return "/run/nemoclaw/hermes-gateway-lazy-packages"
+            return GATEWAY_LAZY_INSTALL_TARGET
     except KeyError:
         # Development hosts commonly have no gateway account; their current
         # user exercises the same-identity sandbox contract.
         pass
-    return "/sandbox/.hermes/lazy-packages"
+    return SANDBOX_LAZY_INSTALL_TARGET
 
 
 def _validate_env_file_metadata(path: str, st: os.stat_result) -> None:
@@ -537,11 +539,9 @@ def validate_env_file(path: str) -> int:
     return 1
 
 
-def validate_runtime_env(env: dict[str, str] | None = None) -> int:
-    source = os.environ if env is None else env
+def _validate_runtime_env(source: dict[str, str], expected_lazy_target: str) -> int:
     violations: list[str] = []
     violation_count = 0
-    expected_lazy_target = _expected_lazy_install_target()
     if source.get("HERMES_LAZY_INSTALL_TARGET") != expected_lazy_target:
         violation_count += 1
         if len(violations) < MAX_VIOLATIONS:
@@ -601,6 +601,27 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
         violation_count - len(violations),
     )
     return 1
+
+
+def validate_runtime_env(env: dict[str, str] | None = None) -> int:
+    source = os.environ if env is None else env
+    return _validate_runtime_env(source, _expected_lazy_install_target())
+
+
+def validate_managed_gateway_env(supervisor_env: dict[str, str]) -> int:
+    """Validate the environment that the managed launcher gives Hermes."""
+
+    runtime_env = dict(supervisor_env)
+    # PID 1 exposes the shell's initial environment. The trusted launcher pins
+    # these values after startup and again on the Hermes gateway command.
+    runtime_env.update(
+        {
+            "HERMES_LAZY_INSTALL_TARGET": GATEWAY_LAZY_INSTALL_TARGET,
+            "HERMES_HOME": MANAGED_HERMES_HOME,
+            "HERMES_BUNDLED_PLUGINS": MANAGED_BUNDLED_PLUGINS,
+        }
+    )
+    return _validate_runtime_env(runtime_env, GATEWAY_LAZY_INSTALL_TARGET)
 
 
 # Config-output masking layer for the wrapper-installed `hermes config show`

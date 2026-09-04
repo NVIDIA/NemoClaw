@@ -493,6 +493,7 @@
       ],
       "fast": [
         "test/e2e/support/gpu-e2e-helpers.test.ts",
+        "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
@@ -526,6 +527,7 @@
         "test/e2e/live/hermes-e2e-phases.ts"
       ],
       "fast": [
+        "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
@@ -589,6 +591,7 @@
         "test/e2e/live/mcp-bridge-hermes-http.ts",
         "test/e2e/live/mcp-bridge-onboard-env.ts",
         "test/e2e/live/mcp-bridge-reliability.ts",
+        "test/e2e/live/mcp-bridge-servers.ts",
         "test/e2e/live/mcp-bridge-hermes-lifecycle.ts",
         "test/e2e/live/mcp-bridge-phases.ts",
         "test/e2e/live/mcp-bridge-sandbox.ts",

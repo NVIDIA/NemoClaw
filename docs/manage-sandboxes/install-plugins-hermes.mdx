@@ -36,6 +36,8 @@ Instead, gateway startup installs the bundled Hindsight dependency into a gatewa
 Neither target modifies the root virtual environment, and neither target is declared in the generated `.env` file.
 
 NemoClaw supports `hindsight-client==0.6.1` for this workflow.
+NemoClaw accepts only the reviewed wheel hashes for `hindsight-client==0.6.1` and `aiohttp-retry==2.9.1`.
+Setup or gateway startup stops if an index or mirror serves a different artifact under either version.
 Hermes checks this version before it loads the plugin.
 This version uses the OpenShell proxy path.
 Do not replace it with a `0.8.x` client because those releases do not use the proxy environment.

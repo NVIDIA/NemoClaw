@@ -56,6 +56,8 @@ type AuditConfig = Readonly<{
   exceptionFile: string;
   lockedGraphs: readonly LockedGraph[];
   nodeVersion: string;
+  npmIntegrity: string;
+  npmVersion: string;
   registryOrigin: string;
   schemaVersion: 2;
   severityThreshold: Severity;
@@ -195,6 +197,12 @@ export function parseAuditConfig(contents: string): AuditConfig {
     parsed.archiveTarVersion !== "7.5.21" ||
     typeof parsed.exceptionFile !== "string" ||
     !parsed.exceptionFile ||
+    typeof parsed.npmVersion !== "string" ||
+    !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(parsed.npmVersion) ||
+    /[\r\n]/.test(parsed.npmVersion) ||
+    typeof parsed.npmIntegrity !== "string" ||
+    !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(parsed.npmIntegrity) ||
+    /[\r\n]/.test(parsed.npmIntegrity) ||
     typeof parsed.registryOrigin !== "string" ||
     !parsed.registryOrigin ||
     !Array.isArray(parsed.archivePackages) ||
@@ -673,25 +681,29 @@ function verifyWechatInstallCacheBoundary(
   });
   if (cache.error) throw cache.error;
   if (cache.status !== 0) throw new Error(`npm cache add failed: ${cache.stderr || cache.stdout}`);
-  fs.chmodSync(trustedCache, 0o555);
-  for (const entry of fs.readdirSync(trustedCache, { recursive: true })) {
-    fs.chmodSync(
-      path.join(trustedCache, entry.toString()),
-      fs.lstatSync(path.join(trustedCache, entry.toString())).isDirectory() ? 0o555 : 0o444,
-    );
+  try {
+    fs.chmodSync(trustedCache, 0o555);
+    for (const entry of fs.readdirSync(trustedCache, { recursive: true })) {
+      fs.chmodSync(
+        path.join(trustedCache, entry.toString()),
+        fs.lstatSync(path.join(trustedCache, entry.toString())).isDirectory() ? 0o555 : 0o444,
+      );
+    }
+    assertTreeReadOnly(trustedCache);
+    fs.cpSync(trustedCache, installCache, { recursive: true, force: true });
+    makeTreeOwnerWritable(installCache);
+    packReviewedNpmArchive({
+      env: { ...env, NPM_CONFIG_CACHE: installCache, NPM_CONFIG_OFFLINE: "true" },
+      expectedIntegrity: graph.integrity,
+      label: graph.label,
+      packageSpec: graph.packageSpec,
+      tarballUrl: graph.tarballUrl,
+      tempDirectory: packDirectory,
+    });
+    assertTreeReadOnly(trustedCache);
+  } finally {
+    makeTreeOwnerWritable(trustedCache);
   }
-  assertTreeReadOnly(trustedCache);
-  fs.cpSync(trustedCache, installCache, { recursive: true, force: true });
-  makeTreeOwnerWritable(installCache);
-  packReviewedNpmArchive({
-    env: { ...env, NPM_CONFIG_CACHE: installCache, NPM_CONFIG_OFFLINE: "true" },
-    expectedIntegrity: graph.integrity,
-    label: graph.label,
-    packageSpec: graph.packageSpec,
-    tarballUrl: graph.tarballUrl,
-    tempDirectory: packDirectory,
-  });
-  assertTreeReadOnly(trustedCache);
 }
 
 function auditLockedGraph(
@@ -905,6 +917,11 @@ function main(): void {
   fs.rmSync(artifactDirectory, { recursive: true, force: true });
   fs.mkdirSync(artifactDirectory, { recursive: true });
   const npmVersion = run("npm", ["--version"], TRUSTED_REPO_ROOT).stdout.trim();
+  if (npmVersion !== config.npmVersion) {
+    throw new Error(
+      `reviewed npm audit requires npm ${config.npmVersion}; running npm ${npmVersion}`,
+    );
+  }
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));
   try {
     const sourceResult = auditSourceGraph(
