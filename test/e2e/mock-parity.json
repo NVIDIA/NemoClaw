@@ -761,6 +761,7 @@
     {
       "live": "test/e2e/live/rebuild-hermes.test.ts",
       "liveSources": [
+        "test/e2e/live/rebuild-hermes-base-identity.ts",
         "test/e2e/live/rebuild-hermes-env.ts",
         "test/e2e/live/rebuild-hermes-host-policy.ts"
       ],
