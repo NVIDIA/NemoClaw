@@ -22,22 +22,6 @@ const endpoint = "https://api.openai.com/v1";
 const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
 const policy =
   "version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\nnetwork_policies:\n  api:\n    name: api\n    endpoints: [{host: api.example.com, port: 443}]\n    binaries: [{path: /usr/bin/curl}]\nfilesystem_policy:\n  include_workdir: false\n  read_only: [/usr]\n  read_write: [/sandbox]\n";
-const canonicalEnvironment = {
-  NEMOCLAW_AGENT_TIMEOUT: "600",
-  NEMOCLAW_CONTEXT_WINDOW: "131072",
-  NEMOCLAW_EXTRA_AGENTS_JSON: '{"agents":[],"defaults":{},"main":{}}',
-  NEMOCLAW_MAX_TOKENS: "8192",
-  NEMOCLAW_MINIMAL_BOOTSTRAP: "1",
-  NEMOCLAW_OPENCLAW_OTEL: "0",
-  NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://host.openshell.internal:4318",
-  NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE: "1",
-  NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME: "openclaw-gateway",
-  NEMOCLAW_PROXY_HOST: "10.200.0.1",
-  NEMOCLAW_PROXY_PORT: "3128",
-  NEMOCLAW_REASONING: "false",
-  NEMOCLAW_REASONING_EFFORT: "default",
-};
-
 function profileInput(
   overrides: Partial<ManagedStartupProfileBuilderInput> = {},
 ): ManagedStartupProfileBuilderInput {
@@ -67,7 +51,7 @@ function profileInput(
     messagingPlan: null,
     dcodeAutoApprovalMode: null,
     observabilityEnabled: null,
-    environment: canonicalEnvironment,
+    environment: {},
     corporateCa: null,
     ...overrides,
   };

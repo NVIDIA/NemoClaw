@@ -204,13 +204,13 @@ Export a supported registered OpenClaw sandbox as a secret-free `NemoClawConfig`
   current live exports stop with `missing-provenance` and do not write output.
 </Warning>
 
-Write a file on Linux:
+When independent endpoint evidence is available, write a file on Linux:
 
 ```bash
 $$nemoclaw config export my-assistant --output nemoclaw.yaml
 ```
 
-Use `--output -` to write YAML to standard output on another supported host or in a pipeline:
+Under the same condition, use `--output -` to write YAML to standard output on another supported host or in a pipeline:
 
 ```bash
 $$nemoclaw config export my-assistant --output -
@@ -225,7 +225,7 @@ $$nemoclaw config export my-assistant --output -
 
 The export contains credential environment-variable references, not credential values. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. With `--force`, publication checks that the existing destination is a regular file before ordinary atomic replacement.
 
-Version 1 exports managed OpenClaw sandboxes that use hosted external inference, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy. Other profiles fail with a diagnostic instead of producing an incomplete document.
+When the required endpoint evidence is available, version 1 exports managed OpenClaw sandboxes that use hosted external inference, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy. Other profiles fail with a diagnostic instead of producing an incomplete document.
 
 ### `$$nemoclaw resources`
 
