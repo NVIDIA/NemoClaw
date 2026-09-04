@@ -690,7 +690,7 @@ jobs:
               throw 'The installed diagnostic Deep Agents Code offload output is invalid.'
             }
             $deepAgentsSiteCustomizeSource = Join-Path $env:GITHUB_WORKSPACE 'candidate\packaging\windows\python\deepagents-sitecustomize.py'
-            $deepAgentsSiteCustomizeDigest = '7b02c51dc8c4952a6a0b5d6b45254bbdd5545153e3cadebdeeacc2fcb59e3585' # gitleaks:allow -- committed compatibility source integrity pin
+            $deepAgentsSiteCustomizeDigest = 'c78a3e9cbe225f459e2ea2d831a9533f776e027770fac2ecd339c22b664279a0' # gitleaks:allow -- committed compatibility source integrity pin
             if ((Get-FileHash -LiteralPath $deepAgentsSiteCustomizeSource -Algorithm SHA256).Hash.ToLowerInvariant() -cne $deepAgentsSiteCustomizeDigest) {
               throw 'The diagnostic Deep Agents Code sitecustomize source is invalid.'
             }
