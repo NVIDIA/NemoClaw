@@ -972,6 +972,34 @@ describe("CLI dispatch", () => {
     );
   });
 
+  it("migrates a legacy sandbox named doctor before probe-only connect (#10212)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, migrateLegacyPortState, runOclifCommandById, sandboxes, stderr }) => {
+        migrateLegacyPortState.mockImplementation(() => {
+          sandboxes.set("doctor", { name: "doctor" });
+          return {
+            migratedSandboxNames: ["doctor"],
+            migratedSession: false,
+            warnings: [],
+          };
+        });
+
+        await dispatchCli(["doctor", "--probe-only"]);
+
+        expect({
+          migrationCalls: migrateLegacyPortState.mock.calls.length,
+          oclifCall: runOclifCommandById.mock.calls[0]?.slice(0, 2) ?? null,
+          stderr,
+        }).toEqual({
+          migrationCalls: 1,
+          oclifCall: ["sandbox:connect", ["doctor", "--probe-only"]],
+          stderr: [expect.stringContaining("Migrated legacy state")],
+        });
+      },
+      { connectFlags: ["--probe-only"] },
+    );
+  });
+
   it("recovers a live sandbox named after an action before reporting scope (#10212)", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, sandboxes, stderr }) => {
