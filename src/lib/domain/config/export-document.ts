@@ -6,10 +6,8 @@ import type {
   NemoClawConfigDocumentName,
   NemoClawConfigDocumentUid,
   NemoClawInferenceProviderConfig,
-  ValidatedNemoClawConfig,
 } from "../../config/model";
-import type { VerifiedExportSource } from "../../config/export-observation";
-import { validateNemoClawConfig } from "../../config/schema";
+import type { VerifiedExportSource } from "./export-evidence";
 
 function providerLocalName(provider: string): string {
   const normalized = provider
@@ -39,11 +37,11 @@ export interface ExportConfigBuildIdentity {
   readonly documentUid: NemoClawConfigDocumentUid;
 }
 
-/** Build and validate an unbound aggregate document from one verified export observation. */
+/** Map one verified export source to an unbound aggregate document. */
 export function buildExportConfig(
   source: VerifiedExportSource,
   identity: ExportConfigBuildIdentity,
-): ValidatedNemoClawConfig {
+): NemoClawConfig {
   const providerName = providerLocalName(source.inference.provider);
   const candidate = {
     apiVersion: "nemoclaw.nvidia.com/v1",
@@ -83,5 +81,5 @@ export function buildExportConfig(
       ],
     },
   } satisfies NemoClawConfig;
-  return validateNemoClawConfig(candidate);
+  return candidate;
 }

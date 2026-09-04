@@ -5,9 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { YamlExportOutputError } from "../../lib/adapters/fs/config-export-file";
 
 const mocks = vi.hoisted(() => ({
-  observeLiveExportSource: vi.fn(),
+  snapshotReader: { read: vi.fn() },
+  createLiveExportSnapshotReader: vi.fn(),
+  observeStableExportSource: vi.fn(),
   buildExportConfig: vi.fn(),
   renderCanonicalNemoClawConfig: vi.fn(),
+  validateNemoClawConfig: vi.fn(),
   publishExportFile: vi.fn(),
 }));
 
@@ -17,25 +20,36 @@ vi.mock("../../lib/config/canonical", () => ({
 vi.mock("../../lib/domain/config/export-document", () => ({
   buildExportConfig: mocks.buildExportConfig,
 }));
+vi.mock("../../lib/config/schema", () => ({
+  validateNemoClawConfig: mocks.validateNemoClawConfig,
+}));
 vi.mock("../../lib/adapters/fs/config-export-file", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/adapters/fs/config-export-file")>()),
   publishExportFile: mocks.publishExportFile,
 }));
 vi.mock("../../lib/adapters/config/live-export-source", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/adapters/config/live-export-source")>()),
-  observeLiveExportSource: mocks.observeLiveExportSource,
+  createLiveExportSnapshotReader: mocks.createLiveExportSnapshotReader,
+}));
+vi.mock("../../lib/actions/config/observe-export-source", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/actions/config/observe-export-source")>()),
+  observeStableExportSource: mocks.observeStableExportSource,
 }));
 
 import ConfigExportCommand from "./export";
 
 describe("config export command", () => {
   beforeEach(() => {
-    mocks.observeLiveExportSource.mockReset().mockResolvedValue({
+    mocks.createLiveExportSnapshotReader.mockReset().mockReturnValue(mocks.snapshotReader);
+    mocks.observeStableExportSource.mockReset().mockResolvedValue({
       ok: true,
       source: { sandboxName: "alpha" },
       attempts: 1,
     });
     mocks.buildExportConfig.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
+    mocks.validateNemoClawConfig
+      .mockReset()
+      .mockReturnValue({ kind: "NemoClawConfig" });
     mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
       yaml: "kind: NemoClawConfig\n",
       documentDigest: "sha256:document",
@@ -59,7 +73,7 @@ describe("config export command", () => {
     await expect(
       ConfigExportCommand.run(["alpha", "--output", "-", "--name", "team.alpha"], process.cwd()),
     ).resolves.toBeUndefined();
-    expect(mocks.observeLiveExportSource).toHaveBeenCalledWith("alpha");
+    expect(mocks.observeStableExportSource).toHaveBeenCalledWith("alpha", mocks.snapshotReader);
     expect(mocks.buildExportConfig).toHaveBeenCalledWith(
       { sandboxName: "alpha" },
       expect.objectContaining({ documentName: "team.alpha", documentUid: expect.any(String) }),
@@ -72,25 +86,25 @@ describe("config export command", () => {
     await expect(
       ConfigExportCommand.run(["alpha", "--output", "-", "--json"], process.cwd()),
     ).resolves.toBeUndefined();
-    expect(mocks.observeLiveExportSource).not.toHaveBeenCalled();
+    expect(mocks.observeStableExportSource).not.toHaveBeenCalled();
   });
 
   it("rejects force on YAML stdout before reading source state (#10938)", async () => {
     await expect(
       ConfigExportCommand.run(["alpha", "--output", "-", "--force"], process.cwd()),
     ).rejects.toThrow("--force cannot be used when --output is stdout (-)");
-    expect(mocks.observeLiveExportSource).not.toHaveBeenCalled();
+    expect(mocks.observeStableExportSource).not.toHaveBeenCalled();
   });
 
   it("rejects an invalid document name before reading source state (#10938)", async () => {
     await expect(
       ConfigExportCommand.run(["alpha", "--output", "-", "--name", "Not Valid"], process.cwd()),
     ).rejects.toThrow("config name is invalid");
-    expect(mocks.observeLiveExportSource).not.toHaveBeenCalled();
+    expect(mocks.observeStableExportSource).not.toHaveBeenCalled();
   });
 
   it("displays a returned observation failure without building the document", async () => {
-    mocks.observeLiveExportSource.mockResolvedValue({
+    mocks.observeStableExportSource.mockResolvedValue({
       ok: false,
       findings: [
         {
@@ -119,7 +133,7 @@ describe("config export command", () => {
       code: "EEXIT",
       oclif: { exit: 0 },
     });
-    expect(mocks.observeLiveExportSource).not.toHaveBeenCalled();
+    expect(mocks.observeStableExportSource).not.toHaveBeenCalled();
   });
 
   it("composes live observation through file publication and JSON result (#10938)", async () => {

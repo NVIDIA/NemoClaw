@@ -1,20 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
-import { fingerprintOpenShellSandboxId } from "../adapters/openshell/sandbox-identity";
+import { describe, expect, it } from "vitest";
+import { observeStableExportSource } from "../../actions/config/observe-export-source";
+import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import {
   buildManagedStartupProfile,
   type ManagedStartupProfileBuilderInput,
-} from "../onboard/managed-startup/profile-builder";
-import type { SandboxEntry, SandboxWorkloadReceipt } from "../state/registry/types";
-import {
-  canonicalizeEffectivePolicy,
-  classifyExportRegistry,
-  observeStableExportSource,
-  type ExportSnapshotReader,
-  type RawExportSnapshot,
-} from "./export-observation";
+} from "../../onboard/managed-startup/profile-builder";
+import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import type {
+  CanonicalExportPolicy,
+  ObservedExportSnapshot,
+  QualifiedExportSnapshot,
+} from "./export-evidence";
+import { classifyExportRegistry, verifyExportSource } from "./verify-export-source";
 
 const sandboxId = "018f47e2-9d93-7d15-9c41-3ecf70b2550f";
 const fingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
@@ -22,6 +22,18 @@ const endpoint = "https://api.openai.com/v1";
 const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
 const policy =
   "version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\nnetwork_policies:\n  api:\n    name: api\n    endpoints: [{host: api.example.com, port: 443}]\n    binaries: [{path: /usr/bin/curl}]\nfilesystem_policy:\n  include_workdir: false\n  read_only: [/usr]\n  read_write: [/sandbox]\n";
+const canonicalPolicy = {
+  filesystem_policy: { include_workdir: false, read_only: ["/usr"], read_write: ["/sandbox"] },
+  network_policies: {
+    api: {
+      binaries: [{ path: "/usr/bin/curl" }],
+      endpoints: [{ host: "api.example.com", port: 443 }],
+      name: "api",
+    },
+  },
+  process: { run_as_group: "sandbox", run_as_user: "sandbox" },
+  version: 1,
+} as unknown as CanonicalExportPolicy;
 function profileInput(
   overrides: Partial<ManagedStartupProfileBuilderInput> = {},
 ): ManagedStartupProfileBuilderInput {
@@ -99,9 +111,7 @@ function entry(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
   };
 }
 
-type ObservedSnapshot = Extract<RawExportSnapshot, { kind: "observed" }>;
-
-function snapshot(overrides: Partial<ObservedSnapshot> = {}): ObservedSnapshot {
+function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): ObservedExportSnapshot {
   return {
     kind: "observed",
     sandboxName: "alpha",
@@ -137,100 +147,59 @@ function snapshot(overrides: Partial<ObservedSnapshot> = {}): ObservedSnapshot {
   };
 }
 
-function withResourceVersion(resourceVersion: number): ObservedSnapshot {
-  const value = snapshot();
-  return { ...value, sandbox: { ...value.sandbox, resourceVersion } };
+function findings(result: ReturnType<typeof verifyExportSource>) {
+  return result.kind === "verified" ? [] : result.findings;
 }
 
-function reader(
-  sequence: readonly RawExportSnapshot[] = [snapshot(), snapshot()],
-): ExportSnapshotReader & { read: ReturnType<typeof vi.fn> } {
-  let call = 0;
-  const read = vi.fn(async () => sequence[Math.min(call++, sequence.length - 1)]!);
-  return { read };
+function verifiedSource(result: ReturnType<typeof verifyExportSource>) {
+  expect(result.kind).toBe("verified");
+  return (result as Extract<typeof result, { kind: "verified" }>).source;
 }
 
-function findings(result: Awaited<ReturnType<typeof observeStableExportSource>>) {
-  return result.ok ? [] : result.findings;
+function verify(
+  value: ObservedExportSnapshot,
+  requestedSandboxName = "alpha",
+  policyRepresentable = true,
+) {
+  const identity = { sandboxId: value.policy.sandboxId, revision: value.policy.revision };
+  const qualified = {
+    ...value,
+    policy: policyRepresentable
+      ? { ...identity, kind: "verified", canonical: canonicalPolicy }
+      : { ...identity, kind: "not-representable" },
+  } as QualifiedExportSnapshot;
+  return verifyExportSource(requestedSandboxName, qualified);
 }
 
-function verifiedSource(result: Awaited<ReturnType<typeof observeStableExportSource>>) {
-  expect(result.ok).toBe(true);
-  return (result as Extract<typeof result, { ok: true }>).source;
-}
-
-describe("stable config export source observation (#10938)", () => {
-  it("narrows one stable supported snapshot to an immutable verified source", async () => {
-    const sourceReader = reader();
-    const result = await observeStableExportSource("alpha", sourceReader);
+describe("config export source verification (#10938)", () => {
+  it("qualifies and verifies two equal snapshots through the observer", async () => {
+    const observed = snapshot();
+    const result = await observeStableExportSource("alpha", {
+      read: async () => observed,
+    });
 
     expect(result).toMatchObject({
       ok: true,
       attempts: 1,
+      source: { sandboxName: "alpha", policy: canonicalPolicy },
+    });
+  });
+
+  it("narrows one supported snapshot to an immutable verified source", () => {
+    const result = verify(snapshot());
+
+    expect(result).toMatchObject({
+      kind: "verified",
       source: {
         sandboxName: "alpha",
         runtime: { provider: "docker", imageRef },
         inference: { api: "openai-responses" },
       },
     });
-    expect(sourceReader.read).toHaveBeenCalledTimes(2);
     const source = verifiedSource(result);
     expect(source).not.toHaveProperty("registry");
     expect(Object.isFrozen(source)).toBe(true);
     expect(Object.isFrozen(source.policy)).toBe(true);
-  });
-
-  it("retries one structurally changed snapshot pair", async () => {
-    const stable = withResourceVersion(3);
-    const sourceReader = reader([
-      withResourceVersion(1),
-      withResourceVersion(2),
-      stable,
-      structuredClone(stable),
-    ]);
-
-    await expect(observeStableExportSource("alpha", sourceReader)).resolves.toMatchObject({
-      ok: true,
-      attempts: 2,
-    });
-    expect(sourceReader.read).toHaveBeenCalledTimes(4);
-  });
-
-  it("owns each read before an untrusted reader can mutate and reuse it", async () => {
-    const shared = snapshot();
-    const sourceReader = {
-      read: vi
-        .fn()
-        .mockResolvedValueOnce(shared)
-        .mockImplementationOnce(async () => {
-          (shared.sandbox as { resourceVersion: number }).resourceVersion = 8;
-          return shared;
-        })
-        .mockResolvedValue(shared),
-    };
-
-    await expect(observeStableExportSource("alpha", sourceReader)).resolves.toMatchObject({
-      ok: true,
-      attempts: 2,
-    });
-    expect(sourceReader.read).toHaveBeenCalledTimes(4);
-  });
-
-  it("returns unstable-source after two changed snapshot pairs", async () => {
-    const result = await observeStableExportSource(
-      "alpha",
-      reader([
-        withResourceVersion(1),
-        withResourceVersion(2),
-        withResourceVersion(3),
-        withResourceVersion(4),
-      ]),
-    );
-
-    expect(result).toMatchObject({ ok: false, attempts: 2 });
-    expect(findings(result)).toContainEqual(
-      expect.objectContaining({ category: "unstable-source" }),
-    );
   });
 
   it("reports every excluded registry capability", () => {
@@ -293,10 +262,10 @@ describe("stable config export source observation (#10938)", () => {
       policy: { sandboxId: "other-id", revision: "4", document: policy },
     });
 
-    const result = await observeStableExportSource("alpha", reader([changed, changed]));
+    const result = verify(changed);
     const fields = findings(result).map(({ field }) => field);
 
-    expect(result.ok).toBe(false);
+    expect(result.kind).toBe("rejected");
     expect(fields).toEqual(
       expect.arrayContaining([
         "source.lifecycle.fingerprint",
@@ -315,9 +284,9 @@ describe("stable config export source observation (#10938)", () => {
       registry: entry({ credentialEnv: undefined }),
       inference: { ...value.inference, credentialEnv: null },
     });
-    const result = await observeStableExportSource("alpha", reader([raw, raw]));
+    const result = verify(raw);
 
-    expect(result).toMatchObject({ ok: true });
+    expect(result).toMatchObject({ kind: "verified" });
     expect(verifiedSource(result).inference).not.toHaveProperty("credentialEnv");
   });
 
@@ -336,11 +305,8 @@ describe("stable config export source observation (#10938)", () => {
       },
     });
 
-    const missingResult = await observeStableExportSource("alpha", reader([missing, missing]));
-    const mismatchResult = await observeStableExportSource(
-      "alpha",
-      reader([mismatched, mismatched]),
-    );
+    const missingResult = verify(missing);
+    const mismatchResult = verify(mismatched);
 
     expect(findings(missingResult)).toContainEqual(
       expect.objectContaining({
@@ -370,9 +336,9 @@ describe("stable config export source observation (#10938)", () => {
       },
     });
 
-    const result = await observeStableExportSource("alpha", reader([raw, raw]));
+    const result = verify(raw);
 
-    expect(result.ok).toBe(false);
+    expect(result.kind).toBe("rejected");
     expect(JSON.stringify(result)).not.toContain("credential-canary");
     expect(findings(result)).toContainEqual(
       expect.objectContaining({ field: "spec.inferenceProviders[].endpoint" }),
@@ -383,19 +349,7 @@ describe("stable config export source observation (#10938)", () => {
     ["snapshot", snapshot({ sandboxName: "beta" })],
     ["registry", snapshot({ registry: entry({ name: "beta" }) })],
   ])("binds the requested name to the %s name", async (_source, raw) => {
-    const result = await observeStableExportSource("alpha", reader([raw, raw]));
-
-    expect(findings(result)).toContainEqual(
-      expect.objectContaining({
-        field: "source.sandbox.name",
-        category: "live-verification-failed",
-      }),
-    );
-  });
-
-  it("binds a not-found result to the requested name", async () => {
-    const raw = { kind: "not-found", sandboxName: "beta" } as const;
-    const result = await observeStableExportSource("alpha", reader([raw, raw]));
+    const result = verify(raw);
 
     expect(findings(result)).toContainEqual(
       expect.objectContaining({
@@ -411,7 +365,7 @@ describe("stable config export source observation (#10938)", () => {
       sandboxName: invalidName,
       registry: entry({ name: invalidName }),
     });
-    const result = await observeStableExportSource(invalidName, reader([raw, raw]));
+    const result = verify(raw, invalidName);
 
     expect(findings(result)).toContainEqual(
       expect.objectContaining({ field: "spec.sandboxes[].name", category: "unsupported" }),
@@ -427,7 +381,7 @@ describe("stable config export source observation (#10938)", () => {
       registry: entry({ gatewayName: name, gatewayPort: port }),
       gateway: { name, port, management: "nemoclaw", stateRootOwned: true },
     });
-    const result = await observeStableExportSource("alpha", reader([raw, raw]));
+    const result = verify(raw);
 
     expect(findings(result)).toContainEqual(
       expect.objectContaining({ field: "spec.gateway", category: "unsupported" }),
@@ -445,7 +399,7 @@ describe("stable config export source observation (#10938)", () => {
       workload: managedWorkload(profileInput(), reference),
     });
     const raw = snapshot({ registry: sourceEntry });
-    const result = await observeStableExportSource("alpha", reader([raw, raw]));
+    const result = verify(raw);
 
     expect(findings(result)).toContainEqual(
       expect.objectContaining({ field: "spec.sandboxes[].runtime.image" }),
@@ -456,7 +410,7 @@ describe("stable config export source observation (#10938)", () => {
     "rejects invalid runtime provider %s",
     async (openshellDriver) => {
       const raw = snapshot({ registry: entry({ openshellDriver }) });
-      const result = await observeStableExportSource("alpha", reader([raw, raw]));
+      const result = verify(raw);
 
       expect(findings(result)).toContainEqual(
         expect.objectContaining({ field: "spec.sandboxes[].runtime.provider" }),
@@ -475,7 +429,7 @@ describe("stable config export source observation (#10938)", () => {
     });
     const workload = managedWorkload(configured);
     const raw = snapshot({ registry: entry({ imageTag: workload.reference, workload }) });
-    const result = await observeStableExportSource("alpha", reader([raw, raw]));
+    const result = verify(raw);
 
     expect(findings(result)).toContainEqual(
       expect.objectContaining({ field: "source.workload.startupProfile", category: "unsupported" }),
@@ -490,7 +444,7 @@ describe("stable config export source observation (#10938)", () => {
         registry: entry({ credentialEnv }),
         inference: { ...value.inference, credentialEnv },
       });
-      const result = await observeStableExportSource("alpha", reader([raw, raw]));
+      const result = verify(raw);
 
       expect(findings(result)).toContainEqual(
         expect.objectContaining({ field: "spec.inferenceProviders[].credential.env" }),
@@ -507,66 +461,11 @@ describe("stable config export source observation (#10938)", () => {
         document: `version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\n  password: ${canary}\nnetwork_policies: {}\n`,
       },
     });
-    const result = await observeStableExportSource("alpha", reader([raw, raw]));
+    const result = verify(raw, "alpha", false);
 
     expect(findings(result)).toContainEqual(
       expect.objectContaining({ category: "policy-not-representable" }),
     );
     expect(JSON.stringify(result)).not.toContain(canary);
-  });
-
-  it("maps a typed concrete read failure to a controlled finding", async () => {
-    const result = await observeStableExportSource(
-      "alpha",
-      reader([{ kind: "read-failed", stage: "provider-metadata" }]),
-    );
-
-    expect(result).toMatchObject({ ok: false, attempts: 1 });
-    expect(findings(result)).toContainEqual(
-      expect.objectContaining({
-        field: "source.live",
-        category: "live-verification-failed",
-        diagnostic: "The live inference provider metadata could not be read or verified.",
-      }),
-    );
-  });
-
-  it("lets unexpected reader defects escape the pure observer", async () => {
-    const sourceReader = {
-      read: vi.fn(async () => {
-        throw new Error("programmer-defect-canary");
-      }),
-    };
-
-    await expect(observeStableExportSource("alpha", sourceReader)).rejects.toThrow(
-      "programmer-defect-canary",
-    );
-  });
-
-  it("canonicalizes policy independently of mapping insertion order", () => {
-    const first = canonicalizeEffectivePolicy(
-      "version: 1\nnetwork_policies:\n  ä:\n    name: ä\n    endpoints: [{host: z.example.com, port: 443}]\n    binaries: [{path: /usr/bin/z}]\n  z:\n    name: z\n    endpoints: [{host: a.example.com, port: 443}]\n    binaries: [{path: /usr/bin/a}]\n",
-    );
-    const second = canonicalizeEffectivePolicy(
-      "network_policies:\n  z:\n    binaries: [{path: /usr/bin/a}]\n    endpoints: [{port: 443, host: a.example.com}]\n    name: z\n  ä:\n    binaries: [{path: /usr/bin/z}]\n    endpoints: [{port: 443, host: z.example.com}]\n    name: ä\nversion: 1\n",
-    );
-
-    expect(second).toEqual(first);
-  });
-
-  it("canonicalizes policy losslessly and rejects malformed policy", () => {
-    expect(canonicalizeEffectivePolicy(policy)).toEqual({
-      filesystem_policy: { include_workdir: false, read_only: ["/usr"], read_write: ["/sandbox"] },
-      network_policies: {
-        api: {
-          binaries: [{ path: "/usr/bin/curl" }],
-          endpoints: [{ host: "api.example.com", port: 443 }],
-          name: "api",
-        },
-      },
-      process: { run_as_group: "sandbox", run_as_user: "sandbox" },
-      version: 1,
-    });
-    expect(() => canonicalizeEffectivePolicy("network_policies: [not-a-map]")).toThrow();
   });
 });

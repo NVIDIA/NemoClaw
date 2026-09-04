@@ -3,7 +3,10 @@
 
 import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
 import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode": "import" };
-import { MAX_CANONICAL_ENDPOINT_LENGTH } from "../core/endpoint-contract";
+import {
+  MAX_CANONICAL_ENDPOINT_LENGTH,
+  unsafeEndpointUrlViolation,
+} from "../core/endpoint-contract";
 import { isValidName, NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../sandbox-name-contract";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
@@ -26,6 +29,14 @@ const BOUNDED_TEXT_PATTERN = "^[^\\s\\p{Cc}\\p{Cf}]+$";
 const IMMUTABLE_IMAGE_REFERENCE_MAX_LENGTH = 512;
 export const NEMOCLAW_INFERENCE_ENDPOINT_MAX_LENGTH = MAX_CANONICAL_ENDPOINT_LENGTH;
 export const NEMOCLAW_INFERENCE_ENDPOINT_PATTERN = "^https://[^\\s]+$";
+const CREDENTIAL_ENVIRONMENT_REFERENCE_PATTERN = "^[A-Z][A-Z0-9_]{0,127}$";
+const FORBIDDEN_CREDENTIAL_NAMES = new Set([
+  "CI",
+  "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+  "NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE",
+  "NEMOCLAW_RECREATE_WITHOUT_BACKUP",
+]);
+const FORBIDDEN_CREDENTIAL_PREFIXES = ["DSH_", "NEMOCLAW_", "OPENSHELL_", "VITEST_"] as const;
 export const NEMOCLAW_IMMUTABLE_IMAGE_REFERENCE_PATTERN =
   "^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$";
 
@@ -83,6 +94,13 @@ const UuidSchema = Type.Unsafe<NemoClawConfigDocumentUid>({
   pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
 });
 const TcpPortSchema = Type.Integer({ minimum: 1, maximum: 65_535 });
+const CredentialEnvironmentReferenceNameSchema = Type.String({
+  pattern: CREDENTIAL_ENVIRONMENT_REFERENCE_PATTERN,
+});
+const InferenceEndpointSchema = Type.String({
+  maxLength: NEMOCLAW_INFERENCE_ENDPOINT_MAX_LENGTH,
+  pattern: NEMOCLAW_INFERENCE_ENDPOINT_PATTERN,
+});
 
 /** True when a value is an exact repository SHA-256 image reference. */
 export function isImmutableImageReference(value: unknown): value is ImmutableImageReference {
@@ -118,6 +136,25 @@ export function isValidNemoClawBoundedText(value: unknown): value is string {
   );
 }
 
+/** True when a value is an allowed host credential environment reference. */
+export function isCredentialEnvironmentReferenceName(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    Check(CredentialEnvironmentReferenceNameSchema, value) &&
+    !FORBIDDEN_CREDENTIAL_NAMES.has(value) &&
+    !FORBIDDEN_CREDENTIAL_PREFIXES.some((prefix) => value.startsWith(prefix))
+  );
+}
+
+/** True when a value satisfies the complete v1 inference endpoint contract. */
+export function isValidNemoClawInferenceEndpoint(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    Check(InferenceEndpointSchema, value) &&
+    unsafeEndpointUrlViolation(value) === null
+  );
+}
+
 /** True when a value follows the NemoClaw configuration document-name contract. */
 export function isValidNemoClawConfigDocumentName(
   value: unknown,
@@ -148,7 +185,7 @@ export const NEMOCLAW_INFERENCE_APIS = [
 export const NemoClawInferenceApiSchema = Type.Enum(NEMOCLAW_INFERENCE_APIS);
 
 const CredentialEnvironmentReferenceSchema = Type.Object(
-  { env: Type.String({ pattern: "^[A-Z][A-Z0-9_]{0,127}$" }) },
+  { env: CredentialEnvironmentReferenceNameSchema },
   { additionalProperties: false },
 );
 
@@ -174,10 +211,7 @@ const NemoClawInferenceProviderConfigSchema = Type.Object(
     name: LocalResourceNameSchema,
     provider: BoundedTextSchema,
     api: NemoClawInferenceApiSchema,
-    endpoint: Type.String({
-      maxLength: NEMOCLAW_INFERENCE_ENDPOINT_MAX_LENGTH,
-      pattern: NEMOCLAW_INFERENCE_ENDPOINT_PATTERN,
-    }),
+    endpoint: InferenceEndpointSchema,
     credential: Type.Optional(CredentialEnvironmentReferenceSchema),
   },
   { additionalProperties: false },
@@ -328,9 +362,7 @@ export type NemoClawSandboxConfig = DeepReadonly<
 export type NemoClawConfigSpec = DeepReadonly<
   TypeBoxModule.Type.Static<typeof NemoClawConfigSpecSchema>
 >;
-export type NemoClawConfig = DeepReadonly<
-  TypeBoxModule.Type.Static<typeof NemoClawConfigSchema>
->;
+export type NemoClawConfig = DeepReadonly<TypeBoxModule.Type.Static<typeof NemoClawConfigSchema>>;
 
 declare const VALIDATED_NEMOCLAW_CONFIG: unique symbol;
 

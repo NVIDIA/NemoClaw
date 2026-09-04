@@ -2,165 +2,52 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
-import YAML from "yaml";
-import { fingerprintOpenShellSandboxId } from "../adapters/openshell/sandbox-identity";
-import { cloneAndDeepFreeze } from "../core/immutable";
-import { resolveManagedStartupInferenceRoute } from "../inference/gateway/route-contract";
-import { normalizeInferenceSelection } from "../inference/selection";
-import type { ManagedStartupProfile } from "../onboard/managed-startup/profile";
-import { buildManagedStartupProfile } from "../onboard/managed-startup/profile-builder";
-import { readManagedWorkloadAuthority } from "../onboard/workload/authority";
+import { cloneAndDeepFreeze } from "../../core/immutable";
+import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
+import { normalizeInferenceSelection } from "../../inference/selection";
+import type { ManagedStartupProfile } from "../../onboard/managed-startup/profile";
+import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
+import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
+import { sortCanonicalMappings } from "../../config/canonical-mapping";
 import {
-  isSandboxPolicyCredentialFree,
-  parseAndValidateSandboxPolicy,
-} from "../policy/sandbox-policy-validation";
-import type { SandboxEntry } from "../state/registry/types";
-import { sortCanonicalMappings } from "./canonical-mapping";
-import {
+  isCredentialEnvironmentReferenceName,
   isImmutableImageReference,
   isValidNemoClawBoundedText,
+  isValidNemoClawInferenceEndpoint,
   isValidNemoClawLocalResourceName,
   isValidNemoClawPort,
   isValidNemoClawRuntimeProvider,
   isValidNemoClawSandboxName,
   NEMOCLAW_INFERENCE_APIS,
-  type ImmutableImageReference,
   type InferenceApi,
-} from "./model";
-import { isCredentialEnvironmentReferenceName, isValidNemoClawInferenceEndpoint } from "./schema";
-
-export type ExportObservationFailureCategory =
-  | "not-found"
-  | "unsupported"
-  | "missing-provenance"
-  | "ambiguous"
-  | "drifted"
-  | "unstable-source"
-  | "live-verification-failed"
-  | "policy-not-representable";
-export interface ExportFinding {
-  readonly field: string;
-  readonly category: ExportObservationFailureCategory;
-  readonly diagnostic: string;
-}
-export type NonEmptyExportFindings = readonly [ExportFinding, ...ExportFinding[]];
-
-export interface ObservedExportGateway {
-  readonly name: string;
-  readonly port: number;
-  readonly management: "nemoclaw" | "external" | "unknown";
-  readonly stateRootOwned: boolean;
-}
-export interface ObservedExportEndpointEvidence {
-  readonly endpoint: string;
-  readonly gatewayName: string;
-  readonly providerName: string;
-  readonly configKey: "OPENAI_BASE_URL" | "ANTHROPIC_BASE_URL";
-}
-export interface ObservedExportInference {
-  readonly topology: "hosted" | "managed" | "local" | "unknown";
-  readonly provider: string;
-  readonly model: string;
-  readonly api: string;
-  /** Registry endpoint. It is not sufficient without independent live evidence. */
-  readonly endpoint: string;
-  readonly endpointEvidence: ObservedExportEndpointEvidence | null;
-  readonly credentialEnv: string | null;
-}
-export interface ObservedExportPolicy {
-  readonly sandboxId: string;
-  readonly revision: string;
-  readonly document: string;
-}
-export interface ObservedExportSandboxIdentity {
-  readonly sandboxId: string;
-  readonly fingerprint: string;
-  readonly resourceVersion: number;
-  readonly policyVersion: number;
-}
-
-export type ExportSnapshotReadStage =
-  | "registry"
-  | "gateway-binding"
-  | "sandbox-inventory"
-  | "sandbox-identity"
-  | "inference-route"
-  | "provider-metadata"
-  | "effective-policy";
-
-/** One complete, untrusted read from all export evidence owners. */
-export type RawExportSnapshot =
-  | Readonly<{ kind: "read-failed"; stage: ExportSnapshotReadStage }>
-  | Readonly<{
-      kind: "not-found";
-      sandboxName: string;
-    }>
-  | Readonly<{
-      kind: "observed";
-      sandboxName: string;
-      registry: Readonly<SandboxEntry>;
-      sandbox: ObservedExportSandboxIdentity;
-      gateway: ObservedExportGateway;
-      inference: ObservedExportInference;
-      policy: ObservedExportPolicy;
-    }>;
-
-/** The only observation port. Each call reads one complete source snapshot. */
-export interface ExportSnapshotReader {
-  read(sandboxName: string): Promise<RawExportSnapshot>;
-}
-
-export interface VerifiedExportGateway {
-  readonly name: string;
-  readonly port: number;
-}
-export interface VerifiedExportInference {
-  readonly provider: string;
-  readonly model: string;
-  readonly api: InferenceApi;
-  readonly endpoint: string;
-  readonly credentialEnv?: string;
-}
-
-declare const VERIFIED_EXPORT_SOURCE: unique symbol;
+} from "../../config/model";
+import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
+import type {
+  ExportFinding,
+  ExportSourceFailureCategory,
+  ExportSourceVerificationResult,
+  NonEmptyExportFindings,
+  ObservedExportEndpointEvidence,
+  ObservedExportRegistry,
+  QualifiedExportSnapshot,
+  VerifiedExportSource,
+} from "./export-evidence";
 
 function isSupportedInferenceApi(value: string): value is InferenceApi {
   return (NEMOCLAW_INFERENCE_APIS as readonly string[]).includes(value);
 }
-/** Narrow source that contains only values proved safe for the v1 document. */
-export interface VerifiedExportSource {
-  readonly [VERIFIED_EXPORT_SOURCE]: true;
-  readonly sandboxName: string;
-  readonly runtime: Readonly<{
-    provider: string;
-    imageRef: ImmutableImageReference;
-  }>;
-  readonly gateway: VerifiedExportGateway;
-  readonly inference: VerifiedExportInference;
-  readonly policy: Readonly<Record<string, unknown>>;
-}
-type VerifiedExportSourceData = Omit<VerifiedExportSource, typeof VERIFIED_EXPORT_SOURCE>;
+type VerifiedExportSourceData = Pick<
+  VerifiedExportSource,
+  "gateway" | "inference" | "policy" | "runtime" | "sandboxName"
+>;
 
 function verifiedExportSource(data: VerifiedExportSourceData): VerifiedExportSource {
   return cloneAndDeepFreeze(data) as VerifiedExportSource;
 }
 
-export type ExportObservationResult =
-  | { readonly ok: true; readonly source: VerifiedExportSource; readonly attempts: 1 | 2 }
-  | {
-      readonly ok: false;
-      readonly findings: NonEmptyExportFindings;
-      readonly attempts: 1 | 2;
-    };
-
-type ObservationAttempt =
-  | Readonly<{ kind: "changed" }>
-  | Readonly<{ kind: "verified"; source: VerifiedExportSource }>
-  | Readonly<{ kind: "rejected"; findings: NonEmptyExportFindings }>;
-
 function finding(
   field: string,
-  category: ExportObservationFailureCategory,
+  category: ExportSourceFailureCategory,
   diagnostic: string,
 ): ExportFinding {
   return { field, category, diagnostic };
@@ -185,7 +72,7 @@ function hasEntries(value: unknown): boolean {
 }
 
 /** Report every v1-excluded capability represented by the registry row. */
-export function classifyExportRegistry(entry: Readonly<SandboxEntry>): ExportFinding[] {
+export function classifyExportRegistry(entry: ObservedExportRegistry): ExportFinding[] {
   const excluded: Array<[string, unknown, string]> = [
     [
       "spec.sandboxes[].runtime.customImage",
@@ -337,23 +224,7 @@ export function classifyExportRegistry(entry: Readonly<SandboxEntry>): ExportFin
   return findings;
 }
 
-/** Parse, schema-check, and prove canonical YAML round-trip without dropping semantics. */
-export function canonicalizeEffectivePolicy(document: string): Readonly<Record<string, unknown>> {
-  if (!isSandboxPolicyCredentialFree(document)) {
-    throw new Error("Effective policy must be credential-free.");
-  }
-  const parsed = parseAndValidateSandboxPolicy(document);
-  const canonical = YAML.stringify(sortCanonicalMappings(parsed), {
-    lineWidth: 0,
-    sortMapEntries: true,
-  });
-  const reparsed = parseAndValidateSandboxPolicy(canonical);
-  if (!isDeepStrictEqual(parsed, reparsed))
-    throw new Error("Effective policy cannot be represented losslessly.");
-  return sortCanonicalMappings(reparsed) as Readonly<Record<string, unknown>>;
-}
-
-function expectedManagedStartupProfile(entry: Readonly<SandboxEntry>): ManagedStartupProfile {
+function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedStartupProfile {
   const selected = normalizeInferenceSelection(entry);
   if (
     !selected.provider ||
@@ -401,7 +272,7 @@ function expectedManagedStartupProfile(entry: Readonly<SandboxEntry>): ManagedSt
 }
 
 function classifyManagedStartupProfile(
-  entry: Readonly<SandboxEntry>,
+  entry: ObservedExportRegistry,
   profile: ManagedStartupProfile,
 ): ExportFinding[] {
   let expected: ManagedStartupProfile;
@@ -446,7 +317,7 @@ function endpointConfigKey(api: string): ObservedExportEndpointEvidence["configK
 
 function validateAgreement(
   requestedSandboxName: string,
-  snapshot: Extract<RawExportSnapshot, { kind: "observed" }>,
+  snapshot: QualifiedExportSnapshot,
 ): ExportFinding[] {
   const { registry: entry, sandbox, gateway, inference, policy } = snapshot;
   const findings = classifyExportRegistry(entry);
@@ -644,10 +515,10 @@ function validateAgreement(
   return findings;
 }
 
-function verifySnapshot(
+export function verifyExportSource(
   requestedSandboxName: string,
-  snapshot: Extract<RawExportSnapshot, { kind: "observed" }>,
-): ObservationAttempt {
+  snapshot: QualifiedExportSnapshot,
+): ExportSourceVerificationResult {
   const entry = snapshot.registry;
   let authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null = null;
   let findings = validateAgreement(requestedSandboxName, snapshot);
@@ -665,10 +536,8 @@ function verifySnapshot(
       );
     }
   }
-  let policy: Readonly<Record<string, unknown>> | undefined;
-  try {
-    policy = canonicalizeEffectivePolicy(snapshot.policy.document);
-  } catch {
+  const policy = snapshot.policy.kind === "verified" ? snapshot.policy.canonical : undefined;
+  if (snapshot.policy.kind === "not-representable") {
     findings = [
       ...findings,
       finding(
@@ -724,84 +593,4 @@ function verifySnapshot(
     kind: "verified",
     source,
   };
-}
-
-const LIVE_READ_SOURCE_LABELS = {
-  registry: "sandbox registry",
-  "gateway-binding": "registered gateway binding",
-  "sandbox-inventory": "live sandbox inventory",
-  "sandbox-identity": "live sandbox identity",
-  "inference-route": "live gateway inference route",
-  "provider-metadata": "live inference provider metadata",
-  "effective-policy": "effective OpenShell policy",
-} satisfies Readonly<Record<ExportSnapshotReadStage, string>>;
-
-function failedLiveRead(stage: ExportSnapshotReadStage): ObservationAttempt {
-  return {
-    kind: "rejected",
-    findings: [
-      finding(
-        "source.live",
-        "live-verification-failed",
-        `The ${LIVE_READ_SOURCE_LABELS[stage]} could not be read or verified.`,
-      ),
-    ],
-  };
-}
-
-async function observeAttempt(
-  sandboxName: string,
-  reader: ExportSnapshotReader,
-): Promise<ObservationAttempt> {
-  const observed = cloneAndDeepFreeze(await reader.read(sandboxName));
-  if (observed.kind === "read-failed") return failedLiveRead(observed.stage);
-  const confirmed = cloneAndDeepFreeze(await reader.read(sandboxName));
-  if (confirmed.kind === "read-failed") return failedLiveRead(confirmed.stage);
-  if (!isDeepStrictEqual(observed, confirmed)) return { kind: "changed" };
-  if (observed.kind === "not-found") {
-    if (observed.sandboxName !== sandboxName) {
-      return {
-        kind: "rejected",
-        findings: [
-          finding(
-            "source.sandbox.name",
-            "live-verification-failed",
-            "The observed source identity does not match the requested sandbox.",
-          ),
-        ],
-      };
-    }
-    return {
-      kind: "rejected",
-      findings: [finding("source.registry", "not-found", "The source sandbox is not registered.")],
-    };
-  }
-  return verifySnapshot(sandboxName, observed);
-}
-
-/** Compare two complete snapshots and retry the pair once when they differ. */
-export async function observeStableExportSource(
-  sandboxName: string,
-  reader: ExportSnapshotReader,
-): Promise<ExportObservationResult> {
-  for (const attempts of [1, 2] as const) {
-    const outcome = await observeAttempt(sandboxName, reader);
-    if (outcome.kind === "changed") {
-      if (attempts === 1) continue;
-      return {
-        ok: false,
-        findings: [
-          finding(
-            "source",
-            "unstable-source",
-            "Source state changed during both complete observation attempts.",
-          ),
-        ],
-        attempts,
-      };
-    }
-    if (outcome.kind === "verified") return { ok: true, source: outcome.source, attempts };
-    return { ok: false, findings: outcome.findings, attempts };
-  }
-  throw new Error("unreachable");
 }

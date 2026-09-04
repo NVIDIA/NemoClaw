@@ -34,7 +34,7 @@ import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-captur
 import { fingerprintOpenShellSandboxId } from "../openshell/sandbox-identity";
 import { inspectOpenShellSandboxIdentityFingerprint } from "../openshell/sandbox-identity-cli";
 import { syncCliOpenShellSandboxPolicyReader } from "../openshell/sandbox-policy-cli";
-import { createLiveExportSnapshotReader, observeLiveExportSource } from "./live-export-source";
+import { createLiveExportSnapshotReader } from "./live-export-source";
 
 const sandboxId = "123e4567-e89b-42d3-a456-426614174000";
 const identityFingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
@@ -73,6 +73,7 @@ const startup = buildManagedStartupProfile({
 
 const entry: SandboxEntry = {
   name: "alpha",
+  createdAt: "not-export-evidence",
   agent: "openclaw",
   openshellDriver: "docker",
   gatewayName: "nemoclaw",
@@ -227,22 +228,6 @@ describe("live export snapshot reader", () => {
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
-  it("fails closed when OpenShell cannot expose independent endpoint evidence", async () => {
-    mockSupportedLiveSource();
-    const result = await observeLiveExportSource("alpha");
-
-    expect(result).toMatchObject({
-      ok: false,
-      attempts: 1,
-      findings: [
-        expect.objectContaining({
-          field: "source.inference.endpoint",
-          category: "missing-provenance",
-        }),
-      ],
-    });
-  });
-
   it("returns a complete non-secret raw snapshot", async () => {
     mockSupportedLiveSource();
     const result = await createLiveExportSnapshotReader().read("alpha");
@@ -258,6 +243,7 @@ describe("live export snapshot reader", () => {
         endpointEvidence: null,
       },
     });
+    expect(result).not.toHaveProperty("registry.createdAt");
     expect(result).not.toHaveProperty("inference.credential");
     expect(process.env.NVIDIA_API_KEY).toBeUndefined();
     expect(captureSanitizedResolvedOpenshell).toHaveBeenCalledTimes(1);
@@ -303,17 +289,9 @@ describe("live export snapshot reader", () => {
       },
     });
 
-    const result = await observeLiveExportSource("alpha");
+    const result = await createLiveExportSnapshotReader().read("alpha");
 
-    expect(result).toMatchObject({
-      ok: false,
-      findings: [
-        expect.objectContaining({
-          category: "live-verification-failed",
-          diagnostic: "The effective OpenShell policy could not be read or verified.",
-        }),
-      ],
-    });
+    expect(result).toEqual({ kind: "read-failed", stage: "effective-policy" });
     expect(JSON.stringify(result)).not.toContain(canary);
   });
 
@@ -331,27 +309,17 @@ describe("live export snapshot reader", () => {
       })),
     } as never);
 
-    await expect(observeLiveExportSource("alpha")).resolves.toMatchObject({
-      ok: false,
-      findings: [
-        expect.objectContaining({
-          category: "live-verification-failed",
-          diagnostic: "The live inference provider metadata could not be read or verified.",
-        }),
-      ],
+    await expect(createLiveExportSnapshotReader().read("alpha")).resolves.toEqual({
+      kind: "read-failed",
+      stage: "provider-metadata",
     });
   });
 
   it("maps route and policy revision drift to controlled read failures", async () => {
     mockSupportedLiveSource(4, 3);
-    await expect(observeLiveExportSource("alpha")).resolves.toMatchObject({
-      ok: false,
-      findings: [
-        expect.objectContaining({
-          category: "live-verification-failed",
-          diagnostic: "The effective OpenShell policy could not be read or verified.",
-        }),
-      ],
+    await expect(createLiveExportSnapshotReader().read("alpha")).resolves.toEqual({
+      kind: "read-failed",
+      stage: "effective-policy",
     });
 
     mockSupportedLiveSource();
@@ -361,14 +329,9 @@ describe("live export snapshot reader", () => {
       output: "",
       status: 0,
     });
-    await expect(observeLiveExportSource("alpha")).resolves.toMatchObject({
-      ok: false,
-      findings: [
-        expect.objectContaining({
-          category: "live-verification-failed",
-          diagnostic: "The live gateway inference route could not be read or verified.",
-        }),
-      ],
+    await expect(createLiveExportSnapshotReader().read("alpha")).resolves.toEqual({
+      kind: "read-failed",
+      stage: "inference-route",
     });
   });
 
@@ -378,17 +341,9 @@ describe("live export snapshot reader", () => {
       throw new Error(canary);
     });
 
-    const result = await observeLiveExportSource("alpha");
+    const result = await createLiveExportSnapshotReader().read("alpha");
 
-    expect(result).toMatchObject({
-      ok: false,
-      findings: [
-        expect.objectContaining({
-          category: "live-verification-failed",
-          diagnostic: "The sandbox registry could not be read or verified.",
-        }),
-      ],
-    });
+    expect(result).toEqual({ kind: "read-failed", stage: "registry" });
     expect(JSON.stringify(result)).not.toContain(canary);
   });
 });

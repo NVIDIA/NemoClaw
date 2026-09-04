@@ -2,17 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { renderCanonicalNemoClawConfig } from "../../config/canonical";
-import type {
-  ExportObservationResult,
-  NonEmptyExportFindings,
-} from "../../config/export-observation";
 import type { NemoClawConfigDocumentName, NemoClawConfigDocumentUid } from "../../config/model";
+import { validateNemoClawConfig } from "../../config/schema";
+import type { NonEmptyExportFindings } from "../../domain/config/export-evidence";
 import { buildExportConfig } from "../../domain/config/export-document";
 import {
   YamlExportOutputError,
   type YamlExportFailureKind,
   type YamlExportFileState,
 } from "../../adapters/fs/config-export-file";
+import type { ExportObservationResult } from "./observe-export-source";
 
 export const CONFIG_EXPORT_RESULT_VERSION = 1 as const;
 
@@ -161,10 +160,12 @@ export async function runConfigExport(
       },
     };
   }
-  const config = buildExportConfig(observation.source, {
-    documentName: request.documentName,
-    documentUid: dependencies.createDocumentUid(),
-  });
+  const config = validateNemoClawConfig(
+    buildExportConfig(observation.source, {
+      documentName: request.documentName,
+      documentUid: dependencies.createDocumentUid(),
+    }),
+  );
   const rendered = renderCanonicalNemoClawConfig(config);
 
   if (request.target.kind === "stdout") {

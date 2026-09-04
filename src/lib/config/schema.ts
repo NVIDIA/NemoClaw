@@ -14,8 +14,7 @@ import { unsafeEndpointUrlViolation } from "../core/endpoint-contract";
 import { cloneAndDeepFreeze } from "../core/immutable";
 import { isSandboxPolicyCredentialFree } from "../policy/sandbox-policy-validation";
 import {
-  NEMOCLAW_INFERENCE_ENDPOINT_MAX_LENGTH,
-  NEMOCLAW_INFERENCE_ENDPOINT_PATTERN,
+  isCredentialEnvironmentReferenceName,
   NemoClawConfigSchema,
   type NemoClawConfig,
   type ValidatedNemoClawConfig,
@@ -24,15 +23,7 @@ import {
 const PACKAGE_ROOT = path.resolve(__dirname, "..", "..", "..");
 const NETWORK_POLICY_SCHEMA_PATH = path.join(PACKAGE_ROOT, "schemas", "network-policy.schema.json");
 const SANDBOX_POLICY_SCHEMA_PATH = path.join(PACKAGE_ROOT, "schemas", "sandbox-policy.schema.json");
-const FORBIDDEN_CREDENTIAL_NAMES = new Set([
-  "CI",
-  "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
-  "NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE",
-  "NEMOCLAW_RECREATE_WITHOUT_BACKUP",
-]);
-const FORBIDDEN_CREDENTIAL_PREFIXES = ["DSH_", "NEMOCLAW_", "OPENSHELL_", "VITEST_"] as const;
 let validator: ValidateFunction<NemoClawConfig> | undefined;
-const INFERENCE_ENDPOINT_RE = new RegExp(NEMOCLAW_INFERENCE_ENDPOINT_PATTERN, "u");
 
 export class NemoClawConfigValidationError extends Error {
   constructor(readonly problems: readonly string[]) {
@@ -61,24 +52,6 @@ function schemaProblems(errors: ErrorObject[] | null | undefined): string[] {
       .slice(0, 160);
     return `${error.keyword}: ${message}`;
   });
-}
-
-export function isCredentialEnvironmentReferenceName(value: string): boolean {
-  return (
-    /^[A-Z][A-Z0-9_]{0,127}$/u.test(value) &&
-    !FORBIDDEN_CREDENTIAL_NAMES.has(value) &&
-    !FORBIDDEN_CREDENTIAL_PREFIXES.some((prefix) => value.startsWith(prefix))
-  );
-}
-
-/** True when a value satisfies the complete v1 inference endpoint contract. */
-export function isValidNemoClawInferenceEndpoint(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length <= NEMOCLAW_INFERENCE_ENDPOINT_MAX_LENGTH &&
-    INFERENCE_ENDPOINT_RE.test(value) &&
-    unsafeEndpointUrlViolation(value) === null
-  );
 }
 
 function duplicateProblems(values: readonly string[], location: string): string[] {

@@ -12,16 +12,16 @@ import {
 import { inspectOpenShellSandboxIdentityFingerprint } from "../openshell/sandbox-identity-cli";
 import { namedOpenShellGateway } from "../openshell/sandbox-observer";
 import { syncCliOpenShellSandboxPolicyReader } from "../openshell/sandbox-policy-cli";
-import {
-  observeStableExportSource,
-  type ExportObservationResult,
-  type ExportSnapshotReadStage,
-  type ExportSnapshotReader,
-  type ObservedExportGateway,
-  type ObservedExportInference,
-  type ObservedExportSandboxIdentity,
-  type RawExportSnapshot,
-} from "../../config/export-observation";
+import { EXPORT_REGISTRY_EVIDENCE_KEYS } from "../../domain/config/export-evidence";
+import type {
+  ExportSnapshotReadStage,
+  ExportSnapshotReader,
+  ObservedExportGateway,
+  ObservedExportInference,
+  ObservedExportRegistry,
+  ObservedExportSandboxIdentity,
+  RawExportSnapshot,
+} from "../../domain/config/export-evidence";
 import { getLiveGatewayInference } from "../../inference/live";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { resolveGatewayName } from "../../onboard/gateway-binding/identity";
@@ -36,6 +36,13 @@ import type { SandboxEntry } from "../../state/registry/types";
 
 const CAPTURE_MAX_BYTES = 1024 * 1024;
 const CAPTURE_TIMEOUT_MS = 30_000;
+
+function registryEvidence(entry: Readonly<SandboxEntry>): ObservedExportRegistry {
+  return {
+    name: entry.name,
+    ...Object.fromEntries(EXPORT_REGISTRY_EVIDENCE_KEYS.map((key) => [key, entry[key]])),
+  } as ObservedExportRegistry;
+}
 
 function liveRow(sandboxName: string, gatewayName: string) {
   const captured = captureSanitizedResolvedOpenshell(
@@ -221,7 +228,7 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
     return {
       kind: "observed",
       sandboxName,
-      registry: entry,
+      registry: registryEvidence(entry),
       gateway,
       sandbox,
       inference,
@@ -235,11 +242,4 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
 /** Concrete read-only bindings for one complete export snapshot. */
 export function createLiveExportSnapshotReader(): ExportSnapshotReader {
   return { read: readSnapshot };
-}
-
-/** Resolve one verified observation without reading credential values or mutating state. */
-export async function observeLiveExportSource(
-  sandboxName: string,
-): Promise<ExportObservationResult> {
-  return observeStableExportSource(sandboxName, createLiveExportSnapshotReader());
 }

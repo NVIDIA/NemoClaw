@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import type { VerifiedExportSource } from "../../config/export-observation";
 import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
 } from "../../config/model";
 import { buildExportConfig } from "./export-document";
+import type { VerifiedExportSource } from "./export-evidence";
 
 const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const firstUid = parseNemoClawConfigDocumentUid("018f47e2-9d93-7d15-9c41-3ecf70b2550f");
@@ -48,7 +48,7 @@ const source = {
 } as unknown as VerifiedExportSource;
 
 describe("export config builder", () => {
-  it("maps a verified source into one validated aggregate (#10938)", () => {
+  it("maps a verified source into one aggregate (#10938)", () => {
     const result = buildExportConfig(source, {
       documentName: workAgentsDocumentName,
       documentUid: firstUid,
@@ -117,7 +117,7 @@ describe("export config builder", () => {
     );
   });
 
-  it("omits an absent hosted credential reference and validates the result (#10938)", () => {
+  it("omits an absent hosted credential reference (#10938)", () => {
     const credentialless: VerifiedExportSource = {
       ...source,
       inference: { ...source.inference, credentialEnv: undefined },

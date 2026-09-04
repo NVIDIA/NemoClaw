@@ -64,12 +64,19 @@ export default class ConfigExportCommand extends NemoClawCommand {
       flags.output === "-"
         ? { kind: "stdout" }
         : { kind: "file", outputPath: flags.output, force: flags.force };
-    const [{ runConfigExport }, { observeLiveExportSource }, { publishExportFile }] =
+    const [
+      { runConfigExport },
+      { observeStableExportSource },
+      { createLiveExportSnapshotReader },
+      { publishExportFile },
+    ] =
       await Promise.all([
         import("../../lib/actions/config/export"),
+        import("../../lib/actions/config/observe-export-source"),
         import("../../lib/adapters/config/live-export-source"),
         import("../../lib/adapters/fs/config-export-file"),
       ]);
+    const snapshotReader = createLiveExportSnapshotReader();
     const outcome = await runConfigExport(
       {
         sandboxName: args.sandboxName,
@@ -77,7 +84,7 @@ export default class ConfigExportCommand extends NemoClawCommand {
         target,
       },
       {
-        observe: observeLiveExportSource,
+        observe: (sandboxName) => observeStableExportSource(sandboxName, snapshotReader),
         createDocumentUid: () => parseNemoClawConfigDocumentUid(randomUUID()),
         publish: publishExportFile,
         writeStdout: (yaml) =>

@@ -5,9 +5,11 @@ import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 import { renderCanonicalNemoClawConfig, validateNemoClawConfig } from "./index";
 import {
+  isCredentialEnvironmentReferenceName,
   isImmutableImageReference,
   isValidNemoClawBoundedText,
   isValidNemoClawConfigDocumentName,
+  isValidNemoClawInferenceEndpoint,
   isValidNemoClawRuntimeProvider,
   NemoClawConfigSchema,
   parseNemoClawConfigDocumentName,
@@ -196,6 +198,12 @@ describe("NemoClawConfig v1", () => {
     },
   );
 
+  it("uses the model guard for credential-reference semantics", () => {
+    expect(isCredentialEnvironmentReferenceName("OPENAI_API_KEY")).toBe(true);
+    expect(isCredentialEnvironmentReferenceName("NEMOCLAW_PROVIDER_KEY")).toBe(false);
+    expect(isCredentialEnvironmentReferenceName(42)).toBe(false);
+  });
+
   it("rejects unsafe endpoints without including their contents in diagnostics (#10938)", () => {
     const canary = "DO_NOT_LOG_ENDPOINT_SECRET";
     const value = structuredClone(config()) as unknown as Record<string, any>;
@@ -217,6 +225,12 @@ describe("NemoClawConfig v1", () => {
       expect(() => validateNemoClawConfig(value)).toThrow();
     },
   );
+
+  it("uses the model guard for complete inference-endpoint semantics", () => {
+    expect(isValidNemoClawInferenceEndpoint("https://api.example.com/v1")).toBe(true);
+    expect(isValidNemoClawInferenceEndpoint("https://user:secret@api.example.com/v1")).toBe(false);
+    expect(isValidNemoClawInferenceEndpoint(42)).toBe(false);
+  });
 
   it.each([
     "nvcr.io/nvidia/nemoclaw:latest",
