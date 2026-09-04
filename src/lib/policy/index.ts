@@ -23,6 +23,7 @@ import {
 } from "../adapters/openshell/sandbox-policy-cli";
 import { PolicyObservationError } from "../adapters/openshell/policy-state";
 export { isPolicyObservationError } from "../adapters/openshell/policy-state";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
 import { CLI_NAME } from "../cli/branding";
 import {
@@ -478,10 +479,10 @@ const MESSAGING_PRESET_LABELS: Readonly<Record<string, string>> = Object.fromEnt
   }),
 );
 
-const MESSAGING_PRESET_VALIDATION_WARNING_LINES: Readonly<Record<string, readonly string[]>> =
-  getMessagingPolicyPresetValidationWarnings();
-
-function getPresetValidationWarning(presetName: string): string | null {
+function getPresetValidationWarning(
+  presetName: string,
+  options: { agent?: "openclaw" | "hermes" } = {},
+): string | null {
   if (presetName === "jira") {
     return [
       "Jira preset validation uses per-binary policy signals.",
@@ -508,7 +509,10 @@ function getPresetValidationWarning(presetName: string): string | null {
     "configuration are wired up at onboard time and are not added by applying",
     "this preset alone.",
   ];
-  lines.push(...(MESSAGING_PRESET_VALIDATION_WARNING_LINES[presetName] ?? []));
+  const validationWarningLines = getMessagingPolicyPresetValidationWarnings({
+    agent: options.agent,
+  });
+  lines.push(...(validationWarningLines[presetName] ?? []));
 
   return lines.join("\n  ");
 }
@@ -738,8 +742,13 @@ export function inspectPolicyMutationContext(
  * Read the round-trippable base policy through the sandbox's recorded gateway.
  * Destructive lifecycle callers use this instead of the ambient CLI gateway.
  */
-export function captureRecordedSandboxBasePolicy(sandboxName: string, operation: string): string {
-  return inspectLivePolicyBoundary(sandboxName, operation).basePolicyDocument;
+export function captureRecordedSandboxBasePolicy(
+  sandboxName: string,
+  operation: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): string {
+  return inspectLivePolicyBoundary(sandboxName, operation, runtimeSelection?.gatewayName)
+    .basePolicyDocument;
 }
 
 function preparePolicyMutationContext(
@@ -1728,7 +1737,11 @@ function removePresetFromPolicy(
 function removePreset(
   sandboxName: string,
   presetName: string,
-  options: { nonFatal?: boolean; presetContent?: string } = {},
+  options: {
+    nonFatal?: boolean;
+    presetContent?: string;
+    runtimeSelection?: OpenShellRuntimeSelection;
+  } = {},
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
@@ -1747,7 +1760,11 @@ function removePreset(
   }
 
   const operation = `remove policy preset '${presetName}'`;
-  const context = inspectLivePolicyForMutation(sandboxName, operation);
+  const context = inspectLivePolicyForMutation(
+    sandboxName,
+    operation,
+    options.runtimeSelection?.gatewayName,
+  );
   if (!context) return false;
 
   const currentPolicy = currentPolicyFromMutationContext(context);
@@ -2145,6 +2162,7 @@ function applyPresetContent(
     suppressDisclosure?: boolean;
     disclosedPresetState?: PresetPolicyState | null;
     includeMessagingCredentialBindings?: boolean;
+    runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
@@ -2227,7 +2245,11 @@ function applyPresetContent(
   const operation = `apply policy preset '${presetName}'`;
   let context: PolicyMutationContext;
   try {
-    context = preparePolicyMutationContext(sandboxName, operation);
+    context = preparePolicyMutationContext(
+      sandboxName,
+      operation,
+      options.runtimeSelection?.gatewayName,
+    );
   } catch (error) {
     return reportPolicyObservationFailure(error);
   }
@@ -2742,9 +2764,11 @@ function getPresetContentGatewayState(
   sandboxName: string,
   presetContent: string,
   policyKey?: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): "match" | "absent" | "drift" | null {
   return inspectPresetContentGatewayState({
-    readPolicy: () => readCurrentSandboxPolicy(sandboxName) ?? "",
+    readPolicy: () =>
+      readCurrentSandboxPolicy(sandboxName, runtimeSelection?.gatewayName) ?? "",
     parseCurrentPolicy: parseCurrentPolicyOrEmpty,
     extractPresetEntries,
     presetContent,

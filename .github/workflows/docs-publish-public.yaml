@@ -20,6 +20,7 @@ env:
 
 jobs:
   publish:
+    name: Docs / Publish release documentation
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: docs-public

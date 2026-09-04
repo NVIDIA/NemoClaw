@@ -236,7 +236,7 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
   });
 
-  it("routes typed publication health failure to existing recovery under one mutation gate", async () => {
+  it("settles transient final Hermes publication health without another recovery", async () => {
     const harness = missingHermesHarness();
     harness.publishLaunchReadinessSpy
       .mockResolvedValueOnce({ kind: "validation-failed", category: "health" })
@@ -248,6 +248,23 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
     expect(harness.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
     expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds final Hermes publication settlement before reporting persistent health failure", async () => {
+    const harness = missingHermesHarness();
+    harness.publishLaunchReadinessSpy.mockResolvedValue({
+      kind: "validation-failed",
+      category: "health",
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.launchReadinessMutationGateSpy).toHaveBeenCalledOnce();
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    // One accepted-runtime attempt enters recovery; final settlement is then capped at three.
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledTimes(4);
   });
 
   it.each([
