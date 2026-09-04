@@ -255,9 +255,8 @@ export function publishExportFile(
       typeof contents === "string" ? Buffer.from(contents, "utf8") : contents,
     );
     fs.fsyncSync(descriptor);
-    const stagedDescriptor = descriptor;
-    descriptor = null;
-    fs.closeSync(stagedDescriptor);
+    // Keep the inode allocated through final location verification; closing
+    // here would let an unlink/recreate race reuse its device/inode identity.
     assertParentStable(parent, outputPath);
     publication = "unknown";
     try {
@@ -312,15 +311,6 @@ export function publishExportFile(
   } catch (error) {
     primaryError ??= error;
   } finally {
-    if (descriptor !== null) {
-      const ownedDescriptor = descriptor;
-      descriptor = null;
-      try {
-        fs.closeSync(ownedDescriptor);
-      } catch (error) {
-        if (primaryError === undefined) primaryError = error;
-      }
-    }
     if (publication !== "published" && stagingPresent && temporary !== null) {
       if (stagedFile === null) {
         stagingCleanupIncomplete = true;
@@ -333,6 +323,15 @@ export function publishExportFile(
             stagingCleanupIncomplete = true;
           }
         }
+      }
+    }
+    if (descriptor !== null) {
+      const ownedDescriptor = descriptor;
+      descriptor = null;
+      try {
+        fs.closeSync(ownedDescriptor);
+      } catch (error) {
+        if (primaryError === undefined) primaryError = error;
       }
     }
     if (parent !== null) {

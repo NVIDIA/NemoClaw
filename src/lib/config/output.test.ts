@@ -233,8 +233,9 @@ describe("publishExportFile", () => {
     let foreignPath = "";
     vi.spyOn(fs, "renameSync").mockImplementationOnce((source, destination) => {
       renameSync(source, destination);
-      foreignPath = String(source);
-      fs.writeFileSync(foreignPath, "foreign");
+      const retainedPath = String(source);
+      foreignPath = path.join(root, path.basename(retainedPath));
+      fs.writeFileSync(retainedPath, "foreign");
       throw Object.assign(new Error("injected ambiguous rename failure"), { code: "EIO" });
     });
 
@@ -457,7 +458,7 @@ describe("publishExportFile", () => {
     expect(closed).toHaveLength(1);
   });
 
-  it("does not retry a staged descriptor close that reports failure (#10938)", () => {
+  it("does not retry a staged descriptor close that reports failure after publication (#10938)", () => {
     const root = temporaryRoot();
     const outputPath = path.join(root, "selected.yaml");
     const closeSync = fs.closeSync;
@@ -478,11 +479,17 @@ describe("publishExportFile", () => {
     expect(() => publishExportFile(outputPath, "content")).toThrowError(
       expect.objectContaining<Partial<YamlExportOutputError>>({
         category: "unsafe-output",
-        fileState: { publication: "not-published", stagingCleanup: "complete" },
+        fileState: {
+          publication: "published",
+          durability: "confirmed",
+          location: "confirmed",
+          stagingCleanup: "complete",
+        },
         outputPath,
       }),
     );
     expect(closed.filter((descriptor) => descriptor === failedDescriptor)).toHaveLength(1);
+    expect(fs.readFileSync(outputPath, "utf8")).toBe("content");
     expect(temporaryEntries(root)).toEqual([]);
   });
 
