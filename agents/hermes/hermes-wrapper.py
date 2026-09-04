@@ -82,6 +82,7 @@
 import ast
 import json
 import os
+import pwd
 import re
 import stat
 import subprocess
@@ -102,6 +103,7 @@ _API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 _CLI_ADAPTER_DEV_FILENAME = "hermes-cli-adapter-v1.json"
 _HERMES_MAIN_DEV_FILENAME = "hermes-main.py"
 _GATEWAY_LAZY_INSTALL_TARGET = "/run/nemoclaw/hermes-gateway-lazy-packages"
+_SANDBOX_LAZY_INSTALL_TARGET = "/sandbox/.hermes/lazy-packages"
 _MANAGED_BUNDLED_PLUGINS = "/opt/hermes/plugins"
 _MANAGED_HERMES_HOME = "/sandbox/.hermes"
 _MANAGED_HOME = "/sandbox"
@@ -355,13 +357,25 @@ def _run_gateway_guard(guard_path: str) -> int:
     return subprocess.call([python3, "-I", guard_path, "runtime-env"])
 
 
-def _harden_root_separated_gateway_package_env() -> None:
+def _managed_gateway_lazy_install_target() -> str:
+    """Return the identity-specific reviewed lazy-install directory."""
+
+    try:
+        if os.geteuid() == pwd.getpwnam("gateway").pw_uid:
+            return _GATEWAY_LAZY_INSTALL_TARGET
+    except KeyError:
+        pass
+    return _SANDBOX_LAZY_INSTALL_TARGET
+
+
+def _harden_gateway_package_env(lazy_install_target: str) -> None:
     """Remove sandbox-controlled installer inputs before gateway exec."""
 
     for key in tuple(os.environ):
         if key in _GATEWAY_PACKAGE_ENV_KEYS or key.startswith(_GATEWAY_PACKAGE_ENV_PREFIXES):
             os.environ.pop(key, None)
     os.environ.update(_GATEWAY_PACKAGE_ENV)
+    os.environ["UV_CACHE_DIR"] = f"{lazy_install_target}/.uv-cache"
 
 
 _SUPPORTED_CLI_ADAPTER_VERSION = 1
@@ -782,11 +796,12 @@ def main(argv: list[str]) -> int:
                 file=sys.stderr,
             )
             return 1
+        lazy_install_target = _managed_gateway_lazy_install_target()
         os.environ["HERMES_HOME"] = _MANAGED_HERMES_HOME
         os.environ["HERMES_BUNDLED_PLUGINS"] = _MANAGED_BUNDLED_PLUGINS
-        os.environ["HERMES_LAZY_INSTALL_TARGET"] = _GATEWAY_LAZY_INSTALL_TARGET
+        os.environ["HERMES_LAZY_INSTALL_TARGET"] = lazy_install_target
         os.environ["HOME"] = _MANAGED_HOME
-        _harden_root_separated_gateway_package_env()
+        _harden_gateway_package_env(lazy_install_target)
         rc = _run_gateway_guard(guard_path)
         if rc != 0:
             return rc

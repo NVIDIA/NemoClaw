@@ -100,7 +100,6 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         TELEGRAM_BOT_TOKEN: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
         OPENCLAW_GATEWAY_TOKEN: "raw-gateway-token",
       },
-      { validatorScript: "raise SystemExit(0)\n" },
     );
 
     expect(run.status).toBe(0);
@@ -109,7 +108,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realArgs).toBe("gateway run");
   });
 
-  it("scrubs package-manager and Python startup inputs before a root-separated gateway exec", () => {
+  it("scrubs package-manager and Python startup inputs before a same-identity gateway exec", () => {
     const run = runWrapper(
       ["gateway", "run"],
       {
@@ -138,7 +137,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realEnv.HERMES_HOME).toBe("/sandbox/.hermes");
     expect(run.realEnv.HERMES_BUNDLED_PLUGINS).toBe("/opt/hermes/plugins");
     expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe(
-      "/run/nemoclaw/hermes-gateway-lazy-packages",
+      "/sandbox/.hermes/lazy-packages",
     );
     expect(run.realEnv.HOME).toBe("/sandbox");
     const packageEnvironment = Object.fromEntries(
@@ -154,7 +153,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(packageEnvironment).toEqual({
       UV_NO_CONFIG: "1",
       UV_NO_CACHE: "1",
-      UV_CACHE_DIR: "/run/nemoclaw/hermes-gateway-lazy-packages/.uv-cache",
+      UV_CACHE_DIR: "/sandbox/.hermes/lazy-packages/.uv-cache",
       PIP_CONFIG_FILE: "/dev/null",
       PIP_DISABLE_PIP_VERSION_CHECK: "1",
       PYTHONSAFEPATH: "1",
@@ -184,7 +183,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realEnv.HERMES_HOME).toBe("/sandbox/.hermes");
     expect(run.realEnv.HERMES_BUNDLED_PLUGINS).toBe("/opt/hermes/plugins");
     expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe(
-      "/run/nemoclaw/hermes-gateway-lazy-packages",
+      "/sandbox/.hermes/lazy-packages",
     );
     expect(run.realEnv.HOME).toBe("/sandbox");
     expect(run.realEnv.UV_CONFIG_FILE).toBeUndefined();
