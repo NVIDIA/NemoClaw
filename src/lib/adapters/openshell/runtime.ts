@@ -17,7 +17,23 @@ import { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./ti
 
 type CommandArgs = string[];
 
-export { buildOpenShellSubprocessEnv, OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS };
+export {
+  buildOpenShellRuntimeSelectionEnv,
+  replaceOpenShellRuntimeSelectionEnv,
+  snapshotOpenShellEnv,
+  type OpenShellRuntimeSelection,
+} from "./runtime-selection";
+export {
+  buildOpenShellCommandEnv,
+  buildSelectedOpenShellSubprocessEnv,
+  withSelectedOpenShellCommandOptions,
+} from "./command-argv";
+
+export {
+  buildOpenShellSubprocessEnv,
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+};
 export { classifyManagedGatewayEndpointBinding } from "./client";
 export { runCaptureEx } from "../../runner";
 
@@ -25,6 +41,7 @@ type RunnerOptions = {
   /** Exact canonical executable selected by the caller. */
   openshellBinary?: string;
   env?: NodeJS.ProcessEnv;
+  gatewayName?: string;
   replaceEnv?: boolean;
   stdio?: StdioOptions;
   input?: string;
@@ -117,6 +134,7 @@ export function captureSandboxSshConfig(sandboxName: string, opts: RunnerOptions
   return captureSandboxSshConfigCommand(getOpenshellBinary(), sandboxName, {
     cwd: ROOT,
     env: opts.env,
+    gatewayName: opts.gatewayName,
     replaceEnv: opts.replaceEnv,
     ignoreError: opts.ignoreError,
     includeStreams: opts.includeStreams,

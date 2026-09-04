@@ -20,6 +20,7 @@ import {
   resolveDriftGatewayBin,
   shouldUseContainerizedGateway,
 } from "./docker-driver-gateway-launch";
+import * as dockerDriverGatewayLocalTls from "./docker-driver-gateway-local-tls";
 import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
 import { gatewayProcessCmdlineMatches } from "./gateway-process-identity";
 
@@ -189,6 +190,60 @@ describe("docker-driver-gateway-launch", () => {
         });
       });
     }).toThrow(/not supported for the OpenShell Docker-driver gateway/);
+  });
+
+  it("uses the selected OpenShell env for certificate generation and the gateway process (#10514)", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    vi.stubEnv("OPENSHELL_DISABLE_TLS", "1");
+    vi.stubEnv("OPENSHELL_DISABLE_GATEWAY_AUTH", "1");
+    const selectedEnv: NodeJS.ProcessEnv = {
+      HOME: "/home/tester",
+      PATH: "/usr/bin",
+      OPENSHELL_GATEWAY: "nemoclaw-8090",
+      OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+      OPENSHELL_WORKSPACE: "default",
+    };
+    const ensureTls = vi
+      .spyOn(dockerDriverGatewayLocalTls, "ensureDockerDriverGatewayLocalTlsBundle")
+      .mockImplementation(({ env, stateDir }) => {
+        expect(env).toBe(selectedEnv);
+        return dockerDriverGatewayLocalTls.getDockerDriverGatewayLocalTlsBundle(stateDir);
+      });
+
+    try {
+      withTempBinaries(({ dir, gatewayBin }) => {
+        const stateDir = path.join(dir, "state");
+        const launch = buildDockerDriverGatewayLaunch({
+          ensureLocalTlsBundle: true,
+          env: selectedEnv,
+          gatewayBin,
+          gatewayEnv: { OPENSHELL_DRIVERS: "docker" },
+          hostGlibcVersion: "2.39",
+          platform: "linux",
+          requiredGlibcVersions: ["2.39"],
+          stateDir,
+        });
+
+        expect(ensureTls).toHaveBeenCalledOnce();
+        expect(launch.env).toEqual(
+          expect.objectContaining({
+            OPENSHELL_GATEWAY: "nemoclaw-8090",
+            OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+            OPENSHELL_WORKSPACE: "default",
+          }),
+        );
+        expect(launch.env.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();
+        expect(launch.env.OPENSHELL_TOKEN).toBeUndefined();
+        expect(launch.env.OPENSHELL_DISABLE_TLS).toBeUndefined();
+        expect(launch.env.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
+      });
+    } finally {
+      ensureTls.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("uses the host binary as the drift binary outside compatibility mode", () => {
