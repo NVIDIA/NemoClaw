@@ -307,163 +307,191 @@ export async function runQwenGpuQualification(): Promise<void> {
   const statePaths = managedLlamaCppStatePaths(os.homedir());
   const cacheEntry = modelCacheEntry(setting);
   const installLog: string[] = [];
+  const credentialName = "NEMOCLAW_LLAMACPP_LOCAL_TOKEN";
+  const baseUrlName = "NEMOCLAW_E2E_LOCAL_INFERENCE_BASE_URL";
+  const priorCredential = process.env[credentialName];
+  const priorBaseUrl = process.env[baseUrlName];
   let apiKey: string | undefined;
   let transactionId: string | undefined;
+  let runtimeCleanup: Extract<LocalModelRuntimeCleanupResult, { ok: true }> | undefined;
+  let runtimeEvidence:
+    | {
+        readonly fullGpuOffload: true;
+        readonly image: string;
+        readonly noDockerPublishedPort: true;
+        readonly offloadedLayers: number;
+        readonly platform: "linux/amd64";
+        readonly totalLayers: number;
+      }
+    | undefined;
   let qualificationEvidence: Record<string, unknown> | undefined;
   let primaryError: unknown;
 
   try {
-    const installed = await installManagedLlamaCpp(setting.selection, {
-      sandboxName: SANDBOX_NAME,
-      runtimeProvider: createDockerRuntimeProviderBundle(),
-      env: process.env,
-      log: (message) => installLog.push(message),
-    });
-    if (!installed.ok) throw new Error(installed.reason);
-    apiKey = installed.apiKey;
-    if (installed.receipt.runtime.kind !== "container" || !installed.receipt.runtime.model) {
-      throw new Error("managed llama.cpp receipt runtime is incomplete");
-    }
-    if (
-      installed.receipt.runtime.model.recipeId !== RECIPE_ID ||
-      installed.receipt.runtime.model.digest !== setting.modelFile.digest ||
-      installed.receipt.runtime.model.sizeBytes !== setting.modelFile.sizeBytes
-    ) {
-      throw new Error("managed llama.cpp receipt does not bind the exact Qwen recipe and GGUF");
-    }
-    if (
-      installed.receipt.inference?.protocol !== "openai-chat-completions" ||
-      installed.receipt.inference.model !== recipe.spec.model.servedName ||
-      installed.receipt.inference.toolCallingRequired !== true
-    ) {
-      throw new Error("managed llama.cpp startup did not prove a Qwen tool call");
-    }
-    transactionId = installed.receipt.runtime.model.generation;
+    const agentResult = await runManagedImageOpenShellE2e(
+      {
+        agent: "openclaw",
+        image: agentPlan.image.reference,
+        localProvider: "llama-cpp",
+        model: recipe.spec.model.servedName,
+        sandbox: SANDBOX_NAME,
+      },
+      (context) => runLlamaCppOpenClawAgentQualification(agentPlan, context),
+      {
+        async afterGatewayStarted() {
+          const installed = await installManagedLlamaCpp(setting.selection, {
+            sandboxName: SANDBOX_NAME,
+            runtimeProvider: createDockerRuntimeProviderBundle(),
+            env: process.env,
+            log: (message) => installLog.push(message),
+          });
+          if (!installed.ok) throw new Error(installed.reason);
+          apiKey = installed.apiKey;
+          const modelAuthority =
+            installed.receipt.runtime.kind === "container"
+              ? installed.receipt.runtime.model
+              : undefined;
+          if (!modelAuthority) throw new Error("managed llama.cpp receipt runtime is incomplete");
+          if (
+            modelAuthority.recipeId !== RECIPE_ID ||
+            modelAuthority.digest !== setting.modelFile.digest ||
+            modelAuthority.sizeBytes !== setting.modelFile.sizeBytes
+          ) {
+            throw new Error(
+              "managed llama.cpp receipt does not bind the exact Qwen recipe and GGUF",
+            );
+          }
+          if (
+            installed.receipt.inference?.protocol !== "openai-chat-completions" ||
+            installed.receipt.inference.model !== recipe.spec.model.servedName ||
+            installed.receipt.inference.toolCallingRequired !== true
+          ) {
+            throw new Error("managed llama.cpp startup did not prove a Qwen tool call");
+          }
+          transactionId = modelAuthority.generation;
 
-    const container = JSON.parse(
-      requireCommand("docker", ["container", "inspect", MANAGED_LLAMA_CPP_CONTAINER_NAME]),
-    ) as Array<{
-      HostConfig?: { PortBindings?: Record<string, unknown> };
-      NetworkSettings?: { Ports?: Record<string, unknown> };
-      State?: { Running?: unknown };
-    }>;
-    if (
-      container[0]?.State?.Running !== true ||
-      JSON.stringify(container[0]?.HostConfig?.PortBindings) !== "{}" ||
-      !Object.values(container[0]?.NetworkSettings?.Ports ?? {}).every((value) => value === null)
-    ) {
-      throw new Error("managed llama.cpp did not retain its running no-publication boundary");
-    }
-    const imagePlatform = JSON.parse(
-      requireCommand("docker", ["image", "inspect", recipe.spec.runtime.image]),
-    ) as Array<{ Architecture?: unknown; Os?: unknown }>;
-    if (imagePlatform[0]?.Architecture !== "amd64" || imagePlatform[0]?.Os !== "linux") {
-      throw new Error("managed llama.cpp did not select the Linux amd64 runtime image");
-    }
-    const offload = validateQwenGpuStartupLog(
-      requireCommand("docker", ["logs", "--tail", "20000", MANAGED_LLAMA_CPP_CONTAINER_NAME]),
+          const container = JSON.parse(
+            requireCommand("docker", ["container", "inspect", MANAGED_LLAMA_CPP_CONTAINER_NAME]),
+          ) as Array<{
+            HostConfig?: { PortBindings?: Record<string, unknown> };
+            NetworkSettings?: { Ports?: Record<string, unknown> };
+            State?: { Running?: unknown };
+          }>;
+          if (
+            container[0]?.State?.Running !== true ||
+            JSON.stringify(container[0]?.HostConfig?.PortBindings) !== "{}" ||
+            !Object.values(container[0]?.NetworkSettings?.Ports ?? {}).every(
+              (value) => value === null,
+            )
+          ) {
+            throw new Error("managed llama.cpp did not retain its running no-publication boundary");
+          }
+          const imagePlatform = JSON.parse(
+            requireCommand("docker", ["image", "inspect", recipe.spec.runtime.image]),
+          ) as Array<{ Architecture?: unknown; Os?: unknown }>;
+          if (imagePlatform[0]?.Architecture !== "amd64" || imagePlatform[0]?.Os !== "linux") {
+            throw new Error("managed llama.cpp did not select the Linux amd64 runtime image");
+          }
+          const offload = validateQwenGpuStartupLog(
+            requireCommand("docker", ["logs", "--tail", "20000", MANAGED_LLAMA_CPP_CONTAINER_NAME]),
+          );
+          const unauthorized = requireCommand("curl", [
+            "-sS",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            `http://127.0.0.1:${String(recipe.spec.serve.port)}/props`,
+          ]).trim();
+          if (unauthorized !== "401") {
+            throw new Error("managed llama.cpp accepted an unauthenticated request");
+          }
+          const hostChat = requireCommand(
+            "curl",
+            [
+              "-fsS",
+              "-H",
+              `Authorization: Bearer ${apiKey}`,
+              "-H",
+              "Content-Type: application/json",
+              `http://127.0.0.1:${String(recipe.spec.serve.port)}/v1/chat/completions`,
+              "--data",
+              JSON.stringify({
+                model: recipe.spec.model.servedName,
+                messages: [{ role: "user", content: agentPlan.prompts.normal }],
+                max_tokens: agentPlan.bounds.maxTokens,
+              }),
+            ],
+            5 * 60_000,
+          );
+          if (!responseText(hostChat).includes(agentPlan.expectations.normal)) {
+            throw new Error("managed llama.cpp host inference did not return PONG");
+          }
+          process.env[credentialName] = apiKey;
+          process.env[baseUrlName] = agentPlan.route.upstreamBaseUrl;
+          runtimeEvidence = {
+            image: recipe.spec.runtime.image,
+            platform: "linux/amd64",
+            fullGpuOffload: true,
+            offloadedLayers: offload.offloadedLayers,
+            totalLayers: offload.totalLayers,
+            noDockerPublishedPort: true,
+          };
+        },
+        beforeCleanup() {
+          if (!apiKey) return;
+          runtimeCleanup = requireCleanup(
+            cleanupManagedLlamaCppRuntimeForSandbox(SANDBOX_NAME, { env: process.env }),
+          );
+          if (transactionId) {
+            createDockerLlamaCppPrivateBridgeController().assertStopped(transactionId);
+          }
+        },
+      },
     );
-    const unauthorized = requireCommand("curl", [
-      "-sS",
-      "-o",
-      "/dev/null",
-      "-w",
-      "%{http_code}",
-      `http://127.0.0.1:${String(recipe.spec.serve.port)}/props`,
-    ]).trim();
-    if (unauthorized !== "401")
-      throw new Error("managed llama.cpp accepted an unauthenticated request");
-    const hostChat = requireCommand(
-      "curl",
-      [
-        "-fsS",
-        "-H",
-        `Authorization: Bearer ${apiKey}`,
-        "-H",
-        "Content-Type: application/json",
-        `http://127.0.0.1:${String(recipe.spec.serve.port)}/v1/chat/completions`,
-        "--data",
-        JSON.stringify({
-          model: recipe.spec.model.servedName,
-          messages: [{ role: "user", content: agentPlan.prompts.normal }],
-          max_tokens: agentPlan.bounds.maxTokens,
-        }),
-      ],
-      5 * 60_000,
-    );
-    if (!responseText(hostChat).includes(agentPlan.expectations.normal)) {
-      throw new Error("managed llama.cpp host inference did not return PONG");
+    if (!agentResult.probeEvidence || !runtimeEvidence) {
+      throw new Error("OpenClaw Qwen qualification returned incomplete evidence");
     }
-
-    const credentialName = "NEMOCLAW_LLAMACPP_LOCAL_TOKEN";
-    const baseUrlName = "NEMOCLAW_E2E_LOCAL_INFERENCE_BASE_URL";
-    const priorCredential = process.env[credentialName];
-    const priorBaseUrl = process.env[baseUrlName];
-    process.env[credentialName] = apiKey;
-    process.env[baseUrlName] = agentPlan.route.upstreamBaseUrl;
-    try {
-      const agentResult = await runManagedImageOpenShellE2e(
-        {
-          agent: "openclaw",
-          image: agentPlan.image.reference,
-          localProvider: "llama-cpp",
-          model: recipe.spec.model.servedName,
-          sandbox: SANDBOX_NAME,
-        },
-        (context) => runLlamaCppOpenClawAgentQualification(agentPlan, context),
-      );
-      if (!agentResult.probeEvidence) {
-        throw new Error("OpenClaw Qwen qualification returned no evidence");
-      }
-      qualificationEvidence = {
-        candidateSha,
-        boundary:
-          "RTX validates the exact Qwen llama.cpp recipe; N1x WSL qualification remains pending",
-        host: {
-          architecture,
-          gpuName: gpuFields[0],
-          driverVersion: gpuFields[1],
-          gpuMemoryMiB: Number(gpuFields[2]),
-        },
-        managedImage: {
-          cohort: managedImage.cohort,
-          reference: managedImage.openClawAmd64,
-          revision: managedImage.revision,
-          runAttempt: managedImage.runAttempt,
-          runId: managedImage.runId,
-        },
-        preset: { id: PRESET_ID, digest: setting.selection.presetDigest },
-        recipe: { id: RECIPE_ID, digest: setting.selection.recipeDigest },
-        model: {
-          id: recipe.spec.model.id,
-          revision: recipe.spec.model.revision,
-          digest: setting.modelFile.digest,
-          servedName: recipe.spec.model.servedName,
-        },
-        runtime: {
-          image: recipe.spec.runtime.image,
-          platform: "linux/amd64",
-          fullGpuOffload: true,
-          offloadedLayers: offload.offloadedLayers,
-          totalLayers: offload.totalLayers,
-          noDockerPublishedPort: true,
-        },
-        probes: {
-          startupToolCall: true,
-          unauthorizedStatus: 401,
-          hostChat: "passed",
-          openClaw: agentResult.probeEvidence,
-        },
-      };
-    } finally {
-      if (priorCredential === undefined) delete process.env[credentialName];
-      else process.env[credentialName] = priorCredential;
-      if (priorBaseUrl === undefined) delete process.env[baseUrlName];
-      else process.env[baseUrlName] = priorBaseUrl;
-    }
+    qualificationEvidence = {
+      candidateSha,
+      boundary:
+        "RTX validates the exact Qwen llama.cpp recipe; N1x WSL qualification remains pending",
+      host: {
+        architecture,
+        gpuName: gpuFields[0],
+        driverVersion: gpuFields[1],
+        gpuMemoryMiB: Number(gpuFields[2]),
+      },
+      managedImage: {
+        cohort: managedImage.cohort,
+        reference: managedImage.openClawAmd64,
+        revision: managedImage.revision,
+        runAttempt: managedImage.runAttempt,
+        runId: managedImage.runId,
+      },
+      preset: { id: PRESET_ID, digest: setting.selection.presetDigest },
+      recipe: { id: RECIPE_ID, digest: setting.selection.recipeDigest },
+      model: {
+        id: recipe.spec.model.id,
+        revision: recipe.spec.model.revision,
+        digest: setting.modelFile.digest,
+        servedName: recipe.spec.model.servedName,
+      },
+      runtime: runtimeEvidence,
+      probes: {
+        startupToolCall: true,
+        unauthorizedStatus: 401,
+        hostChat: "passed",
+        openClaw: agentResult.probeEvidence,
+      },
+    };
   } catch (error) {
     primaryError = error;
   } finally {
+    if (priorCredential === undefined) delete process.env[credentialName];
+    else process.env[credentialName] = priorCredential;
+    if (priorBaseUrl === undefined) delete process.env[baseUrlName];
+    else process.env[baseUrlName] = priorBaseUrl;
     if (apiKey) {
       for (const index of installLog.keys())
         installLog[index] = installLog[index]!.replaceAll(apiKey, "<REDACTED>");
@@ -476,11 +504,13 @@ export async function runQwenGpuQualification(): Promise<void> {
         mode: 0o600,
       },
     );
-    let cleanupResult: LocalModelRuntimeCleanupResult;
     try {
-      cleanupResult = cleanupManagedLlamaCppRuntimeForSandbox(SANDBOX_NAME, { env: process.env });
-      requireCleanup(cleanupResult);
-      if (transactionId) createDockerLlamaCppPrivateBridgeController().assertStopped(transactionId);
+      runtimeCleanup ??= requireCleanup(
+        cleanupManagedLlamaCppRuntimeForSandbox(SANDBOX_NAME, { env: process.env }),
+      );
+      if (transactionId) {
+        createDockerLlamaCppPrivateBridgeController().assertStopped(transactionId);
+      }
       if (
         run("docker", ["container", "inspect", MANAGED_LLAMA_CPP_CONTAINER_NAME]).status !== 1 ||
         run("docker", ["network", "inspect", MANAGED_LLAMA_CPP_NETWORK_NAME]).status !== 1 ||
@@ -493,8 +523,8 @@ export async function runQwenGpuQualification(): Promise<void> {
       }
       writeJson(canonicalArtifactRoot, "cleanup.json", {
         status: "passed",
-        removed: cleanupResult.removed,
-        preserved: cleanupResult.preserved,
+        removed: runtimeCleanup.removed,
+        preserved: runtimeCleanup.preserved,
         modelCachePreserved: Boolean(apiKey),
       });
     } catch (cleanupError) {

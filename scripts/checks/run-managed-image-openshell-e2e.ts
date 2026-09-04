@@ -139,6 +139,11 @@ export type ManagedImageOpenShellE2eProbeContext = {
   ) => ManagedImageOpenShellE2eProbeResult;
 };
 
+export type ManagedImageOpenShellE2eLifecycle = {
+  readonly afterGatewayStarted?: () => Promise<void> | void;
+  readonly beforeCleanup?: () => Promise<void> | void;
+};
+
 export type ManagedImageOpenShellE2eLocalInferenceEvidence = {
   readonly synchronousChat: true;
 };
@@ -976,6 +981,7 @@ export function assertFailedSandboxOwnerCleanupRetention(
 async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = never>(
   input: Inputs,
   afterLocalInference?: (context: ManagedImageOpenShellE2eProbeContext) => Promise<T> | T,
+  lifecycle: ManagedImageOpenShellE2eLifecycle = {},
 ): Promise<ManagedImageOpenShellE2eResult<T>> {
   const stateParent = process.env.RUNNER_TEMP || os.tmpdir();
   const stateDir = fs.mkdtempSync(path.join(stateParent, "nemoclaw-managed-openshell-"));
@@ -1019,6 +1025,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       gatewayName: GATEWAY_NAME,
       gatewayPort: GATEWAY_PORT,
     });
+    await lifecycle.afterGatewayStarted?.();
     configureLocalInferenceRoute(onboard, input, process.env);
 
     const baseProfile = managedStartupE2eProfile(input.agent, false, true, true);
@@ -1288,6 +1295,13 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     primaryError = error;
     hasPrimaryError = true;
   } finally {
+    try {
+      await lifecycle.beforeCleanup?.();
+    } catch (error) {
+      cleanupErrors.push(
+        `managed-image pre-cleanup lifecycle failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     if (onboard) {
       commandResult(
         onboard.openshellArgv(["sandbox", "delete", input.sandbox]),
