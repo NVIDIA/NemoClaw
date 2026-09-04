@@ -587,7 +587,21 @@ jobs:
             } finally {
               $runtime.Dispose()
             }
-            if ($runtimeExitCode -eq 0) {
+            $openClawReceipts = @(Get-ChildItem `
+              -LiteralPath $runtimeArtifacts `
+              -Filter 'native-windows-web-ui-*.json' `
+              -File `
+              -ErrorAction SilentlyContinue)
+            $openClawPassed = $false
+            if ($openClawReceipts.Count -eq 1) {
+              $openClawReceipt = Get-Content -LiteralPath $openClawReceipts[0].FullName -Raw | ConvertFrom-Json
+              $openClawPassed = $openClawReceipt.verdict -ceq 'pass' -and
+                $openClawReceipt.sandboxDeleted -eq $true -and
+                $openClawReceipt.gatewayStopped -eq $true -and
+                $openClawReceipt.qualificationRootsRemoved -eq $true
+            }
+            "runtime_openclaw_receipt_pass=$openClawPassed" | Out-File -LiteralPath (Join-Path $artifactRoot 'probe-result.txt') -Encoding utf8 -Append
+            if ($openClawPassed) {
               foreach ($agent in @('pi', 'hermes', 'langchain-deepagents-code', 'nemocua')) {
                 $agentArtifacts = Join-Path $artifactRoot "runtime-$agent"
                 [IO.Directory]::CreateDirectory($agentArtifacts) | Out-Null
