@@ -1,25 +1,25 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Routes the pinned Hermes v2026.7.20 WhatsApp bridge through the OpenShell
-# proxy and keeps dashboard pairing state in the gateway's session directory.
-# Remove the web_server.py hunk when the minimum supported Hermes release stores
-# Dashboard pairing state in the gateway session directory natively.
-# Remove the scripts/whatsapp-bridge hunks when that release routes the WhatsApp
-# bridge through HTTPS_PROXY natively.
+# Routes the pinned Hermes v2026.8.27 WhatsApp bridge through the OpenShell
+# proxy and keeps dashboard pairing state in the gateway session directory.
 diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
-index d0c78a6b3..5f6d801b5 100644
+index 2b5f0fd6..275011f7 100644
 --- a/hermes_cli/web_server.py
 +++ b/hermes_cli/web_server.py
-@@ -8110,5 +8110,3 @@ def _normalize_whatsapp_allowed_users(value: Any) -> str:
+@@ -9723,7 +9723,5 @@
  def _whatsapp_session_path() -> Path:
 -    from hermes_constants import get_hermes_dir
 -
 -    return get_hermes_dir("platforms/whatsapp/session", "whatsapp/session")
+-
+-
 +    return Path("/sandbox/.hermes/platforms/whatsapp/session")
-
++
++
+ def _whatsapp_phone_from_identifier(value: Any) -> str | None:
 diff --git a/scripts/whatsapp-bridge/bridge.js b/scripts/whatsapp-bridge/bridge.js
-index 4b5733d16..22f1ec3e1 100644
+index 234cbef2..0136628d 100644
 --- a/scripts/whatsapp-bridge/bridge.js
 +++ b/scripts/whatsapp-bridge/bridge.js
 @@ -30,6 +30,7 @@ import { randomBytes, createHash } from 'crypto';
@@ -30,28 +30,108 @@ index 4b5733d16..22f1ec3e1 100644
  import { matchesAllowedUser, parseAllowedUsers } from './allowlist.js';
  import { createOutboundIdTracker } from './outbound_ids.js';
  import { classifyOwnerMessageGate } from './owner_message_gate.js';
-@@ -378,6 +379,9 @@ function rememberSentId(id) {
-
- let sock = null;
+@@ -389,3 +389,6 @@
  let connectionState = 'disconnected';
+-
 +const PROXY_AGENT = process.env.HTTPS_PROXY
 +  ? new HttpsProxyAgent(process.env.HTTPS_PROXY)
 +  : undefined;
-
++
  function emitPairEvent(event) {
-   if (!PAIR_JSON) return;
-@@ -393,6 +397,8 @@ async function startSocket() {
+@@ -405,6 +409,8 @@ async function startSocket() {
    sock = makeWASocket({
-     version,
+     ...(version ? { version } : {}),
      auth: state,
 +    agent: PROXY_AGENT,
 +    fetchAgent: PROXY_AGENT,
      logger,
      printQRInTerminal: false,
      browser: ['Hermes Agent', 'Chrome', '120.0'],
+diff --git a/scripts/whatsapp-bridge/package-lock.json b/scripts/whatsapp-bridge/package-lock.json
+index 74fe2df3..7a023bfa 100644
+--- a/scripts/whatsapp-bridge/package-lock.json
++++ b/scripts/whatsapp-bridge/package-lock.json
+@@ -10,6 +10,7 @@
+       "dependencies": {
+         "@whiskeysockets/baileys": "7.0.0-rc13",
+         "express": "^4.21.0",
++        "https-proxy-agent": "7.0.6",
+         "pino": "^9.0.0",
+         "qrcode-terminal": "^0.12.0"
+       }
+@@ -806,6 +807,15 @@
+         "node": ">= 0.6"
+       }
+     },
++    "node_modules/agent-base": {
++      "version": "7.1.4",
++      "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
++      "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 14"
++      }
++    },
+     "node_modules/array-flatten": {
+       "version": "1.1.1",
+       "resolved": "https://registry.npmjs.org/array-flatten/-/array-flatten-1.1.1.tgz",
+@@ -1285,6 +1295,42 @@
+         "url": "https://opencollective.com/express"
+       }
+     },
++    "node_modules/https-proxy-agent": {
++      "version": "7.0.6",
++      "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
++      "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
++      "license": "MIT",
++      "dependencies": {
++        "agent-base": "^7.1.2",
++        "debug": "4"
++      },
++      "engines": {
++        "node": ">= 14"
++      }
++    },
++    "node_modules/https-proxy-agent/node_modules/debug": {
++      "version": "4.4.3",
++      "resolved": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
++      "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
++      "license": "MIT",
++      "dependencies": {
++        "ms": "^2.1.3"
++      },
++      "engines": {
++        "node": ">=6"
++      },
++      "peerDependenciesMeta": {
++        "supports-color": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/https-proxy-agent/node_modules/ms": {
++      "version": "2.1.3",
++      "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
++      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
++      "license": "MIT"
++    },
+     "node_modules/iconv-lite": {
+       "version": "0.4.24",
+       "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.4.24.tgz",
+diff --git a/scripts/whatsapp-bridge/package.json b/scripts/whatsapp-bridge/package.json
+index c6c3a525..0f12199e 100644
+--- a/scripts/whatsapp-bridge/package.json
++++ b/scripts/whatsapp-bridge/package.json
+@@ -10,6 +10,7 @@
+   "dependencies": {
+     "@whiskeysockets/baileys": "7.0.0-rc13",
+     "express": "^4.21.0",
++    "https-proxy-agent": "7.0.6",
+     "qrcode-terminal": "^0.12.0",
+     "pino": "^9.0.0"
+   },
 diff --git a/scripts/whatsapp-bridge/proxy-agent.test.mjs b/scripts/whatsapp-bridge/proxy-agent.test.mjs
 new file mode 100644
-index 000000000..4b489e7e0
 --- /dev/null
 +++ b/scripts/whatsapp-bridge/proxy-agent.test.mjs
 @@ -0,0 +1,92 @@
@@ -147,86 +227,3 @@ index 000000000..4b489e7e0
 +  assert.equal(options.agent, undefined);
 +  assert.equal(options.fetchAgent, undefined);
 +});
-diff --git a/scripts/whatsapp-bridge/package-lock.json b/scripts/whatsapp-bridge/package-lock.json
-index b3043d288..06550adcc 100644
---- a/scripts/whatsapp-bridge/package-lock.json
-+++ b/scripts/whatsapp-bridge/package-lock.json
-@@ -10,6 +10,7 @@
-       "dependencies": {
-         "@whiskeysockets/baileys": "7.0.0-rc13",
-         "express": "^4.21.0",
-+        "https-proxy-agent": "7.0.6",
-         "pino": "^9.0.0",
-         "qrcode-terminal": "^0.12.0"
-       }
-@@ -806,6 +807,15 @@
-         "node": ">= 0.6"
-       }
-     },
-+    "node_modules/agent-base": {
-+      "version": "7.1.4",
-+      "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
-+      "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
-+      "license": "MIT",
-+      "engines": {
-+        "node": ">= 14"
-+      }
-+    },
-     "node_modules/array-flatten": {
-       "version": "1.1.1",
-       "resolved": "https://registry.npmjs.org/array-flatten/-/array-flatten-1.1.1.tgz",
-@@ -1285,6 +1295,42 @@
-         "url": "https://opencollective.com/express"
-       }
-     },
-+    "node_modules/https-proxy-agent": {
-+      "version": "7.0.6",
-+      "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
-+      "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
-+      "license": "MIT",
-+      "dependencies": {
-+        "agent-base": "^7.1.2",
-+        "debug": "4"
-+      },
-+      "engines": {
-+        "node": ">= 14"
-+      }
-+    },
-+    "node_modules/https-proxy-agent/node_modules/debug": {
-+      "version": "4.4.3",
-+      "resolved": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
-+      "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
-+      "license": "MIT",
-+      "dependencies": {
-+        "ms": "^2.1.3"
-+      },
-+      "engines": {
-+        "node": ">=6.0"
-+      },
-+      "peerDependenciesMeta": {
-+        "supports-color": {
-+          "optional": true
-+        }
-+      }
-+    },
-+    "node_modules/https-proxy-agent/node_modules/ms": {
-+      "version": "2.1.3",
-+      "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
-+      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
-+      "license": "MIT"
-+    },
-     "node_modules/iconv-lite": {
-       "version": "0.4.24",
-       "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.4.24.tgz",
-diff --git a/scripts/whatsapp-bridge/package.json b/scripts/whatsapp-bridge/package.json
-index 3b664108b..1a45debb7 100644
---- a/scripts/whatsapp-bridge/package.json
-+++ b/scripts/whatsapp-bridge/package.json
-@@ -10,6 +10,7 @@
-   "dependencies": {
-     "@whiskeysockets/baileys": "7.0.0-rc13",
-     "express": "^4.21.0",
-+    "https-proxy-agent": "7.0.6",
-     "qrcode-terminal": "^0.12.0",
-     "pino": "^9.0.0"
-   },

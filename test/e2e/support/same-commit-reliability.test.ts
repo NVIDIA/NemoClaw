@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -24,6 +27,7 @@ const SHA_A = "a".repeat(40);
 const SHA_B = "b".repeat(40);
 const REPOSITORY = "NVIDIA/NemoClaw";
 const RETRY_WORKFLOW_PATH = ".github/workflows/e2e-main-retry.yaml";
+const REPORTER_PATH = path.resolve("tools/e2e/same-commit-reliability.mts");
 
 function sample(
   runId: number,
@@ -77,6 +81,25 @@ function controllerRun(id: number, overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+describe("same-commit reliability reporter entrypoint", () => {
+  it("loads with the raw Node strip-types runtime used by CI", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["--experimental-strip-types", "--no-warnings", REPORTER_PATH],
+      {
+        encoding: "utf8",
+        env: { ...process.env, GITHUB_TOKEN: "", SOURCE_RUN_ID: "" },
+        killSignal: "SIGKILL",
+        timeout: 20_000,
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("GITHUB_TOKEN is required");
+    expect(result.stderr).not.toContain("ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX");
+  });
+});
 
 function retryEvidence(runId: number, sourceSha: string): Buffer {
   return artifactZip([
