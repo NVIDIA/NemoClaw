@@ -361,7 +361,12 @@ describe("legacy non-default gateway state migration", () => {
           path.join(selected, "retained-sandbox-recovery.json"),
         ).map((record) => record.sandboxName),
       ).toEqual(["port-box"]);
-      expect(fs.existsSync(path.join(shared, ".gateway-state-migration"))).toBe(true);
+      const pendingIntent = path.join(shared, ".gateway-state-migration", "intent.json");
+      const pendingIntentBefore = fs.readFileSync(pendingIntent, "utf8");
+      expect({
+        recognized: hasMigratableLegacySandbox("port-box", { home, gatewayPort: 9123 }),
+        unchanged: fs.readFileSync(pendingIntent, "utf8") === pendingIntentBefore,
+      }).toEqual({ recognized: true, unchanged: true });
       expect(() => migrateLegacyPortState({ home, gatewayPort: 8080 })).toThrow(
         /recoverable migration for gateway port 9123 is pending/,
       );
