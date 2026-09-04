@@ -284,7 +284,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     expect(providerUpdates).toHaveLength(0);
   });
 
-  it("restores the prior selection without reporting partial state after a definite provider failure (#9806)", async () => {
+  it("restores the prior selection and reports partial state after a failed provider command (#9806)", async () => {
     vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
     const capture = providerCapture({
       providerName: "compatible-endpoint",
@@ -328,9 +328,10 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     expect(failure).toBeInstanceOf(InferenceSetError);
     const message = (failure as Error).message;
     expect(message).toContain(
-      "The previous OpenShell inference selection was restored. The provider binding was not changed.",
+      "The previous OpenShell inference selection was restored. Provider state may still be partial.",
     );
-    expect(message).not.toContain("partial");
+    expect(message).toContain("provider update failed");
+    expect(message).toContain("Rerun onboarding to reconcile the provider");
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     const selectionMutations = capture.mock.calls.filter(
       ([args]) => args[0] === "inference" && args[1] === "set",

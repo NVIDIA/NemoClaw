@@ -378,6 +378,33 @@ describe("inference set provider binding", () => {
     expect(getProvider).toHaveBeenCalledTimes(3);
   });
 
+  it("reports partial provider state without reinspecting after a failed update command (#9806)", async () => {
+    const getProvider = vi
+      .fn<OpenShellProviderAdapter["getProvider"]>()
+      .mockResolvedValueOnce({ ok: true, value: metadata() })
+      .mockResolvedValueOnce({ ok: true, value: metadata() })
+      .mockResolvedValueOnce({ ok: true, value: metadata() });
+    const updateProvider = vi.fn(async () => ({
+      ok: false as const,
+      error: {
+        kind: "command" as const,
+        reason: "failed" as const,
+        message: "redacted failure",
+      },
+    }));
+    const mutation = await prepareInferenceSetProviderBinding({
+      gatewayName: "nemoclaw",
+      providerName: "compatible-endpoint",
+      binding: binding(),
+      providerAdapter: providerAdapter({ getProvider, updateProvider }),
+    });
+
+    await expect(mutation.commit()).rejects.toThrow(
+      "OpenShell could not confirm the update operation for provider 'compatible-endpoint'. Provider state may be partial. redacted failure",
+    );
+    expect(getProvider).toHaveBeenCalledTimes(3);
+  });
+
   it("reports a definite update failure without claiming partial provider state (#9806)", async () => {
     const getProvider = vi
       .fn<OpenShellProviderAdapter["getProvider"]>()

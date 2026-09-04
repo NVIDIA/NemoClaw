@@ -263,7 +263,8 @@ function isUncertainProviderMutationError(error: OpenShellProviderError): boolea
   return (
     error.kind === "timeout" ||
     (error.kind === "transport" && error.reason === "unreachable") ||
-    (error.kind === "command" && error.reason === "uncertain")
+    (error.kind === "command" &&
+      (error.reason === "failed" || error.reason === "uncertain"))
   );
 }
 
