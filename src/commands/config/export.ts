@@ -3,13 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { Flags } from "@oclif/core";
-import { runConfigExport, type ConfigExportTarget } from "../../lib/config/export";
-import { observeLiveExportSource } from "../../lib/config/export-live-adapters";
-import {
-  isValidNemoClawConfigDocumentName,
-  parseNemoClawConfigDocumentUid,
-} from "../../lib/config/model";
-import { publishExportFile } from "../../lib/config/output";
+import type { ConfigExportTarget } from "../../lib/config/export";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 import { sandboxNameArg } from "../../lib/sandbox/command-support";
 
@@ -53,6 +47,9 @@ export default class ConfigExportCommand extends NemoClawCommand {
     const { args, flags } = await this.parse(ConfigExportCommand);
     const json = this.jsonEnabled();
     const documentName = flags.name ?? args.sandboxName;
+    const { isValidNemoClawConfigDocumentName, parseNemoClawConfigDocumentUid } = await import(
+      "../../lib/config/model"
+    );
     if (!isValidNemoClawConfigDocumentName(documentName)) this.error("The config name is invalid.");
     if (json && flags.output === "-") {
       this.error("--json cannot be used when --output is stdout (-).");
@@ -67,6 +64,12 @@ export default class ConfigExportCommand extends NemoClawCommand {
       flags.output === "-"
         ? { kind: "stdout" }
         : { kind: "file", outputPath: flags.output, force: flags.force };
+    const [{ runConfigExport }, { observeLiveExportSource }, { publishExportFile }] =
+      await Promise.all([
+        import("../../lib/config/export"),
+        import("../../lib/config/export-live-adapters"),
+        import("../../lib/config/output"),
+      ]);
     const outcome = await runConfigExport(
       {
         sandboxName: args.sandboxName,
