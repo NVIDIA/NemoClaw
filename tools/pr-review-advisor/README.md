@@ -64,10 +64,10 @@ maintainer-triggered, open, same-repository, non-draft PR whose exact head is cu
 The repair path retains bounded proposal, validation, publication, generated-head, and diagnostic
 artifacts. Ordinary `pull_request_target` review runs remain advisory-only and read-only.
 
-The Advisor owns eligibility, finding identity, and lifecycle orchestration in
-`repair-contract.mts` and the two Advisor workflows. It deliberately reuses the conflict-fixer's
-existing OpenShell patch executor and verified Git publication primitives instead of introducing a
-second sandbox or branch-publication subsystem.
+The Advisor owns eligibility, finding identity, resolution, publication, and lifecycle orchestration
+in `repair-contract.mts`, `repair-resolve.mts`, `repair-publish.mts`, and the two Advisor workflows.
+It reuses the existing OpenShell runtime and the neutral pull-request Git publication primitives;
+the conflict fixer retains only conflict discovery, resolution, and publication commands.
 
 Required-check status is point-in-time context, not a settled-CI gate. Earlier
 `PR_REVIEW_ADVISOR_WAIT_*` workflow variables were inert and have been removed; any future waiting

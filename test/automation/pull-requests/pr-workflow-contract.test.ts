@@ -573,9 +573,9 @@ describe("pull request and main workflow contracts", () => {
     expect(selectText).toContain("external_id");
     expect(resolveText).toContain("secrets.PR_REVIEW_ADVISOR_API_KEY");
     expect(validateText).not.toMatch(/secrets[.]|OPENAI_API_KEY|GITHUB_TOKEN/u);
-    expect(resolveText.match(/run-advisor-repair/gu)).toHaveLength(1);
+    expect(resolveText.match(/repair-resolve[.]mts[^\n]* run/gu)).toHaveLength(1);
     expect(resolveText).toContain("assertRepairArtifactDirectory");
-    expect(resolveText).toContain("export-advisor-repair");
+    expect(resolveText.match(/repair-resolve[.]mts[^\n]* export/gu)).toHaveLength(1);
     expect(resolveText).toContain('if":"always()"');
     expect(validateText).toContain("needs.repair-select.outputs.context-artifact-id");
     expect(validateText).toContain("needs.repair-resolve.outputs.candidate-artifact-id");
@@ -609,20 +609,21 @@ describe("pull request and main workflow contracts", () => {
   // source-shape-contract: security -- Exact-SHA inputs and trusted-main dispatches prevent generated commits from inheriting old-head checks.
   it("runs generated-head validation only through trusted exact-SHA dispatches (#10791)", () => {
     const standard = [prWorkflow, commitLintWorkflow, dcoWorkflow, installerHashWorkflow, codeScanningWorkflow];
-    const standardInputs = standard.map((workflow) =>
-      Object.keys(workflow.on?.workflow_dispatch?.inputs ?? {}),
-    );
     expect(
-      standardInputs.map((inputs) =>
+      standard.map((workflow) =>
         ["repair_pr_number", "repair_head_sha", "repair_base_sha", "repair_attempt_key"].every(
-          (name) => inputs.includes(name),
+          (name) => Object.keys(workflow.on?.workflow_dispatch?.inputs ?? {}).includes(name),
         ),
       ),
     ).toEqual([true, true, true, true, true]);
     const serialized = standard.map((workflow) => JSON.stringify(workflow));
-    expect(standard.every((workflow) => workflow["run-name"]?.includes("Repair validation"))).toBe(
-      true,
-    );
+    const repairRunNameClause =
+      "inputs.repair_attempt_key != '' && format('Repair validation {0} head {1}', inputs.repair_attempt_key, inputs.repair_head_sha)";
+    expect(
+      [...standard, advisorWorkflow].map((workflow) =>
+        String(workflow["run-name"]).match(/^[$][{][{] (.*?) [|][|]/u)?.[1],
+      ),
+    ).toEqual(Array.from({ length: 6 }, () => repairRunNameClause));
     expect(serialized.every((workflow) => workflow.includes("refs/heads/main"))).toBe(true);
     expect(serialized.every((workflow) => workflow.includes("REPAIR_ATTEMPT_KEY"))).toBe(true);
     expect(serialized.every((workflow) => workflow.includes('^sha256:[0-9a-f]{64}$'))).toBe(true);
@@ -632,18 +633,13 @@ describe("pull request and main workflow contracts", () => {
       "inputs.repair_attempt_key",
     );
     expect(String(dcoWorkflow.concurrency?.group)).toContain("inputs.repair_attempt_key");
-    expect(String(commitLintWorkflow.concurrency?.["cancel-in-progress"])).toContain(
-      "github.event_name != 'workflow_dispatch'",
-    );
-    expect(String(dcoWorkflow.concurrency?.["cancel-in-progress"])).toContain(
-      "github.event_name != 'workflow_dispatch'",
-    );
-    expect(String(prWorkflow.concurrency?.["cancel-in-progress"])).toContain(
-      "github.event_name != 'workflow_dispatch'",
-    );
+    expect(
+      [commitLintWorkflow, dcoWorkflow, prWorkflow].map(
+        (workflow) => workflow.concurrency?.["cancel-in-progress"],
+      ),
+    ).toEqual(Array.from({ length: 3 }, () => "${{ github.event_name != 'workflow_dispatch' }}"));
     expect(advisorWorkflow.on?.workflow_dispatch?.inputs).toHaveProperty("repair_attempt_key");
     expect(prWorkflow.on?.workflow_dispatch?.inputs).toHaveProperty("repair_source_head_sha");
-    expect(advisorWorkflow["run-name"]).toContain("Repair validation");
     const advisor = JSON.stringify(advisorWorkflow);
     expect(advisor).toContain("PUBLISH_REQUESTED");
     expect(advisor).toContain("FINDING_IDS");

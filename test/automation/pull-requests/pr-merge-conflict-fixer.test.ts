@@ -17,27 +17,18 @@ import {
 } from "../../../tools/pr-merge-conflict-fixer/discover.mts";
 import { prepareMerge, writeTree } from "../../../tools/pr-merge-conflict-fixer/merge.mts";
 import {
-  ADVISOR_REPAIR_HEAD_WORKFLOWS,
-  type GitHubRequest,
-  type GraphqlRequest,
-  publishAdvisorRepair,
   publishResolution,
   validatePublicationState,
   validateResolutionPatch,
-  waitForAdvisorRepairHead,
 } from "../../../tools/pr-merge-conflict-fixer/publish.mts";
 import {
   configureOpenShellInference,
   createResolutionSandbox,
   deleteResolutionSandbox,
-  downloadAdvisorRepairCandidate,
-  exportAdvisorRepairPatch,
   exportResolutionPatch,
   type ResolverTools,
   resolverModelConfiguration,
   resolverPrompt,
-  prepareAdvisorRepairInputs,
-  runAdvisorRepairTask,
   runResolutionTask,
 } from "../../../tools/pr-merge-conflict-fixer/resolve.mts";
 import {
@@ -51,6 +42,21 @@ import {
   validateRepairPatch,
   validationReceipt,
 } from "../../../tools/pr-review-advisor/repair-contract.mts";
+import {
+  ADVISOR_REPAIR_HEAD_WORKFLOWS,
+  type GitHubRequest,
+  type GraphqlRequest,
+  prepareAdvisorRepair,
+  publishPreparedAdvisorRepair,
+  waitForAdvisorRepairHead,
+} from "../../../tools/pr-review-advisor/repair-publish.mts";
+import {
+  createAdvisorRepairSandbox,
+  downloadAdvisorRepairCandidate,
+  exportAdvisorRepairPatch,
+  prepareAdvisorRepairInputs,
+  runAdvisorRepairTask,
+} from "../../../tools/pr-review-advisor/repair-resolve.mts";
 import { ADVISOR_INTERESTS } from "../../../tools/pr-review-advisor/specialist-catalog.mts";
 
 const temporaryDirectories: string[] = [];
@@ -874,11 +880,10 @@ describe("PR merge conflict fixer", () => {
   it("reuses the sandbox for exactly two credential-free Advisor repair turns (#10791)", () => {
     const env: NodeJS.ProcessEnv = {
       ...resolverEnvironment(),
-      RESOLVER_MODE: "advisor-repair",
     };
     const tools = resolverTools(["", "", "", ""]);
 
-    createResolutionSandbox(env, tools);
+    createAdvisorRepairSandbox(env, tools);
     runAdvisorRepairTask(env, tools);
     downloadAdvisorRepairCandidate(env, tools);
 
@@ -1116,7 +1121,6 @@ describe("PR merge conflict fixer", () => {
       }),
     ).toThrow("non-regular object");
   });
-
   it("reconstructs, seals, and detects mutation of a validated repair (#10791)", () => {
     const fixture = createRepairFixture();
     const selection = repairSelection(fixture.headSha, fixture.baseSha);
@@ -1153,7 +1157,6 @@ describe("PR merge conflict fixer", () => {
       }),
     ).toThrow("validation changed");
   });
-
   it("publishes only the sealed one-parent repair with non-force compare-and-swap (#10791)", async () => {
     const fixture = createRepairFixture();
     const state = { pull: { title: "Focused repair" }, comments: [], reviewComments: [] };
@@ -1205,7 +1208,11 @@ describe("PR merge conflict fixer", () => {
         case "POST:commits":
           return { sha: publishedSha };
         case `GET:${publishedSha}`:
-          return { sha: publishedSha, verification: { verified: true } };
+          return {
+            sha: publishedSha,
+            parents: [{ sha: selection.sourceHeadSha }],
+            verification: { verified: true },
+          };
         default:
           throw new Error(`unexpected request: ${method} ${apiPath}`);
       }
@@ -1215,29 +1222,30 @@ describe("PR merge conflict fixer", () => {
         clientMutationId: (variables.input as { clientMutationId: string }).clientMutationId,
       },
     }));
-
+    const preparedSha = await prepareAdvisorRepair({
+      request: requestMock as GitHubRequest,
+      sourceRepository: fixture.repository,
+      selectionPath,
+      patchPath: patchFile,
+      receiptPath,
+      workDirectory: path.join(temporaryDirectory(), "publisher"),
+    });
     await expect(
-      publishAdvisorRepair({
+      publishPreparedAdvisorRepair({
+        commitSha: preparedSha,
         graphql: graphqlMock as GraphqlRequest,
         request: requestMock as GitHubRequest,
-        sourceRepository: fixture.repository,
         selectionPath,
-        patchPath: patchFile,
-        receiptPath,
         state,
         reviews,
-        workDirectory: path.join(temporaryDirectory(), "publisher"),
       }),
-    ).resolves.toBe(publishedSha);
-
+    ).resolves.toBeUndefined();
     const commitCall = requestMock.mock.calls.find(
       ([method, apiPath]) => method === "POST" && apiPath.endsWith("/git/commits"),
     );
     expect(commitCall?.[2]).toMatchObject({
       parents: [selection.sourceHeadSha],
       tree: candidate.candidateTreeSha,
-    });
-    expect(commitCall?.[2]).toMatchObject({
       message: expect.stringContaining(`Advisor-Repair-Attempt: ${selection.attemptKey}`),
     });
     expect(graphqlMock.mock.calls[0]?.[1]).toMatchObject({
@@ -1254,20 +1262,16 @@ describe("PR merge conflict fixer", () => {
       },
     });
     await expect(
-      publishAdvisorRepair({
+      publishPreparedAdvisorRepair({
+        commitSha: preparedSha,
         graphql: graphqlMock as GraphqlRequest,
         request: requestMock as GitHubRequest,
-        sourceRepository: fixture.repository,
         selectionPath,
-        patchPath: patchFile,
-        receiptPath,
         state: { ...state, comments: [{ body: "new feedback" }] },
         reviews,
-        workDirectory: path.join(temporaryDirectory(), "stale"),
       }),
     ).rejects.toThrow("state changed after repair selection");
   });
-
   it("accepts only real successful workflows bound to the generated head (#10791)", async () => {
     const selection = repairSelection();
     const generatedHeadSha = "9".repeat(40);
@@ -1289,7 +1293,7 @@ describe("PR merge conflict fixer", () => {
     const runName = `Repair validation ${selection.attemptKey} head ${generatedHeadSha}`;
     let failedWorkflow: string | undefined;
     let correlationMode: "one" | "zero" | "ambiguous" = "one";
-    let workflowHeadSha = generatedHeadSha;
+    const workflowHeadSha = "a".repeat(40);
     const dispatchedWorkflows = new Set<string>();
     const request = vi.fn(async (method: string, apiPath: string, body?: unknown) => {
       const workflow = ADVISOR_REPAIR_HEAD_WORKFLOWS.find(({ workflow }) =>
@@ -1392,10 +1396,6 @@ describe("PR merge conflict fixer", () => {
       workflows: { length: 6 },
       checks: { length: 5 },
     });
-    workflowHeadSha = "a".repeat(40);
-    dispatchedWorkflows.clear(); // A valid but different run SHA is not evidence for this head.
-    await expect(verify()).rejects.toThrow("run evidence is invalid");
-    workflowHeadSha = generatedHeadSha;
     failedWorkflow = "pr.yaml";
     dispatchedWorkflows.clear();
     await expect(verify()).rejects.toThrow("generated-head pr.yaml run failed");

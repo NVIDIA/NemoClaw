@@ -149,7 +149,7 @@ jobs:
           GENERATED_HEAD_SHA: ${{ steps.request.outputs.head }}
           GITHUB_TOKEN: ${{ github.token }}
           SELECTION_FILE: ${{ env.REQUEST_DIR }}/selection.json
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-merge-conflict-fixer/publish.mts" advisor-repair-checks
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-publish.mts" advisor-repair-checks
 
       - name: Upload bounded generated-head evidence
         if: always()
