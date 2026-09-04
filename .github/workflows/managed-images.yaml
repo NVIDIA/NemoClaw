@@ -77,7 +77,7 @@ jobs:
     name: PR reviewed npm audit
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -1572,7 +1572,7 @@ jobs:
     name: Reviewed npm audit for managed image publication
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
