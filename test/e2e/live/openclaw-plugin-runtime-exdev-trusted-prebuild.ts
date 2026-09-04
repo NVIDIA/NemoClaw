@@ -32,7 +32,6 @@ import {
 export const DELEGATED_CAPABILITY_COMMENT_PREFIX =
   "# TEST-ONLY delegated-capability marker from validated canonical OpenShell: ";
 export const TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR = "/usr/local/share/nemoclaw-e2e/weather-plugin";
-const TRUSTED_PLUGIN_RUNTIME_STAGE_DIR = "/tmp/nemoclaw-e2e-weather-plugin-runtime";
 
 export type TrustedPluginFixtureImage = {
   imageId: string;
@@ -81,20 +80,11 @@ COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
     /opt/weather/dist/ ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/dist/
 COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
     /opt/weather/node_modules/ ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/node_modules/
-COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
-    /opt/weather/package.json \
-    /opt/weather/package-lock.json \
-    /opt/weather/openclaw.plugin.json \
-    ${TRUSTED_PLUGIN_RUNTIME_STAGE_DIR}/
-COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
-    /opt/weather-runtime-dist/ ${TRUSTED_PLUGIN_RUNTIME_STAGE_DIR}/dist/
-COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
-    /opt/weather/node_modules/ ${TRUSTED_PLUGIN_RUNTIME_STAGE_DIR}/node_modules/
 
 USER sandbox
-RUN HOME=/sandbox openclaw plugins install ${TRUSTED_PLUGIN_RUNTIME_STAGE_DIR} \
-    && HOME=/sandbox openclaw plugins enable weather \
-    && rm -rf ${TRUSTED_PLUGIN_RUNTIME_STAGE_DIR}
+RUN --mount=type=bind,from=weather-plugin-builder,source=/opt/weather-runtime-dist,target=${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/dist,ro \
+    HOME=/sandbox openclaw plugins install ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR} \
+    && HOME=/sandbox openclaw plugins enable weather
 
 # Enabling the plugin changes openclaw.json after the managed runtime hashes it.
 # The runtime test copies this fixture from OpenShell's read-only /usr policy tree
