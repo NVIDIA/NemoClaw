@@ -70,7 +70,7 @@ afterEach(() => {
 });
 
 describe("Hermes session-list preview patch", () => {
-  it("shows the latest user turn while preserving explicit titles", () => {
+  it("shows the latest message while preserving explicit titles", () => {
     const { commandModule, stateModule } = fixtureFiles();
 
     const result = runPatcher(stateModule, commandModule);
