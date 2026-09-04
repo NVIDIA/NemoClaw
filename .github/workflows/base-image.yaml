@@ -122,6 +122,8 @@ jobs:
         with:
           target-root: ${{ github.workspace }}
           report-dir: artifacts/reviewed-npm-audit
+          cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
+          trusted-cache-write: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
 
   # A failed-job rerun can reuse either successful platform job from an earlier
   # attempt. Keep each digest on a distinct job output so completion order cannot

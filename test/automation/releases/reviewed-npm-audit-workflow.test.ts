@@ -66,10 +66,17 @@ function runConsolidatedAuditFixture(
   const artifactDirectory = path.join(targetRoot, "artifacts", "reviewed-npm-audit");
   try {
     fs.mkdirSync(path.join(trustedRoot, "ci"), { recursive: true });
-    fs.mkdirSync(path.join(targetRoot, "agents", "openclaw", "wechat-runtime"), { recursive: true });
+    fs.mkdirSync(path.join(targetRoot, "agents", "openclaw", "wechat-runtime"), {
+      recursive: true,
+    });
     fs.mkdirSync(bin);
-    fs.cpSync(path.join(REPO_ROOT, "scripts"), path.join(trustedRoot, "scripts"), { recursive: true });
-    fs.writeFileSync(path.join(trustedRoot, "ci", "npm-audit-exceptions.json"), '{"schemaVersion":1,"exceptions":[]}\n');
+    fs.cpSync(path.join(REPO_ROOT, "scripts"), path.join(trustedRoot, "scripts"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(trustedRoot, "ci", "npm-audit-exceptions.json"),
+      '{"schemaVersion":1,"exceptions":[]}\n',
+    );
     const runtimeLock = fs.readFileSync(
       path.join(REPO_ROOT, "agents/openclaw/wechat-runtime/package-lock.json"),
     );
@@ -82,19 +89,22 @@ function runConsolidatedAuditFixture(
         archiveTarVersion: "7.5.21",
         artifactDirectory: "artifacts/reviewed-npm-audit",
         exceptionFile: "ci/npm-audit-exceptions.json",
-        lockedGraphs: [{
-          directory: "agents/openclaw/wechat-runtime",
-          id: "wechat-runtime",
-          inputValidation: "wechat-runtime",
-          installMode: "legacy-peer-deps",
-          integrity,
-          label: "WeChat fixture",
-          lockSha256: createHash("sha256").update(runtimeLock).digest("hex"),
-          packageSpec: "@tencent-weixin/openclaw-weixin@2.4.3",
-          severityThreshold: "low",
-          signatureAudit: "retry-download-failures",
-          tarballUrl: "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
-        }],
+        lockedGraphs: [
+          {
+            directory: "agents/openclaw/wechat-runtime",
+            id: "wechat-runtime",
+            inputValidation: "wechat-runtime",
+            installMode: "legacy-peer-deps",
+            integrity,
+            label: "WeChat fixture",
+            lockSha256: createHash("sha256").update(runtimeLock).digest("hex"),
+            packageSpec: "@tencent-weixin/openclaw-weixin@2.4.3",
+            severityThreshold: "low",
+            signatureAudit: "retry-download-failures",
+            tarballUrl:
+              "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+          },
+        ],
         nodeVersion: process.version.slice(1),
         registryOrigin: "https://registry.npmjs.org/",
         schemaVersion: 2,
@@ -133,13 +143,20 @@ if (args[0] === "--version") { console.log("10.9.4"); process.exit(0); }
 if (args[0] === "config") { console.log("https://registry.npmjs.org/"); process.exit(0); }
 if (args[0] === "audit" && args[1] === "signatures") process.exit(0);
 if (args[0] === "audit") { process.stdout.write(process.env.NEMOCLAW_TEST_AUDIT_OUTPUT); process.exit(Number(process.env.NEMOCLAW_TEST_AUDIT_STATUS)); }
+(args[0] === "install" || args[0] === "ci") && !fs.existsSync("package-lock.json") && (() => {
+  const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
+  fs.writeFileSync("package-lock.json", JSON.stringify({ ...manifest, lockfileVersion: 3, packages: { "": manifest } }));
+})();
 process.exit(0);
 `,
       { mode: 0o755 },
     );
     const result = spawnSync(
       process.execPath,
-      ["--experimental-strip-types", path.join(trustedRoot, "scripts/audit-reviewed-npm-graph.mts")],
+      [
+        "--experimental-strip-types",
+        path.join(trustedRoot, "scripts/audit-reviewed-npm-graph.mts"),
+      ],
       {
         cwd: trustedRoot,
         encoding: "utf-8",
@@ -269,7 +286,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     const fixture = runConsolidatedAuditFixture(() => {}, output, status);
 
     expect(fixture.result.status).not.toBe(0);
-    expect(fixture.provenance).toMatchObject({
+    expect(fixture.provenance, fixture.result.stderr.toString()).toMatchObject({
       failure: expect.stringMatching(expectedFailure),
       rawReportPath: "source-graph.json",
     });

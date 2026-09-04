@@ -11,6 +11,13 @@ inputs:
   report-dir:
     description: Report directory relative to target-root.
     required: true
+  cache-directory:
+    description: Absolute directory used for identity-bound reviewed npm audit records.
+    required: true
+  trusted-cache-write:
+    description: Whether this trusted caller may publish reusable audit records.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -20,22 +27,75 @@ runs:
       with:
         node-version: "22.23.2"
 
+    - name: Resolve reviewed npm audit cache buckets
+      id: cache-buckets
+      shell: bash
+      run: |
+        set -euo pipefail
+        current_bucket="$(( $(date -u +%s) / 43200 ))"
+        previous_bucket="$(( current_bucket - 1 ))"
+        input_digest="$(node --input-type=module - '${{ inputs.target-root }}' "$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json" <<'NODE'
+        import { createHash } from "node:crypto";
+        import { readFileSync } from "node:fs";
+        import { join } from "node:path";
+        const [targetRoot, configFile] = process.argv.slice(2);
+        const configSource = readFileSync(configFile, "utf8");
+        const config = JSON.parse(configSource);
+        const directories = ["", ...config.lockedGraphs.map((graph) => graph.directory)].sort();
+        const hash = createHash("sha256");
+        hash.update(configSource);
+        hash.update(JSON.stringify({ argv: ["audit", "--omit=dev", "--json"], npmVersion: "10.9.4", registry: "https://registry.npmjs.org/", schemaVersion: 1 }));
+        for (const directory of directories) {
+          for (const file of ["package.json", "package-lock.json"]) {
+            const relative = join(directory, file);
+            hash.update(relative);
+            hash.update(readFileSync(join(targetRoot, relative)));
+          }
+        }
+        process.stdout.write(hash.digest("hex"));
+        NODE
+        )"
+        printf 'current=%s\nprevious=%s\ninput-digest=%s\n' "$current_bucket" "$previous_bucket" "$input_digest" >> "$GITHUB_OUTPUT"
+        mkdir -p "${{ inputs.cache-directory }}"
+
+    - name: Restore current reviewed npm audit cache bucket
+      id: cache-current
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      with:
+        path: ${{ inputs.cache-directory }}
+        key: reviewed-npm-audit-v1-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.current }}
+
+    - name: Restore previous reviewed npm audit cache bucket
+      if: steps.cache-current.outputs.cache-hit != 'true'
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      with:
+        path: ${{ inputs.cache-directory }}
+        key: reviewed-npm-audit-v1-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.previous }}
+
     - name: Download and verify production npm
       shell: bash
       env:
         NEMOCLAW_REVIEWED_NPM_VERSION: "10.9.4"
         NEMOCLAW_REVIEWED_NPM_INTEGRITY: >-
           sha512-OnUG836FwboQIbqtefDNlyR0gTHzIfwRfE3DuiNewBvnMnWEpB0VEXwBlFVgqpNzIgYo/MHh3d2Hel/pszapAA==
-      run: '"$GITHUB_ACTION_PATH/verify-and-install-npm.sh"'
+      run: env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN "$GITHUB_ACTION_PATH/verify-and-install-npm.sh"
 
     - name: Materialize and audit reviewed npm graphs
       shell: bash
       env:
         NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: ${{ inputs.target-root }}
         NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR: ${{ inputs.report-dir }}
+        NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIR: ${{ inputs.cache-directory }}
         NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
         NPM_CONFIG_USERCONFIG: /dev/null
-      run: node --experimental-strip-types "$GITHUB_ACTION_PATH/../../../scripts/audit-reviewed-npm-graph.mts"
+      run: env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN node --experimental-strip-types "$GITHUB_ACTION_PATH/../../../scripts/audit-reviewed-npm-graph.mts"
+
+    - name: Save current reviewed npm audit cache bucket
+      if: inputs.trusted-cache-write == 'true' && steps.cache-current.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      with:
+        path: ${{ inputs.cache-directory }}
+        key: reviewed-npm-audit-v1-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.current }}
 
     - name: Upload reviewed npm audit reports
       if: always()

@@ -99,6 +99,7 @@ jobs:
             ci/npm-audit-exceptions.json
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/npm-audit-receipt.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
@@ -121,6 +122,7 @@ jobs:
         with:
           target-root: ${{ github.workspace }}/candidate
           report-dir: artifacts/reviewed-npm-audit
+          cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
 
   pr-staging-qa-deep-code:
     name: Staging QA base permission regression (Deep Agents Code)
@@ -459,6 +461,24 @@ jobs:
             chmod 0664 "$artifact_path"
           done
 
+      - name: Download same-run reviewed npm audit evidence
+        if: matrix.agent == 'openclaw'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: reviewed-npm-audit
+          path: ${{ runner.temp }}/reviewed-npm-audit
+
+      - name: Prepare same-run mcporter audit evidence
+        if: matrix.agent == 'openclaw'
+        id: mcporter-audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.receipt.json"
+          raw="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.raw.json"
+          test -f "$receipt"; test -f "$raw"
+          printf 'receipt=%s\nraw=%s\nreceipt_sha256=%s\nraw_sha256=%s\n' "$receipt" "$raw" "$(sha256sum "$receipt" | cut -d' ' -f1)" "$(sha256sum "$raw" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -571,6 +591,11 @@ jobs:
             BASE_IMAGE=${{ steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
             NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256={0}', steps.mcporter-audit.outputs.receipt_sha256) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RAW_REPORT_SHA256={0}', steps.mcporter-audit.outputs.raw_sha256) || '' }}
+          secret-files: |
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', steps.mcporter-audit.outputs.raw) || '' }}
           cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
           provenance: false
           sbom: false
@@ -783,6 +808,11 @@ jobs:
             BASE_IMAGE=${{ steps.base.outputs.local == 'true' && 'nemoclaw-pr-base' || steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
             NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256={0}', steps.mcporter-audit.outputs.receipt_sha256) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RAW_REPORT_SHA256={0}', steps.mcporter-audit.outputs.raw_sha256) || '' }}
+          secret-files: |
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', steps.mcporter-audit.outputs.raw) || '' }}
           cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
           provenance: false
           sbom: false
@@ -1804,6 +1834,11 @@ jobs:
             TARGETARCH=${{ matrix.arch }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
             NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256={0}', steps.mcporter-audit.outputs.receipt_sha256) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RAW_REPORT_SHA256={0}', steps.mcporter-audit.outputs.raw_sha256) || '' }}
+          secret-files: |
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', steps.mcporter-audit.outputs.raw) || '' }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }},mode=max
           provenance: mode=max

@@ -7,7 +7,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   type AuditExceptionRegistry,
+  NPM_AUDIT_ARGV,
+  NPM_AUDIT_CACHE_FUTURE_SKEW_MS,
+  NPM_AUDIT_CACHE_MAX_AGE_MS,
   assertExceptionGraphs,
+  buildAuditCacheInput,
   buildAuditProvenance,
   deriveAuditEndpoints,
   evaluateAuditPolicy,
@@ -16,6 +20,7 @@ import {
   parseAuditExceptionRegistry,
   parseAuditReport,
   provenanceSidecarPath,
+  readAuditCache,
   readAuditExceptionRegistry,
   runNpmAuditWithRetry,
   runReviewedNpmAudit,
@@ -447,6 +452,112 @@ describe("reviewed npm audit gate", () => {
   });
 });
 
+describe("reviewed npm audit raw cache", () => {
+  function fixture() {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-cache-"));
+    fs.writeFileSync(path.join(directory, "package.json"), '{"name":"fixture"}\n');
+    fs.writeFileSync(path.join(directory, "package-lock.json"), '{"lockfileVersion":3}\n');
+    return directory;
+  }
+
+  it("replays an exact fresh raw result and reports cache evidence (#11028)", () => {
+    const directory = fixture();
+    try {
+      const input = buildAuditCacheInput(
+        directory,
+        "10.9.7",
+        "https://user:secret@registry.npmjs.org/private/path?token=query#fragment",
+      );
+      const filename = path.join(directory, "cache.json");
+      const stdout = JSON.stringify({
+        metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 } },
+      });
+      fs.writeFileSync(
+        filename,
+        JSON.stringify({
+          schemaVersion: 1,
+          createdAt: "2026-07-21T11:00:00.000Z",
+          input,
+          result: { stdout, exitCode: 0 },
+        }),
+      );
+      const hit = readAuditCache(filename, input, NOW);
+      expect(hit?.result.stdout).toBe(stdout);
+      expect(hit?.evidence).toMatchObject({ origin: "cache", ageMs: 3_600_000 });
+      expect(input.argv).toEqual(NPM_AUDIT_ARGV);
+      expect(input.registryOrigin).toBe("https://registry.npmjs.org/");
+      expect(JSON.stringify(input)).not.toContain("secret");
+      expect(JSON.stringify(input)).not.toContain("private");
+      expect(JSON.stringify(input)).not.toContain("query");
+      expect(hit?.evidence.inputSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(hit?.evidence.responseSha256).toMatch(/^[a-f0-9]{64}$/);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["stale", -NPM_AUDIT_CACHE_MAX_AGE_MS],
+    ["too far in the future", NPM_AUDIT_CACHE_FUTURE_SKEW_MS + 1],
+  ])("rejects a %s record", (_label, createdOffset) => {
+    const directory = fixture();
+    try {
+      const input = buildAuditCacheInput(directory, "10.9.7", "https://registry.npmjs.org/");
+      const filename = path.join(directory, "cache.json");
+      fs.writeFileSync(
+        filename,
+        JSON.stringify({
+          schemaVersion: 1,
+          createdAt: new Date(NOW.valueOf() + createdOffset).toISOString(),
+          input,
+          result: { stdout: "{}", exitCode: 0 },
+        }),
+      );
+      expect(readAuditCache(filename, input, NOW)).toBeNull();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed, extra-field, and input-mismatched records", () => {
+    const directory = fixture();
+    try {
+      const input = buildAuditCacheInput(directory, "10.9.7", "https://registry.npmjs.org/");
+      const filename = path.join(directory, "cache.json");
+      fs.writeFileSync(filename, "not json");
+      expect(readAuditCache(filename, input, NOW)).toBeNull();
+      fs.writeFileSync(
+        filename,
+        JSON.stringify({
+          schemaVersion: 1,
+          createdAt: NOW.toISOString(),
+          input,
+          result: { stdout: "{}", exitCode: 0 },
+          poison: process.env,
+        }),
+      );
+      expect(readAuditCache(filename, input, NOW)).toBeNull();
+      const changed = { ...input, npmVersion: "11.0.0" };
+      fs.writeFileSync(
+        filename,
+        JSON.stringify({
+          schemaVersion: 1,
+          createdAt: NOW.toISOString(),
+          input,
+          result: { stdout: "{}", exitCode: 0 },
+        }),
+      );
+      expect(readAuditCache(filename, changed, NOW)).toBeNull();
+      fs.writeFileSync(path.join(directory, "package.json"), '{"name":"changed"}\n');
+      expect(buildAuditCacheInput(directory, "10.9.7", "https://registry.npmjs.org/")).not.toEqual(
+        input,
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("reviewed npm audit provenance", () => {
   const detectionReport = {
     metadata: {
@@ -489,17 +600,17 @@ describe("reviewed npm audit provenance", () => {
     expect(extractAdvisoryIds(report as Record<string, unknown>)).toEqual([]);
   });
 
-  it.each([
-    "https://registry.npmjs.org/",
-    "https://registry.npmjs.org",
-  ])("derives the bulk advisory endpoint npm audit uses from %s", (registry) => {
-    const endpoints = deriveAuditEndpoints(registry);
-    expect(endpoints).toEqual({
-      configuredRegistry: "https://registry.npmjs.org/",
-      bulkAdvisoryEndpoint: "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk",
-      note: expect.stringMatching(/bulk advisory endpoint.*no advisory data/s),
-    });
-  });
+  it.each(["https://registry.npmjs.org/", "https://registry.npmjs.org"])(
+    "derives the bulk advisory endpoint npm audit uses from %s",
+    (registry) => {
+      const endpoints = deriveAuditEndpoints(registry);
+      expect(endpoints).toEqual({
+        configuredRegistry: "https://registry.npmjs.org/",
+        bulkAdvisoryEndpoint: "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk",
+        note: expect.stringMatching(/bulk advisory endpoint.*no advisory data/s),
+      });
+    },
+  );
 
   it("redacts registry URL credentials from retained provenance", () => {
     expect(deriveAuditEndpoints("https://audit-user:audit-token@registry.npmjs.org/")).toEqual({
@@ -561,16 +672,16 @@ describe("reviewed npm audit provenance", () => {
     expect(provenance.advisoryIds).toEqual([]);
   });
 
-  it.each([
-    "",
-    "   ",
-  ])("records an unknown registry explicitly instead of deriving a nonsense endpoint (%j)", (registry) => {
-    expect(deriveAuditEndpoints(registry)).toEqual({
-      configuredRegistry: null,
-      bulkAdvisoryEndpoint: null,
-      note: expect.stringMatching(/registry could not be safely recorded/),
-    });
-  });
+  it.each(["", "   "])(
+    "records an unknown registry explicitly instead of deriving a nonsense endpoint (%j)",
+    (registry) => {
+      expect(deriveAuditEndpoints(registry)).toEqual({
+        configuredRegistry: null,
+        bulkAdvisoryEndpoint: null,
+        note: expect.stringMatching(/registry could not be safely recorded/),
+      });
+    },
+  );
 
   it("writes the failure sidecar before rethrowing when npm audit hard-fails", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-provenance-"));
