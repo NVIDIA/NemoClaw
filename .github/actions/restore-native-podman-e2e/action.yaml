@@ -18,15 +18,24 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        disabled_path="${NEMOCLAW_E2E_DISABLED_DOCKER_CLI:-}"
-        restore_path="${NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH:-}"
-        if [[ -z "$disabled_path" && -z "$restore_path" ]]; then
+        restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore
+        disabled_path="$restore_root/docker"
+        metadata_path="$restore_root/metadata"
+        if ! sudo -n test -e "$restore_root" && ! sudo -n test -L "$restore_root"; then
           exit 0
         fi
-        if [[ "$disabled_path" != "${RUNNER_TEMP}/nemoclaw-disabled-docker-cli" ]]; then
-          echo "::error::Refusing unsafe Docker CLI restore source" >&2
+        if ! sudo -n test -d "$restore_root" || sudo -n test -L "$restore_root"; then
+          echo "::error::Refusing unsafe Docker CLI restore authority" >&2
           exit 1
         fi
+        [[ "$(sudo -n stat -c '%u:%g:%a' "$restore_root")" == "0:0:700" ]]
+        mapfile -t restore_files < <(
+          sudo -n find -P "$restore_root" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort
+        )
+        [[ "${restore_files[*]}" == "docker metadata" ]]
+        restore_path="$(sudo -n sed -n '1p' "$metadata_path")"
+        expected_sha256="$(sudo -n sed -n '2p' "$metadata_path")"
+        [[ "$expected_sha256" =~ ^[a-f0-9]{64}$ ]]
         case "$restore_path" in
           /usr/bin/docker | /usr/local/bin/docker | /snap/bin/docker) ;;
           *)
@@ -34,14 +43,19 @@ runs:
             exit 1
             ;;
         esac
-        if [[ ! -e "$disabled_path" && ! -L "$disabled_path" ]]; then
-          echo "::error::Disabled Docker CLI is missing before restore" >&2
-          exit 1
-        fi
+        sudo -n test -f "$disabled_path"
+        sudo -n test ! -L "$disabled_path"
+        [[ "$(sudo -n stat -c '%u:%g' "$disabled_path")" == "0:0" ]]
+        [[ "$(sudo -n sha256sum -- "$disabled_path" | awk '{print $1}')" == "$expected_sha256" ]]
         if [[ -e "$restore_path" || -L "$restore_path" ]]; then
           echo "::error::Docker CLI restore destination is already occupied" >&2
           exit 1
         fi
         sudo -n mv -- "$disabled_path" "$restore_path"
-        test -x "$restore_path"
+        sudo -n test -f "$restore_path"
+        sudo -n test ! -L "$restore_path"
+        [[ "$(sudo -n stat -c '%u:%g' "$restore_path")" == "0:0" ]]
+        [[ "$(sudo -n sha256sum -- "$restore_path" | awk '{print $1}')" == "$expected_sha256" ]]
+        sudo -n rm -f -- "$metadata_path"
+        sudo -n rmdir -- "$restore_root"
         test "$(command -v docker)" = "$restore_path"

@@ -310,7 +310,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        disabled_path="${RUNNER_TEMP}/nemoclaw-disabled-docker-cli"
+        restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore
+        disabled_path="$restore_root/docker"
+        metadata_path="$restore_root/metadata"
         docker_cli="$(command -v docker || true)"
         if [[ -z "$docker_cli" ]]; then
           exit 0
@@ -322,13 +324,24 @@ runs:
             exit 1
             ;;
         esac
-        if [[ -e "$disabled_path" || -L "$disabled_path" ]]; then
-          echo "::error::Docker CLI isolation target already exists" >&2
+        if sudo -n test -e "$restore_root" || sudo -n test -L "$restore_root"; then
+          echo "::error::Docker CLI isolation authority already exists" >&2
           exit 1
         fi
-        printf 'NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s\n' "$disabled_path" >>"$GITHUB_ENV"
-        printf 'NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH=%s\n' "$docker_cli" >>"$GITHUB_ENV"
+        sudo -n test -f "$docker_cli"
+        sudo -n test ! -L "$docker_cli"
+        [[ "$(sudo -n stat -c '%u:%g' "$docker_cli")" == "0:0" ]]
+        docker_sha256="$(sudo -n sha256sum -- "$docker_cli" | awk '{print $1}')"
+        [[ "$docker_sha256" =~ ^[a-f0-9]{64}$ ]]
+        sudo -n install -d --owner=root --group=root --mode=0700 "$restore_root"
+        printf '%s\n%s\n' "$docker_cli" "$docker_sha256" |
+          sudo -n tee "$metadata_path" >/dev/null
+        sudo -n chmod 0600 "$metadata_path"
         sudo -n mv -- "$docker_cli" "$disabled_path"
+        sudo -n test -f "$disabled_path"
+        sudo -n test ! -L "$disabled_path"
+        [[ "$(sudo -n stat -c '%u:%g' "$disabled_path")" == "0:0" ]]
+        [[ "$(sudo -n sha256sum -- "$disabled_path" | awk '{print $1}')" == "$docker_sha256" ]]
         if command -v docker >/dev/null 2>&1; then
           echo "::error::Native Podman E2E still resolves a Docker CLI" >&2
           exit 1
