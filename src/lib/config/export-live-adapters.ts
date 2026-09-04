@@ -88,10 +88,9 @@ function gatewayFor(entry: Readonly<SandboxEntry>): ObservedExportGateway {
 
 function sandboxIdentity(
   sandboxName: string,
-  entry: Readonly<SandboxEntry>,
+  gatewayName: string,
+  row: ReturnType<typeof liveRow>,
 ): ObservedExportSandboxIdentity {
-  const gatewayName = resolveGatewayBinding(entry).name;
-  const row = liveRow(sandboxName, gatewayName);
   const fingerprint = inspectOpenShellSandboxIdentityFingerprint({ sandboxName, gatewayName });
   const idFingerprint = fingerprintOpenShellSandboxId(row.id);
   if (!idFingerprint || fingerprint !== idFingerprint) {
@@ -169,8 +168,11 @@ async function inferenceFor(entry: Readonly<SandboxEntry>): Promise<ObservedExpo
   };
 }
 
-function effectivePolicy(sandboxName: string, gateway: ObservedExportGateway) {
-  const row = liveRow(sandboxName, gateway.name);
+function effectivePolicy(
+  sandboxName: string,
+  gateway: ObservedExportGateway,
+  row: ReturnType<typeof liveRow>,
+) {
   const result = syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
     target: namedOpenShellGateway(gateway.name),
     sandboxName,
@@ -198,9 +200,10 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
     return { kind: "not-found", sandboxName };
   }
   const gateway = gatewayFor(entry);
-  const sandbox = sandboxIdentity(sandboxName, entry);
+  const row = liveRow(sandboxName, gateway.name);
+  const sandbox = sandboxIdentity(sandboxName, gateway.name, row);
   const inference = await inferenceFor(entry);
-  const policy = effectivePolicy(sandboxName, gateway);
+  const policy = effectivePolicy(sandboxName, gateway, row);
   return {
     kind: "observed",
     sandboxName,

@@ -210,6 +210,7 @@ describe("live export snapshot reader", () => {
     });
     expect(result).not.toHaveProperty("inference.credential");
     expect(process.env.NVIDIA_API_KEY).toBeUndefined();
+    expect(captureSanitizedResolvedOpenshell).toHaveBeenCalledTimes(1);
   });
 
   it("preserves live revision fields for structural stability checks", async () => {
