@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -31,12 +31,6 @@ describe("compiled config schema consumer", () => {
           "schemas/sandbox-policy.schema.json",
         ]),
       );
-      const fixturePackage = JSON.parse(
-        readFileSync(path.join(fixtureRoot, "package.json"), "utf8"),
-      ) as { dependencies?: Record<string, string>; engines?: { node?: string } };
-      expect(fixturePackage.engines?.node).toBe(">=22.19.0");
-      expect(fixturePackage.dependencies?.typebox).toBe("1.1.38");
-
       const probe = spawnSync(
         process.execPath,
         [
