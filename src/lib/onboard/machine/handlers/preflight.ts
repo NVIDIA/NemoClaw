@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../../../state/onboard-session";
+import { hasExplicitDeferredN1xOnboardingIntent } from "../../../readiness/onboard-admission";
 import { isN1xOnboardingProviderKey } from "../../inference-providers/provider-selection-keys";
 import { withPreflightTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
@@ -162,9 +163,10 @@ export async function handlePreflightState<
     }),
   );
   // An explicit false is authoritative for rebuilds. Ordinary resume may use
-  // the provider that this owner-only session already validated and recorded.
+  // the current installer choice or the provider already validated and recorded.
   const allowDeferredN1xOnboarding =
-    allowDeferredN1xManagedVllm ?? recordedProviderAllowsDeferredN1x;
+    allowDeferredN1xManagedVllm ??
+    (recordedProviderAllowsDeferredN1x || hasExplicitDeferredN1xOnboardingIntent(env));
 
   let gpu: Gpu;
   if (resumePreflight) {

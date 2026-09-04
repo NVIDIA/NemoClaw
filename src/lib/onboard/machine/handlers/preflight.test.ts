@@ -251,6 +251,36 @@ describe("handlePreflightState", () => {
   });
 
   it.each([
+    ["a declined preview before provider selection", { NEMOCLAW_NO_EXPRESS: "1" }, true],
+    [
+      "an excluded NIM provider",
+      { NEMOCLAW_NO_EXPRESS: "1", NEMOCLAW_PROVIDER: "nim-local" },
+      false,
+    ],
+  ] as const)("classifies %s during Deferred N1x resume (#11041)", async (_case, env, expected) => {
+    const session = createSession({ provider: null });
+    session.steps.preflight.status = "complete";
+    const assertOnboardHostReadiness = vi.fn();
+    const harness = createDeps({ assertOnboardHostReadiness });
+
+    await handlePreflightState({ ...baseOptions(harness.deps, session), resume: true, env });
+
+    expect(assertOnboardHostReadiness).toHaveBeenCalledTimes(2);
+    expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ allowDeferredN1xOnboarding: expected }),
+    );
+    expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ allowDeferredN1xOnboarding: expected }),
+    );
+  });
+
+  it.each([
     ["persisted Local NIM", "vllm-local", "nemoclaw-nim", undefined, false],
     ["an unknown persisted provider", "obsolete-provider", null, undefined, false],
     ["legacy NVIDIA Endpoints", "nvidia-nim", null, undefined, true],
