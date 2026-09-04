@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../../../state/onboard-session";
+import { hasExplicitDeferredN1xOnboardingIntent } from "../../../readiness/onboard-admission";
+import { isN1xOnboardingProviderKey } from "../../inference-providers/provider-selection-keys";
 import { withPreflightTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
@@ -48,6 +50,10 @@ export interface PreflightStateOptions<
     detectGpu(): Gpu;
     runPreflight(options: { optedOutGpuPassthrough?: boolean }): Promise<Gpu>;
     assessHost(): Host;
+    providerNameToOptionKey(
+      name: string | null | undefined,
+      options?: { hasNimContainer?: boolean },
+    ): string | null;
     assertOnboardHostReadiness(
       host: Host,
       gpu: Gpu,
@@ -56,7 +62,7 @@ export interface PreflightStateOptions<
         observedAt?: string;
         now?: () => Date;
         wslDockerDesktopGpuProofPassed?: boolean;
-        allowDeferredN1xManagedVllm?: boolean;
+        allowDeferredN1xOnboarding?: boolean;
         resuming: true;
         presentAdvisories?: boolean;
       },
@@ -151,6 +157,16 @@ export async function handlePreflightState<
     : { flag: null, device: null };
   const effectiveSandboxGpuFlag = explicitSandboxGpuFlag ?? resumedSandboxGpuOverrides.flag;
   const effectiveSandboxGpuDevice = sandboxGpuDevice ?? resumedSandboxGpuOverrides.device;
+  const recordedProviderAllowsDeferredN1x = isN1xOnboardingProviderKey(
+    deps.providerNameToOptionKey(session?.provider, {
+      hasNimContainer: Boolean(session?.nimContainer),
+    }),
+  );
+  // An explicit false is authoritative for rebuilds. Ordinary resume may use
+  // the current installer choice or the provider already validated and recorded.
+  const allowDeferredN1xOnboarding =
+    allowDeferredN1xManagedVllm ??
+    (recordedProviderAllowsDeferredN1x || hasExplicitDeferredN1xOnboardingIntent(env));
 
   let gpu: Gpu;
   if (resumePreflight) {
@@ -177,7 +193,7 @@ export async function handlePreflightState<
       explicitlyOptedOutGpuPassthrough: resumeSandboxGpuConfig.mode === "0",
       observedAt: hostObservedAt,
       now,
-      allowDeferredN1xManagedVllm,
+      allowDeferredN1xOnboarding,
       resuming: true,
     });
     // A full detector can run the bounded ARM64 WSL Docker GPU proof. Keep it
@@ -200,7 +216,7 @@ export async function handlePreflightState<
         observedAt: hostObservedAt,
         now,
         ...(wslDockerDesktopGpuProofPassed === undefined ? {} : { wslDockerDesktopGpuProofPassed }),
-        allowDeferredN1xManagedVllm,
+        allowDeferredN1xOnboarding,
         resuming: true,
         presentAdvisories: false,
       });

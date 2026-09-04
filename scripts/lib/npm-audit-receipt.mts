@@ -238,7 +238,7 @@ function cli(args: readonly string[]): void {
     const value = args[index + 1];
     if (!args[index]?.startsWith("--") || value === undefined)
       throw new Error(
-        "usage: npm-audit-receipt.mts --receipt FILE --package-json FILE --package-lock FILE --raw-report FILE --exceptions FILE --graph ID --audit-config FILE --registry ORIGIN --threshold SEVERITY [--legacy-npmjs true] [--result FILE] [--raw-copy FILE]",
+        "usage: npm-audit-receipt.mts --receipt FILE --package-json FILE --package-lock FILE --raw-report FILE --exceptions FILE --graph ID --audit-config FILE --registry ORIGIN --threshold SEVERITY [--legacy-npmjs true] [--result FILE]",
       );
     values.set(args[index], value);
   }
@@ -253,12 +253,10 @@ function cli(args: readonly string[]): void {
     "--registry",
     "--threshold",
   ];
-  const allowed = [...required, "--result", "--raw-copy", "--legacy-npmjs"];
+  const allowed = [...required, "--result", "--legacy-npmjs"];
   exactKeys(
     Object.fromEntries(
-      [...values].filter(
-        ([key]) => key !== "--result" && key !== "--raw-copy" && key !== "--legacy-npmjs",
-      ),
+      [...values].filter(([key]) => key !== "--result" && key !== "--legacy-npmjs"),
     ),
     required,
     "verifier arguments",
@@ -297,8 +295,6 @@ function cli(args: readonly string[]): void {
     );
   if (values.has("--result"))
     fs.writeFileSync(values.get("--result")!, `${JSON.stringify(policyResult, null, 2)}\n`);
-  if (values.has("--raw-copy"))
-    fs.copyFileSync(values.get("--raw-report")!, values.get("--raw-copy")!);
   console.log("reviewed npm audit receipt and current policy verified");
 }
 
