@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import http from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assertEndpointResolvesPublic } from "./endpoint-ssrf-preflight";
@@ -18,6 +19,7 @@ const { probeOpenAiLikeEndpointOptimized } = require("./onboard-probes");
 const listen = useOpenAiValidationTestServers();
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
 
@@ -345,6 +347,47 @@ describe("OpenAI validation curl fallback", () => {
 });
 
 describe("WSL2 advisory on native terminal failures (#10413)", () => {
+  it("passes the calibrated WSL floor to the native chat deadline", async () => {
+    const server = http.createServer((request, response) => {
+      request.resume();
+      response.end('{"choices":[{"message":{"content":"OK"}}]}');
+    });
+    const port = await listen(server);
+    const spawnSyncImpl = vi.fn((_command: string, args: readonly string[]) => {
+      const outputPath = args[args.indexOf("-o") + 1];
+      fs.writeFileSync(outputPath, "{}");
+      return { pid: 1, output: [], stdout: "200", stderr: "", status: 0, signal: null };
+    });
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    const result = await probeOpenAiLikeEndpointOptimized(
+      `http://provider.example.test:${port}/v1`,
+      "test-model",
+      "test-key",
+      {
+        skipResponsesProbe: true,
+        calibrateTimeouts: true,
+        isWsl: true,
+        spawnSyncImpl,
+        validationSessionOptions: {
+          env: {},
+          lookup: vi.fn(async () => [{ address: "127.0.0.1", family: 4 }]),
+          allowPrivateAddressesForTesting: true,
+        },
+      },
+    );
+
+    expect({
+      result,
+      calibrationArgs: spawnSyncImpl.mock.calls[0]?.[1],
+      nativeTimeouts: timeoutSpy.mock.calls.map((call) => call[1]),
+    }).toMatchObject({
+      result: { ok: true, api: "openai-completions" },
+      calibrationArgs: expect.arrayContaining(["--connect-timeout", "3", "--max-time", "5"]),
+      nativeTimeouts: expect.arrayContaining([30_000]),
+    });
+  });
+
   async function probeUntilNativeTransportFailure(isWsl: boolean) {
     let requests = 0;
     // The reasoning-budget retry runs first, then the connection drops, which is
