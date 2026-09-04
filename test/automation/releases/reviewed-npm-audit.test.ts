@@ -733,11 +733,7 @@ describe("reviewed npm audit provenance", () => {
       expect(sidecar.failure).not.toContain("registry unreachable");
       expect(sidecar.advisoryIds).toEqual([]);
       expect(sidecar.rawReportPath).toBe("graph.json");
-      expect(sidecar.registry).toEqual({
-        configuredRegistry: null,
-        bulkAdvisoryEndpoint: null,
-        note: expect.stringMatching(/registry could not be safely recorded/),
-      });
+      expect(sidecar.registry).toEqual(deriveAuditEndpoints("https://registry.yarnpkg.com"));
     } finally {
       process.env.PATH = originalPath;
       fs.rmSync(tempRoot, { recursive: true, force: true });

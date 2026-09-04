@@ -47,7 +47,12 @@ describe("reviewed npm audit receipt", () => {
   it("canonically binds all receipt inputs and verifies a fresh passing result", () => {
     const parsed = parseAndVerifyAuditReceipt(canonicalAuditReceipt(receipt()), inputs);
     expect(parsed.acceptedAdvisoryIds).toEqual(["GHSA-a", "GHSA-b"]);
-    expect(parsed.argv).toEqual(["audit", "--omit=dev", "--json"]);
+    expect(parsed.argv).toEqual([
+      "audit",
+      "--registry=https://registry.yarnpkg.com",
+      "--omit=dev",
+      "--json",
+    ]);
     expect(new Date(parsed.expiresAt).getTime() - NOW.getTime()).toBeLessThan(12 * 60 * 60 * 1000);
   });
 

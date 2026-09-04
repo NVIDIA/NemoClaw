@@ -102,7 +102,13 @@ const MAX_EXCEPTION_LIFETIME_DAYS = 30;
 const GHSA_ID_IN_URL = /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/gi;
 const NPM_AUDIT_ATTEMPT_TIMEOUT_MS = 45_000;
 const NPM_AUDIT_RETRY_DELAYS_MS = [1_000, 2_000] as const;
-export const NPM_AUDIT_ARGV = ["audit", "--omit=dev", "--json"] as const;
+export const NPM_AUDIT_REGISTRY = "https://registry.yarnpkg.com";
+export const NPM_AUDIT_ARGV = [
+  "audit",
+  `--registry=${NPM_AUDIT_REGISTRY}`,
+  "--omit=dev",
+  "--json",
+] as const;
 export const NPM_AUDIT_CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 export const NPM_AUDIT_CACHE_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const NPM_AUDIT_CACHE_MAX_BYTES = 64 * 1024 * 1024;
@@ -480,17 +486,6 @@ function npmVersion(directory: string): string {
   return result.stdout.trim();
 }
 
-function configuredNpmRegistry(directory: string): string {
-  const result = spawnSync("npm", ["config", "get", "registry"], {
-    cwd: directory,
-    encoding: "utf-8",
-    env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
-    maxBuffer: 64 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  return result.error || result.status !== 0 ? "" : result.stdout.trim();
-}
-
 type AuditCacheInput = Readonly<{
   argv: readonly string[];
   npmVersion: string;
@@ -858,7 +853,7 @@ export function runReviewedNpmAudit(
   const exceptionRegistry = readAuditExceptionRegistry(options.exceptionFile);
   const startedAt = new Date().toISOString();
   const cacheFile = options.cacheFile ?? process.env.NEMOCLAW_NPM_AUDIT_CACHE_FILE;
-  const registry = process.env.NPM_CONFIG_REGISTRY ?? configuredNpmRegistry(options.directory);
+  const registry = NPM_AUDIT_REGISTRY;
   let cacheInput: AuditCacheInput | undefined;
   if (cacheFile) {
     try {
@@ -868,7 +863,10 @@ export function runReviewedNpmAudit(
         registry,
       );
     } catch (error) {
-      if (!(error instanceof Error) || error.message !== "npm audit cache requires a valid HTTP(S) registry") {
+      if (
+        !(error instanceof Error) ||
+        error.message !== "npm audit cache requires a valid HTTP(S) registry"
+      ) {
         throw error;
       }
       // An invalid optional cache registry degrades to a live audit.

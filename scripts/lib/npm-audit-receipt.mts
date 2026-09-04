@@ -10,9 +10,10 @@ import {
   evaluateAuditPolicy,
   parseAuditExceptionRegistry,
   parseAuditReport,
+  NPM_AUDIT_ARGV,
 } from "./reviewed-npm-audit.mts";
 
-export const AUDIT_ARGV = ["audit", "--omit=dev", "--json"] as const;
+export const AUDIT_ARGV = NPM_AUDIT_ARGV;
 export const RECEIPT_LIFETIME_MS = 12 * 60 * 60 * 1000 - 1;
 export const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const SEVERITIES = new Set(["info", "low", "moderate", "high", "critical"]);

@@ -18,6 +18,7 @@ import {
 } from "./lib/reviewed-npm-archive.mts";
 import {
   type AuditPolicyResult,
+  NPM_AUDIT_REGISTRY,
   assertExceptionGraphs,
   readAuditExceptionRegistry,
   runReviewedNpmAudit,
@@ -592,11 +593,15 @@ export function verifySignaturesWithReviewedRetry(
   directory: string,
   evidenceFile: string,
   runner: (directory: string) => CommandResult = (cwd) => {
-    const result = spawnSync("npm", ["audit", "signatures", "--omit=dev"], {
-      cwd,
-      encoding: "utf-8",
-      env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
-    });
+    const result = spawnSync(
+      "npm",
+      ["audit", "signatures", `--registry=${NPM_AUDIT_REGISTRY}`, "--omit=dev"],
+      {
+        cwd,
+        encoding: "utf-8",
+        env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
+      },
+    );
     if (result.error) throw result.error;
     return { status: result.status, stderr: result.stderr, stdout: result.stdout };
   },
@@ -722,7 +727,11 @@ function auditLockedGraph(
       path.join(artifactDirectory, `locked-graph-${index + 1}-signatures.txt`),
     );
   } else {
-    run("npm", ["audit", "signatures", "--omit=dev"], directory);
+    run(
+      "npm",
+      ["audit", "signatures", `--registry=${NPM_AUDIT_REGISTRY}`, "--omit=dev"],
+      directory,
+    );
   }
   if (graph.inputValidation === "wechat-runtime") {
     verifyWechatInstallCacheBoundary(graph, tempRoot, config.registryOrigin);
@@ -795,7 +804,12 @@ export function auditMaterializedSourceGraph(
   });
   (
     dependencies.verifySignatures ??
-    ((directory) => run("npm", ["audit", "signatures", "--omit=dev"], directory))
+    ((directory) =>
+      run(
+        "npm",
+        ["audit", "signatures", `--registry=${NPM_AUDIT_REGISTRY}`, "--omit=dev"],
+        directory,
+      ))
   )(options.directory);
   return result;
 }
