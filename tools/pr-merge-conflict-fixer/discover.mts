@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { ConflictFixerError, listTreeChanges, prepareMerge, requireSha } from "./merge.mts";
+import { ConflictFixerError, hasTreeChanges, prepareMerge, requireSha } from "./merge.mts";
 
 export type PullRequest = {
   base: { ref: string };
@@ -46,9 +46,9 @@ export function parseConflictMatrixEntry(value: string): ConflictMatrixEntry {
   return parsed;
 }
 
-type ConflictInspection = {
+export type ConflictInspection = {
   conflictPaths: string[];
-  mergePaths: string[];
+  updatesWorkflow: boolean;
 };
 
 type DiscoverOptions = {
@@ -89,7 +89,7 @@ export function selectConflictingPullRequests(
   return eligibleSameRepositoryPullRequests(pullRequests, repository).flatMap((pullRequest) => {
     const conflict = checkConflict(pullRequest, baseSha);
     if (!conflict) return [];
-    if (conflict.mergePaths.some((file) => file.startsWith(".github/workflows/"))) return [];
+    if (conflict.updatesWorkflow) return [];
     return [
       {
         base_sha: baseSha,
@@ -144,23 +144,32 @@ export async function discoverConflicts(env = process.env): Promise<ConflictMatr
       );
       const mergeRepository = path.join(temporaryDirectory, "repository");
       try {
-        const merge = prepareMerge(
-          sourceRepository,
-          mergeRepository,
-          pullRequest.head.sha,
-          baseSha,
-        );
-        return merge
-          ? {
-              conflictPaths: merge.conflictPaths,
-              mergePaths: listTreeChanges(merge.repository, merge.headSha, merge.conflictTree),
-            }
-          : null;
+        return inspectConflict(sourceRepository, mergeRepository, pullRequest.head.sha, baseSha);
       } finally {
         rmSync(temporaryDirectory, { force: true, recursive: true });
       }
     },
   });
+}
+
+export function inspectConflict(
+  sourceRepository: string,
+  mergeRepository: string,
+  headSha: string,
+  baseSha: string,
+): ConflictInspection | null {
+  const merge = prepareMerge(sourceRepository, mergeRepository, headSha, baseSha);
+  return merge
+    ? {
+        conflictPaths: merge.conflictPaths,
+        updatesWorkflow: hasTreeChanges(
+          merge.repository,
+          merge.headSha,
+          merge.conflictTree,
+          ".github/workflows",
+        ),
+      }
+    : null;
 }
 
 async function main(): Promise<void> {
