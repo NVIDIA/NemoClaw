@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -292,6 +292,8 @@ describe("CLI dispatch", () => {
     expect(
       normalizeArgv(["-h"], {
         globalCommands: globalCommandTokens(),
+        isRegisteredSandbox: () => false,
+        isSandboxAction: () => false,
         isSandboxConnectFlag: () => false,
       }),
     ).toEqual({ kind: "rootHelp" });
@@ -647,17 +649,151 @@ describe("CLI dispatch", () => {
     );
   });
 
+  it("dispatches the global doctor without a sandbox name (#10212)", async () => {
+    await withDirectPublicDispatch(
+      async ({
+        dispatchCli,
+        migrateLegacyPortState,
+        recoverRegistryEntries,
+        runOclifCommandById,
+        stderr,
+      }) => {
+        await dispatchCli(["doctor"]);
+
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "doctor",
+          [],
+          expect.objectContaining({ rootDir: process.cwd() }),
+        );
+        expect(migrateLegacyPortState).not.toHaveBeenCalled();
+        expect(recoverRegistryEntries).not.toHaveBeenCalled();
+        expect(stderr).toEqual([]);
+      },
+    );
+  });
+
+  it("dispatches global doctor when the sandbox registry is unreadable (#10212)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, migrateLegacyPortState, runOclifCommandById, stderr }) => {
+        await dispatchCli(["doctor"]);
+
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "doctor",
+          [],
+          expect.objectContaining({ rootDir: process.cwd() }),
+        );
+        expect(migrateLegacyPortState).not.toHaveBeenCalled();
+        expect(stderr).toEqual([]);
+      },
+      {
+        registryReadError: new Error(
+          "Authorization: Bearer sk-secret-value in /private/sandboxes.json",
+        ),
+      },
+    );
+  });
+
+  it(
+    "emits one redacted JSON report for the selected non-default gateway (#10212)",
+    testTimeoutOptions(35_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-global-doctor-json-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const openshellBin = path.join(localBin, "openshell");
+      const openshellLog = path.join(home, "openshell-args");
+      const registryFile = path.join(registryDir, "sandboxes.json");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      const emptyRegistry = JSON.stringify({ sandboxes: {}, defaultSandbox: null });
+      fs.writeFileSync(registryFile, emptyRegistry, { mode: 0o600 });
+      fs.writeFileSync(
+        openshellBin,
+        [
+          "#!/bin/sh",
+          `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+          'if [ "$1" = "status" ]; then',
+          "  printf 'Status: Disconnected\\nGateway: nemoclaw\\nAuthorization: Bearer sk-abc123DEF456ghi789\\n'",
+          "  exit 1",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw-19080" ]; then',
+          "  printf 'Gateway: nemoclaw-19080\\n'",
+          "  exit 0",
+          "fi",
+          "exit 97",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(localBin, "docker"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+
+      try {
+        const result = spawnSync(process.execPath, [CLI, "doctor", "--json"], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: home,
+            NEMOCLAW_GATEWAY_PORT: "19080",
+            NEMOCLAW_GATEWAY_RUNTIME: "docker",
+            NEMOCLAW_OPENSHELL_BIN: openshellBin,
+            PATH: `${localBin}:${process.env.PATH || ""}`,
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 30_000,
+        });
+
+        expect(result.status).toBe(1);
+        expect(result.stderr).toBe("");
+        const report = JSON.parse(result.stdout) as Record<string, unknown>;
+        expect(report).toMatchObject({ schemaVersion: 1, scope: "global", status: "fail" });
+        expect(report).not.toHaveProperty("sandbox");
+        expect(result.stdout).not.toContain("sk-abc123DEF456ghi789");
+        expect(fs.readFileSync(registryFile, "utf8")).toBe(emptyRegistry);
+        expect(fs.readFileSync(openshellLog, "utf8").trim().split("\n")).toEqual([
+          "status",
+          "gateway info -g nemoclaw-19080",
+        ]);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(["--json", "--text"])(
+    "dispatches global doctor %s without reading sandbox state (#10212)",
+    async (flag) => {
+      await withDirectPublicDispatch(
+        async ({
+          dispatchCli,
+          migrateLegacyPortState,
+          recoverRegistryEntries,
+          runOclifCommandById,
+        }) => {
+          await dispatchCli(["doctor", flag]);
+
+          expect(runOclifCommandById).toHaveBeenCalledWith(
+            "doctor",
+            [flag],
+            expect.objectContaining({ rootDir: process.cwd() }),
+          );
+          expect(migrateLegacyPortState).not.toHaveBeenCalled();
+          expect(recoverRegistryEntries).not.toHaveBeenCalled();
+        },
+        { sandboxNames: ["doctor"] },
+      );
+    },
+  );
+
   it("reports the sandbox-first grammar without recovering a bare action (#10212)", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, exitSpy, recoverRegistryEntries, stderr }) => {
-        await expect(dispatchCli(["doctor"])).rejects.toThrow("process.exit:1");
+        await expect(dispatchCli(["destroy"])).rejects.toThrow("process.exit:1");
 
         const output = stderr.join("\n");
         expect(recoverRegistryEntries).not.toHaveBeenCalled();
-        expect(output).toContain("'doctor' is a sandbox command. It needs a sandbox name.");
-        expect(output).toContain("Run: nemoclaw <name> doctor");
+        expect(output).toContain("'destroy' is a sandbox command. It needs a sandbox name.");
+        expect(output).toContain("Run: nemoclaw <name> destroy");
         expect(output).toContain("Run 'nemoclaw onboard' to create one.");
-        expect(output).not.toContain("Sandbox 'doctor' does not exist.");
+        expect(output).not.toContain("Sandbox 'destroy' does not exist.");
         expect(exitSpy).toHaveBeenCalledWith(1);
       },
     );
@@ -666,9 +802,9 @@ describe("CLI dispatch", () => {
   it.each([
     {
       input: "flag argument",
-      argv: ["doctor", "--json"],
-      route: "doctor",
-      forbidden: /--json/,
+      argv: ["logs", "--follow"],
+      route: "logs",
+      forbidden: /--follow/,
     },
     {
       input: "credential-bearing argument",
@@ -740,7 +876,7 @@ describe("CLI dispatch", () => {
   it("lists registered sandboxes in the sandbox-first grammar hint (#10212)", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, stderr }) => {
-        await expect(dispatchCli(["doctor"])).rejects.toThrow("process.exit:1");
+        await expect(dispatchCli(["destroy"])).rejects.toThrow("process.exit:1");
 
         const output = stderr.join("\n");
         expect(output).toContain("Registered sandboxes: alpha, beta");
@@ -753,7 +889,7 @@ describe("CLI dispatch", () => {
   it("reports pending setup instead of new onboarding for a bare sandbox action (#10212)", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, stderr }) => {
-        await expect(dispatchCli(["doctor"])).rejects.toThrow("process.exit:1");
+        await expect(dispatchCli(["destroy"])).rejects.toThrow("process.exit:1");
 
         const output = stderr.join("\n");
         expect(output).toContain("Sandbox setup is still pending: alpha");
@@ -792,9 +928,10 @@ describe("CLI dispatch", () => {
 
   it("keeps the name-first grammar for a sandbox literally named doctor (#10212)", async () => {
     await withDirectPublicDispatch(
-      async ({ dispatchCli, runOclifCommandById, stderr }) => {
+      async ({ dispatchCli, migrateLegacyPortState, runOclifCommandById, stderr }) => {
         await dispatchCli(["doctor", "status"]);
 
+        expect(migrateLegacyPortState).toHaveBeenCalledTimes(1);
         expect(runOclifCommandById).toHaveBeenCalledWith(
           "sandbox:status",
           ["doctor"],
@@ -803,6 +940,71 @@ describe("CLI dispatch", () => {
         expect(stderr.join("\n")).not.toContain("is a sandbox command");
       },
       { sandboxNames: ["doctor"] },
+    );
+  });
+
+  it.each([
+    { label: "bare", args: [] as string[], migrationCalls: 1, helpCalls: 0 },
+    { label: "help", args: ["--help"], migrationCalls: 0, helpCalls: 1 },
+    { label: "probe-only", args: ["--probe-only"], migrationCalls: 1, helpCalls: 0 },
+  ])("keeps $label connect for a sandbox literally named doctor (#10212)", async (testCase) => {
+    await withDirectPublicDispatch(
+      async ({
+        dispatchCli,
+        migrateLegacyPortState,
+        printSandboxConnectHelp,
+        runOclifCommandById,
+        stderr,
+      }) => {
+        await dispatchCli(["doctor", ...testCase.args]);
+
+        expect({
+          migrationCalls: migrateLegacyPortState.mock.calls.length,
+          helpCalls: printSandboxConnectHelp.mock.calls.length,
+          oclifCall: runOclifCommandById.mock.calls[0]?.slice(0, 2) ?? null,
+          stderr,
+        }).toEqual({
+          migrationCalls: testCase.migrationCalls,
+          helpCalls: testCase.helpCalls,
+          oclifCall:
+            testCase.helpCalls > 0
+              ? null
+              : ["sandbox:connect", ["doctor", ...testCase.args]],
+          stderr: [],
+        });
+      },
+      { sandboxNames: ["doctor"], connectFlags: ["--help", "--probe-only"] },
+    );
+  });
+
+  it.each([
+    { label: "bare", args: [] as string[] },
+    { label: "probe-only", args: ["--probe-only"] },
+  ])("migrates a legacy sandbox named doctor before $label connect (#10212)", async (testCase) => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, migrateLegacyPortState, runOclifCommandById, sandboxes, stderr }) => {
+        migrateLegacyPortState.mockImplementation(() => {
+          sandboxes.set("doctor", { name: "doctor" });
+          return {
+            migratedSandboxNames: ["doctor"],
+            migratedSession: false,
+            warnings: [],
+          };
+        });
+
+        await dispatchCli(["doctor", ...testCase.args]);
+
+        expect({
+          migrationCalls: migrateLegacyPortState.mock.calls.length,
+          oclifCall: runOclifCommandById.mock.calls[0]?.slice(0, 2) ?? null,
+          stderr,
+        }).toEqual({
+          migrationCalls: 1,
+          oclifCall: ["sandbox:connect", ["doctor", ...testCase.args]],
+          stderr: [expect.stringContaining("Migrated legacy state")],
+        });
+      },
+      { connectFlags: ["--probe-only"], migratableSandboxNames: ["doctor"] },
     );
   });
 
