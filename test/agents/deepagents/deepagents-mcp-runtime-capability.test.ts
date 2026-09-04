@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   executeGatewaySupervisorAction: vi.fn(),
   executeSandboxCommand: vi.fn(),
+  getSandbox: vi.fn(),
 }));
 
 vi.mock("../../../src/lib/actions/sandbox/process-recovery", () => ({
@@ -13,24 +14,46 @@ vi.mock("../../../src/lib/actions/sandbox/process-recovery", () => ({
   executeSandboxCommand: mocks.executeSandboxCommand,
 }));
 
+vi.mock("../../../src/lib/state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/state/registry")>()),
+  getSandbox: mocks.getSandbox,
+}));
+
 import { assertAgentMcpMutationRuntimeCapability } from "../../../src/lib/actions/sandbox/mcp-bridge-adapters";
+
+beforeEach(() => {
+  mocks.getSandbox.mockReset().mockReturnValue({
+    agent: "langchain-deepagents-code",
+    gatewayName: "nemoclaw-8091",
+    name: "deepagents-box",
+  });
+});
 
 type ProbeResult = { status: number; stdout: string; stderr: string } | null;
 
 function runDeepAgentsProbe(result: ProbeResult) {
   mocks.executeSandboxCommand.mockReset().mockReturnValue(result);
+  const runtimeSelection = {
+    gatewayName: "nemoclaw-8091",
+    workspace: "default",
+  } as const;
 
   let message = "";
   try {
-    assertAgentMcpMutationRuntimeCapability("deepagents-box", "deepagents-config");
+    assertAgentMcpMutationRuntimeCapability(
+      "deepagents-box",
+      "deepagents-config",
+      runtimeSelection,
+    );
   } catch (error) {
     message = error instanceof Error ? error.message : String(error);
   }
 
   return {
-    calls: mocks.executeSandboxCommand.mock.calls.map(([sandboxName, command]) => ({
+    calls: mocks.executeSandboxCommand.mock.calls.map(([sandboxName, command, options]) => ({
       sandboxName,
       command,
+      runtimeSelection: options?.runtimeSelection,
     })),
     message,
   };
@@ -49,6 +72,10 @@ describe("Deep Agents managed MCP runtime capability", () => {
         {
           sandboxName: "deepagents-box",
           command: "/usr/local/bin/deepagents-code --nemoclaw-mcp-capability",
+          runtimeSelection: {
+            gatewayName: "nemoclaw-8091",
+            workspace: "default",
+          },
         },
       ],
       message: "",
