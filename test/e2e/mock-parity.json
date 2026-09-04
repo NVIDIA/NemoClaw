@@ -763,7 +763,11 @@
     },
     {
       "live": "test/e2e/live/rebuild-hermes.test.ts",
-      "liveSources": ["test/e2e/live/rebuild-hermes-host-policy.ts"],
+      "liveSources": [
+        "test/e2e/live/rebuild-hermes-base-identity.ts",
+        "test/e2e/live/rebuild-hermes-env.ts",
+        "test/e2e/live/rebuild-hermes-host-policy.ts"
+      ],
       "fast": [
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
