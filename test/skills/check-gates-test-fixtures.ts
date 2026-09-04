@@ -30,7 +30,6 @@ const PR_WORKFLOW_JOB_NAMES = [
   "compile-artifacts",
   "build-typecheck",
   "installer-integration",
-  "wechat-runtime-audit",
   "reviewed-npm-audit",
   "cli-test-shards",
   "cli-tests",
