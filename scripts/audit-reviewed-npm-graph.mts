@@ -971,7 +971,7 @@ function main(): void {
       packageJsonFile: targetRepositoryPath("package.json", "NemoClaw CLI package manifest"),
       packageLockFile: targetRepositoryPath("package-lock.json", "NemoClaw CLI lockfile"),
       rawReportFile: path.join(artifactDirectory, "source-graph.json"),
-      registryOrigin: config.registryOrigin,
+      registryOrigin: NPM_AUDIT_REGISTRY,
       result: sourceResult,
       threshold: config.severityThreshold,
     });
@@ -983,7 +983,7 @@ function main(): void {
       packageLockFile: path.join(archiveDirectory, "package-lock.json"),
       preserveInputs: true,
       rawReportFile: path.join(artifactDirectory, "reviewed-archive-graph.json"),
-      registryOrigin: config.registryOrigin,
+      registryOrigin: NPM_AUDIT_REGISTRY,
       result: archiveResult,
       threshold: config.severityThreshold,
     });
@@ -1001,7 +1001,7 @@ function main(): void {
           `${graph.label} lockfile`,
         ),
         rawReportFile: path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
-        registryOrigin: config.registryOrigin,
+        registryOrigin: NPM_AUDIT_REGISTRY,
         result: lockedResults[index]!,
         threshold: graph.severityThreshold ?? config.severityThreshold,
       });

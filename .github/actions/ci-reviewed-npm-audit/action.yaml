@@ -44,7 +44,7 @@ runs:
         const directories = ["", ...config.lockedGraphs.map((graph) => graph.directory)].sort();
         const hash = createHash("sha256");
         hash.update(configSource);
-        hash.update(JSON.stringify({ argv: ["audit", "--omit=dev", "--json"], npmVersion: "10.9.4", registry: "https://registry.npmjs.org/", schemaVersion: 1 }));
+        hash.update(JSON.stringify({ argv: ["audit", "--registry=https://registry.yarnpkg.com", "--omit=dev", "--json"], npmVersion: "10.9.4", registry: "https://registry.yarnpkg.com/", schemaVersion: 1 }));
         for (const directory of directories) {
           for (const file of ["package.json", "package-lock.json"]) {
             const relative = join(directory, file);

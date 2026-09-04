@@ -23,7 +23,7 @@ const inputs = {
   packageLock: "lock",
   rawResponse:
     '{"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}',
-  registryOrigin: "https://registry.npmjs.org/",
+  registryOrigin: "https://registry.yarnpkg.com/",
   now: NOW,
 } as const;
 function receipt(createdAt = NOW) {
@@ -54,6 +54,15 @@ describe("reviewed npm audit receipt", () => {
       "--json",
     ]);
     expect(new Date(parsed.expiresAt).getTime() - NOW.getTime()).toBeLessThan(12 * 60 * 60 * 1000);
+  });
+
+  it("rejects a receipt whose registry identity differs from its audit command", () => {
+    expect(() =>
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(receipt()), {
+        ...inputs,
+        registryOrigin: "https://registry.npmjs.org/",
+      }),
+    ).toThrow(/registry/);
   });
 
   it.each([

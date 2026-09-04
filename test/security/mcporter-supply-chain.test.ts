@@ -206,7 +206,7 @@ describe("mcporter image supply-chain controls", () => {
     expect(flattenedContents).toContain(
       "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --npm-version",
     );
-    expect(flattenedContents).toContain("--registry https://registry.npmjs.org/ --threshold high");
+    expect(flattenedContents).toContain("--registry https://registry.yarnpkg.com --threshold high");
     expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
     expect(contents).not.toContain(`${runtimePrefix} audit signatures`);
     expect(flattenedContents).toContain(
