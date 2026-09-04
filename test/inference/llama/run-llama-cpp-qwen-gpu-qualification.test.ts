@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   qwenGpuAgentPlan,
+  qwenGpuProbeDiagnostic,
   validateQwenGpuProcessEvidence,
 } from "../../../scripts/checks/llama-cpp-qwen-gpu-contract.ts";
 
@@ -62,5 +63,25 @@ describe("Qwen llama.cpp RTX qualification plan", () => {
         modelSizeBytes,
       ),
     ).toThrow("Qwen llama-server GPU memory is below the full-offload threshold");
+  });
+
+  it("bounds probe diagnostics and redacts exact and credential-shaped secrets", () => {
+    const diagnostic = qwenGpuProbeDiagnostic(
+      "openclaw-agent:normal",
+      {
+        status: 1,
+        stdout: `${"x".repeat(5000)} Bearer explicit-secret`,
+        stderr: "API_TOKEN=token-shaped-value",
+      },
+      ["explicit-secret"],
+    );
+    expect(diagnostic).toMatchObject({
+      label: "openclaw-agent:normal",
+      status: 1,
+      stderr: "API_TOKEN=<REDACTED>",
+    });
+    expect(Buffer.byteLength(diagnostic.stdout)).toBeLessThanOrEqual(4096);
+    expect(JSON.stringify(diagnostic)).not.toContain("explicit-secret");
+    expect(JSON.stringify(diagnostic)).not.toContain("token-shaped-value");
   });
 });

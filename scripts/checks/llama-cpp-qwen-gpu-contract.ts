@@ -5,9 +5,40 @@ import type { LlamaCppOpenClawAgentQualificationPlan } from "./llama-cpp-opencla
 
 export const QWEN_GPU_SHA_PATTERN = /^[a-f0-9]{40}$/u;
 export const QWEN_GPU_MAX_COMMAND_BYTES = 16 * 1024 * 1024;
+const QWEN_GPU_MAX_DIAGNOSTIC_BYTES = 4 * 1024;
 const OPENCLAW_IMAGE_PATTERN =
   /^ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[a-f0-9]{64}$/u;
 const SANDBOX_NAME = "nmc-lcpp-qwen-rtx";
+
+export function qwenGpuProbeDiagnostic(
+  label: string,
+  result: { readonly status: number | null; readonly stdout: string; readonly stderr: string },
+  forbiddenValues: readonly string[],
+): {
+  readonly label: string;
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+} {
+  const redact = (value: string): string => {
+    let redacted = value;
+    for (const forbidden of [...forbiddenValues].sort(
+      (left, right) => right.length - left.length,
+    )) {
+      if (forbidden) redacted = redacted.replaceAll(forbidden, "<REDACTED>");
+    }
+    return redacted
+      .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, "Bearer <REDACTED>")
+      .replace(/\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))=([^\s]*)/giu, "$1=<REDACTED>")
+      .slice(-QWEN_GPU_MAX_DIAGNOSTIC_BYTES);
+  };
+  return {
+    label,
+    status: result.status,
+    stdout: redact(result.stdout),
+    stderr: redact(result.stderr),
+  };
+}
 
 export function qwenGpuAgentPlan(
   imageReference: string,

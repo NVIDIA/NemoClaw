@@ -15,6 +15,7 @@ import { runLlamaCppOpenClawAgentQualification } from "./llama-cpp-openclaw-agen
 import { compiledLlamaCppRuntime } from "./llama-cpp-compiled-runtime.ts";
 import {
   qwenGpuAgentPlan,
+  qwenGpuProbeDiagnostic,
   QWEN_GPU_MAX_COMMAND_BYTES,
   QWEN_GPU_SHA_PATTERN,
   validateQwenGpuProcessEvidence,
@@ -240,6 +241,7 @@ export async function runQwenGpuQualification(): Promise<void> {
   let apiKey: string | undefined;
   let transactionId: string | undefined;
   let runtimeCleanup: Extract<LocalModelRuntimeCleanupResult, { ok: true }> | undefined;
+  const probeDiagnostics: ReturnType<typeof qwenGpuProbeDiagnostic>[] = [];
   let runtimeEvidence:
     | {
         readonly fullGpuOffload: true;
@@ -263,7 +265,28 @@ export async function runQwenGpuQualification(): Promise<void> {
         model: recipe.spec.model.servedName,
         sandbox: SANDBOX_NAME,
       },
-      (context) => runLlamaCppOpenClawAgentQualification(agentPlan, context),
+      (context) =>
+        runLlamaCppOpenClawAgentQualification(agentPlan, {
+          ...context,
+          runSandbox(argv, timeoutMilliseconds) {
+            const result = context.runSandbox(argv, timeoutMilliseconds);
+            const sessionIndex = argv.indexOf("--session-id");
+            const label =
+              argv[0] === "openclaw" && sessionIndex >= 0
+                ? `openclaw-agent:${argv[sessionIndex + 1] ?? "unknown"}`
+                : argv.includes("sync")
+                  ? "inference.local:sync"
+                  : argv.includes("stream")
+                    ? "inference.local:stream"
+                    : argv[0] === "/bin/sh"
+                      ? "tool-fixture"
+                      : "session-structure";
+            probeDiagnostics.push(
+              qwenGpuProbeDiagnostic(label, result, apiKey === undefined ? [] : [apiKey]),
+            );
+            return result;
+          },
+        }),
       {
         networkName: "openshell-docker",
         async afterGatewayStarted() {
@@ -441,6 +464,9 @@ export async function runQwenGpuQualification(): Promise<void> {
         mode: 0o600,
       },
     );
+    if (probeDiagnostics.length > 0) {
+      writeJson(canonicalArtifactRoot, "probe-diagnostics.json", probeDiagnostics);
+    }
     try {
       runtimeCleanup ??= requireCleanup(
         cleanupManagedLlamaCppRuntimeForSandbox(SANDBOX_NAME, { env: process.env }),
