@@ -35,7 +35,7 @@ $ErrorActionPreference = 'Stop'
 
 $script:CaptureFramesPerSecond = 4
 $script:FrameDurationMilliseconds = 250
-$script:MaximumRecordingMilliseconds = 1800000
+$script:MaximumRecordingMilliseconds = 3000000
 $script:MinimumCaptureFrames = 40
 $script:MinimumUniqueFrames = 8
 $script:AgentVideoSegments = @(
