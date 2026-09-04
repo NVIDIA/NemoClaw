@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
+import {
+  buildSelectedOpenShellSubprocessEnv,
+  captureOpenshell,
+  type OpenShellRuntimeSelection,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import { RD as _RD, G, R } from "../../cli/terminal-style";
 import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
 import type {
@@ -18,12 +23,20 @@ import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-stage"
 
 export { stageMessagingManifestPlanForRebuild };
 
-export function createRebuildMessagingPreEnableHookRegistry() {
+export function createRebuildMessagingPreEnableHookRegistry(
+  runtimeSelection?: OpenShellRuntimeSelection,
+) {
   return createMessagingHostForwardPreEnableHookRegistry({
     captureForwardList: (gatewayName) => {
       const args = ["forward", "list"];
       if (gatewayName) args.push("--gateway", gatewayName);
-      const result = captureOpenshell(args, { ignoreError: true });
+      const result = captureOpenshell(args, {
+        env: runtimeSelection
+          ? buildSelectedOpenShellSubprocessEnv(runtimeSelection)
+          : undefined,
+        replaceEnv: runtimeSelection ? true : undefined,
+        ignoreError: true,
+      });
       return result.status === 0 ? result.output : null;
     },
   });
@@ -57,19 +70,31 @@ export async function stageRebuildMessagingPlanOrBail(
   }
 }
 
-const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
-  runOpenshell([...args], {
-    env: options.env as NodeJS.ProcessEnv | undefined,
-    ignoreError: options.ignoreError,
-    input: options.input,
-    stdio: options.stdio as never,
-  });
+function createRunMessagingOpenshell(
+  runtimeSelection?: OpenShellRuntimeSelection,
+): MessagingOpenShellRunner {
+  return (args, options = {}) =>
+    runOpenshell([...args], {
+      env: runtimeSelection
+        ? buildSelectedOpenShellSubprocessEnv(
+            runtimeSelection,
+            options.env ? { ...options.env } : undefined,
+          )
+        : (options.env as NodeJS.ProcessEnv | undefined),
+      replaceEnv: runtimeSelection ? true : undefined,
+      ignoreError: options.ignoreError,
+      input: options.input,
+      stdio: options.stdio as never,
+    });
+}
 
 export function finalizePendingMessagingRemovalsAfterRestore(
   plan: SandboxMessagingPlan | null,
   log: (message: string) => void,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): SandboxMessagingPlan | null {
   if (!plan) return null;
+  const runMessagingOpenshell = createRunMessagingOpenshell(runtimeSelection);
   const pendingRemovals = plan.channels.filter(
     (channel) => channel.pendingRemoval === true,
   );
@@ -109,6 +134,7 @@ export async function reapplyMessagingManifestAfterOpenClawDoctor(
   sandboxName: string,
   plan: SandboxMessagingPlan | null,
   log: (message: string) => void,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<void> {
   if (!plan || plan.agent !== "openclaw") {
     log("Messaging manifest reapply skipped: no OpenClaw messaging plan");
@@ -116,6 +142,7 @@ export async function reapplyMessagingManifestAfterOpenClawDoctor(
   }
 
   log("Reapplying messaging manifest render and post-agent-install hooks after doctor");
+  const runMessagingOpenshell = createRunMessagingOpenshell(runtimeSelection);
   const result = await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, {
     runOpenshell: runMessagingOpenshell,
     runHook: (request) => hookOutputsFromBuildSteps(plan, request),

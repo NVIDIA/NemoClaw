@@ -36,6 +36,13 @@ function providerAdapter(
   const createProvider: OpenShellProviderAdapter["createProvider"] = async () => ({
     ok: true,
   });
+  const getProvider: OpenShellProviderAdapter["getProvider"] = async (request) => ({
+    ok: true,
+    value: { name: request.providerName, type: "generic", credentialKeys: [], configKeys: [] },
+  });
+  const updateProvider: OpenShellProviderAdapter["updateProvider"] = async () => ({
+    ok: true,
+  });
   const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
     ok: true,
   });
@@ -52,6 +59,8 @@ function providerAdapter(
   return {
     listProviders: vi.fn(listProviders),
     createProvider: vi.fn(createProvider),
+    getProvider: vi.fn(getProvider),
+    updateProvider: vi.fn(updateProvider),
     importProviderProfile: vi.fn(importProviderProfile),
     inspectProviderProfile: vi.fn(inspectProviderProfile),
     deleteProvider: vi.fn(deleteProvider),
