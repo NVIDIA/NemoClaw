@@ -79,7 +79,7 @@ function requireSuccess(
   }
 }
 
-function agentArgv(session: string, prompt: string): string[] {
+function agentArgv(session: string, prompt: string, timeoutSeconds: number): string[] {
   return [
     "openclaw",
     "agent",
@@ -88,6 +88,8 @@ function agentArgv(session: string, prompt: string): string[] {
     "--json",
     "--thinking",
     "off",
+    "--timeout",
+    String(timeoutSeconds),
     "--session-id",
     session,
     "-m",
@@ -239,7 +241,7 @@ export async function runLlamaCppOpenClawAgentQualification(
   }
 
   const normal = run(
-    agentArgv(config.sessions.normal, config.prompts.normal),
+    agentArgv(config.sessions.normal, config.prompts.normal, config.bounds.commandTimeoutSeconds),
     "OpenClaw normal agent turn",
   );
   if (
@@ -263,14 +265,18 @@ export async function runLlamaCppOpenClawAgentQualification(
     "OpenClaw tool fixture creation",
   );
   const tool = run(
-    agentArgv(config.sessions.tool, config.prompts.tool),
+    agentArgv(config.sessions.tool, config.prompts.tool, config.bounds.commandTimeoutSeconds),
     "OpenClaw tool agent turn",
   );
   if (!tool.stdout.includes(config.fixture.value)) {
     throw new Error("OpenClaw tool agent turn did not return the declared fixture value");
   }
   const continuation = run(
-    agentArgv(config.sessions.tool, config.prompts.continuation),
+    agentArgv(
+      config.sessions.tool,
+      config.prompts.continuation,
+      config.bounds.commandTimeoutSeconds,
+    ),
     "OpenClaw tool-result continuation turn",
   );
   if (!continuation.stdout.includes(config.fixture.value)) {

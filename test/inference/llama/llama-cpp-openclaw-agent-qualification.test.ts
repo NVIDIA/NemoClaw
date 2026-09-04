@@ -88,6 +88,7 @@ describe("llama.cpp OpenClaw qualification probe", () => {
     expect(invocations).toHaveLength(7);
     expect(invocations[0]).toContain("https://inference.local/v1/chat/completions");
     expect(invocations[2]).toContain("llama-cpp-openclaw-normal");
+    expect(invocations[2]?.[invocations[2].indexOf("--timeout") + 1]).toBe("420");
     expect(invocations[4]).toContain("llama-cpp-openclaw-tool");
     expect(invocations[5]).toContain("llama-cpp-openclaw-tool");
     expect(invocations[6]).toContain(
