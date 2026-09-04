@@ -21,9 +21,9 @@ const mocks = vi.hoisted(() => ({
   persistHostLocalVllmRuntimeReceipt: vi.fn(),
   probeDockerStorage: vi.fn(),
   probeHostStorage: vi.fn(),
-  resolveHostLocalVllmSelection: vi.fn<() => HostLocalVllmSelectionResult>(() => ({
-    kind: "not-selected",
-  })),
+  resolveHostLocalVllmSelection: vi.fn<
+    typeof import("./serving/host-local-vllm-selection").resolveHostLocalVllmSelection
+  >(() => ({ kind: "not-selected" })),
   runCapture: vi.fn(),
   runCurlProbe: vi.fn(),
   tryInstallManagedClusterManagedVllm: vi.fn(async () => ({
@@ -105,6 +105,21 @@ async function resolveActualHostLocalSelection(
   return selection as SelectedHostLocalVllm;
 }
 
+function vllmInstallTestReadinessAtMemory(profile: VllmProfile, availableMemoryBytes: number) {
+  return vllmInstallTestReadiness(profile).map(({ nodeId, report }) => ({
+    nodeId,
+    report: {
+      ...report,
+      observations: report.observations.map((observation) =>
+        observation.id === "host.gpu.memory_total_bytes" ||
+        observation.id === "host.gpu.memory_per_device_bytes"
+          ? { ...observation, value: availableMemoryBytes }
+          : observation,
+      ),
+    },
+  }));
+}
+
 function mockSuccessfulAuthenticatedReadiness(servedModelId: string): void {
   mocks.runCurlProbe
     .mockReturnValueOnce({
@@ -156,18 +171,7 @@ describe("fixed catalog vLLM installs", () => {
   it("reports automatic GPU memory rejection before install effects", async () => {
     const profile = detectVllmProfile({ platform: "n1x", type: "nvidia" })!;
     const availableMemoryBytes = 23_730_323_456;
-    const readinessReports = vllmInstallTestReadiness(profile).map(({ nodeId, report }) => ({
-      nodeId,
-      report: {
-        ...report,
-        observations: report.observations.map((observation) =>
-          observation.id === "host.gpu.memory_total_bytes" ||
-          observation.id === "host.gpu.memory_per_device_bytes"
-            ? { ...observation, value: availableMemoryBytes }
-            : observation,
-        ),
-      },
-    }));
+    const readinessReports = vllmInstallTestReadinessAtMemory(profile, availableMemoryBytes);
     const actualSelection = await vi.importActual<
       typeof import("./serving/host-local-vllm-selection")
     >("./serving/host-local-vllm-selection");
@@ -191,6 +195,34 @@ describe("fixed catalog vLLM installs", () => {
     });
 
     expect(result).toEqual({ ok: false });
+    expect(spies.errSpy).toHaveBeenCalledWith(`  vLLM install failed: ${reason}`);
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+  });
+
+  it("reports the N1x memory rejection after interactive model selection", async () => {
+    const profile = detectVllmProfile({ platform: "n1x", type: "nvidia" })!;
+    const availableMemoryBytes = 23_730_323_456;
+    const readinessReports = vllmInstallTestReadinessAtMemory(profile, availableMemoryBytes);
+    const actualSelection = await vi.importActual<
+      typeof import("./serving/host-local-vllm-selection")
+    >("./serving/host-local-vllm-selection");
+    mocks.resolveHostLocalVllmSelection.mockImplementation(
+      actualSelection.resolveHostLocalVllmSelection,
+    );
+    const promptFn = vi.fn(async () => "1");
+    const reason = `vllm-install-test-host: GPU memory capacity ${String(availableMemoryBytes)} is below the recipe minimum 64000000000 bytes.`;
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: false,
+      promptFn,
+      readinessReports,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(promptFn).toHaveBeenCalledOnce();
     expect(spies.errSpy).toHaveBeenCalledWith(`  vLLM install failed: ${reason}`);
     expect(mocks.runCapture).not.toHaveBeenCalled();
     expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();

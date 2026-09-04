@@ -81,6 +81,13 @@ function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function compareRuntimeRequirementFailures(
+  left: RuntimeRequirementFailure,
+  right: RuntimeRequirementFailure,
+): number {
+  return right.priority - left.priority || compareStrings(left.presetId, right.presetId);
+}
+
 function unmanagedExplicitIntent(intent: ManagedInferenceSelectionIntent): boolean {
   return intent.vllmExtraArguments?.some(hasText) ?? false;
 }
@@ -688,21 +695,27 @@ export function resolveManagedInferenceServing<TOutput>(
     }
 
     const matching: MatchingCandidate<TOutput>[] = [];
-    let firstFailure: Exclude<
-      ReturnType<typeof matchingCandidate<TOutput>>,
-      { readonly outcome: "matched" }
-    > | undefined;
+    const runtimeFailures: RuntimeRequirementFailure[] = [];
+    let firstFailure:
+      | Exclude<
+          ReturnType<typeof matchingCandidate<TOutput>>,
+          { readonly outcome: "matched" } | RuntimeRequirementFailure
+        >
+      | undefined;
     for (const compiledPreset of modelPresets) {
       const evaluated = matchingCandidate(catalog, compiledPreset, input);
       if (evaluated.outcome === "matched") matching.push(evaluated.candidate);
+      else if (evaluated.outcome === "runtime-unmet") runtimeFailures.push(evaluated);
       else firstFailure ??= evaluated;
     }
     if (matching.length === 0) {
+      runtimeFailures.sort(compareRuntimeRequirementFailures);
+      const failure = runtimeFailures.at(0) ?? firstFailure;
       return {
         outcome: "rejected",
-        code: firstFailure?.outcome === "invalid-topology" ? "invalid-topology" : "requirements-not-met",
+        code: failure?.outcome === "invalid-topology" ? "invalid-topology" : "requirements-not-met",
         message:
-          firstFailure?.message ?? `No compatible managed vLLM profile defines model ${explicitModel}.`,
+          failure?.message ?? `No compatible managed vLLM profile defines model ${explicitModel}.`,
       };
     }
     matching.sort(
@@ -743,10 +756,7 @@ export function resolveManagedInferenceServing<TOutput>(
     };
   }
   if (matching.length === 0) {
-    runtimeFailures.sort(
-      (left, right) =>
-        right.priority - left.priority || compareStrings(left.presetId, right.presetId),
-    );
+    runtimeFailures.sort(compareRuntimeRequirementFailures);
     return {
       outcome: "no-match",
       code: "requirements-not-met",

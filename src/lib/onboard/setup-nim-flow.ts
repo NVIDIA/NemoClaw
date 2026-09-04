@@ -1254,7 +1254,7 @@ export function createSetupNim(
         } else if (selected.key === "install-vllm") {
           if (!vllmProfile) {
             deps.error("  No vLLM install profile available for this host.");
-            if (deps.isNonInteractive()) deps.exitProcess(1);
+            if (deps.isNonInteractive() || requestedProvider) deps.exitProcess(1);
             continue selectionLoop;
           }
           if (vllmRunning) {
@@ -1262,7 +1262,7 @@ export function createSetupNim(
               String(process.env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim() !== "";
             const message = vllmPortConflictMessage(gpu?.platform, deps.vllmPort, hasGpuSelection);
             deps.error(`  ${message}`);
-            if (deps.isNonInteractive()) {
+            if (deps.isNonInteractive() || requestedProvider) {
               deps.abortNonInteractive(message);
             }
             continue selectionLoop;
@@ -1294,7 +1294,7 @@ export function createSetupNim(
             },
           });
           if (!result.ok) {
-            if (deps.isNonInteractive())
+            if (deps.isNonInteractive() || requestedProvider)
               deps.abortNonInteractive("vLLM install failed. See errors above.");
             continue selectionLoop;
           }

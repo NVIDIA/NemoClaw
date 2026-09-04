@@ -18,6 +18,34 @@ afterEach(() => {
 });
 
 describe("createSetupNim vLLM resume", () => {
+  it("aborts after one failed managed vLLM install when the provider is pinned", async () => {
+    const profile = { name: "N1x", platform: "n1x" } as VllmProfile;
+    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>(async () => ({ ok: false }));
+    const failure = new Error("pinned managed vLLM install aborted");
+    const abortNonInteractive = vi.fn<SetupNimFlowDeps["abortNonInteractive"]>(() => {
+      throw failure;
+    });
+    const setupNim = createSetupNim(
+      makeDeps({
+        getNonInteractiveProvider: () => "install-vllm",
+        selectFromNumberedMenu: () => unexpected("provider menu"),
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmProfile: profile,
+            vllmEntries: [{ key: "install-vllm", label: "Install vLLM (N1x)" }],
+          }),
+        installVllm,
+        abortNonInteractive,
+      }),
+    );
+
+    await expect(setupNim({ platform: "n1x" } as never)).rejects.toBe(failure);
+
+    expect(installVllm).toHaveBeenCalledOnce();
+    expect(abortNonInteractive).toHaveBeenCalledOnce();
+    expect(abortNonInteractive).toHaveBeenCalledWith("vLLM install failed. See errors above.");
+  });
+
   it("resumes a checkpointed install without prompting for a provider (#9582)", async () => {
     const profile = { name: "DGX Spark" } as VllmProfile;
     const prompt = vi.fn(async () => unexpected("provider prompt"));

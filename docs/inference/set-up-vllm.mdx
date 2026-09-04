@@ -279,7 +279,9 @@ On a mismatch, the managed install stops before those downloads and the error na
   vLLM install failed: NVIDIA Nemotron-3 Nano 4B FP8 requires GPU compute capability 8.9 or newer, but this host reports 8.0. Serve this model on a newer GPU, or select a compatible model with NEMOCLAW_VLLM_MODEL.
 ```
 
-Interactive onboarding returns to the inference-provider list so you can select another provider or model.
+Interactive onboarding returns to the inference-provider list so you can select another provider or model only when `NEMOCLAW_PROVIDER` does not pin a provider.
+When `NEMOCLAW_PROVIDER=install-vllm` pins managed vLLM, onboarding stops after the first failed attempt even if model selection was interactive.
+Correct the reported problem before rerunning or resuming, or unset `NEMOCLAW_PROVIDER` and rerun to choose another provider.
 Non-interactive onboarding exits.
 
 [Select a Managed Model](#select-a-managed-model) lists the minimum for each registry entry.
