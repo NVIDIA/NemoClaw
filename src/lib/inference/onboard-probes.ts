@@ -431,7 +431,9 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
     // exit 28. The connect timeout stays: the endpoint already answered the
     // earlier rungs, and the native session doubles only the request deadline.
     const doubledTimingArgs = timingArgs.map((arg, index) =>
-      timingArgs[index - 1] === "--max-time" ? String(Number(arg) * 2) : arg,
+      timingArgs[index - 1] === "--max-time"
+        ? String(Math.min(Number(arg) * 2, MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS))
+        : arg,
     );
     const runToolProbe = (maxTokens, timing = timingArgs) => {
       const args = [
