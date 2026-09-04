@@ -83,7 +83,7 @@ describe("PR review advisor", () => {
         "Prefer, in order: cite existing coverage unchanged; extend an existing owner with one missing case; add a new test only when no existing owner can express the behavior; or state why automated coverage does not apply.",
         "A changed source file without a changed test file does not establish a gap.",
         "Review every invariant listed in riskPlan against the diff and checked-in test evidence under the general regression-evidence rule above.",
-        "Selecting existing E2E coverage validates the PR; it does not authorize adding or modifying E2E tests, assertions, fixtures, selectors, matrix entries, jobs, or workflow fan-out.",
+        "Selecting an existing E2E selector identifies applicable validation; only its revision-bound result can validate the PR. It does not authorize adding or modifying E2E tests, assertions, fixtures, selectors, matrix entries, jobs, or workflow fan-out.",
         "Propose a new live E2E test only when the changed behavior crosses a real external boundary that no existing live proof reaches.",
         "If a real boundary gap is outside the accepted scope of the current PR, record it as a limitation instead of asking this PR to add coverage.",
         "missingRegressionTest with exactly one decision",
@@ -91,7 +91,7 @@ describe("PR review advisor", () => {
     ).toEqual([]);
   });
 
-  it("keeps test-depth outputs factual while the prompt owns coverage decisions", () => {
+  it("keeps heuristic test-depth outputs factual while the prompt owns coverage decisions", () => {
     const runtimeBoundaryDiff = `diff --git a/src/lib/example.ts b/src/lib/example.ts
 +++ b/src/lib/example.ts
 +spawn("command");`;
