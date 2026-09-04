@@ -19,8 +19,8 @@ import {
   strictToolProbeReasoningRetryMessage,
 } from "./openai-probe-models";
 import { STREAMING_EVENT_PROBE_MAX_SECONDS } from "./probe-http-helpers";
+import { RETRIABLE_HTTP_PROBE_STATUSES } from "./probe/transient-http-policy";
 
-const RETRIABLE_HTTP_STATUSES = new Set([429, 502, 503, 504]);
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
 
 export interface OpenAiValidationOptions {
@@ -208,7 +208,7 @@ async function requestWithHttpRetry(
       accept: (result) =>
         !retryTransientHttp ||
         result.curlStatus !== 0 ||
-        !RETRIABLE_HTTP_STATUSES.has(result.httpStatus),
+        !RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus),
       retryDelaysMs: RETRY_DELAYS_MS,
       onRetry: (result, delayMs) => {
         console.log(

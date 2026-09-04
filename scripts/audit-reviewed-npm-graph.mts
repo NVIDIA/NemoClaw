@@ -673,25 +673,29 @@ function verifyWechatInstallCacheBoundary(
   });
   if (cache.error) throw cache.error;
   if (cache.status !== 0) throw new Error(`npm cache add failed: ${cache.stderr || cache.stdout}`);
-  fs.chmodSync(trustedCache, 0o555);
-  for (const entry of fs.readdirSync(trustedCache, { recursive: true })) {
-    fs.chmodSync(
-      path.join(trustedCache, entry.toString()),
-      fs.lstatSync(path.join(trustedCache, entry.toString())).isDirectory() ? 0o555 : 0o444,
-    );
+  try {
+    fs.chmodSync(trustedCache, 0o555);
+    for (const entry of fs.readdirSync(trustedCache, { recursive: true })) {
+      fs.chmodSync(
+        path.join(trustedCache, entry.toString()),
+        fs.lstatSync(path.join(trustedCache, entry.toString())).isDirectory() ? 0o555 : 0o444,
+      );
+    }
+    assertTreeReadOnly(trustedCache);
+    fs.cpSync(trustedCache, installCache, { recursive: true, force: true });
+    makeTreeOwnerWritable(installCache);
+    packReviewedNpmArchive({
+      env: { ...env, NPM_CONFIG_CACHE: installCache, NPM_CONFIG_OFFLINE: "true" },
+      expectedIntegrity: graph.integrity,
+      label: graph.label,
+      packageSpec: graph.packageSpec,
+      tarballUrl: graph.tarballUrl,
+      tempDirectory: packDirectory,
+    });
+    assertTreeReadOnly(trustedCache);
+  } finally {
+    makeTreeOwnerWritable(trustedCache);
   }
-  assertTreeReadOnly(trustedCache);
-  fs.cpSync(trustedCache, installCache, { recursive: true, force: true });
-  makeTreeOwnerWritable(installCache);
-  packReviewedNpmArchive({
-    env: { ...env, NPM_CONFIG_CACHE: installCache, NPM_CONFIG_OFFLINE: "true" },
-    expectedIntegrity: graph.integrity,
-    label: graph.label,
-    packageSpec: graph.packageSpec,
-    tarballUrl: graph.tarballUrl,
-    tempDirectory: packDirectory,
-  });
-  assertTreeReadOnly(trustedCache);
 }
 
 function auditLockedGraph(

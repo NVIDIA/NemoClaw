@@ -12,6 +12,7 @@ import { canonicalJson } from "../../../tools/advisors/canonical-json.mts";
 import {
   type ConflictMatrixEntry,
   type PullRequest,
+  inspectConflict,
   selectConflictingPullRequests,
 } from "../../../tools/pr-merge-conflict-fixer/discover.mts";
 import { prepareMerge, writeTree } from "../../../tools/pr-merge-conflict-fixer/merge.mts";
@@ -307,6 +308,7 @@ function pullRequest(input: {
   draft?: boolean;
   headRef?: string;
   headRepository?: string;
+  headSha?: string;
   number: number;
   repository?: string;
   state?: string;
@@ -321,7 +323,7 @@ function pullRequest(input: {
         input.headRepository === "deleted"
           ? null
           : { full_name: input.headRepository ?? repository },
-      sha: String(input.number).padStart(40, "0"),
+      sha: input.headSha ?? String(input.number).padStart(40, "0"),
     },
     number: input.number,
     state: input.state ?? "open",
@@ -329,6 +331,7 @@ function pullRequest(input: {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
   }
@@ -336,7 +339,10 @@ afterEach(() => {
 
 describe("PR merge conflict fixer", () => {
   it("skips fork PRs before Git conflict analysis (#7542)", () => {
-    const checkConflict = vi.fn(() => ["conflict.txt"]);
+    const checkConflict = vi.fn(() => ({
+      conflictPaths: ["conflict.txt"],
+      updatesWorkflow: false,
+    }));
     const selected = selectConflictingPullRequests(
       [
         pullRequest({ number: 1 }),
@@ -359,26 +365,85 @@ describe("PR merge conflict fixer", () => {
       [pullRequest({ draft: true, number: 1 }), pullRequest({ number: 2 })],
       "NVIDIA/NemoClaw",
       "b".repeat(40),
-      { checkConflict: () => ["conflict.txt"] },
+      {
+        checkConflict: () => ({
+          conflictPaths: ["conflict.txt"],
+          updatesWorkflow: false,
+        }),
+      },
     );
 
     expect(selected.map((item) => item.pr_number)).toEqual([2]);
   });
 
-  it("skips GitHub workflow conflicts before model selection (#7542)", () => {
+  it("skips merges that would change GitHub workflows before model selection (#7542)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const selected = selectConflictingPullRequests(
       [pullRequest({ number: 1 }), pullRequest({ number: 2 })],
       "NVIDIA/NemoClaw",
       "b".repeat(40),
       {
-        checkConflict: (candidate) =>
-          candidate.number === 1
-            ? ["conflict.txt", ".github/workflows/e2e.yaml"]
-            : ["conflict.txt"],
+        checkConflict: (candidate) => ({
+          conflictPaths: ["conflict.txt"],
+          updatesWorkflow: candidate.number === 1,
+        }),
       },
     );
 
     expect(selected.map((item) => item.pr_number)).toEqual([2]);
+    expect(warn).toHaveBeenCalledWith(
+      "Skipping PR #1: its merge changes .github/workflows; resolve it manually.",
+    );
+  });
+
+  it("selects a workflow-safe conflict from the real merge trees (#7542)", () => {
+    const fixture = createConflictFixture();
+    const inspection = required(
+      inspectConflict(
+        fixture.repository,
+        path.join(temporaryDirectory(), "discovery"),
+        fixture.headSha,
+        fixture.baseSha,
+      ),
+      "expected a conflicting merge",
+    );
+
+    expect(inspection).toEqual({ conflictPaths: ["conflict.txt"], updatesWorkflow: false });
+    expect(
+      selectConflictingPullRequests(
+        [pullRequest({ headRef: "pull-request", headSha: fixture.headSha, number: 42 })],
+        "NVIDIA/NemoClaw",
+        fixture.baseSha,
+        { checkConflict: () => inspection },
+      ),
+    ).toEqual([entryFor(fixture)]);
+  });
+
+  it("detects a workflow update from the real merge trees before model selection (#7542)", () => {
+    const fixture = createConflictFixture();
+    write(fixture.repository, ".github/workflows/e2e.yaml", "name: changed on main\n");
+    git(fixture.repository, ["add", ".github/workflows/e2e.yaml"]);
+    git(fixture.repository, ["commit", "-m", "test: change main workflow"]);
+    fixture.baseSha = git(fixture.repository, ["rev-parse", "HEAD"]);
+    const inspection = required(
+      inspectConflict(
+        fixture.repository,
+        path.join(temporaryDirectory(), "discovery"),
+        fixture.headSha,
+        fixture.baseSha,
+      ),
+      "expected a conflicting merge",
+    );
+
+    expect(inspection).toEqual({ conflictPaths: ["conflict.txt"], updatesWorkflow: true });
+    expect(
+      selectConflictingPullRequests(
+        [pullRequest({ number: 1 })],
+        "NVIDIA/NemoClaw",
+        fixture.baseSha,
+        { checkConflict: () => inspection },
+      ),
+    ).toEqual([]);
   });
 
   it("accepts a patch that resolves the original conflict paths (#7542)", () => {
@@ -395,6 +460,24 @@ describe("PR merge conflict fixer", () => {
 
     expect(result.finalTree).toBe(expectedTree);
     expect(git(result.repository, ["show", `${result.finalTree}:main-only.txt`])).toBe("main");
+  });
+
+  it("rejects a resolution patch that changes a GitHub workflow (#7542)", () => {
+    const fixture = createConflictFixture();
+    const patchPath = path.join(temporaryDirectory(), "resolution.patch");
+    createResolutionPatch(fixture, patchPath, (repository) => {
+      write(repository, ".github/workflows/example.yaml", "name: untrusted\n");
+      git(repository, ["add", ".github/workflows/example.yaml"]);
+    });
+
+    expect(() =>
+      validateResolutionPatch({
+        entry: entryFor(fixture),
+        patchPath,
+        sourceRepository: fixture.repository,
+        workDirectory: path.join(temporaryDirectory(), "publisher"),
+      }),
+    ).toThrow(/resolution patch changes GitHub workflows/u);
   });
 
   it("accepts a resolution that moves PR intent to main's replacement path (#7542)", () => {

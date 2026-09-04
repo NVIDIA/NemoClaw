@@ -93,11 +93,15 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
   });
 
   it("allows `gateway` when only resolver placeholders / allow-listed keys are present", () => {
-    const run = runWrapper(["gateway", "run"], {
-      SLACK_BOT_TOKEN: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-      TELEGRAM_BOT_TOKEN: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-      OPENCLAW_GATEWAY_TOKEN: "raw-gateway-token",
-    });
+    const run = runWrapper(
+      ["gateway", "run"],
+      {
+        SLACK_BOT_TOKEN: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        TELEGRAM_BOT_TOKEN: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+        OPENCLAW_GATEWAY_TOKEN: "raw-gateway-token",
+      },
+      { validatorScript: "raise SystemExit(0)\n" },
+    );
 
     expect(run.status).toBe(0);
     expect(run.stderr).toBe("");
@@ -133,6 +137,9 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realInvoked).toBe(true);
     expect(run.realEnv.HERMES_HOME).toBe("/sandbox/.hermes");
     expect(run.realEnv.HERMES_BUNDLED_PLUGINS).toBe("/opt/hermes/plugins");
+    expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe(
+      "/run/nemoclaw/hermes-gateway-lazy-packages",
+    );
     expect(run.realEnv.HOME).toBe("/sandbox");
     const packageEnvironment = Object.fromEntries(
       Object.entries(run.realEnv).filter(
@@ -157,32 +164,32 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     });
   });
 
-  it("leaves package-manager inputs unchanged for a same-identity gateway", () => {
-    const run = runWrapper(["gateway", "run"], {
-      UV_CONFIG_FILE: "/sandbox/uv.toml",
-      PIP_CONFIG_FILE: "/sandbox/pip.conf",
-      PYTHONPATH: "/sandbox/python",
-    });
+  it.each([
+    ["sandbox-owned", "/sandbox/.hermes/lazy-packages"],
+    ["arbitrary", "/tmp/attacker-controlled-python"],
+  ])("replaces a %s lazy target before gateway validation and exec", (_label, lazyTarget) => {
+    const run = runWrapper(
+      ["gateway", "run"],
+      {
+        HERMES_LAZY_INSTALL_TARGET: lazyTarget,
+        UV_CONFIG_FILE: "/sandbox/uv.toml",
+        PIP_CONFIG_FILE: "/sandbox/pip.conf",
+        PYTHONPATH: "/sandbox/python",
+      },
+      { validatorScript: "raise SystemExit(0)\n" },
+    );
 
     expect(run.status, run.stderr).toBe(0);
+    expect(run.realInvoked).toBe(true);
     expect(run.realEnv.HERMES_HOME).toBe("/sandbox/.hermes");
     expect(run.realEnv.HERMES_BUNDLED_PLUGINS).toBe("/opt/hermes/plugins");
+    expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe(
+      "/run/nemoclaw/hermes-gateway-lazy-packages",
+    );
     expect(run.realEnv.HOME).toBe("/sandbox");
-    expect(run.realEnv.UV_CONFIG_FILE).toBe("/sandbox/uv.toml");
-    expect(run.realEnv.PIP_CONFIG_FILE).toBe("/sandbox/pip.conf");
-    expect(run.realEnv.PYTHONPATH).toBe("/sandbox/python");
-  });
-
-  it("rejects an arbitrary gateway lazy target without exposing its value", () => {
-    const arbitraryTarget = "/tmp/attacker-controlled-python";
-    const run = runWrapper(["gateway", "run"], {
-      HERMES_LAZY_INSTALL_TARGET: arbitraryTarget,
-    });
-
-    expect(run.status).toBe(1);
-    expect(run.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
-    expect(run.stderr).not.toContain(arbitraryTarget);
-    expect(run.realInvoked).toBe(false);
+    expect(run.realEnv.UV_CONFIG_FILE).toBeUndefined();
+    expect(run.realEnv.PIP_CONFIG_FILE).toBe("/dev/null");
+    expect(run.realEnv.PYTHONPATH).toBeUndefined();
   });
 
   it("refuses a direct root gateway before invoking the real binary", () => {
