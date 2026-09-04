@@ -14,6 +14,12 @@ export type SandboxCommandResult = {
 export type SandboxExecCommandOptions = {
   allowLocalDockerFallback?: boolean;
   gatewayName?: string;
+  runtimeEnv?: NodeJS.ProcessEnv;
+};
+
+export type SandboxSshCommandOptions = {
+  gatewayName?: string;
+  runtimeEnv?: NodeJS.ProcessEnv;
 };
 
 export type CommandTransportDependencies = {
@@ -21,7 +27,13 @@ export type CommandTransportDependencies = {
   buildSubprocessEnv: () => NodeJS.ProcessEnv;
   captureSandboxSshConfig: (
     sandboxName: string,
-    options: { ignoreError: boolean; timeout: number },
+    options: {
+      env?: NodeJS.ProcessEnv;
+      gatewayName?: string;
+      ignoreError: boolean;
+      replaceEnv?: boolean;
+      timeout: number;
+    },
   ) => { output: string; status: number | null };
   executePrivilegedSandboxCommand: (
     sandboxName: string,
@@ -52,8 +64,11 @@ export function executeSandboxCommandTransport(
   sandboxName: string,
   command: string,
   timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+  options: SandboxSshCommandOptions = {},
 ): SandboxCommandResult | null {
   const sshConfigResult = deps.captureSandboxSshConfig(sandboxName, {
+    ...(options.runtimeEnv ? { env: options.runtimeEnv, replaceEnv: true } : {}),
+    ...(options.gatewayName ? { gatewayName: options.gatewayName } : {}),
     ignoreError: true,
     timeout: deps.openshellProbeTimeoutMs,
   });
@@ -82,7 +97,7 @@ export function executeSandboxCommandTransport(
       ],
       {
         encoding: "utf-8",
-        env: deps.buildSubprocessEnv(),
+        env: options.runtimeEnv ?? deps.buildSubprocessEnv(),
         stdio: ["ignore", "pipe", "pipe"],
         timeout,
       },
@@ -170,7 +185,7 @@ export function executeSandboxExecCommandTransport(
       {
         cwd: deps.root,
         encoding: "utf-8",
-        env: deps.buildSubprocessEnv(),
+        env: options.runtimeEnv ?? deps.buildSubprocessEnv(),
         stdio: ["ignore", "pipe", "pipe"],
         timeout: effectiveTimeout,
       },
