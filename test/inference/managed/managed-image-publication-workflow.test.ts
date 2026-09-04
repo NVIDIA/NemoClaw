@@ -136,8 +136,8 @@ describe("complete managed-image publication workflow", () => {
     const prAudit = step(required(readWorkflow("pr.yaml").jobs?.["reviewed-npm-audit"], "missing PR audit"), "Audit reviewed production npm graphs");
     const mainAudit = step(required(readWorkflow("main.yaml").jobs?.["reviewed-npm-audit"], "missing main audit"), "Audit reviewed production npm graphs");
     const managedAudit = step(managedPrReviewedAudit(readWorkflow("managed-images.yaml")), "Audit exact PR production npm graphs");
-    expect(prAudit.with?.["cache-directory"]).toBeUndefined();
-    expect(managedAudit.with?.["cache-directory"]).toBeUndefined();
+    expect(prAudit.with?.["cache-directory"]).toBe("${{ runner.temp }}/reviewed-npm-audit-cache");
+    expect(managedAudit.with?.["cache-directory"]).toBe("${{ runner.temp }}/reviewed-npm-audit-cache");
     expect(prAudit.with?.["trusted-cache-write"]).toBeUndefined();
     expect(managedAudit.with?.["trusted-cache-write"]).toBeUndefined();
     expect(mainAudit.with).toMatchObject({
@@ -441,6 +441,7 @@ describe("complete managed-image publication workflow", () => {
     expect(step(reviewedAudit, "Audit exact PR production npm graphs")).toMatchObject({
       uses: "./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit",
       with: {
+        "cache-directory": "${{ runner.temp }}/reviewed-npm-audit-cache",
         "report-dir": "artifacts/reviewed-npm-audit",
         "target-root": "${{ github.workspace }}/candidate",
       },
@@ -719,7 +720,7 @@ describe("complete managed-image publication workflow", () => {
       "${{ github.event.pull_request.head.sha }}",
     );
     expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
-      /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
+      /npm ci --ignore-scripts --no-audit --no-fund[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
     );
     expect(step(activation, "Build exact candidate CLI").run).toContain("npm run build:cli");
     expect(step(activation, "Install OpenShell CLI").run).toContain("scripts/install-openshell.sh");
@@ -772,7 +773,7 @@ describe("complete managed-image publication workflow", () => {
     expect(step(discovery, "Bind E2E correlation identity").run).toContain("randomUUID()");
     const assemble = step(discovery, "Assemble exact all-agent MCP catalog").run ?? "";
     expect(assemble).toMatch(
-      /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
+      /npm ci --ignore-scripts --no-audit --no-fund[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
     );
     const run = step(discovery, "Run exact OpenClaw managed-image MCP discovery").run ?? "";
     expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
@@ -1016,6 +1017,7 @@ fi
     const validate = step(publisher, "Validate exact managed image before promotion");
     const evidence = step(publisher, "Capture exact managed image publication evidence");
     const dependencies = step(publisher, "Install managed-image publication harness dependencies");
+    expect(dependencies.run).toContain("npm ci --ignore-scripts --no-audit --no-fund");
     expect(releaseIdentity.id).toBe("release");
     expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$GITHUB_SHA\"");
     expect(releaseIdentity.run).toContain("managed image release identity does not match");
