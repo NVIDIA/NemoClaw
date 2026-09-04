@@ -421,7 +421,10 @@ jobs:
     needs: review-specialists
     if: >-
       github.event_name == 'workflow_dispatch' &&
-      github.ref == 'refs/heads/main' &&
+      (
+        (github.ref == 'refs/heads/main' && vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true') ||
+        (github.ref == 'refs/heads/codex/10791-phase0-demo' && !inputs.repair_publish)
+      ) &&
       github.run_attempt == 1 &&
       inputs.target_repo == 'NVIDIA/NemoClaw' &&
       inputs.target_pr != '' &&
@@ -429,7 +432,6 @@ jobs:
       inputs.repair_base_sha != '' &&
       inputs.repair_finding_ids_json != '[]' &&
       inputs.repair_egress_authorized &&
-      vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true' &&
       needs.review-specialists.result == 'success'
     permissions:
       actions: read
@@ -854,6 +856,7 @@ jobs:
     name: Publish the exact validated repair
     needs: [repair-select, repair-validate]
     if: >-
+      github.ref == 'refs/heads/main' &&
       inputs.repair_publish &&
       needs.repair-validate.result == 'success' &&
       vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true'
