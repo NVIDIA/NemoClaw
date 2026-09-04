@@ -55,6 +55,7 @@ type ConsolidatedAuditFixture = Readonly<{
   lockedPackageLock: Buffer;
   provenance?: Record<string, unknown>;
   result: ReturnType<typeof spawnSync>;
+  trustedCacheModes?: { directory: number; entry: number };
 }>;
 
 function runConsolidatedAuditFixture(
@@ -64,11 +65,13 @@ function runConsolidatedAuditFixture(
     metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 } },
   }),
   auditStatus = 0,
+  offlinePackStatus = 0,
 ): ConsolidatedAuditFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-audit-entry-"));
   const trustedRoot = path.join(root, "trusted");
   const targetRoot = path.join(root, "target");
   const bin = path.join(root, "bin");
+  const cacheModesFile = path.join(root, "cache-modes");
   const callsFile = path.join(root, "npm-calls");
   const artifactDirectory = path.join(targetRoot, "artifacts", "reviewed-npm-audit");
   try {
@@ -164,6 +167,15 @@ if (args[0] === "view") {
   process.exit(0);
 }
 if (args[0] === "pack") {
+  if (process.env.NPM_CONFIG_OFFLINE === "true") {
+    const trustedCache = process.env.NPM_CONFIG_CACHE.replace(/wechat-install-cache$/, "wechat-trusted-cache");
+    fs.writeFileSync(process.env.NEMOCLAW_TEST_CACHE_MODES_FILE, JSON.stringify({
+      directory: fs.statSync(trustedCache).mode & 0o777,
+      entry: fs.statSync(trustedCache + "/_cacache/fixture").mode & 0o777,
+    }));
+    const status = Number(process.env.NEMOCLAW_TEST_OFFLINE_PACK_STATUS);
+    if (status !== 0) { console.error("simulated offline pack failure"); process.exit(status); }
+  }
   const destination = args[args.indexOf("--pack-destination") + 1];
   const filename = "fixture.tgz";
   fs.writeFileSync(destination + "/" + filename, "fixture");
@@ -172,6 +184,11 @@ if (args[0] === "pack") {
 }
 if (args[0] === "audit" && args[1] === "signatures") process.exit(0);
 if (args[0] === "audit") { process.stdout.write(process.env.NEMOCLAW_TEST_AUDIT_OUTPUT); process.exit(Number(process.env.NEMOCLAW_TEST_AUDIT_STATUS)); }
+if (args[0] === "cache" && args[1] === "add") {
+  fs.mkdirSync(process.env.NPM_CONFIG_CACHE + "/_cacache", { recursive: true });
+  fs.writeFileSync(process.env.NPM_CONFIG_CACHE + "/_cacache/fixture", "cached");
+  process.exit(0);
+}
 if (args[0] === "ci" && !fs.existsSync("package-lock.json")) {
   console.error("npm ci requires an existing package-lock.json");
   process.exit(1);
@@ -202,7 +219,7 @@ process.exit(0);
       process.execPath,
       [
         "--experimental-strip-types",
-        path.join(trustedRoot, "scripts/audit-reviewed-npm-graph.mts"),
+        fs.realpathSync(path.join(trustedRoot, "scripts/audit-reviewed-npm-graph.mts")),
       ],
       {
         cwd: trustedRoot,
@@ -213,7 +230,9 @@ process.exit(0);
           NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: targetRoot,
           NEMOCLAW_TEST_AUDIT_OUTPUT: auditOutput,
           NEMOCLAW_TEST_AUDIT_STATUS: String(auditStatus),
+          NEMOCLAW_TEST_CACHE_MODES_FILE: cacheModesFile,
           NEMOCLAW_TEST_NPM_CALLS: callsFile,
+          NEMOCLAW_TEST_OFFLINE_PACK_STATUS: String(offlinePackStatus),
           NEMOCLAW_TEST_REVIEWED_INTEGRITY: integrity,
           NEMOCLAW_TEST_REVIEWED_TARBALL:
             "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
@@ -237,6 +256,12 @@ process.exit(0);
         ? (JSON.parse(fs.readFileSync(provenanceFile, "utf-8")) as Record<string, unknown>)
         : undefined,
       result,
+      trustedCacheModes: fs.existsSync(cacheModesFile)
+        ? (JSON.parse(fs.readFileSync(cacheModesFile, "utf-8")) as {
+            directory: number;
+            entry: number;
+          })
+        : undefined,
     };
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -314,6 +339,22 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
         calls.length > 0 &&
         calls.every((call) => call.includes("--registry=https://registry.yarnpkg.com")),
     );
+  });
+
+  it("restores the read-only trusted cache after offline packing fails", () => {
+    const fixture = runConsolidatedAuditFixture(() => {}, undefined, 0, 9);
+
+    expect({
+      status: fixture.result.status,
+      stderr: fixture.result.stderr.toString(),
+      trustedCacheModes: fixture.trustedCacheModes,
+      cleanupPermissionFailure: fixture.result.stderr.includes("EACCES"),
+    }).toEqual({
+      status: 1,
+      stderr: expect.stringContaining("simulated offline pack failure"),
+      trustedCacheModes: { directory: 0o555, entry: 0o444 },
+      cleanupPermissionFailure: false,
+    });
   });
 
   it("rejects a target-controlled npm registry override", () => {
