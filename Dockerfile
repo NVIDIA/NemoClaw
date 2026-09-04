@@ -188,7 +188,7 @@ RUN --network=none install -d -o root -g root -m 0755 /out/wechat-npm-cache \
     && chown -R root:root /out/wechat-npm-cache \
     && chmod -R a+rX,go-w /out/wechat-npm-cache
 
-# Fetch locked messaging archives by SHA-256; verify and materialize them offline.
+# Offline messaging archives.
 FROM scratch AS openclaw-managed-messaging-npm-common-archives-1
 
 ADD --chmod=0444 --checksum=sha256:d98ffa76628ea162ddf7539b7b84ab851ef889689b16d454483456ba2e166d84 https://registry.npmjs.org/@azure/abort-controller/-/abort-controller-2.1.2.tgz /abort-controller-2.1.2.tgz
@@ -940,9 +940,7 @@ RUN --network=default set -eu; \
         echo "ERROR: Base image has OpenClaw $CUR_VER, which is newer than reviewed target $OPENCLAW_VERSION" >&2; exit 1; \
     else \
         echo "INFO: Base image OpenClaw $CUR_VER lacks matching reviewed provenance; installing $OPENCLAW_VERSION"; \
-        # npm 10's atomic-move install can hit EROFS on overlayfs when the prior
-        # install spans image layers. Removing it first also prevents unreviewed
-        # files from surviving a same-version reinstall.
+        # Remove the stale overlayfs install before replacement.
         rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
         if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
             node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-lock \
@@ -984,7 +982,7 @@ RUN --network=default set -eu; \
             rm -rf "$OPENCLAW_PACK_DIR"; \
         fi; \
     fi; \
-    node -e 'require.resolve("fast-uri", { paths: ["/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw"] })'; \
+    if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then rm -rf /usr/local/lib/node_modules/fast-uri; ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/fast-uri /usr/local/lib/node_modules/fast-uri; node -e 'require.resolve("fast-uri", { paths: ["/usr/local/lib/node_modules/openclaw"] })'; fi; \
     case "$OPENCLAW_VERSION" in \
         2026.3.11) npm ls -g --depth=1 openclaw tar >/dev/null ;; \
     esac; \
@@ -994,8 +992,7 @@ RUN --network=default set -eu; \
         node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-only \
             --package-spec "mcporter@${MCPORTER_VERSION}" --integrity "$MCPORTER_EXPECTED_INTEGRITY" \
             --tarball-url "$MCPORTER_EXPECTED_TARBALL" --label "mcporter ${MCPORTER_VERSION}"; \
-        # Reinstall from the committed lock when matching protected base provenance
-        # is unavailable; matching top-level versions can hide transitive drift.
+        # Reinstall the committed lock when base provenance is unavailable.
         echo "INFO: Installing locked mcporter $MCPORTER_VERSION dependency graph"; \
         rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter; \
         npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci \

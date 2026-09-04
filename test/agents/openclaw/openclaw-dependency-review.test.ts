@@ -188,6 +188,9 @@ for dockerfile in Dockerfile Dockerfile.base; do
   check_contains "$openclaw_block" 'OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"' "$dockerfile pack directory"
   if [ "$dockerfile" = Dockerfile.base ]; then
     check_contains "$openclaw_block" '[ ! -f "$OPENCLAW_SOURCE_PACK_PATH" ]' "$dockerfile source archive path guard"
+  else
+    check_contains "$openclaw_block" '/usr/local/lib/node_modules/fast-uri' "$dockerfile global fast-uri resolution link"
+    check_contains "$openclaw_block" 'require.resolve("fast-uri"' "$dockerfile global fast-uri resolution proof"
   fi
   check_contains "$openclaw_block" '--archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@\${OPENCLAW_VERSION}"' "$dockerfile legacy remediated identity"
   check_contains "$openclaw_block" 'if (!value.remediated || typeof value.archivePath !== "string")' "$dockerfile remediation result guard"
