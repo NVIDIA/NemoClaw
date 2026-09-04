@@ -26,7 +26,12 @@ import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
 
-export { clearRebuildPolicyHandoff, writeRebuildPolicyHandoff } from "../../state/sandbox";
+export {
+  clearHermesOperatorConfigHandoff,
+  clearRebuildPolicyHandoff,
+  writeHermesOperatorConfigHandoff,
+  writeRebuildPolicyHandoff,
+} from "../../state/sandbox";
 
 export type RebuildBackupManifest = Exclude<
   ReturnType<typeof backupSandboxStateForRebuild>,

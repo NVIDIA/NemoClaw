@@ -12,7 +12,10 @@ import * as rebuildConfigHash from "./rebuild-config-hash";
 import * as rebuildHermesPostRestore from "./rebuild-hermes-post-restore";
 import * as rebuildMcp from "./rebuild-mcp-phase";
 import * as rebuildMessaging from "./rebuild-messaging-phase";
-import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
+import {
+  printHermesOperatorConfigRestoreReport,
+  runRebuildPostRestorePhase,
+} from "./rebuild-post-restore-phase";
 import * as sessionModels from "./reconcile-session-models";
 
 describe("rebuild post-restore phase", () => {
@@ -759,6 +762,46 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).not.toHaveBeenCalled();
   });
 
+  it("passes the Hermes config result through the successful completion report", async () => {
+    agentName = "hermes";
+    const args = {
+      ...input(),
+      hermesOperatorConfigRestore: {
+        restoredKeys: ["memory.provider"],
+        droppedKeys: ["model.default"],
+      },
+    };
+
+    await runRebuildPostRestorePhase(args);
+
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).toContain("Restored Hermes operator config keys: memory.provider");
+    expect(output).toContain("Dropped Hermes operator config keys: model.default");
+    expect(args.bail).not.toHaveBeenCalled();
+  });
+
+  it("prints the Hermes config result before bailing on incomplete state restore", async () => {
+    agentName = "hermes";
+    const args = {
+      ...input(),
+      restoreSucceeded: false,
+      backupManifest: { backupPath: "/tmp/hermes-backup" } as never,
+      hermesOperatorConfigRestore: {
+        restoredKeys: ["memory.provider"],
+        droppedKeys: ["model.default"],
+      },
+    };
+
+    await runRebuildPostRestorePhase(args);
+
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).toContain("Restored Hermes operator config keys: memory.provider");
+    expect(output).toContain("Dropped Hermes operator config keys: model.default");
+    expect(args.bail).toHaveBeenCalledWith(
+      "State restore remained incomplete after rebuilding 'alpha'.",
+    );
+  });
+
   it("prints every incomplete OpenClaw recovery report in a fixed order (#8283)", async () => {
     vi.mocked(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
@@ -802,5 +845,40 @@ describe("rebuild post-restore phase", () => {
     expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
       "nemoclaw alpha rebuild",
     );
+  });
+});
+
+describe("Hermes operator config completion report", () => {
+  it("explicitly names restored keys and an empty dropped set", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      printHermesOperatorConfigRestoreReport("hermes", {
+        restoredKeys: ["memory.provider", "model.max_tokens", "custom_providers"],
+        droppedKeys: [],
+      });
+      const output = log.mock.calls.flat().join("\n");
+      expect(output).toContain(
+        "Restored Hermes operator config keys: memory.provider, model.max_tokens, custom_providers",
+      );
+      expect(output).toContain("Dropped Hermes operator config keys: none");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("names every dropped key when the set is non-empty", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      printHermesOperatorConfigRestoreReport("hermes", {
+        restoredKeys: ["memory.provider"],
+        droppedKeys: ["model.default", "providers.route.api"],
+      });
+      const output = log.mock.calls.flat().join("\n");
+      expect(output).toContain(
+        "Dropped Hermes operator config keys: model.default, providers.route.api",
+      );
+    } finally {
+      log.mockRestore();
+    }
   });
 });

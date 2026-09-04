@@ -3,6 +3,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { ConfigObject, ConfigValue } from "../../security/credential-filter";
+import { isConfigObject, isConfigValue } from "../../security/credential-filter";
+import * as sandboxConfig from "../../sandbox/config";
+import { hermesProviderKey } from "../../hermes-managed-route";
+import { OPERATIONAL_AUDIT_FILE, readStableOperationalAudit } from "../../state/audit/operational";
 import {
   HERMES_DASHBOARD_ENABLE_ENV,
   HERMES_DASHBOARD_INTERNAL_PORT_ENV,
@@ -62,8 +67,7 @@ export type RebuildHermesDashboardEnv = Partial<
 >;
 
 export type RebuildHermesDashboardResolution =
-  | { ok: true; env: RebuildHermesDashboardEnv }
-  | { ok: false; reason: string };
+  { ok: true; env: RebuildHermesDashboardEnv } | { ok: false; reason: string };
 
 function validDashboardPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1024 && value <= 65535;
@@ -78,19 +82,31 @@ export function resolveRebuildHermesDashboardEnv(
     entry.hermesDashboardEnabled !== undefined &&
     typeof entry.hermesDashboardEnabled !== "boolean"
   ) {
-    return { ok: false, reason: "recorded hermesDashboardEnabled value is not boolean" };
+    return {
+      ok: false,
+      reason: "recorded hermesDashboardEnabled value is not boolean",
+    };
   }
   if (rebuildAgent !== "hermes" || entry.hermesDashboardEnabled !== true) {
     return { ok: true, env: { [HERMES_DASHBOARD_ENABLE_ENV]: "0" } };
   }
   if (!validDashboardPort(entry.hermesDashboardPort)) {
-    return { ok: false, reason: "recorded Hermes dashboard port is invalid or missing" };
+    return {
+      ok: false,
+      reason: "recorded Hermes dashboard port is invalid or missing",
+    };
   }
   if (!validDashboardPort(entry.hermesDashboardInternalPort)) {
-    return { ok: false, reason: "recorded Hermes dashboard internal port is invalid or missing" };
+    return {
+      ok: false,
+      reason: "recorded Hermes dashboard internal port is invalid or missing",
+    };
   }
   if (entry.hermesDashboardTui !== undefined && typeof entry.hermesDashboardTui !== "boolean") {
-    return { ok: false, reason: "recorded hermesDashboardTui value is not boolean" };
+    return {
+      ok: false,
+      reason: "recorded hermesDashboardTui value is not boolean",
+    };
   }
   const env: RebuildHermesDashboardEnv = {
     [HERMES_DASHBOARD_ENABLE_ENV]: "1",
@@ -108,7 +124,10 @@ export function resolveRebuildHermesDashboardEnv(
       },
     });
   } catch (err) {
-    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : String(err),
+    };
   }
   return { ok: true, env };
 }
@@ -261,6 +280,339 @@ export function resolveRebuildDurableConfig(
   };
 }
 
+export interface HermesOperatorConfigEntry {
+  key: string;
+  value: ConfigValue;
+}
+
+export interface HermesOperatorConfigSnapshot {
+  version: 1;
+  sandboxName: string;
+  entries: HermesOperatorConfigEntry[];
+  droppedKeys: string[];
+}
+
+export interface HermesOperatorConfigRestoreReport {
+  restoredKeys: string[];
+  droppedKeys: string[];
+}
+
+const HERMES_MANAGED_MODEL_KEYS = new Set([
+  "api_key",
+  "api_mode",
+  "base_url",
+  "context_length",
+  "default",
+  "provider",
+]);
+const HERMES_MANAGED_PROVIDER_KEYS = new Set([
+  "api",
+  "api_key",
+  "default_model",
+  "discover_models",
+  "name",
+  "transport",
+]);
+
+function cloneConfigValue(value: ConfigValue): ConfigValue {
+  return structuredClone(value);
+}
+
+function extractConfigDotpath(value: ConfigValue, dotpath: string): ConfigValue | undefined {
+  let current = value;
+  for (const key of dotpath.split(".")) {
+    if (!isConfigObject(current) || !(key in current)) return undefined;
+    current = current[key];
+  }
+  return current;
+}
+
+function setConfigDotpath(config: ConfigObject, dotpath: string, value: ConfigValue): void {
+  const segments = dotpath.split(".");
+  const leaf = segments.pop();
+  if (!leaf) return;
+  let current = config;
+  for (const segment of segments) {
+    if (!isConfigObject(current[segment])) current[segment] = {};
+    current = current[segment] as ConfigObject;
+  }
+  current[leaf] = cloneConfigValue(value);
+}
+
+function objectHasKeys(value: unknown): boolean {
+  return isConfigObject(value) && Object.keys(value).length > 0;
+}
+
+function stripKeys(value: unknown, keys: ReadonlySet<string>): void {
+  if (!isConfigObject(value)) return;
+  for (const key of keys) delete value[key];
+}
+
+function stripHermesManagedRoute(
+  config: ConfigObject,
+  providerName: string,
+  providerKey: string,
+): void {
+  delete config._config_version;
+  delete config._nemoclaw_upstream;
+
+  stripKeys(config.model, HERMES_MANAGED_MODEL_KEYS);
+  if (isConfigObject(config.model) && !objectHasKeys(config.model)) delete config.model;
+
+  if (isConfigObject(config.providers)) {
+    if (providerKey) {
+      stripKeys(config.providers[providerKey], HERMES_MANAGED_PROVIDER_KEYS);
+      if (
+        isConfigObject(config.providers[providerKey]) &&
+        !objectHasKeys(config.providers[providerKey])
+      ) {
+        delete config.providers[providerKey];
+      }
+      if (!objectHasKeys(config.providers)) delete config.providers;
+    } else {
+      delete config.providers;
+    }
+  }
+
+  if (Array.isArray(config.custom_providers)) {
+    if (providerName) {
+      config.custom_providers = config.custom_providers.filter(
+        (entry) => !isConfigObject(entry) || entry.name !== providerName,
+      );
+      if (config.custom_providers.length === 0) delete config.custom_providers;
+    } else {
+      delete config.custom_providers;
+    }
+  }
+}
+
+function isReportableHermesConfigKey(key: string): boolean {
+  return sandboxConfig.validateConfigDotpath(key).ok;
+}
+
+function isSupportedHermesOperatorConfigKey(key: string): boolean {
+  return (
+    sandboxConfig.validateConfigDotpath(key).ok &&
+    !key.split(".").some((segment) => /^\d+$/u.test(segment)) &&
+    key !== "gateway" &&
+    !key.startsWith("gateway.")
+  );
+}
+
+function readHermesConfigSetKeys(
+  sandboxName: string,
+  auditFile: string = OPERATIONAL_AUDIT_FILE,
+): { keys: string[]; droppedKeys: string[] } {
+  const text = readStableOperationalAudit(auditFile);
+  const keys = new Set<string>();
+  const droppedKeys = new Set<string>();
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isConfigObject(entry) || entry.action !== "config_set" || entry.sandbox !== sandboxName) {
+      continue;
+    }
+    if (typeof entry.reason !== "string") continue;
+    const match = /^config set hermes:(.+)$/u.exec(entry.reason);
+    if (!match?.[1]) continue;
+    if (!isReportableHermesConfigKey(match[1])) continue;
+    if (!isSupportedHermesOperatorConfigKey(match[1])) {
+      droppedKeys.add(match[1]);
+      continue;
+    }
+    keys.add(match[1]);
+  }
+  return { keys: [...keys].sort(), droppedKeys: [...droppedKeys].sort() };
+}
+
+export function captureHermesOperatorConfigSnapshotFromConfig(
+  sandboxName: string,
+  config: ConfigObject,
+  keys: readonly string[],
+): HermesOperatorConfigSnapshot {
+  const upstream = isConfigObject(config._nemoclaw_upstream) ? config._nemoclaw_upstream : {};
+  const providerName =
+    typeof upstream.provider === "string" && upstream.provider.trim() ? upstream.provider : "";
+  const providerKey =
+    typeof upstream.provider_key === "string" && upstream.provider_key.trim()
+      ? upstream.provider_key
+      : providerName
+        ? hermesProviderKey(providerName)
+        : "";
+  const entries: HermesOperatorConfigEntry[] = [];
+  const droppedKeys: string[] = [];
+
+  for (const key of [...new Set(keys)].sort()) {
+    if (!isSupportedHermesOperatorConfigKey(key)) {
+      throw new Error(`Cannot capture unsupported Hermes operator config key '${key}'`);
+    }
+    const value = extractConfigDotpath(config, key);
+    if (value === undefined) continue;
+    const selected: ConfigObject = {};
+    setConfigDotpath(selected, key, value);
+    stripHermesManagedRoute(selected, providerName, providerKey);
+    const operatorValue = extractConfigDotpath(selected, key);
+    if (operatorValue === undefined) {
+      droppedKeys.push(key);
+    } else {
+      entries.push({ key, value: cloneConfigValue(operatorValue) });
+    }
+  }
+
+  return { version: 1, sandboxName, entries, droppedKeys };
+}
+
+export function captureHermesOperatorConfigSnapshot(
+  sandboxName: string,
+  options: {
+    auditFile?: string;
+    readConfig?: typeof sandboxConfig.readSandboxConfig;
+    resolveConfig?: typeof sandboxConfig.resolveAgentConfig;
+  } = {},
+): HermesOperatorConfigSnapshot {
+  const { keys, droppedKeys } = readHermesConfigSetKeys(sandboxName, options.auditFile);
+  if (keys.length === 0) {
+    return { version: 1, sandboxName, entries: [], droppedKeys };
+  }
+  const resolveConfig = options.resolveConfig ?? sandboxConfig.resolveAgentConfig;
+  const readConfig = options.readConfig ?? sandboxConfig.readSandboxConfig;
+  const target = resolveConfig(sandboxName);
+  if (target.agentName !== "hermes") {
+    throw new Error(`Cannot capture Hermes operator config for '${target.agentName}'.`);
+  }
+  const config = readConfig(sandboxName, target);
+  const snapshot = captureHermesOperatorConfigSnapshotFromConfig(sandboxName, config, keys);
+  return {
+    ...snapshot,
+    droppedKeys: [...new Set([...droppedKeys, ...snapshot.droppedKeys])].sort(),
+  };
+}
+
+export function serializeHermesOperatorConfigSnapshot(
+  snapshot: HermesOperatorConfigSnapshot,
+): string {
+  return `${JSON.stringify(snapshot, null, 2)}\n`;
+}
+
+export function parseHermesOperatorConfigSnapshot(
+  document: string,
+  sandboxName: string,
+): HermesOperatorConfigSnapshot | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(document);
+  } catch {
+    return null;
+  }
+  if (
+    !isConfigObject(parsed) ||
+    parsed.version !== 1 ||
+    parsed.sandboxName !== sandboxName ||
+    !Array.isArray(parsed.entries) ||
+    !Array.isArray(parsed.droppedKeys) ||
+    !parsed.droppedKeys.every((key) => typeof key === "string" && isReportableHermesConfigKey(key))
+  ) {
+    return null;
+  }
+  const entries: HermesOperatorConfigEntry[] = [];
+  for (const entry of parsed.entries) {
+    if (
+      !isConfigObject(entry) ||
+      typeof entry.key !== "string" ||
+      !isSupportedHermesOperatorConfigKey(entry.key) ||
+      !isConfigValue(entry.value)
+    ) {
+      return null;
+    }
+    entries.push({ key: entry.key, value: cloneConfigValue(entry.value) });
+  }
+  return {
+    version: 1,
+    sandboxName,
+    entries,
+    droppedKeys: [...new Set(parsed.droppedKeys as string[])].sort(),
+  };
+}
+
+function mergeOperatorValue(current: ConfigValue | undefined, operator: ConfigValue): ConfigValue {
+  if (!isConfigObject(current) || !isConfigObject(operator)) return cloneConfigValue(operator);
+  const merged: ConfigObject = structuredClone(current);
+  for (const [key, value] of Object.entries(operator)) {
+    merged[key] = mergeOperatorValue(merged[key], value);
+  }
+  return merged;
+}
+
+/** Mutates the digest-bound `config` object in place and returns the same reference. */
+export function applyHermesOperatorConfigSnapshot(
+  config: ConfigObject,
+  snapshot: HermesOperatorConfigSnapshot,
+): ConfigObject {
+  // Mutate the digest-bound object returned by readSandboxConfig so Hermes'
+  // sealed write can prove it is replacing the exact bytes that were read.
+  const merged = config;
+  for (const entry of snapshot.entries) {
+    if (entry.key === "custom_providers" && Array.isArray(entry.value)) {
+      const managed = Array.isArray(merged.custom_providers) ? merged.custom_providers : [];
+      merged.custom_providers = [...structuredClone(managed), ...entry.value.map(cloneConfigValue)];
+      continue;
+    }
+    const current = extractConfigDotpath(merged, entry.key);
+    setConfigDotpath(merged, entry.key, mergeOperatorValue(current, entry.value));
+  }
+  return merged;
+}
+
+function isOperatorValueRestored(actual: ConfigValue | undefined, expected: ConfigValue): boolean {
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual)) return false;
+    const expectedByActual = new Map<number, number>();
+    const matchEntry = (expectedIndex: number, seenActual: Set<number>): boolean => {
+      for (const [actualIndex, actualEntry] of actual.entries()) {
+        if (seenActual.has(actualIndex)) continue;
+        if (!isOperatorValueRestored(actualEntry, expected[expectedIndex]!)) continue;
+        seenActual.add(actualIndex);
+        const priorExpected = expectedByActual.get(actualIndex);
+        if (priorExpected === undefined || matchEntry(priorExpected, seenActual)) {
+          expectedByActual.set(actualIndex, expectedIndex);
+          return true;
+        }
+      }
+      return false;
+    };
+    return expected.every((_entry, index) => matchEntry(index, new Set()));
+  }
+  if (isConfigObject(expected)) {
+    if (!isConfigObject(actual)) return false;
+    return Object.entries(expected).every(([key, value]) =>
+      isOperatorValueRestored(actual[key], value),
+    );
+  }
+  return Object.is(actual, expected);
+}
+
+export function verifyHermesOperatorConfigSnapshot(
+  config: ConfigObject,
+  snapshot: HermesOperatorConfigSnapshot,
+): HermesOperatorConfigRestoreReport {
+  const restoredKeys: string[] = [];
+  const droppedKeys = new Set(snapshot.droppedKeys);
+  for (const entry of snapshot.entries) {
+    const actual = extractConfigDotpath(config, entry.key);
+    if (isOperatorValueRestored(actual, entry.value)) restoredKeys.push(entry.key);
+    else droppedKeys.add(entry.key);
+  }
+  return {
+    restoredKeys: [...new Set(restoredKeys)].sort(),
+    droppedKeys: [...droppedKeys].sort(),
+  };
+}
+
 export function resolveRebuildDockerfile(
   fromDockerfile: string | null,
 ): { ok: true; path: string | null } | { ok: false; path: string; reason: string } {
@@ -268,7 +620,11 @@ export function resolveRebuildDockerfile(
   const resolved = path.resolve(fromDockerfile);
   try {
     if (!fs.statSync(resolved).isFile()) {
-      return { ok: false, path: resolved, reason: "path is not a regular file" };
+      return {
+        ok: false,
+        path: resolved,
+        reason: "path is not a regular file",
+      };
     }
     fs.accessSync(resolved, fs.constants.R_OK);
   } catch (err) {
