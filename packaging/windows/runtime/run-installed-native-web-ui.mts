@@ -380,17 +380,20 @@ const writeBrowserReceipt = (value) => {
 };
 const driveControlUi = async () => {
   let browser = null;
+  let context = null;
+  const profileRoot = join(evidenceRoot, "edge-profile-" + process.pid);
   try {
     await waitForUi();
     const require = createRequire(import.meta.url);
     const { chromium } = require(playwrightRoot);
-    browser = await chromium.launch({
+    context = await chromium.launchPersistentContext(profileRoot, {
       executablePath: edge,
       headless: false,
+      viewport: { width: 1400, height: 730 },
       args: ["--no-first-run", "--no-default-browser-check", "--window-position=20,10", "--window-size=1440,810"],
     });
-    const context = await browser.newContext({ viewport: { width: 1400, height: 730 } });
-    const page = await context.newPage();
+    browser = context.browser();
+    const page = context.pages()[0] ?? (await context.newPage());
     await page.goto("http://127.0.0.1:" + uiPort + "/chat", { waitUntil: "domcontentloaded", timeout: 90_000 });
     const composer = page.locator(".agent-chat__composer-combobox > textarea").first();
     await composer.waitFor({ state: "visible", timeout: 90_000 });
@@ -403,9 +406,10 @@ const driveControlUi = async () => {
     });
     await page.screenshot({ path: join(evidenceRoot, "web-ui-ready.png") });
     if (!qualification) {
-      writeBrowserReceipt({ verdict: "ready", browserVersion: browser.version(), closed: false, turns: [] });
-      await new Promise((resolvePromise) => browser.once("disconnected", resolvePromise));
+      writeBrowserReceipt({ verdict: "ready", browserVersion: browser?.version() ?? "Microsoft Edge", closed: false, turns: [] });
+      await new Promise((resolvePromise) => context.once("close", resolvePromise));
       writeBrowserReceipt({ verdict: "pass", browserVersion: "Microsoft Edge", closed: true, turns: [] });
+      try { fs.rmSync(profileRoot, { recursive: true, force: true }); } catch {}
       process.exit(0);
     }
     const turns = [];
@@ -423,8 +427,9 @@ const driveControlUi = async () => {
       await sleep(2000);
     }
     await sleep(3000);
-    writeBrowserReceipt({ verdict: "pass", browserVersion: browser.version(), closed: true, turns });
-    await browser.close();
+    writeBrowserReceipt({ verdict: "pass", browserVersion: browser?.version() ?? "Microsoft Edge", closed: true, turns });
+    await context.close();
+    try { fs.rmSync(profileRoot, { recursive: true, force: true }); } catch {}
     process.exit(0);
   } catch (error) {
     writeBrowserReceipt({
@@ -433,7 +438,9 @@ const driveControlUi = async () => {
       error: error instanceof Error ? error.message : "OpenClaw Control UI proof failed",
       turns: [],
     });
-    if (browser?.isConnected()) await browser.close();
+    if (context !== null) await context.close().catch(() => {});
+    else if (browser?.isConnected()) await browser.close();
+    try { fs.rmSync(profileRoot, { recursive: true, force: true }); } catch {}
     console.error(error instanceof Error ? error.stack : String(error));
     process.exit(1);
   }
