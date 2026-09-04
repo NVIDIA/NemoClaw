@@ -3,14 +3,16 @@
 
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS = 2;
-const TRANSIENT_PROVIDER_AVAILABILITY_RE =
-  /\bServiceUnavailable(?:Error)?\b|\bHTTP(?: status(?: code)?)?[:= ]+5\d{2}\b|\bstatus(?: code)?[:= ]+5\d{2}\b|\b5\d{2} (?:Bad Gateway|Gateway Timeout|Internal Server Error|Service Unavailable)\b/iu;
+const OPENCLAW_LAUNCH_PROVIDER_RETRY_DELAY_MS = 1_000;
+export const OPENCLAW_PROVIDER_UNAVAILABLE_MARKER =
+  "nemoclaw.e2e.launch-failure=provider-unavailable";
 const TERMINAL_LAUNCH_FAILURE_RE =
   /authentication failed|authorization failed|unauthorized|forbidden|HTTP(?: status)?[:= ]+40[13]\b|\b40[13]\b|invalid[^\r\n]*(?:api[_ -]?key|credential|JSON|response)|denied by network policy|network policy denied|policy [^\r\n]*failed|routing [^\r\n]*failed|route [^\r\n]*failed|proxy [^\r\n]*failed|malformed|structured session evidence was invalid|launch final structured session evidence did not qualify|message_(?:content_empty|order_invalid)|session_(?:record_incomplete|removed|rewritten|truncated)|multiple_sessions_changed|extra_message|verifier_failed|PTY [^\r\n]*(?:failed|invalid|unavailable)|structured session baseline cleanup failed|launch host session cleanup failed|launch PTY monitor cleanup failed|launch could not remove/iu;
 
@@ -19,7 +21,8 @@ function isTransientProviderAvailabilityFailure(
 ): boolean {
   const output = resultText(result);
   return (
-    TRANSIENT_PROVIDER_AVAILABILITY_RE.test(output) && !TERMINAL_LAUNCH_FAILURE_RE.test(output)
+    output.split(/\r?\n/u).includes(OPENCLAW_PROVIDER_UNAVAILABLE_MARKER) &&
+    !TERMINAL_LAUNCH_FAILURE_RE.test(output)
   );
 }
 
@@ -1125,8 +1128,18 @@ terminal_diagnostic() {
   fi
 }
 
+transient_provider_availability_failure() {
+  local diagnostic
+  diagnostic="$(tail -c 4096 "$capture" 2>/dev/null || true)"
+  printf '%s\n' "$diagnostic" | grep -Eiq \
+    'ServiceUnavailable(Error)?|HTTP( status( code)?)?[:= ]+5[0-9]{2}|status( code)?[:= ]+5[0-9]{2}|5[0-9]{2} (Bad Gateway|Gateway Timeout|Internal Server Error|Service Unavailable)' || return 1
+  ! printf '%s\n' "$diagnostic" | grep -Eiq \
+    'authentication failed|authorization failed|unauthorized|forbidden|HTTP( status)?[:= ]+40[13]|invalid.*(api[_ -]?key|credential|JSON|response)|denied by network policy|network policy denied|policy .*failed|routing .*failed|route .*failed|proxy .*failed|malformed'
+}
+
 fail_launch_session() {
   echo "$1" >&2
+  echo "${"$"}{2:-}" >&2
   if [[ -s "$evidence_error" ]]; then
     tail -c 2048 "$evidence_error" >&2 || true
   fi
@@ -1179,6 +1192,10 @@ wait_for_turn_count() {
     fi
     sleep 1
   done
+  transient_provider_availability_failure && \
+    fail_launch_session \
+      "launch did not record the required structured session turns" \
+      "${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}"
   fail_launch_session "launch did not record the required structured session turns"
 }
 
@@ -1396,6 +1413,9 @@ export async function runOpenClawLaunchSession(
     finalFailure = result;
     providerUnavailable = isTransientProviderAvailabilityFailure(result);
     if (!providerUnavailable) break;
+    if (attempt < OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS) {
+      await delay(OPENCLAW_LAUNCH_PROVIDER_RETRY_DELAY_MS);
+    }
   }
   const detail = finalFailure ? resultText(finalFailure) : "launch attempt was not executed";
   throw new Error(

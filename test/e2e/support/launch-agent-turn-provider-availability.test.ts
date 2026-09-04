@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, it, vi } from "vitest";
-import { runOpenClawLaunchSession } from "../live/launch-agent-turn.ts";
+import {
+  OPENCLAW_PROVIDER_UNAVAILABLE_MARKER,
+  runOpenClawLaunchSession,
+} from "../live/launch-agent-turn.ts";
 
 function launchOptions(host: unknown) {
   return {
@@ -17,6 +20,7 @@ function launchOptions(host: unknown) {
 
 it("retries a transient provider failure in a fresh launch session (#10978)", async () => {
   const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+  vi.useFakeTimers();
   const calls: Array<{ artifactName?: string; env?: NodeJS.ProcessEnv }> = [];
   const host = {
     command: async (
@@ -29,7 +33,7 @@ it("retries a transient provider failure in a fresh launch session (#10978)", as
         ? {
             exitCode: 1,
             signal: null,
-            stderr: "litellm.ServiceUnavailableError: NVIDIA upstream unavailable",
+            stderr: `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nlitellm.ServiceUnavailableError: NVIDIA upstream unavailable`,
             stdout: "",
           }
         : { exitCode: 0, signal: null, stderr: "", stdout: "" };
@@ -38,7 +42,12 @@ it("retries a transient provider failure in a fresh launch session (#10978)", as
   };
 
   try {
-    const result = await runOpenClawLaunchSession(launchOptions(host));
+    const launch = runOpenClawLaunchSession(launchOptions(host));
+    expect(calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    const result = await launch;
     expect(result.exitCode).toBe(0);
     expect(calls.map((call) => call.artifactName)).toEqual([
       "provider-turn",
@@ -47,12 +56,14 @@ it("retries a transient provider failure in a fresh launch session (#10978)", as
     expect(new Set(calls.map((call) => call.env?.NEMOCLAW_LAUNCH_RUN_ID)).size).toBe(2);
     expect(new Set(calls.map((call) => call.env?.NEMOCLAW_LAUNCH_FIRST_INPUT)).size).toBe(2);
   } finally {
+    vi.useRealTimers();
     platform.mockRestore();
   }
 });
 
 it("classifies exhausted transient launch attempts as provider unavailable (#10978)", async () => {
   const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+  vi.useFakeTimers();
   const calls: string[] = [];
   const host = {
     command: async (_command: string, _args: string[], options?: { artifactName?: string }) => {
@@ -60,7 +71,7 @@ it("classifies exhausted transient launch attempts as provider unavailable (#109
       return {
         exitCode: 1,
         signal: null,
-        stderr: `launch did not record the required structured session turns\nHTTP ${calls.length === 1 ? "503" : "502"}`,
+        stderr: `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nlaunch did not record the required structured session turns\nHTTP ${calls.length === 1 ? "503" : "502"}`,
         stdout: "",
       };
     },
@@ -68,11 +79,13 @@ it("classifies exhausted transient launch attempts as provider unavailable (#109
   };
 
   try {
-    await expect(runOpenClawLaunchSession(launchOptions(host))).rejects.toThrow(
-      "OpenClaw launch provider unavailable after 2 attempts",
-    );
+    const launch = runOpenClawLaunchSession(launchOptions(host));
+    expect(calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(launch).rejects.toThrow("OpenClaw launch provider unavailable after 2 attempts");
     expect(calls).toEqual(["provider-turn", "provider-turn-provider-retry-02"]);
   } finally {
+    vi.useRealTimers();
     platform.mockRestore();
   }
 });
@@ -80,14 +93,21 @@ it("classifies exhausted transient launch attempts as provider unavailable (#109
 it.each([
   [
     "invalid structured session evidence",
-    'ServiceUnavailableError\nlaunch final structured session evidence did not qualify (status 2)\n{"reason":"message_order_invalid"}',
+    `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nServiceUnavailableError\nlaunch final structured session evidence did not qualify (status 2)\n{"reason":"message_order_invalid"}`,
   ],
   [
     "authentication failure",
-    "ServiceUnavailableError: HTTP 503\nauthentication failed: invalid API key",
+    `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nServiceUnavailableError: HTTP 503\nauthentication failed: invalid API key`,
   ],
-  ["policy failure", "ServiceUnavailableError: HTTP 503\ndenied by network policy"],
-  ["invalid response", "ServiceUnavailableError: HTTP 503\ninvalid provider response"],
+  [
+    "policy failure",
+    `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nServiceUnavailableError: HTTP 503\ndenied by network policy`,
+  ],
+  [
+    "invalid response",
+    `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nServiceUnavailableError: HTTP 503\ninvalid provider response`,
+  ],
+  ["unstructured provider output", "ServiceUnavailableError: HTTP 503"],
   ["unknown failure", "launch failed for an unknown reason"],
 ])("does not retry a %s (#10978)", async (_case, stderr) => {
   const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
