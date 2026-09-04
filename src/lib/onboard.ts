@@ -2908,7 +2908,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         sandboxGpuDevice: opts.sandboxGpuDevice ?? null,
         gpuRequested: opts.gpu === true,
         noGpu: opts.noGpu === true,
-        allowDeferredN1xManagedVllm: opts.allowDeferredN1xManagedVllm,
+        allowDeferredN1xOnboarding: opts.allowDeferredN1xOnboarding,
         env: process.env,
         recordedGpuPassthroughBeforePreflight,
         commitSelectedAgentTransition: selectedAgentTransition.commit,

@@ -130,8 +130,8 @@ export type RebuildRecreateOnboardOpts = {
   rebuildRegistryInferenceRoute?: RebuildRouteHandoff;
   rebuildProviderReconfigure?: RebuildProviderReconfigureHandoff;
   providerRecoveryReceipt?: ProviderRecoveryReceipt;
-  /** Recorded managed-vLLM intent admitted only by the N1x readiness exception. */
-  allowDeferredN1xManagedVllm?: true;
+  /** Recorded provider intent admitted only by the Deferred N1x readiness exception. */
+  allowDeferredN1xOnboarding?: true;
   /** Target-scoped authority admitted by the authoritative rebuild preflight. */
   rebuildGatewayAuthority?: CheckpointGatewayAuthority;
   preparedImageRebuild?: PreparedImageRebuildHandoff;

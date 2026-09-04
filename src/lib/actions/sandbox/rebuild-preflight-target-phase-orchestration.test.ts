@@ -73,10 +73,12 @@ describe("prepareRebuildTargetPreflights", () => {
   async function prepareN1xTarget(
     endpointSource: "onboard" | "inference-set",
     mcp: { bridges: Record<string, { server: string }> } | null = null,
+    provider = "vllm-local",
+    model = "nvidia/Qwen3.6-35B-A3B-NVFP4",
   ) {
     const resumeConfig = {
-      provider: "vllm-local",
-      model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      provider,
+      model,
       preferredInferenceApi: "openai-completions",
       pinEndpoint: true,
       endpointUrl: null,
@@ -203,15 +205,19 @@ describe("prepareRebuildTargetPreflights", () => {
   it("passes exact legacy N1x intent into authoritative readiness (#9292)", async () => {
     const readinessOptions = await prepareN1xTarget("onboard");
 
-    expect(readinessOptions).toEqual(
-      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
-    );
+    expect(readinessOptions).toEqual(expect.objectContaining({ allowDeferredN1xOnboarding: true }));
+  });
+
+  it("passes recorded Ollama intent into authoritative readiness (#11041)", async () => {
+    const readinessOptions = await prepareN1xTarget("onboard", null, "ollama-local", "qwen3.5:9b");
+
+    expect(readinessOptions).toEqual(expect.objectContaining({ allowDeferredN1xOnboarding: true }));
   });
 
   it("withholds N1x intent for a mismatched endpoint source (#9292)", async () => {
     const readinessOptions = await prepareN1xTarget("inference-set");
 
-    expect(readinessOptions).not.toHaveProperty("allowDeferredN1xManagedVllm");
+    expect(readinessOptions).not.toHaveProperty("allowDeferredN1xOnboarding");
   });
 
   it("freezes one MCP runtime target before authoritative readiness (#10514)", async () => {

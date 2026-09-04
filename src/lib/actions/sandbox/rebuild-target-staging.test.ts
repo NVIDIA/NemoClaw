@@ -17,6 +17,7 @@ import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import {
   hydrateMessagingConfigForRebuild,
   prepareRebuildRecreateOptions,
+  stageRecordedDeferredN1xIntent,
 } from "./rebuild-target-staging";
 
 const SANDBOX_ENTRY = {
@@ -155,6 +156,62 @@ describe("prepareRebuildRecreateOptions", () => {
 
     expect(options?.baseImageResolutionHint).toBeNull();
     expect(options).not.toHaveProperty("rebuildRegistryInferenceRoute");
+  });
+});
+
+describe("stageRecordedDeferredN1xIntent", () => {
+  function stage(args: {
+    provider: string;
+    model?: string;
+    nimContainer?: string | null;
+    endpointSource?: "onboard" | "inference-set";
+  }): { allowDeferredN1xOnboarding?: true } {
+    const recreateOptions: { allowDeferredN1xOnboarding?: true } = {};
+    const model = args.model ?? "test-model";
+    stageRecordedDeferredN1xIntent(
+      recreateOptions,
+      {
+        provider: args.provider,
+        model,
+        nimContainer: args.nimContainer ?? null,
+        endpointUrl: null,
+        endpointSource: args.endpointSource ?? "onboard",
+        openshellDriver: "docker",
+        hostLocalInferenceReceipt: null,
+      },
+      {
+        provider: args.provider,
+        model,
+        pinEndpoint: true,
+        endpointUrl: null,
+      },
+    );
+    return recreateOptions;
+  }
+
+  it.each([
+    { name: "Ollama", provider: "ollama-local" },
+    { name: "legacy NVIDIA Endpoints", provider: "nvidia-nim" },
+  ])("stages a recognized recorded $name provider", ({ provider }) => {
+    expect(stage({ provider })).toEqual({ allowDeferredN1xOnboarding: true });
+  });
+
+  it.each([
+    {
+      name: "Local NIM",
+      input: { provider: "vllm-local", nimContainer: "alpha-nim" },
+    },
+    { name: "unknown provider", input: { provider: "future-provider" } },
+    {
+      name: "malformed N1x Express record",
+      input: {
+        provider: "vllm-local",
+        model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        endpointSource: "inference-set" as const,
+      },
+    },
+  ])("does not stage $name", ({ input }) => {
+    expect(stage(input)).toEqual({});
   });
 });
 

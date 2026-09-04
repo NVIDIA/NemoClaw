@@ -84,7 +84,7 @@ export type AuthoritativeRebuildPreflightOptions = Pick<
   | "sandboxGpuDevice"
   | "noGpu"
   | "controlUiPort"
-  | "allowDeferredN1xManagedVllm"
+  | "allowDeferredN1xOnboarding"
   | "runtimeSelection"
 > & {
   authoritativeResumeConfig: true;
@@ -101,13 +101,13 @@ export type AuthoritativeRebuildPreflightOptions = Pick<
 export function authoritativeRebuildRuntimePreflightOptions(
   opts: AuthoritativeRebuildPreflightOptions,
 ): Pick<OnboardOptions, "sandboxGpu" | "sandboxGpuDevice" | "noGpu"> & {
-  allowDeferredN1xManagedVllm: boolean;
+  allowDeferredN1xOnboarding: boolean;
 } {
   return {
     sandboxGpu: opts.sandboxGpu,
     sandboxGpuDevice: opts.sandboxGpuDevice,
     noGpu: opts.noGpu,
-    allowDeferredN1xManagedVllm: opts.allowDeferredN1xManagedVllm === true,
+    allowDeferredN1xOnboarding: opts.allowDeferredN1xOnboarding === true,
   };
 }
 

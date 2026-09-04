@@ -204,7 +204,7 @@ describe("handlePreflightState", () => {
     await handlePreflightState({
       ...baseOptions(harness.deps, session),
       resume: true,
-      allowDeferredN1xManagedVllm: true,
+      allowDeferredN1xOnboarding: true,
     });
 
     expect(assertOnboardHostReadiness).toHaveBeenCalledTimes(2);
@@ -261,7 +261,7 @@ describe("handlePreflightState", () => {
       await handlePreflightState({
         ...baseOptions(harness.deps, session),
         resume: true,
-        ...(authority === undefined ? {} : { allowDeferredN1xManagedVllm: authority }),
+        ...(authority === undefined ? {} : { allowDeferredN1xOnboarding: authority }),
       });
 
       expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(

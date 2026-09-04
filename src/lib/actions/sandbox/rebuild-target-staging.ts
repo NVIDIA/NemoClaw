@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
-import { isRecordedN1xManagedVllmRebuildEligible } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
+import {
+  isN1xManagedVllmProviderModel,
+  isRecordedN1xManagedVllmRebuildEligible,
+} from "../../domain/sandbox/n1x-managed-vllm-rebuild";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
+import { isN1xOnboardingRecordedProvider } from "../../onboard/inference-providers/provider-selection-keys";
 import {
   createRebuildRouteHandoff,
   type RegistryInferenceRoute,
@@ -86,9 +90,9 @@ export function stageRebuildHermesDashboardConfig(
   return true;
 }
 
-/** Stage the recorded N1x decision without moving action state into the domain layer. */
-export function stageRecordedManagedVllmIntent(
-  recreateOptions: Pick<RebuildRecreateOnboardOpts, "allowDeferredN1xManagedVllm">,
+/** Stage a validated recorded N1x provider decision for authoritative rebuild readiness. */
+export function stageRecordedDeferredN1xIntent(
+  recreateOptions: Pick<RebuildRecreateOnboardOpts, "allowDeferredN1xOnboarding">,
   sandboxEntry: Pick<
     RebuildSandboxEntry,
     | "provider"
@@ -97,6 +101,7 @@ export function stageRecordedManagedVllmIntent(
     | "endpointSource"
     | "openshellDriver"
     | "hostLocalInferenceReceipt"
+    | "nimContainer"
   >,
   rebuildSelection: {
     provider: string;
@@ -105,14 +110,26 @@ export function stageRecordedManagedVllmIntent(
     endpointUrl: string | null;
   },
 ): void {
-  if (
-    isRecordedN1xManagedVllmRebuildEligible(
-      sandboxEntry,
-      rebuildSelection,
-      parseHostLocalInferenceReceipt,
-    )
-  ) {
-    recreateOptions.allowDeferredN1xManagedVllm = true;
+  const selectionMatchesRecord =
+    rebuildSelection.provider === sandboxEntry.provider &&
+    rebuildSelection.model === sandboxEntry.model;
+  const isManagedVllmIdentity = isN1xManagedVllmProviderModel(
+    sandboxEntry.provider,
+    sandboxEntry.model,
+  );
+  const recordedStandardProviderIsEligible =
+    selectionMatchesRecord &&
+    !isManagedVllmIdentity &&
+    isN1xOnboardingRecordedProvider(sandboxEntry.provider, {
+      hasNimContainer: Boolean(sandboxEntry.nimContainer),
+    });
+  const recordedManagedVllmIsEligible = isRecordedN1xManagedVllmRebuildEligible(
+    sandboxEntry,
+    rebuildSelection,
+    parseHostLocalInferenceReceipt,
+  );
+  if (recordedStandardProviderIsEligible || recordedManagedVllmIsEligible) {
+    recreateOptions.allowDeferredN1xOnboarding = true;
   }
 }
 

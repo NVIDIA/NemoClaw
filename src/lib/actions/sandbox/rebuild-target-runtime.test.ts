@@ -207,7 +207,7 @@ describe("authoritative rebuild readiness", () => {
     mocks.preflightAuthoritativeRebuildTarget.mockResolvedValue(authority);
     const recreateOptions = {
       ...RECREATE_OPTIONS,
-      allowDeferredN1xManagedVllm: true,
+      allowDeferredN1xOnboarding: true,
       runtimeSelection,
     } as RebuildRecreateOnboardOpts;
     const bail = vi.fn((message: string): never => {
@@ -225,7 +225,7 @@ describe("authoritative rebuild readiness", () => {
 
     expect(mocks.preflightAuthoritativeRebuildTarget).toHaveBeenCalledWith(
       expect.objectContaining({
-        allowDeferredN1xManagedVllm: true,
+        allowDeferredN1xOnboarding: true,
         provider: "vllm-local",
         model: "test-model",
         runtimeSelection,

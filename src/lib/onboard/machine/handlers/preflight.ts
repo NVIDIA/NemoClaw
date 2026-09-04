@@ -35,7 +35,7 @@ export interface PreflightStateOptions<
   sandboxGpuDevice?: string | null;
   gpuRequested: boolean;
   noGpu: boolean;
-  allowDeferredN1xManagedVllm?: boolean;
+  allowDeferredN1xOnboarding?: boolean;
   env: NodeJS.ProcessEnv;
   deps: {
     getSandbox(name: string): SandboxEntry | null;
@@ -131,7 +131,7 @@ export async function handlePreflightState<
   sandboxGpuDevice,
   gpuRequested,
   noGpu,
-  allowDeferredN1xManagedVllm,
+  allowDeferredN1xOnboarding: explicitDeferredN1xOnboarding,
   env,
   deps,
 }: PreflightStateOptions<Gpu, SandboxEntry, Host, Config>): Promise<
@@ -158,7 +158,7 @@ export async function handlePreflightState<
   // An explicit false is authoritative for rebuilds. Ordinary resume may use
   // the provider that this owner-only session already validated and recorded.
   const allowDeferredN1xOnboarding =
-    allowDeferredN1xManagedVllm ?? recordedProviderAllowsDeferredN1x;
+    explicitDeferredN1xOnboarding ?? recordedProviderAllowsDeferredN1x;
 
   let gpu: Gpu;
   if (resumePreflight) {

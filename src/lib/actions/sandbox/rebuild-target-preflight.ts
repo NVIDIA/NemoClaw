@@ -19,5 +19,5 @@ export {
   hydrateMessagingConfigForRebuild,
   prepareRebuildRecreateOptions,
   stageRebuildHermesDashboardConfig,
-  stageRecordedManagedVllmIntent,
+  stageRecordedDeferredN1xIntent,
 } from "./rebuild-target-staging";
