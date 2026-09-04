@@ -4,6 +4,8 @@
 import { spawnSync } from "child_process";
 
 import { loadAgent } from "../agent/defs.js";
+import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv.js";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 
@@ -23,7 +25,10 @@ function _log(msg: string): void {
   if (_verbose()) console.error(`  [user-managed-files-probe ${new Date().toISOString()}] ${msg}`);
 }
 
-export function probeUserManagedFiles(sandboxName: string): UserManagedFilesProbe {
+export function probeUserManagedFiles(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): UserManagedFilesProbe {
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
   const agent = loadAgent(agentName);
@@ -34,7 +39,19 @@ export function probeUserManagedFiles(sandboxName: string): UserManagedFilesProb
     `sandbox=${sandboxName}, agent=${agentName}, declared=[${declared.join(",")}], base=${USER_MANAGED_FILES_BASE}`,
   );
 
-  const sshConfig = getSshConfig(sandboxName);
+  const selectedEnv = runtimeSelection
+    ? buildSelectedOpenShellSubprocessEnv(runtimeSelection)
+    : undefined;
+  const sshConfig = getSshConfig(
+    sandboxName,
+    runtimeSelection
+      ? {
+          env: selectedEnv,
+          gatewayName: runtimeSelection.gatewayName,
+          replaceEnv: true,
+        }
+      : undefined,
+  );
   if (!sshConfig) {
     _log("no SSH config — cannot probe declared user-managed files");
     throw new Error(
@@ -54,6 +71,7 @@ export function probeUserManagedFiles(sandboxName: string): UserManagedFilesProb
         .join("; ") + " 2>/dev/null";
     const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), probeCmd], {
       encoding: "utf-8",
+      ...(selectedEnv ? { env: selectedEnv } : {}),
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 30000,
     });

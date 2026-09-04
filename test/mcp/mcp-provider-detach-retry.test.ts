@@ -16,7 +16,14 @@ const foreignId = "99999999-8888-4777-8666-555555555555";
 let attached = true;
 let liveId = expectedId;
 let detachCalls = 0;
-providerCommands.runOpenshellProviderCommand = (args) => {
+const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
+providerCommands.runOpenshellProviderCommand = (args, options) => {
+  if (
+    options?.runtimeSelection?.gatewayName !== runtimeSelection.gatewayName ||
+    options?.runtimeSelection?.workspace !== runtimeSelection.workspace
+  ) {
+    throw new Error("provider command did not retain the recorded runtime selection");
+  }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     return attached
       ? { status: 0, stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake nemoclaw-mcp-v1 1 0\n", stderr: "" }
@@ -62,7 +69,7 @@ const entry = {
 let outcome = null;
 let message = null;
 try {
-  outcome = providerActions.detachProvider("alpha", entry);
+  outcome = providerActions.detachProvider("alpha", entry, { runtimeSelection });
 } catch (error) {
   message = error.message;
 }
