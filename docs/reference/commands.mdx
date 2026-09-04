@@ -1596,6 +1596,7 @@ If the sandbox is running an older Deep Agents Code version than this NemoClaw r
 ### `$$nemoclaw <name> doctor`
 
 Run a focused health check for one sandbox and the host services it depends on. The command checks the local CLI build, Docker daemon, OpenShell CLI, NemoClaw gateway container, gateway port mapping, live sandbox state, inference route, configured-provider model invocation, Ollama reachability, and the cloudflared tunnel state.
+Use `$$nemoclaw doctor` when you need only the host and gateway checks or when no sandbox exists yet. If a sandbox is named `doctor`, use `$$nemoclaw doctor --text` to select the global text report explicitly; bare `$$nemoclaw doctor` keeps the existing name-first sandbox connection behavior.
 
 <AgentOnly variant="openclaw,hermes">
   For gateway-based agents, it also reports messaging channel conflicts within the selected
@@ -3170,6 +3171,28 @@ This command remains as a compatibility alias to `$$nemoclaw onboard` and accept
 ```bash
 $$nemoclaw setup-spark
 ```
+
+### `$$nemoclaw doctor`
+
+Run read-only checks for the host and the NemoClaw gateway without selecting a sandbox.
+The command works before you create a sandbox.
+It checks the NemoClaw CLI build, the selected host runtime provider, the OpenShell CLI, the sandbox registry, and the gateway selected by `NEMOCLAW_GATEWAY_PORT`.
+It does not start, select, restart, or repair a gateway.
+It does not run sandbox, inference, messaging, agent-version, config-permission, or agent-service checks.
+Use `$$nemoclaw <name> doctor` when you need those sandbox checks.
+If a sandbox is named `doctor`, bare `$$nemoclaw doctor` connects to that sandbox under the name-first grammar. Use `$$nemoclaw doctor --text` for the global human-readable report or `$$nemoclaw doctor --json` for the global JSON report.
+
+```bash
+$$nemoclaw doctor [--json | --text]
+```
+
+The command exits nonzero when a required check fails.
+Pass `--json` for a redacted, schema-versioned report with `scope: "global"` and no sandbox field.
+
+| Flag | Description |
+| --- | --- |
+| `--json` | Emit the global report as JSON. |
+| `--text` | Emit the global human-readable report explicitly. |
 
 ### `$$nemoclaw debug`
 
