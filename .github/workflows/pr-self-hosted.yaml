@@ -205,7 +205,9 @@ jobs:
           docker build "${build_args[@]}" -t nemoclaw-production .
 
       - name: Save production image
-        run: docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz
+        run: |
+          set -euo pipefail
+          docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz
 
       - name: Upload isolation image
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -307,6 +309,9 @@ jobs:
       - name: Upload OpenClaw managed-image security evidence
         if: ${{ always() }}
         uses: ./.github/actions/upload-e2e-artifacts
+        with:
+          name: managed-image-openclaw-security-evidence
+          path: ${{ env.E2E_ARTIFACT_DIR }}
 
   port-override-image-contract:
     runs-on: linux-amd64-cpu4

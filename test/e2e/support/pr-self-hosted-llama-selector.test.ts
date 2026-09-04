@@ -225,6 +225,10 @@ describe("OpenClaw managed-image copied-PR qualification", () => {
     ).toMatchObject({
       if: "${{ always() }}",
       uses: "./.github/actions/upload-e2e-artifacts",
+      with: {
+        name: "managed-image-openclaw-security-evidence",
+        path: "${{ env.E2E_ARTIFACT_DIR }}",
+      },
     });
   });
 });

@@ -735,6 +735,7 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
   const save = requireStep(errors, producerName, producer, "Save production image");
   if (
     steps(producer).filter((step) => step.name === "Save production image").length !== 1 ||
+    !(save.run ?? "").includes("set -euo pipefail") ||
     !(save.run ?? "").includes(
       "docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz",
     )
@@ -870,6 +871,10 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
   if (
     securityUpload.if !== "${{ always() }}" ||
     securityUpload.uses !== "./.github/actions/upload-e2e-artifacts" ||
+    !isDeepStrictEqual(record(securityUpload.with), {
+      name: "managed-image-openclaw-security-evidence",
+      path: "${{ env.E2E_ARTIFACT_DIR }}",
+    }) ||
     securityUpload["continue-on-error"] !== undefined
   ) {
     errors.push(`${securityName} must always upload evidence with the shared action`);

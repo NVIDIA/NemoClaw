@@ -51,6 +51,10 @@ describe("sandbox image workflow boundary", () => {
     ).toMatchObject({
       if: "${{ always() }}",
       uses: "./.github/actions/upload-e2e-artifacts",
+      with: {
+        name: "managed-image-openclaw-security-evidence",
+        path: "${{ env.E2E_ARTIFACT_DIR }}",
+      },
     });
   });
 
@@ -69,6 +73,7 @@ describe("sandbox image workflow boundary", () => {
     ["Remove managed-image security resources", "run", "true"],
     ["Remove managed-image security resources", "if", "success()"],
     ["Upload OpenClaw managed-image security evidence", "if", "success()"],
+    ["Upload OpenClaw managed-image security evidence", "with", {}],
   ] as const)("rejects weakened reusable security step %s %s", (name, key, value) => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const step = imageWorkflow.jobs["managed-image-openclaw-security"].steps?.find(
@@ -692,7 +697,9 @@ describe("sandbox image workflow boundary", () => {
     producer.steps!.push({ ...runtime });
     producer.steps!.push({ ...runtimeSteps.find((step) => step.name === "Set up Node")! });
     const save = producer.steps!.find((step) => step.name === "Save production image")!;
-    save.run = save.run!.replace("docker save nemoclaw-production", "docker save rebuilt-image");
+    save.run = save.run!
+      .replace("set -euo pipefail", "set -eu")
+      .replace("docker save nemoclaw-production", "docker save rebuilt-image");
     producer.steps!.push({ ...save });
     const isolationUpload = producer.steps!.find((step) => step.name === "Upload isolation image")!;
     isolationUpload.with!.path = "/tmp/rebuilt-image.tar.gz";

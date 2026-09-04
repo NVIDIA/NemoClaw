@@ -97,7 +97,9 @@ jobs:
           docker build "${build_args[@]}" -t nemoclaw-production .
 
       - name: Save production image
-        run: docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz
+        run: |
+          set -euo pipefail
+          docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz
 
       - name: Verify production image archive
         run: gzip -t /tmp/isolation-image.tar.gz
@@ -535,8 +537,8 @@ jobs:
         if: ${{ always() }}
         uses: ./.github/actions/upload-e2e-artifacts
         with:
-          artifact-name: managed-image-openclaw-security-evidence
-          artifact-path: ${{ env.E2E_ARTIFACT_DIR }}
+          name: managed-image-openclaw-security-evidence
+          path: ${{ env.E2E_ARTIFACT_DIR }}
 
   port-override-image-contract:
     runs-on: ubuntu-latest
