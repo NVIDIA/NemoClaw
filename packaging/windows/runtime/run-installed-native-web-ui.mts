@@ -7,6 +7,7 @@ import fs from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import net from "node:net";
+import { networkInterfaces } from "node:os";
 import path from "node:path";
 
 import {
@@ -57,7 +58,20 @@ function relayFrame(streamId, type, payload = Buffer.alloc(0)) {
 }
 
 async function startReverseTcpRelay(token) {
-  const controlPort = await freePort();
+  const controlHosts = [
+    "127.0.0.1",
+    ...Object.values(networkInterfaces())
+      .flat()
+      .filter(
+        (address) =>
+          address?.family === "IPv4" &&
+          !address.internal &&
+          !address.address.startsWith("169.254."),
+      )
+      .map((address) => address.address),
+  ].filter((address, index, values) => values.indexOf(address) === index);
+  if (controlHosts.length < 2) fail("Windows does not expose a host IPv4 adapter for MXC UI relay");
+  let controlPort;
   let browserPort;
   const streams = new Map();
   let control = null;
@@ -132,9 +146,9 @@ async function startReverseTcpRelay(token) {
   });
   await new Promise((resolve, reject) => {
     controlServer.once("error", reject);
-    controlServer.listen(controlPort, "127.0.0.1", resolve);
+    controlServer.listen(0, "0.0.0.0", resolve);
   });
-  browserPort = await freePort();
+  controlPort = controlServer.address().port;
   const browserServer = net.createServer((socket) => {
     if (control === null) {
       socket.destroy();
@@ -152,10 +166,12 @@ async function startReverseTcpRelay(token) {
   });
   await new Promise((resolve, reject) => {
     browserServer.once("error", reject);
-    browserServer.listen(browserPort, "127.0.0.1", resolve);
+    browserServer.listen(0, "127.0.0.1", resolve);
   });
+  browserPort = browserServer.address().port;
   return {
     browserPort,
+    controlHosts,
     controlPort,
     ready,
     close: async () => {
@@ -454,6 +470,7 @@ const modelPort = Number(required("NEMOCLAW_MXC_MODEL_PORT"));
 const modelId = required("NEMOCLAW_MXC_MODEL_ID");
 const modelToken = required("NEMOCLAW_MXC_MODEL_TOKEN");
 const qualification = required("NEMOCLAW_MXC_QUALIFICATION") === "1";
+const tunnelHosts = required("NEMOCLAW_MXC_TUNNEL_HOSTS").split(",").filter(Boolean);
 const tunnelPort = Number(required("NEMOCLAW_MXC_TUNNEL_PORT"));
 const tunnelToken = required("NEMOCLAW_MXC_TUNNEL_TOKEN");
 const uiPort = Number(required("NEMOCLAW_MXC_UI_PORT"));
@@ -510,13 +527,30 @@ const relayFrame = (streamId, type, payload = Buffer.alloc(0)) => {
 };
 const startTunnel = async () => {
   await waitForUi();
-  const tunnel = net.createConnection({ host: "127.0.0.1", port: tunnelPort });
+  let tunnel = null;
+  for (const host of tunnelHosts) {
+    try {
+      tunnel = await new Promise((resolvePromise, reject) => {
+        const candidate = net.createConnection({ host, port: tunnelPort });
+        const timeout = setTimeout(() => {
+          candidate.destroy();
+          reject(new Error("MXC UI relay host timed out: " + host));
+        }, 3000);
+        candidate.once("connect", () => {
+          clearTimeout(timeout);
+          resolvePromise(candidate);
+        });
+        candidate.once("error", (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        });
+      });
+      break;
+    } catch {}
+  }
+  if (tunnel === null) throw new Error("MXC could not connect to an authenticated host UI relay");
   const streams = new Map();
   let buffer = Buffer.alloc(0);
-  await new Promise((resolvePromise, reject) => {
-    tunnel.once("connect", resolvePromise);
-    tunnel.once("error", reject);
-  });
   tunnel.write("NEMOCLAW " + tunnelToken + "\n");
   tunnel.on("data", (chunk) => {
     buffer = Buffer.concat([buffer, chunk]);
@@ -1408,6 +1442,7 @@ async function main() {
       NEMOCLAW_MXC_MODEL_TOKEN: modelToken,
       NEMOCLAW_MXC_OPENCLAW_ENTRY: openClawEntry,
       NEMOCLAW_MXC_QUALIFICATION: qualification ? "1" : "0",
+      NEMOCLAW_MXC_TUNNEL_HOSTS: uiRelay.controlHosts.join(","),
       NEMOCLAW_MXC_TUNNEL_PORT: String(uiRelay.controlPort),
       NEMOCLAW_MXC_TUNNEL_TOKEN: tunnelToken,
       NEMOCLAW_MXC_UI_PORT: String(uiPort),
