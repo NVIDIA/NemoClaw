@@ -29,6 +29,7 @@ type ValidationProbeOptions =
   | undefined;
 
 const ONBOARD_VALIDATION_TIMEOUT_ENV = "NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS";
+const MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS = 600;
 const STANDARD_VALIDATION_TIMING: ValidationProbeTimingProfile = {
   connectTimeoutSeconds: 10,
   maxTimeSeconds: 15,
@@ -172,8 +173,9 @@ export function getCurlMaxTimeSeconds(args: readonly string[]): number {
 export function withValidationTimeoutOverride(args: string[]): string[] {
   const raw = (process.env[ONBOARD_VALIDATION_TIMEOUT_ENV] || "").trim();
   if (!raw) return args;
-  const overrideSeconds = Math.ceil(Number(raw));
-  if (!Number.isFinite(overrideSeconds) || overrideSeconds <= 0) return args;
+  const requestedSeconds = Math.ceil(Number(raw));
+  if (!Number.isFinite(requestedSeconds) || requestedSeconds <= 0) return args;
+  const overrideSeconds = Math.min(requestedSeconds, MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS);
   const next = [...args];
   let changed = false;
   for (const flag of ["--connect-timeout", "--max-time"]) {

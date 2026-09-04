@@ -347,7 +347,11 @@ describe("OpenAI validation curl fallback", () => {
 });
 
 describe("WSL2 advisory on native terminal failures (#10413)", () => {
-  it("passes the calibrated WSL floor to the native chat deadline", async () => {
+  it.each([
+    { label: "calibrated WSL floor", override: undefined, expectedTimeoutMs: 30_000 },
+    { label: "validation override", override: "360", expectedTimeoutMs: 360_000 },
+  ])("passes the $label to the native chat deadline", async (testCase) => {
+    vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", testCase.override ?? "");
     const server = http.createServer((request, response) => {
       request.resume();
       response.end('{"choices":[{"message":{"content":"OK"}}]}');
@@ -384,7 +388,7 @@ describe("WSL2 advisory on native terminal failures (#10413)", () => {
     }).toMatchObject({
       result: { ok: true, api: "openai-completions" },
       calibrationArgs: expect.arrayContaining(["--connect-timeout", "3", "--max-time", "5"]),
-      nativeTimeouts: expect.arrayContaining([30_000]),
+      nativeTimeouts: expect.arrayContaining([testCase.expectedTimeoutMs]),
     });
   });
 

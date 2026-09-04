@@ -7,6 +7,7 @@ const {
   buildValidationProbeTimingProfile,
   getExtendedNvidiaEndpointValidationProbeCurlArgs,
   getKimiK26ValidationProbeCurlArgs,
+  getProbeProcessTimeoutMs,
   getValidationProbeCurlArgs,
   getStreamingEventProbeCurlArgs,
   STREAMING_EVENT_PROBE_MAX_SECONDS,
@@ -129,6 +130,15 @@ describe("validation probe curl timing helpers", () => {
       "--max-time",
       "300",
     ]);
+  });
+
+  it("caps an excessive finite validation override and its process watchdog", () => {
+    vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", "1e308");
+    const args = getValidationProbeCurlArgs({ isWsl: true });
+    expect({ args, processTimeoutMs: getProbeProcessTimeoutMs(args) }).toEqual({
+      args: ["--connect-timeout", "600", "--max-time", "600"],
+      processTimeoutMs: 605_000,
+    });
   });
 
   // Streaming probe carries its own short deadline so a stall can't hang onboard (#7792).
