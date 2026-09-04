@@ -114,7 +114,6 @@ with tempfile.TemporaryDirectory() as root:
     proc_root = os.path.join(root, "proc")
     system_root = os.path.join(root, "system")
     os.makedirs(os.path.join(proc_root, "net"))
-    os.makedirs(os.path.join(system_root, "run"))
     os.makedirs(os.path.join(system_root, "usr/local/lib/nemoclaw"))
     os.makedirs(os.path.join(system_root, "sandbox/.hermes"))
     os.makedirs(os.path.join(system_root, "etc/nemoclaw"))
@@ -672,12 +671,12 @@ with tempfile.TemporaryDirectory() as root:
     real_terminate = control._terminate_gateway
     lease_path = os.path.join(
         system_root,
-        "run/nemoclaw",
+        "etc/nemoclaw/gateway-control",
         control.EXPECTED_EXIT_MARKER_NAME,
     )
     lock_path = os.path.join(
         system_root,
-        "run/nemoclaw",
+        "etc/nemoclaw/gateway-control",
         control.EXPECTED_EXIT_LOCK_NAME,
     )
     lease_observations = []

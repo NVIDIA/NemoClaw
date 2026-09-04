@@ -2953,7 +2953,7 @@ launch_hermes_gateway_current_user() {
 
 HERMES_MANAGED_GATEWAY_EXIT_TIMES=()
 HERMES_MANAGED_GATEWAY_EXIT_COUNT=0
-readonly HERMES_MANAGED_EXPECTED_EXIT_DIR="/run/nemoclaw"
+readonly HERMES_MANAGED_EXPECTED_EXIT_DIR="/etc/nemoclaw/gateway-control"
 readonly HERMES_MANAGED_EXPECTED_EXIT_MARKER="managed-gateway-expected-exit"
 readonly HERMES_MANAGED_CONTROLLER_PATH="/usr/local/lib/nemoclaw/managed-gateway-control.py"
 

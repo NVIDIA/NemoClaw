@@ -207,13 +207,13 @@ with tempfile.TemporaryDirectory() as root:
     proc_root = os.path.join(root, "proc")
     system_root = os.path.join(root, "system")
     os.makedirs(proc_root)
-    os.makedirs(os.path.join(system_root, "run"))
+    os.makedirs(os.path.join(system_root, "etc/nemoclaw"), exist_ok=True)
     os.environ["NEMOCLAW_MANAGED_CONTROL_ALLOW_NONROOT_TEST"] = "1"
     os.environ["NEMOCLAW_MANAGED_CONTROL_PROC_ROOT"] = proc_root
     os.environ["NEMOCLAW_MANAGED_CONTROL_SYSTEM_ROOT"] = system_root
     marker_path = os.path.join(
         system_root,
-        "run/nemoclaw",
+        "etc/nemoclaw/gateway-control",
         control.EXPECTED_EXIT_MARKER_NAME,
     )
     marker_clock = [0.0]

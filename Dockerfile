@@ -1920,7 +1920,7 @@ RUN managed_runtime_assertion_failed() { \
     && test -f /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = '0:0:444' \
-    && install -d -o root -g root -m 0755 /run/nemoclaw
+    && install -d -o root -g root -m 0755 /run/nemoclaw /etc/nemoclaw
 
 # Copy startup script and shared sandbox initialisation library.
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \

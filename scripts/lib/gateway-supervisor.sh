@@ -240,7 +240,7 @@ EOF
   return 1
 }
 
-NEMOCLAW_MANAGED_EXPECTED_EXIT_DIR="/run/nemoclaw"
+NEMOCLAW_MANAGED_EXPECTED_EXIT_DIR="/etc/nemoclaw/gateway-control"
 NEMOCLAW_MANAGED_EXPECTED_EXIT_MARKER="managed-gateway-expected-exit"
 NEMOCLAW_MANAGED_CONTROLLER_PATH="/usr/local/lib/nemoclaw/managed-gateway-control.py"
 
