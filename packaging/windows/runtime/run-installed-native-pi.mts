@@ -547,6 +547,7 @@ async function main() {
   const isHermes = agentId === "hermes";
   const isDeepAgents = agentId === "langchain-deepagents-code";
   const agentLabel = isHermes ? "Hermes" : isDeepAgents ? "Deep Agents Code" : "Pi";
+  const sandboxPrefix = isHermes ? "nc-h" : isDeepAgents ? "nc-d" : "nc-pi";
   const agentVersion = isHermes ? "0.19.0" : isDeepAgents ? "0.1.55" : "0.84.1";
   const turnProofs = isHermes
     ? HERMES_TURN_PROOFS
@@ -707,7 +708,7 @@ async function main() {
   if (isHermes) agentEnvironment.NEMOCLAW_HERMES_MODEL_PORT = String(modelPort);
   else if (isDeepAgents) agentEnvironment.NEMOCLAW_DEEP_AGENTS_MODEL_PORT = String(modelPort);
   else agentEnvironment.NEMOCLAW_PI_MODEL_PORT = String(modelPort);
-  const sandboxName = `nc-${agentId}-${runId}`;
+  const sandboxName = `${sandboxPrefix}-${runId}`;
   const gatewayName = `nemoclaw-${agentId}-${runId}`;
   const gatewayLogPath = path.join(runRoot, "openshell-gateway.log");
   const gatewayErrorPath = path.join(runRoot, "openshell-gateway.err.log");

@@ -558,9 +558,21 @@ jobs:
           }
           if ($setupExitCode -eq 0) {
             $installRoot = Join-Path $env:ProgramFiles 'NVIDIA\NemoClaw'
-            $installedQualification = Join-Path $installRoot 'qualification\run-installed-native-web-ui.mts'
-            $candidateQualification = Join-Path $env:GITHUB_WORKSPACE 'candidate\packaging\windows\runtime\run-installed-native-web-ui.mts'
-            Copy-Item -LiteralPath $candidateQualification -Destination $installedQualification -Force
+            $installedQualificationRoot = Join-Path $installRoot 'qualification'
+            $candidateQualificationRoot = Join-Path $env:GITHUB_WORKSPACE 'candidate\packaging\windows\runtime'
+            $candidateQualifications = @(Get-ChildItem `
+              -LiteralPath $candidateQualificationRoot `
+              -Filter 'run-installed-native-*.mts' `
+              -File)
+            if ($candidateQualifications.Count -ne 5) {
+              throw 'The candidate native runtime qualification set is incomplete.'
+            }
+            foreach ($candidateQualification in $candidateQualifications) {
+              Copy-Item `
+                -LiteralPath $candidateQualification.FullName `
+                -Destination (Join-Path $installedQualificationRoot $candidateQualification.Name) `
+                -Force
+            }
             $runtimeArtifacts = Join-Path $artifactRoot 'runtime'
             [IO.Directory]::CreateDirectory($runtimeArtifacts) | Out-Null
             $runtimeStdout = Join-Path $artifactRoot 'runtime-stdout.log'
