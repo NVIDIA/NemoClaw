@@ -1099,6 +1099,33 @@ describe("base-image publication evidence", () => {
     expect(sleeps).toEqual([1000, 500]);
   });
 
+  it("aborts an in-flight GitHub request at the caller's request budget", async () => {
+    let observedAbort = false;
+
+    await expect(
+      githubRequest("/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml", "token", {
+        attempts: 1,
+        budgetMs: 100,
+        timeoutMs: 5_000,
+        fetchImpl: async (_input, init) => {
+          const signal = required(init.signal ?? undefined, "request signal is required");
+          await new Promise<void>((_resolve, reject) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                observedAbort = true;
+                reject(signal.reason);
+              },
+              { once: true },
+            );
+          });
+          throw new Error("aborted request unexpectedly resumed");
+        },
+      }),
+    ).rejects.toThrow(/time budget/u);
+    expect(observedAbort).toBe(true);
+  }, 2_000);
+
   it("fails permanent and malformed GitHub responses without retrying (#7372)", async () => {
     let requests = 0;
     await expect(
