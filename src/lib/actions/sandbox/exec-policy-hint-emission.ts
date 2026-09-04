@@ -18,6 +18,7 @@ import {
   shouldProbePolicyDenial,
   shouldProbeScopeUpgrade,
 } from "./exec-policy-hint-rendering";
+import { buildOpenshellExecArgs } from "./exec-argv";
 import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 /** Number of recent log lines to scan for a denial event. */
@@ -99,14 +100,6 @@ function defaultProbeLogs(sandboxName: string, gatewayName?: string): string {
 }
 
 function defaultProbePendingDevices(sandboxName: string, gatewayName?: string): string {
-  if (!supportsBoundedOpenshellProcessTree()) {
-    throw new Error("pending-device probe requires bounded process-tree cleanup");
-  }
-  // Built inline rather than through buildOpenshellExecArgs so this optional
-  // probe does not create an emission -> exec import cycle. The runtime-env
-  // wrapper is imported directly from its own module for the same reason.
-  const argv = ["sandbox", "exec", "--name", sandboxName];
-  if (gatewayName) argv.push("-g", gatewayName);
   // Ask the question the way `nemoclaw <sandbox> exec` asks it. execSandbox
   // wraps every command in wrapExecCommandWithRuntimeEnv, which sources
   // /tmp/nemoclaw-proxy-env.sh so the in-sandbox OpenClaw CLI resolves the
@@ -117,10 +110,15 @@ function defaultProbePendingDevices(sandboxName: string, gatewayName?: string): 
   // list --json` returned the request (#10070). The wrapper unsets
   // OPENCLAW_GATEWAY_TOKEN after sourcing, so this probe gains routing
   // metadata and never the credential.
-  argv.push("--no-tty", "--", ...wrapExecCommandWithRuntimeEnv(PENDING_DEVICES_PROBE_COMMAND));
+  const argv = buildOpenshellExecArgs(
+    sandboxName,
+    wrapExecCommandWithRuntimeEnv(PENDING_DEVICES_PROBE_COMMAND),
+    { tty: false },
+    gatewayName,
+  );
   // This probe starts nested Bash and OpenClaw processes. The support check
-  // above keeps the optional hint silent where the adapter cannot guarantee
-  // that timeout cleanup reaches the complete process tree (#10238).
+  // at the call site keeps the optional hint silent where the adapter cannot
+  // guarantee timeout cleanup for the complete process tree (#10238).
   const result = captureOpenshell(argv, {
     ignoreError: true,
     includeStderr: false,

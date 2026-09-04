@@ -20,6 +20,7 @@ import {
   POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS,
   POLICY_HINT_TAIL_LINES,
 } from "./exec-policy-hint";
+import { buildOpenshellExecArgs } from "./exec";
 import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 const DENIAL_TIME_MS = 1783046573602;
@@ -126,7 +127,7 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
     vi.unstubAllEnvs();
   });
 
-  it("reads pending devices through one bounded read-only OpenShell exec", async () => {
+  it("uses the public exec request shape for the bounded pending-device probe", async () => {
     captureOpenshell.mockReturnValueOnce({
       output: JSON.stringify({ pending: [{ requestId: "req-1" }] }),
       status: 0,
@@ -145,22 +146,9 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
 
     expect(captureOpenshell).toHaveBeenCalledTimes(1);
     const argv = captureOpenshell.mock.calls[0]?.[0] as string[];
-    expect(argv.slice(0, 8)).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
-      "oc-fresh",
-      "-g",
-      "nemoclaw-8091",
-      "--no-tty",
-      "--",
-    ]);
-    // Full equality against the wrapper's real output, so a probe put back on
-    // bare argv, or one that drops the wrapper's "nemoclaw-runtime-env" $0
-    // sentinel or reorders its command, fails here regardless of what the
-    // wrapper itself later produces (#10070).
-    expect(argv.slice(8)).toEqual(
-      wrapExecCommandWithRuntimeEnv(["openclaw", "devices", "list", "--json"]),
+    const wrappedCommand = wrapExecCommandWithRuntimeEnv(["openclaw", "devices", "list", "--json"]);
+    expect(argv).toEqual(
+      buildOpenshellExecArgs("oc-fresh", wrappedCommand, { tty: false }, "nemoclaw-8091"),
     );
     // The probe enters the sandbox and starts the OpenClaw CLI, so it needs a
     // budget the host-side audit-log read ceiling does not give it. Under that
