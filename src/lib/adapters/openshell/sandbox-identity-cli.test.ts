@@ -66,7 +66,9 @@ describe("CLI OpenShell sandbox identity inspector", () => {
     });
 
     expect(result.ok).toBe(true);
-    const options = capture.mock.calls[0]?.[1];
+    const options = capture.mock.calls[0]?.[1] as
+      | { env?: Record<string, string>; replaceEnv?: boolean }
+      | undefined;
     expect(options).toMatchObject({
       replaceEnv: true,
       env: {

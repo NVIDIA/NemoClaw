@@ -46,7 +46,7 @@ export interface ExecUnavailableMcpRebuildPreparation {
   scrubbedAdapterEntries: McpBridgeEntry[];
   revalidateBeforeDelete: () => Promise<void>;
   assertDeleteEdgeUnchanged: () => void;
-  runtimeSelection: McpProviderInspectionRuntimeSelection;
+  runtimeSelection?: McpProviderInspectionRuntimeSelection;
 }
 
 function assertUniqueMcpOwnership(entries: readonly McpBridgeEntry[]): void {
@@ -257,6 +257,18 @@ export async function prepareMcpBridgesForExecUnavailableRebuild(
 ): Promise<ExecUnavailableMcpRebuildPreparation> {
   const { entries, gatewayName, agentName, adapter } = snapshotCompleteEntries(sandboxName);
   const expectedEntries = entries.map(cloneMcpBridgeEntry);
+  if (expectedEntries.length === 0) {
+    return {
+      entries: [],
+      detachedProviderEntries: [],
+      scrubbedAdapterEntries: [],
+      runtimeSelection,
+      revalidateBeforeDelete: async () =>
+        assertDeleteEdgeUnchanged(sandboxName, expectedEntries, gatewayName, agentName, adapter),
+      assertDeleteEdgeUnchanged: () =>
+        assertDeleteEdgeUnchanged(sandboxName, expectedEntries, gatewayName, agentName, adapter),
+    };
+  }
   const expectedValidation = await inspectReadOnlyRecoveryState(
     sandboxName,
     expectedEntries,

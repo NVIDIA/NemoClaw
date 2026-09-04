@@ -1557,10 +1557,15 @@ async function runSnapshotRestoreUnlocked(
     }
     if (repairsManagedDeepAgentsProjection) {
       try {
+        const currentTarget = registry.getSandbox(targetSandbox);
+        if (!currentTarget) {
+          throw new Error(`target '${targetSandbox}' is no longer registered`);
+        }
+        const runtimeSelection = getMcpProviderInspectionRuntimeSelection(currentTarget);
         restoreDeepAgentsManagedMcpProjection(
           targetSandbox,
           managedDeepAgentsEntries,
-          getMcpProviderInspectionRuntimeSelection(snapshotTarget),
+          runtimeSelection,
         );
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
