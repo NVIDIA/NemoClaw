@@ -459,9 +459,7 @@ export function resolveSandboxBaseImage(
   }
   const resolutionKey = createSandboxBaseImageResolutionKey(options);
 
-  const canReuseResolutionHint =
-    allowLocalFallback || options.resolutionHint?.source !== "local";
-  if (!options.forceRefresh && canReuseResolutionHint) {
+  if (!options.forceRefresh) {
     const reused = reuseSandboxBaseImageResolutionHint(options, resolutionKey);
     if (reused) return reused;
   } else if (options.forceRefresh) {

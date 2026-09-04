@@ -114,7 +114,7 @@ describe("ensureRebuildAgentBaseImage", () => {
     };
   }
 
-  it("forwards a recorded hint for cache validation without forcing a legacy rebuild (#4680)", () => {
+  it("validates a recorded hint without allowing a new Hermes fallback (#11072)", () => {
     const { agent, ensureAgentBaseImage } = setup();
     const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
 
@@ -124,6 +124,7 @@ describe("ensureRebuildAgentBaseImage", () => {
       overrideEnvVar,
     });
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(agent, {
+      allowLocalFallback: false,
       forceBaseImageRebuild: false,
       resolutionHint: hint,
     });
@@ -144,26 +145,39 @@ describe("ensureRebuildAgentBaseImage", () => {
     });
   });
 
-  it("carries the current local-build proof into the recreate preflight", () => {
-    const { ensureAgentBaseImage } = setup();
+  it("carries a validated local hint into the recreate preflight (#11072)", () => {
+    const { ensureAgentBaseImage, bindLocalAgentBaseImageHandoffToResolution } = setup();
     const trustedLocalOverride = {
       ref: `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`,
       provenance: `${"b".repeat(64)}.${"c".repeat(64)}`,
     };
+    const localHint = {
+      ...hint,
+      ref: trustedLocalOverride.ref,
+      source: "local" as const,
+    };
     ensureAgentBaseImage.mockReturnValue({
       imageTag: trustedLocalOverride.ref,
-      built: true,
-      trustedLocalOverride,
+      built: false,
+      resolutionMetadata: localHint,
+      reusedResolutionHint: localHint,
     });
+    bindLocalAgentBaseImageHandoffToResolution.mockReturnValue(trustedLocalOverride);
     const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
 
     expect(
-      ensureRebuildAgentBaseImage("hermes", makeBail(), { resolutionHint: hint }),
+      ensureRebuildAgentBaseImage("hermes", makeBail(), { resolutionHint: localHint }),
     ).toEqual({
       ok: true,
       imageRef: trustedLocalOverride.ref,
       overrideEnvVar,
+      resolutionMetadata: localHint,
       trustedLocalOverride,
+    });
+    expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.anything(), {
+      allowLocalFallback: false,
+      forceBaseImageRebuild: false,
+      resolutionHint: localHint,
     });
   });
 
@@ -187,7 +201,7 @@ describe("ensureRebuildAgentBaseImage", () => {
     expect(output).toContain("Sandbox is untouched");
   });
 
-  it("forwards force refresh with the sandbox-specific hint (#4680)", () => {
+  it("refreshes Hermes without allowing a local fallback (#11072)", () => {
     const { agent, ensureAgentBaseImage } = setup();
     const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
 
@@ -202,6 +216,7 @@ describe("ensureRebuildAgentBaseImage", () => {
       overrideEnvVar,
     });
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(agent, {
+      allowLocalFallback: false,
       forceBaseImageRebuild: false,
       resolutionHint: hint,
       forceBaseImageRefresh: true,

@@ -294,8 +294,7 @@ export function ensureRebuildAgentBaseImage(
   const overrideEnvVar = getAgentSandboxBaseImageEnvVar(agentDef.name);
   const explicitOverride = process.env[overrideEnvVar]?.trim();
   const hasExplicitOverride = Boolean(explicitOverride);
-  const requirePinnedHermesBase =
-    agentDef.name === "hermes" && !hasExplicitOverride && !options.resolutionHint;
+  const restrictHermesRebuildBase = agentDef.name === "hermes" && !hasExplicitOverride;
   try {
     // Prove that a retained local alias names the tracked official image before
     // the resolver sees it, and lease that proof only for this resolution call.
@@ -314,8 +313,8 @@ export function ensureRebuildAgentBaseImage(
     try {
       result = ensureAgentBaseImage(agentDef, {
         forceBaseImageRebuild:
-          !requirePinnedHermesBase && !hasExplicitOverride && !options.resolutionHint,
-        ...(requirePinnedHermesBase ? { allowLocalFallback: false } : {}),
+          !restrictHermesRebuildBase && !hasExplicitOverride && !options.resolutionHint,
+        ...(restrictHermesRebuildBase ? { allowLocalFallback: false } : {}),
         ...(options.resolutionHint !== undefined ? { resolutionHint: options.resolutionHint } : {}),
         ...(options.forceBaseImageRefresh !== undefined
           ? { forceBaseImageRefresh: options.forceBaseImageRefresh }
@@ -324,8 +323,12 @@ export function ensureRebuildAgentBaseImage(
     } finally {
       restoreExplicitOverrideTrust();
     }
+    const reusedLocalResolution =
+      result.resolutionMetadata?.source === "local" &&
+      result.reusedResolutionHint === result.resolutionMetadata;
     if (
-      requirePinnedHermesBase &&
+      restrictHermesRebuildBase &&
+      !reusedLocalResolution &&
       (!result.imageTag || !isImmutableRemoteBaseImageRef(result.imageTag))
     ) {
       throw new Error("Hermes rebuild requires the release-pinned immutable base image");
@@ -346,9 +349,6 @@ export function ensureRebuildAgentBaseImage(
         disposeImageRef: createTemporaryBaseImageHandoffDisposer(imageRef),
       };
     }
-    const reusedLocalResolution =
-      result.resolutionMetadata?.source === "local" &&
-      result.reusedResolutionHint === result.resolutionMetadata;
     if (
       !hasExplicitOverride &&
       result.imageTag &&
