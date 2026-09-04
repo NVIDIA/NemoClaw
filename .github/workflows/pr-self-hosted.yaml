@@ -68,7 +68,7 @@ jobs:
                   or .filename == ".github/workflows/pr-self-hosted.yaml"
                   or .filename == "scripts/install.sh"
                   or .filename == "scripts/checks/llama-cpp-openclaw-agent-qualification.mts"
-                  or .filename == "scripts/checks/run-llama-cpp-qwen-gpu-qualification.mts"
+                  or .filename == "scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts"
                   or .filename == "scripts/checks/run-managed-image-openshell-e2e.ts"
                   or .filename == "test/e2e/live/llama-cpp-generic-gpu.test.ts"
                   or .filename == "test/e2e/live/gpu-e2e-helpers.ts"
@@ -252,7 +252,7 @@ jobs:
           OPENSHELL_BIN="$(command -v openshell)"
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx tsx scripts/checks/run-llama-cpp-qwen-gpu-qualification.mts
+          npx tsx scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts
 
       - name: Upload N1x Qwen llama.cpp RTX qualification artifacts
         if: always()

@@ -5,7 +5,6 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import {
   cleanupManagedLlamaCppRuntimeForSandbox,
@@ -27,7 +26,6 @@ import {
   runLlamaCppOpenClawAgentQualification,
   type LlamaCppOpenClawAgentQualificationPlan,
 } from "./llama-cpp-openclaw-agent-qualification.mts";
-import { validateStartupLog } from "./run-llama-cpp-dgx-spark-qualification.mts";
 import { runManagedImageOpenShellE2e } from "./run-managed-image-openshell-e2e.ts";
 
 const TARGET_ID = "llama-cpp-qwen-gpu";
@@ -228,6 +226,38 @@ function responseText(source: string): string {
   return String(body.choices?.[0]?.message?.content ?? body.choices?.[0]?.text ?? "");
 }
 
+export function validateQwenGpuStartupLog(log: string): {
+  readonly offloadedLayers: number;
+  readonly totalLayers: number;
+} {
+  if (Buffer.byteLength(log) < 1 || Buffer.byteLength(log) > MAX_COMMAND_BYTES) {
+    throw new Error("Qwen llama.cpp startup evidence is missing or exceeds its bound");
+  }
+  if (
+    /no usable GPU|gpu-layers[^\n]*ignored|compiled without[^\n]*GPU|CPU fallback|fallback to CPU|falling back to CPU/iu.test(
+      log,
+    )
+  ) {
+    throw new Error("Qwen llama.cpp startup reports a rejected GPU or CPU fallback");
+  }
+  const matches = [
+    ...log.matchAll(/offloaded\s+([1-9][0-9]*)\/([1-9][0-9]*)\s+layers?\s+to\s+GPU/giu),
+  ];
+  if (matches.length < 1) throw new Error("Qwen llama.cpp startup is missing GPU offload evidence");
+  const counts = matches.map((match) => ({
+    offloadedLayers: Number.parseInt(match[1] ?? "0", 10),
+    totalLayers: Number.parseInt(match[2] ?? "0", 10),
+  }));
+  if (counts.some(({ offloadedLayers, totalLayers }) => offloadedLayers !== totalLayers)) {
+    throw new Error("Qwen llama.cpp startup reports partial GPU offload");
+  }
+  const uniqueCounts = new Set(counts.map(({ offloadedLayers }) => offloadedLayers));
+  if (uniqueCounts.size !== 1) {
+    throw new Error("Qwen llama.cpp startup reports inconsistent GPU offload counts");
+  }
+  return counts[0] as { offloadedLayers: number; totalLayers: number };
+}
+
 function requireCleanup(
   result: LocalModelRuntimeCleanupResult,
 ): Extract<LocalModelRuntimeCleanupResult, { ok: true }> {
@@ -329,7 +359,7 @@ export async function runQwenGpuQualification(): Promise<void> {
     if (imagePlatform[0]?.Architecture !== "amd64" || imagePlatform[0]?.Os !== "linux") {
       throw new Error("managed llama.cpp did not select the Linux amd64 runtime image");
     }
-    const offload = validateStartupLog(
+    const offload = validateQwenGpuStartupLog(
       requireCommand("docker", ["logs", "--tail", "20000", MANAGED_LLAMA_CPP_CONTAINER_NAME]),
     );
     const unauthorized = requireCommand("curl", [
@@ -489,7 +519,7 @@ export async function runQwenGpuQualification(): Promise<void> {
   });
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (typeof require !== "undefined" && typeof module !== "undefined" && require.main === module) {
   void runQwenGpuQualification().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

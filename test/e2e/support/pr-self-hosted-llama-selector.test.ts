@@ -109,7 +109,7 @@ describe("generic NVIDIA GPU PR selection", () => {
     "src/lib/onboard/overlayfs-auto-fix.ts",
     "src/lib/onboard/preflight.ts",
     "scripts/checks/llama-cpp-openclaw-agent-qualification.mts",
-    "scripts/checks/run-llama-cpp-qwen-gpu-qualification.mts",
+    "scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts",
   ])(
     "selects the generic NVIDIA GPU E2E job when %s can change installer readiness",
     (changedFile) => {
@@ -204,6 +204,6 @@ describe("generic NVIDIA GPU PR selection", () => {
       value.jobs["llama-cpp-qwen-gpu"]?.steps?.find(
         (step) => step.name === "Run N1x Qwen llama.cpp recipe on RTX GPU",
       )?.run,
-    ).toContain("npx tsx scripts/checks/run-llama-cpp-qwen-gpu-qualification.mts");
+    ).toContain("npx tsx scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts");
   });
 });
