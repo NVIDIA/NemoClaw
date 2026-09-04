@@ -149,6 +149,7 @@ export {
 
 const OLLAMA_REBINDING_PROBE_HOST = "rebinding.invalid";
 const WINDOWS_HOST_OLLAMA_PROBE_TIMEOUT_MS = 5_000;
+const WINDOWS_HOST_OLLAMA_DOCKER_PROBE_TIMEOUT_MS = 10_000;
 
 /** Build a probe that must be rejected when Ollama validates the HTTP Host header. */
 export function getWindowsHostOllamaHostValidationCurlArgs(): string[] {
@@ -281,6 +282,7 @@ export function probeWindowsHostOllamaRouteProtection(
     ],
     {
       ignoreError: true,
+      timeout: WINDOWS_HOST_OLLAMA_DOCKER_PROBE_TIMEOUT_MS,
       ...(options.env === undefined ? {} : { env: options.env }),
     },
   );
@@ -290,6 +292,7 @@ export function probeWindowsHostOllamaRouteProtection(
     isOllamaHostValidationEnabled(
       capture(["curl", ...getWindowsHostOllamaHostValidationCurlArgs()], {
         ignoreError: true,
+        timeout: WINDOWS_HOST_OLLAMA_DOCKER_PROBE_TIMEOUT_MS,
         ...(options.env === undefined ? {} : { env: options.env }),
       }),
     );

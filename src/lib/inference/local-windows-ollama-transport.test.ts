@@ -113,6 +113,10 @@ describe("Windows-host Ollama transport", () => {
     });
     expect(capture).toHaveBeenCalledTimes(2);
     expect(capture.mock.calls.every(([command]) => command[0] === "docker")).toBe(true);
+    expect(capture.mock.calls.map(([, options]) => options)).toEqual([
+      expect.objectContaining({ ignoreError: true, timeout: 10_000 }),
+      expect.objectContaining({ ignoreError: true, timeout: 10_000 }),
+    ]);
   });
 
   it("rejects Host validation observed outside Docker Desktop", () => {
