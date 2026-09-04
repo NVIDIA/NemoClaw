@@ -57,12 +57,6 @@ type ConsolidatedAuditFixture = Readonly<{
   result: ReturnType<typeof spawnSync>;
 }>;
 
-function symlinkedAuditEntrypoint(canonicalEntrypoint: string, trustedRoot: string): string {
-  const symlink = path.join(trustedRoot, "reviewed-npm-audit-entry.mts");
-  fs.symlinkSync(canonicalEntrypoint, symlink);
-  return symlink;
-}
-
 function runConsolidatedAuditFixture(
   mutateTarget: (targetRoot: string) => void,
   auditOutput = JSON.stringify({
@@ -70,9 +64,6 @@ function runConsolidatedAuditFixture(
     metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 } },
   }),
   auditStatus = 0,
-  selectEntrypoint: (canonicalEntrypoint: string, trustedRoot: string) => string = (
-    canonicalEntrypoint,
-  ) => canonicalEntrypoint,
 ): ConsolidatedAuditFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-audit-entry-"));
   const trustedRoot = path.join(root, "trusted");
@@ -207,24 +198,29 @@ process.exit(0);
 `,
       { mode: 0o755 },
     );
-    const canonicalEntrypoint = path.join(trustedRoot, "scripts/audit-reviewed-npm-graph.mts");
-    const auditEntrypoint = selectEntrypoint(canonicalEntrypoint, trustedRoot);
-    const result = spawnSync(process.execPath, ["--experimental-strip-types", auditEntrypoint], {
-      cwd: trustedRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR: "artifacts/reviewed-npm-audit",
-        NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: targetRoot,
-        NEMOCLAW_TEST_AUDIT_OUTPUT: auditOutput,
-        NEMOCLAW_TEST_AUDIT_STATUS: String(auditStatus),
-        NEMOCLAW_TEST_NPM_CALLS: callsFile,
-        NEMOCLAW_TEST_REVIEWED_INTEGRITY: integrity,
-        NEMOCLAW_TEST_REVIEWED_TARBALL:
-          "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
-        PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        path.join(trustedRoot, "scripts/audit-reviewed-npm-graph.mts"),
+      ],
+      {
+        cwd: trustedRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR: "artifacts/reviewed-npm-audit",
+          NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: targetRoot,
+          NEMOCLAW_TEST_AUDIT_OUTPUT: auditOutput,
+          NEMOCLAW_TEST_AUDIT_STATUS: String(auditStatus),
+          NEMOCLAW_TEST_NPM_CALLS: callsFile,
+          NEMOCLAW_TEST_REVIEWED_INTEGRITY: integrity,
+          NEMOCLAW_TEST_REVIEWED_TARBALL:
+            "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
       },
-    });
+    );
     const provenanceFile = path.join(artifactDirectory, "source-graph.provenance.json");
     const receiptFile = path.join(artifactDirectory, "wechat-runtime.receipt.json");
     const rawReportFile = path.join(artifactDirectory, "wechat-runtime.raw.json");
@@ -318,19 +314,6 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
         calls.length > 0 &&
         calls.every((call) => call.includes("--registry=https://registry.yarnpkg.com")),
     );
-  });
-
-  it("runs the audit when Node receives a symlinked entrypoint", () => {
-    const fixture = runConsolidatedAuditFixture(
-      () => {},
-      undefined,
-      undefined,
-      symlinkedAuditEntrypoint,
-    );
-
-    expect(fixture.result.status, fixture.result.stderr.toString()).toBe(0);
-    expect(fixture.lockedReceipt).toBeDefined();
-    expect(fixture.npmCalls.some((call) => call.startsWith('["audit"'))).toBe(true);
   });
 
   it("rejects a target-controlled npm registry override", () => {

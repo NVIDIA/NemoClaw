@@ -26,12 +26,11 @@ export interface HostAddressResult {
 export function configuredRuntimeProviderHostAddress(
   environment: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
-  prepareRuntime: typeof prepareConfiguredGatewayHostRuntime = prepareConfiguredGatewayHostRuntime,
 ): string | null {
   if (!environment.NEMOCLAW_GATEWAY_RUNTIME || isPortableExperimentalProfile(environment)) {
     return null;
   }
-  return prepareRuntime({ environment, platform }).sandboxHostAddress;
+  return prepareConfiguredGatewayHostRuntime({ environment, platform }).sandboxHostAddress;
 }
 
 export function parseHostAddressProbe(
@@ -62,18 +61,11 @@ export async function discoverHostAddress(
   artifactName = "host-address-for-sandbox",
   environment: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
-  prepareRuntime: typeof prepareConfiguredGatewayHostRuntime = prepareConfiguredGatewayHostRuntime,
 ): Promise<HostAddressResult> {
-  const runtimeProviderAddress = configuredRuntimeProviderHostAddress(
-    environment,
-    platform,
-    prepareRuntime,
-  );
+  const runtimeProviderAddress = configuredRuntimeProviderHostAddress(environment, platform);
   if (runtimeProviderAddress !== null) {
     if (isIP(runtimeProviderAddress) !== 4) {
-      throw new Error(
-        `runtime provider returned invalid sandbox host address: ${runtimeProviderAddress}`,
-      );
+      throw new Error(`runtime provider returned invalid sandbox host address: ${runtimeProviderAddress}`);
     }
     return { source: "runtime-provider", address: runtimeProviderAddress, probe: null };
   }

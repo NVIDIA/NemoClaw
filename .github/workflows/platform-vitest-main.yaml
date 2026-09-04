@@ -17,7 +17,6 @@ on:
 
 permissions:
   contents: read
-  packages: read
 
 concurrency:
   group: platform-evidence-${{ github.ref }}
@@ -148,10 +147,16 @@ jobs:
           stat --version | head -n 1
           awk --version | head -n 1
 
-      - name: Install dependencies
+      - name: Install pinned OpenShell
         env:
-          NODE_AUTH_TOKEN: ${{ github.ref == 'refs/heads/main' && github.token || '' }}
-        run: bash .github/actions/ci-install-dependencies.sh
+          NEMOCLAW_NON_INTERACTIVE: "1"
+        run: env -u GH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          cd nemoclaw
+          npm ci --ignore-scripts
 
       - name: Build CLI and plugin
         run: |
@@ -161,12 +166,6 @@ jobs:
 
       - name: Run full Vitest suite on macOS
         run: npx vitest run --testTimeout 60000 --shard="${{ matrix.shard }}/4"
-
-      - name: Install pinned OpenShell
-        if: ${{ matrix.shard == 1 && github.ref == 'refs/heads/main' }}
-        env:
-          NEMOCLAW_NON_INTERACTIVE: "1"
-        run: env -u GH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - id: macos_docker
         name: Detect Docker availability for macOS E2E
@@ -311,20 +310,18 @@ jobs:
 
       - name: Install dependencies and build in WSL
         shell: powershell
-        env:
-          NODE_AUTH_TOKEN: ${{ github.ref == 'refs/heads/main' && github.token || '' }}
         run: |
           . "$env:TRUSTED_WSL_HELPER"
           $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER
           $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
-          $env:WSLENV = (($env:WSLENV, 'NODE_AUTH_TOKEN', 'GITHUB_EVENT_NAME', 'GITHUB_REF') -join ':').Trim(':')
           $script = @"
           set -euo pipefail
           id -un | grep -Fxq $testUser
           cd $workdir
-          bash .github/actions/ci-install-dependencies.sh
+          npm ci --ignore-scripts
           npm run build:cli
           cd nemoclaw
+          npm ci --ignore-scripts
           npm run build
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script

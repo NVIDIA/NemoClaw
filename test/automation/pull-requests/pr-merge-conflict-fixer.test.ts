@@ -405,7 +405,7 @@ describe("PR merge conflict fixer", () => {
     const patchPath = path.join(temporaryDirectory(), "resolution.patch");
     const finalTree = createResolutionPatch(fixture, patchPath);
     const commitSha = "c".repeat(40);
-    const publishRef = vi.fn();
+    const publishRef = vi.fn(async () => undefined);
     const requests: Array<{ body: unknown; method: string; path: string }> = [];
     const responseHandlers: Record<string, (body: unknown) => unknown> = {
       [`GET /repos/NVIDIA/NemoClaw/pulls/${entry.pr_number}`]: () => ({
@@ -521,6 +521,11 @@ describe("PR merge conflict fixer", () => {
     expect(() =>
       pushRefWithLease({
         commitSha,
+        environment: {
+          ...process.env,
+          GIT_CONFIG_GLOBAL: "/dev/null",
+          GIT_CONFIG_SYSTEM: "/dev/null",
+        },
         expectedHeadSha: fixture.headSha,
         headRef: "pull-request",
         remoteUrl: remote,
@@ -530,15 +535,23 @@ describe("PR merge conflict fixer", () => {
     expect(git(remote, ["rev-parse", "refs/heads/pull-request"])).toBe(movedHead);
   });
 
-  it("fetches and publishes the verified GitHub commit through an authenticated lease (#7542)", () => {
+  it("stages, publishes, and removes the verified GitHub commit through authenticated leases (#7542)", async () => {
     const commitSha = "c".repeat(40);
     const expectedHeadSha = "b".repeat(40);
     const repository = "/publisher/repository";
     const remoteUrl = "https://github.com/NVIDIA/NemoClaw.git";
+    const stagingRef = `refs/heads/nemoclaw-conflict-fixer-stage/123-1-${commitSha}`;
     const runGit = mockGitRunner();
+    const request = vi.fn(async (_method: "GET" | "POST", _path: string, body?: unknown) => {
+      const ref = (body as { ref: string; sha: string }).ref;
+      const sha = (body as { ref: string; sha: string }).sha;
+      return { object: { sha }, ref };
+    });
 
-    githubRefPublisher(
+    await githubRefPublisher(
       "credential-sentinel",
+      request,
+      "123-1",
       runGit,
     )({
       commitSha,
@@ -548,8 +561,14 @@ describe("PR merge conflict fixer", () => {
       repositoryName: "NVIDIA/NemoClaw",
     });
 
+    expect(request).toHaveBeenCalledWith("POST", "/repos/NVIDIA/NemoClaw/git/refs", {
+      ref: stagingRef,
+      sha: commitSha,
+    });
+
     expect(runGit.mock.calls.map((call) => call[1])).toEqual([
-      ["fetch", "--no-tags", "--no-write-fetch-head", remoteUrl, commitSha],
+      ["check-ref-format", stagingRef],
+      ["fetch", "--no-tags", "--no-write-fetch-head", remoteUrl, stagingRef],
       ["cat-file", "-e", `${commitSha}^{commit}`],
       ["check-ref-format", "refs/heads/feature"],
       [
@@ -559,19 +578,33 @@ describe("PR merge conflict fixer", () => {
         remoteUrl,
         `${commitSha}:refs/heads/feature`,
       ],
+      [
+        "push",
+        "--porcelain",
+        `--force-with-lease=${stagingRef}:${commitSha}`,
+        remoteUrl,
+        `:${stagingRef}`,
+      ],
     ]);
     const fetchEnvironment = required<NodeJS.ProcessEnv>(
-      runGit.mock.calls[0]?.[2],
+      runGit.mock.calls[1]?.[2],
       "missing fetch environment",
     );
     const pushEnvironment = required<NodeJS.ProcessEnv>(
-      runGit.mock.calls[3]?.[2],
+      runGit.mock.calls[4]?.[2],
       "missing push environment",
     );
+    const cleanupEnvironment = required<NodeJS.ProcessEnv>(
+      runGit.mock.calls[5]?.[2],
+      "missing cleanup environment",
+    );
     expect(fetchEnvironment).toBe(pushEnvironment);
+    expect(fetchEnvironment).toBe(cleanupEnvironment);
     expect(fetchEnvironment).toMatchObject({
       GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+      GIT_CONFIG_NOSYSTEM: "1",
       GIT_TERMINAL_PROMPT: "0",
     });
     expect(
@@ -589,18 +622,23 @@ describe("PR merge conflict fixer", () => {
 
   it.each([
     {
-      createRunner: () => mockGitRunner().mockImplementationOnce(failGitCommand),
-      expected: /could not fetch/u,
-      expectedCalls: 1,
+      createRunner: () =>
+        mockGitRunner()
+          .mockImplementationOnce(() => "")
+          .mockImplementationOnce(failGitCommand)
+          .mockImplementationOnce(() => ""),
+      expected: /could not fetch.*simulated Git failure/u,
+      expectedCalls: 3,
       label: "fetch",
     },
     {
       createRunner: () =>
         mockGitRunner()
           .mockImplementationOnce(() => "")
+          .mockImplementationOnce(() => "")
           .mockImplementationOnce(failGitCommand),
-      expected: /could not fetch/u,
-      expectedCalls: 2,
+      expected: /could not fetch.*simulated Git failure/u,
+      expectedCalls: 4,
       label: "commit verification",
     },
     {
@@ -609,18 +647,23 @@ describe("PR merge conflict fixer", () => {
           .mockImplementationOnce(() => "")
           .mockImplementationOnce(() => "")
           .mockImplementationOnce(() => "")
+          .mockImplementationOnce(() => "")
           .mockImplementationOnce(failGitCommand),
-      expected: /atomic PR branch update/u,
-      expectedCalls: 4,
+      expected: /atomic PR branch update.*simulated Git failure/u,
+      expectedCalls: 6,
       label: "leased push",
     },
   ])(
-    "stops publication when the production $label fails (#7542)",
-    ({ createRunner, expected, expectedCalls }) => {
+    "removes the temporary ref when production $label fails (#7542)",
+    async ({ createRunner, expected, expectedCalls }) => {
       const runGit = createRunner();
-      const publish = githubRefPublisher("credential-sentinel", runGit);
+      const request = vi.fn(async (_method: "GET" | "POST", _path: string, body?: unknown) => {
+        const { ref, sha } = body as { ref: string; sha: string };
+        return { object: { sha }, ref };
+      });
+      const publish = githubRefPublisher("credential-sentinel", request, "123-1", runGit);
 
-      expect(() =>
+      await expect(
         publish({
           commitSha: "c".repeat(40),
           expectedHeadSha: "b".repeat(40),
@@ -628,10 +671,121 @@ describe("PR merge conflict fixer", () => {
           repository: "/publisher/repository",
           repositoryName: "NVIDIA/NemoClaw",
         }),
-      ).toThrow(expected);
+      ).rejects.toThrow(expected);
       expect(runGit).toHaveBeenCalledTimes(expectedCalls);
+      expect(runGit.mock.calls.at(-1)?.[1]?.at(-1)).toMatch(/^:refs\/heads\/nemoclaw/u);
     },
   );
+
+  it("redacts credentials from Git publication failures (#7542)", async () => {
+    const token = "credential-sentinel";
+    const encodedCredential = Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
+    const gitError = Object.assign(new Error("Git command failed"), {
+      status: 128,
+      stderr: Buffer.from(
+        `fatal: AUTHORIZATION: basic ${encodedCredential}\nremote: x-access-token:${token}\n`,
+      ),
+    });
+    const runGit = mockGitRunner()
+      .mockImplementationOnce(() => "")
+      .mockImplementationOnce(() => {
+        throw gitError;
+      })
+      .mockImplementationOnce(() => "");
+    const request = vi.fn(async (_method: "GET" | "POST", _path: string, body?: unknown) => {
+      const { ref, sha } = body as { ref: string; sha: string };
+      return { object: { sha }, ref };
+    });
+
+    let failure: unknown;
+    try {
+      await githubRefPublisher(
+        token,
+        request,
+        "123-1",
+        runGit,
+      )({
+        commitSha: "c".repeat(40),
+        expectedHeadSha: "b".repeat(40),
+        headRef: "feature",
+        repository: "/publisher/repository",
+        repositoryName: "NVIDIA/NemoClaw",
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    const message = required(
+      failure instanceof Error ? failure : undefined,
+      "expected publication failure",
+    ).toString();
+    expect(message).toContain("authorization: [REDACTED]");
+    expect(message).toContain("x-access-token:[REDACTED]");
+    expect(message).not.toContain(token);
+    expect(message).not.toContain(encodedCredential);
+  });
+
+  it("continues when Git confirms an ambiguously created temporary ref (#7542)", async () => {
+    const commitSha = "c".repeat(40);
+    const stagingRef = `refs/heads/nemoclaw-conflict-fixer-stage/123-1-${commitSha}`;
+    const runGit = mockGitRunner()
+      .mockImplementationOnce(() => "")
+      .mockImplementationOnce(() => `${commitSha}\t${stagingRef}\n`);
+    const request = vi.fn(async () => {
+      throw new Error("simulated response loss");
+    });
+
+    await expect(
+      githubRefPublisher(
+        "credential-sentinel",
+        request,
+        "123-1",
+        runGit,
+      )({
+        commitSha,
+        expectedHeadSha: "b".repeat(40),
+        headRef: "feature",
+        repository: "/publisher/repository",
+        repositoryName: "NVIDIA/NemoClaw",
+      }),
+    ).resolves.toBeUndefined();
+    expect(runGit.mock.calls[1]?.[1]).toEqual([
+      "ls-remote",
+      "--refs",
+      "https://github.com/NVIDIA/NemoClaw.git",
+      stagingRef,
+    ]);
+    expect(runGit).toHaveBeenCalledTimes(7);
+  });
+
+  it("reports a published branch when temporary-ref cleanup fails (#7542)", async () => {
+    const runGit = mockGitRunner()
+      .mockImplementationOnce(() => "")
+      .mockImplementationOnce(() => "")
+      .mockImplementationOnce(() => "")
+      .mockImplementationOnce(() => "")
+      .mockImplementationOnce(() => "")
+      .mockImplementationOnce(failGitCommand);
+    const request = vi.fn(async (_method: "GET" | "POST", _path: string, body?: unknown) => {
+      const { ref, sha } = body as { ref: string; sha: string };
+      return { object: { sha }, ref };
+    });
+
+    await expect(
+      githubRefPublisher(
+        "credential-sentinel",
+        request,
+        "123-1",
+        runGit,
+      )({
+        commitSha: "c".repeat(40),
+        expectedHeadSha: "b".repeat(40),
+        headRef: "feature",
+        repository: "/publisher/repository",
+        repositoryName: "NVIDIA/NemoClaw",
+      }),
+    ).rejects.toThrow(/PR branch was published.*could not remove/u);
+  });
 
   it("configures approved inference through a loopback gateway (#7542)", async () => {
     const env = resolverEnvironment();

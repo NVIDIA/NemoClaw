@@ -16,7 +16,6 @@ import {
   writeDockerGatewayDebEnvOverride,
 } from "./docker-driver-gateway-env";
 import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
-import { prepareNativePodmanGatewayHostRuntime } from "./runtime-provider/podman-runtime-surfaces";
 
 function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
   return { HOME: home, XDG_CONFIG_HOME: xdgConfigHome } as NodeJS.ProcessEnv;
@@ -176,7 +175,7 @@ describe("buildDockerDriverGatewayEnv", () => {
     }
   });
 
-  it("builds native Podman gateway state without portable-only environment", () => {
+  it("selects the native Podman gateway without changing portable-only environment", () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
     vi.stubEnv("CONTAINERS_CONF", "/tmp/nemoclaw-portable/containers.conf");
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-podman-gateway-"));
@@ -184,10 +183,6 @@ describe("buildDockerDriverGatewayEnv", () => {
       const env = buildDockerDriverGatewayEnv({
         platform: "linux",
         stateDir,
-        gatewayHostRuntime: prepareNativePodmanGatewayHostRuntime({
-          environment: { OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock" },
-          platform: "linux",
-        }),
         getDockerSupervisorImage: () => "supervisor:test",
         resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
       });

@@ -336,15 +336,12 @@ describe("managed llama.cpp status", () => {
   it("reports invalid Docker authority construction as a conflict", () => {
     const runtimeEngine = engine(vi.fn());
     const homeDir = temporaryHome();
-    const binDir = path.join(homeDir, "bin");
-    fs.mkdirSync(binDir);
-    fs.writeFileSync(path.join(binDir, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     publishState(homeDir, runtimeEngine);
 
     expect(
       inspectManagedLlamaCppStatus("spark-agent", {
         homeDir,
-        env: { DOCKER_CONTEXT: " invalid-context", PATH: binDir },
+        env: { DOCKER_CONTEXT: " invalid-context" },
       }),
     ).toMatchObject({
       state: "conflict",

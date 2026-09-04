@@ -912,7 +912,7 @@ function renderTrace(input: {
   return { events, lifecycleEvents };
 }
 
-export async function processStartIdentity(pid: number): Promise<string | null> {
+async function processStartIdentity(pid: number): Promise<string | null> {
   try {
     const value = await readFile("/proc/" + pid + "/stat", "utf8");
     const fields = value

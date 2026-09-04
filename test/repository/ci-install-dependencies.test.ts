@@ -119,27 +119,6 @@ describe("shared CI dependency installer", () => {
     expect(existsSync(fixture.trace)).toBe(false);
   });
 
-  it("rejects a package credential for a non-main workflow dispatch before npm runs", () => {
-    const fixture = makeFixture();
-    const result = spawnSync("bash", [installer], {
-      cwd: fixture.root,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        GITHUB_EVENT_NAME: "workflow_dispatch",
-        GITHUB_REF: "refs/heads/feature",
-        NODE_AUTH_TOKEN: "credential-sentinel",
-        NPM_TRACE: fixture.trace,
-        PATH: fixture.path,
-      },
-    });
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toBe("Package credentials are allowed only for the trusted main ref.\n");
-    expect(result.stderr).not.toContain("credential-sentinel");
-    expect(existsSync(fixture.trace)).toBe(false);
-  });
-
   it.each(["npm-shrinkwrap.json", "nemoclaw/npm-shrinkwrap.json"])(
     "rejects candidate %s before npm runs",
     (relativePath) => {

@@ -140,6 +140,9 @@ messaging_build_applier=${JSON.stringify(MESSAGING_BUILD_APPLIER)}
 reviewed_archive_helper=scripts/lib/reviewed-npm-archive.mts
 remediation_helper=scripts/lib/openclaw-npm-remediation.mts
 
+boundary_marker_count="$(grep -hF 'Reviewed-archive invariants (#5896):' Dockerfile Dockerfile.base | wc -l | tr -d ' ')"
+test "$boundary_marker_count" -eq 4
+
 check_contains() {
   haystack="$1"
   needle="$2"

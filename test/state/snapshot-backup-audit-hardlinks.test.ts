@@ -230,7 +230,7 @@ describe("pre-backup audit record framing", () => {
     expect(backup.success).toBe(false);
   });
 
-  hardDereferenceTest("keeps accepting a hard-link entry with an empty link target", () => {
+  it("keeps accepting a hard-link entry with an empty link target", () => {
     const backup = backupWithAuditOutput(
       encodePreBackupAuditEntries([
         ["f", "/sandbox/.openclaw/workspace/lazy-packages/edge_tts/__init__.py", ""],
