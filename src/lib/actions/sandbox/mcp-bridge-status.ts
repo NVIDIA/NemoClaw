@@ -10,6 +10,7 @@ import {
   DEFAULT_OPENCLAW_CONFIG_DIR,
   openClawMcporterRoot,
 } from "./mcp-bridge-adapters";
+import { parseUnsafeDeepAgentsMcpProjectionResult } from "./mcp-bridge-adapter-status";
 import { isAgentMcpAdapter, McpBridgeError, type McpBridgeStatus } from "./mcp-bridge-contracts";
 import {
   type HermesMcpReconciliationResult,
@@ -18,12 +19,14 @@ import {
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { getPolicyPresence, getRegisteredGeneratedPolicy } from "./mcp-bridge-policy";
 import {
+  getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   observeMcpCredentialRevision,
   providerAttached,
   providerMatchesCredential,
   providerShapeDetail,
 } from "./mcp-bridge-provider";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type {
   McpAttachedCredentialRevision,
   McpCredentialRevisionObservation,
@@ -66,6 +69,8 @@ const UNSUPPORTED_STORED_URL_WARNING =
   "This persisted MCP URL no longer satisfies the authenticated endpoint boundary. Restart and rebuild fail closed for it; remove this server (use --force if cleanup is partial), then add a normal public HTTPS DNS endpoint.";
 const UNSUPPORTED_STORED_CREDENTIAL_WARNING =
   "This persisted MCP credential name no longer satisfies the host-only credential boundary. Restart and rebuild fail closed for it; remove this server, then add it again with a dedicated service credential name.";
+const UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL =
+  "the unsupported legacy credential may still be attached to fresh sandbox children";
 
 function storedUrlWarning(entry: McpBridgeEntry): string | undefined {
   try {
@@ -92,18 +97,21 @@ function getAdapterRegistration(
   sandboxName: string,
   adapter: AgentMcpAdapter | undefined,
   entry: McpBridgeEntry | undefined,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   hermesReconciliation?: HermesMcpReconciliationResult,
   credentialRevision?: McpAttachedCredentialRevision,
   credentialObservationDetail?: string,
 ): McpBridgeStatus["adapter"] {
   if (!entry) return { registered: null };
   if (!adapter) return { registered: null, detail: "MCP adapter is not declared" };
-  if (credentialObservationDetail) {
-    return {
-      registered: null,
-      detail: `Adapter inspection was skipped because ${credentialObservationDetail}.`,
-    };
-  }
+  const credentialInspectionFailure = credentialObservationDetail
+    ? {
+        registered: null,
+        detail: `Adapter inspection was skipped because ${credentialObservationDetail}.`,
+      }
+    : undefined;
+  if (credentialInspectionFailure && adapter !== "deepagents-config")
+    return credentialInspectionFailure;
   if (adapter === "hermes-config" && hermesReconciliation) {
     return hermesReconciliation.ok
       ? { registered: true }
@@ -120,8 +128,20 @@ function getAdapterRegistration(
       : adapter === "hermes-config"
         ? buildHermesMcpStatusCommand(entry, credentialRevision)
         : buildDeepAgentsMcpStatusCommand(entry, credentialRevision);
-  const result = executeSandboxCommand(sandboxName, command);
-  if (!result) return { registered: null, detail: "sandbox unreachable" };
+  const result = executeSandboxCommand(sandboxName, command, { runtimeSelection });
+  if (!result)
+    return credentialInspectionFailure ?? { registered: null, detail: "sandbox unreachable" };
+  const unsafeProjection =
+    adapter === "deepagents-config" ? parseUnsafeDeepAgentsMcpProjectionResult(result) : null;
+  if (unsafeProjection) {
+    const redactedPath = redactBridgeSecretsForDisplay(
+      unsafeProjection.path,
+      entry,
+      resolvePersistedCredentialEnvForRedaction(entry.env),
+    ).trim();
+    throw new McpBridgeError(`${unsafeProjection.messagePrefix}${redactedPath}`, 2);
+  }
+  if (credentialInspectionFailure) return credentialInspectionFailure;
   if (result.status === 0) {
     const output = result.stdout.trim();
     if (output === "registered") return { registered: true };
@@ -150,6 +170,8 @@ export interface McpBridgeStatusOptions {
    * layer restricts this live operation to an explicitly named server.
    */
   discoverTools?: boolean;
+  /** Reuse the operation-scoped OpenShell target when status closes another lifecycle action. */
+  runtimeSelection?: McpProviderInspectionRuntimeSelection;
 }
 
 function attachedCredentialRevision(
@@ -187,9 +209,6 @@ export async function statusMcpBridge(
   const sandbox = getSandboxOrThrow(sandboxName);
   const agent = getSandboxAgent(sandbox);
   const bridges = bridgeState(sandbox);
-  if (Object.keys(bridges).length > 0) {
-    await ensureSandboxGatewaySelected(sandboxName);
-  }
   const selectedEntry =
     server !== undefined && Object.hasOwn(bridges, server) ? bridges[server] : undefined;
   const entries: Array<[string, McpBridgeEntry | undefined]> =
@@ -229,12 +248,23 @@ export async function statusMcpBridge(
       },
     ];
   }
+  const hasHermesManagedIntent =
+    agent.name === "hermes" && (sandbox.mcp?.managedServerNames?.length ?? 0) > 0;
+  if (entries.length === 0 && !hasHermesManagedIntent) return [];
+  const providerRuntimeSelection =
+    options.runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
+  if (Object.keys(bridges).length > 0) {
+    await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
+  }
 
   const credentialObservations = new Map<string, McpCredentialRevisionObservation | null>();
   for (const [name, entry] of entries) {
     if (!entry || storedCredentialWarning(entry) !== undefined) continue;
     try {
-      credentialObservations.set(name, observeMcpCredentialRevision(sandboxName, entry));
+      credentialObservations.set(
+        name,
+        observeMcpCredentialRevision(sandboxName, entry, providerRuntimeSelection),
+      );
     } catch {
       credentialObservations.set(name, null);
     }
@@ -262,7 +292,10 @@ export async function statusMcpBridge(
             state: "error" as const,
             detail: hermesCredentialObservationDetail,
           }
-        : inspectHermesMcpRuntimeIntent(sandboxName, { credentialRevisions })
+        : inspectHermesMcpRuntimeIntent(sandboxName, {
+            credentialRevisions,
+            runtimeSelection: providerRuntimeSelection,
+          })
       : undefined;
   if (entries.length === 0 && hermesReconciliation && !hermesReconciliation.ok) {
     throw new McpBridgeError(
@@ -296,7 +329,7 @@ export async function statusMcpBridge(
   return entries.map(([name, entry]) => {
     const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
     const registeredPolicy = getRegisteredGeneratedPolicy(sandboxName, entry);
-    const policyPresence = getPolicyPresence(sandboxName, entry);
+    const policyPresence = getPolicyPresence(sandboxName, entry, providerRuntimeSelection);
     const hasCredentialBinding =
       !!entry &&
       Array.isArray(entry.env) &&
@@ -309,7 +342,7 @@ export async function statusMcpBridge(
         )
       : [];
     const expectedCredential = entry?.env.length === 1 ? entry.env[0] : undefined;
-    const providerInspection = inspectMcpProvider(entry?.providerName);
+    const providerInspection = inspectMcpProvider(entry?.providerName, providerRuntimeSelection);
     const providerCredentialReady = providerMatchesCredential(
       providerInspection,
       expectedCredential,
@@ -320,7 +353,11 @@ export async function statusMcpBridge(
       expectedCredential,
       entry?.providerId,
     );
-    const attached = providerAttached(sandboxName, entry?.providerName);
+    const attached = providerAttached(
+      sandboxName,
+      entry?.providerName,
+      providerRuntimeSelection,
+    );
     const warnings: string[] = [];
     let credentialWarning: string | undefined;
     if (entry) {
@@ -359,27 +396,21 @@ export async function statusMcpBridge(
       providerAttached: attached,
       providerCredentialReady,
     };
-    const adapterRegistration = unsafeCredentialMayBeAttached
-      ? {
-          registered: null,
-          detail:
-            "Adapter inspection was skipped because the unsupported legacy credential may still be attached to fresh sandbox children.",
-        }
-      : getAdapterRegistration(
-          sandboxName,
-          support.adapter,
-          entry,
-          hermesReconciliation,
-          credentialRevision,
-          observationDetail,
-        );
+    const adapterRegistration = getAdapterRegistration(
+      sandboxName,
+      support.adapter,
+      entry,
+      providerRuntimeSelection,
+      hermesReconciliation,
+      credentialRevision,
+      unsafeCredentialMayBeAttached ? UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL : observationDetail,
+    );
     const credentialResolution =
       options.probeCredentialResolution && entry
         ? unsafeCredentialMayBeAttached
           ? {
               ok: null,
-              detail:
-                "probe skipped: the unsupported legacy credential may still be attached to fresh sandbox children",
+              detail: `probe skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
             }
           : observationDetail
             ? { ok: null, detail: `probe skipped: ${observationDetail}` }
@@ -394,6 +425,7 @@ export async function statusMcpBridge(
                   entry,
                   support.adapter,
                   readiness,
+                  providerRuntimeSelection,
                   credentialRevision,
                 )
         : undefined;
@@ -422,10 +454,15 @@ export async function statusMcpBridge(
               count: 0,
               tools: [],
               truncated: false,
-              detail:
-                "tool discovery skipped: the unsupported legacy credential may still be attached to fresh sandbox children",
+              detail: `tool discovery skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
             }
-          : discoverMcpTools(sandboxName, entry, support.adapter, readiness)
+          : discoverMcpTools(
+              sandboxName,
+              entry,
+              support.adapter,
+              readiness,
+              providerRuntimeSelection,
+            )
         : undefined;
     return {
       server: name,

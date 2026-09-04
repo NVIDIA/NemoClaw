@@ -177,7 +177,6 @@ const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js")
 const trusted = require("./src/lib/security/trusted-private-endpoint.js");
 let admittedTarget;
 replace(policies, "getPresetContentGatewayState", () => "absent");
-replace(adapters, "assertAgentMcpConfigMutationAllowed", () => {});
 replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
 replace(adapters, "inspectAgentAdapterRegistration", () => ({ state: "absent" }));
 replace(adapters, "registerAgentAdapter", () => {});
@@ -210,7 +209,12 @@ replace(processRecovery, "executeSandboxExecCommand", () => ({
   stdout: "v1\\n",
   stderr: "",
 }));
-registry.registerSandbox({ name: "alpha", agent: "openclaw" });
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  gatewayName: "nemoclaw-9090",
+  gatewayPort: 9090,
+});
 require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
   server: "local",
   url: "https://mcp.corp.example/mcp",
