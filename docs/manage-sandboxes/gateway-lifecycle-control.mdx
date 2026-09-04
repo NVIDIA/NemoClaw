@@ -57,6 +57,19 @@ The authorization records host intent for that exit; it does not claim that the 
 After the in-sandbox processes are healthy, the host repairs only the host-side OpenShell forwards.
 </AgentOnly>
 
+<AgentOnly variant="hermes">
+## Use Only the Default Hermes Gateway
+
+NemoClaw manages one Hermes gateway in each sandbox and launches it with the default Hermes profile.
+The managed lifecycle does not include a gateway that uses `-p` or `--profile`.
+The Hermes wrapper rejects named-profile `gateway run`, `gateway start`, `gateway restart`, and `gateway install` commands because their processes would have no managed health checks, restart, crash quarantine, or teardown.
+
+Create another NemoClaw Hermes sandbox when you need another managed gateway.
+Do not bypass the wrapper and launch the upstream binary in the background.
+NemoClaw protects the default gateway log at `/tmp/gateway.log` with mode `0600`, but it does not create or protect logs for an unmanaged process.
+Do not redirect gateway output to a shared or world-readable file.
+</AgentOnly>
+
 ## Fail Closed on Unsupported Topologies
 
 The host selects the matching controller automatically for `recover` and `gateway restart`.

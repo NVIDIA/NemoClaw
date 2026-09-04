@@ -768,9 +768,38 @@ def _report_cli_adapter_error(exc: _CliAdapterError) -> int:
     return 2
 
 
+_GATEWAY_LAUNCH_COMMANDS = frozenset({"install", "restart", "run", "start"})
+
+
+def _requests_named_profile_gateway_launch(argv: list[str]) -> bool:
+    """Detect upstream profile forms before a gateway launch command."""
+    if len(argv) >= 4 and argv[0] in ("-p", "--profile"):
+        return (
+            bool(argv[1])
+            and argv[2] == "gateway"
+            and argv[3] in _GATEWAY_LAUNCH_COMMANDS
+        )
+    if len(argv) >= 3 and argv[0].startswith("--profile="):
+        return (
+            bool(argv[0].partition("=")[2])
+            and argv[1] == "gateway"
+            and argv[2] in _GATEWAY_LAUNCH_COMMANDS
+        )
+    return False
+
+
 def main(argv: list[str]) -> int:
     real_hermes = _resolve_real_hermes()
     guard_path = _resolve_guard()
+    if _requests_named_profile_gateway_launch(argv):
+        print(
+            "[COMPATIBILITY] Refusing named-profile Hermes gateway: NemoClaw "
+            "manages only the default-profile gateway. Use a separate NemoClaw "
+            "sandbox for another supervised gateway; named-profile gateway "
+            "processes have no managed restart, crash quarantine, or protected log.",
+            file=sys.stderr,
+        )
+        return 2
     if argv[:1] == ["dashboard"] and not _load_dashboard_api_server_key():
         return 1
     if argv[:2] == ["config", "show"]:
