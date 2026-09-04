@@ -16,7 +16,9 @@ import {
   parseAuditConfig,
   reviewedArchiveGraphManifest,
   selectReviewedLockSha256,
+  validateWechatRuntimeInputs,
   verifyMaterializedLockedGraph,
+  verifySignaturesWithReviewedRetry,
 } from "../../../scripts/audit-reviewed-npm-graph.mts";
 import { verifyInstalledNpmLock } from "../../../scripts/lib/reviewed-npm-archive.mts";
 import type { AuditPolicyResult } from "../../../scripts/lib/reviewed-npm-audit.mts";
@@ -41,6 +43,132 @@ type Workflow = {
 };
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
+
+type ConsolidatedAuditFixture = Readonly<{
+  npmCalls: readonly string[];
+  provenance?: Record<string, unknown>;
+  result: ReturnType<typeof spawnSync>;
+}>;
+
+function runConsolidatedAuditFixture(
+  mutateTarget: (targetRoot: string) => void,
+  auditOutput = JSON.stringify({
+    vulnerabilities: {},
+    metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 } },
+  }),
+  auditStatus = 0,
+): ConsolidatedAuditFixture {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-audit-entry-"));
+  const trustedRoot = path.join(root, "trusted");
+  const targetRoot = path.join(root, "target");
+  const bin = path.join(root, "bin");
+  const callsFile = path.join(root, "npm-calls");
+  const artifactDirectory = path.join(targetRoot, "artifacts", "reviewed-npm-audit");
+  try {
+    fs.mkdirSync(path.join(trustedRoot, "ci"), { recursive: true });
+    fs.mkdirSync(path.join(targetRoot, "agents", "openclaw", "wechat-runtime"), { recursive: true });
+    fs.mkdirSync(bin);
+    fs.cpSync(path.join(REPO_ROOT, "scripts"), path.join(trustedRoot, "scripts"), { recursive: true });
+    fs.writeFileSync(path.join(trustedRoot, "ci", "npm-audit-exceptions.json"), '{"schemaVersion":1,"exceptions":[]}\n');
+    const runtimeLock = fs.readFileSync(
+      path.join(REPO_ROOT, "agents/openclaw/wechat-runtime/package-lock.json"),
+    );
+    const integrity = "sha512-Zml4dHVyZQ==";
+    fs.writeFileSync(
+      path.join(trustedRoot, "ci", "reviewed-npm-audit.json"),
+      JSON.stringify({
+        archiveGraphId: "reviewed-archive-graph",
+        archivePackages: [],
+        archiveTarVersion: "7.5.21",
+        artifactDirectory: "artifacts/reviewed-npm-audit",
+        exceptionFile: "ci/npm-audit-exceptions.json",
+        lockedGraphs: [{
+          directory: "agents/openclaw/wechat-runtime",
+          id: "wechat-runtime",
+          inputValidation: "wechat-runtime",
+          installMode: "legacy-peer-deps",
+          integrity,
+          label: "WeChat fixture",
+          lockSha256: createHash("sha256").update(runtimeLock).digest("hex"),
+          packageSpec: "@tencent-weixin/openclaw-weixin@2.4.3",
+          severityThreshold: "low",
+          signatureAudit: "retry-download-failures",
+          tarballUrl: "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+        }],
+        nodeVersion: process.version.slice(1),
+        registryOrigin: "https://registry.npmjs.org/",
+        schemaVersion: 2,
+        severityThreshold: "high",
+        sourceNestedShrinkwrapPackages: [],
+        sourceRegistryPackage: {
+          artifactName: "fixture-1.0.0.tgz",
+          integrity,
+          label: "fixture",
+          packageSpec: "fixture@1.0.0",
+          tarballUrl: "https://registry.npmjs.org/fixture/-/fixture-1.0.0.tgz",
+        },
+        sourceRegistryPackagesWithoutIntegrity: [],
+      }),
+    );
+    const manifest = { name: "fixture", private: true, version: "1.0.0" };
+    fs.writeFileSync(path.join(targetRoot, "package.json"), JSON.stringify(manifest));
+    fs.writeFileSync(
+      path.join(targetRoot, "package-lock.json"),
+      JSON.stringify({ ...manifest, lockfileVersion: 3, packages: { "": manifest } }),
+    );
+    for (const filename of ["package.json", "package-lock.json"]) {
+      fs.copyFileSync(
+        path.join(REPO_ROOT, "agents/openclaw/wechat-runtime", filename),
+        path.join(targetRoot, "agents/openclaw/wechat-runtime", filename),
+      );
+    }
+    mutateTarget(targetRoot);
+    fs.writeFileSync(
+      path.join(bin, "npm"),
+      `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.appendFileSync(process.env.NEMOCLAW_TEST_NPM_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
+const args = process.argv.slice(2);
+if (args[0] === "--version") { console.log("10.9.4"); process.exit(0); }
+if (args[0] === "config") { console.log("https://registry.npmjs.org/"); process.exit(0); }
+if (args[0] === "audit" && args[1] === "signatures") process.exit(0);
+if (args[0] === "audit") { process.stdout.write(process.env.NEMOCLAW_TEST_AUDIT_OUTPUT); process.exit(Number(process.env.NEMOCLAW_TEST_AUDIT_STATUS)); }
+process.exit(0);
+`,
+      { mode: 0o755 },
+    );
+    const result = spawnSync(
+      process.execPath,
+      ["--experimental-strip-types", path.join(trustedRoot, "scripts/audit-reviewed-npm-graph.mts")],
+      {
+        cwd: trustedRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR: "artifacts/reviewed-npm-audit",
+          NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: targetRoot,
+          NEMOCLAW_TEST_AUDIT_OUTPUT: auditOutput,
+          NEMOCLAW_TEST_AUDIT_STATUS: String(auditStatus),
+          NEMOCLAW_TEST_NPM_CALLS: callsFile,
+          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
+      },
+    );
+    const provenanceFile = path.join(artifactDirectory, "source-graph.provenance.json");
+    return {
+      npmCalls: fs.existsSync(callsFile)
+        ? fs.readFileSync(callsFile, "utf-8").trim().split("\n")
+        : [],
+      provenance: fs.existsSync(provenanceFile)
+        ? (JSON.parse(fs.readFileSync(provenanceFile, "utf-8")) as Record<string, unknown>)
+        : undefined,
+      result,
+    };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 const DOMEXCEPTION_INTEGRITY =
   "sha512-tlc/FcYIv5i8RYsl2iDil4A0gOihaas1R5jPcIC4Zw3GhjKsVilw90aHcVlhZPTBLGBzd379S+VcnsDjd9ChiA==";
 
@@ -85,6 +213,124 @@ function writeProductionSourceGraph(
 }
 
 describe("trusted reviewed npm audit workflow (#5896)", () => {
+  it("rejects a target-controlled npm registry override", () => {
+    const fixture = runConsolidatedAuditFixture((targetRoot) => {
+      fs.writeFileSync(
+        path.join(targetRoot, "agents", "openclaw", "wechat-runtime", ".npmrc"),
+        "registry=https://registry.example.test/\n",
+      );
+    });
+
+    expect(fixture.result.status).not.toBe(0);
+    expect(fixture.result.stderr).toContain("refuses target-controlled npm config");
+    expect(fixture.npmCalls.some((call) => call.includes("--legacy-peer-deps"))).toBe(false);
+  });
+
+  it("rejects an off-origin transitive package archive before npm installs the WeChat graph", () => {
+    const fixture = runConsolidatedAuditFixture((targetRoot) => {
+      const lockFile = path.join(
+        targetRoot,
+        "agents",
+        "openclaw",
+        "wechat-runtime",
+        "package-lock.json",
+      );
+      const lock = JSON.parse(fs.readFileSync(lockFile, "utf-8"));
+      lock.packages["node_modules/qrcode-terminal"].resolved =
+        "https://registry.example.test/qrcode-terminal-0.12.0.tgz";
+      fs.writeFileSync(lockFile, `${JSON.stringify(lock, null, 2)}\n`);
+    });
+
+    expect(fixture.result.status).not.toBe(0);
+    expect(fixture.result.stderr).toContain(
+      "locked package must resolve from the reviewed npm registry origin: node_modules/qrcode-terminal",
+    );
+    expect(fixture.npmCalls.some((call) => call.includes("--legacy-peer-deps"))).toBe(false);
+  });
+
+  it.each([
+    ["malformed npm output", "{not-json", 1, /invalid-json/],
+    [
+      "parseable npm error JSON",
+      JSON.stringify({ error: { code: "ECONNREFUSED", summary: "registry unreachable" } }),
+      1,
+      /incomplete-report/,
+    ],
+    ["missing vulnerability metadata", JSON.stringify({}), 0, /incomplete-report/],
+    [
+      "an incomplete severity matrix",
+      JSON.stringify({
+        metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0 } },
+      }),
+      0,
+      /incomplete-report/,
+    ],
+  ])("records provenance and fails closed for %s", (_label, output, status, expectedFailure) => {
+    const fixture = runConsolidatedAuditFixture(() => {}, output, status);
+
+    expect(fixture.result.status).not.toBe(0);
+    expect(fixture.provenance).toMatchObject({
+      failure: expect.stringMatching(expectedFailure),
+      rawReportPath: "source-graph.json",
+    });
+  });
+
+  it("keeps the WeChat archive and reviewed locked graph distinct", () => {
+    const config = parseAuditConfig(
+      fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
+    );
+    expect(
+      config.archivePackages.some(
+        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.3",
+      ),
+    ).toBe(true);
+    expect(config.lockedGraphs).toContainEqual(
+      expect.objectContaining({
+        id: "wechat-runtime",
+        inputValidation: "wechat-runtime",
+        installMode: "legacy-peer-deps",
+        lockSha256: "27fcc4abe6707d5d710c691b25b942a269ebe2b652c6591174ee01fe06a5df35",
+        severityThreshold: "low",
+        signatureAudit: "retry-download-failures",
+      }),
+    );
+  });
+
+  it("validates the exact checked-in WeChat runtime inputs", () => {
+    expect(() =>
+      validateWechatRuntimeInputs(
+        path.join(REPO_ROOT, "agents/openclaw/wechat-runtime/package.json"),
+        path.join(REPO_ROOT, "agents/openclaw/wechat-runtime/package-lock.json"),
+        "https://registry.npmjs.org/",
+      ),
+    ).not.toThrow();
+  });
+
+  it("retries signature downloads only three times and records evidence", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "wechat-signatures-"));
+    const evidence = path.join(root, "signatures.txt");
+    let calls = 0;
+    try {
+      verifySignaturesWithReviewedRetry(root, evidence, () => {
+        calls += 1;
+        return calls < 3
+          ? { status: 1, stdout: "", stderr: "npm error Failed to download signature" }
+          : { status: 0, stdout: "verified", stderr: "" };
+      });
+      expect(calls).toBe(3);
+      expect(fs.readFileSync(evidence, "utf-8")).toContain("attempt=3 status=0");
+      calls = 0;
+      expect(() =>
+        verifySignaturesWithReviewedRetry(root, evidence, () => {
+          calls += 1;
+          return { status: 1, stdout: "", stderr: "invalid signature" };
+        }),
+      ).toThrow("after 1 attempt");
+      expect(calls).toBe(1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
   it("accepts only an explicitly reviewed lock during a dependency transition", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-lock-transition-"));
     const lockfile = path.join(root, "package-lock.json");
