@@ -89,7 +89,12 @@ export function selectConflictingPullRequests(
   return eligibleSameRepositoryPullRequests(pullRequests, repository).flatMap((pullRequest) => {
     const conflict = checkConflict(pullRequest, baseSha);
     if (!conflict) return [];
-    if (conflict.updatesWorkflow) return [];
+    if (conflict.updatesWorkflow) {
+      console.warn(
+        `Skipping PR #${pullRequest.number}: its merge changes .github/workflows; resolve it manually.`,
+      );
+      return [];
+    }
     return [
       {
         base_sha: baseSha,
