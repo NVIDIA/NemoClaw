@@ -10,6 +10,7 @@ export const ISSUE_4462_SCOPE_UPGRADE_PHASES = [
 ] as const;
 
 export type PreApprovalAdminProbeOutcome =
+  | "approval-required-with-confirmed-hint"
   | "approval-required-with-recovery-hint"
   | "approval-required"
   | "command-failed"
@@ -42,7 +43,14 @@ export function preApprovalAdminProbeEvidence(
     const listCommand = `nemoclaw ${sandboxName} exec -- openclaw devices list`;
     const approveCommand = `nemoclaw ${sandboxName} exec -- openclaw devices approve <requestId>`;
     if (output.includes(listCommand) && output.includes(approveCommand)) {
-      return { outcome: "approval-required-with-recovery-hint" };
+      const confirmedHint = `nemoclaw: a device scope upgrade is waiting for approval inside sandbox '${sandboxName}'.`;
+      const conditionalHint = "nemoclaw: pending device requests could not be inspected safely";
+      if (output.includes(confirmedHint) && !output.includes(conditionalHint)) {
+        return { outcome: "approval-required-with-confirmed-hint" };
+      }
+      if (output.includes(conditionalHint)) {
+        return { outcome: "approval-required-with-recovery-hint" };
+      }
     }
     return { outcome: "approval-required" };
   }

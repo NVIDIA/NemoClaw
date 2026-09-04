@@ -324,7 +324,7 @@ test(
     expect(
       cronTriggerEvidence.outcome,
       "The operator.admin probe did not stop at the explicit approval boundary",
-    ).toBe("approval-required-with-recovery-hint");
+    ).toBe("approval-required-with-confirmed-hint");
 
     const adminConnect = await host.command(
       "bash",

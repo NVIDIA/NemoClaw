@@ -9,6 +9,10 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  isTestProcessAlive,
+  killTestProcess,
+} from "../../../../test/support/process-liveness-test-support";
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
   captureOpenshellCommand,
@@ -56,24 +60,6 @@ function timeoutError(): Error {
 
 function exitWithCode(code: number): never {
   throw new Error(`exit:${code}`);
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== "ESRCH";
-  }
-}
-
-async function waitForProcessExit(pid: number, timeoutMs = 2_000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!isProcessAlive(pid)) return true;
-    await delay(25);
-  }
-  return !isProcessAlive(pid);
 }
 
 describe("openshell helpers", () => {
@@ -265,15 +251,10 @@ describe("openshell helpers", () => {
         expect(elapsedMs).toBeLessThan(2_500);
         expect((result.error as NodeJS.ErrnoException | undefined)?.code).not.toBe("ETIMEDOUT");
         expect(Number.isInteger(childPid)).toBe(true);
-        expect(await waitForProcessExit(childPid)).toBe(true);
+        await delay(100);
+        expect(isTestProcessAlive(childPid)).toBe(false);
       } finally {
-        if (childPid && isProcessAlive(childPid)) {
-          try {
-            process.kill(childPid, "SIGKILL");
-          } catch {
-            // The descendant exited after the final liveness check.
-          }
-        }
+        killTestProcess(childPid);
         rmSync(fixtureDirectory, { force: true, recursive: true });
       }
     },

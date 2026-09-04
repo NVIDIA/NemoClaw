@@ -183,6 +183,22 @@ describe("prepared connect-shell administrative approval", () => {
         exitCode: 1,
         stderr: [
           `scope upgrade pending approval requestId=${EXPECTED_REQUEST_ID} device=${EXPECTED_DEVICE_ID}`,
+          "nemoclaw: a device scope upgrade is waiting for approval inside sandbox 'e2e-issue-4462'.",
+          "nemoclaw e2e-issue-4462 exec -- openclaw devices list",
+          "nemoclaw e2e-issue-4462 exec -- openclaw devices approve <requestId>",
+        ].join("\n"),
+        stdout: "",
+        timedOut: false,
+      },
+      "approval-required-with-confirmed-hint",
+    ],
+    [
+      "approval boundary with conditional recovery hint",
+      {
+        exitCode: 1,
+        stderr: [
+          `scope upgrade pending approval requestId=${EXPECTED_REQUEST_ID} device=${EXPECTED_DEVICE_ID}`,
+          "nemoclaw: pending device requests could not be inspected safely on this host.",
           "nemoclaw e2e-issue-4462 exec -- openclaw devices list",
           "nemoclaw e2e-issue-4462 exec -- openclaw devices approve <requestId>",
         ].join("\n"),
@@ -192,10 +208,14 @@ describe("prepared connect-shell administrative approval", () => {
       "approval-required-with-recovery-hint",
     ],
     [
-      "approval boundary without recovery hint",
+      "approval boundary with commands but no hint discriminator",
       {
         exitCode: 1,
-        stderr: `scope upgrade pending approval requestId=${EXPECTED_REQUEST_ID} device=${EXPECTED_DEVICE_ID}`,
+        stderr: [
+          `scope upgrade pending approval requestId=${EXPECTED_REQUEST_ID} device=${EXPECTED_DEVICE_ID}`,
+          "nemoclaw e2e-issue-4462 exec -- openclaw devices list",
+          "nemoclaw e2e-issue-4462 exec -- openclaw devices approve <requestId>",
+        ].join("\n"),
         stdout: "",
         timedOut: false,
       },
