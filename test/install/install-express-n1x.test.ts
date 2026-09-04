@@ -30,29 +30,36 @@ describe("installer N1x Express preview", () => {
     );
   });
 
-  it("stops before onboarding when the Deferred preview is declined (#8574)", () => {
+  it("continues with ordinary onboarding when the Deferred preview is declined (#11041)", () => {
     // Model curl | bash: stdin is the script pipe, while the reply reaches the controlling /dev/tty.
     const result = runExpressPromptWithTty("n\n", "pipe", "N1x");
     const output = `${result.stdout}${result.stderr}`;
 
-    expect(result.status, output).toBe(1);
-    expect(output).toMatch(/N1x onboarding currently requires the Deferred managed-vLLM preview/);
-    expect(output).toMatch(/accept the preview, or set NEMOCLAW_PROVIDER=install-vllm/);
-    expect(output).not.toMatch(/Continuing with interactive flow/);
-    expect(output).not.toMatch(/RESULT /);
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Skipping express install\. Continuing with interactive flow/);
+    expect(output).toMatch(/RESULT .*NO_EXPRESS=1/);
   });
 
-  it("rejects NEMOCLAW_NO_EXPRESS without explicit managed-vLLM intent (#8574)", () => {
+  it("continues with ordinary onboarding when NEMOCLAW_NO_EXPRESS is set (#11041)", () => {
     const result = runExpressPromptWithTty("", "pipe", "N1x", {
       NEMOCLAW_NO_EXPRESS: "1",
     });
     const output = `${result.stdout}${result.stderr}`;
 
-    expect(result.status, output).toBe(1);
-    expect(output).toMatch(/explicit Deferred managed-vLLM preview intent/);
-    expect(output).toMatch(/Remove NEMOCLAW_NO_EXPRESS=1 and accept the preview/);
-    expect(output).toMatch(/set NEMOCLAW_PROVIDER=install-vllm/);
-    expect(output).not.toMatch(/RESULT /);
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Skipping express prompt \(NEMOCLAW_NO_EXPRESS=1\)/);
+    expect(output).toMatch(/RESULT .*NO_EXPRESS=1/);
+  });
+
+  it("continues with an explicit non-Express provider on N1x (#11041)", () => {
+    const result = runExpressPromptWithTty("", "pipe", "N1x", {
+      NEMOCLAW_PROVIDER: "ollama",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Skipping express prompt \(NEMOCLAW_PROVIDER=ollama already set\)/);
+    expect(output).toMatch(/RESULT .*PROVIDER=ollama/);
   });
 
   it("allows the N1x prompt bypass with explicit managed-vLLM intent (#8574)", () => {

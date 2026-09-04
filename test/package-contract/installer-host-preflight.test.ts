@@ -30,6 +30,7 @@ exit 99`,
 function runInstallerHostAdmissionTest(
   host: {
     runtime: string;
+    isN1x?: boolean;
     hasNestedOverlayConflict?: boolean;
     isUnsupportedRuntime?: boolean;
     additionalFindingIds?: string[];
@@ -42,6 +43,8 @@ function runInstallerHostAdmissionTest(
     gatewayManagementMode?: string;
     portableProfileArtifact?: "present" | "missing";
     providerResolutionFailure?: string;
+    provider?: string;
+    noExpress?: boolean;
   } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-host-admission-"));
@@ -157,6 +160,11 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
   const findingIds = report.findings
     .filter((finding) => {
       if (
+        finding.id === "host.platform.n1x_validation_pending" &&
+        options.allowDeferredN1x &&
+        report.host.isN1x
+      ) return false;
+      if (
         options.providerOwnsHostReadiness &&
         providerOwnedDockerFindings.has(finding.id)
       ) return false;
@@ -188,6 +196,8 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
     ? { admitted: true, waivedFindingIds: [] }
     : { admitted: false, reasonIds: [], findingIds, capabilityIds, waivedFindingIds: [] };
 };
+exports.hasExplicitDeferredN1xOnboardingIntent = (env) =>
+  env.NEMOCLAW_NO_EXPRESS === "1" || String(env.NEMOCLAW_PROVIDER || "").trim() !== "";
 `,
   );
   writeNodeStub(fakeBin);
@@ -195,6 +205,8 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
   const {
     NEMOCLAW_EXPERIMENTAL_PROFILE: _experimentalProfile,
     NEMOCLAW_GATEWAY_RUNTIME: _gatewayRuntime,
+    NEMOCLAW_NO_EXPRESS: _noExpress,
+    NEMOCLAW_PROVIDER: _provider,
     TEST_GATEWAY_MANAGEMENT_MODE: _gatewayManagementMode,
     ...inheritedEnv
   } = process.env;
@@ -208,6 +220,8 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
       ? { NEMOCLAW_EXPERIMENTAL_PROFILE: options.experimentalProfile }
       : {}),
     ...(options.gatewayRuntime ? { NEMOCLAW_GATEWAY_RUNTIME: options.gatewayRuntime } : {}),
+    ...(options.noExpress ? { NEMOCLAW_NO_EXPRESS: "1" } : {}),
+    ...(options.provider ? { NEMOCLAW_PROVIDER: options.provider } : {}),
     TEST_GATEWAY_MANAGEMENT_MODE: options.gatewayManagementMode ?? "",
   };
 
@@ -232,6 +246,35 @@ run_installer_host_preflight
 }
 
 describe("installer host preflight package contract", () => {
+  it.each([
+    ["a declined Express preview", { noExpress: true }],
+    ["an explicit standard provider", { provider: "ollama" }],
+  ])("admits qualified Deferred N1x through %s (#11041)", (_scenario, intent) => {
+    const { output, result } = runInstallerHostAdmissionTest(
+      {
+        runtime: "docker",
+        isN1x: true,
+        additionalFindingIds: ["host.platform.n1x_validation_pending"],
+      },
+      undefined,
+      intent,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).not.toMatch(/Host preflight found issues/);
+  });
+
+  it("keeps Deferred N1x blocked without explicit onboarding intent (#11041)", () => {
+    const { output, result } = runInstallerHostAdmissionTest({
+      runtime: "docker",
+      isN1x: true,
+      additionalFindingIds: ["host.platform.n1x_validation_pending"],
+    });
+
+    expect(result.status).toBe(1);
+    expect(output).toContain("host.platform.n1x_validation_pending");
+  });
+
   it("continues to onboarding when managed storage remediation is available", () => {
     const { output, result } = runInstallerHostAdmissionTest({
       runtime: "docker",

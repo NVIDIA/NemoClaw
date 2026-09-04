@@ -11,6 +11,12 @@ export const ONBOARD_READINESS_ADMISSION_REASON_IDS = {
 export type OnboardReadinessAdmissionReasonId =
   (typeof ONBOARD_READINESS_ADMISSION_REASON_IDS)[keyof typeof ONBOARD_READINESS_ADMISSION_REASON_IDS];
 
+export function hasExplicitDeferredN1xOnboardingIntent(
+  env: Readonly<Record<string, string | undefined>>,
+): boolean {
+  return env.NEMOCLAW_NO_EXPRESS === "1" || String(env.NEMOCLAW_PROVIDER ?? "").trim() !== "";
+}
+
 export const ONBOARD_READINESS_FINDING_IDS = {
   containerToolkitMissing: "host.gpu.container_toolkit_missing",
   cdiMissing: "host.gpu.cdi_missing",
@@ -53,8 +59,8 @@ export interface OnboardReadinessAdmissionOptions {
   allowStorageRemediation: boolean;
   /** The explicit portable profile may prepare its rootless runtime before revalidation. */
   allowPortableHostPreparation?: boolean;
-  /** Explicit managed-vLLM intent may exercise the Deferred N1x validation path. */
-  allowDeferredN1xManagedVllm?: boolean;
+  /** Explicit Express or standard-onboarding intent may exercise the Deferred N1x path. */
+  allowDeferredN1x?: boolean;
 }
 
 export type OnboardReadinessAdmissionDecision =
@@ -144,7 +150,7 @@ function canWaiveFinding(
     return true;
   }
   if (
-    options.allowDeferredN1xManagedVllm &&
+    options.allowDeferredN1x &&
     finding.id === ONBOARD_READINESS_FINDING_IDS.n1xValidationPending &&
     capabilityState(capabilities, "host.platform.n1x") === "present"
   ) {

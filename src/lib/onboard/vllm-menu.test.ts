@@ -119,7 +119,7 @@ describe("buildVllmMenuEntries", () => {
       log: () => {},
     });
 
-    // N1x readiness rejects the running-server state without explicit managed
+    // N1x readiness rejects the running-server state without explicit onboarding
     // intent. If this lower-level helper sees that state in isolation, it must
     // not mislabel an operator-managed server as the Deferred managed preview.
     assert.equal(install[0].label, "Install vLLM (N1x) [Deferred preview]");

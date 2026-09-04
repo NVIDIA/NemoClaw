@@ -152,7 +152,7 @@ afterEach(() => {
 });
 
 describe("report-backed runtime readiness (#7411)", () => {
-  it("requires explicit managed-vLLM intent and lets rebuild reject ambient intent (#9292)", () => {
+  it("admits explicit N1x onboarding intent and lets rebuild reject ambient intent (#11041)", () => {
     const readiness: SystemReadinessReport = {
       schemaVersion: "1.1.0",
       status: "incompatible",
@@ -206,7 +206,7 @@ describe("report-backed runtime readiness (#7411)", () => {
       }),
     ).toBe(readiness);
 
-    vi.stubEnv("NEMOCLAW_PROVIDER", "install-vllm");
+    vi.stubEnv("NEMOCLAW_PROVIDER", "ollama");
     expect(
       assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
         explicitlyOptedOutGpuPassthrough: false,
@@ -214,6 +214,16 @@ describe("report-backed runtime readiness (#7411)", () => {
       }),
     ).toBe(readiness);
 
+    vi.stubEnv("NEMOCLAW_PROVIDER", "");
+    vi.stubEnv("NEMOCLAW_NO_EXPRESS", "1");
+    expect(
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit as never,
+      }),
+    ).toBe(readiness);
+
+    vi.stubEnv("NEMOCLAW_PROVIDER", "ollama");
     expect(() =>
       assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
         explicitlyOptedOutGpuPassthrough: false,

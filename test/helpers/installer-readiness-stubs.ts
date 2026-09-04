@@ -84,6 +84,8 @@ export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
     waivedFindingIds: [],
   };
 };
+exports.hasExplicitDeferredN1xOnboardingIntent = (env) =>
+  env.NEMOCLAW_NO_EXPRESS === "1" || String(env.NEMOCLAW_PROVIDER || "").trim() !== "";
 `,
   );
   fs.writeFileSync(

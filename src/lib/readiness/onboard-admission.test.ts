@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   evaluateOnboardGatewayReadinessAdmission,
   evaluateOnboardReadinessAdmission,
+  hasExplicitDeferredN1xOnboardingIntent,
   ONBOARD_READINESS_ADMISSION_REASON_IDS,
   ONBOARD_READINESS_FINDING_IDS,
   ONBOARD_REQUIRED_CAPABILITY_IDS,
@@ -101,6 +102,20 @@ function withCapabilityState(
 }
 
 describe("onboarding readiness admission (#7411)", () => {
+  it.each([
+    ["preview decline", { NEMOCLAW_NO_EXPRESS: "1" }, true],
+    ["explicit non-Express provider", { NEMOCLAW_PROVIDER: "ollama" }, true],
+    ["explicit managed provider", { NEMOCLAW_PROVIDER: "install-vllm" }, true],
+    ["blank provider", { NEMOCLAW_PROVIDER: "  " }, false],
+    ["disabled Express override", { NEMOCLAW_NO_EXPRESS: "0" }, false],
+    ["no intent", {}, false],
+  ] as const)(
+    "recognizes %s as Deferred N1x onboarding intent (#11041)",
+    (_scenario, env, expected) => {
+      expect(hasExplicitDeferredN1xOnboardingIntent(env)).toBe(expected);
+    },
+  );
+
   it("admits known required capabilities without relying on the report status", () => {
     expect(
       evaluateOnboardReadinessAdmission(report({ status: "inconclusive" }), DEFAULT_OPTIONS),
@@ -385,7 +400,7 @@ describe("onboarding readiness admission (#7411)", () => {
     });
   });
 
-  it("admits only explicit managed-vLLM intent through the Deferred N1x validation gate (#8574)", () => {
+  it("admits explicit onboarding intent only for a qualified Deferred N1x identity (#11041)", () => {
     const capabilities = [
       ...withCapabilityState(
         requiredCapabilities(),
@@ -405,16 +420,37 @@ describe("onboarding readiness admission (#7411)", () => {
     expect(
       evaluateOnboardReadinessAdmission(
         report({ capabilities, findings: [pending], status: "incompatible" }),
-        { ...DEFAULT_OPTIONS, allowDeferredN1xManagedVllm: true },
+        { ...DEFAULT_OPTIONS, allowDeferredN1x: true },
       ),
     ).toEqual({ admitted: true, waivedFindingIds: [pending.id] });
     expect(
       evaluateOnboardReadinessAdmission(report({ findings: [pending], status: "incompatible" }), {
         ...DEFAULT_OPTIONS,
-        allowDeferredN1xManagedVllm: true,
+        allowDeferredN1x: true,
       }),
     ).toMatchObject({ admitted: false, findingIds: [pending.id] });
   });
+
+  it.each(["absent", "unknown"] as const)(
+    "keeps Deferred N1x blocked when its identity capability is %s (#11041)",
+    (state) => {
+      const pending = finding(ONBOARD_READINESS_FINDING_IDS.n1xValidationPending);
+      const capabilities = [
+        ...withCapabilityState(
+          requiredCapabilities(),
+          ONBOARD_REQUIRED_CAPABILITY_IDS.platformSupported,
+          "absent",
+        ),
+        capability("host.platform.n1x", state),
+      ];
+      expect(
+        evaluateOnboardReadinessAdmission(
+          report({ capabilities, findings: [pending], status: "incompatible" }),
+          { ...DEFAULT_OPTIONS, allowDeferredN1x: true },
+        ),
+      ).toMatchObject({ admitted: false, findingIds: [pending.id] });
+    },
+  );
 
   it("fails closed when a required capability is unknown or missing", () => {
     const capabilities = withCapabilityState(
