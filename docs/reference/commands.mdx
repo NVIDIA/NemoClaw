@@ -99,6 +99,30 @@ printf '%s\n' '{"worker":"worker-17"}' | dcode tools call-read-only worker_task_
 
 The hosted installer accepts options after `bash -s --`. These options control installation and the onboarding run that follows it.
 
+### `--defer-onboarding`
+
+Use this option only with `NEMOCLAW_AGENT=hermes` or `NEMOCLAW_AGENT=langchain-deepagents-code`.
+Select the `build`, `cloud`, or `routed` NVIDIA hosted provider.
+Do not combine this option with a local model profile.
+
+If NVIDIA inference credentials are absent and no sandbox is registered, the installer installs NemoClaw and skips onboarding.
+It does not create an OpenShell provider or sandbox, and it does not report onboarding as complete.
+If a credential is present, the installer runs normal validated onboarding.
+An invalid credential fails validation and does not select deferred onboarding.
+
+After the runtime process supplies one of these credentials, run the onboarding command for the selected agent:
+
+- Non-empty `NVIDIA_INFERENCE_API_KEY`
+- Non-empty `NVIDIA_API_KEY`
+- Valid `NEMOCLAW_PROVIDER_KEY`
+
+For the selected agent, run:
+
+- Hermes: `nemohermes onboard`
+- LangChain Deep Agents Code: `nemo-deepagents onboard`
+
+Set `NEMOCLAW_DEFER_ONBOARDING=1` to select the same installer behavior without the command-line option.
+
 ### `--local-model-runtime=vllm`
 
 Enable the fixed vLLM local model profile. The flag accepts only `vllm`. It makes the remaining onboarding non-interactive and disables Express profile selection.
@@ -3599,6 +3623,7 @@ The following variables let you tune onboarding without editing the Dockerfile o
 
 | Variable | Format | Effect |
 | --- | --- | --- |
+| `NEMOCLAW_DEFER_ONBOARDING` | `1` to enable | Hosted installer only. Selects the same behavior as `--defer-onboarding` for Hermes or LangChain Deep Agents Code with NVIDIA hosted inference. When none of the accepted credentials (`NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, or a valid `NEMOCLAW_PROVIDER_KEY`) is present and no sandbox is registered, the installer installs NemoClaw without creating a provider, sandbox, or completed onboarding state. |
 | `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `llama-cpp`, `install-llama-cpp`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. On a qualified N1x host, only `install-vllm` supplies the explicit Deferred preview intent; another provider stops installation before onboarding. `llama-cpp` selects attachment of an authenticated, operator-managed llama.cpp server on loopback port `8081`. Set `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`; set `NEMOCLAW_MODEL` to the served alias when the server exposes multiple models. `install-llama-cpp` selects the experimental DGX Spark managed path and rejects `NEMOCLAW_MODEL`; use `NEMOCLAW_LLAMACPP_RECIPE` for its declarative selection. If an operator-managed server does not provide consistent native llama.cpp evidence, select `custom`. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
 | `NEMOCLAW_LLAMACPP_RECIPE` | repository-owned managed-inference recipe ID | Selects the managed llama.cpp recipe when `NEMOCLAW_PROVIDER=install-llama-cpp`, including a compatible lower-priority profile. When unset, NemoClaw selects the unique highest-priority compatible automatic profile. An unknown recipe, an ambiguous selection, or a stale or incompatible readiness report fails before image, model, or runtime effects. |
 | `NEMOCLAW_MODEL` | model ID | Selects an explicit model for a non-interactive onboarding run. NemoClaw preserves it across a detected provider switch, even when it matches the recorded provider's default. When this variable is unset during such a switch, NemoClaw ignores the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback and uses normal provider model selection. |

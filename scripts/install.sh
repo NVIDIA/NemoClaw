@@ -785,8 +785,8 @@ usage() {
   printf "  ${C_DIM}Options:${C_RESET}\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
-  printf "    --defer-onboarding   Install Hermes without onboarding when NVIDIA inference credentials are absent\n"
-  printf "                          Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
+  printf "    --defer-onboarding   Install NemoClaw without onboarding for a supported agent when NVIDIA inference credentials are absent\n"
+  printf "                          Use only with NEMOCLAW_AGENT=hermes or langchain-deepagents-code, no registered sandboxes, no local model profile,\n"
   printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
@@ -798,7 +798,7 @@ usage() {
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_DEFER_ONBOARDING=1   Same as --defer-onboarding\n"
-  printf "                                  Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
+  printf "                                  Use only with NEMOCLAW_AGENT=hermes or langchain-deepagents-code, no registered sandboxes, no local model profile,\n"
   printf "                                  and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
@@ -3907,11 +3907,21 @@ recover_preexisting_sandboxes_before_onboard() {
   return 1
 }
 
-validate_deferred_hermes_onboarding_request() {
+agent_supports_deferred_onboarding() {
+  local agent_name="${NEMOCLAW_AGENT:-openclaw}"
+  case "$agent_name" in
+    "" | *[!a-z0-9-]*) return 1 ;;
+  esac
+  local manifest_path="${NEMOCLAW_SOURCE_ROOT}/agents/${agent_name}/manifest.yaml"
+  [[ -f "$manifest_path" ]] || return 1
+  grep -Eq '^deferred_onboarding:[[:space:]]*true[[:space:]]*$' "$manifest_path"
+}
+
+validate_deferred_onboarding_request() {
   [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 0
 
-  if [[ "${NEMOCLAW_AGENT:-openclaw}" != "hermes" ]]; then
-    error "--defer-onboarding currently requires NEMOCLAW_AGENT=hermes."
+  if ! agent_supports_deferred_onboarding; then
+    error "--defer-onboarding is not supported for NEMOCLAW_AGENT=${NEMOCLAW_AGENT:-openclaw}."
   fi
   if [[ "${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" == "1" ]]; then
     error "--defer-onboarding does not support a local model profile."
@@ -3924,24 +3934,41 @@ validate_deferred_hermes_onboarding_request() {
   esac
 }
 
-should_defer_hermes_onboarding() {
-  local registered_sandbox_count="${1:-0}"
-  local provider_key="${NEMOCLAW_PROVIDER_KEY:-}"
-  [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 1
-  [[ "${NEMOCLAW_AGENT:-openclaw}" == "hermes" ]] || return 1
-  [[ "$registered_sandbox_count" == "0" ]] || return 1
-  [[ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]] || return 1
-  [[ -z "${NVIDIA_API_KEY:-}" ]] || return 1
+resolve_deferred_onboarding_decision() {
+  local cli_runner="$1"
+  local registered_sandbox_count="${2:-0}"
+  local decision=""
+  if ! decision="$(
+    "$cli_runner" internal installer plan \
+      --defer-onboarding \
+      --deferred-onboarding-supported \
+      --registered-sandbox-count "$registered_sandbox_count" \
+      --deferred-onboarding-decision
+  )"; then
+    error "Could not resolve the deferred-onboarding installer decision."
+  fi
+  printf '%s' "$decision"
+}
 
-  provider_key="${provider_key#"${provider_key%%[![:space:]]*}"}"
-  provider_key="${provider_key%"${provider_key##*[![:space:]]}"}"
-  provider_key="$(printf '%s' "$provider_key" | tr '[:upper:]' '[:lower:]')"
-  # Keep this list aligned with PROVIDER_KEY_ROUTE_VALUES in
-  # src/lib/onboard/providers.ts. These values select a route; they are not
-  # inference credentials.
-  case "$provider_key" in
-    "" | inference | cloud | nim | vllm | open-router | openrouterai | anthropiccompatible | hermes | hermes-provider | hermesprovider | nous | nous-portal | build | openrouter | openai | anthropic | gemini | ollama | llama-cpp | install-llama-cpp | custom | nim-local | routed | install-vllm | install-ollama | install-windows-ollama | start-windows-ollama) ;;
-    *) return 1 ;;
+should_defer_onboarding() {
+  local cli_runner="$1"
+  local registered_sandbox_count="${2:-0}"
+  local decision=""
+  [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 1
+  decision="$(resolve_deferred_onboarding_decision "$cli_runner" "$registered_sandbox_count")"
+  case "$decision" in
+    defer) return 0 ;;
+    credential-present | existing-sandbox | not-requested) return 1 ;;
+    unsupported-agent)
+      error "--defer-onboarding is not supported for NEMOCLAW_AGENT=${NEMOCLAW_AGENT:-openclaw}."
+      ;;
+    unsupported-local-model)
+      error "--defer-onboarding does not support a local model profile."
+      ;;
+    unsupported-provider)
+      error "--defer-onboarding currently supports NVIDIA hosted inference only. Use NEMOCLAW_PROVIDER=build, cloud, or routed."
+      ;;
+    *) error "Unexpected deferred-onboarding installer decision: ${decision:-empty}." ;;
   esac
 }
 
@@ -5847,6 +5874,7 @@ clear_station_dual_pair_resume() {
 
 prepare_installer_host() {
   maybe_offer_express_install
+  validate_deferred_onboarding_request
   # Reject conflicting explicit Station selections and pending-pair bypasses
   # before the local host-preparation helper can mutate packages or Docker.
   validate_station_pair_selection
@@ -6288,7 +6316,7 @@ main() {
     && { [ -n "${NEMOCLAW_PROVIDER:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ]; }; then
     error "The local model profile does not accept NEMOCLAW_PROVIDER or NEMOCLAW_MODEL overrides."
   fi
-  validate_deferred_hermes_onboarding_request
+  validate_deferred_onboarding_request
   # If the user explicitly accepted the third-party-software notice, treat
   # that as non-interactive intent for the rest of the run too — show_usage_notice
   # is only one of several phase-3 steps that need a TTY or --non-interactive
@@ -6341,10 +6369,6 @@ main() {
   # host prerequisite preparation before the generic Docker bootstrap.
   prepare_installer_host
 
-  # Express selection can change the provider after the initial argument
-  # validation. Recheck the deferred-onboarding scope before installation.
-  validate_deferred_hermes_onboarding_request
-
   install_nemoclaw_before_onboarding
 
   # Gate the onboarding-adjacent steps on the absolute CLI path so a stale
@@ -6371,8 +6395,8 @@ main() {
       warn "Consider destroying existing sessions with '${_CLI_BIN} <name> destroy' first."
       warn "Set NEMOCLAW_SINGLE_SESSION=1 to abort the installer when sessions are active."
     fi
-    if should_defer_hermes_onboarding "$_registered_sandbox_count"; then
-      info "NVIDIA inference credentials are absent. Hermes onboarding did not run."
+    if should_defer_onboarding "$_cli_runner" "$_registered_sandbox_count"; then
+      info "NVIDIA inference credentials are absent. $(agent_display_name "${NEMOCLAW_AGENT:-openclaw}") onboarding did not run."
     elif run_installer_host_preflight; then
       if ! recover_preexisting_sandboxes_before_onboard "$_cli_runner"; then
         finalize_install

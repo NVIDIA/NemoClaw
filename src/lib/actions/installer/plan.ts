@@ -19,14 +19,20 @@ import {
   type InstallerRefEnv,
 } from "../../domain/installer/ref";
 import { checkInstallerRuntime, type RuntimeCheckResult } from "../../domain/installer/version";
+import {
+  buildDeferredOnboardingPlan,
+  type DeferredOnboardingPlan,
+} from "./deferred-onboarding";
 
-export interface InstallerPlanEnv extends InstallerRefEnv {
+export interface InstallerPlanEnv extends NodeJS.ProcessEnv, InstallerRefEnv {
   NEMOCLAW_PROVIDER?: string | undefined;
   PATH?: string | undefined;
 }
 
 export interface BuildInstallerPlanOptions {
   defaultVersion?: string;
+  deferredOnboardingRequested?: boolean;
+  deferredOnboardingRuntimeSupported?: boolean;
   env?: InstallerPlanEnv;
   gitDescribeVersion?: string | null;
   nodeVersion?: string | null;
@@ -34,6 +40,7 @@ export interface BuildInstallerPlanOptions {
   npmTargetState?: NpmLinkTargetState;
   npmVersion?: string | null;
   packageJsonVersion?: string | null;
+  registeredSandboxCount?: number;
   stampedVersion?: string | null;
 }
 
@@ -52,6 +59,7 @@ export interface InstallerNpmPlan {
 }
 
 export interface InstallerPlan {
+  deferredOnboarding: DeferredOnboardingPlan;
   installRef: string;
   installerVersion: string;
   npm: InstallerNpmPlan | null;
@@ -72,6 +80,14 @@ export function buildInstallerPlan(options: BuildInstallerPlanOptions = {}): Ins
   const globalBin = options.npmPrefix ? npmGlobalBin(options.npmPrefix) : null;
 
   return {
+    deferredOnboarding: buildDeferredOnboardingPlan(
+      { ...env },
+      {
+        registeredSandboxCount: options.registeredSandboxCount,
+        requested: options.deferredOnboardingRequested,
+        runtimeSupported: options.deferredOnboardingRuntimeSupported,
+      },
+    ),
     installRef,
     installerVersion: resolveInstallerVersion({
       defaultVersion: options.defaultVersion ?? "0.1.0",
