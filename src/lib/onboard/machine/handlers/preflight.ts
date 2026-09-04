@@ -7,6 +7,8 @@ import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
 export type PreflightSandboxGpuFlag = "enable" | "disable" | null;
 
+const N1X_EXCLUDED_RECORDED_PROVIDERS = new Set(["nim", "nim-local", "nvidia-nim"]);
+
 export interface PreflightSandboxGpuOverrides {
   flag: PreflightSandboxGpuFlag;
   device: string | null;
@@ -56,7 +58,7 @@ export interface PreflightStateOptions<
         observedAt?: string;
         now?: () => Date;
         wslDockerDesktopGpuProofPassed?: boolean;
-        allowDeferredN1xManagedVllm?: boolean;
+        allowDeferredN1xOnboarding?: boolean;
         resuming: true;
         presentAdvisories?: boolean;
       },
@@ -151,6 +153,14 @@ export async function handlePreflightState<
     : { flag: null, device: null };
   const effectiveSandboxGpuFlag = explicitSandboxGpuFlag ?? resumedSandboxGpuOverrides.flag;
   const effectiveSandboxGpuDevice = sandboxGpuDevice ?? resumedSandboxGpuOverrides.device;
+  const recordedProviderAllowsDeferredN1x =
+    typeof session?.provider === "string" &&
+    session.provider.trim() !== "" &&
+    !N1X_EXCLUDED_RECORDED_PROVIDERS.has(session.provider);
+  // An explicit false is authoritative for rebuilds. Ordinary resume may use
+  // the provider that this owner-only session already validated and recorded.
+  const allowDeferredN1xOnboarding =
+    allowDeferredN1xManagedVllm ?? recordedProviderAllowsDeferredN1x;
 
   let gpu: Gpu;
   if (resumePreflight) {
@@ -177,7 +187,7 @@ export async function handlePreflightState<
       explicitlyOptedOutGpuPassthrough: resumeSandboxGpuConfig.mode === "0",
       observedAt: hostObservedAt,
       now,
-      allowDeferredN1xManagedVllm,
+      allowDeferredN1xOnboarding,
       resuming: true,
     });
     // A full detector can run the bounded ARM64 WSL Docker GPU proof. Keep it
@@ -200,7 +210,7 @@ export async function handlePreflightState<
         observedAt: hostObservedAt,
         now,
         ...(wslDockerDesktopGpuProofPassed === undefined ? {} : { wslDockerDesktopGpuProofPassed }),
-        allowDeferredN1xManagedVllm,
+        allowDeferredN1xOnboarding,
         resuming: true,
         presentAdvisories: false,
       });

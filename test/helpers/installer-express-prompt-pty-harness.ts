@@ -25,7 +25,7 @@ export function runExpressPromptWithTty(
   stdinMode: "pipe" | "tty",
   platform = "DGX Spark",
   extraEnv: Record<string, string> = {},
-  entrypoint: "prompt" | "accepted-station-main" = "prompt",
+  entrypoint: "prompt" | "accepted-station-main" | "n1x-standard-main" = "prompt",
   entrypointArgs: string[] = [],
   harnessFixture?: InstallerExpressPtyFixture,
 ) {
@@ -51,7 +51,56 @@ harness_mode = sys.argv[6]
 timeout_seconds = float(sys.argv[7])
 pid_file = sys.argv[8]
 entrypoint_args = sys.argv[9:]
-if entrypoint == "accepted-station-main":
+if entrypoint == "n1x-standard-main":
+    script = r'''
+source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform() { printf "N1x"; }
+classify_dgx_station_release() { printf "generic-ubuntu"; }
+NON_INTERACTIVE="\${NON_INTERACTIVE:-}"
+NEMOCLAW_PROVIDER="\${NEMOCLAW_PROVIDER:-}"
+NEMOCLAW_NO_EXPRESS="\${NEMOCLAW_NO_EXPRESS:-}"
+maybe_offer_express_install
+
+NEMOCLAW_SOURCE_ROOT="$PWD/source"
+mkdir -p "$NEMOCLAW_SOURCE_ROOT/dist/lib/onboard/experimental" \
+  "$NEMOCLAW_SOURCE_ROOT/dist/lib/readiness"
+for module in \
+  "$NEMOCLAW_SOURCE_ROOT/dist/lib/onboard/preflight.js" \
+  "$NEMOCLAW_SOURCE_ROOT/dist/lib/onboard/gateway-management.js" \
+  "$NEMOCLAW_SOURCE_ROOT/dist/lib/onboard/experimental/portable-profile.js" \
+  "$NEMOCLAW_SOURCE_ROOT/dist/lib/onboard/docker-driver-gateway-env.js" \
+  "$NEMOCLAW_SOURCE_ROOT/dist/lib/readiness/host.js" \
+  "$NEMOCLAW_SOURCE_ROOT/dist/lib/readiness/onboard-admission.js"; do
+  : >"$module"
+done
+repair_installer_nvidia_cdi_spec() { :; }
+node() {
+  if [ "\${1:-}" = "-e" ]; then
+    printf '__INFO__\nHOST_PREFLIGHT_NO_EXPRESS=%s PROVIDER=%s QUALIFIED_N1X=1\n' \
+      "\${NEMOCLAW_NO_EXPRESS:-}" "\${NEMOCLAW_PROVIDER:-}"
+    if [ "\${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ "\${NEMOCLAW_PROVIDER:-}" = "ollama" ]; then
+      return 0
+    fi
+    printf '__ACTIONS__\nAdmission finding IDs: host.platform.n1x_validation_pending\n'
+    return 10
+  fi
+  command node "$@"
+}
+run_installer_host_preflight || exit $?
+
+fake_cli="$PWD/nemoclaw-under-test"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "ONBOARD NO_EXPRESS=%s PROVIDER=%s ARGS=%s\\n" "\${NEMOCLAW_NO_EXPRESS:-}" "\${NEMOCLAW_PROVIDER:-}" "$*"' \
+  >"$fake_cli"
+chmod +x "$fake_cli"
+_CLI_BIN="nemoclaw"
+_CLI_PATH="$fake_cli"
+show_usage_notice() { :; }
+nemoclaw_state_dir() { printf '%s' "$PWD/state"; }
+run_onboard
+'''
+elif entrypoint == "accepted-station-main":
     script = r'''
 source "$INSTALLER_UNDER_TEST" >/dev/null
 detect_express_platform() { printf "$EXPRESS_PLATFORM"; }

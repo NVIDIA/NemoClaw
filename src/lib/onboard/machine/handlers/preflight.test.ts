@@ -212,15 +212,72 @@ describe("handlePreflightState", () => {
       1,
       expect.anything(),
       expect.anything(),
-      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
+      expect.objectContaining({ allowDeferredN1xOnboarding: true }),
     );
     expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
       2,
       expect.anything(),
       expect.anything(),
-      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
+      expect.objectContaining({ allowDeferredN1xOnboarding: true }),
     );
   });
+
+  it("reuses a recorded standard provider for Deferred N1x resume (#11041)", async () => {
+    const session = createSession({ provider: "ollama-local" });
+    session.steps.preflight.status = "complete";
+    const assertOnboardHostReadiness = vi.fn();
+    const harness = createDeps({ assertOnboardHostReadiness });
+
+    await handlePreflightState({ ...baseOptions(harness.deps, session), resume: true });
+
+    expect(assertOnboardHostReadiness).toHaveBeenCalledTimes(2);
+    expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ allowDeferredN1xOnboarding: true }),
+    );
+    expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ allowDeferredN1xOnboarding: true }),
+    );
+  });
+
+  it.each([
+    ["an excluded NIM provider", "nim", undefined, false],
+    ["an excluded NIM provider selection", "nim-local", undefined, false],
+    ["an excluded NIM inference provider", "nvidia-nim", undefined, false],
+    ["an explicit rebuild denial", "ollama-local", false, false],
+  ] as const)(
+    "does not reuse %s for Deferred N1x resume (#11041)",
+    async (_case, provider, authority, expected) => {
+      const session = createSession({ provider });
+      session.steps.preflight.status = "complete";
+      const assertOnboardHostReadiness = vi.fn();
+      const harness = createDeps({ assertOnboardHostReadiness });
+
+      await handlePreflightState({
+        ...baseOptions(harness.deps, session),
+        resume: true,
+        ...(authority === undefined ? {} : { allowDeferredN1xManagedVllm: authority }),
+      });
+
+      expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+        1,
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ allowDeferredN1xOnboarding: expected }),
+      );
+      expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+        2,
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ allowDeferredN1xOnboarding: expected }),
+      );
+    },
+  );
 
   it("rejects changed gateway ownership before cached resume probe effects (#7411)", async () => {
     const session = createSession();

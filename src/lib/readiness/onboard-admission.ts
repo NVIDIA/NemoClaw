@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ReadinessCapability, ReadinessFinding, SystemReadinessReport } from "./types";
+import { isN1xOnboardingProviderKey } from "../onboard/inference-providers/provider-selection-keys";
 
 export const ONBOARD_READINESS_ADMISSION_REASON_IDS = {
   blockingFindings: "onboard.readiness.blocking_findings",
@@ -14,7 +15,7 @@ export type OnboardReadinessAdmissionReasonId =
 export function hasExplicitDeferredN1xOnboardingIntent(
   env: Readonly<Record<string, string | undefined>>,
 ): boolean {
-  return env.NEMOCLAW_NO_EXPRESS === "1" || String(env.NEMOCLAW_PROVIDER ?? "").trim() !== "";
+  return env.NEMOCLAW_NO_EXPRESS === "1" || isN1xOnboardingProviderKey(env.NEMOCLAW_PROVIDER);
 }
 
 export const ONBOARD_READINESS_FINDING_IDS = {

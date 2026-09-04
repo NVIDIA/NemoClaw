@@ -11,6 +11,7 @@ import {
   TEST_SYSTEM_PATH,
   writeExecutable,
 } from "../helpers/installer-sourced-env";
+import { DEFERRED_N1X_INTENT_STUB } from "../helpers/installer-readiness-stubs";
 
 function writeNodeStub(fakeBin: string) {
   writeExecutable(
@@ -196,8 +197,7 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
     ? { admitted: true, waivedFindingIds: [] }
     : { admitted: false, reasonIds: [], findingIds, capabilityIds, waivedFindingIds: [] };
 };
-exports.hasExplicitDeferredN1xOnboardingIntent = (env) =>
-  env.NEMOCLAW_NO_EXPRESS === "1" || String(env.NEMOCLAW_PROVIDER || "").trim() !== "";
+${DEFERRED_N1X_INTENT_STUB}
 `,
   );
   writeNodeStub(fakeBin);
@@ -274,6 +274,24 @@ describe("installer host preflight package contract", () => {
     expect(result.status).toBe(1);
     expect(output).toContain("host.platform.n1x_validation_pending");
   });
+
+  it.each(["unknown-provider", "nim", "nim-local"])(
+    "keeps Deferred N1x blocked for provider %s (#11041)",
+    (provider) => {
+      const { output, result } = runInstallerHostAdmissionTest(
+        {
+          runtime: "docker",
+          isN1x: true,
+          additionalFindingIds: ["host.platform.n1x_validation_pending"],
+        },
+        undefined,
+        { provider },
+      );
+
+      expect(result.status).toBe(1);
+      expect(output).toContain("host.platform.n1x_validation_pending");
+    },
+  );
 
   it("continues to onboarding when managed storage remediation is available", () => {
     const { output, result } = runInstallerHostAdmissionTest({

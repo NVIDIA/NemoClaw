@@ -40,6 +40,15 @@ describe("installer N1x Express preview", () => {
     expect(output).toMatch(/RESULT .*NO_EXPRESS=1/);
   });
 
+  it("carries a declined preview through host admission into the onboarding CLI (#11041)", () => {
+    const result = runExpressPromptWithTty("n\n", "pipe", "N1x", {}, "n1x-standard-main");
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("HOST_PREFLIGHT_NO_EXPRESS=1 PROVIDER= QUALIFIED_N1X=1");
+    expect(output).toContain("ONBOARD NO_EXPRESS=1 PROVIDER= ARGS=onboard");
+  });
+
   it("continues with ordinary onboarding when NEMOCLAW_NO_EXPRESS is set (#11041)", () => {
     const result = runExpressPromptWithTty("", "pipe", "N1x", {
       NEMOCLAW_NO_EXPRESS: "1",
@@ -60,6 +69,23 @@ describe("installer N1x Express preview", () => {
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Skipping express prompt \(NEMOCLAW_PROVIDER=ollama already set\)/);
     expect(output).toMatch(/RESULT .*PROVIDER=ollama/);
+  });
+
+  it("carries an explicit Ollama choice through host admission into the onboarding CLI (#11041)", () => {
+    const result = runExpressPromptWithTty(
+      "",
+      "pipe",
+      "N1x",
+      {
+        NEMOCLAW_PROVIDER: "ollama",
+      },
+      "n1x-standard-main",
+    );
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("HOST_PREFLIGHT_NO_EXPRESS= PROVIDER=ollama QUALIFIED_N1X=1");
+    expect(output).toContain("ONBOARD NO_EXPRESS= PROVIDER=ollama ARGS=onboard");
   });
 
   it("allows the N1x prompt bypass with explicit managed-vLLM intent (#8574)", () => {

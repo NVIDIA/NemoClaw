@@ -201,7 +201,7 @@ describe("report-backed runtime readiness (#7411)", () => {
     expect(
       assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
         explicitlyOptedOutGpuPassthrough: false,
-        allowDeferredN1xManagedVllm: true,
+        allowDeferredN1xOnboarding: true,
         exitProcess: exit as never,
       }),
     ).toBe(readiness);
@@ -227,7 +227,30 @@ describe("report-backed runtime readiness (#7411)", () => {
     expect(() =>
       assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
         explicitlyOptedOutGpuPassthrough: false,
-        allowDeferredN1xManagedVllm: false,
+        allowDeferredN1xOnboarding: false,
+        exitProcess: exit as never,
+      }),
+    ).toThrow("exit");
+
+    vi.stubEnv("NEMOCLAW_NO_EXPRESS", "0");
+    vi.stubEnv("NEMOCLAW_PROVIDER", "unknown-provider");
+    expect(() =>
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit as never,
+      }),
+    ).toThrow("exit");
+    vi.stubEnv("NEMOCLAW_PROVIDER", "nim");
+    expect(() =>
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit as never,
+      }),
+    ).toThrow("exit");
+    vi.stubEnv("NEMOCLAW_PROVIDER", "nim-local");
+    expect(() =>
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
         exitProcess: exit as never,
       }),
     ).toThrow("exit");

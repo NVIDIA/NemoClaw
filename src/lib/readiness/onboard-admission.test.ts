@@ -105,7 +105,11 @@ describe("onboarding readiness admission (#7411)", () => {
   it.each([
     ["preview decline", { NEMOCLAW_NO_EXPRESS: "1" }, true],
     ["explicit non-Express provider", { NEMOCLAW_PROVIDER: "ollama" }, true],
+    ["normalized provider alias", { NEMOCLAW_PROVIDER: " Open-Router " }, true],
     ["explicit managed provider", { NEMOCLAW_PROVIDER: "install-vllm" }, true],
+    ["unknown provider", { NEMOCLAW_PROVIDER: "unknown-provider" }, false],
+    ["N1x-excluded provider", { NEMOCLAW_PROVIDER: "nim-local" }, false],
+    ["N1x-excluded provider alias", { NEMOCLAW_PROVIDER: "nim" }, false],
     ["blank provider", { NEMOCLAW_PROVIDER: "  " }, false],
     ["disabled Express override", { NEMOCLAW_NO_EXPRESS: "0" }, false],
     ["no intent", {}, false],

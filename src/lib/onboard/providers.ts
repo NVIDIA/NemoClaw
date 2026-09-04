@@ -32,6 +32,11 @@ const {
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
 } = require("../messaging/provider-profile");
 const { ensureWebSearchProviderProfiles } = require("./brave-provider-profile");
+const {
+  NON_INTERACTIVE_PROVIDER_ALIASES,
+  NON_INTERACTIVE_PROVIDER_KEYS,
+  normalizeNonInteractiveProviderKey,
+} = require("./inference-providers/provider-selection-keys");
 
 const MESSAGING_PROVIDER_BINDING_CONFLICT = "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT";
 const MESSAGING_PROVIDER_MUTATION_FAILURE = "NEMOCLAW_MESSAGING_PROVIDER_MUTATION_FAILURE";
@@ -164,39 +169,6 @@ const PROVIDER_MODEL_ENV = "NEMOCLAW_PROVIDER_MODEL";
 // provider/namespace/model convention. This endpoint is staged as a custom
 // OpenAI-compatible provider, not as the public build.nvidia.com provider.
 const HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-ultra";
-const NON_INTERACTIVE_PROVIDER_ALIASES = {
-  cloud: "build",
-  nim: "nim-local",
-  vllm: "vllm",
-  "open-router": "openrouter",
-  openrouterai: "openrouter",
-  anthropiccompatible: "anthropicCompatible",
-  hermes: "hermesProvider",
-  "hermes-provider": "hermesProvider",
-  hermesprovider: "hermesProvider",
-  nous: "hermesProvider",
-  "nous-portal": "hermesProvider",
-};
-const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
-  "build",
-  "openrouter",
-  "openai",
-  "anthropic",
-  "anthropicCompatible",
-  "gemini",
-  "hermesProvider",
-  "ollama",
-  "llama-cpp",
-  "install-llama-cpp",
-  "custom",
-  "nim-local",
-  "vllm",
-  "routed",
-  "install-vllm",
-  "install-ollama",
-  "install-windows-ollama",
-  "start-windows-ollama",
-]);
 const NON_INTERACTIVE_PROVIDER_VALID_VALUES =
   "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, llama-cpp, install-llama-cpp, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
 const PROVIDER_KEY_ROUTE_VALUES = new Set(
@@ -384,8 +356,8 @@ function getNonInteractiveProvider(allowHostedInferenceStaging = true) {
   if (allowHostedInferenceStaging) stageHostedInferenceSourceSecretEnv();
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
-  const normalized = NON_INTERACTIVE_PROVIDER_ALIASES[providerKey] || providerKey;
-  if (!NON_INTERACTIVE_PROVIDER_KEYS.has(normalized)) {
+  const normalized = normalizeNonInteractiveProviderKey(providerKey);
+  if (!normalized) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
     console.error(`  ${NON_INTERACTIVE_PROVIDER_VALID_VALUES}`);
     process.exit(1);
