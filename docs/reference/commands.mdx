@@ -2143,6 +2143,7 @@ On a fresh add, NemoClaw may already have applied the credential-free policy pre
 If that policy cleanup fails, run the `$$nemoclaw <name> policy remove <channel>` command printed by the CLI.
 With complete credentials, NemoClaw replaces a mismatched provider only when it is unattached or attached exclusively to the selected sandbox.
 An attachment to another sandbox stops replacement.
+The `--force` flag does not override this provider attachment authority.
 Hermes Discord uses its dedicated static provider type because its policy binds the Discord API and Gateway endpoints.
 Channel names are trimmed and lowercased before NemoClaw stores credentials, names bridge providers, or prints rebuild messages.
 NemoClaw requires the matching built-in network policy preset YAML to be present.
@@ -2167,7 +2168,7 @@ $$nemoclaw my-assistant channels add telegram
 | Flag | Description |
 | --- | --- |
 | `--dry-run` | Validate the channel name and matching policy preset without prompting for credentials, contacting the gateway, or rebuilding |
-| `--force` | Add the channel despite a credential conflict, shared-resource conflict, or incomplete required check. This flag is the only conflict override. |
+| `--force` | Add the channel despite a credential conflict, shared-resource conflict, or incomplete required check. This flag does not authorize replacing a provider attached to another sandbox. |
 
 Slack requires both `SLACK_BOT_TOKEN` (bot user OAuth) and `SLACK_APP_TOKEN` (app-level Socket Mode token); the command prompts for each in turn. The conflict check compares only sandboxes in the selected OpenShell gateway's sandbox registry. It cannot detect Slack token reuse across independent OpenShell gateways. Run only one active Slack sandbox on each OpenShell gateway, and use distinct Slack bot and app tokens across gateways. Optional Slack allowlists come from `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` at rebuild time. Telegram and Discord mention mode default to `1` when no environment, session, or saved state value exists for that setting. Discord applies that default only when a server ID is configured. A run with `NEMOCLAW_NON_INTERACTIVE=1`, or a run without a terminal on stdin, fails fast on any missing token and shows no rebuild prompt. Instead, the change is queued and you are told to run `$$nemoclaw <name> rebuild` manually. An SSH command without `-t`, a service unit, or a CI job has no terminal on stdin, so it does not need `NEMOCLAW_NON_INTERACTIVE=1` to reach this path. If you omit the required `<channel>` argument, the CLI prints the `channels add <channel>` usage with the supported channel list instead of falling back to top-level help.
 

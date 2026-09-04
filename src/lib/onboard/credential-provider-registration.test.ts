@@ -901,6 +901,60 @@ describe("credential provider registration", () => {
     }
   });
 
+  it("retains replacement evidence when migration receipt persistence fails (#9806)", async () => {
+    const providerName = "alpha-discord-bridge";
+    const apply = vi.spyOn(MessagingSetupApplier, "applyCredentialsAtOpenShell").mockResolvedValue({
+      upserted: [
+        {
+          channelId: "discord",
+          credentialId: "DISCORD_BOT_TOKEN",
+          providerName,
+          envKey: "DISCORD_BOT_TOKEN",
+          action: "update",
+        },
+      ],
+      reused: [],
+      missing: [],
+      replacedProviderNames: [providerName],
+      providerNames: [providerName],
+      sandboxCreateProviderArgs: ["--provider", providerName],
+    });
+    const cleanup = vi.spyOn(MessagingSetupApplier, "cleanupProvidersAtOpenShell");
+    const deps = registrationDeps(
+      vi.fn(),
+      { stagedCredentialProviders: [] } as unknown as Session,
+    );
+    deps.stagedLegacyValues = new Map([["DISCORD_BOT_TOKEN", DISCORD_SECRET]]);
+    deps.persistMigratedLegacyKeys = vi.fn(() => {
+      throw new Error("receipt persistence failed");
+    });
+    const registration = createCredentialProviderRegistration(deps);
+
+    try {
+      const failure = await registration
+        .applyMessagingProviders([
+          {
+            name: providerName,
+            envKey: "DISCORD_BOT_TOKEN",
+            token: DISCORD_SECRET,
+            providerType: "generic",
+          },
+        ])
+        .catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({
+        message: "receipt persistence failed",
+        mutatedProviderNames: [providerName],
+        createdProviderNames: [],
+        replacedProviderNames: [providerName],
+      });
+      expect(cleanup).not.toHaveBeenCalled();
+    } finally {
+      cleanup.mockRestore();
+      apply.mockRestore();
+    }
+  });
+
   it("registers one static Hermes Discord provider from the checkpoint binding", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const missing = {

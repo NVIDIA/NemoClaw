@@ -122,21 +122,23 @@ async function rethrowAfterCreatedProviderCleanup(
     ...existingCreatedProviderNames,
     ...(input.createdProviderNames ?? []),
   ]);
-  if (createdProviderNames.length === 0) throw error;
   const replacedProviderNames = uniqueProviderNames([
     ...existingReplacedProviderNames,
     ...(input.replacedProviderNames ?? []),
   ]);
+  if (createdProviderNames.length === 0 && replacedProviderNames.length === 0) throw error;
   const mutationError = new MessagingProviderApplyError({
     message: error instanceof Error ? error.message : "Provider registration failed.",
     mutatedProviderNames: uniqueProviderNames([
       ...existingMutatedProviderNames,
       ...createdProviderNames,
+      ...replacedProviderNames,
     ]),
     createdProviderNames,
     replacedProviderNames,
     cause: error,
   });
+  if (createdProviderNames.length === 0) throw mutationError;
   const cleanup = await MessagingSetupApplier.cleanupProvidersAtOpenShell(createdProviderNames, {
     providerAdapter: input.providerAdapter,
     target: namedOpenShellGateway(input.gatewayName),
