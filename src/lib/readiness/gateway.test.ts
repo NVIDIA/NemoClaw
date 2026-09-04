@@ -212,7 +212,9 @@ describe("gateway readiness projection (#7411)", () => {
   it("reports the underlying error when the external attachment probe throws unexpectedly", async () => {
     const owner = externalOwner();
     const deps = dependencies(owner);
-    vi.mocked(deps.probeAttachment).mockRejectedValueOnce(new Error("ECONNREFUSED 127.0.0.1:8080"));
+    vi.mocked(deps.probeAttachment).mockRejectedValueOnce(
+      new Error(`ECONNREFUSED 127.0.0.1:8080: ${owner.stateDir}`),
+    );
 
     const projection = projectGatewayReadiness(
       await collectGatewayObservations(deps, { now: () => NOW }),
@@ -222,6 +224,7 @@ describe("gateway readiness projection (#7411)", () => {
 
     expect(serialized).toContain("ECONNREFUSED 127.0.0.1:8080");
     expect(serialized).not.toContain(owner.stateDir);
+    expect(serialized).toContain("<gateway-state>");
   });
 
   it("fails closed when lifecycle authority cannot be resolved", async () => {
