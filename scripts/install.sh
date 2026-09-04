@@ -3683,10 +3683,7 @@ run_installer_host_preflight() {
       try {
         const { assessHost, planHostAdvisories } = require(preflightPath);
         const { createHostReadinessReport } = require(hostReadinessPath);
-        const {
-          evaluateOnboardReadinessAdmission,
-          hasExplicitDeferredN1xOnboardingIntent,
-        } = require(onboardAdmissionPath);
+        const { evaluateOnboardReadinessAdmission } = require(onboardAdmissionPath);
         const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
         const { configuredRuntimeProviderOwnsHostReadiness } = require(gatewayRuntimePath);
         const host = assessHost();
@@ -3721,7 +3718,9 @@ run_installer_host_preflight() {
           // authoritative onboarding gate apply supported storage remediation,
           // but only when the gateway declaration confirms NemoClaw ownership.
           allowStorageRemediation,
-          allowDeferredN1x: hasExplicitDeferredN1xOnboardingIntent(process.env),
+          allowDeferredN1xManagedVllm:
+            process.env.NEMOCLAW_PROVIDER === "install-vllm" ||
+            process.env.NEMOCLAW_NO_EXPRESS === "1",
         });
         const infoLines = [];
         const actionLines = [];
@@ -6066,6 +6065,9 @@ maybe_offer_express_install() {
     return 0
   fi
   if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
+    if [ "$platform" = "N1x" ] && [ "$NEMOCLAW_PROVIDER" != "install-vllm" ]; then
+      export NEMOCLAW_NO_EXPRESS=1
+    fi
     if [ "$platform" = "DGX Station" ] && [ "$NEMOCLAW_PROVIDER" = "install-vllm" ]; then
       # An explicit managed-vLLM provider selects the same Station host/pair
       # preparation boundary without forcing the rest of the express policy.

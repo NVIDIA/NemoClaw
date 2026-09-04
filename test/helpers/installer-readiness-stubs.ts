@@ -84,7 +84,6 @@ export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
     waivedFindingIds: [],
   };
 };
-exports.hasExplicitDeferredN1xOnboardingIntent = () => false;
 `,
   );
   fs.writeFileSync(

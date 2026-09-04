@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../../../state/onboard-session";
-import { isN1xOnboardingRecordedProvider } from "../../inference-providers/provider-selection-keys";
 import { withPreflightTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
@@ -57,7 +56,7 @@ export interface PreflightStateOptions<
         observedAt?: string;
         now?: () => Date;
         wslDockerDesktopGpuProofPassed?: boolean;
-        allowDeferredN1xOnboarding?: boolean;
+        allowDeferredN1xManagedVllm?: boolean;
         resuming: true;
         presentAdvisories?: boolean;
       },
@@ -152,13 +151,6 @@ export async function handlePreflightState<
     : { flag: null, device: null };
   const effectiveSandboxGpuFlag = explicitSandboxGpuFlag ?? resumedSandboxGpuOverrides.flag;
   const effectiveSandboxGpuDevice = sandboxGpuDevice ?? resumedSandboxGpuOverrides.device;
-  const recordedProviderAllowsDeferredN1x = isN1xOnboardingRecordedProvider(session?.provider, {
-    hasNimContainer: Boolean(session?.nimContainer),
-  });
-  // An explicit false is authoritative for rebuilds. Ordinary resume may use
-  // the provider that this owner-only session already validated and recorded.
-  const allowDeferredN1xOnboarding =
-    allowDeferredN1xManagedVllm ?? recordedProviderAllowsDeferredN1x;
 
   let gpu: Gpu;
   if (resumePreflight) {
@@ -185,7 +177,7 @@ export async function handlePreflightState<
       explicitlyOptedOutGpuPassthrough: resumeSandboxGpuConfig.mode === "0",
       observedAt: hostObservedAt,
       now,
-      allowDeferredN1xOnboarding,
+      allowDeferredN1xManagedVllm,
       resuming: true,
     });
     // A full detector can run the bounded ARM64 WSL Docker GPU proof. Keep it
@@ -208,7 +200,7 @@ export async function handlePreflightState<
         observedAt: hostObservedAt,
         now,
         ...(wslDockerDesktopGpuProofPassed === undefined ? {} : { wslDockerDesktopGpuProofPassed }),
-        allowDeferredN1xOnboarding,
+        allowDeferredN1xManagedVllm,
         resuming: true,
         presentAdvisories: false,
       });

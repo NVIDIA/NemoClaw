@@ -122,7 +122,7 @@ function hasAdmittedReadinessException(
     explicitlyOptedOutGpuPassthrough: false,
     allowUnsupportedRuntime: false,
     allowStorageRemediation: remediableStorage,
-    allowDeferredN1x: allowDeferredN1xManagedVllm,
+    allowDeferredN1xManagedVllm,
   });
   if (!admission.admitted || admission.waivedFindingIds.length === 0) return false;
   const waivedFindingIds = new Set(admission.waivedFindingIds);

@@ -21,7 +21,6 @@ import {
 import {
   evaluateOnboardGatewayReadinessAdmission,
   evaluateOnboardReadinessAdmission,
-  hasExplicitDeferredN1xOnboardingIntent,
 } from "../readiness/onboard-admission";
 import { composeSystemReadinessReport } from "../readiness/system";
 import type { SystemReadinessReport } from "../readiness/types";
@@ -47,6 +46,7 @@ import {
   validateSandboxGpuPreflight,
 } from "./sandbox-gpu-preflight";
 import type { OnboardOptions } from "./types";
+import { MANAGED_VLLM_PROVIDER_KEY } from "./vllm-menu";
 
 export type FatalRuntimePreflightOptions = Pick<
   OnboardOptions,
@@ -119,8 +119,7 @@ export interface OnboardHostReadinessOptions {
   resuming?: boolean;
   allowStorageRemediation?: boolean;
   allowPortableHostPreparation?: boolean;
-  /** A trusted current or recorded choice may exercise the Deferred N1x path. */
-  allowDeferredN1xOnboarding?: boolean;
+  allowDeferredN1xManagedVllm?: boolean;
   /** Print warning-severity host advisories before returning an admitted report. */
   presentAdvisories?: boolean;
   exitProcess?: (code: number) => never;
@@ -179,8 +178,10 @@ export function assertOnboardSystemReadiness(
     providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
     allowStorageRemediation: options.allowStorageRemediation === true,
     allowPortableHostPreparation: options.allowPortableHostPreparation,
-    allowDeferredN1x:
-      options.allowDeferredN1xOnboarding ?? hasExplicitDeferredN1xOnboardingIntent(process.env),
+    allowDeferredN1xManagedVllm:
+      options.allowDeferredN1xManagedVllm ??
+      (process.env.NEMOCLAW_PROVIDER === MANAGED_VLLM_PROVIDER_KEY ||
+        process.env.NEMOCLAW_NO_EXPRESS === "1"),
   });
   const advisories = planHostAdvisories(host, {
     providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
@@ -315,7 +316,7 @@ function collectOnboardHostReadiness(
     wslDockerDesktopGpuProofPassed: runtimeGpu?.wslDockerDesktopGpuProofPassed,
     resuming: context.resuming,
     allowStorageRemediation,
-    allowDeferredN1xOnboarding: options.allowDeferredN1xManagedVllm,
+    allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
     // The initial host readiness gate already presented warning advisories.
     presentAdvisories: false,
     exitProcess: context.exitProcess,
@@ -410,7 +411,7 @@ async function collectAdmittedReadinessPair(
       host.result.sandboxGpuConfig.mode === "0" || options.optedOutGpuPassthrough === true,
     resuming: context.resuming,
     allowStorageRemediation: isManagedGatewayReadiness(gateway),
-    allowDeferredN1xOnboarding: options.allowDeferredN1xManagedVllm,
+    allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
     presentAdvisories: false,
     exitProcess,
   });
@@ -593,7 +594,7 @@ export function runFatalOnboardRuntimePreflight(
     explicitlyOptedOutGpuPassthrough,
     resuming: context.resuming,
     allowStorageRemediation: context.allowStorageRemediation,
-    allowDeferredN1xOnboarding: options.allowDeferredN1xManagedVllm,
+    allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
     exitProcess,
     observedAt,
     now,

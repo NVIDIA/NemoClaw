@@ -212,72 +212,15 @@ describe("handlePreflightState", () => {
       1,
       expect.anything(),
       expect.anything(),
-      expect.objectContaining({ allowDeferredN1xOnboarding: true }),
+      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
     );
     expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
       2,
       expect.anything(),
       expect.anything(),
-      expect.objectContaining({ allowDeferredN1xOnboarding: true }),
+      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
     );
   });
-
-  it("reuses a recorded standard provider for Deferred N1x resume (#11041)", async () => {
-    const session = createSession({ provider: "ollama-local" });
-    session.steps.preflight.status = "complete";
-    const assertOnboardHostReadiness = vi.fn();
-    const harness = createDeps({ assertOnboardHostReadiness });
-
-    await handlePreflightState({ ...baseOptions(harness.deps, session), resume: true });
-
-    expect(assertOnboardHostReadiness).toHaveBeenCalledTimes(2);
-    expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
-      1,
-      expect.anything(),
-      expect.anything(),
-      expect.objectContaining({ allowDeferredN1xOnboarding: true }),
-    );
-    expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
-      2,
-      expect.anything(),
-      expect.anything(),
-      expect.objectContaining({ allowDeferredN1xOnboarding: true }),
-    );
-  });
-
-  it.each([
-    ["persisted Local NIM", "vllm-local", "nemoclaw-nim", undefined, false],
-    ["an unknown persisted provider", "obsolete-provider", null, undefined, false],
-    ["legacy NVIDIA Endpoints", "nvidia-nim", null, undefined, true],
-    ["an explicit rebuild denial", "ollama-local", null, false, false],
-  ] as const)(
-    "classifies %s for Deferred N1x resume (#11041)",
-    async (_case, provider, nimContainer, authority, expected) => {
-      const session = createSession({ provider, nimContainer });
-      session.steps.preflight.status = "complete";
-      const assertOnboardHostReadiness = vi.fn();
-      const harness = createDeps({ assertOnboardHostReadiness });
-
-      await handlePreflightState({
-        ...baseOptions(harness.deps, session),
-        resume: true,
-        ...(authority === undefined ? {} : { allowDeferredN1xManagedVllm: authority }),
-      });
-
-      expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
-        1,
-        expect.anything(),
-        expect.anything(),
-        expect.objectContaining({ allowDeferredN1xOnboarding: expected }),
-      );
-      expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
-        2,
-        expect.anything(),
-        expect.anything(),
-        expect.objectContaining({ allowDeferredN1xOnboarding: expected }),
-      );
-    },
-  );
 
   it("rejects changed gateway ownership before cached resume probe effects (#7411)", async () => {
     const session = createSession();

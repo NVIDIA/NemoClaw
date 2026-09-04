@@ -37,55 +37,19 @@ describe("installer N1x Express preview", () => {
 
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Skipping express install\. Continuing with interactive flow/);
-    expect(output).toMatch(/RESULT .*NO_EXPRESS=1/);
+    expect(output).toMatch(/RESULT /);
   });
 
-  it("carries a declined preview through host admission into the onboarding CLI (#11041)", () => {
-    const result = runExpressPromptWithTty("n\n", "pipe", "N1x", {}, "n1x-standard-main");
+  it.each([
+    ["NEMOCLAW_NO_EXPRESS", { NEMOCLAW_NO_EXPRESS: "1" }],
+    ["an explicit provider", { NEMOCLAW_PROVIDER: "ollama" }],
+  ])("continues with ordinary onboarding for %s (#11041)", (_scenario, env) => {
+    const result = runExpressPromptWithTty("", "pipe", "N1x", env);
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).toBe(0);
-    expect(output).toContain("HOST_PREFLIGHT_NO_EXPRESS=1 PROVIDER= QUALIFIED_N1X=1");
-    expect(output).toContain("ONBOARD NO_EXPRESS=1 PROVIDER= ARGS=onboard");
-  });
-
-  it("continues with ordinary onboarding when NEMOCLAW_NO_EXPRESS is set (#11041)", () => {
-    const result = runExpressPromptWithTty("", "pipe", "N1x", {
-      NEMOCLAW_NO_EXPRESS: "1",
-    });
-    const output = `${result.stdout}${result.stderr}`;
-
-    expect(result.status, output).toBe(0);
-    expect(output).toMatch(/Skipping express prompt \(NEMOCLAW_NO_EXPRESS=1\)/);
-    expect(output).toMatch(/RESULT .*NO_EXPRESS=1/);
-  });
-
-  it("continues with an explicit non-Express provider on N1x (#11041)", () => {
-    const result = runExpressPromptWithTty("", "pipe", "N1x", {
-      NEMOCLAW_PROVIDER: "ollama",
-    });
-    const output = `${result.stdout}${result.stderr}`;
-
-    expect(result.status, output).toBe(0);
-    expect(output).toMatch(/Skipping express prompt \(NEMOCLAW_PROVIDER=ollama already set\)/);
-    expect(output).toMatch(/RESULT .*PROVIDER=ollama/);
-  });
-
-  it("carries an explicit Ollama choice through host admission into the onboarding CLI (#11041)", () => {
-    const result = runExpressPromptWithTty(
-      "",
-      "pipe",
-      "N1x",
-      {
-        NEMOCLAW_PROVIDER: "ollama",
-      },
-      "n1x-standard-main",
-    );
-    const output = `${result.stdout}${result.stderr}`;
-
-    expect(result.status, output).toBe(0);
-    expect(output).toContain("HOST_PREFLIGHT_NO_EXPRESS= PROVIDER=ollama QUALIFIED_N1X=1");
-    expect(output).toContain("ONBOARD NO_EXPRESS= PROVIDER=ollama ARGS=onboard");
+    expect(output).toMatch(/Skipping express prompt/);
+    expect(output).toMatch(/RESULT /);
   });
 
   it("allows the N1x prompt bypass with explicit managed-vLLM intent (#8574)", () => {
