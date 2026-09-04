@@ -31,7 +31,7 @@ export function classifyTestDepth(
       verdict: "unit_sufficient",
       rationale:
         "Changes are limited to tests, documentation, or metadata that cannot affect runtime behavior directly.",
-      suggestedTests: ["Existing unit or documentation validation candidate for the touched files."],
+      suggestedTests: ["Unit or documentation validation candidate for the touched files."],
     };
   }
   if (riskPlan.requiredJobs.length > 0 || riskPlan.requiredTargets.length > 0) {
