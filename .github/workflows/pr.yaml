@@ -155,6 +155,7 @@ jobs:
           VALIDATION_BASE: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || format('origin/{0}', github.base_ref) }}
         run: |
           set -euo pipefail
+          VALIDATION_BASE="${VALIDATION_BASE:-origin/${GITHUB_BASE_REF:?missing base ref}}"
           DOCS_ONLY_FROM_REF="$(git merge-base HEAD "$VALIDATION_BASE")"
           [ -n "$DOCS_ONLY_FROM_REF" ]
           echo "DOCS_ONLY_FROM_REF=$DOCS_ONLY_FROM_REF" >> "$GITHUB_ENV"
