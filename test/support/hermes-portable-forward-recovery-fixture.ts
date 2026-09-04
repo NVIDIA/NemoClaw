@@ -8,6 +8,7 @@ import { type ConnectHarness, requireDist } from "./connect-flow-test-harness";
 
 type ForwardRecord = {
   owner: string;
+  pid?: number;
   reachable: boolean;
   status: "active" | "dead" | "running" | "stopped";
 };
@@ -16,7 +17,8 @@ function forwardList(records: ReadonlyMap<number, ForwardRecord>): string {
   return [
     "SANDBOX BIND PORT PID STATUS",
     ...[...records].map(
-      ([port, record]) => `${record.owner} 127.0.0.1 ${String(port)} 12345 ${record.status}`,
+      ([port, record]) =>
+        `${record.owner} 127.0.0.1 ${String(port)} ${String(record.pid ?? 12_345)} ${record.status}`,
     ),
   ].join("\n");
 }
@@ -71,7 +73,6 @@ export function createHermesPortableForwardRecoveryFixture({
   const currentCaptureCalls: string[][] = [];
   const currentMutationCalls: string[][] = [];
   const rollbackCaptureCalls: string[][] = [];
-  const rollbackMutationCalls: string[][] = [];
   let currentAllowed = true;
   let rollbackAllowed = true;
   let now = 0;
@@ -86,10 +87,9 @@ export function createHermesPortableForwardRecoveryFixture({
       output: listOutput ?? (malformedList ? "not a forward list" : forwardList(records)),
     };
   };
-  const mutate = (args: readonly string[], rollback: boolean) => {
-    const calls = rollback ? rollbackCalls : currentCalls;
-    calls.push([...args]);
-    (rollback ? rollbackMutationCalls : currentMutationCalls).push([...args]);
+  const mutate = (args: readonly string[]) => {
+    currentCalls.push([...args]);
+    currentMutationCalls.push([...args]);
     const port = Number(args[1] === "stop" ? args[2] : args[3]);
     if (args[1] === "stop") {
       records.delete(port);
@@ -121,8 +121,7 @@ export function createHermesPortableForwardRecoveryFixture({
       },
       captureCurrentList: (args) => capture(args, false),
       captureRollbackList: (args) => capture(args, true),
-      runCurrentMutation: (args) => mutate(args, false),
-      runRollbackMutation: (args) => mutate(args, true),
+      runCurrentMutation: mutate,
       isPortReachable: (port) => records.get(port)?.reachable === true,
       now: () => now,
       sleep: (milliseconds) => {
@@ -139,7 +138,6 @@ export function createHermesPortableForwardRecoveryFixture({
     records,
     rollbackCalls,
     rollbackCaptureCalls,
-    rollbackMutationCalls,
     setCurrentAllowed(value: boolean) {
       currentAllowed = value;
     },

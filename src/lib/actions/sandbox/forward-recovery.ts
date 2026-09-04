@@ -112,15 +112,6 @@ export function createHermesPortableForwardRecoveryInput(input: {
           stdio: "ignore",
           timeout,
         }),
-      runRollbackMutation: (args, timeout) =>
-        runOpenshell([...args], {
-          env: input.commandAuthority.env,
-          openshellBinary: input.commandAuthority.executablePath,
-          replaceEnv: true,
-          ignoreError: true,
-          stdio: "ignore",
-          timeout,
-        }),
       isPortReachable: isLocalForwardReachable,
     },
   };
@@ -481,17 +472,19 @@ export function ensureMessagingHostForwardHealthy(
 ): boolean | null {
   const forward = getSandboxMessagingHostForward(sandboxName);
   if (!forward) return null;
-  const health = isSandboxPortForwardHealthy(sandboxName, forward.port, undefined, runtimeSelection);
+  const health = isSandboxPortForwardHealthy(
+    sandboxName,
+    forward.port,
+    undefined,
+    runtimeSelection,
+  );
   if (health === true) return true;
   return ensureSandboxPortForwardForPort(sandboxName, forward.port, { runtimeSelection });
 }
 
 export function recoverMessagingHostForward(
   sandboxName: string,
-  {
-    quiet,
-    runtimeSelection,
-  }: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
+  { quiet, runtimeSelection }: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
 ): boolean | null {
   const recovered = ensureMessagingHostForwardHealthy(sandboxName, runtimeSelection);
   if (!quiet && recovered === false) {
@@ -628,10 +621,7 @@ export function resolveSandboxLaunchForwardPorts(sandboxName: string): number[] 
 export function recoverDeclaredAgentForwardPorts(
   sandboxName: string,
   recoveryPort: number,
-  {
-    quiet,
-    runtimeSelection,
-  }: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
+  { quiet, runtimeSelection }: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
 ): boolean | null {
   const recovered = ensureDeclaredAgentForwardPortsHealthy(
     sandboxName,
