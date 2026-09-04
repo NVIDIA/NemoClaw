@@ -524,7 +524,6 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
             --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
             --install-root /usr/local/lib/nemoclaw/openclaw-runtime \
             --label "OpenClaw ${OPENCLAW_VERSION}"; \
-        node -e 'require.resolve("fast-uri", { paths: ["/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw"] })'; \
         node /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs; \
         mkdir -p /usr/local/lib/node_modules; \
         ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw /usr/local/lib/node_modules/openclaw; \
