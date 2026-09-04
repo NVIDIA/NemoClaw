@@ -175,6 +175,7 @@ describe("command-registry", () => {
       const expected = new Set([
         "agents",
         "completion",
+        "config",
         "host",
         "onboard",
         "profiles",

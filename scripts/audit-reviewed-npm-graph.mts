@@ -18,6 +18,7 @@ import {
 } from "./lib/reviewed-npm-archive.mts";
 import {
   type AuditPolicyResult,
+  NPM_AUDIT_REGISTRY,
   assertExceptionGraphs,
   readAuditExceptionRegistry,
   runReviewedNpmAudit,
@@ -74,6 +75,12 @@ const TARGET_REPO_ROOT = fs.realpathSync(
 );
 const CONFIG_PATH = resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT);
 const SEVERITIES: readonly Severity[] = ["info", "low", "moderate", "high", "critical"];
+export const NPM_AUDIT_SIGNATURE_ARGV = [
+  "audit",
+  "signatures",
+  `--registry=${NPM_AUDIT_REGISTRY}`,
+  "--omit=dev",
+] as const;
 const SEMVER_NUMERIC_IDENTIFIER = String.raw`(?:0|[1-9][0-9]*)`;
 const SEMVER_PRERELEASE_IDENTIFIER = String.raw`(?:${SEMVER_NUMERIC_IDENTIFIER}|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)`;
 const EXACT_NPM_PACKAGE_SPEC = new RegExp(
@@ -592,7 +599,7 @@ export function verifySignaturesWithReviewedRetry(
   directory: string,
   evidenceFile: string,
   runner: (directory: string) => CommandResult = (cwd) => {
-    const result = spawnSync("npm", ["audit", "signatures", "--omit=dev"], {
+    const result = spawnSync("npm", NPM_AUDIT_SIGNATURE_ARGV, {
       cwd,
       encoding: "utf-8",
       env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
@@ -666,25 +673,29 @@ function verifyWechatInstallCacheBoundary(
   });
   if (cache.error) throw cache.error;
   if (cache.status !== 0) throw new Error(`npm cache add failed: ${cache.stderr || cache.stdout}`);
-  fs.chmodSync(trustedCache, 0o555);
-  for (const entry of fs.readdirSync(trustedCache, { recursive: true })) {
-    fs.chmodSync(
-      path.join(trustedCache, entry.toString()),
-      fs.lstatSync(path.join(trustedCache, entry.toString())).isDirectory() ? 0o555 : 0o444,
-    );
+  try {
+    fs.chmodSync(trustedCache, 0o555);
+    for (const entry of fs.readdirSync(trustedCache, { recursive: true })) {
+      fs.chmodSync(
+        path.join(trustedCache, entry.toString()),
+        fs.lstatSync(path.join(trustedCache, entry.toString())).isDirectory() ? 0o555 : 0o444,
+      );
+    }
+    assertTreeReadOnly(trustedCache);
+    fs.cpSync(trustedCache, installCache, { recursive: true, force: true });
+    makeTreeOwnerWritable(installCache);
+    packReviewedNpmArchive({
+      env: { ...env, NPM_CONFIG_CACHE: installCache, NPM_CONFIG_OFFLINE: "true" },
+      expectedIntegrity: graph.integrity,
+      label: graph.label,
+      packageSpec: graph.packageSpec,
+      tarballUrl: graph.tarballUrl,
+      tempDirectory: packDirectory,
+    });
+    assertTreeReadOnly(trustedCache);
+  } finally {
+    makeTreeOwnerWritable(trustedCache);
   }
-  assertTreeReadOnly(trustedCache);
-  fs.cpSync(trustedCache, installCache, { recursive: true, force: true });
-  makeTreeOwnerWritable(installCache);
-  packReviewedNpmArchive({
-    env: { ...env, NPM_CONFIG_CACHE: installCache, NPM_CONFIG_OFFLINE: "true" },
-    expectedIntegrity: graph.integrity,
-    label: graph.label,
-    packageSpec: graph.packageSpec,
-    tarballUrl: graph.tarballUrl,
-    tempDirectory: packDirectory,
-  });
-  assertTreeReadOnly(trustedCache);
 }
 
 function auditLockedGraph(
@@ -722,7 +733,7 @@ function auditLockedGraph(
       path.join(artifactDirectory, `locked-graph-${index + 1}-signatures.txt`),
     );
   } else {
-    run("npm", ["audit", "signatures", "--omit=dev"], directory);
+    run("npm", NPM_AUDIT_SIGNATURE_ARGV, directory);
   }
   if (graph.inputValidation === "wechat-runtime") {
     verifyWechatInstallCacheBoundary(graph, tempRoot, config.registryOrigin);
@@ -795,7 +806,7 @@ export function auditMaterializedSourceGraph(
   });
   (
     dependencies.verifySignatures ??
-    ((directory) => run("npm", ["audit", "signatures", "--omit=dev"], directory))
+    ((directory) => run("npm", NPM_AUDIT_SIGNATURE_ARGV, directory))
   )(options.directory);
   return result;
 }
@@ -957,7 +968,7 @@ function main(): void {
       packageJsonFile: targetRepositoryPath("package.json", "NemoClaw CLI package manifest"),
       packageLockFile: targetRepositoryPath("package-lock.json", "NemoClaw CLI lockfile"),
       rawReportFile: path.join(artifactDirectory, "source-graph.json"),
-      registryOrigin: config.registryOrigin,
+      registryOrigin: NPM_AUDIT_REGISTRY,
       result: sourceResult,
       threshold: config.severityThreshold,
     });
@@ -969,7 +980,7 @@ function main(): void {
       packageLockFile: path.join(archiveDirectory, "package-lock.json"),
       preserveInputs: true,
       rawReportFile: path.join(artifactDirectory, "reviewed-archive-graph.json"),
-      registryOrigin: config.registryOrigin,
+      registryOrigin: NPM_AUDIT_REGISTRY,
       result: archiveResult,
       threshold: config.severityThreshold,
     });
@@ -987,7 +998,7 @@ function main(): void {
           `${graph.label} lockfile`,
         ),
         rawReportFile: path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
-        registryOrigin: config.registryOrigin,
+        registryOrigin: NPM_AUDIT_REGISTRY,
         result: lockedResults[index]!,
         threshold: graph.severityThreshold ?? config.severityThreshold,
       });

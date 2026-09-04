@@ -54,11 +54,12 @@ const OPAQUE_INPUTS = [
   "tools/e2e/brev-launchable-e2e.sh",
   "managed-inference/models/example.yaml",
   "managed-inference/recipes/vllm.example.managed-cluster.v1.yaml",
-  "internal/security-reviews/hermes-0.19.0-dependency-review.md",
+  "internal/security-reviews/hermes-0.20.6-dependency-review.md",
   ".github/actions/resolve-hermes-base-image/action.yaml",
   ".github/actions/resolve-reviewed-hermes-platform/action.yaml",
   "Dockerfile",
   "agents/hermes/Dockerfile.base",
+  "agents/hermes/patch-session-list-preview.py",
   "agents/hermes/Dockerfile",
   "agents/langchain-deepagents-code/Dockerfile",
   "agents/hermes/policy-additions.yaml",
@@ -197,9 +198,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/inference/serving/resolver.test.ts",
       "test/inference/managed/managed-inference-catalog-compiler.test.ts",
     ]);
-    expect(triggeredBy("internal/security-reviews/hermes-0.19.0-dependency-review.md")).toEqual([
-      "test/agents/hermes/hermes-dependency-review.test.ts",
-    ]);
+    expect(triggeredBy("internal/security-reviews/hermes-0.20.6-dependency-review.md")).toEqual([]);
     expect(triggeredBy(".github/actions/resolve-hermes-base-image/action.yaml")).toEqual([
       "test/platform/images/base-image-resolver-helper.test.ts",
     ]);
@@ -213,12 +212,18 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/Dockerfile.base")).toEqual([
-      "test/agents/hermes/hermes-dependency-review.test.ts",
       "test/agents/hermes/hermes-share-mount-deps.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/runtime/sandbox/sandbox-provisioning.test.ts",
     ]);
+    expect(triggeredBy("agents/hermes/patch-session-list-preview.py")).toEqual([
+      "test/agents/hermes/hermes-session-list-preview-patch.test.ts",
+    ]);
+    expect(triggeredBy("nemoclaw-blueprint/policies/presets/nous-browser.yaml")).toEqual([
+      "test/onboarding/effective-policy-contracts.test.ts",
+    ]);
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
+      "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
       "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
     ]);

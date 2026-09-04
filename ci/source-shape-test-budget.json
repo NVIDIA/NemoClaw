@@ -87,11 +87,6 @@
       "category": "security"
     },
     {
-      "file": "test/agents/hermes/hermes-final-image-layout.test.ts",
-      "test": "pins $source to its current bytes at $target",
-      "category": "security"
-    },
-    {
       "file": "test/platform/images/muse-glimmer-vllm-image-provenance.test.ts",
       "test": "binds the checked-in provenance to the selected runtime",
       "category": "security"
@@ -214,6 +209,11 @@
     {
       "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
       "test": "rejects malformed reviewed source package specifications",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/hermes/hermes-image-build-probes.test.ts",
+      "test": "binds the runtime environment validator to its source digest",
       "category": "security"
     },
     {
