@@ -30,8 +30,6 @@ export interface NemoClawInferenceProviderConfig {
 
 export interface NemoClawRouteOverrides {
   readonly model: string;
-  readonly reasoning?: Readonly<{ enabled: boolean; effort?: string }>;
-  readonly limits?: Readonly<{ contextTokens?: number; outputTokens?: number }>;
 }
 
 export interface NemoClawInferenceRouteConfig {
@@ -42,7 +40,7 @@ export interface NemoClawInferenceRouteConfig {
 
 export interface NemoClawAgentConfig {
   readonly name: string;
-  readonly type: "openclaw" | "hermes" | "langchain-deepagents-code" | "nemocua";
+  readonly type: "openclaw";
   readonly inference: Readonly<{ routes: readonly NemoClawInferenceRouteConfig[] }>;
 }
 

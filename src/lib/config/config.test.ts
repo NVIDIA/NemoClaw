@@ -82,6 +82,24 @@ describe("NemoClawConfig v1", () => {
     );
   });
 
+  it.each(["hermes", "langchain-deepagents-code", "nemocua"])(
+    "rejects unsupported v1 agent type %s (#10938)",
+    (type) => {
+      const value = structuredClone(config()) as unknown as Record<string, any>;
+      value.spec.sandboxes[0].agents[0].type = type;
+      expect(() => validateNemoClawConfig(value)).toThrow("must be equal to constant");
+    },
+  );
+
+  it.each(["reasoning", "limits"])(
+    "rejects unsupported v1 inference field %s (#10938)",
+    (field) => {
+      const value = structuredClone(config()) as unknown as Record<string, any>;
+      value.spec.sandboxes[0].agents[0].inference.routes[0][field] = {};
+      expect(() => validateNemoClawConfig(value)).toThrow("additional properties");
+    },
+  );
+
   it.each(["NEMOCLAW_PROVIDER_KEY", "OPENSHELL_SECRET", "VITEST_TOKEN", "CI"])(
     "rejects reserved credential reference %s (#10938)",
     (env) => {

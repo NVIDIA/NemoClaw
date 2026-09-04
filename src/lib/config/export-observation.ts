@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import { fingerprintOpenShellSandboxId } from "../adapters/openshell/sandbox-identity";
 import { parseAndValidateSandboxPolicy } from "../policy/sandbox-policy-validation";
+import { sortCanonicalMappings } from "./canonical-mapping";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../state/registry/types";
 import { isCredentialEnvironmentReferenceName } from "./schema";
 
@@ -228,23 +229,17 @@ export function classifyExportRegistryFidelity(
     );
   return findings;
 }
-function sortJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortJson);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-      .map(([key, child]) => [key, sortJson(child)]),
-  );
-}
 /** Parse, schema-check, and prove canonical YAML round-trip without dropping semantics. */
 export function canonicalizeEffectivePolicy(document: string): Readonly<Record<string, unknown>> {
   const parsed = parseAndValidateSandboxPolicy(document);
-  const canonical = YAML.stringify(sortJson(parsed), { lineWidth: 0, sortMapEntries: true });
+  const canonical = YAML.stringify(sortCanonicalMappings(parsed), {
+    lineWidth: 0,
+    sortMapEntries: true,
+  });
   const reparsed = parseAndValidateSandboxPolicy(canonical);
   if (!isDeepStrictEqual(parsed, reparsed))
     throw new Error("Effective policy cannot be represented losslessly.");
-  return sortJson(reparsed) as Readonly<Record<string, unknown>>;
+  return sortCanonicalMappings(reparsed) as Readonly<Record<string, unknown>>;
 }
 function validateAgreement(
   entry: Readonly<SandboxEntry>,

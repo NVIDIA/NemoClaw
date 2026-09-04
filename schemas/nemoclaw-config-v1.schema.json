@@ -71,25 +71,7 @@
           "additionalProperties": false,
           "required": ["model"],
           "properties": {
-            "model": { "$ref": "#/$defs/nonEmpty" },
-            "reasoning": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["enabled"],
-              "properties": {
-                "enabled": { "type": "boolean" },
-                "effort": { "$ref": "#/$defs/nonEmpty" }
-              }
-            },
-            "limits": {
-              "type": "object",
-              "additionalProperties": false,
-              "minProperties": 1,
-              "properties": {
-                "contextTokens": { "type": "integer", "minimum": 1 },
-                "outputTokens": { "type": "integer", "minimum": 1 }
-              }
-            }
+            "model": { "$ref": "#/$defs/nonEmpty" }
           }
         }
       }
@@ -100,7 +82,7 @@
       "required": ["name", "type", "inference"],
       "properties": {
         "name": { "$ref": "#/$defs/name" },
-        "type": { "enum": ["openclaw", "hermes", "langchain-deepagents-code", "nemocua"] },
+        "type": { "const": "openclaw" },
         "inference": {
           "type": "object",
           "additionalProperties": false,

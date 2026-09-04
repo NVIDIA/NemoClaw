@@ -386,6 +386,7 @@ function publishYamlExport(options: PublishYamlExportOptions): PublishExportFile
   const moved = path.join(parent.retainedPath, `.${name}.${suffix}.previous`);
   const quarantine = path.join(parent.retainedPath, `.${name}.${suffix}.rollback`);
   let descriptor: number | null = null;
+  let temporaryCleanupAttempted = false;
   try {
     const expected = inspectDestination(destination, outputPath, options.force === true);
     descriptor = fs.openSync(
@@ -441,8 +442,36 @@ function publishYamlExport(options: PublishYamlExportOptions): PublishExportFile
       );
       throw error;
     }
-    fs.unlinkSync(temporary);
-    fs.fsyncSync(parent.descriptor);
+    temporaryCleanupAttempted = true;
+    let temporaryCleanupFailed = false;
+    try {
+      fs.unlinkSync(temporary);
+    } catch {
+      temporaryCleanupFailed = true;
+    }
+    let durabilityFailed = false;
+    try {
+      fs.fsyncSync(parent.descriptor);
+    } catch {
+      durabilityFailed = true;
+    }
+    if (temporaryCleanupFailed || durabilityFailed) {
+      const temporaryRecovery = temporaryCleanupFailed
+        ? ` Its temporary link remains at: ${path.join(path.dirname(outputPath), path.basename(temporary))}.`
+        : "";
+      const priorRecovery =
+        expected === null
+          ? ""
+          : ` The prior output remains recoverable at: ${path.join(path.dirname(outputPath), path.basename(moved))}`;
+      const durability = durabilityFailed
+        ? " Parent-directory durability could not be confirmed."
+        : "";
+      throw new YamlExportOutputError(
+        "unsafe-output",
+        outputPath,
+        `The new export is published at ${outputPath}.${temporaryRecovery}${durability}${priorRecovery}`,
+      );
+    }
     if (expected !== null) {
       try {
         fs.unlinkSync(moved);
@@ -458,11 +487,13 @@ function publishYamlExport(options: PublishYamlExportOptions): PublishExportFile
     return { path: outputPath };
   } finally {
     if (descriptor !== null) fs.closeSync(descriptor);
-    try {
-      fs.unlinkSync(temporary);
-    } catch (error) {
-      if (!isErrnoException(error) || error.code !== "ENOENT") {
-        /* Preserve the publication result. */
+    if (!temporaryCleanupAttempted) {
+      try {
+        fs.unlinkSync(temporary);
+      } catch (error) {
+        if (!isErrnoException(error) || error.code !== "ENOENT") {
+          /* Preserve the publication result. */
+        }
       }
     }
     fs.closeSync(parent.descriptor);

@@ -3,21 +3,12 @@
 
 import { createHash } from "node:crypto";
 import YAML from "yaml";
+import { sortCanonicalMappings } from "./canonical-mapping";
 import type { NemoClawConfigSpec } from "./model";
 import { validateNemoClawConfig } from "./schema";
 
-function sortMappings(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortMappings);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-      .map(([key, child]) => [key, sortMappings(child)]),
-  );
-}
-
 function canonicalYaml(value: unknown): string {
-  return YAML.stringify(sortMappings(value), { indent: 2, lineWidth: 0 });
+  return YAML.stringify(sortCanonicalMappings(value), { indent: 2, lineWidth: 0 });
 }
 
 function sha256(value: string): string {

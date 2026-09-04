@@ -274,6 +274,68 @@ describe("publishExportFile", () => {
     expect(fs.readFileSync(racedPath, "utf8")).toBe("writer");
   });
 
+  it("preserves exact recovery paths when temporary-link cleanup fails (#10938)", () => {
+    const root = temporaryRoot();
+    const outputPath = path.join(root, "selected.yaml");
+    fs.writeFileSync(outputPath, "validated");
+    const unlinkSync = fs.unlinkSync;
+    let temporaryCleanupAttempts = 0;
+    vi.spyOn(fs, "unlinkSync").mockImplementation((candidate) =>
+      String(candidate).endsWith(".tmp")
+        ? (() => {
+            temporaryCleanupAttempts += 1;
+            throw Object.assign(new Error("injected temporary cleanup failure"), { code: "EIO" });
+          })()
+        : unlinkSync(candidate),
+    );
+
+    let failure: unknown;
+    try {
+      publishExportFile(outputPath, "content", true);
+    } catch (error) {
+      failure = error;
+    }
+    const temporaryName = temporaryEntries(root).find((entry) => entry.endsWith(".tmp"));
+    const previousName = temporaryEntries(root).find((entry) => entry.endsWith(".previous"));
+    expect(temporaryName).toBeDefined();
+    expect(previousName).toBeDefined();
+    expect(temporaryCleanupAttempts).toBe(1);
+    expect((failure as Error).message).toContain(path.join(root, temporaryName!));
+    expect((failure as Error).message).toContain(path.join(root, previousName!));
+    expect(fs.readFileSync(outputPath, "utf8")).toBe("content");
+    expect(fs.readFileSync(path.join(root, previousName!), "utf8")).toBe("validated");
+  });
+
+  it("preserves prior output when post-publication durability is uncertain (#10938)", () => {
+    const root = temporaryRoot();
+    const outputPath = path.join(root, "selected.yaml");
+    fs.writeFileSync(outputPath, "validated");
+    const fsyncSync = fs.fsyncSync;
+    let calls = 0;
+    vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
+      calls += 1;
+      return calls === 2
+        ? (() => {
+            throw Object.assign(new Error("injected directory fsync failure"), { code: "EIO" });
+          })()
+        : fsyncSync(descriptor);
+    });
+
+    let failure: unknown;
+    try {
+      publishExportFile(outputPath, "content", true);
+    } catch (error) {
+      failure = error;
+    }
+    const previousName = temporaryEntries(root).find((entry) => entry.endsWith(".previous"));
+    expect(previousName).toBeDefined();
+    expect(calls).toBe(2);
+    expect((failure as Error).message).toContain("durability could not be confirmed");
+    expect((failure as Error).message).toContain(path.join(root, previousName!));
+    expect(fs.readFileSync(outputPath, "utf8")).toBe("content");
+    expect(fs.readFileSync(path.join(root, previousName!), "utf8")).toBe("validated");
+  });
+
   it("classifies final prior-inode cleanup failure with the exact recovery path (#10938)", () => {
     const root = temporaryRoot();
     const outputPath = path.join(root, "selected.yaml");

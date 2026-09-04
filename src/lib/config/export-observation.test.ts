@@ -211,6 +211,16 @@ describe("stable config export source observation (#10938)", () => {
       expect.arrayContaining(["spec.gateway", "spec.sandboxes[].runtime.provider"]),
     );
   });
+  it("canonicalizes policy independently of mapping insertion order (#10938)", () => {
+    const first = canonicalizeEffectivePolicy(
+      "version: 1\nnetwork_policies:\n  ä:\n    name: ä\n    endpoints: [{host: z.example.com, port: 443}]\n    binaries: [{path: /usr/bin/z}]\n  z:\n    name: z\n    endpoints: [{host: a.example.com, port: 443}]\n    binaries: [{path: /usr/bin/a}]\n",
+    );
+    const second = canonicalizeEffectivePolicy(
+      "network_policies:\n  z:\n    binaries: [{path: /usr/bin/a}]\n    endpoints: [{port: 443, host: a.example.com}]\n    name: z\n  ä:\n    binaries: [{path: /usr/bin/z}]\n    endpoints: [{port: 443, host: z.example.com}]\n    name: ä\nversion: 1\n",
+    );
+    expect(second).toEqual(first);
+  });
+
   it("canonicalizes policy losslessly and rejects malformed policy", () => {
     expect(canonicalizeEffectivePolicy(policy)).toEqual({
       filesystem_policy: { include_workdir: false, read_only: ["/usr"], read_write: ["/sandbox"] },
