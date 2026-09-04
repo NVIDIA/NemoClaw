@@ -2137,7 +2137,9 @@ A failed re-add can leave residual gateway-provider state when prior refresh mat
 Static channel credentials use a validated endpointless OpenShell provider profile so the gateway can replace their sandbox placeholders.
 NemoClaw validates the existing profile, provider type, and credential keys before it reuses a provider.
 A missing provider is created when complete credentials are available.
-A malformed, conflicting, or incompatible existing provider binding stops the operation before reuse.
+OpenShell provider inspection uncertainty stops the operation before mutation.
+With complete credentials, NemoClaw replaces a mismatched provider only when it is unattached or attached exclusively to the selected sandbox.
+An attachment to another sandbox stops replacement.
 Hermes Discord uses its dedicated static provider type because its policy binds the Discord API and Gateway endpoints.
 Channel names are trimmed and lowercased before NemoClaw stores credentials, names bridge providers, or prints rebuild messages.
 NemoClaw requires the matching built-in network policy preset YAML to be present.

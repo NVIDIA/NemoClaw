@@ -20,6 +20,12 @@ List the supported channel names:
 $$nemoclaw my-assistant channels list
 ```
 
+<Warning>
+  `channels add` can replace a mismatched provider when complete credentials are available.
+  Replacement is allowed only when the provider is unattached or attached only to the selected
+  sandbox. An attachment to another sandbox stops the operation.
+</Warning>
+
 Add the channel you want:
 
 ```bash
