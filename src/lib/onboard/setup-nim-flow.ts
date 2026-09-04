@@ -651,21 +651,18 @@ function requestedVllmServingProfileModel(
   return requested?.backend === "vllm" ? requested : null;
 }
 
-/** Model ID that an explicit managed-vLLM model selection exposes through `/v1/models`. */
-function requestedManagedVllmModel(
-  resolve: SetupNimFlowDeps["selectVllmModelFromEnv"],
-): string | null {
-  if (!resolve) throw new Error("Managed vLLM model selection could not be resolved.");
-  const requested = resolve();
-  return requested?.servedModelId ?? requested?.id ?? null;
-}
-
 /** Preserve explicit route intent while converting a known catalog alias to its served name. */
 function requestedManagedVllmRouteModel(input: {
   requestedModel: string | null;
   selectVllmModelFromEnv: SetupNimFlowDeps["selectVllmModelFromEnv"];
 }): string | null {
-  if (!input.requestedModel) return requestedManagedVllmModel(input.selectVllmModelFromEnv);
+  if (!input.requestedModel) {
+    if (!input.selectVllmModelFromEnv) {
+      throw new Error("Managed vLLM model selection could not be resolved.");
+    }
+    const requested = input.selectVllmModelFromEnv();
+    return requested?.servedModelId ?? requested?.id ?? null;
+  }
   if (!input.selectVllmModelFromEnv) return input.requestedModel;
   try {
     const catalogModel = input.selectVllmModelFromEnv({
@@ -1263,11 +1260,7 @@ export function createSetupNim(
           if (vllmRunning) {
             const hasGpuSelection =
               String(process.env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim() !== "";
-            const message = vllmPortConflictMessage(
-              gpu?.platform,
-              deps.vllmPort,
-              hasGpuSelection,
-            );
+            const message = vllmPortConflictMessage(gpu?.platform, deps.vllmPort, hasGpuSelection);
             deps.error(`  ${message}`);
             if (deps.isNonInteractive()) {
               deps.abortNonInteractive(message);
