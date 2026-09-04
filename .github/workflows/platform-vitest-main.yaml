@@ -342,7 +342,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/nemoclaw-native-runtime-payload
-          key: windows-native-runtime-v2-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}-openshell-bcd517bbe08c-${{ hashFiles('candidate/package.json', 'candidate/package-lock.json', 'candidate/bin/**', 'candidate/src/**', 'candidate/nemoclaw/**', 'candidate/agents/**', 'candidate/scripts/lib/package-blueprint-runner-runtime.mts', 'candidate/scripts/checks/prepare-windows-native-package-payload.ps1', 'candidate/packaging/windows/NATIVE-PREVIEW.txt', 'candidate/packaging/windows/MXC-LICENSE.txt', 'candidate/packaging/windows/openshell-2721-node-ui.patch', 'candidate/packaging/windows/python/langgraph-api-0.14.0.dev3-inmemory-no-grpc.patch', 'candidate/packaging/windows/python/langchain-quickjs-0.3.5-no-bsdiff.patch') }}
+          key: windows-native-runtime-v2-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}-openshell-bcd517bbe08c-${{ hashFiles('candidate/package.json', 'candidate/package-lock.json', 'candidate/bin/**', 'candidate/src/**', 'candidate/nemoclaw/**', 'candidate/agents/**', 'candidate/scripts/lib/package-blueprint-runner-runtime.mts', 'candidate/scripts/checks/prepare-windows-native-package-payload.ps1', 'candidate/packaging/windows/NATIVE-PREVIEW.txt', 'candidate/packaging/windows/MXC-LICENSE.txt', 'candidate/packaging/windows/openshell-2721-node-ui.patch', 'candidate/packaging/windows/python/langgraph-api-0.14.0.dev3-inmemory-no-grpc.patch', 'candidate/packaging/windows/python/langchain-quickjs-0.3.5-no-bsdiff.patch', 'candidate/packaging/windows/python/deepagents-code-0.1.55-windows-dacl.patch', 'candidate/packaging/windows/python/deepagents-sitecustomize.py') }}
 
       - name: Assemble the native NemoClaw runtime payload
         shell: powershell
@@ -581,6 +581,7 @@ jobs:
             $langGraphPatch = Join-Path $env:GITHUB_WORKSPACE 'candidate\packaging\windows\python\langgraph-api-0.14.0.dev3-python313.patch'
             $langGraphNoGrpcPatch = Join-Path $env:GITHUB_WORKSPACE 'candidate\packaging\windows\python\langgraph-api-0.14.0.dev3-inmemory-no-grpc.patch'
             $langChainQuickJsPatch = Join-Path $env:GITHUB_WORKSPACE 'candidate\packaging\windows\python\langchain-quickjs-0.3.5-no-bsdiff.patch'
+            $deepAgentsWindowsDaclPatch = Join-Path $env:GITHUB_WORKSPACE 'candidate\packaging\windows\python\deepagents-code-0.1.55-windows-dacl.patch'
             $langGraphSourceDigest = '5754429ea54bb8cbc9b6b062c8c30b7da11d6d2de4e40d8cf149e1af815451d4' # gitleaks:allow -- public wheel source integrity pin
             $langGraphPatchedDigest = '862a676aad507986ce65ba6805feae97406508f994d25b2e4fcdfafc1b366874' # gitleaks:allow -- deterministic compatibility output pin
             $langGraphApiSourceDigest = '66ed5ec37771619bbb70b4408e7fba1dc626b6e40176286554530a309efb6377' # gitleaks:allow -- public wheel source integrity pin
@@ -591,6 +592,8 @@ jobs:
             $langGraphStreamPatchedDigest = 'f9128fa986c46015d5391fbb3c944f5678c06597f09b4f9630e208bb297cc96f' # gitleaks:allow -- deterministic compatibility output pin
             $langChainQuickJsSnapshotSourceDigest = '616cbc40402b7b414fcbac1992113bab6310974883b01a9f89fba8ce621b1e3d' # gitleaks:allow -- public wheel source integrity pin
             $langChainQuickJsSnapshotPatchedDigest = '105d5d6e999d5e04131211890e450e614b295bde4af0d5e7d40ac4ddfbc295a9' # gitleaks:allow -- deterministic compatibility output pin
+            $deepAgentsOffloadSourceDigest = 'baaf2a75eca26dbc58ab195ed9198822c3e48fd505faa36b8e0c0cb10ede3f14' # gitleaks:allow -- public wheel source integrity pin
+            $deepAgentsOffloadPatchedDigest = 'd86c8bbb15163cdde123246981f2bf94289eab45142e35e52018ab713871f6c7' # gitleaks:allow -- deterministic compatibility output pin
             $langGraphDigest = (Get-FileHash -LiteralPath $langGraphLogging -Algorithm SHA256).Hash.ToLowerInvariant()
             $langGraphApiDigest = (Get-FileHash -LiteralPath $langGraphApi -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($langGraphDigest -ceq $langGraphSourceDigest) {
@@ -672,6 +675,29 @@ jobs:
             }
             if ((Get-FileHash -LiteralPath $langChainQuickJsSnapshot -Algorithm SHA256).Hash.ToLowerInvariant() -cne $langChainQuickJsSnapshotPatchedDigest) {
               throw 'The installed diagnostic langchain-quickjs snapshot output is invalid.'
+            }
+            $deepAgentsOffload = Join-Path $deepAgentsSitePackages 'deepagents_code\offload.py'
+            $deepAgentsOffloadDigest = (Get-FileHash -LiteralPath $deepAgentsOffload -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($deepAgentsOffloadDigest -ceq $deepAgentsOffloadSourceDigest) {
+              & git -c core.autocrlf=false -C $deepAgentsSitePackages apply --check --unidiff-zero --whitespace=nowarn $deepAgentsWindowsDaclPatch
+              if ($LASTEXITCODE -ne 0) { throw 'The diagnostic Deep Agents Code Windows DACL patch check failed.' }
+              & git -c core.autocrlf=false -C $deepAgentsSitePackages apply --unidiff-zero --whitespace=nowarn $deepAgentsWindowsDaclPatch
+              if ($LASTEXITCODE -ne 0) { throw 'The diagnostic Deep Agents Code Windows DACL patch failed.' }
+            } elseif ($deepAgentsOffloadDigest -cne $deepAgentsOffloadPatchedDigest) {
+              throw 'The installed Deep Agents Code offload source does not match a pinned diagnostic state.'
+            }
+            if ((Get-FileHash -LiteralPath $deepAgentsOffload -Algorithm SHA256).Hash.ToLowerInvariant() -cne $deepAgentsOffloadPatchedDigest) {
+              throw 'The installed diagnostic Deep Agents Code offload output is invalid.'
+            }
+            $deepAgentsSiteCustomizeSource = Join-Path $env:GITHUB_WORKSPACE 'candidate\packaging\windows\python\deepagents-sitecustomize.py'
+            $deepAgentsSiteCustomizeDigest = '7b02c51dc8c4952a6a0b5d6b45254bbdd5545153e3cadebdeeacc2fcb59e3585' # gitleaks:allow -- committed compatibility source integrity pin
+            if ((Get-FileHash -LiteralPath $deepAgentsSiteCustomizeSource -Algorithm SHA256).Hash.ToLowerInvariant() -cne $deepAgentsSiteCustomizeDigest) {
+              throw 'The diagnostic Deep Agents Code sitecustomize source is invalid.'
+            }
+            $deepAgentsSiteCustomize = Join-Path $deepAgentsSitePackages 'sitecustomize.py'
+            Copy-Item -LiteralPath $deepAgentsSiteCustomizeSource -Destination $deepAgentsSiteCustomize -Force
+            if ((Get-FileHash -LiteralPath $deepAgentsSiteCustomize -Algorithm SHA256).Hash.ToLowerInvariant() -cne $deepAgentsSiteCustomizeDigest) {
+              throw 'The installed diagnostic Deep Agents Code sitecustomize output is invalid.'
             }
             $runtimeArtifacts = Join-Path $artifactRoot 'runtime'
             [IO.Directory]::CreateDirectory($runtimeArtifacts) | Out-Null
