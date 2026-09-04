@@ -339,6 +339,7 @@ export async function runQwenGpuQualification(): Promise<void> {
       },
       (context) => runLlamaCppOpenClawAgentQualification(agentPlan, context),
       {
+        networkName: "openshell-docker",
         async afterGatewayStarted() {
           const installed = await installManagedLlamaCpp(setting.selection, {
             sandboxName: SANDBOX_NAME,

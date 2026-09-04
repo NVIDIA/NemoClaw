@@ -142,6 +142,7 @@ export type ManagedImageOpenShellE2eProbeContext = {
 export type ManagedImageOpenShellE2eLifecycle = {
   readonly afterGatewayStarted?: () => Promise<void> | void;
   readonly beforeCleanup?: () => Promise<void> | void;
+  readonly networkName?: string;
 };
 
 export type ManagedImageOpenShellE2eLocalInferenceEvidence = {
@@ -983,9 +984,13 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
   afterLocalInference?: (context: ManagedImageOpenShellE2eProbeContext) => Promise<T> | T,
   lifecycle: ManagedImageOpenShellE2eLifecycle = {},
 ): Promise<ManagedImageOpenShellE2eResult<T>> {
+  const networkName =
+    lifecycle.networkName ?? `nemoclaw-managed-pr-${process.pid}-${Date.now().toString(36)}`;
+  if (!/^[a-z0-9][a-z0-9_.-]{0,127}$/u.test(networkName)) {
+    throw new Error("managed-image OpenShell network name is invalid");
+  }
   const stateParent = process.env.RUNNER_TEMP || os.tmpdir();
   const stateDir = fs.mkdtempSync(path.join(stateParent, "nemoclaw-managed-openshell-"));
-  const networkName = `nemoclaw-managed-pr-${process.pid}-${Date.now().toString(36)}`;
   const previousEnvironment = Object.fromEntries(
     MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS.map((key) => [key, process.env[key]]),
   ) as Record<(typeof MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS)[number], string | undefined>;
