@@ -17,6 +17,7 @@ export const AUDIT_ARGV = NPM_AUDIT_ARGV;
 // Remove this PR-only compatibility after main produces Yarn-bound audit receipts.
 const LEGACY_NPM_AUDIT_REGISTRY = "https://registry.npmjs.org/";
 const LEGACY_NPM_AUDIT_ARGV = ["audit", "--omit=dev", "--json"] as const;
+export const LEGACY_NPM_AUDIT_RECEIPT_DEADLINE = Date.parse("2026-09-11T00:00:00.000Z");
 export const RECEIPT_LIFETIME_MS = 12 * 60 * 60 * 1000 - 1;
 export const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const SEVERITIES = new Set(["info", "low", "moderate", "high", "critical"]);
@@ -159,6 +160,7 @@ export function parseAndVerifyAuditReceipt(
     throw new Error("receipt is not a passing schema version 1 receipt");
   if (value.graphId !== expected.graphId || value.npmVersion !== expected.npmVersion)
     throw new Error("receipt identity does not match expected graph and npm");
+  const now = (expected.now ?? new Date()).getTime();
   const currentContract =
     value.registryOrigin === expected.registryOrigin &&
     Array.isArray(value.argv) &&
@@ -166,6 +168,7 @@ export function parseAndVerifyAuditReceipt(
     value.argv.every((arg, index) => arg === AUDIT_ARGV[index]);
   const legacyContract =
     expected.allowLegacyNpmjsReceipt === true &&
+    now < LEGACY_NPM_AUDIT_RECEIPT_DEADLINE &&
     value.registryOrigin === LEGACY_NPM_AUDIT_REGISTRY &&
     Array.isArray(value.argv) &&
     value.argv.length === LEGACY_NPM_AUDIT_ARGV.length &&
@@ -194,7 +197,6 @@ export function parseAndVerifyAuditReceipt(
   const expires = utcInstant(value.expiresAt, "expiresAt");
   if (expires <= created || expires - created >= 12 * 60 * 60 * 1000)
     throw new Error("receipt lifetime must be positive and less than 12 hours");
-  const now = (expected.now ?? new Date()).getTime();
   if (created - now > MAX_FUTURE_SKEW_MS)
     throw new Error("receipt creation time is too far in the future");
   if (now >= expires) throw new Error("receipt is expired");

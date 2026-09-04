@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalAuditReceipt,
   createAuditReceipt,
+  LEGACY_NPM_AUDIT_RECEIPT_DEADLINE,
   parseAndVerifyAuditReceipt,
   sha256,
 } from "../../../scripts/lib/npm-audit-receipt.mts";
@@ -71,6 +72,13 @@ describe("reviewed npm audit receipt", () => {
         allowLegacyNpmjsReceipt: true,
       }).registryOrigin,
     ).toBe("https://registry.npmjs.org/");
+    expect(() =>
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), {
+        ...inputs,
+        allowLegacyNpmjsReceipt: true,
+        now: new Date(LEGACY_NPM_AUDIT_RECEIPT_DEADLINE),
+      }),
+    ).toThrow(/allowed contract/);
   });
 
   it("rejects a receipt whose registry identity differs from its audit command", () => {
