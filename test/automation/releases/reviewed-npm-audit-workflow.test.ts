@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertReviewedAuditReportsPass,
   auditMaterializedSourceGraph,
+  emitAuditReceipt,
   materializeSourceGraph,
   normalizeOpenClawSignatureAlias,
   parseAuditConfig,
@@ -66,10 +67,17 @@ function runConsolidatedAuditFixture(
   const artifactDirectory = path.join(targetRoot, "artifacts", "reviewed-npm-audit");
   try {
     fs.mkdirSync(path.join(trustedRoot, "ci"), { recursive: true });
-    fs.mkdirSync(path.join(targetRoot, "agents", "openclaw", "wechat-runtime"), { recursive: true });
+    fs.mkdirSync(path.join(targetRoot, "agents", "openclaw", "wechat-runtime"), {
+      recursive: true,
+    });
     fs.mkdirSync(bin);
-    fs.cpSync(path.join(REPO_ROOT, "scripts"), path.join(trustedRoot, "scripts"), { recursive: true });
-    fs.writeFileSync(path.join(trustedRoot, "ci", "npm-audit-exceptions.json"), '{"schemaVersion":1,"exceptions":[]}\n');
+    fs.cpSync(path.join(REPO_ROOT, "scripts"), path.join(trustedRoot, "scripts"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(trustedRoot, "ci", "npm-audit-exceptions.json"),
+      '{"schemaVersion":1,"exceptions":[]}\n',
+    );
     const runtimeLock = fs.readFileSync(
       path.join(REPO_ROOT, "agents/openclaw/wechat-runtime/package-lock.json"),
     );
@@ -82,19 +90,22 @@ function runConsolidatedAuditFixture(
         archiveTarVersion: "7.5.21",
         artifactDirectory: "artifacts/reviewed-npm-audit",
         exceptionFile: "ci/npm-audit-exceptions.json",
-        lockedGraphs: [{
-          directory: "agents/openclaw/wechat-runtime",
-          id: "wechat-runtime",
-          inputValidation: "wechat-runtime",
-          installMode: "legacy-peer-deps",
-          integrity,
-          label: "WeChat fixture",
-          lockSha256: createHash("sha256").update(runtimeLock).digest("hex"),
-          packageSpec: "@tencent-weixin/openclaw-weixin@2.4.3",
-          severityThreshold: "low",
-          signatureAudit: "retry-download-failures",
-          tarballUrl: "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
-        }],
+        lockedGraphs: [
+          {
+            directory: "agents/openclaw/wechat-runtime",
+            id: "wechat-runtime",
+            inputValidation: "wechat-runtime",
+            installMode: "legacy-peer-deps",
+            integrity,
+            label: "WeChat fixture",
+            lockSha256: createHash("sha256").update(runtimeLock).digest("hex"),
+            packageSpec: "@tencent-weixin/openclaw-weixin@2.4.3",
+            severityThreshold: "low",
+            signatureAudit: "retry-download-failures",
+            tarballUrl:
+              "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+          },
+        ],
         nodeVersion: process.version.slice(1),
         registryOrigin: "https://registry.npmjs.org/",
         schemaVersion: 2,
@@ -133,13 +144,24 @@ if (args[0] === "--version") { console.log("10.9.4"); process.exit(0); }
 if (args[0] === "config") { console.log("https://registry.npmjs.org/"); process.exit(0); }
 if (args[0] === "audit" && args[1] === "signatures") process.exit(0);
 if (args[0] === "audit") { process.stdout.write(process.env.NEMOCLAW_TEST_AUDIT_OUTPUT); process.exit(Number(process.env.NEMOCLAW_TEST_AUDIT_STATUS)); }
+if (args[0] === "ci" && !fs.existsSync("package-lock.json")) {
+  console.error("npm ci requires an existing package-lock.json");
+  process.exit(1);
+}
+if (args[0] === "install" && !fs.existsSync("package-lock.json")) {
+  const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
+  fs.writeFileSync("package-lock.json", JSON.stringify({ ...manifest, lockfileVersion: 3, packages: { "": manifest } }));
+}
 process.exit(0);
 `,
       { mode: 0o755 },
     );
     const result = spawnSync(
       process.execPath,
-      ["--experimental-strip-types", path.join(trustedRoot, "scripts/audit-reviewed-npm-graph.mts")],
+      [
+        "--experimental-strip-types",
+        path.join(trustedRoot, "scripts/audit-reviewed-npm-graph.mts"),
+      ],
       {
         cwd: trustedRoot,
         encoding: "utf-8",
@@ -269,10 +291,56 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     const fixture = runConsolidatedAuditFixture(() => {}, output, status);
 
     expect(fixture.result.status).not.toBe(0);
-    expect(fixture.provenance).toMatchObject({
+    expect(fixture.provenance, fixture.result.stderr.toString()).toMatchObject({
       failure: expect.stringMatching(expectedFailure),
       rawReportPath: "source-graph.json",
     });
+  });
+
+  it("retains the temporary graph inputs that its receipt authenticates", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "npm-audit-receipt-inputs-"));
+    const packageJsonFile = path.join(root, "package.json");
+    const packageLockFile = path.join(root, "package-lock.json");
+    const rawReportFile = path.join(root, "report.json");
+    const packageJson = Buffer.from("temporary manifest\n");
+    const packageLock = Buffer.from("temporary lock\n");
+    try {
+      fs.writeFileSync(packageJsonFile, packageJson);
+      fs.writeFileSync(packageLockFile, packageLock);
+      fs.writeFileSync(rawReportFile, "{}\n");
+      fs.writeFileSync(
+        path.join(root, "report.provenance.json"),
+        JSON.stringify({ run: { startedAt: "2026-01-01T00:00:00.000Z" } }),
+      );
+      emitAuditReceipt({
+        artifactDirectory: root,
+        graphId: "temporary-graph",
+        npmVersion: "10.9.4",
+        packageJsonFile,
+        packageLockFile,
+        preserveInputs: true,
+        rawReportFile,
+        registryOrigin: "https://registry.npmjs.org/",
+        result: {
+          acceptedAdvisories: [],
+          blockingThreshold: "high",
+          exceptionPolicySha256: "a".repeat(64),
+          graph: "temporary-graph",
+          reported: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
+          schemaVersion: 1,
+          status: "clean",
+          unacceptedBlockingAdvisories: [],
+        },
+        threshold: "high",
+      });
+
+      expect(fs.readFileSync(path.join(root, "temporary-graph.package.json"))).toEqual(packageJson);
+      expect(fs.readFileSync(path.join(root, "temporary-graph.package-lock.json"))).toEqual(
+        packageLock,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("keeps the WeChat archive and reviewed locked graph distinct", () => {

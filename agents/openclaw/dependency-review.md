@@ -41,7 +41,9 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
   It installs the exact lock with lifecycle scripts disabled and legacy peer resolution, rejects any low-or-higher production advisory, and verifies registry signatures.
   It also exercises the reviewed archive through a copied writable cache while the trusted source remains read-only.
   Signature verification makes at most three attempts and retries only `npm error Failed to download`; all other failures stop immediately.
-  The shared report artifact stores the audit policy, provenance, and signature-attempt evidence.
+  The shared report artifact stores the audit policy, signature-attempt evidence, and whether each response came from a matching cache entry or a live registry request.
+  Its mcporter receipt and raw response cross into the image build; the other graph receipts remain CI evidence.
+  The archive graph also retains the generated manifest and lock bytes authenticated by its receipt.
 - Advisory command: `npm ci --ignore-scripts --omit=dev --legacy-peer-deps --prefix agents/openclaw/wechat-runtime && npm audit --omit=dev --audit-level=low --json --prefix agents/openclaw/wechat-runtime && npm audit signatures --prefix agents/openclaw/wechat-runtime`.
 - Advisory review: `2026-07-12`; result: `0` known vulnerabilities across the resolved production graph.
 - Regression tests: `test/install/wechat-locked-install.test.ts` keeps the manifest runtime-lock paths and installer verification dispatch synchronized; `test/install/verify-wechat-runtime-lock.test.ts` proves that the installed graph and OpenClaw peer range fail closed; `test/automation/releases/reviewed-npm-audit-workflow.test.ts` keeps the cache lifecycle, audit threshold, bounded signature retry, invalid-signature denial, and npm-pack boundary synchronized.
