@@ -238,6 +238,38 @@ function readOwnedRuntimeFile(filePath: string, uid: number): string | null {
   }
 }
 
+/** Recover provider identity only from the selected gateway's owned runtime marker. */
+export function resolveOwnedHostGatewayRuntimeProviderId(options: {
+  gatewayName: string;
+  gatewayPort: number;
+  stateDir: string;
+  architecture?: NodeJS.Architecture;
+  platform?: NodeJS.Platform;
+  uid?: number;
+}): string | null {
+  const platform = options.platform ?? process.platform;
+  const architecture = options.architecture ?? process.arch;
+  const uid = options.uid ?? (typeof process.getuid === "function" ? process.getuid() : -1);
+  if (uid < 0 || !canonicalGatewayTargetMatches(options.gatewayName, options.gatewayPort)) {
+    return null;
+  }
+  const markerText = readOwnedRuntimeFile(
+    getDockerDriverGatewayRuntimeMarkerPath(options.stateDir),
+    uid,
+  );
+  const marker = markerText ? parseDockerDriverGatewayRuntimeMarker(markerText) : null;
+  if (!marker || marker.platform !== platform || marker.arch !== architecture) return null;
+  let markerPort = 0;
+  try {
+    markerPort = Number(new URL(marker.endpoint).port);
+  } catch {
+    return null;
+  }
+  if (markerPort !== options.gatewayPort) return null;
+  const provider = resolveRegisteredRuntimeProvider(marker.driver);
+  return provider?.gateway.supported === true ? provider.identity.id : null;
+}
+
 export function processUsesStateScopedSandboxNamespace(
   pid: number,
   stateDir: string,

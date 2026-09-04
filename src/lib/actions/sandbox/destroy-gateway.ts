@@ -24,8 +24,10 @@ import {
 import {
   clearHostGatewayRuntimeFiles,
   isHostPortFree,
+  resolveOwnedHostGatewayRuntimeProviderId,
   stopHostGatewayProcesses,
 } from "../../onboard/host-gateway-process";
+import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider/registry";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 
 export type DestroyRunOpenshell = (
@@ -39,6 +41,7 @@ export interface CleanupGatewayDeps {
   clearGatewayRuntimeFiles?: typeof clearHostGatewayRuntimeFiles;
   isGatewayPortFree?: typeof isHostPortFree;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
+  resolveOwnedRuntimeProviderId?: typeof resolveOwnedHostGatewayRuntimeProviderId;
   resolveRuntimeProvider?: typeof resolveRegisteredRuntimeProvider;
   runtimeProviderId?: string | null;
   stopOpenShellGatewayUserService?: typeof stopOpenShellGatewayUserService;
@@ -61,6 +64,32 @@ function resolvePerGatewayState(gatewayName: string): { port: number; stateDir: 
       port,
     }),
   };
+}
+
+/** Keep final cleanup on the provider recorded before or during sandbox deletion. */
+export function resolveGatewayCleanupRuntimeProviderId(
+  gatewayName: string,
+  registeredProviderId?: string | null,
+  deps: Pick<CleanupGatewayDeps, "resolveOwnedRuntimeProviderId"> = {},
+): string | null {
+  const perGatewayState = resolvePerGatewayState(gatewayName);
+  if (!perGatewayState) return null;
+  const registered = registeredProviderId
+    ? normalizeRuntimeProviderIdentity(registeredProviderId)
+    : null;
+  const recorded = (deps.resolveOwnedRuntimeProviderId ?? resolveOwnedHostGatewayRuntimeProviderId)(
+    {
+      gatewayName,
+      gatewayPort: perGatewayState.port,
+      stateDir: perGatewayState.stateDir,
+    },
+  );
+  if (registered && recorded && registered !== recorded) {
+    throw new Error(
+      `Refusing cleanup because sandbox runtime provider '${registered}' does not match gateway runtime provider '${recorded}'.`,
+    );
+  }
+  return registered ?? recorded;
 }
 
 export function selectGatewayForSandboxDestroy(
@@ -94,8 +123,13 @@ export function cleanupGatewayAfterLastSandbox(
   if (!perGatewayState) {
     throw new Error(`Refusing cleanup for noncanonical NemoClaw gateway '${gatewayName}'.`);
   }
-  const runtimeProvider = deps.runtimeProviderId
-    ? (deps.resolveRuntimeProvider ?? resolveRegisteredRuntimeProvider)(deps.runtimeProviderId)
+  const runtimeProviderId = resolveGatewayCleanupRuntimeProviderId(
+    gatewayName,
+    deps.runtimeProviderId,
+    deps,
+  );
+  const runtimeProvider = runtimeProviderId
+    ? (deps.resolveRuntimeProvider ?? resolveRegisteredRuntimeProvider)(runtimeProviderId)
     : null;
   // The sandbox and its registry entry are already gone when this runs; shared
   // gateway cleanup is the last, optional step. Rethrowing an authority refusal

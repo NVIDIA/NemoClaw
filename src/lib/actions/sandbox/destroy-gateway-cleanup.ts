@@ -6,9 +6,11 @@ import {
   type DockerSandboxContainerSnapshot,
   getLiveSandboxNames,
   hasNoLiveSandboxes,
+  hasNoLiveSandboxesWithResourceObservation,
   type LiveSandboxListSnapshot,
   shouldCleanupGatewayAfterDestroy,
 } from "../../domain/sandbox/destroy";
+import type { RuntimeProviderBundle } from "../../onboard/runtime-provider/contract";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import * as registry from "../../state/registry";
 
@@ -103,13 +105,34 @@ function hasNoLiveSandboxesFromHost(deps?: Parameters<LiveSandboxProbe>[0]): boo
 
 function hasNoLiveSandboxesWithoutDocker(
   timeoutMs: number,
+  provider: RuntimeProviderBundle,
   captureOpenshell: LiveSandboxListProbe = captureLiveSandboxes,
 ): boolean {
   const liveList = captureOpenshell(["sandbox", "list"], {
     ignoreError: true,
     timeout: timeoutMs,
   });
-  return liveList.status === 0 && getLiveSandboxNames(liveList).length === 0;
+  return hasNoLiveSandboxesWithResourceObservation(liveList, (sandboxName) => {
+    const capture =
+      provider.cleanup.supported === true
+        ? provider.cleanup.captureDestroyIdentityByName
+        : undefined;
+    if (!capture) return true;
+    try {
+      const identity = capture(sandboxName);
+      const confirmedAbsent =
+        identity.schemaVersion === 1 &&
+        identity.providerId === provider.identity.id &&
+        identity.resourceHandle === null &&
+        identity.ownershipSha256 === null;
+      return !confirmedAbsent;
+    } catch {
+      console.warn(
+        `Runtime provider resource probe failed for sandbox '${sandboxName}'; preserving shared gateway.`,
+      );
+      return true;
+    }
+  });
 }
 
 export function shouldCleanupGatewayAfterConfirmedFinalDestroy(
@@ -130,7 +153,7 @@ export function shouldCleanupGatewayAfterConfirmedFinalDestroy(
     (deps.liveSandboxProbe
       ? liveSandboxProbe({ timeoutMs })
       : provider?.gateway.ownsHostReadiness === true
-        ? hasNoLiveSandboxesWithoutDocker(timeoutMs, deps.captureOpenshell)
+        ? hasNoLiveSandboxesWithoutDocker(timeoutMs, provider, deps.captureOpenshell)
         : liveSandboxProbe({
             ...(deps.captureOpenshell ? { captureOpenshell: deps.captureOpenshell } : {}),
             ...(deps.dockerCapture ? { dockerCapture: deps.dockerCapture } : {}),

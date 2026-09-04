@@ -13,9 +13,11 @@ import {
   type HostGatewayProcessDeps,
   isHostPortFree,
   type RunResult,
+  resolveOwnedHostGatewayRuntimeProviderId,
   scopedHostGatewayProcessAbsenceFailure,
   stopHostGatewayProcesses,
 } from "./host-gateway-process";
+import { writeDockerDriverGatewayRuntimeMarkerForStateDir } from "./docker-driver-gateway-runtime-marker";
 
 const PGREP_KEY = `pgrep -f ${HOST_GATEWAY_PGREP_PATTERN}`;
 
@@ -78,6 +80,50 @@ function otherUserUid(): number {
 }
 
 describe("host gateway cleanup boundaries", () => {
+  it("recovers the provider from an owned gateway runtime marker", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-marker-"));
+    try {
+      writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
+        pid: 4242,
+        desiredEnv: {},
+        endpoint: "https://127.0.0.1:9123",
+        runtimeProviderId: "podman",
+      });
+
+      expect(
+        resolveOwnedHostGatewayRuntimeProviderId({
+          gatewayName: "nemoclaw-9123",
+          gatewayPort: 9123,
+          stateDir,
+        }),
+      ).toBe("podman");
+    } finally {
+      fs.rmSync(stateDir, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a provider marker outside the selected gateway identity", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-marker-"));
+    try {
+      writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
+        pid: 4242,
+        desiredEnv: {},
+        endpoint: "https://127.0.0.1:8080",
+        runtimeProviderId: "podman",
+      });
+
+      expect(
+        resolveOwnedHostGatewayRuntimeProviderId({
+          gatewayName: "nemoclaw-9123",
+          gatewayPort: 9123,
+          stateDir,
+        }),
+      ).toBeNull();
+    } finally {
+      fs.rmSync(stateDir, { force: true, recursive: true });
+    }
+  });
+
   it.each([
     ["free", 0, true],
     ["occupied", 1, false],

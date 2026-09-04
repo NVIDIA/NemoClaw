@@ -81,6 +81,82 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
     expect(dockerCapture).not.toHaveBeenCalled();
   });
 
+  it("reconciles a terminal Podman row after its owned resource is absent", () => {
+    const captureDestroyIdentityByName = vi.fn(() => ({
+      schemaVersion: 1 as const,
+      providerId: "podman",
+      resourceHandle: null,
+      ownershipSha256: null,
+    }));
+    const dockerCapture = vi.fn(() => {
+      throw new Error("native Podman cleanup reached Docker");
+    });
+
+    expect(
+      shouldCleanupGatewayAfterConfirmedFinalDestroy(
+        {
+          deleteSucceededOrAlreadyGone: true,
+          removedRegistryEntry: true,
+          runtimeProviderId: "podman",
+        },
+        {
+          captureOpenshell: () => ({
+            status: 0,
+            output:
+              "NAME              CREATED              PHASE\nalpha             now                  Error\n",
+          }),
+          dockerCapture,
+          listSandboxes: () => ({ sandboxes: [] }),
+          resolveRuntimeProvider: () =>
+            ({
+              identity: { id: "podman" },
+              gateway: { ownsHostReadiness: true },
+              cleanup: { supported: true, captureDestroyIdentityByName },
+            }) as never,
+        },
+      ),
+    ).toBe(true);
+    expect(captureDestroyIdentityByName).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(dockerCapture).not.toHaveBeenCalled();
+  });
+
+  it("preserves the gateway when a terminal Podman resource probe fails", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const captureDestroyIdentityByName = vi.fn(() => {
+      throw new Error("podman unavailable");
+    });
+
+    expect(
+      shouldCleanupGatewayAfterConfirmedFinalDestroy(
+        {
+          deleteSucceededOrAlreadyGone: true,
+          removedRegistryEntry: true,
+          runtimeProviderId: "podman",
+        },
+        {
+          captureOpenshell: () => ({
+            status: 0,
+            output:
+              "NAME              CREATED              PHASE\nalpha             now                  Failed\n",
+          }),
+          dockerCapture: vi.fn(() => {
+            throw new Error("native Podman cleanup reached Docker");
+          }),
+          listSandboxes: () => ({ sandboxes: [] }),
+          resolveRuntimeProvider: () =>
+            ({
+              identity: { id: "podman" },
+              gateway: { ownsHostReadiness: true },
+              cleanup: { supported: true, captureDestroyIdentityByName },
+            }) as never,
+        },
+      ),
+    ).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      "Runtime provider resource probe failed for sandbox 'alpha'; preserving shared gateway.",
+    );
+  });
+
   it("preserves the gateway when a live sandbox appears after the empty-registry check", () => {
     const events: string[] = [];
     expect(
