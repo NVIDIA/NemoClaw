@@ -53,6 +53,12 @@ type PublishRef = (input: {
   repositoryName: string;
 }) => void;
 
+export type GitRunner = (
+  repository: string,
+  args: readonly string[],
+  environment?: NodeJS.ProcessEnv,
+) => string;
+
 function required(value: string | undefined, name: string): string {
   if (!value) throw new ConflictFixerError(`${name} is required`);
   return value;
@@ -129,20 +135,23 @@ function gitText(
   });
 }
 
-export function pushRefWithLease(input: {
-  commitSha: string;
-  environment?: NodeJS.ProcessEnv;
-  expectedHeadSha: string;
-  headRef: string;
-  remoteUrl: string;
-  repository: string;
-}): void {
+export function pushRefWithLease(
+  input: {
+    commitSha: string;
+    environment?: NodeJS.ProcessEnv;
+    expectedHeadSha: string;
+    headRef: string;
+    remoteUrl: string;
+    repository: string;
+  },
+  runGit: GitRunner = gitText,
+): void {
   const commitSha = requireSha(input.commitSha, "published commit SHA");
   const expectedHeadSha = requireSha(input.expectedHeadSha, "expected PR head SHA");
   const remoteRef = `refs/heads/${input.headRef}`;
   try {
-    gitText(input.repository, ["check-ref-format", remoteRef]);
-    gitText(
+    runGit(input.repository, ["check-ref-format", remoteRef]);
+    runGit(
       input.repository,
       [
         "push",
@@ -171,7 +180,7 @@ function githubGitEnvironment(token: string): NodeJS.ProcessEnv {
   };
 }
 
-function githubRefPublisher(token: string): PublishRef {
+export function githubRefPublisher(token: string, runGit: GitRunner = gitText): PublishRef {
   return (input) => {
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(input.repositoryName)) {
       throw new ConflictFixerError("GITHUB_REPOSITORY is invalid");
@@ -179,23 +188,26 @@ function githubRefPublisher(token: string): PublishRef {
     const environment = githubGitEnvironment(token);
     const remoteUrl = `https://github.com/${input.repositoryName}.git`;
     try {
-      gitText(
+      runGit(
         input.repository,
         ["fetch", "--no-tags", "--no-write-fetch-head", remoteUrl, input.commitSha],
         environment,
       );
-      gitText(input.repository, ["cat-file", "-e", `${input.commitSha}^{commit}`]);
+      runGit(input.repository, ["cat-file", "-e", `${input.commitSha}^{commit}`]);
     } catch {
       throw new ConflictFixerError("Git could not fetch the verified merge commit from GitHub");
     }
-    pushRefWithLease({
-      commitSha: input.commitSha,
-      environment,
-      expectedHeadSha: input.expectedHeadSha,
-      headRef: input.headRef,
-      remoteUrl,
-      repository: input.repository,
-    });
+    pushRefWithLease(
+      {
+        commitSha: input.commitSha,
+        environment,
+        expectedHeadSha: input.expectedHeadSha,
+        headRef: input.headRef,
+        remoteUrl,
+        repository: input.repository,
+      },
+      runGit,
+    );
   };
 }
 

@@ -15,6 +15,8 @@ import {
 } from "../../../tools/pr-merge-conflict-fixer/discover.mts";
 import { prepareMerge, writeTree } from "../../../tools/pr-merge-conflict-fixer/merge.mts";
 import {
+  type GitRunner,
+  githubRefPublisher,
   publishResolution,
   pushRefWithLease,
   validatePublicationState,
@@ -58,6 +60,14 @@ function required<T>(value: T | null | undefined, message: string): T {
   expect(value, message).not.toBeNull();
   expect(value, message).toBeDefined();
   return value as T;
+}
+
+function failGitCommand(): never {
+  throw new Error("simulated Git failure");
+}
+
+function mockGitRunner() {
+  return vi.fn<GitRunner>(() => "");
 }
 
 function resolverEnvironment(): NodeJS.ProcessEnv {
@@ -519,6 +529,109 @@ describe("PR merge conflict fixer", () => {
     ).toThrow(/atomic PR branch update.*changed/u);
     expect(git(remote, ["rev-parse", "refs/heads/pull-request"])).toBe(movedHead);
   });
+
+  it("fetches and publishes the verified GitHub commit through an authenticated lease (#7542)", () => {
+    const commitSha = "c".repeat(40);
+    const expectedHeadSha = "b".repeat(40);
+    const repository = "/publisher/repository";
+    const remoteUrl = "https://github.com/NVIDIA/NemoClaw.git";
+    const runGit = mockGitRunner();
+
+    githubRefPublisher(
+      "credential-sentinel",
+      runGit,
+    )({
+      commitSha,
+      expectedHeadSha,
+      headRef: "feature",
+      repository,
+      repositoryName: "NVIDIA/NemoClaw",
+    });
+
+    expect(runGit.mock.calls.map((call) => call[1])).toEqual([
+      ["fetch", "--no-tags", "--no-write-fetch-head", remoteUrl, commitSha],
+      ["cat-file", "-e", `${commitSha}^{commit}`],
+      ["check-ref-format", "refs/heads/feature"],
+      [
+        "push",
+        "--porcelain",
+        `--force-with-lease=refs/heads/feature:${expectedHeadSha}`,
+        remoteUrl,
+        `${commitSha}:refs/heads/feature`,
+      ],
+    ]);
+    const fetchEnvironment = required<NodeJS.ProcessEnv>(
+      runGit.mock.calls[0]?.[2],
+      "missing fetch environment",
+    );
+    const pushEnvironment = required<NodeJS.ProcessEnv>(
+      runGit.mock.calls[3]?.[2],
+      "missing push environment",
+    );
+    expect(fetchEnvironment).toBe(pushEnvironment);
+    expect(fetchEnvironment).toMatchObject({
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+      GIT_TERMINAL_PROMPT: "0",
+    });
+    expect(
+      Buffer.from(
+        required(fetchEnvironment.GIT_CONFIG_VALUE_0, "missing Git credential").slice(
+          "AUTHORIZATION: basic ".length,
+        ),
+        "base64",
+      ).toString("utf8"),
+    ).toBe("x-access-token:credential-sentinel");
+    expect(JSON.stringify(runGit.mock.calls.map((call) => call[1]))).not.toContain(
+      "credential-sentinel",
+    );
+  });
+
+  it.each([
+    {
+      createRunner: () => mockGitRunner().mockImplementationOnce(failGitCommand),
+      expected: /could not fetch/u,
+      expectedCalls: 1,
+      label: "fetch",
+    },
+    {
+      createRunner: () =>
+        mockGitRunner()
+          .mockImplementationOnce(() => "")
+          .mockImplementationOnce(failGitCommand),
+      expected: /could not fetch/u,
+      expectedCalls: 2,
+      label: "commit verification",
+    },
+    {
+      createRunner: () =>
+        mockGitRunner()
+          .mockImplementationOnce(() => "")
+          .mockImplementationOnce(() => "")
+          .mockImplementationOnce(() => "")
+          .mockImplementationOnce(failGitCommand),
+      expected: /atomic PR branch update/u,
+      expectedCalls: 4,
+      label: "leased push",
+    },
+  ])(
+    "stops publication when the production $label fails (#7542)",
+    ({ createRunner, expected, expectedCalls }) => {
+      const runGit = createRunner();
+      const publish = githubRefPublisher("credential-sentinel", runGit);
+
+      expect(() =>
+        publish({
+          commitSha: "c".repeat(40),
+          expectedHeadSha: "b".repeat(40),
+          headRef: "feature",
+          repository: "/publisher/repository",
+          repositoryName: "NVIDIA/NemoClaw",
+        }),
+      ).toThrow(expected);
+      expect(runGit).toHaveBeenCalledTimes(expectedCalls);
+    },
+  );
 
   it("configures approved inference through a loopback gateway (#7542)", async () => {
     const env = resolverEnvironment();

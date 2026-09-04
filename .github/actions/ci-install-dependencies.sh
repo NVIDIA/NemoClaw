@@ -26,6 +26,10 @@ if [ "$event_name" = "pull_request" ]; then
     exit 1
   fi
 fi
+if [ -n "${NODE_AUTH_TOKEN:-}" ] && [ "${GITHUB_REF:-}" != "refs/heads/main" ]; then
+  echo "Package credentials are allowed only for the trusted main ref." >&2
+  exit 1
+fi
 
 target_root="$(pwd -P)"
 trusted_root="$(cd "$(dirname "$0")/../.." && pwd -P)"

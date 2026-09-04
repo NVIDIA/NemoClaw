@@ -150,7 +150,7 @@ jobs:
 
       - name: Install dependencies
         env:
-          NODE_AUTH_TOKEN: ${{ github.token }}
+          NODE_AUTH_TOKEN: ${{ github.ref == 'refs/heads/main' && github.token || '' }}
         run: bash .github/actions/ci-install-dependencies.sh
 
       - name: Build CLI and plugin
@@ -312,12 +312,12 @@ jobs:
       - name: Install dependencies and build in WSL
         shell: powershell
         env:
-          NODE_AUTH_TOKEN: ${{ github.token }}
+          NODE_AUTH_TOKEN: ${{ github.ref == 'refs/heads/main' && github.token || '' }}
         run: |
           . "$env:TRUSTED_WSL_HELPER"
           $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER
           $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
-          $env:WSLENV = (($env:WSLENV, 'NODE_AUTH_TOKEN', 'GITHUB_EVENT_NAME') -join ':').Trim(':')
+          $env:WSLENV = (($env:WSLENV, 'NODE_AUTH_TOKEN', 'GITHUB_EVENT_NAME', 'GITHUB_REF') -join ':').Trim(':')
           $script = @"
           set -euo pipefail
           id -un | grep -Fxq $testUser

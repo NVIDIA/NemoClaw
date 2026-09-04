@@ -14,6 +14,7 @@ import {
 const WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
 const WSL_HELPER_PATH = "tools/wsl/ci-helper.ps1";
 const MACOS_REQUIREMENTS_PATH = "ci/platform-vitest-macos-requirements.lock";
+const MAIN_ONLY_PACKAGE_TOKEN = "${{ github.ref == 'refs/heads/main' && github.token || '' }}";
 const workflow = readYaml<Workflow>(WORKFLOW_PATH);
 const wslHelperSource = readRepoText(WSL_HELPER_PATH);
 
@@ -41,7 +42,7 @@ describe("platform evidence workflow", () => {
     const installOpenShell = step("macos-vitest", "Install pinned OpenShell");
     const stepNames = job("macos-vitest").steps?.map(({ name }) => name) ?? [];
 
-    expect(installDependencies.env).toMatchObject({ NODE_AUTH_TOKEN: "${{ github.token }}" });
+    expect(installDependencies.env).toMatchObject({ NODE_AUTH_TOKEN: MAIN_ONLY_PACKAGE_TOKEN });
     expect(installDependencies.run).toBe("bash .github/actions/ci-install-dependencies.sh");
     expect(stepNames.indexOf("Run full Vitest suite on macOS")).toBeLessThan(
       stepNames.indexOf("Install pinned OpenShell"),
@@ -54,8 +55,8 @@ describe("platform evidence workflow", () => {
     const install = step("wsl-vitest", "Install dependencies and build in WSL");
 
     expect(wslHelperSource).toContain('"chmod -R go-w $workdirLiteral"');
-    expect(install.env).toMatchObject({ NODE_AUTH_TOKEN: "${{ github.token }}" });
-    expect(install.run).toContain("'NODE_AUTH_TOKEN', 'GITHUB_EVENT_NAME'");
+    expect(install.env).toMatchObject({ NODE_AUTH_TOKEN: MAIN_ONLY_PACKAGE_TOKEN });
+    expect(install.run).toContain("'NODE_AUTH_TOKEN', 'GITHUB_EVENT_NAME', 'GITHUB_REF'");
     expect(install.run).toContain("bash .github/actions/ci-install-dependencies.sh");
   });
 
