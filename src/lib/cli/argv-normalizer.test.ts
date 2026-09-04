@@ -97,6 +97,7 @@ describe("normalizeArgv", () => {
     { argv: ["doctor"], kind: "global", action: undefined },
     { argv: ["doctor", "--help"], kind: "global", action: undefined },
     { argv: ["doctor", "--json"], kind: "global", action: undefined },
+    { argv: ["doctor", "--text"], kind: "global", action: undefined },
     { argv: ["doctor", "--probe-only"], kind: "sandbox", action: "connect" },
     { argv: ["doctor", "status"], kind: "sandbox", action: "status" },
     { argv: ["doctor", "policy-add"], kind: "sandbox", action: "policy-add" },

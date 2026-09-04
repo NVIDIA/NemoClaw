@@ -40,7 +40,7 @@ describe("global doctor command", () => {
     "runs the read-only text diagnosis without a sandbox (#10212)",
     testTimeoutOptions(30_000),
     async () => {
-      await DoctorCommand.run([], rootDir);
+      await DoctorCommand.run(["--text"], rootDir);
 
       expect(mocks.runGlobalDoctor).toHaveBeenCalledWith();
       expect(process.exitCode).toBeUndefined();

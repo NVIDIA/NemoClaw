@@ -694,7 +694,7 @@ describe("CLI dispatch", () => {
   });
 
   it(
-    "emits one redacted JSON report through the public global doctor route (#10212)",
+    "emits one redacted JSON report for the selected non-default gateway (#10212)",
     testTimeoutOptions(35_000),
     () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-global-doctor-json-"));
@@ -716,8 +716,8 @@ describe("CLI dispatch", () => {
           "  printf 'Status: Disconnected\\nGateway: nemoclaw\\nAuthorization: Bearer sk-abc123DEF456ghi789\\n'",
           "  exit 1",
           "fi",
-          'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
-          "  printf 'Gateway: nemoclaw\\n'",
+          'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw-19080" ]; then',
+          "  printf 'Gateway: nemoclaw-19080\\n'",
           "  exit 0",
           "fi",
           "exit 97",
@@ -732,6 +732,7 @@ describe("CLI dispatch", () => {
           env: {
             ...process.env,
             HOME: home,
+            NEMOCLAW_GATEWAY_PORT: "19080",
             NEMOCLAW_GATEWAY_RUNTIME: "docker",
             NEMOCLAW_OPENSHELL_BIN: openshellBin,
             PATH: `${localBin}:${process.env.PATH || ""}`,
@@ -749,7 +750,7 @@ describe("CLI dispatch", () => {
         expect(fs.readFileSync(registryFile, "utf8")).toBe(emptyRegistry);
         expect(fs.readFileSync(openshellLog, "utf8").trim().split("\n")).toEqual([
           "status",
-          "gateway info -g nemoclaw",
+          "gateway info -g nemoclaw-19080",
         ]);
       } finally {
         fs.rmSync(home, { recursive: true, force: true });
@@ -757,26 +758,30 @@ describe("CLI dispatch", () => {
     },
   );
 
-  it("dispatches global doctor flags without reading sandbox state (#10212)", async () => {
-    await withDirectPublicDispatch(
-      async ({
-        dispatchCli,
-        migrateLegacyPortState,
-        recoverRegistryEntries,
-        runOclifCommandById,
-      }) => {
-        await dispatchCli(["doctor", "--json"]);
+  it.each(["--json", "--text"])(
+    "dispatches global doctor %s without reading sandbox state (#10212)",
+    async (flag) => {
+      await withDirectPublicDispatch(
+        async ({
+          dispatchCli,
+          migrateLegacyPortState,
+          recoverRegistryEntries,
+          runOclifCommandById,
+        }) => {
+          await dispatchCli(["doctor", flag]);
 
-        expect(runOclifCommandById).toHaveBeenCalledWith(
-          "doctor",
-          ["--json"],
-          expect.objectContaining({ rootDir: process.cwd() }),
-        );
-        expect(migrateLegacyPortState).not.toHaveBeenCalled();
-        expect(recoverRegistryEntries).not.toHaveBeenCalled();
-      },
-    );
-  });
+          expect(runOclifCommandById).toHaveBeenCalledWith(
+            "doctor",
+            [flag],
+            expect.objectContaining({ rootDir: process.cwd() }),
+          );
+          expect(migrateLegacyPortState).not.toHaveBeenCalled();
+          expect(recoverRegistryEntries).not.toHaveBeenCalled();
+        },
+        { sandboxNames: ["doctor"] },
+      );
+    },
+  );
 
   it("reports the sandbox-first grammar without recovering a bare action (#10212)", async () => {
     await withDirectPublicDispatch(

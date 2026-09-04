@@ -66,7 +66,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Troubleshooting",
       order: 36,
-      flags: "[--json]",
+      flags: "[--json|--text]",
     },
   ],
   gc: [
