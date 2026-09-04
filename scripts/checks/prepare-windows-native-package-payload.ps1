@@ -40,6 +40,10 @@ $script:LangGraphLoggingSourceDigest = '5754429ea54bb8cbc9b6b062c8c30b7da11d6d2d
 $script:LangGraphLoggingPatchedDigest = '862a676aad507986ce65ba6805feae97406508f994d25b2e4fcdfafc1b366874' # gitleaks:allow -- deterministic compatibility output pin
 $script:LangGraphApiSourceDigest = '66ed5ec37771619bbb70b4408e7fba1dc626b6e40176286554530a309efb6377' # gitleaks:allow -- public wheel source integrity pin
 $script:LangGraphApiPatchedDigest = '7faa1904d664bcc1c99d69da0f44d2fd36eaca87ad72d4aa1215f83b45aadb0e' # gitleaks:allow -- deterministic compatibility output pin
+$script:LangGraphCheckpointerSourceDigest = 'd63262d2f5e834a782c0d3f6e96f1b998af07be7ce585a9ea67a2f605b75e16d' # gitleaks:allow -- public wheel source integrity pin
+$script:LangGraphCheckpointerPatchedDigest = 'f34ea4982d5a2623e8e38fa324142441d355639cc0340fc76a0a6c052fed0b8b' # gitleaks:allow -- deterministic compatibility output pin
+$script:LangGraphStreamSourceDigest = '6a88d50614d34189d3a77d5d852d4479b889c88307bb1ccb52b9d1ef845c06e3' # gitleaks:allow -- public wheel source integrity pin
+$script:LangGraphStreamPatchedDigest = 'f9128fa986c46015d5391fbb3c944f5678c06597f09b4f9630e208bb297cc96f' # gitleaks:allow -- deterministic compatibility output pin
 $script:JsonSchemaRsVersion = '0.44.1'
 $script:JsonSchemaRsSourceDigest = '49ca909cc3017990a732145b9a7c2f1a0727b2f95dba4190c05a514575b5f4bf' # gitleaks:allow -- public PyPI source integrity pin
 $script:JsonSchemaRsCargoLockDigest = '77170cff39f4f8bf22ecfde8c728aad659f0f4e2471e36eaffeb1eaca340e291' # gitleaks:allow -- source-supplied Cargo lock integrity pin
@@ -295,10 +299,15 @@ try {
         ) `
         -Label 'Deep Agents Code native ARM64 runtime restore'
     $langGraphPatch = Join-Path $candidate 'packaging\windows\python\langgraph-api-0.14.0.dev3-python313.patch'
+    $langGraphNoGrpcPatch = Join-Path $candidate 'packaging\windows\python\langgraph-api-0.14.0.dev3-inmemory-no-grpc.patch'
     $langGraphLogging = Join-Path $deepAgentsSitePackages 'langgraph_api\logging.py'
     $langGraphApi = Join-Path $deepAgentsSitePackages 'langgraph_api\api\__init__.py'
+    $langGraphCheckpointer = Join-Path $deepAgentsSitePackages 'langgraph_api\_checkpointer\_adapter.py'
+    $langGraphStream = Join-Path $deepAgentsSitePackages 'langgraph_api\stream.py'
     Assert-Sha256 -Path $langGraphLogging -Expected $script:LangGraphLoggingSourceDigest -Label 'langgraph-api logging source'
     Assert-Sha256 -Path $langGraphApi -Expected $script:LangGraphApiSourceDigest -Label 'langgraph-api API source'
+    Assert-Sha256 -Path $langGraphCheckpointer -Expected $script:LangGraphCheckpointerSourceDigest -Label 'langgraph-api checkpointer source'
+    Assert-Sha256 -Path $langGraphStream -Expected $script:LangGraphStreamSourceDigest -Label 'langgraph-api stream source'
     Invoke-Checked `
         -FilePath $git `
         -Arguments @('-c', 'core.autocrlf=false', 'apply', '--check', '--whitespace=nowarn', $langGraphPatch) `
@@ -309,9 +318,22 @@ try {
         -Arguments @('-c', 'core.autocrlf=false', 'apply', '--whitespace=nowarn', $langGraphPatch) `
         -Label 'langgraph-api Python 3.13 compatibility patch' `
         -WorkingDirectory $deepAgentsSitePackages
+    Invoke-Checked `
+        -FilePath $git `
+        -Arguments @('-c', 'core.autocrlf=false', 'apply', '--check', '--unidiff-zero', '--whitespace=nowarn', $langGraphNoGrpcPatch) `
+        -Label 'langgraph-api in-memory no-gRPC patch check' `
+        -WorkingDirectory $deepAgentsSitePackages
+    Invoke-Checked `
+        -FilePath $git `
+        -Arguments @('-c', 'core.autocrlf=false', 'apply', '--unidiff-zero', '--whitespace=nowarn', $langGraphNoGrpcPatch) `
+        -Label 'langgraph-api in-memory no-gRPC patch' `
+        -WorkingDirectory $deepAgentsSitePackages
     Assert-Sha256 -Path $langGraphLogging -Expected $script:LangGraphLoggingPatchedDigest -Label 'patched langgraph-api logging source'
     Assert-Sha256 -Path $langGraphApi -Expected $script:LangGraphApiPatchedDigest -Label 'patched langgraph-api API source'
+    Assert-Sha256 -Path $langGraphCheckpointer -Expected $script:LangGraphCheckpointerPatchedDigest -Label 'patched langgraph-api checkpointer source'
+    Assert-Sha256 -Path $langGraphStream -Expected $script:LangGraphStreamPatchedDigest -Label 'patched langgraph-api stream source'
     Copy-Item -LiteralPath $langGraphPatch -Destination (Join-Path $output 'LANGGRAPH-PYTHON313-COMPATIBILITY.patch')
+    Copy-Item -LiteralPath $langGraphNoGrpcPatch -Destination (Join-Path $output 'LANGGRAPH-INMEMORY-NO-GRPC.patch')
     $forbiddenFruitArchive = Join-Path $workRoot 'forbiddenfruit-0.1.4.tar.gz'
     Invoke-WebRequest -UseBasicParsing -Uri 'https://files.pythonhosted.org/packages/e6/79/d4f20e91327c98096d605646bdc6a5ffedae820f38d378d3515c42ec5e60/forbiddenfruit-0.1.4.tar.gz' -OutFile $forbiddenFruitArchive
     Assert-Sha256 -Path $forbiddenFruitArchive -Expected $script:ForbiddenFruitArchiveSha256 -Label 'forbiddenfruit source archive'
@@ -590,7 +612,8 @@ debug = false
         'qualification\run-installed-native-pi.mts',
         'qualification\run-installed-native-nemocua.mts',
         'agent-support.json',
-        'LANGGRAPH-PYTHON313-COMPATIBILITY.patch'
+        'LANGGRAPH-PYTHON313-COMPATIBILITY.patch',
+        'LANGGRAPH-INMEMORY-NO-GRPC.patch'
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $output $required) -PathType Leaf)) {
             Fail-PayloadPreparation "Prepared payload is incomplete: $required"
@@ -639,6 +662,11 @@ debug = false
                 apiSourceSha256 = $script:LangGraphApiSourceDigest
                 apiPatchedSha256 = $script:LangGraphApiPatchedDigest
                 patchSha256 = (Get-FileHash -LiteralPath $langGraphPatch -Algorithm SHA256).Hash.ToLowerInvariant()
+                checkpointerSourceSha256 = $script:LangGraphCheckpointerSourceDigest
+                checkpointerPatchedSha256 = $script:LangGraphCheckpointerPatchedDigest
+                streamSourceSha256 = $script:LangGraphStreamSourceDigest
+                streamPatchedSha256 = $script:LangGraphStreamPatchedDigest
+                inMemoryNoGrpcPatchSha256 = (Get-FileHash -LiteralPath $langGraphNoGrpcPatch -Algorithm SHA256).Hash.ToLowerInvariant()
             }
             jsonSchemaRs = [pscustomobject]@{
                 version = $script:JsonSchemaRsVersion

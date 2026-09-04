@@ -280,6 +280,9 @@ if (agent === "pi") {
     "check = false",
     "auto_update = false",
     "",
+    "[warnings]",
+    "suppress = [\"ripgrep\", \"tavily\"]",
+    "",
   ].join("\n"), "utf8");
   const runner = join(home, "run-deep-agents.py");
   writeFileSync(runner, [
@@ -293,7 +296,10 @@ if (agent === "pi") {
   ].join("\n"), "utf8");
   executable = python;
   args = [runner, "--sandbox", "none"];
-  extraEnvironment = { DEEPAGENTS_CODE_OPENAI_API_KEY: brokerToken };
+  extraEnvironment = {
+    DEEPAGENTS_CODE_OPENAI_API_KEY: brokerToken,
+    DEEPAGENTS_CODE_RIPGREP_INSTALLER: "system",
+  };
 } else {
   throw new Error("unsupported native terminal agent " + agent);
 }

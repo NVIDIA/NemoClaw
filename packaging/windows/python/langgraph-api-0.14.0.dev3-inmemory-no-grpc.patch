@@ -1,0 +1,34 @@
+diff --git a/langgraph_api/_checkpointer/_adapter.py b/langgraph_api/_checkpointer/_adapter.py
+index 87c7d86..242cf75 100644
+--- a/langgraph_api/_checkpointer/_adapter.py
++++ b/langgraph_api/_checkpointer/_adapter.py
+@@ -22,2 +21,0 @@ from langgraph.pregel import Pregel
+-from langgraph_grpc_common.checkpointer import GrpcCheckpointer
+-
+@@ -26 +23,0 @@ from langgraph_api.asyncio import as_asynccontextmanager
+-from langgraph_api.grpc.client import get_shared_client
+@@ -75,0 +73,2 @@ async def _get_shared_checkpointer_stub() -> CheckpointerStub:
++    from langgraph_api.grpc.client import get_shared_client  # noqa: PLC0415
++
+@@ -328,0 +328,4 @@ async def get_checkpointer(
++        from langgraph_grpc_common.checkpointer import (  # noqa: PLC0415
++            GrpcCheckpointer,
++        )
++
+@@ -342,0 +346,4 @@ async def get_checkpointer(
++        from langgraph_grpc_common.checkpointer import (  # noqa: PLC0415
++            GrpcCheckpointer,
++        )
++
+diff --git a/langgraph_api/stream.py b/langgraph_api/stream.py
+index 20033eb..61cdfe1 100644
+--- a/langgraph_api/stream.py
++++ b/langgraph_api/stream.py
+@@ -44 +43,0 @@ from langgraph_api.graph import get_graph
+-from langgraph_api.grpc.ops.runs import StreamPublishException
+@@ -67,0 +67 @@ if IS_POSTGRES_OR_GRPC_BACKEND:
++    from langgraph_api.grpc.ops.runs import StreamPublishException
+@@ -70,0 +71,3 @@ else:
++    class StreamPublishException(Exception):
++        """Unavailable gRPC stream exception for the in-memory backend."""
++

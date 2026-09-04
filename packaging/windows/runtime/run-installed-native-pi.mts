@@ -485,6 +485,9 @@ writeFileSync(join(configDirectory, "config.toml"), [
   "check = false",
   "auto_update = false",
   "",
+  "[warnings]",
+  "suppress = [\"ripgrep\", \"tavily\"]",
+  "",
 ].join("\n"), "utf8");
 const runner = join(home, "run-deep-agents.py");
 // Python 3.13 gives tempfile.mkdtemp() a protected owner-only Windows DACL.
@@ -678,6 +681,7 @@ async function main() {
       agentEnvironment = {
         DEEPAGENTS_CODE_DEBUG: "1",
         DEEPAGENTS_CODE_DEBUG_FILE: path.join(shareRoot, "deepagents-debug.log"),
+        DEEPAGENTS_CODE_RIPGREP_INSTALLER: "system",
         NEMOCLAW_DEEP_AGENTS_HOME_ROOT: path.join(shareRoot, "home"),
         NEMOCLAW_DEEP_AGENTS_MODEL_PORT: "",
         NEMOCLAW_DEEP_AGENTS_PYTHON: requiredFile(
