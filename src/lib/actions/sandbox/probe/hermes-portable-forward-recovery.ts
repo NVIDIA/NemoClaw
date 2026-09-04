@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isIP } from "node:net";
-
 import { isLocalForwardReachable } from "../forward-health";
 
 const FORWARD_SETTLEMENT_TIMEOUT_MS = 3_000;
@@ -360,6 +358,8 @@ function readClock(now: () => number, previous?: number): number {
 function settleTouchedPorts(
   input: HermesPortableForwardRecoveryInput,
   requiredHealthy: ReadonlySet<number>,
+  touchedPorts: ReadonlySet<number>,
+  identities: Map<number, StrictForwardEntry>,
   timing: ReturnType<typeof createForwardTimingRecorder>,
 ): ForwardObservation {
   return timing.measure("settle", () => {
@@ -372,6 +372,10 @@ function settleTouchedPorts(
     for (let observation = 0; observation < FORWARD_SETTLEMENT_MAX_OBSERVATIONS; observation += 1) {
       const observed = observeForwards(input, false, timing, deadline, now);
       requireNoOccupied(observed.states);
+      for (const port of touchedPorts) {
+        const entry = observed.entries.get(port);
+        if (entry) identities.set(port, entry);
+      }
       if ([...requiredHealthy].every((port) => observed.states.get(port) === "healthy")) {
         return observed;
       }
@@ -408,10 +412,11 @@ function rollbackPort(
   try {
     const beforeStop = observeForwards(input, true, undefined, deadline, now);
     const currentEntry = beforeStop.entries.get(port);
-    if (expected && !sameForwardIdentity(expected, currentEntry)) failure("restoration-unproved");
-    if (!expected && currentEntry && currentEntry.sandboxName !== input.sandboxName) {
+    if (!expected) {
+      if (!currentEntry && beforeStop.states.get(port) === "absent") return;
       failure("restoration-unproved");
     }
+    if (!sameForwardIdentity(expected, currentEntry)) failure("restoration-unproved");
     if (["occupied", "stale-reachable"].includes(beforeStop.states.get(port) ?? "")) {
       failure("restoration-unproved");
     }
@@ -521,7 +526,13 @@ export function prepareHermesPortableLaunchForwards(
         timing,
       );
     }
-    const final = settleTouchedPorts(input, requiredHealthy, timing);
+    const final = settleTouchedPorts(
+      input,
+      requiredHealthy,
+      new Set(touchedPorts),
+      identities,
+      timing,
+    );
 
     requireNoOccupied(final.states);
     if (input.ports.some((port) => final.states.get(port) !== "healthy")) {
