@@ -80,6 +80,7 @@ describe("PR review advisor", () => {
 
     expect(
       [
+        "testDepth.suggestedTests and staticTestInventory are internal starting points for selecting existing validation, not proof that coverage is absent or authorization to add or modify tests.",
         "Prefer, in order: cite existing coverage unchanged; extend an existing owner with one missing case; add a new test only when no existing owner can express the behavior; or state why automated coverage does not apply.",
         "A changed source file without a changed test file does not establish a gap.",
         "Review every invariant listed in riskPlan against the diff and checked-in test evidence under the general regression-evidence rule above.",
