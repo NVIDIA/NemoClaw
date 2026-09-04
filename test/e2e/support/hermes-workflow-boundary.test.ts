@@ -156,6 +156,16 @@ describe("Hermes GPU boundary", () => {
     );
   });
 
+  it("rejects fail-open stale Docker CLI recovery", () => {
+    const errors = wfErrors((workflow) => {
+      step(workflow.jobs[GPU], "Recover Docker CLI before native Podman E2E")[
+        "continue-on-error"
+      ] = true;
+    });
+
+    expect(errors).toContain("hermes-gpu-startup trusted runtime boundary failed");
+  });
+
   it("rejects broad drift", () => {
     const errors = wfErrors((workflow) => {
       workflow.jobs["hermes-e2e"].env.NEMOCLAW_MODEL = "provider/unexpected-model";

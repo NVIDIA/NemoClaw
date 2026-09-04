@@ -291,6 +291,7 @@ if ! @run restore`;
     staleDockerRestore?.name !== "Recover Docker CLI before native Podman E2E" ||
     staleDockerRestore?.uses !== E2E_ACTION_PROVENANCE.restoreNativePodmanRuntime.reference ||
     staleDockerRestore?.if !== "${{ matrix.runtime_provider == 'podman' }}" ||
+    staleDockerRestore?.["continue-on-error"] !== undefined ||
     !isDeepStrictEqual(asRecord(staleDockerRestore?.with), { enabled: "true" }) ||
     nativePodmanRuntime?.name !== "Prepare native Podman E2E runtime" ||
     nativePodmanRuntime?.uses !== E2E_ACTION_PROVENANCE.nativePodmanRuntime.reference ||
