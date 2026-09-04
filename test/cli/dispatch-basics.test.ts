@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -292,6 +292,7 @@ describe("CLI dispatch", () => {
     expect(
       normalizeArgv(["-h"], {
         globalCommands: globalCommandTokens(),
+        isSandboxAction: () => false,
         isSandboxConnectFlag: () => false,
       }),
     ).toEqual({ kind: "rootHelp" });
@@ -669,6 +670,70 @@ describe("CLI dispatch", () => {
       },
     );
   });
+
+  it(
+    "emits one redacted JSON report through the public global doctor route (#10212)",
+    testTimeoutOptions(35_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-global-doctor-json-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const openshellBin = path.join(localBin, "openshell");
+      const openshellLog = path.join(home, "openshell-args");
+      const registryFile = path.join(registryDir, "sandboxes.json");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      const emptyRegistry = JSON.stringify({ sandboxes: {}, defaultSandbox: null });
+      fs.writeFileSync(registryFile, emptyRegistry, { mode: 0o600 });
+      fs.writeFileSync(
+        openshellBin,
+        [
+          "#!/bin/sh",
+          `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+          'if [ "$1" = "status" ]; then',
+          "  printf 'Status: Disconnected\\nGateway: nemoclaw\\nAuthorization: Bearer sk-abc123DEF456ghi789\\n'",
+          "  exit 1",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+          "  printf 'Gateway: nemoclaw\\n'",
+          "  exit 0",
+          "fi",
+          "exit 97",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(localBin, "docker"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+
+      try {
+        const result = spawnSync(process.execPath, [CLI, "doctor", "--json"], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: home,
+            NEMOCLAW_GATEWAY_RUNTIME: "docker",
+            NEMOCLAW_OPENSHELL_BIN: openshellBin,
+            PATH: `${localBin}:${process.env.PATH || ""}`,
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 30_000,
+        });
+
+        expect(result.status).toBe(1);
+        expect(result.stderr).toBe("");
+        const report = JSON.parse(result.stdout) as Record<string, unknown>;
+        expect(report).toMatchObject({ schemaVersion: 1, scope: "global", status: "fail" });
+        expect(report).not.toHaveProperty("sandbox");
+        expect(result.stdout).not.toContain("sk-abc123DEF456ghi789");
+        expect(fs.readFileSync(registryFile, "utf8")).toBe(emptyRegistry);
+        expect(fs.readFileSync(openshellLog, "utf8").trim().split("\n")).toEqual([
+          "status",
+          "gateway info -g nemoclaw",
+        ]);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("dispatches global doctor flags without reading sandbox state (#10212)", async () => {
     await withDirectPublicDispatch(
