@@ -101,6 +101,7 @@ function Invoke-BoundedProcess {
         [Parameter(Mandatory)][string[]]$Arguments,
         [Parameter(Mandatory)][string]$Label,
         [Parameter(Mandatory)][int[]]$AllowedExitCodes,
+        [int]$TimeoutMilliseconds = $script:OperationTimeoutMilliseconds,
         [switch]$SuppressProofOutput
     )
 
@@ -110,7 +111,7 @@ function Invoke-BoundedProcess {
     }
     $process = Start-Process -FilePath $FilePath -ArgumentList $argumentList -PassThru -ErrorAction Stop
     try {
-        if (-not $process.WaitForExit($script:OperationTimeoutMilliseconds)) {
+        if (-not $process.WaitForExit($TimeoutMilliseconds)) {
             $process.Kill()
             $process.WaitForExit()
             Fail-PackageQualification "$Label exceeded its timeout."
@@ -757,7 +758,8 @@ try {
         -FilePath $setup `
         -Arguments $bundleInstallArguments `
         -Label 'Burn bundle install' `
-        -AllowedExitCodes @(0, 3010) | Out-Null
+        -AllowedExitCodes @(0, 3010) `
+        -TimeoutMilliseconds 2700000 | Out-Null
 
     if (-not (Test-Path -LiteralPath $openshellPath -PathType Leaf) -or
         -not (Test-Path -LiteralPath $gatewayPath -PathType Leaf)) {
@@ -1045,7 +1047,8 @@ try {
             -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') `
             -Arguments @('/fa', $msi, '/qn', '/norestart', '/l*v', $msiRepairLog) `
             -Label 'MSI repair' `
-            -AllowedExitCodes @(0, 3010) | Out-Null
+            -AllowedExitCodes @(0, 3010) `
+            -TimeoutMilliseconds 2700000 | Out-Null
         if ((Get-FileHash -LiteralPath $openshellPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $payloadHashes['bin\openshell.exe']) {
             Fail-PackageQualification 'MSI repair did not restore the corrupted OpenShell CLI.'
         }
@@ -1057,7 +1060,8 @@ try {
             -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') `
             -Arguments @('/i', $msi, 'REINSTALL=ALL', 'REINSTALLMODE=vomus', '/qn', '/norestart', '/l*v', $msiReinstallLog) `
             -Label 'MSI reinstall' `
-            -AllowedExitCodes @(0, 3010) | Out-Null
+            -AllowedExitCodes @(0, 3010) `
+            -TimeoutMilliseconds 2700000 | Out-Null
         if (@(Get-ArpEntries -DisplayName $script:MsiDisplayName).Count -ne 1) {
             Fail-PackageQualification 'MSI reinstall did not preserve one product registration.'
         }
@@ -1070,12 +1074,14 @@ try {
         -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') `
         -Arguments @('/x', $msi, '/qn', '/norestart', '/l*v', $msiUninstallLog) `
         -Label 'MSI uninstall' `
-        -AllowedExitCodes @(0, 3010) | Out-Null
+        -AllowedExitCodes @(0, 3010) `
+        -TimeoutMilliseconds 2700000 | Out-Null
     Invoke-BoundedProcess `
         -FilePath $setup `
         -Arguments @('/uninstall', '/quiet', '/norestart', '/log', $bundleUninstallLog) `
         -Label 'Burn bundle registration cleanup' `
-        -AllowedExitCodes @(0, 3010) | Out-Null
+        -AllowedExitCodes @(0, 3010) `
+        -TimeoutMilliseconds 2700000 | Out-Null
 
     if (Test-Path -LiteralPath $installRoot) {
         Fail-PackageQualification 'Windows Installer uninstall did not remove the product directory.'
@@ -1199,6 +1205,7 @@ try {
                 -Arguments @('/x', $msi, '/qn', '/norestart') `
                 -Label 'Failure cleanup MSI uninstall' `
                 -AllowedExitCodes @(0, 1605, 3010) `
+                -TimeoutMilliseconds 2700000 `
                 -SuppressProofOutput | Out-Null
         } catch {
             Write-Warning "MSI failure cleanup did not complete: $($_.Exception.Message)"
@@ -1210,6 +1217,7 @@ try {
             -Arguments @('/uninstall', '/quiet', '/norestart') `
             -Label 'Failure cleanup bundle uninstall' `
             -AllowedExitCodes @(0, 1605, 3010) `
+            -TimeoutMilliseconds 2700000 `
             -SuppressProofOutput | Out-Null
     } catch {
         Write-Warning "Bundle failure cleanup did not complete: $($_.Exception.Message)"

@@ -24,6 +24,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
     ];
     private IBootstrapperCommand? command;
     private MainWindow? window;
+    private Window? ownerWindow;
     private Dispatcher? engineDispatcher;
     private Dispatcher? dispatcher;
     private Exception? dispatcherFailure;
@@ -78,6 +79,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             if (this.command?.Display is Display.Full or Display.Passive)
             {
                 this.window = new MainWindow();
+                this.ownerWindow = this.window;
                 this.window.InstallRequested += (_, _) => this.BeginPlan(LaunchAction.Install);
                 this.window.RepairRequested += (_, _) => this.BeginPlan(LaunchAction.Repair);
                 this.window.UninstallRequested += (_, _) => this.BeginPlan(LaunchAction.Uninstall);
@@ -89,6 +91,19 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
                     this.engineDispatcher?.BeginInvokeShutdown(DispatcherPriority.Normal);
                 };
                 this.window.Show();
+            }
+            else
+            {
+                this.ownerWindow = new Window
+                {
+                    Height = 0,
+                    Opacity = 0,
+                    ShowActivated = false,
+                    ShowInTaskbar = false,
+                    Width = 0,
+                    WindowStyle = WindowStyle.None,
+                };
+                _ = new WindowInteropHelper(this.ownerWindow).EnsureHandle();
             }
 
             ready.Set();
@@ -187,7 +202,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         }
 
         var owner = this.UiValue(
-            () => this.window is null ? IntPtr.Zero : new WindowInteropHelper(this.window).Handle,
+            () => this.ownerWindow is null ? IntPtr.Zero : new WindowInteropHelper(this.ownerWindow).EnsureHandle(),
             IntPtr.Zero);
         this.Engine.Apply(owner);
     }
@@ -315,6 +330,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         {
             if (this.window is null)
             {
+                this.ownerWindow?.Close();
                 this.dispatcher?.InvokeShutdown();
             }
             else

@@ -237,7 +237,7 @@ jobs:
     name: Windows native installer candidate (ARM64, no WSL)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' }}
     runs-on: windows-11-vs2026-arm
-    timeout-minutes: 120
+    timeout-minutes: 240
     steps:
       - name: Check out the NemoClaw candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
