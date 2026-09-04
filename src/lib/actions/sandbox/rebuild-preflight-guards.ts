@@ -5,6 +5,7 @@ import {
   detectOpenShellStateRpcPreflightIssue,
   printOpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { CLI_NAME } from "../../cli/branding";
 import {
   checkGatewayRouteCompatibility,
@@ -269,9 +270,17 @@ export function checkRebuildGatewaySchemaPreflight(
   sandboxName: string,
   sb: RebuildSandboxEntry,
   bail: RebuildBail,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): boolean {
+  const gatewayName = resolveSandboxGatewayName(sb);
+  if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) {
+    return bail(
+      `Rebuild gateway schema target '${gatewayName}' does not match the frozen OpenShell target '${runtimeSelection.gatewayName}'.`,
+    );
+  }
   const issue = detectOpenShellStateRpcPreflightIssue({
-    gatewayName: resolveSandboxGatewayName(sb),
+    gatewayName,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
   });
   if (issue) {
     printOpenShellStateRpcIssue(issue, {

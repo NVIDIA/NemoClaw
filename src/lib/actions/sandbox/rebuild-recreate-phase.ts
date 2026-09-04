@@ -273,6 +273,9 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   try {
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
+      ...(recreateJournal.runtimeSelection
+        ? { runtimeSelection: recreateJournal.runtimeSelection }
+        : {}),
       ...(preparedBackupRecovery ? { allowRemovedImmutabilityStateRecord: true } : {}),
       rebuildGatewayAuthority,
       rebuildPolicySourcePath,
