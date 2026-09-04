@@ -515,7 +515,7 @@ test(
       captureDiagnostics: () =>
         capturePairingDiagnostics("openclaw-plugin-exdev-onboard-pairing-diagnostics"),
       onEvidence: async (evidence) => {
-        await artifacts.writeJson("openclaw-plugin-exdev-onboard-retry.json", evidence);
+        await artifacts.writeJson("retry/openclaw-plugin-exdev-onboard-retry.json", evidence);
       },
     });
     const onboardText = onboard.value ? resultText(onboard.value) : "onboard returned no result";
@@ -596,7 +596,7 @@ test(
         ),
       sandboxName: SANDBOX_NAME,
       onEvidence: async (evidence) => {
-        await artifacts.writeJson("openclaw-weather-plugin-recreate-retry.json", evidence);
+        await artifacts.writeJson("retry/openclaw-weather-plugin-recreate-retry.json", evidence);
       },
     });
     const recreateText = recreate.value
