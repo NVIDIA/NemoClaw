@@ -96,13 +96,22 @@ describe("PR review advisor", () => {
     const runtimeBoundaryDiff = `diff --git a/src/lib/example.ts b/src/lib/example.ts
 +++ b/src/lib/example.ts
 +spawn("command");`;
-    const requiredRiskCandidates = classifyTestDepth(["src/lib/state/registry.ts"]).suggestedTests;
+    const requiredRiskCandidates = classifyTestDepth([
+      "agents/langchain-deepagents-code/patch-managed-deepagents-code.py",
+    ]).suggestedTests;
 
     expect({
       testOrDocs: classifyTestDepth(["test/example.test.ts"]).suggestedTests,
-      requiredRiskIsCandidate:
-        requiredRiskCandidates.length > 0 &&
-        requiredRiskCandidates.every((candidate) => candidate.startsWith("Existing ")),
+      requiredRiskUsesFactualJobAndTarget:
+        requiredRiskCandidates.some((candidate) => candidate.includes("E2E job validation candidate")) &&
+        requiredRiskCandidates.some((candidate) =>
+          candidate.includes("typed E2E target validation candidate"),
+        ) &&
+        requiredRiskCandidates.every(
+          (candidate) =>
+            candidate.startsWith("Existing ") &&
+            !/\b(?:add|modify|run)\b/i.test(candidate),
+        ),
       runtimePath: classifyTestDepth(["src/lib/example-sandbox.ts"]).suggestedTests,
       runtimeBoundary: classifyTestDepth(["src/lib/example.ts"], undefined, runtimeBoundaryDiff)
         .suggestedTests,
@@ -112,7 +121,7 @@ describe("PR review advisor", () => {
       defaultUnit: classifyTestDepth(["src/lib/example.ts"]).suggestedTests,
     }).toEqual({
       testOrDocs: ["Unit or documentation validation candidate for the touched files."],
-      requiredRiskIsCandidate: true,
+      requiredRiskUsesFactualJobAndTarget: true,
       runtimePath: [
         "Runtime or integration validation candidate for the changed behavior; external E2E job results are outside this context.",
       ],
