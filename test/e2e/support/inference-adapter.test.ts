@@ -205,6 +205,31 @@ describe("E2E inference adapter", () => {
     });
   });
 
+  const hermesSessionMarker = ["NEMOCLAW", "5254", "123456"].join("_");
+
+  it.each([
+    [`Remember this exact token: ${hermesSessionMarker}. Reply with acknowledged.`, "acknowledged"],
+    ["What is seven multiplied by eight? Reply with only the integer.", "56"],
+    ["Multiply seven by eight. Reply with only the integer.", "56"],
+    ["N8011_m1h2j3k4_PROFILE_SEED", "N8011_m1h2j3k4_PROFILE_SEED"],
+    ["N8011_m1h2j3k4_PROFILE_CONTINUE", "N8011_m1h2j3k4_PROFILE_CONTINUE"],
+  ] as const)("returns the deterministic Hermes session reply for %s", async (prompt, expected) => {
+    const adapter = await createAdapter({ env: {} });
+    expect(
+      await adapter.directChat(`${prompt}\n\n<runtime-context>fixture</runtime-context>`),
+    ).toMatchObject({ choices: [{ message: { content: expected } }] });
+  });
+
+  it("keeps the PONG fallback for an unrelated mock prompt", async () => {
+    const adapter = await createAdapter({ env: {} });
+    expect(await adapter.directChat("Explain seven multiplied by eight.")).toMatchObject({
+      choices: [{ message: { content: "PONG" } }],
+    });
+    expect(await adapter.directChat("N8011_NOT_HEX_PROFILE_SEED")).toMatchObject({
+      choices: [{ message: { content: "PONG" } }],
+    });
+  });
+
   it("keeps unrelated ambient secrets out of adapter and fake-server child environments", async () => {
     const secretName = "UNRELATED_E2E_SENTINEL_SECRET";
     const secretValue = "sentinel-value-that-must-not-propagate";

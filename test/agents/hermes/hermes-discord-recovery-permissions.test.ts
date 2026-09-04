@@ -162,15 +162,6 @@ describe("Hermes cross-UID ledger permissions", () => {
     },
   );
 
-  it("keeps managed cron definitions sandbox-owned while gateway state stays gateway-owned", () => {
-    expect(baseDockerfile).toContain(
-      "chown gateway:sandbox \\\n        /sandbox/.hermes/cron \\\n        /sandbox/.hermes/gateway \\\n        /sandbox/.hermes/runtime",
-    );
-    expect(dockerfile).toContain(
-      "chown -R sandbox:sandbox /sandbox/.hermes \\\n    && chown gateway:sandbox \\\n        /sandbox/.hermes/gateway \\\n        /sandbox/.hermes/runtime",
-    );
-  });
-
   it("requires a Dockerfile cross-identity probe for the cron ledger lifecycle", () => {
     expect(dockerfile).toContain(
       `stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 2770"`,

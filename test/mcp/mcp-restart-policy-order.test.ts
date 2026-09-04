@@ -466,6 +466,15 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
     };
   };
 
+  const expectedStatusCall = (server: string) => ({
+    sandboxName: "alpha",
+    server,
+    options: {
+      probeCredentialResolution: true,
+      runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+    },
+  });
+
   it("refuses a hostless restart whose stored credential is not verified (#10750)", () => {
     const payload = runCredentialRestart({
       probeResponses: {
@@ -482,21 +491,11 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
     expect(payload).toEqual({
       outcome: "rejected",
       message:
-        "MCP server 'example' cannot reuse its stored credential because the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401). Export host environment variable 'MCP_TOKEN' and run `nemoclaw alpha mcp restart example` to replace it.",
+        "MCP server 'example' cannot reuse its stored credential: the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401). Export host environment variable 'MCP_TOKEN' and run `nemoclaw alpha mcp restart example` to replace it.",
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],
-      statusCalls: [
-        {
-          sandboxName: "alpha",
-          server: "example",
-          options: {
-            probeCredentialResolution: true,
-            allowAdapterRepairProbe: true,
-            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
-          },
-        },
-      ],
+      statusCalls: [expectedStatusCall("example")],
     });
   }, 75_000);
 
@@ -516,21 +515,11 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
 
     expect(payload).toEqual({
       outcome: "rejected",
-      message: `MCP server 'example' cannot reuse its stored credential because ${boundedRedactedProbeDetail}. Export host environment variable 'MCP_TOKEN' and run \`nemoclaw alpha mcp restart example\` to replace it.`,
+      message: `MCP server 'example' cannot reuse its stored credential: ${boundedRedactedProbeDetail}. Export host environment variable 'MCP_TOKEN' and run \`nemoclaw alpha mcp restart example\` to replace it.`,
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],
-      statusCalls: [
-        {
-          sandboxName: "alpha",
-          server: "example",
-          options: {
-            probeCredentialResolution: true,
-            allowAdapterRepairProbe: true,
-            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
-          },
-        },
-      ],
+      statusCalls: [expectedStatusCall("example")],
     });
   }, 75_000);
 
@@ -545,17 +534,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       outcome: "refreshed",
       policyApplyCalls: 2,
       providerCalls: ["provider update alpha-mcp-example"],
-      statusCalls: [
-        {
-          sandboxName: "alpha",
-          server: "example",
-          options: {
-            probeCredentialResolution: true,
-            allowAdapterRepairProbe: true,
-            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
-          },
-        },
-      ],
+      statusCalls: [expectedStatusCall("example")],
     });
   }, 75_000);
 
@@ -571,21 +550,11 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
     expect(payload).toEqual({
       outcome: "rejected",
       message:
-        "MCP server 'example' cannot reuse its stored credential because sandbox transport https://example.com/ failed; MCP_TOKEN=<REDACTED>. Export host environment variable 'MCP_TOKEN' and run `nemoclaw alpha mcp restart example` to replace it.",
+        "MCP server 'example' cannot reuse its stored credential: sandbox transport https://example.com/ failed; MCP_TOKEN=<REDACTED>. Export host environment variable 'MCP_TOKEN' and run `nemoclaw alpha mcp restart example` to replace it.",
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],
-      statusCalls: [
-        {
-          sandboxName: "alpha",
-          server: "example",
-          options: {
-            probeCredentialResolution: true,
-            allowAdapterRepairProbe: true,
-            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
-          },
-        },
-      ],
+      statusCalls: [expectedStatusCall("example")],
     });
   }, 75_000);
 
@@ -607,33 +576,11 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
     expect(payload).toMatchObject({
       outcome: "rejected",
       message:
-        "MCP server 'later' cannot reuse its stored credential because the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401). Export host environment variable 'LATER_TOKEN' and run `nemoclaw alpha mcp restart later` to replace it.",
+        "MCP server 'later' cannot reuse its stored credential: the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401). Export host environment variable 'LATER_TOKEN' and run `nemoclaw alpha mcp restart later` to replace it.",
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],
+      statusCalls: [expectedStatusCall("example"), expectedStatusCall("later")],
     });
-    expect(payload.statusCalls).toHaveLength(2);
-    expect(payload.statusCalls).toEqual(
-      expect.arrayContaining([
-        {
-          sandboxName: "alpha",
-          server: "example",
-          options: {
-            probeCredentialResolution: true,
-            allowAdapterRepairProbe: true,
-            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
-          },
-        },
-        {
-          sandboxName: "alpha",
-          server: "later",
-          options: {
-            probeCredentialResolution: true,
-            allowAdapterRepairProbe: true,
-            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
-          },
-        },
-      ]),
-    );
   }, 75_000);
 });

@@ -90,9 +90,6 @@ async function assertRestartCredentialsAvailable(
     try {
       const [status] = await statusMcpBridge(sandboxName, entry.server, {
         probeCredentialResolution: true,
-        // Restart may repair a stale managed adapter, while this operation's
-        // provider and status probes must remain pinned to one runtime.
-        allowAdapterRepairProbe: true,
         runtimeSelection,
       });
       const probe = status?.provider.credentialResolution;
@@ -106,7 +103,7 @@ async function assertRestartCredentialsAvailable(
       );
     }
     throw new McpBridgeError(
-      `MCP server '${entry.server}' cannot reuse its stored credential because ${detail}. Export host environment variable '${entry.env[0]}' and run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` to replace it.`,
+      `MCP server '${entry.server}' cannot reuse its stored credential: ${detail}. Export host environment variable '${entry.env[0]}' and run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` to replace it.`,
     );
   }
 }

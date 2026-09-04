@@ -81,7 +81,7 @@ function startPolicyRelay() {
         },
       );
       upstream.on("error", () => {
-        if (!response.headersSent) response.writeHead(502);
+        response.headersSent || response.writeHead(502);
         response.end("WeChat fixture relay failed");
       });
       request.pipe(upstream);
@@ -91,12 +91,9 @@ function startPolicyRelay() {
     server.listen(0, "127.0.0.1", () => {
       server.off("error", rejectStartup);
       const address = server.address();
-      if (address === null || typeof address === "string") {
-        server.close();
-        reject(new Error("WeChat fixture relay did not expose an IPv4 port"));
-        return;
-      }
-      resolve({ server, baseUrl: "http://127.0.0.1:" + address.port });
+      address !== null && typeof address !== "string"
+        ? resolve({ server, baseUrl: "http://127.0.0.1:" + address.port })
+        : (server.close(), reject(new Error("WeChat fixture relay did not expose an IPv4 port")));
     });
   });
 }

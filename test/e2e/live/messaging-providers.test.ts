@@ -492,7 +492,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
 
     const refusedGithub = await sandboxOutput(
       sandbox,
-      "printenv GITHUB_TOKEN 2>/dev/null || true",
+      'printf "%s\\n" "${GITHUB_TOKEN+__PRESENT__}"',
       "refused-extra-placeholder-github",
       redactionValues,
     );

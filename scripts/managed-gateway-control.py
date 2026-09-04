@@ -95,11 +95,6 @@ HERMES_MCP_STATE_RE = re.compile(
     r"# nemoclaw-hermes-mcp-state-v1 "
     r"intended=[0-9a-f]{64} applied=[0-9a-f]{64}\Z"
 )
-HERMES_SANDBOX_RUNTIME_ENVIRONMENT = {
-    "HERMES_HOME": "/sandbox/.hermes",
-    "HERMES_LAZY_INSTALL_TARGET": "/sandbox/.hermes/lazy-packages",
-    "HERMES_BUNDLED_PLUGINS": "/opt/hermes/plugins",
-}
 CONTROL_STAGES = frozenset(
     {
         "detect-agent",
@@ -1594,13 +1589,10 @@ def _run_fixed_validator(
         raise ControlError("SECRET_BOUNDARY_REFUSED")
 
 
-def _validate_runtime_environment(
-    script: str,
-    environment: dict[str, str],
-    *,
-    managed_identity: str | None = None,
+def _validate_managed_gateway_environment(
+    script: str, supervisor_environment: dict[str, str]
 ) -> None:
-    """Validate runtime values without execing a root process under them."""
+    """Validate the Hermes gateway environment without executing under untrusted input."""
 
     _validate_trusted_regular(script)
     spec = importlib.util.spec_from_file_location(
@@ -1611,8 +1603,8 @@ def _validate_runtime_environment(
     module = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
-        validator = getattr(module, "validate_runtime_env")
-        result = validator(environment, managed_identity=managed_identity)
+        validator = getattr(module, "validate_managed_gateway_env")
+        result = validator(supervisor_environment)
     except (AttributeError, ImportError, OSError, RuntimeError) as exc:
         raise ControlError("SECRET_BOUNDARY_REFUSED") from exc
     if result != 0:
@@ -1732,18 +1724,7 @@ def _hermes_preflight(
         MAX_ENV_BYTES,
         recovery_deadline,
     )
-    runtime_environment = _parse_environment(raw_environment)
-    # The proven supervisor always runs as the sandbox identity, and its trusted
-    # launcher overwrites these values on the gateway child. /proc environ
-    # exposes the supervisor's initial exec environment, not later shell exports,
-    # so validate the exact child environment while retaining every other value
-    # for secret-boundary inspection.
-    runtime_environment.update(HERMES_SANDBOX_RUNTIME_ENVIRONMENT)
-    _validate_runtime_environment(
-        validator,
-        runtime_environment,
-        managed_identity="sandbox",
-    )
+    _validate_managed_gateway_environment(validator, _parse_environment(raw_environment))
     _require_recovery_time(recovery_deadline)
     _verify_locked_hermes_hash()
     _require_recovery_time(recovery_deadline)

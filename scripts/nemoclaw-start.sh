@@ -5824,12 +5824,18 @@ restore_openclaw_weixin_extension_link() {
     echo "[SECURITY] refusing broken OpenClaw WeChat extension link" >&2
     return 1
   fi
-  [ -d "$projects" ] && [ ! -L "$projects" ] || return 0
+  if [ ! -d "$projects" ] || [ -L "$projects" ]; then
+    return 0
+  fi
 
   for project in "$projects"/*; do
-    [ -d "$project" ] && [ ! -L "$project" ] || continue
+    if [ ! -d "$project" ] || [ -L "$project" ]; then
+      continue
+    fi
     candidate="$project/node_modules/@tencent-weixin/openclaw-weixin"
-    [ -f "$candidate/package.json" ] && [ ! -L "$candidate/package.json" ] || continue
+    if [ ! -f "$candidate/package.json" ] || [ -L "$candidate/package.json" ]; then
+      continue
+    fi
     node -e 'const p=require(process.argv[1]); process.exit(p.name==="@tencent-weixin/openclaw-weixin"&&p.version==="2.4.3"?0:1)' \
       "$candidate/package.json" || continue
     [ -z "$selected" ] || {
