@@ -70,7 +70,12 @@ jobs:
           cache: npm
 
       - name: Install root dependencies
+        if: github.event_name != 'workflow_dispatch'
         run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install root dependencies with audit
+        if: github.event_name == 'workflow_dispatch'
+        run: npm ci --ignore-scripts --audit --no-fund
 
       - name: Compile managed inference catalogue
         run: npm run catalog:compile

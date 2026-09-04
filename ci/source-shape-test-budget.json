@@ -68,7 +68,7 @@
     },
     {
       "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
-      "test": "installs root dependencies without an implicit npm audit (#11028)",
+      "test": "routes rootless job dependency auditing by workflow trigger (#11028)",
       "category": "security"
     },
     {

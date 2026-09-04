@@ -11,18 +11,34 @@ import { readRepoText, readYaml, type Workflow } from "../../helpers/e2e-workflo
 type PortableProfileWorkflow = Workflow & {
   on: {
     pull_request: { paths: string[]; types: string[] };
+    push: { branches: string[]; paths: string[] };
+    workflow_dispatch: null;
   };
 };
 
 describe("portable profile rootless runtime workflow", () => {
-  // source-shape-contract: security -- The rootless dependency install must not issue a non-authoritative advisory request for the candidate lock
-  it("installs root dependencies without an implicit npm audit (#11028)", () => {
-    const workflow = readYaml<Workflow>(".github/workflows/portable-profile-e2e.yaml");
+  // source-shape-contract: security -- The rootless-linux install must skip redundant advisory requests on automated runs while manual dispatches retain an explicit audit without a reviewed prerequisite
+  it("routes rootless job dependency auditing by workflow trigger (#11028)", () => {
+    const workflow = readYaml<PortableProfileWorkflow>(
+      ".github/workflows/portable-profile-e2e.yaml",
+    );
     const install = workflow.jobs["rootless-linux"]?.steps?.find(
       (step) => step.name === "Install root dependencies",
     );
+    const auditedInstall = workflow.jobs["rootless-linux"]?.steps?.find(
+      (step) => step.name === "Install root dependencies with audit",
+    );
 
-    expect(install?.run).toBe("npm ci --ignore-scripts --no-audit --no-fund");
+    expect(Object.keys(workflow.on).sort()).toEqual(["pull_request", "push", "workflow_dispatch"]);
+    expect(workflow.on.push.branches).toEqual(["main"]);
+    expect(install).toMatchObject({
+      if: "github.event_name != 'workflow_dispatch'",
+      run: "npm ci --ignore-scripts --no-audit --no-fund",
+    });
+    expect(auditedInstall).toMatchObject({
+      if: "github.event_name == 'workflow_dispatch'",
+      run: "npm ci --ignore-scripts --audit --no-fund",
+    });
   });
 
   // source-shape-contract: compatibility -- The workflow and live fixture must keep the accepted OS, Podman, AppArmor, and HTTP local-registry authorities aligned before live E2E
@@ -47,6 +63,9 @@ describe("portable profile rootless runtime workflow", () => {
     )?.run;
     const dependencyInstallIndex = steps.findIndex(
       (step) => step.name === "Install root dependencies",
+    );
+    const auditedDependencyInstallIndex = steps.findIndex(
+      (step) => step.name === "Install root dependencies with audit",
     );
     const catalogueCompileIndex = steps.findIndex((step) => step.run === "npm run catalog:compile");
     const provisionIndex = steps.findIndex(
@@ -77,7 +96,8 @@ describe("portable profile rootless runtime workflow", () => {
     expect(actionlintLabels).toContain("ubuntu-26.04");
     expect(job?.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
     expect(dependencyInstallIndex).toBeGreaterThanOrEqual(0);
-    expect(catalogueCompileIndex).toBeGreaterThan(dependencyInstallIndex);
+    expect(auditedDependencyInstallIndex).toBeGreaterThan(dependencyInstallIndex);
+    expect(catalogueCompileIndex).toBeGreaterThan(auditedDependencyInstallIndex);
     expect(provisionIndex).toBeGreaterThan(catalogueCompileIndex);
     expect(policyIndex).toBeGreaterThan(provisionIndex);
     expect(liveTestIndex).toBeGreaterThan(policyIndex);
