@@ -124,6 +124,7 @@ function run(command: string, args: readonly string[], timeout = 30_000): Comman
   const result = spawnSync(command, args, {
     encoding: "utf8",
     env: process.env,
+    killSignal: "SIGKILL",
     maxBuffer: MAX_COMMAND_BYTES,
     timeout,
   });
