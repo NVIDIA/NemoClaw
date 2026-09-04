@@ -7,7 +7,6 @@ import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { HERMES_TAVILY_PROVIDER_PROFILE_ID } from "../messaging/applier/web-search-provider-profile";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
-import * as braveProviderProfile from "./brave-provider-profile";
 import type { ExtraPlaceholderCredentialSources } from "./extra-placeholder-keys";
 import {
   bridgeProviderNamesForChannel,
@@ -126,7 +125,7 @@ export function prepareCreateSandboxMessaging(
     .filter(({ envKey }) => !disabledEnvKeys.has(envKey))
     .map(({ retainWhileDisabled: _retainWhileDisabled, ...definition }) => definition);
 
-  const webSearchEnabled = braveProviderProfile.shouldEnableWebSearch(input.webSearchConfig);
+  const webSearchEnabled = webSearch.isWebSearchEnabled(input.webSearchConfig);
   const webSearchProvider = webSearch.webSearchProviderForConfig(input.webSearchConfig);
   const webSearchCredentialEnv = webSearch.webSearchEnvFor(webSearchProvider);
   const webSearchProviderType =

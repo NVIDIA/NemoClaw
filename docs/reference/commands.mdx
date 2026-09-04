@@ -2140,7 +2140,7 @@ NemoClaw validates the existing profile, provider type, and credential keys befo
 A missing provider is created when complete credentials are available.
 OpenShell provider inspection uncertainty stops the operation before provider mutation.
 On a fresh add, NemoClaw may already have applied the credential-free policy preset and attempts to remove it before exiting.
-If that policy cleanup fails, run the `$$nemoclaw <name> policy remove <channel>` command printed by the CLI.
+If that policy cleanup fails, rebuild the sandbox first, then run the `$$nemoclaw <name> policy remove <channel>` command printed by the CLI.
 With complete credentials, NemoClaw replaces a mismatched provider only when it is unattached or attached exclusively to the selected sandbox.
 An attachment to another sandbox stops replacement.
 The `--force` flag does not override this provider attachment authority.

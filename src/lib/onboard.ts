@@ -149,7 +149,6 @@ const os = require("os");
 const path = require("path");
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runCaptureEx, runFile, validateName } = runner;
-const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
 const {
   applyExtraProviderReconciliation,
   planRegisteredExtraProviders,
@@ -521,7 +520,7 @@ const openshellPinFlow: typeof import("./onboard/openshell-pin") = require("./on
 
 import type { CurlProbeResult } from "./adapters/http/probe";
 import type { AgentDefinition } from "./agent/defs";
-import type { WebSearchConfig } from "./inference/web-search";
+import { isWebSearchEnabled, type WebSearchConfig } from "./inference/web-search";
 import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
@@ -3291,7 +3290,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         finalization: {
           stagedLegacyKeys,
           migratedLegacyKeys,
-          webSearchEnabled: (config) => braveProviderProfile.shouldEnableWebSearch(config),
+          webSearchEnabled: (config) => isWebSearchEnabled(config),
           webSearchProvider: (config) => webSearchProviderForConfig(config),
         },
         finalizationDeps: {
