@@ -352,11 +352,20 @@ def _run_gateway_guard(guard_path: str) -> int:
             file=sys.stderr,
         )
         return 127
-    env = dict(os.environ)
+    logical_env = dict(os.environ)
+    env = dict(logical_env)
     for key in tuple(env):
         if key in _GATEWAY_PACKAGE_ENV_KEYS or key.startswith(_GATEWAY_PACKAGE_ENV_PREFIXES):
             env.pop(key, None)
-    return subprocess.call([python3, "-I", guard_path, "runtime-env"], env=env)
+    payload = json.dumps(
+        logical_env, ensure_ascii=True, separators=(",", ":")
+    ).encode("ascii")
+    return subprocess.run(
+        [python3, "-I", guard_path, "runtime-env-json"],
+        input=payload,
+        env=env,
+        check=False,
+    ).returncode
 
 
 def _harden_root_separated_gateway_package_env() -> None:

@@ -131,7 +131,10 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       },
       {
         validatorScript: [
-          "import os",
+          "import json, os, sys",
+          "logical_env = json.load(sys.stdin)",
+          "assert logical_env.get('PIP_CONFIG_FILE') == '/sandbox/pip.conf'",
+          "assert logical_env.get('LD_PRELOAD') == '/sandbox/hostile.so'",
           "assert os.environ.get('HERMES_LAZY_INSTALL_TARGET') == '/run/nemoclaw/hermes-gateway-lazy-packages'",
           "blocked = ('BASH_ENV', 'ENV', 'PATH', 'VIRTUAL_ENV')",
           "prefixes = ('DYLD_', 'LD_', 'UV_', 'PIP_', 'PYTHON')",
@@ -204,6 +207,17 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
     expect(run.stderr).not.toContain(arbitraryTarget);
     expect(run.stdout).not.toContain(arbitraryTarget);
+    expect(run.realInvoked).toBe(false);
+  });
+
+  it("rejects a package-prefixed raw secret without exposing its value", () => {
+    const secret = "pypi-secret-value-that-must-not-leak";
+    const run = runWrapper(["gateway", "run"], { PIP_API_KEY: secret });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("PIP_API_KEY");
+    expect(run.stderr).not.toContain(secret);
+    expect(run.stdout).not.toContain(secret);
     expect(run.realInvoked).toBe(false);
   });
 
@@ -285,7 +299,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       expect(run.status).not.toBe(0);
       const argv = fs.readFileSync(argvLog, "utf-8").trim().split("\n");
       expect(argv[0]).toBe("-I");
-      expect(argv[argv.length - 1]).toBe("runtime-env");
+      expect(argv[argv.length - 1]).toBe("runtime-env-json");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
