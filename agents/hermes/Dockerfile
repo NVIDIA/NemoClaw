@@ -707,28 +707,22 @@ RUN set -eu; \
 # titled workspace row renders the latest resumed or continued one-shot turn
 # while a user-authored title remains authoritative.
 ARG NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256=718315e7c36727ca49ac88a1be44f95e4d495ca737ba70d5bb3d5c509fd9a0e2
-# hadolint ignore=DL4006
-RUN printf '%s  %s\n' \
-        "$NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
-    | sha256sum -c - \
-    || { echo "ERROR: patch-session-list-preview.py hash mismatch (update NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256)" >&2; exit 1; }; \
-    /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
-    && grep -q 'ORDER BY m.timestamp DESC, m.id DESC LIMIT 1' /opt/hermes/hermes_state.py \
-    && grep -Fq 'if s.get("title_source") in ("derived", "llm")' /opt/hermes/hermes_cli/sessions_cmd.py \
-    && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py session-preview \
-    && rm /opt/nemoclaw-hermes-config/patch-session-list-preview.py
-
 # Keep skill lifecycle state inside Hermes. The host only stages a validated
 # payload; this pinned native command owns scanning, replacement, rollback,
 # lock metadata, loader verification, listing, and removal.
 ARG NEMOCLAW_HERMES_NATIVE_SKILL_IMPORT_PATCHER_SHA256=8004483ee8712225de829055bb81386b474328843c4ea162a185d7c78fcf5382
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
         "$NEMOCLAW_HERMES_NATIVE_SKILL_IMPORT_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-native-skill-import.py \
     | sha256sum -c - \
-    || { echo "ERROR: patch-native-skill-import.py hash mismatch (update NEMOCLAW_HERMES_NATIVE_SKILL_IMPORT_PATCHER_SHA256)" >&2; exit 1; }; \
-    /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-native-skill-import.py \
+    || { echo "ERROR: Hermes session preview or native skill patch identity mismatch" >&2; exit 1; }; \
+    /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
+    && grep -q 'ORDER BY m.timestamp DESC, m.id DESC LIMIT 1' /opt/hermes/hermes_state.py \
+    && grep -Fq 'if s.get("title_source") in ("derived", "llm")' /opt/hermes/hermes_cli/sessions_cmd.py \
+    && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py session-preview \
+    && /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-native-skill-import.py \
         /opt/hermes/hermes_cli/subcommands/skills.py \
         /opt/hermes/hermes_cli/skills_hub.py \
     && grep -Fq 'NemoClaw native local skill import (#10210)' /opt/hermes/hermes_cli/subcommands/skills.py \
@@ -737,7 +731,8 @@ RUN printf '%s  %s\n' \
     && HERMES_HOME="$native_skill_home" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py native-skill-import \
     && rm -rf "$native_skill_home" \
-    && rm /opt/nemoclaw-hermes-config/patch-native-skill-import.py
+    && rm /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
+        /opt/nemoclaw-hermes-config/patch-native-skill-import.py
 
 # Hermes v0.20.6 SessionDB does not set PRAGMA temp_store=MEMORY, so SQLite
 # falls back to file-based temp storage for FK constraint processing (for
