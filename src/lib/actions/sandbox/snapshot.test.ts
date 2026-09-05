@@ -156,22 +156,7 @@ describe("runSandboxSnapshot", () => {
     return { status: result.status ?? 255, output: result.stdout || "" };
   }
 
-  it("refuses snapshot creation before backup when the shields gate helper is unavailable", async () => {
-    f.shieldsMock.setIsShieldsDownExport(undefined);
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
-      exitCode: 1,
-    });
-
-    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
-    expect(consoleError.mock.calls.flat().join("\n")).toContain(
-      "Cannot verify shields state. Refusing to create snapshot.",
-    );
-  });
-
-  it("creates a named snapshot after gateway, liveness, and shields checks pass", async () => {
+  it("creates a named snapshot after gateway and liveness checks pass", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     const manifest = {
       timestamp: "2026-06-15T00:00:00.000Z",

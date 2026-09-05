@@ -17,8 +17,6 @@ encoded in namespaced OpenShell policy keys so list and remove commands can
 derive it from live state. Generated MCP policy is derived from durable MCP
 target and credential-domain state, not from a second policy registry.
 
-Shields retains only its bounded transition snapshot and timer state. On
-restore, it reverts entries that still match the Shields-down values and keeps
-host-side changes made while Shields was down. Rebuild and clone operations use
-a private temporary copy of the current OpenShell base policy for the active
-transaction and remove that copy after completion.
+Rebuild and clone operations use a private temporary copy of the current
+OpenShell base policy for the active transaction and remove that copy after
+completion.

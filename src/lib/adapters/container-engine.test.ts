@@ -143,7 +143,7 @@ describe("operation-scoped container engine command", () => {
       XDG_RUNTIME_DIR: "/run/user/1000",
     });
     const engine = createContainerEngineCommand({
-      operation: "state-mutation",
+      operation: "sandbox-lifecycle",
       engineId: "podman",
       displayName: "Podman",
       authorityId: "test:podman-socket",

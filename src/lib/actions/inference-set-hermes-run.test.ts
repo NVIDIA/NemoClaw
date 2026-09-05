@@ -59,7 +59,7 @@ describe("runInferenceSet Hermes routing", () => {
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
         throw new Error("schema-5 appeared");
-    });
+      });
     const deps = createDeps({
       config: {},
       entry: {

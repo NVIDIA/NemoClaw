@@ -3,6 +3,7 @@
 
 import os from "node:os";
 import path from "node:path";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
@@ -17,8 +18,8 @@ import {
 } from "./issue-4462-admin-approval-helper.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
-const LIVE_TIMEOUT_MS = 70 * 60_000;
-const INSTALL_TIMEOUT_MS = 30 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
+const INSTALL_TIMEOUT_MS = execTimeout(30 * 60_000);
 const AUTO_PAIR_DEADLINE_SECS = String(INSTALL_TIMEOUT_MS / 1_000);
 const GATEWAY_OBSERVATION_TIMEOUT_MS = 30_000;
 const GATEWAY_OBSERVATION_TIMEOUT_SECS = String(GATEWAY_OBSERVATION_TIMEOUT_MS / 1_000);

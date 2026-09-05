@@ -38,19 +38,9 @@ Continue only when the returned JSON `models` array contains an entry whose `nam
 
 ## Configure the Embedding Provider
 
-Open a bounded shields-down window before you change the OpenClaw configuration.
-Define an Ollama provider, select it for memory search, restart OpenClaw, and restore lockdown.
-
-<Warning>
-Shields down temporarily relaxes selected lockdown controls for five minutes.
-If a configuration command or restart fails, run `nemoclaw my-assistant shields up` before you retry.
-</Warning>
+Define an Ollama provider, select it for memory search, and restart OpenClaw.
 
 ```bash
-nemoclaw my-assistant shields down \
-  --timeout 5m \
-  --reason "configure memory search"
-
 nemoclaw my-assistant config set \
   --key models.providers.ollama-mem \
   --value '{"api":"ollama","baseUrl":"http://host.openshell.internal:11434","apiKey":"x","models":[{"id":"qwen3-embedding:4b","name":"Qwen3 embedding 4B"}]}' \
@@ -61,17 +51,7 @@ nemoclaw my-assistant config set \
   --value ollama-mem \
   --config-accept-new-path \
   --restart
-
-nemoclaw my-assistant shields up
 ```
-
-Verify that Shields up restored lockdown:
-
-```bash
-nemoclaw my-assistant shields status
-```
-
-Continue only when the command succeeds and reports `Shields: UP (lockdown active)`.
 
 The host-side `config set` command accepts the bridge URL only for supported provider `baseUrl` fields.
 Generic configuration keys and other private URL shapes remain rejected.
@@ -93,4 +73,4 @@ Add `--agent <id>` to each `openclaw memory` command for a non-default OpenClaw 
 
 - [Set Up Ollama](../inference/local-inference/set-up-ollama) for the host Ollama lifecycle and authenticated chat proxy.
 - [Apply Policy Presets](../network-policy/configure-policies/apply-policy-presets) for managed network-policy access.
-- [Understand Runtime Changes](../manage-sandboxes/configure-sandboxes/understand-runtime-changes) for shields and configuration mutations.
+- [Understand Runtime Changes](../manage-sandboxes/configure-sandboxes/understand-runtime-changes) for configuration mutations.

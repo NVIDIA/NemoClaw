@@ -177,6 +177,9 @@ $$nemoclaw status
 $$nemoclaw status --json
 ```
 
+In `nemoclaw-managed` mode, `gatewayAuthority.supervisor` is `null`.
+The owner source is `declared` when a declaration selected that mode; without a declaration it is the resolved lifecycle source, `packaged-service` or `standalone`.
+In `externally-supervised` mode, the owner is the declared supervisor `kind`, `serviceName`, and `execPath`.
 `$$nemoclaw debug` also records `gatewayAuthority` in `onboard-session-summary.txt`.
 The status and debug views omit the external state directory and never include credential values.
 
@@ -207,18 +210,32 @@ It does not transfer process ownership to NemoClaw.
 
 ## Fix a failure
 
+Run `$$nemoclaw status` to read the `Gateway authority` mode before you inspect a service.
+
+### Fix an externally supervised gateway
+
 Resolve an external gateway failure through the declared supervisor.
-For `systemd-system`, inspect the declared service with:
+Replace `<serviceName>` with the `serviceName` value from your declaration.
+For `systemd-system`, inspect the declared unit with the system manager:
 
 ```bash
-systemctl status openshell-gateway.service
+systemctl status <serviceName>
 ```
 
 For `systemd-user`, use the user manager:
 
 ```bash
-systemctl --user status openshell-gateway.service
+systemctl --user status <serviceName>
 ```
 
 Bring the supervised gateway up, leave exactly one verified process holding the configured port, and rerun `$$nemoclaw onboard`.
-To hand the lifecycle back to NemoClaw, remove the platform gateway service and declare `nemoclaw-managed`, or remove the declaration.
+To hand the lifecycle back to NemoClaw, first stop and remove or disable the external supervisor and its gateway so no process remains on the configured port.
+Then declare `nemoclaw-managed` or remove the declaration, and rerun `$$nemoclaw onboard`.
+
+### Inspect a NemoClaw-managed gateway
+
+In `nemoclaw-managed` mode, no declaration names a unit.
+NemoClaw uses a managed service only for the default gateway port `8080`.
+An owner of `standalone` has no service unit.
+For `packaged-service` or a declared managed mode, the owner record does not identify the concrete service, so do not infer a unit from the install type.
+Follow [Reconnect after a host reboot](../reference/troubleshooting#reconnect-after-a-host-reboot) for NemoClaw-owned service inspection, trust-scoped recovery, and standalone recovery.

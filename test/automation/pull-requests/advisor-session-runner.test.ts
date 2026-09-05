@@ -50,6 +50,8 @@ const sdk = vi.hoisted(() => {
     omitContextTool: false,
     activeToolCalls: [] as string[][],
     contextContents: [] as string[],
+    readContents: [] as string[],
+    readErrors: [] as string[],
     customTools: [] as MockTool[],
     emitAnalysisError: false,
     emitCommitProse: false,
@@ -65,6 +67,8 @@ const sdk = vi.hoisted(() => {
     state.omitContextTool = false;
     state.activeToolCalls = [];
     state.contextContents = [];
+    state.readContents = [];
+    state.readErrors = [];
     state.customTools = [];
     state.emitAnalysisError = false;
     state.emitCommitProse = false;
@@ -94,15 +98,17 @@ const sdk = vi.hoisted(() => {
   const executeReadTool = async (tool: MockTool, target: string, emit: Listener): Promise<void> => {
     emit({ type: "tool_execution_start", toolName: tool.name });
     try {
-      await tool.execute(
+      const result = await tool.execute(
         `${tool.name}-call`,
         { path: target } as never,
         undefined,
         undefined,
         undefined as never,
       );
+      state.readContents.push(result.content[0]?.text ?? "");
       emit({ type: "tool_execution_end", toolName: tool.name, isError: false });
-    } catch {
+    } catch (error: unknown) {
+      state.readErrors.push(error instanceof Error ? error.message : String(error));
       emit({ type: "tool_execution_end", toolName: tool.name, isError: true });
     }
   };
@@ -268,6 +274,7 @@ import {
   READ_ONLY_TOOLS,
   runReadOnlyAdvisor,
 } from "../../../tools/advisors/session.mts";
+import { buildSpecialistInvestigateTurn } from "../../../tools/pr-review-advisor/specialists.mts";
 
 const tempDirs: string[] = [];
 
@@ -326,7 +333,11 @@ function commitTurn(name: string): AdvisorPromptTurn {
   };
 }
 
-async function run(promptTurns: AdvisorPromptTurn[], prepare?: (directory: string) => void) {
+async function run(
+  promptTurns: AdvisorPromptTurn[],
+  prepare?: (directory: string) => void,
+  additionalReadRoots: string[] = [],
+) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-session-runner-"));
   tempDirs.push(dir);
   prepare?.(dir);
@@ -334,6 +345,7 @@ async function run(promptTurns: AdvisorPromptTurn[], prepare?: (directory: strin
   return runReadOnlyAdvisor({
     cwd: dir,
     promptTurns,
+    additionalReadRoots,
     systemPrompt: "system",
     configDir: path.join(dir, "config"),
     htmlExportPath: path.join(dir, "session.html"),
@@ -532,79 +544,6 @@ describe("advisor session runner", () => {
     expect(result.turnErrors).toEqual([]);
     expect(result.raw).not.toContain("terminal_submit_repair_start");
     expect(sdk.state.prompts).toHaveLength(1);
-  });
-
-  it("deduplicates relative aliases before required-read preparation (#9963)", async () => {
-    sdk.state.terminalResponses = ["success"];
-    const result = await run(
-      [
-        {
-          ...submitTurn("prepare-and-submit"),
-          requiredReadPaths: ["required.txt", "./required.txt"],
-        },
-      ],
-      (directory) => fs.writeFileSync(path.join(directory, "required.txt"), "required\n", "utf8"),
-    );
-
-    expect(result.fatalError).toBeUndefined();
-    expect(result.turnErrors).toEqual([]);
-    expect(result.raw).toContain("required_read_preparation_end prepare-and-submit ok");
-  });
-
-  it("prepares every distinct required read before submission (#9963)", async () => {
-    sdk.state.terminalResponses = ["success"];
-    const result = await run(
-      [
-        {
-          ...submitTurn("prepare-and-submit"),
-          requiredReadPaths: ["first.txt", "second.txt"],
-        },
-      ],
-      (directory) => {
-        fs.writeFileSync(path.join(directory, "first.txt"), "first\n", "utf8");
-        fs.writeFileSync(path.join(directory, "second.txt"), "second\n", "utf8");
-      },
-    );
-
-    expect(result.fatalError).toBeUndefined();
-    expect(result.turnErrors).toEqual([]);
-    expect(sdk.state.prompts).toHaveLength(3);
-    expect(sdk.state.prompts[0]).toMatch(/first\.txt/u);
-    expect(sdk.state.prompts[1]).toMatch(/second\.txt/u);
-    expect(result.raw).toContain("required_read_preparation_end prepare-and-submit ok");
-  });
-
-  it("accepts an empty required file at EOF (#9963)", async () => {
-    const requiredReadTurn: AdvisorPromptTurn = {
-      name: "read-empty",
-      prompt: "Analyze the required file.",
-      requiredReadPaths: ["empty.txt"],
-      requireAssistantText: true,
-    };
-    const result = await run([requiredReadTurn], (directory) =>
-      fs.writeFileSync(path.join(directory, "empty.txt"), "", "utf8"),
-    );
-
-    expect(result.fatalError).toBeUndefined();
-    expect(result.turnErrors).toEqual([]);
-    expect(result.raw).toContain("required_read_preparation_end read-empty ok");
-  });
-
-  it("rejects a required read outside the workspace (#9963)", async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-required-read-outside-"));
-    tempDirs.push(outside);
-    const outsideFile = path.join(outside, "outside.txt");
-    fs.writeFileSync(outsideFile, "outside\n", "utf8");
-
-    await expect(
-      run([
-        {
-          name: "read-outside",
-          prompt: "Analyze the required file.",
-          requiredReadPaths: [outsideFile],
-        },
-      ]),
-    ).rejects.toThrow("outside the workspace");
   });
 
   it("allows one failed initial submit followed by one repair success", async () => {

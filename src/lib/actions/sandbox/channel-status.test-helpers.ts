@@ -7,7 +7,6 @@ import { vi } from "vitest";
 // both of which require runner.ts via CJS; runner.ts uses `require()` calls
 // vitest cannot resolve from a TS source file. Stub the heavy modules so the
 // tests stay focused on the orchestrator's diagnostic glue. See
-// src/lib/shields/index.test.ts for the same workaround pattern.
 vi.mock("../../policy", () => ({
   getAppliedPresets: vi.fn(() => []),
   getGatewayPresets: vi.fn(() => null),
@@ -79,7 +78,6 @@ function fakeAgent(name: "openclaw" | "hermes" = "openclaw"): AgentDefinition {
         configFile: name === "openclaw" ? "openclaw.json" : "config.yaml",
         envFile: name === "hermes" ? ".env" : null,
         format: name === "openclaw" ? "json" : "yaml",
-        shieldsFiles: name === "hermes" ? [".env"] : [],
       };
     },
     get inferenceProviderOptions() {
@@ -113,9 +111,6 @@ function fakeAgent(name: "openclaw" | "hermes" = "openclaw"): AgentDefinition {
       return null;
     },
     get policyAdditionsPath() {
-      return null;
-    },
-    get policyPermissivePath() {
       return null;
     },
     get pluginDir() {

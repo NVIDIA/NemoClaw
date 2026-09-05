@@ -4,8 +4,12 @@
 import zlib from "node:zlib";
 
 const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
+const ZIP_DATA_DESCRIPTOR_FLAG = 0x0008;
+const ZIP_DATA_DESCRIPTOR_SIGNATURE = 0x08074b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
 const ZIP_LOCAL_FILE_SIGNATURE = 0x04034b50;
+const ZIP_UTF8_NAMES_FLAG = 0x0800;
+const ZIP_SUPPORTED_GENERAL_PURPOSE_FLAGS = ZIP_DATA_DESCRIPTOR_FLAG | ZIP_UTF8_NAMES_FLAG;
 
 type ParseOptions = {
   maxEntries: number;
@@ -58,6 +62,30 @@ function isSafeIntegerAtLeast(value: number, minimum: number): boolean {
   return Number.isSafeInteger(value) && value >= minimum;
 }
 
+function matchingDataDescriptorEnd(
+  archive: Buffer,
+  offset: number,
+  boundary: number,
+  expectedCrc: number,
+  compressedSize: number,
+  uncompressedSize: number,
+): number | null {
+  const matchesAt = (fieldsOffset: number): boolean =>
+    fieldsOffset + 12 <= boundary &&
+    archive.readUInt32LE(fieldsOffset) === expectedCrc &&
+    archive.readUInt32LE(fieldsOffset + 4) === compressedSize &&
+    archive.readUInt32LE(fieldsOffset + 8) === uncompressedSize;
+
+  if (
+    offset + 4 <= boundary &&
+    archive.readUInt32LE(offset) === ZIP_DATA_DESCRIPTOR_SIGNATURE &&
+    matchesAt(offset + 4)
+  ) {
+    return offset + 16;
+  }
+  return matchesAt(offset) ? offset + 12 : null;
+}
+
 /** Owns all ZIP parsing, structural validation, optional inflation, and CRC checks. */
 function parseValidatedArtifactZip(
   archive: Buffer,
@@ -88,6 +116,7 @@ function parseValidatedArtifactZip(
   }
 
   const entries: ValidatedArtifactZipEntry[] = [];
+  const localRecords: Array<{ end: number; start: number; usesDataDescriptor: boolean }> = [];
   const seen = new Set<string>();
   let totalUncompressedBytes = 0;
   let offset = centralDirectoryOffset;
@@ -128,7 +157,7 @@ function parseValidatedArtifactZip(
       totalUncompressedBytes > options.maxTotalUncompressedBytes ||
       seen.has(name) ||
       diskStart !== 0 ||
-      (flags & 0x9) !== 0 ||
+      (flags & ~ZIP_SUPPORTED_GENERAL_PURPOSE_FLAGS) !== 0 ||
       (compressionMethod !== 0 && compressionMethod !== 8) ||
       (creatorSystem !== 0 && creatorSystem !== 3) ||
       (creatorSystem === 3 && unixFileType !== 0 && unixFileType !== 0x8000) ||
@@ -148,14 +177,30 @@ function parseValidatedArtifactZip(
     const localNameEnd = localHeaderOffset + 30 + localNameLength;
     const compressedDataOffset = localNameEnd + localExtraLength;
     const dataEnd = compressedDataOffset + compressedSize;
+    const usesDataDescriptor = (flags & ZIP_DATA_DESCRIPTOR_FLAG) !== 0;
+    const descriptorEnd = usesDataDescriptor
+      ? matchingDataDescriptorEnd(
+          archive,
+          dataEnd,
+          centralDirectoryOffset,
+          expectedCrc,
+          compressedSize,
+          uncompressedSize,
+        )
+      : dataEnd;
     if (
       localNameEnd > centralDirectoryOffset ||
       dataEnd > centralDirectoryOffset ||
       localFlags !== flags ||
       localCompressionMethod !== compressionMethod ||
-      localCrc !== expectedCrc ||
-      localCompressedSize !== compressedSize ||
-      localUncompressedSize !== uncompressedSize ||
+      (usesDataDescriptor
+        ? localCrc !== 0 ||
+          localCompressedSize !== 0 ||
+          localUncompressedSize !== 0 ||
+          descriptorEnd === null
+        : localCrc !== expectedCrc ||
+          localCompressedSize !== compressedSize ||
+          localUncompressedSize !== uncompressedSize) ||
       !archive.subarray(localHeaderOffset + 30, localNameEnd).equals(nameBytes)
     ) {
       return null;
@@ -177,9 +222,24 @@ function parseValidatedArtifactZip(
 
     seen.add(name);
     entries.push({ name, bytes });
+    localRecords.push({
+      end: descriptorEnd ?? dataEnd,
+      start: localHeaderOffset,
+      usesDataDescriptor,
+    });
     offset = entryEnd;
   }
-  return offset === endOffset ? entries : null;
+  if (offset !== endOffset) return null;
+
+  localRecords.sort((left, right) => left.start - right.start);
+  for (let index = 0; index < localRecords.length; index += 1) {
+    const record = localRecords[index]!;
+    const nextBoundary = localRecords[index + 1]?.start ?? centralDirectoryOffset;
+    if (record.end > nextBoundary || (record.usesDataDescriptor && record.end !== nextBoundary)) {
+      return null;
+    }
+  }
+  return entries;
 }
 
 /**

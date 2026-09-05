@@ -3,8 +3,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { testTimeoutOptions } from "../../helpers/timeouts";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupWhenCommandAvailable,
@@ -26,8 +26,8 @@ const REGISTRY_FILE = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "sandbo
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-tok-${process.pid}`;
 validateSandboxName(SANDBOX_NAME);
 
-const ONBOARD_TIMEOUT_MS = 25 * 60_000;
-const PHASE_TIMEOUT_MS = 40 * 60_000;
+const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
+const PHASE_TIMEOUT_MS = testTimeout(40 * 60_000);
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
@@ -282,7 +282,7 @@ async function destroyGatewayIfOpenshellExists(
 test(
   "messaging token rotation rebuilds only the changed provider and reuses unchanged credentials",
   {
-    ...testTimeoutOptions(PHASE_TIMEOUT_MS),
+    timeout: PHASE_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm the selected runtime and start hermetic inference",

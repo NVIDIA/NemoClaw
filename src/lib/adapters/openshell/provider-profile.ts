@@ -4,47 +4,6 @@
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
-import { REPOSITORY_ROOT } from "../../core/repository-root";
-import { OPENSHELL_OPERATION_TIMEOUT_MS } from "./provider-command";
-
-export type EndpointlessProviderProfileRunner = (
-  args: string[],
-  options?: {
-    readonly ignoreError?: boolean;
-    readonly suppressOutput?: boolean;
-    readonly stdio?: ["ignore", "pipe", "pipe"];
-    readonly timeout?: number;
-  },
-) => {
-  readonly status?: number | null;
-  readonly output?: unknown;
-  readonly stdout?: unknown;
-  readonly stderr?: unknown;
-};
-
-function outputText(value: unknown): string {
-  if (Buffer.isBuffer(value)) return value.toString("utf8");
-  return typeof value === "string" ? value : "";
-}
-
-function commandOutput(result: {
-  readonly output?: unknown;
-  readonly stdout?: unknown;
-  readonly stderr?: unknown;
-}): string {
-  const streams = [outputText(result.stderr), outputText(result.stdout)].filter(Boolean);
-  if (streams.length > 0) return streams.join("\n");
-  if (Array.isArray(result.output)) {
-    return [outputText(result.output[2]), outputText(result.output[1])].filter(Boolean).join("\n");
-  }
-  return outputText(result.output);
-}
-
-function commandStdout(result: { readonly output?: unknown; readonly stdout?: unknown }): string {
-  const stdout = outputText(result.stdout);
-  if (stdout) return stdout;
-  return Array.isArray(result.output) ? outputText(result.output[1]) : outputText(result.output);
-}
 
 type ProviderProfileBoundary = Readonly<{
   id: string;
@@ -139,7 +98,7 @@ export function exportedProviderProfileMatchesContract(
   }
 }
 
-function isMissingProviderProfile(output: string, profileId: string): boolean {
+export function isMissingProviderProfile(output: string, profileId: string): boolean {
   const normalized = output
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, "")
     .replace(/\r/gu, "")
@@ -158,140 +117,6 @@ function isMissingProviderProfile(output: string, profileId: string): boolean {
   return structuredStatus.test(normalized) && missingMessage.test(message);
 }
 
-function profileHasExpectedCredentialBoundary(
-  output: string,
-  expected: { readonly id: string; readonly inferenceCapable: boolean },
-): boolean {
-  try {
-    const profile = JSON.parse(output) as Record<string, unknown>;
-    return (
-      profile.id === expected.id &&
-      Array.isArray(profile.credentials) &&
-      profile.credentials.length === 0 &&
-      Array.isArray(profile.endpoints) &&
-      profile.endpoints.length === 0 &&
-      Array.isArray(profile.binaries) &&
-      profile.binaries.length === 0 &&
-      profile.inference_capable === expected.inferenceCapable
-    );
-  } catch {
-    return false;
-  }
-}
-
 export function endpointlessProviderProfilePath(root: string, profileId: string): string {
   return path.join(root, "nemoclaw-blueprint", "provider-profiles", `${profileId}.yaml`);
-}
-
-export type EndpointlessProviderProfileFailureReason =
-  | "export-failed"
-  | "import-failed"
-  | "incompatible";
-
-export type EndpointlessProviderProfileResult =
-  | { readonly ok: true }
-  | {
-      readonly ok: false;
-      readonly reason: EndpointlessProviderProfileFailureReason;
-    };
-
-/** OpenShell provider type registered for every OpenAI-surface inference route. */
-export const OPENAI_GATEWAY_PROVIDER_TYPE = "openai";
-
-export type OpenAiProviderProfileCheck =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly messages: readonly string[] };
-
-/** Return the recovery guidance for an endpointless OpenAI profile failure. */
-export function endpointlessProviderProfileFailureMessages(
-  reason: EndpointlessProviderProfileFailureReason,
-): readonly string[] {
-  if (reason === "import-failed") {
-    return [
-      `\n  ✗ OpenShell could not import the checked-in '${OPENAI_GATEWAY_PROVIDER_TYPE}' inference provider profile.`,
-      "    Confirm OpenShell is available and authorized, then retry this command.",
-    ];
-  }
-  if (reason === "export-failed") {
-    return [
-      `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' could not be read for validation.`,
-      "    Confirm OpenShell is available, authorized, and the profile is readable, then retry this command.",
-    ];
-  }
-  return [
-    `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' already exists but does not match NemoClaw's endpointless inference contract.`,
-    "    Remove the conflicting profile, then retry this command.",
-  ];
-}
-
-/** Import one endpointless profile or validate the exact existing contract. */
-export function ensureEndpointlessProviderProfile(input: {
-  readonly profileId: string;
-  readonly inferenceCapable: boolean;
-  readonly profilePath: string;
-  readonly runOpenshell: EndpointlessProviderProfileRunner;
-}): EndpointlessProviderProfileResult {
-  const exportProfile = () =>
-    input.runOpenshell(["provider", "profile", "export", input.profileId, "--output", "json"], {
-      ignoreError: true,
-      suppressOutput: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-    });
-  const validateExportedProfile = (
-    result: ReturnType<EndpointlessProviderProfileRunner>,
-  ): EndpointlessProviderProfileResult => {
-    if (result.status !== 0) return { ok: false, reason: "export-failed" };
-    return profileHasExpectedCredentialBoundary(commandStdout(result), {
-      id: input.profileId,
-      inferenceCapable: input.inferenceCapable,
-    })
-      ? { ok: true }
-      : { ok: false, reason: "incompatible" };
-  };
-
-  const exported = exportProfile();
-  if (exported.status === 0) {
-    return validateExportedProfile(exported);
-  }
-
-  if (!Number.isInteger(exported.status)) {
-    return { ok: false, reason: "export-failed" };
-  }
-  const exportOutput = commandOutput(exported);
-  if (!isMissingProviderProfile(exportOutput, input.profileId)) {
-    return { ok: false, reason: "export-failed" };
-  }
-
-  const imported = input.runOpenshell(
-    ["provider", "profile", "import", "--file", input.profilePath],
-    {
-      ignoreError: true,
-      suppressOutput: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-    },
-  );
-  if (imported.status !== 0 && !/already exists/iu.test(commandOutput(imported))) {
-    return { ok: false, reason: "import-failed" };
-  }
-  return validateExportedProfile(exportProfile());
-}
-
-/** Validate or import the endpointless OpenAI profile through the OpenShell adapter. */
-export function checkOpenAiInferenceProviderProfile(deps: {
-  readonly runOpenshell: EndpointlessProviderProfileRunner;
-  readonly root?: string;
-}): OpenAiProviderProfileCheck {
-  const result = ensureEndpointlessProviderProfile({
-    profileId: OPENAI_GATEWAY_PROVIDER_TYPE,
-    inferenceCapable: true,
-    profilePath: endpointlessProviderProfilePath(
-      deps.root ?? REPOSITORY_ROOT,
-      OPENAI_GATEWAY_PROVIDER_TYPE,
-    ),
-    runOpenshell: deps.runOpenshell,
-  });
-  if (result.ok) return { ok: true };
-  return { ok: false, messages: endpointlessProviderProfileFailureMessages(result.reason) };
 }

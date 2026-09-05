@@ -51,7 +51,6 @@ const SLACK_CREDENTIAL_FINGERPRINTS = hermesSlackCredentialFingerprints([
   SLACK_APP_TOKEN,
 ]);
 export const LIVE_TIMEOUT_MS = 70 * 60_000;
-const INSTALL_TIMEOUT_MS = 60 * 60_000;
 const HERMES_HEALTH_URL = "http://localhost:8642/health";
 
 function isFakeSlackToken(value: string): boolean {

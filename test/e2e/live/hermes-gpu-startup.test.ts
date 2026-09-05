@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { cleanupUnlessVerified } from "../fixtures/cleanup-resources.ts";
@@ -324,7 +325,7 @@ done`;
 test(
   `hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches stable Ready state`,
   {
-    timeout: LIVE_TIMEOUT_MS,
+    timeout: testTimeout(LIVE_TIMEOUT_MS),
     meta: {
       e2ePhases: [
         "prepare clean Hermes GPU runner",
@@ -467,7 +468,7 @@ test(
       cwd: REPO_ROOT,
       env,
       redactionValues: [FAKE_API_KEY],
-      timeoutMs: 60 * 60_000,
+      timeoutMs: execTimeout(60 * 60_000),
     });
     const gpuDiagnosticsDir = extractHermesGpuDiagnosticsDirectory(resultText(install));
     await (install.exitCode !== 0

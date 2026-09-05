@@ -133,6 +133,52 @@ describe("handleSandboxState Ready sandbox messaging", () => {
     expect(getSession().messagingPlan).toEqual(registryPlan);
   });
 
+  it("rejects Ready reuse when gateway credential inspection is indeterminate", async () => {
+    const registryPlan = makeMinimalPlan("saved", "openclaw", ["googlechat"]);
+    const session = createSession({ sandboxName: "saved", messagingPlan: registryPlan });
+    session.steps.sandbox.status = "complete";
+    const recordStateSkipped = vi.fn(async () => session);
+    const writePlanToEnv = vi.fn();
+    detectUnconfiguredMessagingChannelsMock.mockReturnValue(["googlechat"]);
+    const { deps, calls, getSession } = createDeps(
+      {
+        getSandboxReuseState: () => "ready",
+        getSandboxRegistryEntry: () => ({
+          name: "saved",
+          pendingRouteReservation: true,
+          provider: "provider",
+          model: "model",
+          endpointUrl: null,
+          preferredInferenceApi: "openai-completions",
+          toolDisclosure: "progressive",
+          fromDockerfile: null,
+          hermesAuthMethod: null,
+        }),
+        getRegistrySandboxMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
+        inspectGatewayCredential: () => ({ kind: "indeterminate" }),
+        writePlanToEnv,
+        recordStateSkipped,
+      },
+      session,
+    );
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "saved",
+      }),
+    ).rejects.toThrow(
+      /Could not inspect messaging provider 'saved-googlechat-bridge'.*No messaging state was changed/u,
+    );
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(recordStateSkipped).not.toHaveBeenCalled();
+    expect(writePlanToEnv).not.toHaveBeenCalled();
+    expect(calls.persistMessaging).not.toHaveBeenCalled();
+    expect(getSession().messagingPlan).toEqual(registryPlan);
+  });
+
   it("rejects Ready reuse when a matching host credential has no gateway provider", async () => {
     const token = "123456:unchanged-telegram-token";
     const registryPlan = withTelegramCredentialHash(

@@ -184,7 +184,6 @@ export function installGooglechatCredentialFixture(
     ensureProfiles(fixtureTokenDefs, {
       root: dependencies.root ?? ROOT,
       runOpenshell: effectiveRun,
-      redact: (value) => value.replaceAll(GOOGLECHAT_E2E_ACCESS_TOKEN, "[redacted]"),
     });
     const existing = effectiveRun(["provider", "get", expectedName], {
       ignoreError: true,
@@ -267,7 +266,6 @@ export function installGooglechatCredentialFixture(
     ensureProfiles(fixtureTokenDefs, {
       root,
       runOpenshell: effectiveRun,
-      redact: (value) => value.replaceAll(GOOGLECHAT_E2E_ACCESS_TOKEN, "[redacted]"),
     });
     const existing = effectiveRun(["provider", "get", expectedName], {
       ignoreError: true,

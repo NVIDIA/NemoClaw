@@ -76,6 +76,36 @@ Run the same `policy add` command after you edit a maintained preset or a custom
 
 The merge starts from the round-trippable base policy returned by `openshell policy get --base`. It excludes provider-composed `_provider_*` entries because OpenShell reserves that namespace and rejects it in `policy set`. Existing presets and baseline entries remain in place.
 
+<AgentOnly variant="hermes">
+
+### Remove the Previous Hermes Discord Node Grant
+
+A Hermes sandbox that was created with an older Discord preset keeps its live policy during rebuild.
+Reapply the maintained `discord` preset before the next rebuild to remove the previous `/usr/local/bin/node` grant.
+
+Preview and apply the current preset:
+
+```bash
+$$nemoclaw <name> policy add discord --dry-run
+$$nemoclaw <name> policy add discord --yes
+```
+
+Inspect the resulting live policy:
+
+```bash
+$$nemoclaw <name> policy get
+```
+
+The `discord` binary list must contain `/opt/hermes/.venv/bin/python3`, `/opt/hermes/.venv/bin/python`, `/usr/bin/python3`, and the managed image's resolved interpreter `/usr/bin/python3.13`.
+It must not contain the broad `/usr/bin/python3*` wildcard or `/usr/local/bin/node`.
+The reapply operation retains the Discord credential binding and all policy entries outside the maintained `discord` entry.
+A later rebuild preserves this reconciled live policy.
+
+If the apply command fails, NemoClaw leaves the live policy unchanged.
+Resolve the reported policy or gateway error, then rerun the preview and apply commands.
+
+</AgentOnly>
+
 ## List and Remove Presets
 
 List available presets and identify which ones match the current OpenShell policy:

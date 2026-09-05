@@ -855,9 +855,6 @@ export function installHermesManagedPolicy(
  * Restore the mutable Hermes image contract after its sandbox-side generator
  * atomically replaces config.yaml or .env with mode 0600. The mode transition
  * is performed through the already-authenticated descriptor, never by path.
- *
- * Shields-up turns these files into root:root 0444 trust anchors. That state is
- * valid on an already-committed replay and must not be made mutable again.
  */
 export function normalizeHermesManagedConfigDescriptor(
   target: string,
@@ -889,13 +886,12 @@ export function normalizeHermesManagedConfigDescriptor(
       before.uid === BigInt(sandboxIdentity.uid) &&
       before.gid === BigInt(sandboxIdentity.gid) &&
       (beforeMode === 0o600 || beforeMode === 0o640);
-    const shielded = before.uid === 0n && before.gid === 0n && beforeMode === 0o444;
-    if (!before.isFile() || before.nlink !== 1n || (!mutable && !shielded)) {
+    if (!before.isFile() || before.nlink !== 1n || !mutable) {
       fail(`refusing unexpected Hermes managed config descriptor ${target}`);
     }
 
-    const expectedMode = mutable ? 0o640 : 0o444;
-    if (mutable && beforeMode === 0o600) {
+    const expectedMode = 0o640;
+    if (beforeMode === 0o600) {
       try {
         fs.fchmodSync(descriptor, expectedMode);
       } catch {
@@ -910,8 +906,8 @@ export function normalizeHermesManagedConfigDescriptor(
     } catch {
       fail(`Hermes managed config descriptor disappeared during normalization: ${target}`);
     }
-    const expectedUid = mutable ? BigInt(sandboxIdentity.uid) : 0n;
-    const expectedGid = mutable ? BigInt(sandboxIdentity.gid) : 0n;
+    const expectedUid = BigInt(sandboxIdentity.uid);
+    const expectedGid = BigInt(sandboxIdentity.gid);
     if (
       !after.isFile() ||
       after.nlink !== 1n ||
@@ -1501,8 +1497,7 @@ export async function applyManagedStartupImageProfile(
     fail(`mapped ${mapped.agent} environment for ${result.application.profile.agent}`);
   }
   if (expectedAgent === "hermes" && !result.adapterApplied) {
-    // Committed startup replays still repair generator-created 0600 files,
-    // while the descriptor guard preserves root-owned shields-up files.
+    // Committed startup replays still repair generator-created 0600 files.
     normalizeHermesManagedConfiguration();
   }
   let corporateCaMerged: boolean;

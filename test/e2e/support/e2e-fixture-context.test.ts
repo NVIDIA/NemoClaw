@@ -14,6 +14,7 @@ import { test as e2eTest } from "../fixtures/e2e-test.ts";
 import { startTestProgress, type TestProgress } from "../fixtures/progress.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import {
+  normalizeLiveE2EAgentName,
   resolveLiveE2eWorkloadSourceEnv,
   ShellProbe,
   type TrustedShellCommand,
@@ -58,6 +59,24 @@ async function expectProcessToExit(pid: number, timeoutMs = 2_000): Promise<void
 }
 
 describe("E2E fixture primitives", () => {
+  it.each(["hermes", "langchain-deepagents-code", "nemocua", "openclaw", "pi"] as const)(
+    "normalizes the supported local Dockerfile agent selector %s",
+    (agentName) => {
+      expect(normalizeLiveE2EAgentName(agentName)).toBe(agentName);
+    },
+  );
+
+  it("rejects unknown local Dockerfile agent selectors before manifest lookup", () => {
+    const canary = "ambient-secret-value";
+    expect(() => normalizeLiveE2EAgentName(canary)).toThrow(/Unsupported E2E agent selector/);
+    try {
+      normalizeLiveE2EAgentName(canary);
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).not.toContain(canary);
+    }
+  });
+
   it("forces the trusted local BuildKit handoff for candidate Dockerfiles under Vitest", () => {
     const environment = resolveLiveE2eWorkloadSourceEnv({
       E2E_TARGET_ID: "ubuntu-repo-cloud-openclaw",
@@ -70,6 +89,19 @@ describe("E2E fixture primitives", () => {
     expect(environment.NEMOCLAW_FROM_DOCKERFILE).toBe(path.resolve("Dockerfile"));
     expect(environment.NEMOCLAW_SANDBOX_PREBUILD).toBe("1");
     expect(resolveSandboxPrebuildEnabled(environment, true)).toBe(true);
+  });
+
+  it("leaves an explicitly empty historical workload source unchanged", () => {
+    const historical = {
+      E2E_TARGET_ID: "openshell-gateway-upgrade",
+      E2E_WORKLOAD_SOURCE: "",
+      NEMOCLAW_SANDBOX_PREBUILD: "0",
+      VITEST: "true",
+    };
+
+    expect(resolveLiveE2eWorkloadSourceEnv(historical)).toBe(historical);
+    expect(historical).not.toHaveProperty("NEMOCLAW_FROM_DOCKERFILE");
+    expect(resolveSandboxPrebuildEnabled(historical, true)).toBe(false);
   });
 
   it("forces local BuildKit when the candidate Dockerfile is already selected", () => {
@@ -162,10 +194,16 @@ describe("E2E fixture primitives", () => {
 
       expect(shellResult.exitCode).toBe(0);
 
-      expect(allowlistedFiles.every((file) =>
-          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true))).toBe(true);
-      expect(shellEvidenceFiles.every((file) =>
-          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true))).toBe(true);
+      expect(
+        allowlistedFiles.every((file) =>
+          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true),
+        ),
+      ).toBe(true);
+      expect(
+        shellEvidenceFiles.every((file) =>
+          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true),
+        ),
+      ).toBe(true);
       expect(fs.existsSync(path.join(artifactParent, targetId, targetId, "run-plan.json"))).toBe(
         false,
       );

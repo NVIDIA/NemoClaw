@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
+import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import {
   hasBedrockRuntimeAwsAuthEnv,
@@ -85,10 +87,17 @@ export function inspectRebuildGatewayProviderRegistration(
   provider: string,
   log: (msg: string) => void,
   phase = "Preflight",
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): RebuildGatewayProviderRegistration {
   const result = runOpenshell(["provider", "get", provider], {
     ignoreError: true,
     stdio: ["ignore", "pipe", "pipe"],
+    ...(runtimeSelection
+      ? {
+          env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
+          replaceEnv: true,
+        }
+      : {}),
   });
   const registration = classifyRebuildGatewayProviderRegistration(result, provider);
   log(

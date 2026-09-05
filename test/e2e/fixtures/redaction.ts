@@ -272,12 +272,16 @@ export function buildChildEnv(
       continue;
     }
     if (FIXTURE_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) {
-      out[key] = value;
+      if (!SECRET_ENV_KEY_SHAPE.test(key)) out[key] = value;
       continue;
     }
   }
   for (const key of opts.additionalAllowedEnv ?? []) {
-    if (isValidSecretEnvKey(key)) {
+    // Keep the validation at the dynamic property-read boundary. Besides
+    // rejecting accidental secret passthrough, the explicit name filter makes
+    // it impossible for an ambient secret-bearing process.env property to
+    // reach the child through this non-secret channel.
+    if (SECRET_ENV_KEY_SHAPE.test(key)) {
       throw new Error(
         `additionalAllowedEnv entry '${key}' looks secret-bearing; use secretEnv ` +
           `so secret passthrough remains explicit.`,
@@ -297,6 +301,14 @@ export function buildChildEnv(
     }
     if (base[key] !== undefined) {
       out[key] = base[key];
+    }
+  }
+  for (const key of Object.keys(opts.fixtureOverlay)) {
+    if (SECRET_ENV_KEY_SHAPE.test(key)) {
+      throw new Error(
+        `fixtureOverlay entry '${key}' looks secret-bearing; use secretEnv so secret ` +
+          `passthrough remains explicit.`,
+      );
     }
   }
   Object.assign(out, opts.fixtureOverlay);

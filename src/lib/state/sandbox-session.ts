@@ -14,6 +14,8 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { createOpenshellSandboxIdReader } from "../adapters/openshell/sandbox-identity";
 import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
 
@@ -39,62 +41,9 @@ export interface ActiveSessionsResult {
   sessions: SandboxSession[];
 }
 
-/** A forward entry parsed from `openshell forward list` output. */
-export interface ForwardEntry {
-  /** Sandbox name owning the forward. */
-  sandboxName: string;
-  /** Bind address (e.g., "127.0.0.1"). */
-  bind: string;
-  /** Port number being forwarded. */
-  port: string;
-  /** PID of the forwarding process (null if not parseable). */
-  pid: number | null;
-  /** Status string (e.g., "running", "stopped"). */
-  status: string;
-}
-
 // ---------------------------------------------------------------------------
 // Pure classifiers — parse CLI output, no I/O
 // ---------------------------------------------------------------------------
-
-function stripAnsi(value: string): string {
-  return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
-}
-
-/**
- * Parse `openshell forward list` output into structured forward entries.
- *
- * Output format (columns separated by whitespace):
- *   SANDBOX  BIND  PORT  PID  STATUS
- *
- * The first line may be a header row — we skip lines where "SANDBOX" appears
- * literally in the first column.
- */
-export function parseForwardList(output: string | null | undefined): ForwardEntry[] {
-  if (!output || typeof output !== "string") return [];
-
-  const entries: ForwardEntry[] = [];
-  const lines = stripAnsi(output)
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-  for (const line of lines) {
-    // Skip header row
-    if (/^\s*SANDBOX\s/i.test(line)) continue;
-
-    const parts = line.split(/\s+/);
-    if (parts.length < 4) continue;
-
-    const [sandboxName, bind, port, pidStr, ...rest] = parts;
-    const pid = /^\d+$/.test(pidStr) ? Number.parseInt(pidStr, 10) : null;
-    const status = rest.join(" ").toLowerCase() || "unknown";
-
-    entries.push({ sandboxName, bind, port, pid, status });
-  }
-
-  return entries;
-}
 
 /**
  * Does this command line belong to an interactive shell rather than a forward?
@@ -171,79 +120,11 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * Check if a sandbox has active forwards from parsed forward entries.
- * Active forwards (status includes "running") indicate an active connection.
- */
-export function hasActiveForwards(entries: ForwardEntry[], sandboxName: string): boolean {
-  return entries.some((e) => e.sandboxName === sandboxName && e.status.includes("running"));
-}
-
-/**
- * Get forward entries for a specific sandbox.
- */
-export function getForwardsForSandbox(
-  entries: ForwardEntry[],
-  sandboxName: string,
-): ForwardEntry[] {
-  return entries.filter((e) => e.sandboxName === sandboxName);
-}
-
-/** Classification result from combining forward and SSH session evidence. */
-export interface SessionClassification {
-  /** Whether interactive SSH sessions are active (authoritative indicator). */
-  hasActiveSessions: boolean;
-  /** Number of active SSH sessions. */
-  sessionCount: number;
-  /** Number of running port forwards for this sandbox. */
-  forwardCount: number;
-  /** Which detection sources contributed evidence (e.g., ["forward", "ssh"]). */
-  sources: string[];
-}
-
-/**
- * Determine whether there are active SSH sessions for a sandbox from both
- * forward list and process detection.
- *
- * Combines evidence from forward entries and SSH processes. Either source
- * alone is sufficient to detect an active session — forwards may exist
- * without an interactive SSH session (e.g., port-forward only), and SSH
- * sessions may exist without a tracked forward (e.g., manual SSH).
- */
-export function classifySessionState(
-  forwardEntries: ForwardEntry[],
-  sshSessions: SandboxSession[],
-  sandboxName: string,
-): SessionClassification {
-  const sources: string[] = [];
-
-  const activeForwards = getForwardsForSandbox(forwardEntries, sandboxName).filter((e) =>
-    e.status.includes("running"),
-  );
-  if (activeForwards.length > 0) {
-    sources.push("forward");
-  }
-
-  const matchingSessions = sshSessions.filter((s) => s.sandboxName === sandboxName);
-  if (matchingSessions.length > 0) {
-    sources.push("ssh");
-  }
-
-  // SSH sessions are the authoritative indicator of interactive connections.
-  // Forwards alone don't necessarily mean interactive use (dashboard forward).
-  const sessionCount = matchingSessions.length;
-  const hasActiveSessions = sessionCount > 0;
-
-  return { hasActiveSessions, sessionCount, forwardCount: activeForwards.length, sources };
-}
-
 // ---------------------------------------------------------------------------
 // I/O layer — invokes system commands to gather raw output
 // ---------------------------------------------------------------------------
 
 export interface SessionDetectionDeps {
-  /** Run `openshell forward list` and return stdout. Null if unavailable. */
-  getForwardList: () => string | null;
   /** Run `pgrep -a ssh` and return stdout. Null if unavailable. */
   getSshProcesses: () => string | null;
   /**
@@ -261,10 +142,7 @@ export interface SessionDetectionDeps {
  * It invokes system commands through the deps interface for testability.
  *
  * Detection relies on `pgrep -a ssh` to find SSH processes targeting the
- * sandbox's SSH host. The `getForwardList` dep is not used here (forward
- * activity alone doesn't indicate interactive sessions — the dashboard
- * forward is always running). Consumers that need forward state can call
- * `parseForwardList` + `classifySessionState` directly.
+ * sandbox's SSH host.
  */
 export function getActiveSandboxSessions(
   sandboxName: string,
@@ -300,9 +178,9 @@ export function getActiveSandboxSessions(
  * for matching SSH target hosts. `ps -axo pid,command` works on both platforms
  * and returns full command lines in pgrep-compatible format (`PID COMMAND`).
  */
-function querySshProcesses(): string | null {
+function querySshProcesses(runCommand: typeof spawnSync = spawnSync): string | null {
   try {
-    const result = spawnSync("ps", ["-axo", "pid,command"], {
+    const result = runCommand("ps", ["-axo", "pid,command"], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 5000,
@@ -321,27 +199,28 @@ function querySshProcesses(): string | null {
 
 /**
  * Create the default system deps for session detection.
- * Uses `openshell forward list` and `ps` (cross-platform) on the host.
+ * Uses `ps` on the host.
  */
-export function createSystemDeps(openshellBinary: string): SessionDetectionDeps {
+export function createSystemDeps(
+  openshellBinary: string,
+  options: {
+    readonly runtimeSelection?: OpenShellRuntimeSelection;
+    readonly spawnSync?: typeof spawnSync;
+  } = {},
+): SessionDetectionDeps {
+  const runCommand = options.spawnSync ?? spawnSync;
+  const selectedEnv = options.runtimeSelection
+    ? buildSelectedOpenShellSubprocessEnv(options.runtimeSelection)
+    : undefined;
   return {
-    getForwardList: (): string | null => {
-      try {
-        const result = spawnSync(openshellBinary, ["forward", "list"], {
-          encoding: "utf-8",
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: 5000,
-        });
-        if (result.status !== 0) return null;
-        return result.stdout || "";
-      } catch {
-        return null;
-      }
-    },
-    getSshProcesses: querySshProcesses,
+    getSshProcesses: () => querySshProcesses(runCommand),
     resolveSandboxId: createOpenshellSandboxIdReader(openshellBinary, (binary, args) => {
-      const result = spawnSync(binary, args, {
+      const selectedArgs = options.runtimeSelection
+        ? [args[0]!, args[1]!, "-g", options.runtimeSelection.gatewayName, ...args.slice(2)]
+        : args;
+      const result = runCommand(binary, selectedArgs, {
         encoding: "utf-8",
+        ...(selectedEnv ? { env: selectedEnv } : {}),
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 5000,
       });

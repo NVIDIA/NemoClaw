@@ -41,6 +41,14 @@ describe("checks runner", () => {
     });
   });
 
+  it("registers the live E2E assertion ratchet", () => {
+    expect(CHECKS).toContainEqual({
+      name: "e2e-assertion-census",
+      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
+      args: ["scripts/checks/e2e-assertion-census.mts", "--check"],
+    });
+  });
+
   it("registers the defaulted dependent flag check (#8883)", () => {
     expect(CHECKS).toContainEqual({
       name: "no-defaulted-dependent-flags",
@@ -55,6 +63,20 @@ describe("checks runner", () => {
       command: process.platform === "win32" ? "tsx.cmd" : "tsx",
       args: ["scripts/checks/optimized-build-context-copy-sources.mts"],
     });
+  });
+
+  it("runs the Pi qualification receipt refresh check", () => {
+    const spawn = vi.fn((_command: string, _args: string[], _options: SpawnSyncOptions) =>
+      successfulSpawn(),
+    );
+
+    runChecks({ platform: "linux", spawn });
+
+    expect(spawn).toHaveBeenCalledWith(
+      "tsx",
+      ["scripts/checks/pi-qualification-receipt-refresh.mts"],
+      expect.objectContaining({ stdio: "inherit" }),
+    );
   });
 
   it("runs Windows command shims through cmd.exe", () => {

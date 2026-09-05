@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import {
@@ -47,7 +48,7 @@ const VERIFY_SKILL_SCRIPT = path.join(
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-skill-agent";
 validateSandboxName(SANDBOX_NAME);
 const SKILL_ID = "skill-smoke-fixture";
-const ONBOARD_TIMEOUT_MS = 20 * 60_000;
+const ONBOARD_TIMEOUT_MS = execTimeout(20 * 60_000);
 const AGENT_VERIFY_TIMEOUT_MS = 4 * 60_000;
 const MAX_ATTEMPTS = Number.parseInt(process.env.E2E_SKILL_AGENT_MAX_ATTEMPTS ?? "3", 10);
 const RETRY_SLEEP_MS =
@@ -105,7 +106,7 @@ async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
 test(
   "skill-agent: injected sandbox skill is read by a real OpenClaw agent turn",
   {
-    timeout: 30 * 60_000,
+    timeout: testTimeout(30 * 60_000),
     meta: {
       e2ePhases: [
         "confirm the selected runtime and skill tooling",

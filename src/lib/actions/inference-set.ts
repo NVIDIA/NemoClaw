@@ -49,12 +49,12 @@ import {
 } from "../sandbox/config";
 import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import { isConfigObject, isConfigValue } from "../security/credential-filter";
-import { appendAuditEntry } from "../shields/audit";
-import { withTimerBoundShieldsMutationLockAsync } from "../shields/timer-bound-lock";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import * as onboardSession from "../state/onboard-session";
+import { appendAuditEntry } from "../state/audit/operational";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
+import { enforceRemovedImmutabilityMigrationBoundary } from "../state/migrations/removed-immutability";
 import { isSafeModelId } from "../validation";
 import { resolveRuntimeInferenceApi } from "./inference-route-api";
 import {
@@ -135,7 +135,10 @@ interface InferenceSetMutationResult extends InferenceSetResult {
 export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
-  listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox: string | null };
+  listSandboxes: () => {
+    sandboxes: SandboxEntry[];
+    defaultSandbox: string | null;
+  };
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
   getRequestedAgent: () => string | null | undefined;
   loadSession: () => onboardSession.Session | null;
@@ -167,7 +170,6 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   validateLocalProvider: (provider: string) => ValidationResult;
   ensureLocalProviderReachable: (provider: string) => boolean;
   resolveContextWindowForModel: (provider: string, model: string) => number | null;
-  isSandboxConfigMutable: (sandboxName: string) => boolean;
   rewriteConfigUrlsWithDnsPinning: (value: ConfigValue) => Promise<ConfigValue>;
   resolveCredentialValue: (credentialEnv: string) => string;
   ensureHttpsPinRuntimeAdapter: EnsureHttpsPinRuntimeAdapterFn;
@@ -291,10 +293,6 @@ function defaultDeps(): InferenceSetDeps {
     withGatewayRouteMutationLock,
     restartSandboxGateway: defaultInferenceGatewayRestart,
     settleOpenClawPairing: settleInferenceSetOpenClawPairing,
-    isSandboxConfigMutable: (sandboxName) => {
-      const { isShieldsDown }: typeof import("../shields") = require("../shields");
-      return isShieldsDown(sandboxName, true);
-    },
   };
 }
 
@@ -397,7 +395,11 @@ function resolveTargetSandbox(
     throw new InferenceSetError(`Sandbox '${targetName}' is not registered.`, 2);
   }
   assertSandboxRouteReservationComplete(entry);
-  return { sandboxName: targetName, entry, agentName: normalizeSandboxAgent(entry.agent) };
+  return {
+    sandboxName: targetName,
+    entry,
+    agentName: normalizeSandboxAgent(entry.agent),
+  };
 }
 
 function ensureObject(record: ConfigObject, key: string): ConfigObject {
@@ -724,7 +726,9 @@ function assertHermesCompatibleAnthropicOpenAiProvider(
   provider: string,
   endpointUrl: string | null,
   deps: InferenceSetDeps,
-  httpsPinProviderBinding: { providerType: "openai" | "anthropic" } | null = null,
+  httpsPinProviderBinding: {
+    providerType: "openai" | "anthropic";
+  } | null = null,
 ): void {
   if (
     agentName !== "hermes" ||
@@ -906,12 +910,6 @@ async function runInferenceSetWithoutHostLock(
   if (targetAgent !== agentName) {
     throw new InferenceSetError(
       `Sandbox '${sandboxName}' is registered as '${agentName}' but resolved config for '${target.agentName}'.`,
-      2,
-    );
-  }
-  if (!deps.isSandboxConfigMutable(sandboxName)) {
-    throw new InferenceSetError(
-      `${agentName === "hermes" ? "Hermes" : "OpenClaw"} inference changes are unavailable while shields are up for '${sandboxName}'. Run '${CLI_NAME} ${sandboxName} shields down' first.`,
       2,
     );
   }
@@ -1531,10 +1529,16 @@ export async function runInferenceSet(
   // missing-binary path exits the process, which cannot be deferred safely by
   // an async lock. The inner resolution still validates the live registry entry.
   const selected = resolveTargetSandbox(options.sandboxName, deps);
+  try {
+    enforceRemovedImmutabilityMigrationBoundary(selected.sandboxName);
+  } catch (error) {
+    throw new InferenceSetError(error instanceof Error ? error.message : String(error), 2);
+  }
   assertInferenceSetRuntimeAuthority(selected.entry, deps.runtimeProviders);
   assertInferenceSetCommandAvailable(selected.sandboxName);
   deps.prepareRunOpenshell();
   return withSandboxMutationLock(selected.sandboxName, async () => {
+    enforceRemovedImmutabilityMigrationBoundary(selected.sandboxName);
     assertInferenceSetCommandAvailable(selected.sandboxName);
     const lockedSelection = resolveTargetSandbox(selected.sandboxName, deps);
     const runtimeProvider = assertInferenceSetRuntimeAuthority(
@@ -1543,19 +1547,16 @@ export async function runInferenceSet(
     );
     const gatewayName = resolveSandboxGatewayName(lockedSelection.entry);
     const mutation = await deps.withGatewayRouteMutationLock(gatewayName, () =>
-      withTimerBoundShieldsMutationLockAsync(selected.sandboxName, "inference set", () =>
-        runInferenceSetWithoutHostLock(
-          { ...options, sandboxName: selected.sandboxName },
-          deps,
-          gatewayName,
-          runtimeProvider,
-        ),
+      runInferenceSetWithoutHostLock(
+        { ...options, sandboxName: selected.sandboxName },
+        deps,
+        gatewayName,
+        runtimeProvider,
       ),
     );
-    // Release the config transition lock before post-commit gateway work
-    // reacquires its own route state. Retain the outer sandbox lifecycle lock
-    // so another process cannot replace this sandbox between the committed
-    // write, an optional restart, and device-scope convergence.
+    // Retain the outer sandbox lifecycle lock so another process cannot replace
+    // this sandbox between the committed write, an optional restart, and
+    // device-scope convergence.
     completeInferencePostCommit(mutation, deps);
     if (mutation.result.dashboardConverged === false) {
       throw new InferenceSetError(
