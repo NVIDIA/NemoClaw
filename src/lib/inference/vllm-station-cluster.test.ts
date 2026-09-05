@@ -121,9 +121,13 @@ function hostFixture(side: "local" | "peer"): StationHostProbe {
   const isLocal = side === "local";
   const home = isLocal ? LOCAL_HOME : PEER_HOME;
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     hostname: isLocal ? "station-a" : "station-b",
     productName: "NVIDIA DGX Station GB300",
+    productFamily: "",
+    boardName: "",
+    deviceTreeModel: "",
+    stationGb300PciGpu: true,
     architecture: "aarch64",
     home,
     uid: isLocal ? 1000 : 1001,
@@ -260,21 +264,20 @@ function runWith(deps: StationClusterProbeDeps, target = "nvidia@station-b") {
 }
 
 describe("probeDualStationVllmCapability", () => {
-  it.each([
-    undefined,
-    "",
-    "   ",
-  ])("does no work when the explicit peer is absent or blank (%s)", (value) => {
-    const deps = fixtureDeps();
-    const env = value === undefined ? {} : { [NEMOCLAW_DGX_STATION_PEER_ENV]: value };
+  it.each([undefined, "", "   "])(
+    "does no work when the explicit peer is absent or blank (%s)",
+    (value) => {
+      const deps = fixtureDeps();
+      const env = value === undefined ? {} : { [NEMOCLAW_DGX_STATION_PEER_ENV]: value };
 
-    expect(probeDualStationVllmCapability({ env, deps })).toEqual({ kind: "not-configured" });
-    expect(deps.calls.sshConfig).not.toHaveBeenCalled();
-    expect(deps.calls.localHost).not.toHaveBeenCalled();
-    expect(deps.calls.peerHost).not.toHaveBeenCalled();
-    expect(deps.calls.localConnectivity).not.toHaveBeenCalled();
-    expect(deps.calls.peerConnectivity).not.toHaveBeenCalled();
-  });
+      expect(probeDualStationVllmCapability({ env, deps })).toEqual({ kind: "not-configured" });
+      expect(deps.calls.sshConfig).not.toHaveBeenCalled();
+      expect(deps.calls.localHost).not.toHaveBeenCalled();
+      expect(deps.calls.peerHost).not.toHaveBeenCalled();
+      expect(deps.calls.localConnectivity).not.toHaveBeenCalled();
+      expect(deps.calls.peerConnectivity).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     "ssh://station-b",
@@ -401,23 +404,22 @@ describe("probeDualStationVllmCapability", () => {
     expect(deps.calls.localHost).toHaveBeenCalledOnce();
   });
 
-  it.each([
-    "station-b",
-    "nvidia@station-b",
-    "_svc@192.168.50.20",
-  ])("returns the qualified binding for %s", (target) => {
-    const result = runWith(fixtureDeps(), target);
-    expect(result).toMatchObject({
-      kind: "ready",
-      peerModelSnapshot: "ready",
-      plan: { peerSshBinding: { peerTarget: target } },
-    });
-    expect(result.kind).toBe("ready");
-    const ready = result as Extract<typeof result, { kind: "ready" }>;
-    expect(buildRemoteVllmDockerEnv(ready.plan.peerSshBinding, {}).DOCKER_HOST).toBe(
-      `ssh://${ready.plan.peerSshBinding.sshUser}@${ready.plan.peerSshBinding.resolvedHost}`,
-    );
-  });
+  it.each(["station-b", "nvidia@station-b", "_svc@192.168.50.20"])(
+    "returns the qualified binding for %s",
+    (target) => {
+      const result = runWith(fixtureDeps(), target);
+      expect(result).toMatchObject({
+        kind: "ready",
+        peerModelSnapshot: "ready",
+        plan: { peerSshBinding: { peerTarget: target } },
+      });
+      expect(result.kind).toBe("ready");
+      const ready = result as Extract<typeof result, { kind: "ready" }>;
+      expect(buildRemoteVllmDockerEnv(ready.plan.peerSshBinding, {}).DOCKER_HOST).toBe(
+        `ssh://${ready.plan.peerSshBinding.sshUser}@${ready.plan.peerSshBinding.resolvedHost}`,
+      );
+    },
+  );
 
   it("returns a deterministic two-rail Ray PP2 plan and permits one auxiliary non-GB300 GPU", () => {
     const deps = fixtureDeps();
@@ -533,17 +535,55 @@ describe("probeDualStationVllmCapability", () => {
     });
   });
 
-  it.each([
-    "DGX-Station",
-    "P3830",
-    "NVIDIA Station GB300",
-  ])("accepts an existing Station firmware product identifier: %s", (productName) => {
+  it("accepts a bounded Station GB300 firmware product identifier", () => {
     const peer = hostFixture("peer");
-    peer.productName = productName;
+    peer.productName = "NVIDIA Station GB300";
 
     expect(runWith(fixtureDeps(hostFixture("local"), peer))).toMatchObject({
       kind: "ready",
       peerModelSnapshot: "ready",
+    });
+  });
+
+  it("accepts local and peer Station GB300 product-family identities (#10928)", () => {
+    const local = hostFixture("local");
+    const peer = hostFixture("peer");
+    local.productName = "Generic ARM workstation";
+    local.productFamily = "NVIDIA DGX Station GB300";
+    peer.productName = "Generic ARM workstation";
+    peer.productFamily = "NVIDIA DGX Station GB300";
+
+    expect(runWith(fixtureDeps(local, peer))).toMatchObject({ kind: "ready" });
+  });
+
+  it("rejects conflicting peer firmware identity (#10928)", () => {
+    const peer = hostFixture("peer");
+    peer.productName = "NVIDIA DGX Spark";
+    peer.productFamily = "NVIDIA DGX Station GB300";
+
+    expect(runWith(fixtureDeps(hostFixture("local"), peer))).toMatchObject({
+      kind: "unavailable",
+      code: "peer-not-station",
+    });
+  });
+
+  it("rejects Station firmware without exact GB300 PCI identity (#10928)", () => {
+    const peer = hostFixture("peer");
+    peer.stationGb300PciGpu = false;
+
+    expect(runWith(fixtureDeps(hostFixture("local"), peer))).toMatchObject({
+      kind: "unavailable",
+      code: "peer-not-station",
+    });
+  });
+
+  it.each(["DGX-Station", "P3830"])("does not admit unqualified Station identifier %s", (value) => {
+    const peer = hostFixture("peer");
+    peer.productName = value;
+
+    expect(runWith(fixtureDeps(hostFixture("local"), peer))).toMatchObject({
+      kind: "unavailable",
+      code: "peer-not-station",
     });
   });
 
@@ -685,8 +725,16 @@ describe("probeDualStationVllmCapability", () => {
     const peer = hostFixture("peer");
     setRailAddress(local.rails[0], "192.168.100.1", 24);
     setRailAddress(local.rails[1], "192.168.101.1", 24);
-    setRailAddress(peer.rails.find((item) => item.rdmaDevice === "mlx5_0")!, "192.168.100.2", 24);
-    setRailAddress(peer.rails.find((item) => item.rdmaDevice === "mlx5_1")!, "192.168.101.2", 24);
+    setRailAddress(
+      peer.rails.find((item) => item.rdmaDevice === "mlx5_0")!,
+      "192.168.100.2",
+      24,
+    );
+    setRailAddress(
+      peer.rails.find((item) => item.rdmaDevice === "mlx5_1")!,
+      "192.168.101.2",
+      24,
+    );
 
     expect(runWith(fixtureDeps(local, peer))).toMatchObject({
       kind: "unavailable",
@@ -699,8 +747,16 @@ describe("probeDualStationVllmCapability", () => {
     const peer = hostFixture("peer");
     setRailAddress(local.rails[0], "203.0.113.1", 30);
     setRailAddress(local.rails[1], "198.51.100.5", 30);
-    setRailAddress(peer.rails.find((item) => item.rdmaDevice === "mlx5_0")!, "203.0.113.2", 30);
-    setRailAddress(peer.rails.find((item) => item.rdmaDevice === "mlx5_1")!, "198.51.100.6", 30);
+    setRailAddress(
+      peer.rails.find((item) => item.rdmaDevice === "mlx5_0")!,
+      "203.0.113.2",
+      30,
+    );
+    setRailAddress(
+      peer.rails.find((item) => item.rdmaDevice === "mlx5_1")!,
+      "198.51.100.6",
+      30,
+    );
 
     expect(runWith(fixtureDeps(local, peer))).toMatchObject({
       kind: "unavailable",
@@ -1256,7 +1312,7 @@ subprocess.run = fixture_run
 
 describe("parseStationHostProbe", () => {
   it("rejects unsupported schemas and unsafe device names", () => {
-    const unsupported = { ...hostFixture("local"), schemaVersion: 2 };
+    const unsupported = { ...hostFixture("local"), schemaVersion: 3 };
     expect(() => parseStationHostProbe(JSON.stringify(unsupported))).toThrow(/schema version/);
 
     const unsafe = hostFixture("local");

@@ -15,6 +15,7 @@ import {
 import { TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
+const INSTALLER = path.join(REPO_ROOT, "scripts", "install.sh");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 const DISPLAY_NAME = 'DGX_PRETTY_NAME="NVIDIA DGX GB300 Workstation"';
 const PLATFORM = 'DGX_PLATFORM="DGX Server for GALAXY-GB300"';
@@ -251,6 +252,58 @@ printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"`,
   );
 }
 
+function detectWithInstallerWrapper(productName: string, productFamily: string): string {
+  const fixtureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-handoff-"));
+  fixtureDirectories.push(fixtureDirectory);
+  for (const [name, value] of [
+    ["product_name", productName],
+    ["product_family", productFamily],
+    ["board_name", "Generic board"],
+    ["model", "Generic device tree"],
+  ]) {
+    fs.writeFileSync(path.join(fixtureDirectory, name), `${value}\n`);
+  }
+  fs.writeFileSync(
+    path.join(fixtureDirectory, "prepare-dgx-station-host.sh"),
+    `#!/usr/bin/env bash
+source "$STATION_PREPARE"
+station_product_name_path() { printf '%s' "$FIXTURE/product_name"; }
+station_product_family_path() { printf '%s' "$FIXTURE/product_family"; }
+station_board_name_path() { printf '%s' "$FIXTURE/board_name"; }
+station_device_tree_model_path() { printf '%s' "$FIXTURE/model"; }
+dgx_station_release_path() { printf '%s' "$FIXTURE/absent-release"; }
+main "$@"
+`,
+  );
+  const result = spawnSync(
+    "bash",
+    [
+      "--noprofile",
+      "--norc",
+      "-c",
+      `source "$INSTALLER" >/dev/null
+SCRIPT_DIR="$FIXTURE"
+printf 'firmware=%s\n' "$(classify_dgx_station_firmware)"
+printf 'platform=%s\n' "$(detect_express_platform)"`,
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env: {
+        HOME: fixtureDirectory,
+        PATH: TEST_SYSTEM_PATH,
+        FIXTURE: fixtureDirectory,
+        INSTALLER,
+        STATION_PREPARE,
+      },
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    },
+  );
+  expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+  return result.stdout;
+}
+
 afterEach(() => {
   fixtureDirectories
     .splice(0)
@@ -321,6 +374,18 @@ describe("DGX Station release classifier parity", () => {
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stdout).toContain("firmware_product=NVIDIA DGX Station GB300");
     expect(result.stdout).toContain("PROFILE=stock-dgx-os");
+  });
+
+  it("passes family-only identity through the installer-to-helper boundary (#10928)", () => {
+    expect(detectWithInstallerWrapper("Generic ARM workstation", "NVIDIA DGX Station GB300")).toBe(
+      "firmware=station-gb300\nplatform=DGX Station\n",
+    );
+  });
+
+  it("passes firmware conflicts through the installer-to-helper boundary (#10928)", () => {
+    expect(detectWithInstallerWrapper("NVIDIA DGX Spark", "NVIDIA DGX Station GB300")).toBe(
+      "firmware=conflicting\nplatform=Conflicting NVIDIA firmware identity\n",
+    );
   });
 
   it.each([

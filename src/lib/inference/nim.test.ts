@@ -95,7 +95,7 @@ describe("nim", () => {
   describe("listModels", () => {
     it("returns 5 models", () => {
       expect(nim.listModels().length).toBe(5);
-      });
+    });
     it.each(nim.listModels())("model $name has an image and positive GPU memory", (model) => {
       expect(model.name).toBeTruthy();
       expect(model.image).toBeTruthy();
@@ -402,11 +402,12 @@ describe("nim", () => {
       }
     }
 
-    it.each(["NVIDIA DGX Station GB300", "DGX-Station", "P3830"])(
+    it.each(["NVIDIA DGX Station GB300", "NVIDIA Station GB300"])(
       "classifies explicit DGX Station identifier %s as station",
       (model) => {
         withFirmwareModel(model, () => {
-          expect(nim.detectNvidiaPlatform()).toBe("station");
+          // Keep PCI deterministic here; its fail-closed cases live in the focused identity owner.
+          expect(nim.detectNvidiaPlatform({ stationGb300PciGpu: true })).toBe("station");
         });
       },
     );
@@ -425,7 +426,6 @@ describe("nim", () => {
         expect(nim.detectNvidiaPlatform()).toBe("spark");
       });
     });
-
   });
 
   describe("detectGpu", () => {

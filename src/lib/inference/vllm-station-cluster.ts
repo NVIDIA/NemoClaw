@@ -6,7 +6,10 @@ import net from "node:net";
 import path from "node:path";
 
 import { buildSubprocessEnv } from "../subprocess-env";
-import { isDgxStationGb300Product } from "./dgx-station-identity";
+import {
+  classifyNvidiaFirmwareProducts,
+  NVIDIA_FIRMWARE_VALUE_MAX_BYTES,
+} from "./dgx-station-identity";
 import { buildVllmSshTransportEnv } from "./vllm-docker-env";
 import {
   DUAL_STATION_VLLM_GPU_MEMORY_UTILIZATION,
@@ -23,7 +26,7 @@ import {
 
 export const NEMOCLAW_DGX_STATION_PEER_ENV = "NEMOCLAW_DGX_STATION_PEER";
 
-const HOST_PROBE_SCHEMA_VERSION = 1;
+const HOST_PROBE_SCHEMA_VERSION = 2;
 const CONNECTIVITY_PROBE_SCHEMA_VERSION = 1;
 const COMMAND_TIMEOUT_MS = 20_000;
 const MAX_PROBE_OUTPUT_BYTES = 1024 * 1024;
@@ -121,9 +124,13 @@ export interface StationModelSnapshotProbe {
 }
 
 export interface StationHostProbe {
-  schemaVersion: 1;
+  schemaVersion: 2;
   hostname: string;
   productName: string;
+  productFamily: string;
+  boardName: string;
+  deviceTreeModel: string;
+  stationGb300PciGpu: boolean;
   architecture: string;
   home: string;
   uid: number;
@@ -283,12 +290,43 @@ import subprocess
 MODEL_ID = ${JSON.stringify(DUAL_STATION_VLLM_RUNTIME.modelId)}
 MODEL_REVISION = ${JSON.stringify(DUAL_STATION_VLLM_RUNTIME.modelRevision)}
 MODEL_CACHE_NAME = "models--" + MODEL_ID.replace("/", "--")
+FIRMWARE_VALUE_MAX_BYTES = ${String(NVIDIA_FIRMWARE_VALUE_MAX_BYTES)}
 
 def read_text(path):
     try:
         return Path(path).read_text(encoding="utf-8").rstrip("\x00").strip()
     except (OSError, UnicodeError):
         return ""
+
+def firmware_value(path, strip_nul=False):
+    try:
+        with Path(path).open("rb") as handle:
+            raw = handle.read(FIRMWARE_VALUE_MAX_BYTES + 2)
+        if strip_nul:
+            raw = raw.replace(b"\x00", b"")
+        normalized = raw.decode("utf-8").rstrip("\n")
+        if len(normalized.encode("utf-8")) > FIRMWARE_VALUE_MAX_BYTES:
+            return ""
+        if any(character in normalized for character in ("\r", "\n", "\x00")):
+            return ""
+        return normalized.strip()
+    except (OSError, UnicodeError):
+        return ""
+
+def station_gb300_pci_gpu():
+    try:
+        candidates = sorted(Path("/sys/bus/pci/devices").iterdir())
+    except OSError:
+        return False
+    if len(candidates) > 256:
+        return False
+    for candidate in candidates:
+        vendor = firmware_value(candidate / "vendor").lower()
+        device = firmware_value(candidate / "device").lower()
+        pci_class = firmware_value(candidate / "class").lower()
+        if vendor == "0x10de" and device in ("0x31c2", "0x31c3") and re.fullmatch(r"0x03[0-9a-f]{4}", pci_class):
+            return True
+    return False
 
 def run(argv, timeout=5):
     try:
@@ -304,17 +342,6 @@ def run(argv, timeout=5):
         return result.returncode, result.stdout.strip()
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return 127, ""
-
-def product_name():
-    for candidate in (
-        "/sys/class/dmi/id/product_name",
-        "/sys/devices/virtual/dmi/id/product_name",
-        "/sys/firmware/devicetree/base/model",
-    ):
-        value = read_text(candidate)
-        if value:
-            return value
-    return ""
 
 def gpu_inventory():
     rc, output = run([
@@ -570,7 +597,11 @@ def snapshot_state():
 payload = {
     "schemaVersion": ${String(HOST_PROBE_SCHEMA_VERSION)},
     "hostname": socket.gethostname(),
-    "productName": product_name(),
+    "productName": firmware_value("/sys/class/dmi/id/product_name"),
+    "productFamily": firmware_value("/sys/class/dmi/id/product_family"),
+    "boardName": firmware_value("/sys/class/dmi/id/board_name"),
+    "deviceTreeModel": firmware_value("/sys/firmware/devicetree/base/model", strip_nul=True),
+    "stationGb300PciGpu": station_gb300_pci_gpu(),
     "architecture": platform.machine(),
     "home": str(Path.home()),
     "uid": os.getuid(),
@@ -847,6 +878,17 @@ function requireString(value: unknown, label: string, maxLength = 1024): string 
   return value;
 }
 
+function requireFirmwareString(value: unknown, label: string): string {
+  if (
+    typeof value !== "string" ||
+    Buffer.byteLength(value, "utf8") > NVIDIA_FIRMWARE_VALUE_MAX_BYTES ||
+    /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    throw new Error(`${label} must be bounded printable text`);
+  }
+  return value;
+}
+
 function requireBoolean(value: unknown, label: string): boolean {
   if (typeof value !== "boolean") throw new Error(`${label} must be a boolean`);
   return value;
@@ -1014,9 +1056,13 @@ export function parseStationHostProbe(stdout: string): StationHostProbe {
   }
   const docker = requireRecord(record.docker, "host probe.docker");
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     hostname: requireString(record.hostname, "host probe.hostname", 256),
-    productName: requireString(record.productName, "host probe.productName", 512),
+    productName: requireFirmwareString(record.productName, "host probe.productName"),
+    productFamily: requireFirmwareString(record.productFamily, "host probe.productFamily"),
+    boardName: requireFirmwareString(record.boardName, "host probe.boardName"),
+    deviceTreeModel: requireFirmwareString(record.deviceTreeModel, "host probe.deviceTreeModel"),
+    stationGb300PciGpu: requireBoolean(record.stationGb300PciGpu, "host probe.stationGb300PciGpu"),
     architecture: requireString(record.architecture, "host probe.architecture", 64),
     home,
     uid: requireInteger(record.uid, "host probe.uid", 1, 2_147_483_647),
@@ -1330,14 +1376,30 @@ function buildStaticPlan(
   local: StationHostProbe,
   peer: StationHostProbe,
 ): StaticPlan | PlanFailure {
+  const localFirmware = classifyNvidiaFirmwareProducts([
+    local.productName,
+    local.productFamily,
+    local.boardName,
+    local.deviceTreeModel,
+  ]);
+  const peerFirmware = classifyNvidiaFirmwareProducts([
+    peer.productName,
+    peer.productFamily,
+    peer.boardName,
+    peer.deviceTreeModel,
+  ]);
   if (
-    !isDgxStationGb300Product(local.productName) ||
+    !localFirmware.stationFirmwareProduct ||
+    localFirmware.platformIdentityConflict ||
+    !local.stationGb300PciGpu ||
     !/^(?:aarch64|arm64)$/i.test(local.architecture)
   ) {
     return unavailable("local-not-station", "local host is not a verified arm64 DGX Station");
   }
   if (
-    !isDgxStationGb300Product(peer.productName) ||
+    !peerFirmware.stationFirmwareProduct ||
+    peerFirmware.platformIdentityConflict ||
+    !peer.stationGb300PciGpu ||
     !/^(?:aarch64|arm64)$/i.test(peer.architecture)
   ) {
     return unavailable("peer-not-station", "configured peer is not a verified arm64 DGX Station");
@@ -1433,28 +1495,26 @@ function buildStaticPlan(
     );
   }
 
-  const rails = matches.map(
-    (match, index): DualStationPlanRail => ({
-      index,
-      subnet: match.subnet,
-      local: {
-        rdmaDevice: match.localRail.rdmaDevice,
-        netdev: match.localRail.netdev,
-        macAddress: match.localRail.macAddress,
-        uverbsDevice: match.localRail.uverbsDevice,
-        pciAddress: match.localRail.pciAddress,
-        address: match.localAddress.address,
-      },
-      peer: {
-        rdmaDevice: match.peerRail.rdmaDevice,
-        netdev: match.peerRail.netdev,
-        macAddress: match.peerRail.macAddress,
-        uverbsDevice: match.peerRail.uverbsDevice,
-        pciAddress: match.peerRail.pciAddress,
-        address: match.peerAddress.address,
-      },
-    }),
-  );
+  const rails = matches.map((match, index): DualStationPlanRail => ({
+    index,
+    subnet: match.subnet,
+    local: {
+      rdmaDevice: match.localRail.rdmaDevice,
+      netdev: match.localRail.netdev,
+      macAddress: match.localRail.macAddress,
+      uverbsDevice: match.localRail.uverbsDevice,
+      pciAddress: match.localRail.pciAddress,
+      address: match.localAddress.address,
+    },
+    peer: {
+      rdmaDevice: match.peerRail.rdmaDevice,
+      netdev: match.peerRail.netdev,
+      macAddress: match.peerRail.macAddress,
+      uverbsDevice: match.peerRail.uverbsDevice,
+      pciAddress: match.peerRail.pciAddress,
+      address: match.peerAddress.address,
+    },
+  }));
 
   return {
     plan: {
@@ -1507,15 +1567,15 @@ function connectivityMatches(
     const check = byKey.get(`${request.netdev}|${request.sourceAddress}|${request.peerAddress}`);
     return Boolean(
       check &&
-        check.routeDevice === request.netdev &&
-        check.routeSource === request.sourceAddress &&
-        check.routeGateway === null &&
-        check.routeScope.toLowerCase() === "link" &&
-        check.peerMac === request.expectedPeerMac &&
-        /^(?:REACHABLE|STALE|DELAY|PROBE|PERMANENT|NOARP)(?:,(?:REACHABLE|STALE|DELAY|PROBE|PERMANENT|NOARP))*$/i.test(
-          check.peerNeighborState,
-        ) &&
-        check.jumboPing,
+      check.routeDevice === request.netdev &&
+      check.routeSource === request.sourceAddress &&
+      check.routeGateway === null &&
+      check.routeScope.toLowerCase() === "link" &&
+      check.peerMac === request.expectedPeerMac &&
+      /^(?:REACHABLE|STALE|DELAY|PROBE|PERMANENT|NOARP)(?:,(?:REACHABLE|STALE|DELAY|PROBE|PERMANENT|NOARP))*$/i.test(
+        check.peerNeighborState,
+      ) &&
+      check.jumboPing,
     );
   });
 }

@@ -2,13 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import path from "node:path";
+import {
+  classifyNvidiaFirmwareProducts,
+  hasDgxStationGb300PciGpu,
+  NVIDIA_FIRMWARE_VALUE_MAX_BYTES,
+  readBoundedNvidiaFirmwareValue,
+} from "../inference/dgx-station-identity.js";
 import type { NvidiaPlatform } from "../inference/nim.js";
 import { collectN1xIdentity, type N1xIdentityOptions } from "../inference/platform-identity/n1x.js";
 import {
   isQualifiedStationProfile,
   isQualifiedStationRuntime,
-  isStationGb300PciDevice,
   isStationGb300ProductName,
   isTrustedStationReleaseMarker,
   STATION_RELEASE_MARKER_MAX_BYTES,
@@ -90,7 +94,6 @@ export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
 
 const N1X_WSL_PRODUCT_NAME_MAX_BYTES = 256;
 const N1X_WSL_PRODUCT_PATTERN = /(?:^|\s)RTX Spark N1X(?:$|\s)/i;
-const STATION_FIRMWARE_VALUE_MAX_BYTES = 256;
 const STATION_HOST_INFO_MAX_BYTES = 64 * 1024;
 const MAX_REPORTED_CPU_COUNT = 4096;
 
@@ -142,62 +145,6 @@ function readOptional(
   }
 }
 
-function readFirmwareOptional(
-  readFile: (filePath: string) => string,
-  filePath: string,
-  stripNul = false,
-): string | undefined {
-  try {
-    const contents = readFile(filePath);
-    const normalized = (stripNul ? contents.replace(/\0/g, "") : contents).replace(/\n+$/u, "");
-    if (
-      Buffer.byteLength(normalized) > STATION_FIRMWARE_VALUE_MAX_BYTES ||
-      /[\r\n\0]/u.test(normalized)
-    ) {
-      return undefined;
-    }
-    return normalized.trim() || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-type FirmwareProductClass = "spark" | "station-gb300" | "station-other" | "jetson";
-
-function firmwareProductClass(product: string): FirmwareProductClass | undefined {
-  if (/DGX[_\s-]+Spark/i.test(product)) return "spark";
-  if (isStationGb300ProductName(product)) return "station-gb300";
-  if (/(?<![A-Za-z0-9])P3830(?![A-Za-z0-9])/i.test(product) || /DGX[_\s-]+Station/i.test(product)) {
-    return "station-other";
-  }
-  if (/Jetson|Tegra|Thor|Orin|Xavier/i.test(product)) return "jetson";
-  return undefined;
-}
-
-function classifyFirmwareProducts(products: readonly (string | undefined)[]): {
-  nvidiaPlatform?: NvidiaPlatform;
-  stationFirmwareProduct?: string;
-  platformIdentityConflict?: true;
-} {
-  let recognized: FirmwareProductClass | undefined;
-  let stationFirmwareProduct: string | undefined;
-  for (const product of products) {
-    if (!product) continue;
-    const current = firmwareProductClass(product);
-    if (!current) continue;
-    if (recognized && recognized !== current) return { platformIdentityConflict: true };
-    recognized = current;
-    if (current === "station-gb300" && !stationFirmwareProduct) stationFirmwareProduct = product;
-  }
-  if (recognized === "station-gb300" || recognized === "station-other") {
-    return {
-      nvidiaPlatform: "station",
-      ...(stationFirmwareProduct ? { stationFirmwareProduct } : {}),
-    };
-  }
-  return recognized ? { nvidiaPlatform: recognized } : {};
-}
-
 function parseOsRelease(contents: string): {
   osId?: string;
   osVersionId?: string;
@@ -214,7 +161,7 @@ function parseOsRelease(contents: string): {
   return {
     osId: values.get("ID"),
     osVersionId: values.get("VERSION_ID"),
-    osPrettyName: values.get("PRETTY_NAME")?.slice(0, STATION_FIRMWARE_VALUE_MAX_BYTES),
+    osPrettyName: values.get("PRETTY_NAME")?.slice(0, NVIDIA_FIRMWARE_VALUE_MAX_BYTES),
   };
 }
 
@@ -361,30 +308,6 @@ function parseStationRelease(contents: string): StationReleaseParseResult {
   return unsupported();
 }
 
-function stationHasGb300PciGpu(
-  readFile: (filePath: string) => string,
-  readdir: (directory: string) => readonly string[],
-  pciDevicesPath: string,
-): boolean | undefined {
-  try {
-    const entries = readdir(pciDevicesPath);
-    let incompleteEvidence = entries.length > 256;
-    for (const entry of entries.slice(0, 256)) {
-      const devicePath = path.join(pciDevicesPath, entry);
-      const vendor = readOptional(readFile, path.join(devicePath, "vendor"));
-      const device = readOptional(readFile, path.join(devicePath, "device"));
-      const pciClass = readOptional(readFile, path.join(devicePath, "class"));
-      if (isStationGb300PciDevice(vendor, device, pciClass)) return true;
-      if (vendor === undefined || device === undefined || pciClass === undefined) {
-        incompleteEvidence = true;
-      }
-    }
-    return incompleteEvidence ? undefined : false;
-  } catch {
-    return undefined;
-  }
-}
-
 function readOpenedFile(fileDescriptor: number, maxBytes: number): string {
   const contents = Buffer.alloc(maxBytes + 1);
   const bytesRead = fs.readSync(fileDescriptor, contents, 0, contents.length, 0);
@@ -403,29 +326,29 @@ export function collectPlatformIdentity(
   const readFileDescriptor = options.readFileDescriptor ?? readOpenedFile;
   const closeFileDescriptor =
     options.closeFileDescriptor ?? ((fileDescriptor) => fs.closeSync(fileDescriptor));
-  const productName = readFirmwareOptional(
+  const productName = readBoundedNvidiaFirmwareValue(
     readFile,
     options.productNamePath ?? "/sys/class/dmi/id/product_name",
   );
-  const productFamily = readFirmwareOptional(
+  const productFamily = readBoundedNvidiaFirmwareValue(
     readFile,
     options.productFamilyPath ?? "/sys/class/dmi/id/product_family",
   );
-  const boardName = readFirmwareOptional(
+  const boardName = readBoundedNvidiaFirmwareValue(
     readFile,
     options.boardNamePath ?? "/sys/class/dmi/id/board_name",
   );
-  const deviceTreeModel = readFirmwareOptional(
+  const deviceTreeModel = readBoundedNvidiaFirmwareValue(
     readFile,
     options.deviceTreeModelPath ?? "/sys/firmware/devicetree/base/model",
     true,
   );
-  const stationSystemVendor = readFirmwareOptional(
+  const stationSystemVendor = readBoundedNvidiaFirmwareValue(
     readFile,
     options.systemVendorPath ?? "/sys/class/dmi/id/sys_vendor",
   );
   const firmwareProducts = [productName, productFamily, boardName, deviceTreeModel];
-  const firmwareIdentity = classifyFirmwareProducts(firmwareProducts);
+  const firmwareIdentity = classifyNvidiaFirmwareProducts(firmwareProducts);
   const stationFirmwareProduct = firmwareIdentity.stationFirmwareProduct;
   const n1xWslProduct = collectN1xWslProduct(options);
   const wslIdentity = options.isWsl ? { n1xWslProduct } : {};
@@ -439,7 +362,7 @@ export function collectPlatformIdentity(
       ...wslIdentity,
     };
   }
-  let nvidiaPlatform = firmwareIdentity.nvidiaPlatform;
+  let nvidiaPlatform: NvidiaPlatform | undefined = firmwareIdentity.nvidiaPlatform;
   if (nvidiaPlatform === undefined) {
     const n1xIdentity = collectN1xIdentity({
       readFile,
@@ -471,7 +394,7 @@ export function collectPlatformIdentity(
     readOptional(
       readFile,
       options.cpuPossiblePath ?? "/sys/devices/system/cpu/possible",
-      STATION_FIRMWARE_VALUE_MAX_BYTES,
+      NVIDIA_FIRMWARE_VALUE_MAX_BYTES,
     ) ?? "",
   );
   const stationHostMemoryBytes = parseHostMemoryBytes(
@@ -518,7 +441,7 @@ export function collectPlatformIdentity(
     ...(stationHostMemoryBytes === undefined ? {} : { stationHostMemoryBytes }),
     ...wslIdentity,
     ...stationRelease,
-    stationGb300PciGpu: stationHasGb300PciGpu(
+    stationGb300PciGpu: hasDgxStationGb300PciGpu(
       readFile,
       readdir,
       options.pciDevicesPath ?? "/sys/bus/pci/devices",

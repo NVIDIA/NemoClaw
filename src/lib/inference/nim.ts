@@ -23,7 +23,11 @@ import { VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
 import { runCapture } from "../runner";
 import { isSafeModelId } from "../validation";
-import { isDgxStationGb300Product } from "./dgx-station-identity";
+import {
+  classifyNvidiaFirmwareProducts,
+  hasDgxStationGb300PciGpu,
+  readBoundedNvidiaFirmwareValue,
+} from "./dgx-station-identity";
 import {
   type Arm64WslDockerDesktopGpuProver,
   captureNvidiaSmi,
@@ -199,25 +203,18 @@ export function formatNvidiaGpuPreflightLines(gpu: GpuDetection): string[] {
   return [`NVIDIA GPU detected: ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`];
 }
 
-// Read the platform model name from firmware. Try DMI first (covers Spark
-// and Station, observed empirically), fall back to devicetree on systems
-// without DMI tables. Returns "" if neither is readable.
+function readPlatformFirmwareProducts(): readonly (string | undefined)[] {
+  const readFile = (filePath: string) => fs.readFileSync(filePath, "utf-8");
+  return [
+    readBoundedNvidiaFirmwareValue(readFile, "/sys/class/dmi/id/product_name"),
+    readBoundedNvidiaFirmwareValue(readFile, "/sys/class/dmi/id/product_family"),
+    readBoundedNvidiaFirmwareValue(readFile, "/sys/class/dmi/id/board_name"),
+    readBoundedNvidiaFirmwareValue(readFile, "/sys/firmware/devicetree/base/model", true),
+  ];
+}
+
 function readPlatformModel(): string {
-  try {
-    const dmi = fs.readFileSync("/sys/class/dmi/id/product_name", "utf-8").trim();
-    if (dmi) return dmi;
-  } catch {
-    /* no dmi */
-  }
-  try {
-    return fs
-      .readFileSync("/sys/firmware/devicetree/base/model", "utf-8")
-      .replace(/\0/g, "")
-      .trim();
-  } catch {
-    /* not arm devicetree */
-  }
-  return "";
+  return readPlatformFirmwareProducts().find((value) => value !== undefined) ?? "";
 }
 
 function readHostMemoryMB(runCaptureImpl: typeof runCapture = runCapture): number {
@@ -316,15 +313,24 @@ export interface DetectNvidiaPlatformOptions {
   hostPlatform?: NodeJS.Platform;
   architecture?: string;
   collectN1xIdentityImpl?: typeof collectN1xIdentity;
+  stationGb300PciGpu?: boolean;
 }
 
 export function detectNvidiaPlatform(options: DetectNvidiaPlatformOptions = {}): NvidiaPlatform {
-  const model = readPlatformModel();
-  if (/DGX[_\s-]+Spark/i.test(model)) return "spark";
-  if (isDgxStationGb300Product(model)) return "station";
-  if (/Jetson|Tegra|Thor|Orin|Xavier/i.test(model) || hasTegraDeviceNodeSignal()) {
-    return "jetson";
+  const firmwareIdentity = classifyNvidiaFirmwareProducts(readPlatformFirmwareProducts());
+  if (firmwareIdentity.platformIdentityConflict) return "linux";
+  if (firmwareIdentity.stationFirmwareProduct) {
+    const pciIdentity =
+      options.stationGb300PciGpu ??
+      hasDgxStationGb300PciGpu(
+        (filePath) => fs.readFileSync(filePath, "utf-8"),
+        (directory) => fs.readdirSync(directory),
+      );
+    return pciIdentity === true ? "station" : "linux";
   }
+  if (firmwareIdentity.nvidiaPlatform === "spark") return "spark";
+  if (firmwareIdentity.nvidiaPlatform === "jetson" || hasTegraDeviceNodeSignal()) return "jetson";
+  if (firmwareIdentity.firmwareClass) return "linux";
   if (
     (options.hostPlatform ?? process.platform) === "linux" &&
     (options.architecture ?? process.arch) === "arm64"
@@ -584,9 +590,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           trusted = parsed.filter((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
         }
         if (trusted.length === 0) {
-          deps.onTrustGateRejection?.(
-            "nvidia-smi reported no recognized NVIDIA GPU product names",
-          );
+          deps.onTrustGateRejection?.("nvidia-smi reported no recognized NVIDIA GPU product names");
           return null;
         }
         const totalMemoryMB = trusted.reduce((sum: number, p: ParsedGpu) => sum + p.memoryMB, 0);
@@ -676,11 +680,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         : firmwareIsUnifiedMemory
           ? gpuNames
           : [];
-    if (
-      taggedNames.length > 0 &&
-      !firmwareIsUnifiedMemory &&
-      !allowTaggedOnGenericFirmware
-    ) {
+    if (taggedNames.length > 0 && !firmwareIsUnifiedMemory && !allowTaggedOnGenericFirmware) {
       deps.onTrustGateRejection?.(
         "/proc/driver/nvidia is absent for the nvidia-smi names-only unified-memory check",
       );
