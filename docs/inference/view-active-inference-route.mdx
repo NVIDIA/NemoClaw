@@ -96,7 +96,7 @@ $$nemoclaw <name> inference get
 
 `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
 When that registry contains the named sandbox, the command resolves its recorded gateway and reads that gateway-wide route.
-For a compatible custom provider, the named sandbox's registry row supplies the endpoint URL.
+For a compatible custom provider, the command reports an endpoint only when every eligible published row on the resolved gateway matches the live route and records the same safe, reusable endpoint.
 The command does not search registries for other gateway ports.
 OpenShell exposes one inference route to every sandbox registered on the same gateway.
 
