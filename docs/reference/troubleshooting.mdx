@@ -4379,6 +4379,7 @@ If the command instead reports `secret-boundary refusal`, inspect `/sandbox/.her
 ### Restart or recovery reports `relaunch quarantined`
 
 In the OpenShell-managed topology the strict root-owned hash is not a trust anchor for mutable config, so a direct edit of `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` is not refused by the host controller. The in-sandbox supervisor still refuses to start a gateway on configuration it cannot match to the persisted managed state, and it stops attempting relaunch once that refusal or repeated gateway exits exhaust its crash budget. `$$nemoclaw <name> gateway restart`, `$$nemoclaw <name> recover`, and `$$nemoclaw <name> connect` then report the `relaunch quarantined` failure layer.
+If the startup log reports `Hermes runtime preparation failed at <stage>`, the named environment, config, dependency, provider, or messaging preparation failed before a replacement gateway launched. The supervisor quarantines that nontransient failure immediately instead of repeating it. Correct the named input through its supported host-side configuration or credential flow, then run `$$nemoclaw <name> rebuild --yes`; repeated recovery requests do not retry the quarantined preparation.
 
 The refusal is deterministic, so retrying any of those commands cannot clear it. Restore the registered configuration and refresh its integrity metadata in one transaction:
 

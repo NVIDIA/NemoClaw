@@ -3406,22 +3406,35 @@ prepare_hermes_nonroot_runtime() {
   # mutable default with a raw secret fails as generic MCP drift and bypasses
   # the actionable, redacted secret-boundary refusal. Repeat after the trusted
   # startup mutations below so their outputs remain covered as well.
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="initial environment secret-boundary validation"
   validate_hermes_env_secret_boundary || return 1
   # The non-root Hermes runtime can persist safe config/env changes while it is
   # running. Reconcile that mutable compatibility anchor only after the secret
   # boundary is valid; refresh-hashes still requires the recorded MCP intent to
   # match exactly before it advances the anchor.
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="runtime config-hash reconciliation"
   refresh_hermes_runtime_config_hashes compat || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="initial MCP integrity inspection"
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="lazy dependency preparation"
   prepare_hermes_lazy_dependencies || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="API server key preparation"
   ensure_hermes_runtime_api_server_key compat || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="final environment secret-boundary validation"
   validate_hermes_env_secret_boundary || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="runtime environment secret-boundary validation"
   validate_hermes_runtime_env_secret_boundary || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="provider placeholder refresh"
   refresh_hermes_provider_placeholders compat || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="final config-hash reconciliation"
   refresh_hermes_runtime_config_hashes compat || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="final MCP integrity inspection"
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="messaging channel configuration"
   configure_messaging_channels || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="Tirith retry-marker preparation"
   prepare_tirith_marker_retry || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE=
 }
 
 prepare_hermes_root_runtime_dir() {
@@ -3681,20 +3694,22 @@ record_hermes_managed_gateway_exit() {
 }
 
 recover_hermes_gateway_current_user() {
-  local launch_status replacement_reached_internal_health
+  local launch_status preparation_stage replacement_reached_internal_health
   local layout_repair_refused_status="${HERMES_LAYOUT_REPAIR_REFUSED_STATUS:-78}"
 
   while :; do
     replacement_reached_internal_health=0
-    until prepare_hermes_nonroot_runtime; do
-      if [ "$HERMES_MCP_INTEGRITY_FAILED" -eq 1 ]; then
+    if ! prepare_hermes_nonroot_runtime; then
+      if [ "${HERMES_MCP_INTEGRITY_FAILED:-0}" -eq 1 ]; then
         echo "[SECURITY] Hermes automatic respawn is quarantined until MCP integrity is restored by rebuilding the sandbox" >&2
         quarantine_hermes_managed_gateway_relaunch
         return 1
       fi
-      echo "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s" >&2
-      sleep 5 || true
-    done
+      preparation_stage="${HERMES_NONROOT_PREPARE_FAILURE_STAGE:-unknown preparation stage}"
+      echo "[gateway] Hermes runtime preparation failed at ${preparation_stage}; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted" >&2
+      quarantine_hermes_managed_gateway_relaunch
+      return 1
+    fi
     launch_status=0
     launch_hermes_gateway_current_user || launch_status=$?
     case "$launch_status" in
@@ -3848,6 +3863,15 @@ start_hermes_root_gateway() {
   # Waiting until dashboard launch leaves restored legacy state in the gateway's
   # HERMES_HOME during its readiness check.
   prepare_hermes_dashboard_home sandbox:sandbox || return 1
+
+  # The embedded dispatcher writes kanban.db below the config root. A retained
+  # locked-root sandbox can run the gateway, but it must keep that writer off.
+  if [ "${HERMES_CONFIG_ROOT_LOCKED:-0}" -eq 1 ]; then
+    if [ "${HERMES_KANBAN_DISPATCH_IN_GATEWAY:-}" != 0 ]; then
+      echo "[gateway] Locked Hermes config root: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0 (embedded kanban dispatcher suspended)" >&2
+    fi
+    export HERMES_KANBAN_DISPATCH_IN_GATEWAY=0
+  fi
 
   # Start Hermes gateway. Messaging egress goes directly through OpenShell.
   launch_hermes_gateway || return 1
