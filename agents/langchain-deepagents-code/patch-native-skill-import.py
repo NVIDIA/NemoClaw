@@ -11,6 +11,13 @@ MARKER = "# NemoClaw native local skill import (#10210)."
 FUNCTION_ANCHOR = "\ndef _info(\n"
 PARSER_ANCHOR = "    # Skills info\n"
 DISPATCH_ANCHOR = '    elif args.skills_command == "info":\n'
+DELETE_FUNCTION_ANCHOR = "\ndef _delete(\n"
+DELETE_PARSER_ANCHOR = '''    delete_parser = skills_subparsers.add_parser(
+        "delete",
+'''
+DELETE_DISPATCH_ANCHOR = '''    elif args.skills_command == "delete":
+        _delete(
+'''
 
 FUNCTION = r'''
 # NemoClaw native local skill import (#10210).
@@ -296,6 +303,16 @@ def _replace_once(source: str, anchor: str, replacement: str, label: str) -> str
 def patch(path: Path) -> None:
     """Patch and compile-check the pinned skills command module."""
     source = path.read_text(encoding="utf-8")
+    for anchor, label in (
+        (DELETE_FUNCTION_ANCHOR, "native delete function"),
+        (DELETE_PARSER_ANCHOR, "native delete parser"),
+        (DELETE_DISPATCH_ANCHOR, "native delete dispatch"),
+    ):
+        if source.count(anchor) != 1:
+            raise SystemExit(
+                f"ERROR: Deep Agents Code skill import {label} anchor count is "
+                f"{source.count(anchor)}, expected 1"
+            )
     if MARKER in source:
         if source.count(MARKER) != 3 or FUNCTION not in source or PARSER not in source or DISPATCH not in source:
             raise SystemExit("ERROR: Deep Agents Code native skill import patch is partial")

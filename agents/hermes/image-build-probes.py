@@ -710,7 +710,7 @@ def verify_native_skill_import() -> None:
         }
         assert HubLockFile().get_installed(name) is not None
 
-        interrupted_backup = target.parent / f".{name}.backup.interrupted"
+        interrupted_backup = target.parent / ".hub" / f"nemoclaw-import-backup.{name}.interrupted"
         target.replace(interrupted_backup)
         recovered = subprocess.run(
             [

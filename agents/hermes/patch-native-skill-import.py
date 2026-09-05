@@ -137,13 +137,19 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
     if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
         c.print("[bold red]Error:[/] Existing skill target is not a regular directory.")
         return False
-    backup_prefix = f".{expected_name}.backup."
+    backup_root = skills_root / ".hub"
+    backup_prefix = f"nemoclaw-import-backup.{expected_name}."
     try:
+        if backup_root.is_symlink() or (backup_root.exists() and not backup_root.is_dir()):
+            raise RuntimeError(f"native skill transaction root requires inspection: {backup_root}")
+        backup_root.mkdir(parents=True, exist_ok=True)
+        if backup_root.resolve() != (skills_root / ".hub").resolve():
+            raise RuntimeError(f"native skill transaction root requires inspection: {backup_root}")
         abandoned_backups = []
-        for entry in skills_root.iterdir():
+        for entry in backup_root.iterdir():
             if not entry.name.startswith(backup_prefix):
                 continue
-            if entry.is_symlink() or not entry.is_dir() or entry.parent.resolve() != skills_root:
+            if entry.is_symlink() or not entry.is_dir() or entry.parent.resolve() != backup_root.resolve():
                 raise RuntimeError(f"native skill backup requires inspection: {entry}")
             abandoned_backups.append(entry)
         if len(abandoned_backups) > 1:
@@ -212,7 +218,7 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
             shutil.rmtree(quarantine, ignore_errors=True)
         return False
 
-    backup = skills_root / f".{expected_name}.backup.{uuid.uuid4().hex}"
+    backup = backup_root / f"{backup_prefix}{uuid.uuid4().hex}"
     lock = HubLockFile()
     lock_before = lock.load()
     moved_existing = False

@@ -244,7 +244,7 @@ RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
     && dcode_skills_commands="$(/opt/venv/bin/python3 -I -c 'import deepagents_code.skills.commands as commands; print(commands.__file__)')" \
     && python3 /opt/nemoclaw-deepagents-code/patch-native-skill-import.py "$dcode_skills_commands" \
     && grep -Fq 'NemoClaw native local skill import (#10210)' "$dcode_skills_commands" \
-    && /opt/venv/bin/python3 -I -c 'import deepagents_code.skills.commands as commands; assert callable(commands._import_local)' \
+    && /opt/venv/bin/python3 -I -c 'import deepagents_code.skills.commands as commands; assert callable(commands._import_local) and callable(commands._delete)' \
     && rm -f /opt/nemoclaw-deepagents-code/patch-native-skill-import.py \
     && install -d -m 0700 /tmp/nemoclaw-progressive-validation \
     && TMPDIR=/tmp/nemoclaw-progressive-validation python3 /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py \
@@ -324,7 +324,7 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' '# Mutated after host verification' >> "$dcode_skill_stage/SKILL.md" \
     && if HOME=/sandbox /opt/venv/bin/python3 -I -c 'import sys; from deepagents_code.skills.commands import _import_local; _import_local(sys.argv[1], "nemoclaw-native-import-probe", sys.argv[2], agent="agent", replace=True)' "$dcode_skill_stage" "$dcode_skill_digest" >/tmp/nemoclaw-dcode-skill-rejected.out 2>&1; then echo 'ERROR: changed DCode staging payload was accepted' >&2; exit 1; fi \
     && ! grep -Fq 'Mutated after host verification' /sandbox/.deepagents/agent/skills/nemoclaw-native-import-probe/SKILL.md \
-    && HOME=/sandbox /opt/venv/bin/python3 -I -c 'from deepagents_code.skills.commands import _delete; _delete("nemoclaw-native-import-probe", agent="agent", force=True, output_format="json")' \
+    && HOME=/sandbox /opt/venv/bin/python3 -I -c 'import argparse; from deepagents_code.skills import commands; parser = argparse.ArgumentParser(); subparsers = parser.add_subparsers(dest="command"); commands.setup_skills_parser(subparsers, make_help_action=lambda _help: argparse._HelpAction); args = parser.parse_args(["skills", "delete", "nemoclaw-native-import-probe", "--agent", "agent", "--force", "--json"]); commands.execute_skills_command(args)' \
     && test ! -e /sandbox/.deepagents/agent/skills/nemoclaw-native-import-probe \
     && { rmdir /sandbox/.deepagents/agent/skills /sandbox/.deepagents/agent 2>/dev/null || true; } \
     && rm -rf "$dcode_skill_stage" /tmp/nemoclaw-dcode-skill-import.out /tmp/nemoclaw-dcode-skill-recovery.out /tmp/nemoclaw-dcode-skill-rejected.out \
