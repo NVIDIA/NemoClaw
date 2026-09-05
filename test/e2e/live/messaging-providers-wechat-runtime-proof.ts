@@ -21,102 +21,6 @@ export type InstalledWechatRuntimeProof = {
   pluginVersion: string;
 };
 
-export const waitForInstalledWechatApi: (
-  probe: () => Promise<unknown>,
-  delay: (milliseconds: number) => Promise<void>,
-) => Promise<void> = async function waitForInstalledWechatApi(probe, delay) {
-  const maxAttempts = 20;
-  const retryDelayMs = 250;
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      await probe();
-      return;
-    } catch (error) {
-      lastError = error;
-      if (attempt < maxAttempts) await delay(retryDelayMs);
-    }
-  }
-  return Promise.reject(lastError);
-};
-
-export const fetchFakeWechatWithNodeHttp: (
-  input: string | URL,
-  init?: RequestInit,
-) => Promise<Response> = function fetchFakeWechatWithNodeHttp(input, init) {
-  const url = new URL(String(input));
-  const signal = init?.signal;
-  const body = init?.body;
-  const headers = Array.isArray(init?.headers)
-    ? Object.fromEntries(init.headers)
-    : init?.headers instanceof Headers
-      ? Object.fromEntries(init.headers.entries())
-      : { ...(init?.headers ?? {}) };
-  const bodyLength =
-    typeof body === "string"
-      ? Buffer.byteLength(body)
-      : body instanceof Uint8Array
-        ? body.byteLength
-        : undefined;
-  if (
-    bodyLength !== undefined &&
-    !Object.keys(headers).some((name) => name.toLowerCase() === "content-length")
-  ) {
-    headers["Content-Length"] = String(bodyLength);
-  }
-  const httpModule = process.getBuiltinModule("node:http") as typeof import("node:http");
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(signal.reason);
-      return;
-    }
-
-    let settled = false;
-    const settle = (complete: () => void): void => {
-      if (settled) return;
-      settled = true;
-      signal?.removeEventListener("abort", onAbort);
-      complete();
-    };
-    const request = httpModule.request(
-      {
-        hostname: url.hostname,
-        port: Number(url.port),
-        path: url.pathname + url.search,
-        method: init?.method,
-        headers,
-      },
-      (response) => {
-        const chunks: Buffer[] = [];
-        response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-        response.once("error", (error) => settle(() => reject(error)));
-        response.once("end", () => {
-          settle(() => {
-            resolve(
-              new Response(Buffer.concat(chunks), {
-                status: response.statusCode ?? 500,
-              }),
-            );
-          });
-        });
-      },
-    );
-    function onAbort(): void {
-      request.destroy(
-        signal?.reason instanceof Error ? signal.reason : new Error("fake WeChat request aborted"),
-      );
-    }
-    request.once("error", (error) => settle(() => reject(error)));
-    signal?.addEventListener("abort", onAbort, { once: true });
-    if (!signal) {
-      request.setTimeout(30_000, () => {
-        request.destroy(new Error("fake WeChat request timed out"));
-      });
-    }
-    request.end(body);
-  });
-};
-
 const readWechatPackageName: (
   candidate: string,
   fileSystem: typeof fs,
@@ -275,6 +179,7 @@ const resolveInstalledOpenClawRoot: (
 export const WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -282,14 +187,57 @@ function invariant(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-const fetchFakeWechatWithNodeHttp = ${fetchFakeWechatWithNodeHttp.toString()};
-
 const readWechatPackageName = ${readWechatPackageName.toString()};
 const addManagedNpmProjectWechatCandidates = ${addManagedNpmProjectWechatCandidates.toString()};
 const linkWechatNodeModulesEntries = ${linkWechatNodeModulesEntries.toString()};
 const resolveInstalledWechatPluginRootWithDependencies = ${resolveInstalledWechatPluginRootWithDependencies.toString()};
 const resolveInstalledOpenClawRoot = ${resolveInstalledOpenClawRoot.toString()};
-const waitForInstalledWechatApi = ${waitForInstalledWechatApi.toString()};
+
+function startPolicyRelay() {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((request, response) => {
+      const headers = { ...request.headers };
+      headers.host = "host.openshell.internal:" + process.env.FAKE_WECHAT_API_PORT;
+      delete headers.connection;
+      delete headers["proxy-connection"];
+      const upstream = http.request(
+        {
+          hostname: "host.openshell.internal",
+          port: Number(process.env.FAKE_WECHAT_API_PORT),
+          path: request.url,
+          method: request.method,
+          headers,
+        },
+        (upstreamResponse) => {
+          response.writeHead(upstreamResponse.statusCode || 502, upstreamResponse.headers);
+          upstreamResponse.pipe(response);
+        },
+      );
+      upstream.on("error", () => {
+        response.headersSent
+          ? response.end("WeChat fixture relay failed")
+          : response.writeHead(502).end("WeChat fixture relay failed");
+      });
+      request.pipe(upstream);
+    });
+    const rejectStartup = (error) => reject(error);
+    server.once("error", rejectStartup);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", rejectStartup);
+      const address = server.address();
+      const port = address !== null && typeof address !== "string" ? address.port : null;
+      port === null
+        ? server.close(() => reject(new Error("WeChat fixture relay did not expose an IPv4 port")))
+        : resolve({ server, baseUrl: "http://127.0.0.1:" + port });
+    });
+  });
+}
+
+function stopPolicyRelay(server) {
+  return new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
 
 const stateDir = process.env.OPENCLAW_STATE_DIR || "/sandbox/.openclaw";
 const pluginRoot = resolveInstalledWechatPluginRootWithDependencies(stateDir, fs, path);
@@ -343,48 +291,34 @@ try {
     "installed WeChat runtime did not load the revision-scoped account token",
   );
 
-  const fakeWechatBaseUrl =
-    "http://host.openshell.internal:" + process.env.FAKE_WECHAT_API_PORT;
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input, init) => {
-    const url = new URL(String(input));
-    return url.origin === fakeWechatBaseUrl
-      ? fetchFakeWechatWithNodeHttp(input, init)
-      : originalFetch(input, init);
-  };
+  const relay = await startPolicyRelay();
+  let result;
   try {
-    await waitForInstalledWechatApi(
-      () =>
-        fetch(fakeWechatBaseUrl + "/__nemoclaw_ready__", {
-          signal: AbortSignal.timeout(1_000),
-        }),
-      (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-    );
     const target = process.env.OPENCLAW_WECHAT_TARGET || "e2e-user@im.wechat";
     const text = process.env.OPENCLAW_WECHAT_TEXT || "NemoClaw OpenClaw WeChat plugin mock E2E";
-    const result = await sendModule.sendMessageWeixin({
+    result = await sendModule.sendMessageWeixin({
       to: target,
       text,
       opts: {
-        baseUrl: fakeWechatBaseUrl,
+        baseUrl: relay.baseUrl,
         token: account.token,
         contextToken: "nemoclaw-e2e-context",
         timeoutMs: 30_000,
       },
     });
-    invariant(typeof result.messageId === "string" && result.messageId, "WeChat send emitted no ID");
-    console.log(
-      JSON.stringify({
-        ok: true,
-        proof: "openclaw-weixin-runtime-send",
-        accountId: account.accountId,
-        messageId: result.messageId,
-        pluginVersion: pluginMetadata.version,
-      }),
-    );
   } finally {
-    globalThis.fetch = originalFetch;
+    await stopPolicyRelay(relay.server);
   }
+  invariant(typeof result.messageId === "string" && result.messageId, "WeChat send emitted no ID");
+  console.log(
+    JSON.stringify({
+      ok: true,
+      proof: "openclaw-weixin-runtime-send",
+      accountId: account.accountId,
+      messageId: result.messageId,
+      pluginVersion: pluginMetadata.version,
+    }),
+  );
 } finally {
   fs.rmSync(proofWorkspace, { recursive: true, force: true });
 }
