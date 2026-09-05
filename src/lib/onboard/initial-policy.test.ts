@@ -364,6 +364,35 @@ describe("initial sandbox policy helpers", () => {
     expect(prepared.cleanup?.()).toBe(true);
   });
 
+  it("collects a Station family identity before direct-GPU policy preparation (#10928)", () => {
+    const sysfsRoot = tmpSysfsRoot();
+    const firmwareRoot = path.join(sysfsRoot, "firmware-fixture");
+    writeSysfsFile(firmwareRoot, "product_name", "Generic ARM workstation\n");
+    writeSysfsFile(firmwareRoot, "product_family", "NVIDIA DGX Station GB300\n");
+    writeSysfsFile(firmwareRoot, "board_name", "Generic board\n");
+    writeSysfsFile(firmwareRoot, "model", "Generic device tree\0");
+    writeSysfsFile(firmwareRoot, "os-release", 'ID=ubuntu\nVERSION_ID="24.04"\n');
+    addPciDevice(sysfsRoot, "0009:06:00.0", "0x10de\n", "0x030200\n");
+
+    const discoveredPaths = discoverHostStationGb300SysfsReadOnlyPaths({
+      platform: "linux",
+      architecture: "arm64",
+      hasNvidiaGpu: true,
+      identityOptions: {
+        productNamePath: path.join(firmwareRoot, "product_name"),
+        productFamilyPath: path.join(firmwareRoot, "product_family"),
+        boardNamePath: path.join(firmwareRoot, "board_name"),
+        deviceTreeModelPath: path.join(firmwareRoot, "model"),
+        osReleasePath: path.join(firmwareRoot, "os-release"),
+        stationReleasePath: path.join(firmwareRoot, "absent-dgx-release"),
+        pciDevicesPath: path.join(sysfsRoot, "bus", "pci", "devices"),
+      },
+      sysfsRoot,
+    });
+
+    expect(discoveredPaths).toEqual(["/sys/bus/pci/devices/0009:06:00.0"]);
+  });
+
   it("rejects Station GPU policy when host GPU availability fails", () => {
     expect(() =>
       discoverHostStationGb300SysfsReadOnlyPaths({

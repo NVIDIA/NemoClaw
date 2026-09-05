@@ -972,16 +972,40 @@ describe("probe command boundary", () => {
     );
     createStationClusterProbeDeps(recordingSpawn).probeLocalHost();
     const python = resolveStationFixturePython();
+    const identityProbeScript = probeScript.replace(
+      "\npayload = {\n",
+      `
+def firmware_value(path, strip_nul=False):
+    return {
+        "/sys/class/dmi/id/product_name": "Generic ARM workstation",
+        "/sys/class/dmi/id/product_family": "NVIDIA DGX Station GB300",
+        "/sys/class/dmi/id/board_name": "Generic board",
+        "/sys/firmware/devicetree/base/model": "Generic device tree",
+    }.get(str(path), "")
+
+def station_gb300_pci_gpu():
+    return True
+
+payload = {
+`,
+    );
 
     try {
       const executed = spawnSync(python, ["-"], {
         encoding: "utf8",
         env: { ...process.env, HOME: home, PATH: bin },
-        input: probeScript,
+        input: identityProbeScript,
         timeout: 20_000,
       });
       expect(executed.status, executed.stderr).toBe(0);
-      const observed = JSON.parse(executed.stdout) as StationHostProbe;
+      const observed = parseStationHostProbe(executed.stdout);
+      expect(observed).toMatchObject({
+        productName: "Generic ARM workstation",
+        productFamily: "NVIDIA DGX Station GB300",
+        boardName: "Generic board",
+        deviceTreeModel: "Generic device tree",
+        stationGb300PciGpu: true,
+      });
       expect(observed.modelSnapshot).toMatchObject({
         complete: false,
         shardCount: 113,

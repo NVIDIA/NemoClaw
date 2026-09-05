@@ -252,7 +252,11 @@ printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"`,
   );
 }
 
-function detectWithInstallerWrapper(productName: string, productFamily: string): string {
+function detectWithInstallerWrapper(
+  productName: string,
+  productFamily: string,
+  stationPci = true,
+): string {
   const fixtureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-handoff-"));
   fixtureDirectories.push(fixtureDirectory);
   for (const [name, value] of [
@@ -263,6 +267,11 @@ function detectWithInstallerWrapper(productName: string, productFamily: string):
   ]) {
     fs.writeFileSync(path.join(fixtureDirectory, name), `${value}\n`);
   }
+  const pciDevice = path.join(fixtureDirectory, "pci", "0000:01:00.0");
+  fs.mkdirSync(pciDevice, { recursive: true });
+  fs.writeFileSync(path.join(pciDevice, "vendor"), "0x10de\n");
+  fs.writeFileSync(path.join(pciDevice, "device"), stationPci ? "0x31c2\n" : "0xffff\n");
+  fs.writeFileSync(path.join(pciDevice, "class"), "0x030000\n");
   fs.writeFileSync(
     path.join(fixtureDirectory, "prepare-dgx-station-host.sh"),
     `#!/usr/bin/env bash
@@ -271,6 +280,7 @@ station_product_name_path() { printf '%s' "$FIXTURE/product_name"; }
 station_product_family_path() { printf '%s' "$FIXTURE/product_family"; }
 station_board_name_path() { printf '%s' "$FIXTURE/board_name"; }
 station_device_tree_model_path() { printf '%s' "$FIXTURE/model"; }
+station_pci_devices_path() { printf '%s' "$FIXTURE/pci"; }
 dgx_station_release_path() { printf '%s' "$FIXTURE/absent-release"; }
 main "$@"
 `,
@@ -283,7 +293,7 @@ main "$@"
       "-c",
       `source "$INSTALLER" >/dev/null
 SCRIPT_DIR="$FIXTURE"
-printf 'firmware=%s\n' "$(classify_dgx_station_firmware)"
+printf 'hardware=%s\n' "$(classify_dgx_station_hardware)"
 printf 'platform=%s\n' "$(detect_express_platform)"`,
     ],
     {
@@ -378,14 +388,20 @@ describe("DGX Station release classifier parity", () => {
 
   it("passes family-only identity through the installer-to-helper boundary (#10928)", () => {
     expect(detectWithInstallerWrapper("Generic ARM workstation", "NVIDIA DGX Station GB300")).toBe(
-      "firmware=station-gb300\nplatform=DGX Station\n",
+      "hardware=station-gb300\nplatform=DGX Station\n",
     );
   });
 
   it("passes firmware conflicts through the installer-to-helper boundary (#10928)", () => {
     expect(detectWithInstallerWrapper("NVIDIA DGX Spark", "NVIDIA DGX Station GB300")).toBe(
-      "firmware=conflicting\nplatform=Conflicting NVIDIA firmware identity\n",
+      "hardware=conflicting\nplatform=Conflicting NVIDIA firmware identity\n",
     );
+  });
+
+  it("blocks Station Express when exact GB300 PCI identity is absent (#10928)", () => {
+    expect(
+      detectWithInstallerWrapper("Generic ARM workstation", "NVIDIA DGX Station GB300", false),
+    ).toBe("hardware=station-gb300-pci-missing\nplatform=Unverified DGX Station hardware\n");
   });
 
   it.each([

@@ -429,7 +429,7 @@ parse_args() {
   FORCE_STATION_INSTALL=0
   for arg in "$@"; do
     case "$arg" in
-      --check | --apply | --verify | --bind-controller | --classify-dgx-release | --classify-station-firmware)
+      --check | --apply | --verify | --bind-controller | --classify-dgx-release | --classify-station-firmware | --classify-station-hardware)
         [[ -z "$MODE" ]] || return 1
         MODE="$arg"
         ;;
@@ -440,6 +440,7 @@ parse_args() {
   [[ -n "$MODE" ]] || return 1
   [[ "$MODE" != "--classify-dgx-release" || "$FORCE_STATION_INSTALL" == "0" ]] \
     && [[ "$MODE" != "--classify-station-firmware" || "$FORCE_STATION_INSTALL" == "0" ]] \
+    && [[ "$MODE" != "--classify-station-hardware" || "$FORCE_STATION_INSTALL" == "0" ]] \
     && [[ "$MODE" != "--bind-controller" || "$FORCE_STATION_INSTALL" == "0" ]]
 }
 
@@ -576,6 +577,18 @@ station_has_exact_gb300_pci_gpu() {
     station_pci_device_is_gb300 "${pci_path##*/}" "$pci_root" && return 0
   done
   return 1
+}
+
+station_hardware_identity_state() {
+  local firmware_state
+  firmware_state="$(station_firmware_identity_state)"
+  if [[ "$firmware_state" != "station-gb300" ]]; then
+    printf '%s' "$firmware_state"
+  elif station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)"; then
+    printf '%s' station-gb300
+  else
+    printf '%s' station-gb300-pci-missing
+  fi
 }
 
 is_preparation_critical_unit() {
@@ -2914,6 +2927,10 @@ main() {
   fi
   if [[ "$MODE" == "--classify-station-firmware" ]]; then
     station_firmware_identity_state
+    return 0
+  fi
+  if [[ "$MODE" == "--classify-station-hardware" ]]; then
+    station_hardware_identity_state
     return 0
   fi
   if [[ "$MODE" == "--apply" ]]; then

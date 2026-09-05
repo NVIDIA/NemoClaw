@@ -12,6 +12,7 @@ import type { MessagingChannelConfig } from "../messaging-channel-config";
 import * as policies from "../policy";
 import {
   collectPlatformIdentity,
+  type CollectPlatformIdentityOptions,
   type PlatformIdentity,
 } from "../readiness/platform-qualification";
 import {
@@ -144,12 +145,13 @@ export function discoverHostStationGb300SysfsReadOnlyPaths(
     architecture?: string;
     hasNvidiaGpu?: boolean;
     identity?: PlatformIdentity;
+    identityOptions?: CollectPlatformIdentityOptions;
     sysfsRoot?: string;
   } = {},
 ): string[] {
   const platform = options.platform ?? process.platform;
   if (platform !== "linux") return [];
-  const identity = options.identity ?? collectPlatformIdentity();
+  const identity = options.identity ?? collectPlatformIdentity(options.identityOptions);
   if (identity.nvidiaPlatform !== "station") return [];
   const stationFirmwareProduct = identity.stationFirmwareProduct ?? identity.productName;
   if (!stationFirmwareProduct || !isStationGb300ProductName(stationFirmwareProduct)) {

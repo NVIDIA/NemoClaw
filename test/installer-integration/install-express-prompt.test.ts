@@ -86,7 +86,7 @@ classify_dgx_station_release() {
     dgx_station_release_state "$EXPRESS_DGX_RELEASE_PATH"
   '
 }
-classify_dgx_station_firmware() { printf "%s" "$EXPRESS_FIRMWARE_STATE"; }
+classify_dgx_station_hardware() { printf "%s" "$EXPRESS_FIRMWARE_STATE"; }
 function [ {
   if [[ "$#" -eq 3 && "$1" = "-r" && "$2" = "/sys/class/dmi/id/product_name" && "$3" = "]" ]]; then
     return 0
@@ -963,51 +963,6 @@ main "$@"
       expect(output).toMatch(
         /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash POLICY=suggested YES=1 SANDBOX=my-assistant/,
       );
-      expect(output).not.toMatch(/cannot be combined with non-interactive mode/);
-    },
-  );
-
-  it.each<{
-    name: string;
-    extraEnv: Record<string, string>;
-    entrypointArgs: string[];
-  }>([
-    {
-      name: "environment notice acceptance",
-      extraEnv: {
-        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-        EXPRESS_RELEASE_STATE: "unsupported-dgx-os",
-      },
-      entrypointArgs: ["--force-station-install"],
-    },
-    {
-      name: "the CLI notice-acceptance flag",
-      extraEnv: { EXPRESS_RELEASE_STATE: "unsupported-dgx-os" },
-      entrypointArgs: ["--force-station-install", "--yes-i-accept-third-party-software"],
-    },
-  ])(
-    "reaches and accepts the forced Station express prompt through main with $name",
-    ({ extraEnv, entrypointArgs }) => {
-      const result = runExpressPromptWithTty(
-        "\n",
-        "pipe",
-        "DGX Station",
-        extraEnv,
-        "accepted-station-main",
-        entrypointArgs,
-      );
-      const output = `${result.stdout}${result.stderr}`;
-
-      expect(result.status, output).toBe(0);
-      expect(output).toMatch(
-        /Explicit --force-station-install intent bypasses only DGX release-metadata qualification/,
-      );
-      expect(output).toMatch(
-        /Active agent and unrelated Docker workloads still block Station preparation; an existing vLLM workload receives explicit handling choices/,
-      );
-      expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
-      expect(output).toMatch(/Using express install for DGX Station/);
-      expect(output).toMatch(/PROVIDER=install-vllm/);
       expect(output).not.toMatch(/cannot be combined with non-interactive mode/);
     },
   );

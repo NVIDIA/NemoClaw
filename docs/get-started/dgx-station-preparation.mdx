@@ -71,6 +71,8 @@ Preparation also requires no inference workload or unrelated Docker workload.
 The override preserves the existing factory driver, packages, and container-runtime configuration; it does not install or repair missing factory components.
 It cannot enable Station Express on another Station generation or hardware platform.
 This override remains for release metadata that automatic classification cannot admit as a trusted, complete Station profile.
+A successful validation-only run then exits without onboarding because the software profile remains unqualified.
+Install a supported DGX Station software profile before rerunning the installer without the override.
 
 If the installer cannot read the prompt, it stops before host changes.
 Run the override from an interactive terminal:
@@ -195,4 +197,5 @@ Follow [Set Up vLLM on Two DGX Stations](../../inference/local-inference/set-up-
 
 ## Next Step
 
-After your host passes preparation or validation, continue with the [Quickstart](../quickstart).
+After a qualified host passes preparation, continue with the [Quickstart](../quickstart).
+The validation-only override exits with the recovery action above instead of continuing to Quickstart.

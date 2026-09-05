@@ -4415,6 +4415,12 @@ classify_dgx_station_firmware() {
   bash "$helper" --classify-station-firmware
 }
 
+classify_dgx_station_hardware() {
+  local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
+  [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
+  bash "$helper" --classify-station-hardware
+}
+
 N1X_FASTOS_RELEASE_MAX_BYTES=4096
 
 n1x_fastos_release_path() {
@@ -4560,7 +4566,7 @@ detect_express_platform() {
     printf "Windows WSL"
     return
   fi
-  firmware_state="$(classify_dgx_station_firmware)"
+  firmware_state="$(classify_dgx_station_hardware)"
   case "$firmware_state" in
     conflicting)
       printf "Conflicting NVIDIA firmware identity"
@@ -4572,6 +4578,10 @@ detect_express_platform() {
       ;;
     station-other)
       printf "Unsupported DGX Station generation"
+      return
+      ;;
+    station-gb300-pci-missing)
+      printf "Unverified DGX Station hardware"
       return
       ;;
     jetson) return ;;
@@ -4614,6 +4624,9 @@ validate_express_platform_boundary() {
       ;;
     "Conflicting NVIDIA firmware identity")
       error "NVIDIA platform identity conflicts across firmware fields. Resolve the firmware identity before installation."
+      ;;
+    "Unverified DGX Station hardware")
+      error "DGX Station GB300 firmware was found without an exact NVIDIA GB300 PCI device. Resolve the hardware identity before installation."
       ;;
   esac
 }
@@ -5617,6 +5630,13 @@ ensure_station_express_host() {
   run_station_host_preparation || status=$?
   case "$status" in
     0)
+      if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        clear_station_express_resume
+        ok "DGX Station factory-runtime validation completed"
+        warn "Station Express remains blocked because this release profile is not qualified."
+        info "Install a supported DGX Station software profile, then rerun the installer without --force-station-install."
+        exit 0
+      fi
       ok "DGX Station host prerequisites are ready"
       ;;
     10)
@@ -5969,6 +5989,12 @@ describe_express_install() {
       ;;
   esac
 
+  if [ "$platform" = "DGX Station" ] && [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+    printf "  This validation-only run checks the existing factory GPU and container runtime without authorizing onboarding.\n"
+    printf "  A passing result exits with the supported recovery action because the Station software profile remains unqualified.\n"
+    return 0
+  fi
+
   case "$tier" in
     balanced)
       policy_summary="base sandbox policy plus npm, pypi, huggingface, brew, and the selected web-search preset"
@@ -6112,6 +6138,8 @@ maybe_offer_express_install() {
     describe_express_install "$platform"
     if [ "$platform" = "N1x" ]; then
       printf "  Run the Deferred N1x preview with these settings? [Y/n]: "
+    elif [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+      printf "  Run validation-only Station checks with these settings? [Y/n]: "
     else
       printf "  Run express install with these settings? [Y/n]: "
     fi
@@ -6134,6 +6162,8 @@ maybe_offer_express_install() {
     describe_express_install "$platform"
     if [ "$platform" = "N1x" ]; then
       printf "  Run the Deferred N1x preview with these settings? [Y/n]: "
+    elif [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+      printf "  Run validation-only Station checks with these settings? [Y/n]: "
     else
       printf "  Run express install with these settings? [Y/n]: "
     fi
@@ -6157,6 +6187,8 @@ maybe_offer_express_install() {
     "" | y | yes)
       if [ "$platform" = "N1x" ]; then
         info "Using the Deferred N1x preview."
+      elif [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        info "Using validation-only Station checks."
       else
         info "Using express install for ${platform}."
       fi
