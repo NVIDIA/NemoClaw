@@ -23,8 +23,8 @@
       "throwGuards": 87,
       "objectFieldAssertions": 245,
       "assertionPoints": 2915,
-      "generatedProbeBlocks": 136,
-      "generatedProbeConditions": 354
+      "generatedProbeBlocks": 135,
+      "generatedProbeConditions": 353
     },
     "unique": {
       "expectCalls": 2373,
@@ -35,8 +35,8 @@
       "throwGuards": 638,
       "objectFieldAssertions": 348,
       "assertionPoints": 4408,
-      "generatedProbeBlocks": 290,
-      "generatedProbeConditions": 980
+      "generatedProbeBlocks": 289,
+      "generatedProbeConditions": 979
     },
     "fileMetricOrder": [
       "directExpectCalls",
@@ -101,7 +101,7 @@
       "test/e2e/live/openclaw-discord-pairing.test.ts": [13,20,28,86,10],
       "test/e2e/live/openclaw-inference-switch.test.ts": [50,56,50,57,2],
       "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts": [9,17,9,32,3],
-      "test/e2e/live/openclaw-skill-cli.test.ts": [10,15,10,15,1],
+      "test/e2e/live/openclaw-skill-cli.test.ts": [10,15,10,15,0],
       "test/e2e/live/openclaw-slack-pairing.test.ts": [11,18,26,84,10],
       "test/e2e/live/openclaw-tui-chat-correlation.test.ts": [40,46,40,52,4],
       "test/e2e/live/openshell-credential-generation-window.test.ts": [44,94,44,113,18],
