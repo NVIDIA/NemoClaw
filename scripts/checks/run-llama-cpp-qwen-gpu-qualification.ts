@@ -338,9 +338,15 @@ export async function runQwenGpuQualification(): Promise<void> {
                 );
               }
               const combined = `${logs.stdout}\n${logs.stderr}`;
+              const startup = qwenGpuProbeDiagnostic(
+                "llama-server-startup",
+                logs,
+                apiKey === undefined ? [] : [apiKey],
+              );
               writeJson(canonicalArtifactRoot, "offload-runtime-diagnostics.json", {
                 stderrBytes: Buffer.byteLength(logs.stderr),
                 stdoutBytes: Buffer.byteLength(logs.stdout),
+                startup,
                 candidateLines: combined
                   .split("\n")
                   .filter((line) => /offload|layers?\s+to\s+GPU/iu.test(line))
