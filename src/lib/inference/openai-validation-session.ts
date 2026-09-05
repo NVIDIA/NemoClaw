@@ -29,6 +29,7 @@ export interface OpenAiValidationOptions {
   requireResponsesToolCalling?: boolean;
   requireChatCompletionsToolCalling?: boolean;
   retryChatCompletionsToolReadiness?: boolean;
+  useNvidiaEndpointProbePayload?: boolean;
 
   skipResponsesProbe?: boolean;
   probeStreaming?: boolean;
@@ -56,7 +57,7 @@ export interface OpenAiValidationSessionDeps {
   hasResponsesToolCall(body: string): boolean;
   hasChatCompletionsToolCall(body: string): boolean;
   hasChatCompletionsToolCallLeak(body: string): boolean;
-  getChatPayload(model: string): Record<string, unknown>;
+  getChatPayload(model: string, options: OpenAiValidationOptions): Record<string, unknown>;
   getResponsesTimeoutMs(options: OpenAiValidationOptions): number;
   getChatTimeoutMs(model: string, options: OpenAiValidationOptions): number;
   sessionOptions?: ValidationSessionOptions;
@@ -344,7 +345,7 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
                 ...auth,
                 body: requireToolCall
                   ? chatToolPayload(model, maxTokens)
-                  : JSON.stringify(deps.getChatPayload(model)),
+                  : JSON.stringify(deps.getChatPayload(model, options)),
                 timeoutMs: deps.getChatTimeoutMs(model, options) * timeoutMultiplier,
               }),
             retryTransientHttp,
