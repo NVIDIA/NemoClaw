@@ -643,6 +643,11 @@ export type RuntimeProviderSnapshotSurface =
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
       ): RuntimeProviderRuntimeReceipt;
+      /** Compare provider-owned acceleration encodings without widening central authority. */
+      canRepresentAcceleration?(
+        source: RuntimeProviderRuntimeReceipt["acceleration"],
+        target: RuntimeProviderRuntimeReceipt["acceleration"],
+      ): boolean;
       validateRestore(
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,

@@ -11,16 +11,22 @@ import {
   type ShippedManagedImageAgent,
 } from "../../../onboard/managed-image/contract";
 import { encodeManagedStartupProfile } from "../../../onboard/managed-startup/profile";
+import type { OpenShellDockerSandboxRuntimeSnapshotQuery } from "../../../onboard/openshell-docker-sandbox-containers";
 import type {
   RuntimeProviderBundle,
   RuntimeProviderManagedProfileRestoreAuthority,
+  RuntimeProviderRuntimeReceipt,
+  RuntimeProviderSnapshotSurface,
 } from "../../../onboard/runtime-provider/contract";
+import { createDockerRuntimeProviderBundle } from "../../../onboard/runtime-provider/docker";
+import { createRuntimeProviderSnapshotSurface } from "../../../onboard/runtime-provider/snapshot";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../../state/registry/types";
 import type {
   RebuildManifest,
   RecreatedSandboxRestoreOptions,
   RestoreResult,
 } from "../../../state/sandbox";
+import { captureSandboxRuntimeSnapshot } from "./provider-lifecycle";
 import { restoreRecreatedSandboxStateWithManagedAuthority } from "./restore-authority";
 
 function workload(
@@ -77,7 +83,10 @@ function manifest(agent: ShippedManagedImageAgent): RebuildManifest {
   };
 }
 
-function sandbox(agent: ShippedManagedImageAgent): SandboxEntry {
+function sandbox(
+  agent: ShippedManagedImageAgent,
+  overrides: Partial<SandboxEntry> = {},
+): SandboxEntry {
   const receipt = workload(agent);
   return {
     name: "alpha",
@@ -86,6 +95,153 @@ function sandbox(agent: ShippedManagedImageAgent): SandboxEntry {
     imageTag: receipt.reference,
     fromDockerfile: null,
     workload: receipt,
+    ...overrides,
+  };
+}
+
+function retainedDockerSnapshot(
+  target: SandboxEntry,
+  acceleration: RuntimeProviderRuntimeReceipt["acceleration"],
+) {
+  const source = createRuntimeProviderSnapshotSurface("docker", {
+    observe: () => ({
+      lifecycleState: "running",
+      lifecycleGeneration: "retained-generation",
+      runtime: {
+        schemaVersion: 1,
+        providerId: "docker",
+        runtime: { kind: "docker-container", handle: "c".repeat(64) },
+        acceleration,
+      },
+    }),
+    restoreManagedProfile: () => "unused-source-proof",
+  });
+  return captureSandboxRuntimeSnapshot(
+    {
+      identity: { contractVersion: 1, id: "docker", displayName: "Docker" },
+      snapshot: source,
+    } as RuntimeProviderBundle,
+    target,
+  );
+}
+
+function dockerRuntimeSnapshot(
+  selection: "all" | "exact",
+): Extract<OpenShellDockerSandboxRuntimeSnapshotQuery, { ok: true }> {
+  return {
+    ok: true,
+    imageId: `sha256:${"b".repeat(64)}`,
+    bookkeepingImageRef: "managed@example",
+    stateError: "",
+    deviceRequests: [
+      selection === "all"
+        ? {
+            Driver: "",
+            Count: -1,
+            DeviceIDs: null,
+            Capabilities: [["gpu"]],
+            Options: null,
+          }
+        : {
+            Driver: "cdi",
+            Count: 0,
+            DeviceIDs: ["nvidia.com/gpu=0"],
+            Capabilities: null,
+            Options: null,
+          },
+    ],
+    devices: null,
+    runtime: "runc",
+    nvidiaVisibleDevices: null,
+    nativeGpuAttachmentState: "present",
+    containerId: "c".repeat(64),
+  };
+}
+
+function dockerCapture() {
+  return vi.fn((_command: string, args: string[]) =>
+    args[0] === "exec"
+      ? {
+          status: 0,
+          stdout: "[managed-startup] verified profile completion\n",
+          stderr: "",
+        }
+      : {
+          status: 0,
+          stdout: JSON.stringify([
+            "c".repeat(64),
+            "running",
+            false,
+            "2026-07-30T12:00:00Z",
+            "0001-01-01T00:00:00Z",
+            0,
+          ]),
+          stderr: "",
+        },
+  );
+}
+
+function managedDockerRestoreFixture(
+  sourceDevices: string[],
+  initialTargetSelection: "all" | "exact",
+) {
+  const agent = "openclaw";
+  const backupPath = "/tmp/alpha";
+  const target = sandbox(agent, { openshellDriver: "docker" });
+  const source = retainedDockerSnapshot(target, {
+    kind: "gpu",
+    vendor: "nvidia",
+    devices: sourceDevices,
+  });
+  let targetSelection = initialTargetSelection;
+  const captureHostCommand = dockerCapture();
+  const runtimeProvider = createDockerRuntimeProviderBundle({
+    captureHostCommand,
+    queryRuntimeSnapshot: () => dockerRuntimeSnapshot(targetSelection),
+  });
+  expect(runtimeProvider.snapshot.supported).toBe(true);
+  const snapshot = runtimeProvider.snapshot as Extract<
+    RuntimeProviderSnapshotSurface,
+    { supported: true }
+  >;
+  const providerRestore = vi.spyOn(snapshot, "restore");
+  const restore = vi.fn(
+    (_name: string, _path: string, options: RecreatedSandboxRestoreOptions): RestoreResult => {
+      options.validateBeforeMutation?.();
+      return {
+        success: true,
+        restoredDirs: ["workspace"],
+        failedDirs: [],
+        restoredFiles: [],
+        failedFiles: [],
+      };
+    },
+  );
+  const retainedManifest = { ...manifest(agent), backupPath, runtimeSnapshot: source };
+  const run = () =>
+    restoreRecreatedSandboxStateWithManagedAuthority(
+      "alpha",
+      retainedManifest,
+      { targetAgentType: agent },
+      {
+        getSandbox: () => target,
+        requireProvider: () => runtimeProvider,
+        captureContentAuthority: () => ({
+          schemaVersion: 1,
+          backupPath,
+          contentSha256: "c".repeat(64),
+        }),
+        restore,
+      },
+    );
+  return {
+    captureHostCommand,
+    providerRestore,
+    restore,
+    run,
+    selectTarget: (selection: "all" | "exact") => {
+      targetSelection = selection;
+    },
   };
 }
 
@@ -146,55 +302,54 @@ function provider(agent: ShippedManagedImageAgent) {
 }
 
 describe("managed rebuild restore authority", () => {
-  it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("revalidates %s content and provider authority at the mutation edge", (agent) => {
-    const target = sandbox(agent);
-    const runtimeProvider = provider(agent);
-    const restore = vi.fn(
-      (_name: string, _path: string, options: RecreatedSandboxRestoreOptions): RestoreResult => {
-        options.validateBeforeMutation?.();
-        return {
-          success: true,
-          restoredDirs: ["workspace"],
-          failedDirs: [],
-          restoredFiles: [],
-          failedFiles: [],
-        };
-      },
-    );
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "revalidates %s content and provider authority at the mutation edge",
+    (agent) => {
+      const target = sandbox(agent);
+      const runtimeProvider = provider(agent);
+      const restore = vi.fn(
+        (_name: string, _path: string, options: RecreatedSandboxRestoreOptions): RestoreResult => {
+          options.validateBeforeMutation?.();
+          return {
+            success: true,
+            restoredDirs: ["workspace"],
+            failedDirs: [],
+            restoredFiles: [],
+            failedFiles: [],
+          };
+        },
+      );
 
-    const result = restoreRecreatedSandboxStateWithManagedAuthority(
-      "alpha",
-      manifest(agent),
-      { targetAgentType: agent },
-      {
-        getSandbox: () => target,
-        requireProvider: () => runtimeProvider.bundle,
-        captureContentAuthority: () => ({
-          schemaVersion: 1,
-          backupPath: "/tmp/alpha",
-          contentSha256: "c".repeat(64),
+      const result = restoreRecreatedSandboxStateWithManagedAuthority(
+        "alpha",
+        manifest(agent),
+        { targetAgentType: agent },
+        {
+          getSandbox: () => target,
+          requireProvider: () => runtimeProvider.bundle,
+          captureContentAuthority: () => ({
+            schemaVersion: 1,
+            backupPath: "/tmp/alpha",
+            contentSha256: "c".repeat(64),
+          }),
+          restore,
+        },
+      );
+
+      expect(result.success).toBe(true);
+      expect(restore).toHaveBeenCalledWith(
+        "alpha",
+        "/tmp/alpha",
+        expect.objectContaining({
+          authority: expect.objectContaining({ contentSha256: "c".repeat(64) }),
+          validateBeforeMutation: expect.any(Function),
         }),
-        restore,
-      },
-    );
-
-    expect(result.success).toBe(true);
-    expect(restore).toHaveBeenCalledWith(
-      "alpha",
-      "/tmp/alpha",
-      expect.objectContaining({
-        authority: expect.objectContaining({ contentSha256: "c".repeat(64) }),
-        validateBeforeMutation: expect.any(Function),
-      }),
-    );
-    expect(runtimeProvider.preflight).toHaveBeenCalledTimes(2);
-    expect(runtimeProvider.validateRestore).toHaveBeenCalledTimes(2);
-    expect(runtimeProvider.restore).toHaveBeenCalledOnce();
-  });
+      );
+      expect(runtimeProvider.preflight).toHaveBeenCalledTimes(2);
+      expect(runtimeProvider.validateRestore).toHaveBeenCalledTimes(2);
+      expect(runtimeProvider.restore).toHaveBeenCalledOnce();
+    },
+  );
 
   it("keeps legacy rebuild manifests on the state-only restore path", () => {
     const legacy = { ...manifest("openclaw"), workload: undefined, runtimeSnapshot: undefined };
@@ -243,5 +398,48 @@ describe("managed rebuild restore authority", () => {
       error: expect.stringContaining("missing provider runtime authority"),
     });
     expect(restore).not.toHaveBeenCalled();
+  });
+
+  it("restores retained all-GPU authority through the managed rebuild path (#10758)", () => {
+    const fixture = managedDockerRestoreFixture(["docker-device-id:nvidia.com/gpu=all"], "all");
+
+    expect(fixture.run()).toMatchObject({ success: true, restoredDirs: ["workspace"] });
+    expect(fixture.restore).toHaveBeenCalledOnce();
+    expect(
+      fixture.captureHostCommand.mock.calls.filter(([, args]) => args[0] === "exec"),
+    ).toHaveLength(1);
+    expect(fixture.providerRestore).toHaveReturnedWith(
+      expect.objectContaining({
+        runtime: expect.objectContaining({
+          acceleration: {
+            kind: "gpu",
+            vendor: "nvidia",
+            devices: ["nvidia.com/gpu=all"],
+          },
+        }),
+      }),
+    );
+  });
+
+  it("retains exact-device authority before mutation and succeeds on retry (#10758)", () => {
+    const fixture = managedDockerRestoreFixture(["docker-device-id:nvidia.com/gpu=0"], "all");
+
+    expect(fixture.run()).toMatchObject({
+      success: false,
+      error: expect.stringContaining("cannot represent the snapshot acceleration state"),
+    });
+    expect(fixture.restore).not.toHaveBeenCalled();
+    expect(fixture.providerRestore).not.toHaveBeenCalled();
+    expect(fixture.captureHostCommand.mock.calls.some(([, args]) => args[0] === "exec")).toBe(
+      false,
+    );
+
+    fixture.selectTarget("exact");
+    expect(fixture.run()).toMatchObject({ success: true, restoredDirs: ["workspace"] });
+    expect(fixture.restore).toHaveBeenCalledOnce();
+    expect(fixture.providerRestore).toHaveBeenCalledOnce();
+    expect(
+      fixture.captureHostCommand.mock.calls.filter(([, args]) => args[0] === "exec"),
+    ).toHaveLength(1);
   });
 });

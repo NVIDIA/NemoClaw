@@ -66,6 +66,10 @@ export type RuntimeProviderManagedProfileRestorer = (
 export interface RuntimeProviderSnapshotDriver {
   readonly observe: RuntimeProviderSnapshotObserver;
   readonly restoreManagedProfile: RuntimeProviderManagedProfileRestorer;
+  readonly canRepresentAcceleration?: (
+    source: RuntimeProviderRuntimeReceipt["acceleration"],
+    target: RuntimeProviderRuntimeReceipt["acceleration"],
+  ) => boolean;
 }
 
 export interface OpenShellRuntimeSnapshotDependencies {
@@ -221,18 +225,114 @@ export function observeOpenShellRuntimeSnapshot(
   };
 }
 
-function dockerRequestUsesGpu(
+function dockerNvidiaGpuRequestSelectors(
   request: NonNullable<
     Extract<OpenShellDockerSandboxRuntimeSnapshotQuery, { ok: true }>["deviceRequests"]
   >[number],
-): boolean {
-  return (
-    request.Driver.trim().toLowerCase() === "nvidia" ||
-    request.DeviceIDs?.some((device) => /^nvidia[.]com\/gpu(?:=|$)/iu.test(device.trim())) ===
-      true ||
+): readonly string[] | null {
+  const driver = request.Driver.trim().toLowerCase();
+  const deviceIds = request.DeviceIDs ?? [];
+  const hasGpuCapability =
     request.Capabilities?.some((group) =>
       group.some((capability) => capability.trim().toLowerCase() === "gpu"),
-    ) === true
+    ) === true;
+  const hasNvidiaCdiSelector = deviceIds.some((device) =>
+    /^nvidia[.]com\/gpu=/iu.test(device.trim()),
+  );
+  if (driver !== "nvidia" && !hasNvidiaCdiSelector && !hasGpuCapability) return null;
+
+  if (deviceIds.length > 0) {
+    if (driver === "nvidia") return deviceIds;
+    if (
+      ["", "cdi"].includes(driver) &&
+      deviceIds.every((device) => /^nvidia[.]com\/gpu=/iu.test(device.trim()))
+    ) {
+      return deviceIds;
+    }
+    throw new RuntimeProviderSnapshotError(
+      "Docker GPU attachment does not prove NVIDIA acceleration authority",
+    );
+  }
+  if (request.Count === -1 && ["", "nvidia"].includes(driver)) return ["all"];
+  throw new RuntimeProviderSnapshotError(
+    driver && !["nvidia", "cdi"].includes(driver)
+      ? "Docker GPU attachment does not prove NVIDIA acceleration authority"
+      : "Docker GPU attachment does not expose exact live device selectors",
+  );
+}
+
+function canonicalNvidiaGpuSelector(device: string): string {
+  const value = device.trim();
+  const cdiPrefix = /^nvidia[.]com\/gpu=/iu;
+  const identifier = cdiPrefix.test(value) ? value.replace(cdiPrefix, "") : value;
+  if (!identifier || CONTROL_CHARACTERS.test(identifier)) {
+    throw new RuntimeProviderSnapshotError(
+      "Docker GPU attachment does not expose exact live device selectors",
+    );
+  }
+  return identifier.toLowerCase() === "all" ? "nvidia.com/gpu=all" : `nvidia.com/gpu=${identifier}`;
+}
+
+function canonicalDockerGpuSelection(devices: readonly string[]): readonly string[] {
+  const selectors = [...new Set(devices.map(canonicalNvidiaGpuSelector))].sort();
+  if (selectors.includes("nvidia.com/gpu=all") && selectors.length !== 1) {
+    throw new RuntimeProviderSnapshotError(
+      "Docker GPU attachment exposes conflicting live device selectors",
+    );
+  }
+  return selectors;
+}
+
+function canonicalDockerAcceleration(
+  acceleration: RuntimeProviderRuntimeReceipt["acceleration"],
+): RuntimeProviderRuntimeReceipt["acceleration"] | null {
+  if (acceleration.kind === "none") return acceleration;
+  if (acceleration.vendor.toLowerCase() !== "nvidia") return null;
+  const gpuSelectors: string[] = [];
+  const pathSelectors: string[] = [];
+  for (const selector of acceleration.devices) {
+    if (selector.startsWith("docker-device-path:")) {
+      pathSelectors.push(selector);
+      continue;
+    }
+    if (selector === "docker-nvidia-visible-devices:all") {
+      gpuSelectors.push("all");
+      continue;
+    }
+    if (/^docker-device-request:[^:]+:count=-1$/u.test(selector)) {
+      gpuSelectors.push("all");
+      continue;
+    }
+    const legacyDevice = selector.match(/^docker-(?:device-id|nvidia-visible-device):(.+)$/u)?.[1];
+    if (legacyDevice) {
+      gpuSelectors.push(legacyDevice);
+      continue;
+    }
+    if (/^nvidia[.]com\/gpu=/iu.test(selector)) {
+      gpuSelectors.push(selector);
+      continue;
+    }
+    return null;
+  }
+  try {
+    const devices = [
+      ...canonicalDockerGpuSelection(gpuSelectors),
+      ...new Set(pathSelectors),
+    ].sort();
+    return devices.length > 0 ? { kind: "gpu", vendor: "nvidia", devices } : null;
+  } catch {
+    return null;
+  }
+}
+
+function dockerCanRepresentAcceleration(
+  source: RuntimeProviderRuntimeReceipt["acceleration"],
+  target: RuntimeProviderRuntimeReceipt["acceleration"],
+): boolean {
+  const canonicalSource = canonicalDockerAcceleration(source);
+  const canonicalTarget = canonicalDockerAcceleration(target);
+  return Boolean(
+    canonicalSource && canonicalTarget && isDeepStrictEqual(canonicalSource, canonicalTarget),
   );
 }
 
@@ -244,35 +344,29 @@ function dockerGpuSelectors(
     throw new RuntimeProviderSnapshotError("Docker returned ambiguous live acceleration evidence");
   }
 
-  const selectors: string[] = [];
+  const selections: string[][] = [];
   if (snapshot.runtime.trim().toLowerCase() === "nvidia") {
     const visibleDevices = snapshot.nvidiaVisibleDevices;
     if (visibleDevices === "all") {
-      selectors.push("docker-nvidia-visible-devices:all");
+      selections.push(["all"]);
     } else if (visibleDevices && !["none", "void"].includes(visibleDevices)) {
-      for (const device of visibleDevices.split(",")) {
-        selectors.push(`docker-nvidia-visible-device:${device}`);
-      }
+      selections.push(visibleDevices.split(","));
     }
   }
+  const requestedDevices: string[] = [];
   for (const request of snapshot.deviceRequests ?? []) {
-    if (!dockerRequestUsesGpu(request)) continue;
-    if (request.DeviceIDs && request.DeviceIDs.length > 0) {
-      for (const device of request.DeviceIDs) {
-        selectors.push(`docker-device-id:${device}`);
-      }
-      continue;
-    }
-    if (request.Count === -1) {
-      // Count=-1 is Docker's explicit live all-device selector. Never infer
-      // this value from a durable "GPU enabled" flag.
-      selectors.push(`docker-device-request:${request.Driver || "default"}:count=-1`);
-      continue;
-    }
+    const selectors = dockerNvidiaGpuRequestSelectors(request);
+    if (selectors) requestedDevices.push(...selectors);
+  }
+  if (requestedDevices.length > 0) selections.push(requestedDevices);
+  const canonicalSelections = selections.map(canonicalDockerGpuSelection);
+  const selectedDevices = canonicalSelections[0] ?? [];
+  if (canonicalSelections.some((selection) => !isDeepStrictEqual(selection, selectedDevices))) {
     throw new RuntimeProviderSnapshotError(
-      "Docker GPU attachment does not expose exact live device selectors",
+      "Docker GPU attachment exposes conflicting live device selectors",
     );
   }
+  const selectors = [...selectedDevices];
   for (const mapping of snapshot.devices ?? []) {
     const rendered =
       `docker-device-path:${mapping.PathOnHost}=>${mapping.PathInContainer}` +
@@ -611,7 +705,8 @@ function validateRestoreRequest(
   }
   const observed = observeAndNormalize(driver.observe, sandbox, providerId);
   assertUnchanged(providerId, expected, observed);
-  if (!isDeepStrictEqual(source.runtime.acceleration, observed.runtime.acceleration)) {
+  const canRepresentAcceleration = driver.canRepresentAcceleration ?? isDeepStrictEqual;
+  if (!canRepresentAcceleration(source.runtime.acceleration, observed.runtime.acceleration)) {
     throw new RuntimeProviderSnapshotError(
       `sandbox '${sandbox.name}' cannot represent the snapshot acceleration state`,
     );
@@ -650,6 +745,9 @@ export function createRuntimeProviderSnapshotSurface(
       const observed = observeAndNormalize(driver.observe, sandbox, providerId);
       assertUnchanged(providerId, expected, observed);
       return observed.runtime;
+    },
+    canRepresentAcceleration(source, target) {
+      return (driver.canRepresentAcceleration ?? isDeepStrictEqual)(source, target);
     },
     validateRestore(sandbox, preflight, source, managedProfile) {
       validateRestoreRequest(providerId, driver, sandbox, preflight, source, managedProfile);
@@ -709,6 +807,7 @@ export function createDockerRuntimeProviderSnapshotSurface(
   };
   return createRuntimeProviderSnapshotSurface(providerId, {
     observe: (sandbox, id) => observeDockerRuntimeSnapshot(sandbox, id, resolved),
+    canRepresentAcceleration: dockerCanRepresentAcceleration,
     restoreManagedProfile: (sandbox, authority, runtime) =>
       verifyDockerManagedProfileRestore(sandbox, authority, runtime, resolved),
   });

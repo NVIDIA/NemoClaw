@@ -39,6 +39,10 @@ function provider(
     preflightProviderId?: string;
     runtimeProviderId?: string;
     restoreProviderId?: string;
+    canRepresentAcceleration?: (
+      source: RuntimeProviderRuntimeReceipt["acceleration"],
+      target: RuntimeProviderRuntimeReceipt["acceleration"],
+    ) => boolean;
   } = {},
 ): {
   readonly bundle: RuntimeProviderBundle;
@@ -86,6 +90,9 @@ function provider(
         capabilities: { backup: true, restore: true, managedProfileRestore: true },
         preflight,
         capture,
+        ...(options.canRepresentAcceleration
+          ? { canRepresentAcceleration: options.canRepresentAcceleration }
+          : {}),
         validateRestore,
         restore,
       },
@@ -315,40 +322,40 @@ describe("snapshot provider lifecycle", () => {
   it.each([
     { field: "lifecycle state", lifecycleState: "stopped", lifecycleGeneration: "generation-1" },
     { field: "lifecycle generation", lifecycleState: "running", lifecycleGeneration: "changed" },
-  ] as const)("rejects restore proof with changed $field", ({
-    lifecycleState,
-    lifecycleGeneration,
-  }) => {
-    const { bundle, restore } = provider();
-    const target = sandbox("target");
-    const prepared = prepareSandboxRuntimeRestore(
-      bundle,
-      target,
-      {
+  ] as const)(
+    "rejects restore proof with changed $field",
+    ({ lifecycleState, lifecycleGeneration }) => {
+      const { bundle, restore } = provider();
+      const target = sandbox("target");
+      const prepared = prepareSandboxRuntimeRestore(
+        bundle,
+        target,
+        {
+          schemaVersion: 1,
+          providerId: "mxc",
+          providerHandle: "opaque-source",
+          lifecycleState: "running",
+          lifecycleGeneration: "source-generation",
+          runtime: runtime(),
+        },
+        managedProfile,
+      );
+      restore.mockReturnValueOnce({
         schemaVersion: 1,
         providerId: "mxc",
-        providerHandle: "opaque-source",
-        lifecycleState: "running",
-        lifecycleGeneration: "source-generation",
+        sandboxName: "target",
+        providerHandle: "provider-owned-restore-handle",
+        lifecycleState,
+        lifecycleGeneration,
         runtime: runtime(),
-      },
-      managedProfile,
-    );
-    restore.mockReturnValueOnce({
-      schemaVersion: 1,
-      providerId: "mxc",
-      sandboxName: "target",
-      providerHandle: "provider-owned-restore-handle",
-      lifecycleState,
-      lifecycleGeneration,
-      runtime: runtime(),
-      managedProfile,
-    });
+        managedProfile,
+      });
 
-    expect(() => confirmSandboxRuntimeRestore(bundle, target, prepared)).toThrow(
-      /invalid managed restore proof/u,
-    );
-  });
+      expect(() => confirmSandboxRuntimeRestore(bundle, target, prepared)).toThrow(
+        /invalid managed restore proof/u,
+      );
+    },
+  );
 
   it("rejects restore proof that changes acceleration authority", () => {
     const { bundle } = provider();
@@ -372,6 +379,67 @@ describe("snapshot provider lifecycle", () => {
 
     expect(() => confirmSandboxRuntimeRestore(bundle, target, prepared)).toThrow(
       /invalid managed restore proof/u,
+    );
+  });
+
+  it("accepts a provider-verified canonical acceleration receipt for a legacy source", () => {
+    const legacyAcceleration = {
+      kind: "gpu" as const,
+      vendor: "nvidia",
+      devices: ["docker-device-id:nvidia.com/gpu=all"],
+    };
+    const canonicalAcceleration = {
+      kind: "gpu" as const,
+      vendor: "nvidia",
+      devices: ["nvidia.com/gpu=all"],
+    };
+    const canRepresentAcceleration = vi.fn(
+      (
+        source: RuntimeProviderRuntimeReceipt["acceleration"],
+        target: RuntimeProviderRuntimeReceipt["acceleration"],
+      ) => {
+        expect(Object.isFrozen(source)).toBe(true);
+        expect(Object.isFrozen(target)).toBe(true);
+        return (
+          source.kind === "gpu" &&
+          target.kind === "gpu" &&
+          source.devices[0] === "docker-device-id:nvidia.com/gpu=all" &&
+          target.devices[0] === "nvidia.com/gpu=all"
+        );
+      },
+    );
+    const { bundle, restore } = provider({ canRepresentAcceleration });
+    const target = sandbox("target");
+    const prepared = prepareSandboxRuntimeRestore(
+      bundle,
+      target,
+      {
+        schemaVersion: 1,
+        providerId: "mxc",
+        providerHandle: "opaque-source",
+        lifecycleState: "running",
+        lifecycleGeneration: "source-generation",
+        runtime: { ...runtime(), acceleration: legacyAcceleration },
+      },
+      managedProfile,
+    );
+    restore.mockReturnValueOnce({
+      schemaVersion: 1,
+      providerId: "mxc",
+      sandboxName: "target",
+      providerHandle: "opaque-restore",
+      lifecycleState: "running",
+      lifecycleGeneration: "generation-1",
+      runtime: { ...runtime(), acceleration: canonicalAcceleration },
+      managedProfile,
+    });
+
+    expect(confirmSandboxRuntimeRestore(bundle, target, prepared)).toMatchObject({
+      restoreReceipt: { runtime: { acceleration: canonicalAcceleration } },
+    });
+    expect(canRepresentAcceleration).toHaveBeenCalledWith(
+      legacyAcceleration,
+      canonicalAcceleration,
     );
   });
 
