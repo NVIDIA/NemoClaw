@@ -1,18 +1,44 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-vi.mock("../../adapters/docker/runtime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../adapters/docker/runtime")>()),
-  detectContainerRuntimeFromDockerInfo: () => "docker-desktop",
-}));
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 const requireDist = createRequire(import.meta.url);
 const modulePath = "./doctor-system-checks.js";
 
 describe("doctor system checks", () => {
+  const originalPath = process.env.PATH;
+  let fakeDockerDir: string;
+
+  beforeAll(() => {
+    fakeDockerDir = mkdtempSync(join(tmpdir(), "nemoclaw-doctor-fake-docker-desktop-"));
+    const fakeDockerPath = join(fakeDockerDir, "docker");
+    writeFileSync(
+      fakeDockerPath,
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "info" ]; then',
+        "  printf '%s\\n' 'Operating System: Docker Desktop'",
+        "  exit 0",
+        "fi",
+        "exit 1",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(fakeDockerPath, 0o755);
+    process.env.PATH = `${fakeDockerDir}${delimiter}${originalPath ?? ""}`;
+  });
+
+  afterAll(() => {
+    Reflect.deleteProperty(process.env, "PATH");
+    Object.assign(process.env, originalPath === undefined ? {} : { PATH: originalPath });
+    rmSync(fakeDockerDir, { recursive: true, force: true });
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
