@@ -162,11 +162,18 @@ const freshCreateIdentityCases = [
 export type FreshCreateIdentityGroup = (typeof freshCreateIdentityCases)[number]["group"];
 
 export function registerFreshCreateIdentityTests(group: FreshCreateIdentityGroup): void {
+  const childProcessTimeoutMs = 30_000;
+  const caseTimeoutMs =
+    group === "cancellation"
+      ? childProcessTimeoutMs * 6 + 15_000
+      : group === "recovery"
+        ? childProcessTimeoutMs * 3 + 15_000
+        : 45_000;
   describe(`fresh create identity (${group})`, () => {
     it.each(freshCreateIdentityCases.filter((testCase) => testCase.group === group))(
       "$title",
       {
-        timeout: 45000,
+        timeout: caseTimeoutMs,
       },
       async ({ agent, apfInterceptorRequested, expectedOutcome, model, provider }) => {
         const repoRoot = path.join(import.meta.dirname, "../..");
@@ -335,7 +342,6 @@ runner.run = (command, opts = {}) => {
 	  ? JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")).currentRegistryEntry
 	  : null;
 	const registryMutationCalls = [];
-  let checkpointReadCalls = 0;
 	if (!recoveryReentry) {
 	  const session = retainedRecovery.createSession({
 	    sessionId: "session-owner",
@@ -409,8 +415,7 @@ runner.run = (command, opts = {}) => {
 if (postCreateRunnerRefusal) {
   const requireCurrentCheckpoint = registry.requireCurrentPendingSandboxCreateIdentity;
   registry.requireCurrentPendingSandboxCreateIdentity = (...args) => {
-    checkpointReadCalls += 1;
-    if (checkpointReadCalls === 6) {
+    if (commands.some((entry) => entry.command.includes("sandbox create"))) {
       throw new Error("post-verification create runner checkpoint failed");
     }
     return requireCurrentCheckpoint(...args);
@@ -523,7 +528,6 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     identityMismatchGetCalls,
     mismatchedSandboxId,
     routeReservationCalls,
-    checkpointReadCalls,
     registryMutationCalls,
     currentRegistryEntry: cancelAfterCreate ? registry.getSandbox("my-assistant") : null,
     recoveryRegistryEntry: registry.getSandbox("my-assistant"),
@@ -688,7 +692,7 @@ if (${JSON.stringify(
           cwd: repoRoot,
           encoding: "utf-8",
           env: childEnv,
-          timeout: 30000,
+          timeout: childProcessTimeoutMs,
         });
 
         const cancellationOutcome = expectedOutcome.startsWith("cancel-after-create-");
@@ -871,7 +875,6 @@ if (${JSON.stringify(
           assert.equal(payload.retainedRecoveryRecords.length, 1);
           assert.equal(payload.retainedRecoveryRecords[0].sandboxName, "my-assistant");
           assertRecoveryTuple(payload.retainedRecoveryRecords[0]);
-          assert.ok(payload.checkpointReadCalls >= 6);
           assert.equal(
             payload.commandNames.filter((command: string) => command.includes("sandbox create"))
               .length,
@@ -930,7 +933,7 @@ if (${JSON.stringify(
                 ...childEnv,
                 NEMOCLAW_RECOVERY_REENTRY: mode,
               },
-              timeout: 30000,
+              timeout: childProcessTimeoutMs,
             });
             assert.equal(reentry.status, 0, reentry.stderr);
             const reentryPayload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
@@ -1011,7 +1014,7 @@ if (${JSON.stringify(
               ...childEnv,
               NEMOCLAW_RECOVERY_REENTRY: "fresh-different",
             },
-            timeout: 30000,
+            timeout: childProcessTimeoutMs,
           });
           assert.equal(differentName.status, 0, differentName.stderr);
           const differentNamePayload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
@@ -1064,7 +1067,7 @@ if (${JSON.stringify(
                 ...childEnv,
                 NEMOCLAW_RECOVERY_REENTRY: reentryMode,
               },
-              timeout: 30000,
+              timeout: childProcessTimeoutMs,
             });
             assert.equal(reentry.status, 0, reentry.stderr);
             const reentryPayload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));

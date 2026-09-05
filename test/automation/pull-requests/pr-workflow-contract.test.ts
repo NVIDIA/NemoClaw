@@ -486,7 +486,21 @@ describe("pull request and main workflow contracts", () => {
     ["pull_request", prWorkflow],
     ["main", mainWorkflow],
   ] as const)("keeps the %s CLI coverage shard budget aligned", (_workflowName, workflow) => {
-    expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
+    const shardJob = workflow.jobs["cli-test-shards"];
+    const mergeJob = workflow.jobs["cli-tests"];
+    const expectedShards = Array.from({ length: Number(cliShardCount) }, (_, index) => index + 1);
+
+    expect({
+      mergeShardCount: requiredWorkflowStep(mergeJob, "Merge CLI coverage").with?.["shard-count"],
+      shardCount: requiredWorkflowStep(shardJob, "Run CLI coverage shard").with?.["shard-count"],
+      shards: shardJob.strategy?.matrix?.shard,
+      timeoutMinutes: shardJob["timeout-minutes"],
+    }).toEqual({
+      mergeShardCount: cliShardCount,
+      shardCount: cliShardCount,
+      shards: expectedShards,
+      timeoutMinutes: cliShardTimeoutMinutes,
+    });
   });
 
   // source-shape-contract: security -- Credential-free workflow structure prevents pull request code from receiving Hugging Face or checkout credentials
