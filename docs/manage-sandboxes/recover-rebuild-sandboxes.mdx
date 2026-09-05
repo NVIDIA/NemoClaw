@@ -251,7 +251,8 @@ Rebuild creates the replacement from the base image selected during preflight, e
 
 <AgentOnly variant="hermes">
 
-For a legacy Hermes sandbox with no base-image hint or explicit image override, rebuild requires the release-pinned immutable Hermes base image.
+For a legacy Hermes sandbox with no base-image hint or `NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF` override, rebuild requires the release-pinned immutable Hermes base image.
+The override must use the official remote repository and resolve to a trusted immutable digest as described in the [NemoClaw CLI Commands Reference](/user-guide/hermes/reference/commands).
 If NemoClaw cannot resolve and validate that image, rebuild stops before it changes the sandbox or its registry.
 
 </AgentOnly>
