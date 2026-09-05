@@ -6,9 +6,9 @@ import {
   printAgentsPassthroughHelp,
   runAgentsPassthrough,
 } from "../../../lib/actions/sandbox/agents/passthrough";
-import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
+import { NemoClawPassthroughCommand } from "../../../lib/cli/nemoclaw-passthrough-command";
 
-export default class SandboxAgentsListCommand extends NemoClawCommand {
+export default class SandboxAgentsListCommand extends NemoClawPassthroughCommand {
   static id = "sandbox:agents:list";
   static customHelp = true;
   static strict = false;
