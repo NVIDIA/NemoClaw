@@ -99,11 +99,9 @@ describe("Ollama model inventory", () => {
   it("queries the given daemon for its inventory", () => {
     const capture = vi.fn((_command: readonly string[]) => tagsBody("llama3.2:1b"));
 
-    const inventory = probeOllamaEndpointInventory("host.docker.internal", capture);
+    const inventory = probeOllamaEndpointInventory("127.0.0.1", capture);
 
-    expect(commandUrl(capture.mock.calls[0][0])).toBe(
-      `http://host.docker.internal:${OLLAMA_PORT}/api/tags`,
-    );
+    expect(commandUrl(capture.mock.calls[0][0])).toBe(`http://127.0.0.1:${OLLAMA_PORT}/api/tags`);
     expect(inventory).toEqual(["llama3.2:1b"]);
     expect(ollamaInventoryContainsModel(inventory ?? [], "gemma4:26b")).toBe(false);
   });

@@ -937,16 +937,6 @@ describe("local inference helpers", () => {
     expect(parseOllamaList("NAME ID SIZE MODIFIED\n\n")).toEqual([]);
   });
 
-  it("returns no models when the Windows host reports an empty inventory", () => {
-    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const { capture, calls } = makeOllamaCapture([
-      { match: /\/api\/tags/, output: JSON.stringify({ models: [] }) },
-    ]);
-    expect(getOllamaModelOptions(capture)).toEqual([]);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].join(" ")).toContain(`http://${OLLAMA_HOST_DOCKER_INTERNAL}:11434/api/tags`);
-  });
-
   it("falls back to `ollama list` on loopback when /api/tags is empty", () => {
     setResolvedOllamaHost(OLLAMA_LOCALHOST);
     const { capture, calls } = makeOllamaCapture([
@@ -959,44 +949,6 @@ describe("local inference helpers", () => {
     ]);
     expect(getOllamaModelOptions(capture)).toEqual(["llama3.2:3b"]);
     expect(calls.some((argv) => argv.includes("list"))).toBe(true);
-  });
-
-  it("returns parsed tags without calling the loopback CLI", () => {
-    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const { capture, calls } = makeOllamaCapture([
-      {
-        match: /\/api\/tags/,
-        output: JSON.stringify({ models: [{ name: "qwen3.5:9b" }, { name: "gemma2:9b" }] }),
-      },
-    ]);
-    expect(getOllamaModelOptions(capture)).toEqual(["qwen3.5:9b", "gemma2:9b"]);
-    expect(calls).toHaveLength(1);
-  });
-
-  it("retries an invalid Windows-host inventory before returning installed models (#10259)", () => {
-    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const outputs = [
-      "",
-      "<html>proxy response</html>",
-      JSON.stringify({ models: [{ name: "qwen3.5:9b" }] }),
-    ];
-    const capture = vi.fn(() => outputs.shift() ?? "");
-    const sleeps: number[] = [];
-    const models = getOllamaModelOptions(capture, (milliseconds) => sleeps.push(milliseconds));
-    expect(models).toEqual(["qwen3.5:9b"]);
-    expect(capture).toHaveBeenCalledTimes(3);
-    expect(sleeps).toEqual([500, 1_000]);
-  });
-
-  it("rejects an invalid Windows-host inventory after bounded retries (#10259)", () => {
-    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const capture = vi.fn(() => "");
-    const sleeps: number[] = [];
-    expect(() =>
-      getOllamaModelOptions(capture, (milliseconds) => sleeps.push(milliseconds)),
-    ).toThrow(/Could not read Ollama models from host\.docker\.internal:11434 after 3 attempts/);
-    expect(capture).toHaveBeenCalledTimes(3);
-    expect(sleeps).toEqual([500, 1_000]);
   });
 
   it("prefers the default ollama model when present", () => {

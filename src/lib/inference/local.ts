@@ -150,6 +150,7 @@ export {
 const OLLAMA_REBINDING_PROBE_HOST = "rebinding.invalid";
 const WINDOWS_HOST_OLLAMA_PROBE_TIMEOUT_MS = 5_000;
 const WINDOWS_HOST_OLLAMA_DOCKER_PROBE_TIMEOUT_MS = 10_000;
+let windowsHostOllamaRouteProtectionProbeDepth = 0;
 
 /** Build a probe that must be rejected when Ollama validates the HTTP Host header. */
 export function getWindowsHostOllamaHostValidationCurlArgs(): string[] {
@@ -246,6 +247,18 @@ function probeWindowsHostOllamaLoopbackOnly(runCaptureImpl: RunCaptureFn): boole
 export function probeWindowsHostOllamaRouteProtection(
   runCaptureImpl: RunCaptureFn = runCapture,
   options: WindowsHostOllamaRouteProtectionOptions = {},
+): WindowsHostOllamaRouteProtection {
+  windowsHostOllamaRouteProtectionProbeDepth += 1;
+  try {
+    return probeWindowsHostOllamaRouteProtectionImpl(runCaptureImpl, options);
+  } finally {
+    windowsHostOllamaRouteProtectionProbeDepth -= 1;
+  }
+}
+
+function probeWindowsHostOllamaRouteProtectionImpl(
+  runCaptureImpl: RunCaptureFn,
+  options: WindowsHostOllamaRouteProtectionOptions,
 ): WindowsHostOllamaRouteProtection {
   const wslDetection = options.wslDetection ?? {};
   const runtime = options.runtime ?? detectContainerRuntimeFromDockerInfo();
@@ -532,6 +545,7 @@ export function prepareOllamaApiExecution(
     env?: NodeJS.ProcessEnv;
     operation?: string;
     prepareDockerEnvironment?: PrepareDockerEnvironmentFn;
+    runCaptureImpl?: RunCaptureFn;
   } = {},
 ): PreparedOllamaApiExecution {
   const [executable, ...args] = command;
@@ -549,6 +563,19 @@ export function prepareOllamaApiExecution(
     _resolvedOllamaHost = null;
     throw new Error(
       "Windows-host Ollama request blocked because Docker no longer targets the local default context",
+    );
+  }
+  if (
+    host === OLLAMA_HOST_DOCKER_INTERNAL &&
+    windowsHostOllamaRouteProtectionProbeDepth === 0 &&
+    !probeWindowsHostOllamaRouteProtection(options.runCaptureImpl ?? runCapture, {
+      env: sourceEnv,
+      prepareDockerEnvironment: options.prepareDockerEnvironment,
+    }).protected
+  ) {
+    _resolvedOllamaHost = null;
+    throw new Error(
+      "Windows-host Ollama request blocked because the protected route no longer validates",
     );
   }
   const prepared = (options.prepareDockerEnvironment ?? prepareIsolatedDockerEnvironment)();
@@ -582,6 +609,7 @@ export function createOllamaApiCapture(
       execution = prepareOllamaApiExecution(command, host, {
         env: options?.env,
         prepareDockerEnvironment,
+        runCaptureImpl: capture,
       });
     } catch (error) {
       if (options?.ignoreError) return "";
@@ -602,6 +630,7 @@ export function createOllamaApiCaptureEx(
   runCaptureExImpl: RunCaptureExFn = runCaptureEx,
   host: string = getResolvedOllamaHost(),
   prepareDockerEnvironment: PrepareDockerEnvironmentFn = prepareIsolatedDockerEnvironment,
+  routeProtectionCapture: RunCaptureFn = runCapture,
 ): RunCaptureExFn {
   return (command, options) => {
     let execution: PreparedOllamaApiExecution;
@@ -609,6 +638,7 @@ export function createOllamaApiCaptureEx(
       execution = prepareOllamaApiExecution(command, host, {
         env: options?.env,
         prepareDockerEnvironment,
+        runCaptureImpl: routeProtectionCapture,
       });
     } catch (error) {
       return {
@@ -721,6 +751,8 @@ export interface LocalProviderHealthProbeOptions {
   runCurlProbeImpl?: (argv: string[], opts?: CurlProbeOptions) => CurlProbeResult;
   /** Executes the translated Windows-host Docker probe. Injectable for transport tests. */
   ollamaRunCaptureExImpl?: RunCaptureExFn;
+  /** Executes the protection revalidation before a Windows-host probe. */
+  ollamaRunCaptureImpl?: RunCaptureFn;
   findReachableOllamaHostImpl?: () => string | null;
   /**
    * Lets callers that perform their own Ollama auth-proxy check avoid the
@@ -763,9 +795,15 @@ function runOllamaLocalCurlProbe(
   argv: string[],
   host: string,
   runCaptureExImpl: RunCaptureExFn = runCaptureEx,
+  routeProtectionCapture: RunCaptureFn = runCapture,
 ): CurlProbeResult {
   const command = ["curl", ...buildValidatedCurlCommandArgs(["-f", ...argv])];
-  const result = createOllamaApiCaptureEx(runCaptureExImpl, host)(command);
+  const result = createOllamaApiCaptureEx(
+    runCaptureExImpl,
+    host,
+    prepareIsolatedDockerEnvironment,
+    routeProtectionCapture,
+  )(command);
   const ok = result.exitCode === 0;
   const stderr = String(result.stderr ?? "");
   return {
@@ -1452,7 +1490,12 @@ export function probeLocalProviderHealth(
     options.runCurlProbeImpl ??
     (provider === "ollama-local" && resolvedOllamaHost === OLLAMA_HOST_DOCKER_INTERNAL
       ? (argv: string[]) =>
-          runOllamaLocalCurlProbe(argv, resolvedOllamaHost, options.ollamaRunCaptureExImpl)
+          runOllamaLocalCurlProbe(
+            argv,
+            resolvedOllamaHost,
+            options.ollamaRunCaptureExImpl,
+            options.ollamaRunCaptureImpl,
+          )
       : runLocalCurlProbe);
   let result: CurlProbeResult;
   if (managedBinding) {
@@ -2251,6 +2294,7 @@ export function runOllamaWarmup(
     options?: { ignoreError?: boolean; env?: NodeJS.ProcessEnv },
   ) => unknown = run,
   prepareDockerEnvironment: PrepareDockerEnvironmentFn = prepareIsolatedDockerEnvironment,
+  routeProtectionCapture: RunCaptureFn = runCapture,
 ): void {
   const windowsHost = getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL;
   const command = windowsHost
@@ -2261,6 +2305,7 @@ export function runOllamaWarmup(
     execution = prepareOllamaApiExecution(command, getResolvedOllamaHost(), {
       prepareDockerEnvironment,
       operation: `Windows-host Ollama warm-up for '${model}'`,
+      runCaptureImpl: routeProtectionCapture,
     });
   } catch (error) {
     console.error(`  ${error instanceof Error ? error.message : String(error)}`);
@@ -2313,7 +2358,12 @@ export function validateOllamaModel(
   options: { allowToolsIncompatible?: boolean } = {},
 ): ValidationResult {
   const capture = runCaptureImpl ?? runCapture;
-  const captureEx = createOllamaApiCaptureEx(runCaptureExImpl ?? runCaptureEx);
+  const captureEx = createOllamaApiCaptureEx(
+    runCaptureExImpl ?? runCaptureEx,
+    getResolvedOllamaHost(),
+    prepareIsolatedDockerEnvironment,
+    capture,
+  );
   const isSpark = isSparkImpl ?? (() => detectNvidiaPlatform() === "spark");
   const sparkHost = isSpark();
   const probeCmd = getOllamaProbeCommand(model);

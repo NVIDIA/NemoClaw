@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { delimiter, join } from "node:path";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   applyOllamaRuntimeContextWindow,
@@ -33,6 +33,7 @@ import { withOllamaModelOwnershipTransaction } from "./ollama/proxy";
 
 function respondsOnlyThroughDockerDesktop(apiPath: string, response: string) {
   return vi.fn((command: readonly string[]) => {
+    const rendered = command.join(" ");
     const expectedUrl = `http://host.docker.internal:11434${apiPath}`;
     const usesExpectedTransport =
       command[0] === "docker" &&
@@ -40,7 +41,34 @@ function respondsOnlyThroughDockerDesktop(apiPath: string, response: string) {
       command.includes("--rm") &&
       command.includes(CONTAINER_REACHABILITY_IMAGE) &&
       command.some((argument) => argument === expectedUrl);
-    return usesExpectedTransport ? response : "";
+    return rendered.includes("Get-NetTCPConnection")
+      ? "127.0.0.1"
+      : command.includes("Host: rebinding.invalid")
+        ? "403"
+        : rendered.includes("host.docker.internal:11434/api/tags")
+          ? apiPath === "/api/tags"
+            ? response
+            : JSON.stringify({ models: [] })
+          : usesExpectedTransport
+            ? response
+            : "";
+  });
+}
+
+function respondsWithOllamaInventorySequence(responses: string[]) {
+  return vi.fn<RunCaptureFn>((command, options) => {
+    const rendered = command.join(" ");
+    switch (true) {
+      case rendered.includes("Get-NetTCPConnection"):
+        return "127.0.0.1";
+      case command.includes("Host: rebinding.invalid"):
+        return "403";
+      case rendered.includes("host.docker.internal:11434/api/tags") &&
+        options?.timeout === 10_000:
+        return JSON.stringify({ models: [] });
+      default:
+        return responses.shift() ?? "";
+    }
   });
 }
 
@@ -53,11 +81,43 @@ function isolatedDockerEnvironment() {
 }
 
 describe("Windows-host Ollama transport", () => {
+  const originalPath = process.env.PATH;
+  let fakeDockerDir: string;
+
+  beforeAll(() => {
+    fakeDockerDir = mkdtempSync(join(tmpdir(), "nemoclaw-fake-docker-desktop-"));
+    const fakeDockerPath = join(fakeDockerDir, "docker");
+    writeFileSync(
+      fakeDockerPath,
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "info" ]; then',
+        "  printf '%s\\n' 'Operating System: Docker Desktop'",
+        "  exit 0",
+        "fi",
+        "exit 1",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(fakeDockerPath, 0o755);
+    process.env.PATH = `${fakeDockerDir}${delimiter}${originalPath ?? ""}`;
+  });
+
+  afterAll(() => {
+    Reflect.deleteProperty(process.env, "PATH");
+    Object.assign(process.env, originalPath === undefined ? {} : { PATH: originalPath });
+    rmSync(fakeDockerDir, { recursive: true, force: true });
+  });
+
   beforeEach(() => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     vi.stubEnv("DOCKER_CONTEXT", "default");
+    vi.stubEnv("DOCKER_HOST", "");
+    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     resetOllamaHostCache();
     resetOllamaRuntimeContextWindowAutoState();
@@ -509,6 +569,10 @@ describe("Windows-host Ollama transport", () => {
       const result = probeLocalProviderHealth("ollama-local", {
         findReachableOllamaHostImpl: () => OLLAMA_HOST_DOCKER_INTERNAL,
         loadOllamaProxyTokenImpl: () => null,
+        ollamaRunCaptureImpl: respondsOnlyThroughDockerDesktop(
+          "/api/tags",
+          JSON.stringify({ models: [] }),
+        ),
         ollamaRunCaptureExImpl: captureEx,
       });
 
@@ -531,7 +595,55 @@ describe("Windows-host Ollama transport", () => {
     );
 
     expect(getOllamaModelOptions(capture)).toEqual(["qwen3.5:9b"]);
-    expect(capture).toHaveBeenCalledOnce();
+    expect(capture).toHaveBeenCalledTimes(4);
+  });
+
+  it("returns no models when the Windows host reports an empty inventory", () => {
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const capture = respondsOnlyThroughDockerDesktop("/api/tags", JSON.stringify({ models: [] }));
+
+    expect(getOllamaModelOptions(capture)).toEqual([]);
+    expect(capture).toHaveBeenCalledTimes(4);
+  });
+
+  it("retries an invalid Windows-host inventory before returning installed models (#10259)", () => {
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const capture = respondsWithOllamaInventorySequence([
+      "",
+      "<html>proxy response</html>",
+      JSON.stringify({ models: [{ name: "qwen3.5:9b" }] }),
+    ]);
+    const sleeps: number[] = [];
+
+    expect(getOllamaModelOptions(capture, (milliseconds) => sleeps.push(milliseconds))).toEqual([
+      "qwen3.5:9b",
+    ]);
+    expect(
+      capture.mock.calls.filter(
+        ([command, options]) =>
+          command.some((argument) => argument.endsWith("/api/tags")) &&
+          options?.timeout !== 10_000,
+      ),
+    ).toHaveLength(3);
+    expect(sleeps).toEqual([500, 1_000]);
+  });
+
+  it("rejects an invalid Windows-host inventory after bounded retries (#10259)", () => {
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const capture = respondsWithOllamaInventorySequence(["", "", ""]);
+    const sleeps: number[] = [];
+
+    expect(() =>
+      getOllamaModelOptions(capture, (milliseconds) => sleeps.push(milliseconds)),
+    ).toThrow(/Could not read Ollama models from host\.docker\.internal:11434 after 3 attempts/);
+    expect(
+      capture.mock.calls.filter(
+        ([command, options]) =>
+          command.some((argument) => argument.endsWith("/api/tags")) &&
+          options?.timeout !== 10_000,
+      ),
+    ).toHaveLength(3);
+    expect(sleeps).toEqual([500, 1_000]);
   });
 
   it("validates a Windows-host model through Docker Desktop (#10553)", () => {
@@ -564,18 +676,23 @@ describe("Windows-host Ollama transport", () => {
   it("validates health and container reachability through Docker Desktop (#10553)", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
     const capture = vi.fn((command: readonly string[]) => {
+      const rendered = command.join(" ");
       const usesDockerDesktop =
         command[0] === "docker" &&
         command[1] === "run" &&
         command[2] === "--rm" &&
         command.includes(CONTAINER_REACHABILITY_IMAGE);
       const endpoint = command.find((argument) => argument.startsWith("http://"));
-      return usesDockerDesktop &&
-        (endpoint === "http://host.docker.internal:11434/api/tags" ||
-          endpoint === "http://host.openshell.internal:11434/api/tags" ||
-          endpoint === "http://host.openshell.internal:11435/api/tags")
-        ? JSON.stringify({ models: [] })
-        : "";
+      return rendered.includes("Get-NetTCPConnection")
+        ? "127.0.0.1"
+        : command.includes("Host: rebinding.invalid")
+          ? "403"
+          : usesDockerDesktop &&
+              (endpoint === "http://host.docker.internal:11434/api/tags" ||
+                endpoint === "http://host.openshell.internal:11434/api/tags" ||
+                endpoint === "http://host.openshell.internal:11435/api/tags")
+            ? JSON.stringify({ models: [] })
+            : "";
     });
 
     const result = validateLocalProvider(
@@ -598,11 +715,16 @@ describe("Windows-host Ollama transport", () => {
 
   it("rejects Windows-host health when the container route is unreachable", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const capture = vi.fn((command: readonly string[]) =>
-      command.some((argument) => argument === "http://host.docker.internal:11434/api/tags")
-        ? JSON.stringify({ models: [] })
-        : "",
-    );
+    const capture = vi.fn((command: readonly string[]) => {
+      const rendered = command.join(" ");
+      return rendered.includes("Get-NetTCPConnection")
+        ? "127.0.0.1"
+        : command.includes("Host: rebinding.invalid")
+          ? "403"
+          : command.some((argument) => argument === "http://host.docker.internal:11434/api/tags")
+            ? JSON.stringify({ models: [] })
+            : "";
+    });
 
     const result = validateLocalProvider(
       "ollama-local",
@@ -647,7 +769,7 @@ describe("Windows-host Ollama transport", () => {
       }),
     ).toEqual({ ok: true });
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
-    expect(capture).toHaveBeenCalledOnce();
+    expect(capture).toHaveBeenCalledTimes(4);
   });
 
   it("checks model capability metadata through Docker Desktop (#10553)", () => {
@@ -661,7 +783,7 @@ describe("Windows-host Ollama transport", () => {
       source: "api",
       supportsTools: true,
     });
-    expect(capture).toHaveBeenCalledOnce();
+    expect(capture).toHaveBeenCalledTimes(4);
   });
 
   it.each([
@@ -702,12 +824,60 @@ describe("Windows-host Ollama transport", () => {
     }
   });
 
+  it("rejects a cached Windows route when Host validation changes before a model probe", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-protection-change-"));
+    let hostValidationEnabled = true;
+    const capture = vi.fn<RunCaptureFn>((command) => {
+      const rendered = command.join(" ");
+      switch (true) {
+        case rendered.includes("Get-NetTCPConnection"):
+          return "127.0.0.1";
+        case command.includes("Host: rebinding.invalid"):
+          return hostValidationEnabled ? "403" : "200";
+        case rendered.includes("host.docker.internal:11434/api/tags"):
+          return JSON.stringify({ models: [] });
+        case rendered.includes("host.docker.internal:11434/api/show"):
+          return JSON.stringify({ capabilities: ["tools"] });
+        default:
+          return "";
+      }
+    });
+
+    try {
+      expect(
+        findReachableOllamaHost(capture, { isWsl: true }, stateRoot, {
+          runtime: "docker-desktop",
+          prepareDockerEnvironment: isolatedDockerEnvironment,
+        }),
+      ).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+      hostValidationEnabled = false;
+      capture.mockClear();
+
+      expect(probeOllamaModelCapabilities("qwen3.5:9b", capture)).toMatchObject({
+        source: "unknown",
+        supportsTools: null,
+      });
+      expect(
+        capture.mock.calls.some(([command]) =>
+          command.some((argument) => argument.endsWith("/api/show")),
+        ),
+      ).toBe(false);
+      expect(getResolvedOllamaHost()).toBe("127.0.0.1");
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
   it("isolates Docker credentials for Windows-host API requests", () => {
     const cleanup = vi.fn(() => ({ ok: true as const }));
-    const capture = vi.fn((_command: readonly string[], options?: { env?: NodeJS.ProcessEnv }) =>
-      options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
-        ? JSON.stringify({ models: [] })
-        : "",
+    const capture = vi.fn((command: readonly string[], options?: { env?: NodeJS.ProcessEnv }) =>
+      command.join(" ").includes("Get-NetTCPConnection")
+        ? "127.0.0.1"
+        : command.includes("Host: rebinding.invalid")
+          ? "403"
+          : options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
+            ? JSON.stringify({ models: [] })
+            : "",
     );
     const isolatedCapture = createOllamaApiCapture(capture, OLLAMA_HOST_DOCKER_INTERNAL, () => ({
       env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
@@ -727,19 +897,28 @@ describe("Windows-host Ollama transport", () => {
         }),
       },
     );
-    expect(cleanup).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledTimes(3);
   });
 
   it("runs Windows-host warm-up with an isolated Docker client", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
     const cleanup = vi.fn(() => ({ ok: true as const }));
     const run = vi.fn();
+    const protectionCapture = respondsOnlyThroughDockerDesktop(
+      "/api/tags",
+      JSON.stringify({ models: [] }),
+    );
 
-    runOllamaWarmup("qwen3.5:9b", run, () => ({
-      env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
-      isolatedCredentialConfig: true,
-      cleanup,
-    }));
+    runOllamaWarmup(
+      "qwen3.5:9b",
+      run,
+      () => ({
+        env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+        isolatedCredentialConfig: true,
+        cleanup,
+      }),
+      protectionCapture,
+    );
 
     expect(run).toHaveBeenCalledWith(
       expect.arrayContaining([
@@ -757,7 +936,7 @@ describe("Windows-host Ollama transport", () => {
         }),
       },
     );
-    expect(cleanup).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledTimes(3);
   });
 
   it("keeps the Hermes context-window check fail-closed on an invalid Docker response (#10553)", () => {

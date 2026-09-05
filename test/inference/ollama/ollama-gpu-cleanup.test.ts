@@ -7,6 +7,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../../../src/lib/adapters/docker", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/adapters/docker/index.ts")>()),
+  detectContainerRuntimeFromDockerInfo: vi.fn(() => "docker-desktop"),
+}));
+vi.mock("../../../src/lib/platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/platform.ts")>()),
+  containerCanReachHostLoopback: vi.fn(() => true),
+}));
+
 import {
   findReachableOllamaHost,
   loadPersistedOllamaHost,
@@ -63,6 +72,25 @@ const WINDOWS_WSL_DETECTION = {
   env: { DOCKER_CONTEXT: "default" },
 } as const;
 
+const windowsRouteProtectionCapture = (command: readonly string[]): string => {
+  const rendered = command.join(" ");
+  return rendered.includes("Get-NetTCPConnection")
+    ? "127.0.0.1"
+    : command.includes("Host: rebinding.invalid")
+      ? "403"
+      : JSON.stringify({ models: [] });
+};
+
+const prepareProtectedOllamaApiExecution: typeof prepareOllamaApiExecution = (
+  command,
+  host,
+  options,
+) =>
+  prepareOllamaApiExecution(command, host, {
+    ...options,
+    runCaptureImpl: windowsRouteProtectionCapture,
+  });
+
 function withMockedSpawnSync<T>(
   responder: (call: SpawnCall) => SpawnSyncReturns<string>,
   fn: (calls: SpawnCall[], modules: OllamaModules) => T | Promise<T>,
@@ -82,6 +110,7 @@ function withMockedSpawnSync<T>(
     unloadOllamaModelsImpl(onlyModels, {
       ...options,
       findReachableOllamaHost: () => ollamaHost,
+      prepareOllamaApiExecution: prepareProtectedOllamaApiExecution,
       spawnSync,
     });
   return fn(calls, { unloadOllamaModels });
@@ -151,6 +180,7 @@ describe("Ollama GPU cleanup", () => {
             prepareDockerEnvironment: isolatedDockerEnvironment,
           }),
         ollamaHostStateRoot: stateRoot,
+        prepareOllamaApiExecution: prepareProtectedOllamaApiExecution,
         sleep: () => {},
         spawnSync,
       });
@@ -298,6 +328,7 @@ describe("Ollama GPU cleanup", () => {
       ) =>
         prepareOllamaApiExecution(command, host, {
           ...options,
+          runCaptureImpl: windowsRouteProtectionCapture,
           prepareDockerEnvironment: () => ({
             env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
             isolatedCredentialConfig: true,
@@ -318,7 +349,7 @@ describe("Ollama GPU cleanup", () => {
       "http://host.docker.internal:11434/api/generate",
       "http://host.docker.internal:11434/api/ps",
     ]);
-    expect(cleanup).toHaveBeenCalledTimes(3);
+    expect(cleanup).toHaveBeenCalledTimes(9);
   });
 
   it("unloads every running model through the Ollama API", async () => {
