@@ -85,7 +85,7 @@ const ENDPOINT_RECOVERY: Record<InferenceEndpointStatus, string> = {
   unavailable:
     "Restore registry access or record the trusted endpoint and API family again, then rerun inference get.",
   "registry-corrupt":
-    "Back up and remove the corrupt sandbox registry file, then rerun inference get.",
+    "Restore a known-good sandbox registry backup, then rerun inference get; if no valid backup exists, stop and obtain recovery support.",
   "registry-unreadable":
     "Repair ownership and permissions for the NemoClaw state directory or use a writable HOME, then rerun inference get.",
   invalid:
