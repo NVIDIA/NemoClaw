@@ -100,15 +100,13 @@ function makeOllamaDeps(overrides: Partial<SetupNimOllamaDeps> = {}): SetupNimOl
       model: "qwen3:8b",
       allowToolsIncompatible: false,
     }),
-    printOllamaExposureWarning: () => {},
-    switchToWindowsOllamaHost: () => {},
     installOllamaOnWindowsHost: async () => ({
       ok: true,
       path: "C:/Ollama/ollama.exe",
       commit: () => {},
       rollback: () => {},
     }),
-    setupWindowsOllamaWith0000Binding: () => ({
+    setupWindowsOllamaLoopbackBinding: () => ({
       ok: true,
       commit: () => {},
       rollback: () => {},

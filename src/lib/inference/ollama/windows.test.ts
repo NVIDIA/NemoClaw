@@ -3,12 +3,16 @@
 
 import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const WINDOWS_DIST_PATH = require.resolve("./windows");
+const DOCKER_ADAPTER_PATH = require.resolve("../../adapters/docker/runtime");
+const PLATFORM_PATH = require.resolve("../../platform");
 const RUNNER_PATH = require.resolve("../../runner");
 const LOCAL_INFERENCE_PATH = require.resolve("../local");
+const WINDOWS_OLLAMA_TAGS_URL = "http://host.docker.internal:11434/api/tags";
+const REBINDING_PROBE_HOST_HEADER = "Host: rebinding.invalid";
 
 function commandText(command: string | string[]): string {
   return Array.isArray(command) ? command.join(" ") : String(command);
@@ -94,7 +98,7 @@ function createWindowsSetupBoundary(options: {
     }),
     persistBinding: vi.fn(() => {
       state.events.push("persist");
-      state.userHost = "0.0.0.0:11434";
+      state.userHost = "127.0.0.1:11434";
       return true;
     }),
     stopProcesses: vi.fn(() => {
@@ -159,10 +163,19 @@ function createWindowsSetupBoundary(options: {
 function loadWindowsOllamaWithMocks(
   run: ReturnType<typeof vi.fn>,
   runCapture: ReturnType<typeof vi.fn>,
-  spawnProcess?: ReturnType<typeof vi.fn>,
+  spawnImpl?: ReturnType<typeof vi.fn>,
+  observerOverrides: {
+    detectContainerRuntimeFromDockerInfo?: ReturnType<typeof vi.fn>;
+    isWsl?: ReturnType<typeof vi.fn>;
+  } = {},
 ) {
-  const childProcess = require("node:child_process");
+  const dockerAdapter = require(DOCKER_ADAPTER_PATH);
+  const platform = require(PLATFORM_PATH);
   const runner = require(RUNNER_PATH);
+  const childProcess = require("child_process");
+  const originalDetectContainerRuntimeFromDockerInfo =
+    dockerAdapter.detectContainerRuntimeFromDockerInfo;
+  const originalIsWsl = platform.isWsl;
   const originalSpawn = childProcess.spawn;
   const originalRun = runner.run;
   const originalRunCapture = runner.runCapture;
@@ -170,17 +183,23 @@ function loadWindowsOllamaWithMocks(
   const atomicsWaitStub = vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
 
   delete require.cache[WINDOWS_DIST_PATH];
-  if (spawnProcess) childProcess.spawn = spawnProcess;
+  dockerAdapter.detectContainerRuntimeFromDockerInfo =
+    observerOverrides.detectContainerRuntimeFromDockerInfo ?? vi.fn(() => "docker-desktop");
+  platform.isWsl = observerOverrides.isWsl ?? vi.fn(() => true);
   runner.run = run;
   runner.runCapture = runCapture;
+  childProcess.spawn = spawnImpl ?? originalSpawn;
 
   return {
     windows: require(WINDOWS_DIST_PATH),
     restore() {
       delete require.cache[WINDOWS_DIST_PATH];
-      childProcess.spawn = originalSpawn;
+      dockerAdapter.detectContainerRuntimeFromDockerInfo =
+        originalDetectContainerRuntimeFromDockerInfo;
+      platform.isWsl = originalIsWsl;
       runner.run = originalRun;
       runner.runCapture = originalRunCapture;
+      childProcess.spawn = originalSpawn;
       atomicsWaitStub.mockRestore();
     },
   };
@@ -200,7 +219,6 @@ function captureDefaultWindowsRollbackInvocation(userHost: string | null) {
   const launchFailure = { status: 1, stdout: "", stderr: "launch unavailable" };
   const runResults = [
     hostSnapshotRun(userHost, watcherPath, daemonPath),
-    successfulRun(),
     launchFailure,
     launchFailure,
     launchFailure,
@@ -214,11 +232,15 @@ function captureDefaultWindowsRollbackInvocation(userHost: string | null) {
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   const { windows, restore } = loadWindowsOllamaWithMocks(
     run,
-    vi.fn(() => ""),
+    vi.fn((command: string | string[]) =>
+      commandText(command).includes("SetEnvironmentVariable('OLLAMA_HOST'")
+        ? "127.0.0.1:11434"
+        : "",
+    ),
   );
 
   try {
-    expect(windows.setupWindowsOllamaWith0000Binding({ installedPath: daemonPath })).toEqual({
+    expect(windows.setupWindowsOllamaLoopbackBinding({ installedPath: daemonPath })).toEqual({
       ok: false,
       reason: "readiness",
     });
@@ -255,7 +277,7 @@ function createWindowsInstallBoundary(options: {
     ...boundary.operations,
     startInstaller: vi.fn(() => {
       boundary.state.events.push("install");
-      boundary.state.userHost = "0.0.0.0:11434";
+      boundary.state.userHost = "127.0.0.1:11434";
       boundary.state.watcherRunning = true;
       boundary.state.daemonRunning = true;
       return { completion, cancelAndWait: cancelInstaller };
@@ -273,6 +295,15 @@ function createWindowsInstallBoundary(options: {
 }
 
 describe("Windows Ollama helper", () => {
+  beforeEach(() => {
+    vi.stubEnv("DOCKER_CONTEXT", "default");
+    vi.stubEnv("DOCKER_HOST", "");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("terminates the PowerShell wrapper when cancellation precedes the PID sentinel", async () => {
     const child = createMockChildProcess();
     const spawnProcess = vi.fn(() => child);
@@ -345,7 +376,8 @@ describe("Windows Ollama helper", () => {
     expect(diagnostic).toContain("nemoclaw onboard");
     expect(diagnostic).toContain("isolated Docker client configuration");
     expect(diagnostic).toContain("removes that temporary configuration afterward");
-    expect(diagnostic).not.toContain("docker run");
+    expect(diagnostic).toContain("docker run");
+    expect(diagnostic).toContain(REBINDING_PROBE_HOST_HEADER);
   });
 
   it("describes a snapshot inspection failure without claiming a startup timeout", () => {
@@ -379,13 +411,17 @@ describe("Windows Ollama helper", () => {
       validResponseServed = true;
       return JSON.stringify({ models: [] });
     };
-    const runCapture = vi.fn((command: string | string[]) =>
-      isDockerTagsRequest(command)
-        ? invalidResponseServed
-          ? serveValidResponse()
-          : serveInvalidResponse()
-        : "",
-    );
+    const runCapture = vi.fn((command: string | string[]) => {
+      return commandText(command).includes("Get-NetTCPConnection")
+        ? "127.0.0.1"
+        : Array.isArray(command) && command.includes(REBINDING_PROBE_HOST_HEADER)
+          ? "403"
+          : isDockerTagsRequest(command)
+            ? invalidResponseServed
+              ? serveValidResponse()
+              : serveInvalidResponse()
+            : "";
+    });
     localInference.resetOllamaHostCache();
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
@@ -410,6 +446,69 @@ describe("Windows Ollama helper", () => {
     }
   });
 
+  it("rejects readiness when the active runtime changes away from Docker Desktop", () => {
+    const detectContainerRuntimeFromDockerInfo = vi.fn(() => "docker");
+    const currentIsWsl = vi.fn(() => true);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn(), undefined, {
+      detectContainerRuntimeFromDockerInfo,
+      isWsl: currentIsWsl,
+    });
+
+    try {
+      expect(
+        windows.awaitWindowsOllamaReady({
+          delay: vi.fn(),
+          prepareDockerEnvironment: () => ({
+            env: {},
+            isolatedCredentialConfig: false,
+            cleanup: () => ({ ok: true }),
+          }),
+        }),
+      ).toBe(false);
+    } finally {
+      restore();
+      logSpy.mockRestore();
+    }
+
+    expect(detectContainerRuntimeFromDockerInfo).toHaveBeenCalledTimes(15);
+    expect(currentIsWsl).toHaveBeenCalledTimes(15);
+  });
+
+  it("rejects a reachable daemon that accepts a rebinding Host header", () => {
+    const runCapture = vi.fn((command: string | string[]) => {
+      return commandText(command).includes("Get-NetTCPConnection")
+        ? "127.0.0.1"
+        : Array.isArray(command) && command.includes(REBINDING_PROBE_HOST_HEADER)
+          ? "200"
+          : isDockerTagsRequest(command)
+            ? JSON.stringify({ models: [] })
+            : "";
+    });
+    const localInference = require(LOCAL_INFERENCE_PATH);
+    localInference.resetOllamaHostCache();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), runCapture);
+
+    try {
+      expect(
+        windows.awaitWindowsOllamaReady({
+          delay: vi.fn(),
+          prepareDockerEnvironment: () => ({
+            env: {},
+            isolatedCredentialConfig: false,
+            cleanup: () => ({ ok: true }),
+          }),
+        }),
+      ).toBe(false);
+      expect(localInference.getResolvedOllamaHost()).toBe("127.0.0.1");
+    } finally {
+      localInference.resetOllamaHostCache();
+      restore();
+      logSpy.mockRestore();
+    }
+  });
+
   it("falls back from a stale watcher to the verified executable and selects Windows route", () => {
     const watcherPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama app.exe";
     const installedPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe";
@@ -427,12 +526,11 @@ describe("Windows Ollama helper", () => {
     const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
 
     try {
-      const result = windows.setupWindowsOllamaWith0000Binding(
+      const result = windows.setupWindowsOllamaLoopbackBinding(
         { installedPath },
         boundary.operations,
       );
       expect(result.ok).toBe(true);
-      if (!result.ok) throw new Error("expected successful Windows Ollama setup");
       result.commit();
       expect(boundary.state.events).toEqual([
         "snapshot",
@@ -467,7 +565,7 @@ describe("Windows Ollama helper", () => {
 
     try {
       expect(
-        windows.setupWindowsOllamaWith0000Binding(
+        windows.setupWindowsOllamaLoopbackBinding(
           { installedPath: daemonPath },
           boundary.operations,
         ),
@@ -498,7 +596,7 @@ describe("Windows Ollama helper", () => {
     const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
 
     try {
-      expect(windows.setupWindowsOllamaWith0000Binding({}, boundary.operations)).toEqual({
+      expect(windows.setupWindowsOllamaLoopbackBinding({}, boundary.operations)).toEqual({
         ok: false,
         reason: "readiness",
       });
@@ -520,7 +618,7 @@ describe("Windows Ollama helper", () => {
   it("keeps a credential-bearing prior binding out of Windows rollback argv", () => {
     const priorHost = "https://operator:private-token@ollama.example:11434";
     const { daemonPath, run, watcherPath } = captureDefaultWindowsRollbackInvocation(priorHost);
-    expect(run).toHaveBeenCalledTimes(6);
+    expect(run).toHaveBeenCalledTimes(5);
     const rollbackCall = run.mock.calls.at(-1);
     expect(rollbackCall).toBeDefined();
     const [rollbackCommand, rollbackOptions] = rollbackCall!;
@@ -582,6 +680,7 @@ describe("Windows Ollama helper", () => {
     expect(boundary.state.daemonRunning).toBe(false);
     expect(boundary.state.events).toEqual([
       "snapshot",
+      "persist",
       "install",
       "resolve-path",
       "stop-replacement",
@@ -642,7 +741,7 @@ describe("Windows Ollama helper", () => {
     try {
       const installation = windows.installOllamaOnWindowsHost({}, boundary.operations);
       await vi.waitFor(() => expect(boundary.cancelInstaller).toHaveBeenCalledOnce());
-      expect(boundary.state.events).toEqual(["snapshot", "install", "cancel-installer"]);
+      expect(boundary.state.events).toEqual(["snapshot", "persist", "install", "cancel-installer"]);
       expect(boundary.operations.rollbackSnapshot).not.toHaveBeenCalled();
       expect(boundary.operations.preserveInterrupt).not.toHaveBeenCalled();
 
@@ -656,6 +755,7 @@ describe("Windows Ollama helper", () => {
 
     expect(boundary.state.events).toEqual([
       "snapshot",
+      "persist",
       "install",
       "cancel-installer",
       "stop-replacement",
@@ -694,7 +794,7 @@ describe("Windows Ollama helper", () => {
     expect(boundary.cancelInstaller).toHaveBeenCalledOnce();
     expect(boundary.operations.rollbackSnapshot).not.toHaveBeenCalled();
     expect(boundary.operations.preserveInterrupt).not.toHaveBeenCalled();
-    expect(boundary.state.events).toEqual(["snapshot", "install", "cancel-installer"]);
+    expect(boundary.state.events).toEqual(["snapshot", "persist", "install", "cancel-installer"]);
   });
 
   it("reports manual recovery when install rollback fails", async () => {
@@ -739,7 +839,7 @@ describe("Windows Ollama helper", () => {
 
     try {
       expect(
-        windows.setupWindowsOllamaWith0000Binding(
+        windows.setupWindowsOllamaLoopbackBinding(
           { installedPath: daemonPath },
           boundary.operations,
         ),
@@ -779,7 +879,7 @@ describe("Windows Ollama helper", () => {
 
       try {
         expect(() =>
-          windows.setupWindowsOllamaWith0000Binding(
+          windows.setupWindowsOllamaLoopbackBinding(
             { installedPath: daemonPath },
             boundary.operations,
           ),
@@ -809,13 +909,18 @@ describe("Windows Ollama helper", () => {
   it("isolates Docker credentials while waiting for the Windows-host daemon", () => {
     const run = vi.fn();
     const cleanup = vi.fn(() => ({ ok: true as const }));
-    let credentialFreeDockerRequestObserved = false;
     const runCapture = vi.fn(
       (command: string | string[], options?: { env?: NodeJS.ProcessEnv }) => {
-        credentialFreeDockerRequestObserved =
-          isDockerTagsRequest(command) &&
-          options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker";
-        return credentialFreeDockerRequestObserved ? JSON.stringify({ models: [] }) : "";
+        return commandText(command).includes("Get-NetTCPConnection")
+          ? "127.0.0.1"
+          : !Array.isArray(command) ||
+              options?.env?.DOCKER_CONFIG !== "/tmp/credential-free-docker"
+            ? ""
+            : command.includes(REBINDING_PROBE_HOST_HEADER)
+              ? "403"
+              : isDockerTagsRequest(command)
+                ? JSON.stringify({ models: [] })
+                : "";
       },
     );
     const localInference = require(LOCAL_INFERENCE_PATH);
@@ -834,8 +939,16 @@ describe("Windows Ollama helper", () => {
         }),
       ).toBe(true);
       expect(localInference.getResolvedOllamaHost()).toBe("host.docker.internal");
-      expect(credentialFreeDockerRequestObserved).toBe(true);
-      expect(cleanup).toHaveBeenCalledOnce();
+      expect(runCapture).toHaveBeenCalledWith(
+        expect.arrayContaining(["docker", "run", "--rm", WINDOWS_OLLAMA_TAGS_URL]),
+        expect.objectContaining({
+          env: expect.objectContaining({
+            DOCKER_CONFIG: "/tmp/credential-free-docker",
+            DOCKER_CONTEXT: "default",
+          }),
+        }),
+      );
+      expect(cleanup).toHaveBeenCalledTimes(2);
     } finally {
       localInference.resetOllamaHostCache();
       restore();

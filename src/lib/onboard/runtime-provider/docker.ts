@@ -538,6 +538,7 @@ export function createDockerRuntimeProviderBundle(
       supported: true,
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
+      ownsHostReadiness: false,
       prepareHostRuntime: (input) => {
         const bindAddress = parseGatewayBindAddress(
           "NEMOCLAW_GATEWAY_BIND_ADDRESS",
@@ -704,6 +705,7 @@ export function createKubernetesRuntimeProviderBundle(
       supported: true,
       launcher: "openshell",
       inspectLegacyContainer: true,
+      ownsHostReadiness: false,
       prepareHostRuntime: () => {
         throw new Error("The Kubernetes provider does not launch a host-managed gateway.");
       },

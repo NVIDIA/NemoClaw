@@ -23,6 +23,7 @@ describe("OpenShell gateway drift preflight", () => {
   afterEach(() => {
     for (const spy of spies) spy.mockRestore();
     spies = [];
+    vi.unstubAllEnvs();
   });
 
   it("parses OpenShell cluster image versions", () => {
@@ -118,6 +119,71 @@ describe("OpenShell gateway drift preflight", () => {
     });
     expect(isGatewayClusterActiveForGateway("nemoclaw", { expectedGatewayPort: 8080 })).toBe(true);
     expect(isGatewayClusterActiveForGateway("nemoclaw", { expectedGatewayPort: 9090 })).toBe(false);
+  });
+
+  it("pins gateway health probes to the frozen OpenShell target (#10514)", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.example.invalid");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    const openshellRuntime = requireDist("./runtime.js");
+    const docker = requireDist("../docker/inspect.js");
+    const captureOpenshell = vi
+      .spyOn(openshellRuntime, "captureOpenshell")
+      .mockReturnValueOnce({
+        status: 0,
+        output: "Server Status\n\n  Gateway: nemoclaw-9090\n  Status: Connected",
+      })
+      .mockReturnValue({
+        status: 0,
+        output:
+          "Gateway Info\n\n  Gateway: nemoclaw-9090\n  Gateway endpoint: https://127.0.0.1:9090",
+      });
+    const inspectContainer = vi
+      .spyOn(docker, "dockerContainerInspectFormat")
+      .mockReturnValueOnce("true")
+      .mockReturnValue('{"30051/tcp":[{"HostIp":"0.0.0.0","HostPort":"9090"}]}');
+    spies.push(
+      captureOpenshell,
+      inspectContainer,
+    );
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-9090",
+      localTlsDir: "/authority/tls",
+      workspace: "default",
+    };
+
+    expect(
+      isGatewayClusterActiveForGateway(runtimeSelection.gatewayName, {
+        expectedGatewayPort: 9090,
+        runtimeSelection,
+      }),
+    ).toBe(true);
+    const selectedProbeOptions = expect.objectContaining({
+      env: expect.objectContaining({
+        OPENSHELL_GATEWAY: "nemoclaw-9090",
+        OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+        OPENSHELL_WORKSPACE: "default",
+      }),
+      replaceEnv: true,
+    });
+    expect(captureOpenshell).toHaveBeenNthCalledWith(1, ["status"], selectedProbeOptions);
+    expect(captureOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["gateway", "info", "-g", "nemoclaw-9090"],
+      selectedProbeOptions,
+    );
+    expect(captureOpenshell).toHaveBeenNthCalledWith(
+      3,
+      ["gateway", "info"],
+      selectedProbeOptions,
+    );
+    const firstProbeOptions = captureOpenshell.mock.calls[0]?.[1] as
+      | { env?: Record<string, string> }
+      | undefined;
+    const selectedEnv = firstProbeOptions?.env;
+    expect(selectedEnv).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(selectedEnv).not.toHaveProperty("OPENSHELL_TOKEN");
   });
 
   it("ignores stale cluster containers whose published port is not the active gateway endpoint", () => {

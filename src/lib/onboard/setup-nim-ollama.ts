@@ -52,12 +52,10 @@ type SetupNimOllamaDeps = {
     | { outcome: "back-to-selection" }
     | { outcome: "selected"; model: string; allowToolsIncompatible: boolean }
   >;
-  printOllamaExposureWarning: () => void;
-  switchToWindowsOllamaHost: () => void;
   installOllamaOnWindowsHost: (args: {
     beforeRestart: () => void;
   }) => Promise<WindowsOllamaInstallResult>;
-  setupWindowsOllamaWith0000Binding: (args: {
+  setupWindowsOllamaLoopbackBinding: (args: {
     announceStop?: boolean;
     installedPath?: string | null;
   }) => WindowsOllamaSetupResult;
@@ -87,7 +85,6 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     gpu: any,
     selectedKey: string,
     requestedModel: string | null,
-    windowsOllamaReachable: boolean,
     winOllamaLoopbackOnly: boolean,
     winOllamaInstalledPath: string | null,
     state: SetupNimSelectionState,
@@ -205,7 +202,6 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     gpu: any,
     selectedKey: string,
     requestedModel: string | null,
-    windowsOllamaReachable: boolean,
     winOllamaLoopbackOnly: boolean,
     winOllamaInstalledPath: string | null,
     state: SetupNimSelectionState,
@@ -213,18 +209,13 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     if (!deps.checkOllamaPortsOrWarn({ isNonInteractive: deps.isNonInteractive })) {
       return "retry-selection";
     }
-    const lockedModel = preflightOllamaRoute(state, requestedModel, null);
     const isInstall = selectedKey === "install-windows-ollama";
-    const isSwitch = !isInstall && windowsOllamaReachable;
-    const isRestart = !isInstall && !isSwitch && winOllamaLoopbackOnly;
-    if (!isSwitch) deps.printOllamaExposureWarning();
+    const isRestart = !isInstall;
     const promptMsg = isInstall
-      ? "  Install and launch Ollama on the Windows host with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: "
-      : isSwitch
-        ? "  Use Ollama on the Windows host (already running)? [Y/n]: "
-        : isRestart
-          ? "  Stop the running Ollama and restart it with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: "
-          : "  Launch Ollama on the Windows host with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: ";
+      ? "  Install and launch Ollama on the Windows host with OLLAMA_HOST=127.0.0.1:11434? [Y/n]: "
+      : winOllamaLoopbackOnly
+        ? "  Restart loopback-only Ollama and verify Host header validation? [Y/n]: "
+        : "  Stop the running Ollama and restart it with OLLAMA_HOST=127.0.0.1:11434? [Y/n]: ";
     const proceed = deps.isNonInteractive()
       ? true
       : !(await deps.prompt(promptMsg)).trim().toLowerCase().startsWith("n");
@@ -232,10 +223,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
 
     let mutationSession: { commit: () => void; rollback: () => void | Promise<void> } | null = null;
     try {
-      if (isSwitch) {
-        state.revalidateSandboxIdentity?.("switch to the Windows Ollama runtime");
-        deps.switchToWindowsOllamaHost();
-      } else if (isInstall) {
+      if (isInstall) {
         state.revalidateSandboxIdentity?.("install the Windows Ollama runtime");
         const installResult = await deps.installOllamaOnWindowsHost({
           beforeRestart: () =>
@@ -258,7 +246,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
         console.log(`  ✓ Using Ollama on host.docker.internal:${deps.OLLAMA_PORT}`);
       } else {
         state.revalidateSandboxIdentity?.("start the Windows Ollama runtime");
-        const setupResult = deps.setupWindowsOllamaWith0000Binding({
+        const setupResult = deps.setupWindowsOllamaLoopbackBinding({
           announceStop: isRestart,
           installedPath: winOllamaInstalledPath || undefined,
         });
@@ -275,6 +263,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
         console.log(`  ✓ Using Ollama on host.docker.internal:${deps.OLLAMA_PORT}`);
       }
 
+      const lockedModel = preflightOllamaRoute(state, requestedModel, null);
       const result = await selectModel(gpu, state, requestedModel, null, lockedModel);
       if (result === "retry-selection") {
         await mutationSession?.rollback();

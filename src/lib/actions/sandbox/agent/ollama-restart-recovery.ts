@@ -20,6 +20,7 @@ import { buildValidatedCurlCommandArgs } from "../../../adapters/http/curl-args"
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
 import {
   describeModelInventory,
+  findReachableOllamaHost,
   getResolvedOllamaHost,
   ollamaInventoryContainsModel,
   OLLAMA_HOST_DOCKER_INTERNAL,
@@ -60,6 +61,7 @@ export interface OllamaRestartRecoveryDeps extends OllamaRestartRecoveryOptions 
   signalSource?: SandboxExecSignalSource;
   spawnRecoveryChild?: OllamaRecoverySpawner;
   now?: () => number;
+  revalidateOllamaHost?: () => string | null;
 }
 
 export type OllamaRestartRecoveryFailureReason =
@@ -351,6 +353,19 @@ export async function maybeWarmOllamaAfterDaemonRestart(
 
   const getOllamaHost = deps.getOllamaHost ?? getResolvedOllamaHost;
   const rawHost = resolveRawOllamaHost(route.endpointUrl, getOllamaHost);
+  if (rawHost === OLLAMA_HOST_DOCKER_INTERNAL) {
+    const revalidatedHost = (
+      deps.revalidateOllamaHost ??
+      (() => findReachableOllamaHost(undefined, {}, undefined, { revalidate: true }))
+    )();
+    if (revalidatedHost !== OLLAMA_HOST_DOCKER_INTERNAL) {
+      return {
+        kind: "skipped",
+        reason: "unreachable",
+        endpoint: `http://${rawHost}:${OLLAMA_PORT}`,
+      };
+    }
+  }
   const rawEndpoint = `http://${rawHost}:${OLLAMA_PORT}`;
   if (
     deps.timeoutSeconds !== undefined &&

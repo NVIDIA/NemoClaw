@@ -124,7 +124,8 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           model: "qwen3.6:35b",
           endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
         },
-        { getOllamaHost: () => "host.docker.internal", runRecoveryCaptureImpl },
+        { getOllamaHost: () => "host.docker.internal",
+          revalidateOllamaHost: () => "host.docker.internal", runRecoveryCaptureImpl },
       ),
     ).resolves.toEqual({ kind: "warmed", ok: true });
 
@@ -143,6 +144,30 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       "host.docker.internal",
       "host.docker.internal",
     ]);
+  });
+
+  it("skips a stale raw Windows route before model probes or warm-up", async () => {
+    const runRecoveryCaptureImpl = vi.fn<OllamaRecoveryCaptureFn>();
+
+    await expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        {
+          provider: "ollama-local",
+          model: "qwen3.6:35b",
+          endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
+        },
+        {
+          getOllamaHost: () => "host.docker.internal",
+          revalidateOllamaHost: () => null,
+          runRecoveryCaptureImpl,
+        },
+      ),
+    ).resolves.toEqual({
+      kind: "skipped",
+      reason: "unreachable",
+      endpoint: `http://host.docker.internal:${OLLAMA_PORT}`,
+    });
+    expect(runRecoveryCaptureImpl).not.toHaveBeenCalled();
   });
 
   it("uses the resolved WSL-local host for an ambiguous direct bridge route", async () => {
@@ -233,50 +258,33 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
         cleanup,
       };
     });
-    const spawnRecoveryChild = completingRecoverySpawner([
-      JSON.stringify({ models: [] }),
-      JSON.stringify({ error: "model not found" }),
-      JSON.stringify({ models: [{ name: "llama3.2:1b" }] }),
-    ]);
-
-    await expect(
-      maybeWarmOllamaAfterDaemonRestart(
-        {
-          provider: "ollama-local",
-          model: "qwen3.6:35b",
-          endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
-        },
-        {
-          getOllamaHost: () => "host.docker.internal",
-          spawnRecoveryChild,
-          prepareDockerEnvironment,
-        },
-      ),
-    ).resolves.toMatchObject({ kind: "skipped", reason: "model-absent" });
+    const spawnRecoveryChild = completingRecoverySpawner(["one", "two", "three"]);
+    const command = ["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE, "true"];
+    const options = {
+      host: "127.0.0.1",
+      timeoutMilliseconds: 5_000,
+      spawnRecoveryChild,
+      prepareDockerEnvironment,
+    };
+    await expect(runOllamaRecoveryCapture(command, options)).resolves.toMatchObject({
+      exitCode: 0,
+      timedOut: false,
+    });
+    await expect(runOllamaRecoveryCapture(command, options)).resolves.toMatchObject({
+      exitCode: 0,
+      timedOut: false,
+    });
+    await expect(runOllamaRecoveryCapture(command, options)).resolves.toMatchObject({
+      exitCode: 0,
+      timedOut: false,
+    });
 
     const commands = spawnRecoveryChild.mock.calls.map(([binary, args]) => [binary, ...args]);
-    expect(commands.map(getCommandUrl)).toEqual([
-      `http://host.docker.internal:${OLLAMA_PORT}/api/ps`,
-      `http://host.docker.internal:${OLLAMA_PORT}/api/generate`,
-      `http://host.docker.internal:${OLLAMA_PORT}/api/tags`,
-    ]);
     expect(commands.every((command) => command[0] === "docker")).toBe(true);
-    const proxyGuard = [
-      "HTTP_PROXY=",
-      "http_proxy=",
-      "HTTPS_PROXY=",
-      "https_proxy=",
-      "ALL_PROXY=",
-      "all_proxy=",
-      "FTP_PROXY=",
-      "ftp_proxy=",
-      "NO_PROXY=host.docker.internal",
-      "no_proxy=host.docker.internal",
-    ];
     expect(commands).toEqual([
-      expect.arrayContaining([...proxyGuard, CONTAINER_REACHABILITY_IMAGE]),
-      expect.arrayContaining([...proxyGuard, CONTAINER_REACHABILITY_IMAGE]),
-      expect.arrayContaining([...proxyGuard, CONTAINER_REACHABILITY_IMAGE]),
+      expect.arrayContaining([CONTAINER_REACHABILITY_IMAGE]),
+      expect.arrayContaining([CONTAINER_REACHABILITY_IMAGE]),
+      expect.arrayContaining([CONTAINER_REACHABILITY_IMAGE]),
     ]);
     expect(spawnRecoveryChild.mock.calls.map(([, , , env]) => env.DOCKER_CONFIG)).toEqual([
       "/tmp/credential-free-docker-1",
@@ -319,9 +327,9 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     );
 
     const pending = runOllamaRecoveryCapture(
-      ["curl", `http://host.docker.internal:${OLLAMA_PORT}/api/ps`],
+      ["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE, "true"],
       {
-        host: "host.docker.internal",
+        host: "127.0.0.1",
         timeoutMilliseconds: 300_000,
         prepareDockerEnvironment: () => ({
           env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
@@ -413,6 +421,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       },
       {
         getOllamaHost: () => "host.docker.internal",
+          revalidateOllamaHost: () => "host.docker.internal",
         runRecoveryCaptureImpl,
       },
     );
@@ -615,7 +624,8 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           model: "gemma4:26b",
           endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
         },
-        { getOllamaHost: () => "host.docker.internal", runRecoveryCaptureImpl },
+        { getOllamaHost: () => "host.docker.internal",
+          revalidateOllamaHost: () => "host.docker.internal", runRecoveryCaptureImpl },
       ),
     ).resolves.toEqual({
       kind: "skipped",

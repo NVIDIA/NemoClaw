@@ -17,15 +17,13 @@ Use these workflows to keep existing sandboxes reachable and control the resourc
 
 ## Manage Dashboard Ports
 
-If the forward stopped, or the installer reported that no active forward was found and the URL does not load, restart the forward manually with the port from the install summary.
+If a managed forward stopped or the URL does not load, restore its identity-bound lifecycle through NemoClaw.
 
 ```bash
-openshell forward start --background <dashboard-port> my-gpt-claw
+nemoclaw my-gpt-claw recover
 ```
 
-On WSL, use `0.0.0.0:<dashboard-port>` as the forward target so the Windows host can continue to reach the dashboard.
-
-To list active forwards across all sandboxes, run the following command.
+For lower-level diagnostics, list OpenShell's legacy and user-managed forwards separately. Receipt-owned ForwardTcp services are verified by `nemoclaw <name> status` and `recover`.
 
 ```bash
 openshell forward list

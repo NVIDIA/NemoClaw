@@ -278,6 +278,7 @@ export function createPodmanRuntimeProviderBundle(
       supported: true,
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
+      ownsHostReadiness: true,
       prepareHostRuntime: (input) => {
         if (
           options.gatewaySocketPath !== undefined &&

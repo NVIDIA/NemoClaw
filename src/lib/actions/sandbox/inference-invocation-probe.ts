@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { getSandboxInferenceConfig } from "../../inference/config";
 import { validateInferenceResponseBody } from "../../inference/health";
 import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "../../inference/max-tokens-field";
@@ -17,6 +18,7 @@ import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 export type SandboxInferenceInvocationInput = {
   sandboxName: string;
   gatewayName?: string;
+  runtimeSelection?: OpenShellRuntimeSelection;
   agentName?: string | null;
   provider: string;
   model: string;
@@ -141,6 +143,7 @@ function executeDcodeSandboxInferenceInvocation(
   try {
     const result = runOpenshell(buildDcodeSandboxInferenceInvocationArgs(input), {
       ignoreError: true,
+      ...(input.runtimeSelection ? { runtimeSelection: input.runtimeSelection } : {}),
       stdio: ["ignore", "pipe", "pipe"],
       timeout: timeoutMs,
     });
@@ -178,9 +181,11 @@ export function probeSandboxInferenceInvocation(
     result = executeDcodeSandboxInferenceInvocation(input, deps, timeoutMs);
   } else {
     const execute = deps.execute ?? executeSandboxExecCommand;
-    const execOptions: SandboxExecCommandOptions = input.gatewayName
-      ? { gatewayName: input.gatewayName, allowLocalDockerFallback: false }
-      : {};
+    const execOptions: SandboxExecCommandOptions = {
+      ...(input.gatewayName ? { gatewayName: input.gatewayName } : {}),
+      ...(input.runtimeSelection ? { runtimeSelection: input.runtimeSelection } : {}),
+      allowLocalDockerFallback: false,
+    };
     result = execute(
       input.sandboxName,
       buildSandboxInferenceInvocationCommand(input),

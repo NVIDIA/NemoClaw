@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { mockManagedEndpointlessProviderProfileRun } from "../../helpers/onboard-script-mocks.cjs";
 
@@ -27,7 +27,8 @@ vi.mock("../../../src/lib/adapters/openshell/provider-command", () => ({
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 
-vi.mock("../../../src/lib/gateway-runtime-action", () => ({
+vi.mock("../../../src/lib/gateway-runtime-action", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/gateway-runtime-action")>()),
   recoverNamedGatewayRuntime: mocks.recoverNamedGatewayRuntime,
 }));
 
@@ -48,11 +49,19 @@ vi.mock("../../../src/lib/actions/sandbox/process-recovery", () => ({
 
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
 const ORIGINAL_HOME = process.env.HOME;
+const ORIGINAL_GATEWAY_MANAGEMENT = process.env.NEMOCLAW_GATEWAY_MANAGEMENT;
 const ORIGINAL_OPENSHELL_BIN = process.env.NEMOCLAW_OPENSHELL_BIN;
 const ORIGINAL_OPENSHELL_GATEWAY = process.env.OPENSHELL_GATEWAY;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepagents-mcp-legacy-"));
+const GATEWAY_MANAGEMENT = path.join(TMP_HOME, "gateway-management.json");
+
+fs.writeFileSync(
+  GATEWAY_MANAGEMENT,
+  JSON.stringify({ version: 1, mode: "nemoclaw-managed", requiredCapabilities: [] }),
+);
 
 process.env.HOME = TMP_HOME;
+process.env.NEMOCLAW_GATEWAY_MANAGEMENT = GATEWAY_MANAGEMENT;
 process.env.NEMOCLAW_OPENSHELL_BIN = MATCHING_OPENSHELL;
 
 const registry = await import("../../../src/lib/state/registry");
@@ -96,13 +105,19 @@ function restoreEnvironmentVariable(name: string, value: string | undefined): vo
 
 afterAll(() => {
   restoreEnvironmentVariable("HOME", ORIGINAL_HOME);
+  restoreEnvironmentVariable("NEMOCLAW_GATEWAY_MANAGEMENT", ORIGINAL_GATEWAY_MANAGEMENT);
   restoreEnvironmentVariable("NEMOCLAW_OPENSHELL_BIN", ORIGINAL_OPENSHELL_BIN);
   restoreEnvironmentVariable("OPENSHELL_GATEWAY", ORIGINAL_OPENSHELL_GATEWAY);
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
 });
 
+afterEach(() => {
+  restoreEnvironmentVariable("NEMOCLAW_GATEWAY_MANAGEMENT", ORIGINAL_GATEWAY_MANAGEMENT);
+});
+
 beforeEach(() => {
   fs.rmSync(path.dirname(registry.REGISTRY_FILE), { recursive: true, force: true });
+  process.env.NEMOCLAW_GATEWAY_MANAGEMENT = GATEWAY_MANAGEMENT;
   restoreEnvironmentVariable("OPENSHELL_GATEWAY", ORIGINAL_OPENSHELL_GATEWAY);
 
   providerExists = true;

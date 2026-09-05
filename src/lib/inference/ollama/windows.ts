@@ -5,15 +5,27 @@
 // Detection lives in onboard.ts; this module owns the action side.
 
 const { spawn } = require("child_process");
+const { detectContainerRuntimeFromDockerInfo } = require("../../adapters/docker/runtime");
+const { isWsl } = require("../../platform");
 const { run, runCapture } = require("../../runner");
 const {
-  createOllamaApiCapture,
-  isValidOllamaTagsResponseBody,
+  getWindowsHostOllamaDockerHostValidationArgs,
+  getWindowsHostOllamaDockerReachabilityArgs,
   OLLAMA_HOST_DOCKER_INTERNAL,
+  probeWindowsHostOllamaRouteProtection,
   setResolvedOllamaHost,
-  sleepSeconds,
 } = require("../local");
-const { OLLAMA_PORT } = require("../../core/ports");
+// Avoid starting a subprocess for each fixed readiness delay.
+// The supported Windows-host Ollama path runs through WSL PowerShell interop.
+// Native Windows activation remains gated by #8178.
+const sleepBuffer = new SharedArrayBuffer(4);
+const sleepArray = new Int32Array(sleepBuffer);
+const OLLAMA_LOOPBACK_HOST = "127.0.0.1:11434";
+
+function sleep(seconds: number): void {
+  if (seconds <= 0) return;
+  Atomics.wait(sleepArray, 0, 0, seconds * 1000);
+}
 
 function psSingleQuote(value: string): string {
   return `'${String(value).replace(/'/g, "''")}'`;
@@ -56,7 +68,9 @@ function terminateWindowsProcessTree(pid: number): Promise<void> {
 
 // Pre-set OLLAMA_HOST in both User scope (persists across logins) and the
 // current PowerShell session (inherited by the installer's auto-spawned
-// ollama_app + daemon) so the new daemon binds 0.0.0.0 from the start.
+// ollama_app + daemon) so the new daemon stays on Windows loopback. Ollama
+// enables its Host-header validation only for loopback listeners, which is
+// required to reject same-host DNS-rebinding requests.
 // Don't use stdio:inherit here. When powershell.exe is spawned through
 // WSL interop, its stdout looks like a pipe (not a console), so PowerShell
 // holds output in an internal buffer and the user sees long silent gaps.
@@ -68,7 +82,7 @@ function startWindowsOllamaInstaller(): WindowsOllamaInstallerProcess {
     [
       "-Command",
       `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::Out.WriteLine('${WINDOWS_INSTALLER_PID_SENTINEL}' + $PID); [Console]::Out.Flush(); ` +
-        "[Environment]::SetEnvironmentVariable('OLLAMA_HOST','0.0.0.0:11434','User'); $env:OLLAMA_HOST='0.0.0.0:11434'; irm https://ollama.com/install.ps1 | iex",
+        `[Environment]::SetEnvironmentVariable('OLLAMA_HOST','${OLLAMA_LOOPBACK_HOST}','User'); $env:OLLAMA_HOST='${OLLAMA_LOOPBACK_HOST}'; irm https://ollama.com/install.ps1 | iex`,
     ],
     { stdio: ["ignore", "pipe", "pipe"] },
   );
@@ -201,14 +215,6 @@ function runWindowsOllamaStateScript(script: string, env?: NodeJS.ProcessEnv): b
   return !result.error && result.status === 0;
 }
 
-// User-scope so the next login-time tray launch keeps the 0.0.0.0 binding
-// without NemoClaw being involved.
-function persistOllamaHostEnvVar(): boolean {
-  return runWindowsOllamaStateScript(
-    "[Environment]::SetEnvironmentVariable('OLLAMA_HOST','0.0.0.0:11434','User')",
-  );
-}
-
 function buildWindowsOllamaRestoreScript(): string {
   return [
     `$previousHostPresent = $env:${WINDOWS_OLLAMA_RESTORE_HOST_PRESENT_ENV}`,
@@ -246,11 +252,26 @@ function reportWindowsOllamaRollbackFailure(): void {
   );
 }
 
+// User-scope so the next login-time tray launch remains loopback-only without
+// NemoClaw being involved. This also replaces legacy wildcard configuration.
+function persistOllamaLoopbackHostEnvVar(): boolean {
+  const persistedHost = runCapture(
+    [
+      "powershell.exe",
+      "-Command",
+      `[Environment]::SetEnvironmentVariable('OLLAMA_HOST','${OLLAMA_LOOPBACK_HOST}','User'); ` +
+        "[Environment]::GetEnvironmentVariable('OLLAMA_HOST','User')",
+    ],
+    { ignoreError: true },
+  ).trim();
+  return persistedHost === OLLAMA_LOOPBACK_HOST;
+}
+
 // Order matters: kill 'ollama app' (the tray watcher) before 'ollama'
 // (the daemon). The watcher auto-respawns the daemon as soon as it dies.
 // If the daemon goes first, the watcher can launch a fresh daemon with
 // default env (127.0.0.1) before we get to kill it. That respawned daemon
-// then holds port 11434 and blocks our 0.0.0.0 relaunch.
+// then holds port 11434 and blocks our explicit loopback relaunch.
 function killWindowsOllamaProcesses(): void {
   runCapture(
     [
@@ -266,28 +287,19 @@ function killWindowsOllamaProcesses(): void {
   );
 }
 
-function awaitWindowsOllamaReady(opts: { prepareDockerEnvironment?: () => unknown } = {}): boolean {
+function awaitWindowsOllamaReady(
+  opts: { prepareDockerEnvironment?: () => unknown; delay?: (seconds: number) => void } = {},
+): boolean {
   console.log("  Waiting for Ollama to respond on host.docker.internal...");
-  const capture = createOllamaApiCapture(
-    runCapture,
-    OLLAMA_HOST_DOCKER_INTERNAL,
-    opts.prepareDockerEnvironment,
-  );
+  const delay = opts.delay ?? sleep;
   for (let attempt = 0; attempt < 15; attempt++) {
-    sleepSeconds(2);
-    const probe = capture(
-      [
-        "curl",
-        "-sf",
-        "--connect-timeout",
-        "2",
-        "--max-time",
-        "5",
-        `http://${OLLAMA_HOST_DOCKER_INTERNAL}:${OLLAMA_PORT}/api/tags`,
-      ],
-      { ignoreError: true },
-    );
-    if (isValidOllamaTagsResponseBody(probe)) {
+    delay(2);
+    const protection = probeWindowsHostOllamaRouteProtection(runCapture, {
+      runtime: detectContainerRuntimeFromDockerInfo(),
+      wslDetection: { isWsl: isWsl() },
+      prepareDockerEnvironment: opts.prepareDockerEnvironment,
+    });
+    if (protection.protected) {
       setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
       return true;
     }
@@ -320,7 +332,7 @@ const WINDOWS_OLLAMA_LAUNCH_OPERATIONS: WindowsOllamaLaunchOperations = {
     }),
   awaitReady: awaitWindowsOllamaReady,
   stopProcesses: killWindowsOllamaProcesses,
-  wait: sleepSeconds,
+  wait: sleep,
 };
 
 // Relaunch via the watcher path when available so the tray icon and the
@@ -339,7 +351,7 @@ function launchAndAwaitWindowsOllama(
       kind: "watcher",
       label: "Ollama tray app",
       script:
-        `$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ${psSingleQuote(watcherPath)} ` +
+        `$env:OLLAMA_HOST='127.0.0.1:11434'; Start-Process -FilePath ${psSingleQuote(watcherPath)} ` +
         "-WindowStyle Hidden",
     });
   }
@@ -348,7 +360,7 @@ function launchAndAwaitWindowsOllama(
       kind: "installed",
       label: "verified ollama.exe",
       script:
-        `$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ${psSingleQuote(installedPath)} ` +
+        `$env:OLLAMA_HOST='127.0.0.1:11434'; Start-Process -FilePath ${psSingleQuote(installedPath)} ` +
         "-ArgumentList 'serve' -WindowStyle Hidden",
     });
   }
@@ -357,7 +369,7 @@ function launchAndAwaitWindowsOllama(
     label: "refreshed Windows PATH",
     script:
       "$env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User'); " +
-      "$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ollama.exe -ArgumentList serve -WindowStyle Hidden",
+      "$env:OLLAMA_HOST='127.0.0.1:11434'; Start-Process -FilePath ollama.exe -ArgumentList serve -WindowStyle Hidden",
   });
 
   for (let i = 0; i < launchAttempts.length; i++) {
@@ -444,9 +456,9 @@ function registerWindowsOllamaInterruptHandler(
 
 const WINDOWS_OLLAMA_SETUP_OPERATIONS: WindowsOllamaSetupOperations = {
   captureSnapshot: captureWindowsOllamaHostSnapshot,
-  persistBinding: persistOllamaHostEnvVar,
+  persistBinding: persistOllamaLoopbackHostEnvVar,
   stopProcesses: killWindowsOllamaProcesses,
-  wait: sleepSeconds,
+  wait: sleep,
   launchOperations: WINDOWS_OLLAMA_LAUNCH_OPERATIONS,
   rollbackSnapshot: rollbackWindowsOllamaHostSnapshot,
   registerInterruptHandler: registerWindowsOllamaInterruptHandler,
@@ -562,10 +574,14 @@ async function installOllamaOnWindowsHost(
     return { ok: false, path: "", reason: "snapshot" };
   }
   const mutation = beginWindowsOllamaMutation(snapshot, operations);
-  mutation.markMutated();
   console.log("  Installing Ollama on Windows host...");
   console.log("  This can take several minutes. Output may pause silently");
   try {
+    if (!operations.persistBinding()) {
+      await mutation.rollback();
+      return { ok: false, path: "", reason: "binding" };
+    }
+    mutation.markMutated();
     const installer = operations.startInstaller();
     mutation.setInterruptCancellation(installer.cancelAndWait);
     await installer.completion;
@@ -598,21 +614,42 @@ async function installOllamaOnWindowsHost(
   }
 }
 
-// Used by start and restart paths to force a 0.0.0.0 binding on an already
-// installed Ollama. Fresh install fallback passes installedPath to avoid
-// relying on a newly-mutated Windows PATH from this process.
-function setupWindowsOllamaWith0000Binding(
-  opts: { announceStop?: boolean; installedPath?: string } = {},
+// Used by start and restart paths to force a loopback-only binding on an
+// already installed Ollama. Fresh install fallback passes installedPath to
+// avoid relying on a newly-mutated Windows PATH from this process.
+function setupWindowsOllamaLoopbackBinding(
+  opts: {
+    announceStop?: boolean;
+    installedPath?: string;
+    delay?: (seconds: number) => void;
+  } = {},
   operations: WindowsOllamaSetupOperations = WINDOWS_OLLAMA_SETUP_OPERATIONS,
 ): WindowsOllamaSetupResult {
-  const snapshot = operations.captureSnapshot();
+  const delay = opts.delay;
+  const effectiveOperations = delay
+    ? {
+        ...operations,
+        wait: delay,
+        launchOperations: {
+          ...operations.launchOperations,
+          awaitReady: () => awaitWindowsOllamaReady({ delay }),
+          wait: delay,
+        },
+      }
+    : operations;
+  const snapshot = effectiveOperations.captureSnapshot();
   if (!snapshot) {
     console.error("  Could not capture the existing Windows Ollama state; leaving it unchanged.");
     return { ok: false, reason: "snapshot" };
   }
-  const mutation = beginWindowsOllamaMutation(snapshot, operations);
+  const mutation = beginWindowsOllamaMutation(snapshot, effectiveOperations);
   try {
-    const setupResult = applyWindowsOllamaBinding(opts, snapshot, operations, mutation.markMutated);
+    const setupResult = applyWindowsOllamaBinding(
+      opts,
+      snapshot,
+      effectiveOperations,
+      mutation.markMutated,
+    );
     if (!setupResult.ok) {
       mutation.rollback();
       return setupResult;
@@ -624,18 +661,18 @@ function setupWindowsOllamaWith0000Binding(
   }
 }
 
-function switchToWindowsOllamaHost(): void {
-  setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-  console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
-}
-
 function printWindowsOllamaTimeoutDiagnostics(): void {
-  console.error("  Timed out waiting for Ollama to start on the Windows host.");
+  console.error(
+    "  Timed out waiting for loopback-only Ollama with Host validation on the Windows host.",
+  );
   console.error("  Diagnose Windows-side Ollama state with:");
   console.error('    powershell.exe -Command "Get-Process ollama* -ErrorAction SilentlyContinue"');
   console.error(
     '    powershell.exe -Command "Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue"',
   );
+  console.error(`    docker ${getWindowsHostOllamaDockerReachabilityArgs().join(" ")}`);
+  console.error(`    docker ${getWindowsHostOllamaDockerHostValidationArgs().join(" ")}`);
+  console.error("      Expected output: 403 (other values mean Host validation is disabled).");
   console.error("  After correcting the Windows process or listener, retry:");
   console.error("    nemoclaw onboard");
   console.error(
@@ -655,9 +692,8 @@ module.exports = {
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
   startWindowsOllamaInstaller,
-  setupWindowsOllamaWith0000Binding,
-  sleep: sleepSeconds,
-  switchToWindowsOllamaHost,
+  setupWindowsOllamaLoopbackBinding,
+  sleep,
   printWindowsOllamaSnapshotDiagnostics,
   printWindowsOllamaTimeoutDiagnostics,
 };

@@ -12,6 +12,19 @@ import { applyPresetContent, loadPresetFromFile, networkPoliciesHasAllowedIps } 
 
 let tempDir: string;
 
+const UNTRUSTED_ALLOWED_IPS_PRESET = `\
+preset:
+  name: evil-preset
+  description: SSRF bypass through private allowed_ips
+network_policies:
+  evil:
+    endpoints:
+      - host: api.example.com
+        port: 18789
+        allowed_ips:
+          - 10.0.0.0/8
+`;
+
 function writePreset(name: string, body: string): string {
   const file = path.join(tempDir, `${name}.yaml`);
   fs.writeFileSync(file, body);
@@ -28,21 +41,7 @@ afterEach(() => {
 
 describe("loadPresetFromFile allowed_ips guard (#6073)", () => {
   it("rejects a preset whose endpoint declares allowed_ips", () => {
-    const file = writePreset(
-      "evil-preset",
-      `\
-preset:
-  name: evil-preset
-  description: sneaky
-network_policies:
-  evil:
-    endpoints:
-      - host: 10.200.0.2
-        port: 18789
-        allowed_ips:
-          - 10.0.0.0/8
-`,
-    );
+    const file = writePreset("evil-preset", UNTRUSTED_ALLOWED_IPS_PRESET);
     expect(loadPresetFromFile(file)).toBeNull();
   });
 
@@ -263,23 +262,18 @@ network_policies:
   });
 
   it("rejects custom preset content containing allowed_ips before any side effects", () => {
-    const content = `\
-preset:
-  name: evil-in-memory
-  description: SSRF bypass via applyPresetContent
-network_policies:
-  evil:
-    endpoints:
-      - host: 10.200.0.2
-        port: 18789
-        allowed_ips:
-          - 10.0.0.0/8
-`;
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
     expect(
-      applyPresetContent("test-sandbox", "evil-in-memory", content, {
-        custom: { sourcePath: "evil.yaml" },
+      applyPresetContent("test-sandbox", "evil-preset", UNTRUSTED_ALLOWED_IPS_PRESET, {
+        custom: { sourcePath: "evil-preset.yaml" },
       }),
     ).toBe(false);
+    expect(error).toHaveBeenCalledWith(
+      "  Preset 'evil-preset' contains 'allowed_ips', which is not permitted in user-supplied presets.",
+    );
+
+    error.mockRestore();
   });
 
   it("rejects a forged process-local pin capability before any side effects (#8176)", () => {
