@@ -637,6 +637,8 @@
       "liveSources": [
         "test/e2e/live/messaging-providers-helpers.ts",
         "test/e2e/live/phase6-messaging-helpers.ts",
+        "test/e2e/live/messaging-providers-slack-runtime-proof.ts",
+        "test/e2e/live/messaging-providers-telegram-runtime-proof.ts",
         "test/e2e/live/messaging-providers-wechat-runtime-proof.ts"
       ],
       "fast": [
@@ -656,9 +658,13 @@
     },
     {
       "live": "test/e2e/live/model-router-provider-routed-inference.test.ts",
+      "liveSources": [
+        "test/e2e/live/model-router-provider-routed-inference-helpers.ts"
+      ],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/model-router-provider-routed-inference.test.ts"
       ]
     },
     {

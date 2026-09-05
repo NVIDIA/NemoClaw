@@ -2185,18 +2185,16 @@ class SandboxStateFlow<
                   }
                 : null,
               effectiveCreateIntent,
-              ...(activateVerifiedCredentialProviders
-                ? [
-                    async (
-                      verifiedContext: import("../../types").VerifiedSandboxCreateEffectsContext,
-                    ) => {
-                      state = await activateVerifiedCredentialProviders(
-                        state,
-                        verifiedContext.revalidateSandboxIdentity,
-                      );
-                    },
-                  ]
-                : []),
+              activateVerifiedCredentialProviders
+                ? async (
+                    verifiedContext: import("../../types").VerifiedSandboxCreateEffectsContext,
+                  ) => {
+                    state = await activateVerifiedCredentialProviders(
+                      state,
+                      verifiedContext.revalidateSandboxIdentity,
+                    );
+                  }
+                : undefined,
             ),
         );
       } catch (error) {
