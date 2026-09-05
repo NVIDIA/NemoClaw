@@ -75,7 +75,7 @@ The sandbox never sees raw API keys.
 The router model pool lives in `nemoclaw-blueprint/router/pool-config.yaml`.
 Edit that file to define the model names that the router can select.
 
-The default pool routes between NVIDIA-hosted Nemotron models.
+The default pool routes between models available through NVIDIA Endpoints.
 It uses `tolerance` to select the lowest-cost model whose predicted quality stays within the configured threshold.
 
 ```yaml
@@ -84,17 +84,22 @@ routing:
   checkpoint: llm-router/checkpoints/prefill_router_qwen08b.pt
   tolerance: 0.20
   encoder: Qwen/Qwen3.5-0.8B
+  encoder_backend: transformers
 
 models:
-  - name: nano
-    litellm_model: "openai/nvidia/Nemotron-3-Nano-30B-A3B"
-    cost_per_m_input_tokens: 0.05
-    api_base: "https://integrate.api.nvidia.com"
+  - name: gpt-oss-20b-high
+    display_name: "GPT-OSS 20B High"
+    litellm_model: "openai/openai/gpt-oss-20b"
+    cost_per_m_input_tokens: 0.052
+    cost_per_m_output_tokens: 0.245
+    api_base: "https://integrate.api.nvidia.com/v1"
 
-  - name: super
+  - name: nemotron-3-super
+    display_name: "Nemotron 3 Super 120B"
     litellm_model: "openai/nvidia/nemotron-3-super-120b-a12b"
     cost_per_m_input_tokens: 0.10
-    api_base: "https://integrate.api.nvidia.com"
+    cost_per_m_output_tokens: 0.40
+    api_base: "https://integrate.api.nvidia.com/v1"
 ```
 
 Use these values to tune the accuracy and cost tradeoff.
