@@ -461,9 +461,17 @@ describe("DGX Station release classifier parity", () => {
   });
 
   it("rejects an embedded NUL in DMI firmware before shell conversion (#10928)", () => {
-    const productName = "NVIDIA DGX\0 Station GB300";
-    const shell = classifyFirmwareWithStationHelper(productName, "Generic family", "Generic board");
-    const readiness = classifyFirmwareWithReadiness(productName, "Generic family", "Generic board");
+    const productFamily = "NVIDIA DGX\0 Station GB300";
+    const shell = classifyFirmwareWithStationHelper(
+      "Generic ARM workstation",
+      productFamily,
+      "Generic board",
+    );
+    const readiness = classifyFirmwareWithReadiness(
+      "Generic ARM workstation",
+      productFamily,
+      "Generic board",
+    );
 
     expect(shell).toBe("not-station");
     expect(readiness.nvidiaPlatform).toBeUndefined();
