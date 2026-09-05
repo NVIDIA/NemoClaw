@@ -110,6 +110,13 @@ const DEFAULT_NATIVE_PODMAN_SETUP_ACTION_PATH = join(
   "setup-native-podman-e2e",
   "action.yaml",
 );
+const DEFAULT_NATIVE_PODMAN_RESTORE_ACTION_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "actions",
+  "restore-native-podman-e2e",
+  "action.yaml",
+);
 const DEFAULT_HOST_DEPENDENCY_SCRIPT_PATH = join(
   REPO_ROOT,
   ".github",
@@ -1072,6 +1079,12 @@ function validateCloudOnboardDockerAbsenceBoundary(
     steps,
     "Restore Docker CLI after native Podman public install",
   );
+  const uploadCloudOnboard = requireJobStep(
+    errors,
+    "cloud-onboard",
+    steps,
+    "Upload cloud-onboard artifacts",
+  );
   if (stringValue(hideDockerForPodman?.if) !== "${{ matrix.runtime_provider == 'podman' }}") {
     errors.push("cloud-onboard Docker removal must run only for native Podman");
   }
@@ -1081,43 +1094,28 @@ function validateCloudOnboardDockerAbsenceBoundary(
   ) {
     errors.push("cloud-onboard Docker restoration must always run for native Podman");
   }
-  requireRunContains(errors, hideDockerForPodman, "/usr/bin/docker | /usr/local/bin/docker");
-  const moveDockerCli = 'sudo mv -- "${docker_cli}" "${disabled_path}"';
-  const exportDisabledDockerCli = "NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s";
-  const exportDockerCliRestorePath = "NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH=%s";
-  requireRunContains(errors, hideDockerForPodman, moveDockerCli);
   requireRunContains(errors, hideDockerForPodman, "if command -v docker >/dev/null 2>&1");
   requireRunContains(errors, hideDockerForPodman, "dockerClientAvailable: false");
-  requireRunContains(errors, hideDockerForPodman, exportDisabledDockerCli);
-  requireRunContains(errors, hideDockerForPodman, exportDockerCliRestorePath);
-  requireRunFragmentBefore(errors, hideDockerForPodman, exportDisabledDockerCli, moveDockerCli);
-  requireRunFragmentBefore(errors, hideDockerForPodman, exportDockerCliRestorePath, moveDockerCli);
-  requireRunContains(
-    errors,
-    restoreDockerAfterPodman,
-    "${RUNNER_TEMP}/nemoclaw-disabled-docker-cli",
-  );
-  requireRunContains(errors, restoreDockerAfterPodman, "/usr/bin/docker | /usr/local/bin/docker");
-  requireRunContains(
-    errors,
-    restoreDockerAfterPodman,
-    'sudo mv -- "${disabled_path}" "${restore_path}"',
-  );
-  requireRunContains(
-    errors,
-    restoreDockerAfterPodman,
-    'test "$(command -v docker)" = "${restore_path}"',
-  );
+  if (
+    restoreDockerAfterPodman?.uses !== E2E_ACTION_PROVENANCE.restoreNativePodmanRuntime.reference ||
+    !isDeepStrictEqual(asRecord(restoreDockerAfterPodman?.with), { enabled: "true" })
+  ) {
+    errors.push("cloud-onboard must restore Docker through the reviewed Podman cleanup action");
+  }
   if (
     hideDockerForPodman &&
     runCloudOnboard &&
+    uploadCloudOnboard &&
     restoreDockerAfterPodman &&
     !(
       steps.indexOf(hideDockerForPodman) < steps.indexOf(runCloudOnboard) &&
-      steps.indexOf(runCloudOnboard) < steps.indexOf(restoreDockerAfterPodman)
+      steps.indexOf(runCloudOnboard) < steps.indexOf(uploadCloudOnboard) &&
+      steps.indexOf(uploadCloudOnboard) < steps.indexOf(restoreDockerAfterPodman)
     )
   ) {
-    errors.push("cloud-onboard must hide Docker before the live test and restore it afterward");
+    errors.push(
+      "cloud-onboard must hide Docker through the live test and artifact upload before restoring it",
+    );
   }
 }
 
@@ -2759,6 +2757,67 @@ function validateTrustedE2ePlannerBoundary(
   }
 }
 
+function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): string[] {
+  const errors: string[] = [];
+  const jobs = asRecord(workflow.jobs);
+  for (const [jobName, jobValue] of Object.entries(jobs)) {
+    const jobSteps = asSteps(asRecord(jobValue).steps);
+    const setupIndex = jobSteps.findIndex(
+      (step) => step.uses === E2E_ACTION_PROVENANCE.nativePodmanRuntime.reference,
+    );
+    if (setupIndex < 0) continue;
+    const restores = jobSteps
+      .map((step, index) => ({ index, step }))
+      .filter(
+        ({ step }) => step.uses === E2E_ACTION_PROVENANCE.restoreNativePodmanRuntime.reference,
+      );
+    const preSetupRestores = restores.filter(({ index }) => index < setupIndex);
+    const postSetupRestores = restores.filter(({ index }) => index > setupIndex);
+    const requiresStaleRecovery = jobName === "hermes-gpu-startup";
+    if (
+      requiresStaleRecovery &&
+      (preSetupRestores.length !== 1 ||
+        preSetupRestores[0]!.index !== setupIndex - 1 ||
+        preSetupRestores[0]!.step.name !== "Recover Docker CLI before native Podman E2E" ||
+        stringValue(preSetupRestores[0]!.step.if) !==
+          "${{ matrix.runtime_provider == 'podman' }}" ||
+        !isDeepStrictEqual(asRecord(preSetupRestores[0]!.step.with), { enabled: "true" }))
+    ) {
+      errors.push(
+        `${jobName} must recover stale Docker CLI isolation immediately before native Podman setup`,
+      );
+    }
+    if (!requiresStaleRecovery && preSetupRestores.length !== 0) {
+      errors.push(`${jobName} must not restore Docker before native Podman setup`);
+    }
+    const resultUploads = jobSteps
+      .map((step, index) => ({ index, step }))
+      .filter(({ step }) => step.uses === E2E_ACTION_PROVENANCE.uploadArtifacts.reference);
+    const finalResultUploadIndex = Math.max(
+      ...resultUploads.map(({ index }) => index),
+      Number.NEGATIVE_INFINITY,
+    );
+    if (
+      postSetupRestores.length !== 1 ||
+      stringValue(postSetupRestores[0]!.step.if) !==
+        "${{ always() && matrix.runtime_provider == 'podman' }}" ||
+      !isDeepStrictEqual(asRecord(postSetupRestores[0]!.step.with), { enabled: "true" })
+    ) {
+      errors.push(
+        `${jobName} must restore the Docker CLI exactly once after native Podman execution`,
+      );
+    }
+    if (
+      resultUploads.length === 0 ||
+      (postSetupRestores.length === 1 &&
+        postSetupRestores[0]!.index <= finalResultUploadIndex)
+    ) {
+      errors.push(`${jobName} must keep Docker unavailable through result artifact upload`);
+    }
+  }
+  return errors;
+}
+
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
@@ -2783,6 +2842,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(...validateStandardProfileWorkflowBoundary(workflow));
   errors.push(...validateTrustedHermesSwapWorkflow(workflow));
   errors.push(...validateRunnerComparisonWorkflowBoundary(workflow));
+  errors.push(...validateNativePodmanDockerIsolationWorkflow(workflow));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
   const workflowDispatch = requireWorkflowDispatch(errors, triggers);
@@ -3521,6 +3581,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     ...validateDockerHubCleanupAction(),
     ...validateHostDependencyAction(),
     ...validateNativePodmanSetupAction(),
+    ...validateNativePodmanRestoreAction(),
     ...validateE2eWorkflow(workflow),
     ...validateTrustedHermesSwapHelperSource(
       readFileSync(DEFAULT_LIVE_VITEST_INVOCATION_PATH, "utf8"),
@@ -3531,11 +3592,22 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
 export function validateNativePodmanSetupAction(
   actionPath = DEFAULT_NATIVE_PODMAN_SETUP_ACTION_PATH,
 ): string[] {
-  const action = asRecord(YAML.parse(readFileSync(actionPath, "utf8")));
+  const actionSource = readFileSync(actionPath, "utf8");
+  const action = asRecord(YAML.parse(actionSource));
   const steps = asSteps(asRecord(action.runs).steps);
   const start = steps.find((step) => step.name === "Start native Podman runtime");
+  const isolate = steps.find(
+    (step) => step.name === "Remove Docker CLI from native Podman execution",
+  );
   const run = stringValue(start?.run);
   const errors: string[] = [];
+
+  if (
+    createHash("sha256").update(actionSource).digest("hex") !==
+    E2E_ACTION_PROVENANCE.nativePodmanRuntime.contentSha256
+  ) {
+    errors.push("native Podman setup action content must match its immutable commit pin");
+  }
 
   if (!start) return ["native Podman setup action must start the runtime"];
   if (!run.includes('systemctl start "user-runtime-dir@${uid}.service" "user@${uid}.service"')) {
@@ -3571,6 +3643,61 @@ export function validateNativePodmanSetupAction(
   }
   if (!run.includes('printf \'PATH=%s:%s\\n\' "$toolchain_install_root/bin" "$PATH"')) {
     errors.push("native Podman setup must preserve the reviewed executable authority on PATH");
+  }
+  const isolationRun = stringValue(isolate?.run);
+  if (
+    isolate?.if !== "${{ inputs.enabled == 'true' }}" ||
+    steps.at(-1) !== isolate ||
+    !isolationRun.includes("restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore") ||
+    !isolationRun.includes("sudo -n install -d --owner=root --group=root --mode=0700") ||
+    !isolationRun.includes('sudo -n test ! -L "$docker_cli"') ||
+    !isolationRun.includes('docker_sha256="$(sudo -n sha256sum -- "$docker_cli"') ||
+    !isolationRun.includes('sudo -n tee "$metadata_path"') ||
+    !isolationRun.includes('sudo -n mv -- "$docker_cli" "$disabled_path"') ||
+    isolationRun.includes("NEMOCLAW_E2E_DISABLED_DOCKER_CLI") ||
+    isolationRun.includes("NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH") ||
+    !isolationRun.includes("if command -v docker >/dev/null 2>&1")
+  ) {
+    errors.push(
+      "native Podman setup must preserve Docker in a root-owned integrity-bound restore authority",
+    );
+  }
+  return errors;
+}
+
+export function validateNativePodmanRestoreAction(
+  actionPath = DEFAULT_NATIVE_PODMAN_RESTORE_ACTION_PATH,
+): string[] {
+  const actionSource = readFileSync(actionPath, "utf8");
+  const action = asRecord(YAML.parse(actionSource));
+  const steps = asSteps(asRecord(action.runs).steps);
+  const restore = steps.find(
+    (step) => step.name === "Restore Docker CLI after native Podman execution",
+  );
+  const run = stringValue(restore?.run);
+  const errors: string[] = [];
+  if (
+    createHash("sha256").update(actionSource).digest("hex") !==
+    E2E_ACTION_PROVENANCE.restoreNativePodmanRuntime.contentSha256
+  ) {
+    errors.push("native Podman restore action content must match its immutable commit pin");
+  }
+  if (
+    steps.length !== 1 ||
+    restore?.if !== "${{ inputs.enabled == 'true' }}" ||
+    !run.includes("restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore") ||
+    !run.includes('[[ "$(sudo -n stat -c \'%u:%g:%a\' "$restore_root")" == "0:0:700" ]]') ||
+    !run.includes('[[ "${restore_files[*]}" == "docker metadata" ]]') ||
+    !run.includes('sudo -n test ! -L "$disabled_path"') ||
+    !run.includes('sha256sum -- "$disabled_path"') ||
+    !run.includes("/usr/bin/docker | /usr/local/bin/docker | /snap/bin/docker") ||
+    !run.includes('sudo -n mv -- "$disabled_path" "$restore_path"') ||
+    !run.includes('sudo -n rmdir -- "$restore_root"') ||
+    !run.includes('test "$(command -v docker)" = "$restore_path"')
+  ) {
+    errors.push(
+      "native Podman restore action must verify and restore only its root-owned Docker CLI",
+    );
   }
   return errors;
 }

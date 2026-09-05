@@ -42,6 +42,24 @@ export type SandboxDestroyPreflight = {
   sandboxConfirmedAbsent: boolean;
 };
 
+export function resolveSandboxDestroyGatewayName(
+  sandboxName: string,
+  sandbox: SandboxEntry | null,
+  retainedRecoveryGatewayName?: string,
+): string {
+  const registeredGatewayName = sandbox ? getPersistedSandboxTargetGatewayName(sandbox) : null;
+  if (
+    retainedRecoveryGatewayName &&
+    registeredGatewayName &&
+    retainedRecoveryGatewayName !== registeredGatewayName
+  ) {
+    throw new Error(
+      `Refusing to destroy sandbox '${sandboxName}': retained recovery gateway '${retainedRecoveryGatewayName}' does not match registered gateway '${registeredGatewayName}'.`,
+    );
+  }
+  return retainedRecoveryGatewayName ?? registeredGatewayName ?? getSandboxTargetGatewayName();
+}
+
 export function resolveSandboxDestroyRuntimeSelection(
   sandbox: SandboxEntry | null,
 ): OpenShellRuntimeSelection | undefined {
@@ -304,18 +322,11 @@ export function prepareSandboxDestroy(
   // following OpenShell subprocess against that same durable authority. A
   // retained recovery record remains authoritative after a partial destroy
   // has already retired the registry row.
-  const registeredGatewayName = sandbox ? getPersistedSandboxTargetGatewayName(sandbox) : null;
-  if (
-    retainedRecoveryGatewayName &&
-    registeredGatewayName &&
-    retainedRecoveryGatewayName !== registeredGatewayName
-  ) {
-    throw new Error(
-      `Refusing to destroy sandbox '${sandboxName}': retained recovery gateway '${retainedRecoveryGatewayName}' does not match registered gateway '${registeredGatewayName}'.`,
-    );
-  }
-  const cleanupGatewayName =
-    retainedRecoveryGatewayName ?? registeredGatewayName ?? getSandboxTargetGatewayName();
+  const cleanupGatewayName = resolveSandboxDestroyGatewayName(
+    sandboxName,
+    sandbox,
+    retainedRecoveryGatewayName,
+  );
   const runtimeSelection =
     operationRuntimeSelection ?? resolveSandboxDestroyRuntimeSelection(sandbox);
   if (runtimeSelection && runtimeSelection.gatewayName !== cleanupGatewayName) {

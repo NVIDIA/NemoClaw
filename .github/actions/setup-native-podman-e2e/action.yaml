@@ -304,3 +304,45 @@ runs:
           printf 'PATH=%s:%s\n' "$toolchain_install_root/bin" "$PATH"
           printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_directory"
         } >>"$GITHUB_ENV"
+
+    - name: Remove Docker CLI from native Podman execution
+      if: ${{ inputs.enabled == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore
+        disabled_path="$restore_root/docker"
+        metadata_path="$restore_root/metadata"
+        docker_cli="$(command -v docker || true)"
+        if [[ -z "$docker_cli" ]]; then
+          exit 0
+        fi
+        case "$docker_cli" in
+          /usr/bin/docker | /usr/local/bin/docker | /snap/bin/docker) ;;
+          *)
+            echo "::error::Refusing to move unexpected Docker CLI path: $docker_cli" >&2
+            exit 1
+            ;;
+        esac
+        if sudo -n test -e "$restore_root" || sudo -n test -L "$restore_root"; then
+          echo "::error::Docker CLI isolation authority already exists" >&2
+          exit 1
+        fi
+        sudo -n test -f "$docker_cli"
+        sudo -n test ! -L "$docker_cli"
+        [[ "$(sudo -n stat -c '%u:%g' "$docker_cli")" == "0:0" ]]
+        docker_sha256="$(sudo -n sha256sum -- "$docker_cli" | awk '{print $1}')"
+        [[ "$docker_sha256" =~ ^[a-f0-9]{64}$ ]]
+        sudo -n install -d --owner=root --group=root --mode=0700 "$restore_root"
+        printf '%s\n%s\n' "$docker_cli" "$docker_sha256" |
+          sudo -n tee "$metadata_path" >/dev/null
+        sudo -n chmod 0600 "$metadata_path"
+        sudo -n mv -- "$docker_cli" "$disabled_path"
+        sudo -n test -f "$disabled_path"
+        sudo -n test ! -L "$disabled_path"
+        [[ "$(sudo -n stat -c '%u:%g' "$disabled_path")" == "0:0" ]]
+        [[ "$(sudo -n sha256sum -- "$disabled_path" | awk '{print $1}')" == "$docker_sha256" ]]
+        if command -v docker >/dev/null 2>&1; then
+          echo "::error::Native Podman E2E still resolves a Docker CLI" >&2
+          exit 1
+        fi

@@ -6,9 +6,12 @@ import {
   type DockerSandboxContainerSnapshot,
   getLiveSandboxNames,
   hasNoLiveSandboxes,
+  hasNoLiveSandboxesWithResourceObservation,
   type LiveSandboxListSnapshot,
   shouldCleanupGatewayAfterDestroy,
 } from "../../domain/sandbox/destroy";
+import type { RuntimeProviderBundle } from "../../onboard/runtime-provider/contract";
+import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import * as registry from "../../state/registry";
 
 type SandboxListProvider = () => { sandboxes: unknown[] };
@@ -29,12 +32,15 @@ type LiveSandboxProbe = (deps?: {
 type FinalDestroyGatewayCleanupInput = {
   deleteSucceededOrAlreadyGone: boolean;
   removedRegistryEntry: boolean;
+  runtimeProviderId?: string | null;
 };
 
 type FinalDestroyGatewayCleanupDeps = {
   captureOpenshell?: LiveSandboxListProbe;
+  dockerCapture?: DockerCaptureProbe;
   listSandboxes?: SandboxListProvider;
   liveSandboxProbe?: LiveSandboxProbe;
+  resolveRuntimeProvider?: typeof resolveRegisteredRuntimeProvider;
   timeoutMs?: number;
 };
 
@@ -97,6 +103,38 @@ function hasNoLiveSandboxesFromHost(deps?: Parameters<LiveSandboxProbe>[0]): boo
   return hasNoLiveSandboxes(collectLiveSandboxProbeSnapshot(deps));
 }
 
+function hasNoLiveSandboxesWithoutDocker(
+  timeoutMs: number,
+  provider: RuntimeProviderBundle,
+  captureOpenshell: LiveSandboxListProbe = captureLiveSandboxes,
+): boolean {
+  const liveList = captureOpenshell(["sandbox", "list"], {
+    ignoreError: true,
+    timeout: timeoutMs,
+  });
+  return hasNoLiveSandboxesWithResourceObservation(liveList, (sandboxName) => {
+    const capture =
+      provider.cleanup.supported === true
+        ? provider.cleanup.captureDestroyIdentityByName
+        : undefined;
+    if (!capture) return true;
+    try {
+      const identity = capture(sandboxName);
+      const confirmedAbsent =
+        identity.schemaVersion === 1 &&
+        identity.providerId === provider.identity.id &&
+        identity.resourceHandle === null &&
+        identity.ownershipSha256 === null;
+      return !confirmedAbsent;
+    } catch {
+      console.warn(
+        `Runtime provider resource probe failed for sandbox '${sandboxName}'; preserving shared gateway.`,
+      );
+      return true;
+    }
+  });
+}
+
 export function shouldCleanupGatewayAfterConfirmedFinalDestroy(
   input: FinalDestroyGatewayCleanupInput,
   deps: FinalDestroyGatewayCleanupDeps = {},
@@ -105,14 +143,23 @@ export function shouldCleanupGatewayAfterConfirmedFinalDestroy(
   const liveSandboxProbe = deps.liveSandboxProbe ?? hasNoLiveSandboxesFromHost;
   const timeoutMs = deps.timeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS;
   const noRegisteredSandboxes = listSandboxes().sandboxes.length === 0;
+  const provider = input.runtimeProviderId
+    ? (deps.resolveRuntimeProvider ?? resolveRegisteredRuntimeProvider)(input.runtimeProviderId)
+    : null;
+  const liveProbeDeps = {
+    ...(deps.captureOpenshell ? { captureOpenshell: deps.captureOpenshell } : {}),
+    ...(deps.dockerCapture ? { dockerCapture: deps.dockerCapture } : {}),
+    timeoutMs,
+  };
   const noLiveSandboxes =
     input.deleteSucceededOrAlreadyGone &&
     input.removedRegistryEntry &&
     noRegisteredSandboxes &&
-    liveSandboxProbe({
-      ...(deps.captureOpenshell ? { captureOpenshell: deps.captureOpenshell } : {}),
-      timeoutMs,
-    });
+    (deps.liveSandboxProbe
+      ? liveSandboxProbe(liveProbeDeps)
+      : provider?.gateway.ownsHostReadiness === true
+        ? hasNoLiveSandboxesWithoutDocker(timeoutMs, provider, deps.captureOpenshell)
+        : liveSandboxProbe(liveProbeDeps));
 
   return shouldCleanupGatewayAfterDestroy({
     deleteSucceededOrAlreadyGone: input.deleteSucceededOrAlreadyGone,

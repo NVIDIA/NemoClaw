@@ -81,7 +81,7 @@ export function hasLegacyStatusRuntimeObservation(sb: registry.SandboxEntry | nu
     // container-engine transport until the status contract grows an
     // operation-bearing provider observation surface.
     return (
-      provider.gateway.prepareHostRuntime({
+      provider.gateway.observeHostRuntime({
         environment: process.env,
         platform: process.platform,
       }).socketPath === null

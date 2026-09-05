@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { remediateReviewedOpenClawPluginArchive } from "./lib/openclaw-npm-remediation.mts";
 import { canonicalAuditReceipt, createAuditReceipt } from "./lib/npm-audit-receipt.mts";
 import { resolvePathWithinRoot } from "./lib/repository-input-path.mts";
@@ -994,14 +994,24 @@ function main(): void {
       });
     });
   } finally {
+    makeTreeOwnerWritable(tempRoot);
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 }
 
 function isMainModule(): boolean {
-  return process.argv[1]
-    ? import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
-    : false;
+  if (!process.argv[1]) return false;
+  let invokedPath: string;
+  try {
+    invokedPath = fs.realpathSync.native(path.resolve(process.argv[1]));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  return (
+    fs.realpathSync.native(fileURLToPath(import.meta.url)) ===
+    invokedPath
+  );
 }
 
 if (isMainModule()) {

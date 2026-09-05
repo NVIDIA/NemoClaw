@@ -509,6 +509,50 @@ export function createDockerRuntimeProviderBundle(
     "workload-cleanup",
   ]);
   const futureReason = "This operation is intentionally deferred to a later provider slice.";
+  const projectGatewayHostRuntime: RuntimeProviderBundle["gateway"]["prepareHostRuntime"] = (
+    input,
+  ) => {
+    const bindAddress = parseGatewayBindAddress(
+      "NEMOCLAW_GATEWAY_BIND_ADDRESS",
+      DEFAULT_GATEWAY_BIND_ADDRESS,
+      input.environment,
+    );
+    const connectHost = getGatewayConnectHost(bindAddress);
+    return {
+      providerId,
+      openShellDriver: "docker",
+      bindAddress,
+      grpcHost: connectHost,
+      sshGatewayHost: connectHost,
+      portCheckHost: bindAddress,
+      socketPath: null,
+      requiredServerIpSans: [],
+      sandboxHostAddress: null,
+      usesHostGatewayRoute: false,
+      resourceOwnership: {
+        label: "openshell.ai/managed-by",
+        value: "openshell",
+      },
+      gatewayConfig: {
+        sandboxNamespace: "scoped",
+        hostGatewayIp: null,
+        includeSupervisorBin: true,
+        processOwnership: "scoped-namespace",
+      },
+      network: {
+        sandboxSourceCidrs: () => {
+          const network = inspectDockerGatewayNetwork(
+            resolveDockerDriverNetworkName(input.environment),
+          );
+          return network?.subnet ? [network.subnet] : [];
+        },
+        inspect: inspectDockerGatewayNetwork,
+        usesHostGatewayRoute: dockerGatewayUsesHostGatewayRoute,
+        run: runDockerGatewayCommand,
+        ensureProbeImageCached: ensureDockerGatewayProbeImageCached,
+      },
+    };
+  };
   return {
     identity: {
       contractVersion: RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
@@ -539,48 +583,8 @@ export function createDockerRuntimeProviderBundle(
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
       ownsHostReadiness: false,
-      prepareHostRuntime: (input) => {
-        const bindAddress = parseGatewayBindAddress(
-          "NEMOCLAW_GATEWAY_BIND_ADDRESS",
-          DEFAULT_GATEWAY_BIND_ADDRESS,
-          input.environment,
-        );
-        const connectHost = getGatewayConnectHost(bindAddress);
-        return {
-          providerId,
-          openShellDriver: "docker",
-          bindAddress,
-          grpcHost: connectHost,
-          sshGatewayHost: connectHost,
-          portCheckHost: bindAddress,
-          socketPath: null,
-          requiredServerIpSans: [],
-          sandboxHostAddress: null,
-          usesHostGatewayRoute: false,
-          resourceOwnership: {
-            label: "openshell.ai/managed-by",
-            value: "openshell",
-          },
-          gatewayConfig: {
-            sandboxNamespace: "scoped",
-            hostGatewayIp: null,
-            includeSupervisorBin: true,
-            processOwnership: "scoped-namespace",
-          },
-          network: {
-            sandboxSourceCidrs: () => {
-              const network = inspectDockerGatewayNetwork(
-                resolveDockerDriverNetworkName(input.environment),
-              );
-              return network?.subnet ? [network.subnet] : [];
-            },
-            inspect: inspectDockerGatewayNetwork,
-            usesHostGatewayRoute: dockerGatewayUsesHostGatewayRoute,
-            run: runDockerGatewayCommand,
-            ensureProbeImageCached: ensureDockerGatewayProbeImageCached,
-          },
-        };
-      },
+      observeHostRuntime: projectGatewayHostRuntime,
+      prepareHostRuntime: projectGatewayHostRuntime,
     },
     workload: {
       providerId,
@@ -706,6 +710,9 @@ export function createKubernetesRuntimeProviderBundle(
       launcher: "openshell",
       inspectLegacyContainer: true,
       ownsHostReadiness: false,
+      observeHostRuntime: () => {
+        throw new Error("The Kubernetes provider does not launch a host-managed gateway.");
+      },
       prepareHostRuntime: () => {
         throw new Error("The Kubernetes provider does not launch a host-managed gateway.");
       },
