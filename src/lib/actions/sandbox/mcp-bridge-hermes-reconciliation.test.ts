@@ -45,6 +45,7 @@ function sandbox(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
   return {
     name: "alpha",
     agent: "hermes",
+    gatewayName: "nemoclaw-8091",
     mcp: {
       bridges: { github: entry },
       managedServerNames: ["github", "retired"],
@@ -101,7 +102,11 @@ describe("Hermes MCP host reconciliation", () => {
       absent: ["retired"],
     });
     expect(JSON.stringify(args)).not.toContain("host-only-secret");
-    expect(options).toMatchObject({ ignoreError: true, timeout: 60_000 });
+    expect(options).toMatchObject({
+      ignoreError: true,
+      runtimeSelection: { gatewayName: "nemoclaw-8091", workspace: "default" },
+      timeout: 60_000,
+    });
   });
 
   it("requires the observed credential revision during status reconciliation (#10079)", () => {

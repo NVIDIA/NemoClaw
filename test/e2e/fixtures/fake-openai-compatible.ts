@@ -40,7 +40,7 @@ export interface FakeOpenAiCompatibleServerOptions {
   readonly apiKey?: string;
   readonly chatContent?: string;
   readonly forbiddenMarkers?: readonly string[];
-  readonly launchReplyFromPrompt?: boolean;
+  readonly replyFromPrompt?: boolean;
   /** Non-secret marker expected in a request under test. */
   readonly requestCanaryMarker?: string;
   readonly host?: string;
@@ -185,7 +185,7 @@ export async function startFakeOpenAiCompatibleServer(
           NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS: JSON.stringify(options.forbiddenMarkers ?? []),
           NEMOCLAW_FAKE_OPENAI_HOST: host,
           NEMOCLAW_FAKE_OPENAI_LOG_FILE: logFile,
-          NEMOCLAW_FAKE_OPENAI_LAUNCH_REPLY_FROM_PROMPT: options.launchReplyFromPrompt ? "1" : "0",
+          NEMOCLAW_FAKE_OPENAI_REPLY_FROM_PROMPT: options.replyFromPrompt ? "1" : "0",
           NEMOCLAW_FAKE_OPENAI_MAX_MODEL_LEN:
             options.maxModelLen !== undefined ? String(options.maxModelLen) : "",
           NEMOCLAW_FAKE_OPENAI_MODEL: options.model ?? "test-model",

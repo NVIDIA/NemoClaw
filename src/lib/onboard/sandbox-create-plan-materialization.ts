@@ -58,8 +58,9 @@ function buildSandboxDriverConfig(
         );
       }
       if (
-        providerMounts.some(({ target }) =>
-          typeof target === "string" && containerPathsOverlap(target, managedStateMount.target),
+        providerMounts.some(
+          ({ target }) =>
+            typeof target === "string" && containerPathsOverlap(target, managedStateMount.target),
         )
       ) {
         throw new Error(`Managed state root '${managedStateMount.target}' overlaps another root.`);
@@ -306,6 +307,7 @@ export function materializeSandboxCreatePlan({
   managedStateMountDriverId,
   policylessCreate = false,
   deferSandboxEffectsUntilIdentityVerification = false,
+  skipProviderEffects = false,
   messagingTokenDefs,
   messagingConfig,
   runProviderPreDeleteCleanup,
@@ -402,7 +404,7 @@ export function materializeSandboxCreatePlan({
     }
     return [...createProviders];
   };
-  if (!deferSandboxEffectsUntilIdentityVerification) {
+  if (!deferSandboxEffectsUntilIdentityVerification && !skipProviderEffects) {
     for (const provider of activateProviderEffects()) {
       createArgs.push("--provider", provider);
     }

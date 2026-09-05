@@ -27,6 +27,7 @@ env:
 
 jobs:
   publish:
+    name: Docs / Publish staging documentation
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: docs-staging
@@ -58,6 +59,7 @@ jobs:
           npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_STAGING_INSTANCE"
 
   delete-preview:
+    name: Docs / Delete PR previews
     runs-on: ubuntu-latest
     needs: publish
     timeout-minutes: 5

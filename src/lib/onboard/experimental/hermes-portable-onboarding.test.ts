@@ -333,6 +333,23 @@ describe("Hermes portable onboarding transaction", () => {
     );
   });
 
+  it("does not enter the provider-owned create callback after active authority supersedes create (#9806)", async () => {
+    const providerOwnedCreate = vi.fn(async () => ({ ready: true as const }));
+    const fixture = deps({ createSandbox: providerOwnedCreate });
+
+    const created = await runHermesPortableOnboardingTransaction(input(), fixture.value);
+    expect(created.created).toBe(true);
+    expect(providerOwnedCreate).toHaveBeenCalledOnce();
+
+    providerOwnedCreate.mockClear();
+    fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
+    const superseded = await runHermesPortableOnboardingTransaction(input(), fixture.value);
+
+    expect(superseded.created).toBe(false);
+    expect(providerOwnedCreate).not.toHaveBeenCalled();
+    expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
+  });
+
   it("settles the exact post-create sandbox identity after the old Ready deadline (#9211)", async () => {
     const present = {
       kind: "present" as const,

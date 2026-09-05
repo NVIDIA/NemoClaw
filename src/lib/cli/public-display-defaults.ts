@@ -62,6 +62,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--quick] [--output FILE|-o FILE] [--sandbox NAME]",
     },
   ],
+  doctor: [
+    {
+      group: "Troubleshooting",
+      order: 36,
+      flags: "[--json|--text]",
+    },
+  ],
   gc: [
     {
       group: "Cleanup",
@@ -445,28 +452,6 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       order: 11,
       description: "Unmount a previously mounted sandbox filesystem",
       flags: "[local-mount-point]",
-    },
-  ],
-  "sandbox:shields:down": [
-    {
-      group: "Sandbox Management",
-      order: 25,
-      flags: "[--timeout 5m] [--reason <text>] [--policy permissive]",
-      hidden: true,
-    },
-  ],
-  "sandbox:shields:status": [
-    {
-      group: "Sandbox Management",
-      order: 27,
-      hidden: true,
-    },
-  ],
-  "sandbox:shields:up": [
-    {
-      group: "Sandbox Management",
-      order: 26,
-      hidden: true,
     },
   ],
   "sandbox:skill:install": [

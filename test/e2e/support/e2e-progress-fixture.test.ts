@@ -30,7 +30,6 @@ it.each([
 it.each([
   "hermes-e2e",
   "hermes-discord",
-  "hermes-shields-config",
   null,
 ])("keeps the 60-second runner-pressure cadence for %s (#7144)", (targetId) => {
   expect(runnerComparisonSampleIntervalMs(targetId)).toBe(60_000);

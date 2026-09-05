@@ -92,6 +92,15 @@ export interface HermesPortableContainerInspection {
   readonly status: string;
 }
 
+const CURRENT_OBSERVATION_RECEIPTS = new WeakMap<
+  HermesPortableContainerInspection,
+  HermesPortableConfiguredReceipt
+>();
+const LATEST_CURRENT_OBSERVATIONS = new WeakMap<
+  HermesPortableConfiguredReceipt,
+  HermesPortableContainerInspection
+>();
+
 export type HermesPortableContainerInspectionTimingStage =
   | "preGuard"
   | "podmanCapture"
@@ -324,8 +333,8 @@ function parseInspection(
   }
   const hostConfig = record(row.HostConfig, "inspect HostConfig");
   const restart = record(hostConfig.RestartPolicy, "inspect restart policy");
-  return {
-    authority: {
+  return Object.freeze({
+    authority: Object.freeze({
       containerId,
       sandboxId: expected.sandboxId,
       imageId: imageId(row.Image),
@@ -333,11 +342,11 @@ function parseInspection(
       name,
       running: state.Running,
       restartPolicy: text(restart.Name, "restart policy", true),
-    },
-    labels: containerLabels,
+    }),
+    labels: Object.freeze(containerLabels),
     paused: state.Paused === true,
     status: text(state.Status, "container status").toLowerCase(),
-  };
+  });
 }
 
 function assertSocket(
@@ -438,9 +447,69 @@ export function assertCurrentHermesPortableContainer(
   } = inspected.authority;
   const compare = deps.inspectionTiming?.measure ?? ((_stage, operation) => operation());
   compare("identityCompare", () => {
-    if (!isDeepStrictEqual(current, recorded)) fail("live immutable identity disagrees with receipt");
+    if (!isDeepStrictEqual(current, recorded))
+      fail("live immutable identity disagrees with receipt");
   });
+  CURRENT_OBSERVATION_RECEIPTS.set(inspected, receipt);
+  LATEST_CURRENT_OBSERVATIONS.set(receipt, inspected);
   return inspected;
+}
+
+function consumeCurrentObservation(
+  receipt: HermesPortableConfiguredReceipt,
+  observation: HermesPortableContainerInspection,
+): HermesPortableContainerInspection {
+  const isCurrent =
+    CURRENT_OBSERVATION_RECEIPTS.get(observation) === receipt &&
+    LATEST_CURRENT_OBSERVATIONS.get(receipt) === observation;
+  CURRENT_OBSERVATION_RECEIPTS.delete(observation);
+  LATEST_CURRENT_OBSERVATIONS.delete(receipt);
+  if (!isCurrent) fail("reused health observation is not current receipt authority");
+  return observation;
+}
+
+function isAuthenticatedHealthReady(observation: HermesPortableContainerInspection): boolean {
+  return (
+    observation.authority.running &&
+    !observation.paused &&
+    observation.authority.restartPolicy === "unless-stopped" &&
+    observation.status === "running"
+  );
+}
+
+function captureAuthenticatedHealthWithPostInspection(
+  receipt: HermesPortableConfiguredReceipt,
+  deps: HermesPortableContainerDeps,
+  authenticatedHealth: HermesPortableAuthenticatedHealthCapture,
+): string {
+  const command: { readonly output: string } | { readonly failure: unknown } = (() => {
+    try {
+      return {
+        output: requireCommand(
+          authenticatedHealth(AUTHENTICATED_HEALTH_SCRIPT, MUTATION_TIMEOUT_MS),
+          "authenticated Hermes health probe",
+        ),
+      };
+    } catch (failure) {
+      return { failure };
+    }
+  })();
+  try {
+    const after = assertCurrentHermesPortableContainer(receipt, deps);
+    if (!isAuthenticatedHealthReady(after)) {
+      fail("container authority changed during authenticated health");
+    }
+  } catch (postInspectionFailure) {
+    if ("failure" in command) {
+      throw new AggregateError(
+        [command.failure, postInspectionFailure],
+        "Hermes portable container authority authenticated health and post-inspection failed",
+      );
+    }
+    throw postInspectionFailure;
+  }
+  if ("failure" in command) throw command.failure;
+  return command.output;
 }
 
 /** Apply and verify the only enrollment-time Podman mutation by exact full ID. */
@@ -477,27 +546,29 @@ export function configureHermesPortableRestartPolicy(
 export function observeHermesPortableAuthenticatedHealth(
   receipt: HermesPortableConfiguredReceipt,
   deps: HermesPortableContainerDeps,
+  beforeObservation?: HermesPortableContainerInspection,
 ): "ready" | "unavailable" {
-  const before = assertCurrentHermesPortableContainer(receipt, deps);
-  if (!before.authority.running || before.paused) {
-    fail("authenticated health requires the exact container to be running and unpaused");
+  const before = consumeCurrentObservation(
+    receipt,
+    beforeObservation ?? assertCurrentHermesPortableContainer(receipt, deps),
+  );
+  if (!isAuthenticatedHealthReady(before)) {
+    fail(
+      "authenticated health requires the exact container to be running, unpaused, and restart-policy qualified",
+    );
   }
   assertSocket(receipt, deps);
   if (!deps.authenticatedHealth) {
     fail("authenticated Hermes health observer is unavailable");
   }
-  const output = requireCommand(
-    deps.authenticatedHealth(AUTHENTICATED_HEALTH_SCRIPT, MUTATION_TIMEOUT_MS),
-    "authenticated Hermes health probe",
+  const output = captureAuthenticatedHealthWithPostInspection(
+    receipt,
+    deps,
+    deps.authenticatedHealth,
   );
-  assertSocket(receipt, deps);
   const status = output.trim();
   if (status !== String(receipt.startup.health.successStatus) && status !== "unavailable") {
     fail(`authenticated Hermes health returned status '${status || "missing"}'`);
-  }
-  const after = assertCurrentHermesPortableContainer(receipt, deps);
-  if (!after.authority.running || after.paused) {
-    fail("container authority changed during authenticated health");
   }
   return status === "unavailable" ? "unavailable" : "ready";
 }

@@ -535,7 +535,7 @@ function validateOpenShellOciIdentityMetadata(environment: readonly string[]): b
 /**
  * OpenShell 0.0.99 began using `OPENSHELL_OCI_IMAGE_USER` presence to prepare
  * its default workspace. That preparation changes the `/sandbox` owner before
- * the workload starts, which breaks NemoClaw's Shields parent ownership
+ * the workload starts, which breaks NemoClaw's config-parent ownership
  * requirement. The recreated Docker supervisor retains NemoClaw's explicit
  * sandbox policy, so omitting only this marker replays the pre-0.0.99 workspace
  * behavior without changing the process identity selected by policy.

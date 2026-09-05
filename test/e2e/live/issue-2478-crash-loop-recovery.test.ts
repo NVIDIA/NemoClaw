@@ -14,6 +14,7 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 
+import { execTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -179,7 +180,7 @@ async function onboardWithCompatibleEndpoint(
       NEMOCLAW_SANDBOX_NAME: sandboxName,
     },
     redactionValues: [COMPATIBLE_AUTH_VALUE],
-    timeoutMs: 15 * 60_000,
+    timeoutMs: execTimeout(15 * 60_000),
   });
   expect(
     result.exitCode,

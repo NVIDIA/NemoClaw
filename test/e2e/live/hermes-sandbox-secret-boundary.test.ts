@@ -505,7 +505,6 @@ async function inspectGatewayControlBoundary(probe: DockerProbe, image: string):
 set -eu
 [ "$(stat -c '%U:%G %a' /usr/local/bin/nemoclaw-gateway-control)" = "root:root 700" ]
 [ "$(stat -c '%U:%G %a' /usr/local/lib/nemoclaw/managed-gateway-control.py)" = "root:root 500" ]
-[ "$(stat -c '%U:%G %a' /usr/local/lib/nemoclaw/state-dir-guard.py)" = "root:root 500" ]
 [ "$(stat -c '%U:%G %a' /usr/local/lib/nemoclaw/gateway-supervisor.sh)" = "root:root 444" ]
 id -nG gateway | tr ' ' '\n' | grep -qx sandbox
 id -nG root | tr ' ' '\n' | grep -qx sandbox

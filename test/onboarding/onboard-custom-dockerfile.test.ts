@@ -195,6 +195,7 @@ const fixtureMocks = require(${onboardScriptMocksPath});
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "my-assistant",
 });
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 createdSandbox.installRuntimeObservation();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -237,6 +238,13 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: normalized, env: opts.env || null });
   const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
+  if (normalized.endsWith("provider get -g nemoclaw openai-api")) {
+    return {
+      status: 1,
+      stdout: "",
+      stderr: "provider 'openai-api' not found",
+    };
+  }
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
 };
@@ -250,7 +258,7 @@ runner.runCapture = (command) => {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 fixtureMocks.mockDockerSandboxLifecycleReleaseFromRunner();
@@ -263,7 +271,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
-  createdSandbox.create(args.flat());
+  if (!forwardService.recordSpawn(args)) createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();

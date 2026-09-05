@@ -439,7 +439,7 @@ describe("sandbox skill action orchestration", () => {
     expect(skillInstall.postInstall).not.toHaveBeenCalled();
   });
 
-  it("adds shields recovery guidance when skill upload fails and deletes the temp SSH config (#6859)", async () => {
+  it("reports an upload failure and deletes the temporary SSH config (#6859)", async () => {
     const skillDir = makeSkillDir();
     let tempConfig = "";
     skillInstall.uploadDirectory.mockImplementation((ctx) => {
@@ -457,8 +457,6 @@ describe("sandbox skill action orchestration", () => {
     const output = error.mock.calls.map((args) => args.join(" ")).join("\n");
     expect(process.exitCode).toBe(1);
     expect(output).toContain("Failed to upload 1 file(s): SKILL.md");
-    expect(output).toContain("locked while shields are up");
-    expect(output).toContain("nemoclaw alpha shields down");
     expect(skillInstall.postInstall).not.toHaveBeenCalled();
     expectTempSshConfigCleanedUp(tempConfig);
   });

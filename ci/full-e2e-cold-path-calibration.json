@@ -173,7 +173,6 @@
       "scripts/nemoclaw-start.sh",
       "scripts/gateway-control.sh",
       "scripts/managed-gateway-control.py",
-      "scripts/state-dir-guard.py",
       "scripts/openclaw-config-guard.py",
       "scripts/codex-acp-wrapper.sh",
       "scripts/generate-openclaw-config.mts",

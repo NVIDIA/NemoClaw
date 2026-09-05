@@ -34,7 +34,7 @@ portable profile are different product paths.
 5. Implement immutable workload receipt acceptance.
 6. Implement bootstrap, start, started-state verification, stop, and privileged control.
 7. Implement inference service authority and credential redaction where applicable.
-8. Implement fenced state mutation, snapshot, restore, and restart recovery.
+8. Implement snapshot, restore, and restart recovery.
 9. Implement side-effect-free cleanup planning, authority revalidation, removal, and absence
    confirmation.
 10. Persist the provider identity and prove each later operation resolves the same bundle.
@@ -73,7 +73,6 @@ Test at least these provider-bound failures when applicable:
 - endpoint or socket authority drift between operation scopes;
 - runtime handle, lifecycle generation, or ownership mismatch;
 - timeout, nonzero status, partial publication, and controller restart;
-- state-mutation rollback and active-fence recovery;
 - snapshot source and target provider mismatch;
 - cleanup with missing, shared, ambiguous, or changed ownership;
 - credential redaction from logs, receipts, and artifacts; and
@@ -94,7 +93,7 @@ A provider PR is not approval-ready until the review can answer each question:
 - Do unsupported candidate surfaces state reasons?
 - Does activation enter through the qualification-backed composition seam?
 - Does protected evidence bind the candidate, base, workflow, job, attempt, and artifact?
-- Do state mutation, recovery, and cleanup fail closed on authority drift?
+- Do recovery and cleanup fail closed on authority drift?
 - Do focused checks pass for the commit under review?
 - Does the complete supported E2E matrix pass for that same commit?
 - Are ownership, compatibility, security, and upgrade obligations documented?

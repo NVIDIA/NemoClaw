@@ -320,45 +320,6 @@ EOF
       expect(stderr).toContain("integrity check FAILED");
     });
 
-    it("locked-aware verifier skips mutable-default hash files", () => {
-      const configFile = join(workDir, "config.json");
-      writeFileSync(configFile, '{"test": true}');
-      execFileSync("bash", [
-        "-c",
-        `cd ${JSON.stringify(workDir)} && sha256sum config.json > .config-hash`,
-      ]);
-      writeFileSync(configFile, '{"test": false, "mutable": true}');
-
-      const { stdout } = runWithLib(`
-        verify_config_integrity_if_locked ${JSON.stringify(workDir)} 2>&1
-        echo "MUTABLE_OK"
-      `);
-      expect(stdout).toContain("Config integrity check skipped for mutable default");
-    });
-
-    it("locked-aware verifier fails closed when a locked config is missing its hash", () => {
-      const fakeBin = join(workDir, "bin");
-      mkdirSync(fakeBin);
-      writeFileSync(
-        join(fakeBin, "stat"),
-        [
-          "#!/usr/bin/env bash",
-          'if [ "${2:-}" = "%u" ]; then echo 0; exit 0; fi',
-          'if [ "${2:-}" = "%a" ] || [ "${2:-}" = "%Lp" ]; then echo 755; exit 0; fi',
-          "exit 1",
-        ].join("\n"),
-        { mode: 0o700 },
-      );
-
-      const { stderr } = runWithLib(
-        `verify_config_integrity_if_locked ${JSON.stringify(workDir)}`,
-        {
-          env: { PATH: `${fakeBin}:${process.env.PATH || ""}` },
-          expectFail: true,
-        },
-      );
-      expect(stderr).toContain("Locked config is missing hash file");
-    });
   });
 
   describe("lock_rc_files", () => {

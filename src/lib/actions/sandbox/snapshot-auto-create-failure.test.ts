@@ -213,21 +213,8 @@ vi.mock("../../runtime-recovery", () => ({
   parseLiveSandboxNames: vi.fn(() => new Set(["alpha"])),
 }));
 vi.mock("../../sandbox/create-stream", () => ({ streamSandboxCreate: streamSandboxCreateMock }));
-vi.mock("../../shields", () => ({
-  get isShieldsDown() {
-    return true;
-  },
-  recoverCompletedAutoRestoreBeforeCommand: vi.fn(),
+vi.mock("../../sandbox/mutable-config-perms", () => ({
   repairMutableConfigPerms: vi.fn(() => ({ applied: true, verified: true, errors: [] })),
-  shieldsUp: vi.fn(),
-}));
-vi.mock("../../shields/timer-bound-lock", () => ({
-  withTimerBoundShieldsMutationLock: vi.fn((_sandbox, _command, fn) => fn()),
-}));
-vi.mock("../../shields/timer-control", () => ({
-  isProcessAlive: vi.fn(() => true),
-  readProcessStartIdentity: vi.fn(() => "snapshot-test-process-start"),
-  readTimerMarker: vi.fn(() => null),
 }));
 vi.mock("../../state/gateway", () => ({
   isGatewayHealthy: vi.fn(() => true),
@@ -263,7 +250,6 @@ vi.mock("../../state/sandbox", () => ({
   restoreSandboxState: restoreSandboxStateMock,
 }));
 vi.mock("./destroy", () => ({
-  cleanupShieldsDestroyArtifacts: vi.fn(),
   removeSandboxRegistryEntryOutcome: removeSandboxRegistryEntryOutcomeMock,
   requireSandboxDestructiveCleanupAuthority: vi.fn(() => ({ provider: runtimeProvider })),
 }));

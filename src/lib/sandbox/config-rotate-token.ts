@@ -22,7 +22,7 @@ export function loadRotateTokenSession(): RotateTokenSession | null {
 }
 
 export type RotateTokenDeps = {
-  readonly appendAuditEntry: typeof import("../shields/audit").appendAuditEntry;
+  readonly appendAuditEntry: typeof import("../state/audit/operational").appendAuditEntry;
   readonly captureOpenshellCommand: typeof import("../adapters/openshell/client").captureOpenshellCommand;
   readonly fail: RotateTokenFailure;
   readonly loadSession: () => RotateTokenSession | null;

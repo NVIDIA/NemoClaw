@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { SystemReadinessReport } from "../../readiness/types";
 import { loadServingCatalog } from "./catalog-loader";
 import {
   listServingProfiles,
@@ -88,6 +89,49 @@ describe("serving profile discovery", () => {
 
     expect(observed).toHaveLength(catalog.presets.length);
     expect(observed.every((reports) => reports === readinessReports)).toBe(true);
+  });
+
+  it("keeps managed vLLM profiles incompatible when Docker is absent (#10891)", () => {
+    const catalog = loadServingCatalog();
+    const profileId = "vllm.dgx-spark-gb10.single.qwen3-6-35b-a3b-nvfp4";
+    const report = {
+      schemaVersion: "1.1.0",
+      mutated: false,
+      provenance: {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: "a".repeat(40),
+        observedAt: new Date().toISOString(),
+      },
+      observations: [],
+      capabilities: [{ id: "host.docker.available", state: "unknown" }],
+      qualifications: [],
+      findings: [
+        {
+          id: "host.docker.unavailable",
+          severity: "blocking",
+          summary: "Docker is unavailable.",
+          capabilityIds: ["host.docker.available"],
+        },
+      ],
+      evidence: [],
+      status: "incompatible",
+      exitCode: 2,
+    } satisfies SystemReadinessReport;
+    const entries = listServingProfiles(catalog, {
+      readinessReports: [{ nodeId: "podman-host", report }],
+    });
+    const profile = entries.find(({ id }) => id === profileId);
+
+    expect(profile).toMatchObject({
+      compatible: false,
+      incompatibilityReason: "podman-host: readiness status is incompatible",
+    });
+    expect(() =>
+      resolveServingProfileSelection(profileId, {
+        catalog,
+        listProfiles: () => entries,
+      }),
+    ).toThrow("is incompatible: podman-host: readiness status is incompatible");
   });
 
   it("escapes an untrusted profile candidate in diagnostics (#8384)", () => {

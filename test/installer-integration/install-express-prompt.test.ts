@@ -11,6 +11,18 @@ import { runExpressPromptWithTty } from "../helpers/installer-express-prompt-pty
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
 describe("installer express install prompt (sourced)", () => {
+  it("carries a declined N1x preview through preflight into ordinary onboarding (#11041)", () => {
+    const result = runExpressPromptWithTty("n\n", "pipe", "N1x", {}, "n1x-standard-main");
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.error, output).toBeUndefined();
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("Skipping express install. Continuing with interactive flow.");
+    expect(output.match(/Detected container runtime: docker/g)).toHaveLength(1);
+    expect(output).not.toContain("Host preflight found issues");
+    expect(output.match(/ONBOARD NO_EXPRESS=1 PROVIDER= ARGS=onboard/g)).toHaveLength(1);
+  });
+
   it("drains PTY output after the child exits", () => {
     const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pty-tail-"));
     try {

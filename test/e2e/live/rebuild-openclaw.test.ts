@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
@@ -56,6 +57,7 @@ const PRE_REBUILD_GATEWAY_TOKEN = `nemoclaw-e2e-old-gateway-token-${MARKER_CONTE
 const OLD_BASE_TAG = `nemoclaw-old-base:${SANDBOX_NAME.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-")}`;
 
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
+const LOCAL_ONBOARD_COMMAND_TIMEOUT_MS = execTimeout(ONBOARD_TIMEOUT_MS);
 const DOCKER_BUILD_TIMEOUT_MS = 35 * 60_000;
 const REBUILD_TIMEOUT_MS = 30 * 60_000;
 const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
@@ -445,7 +447,7 @@ test(
       artifactName: "phase-1-onboard-current",
       env: cliEnv(apiKey, { NEMOCLAW_RECREATE_SANDBOX: "1" }),
       redactionValues: [apiKey],
-      timeoutMs: ONBOARD_TIMEOUT_MS,
+      timeoutMs: LOCAL_ONBOARD_COMMAND_TIMEOUT_MS,
     });
     if (onboard.exitCode !== 0) {
       if (!isRetryableOnboardEndpointFailure(onboard)) {

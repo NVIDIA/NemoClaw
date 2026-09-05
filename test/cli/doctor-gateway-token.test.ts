@@ -399,34 +399,6 @@ describe("CLI dispatch", () => {
     },
   );
 
-  it(
-    "doctor reports fresh shields state as not configured instead of down",
-    testTimeoutOptions(30_000),
-    ({ resources }) => {
-      const setup = createDoctorTestSetup(resources, "nemoclaw-cli-doctor-shields-default-", [
-        'case "$*" in',
-        '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
-        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
-        "esac",
-      ]);
-
-      const r = setup.runDoctor("alpha doctor --json");
-
-      const report = JSON.parse(r.out) as {
-        checks: Array<{ label: string; status: string; detail: string; hint?: string }>;
-      };
-      const shields = report.checks.find((check) => check.label === "Shields");
-      expect(shields).toEqual(
-        expect.objectContaining({
-          status: "info",
-          detail: "not configured (default mutable state)",
-        }),
-      );
-      expect(shields?.detail).not.toBe("down");
-    },
-  );
 
   it(
     "doctor does not query sandbox state from a different active gateway",

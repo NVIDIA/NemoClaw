@@ -64,6 +64,13 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Download same-run reviewed npm audit evidence
+        if: inputs.agent == 'openclaw'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: reviewed-npm-audit
+          path: ${{ runner.temp }}/reviewed-npm-audit
+
       - name: Build and publish platform digest
         id: platform
         uses: ./.github/actions/build-base-image-platform
@@ -77,3 +84,5 @@ jobs:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.registry_password }}
           openclaw-version: ${{ inputs.openclaw-version }}
+          mcporter-audit-receipt: ${{ inputs.agent == 'openclaw' && format('{0}/reviewed-npm-audit/mcporter-runtime.receipt.json', runner.temp) || '' }}
+          mcporter-audit-raw-report: ${{ inputs.agent == 'openclaw' && format('{0}/reviewed-npm-audit/mcporter-runtime.raw.json', runner.temp) || '' }}

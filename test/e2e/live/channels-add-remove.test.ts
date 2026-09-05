@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { testTimeoutOptions } from "../../helpers/timeouts";
+import { execTimeout, testTimeoutOptions } from "../../helpers/timeouts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -45,7 +45,7 @@ const ONBOARD_ARGS = [
 ];
 
 const TEST_TIMEOUT_MS = Number(process.env.NEMOCLAW_E2E_TIMEOUT_SECONDS ?? 4_500) * 1_000;
-const ONBOARD_TIMEOUT_MS = 25 * 60_000;
+const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
 const REBUILD_TIMEOUT_MS = 30 * 60_000;
 const COMMAND_TIMEOUT_MS = 2 * 60_000;
 

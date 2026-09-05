@@ -2,6 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ReadinessCapability, ReadinessFinding, SystemReadinessReport } from "./types";
+import { isN1xOnboardingProviderKey } from "../onboard/inference-providers/provider-selection-keys";
+
+/** Return whether installer state records an accepted Deferred N1x onboarding path. */
+export function hasExplicitDeferredN1xOnboardingIntent(
+  env: Readonly<Record<string, string | undefined>>,
+): boolean {
+  const provider = String(env.NEMOCLAW_PROVIDER ?? "").trim();
+  if (provider) return isN1xOnboardingProviderKey(provider);
+  return env.NEMOCLAW_NO_EXPRESS === "1";
+}
 
 export const ONBOARD_READINESS_ADMISSION_REASON_IDS = {
   blockingFindings: "onboard.readiness.blocking_findings",
@@ -16,6 +26,8 @@ export const ONBOARD_READINESS_FINDING_IDS = {
   cdiMissing: "host.gpu.cdi_missing",
   cdiStale: "host.gpu.cdi_stale",
   nvidiaRuntimeMissing: "host.gpu.nvidia_runtime_missing",
+  dockerUnavailable: "host.docker.unavailable",
+  dockerHostInvalid: "host.docker.host_invalid",
   dockerDaemonUnreachable: "host.docker.daemon_unreachable",
   runtimeUnsupported: "host.docker.runtime_unsupported",
   storageIncompatible: "host.docker.storage_incompatible",
@@ -45,11 +57,13 @@ export interface OnboardReadinessAdmissionOptions {
   explicitlyOptedOutGpuPassthrough: boolean;
   /** This run has an explicit runtime path that does not require the standard Docker driver. */
   allowUnsupportedRuntime: boolean;
+  /** A selected registered provider owns host readiness instead of the standard Docker driver. */
+  providerOwnsHostReadiness?: boolean;
   /** The lifecycle may build the documented patched gateway image for the storage conflict. */
   allowStorageRemediation: boolean;
   /** The explicit portable profile may prepare its rootless runtime before revalidation. */
   allowPortableHostPreparation?: boolean;
-  /** Explicit managed-vLLM intent may exercise the Deferred N1x validation path. */
+  /** Explicit accepted onboarding intent may exercise the Deferred N1x validation path. */
   allowDeferredN1xManagedVllm?: boolean;
 }
 
@@ -71,6 +85,22 @@ const GPU_FINDINGS = new Set<string>([
   ONBOARD_READINESS_FINDING_IDS.cdiMissing,
   ONBOARD_READINESS_FINDING_IDS.cdiStale,
   ONBOARD_READINESS_FINDING_IDS.nvidiaRuntimeMissing,
+]);
+
+const STANDARD_DOCKER_FINDINGS = new Set<string>([
+  ONBOARD_READINESS_FINDING_IDS.dockerUnavailable,
+  ONBOARD_READINESS_FINDING_IDS.dockerHostInvalid,
+  ONBOARD_READINESS_FINDING_IDS.dockerDaemonUnreachable,
+  ONBOARD_READINESS_FINDING_IDS.runtimeUnsupported,
+  ONBOARD_READINESS_FINDING_IDS.storageIncompatible,
+]);
+
+const STANDARD_DOCKER_REQUIRED_CAPABILITIES = new Set<string>([
+  ONBOARD_REQUIRED_CAPABILITY_IDS.dockerAvailable,
+  ONBOARD_REQUIRED_CAPABILITY_IDS.dockerDaemonReachable,
+  ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported,
+  ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
+  ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
 ]);
 
 const ALWAYS_REQUIRED_CAPABILITIES = [
@@ -106,6 +136,7 @@ function canWaiveFinding(
   managedGateway: boolean,
 ): boolean {
   if (options.explicitlyOptedOutGpuPassthrough && GPU_FINDINGS.has(finding.id)) return true;
+  if (options.providerOwnsHostReadiness && STANDARD_DOCKER_FINDINGS.has(finding.id)) return true;
   if (
     options.allowUnsupportedRuntime &&
     finding.id === ONBOARD_READINESS_FINDING_IDS.runtimeUnsupported
@@ -155,9 +186,10 @@ function requiredUnknownCapabilityIds(
   const unknown: string[] = [];
   for (const id of ALWAYS_REQUIRED_CAPABILITIES) {
     if (
-      options.allowPortableHostPreparation &&
-      (id === ONBOARD_REQUIRED_CAPABILITY_IDS.dockerDaemonReachable ||
-        id === ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported)
+      (options.providerOwnsHostReadiness && STANDARD_DOCKER_REQUIRED_CAPABILITIES.has(id)) ||
+      (options.allowPortableHostPreparation &&
+        (id === ONBOARD_REQUIRED_CAPABILITY_IDS.dockerDaemonReachable ||
+          id === ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported))
     ) {
       continue;
     }
@@ -173,6 +205,7 @@ function requiredUnknownCapabilityIds(
     ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
   );
   const storageRequirementSatisfied =
+    options.providerOwnsHostReadiness === true ||
     options.allowPortableHostPreparation === true ||
     storageCompatible === "present" ||
     (options.allowStorageRemediation && storageRemediation === "present");

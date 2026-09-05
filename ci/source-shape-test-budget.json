@@ -87,21 +87,6 @@
       "category": "security"
     },
     {
-      "file": "test/agents/hermes/hermes-final-image-layout.test.ts",
-      "test": "pins $source to its current bytes at $target",
-      "category": "security"
-    },
-    {
-      "file": "test/agents/hermes/hermes-runtime-config-guard-topology.test.ts",
-      "test": "allows the sandbox identity to create runtime state but refuses sealed configuration writes, unlinks, and renames (#7865)",
-      "category": "security"
-    },
-    {
-      "file": "test/agents/hermes/hermes-runtime-config-guard-topology.test.ts",
-      "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
-      "category": "security"
-    },
-    {
       "file": "test/platform/images/muse-glimmer-vllm-image-provenance.test.ts",
       "test": "binds the checked-in provenance to the selected runtime",
       "category": "security"
@@ -218,12 +203,27 @@
     },
     {
       "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
+      "test": "passes the cache identity target root without interpolating it into shell source",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
       "test": "rejects the removed plural source-registry package shape",
       "category": "security"
     },
     {
       "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
       "test": "rejects malformed reviewed source package specifications",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/hermes/hermes-image-build-probes.test.ts",
+      "test": "binds the runtime environment validator to its source digest",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/hermes/hermes-image-build-probes.test.ts",
+      "test": "binds the Hermes wrapper to its source digest",
       "category": "security"
     },
     {
