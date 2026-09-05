@@ -50,6 +50,8 @@ $$nemoclaw my-assistant channels remove teams
 `channels remove wechat` clears the bot token, deletes the `<sandbox>-wechat-bridge` provider, and removes `wechat` from the enabled-channel set. The next rebuild omits WeChat configuration and per-account state files.
 
 `channels remove googlechat` detaches and deletes the `<sandbox>-googlechat-bridge` provider before the rebuild removes Google Chat configuration and the matching policy preset.
+If deletion fails after detachment, NemoClaw first attempts to restore the provider attachment so the configured channel can keep delivering.
+If restoration also fails, the command names the provider and sandbox, warns that delivery may remain interrupted, and leaves the channel's credentials, registry entry, and policy in place for a retry.
 
 <AgentOnly variant="openclaw">
 It also stops the dedicated cloudflared process and webhook proxy for that sandbox.

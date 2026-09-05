@@ -324,6 +324,7 @@ export async function cleanupProvidersAtOpenShell(
   const residualProviders: Array<{ providerName: string; error: OpenShellProviderError }> = [];
 
   for (const providerName of uniqueStrings(providerNames)) {
+    const providerDetachedAttachments: Array<{ providerName: string; sandboxName: string }> = [];
     const initialIdentityError = cleanupIdentityError(options, providerName, "delete");
     if (initialIdentityError) {
       residualProviders.push({ providerName, error: redactedProviderError(initialIdentityError) });
@@ -358,7 +359,7 @@ export async function cleanupProvidersAtOpenShell(
           detachFailed = detached.error;
           break;
         }
-        detachedAttachments.push({ providerName, sandboxName });
+        providerDetachedAttachments.push({ providerName, sandboxName });
         options.revalidateSandboxIdentity?.(
           `confirm messaging provider ${JSON.stringify(providerName)} cleanup detach from sandbox ${JSON.stringify(sandboxName)}`,
         );
@@ -371,18 +372,50 @@ export async function cleanupProvidersAtOpenShell(
       }
     }
     if (detachFailed) {
-      residualProviders.push({ providerName, error: redactedProviderError(detachFailed) });
+      detachedAttachments.push(...providerDetachedAttachments);
+      residualProviders.push({
+        providerName,
+        error: await restoreCleanupAttachments(
+          providerName,
+          providerDetachedAttachments,
+          detachFailed,
+          options,
+          target,
+        ),
+      });
       continue;
     }
     const retryIdentityError = cleanupIdentityError(options, providerName, "retry deletion of");
     if (retryIdentityError) {
-      residualProviders.push({ providerName, error: redactedProviderError(retryIdentityError) });
+      detachedAttachments.push(...providerDetachedAttachments);
+      residualProviders.push({
+        providerName,
+        error: await restoreCleanupAttachments(
+          providerName,
+          providerDetachedAttachments,
+          retryIdentityError,
+          options,
+          target,
+        ),
+      });
       continue;
     }
     const retried = await options.providerAdapter.deleteProvider({ target, providerName });
+    detachedAttachments.push(...providerDetachedAttachments);
     if (retried.ok) removedProviderNames.push(providerName);
     else if (isNotFound(retried)) absentProviderNames.push(providerName);
-    else residualProviders.push({ providerName, error: redactedProviderError(retried.error) });
+    else {
+      residualProviders.push({
+        providerName,
+        error: await restoreCleanupAttachments(
+          providerName,
+          providerDetachedAttachments,
+          retried.error,
+          options,
+          target,
+        ),
+      });
+    }
   }
 
   return {
@@ -390,6 +423,49 @@ export async function cleanupProvidersAtOpenShell(
     absentProviderNames,
     detachedAttachments,
     residualProviders,
+  };
+}
+
+async function restoreCleanupAttachments(
+  providerName: string,
+  attachments: readonly Readonly<{ providerName: string; sandboxName: string }>[],
+  cleanupError: OpenShellProviderError,
+  options: MessagingProviderCleanupOptions,
+  target: OpenShellGatewayTarget,
+): Promise<OpenShellProviderError> {
+  const failures: Array<{ sandboxName: string; error: OpenShellProviderError }> = [];
+  for (const { sandboxName } of [...attachments].reverse()) {
+    const before = cleanupIdentityError(options, providerName, "restore attachment for");
+    if (before) {
+      failures.push({ sandboxName, error: before });
+      continue;
+    }
+    const restored = await options.providerAdapter.attachProvider({
+      target,
+      providerName,
+      sandboxName,
+    });
+    if (!restored.ok) {
+      failures.push({ sandboxName, error: restored.error });
+      continue;
+    }
+    const after = cleanupIdentityError(options, providerName, "confirm restored attachment for");
+    if (after) failures.push({ sandboxName, error: after });
+  }
+
+  const redactedCleanupError = redactedProviderError(cleanupError);
+  if (failures.length === 0) return redactedCleanupError;
+  const recovery = failures
+    .map(
+      ({ sandboxName, error }) =>
+        `${JSON.stringify(sandboxName)}: ${redactedProviderError(error).message}`,
+    )
+    .join("; ");
+  return {
+    ...redactedCleanupError,
+    message:
+      `${redactedCleanupError.message} Automatic attachment recovery failed for provider ` +
+      `${JSON.stringify(providerName)} on sandbox ${recovery}. Channel delivery may remain interrupted.`,
   };
 }
 

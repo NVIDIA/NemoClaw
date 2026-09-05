@@ -971,7 +971,10 @@ describe("messaging OpenShell provider application", () => {
         ok: false,
         error: { kind: "transport", reason: "unreachable", message: "delete unavailable" },
       });
-    const adapter = providerAdapter({ deleteProvider });
+    const attachProvider = vi
+      .fn<OpenShellProviderAdapter["attachProvider"]>()
+      .mockResolvedValue({ ok: true });
+    const adapter = providerAdapter({ deleteProvider, attachProvider });
 
     const result = await cleanupProvidersAtOpenShell([providerName], {
       providerAdapter: adapter,
@@ -990,6 +993,64 @@ describe("messaging OpenShell provider application", () => {
         },
       ],
     });
+    expect(attachProvider).toHaveBeenCalledExactlyOnceWith({
+      target,
+      providerName,
+      sandboxName: "alpha",
+    });
+  });
+
+  it("reports a residual attachment when cleanup cannot restore channel delivery (#9806)", async () => {
+    const providerName = "alpha-telegram-bridge";
+    const secret = "nvapi-reattach-secret-do-not-leak";
+    const deleteProvider = vi
+      .fn<OpenShellProviderAdapter["deleteProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "attached",
+          message: "provider is attached",
+          attachedSandboxes: ["alpha"],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "transport", reason: "unreachable", message: "delete unavailable" },
+      });
+    const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>().mockResolvedValue({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: `NVIDIA_API_KEY=${secret}`,
+      },
+    });
+    const adapter = providerAdapter({ deleteProvider, attachProvider });
+
+    const result = await cleanupProvidersAtOpenShell([providerName], {
+      providerAdapter: adapter,
+      target,
+      allowedSandboxes: ["alpha"],
+    });
+
+    expect(result.residualProviders).toEqual([
+      {
+        providerName,
+        error: {
+          kind: "transport",
+          reason: "unreachable",
+          message: expect.stringContaining(
+            'Automatic attachment recovery failed for provider "alpha-telegram-bridge" on sandbox "alpha":',
+          ),
+        },
+      },
+    ]);
+    expect(result.residualProviders[0]?.error.message).toContain(
+      "Channel delivery may remain interrupted.",
+    );
+    expect(result.residualProviders[0]?.error.message).toContain("<REDACTED>");
+    expect(JSON.stringify(result)).not.toContain(secret);
   });
 
   it("distinguishes an already absent provider from one removed by cleanup (#9806)", async () => {
