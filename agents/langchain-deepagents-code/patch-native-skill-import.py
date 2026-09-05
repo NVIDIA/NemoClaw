@@ -82,6 +82,32 @@ def _import_local(
     if not valid_path:
         console.print(f"[bold red]Error:[/bold red] {path_error}")
         raise SystemExit(1)
+    if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
+        console.print("[bold red]Error:[/bold red] Existing skill target is not a regular directory.")
+        raise SystemExit(1)
+
+    backup_prefix = f".{skill_name}.backup."
+    import_prefix = f".{skill_name}.import."
+    try:
+        abandoned_backups = []
+        abandoned_imports = []
+        for entry in destination_root.iterdir():
+            if entry.name.startswith(backup_prefix) or entry.name.startswith(import_prefix):
+                if entry.is_symlink() or not entry.is_dir() or entry.parent.resolve() != destination_root:
+                    raise RuntimeError(f"native skill transaction requires inspection: {entry}")
+                (abandoned_backups if entry.name.startswith(backup_prefix) else abandoned_imports).append(entry)
+        if len(abandoned_backups) > 1:
+            raise RuntimeError(
+                "multiple native skill backups require inspection: "
+                + ", ".join(str(entry) for entry in sorted(abandoned_backups, key=str))
+            )
+        abandoned_backup = abandoned_backups[0] if abandoned_backups else None
+        if abandoned_backup is not None and not destination.exists():
+            os.replace(abandoned_backup, destination)
+            abandoned_backup = None
+    except Exception as exc:
+        console.print(f"[bold red]Error:[/bold red] Cannot reconcile native skill transaction: {exc}")
+        raise SystemExit(1) from exc
 
     active = next(
         (
@@ -97,6 +123,22 @@ def _import_local(
         ),
         None,
     )
+    if abandoned_backup is not None:
+        expected_file = (destination / "SKILL.md").resolve()
+        if not active or Path(str(active.get("path") or "")).resolve() != expected_file:
+            console.print(
+                f"[bold red]Error:[/bold red] Native skill backup requires inspection: {abandoned_backup}"
+            )
+            raise SystemExit(1)
+        shutil.rmtree(abandoned_backup)
+    try:
+        for abandoned_import in abandoned_imports:
+            shutil.rmtree(abandoned_import)
+    except OSError as exc:
+        console.print(
+            f"[bold red]Error:[/bold red] Native skill import transaction requires inspection: {abandoned_import}"
+        )
+        raise SystemExit(1) from exc
     if active and active["source"] == "project":
         console.print(
             "[bold red]Error:[/bold red] A project skill with this name is active; "
@@ -106,10 +148,6 @@ def _import_local(
     if destination.exists() and not replace:
         console.print("[bold red]Error:[/bold red] Skill already exists; pass --replace to update it.")
         raise SystemExit(1)
-    if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
-        console.print("[bold red]Error:[/bold red] Existing skill target is not a regular directory.")
-        raise SystemExit(1)
-
     transaction_root = Path(tempfile.mkdtemp(prefix=f".{skill_name}.import.", dir=destination_root))
     candidate = transaction_root / skill_name
     backup = destination_root / f".{skill_name}.backup.{uuid.uuid4().hex}"

@@ -314,17 +314,20 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' '---' 'name: nemoclaw-native-import-probe' 'description: Controlled managed-image native import probe.' '---' '# Native import probe' > "$dcode_skill_stage/SKILL.md" \
     && dcode_skill_file_digest="$(sha256sum "$dcode_skill_stage/SKILL.md" | cut -d ' ' -f 1)" \
     && dcode_skill_digest="$(printf '644 %s  SKILL.md\n' "$dcode_skill_file_digest" | sha256sum | cut -d ' ' -f 1)" \
-    && HOME=/sandbox /usr/local/bin/dcode skills import "$dcode_skill_stage" --name nemoclaw-native-import-probe --agent agent --replace --expected-digest "$dcode_skill_digest" > /tmp/nemoclaw-dcode-skill-import.out \
+    && HOME=/sandbox /opt/venv/bin/python3 -I -c 'import argparse, sys; from deepagents_code.skills import commands; parser = argparse.ArgumentParser(); subparsers = parser.add_subparsers(dest="command"); commands.setup_skills_parser(subparsers, make_help_action=lambda _help: argparse._HelpAction); args = parser.parse_args(["skills", "import", sys.argv[1], "--name", "nemoclaw-native-import-probe", "--agent", "agent", "--replace", "--expected-digest", sys.argv[2]]); commands.execute_skills_command(args)' "$dcode_skill_stage" "$dcode_skill_digest" > /tmp/nemoclaw-dcode-skill-import.out \
     && grep -Fq 'NEMOCLAW_NATIVE_SKILL_IMPORT=' /tmp/nemoclaw-dcode-skill-import.out \
     && grep -Fq "\"digest\":\"$dcode_skill_digest\"" /tmp/nemoclaw-dcode-skill-import.out \
-    && HOME=/sandbox /usr/local/bin/dcode skills list --agent agent --json | grep -Fq 'nemoclaw-native-import-probe' \
+    && mv /sandbox/.deepagents/agent/skills/nemoclaw-native-import-probe /sandbox/.deepagents/agent/skills/.nemoclaw-native-import-probe.backup.interrupted \
+    && mkdir -p /sandbox/.deepagents/agent/skills/.nemoclaw-native-import-probe.import.interrupted/nemoclaw-native-import-probe \
+    && HOME=/sandbox /opt/venv/bin/python3 -I -c 'import sys; from deepagents_code.skills.commands import _import_local; _import_local(sys.argv[1], "nemoclaw-native-import-probe", sys.argv[2], agent="agent", replace=True)' "$dcode_skill_stage" "$dcode_skill_digest" > /tmp/nemoclaw-dcode-skill-recovery.out \
+    && test -z "$(find /sandbox/.deepagents/agent/skills -maxdepth 1 \( -name '.nemoclaw-native-import-probe.backup.*' -o -name '.nemoclaw-native-import-probe.import.*' \) -print -quit)" \
     && printf '%s\n' '# Mutated after host verification' >> "$dcode_skill_stage/SKILL.md" \
-    && if HOME=/sandbox /usr/local/bin/dcode skills import "$dcode_skill_stage" --name nemoclaw-native-import-probe --agent agent --replace --expected-digest "$dcode_skill_digest" >/tmp/nemoclaw-dcode-skill-rejected.out 2>&1; then echo 'ERROR: changed DCode staging payload was accepted' >&2; exit 1; fi \
+    && if HOME=/sandbox /opt/venv/bin/python3 -I -c 'import sys; from deepagents_code.skills.commands import _import_local; _import_local(sys.argv[1], "nemoclaw-native-import-probe", sys.argv[2], agent="agent", replace=True)' "$dcode_skill_stage" "$dcode_skill_digest" >/tmp/nemoclaw-dcode-skill-rejected.out 2>&1; then echo 'ERROR: changed DCode staging payload was accepted' >&2; exit 1; fi \
     && ! grep -Fq 'Mutated after host verification' /sandbox/.deepagents/agent/skills/nemoclaw-native-import-probe/SKILL.md \
-    && HOME=/sandbox /usr/local/bin/dcode skills delete nemoclaw-native-import-probe --agent agent --force --json \
+    && HOME=/sandbox /opt/venv/bin/python3 -I -c 'from deepagents_code.skills.commands import _delete; _delete("nemoclaw-native-import-probe", agent="agent", force=True, output_format="json")' \
     && test ! -e /sandbox/.deepagents/agent/skills/nemoclaw-native-import-probe \
     && { rmdir /sandbox/.deepagents/agent/skills /sandbox/.deepagents/agent 2>/dev/null || true; } \
-    && rm -rf "$dcode_skill_stage" /tmp/nemoclaw-dcode-skill-import.out /tmp/nemoclaw-dcode-skill-rejected.out \
+    && rm -rf "$dcode_skill_stage" /tmp/nemoclaw-dcode-skill-import.out /tmp/nemoclaw-dcode-skill-recovery.out /tmp/nemoclaw-dcode-skill-rejected.out \
     && empty_prompt_log="$(mktemp)" \
     && if timeout 10 env -i /usr/local/lib/nemoclaw/dcode-wrapper.sh -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
     && empty_prompt_output="$(cat "$empty_prompt_log")" \

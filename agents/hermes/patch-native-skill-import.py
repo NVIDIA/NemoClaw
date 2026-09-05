@@ -134,11 +134,49 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
         c.print("[bold red]Error:[/] Staged skill name does not match the requested name.")
         return False
 
+    if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
+        c.print("[bold red]Error:[/] Existing skill target is not a regular directory.")
+        return False
+    backup_prefix = f".{expected_name}.backup."
+    try:
+        abandoned_backups = []
+        for entry in skills_root.iterdir():
+            if not entry.name.startswith(backup_prefix):
+                continue
+            if entry.is_symlink() or not entry.is_dir() or entry.parent.resolve() != skills_root:
+                raise RuntimeError(f"native skill backup requires inspection: {entry}")
+            abandoned_backups.append(entry)
+        if len(abandoned_backups) > 1:
+            raise RuntimeError(
+                "multiple native skill backups require inspection: "
+                + ", ".join(str(entry) for entry in sorted(abandoned_backups, key=str))
+            )
+        abandoned_backup = abandoned_backups[0] if abandoned_backups else None
+        if abandoned_backup is not None and not destination.exists():
+            os.replace(abandoned_backup, destination)
+            abandoned_backup = None
+    except Exception as exc:
+        c.print(f"[bold red]Error:[/] Cannot reconcile native skill transaction: {exc}")
+        return False
+
     try:
         active = json.loads(skill_view(expected_name, preprocess=False))
     except Exception:
         active = {}
     active_dir = Path(str(active.get("skill_dir") or "")) if active.get("success") else None
+    if abandoned_backup is not None:
+        if active_dir is None or active_dir.resolve() != destination.resolve():
+            c.print(
+                f"[bold red]Error:[/] Native skill backup requires inspection: {abandoned_backup}"
+            )
+            return False
+        try:
+            shutil.rmtree(abandoned_backup)
+        except OSError as exc:
+            c.print(
+                f"[bold red]Error:[/] Native skill backup requires inspection: {abandoned_backup}: {exc}"
+            )
+            return False
     if active_dir and is_external_skill_path(active_dir):
         c.print(
             "[bold red]Error:[/] A project or external skill with this name is active; "
@@ -174,10 +212,6 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
             shutil.rmtree(quarantine, ignore_errors=True)
         return False
 
-    if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
-        c.print("[bold red]Error:[/] Existing skill target is not a regular directory.")
-        shutil.rmtree(quarantine, ignore_errors=True)
-        return False
     backup = skills_root / f".{expected_name}.backup.{uuid.uuid4().hex}"
     lock = HubLockFile()
     lock_before = lock.load()

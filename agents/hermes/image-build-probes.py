@@ -710,6 +710,26 @@ def verify_native_skill_import() -> None:
         }
         assert HubLockFile().get_installed(name) is not None
 
+        interrupted_backup = target.parent / f".{name}.backup.interrupted"
+        target.replace(interrupted_backup)
+        recovered = subprocess.run(
+            [
+                "/usr/local/bin/hermes",
+                "skills",
+                "import-local",
+                staging,
+                "--name",
+                name,
+                "--expected-digest",
+                expected_digest,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert recovered.returncode == 0, recovered.stdout + recovered.stderr
+        assert target.is_dir() and not interrupted_backup.exists()
+
         (source / "SKILL.md").write_text(skill_content + "# Mutated\n", encoding="utf-8")
         rejected = subprocess.run(
             [

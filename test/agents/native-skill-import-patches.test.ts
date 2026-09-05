@@ -64,6 +64,9 @@ describe("agent-native local skill import patches", () => {
     expect(source).toContain('elif args.skills_command == "import"');
     expect(source).toContain('"--expected-digest"');
     expect(source).toContain("observed_digest != expected_digest");
+    expect(source).toContain("Cannot reconcile native skill transaction");
+    expect(source).toContain('import_prefix = f".{skill_name}.import."');
+    expect(source).toContain("os.replace(abandoned_backup, destination)");
     expect(source).toContain("NEMOCLAW_NATIVE_SKILL_IMPORT=");
     expect(runPython(["-m", "py_compile", target]).status).toBe(0);
   });
@@ -114,6 +117,8 @@ describe("agent-native local skill import patches", () => {
     expect(source.match(/NemoClaw native local skill import \(#10210\)/g)).toHaveLength(3);
     expect(source).toContain('elif action == "import-local"');
     expect(source).toContain("observed_digest != expected_digest");
+    expect(source).toContain("Cannot reconcile native skill transaction");
+    expect(source).toContain("os.replace(abandoned_backup, destination)");
     expect(source).toContain("if not before:");
     expect(source).toContain("NEMOCLAW_NATIVE_SKILL_IMPORT=");
     expect(runPython(["-m", "py_compile", parser, hub]).status).toBe(0);
