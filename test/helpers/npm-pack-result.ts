@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { singleNpmPackResult } from "../../scripts/lib/reviewed-npm-archive.mts";
+
 export type NpmPackResult = Readonly<{
   filename?: string;
   files?: ReadonlyArray<Readonly<{ path?: string }>>;
@@ -9,15 +11,11 @@ export type NpmPackResult = Readonly<{
 
 export function parseSingleNpmPackResult(source: string): NpmPackResult {
   const parsed: unknown = JSON.parse(source);
-  const entries = Array.isArray(parsed)
-    ? parsed
-    : typeof parsed === "object" && parsed !== null
-      ? Object.values(parsed)
-      : [];
-  if (entries.length !== 1 || typeof entries[0] !== "object" || entries[0] === null) {
+  const result = singleNpmPackResult(parsed);
+  if (result === undefined) {
     throw new Error("npm pack must return exactly one package result");
   }
-  return entries[0] as NpmPackResult;
+  return result as NpmPackResult;
 }
 
 export function npmPackFilePaths(source: string): string[] {

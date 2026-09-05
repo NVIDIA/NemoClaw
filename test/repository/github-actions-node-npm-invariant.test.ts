@@ -326,10 +326,17 @@ describe("controlled setup-node environments", () => {
 
     const actionRoot = path.join(GITHUB_ROOT, "actions/setup-reviewed-npm");
     const action = fs.readFileSync(path.join(actionRoot, "action.yaml"), "utf8");
+    const actionDocument = YAML.parse(action) as ActionDocument;
+    const installerStep = actionDocument.runs?.steps?.find(({ run }) =>
+      run?.includes("$GITHUB_ACTION_PATH/verify-and-install-npm.sh"),
+    );
     expect(fs.existsSync(path.join(actionRoot, "verify-and-install-npm.sh"))).toBe(true);
     expect(action).toContain("$GITHUB_ACTION_PATH/verify-and-install-npm.sh");
     expect(action).toContain("$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json");
     expect(action).not.toContain("../ci-reviewed-npm-audit/");
+    expect(installerStep?.run).toMatch(
+      /^env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN\s+"\$GITHUB_ACTION_PATH\/verify-and-install-npm[.]sh"/u,
+    );
   });
 
   // source-shape-contract: security -- Every npm-mutating script must import the canonical reviewed identity so independent version or digest pins cannot drift
