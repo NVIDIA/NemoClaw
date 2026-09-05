@@ -801,13 +801,11 @@ try {
     )
     $credentialManagerEvidence = Invoke-NativeCredentialManagerRoundTrip -LauncherPath $nemoclawUiLauncherPath
     $nativeTurnArtifacts = Join-Path $artifactRoot 'native-turn'
-    Write-Host "PS> Installed NemoClaw native MXC agent turn :: NemoClaw.exe --native-turn"
-    & $nemoclawUiLauncherPath --native-turn --wait --qualification --artifact-directory $nativeTurnArtifacts
-    $nativeTurnExitCode = $LASTEXITCODE
-    if ($nativeTurnExitCode -ne 0) {
-        Fail-PackageQualification "Installed NemoClaw native MXC agent turn failed with exit code $nativeTurnExitCode."
-    }
-    Write-Host "[PASS] Installed NemoClaw native MXC agent turn exit=$nativeTurnExitCode"
+    $nativeTurnExitCode = Invoke-BoundedProcess `
+        -FilePath $nemoclawUiLauncherPath `
+        -Arguments @('--native-turn', '--wait', '--qualification', '--artifact-directory', $nativeTurnArtifacts) `
+        -Label 'Installed NemoClaw native MXC agent turn' `
+        -AllowedExitCodes @(0)
     $nativeTurnReceipts = @(Get-ChildItem -LiteralPath $nativeTurnArtifacts -Filter 'native-windows-turn-*.json' -File)
     if ($nativeTurnReceipts.Count -ne 1) {
         Fail-PackageQualification 'Installed NemoClaw native turn did not publish exactly one receipt.'
