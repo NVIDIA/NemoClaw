@@ -36,6 +36,8 @@ export interface InferenceGetResult {
 
 export type InferenceEndpointStatus =
   | "unavailable"
+  | "registry-corrupt"
+  | "registry-unreadable"
   | "invalid"
   | "conflicting"
   | "withheld"
@@ -80,6 +82,10 @@ const DISPLAYABLE_ENDPOINT_PATHS = new Set(["/", "/v1", "/v1/"]);
 const ENDPOINT_RECOVERY: Record<InferenceEndpointStatus, string> = {
   unavailable:
     "Restore registry access or record the trusted endpoint and API family again, then rerun inference get.",
+  "registry-corrupt":
+    "Back up and remove the corrupt sandbox registry file, then rerun inference get.",
+  "registry-unreadable":
+    "Repair ownership and permissions for the NemoClaw state directory or use a writable HOME, then rerun inference get.",
   invalid:
     "Repair the named sandbox registrations' compatible-route metadata, then rerun inference get; repeat if additional affected registrations are reported.",
   conflicting:
@@ -171,7 +177,13 @@ function getPersistedEndpoint(
   let sandboxes: ReturnType<InferenceGetDeps["listSandboxes"]>;
   try {
     sandboxes = deps.listSandboxes();
-  } catch {
+  } catch (error) {
+    if (error instanceof ConfigCorruptError) {
+      return endpointOmission("registry-corrupt");
+    }
+    if (error instanceof ConfigPermissionError) {
+      return endpointOmission("registry-unreadable");
+    }
     return endpointOmission("unavailable");
   }
 

@@ -84,6 +84,10 @@ const ENDPOINT_OMISSION_CASES = [
 const ENDPOINT_RECOVERY: Record<InferenceEndpointStatus, string> = {
   unavailable:
     "Restore registry access or record the trusted endpoint and API family again, then rerun inference get.",
+  "registry-corrupt":
+    "Back up and remove the corrupt sandbox registry file, then rerun inference get.",
+  "registry-unreadable":
+    "Repair ownership and permissions for the NemoClaw state directory or use a writable HOME, then rerun inference get.",
   invalid:
     "Repair the named sandbox registrations' compatible-route metadata, then rerun inference get; repeat if additional affected registrations are reported.",
   conflicting:
@@ -640,40 +644,46 @@ describe("runInferenceGet", () => {
       options: {},
       error: new Error("secret registry path and contents"),
       hiddenDetail: "secret registry path and contents",
+      expectedStatus: "unavailable" as const,
     },
     {
       label: "a generic registry failure in JSON output",
       options: { json: true },
       error: new Error("secret registry path and contents"),
       hiddenDetail: "secret registry path and contents",
+      expectedStatus: "unavailable" as const,
     },
     {
       label: "a corrupt registry in human-readable output",
       options: {},
       error: new ConfigCorruptError("/safe/state/sandboxes.json"),
       hiddenDetail: "/safe/state/sandboxes.json",
+      expectedStatus: "registry-corrupt" as const,
     },
     {
       label: "a corrupt registry in JSON output",
       options: { json: true },
       error: new ConfigCorruptError("/safe/state/sandboxes.json"),
       hiddenDetail: "/safe/state/sandboxes.json",
+      expectedStatus: "registry-corrupt" as const,
     },
     {
       label: "an unreadable registry in human-readable output",
       options: {},
       error: new ConfigPermissionError("/safe/state/sandboxes.json", "read"),
       hiddenDetail: "/safe/state/sandboxes.json",
+      expectedStatus: "registry-unreadable" as const,
     },
     {
       label: "an unreadable registry in JSON output",
       options: { json: true },
       error: new ConfigPermissionError("/safe/state/sandboxes.json", "read"),
       hiddenDetail: "/safe/state/sandboxes.json",
+      expectedStatus: "registry-unreadable" as const,
     },
   ])(
     "retains the live route and omits optional endpoint metadata after $label",
-    async ({ options, error, hiddenDetail }) => {
+    async ({ options, error, hiddenDetail, expectedStatus }) => {
       const deps = createDeps(
         "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
       );
@@ -682,13 +692,15 @@ describe("runInferenceGet", () => {
       });
 
       await expect(runInferenceGet(options, deps)).resolves.toEqual(
-        expectedEndpointOmission("unavailable"),
+        expectedEndpointOmission(expectedStatus),
       );
       const output = deps.log.mock.calls.flat().join("\n");
       expect(output).toContain("compatible-endpoint");
       expect(output).toContain("custom/model");
       expect(output).not.toContain("endpointUrl");
       expect(output).not.toContain(hiddenDetail);
+      expect(output).toContain(expectedStatus);
+      expect(output).toContain(ENDPOINT_RECOVERY[expectedStatus]);
     },
   );
 
