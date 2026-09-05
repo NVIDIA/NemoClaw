@@ -165,12 +165,18 @@ describe("sandbox skill action orchestration", () => {
     expect(execSandbox).toHaveBeenCalledWith(
       "alpha",
       ["/bin/sh", "-c", "identity-bound-native-skill-command"],
-      {},
+      { timeoutSeconds: 120 },
       { exit: expect.any(Function) },
     );
     expect(skillInstall.bindNativeSkillCommandToSandboxIdentity).toHaveBeenCalledWith(
       ["/usr/local/bin/openclaw", "skills", "remove", "demo-skill", "--agent", "main"],
       "f".repeat(64),
+      {
+        diagnostic: expect.stringContaining(
+          "Native OpenClaw skill removal timed out in sandbox 'alpha' while running '/usr/local/bin/openclaw skills remove'",
+        ),
+        seconds: 110,
+      },
     );
   });
 
@@ -197,11 +203,15 @@ describe("sandbox skill action orchestration", () => {
     expect(skillInstall.bindNativeSkillCommandToSandboxIdentity).toHaveBeenCalledWith(
       command,
       "f".repeat(64),
+      {
+        diagnostic: expect.stringContaining("skill removal timed out in sandbox 'alpha'"),
+        seconds: 110,
+      },
     );
     expect(execSandbox).toHaveBeenCalledWith(
       "alpha",
       ["/bin/sh", "-c", "identity-bound-native-skill-command"],
-      {},
+      { timeoutSeconds: 120 },
       { exit: expect.any(Function) },
     );
   });

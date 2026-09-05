@@ -183,15 +183,27 @@ function sandboxIdentityCheckCommand(expectedFingerprint: string): string {
 export function bindNativeSkillCommandToSandboxIdentity(
   command: readonly string[],
   expectedFingerprint: string,
+  timeout?: { diagnostic: string; seconds: number },
 ): string[] {
   if (command.length === 0 || !SHA256_RE.test(expectedFingerprint)) {
     throw new Error("Native skill command requires a valid sandbox identity binding");
   }
   const nativeCommand = command.map((argument) => shellQuote(argument)).join(" ");
+  if (
+    timeout &&
+    (!Number.isSafeInteger(timeout.seconds) ||
+      timeout.seconds < 1 ||
+      timeout.diagnostic.length === 0)
+  ) {
+    throw new Error("Native skill command timeout binding is invalid");
+  }
+  const invocation = timeout
+    ? `if timeout --signal=TERM --kill-after=5s ${String(timeout.seconds)}s ${nativeCommand}; then exit 0; else status=$?; if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then printf '%s\\n' ${shellQuote(timeout.diagnostic)} >&2; fi; exit "$status"; fi`
+    : `exec ${nativeCommand}`;
   return [
     "/bin/sh",
     "-c",
-    `${sandboxIdentityCheckCommand(expectedFingerprint)} || { echo IDENTITY_CHANGED >&2; exit 9; }; exec ${nativeCommand}`,
+    `${sandboxIdentityCheckCommand(expectedFingerprint)} || { echo IDENTITY_CHANGED >&2; exit 9; }; ${invocation}`,
   ];
 }
 

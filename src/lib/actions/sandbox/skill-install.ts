@@ -25,6 +25,8 @@ import { ensureLiveSandboxOrExit } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 
 const OPENCLAW_NATIVE_BIN = "/usr/local/bin/openclaw";
+const NATIVE_SKILL_REMOVE_TIMEOUT_SECONDS = 120;
+const NATIVE_SKILL_REMOVE_INNER_TIMEOUT_SECONDS = 110;
 
 export function printSkillInstallUsage(): void {
   console.log("");
@@ -259,8 +261,17 @@ export async function removeSandboxSkill(
       const identityBoundCommand = skillInstall.bindNativeSkillCommandToSandboxIdentity(
         command,
         expectedIdentity,
+        {
+          diagnostic: `Native ${nativeSkillAgentDisplayName(agentName)} skill removal timed out in sandbox '${sandboxName}' while running '${command.slice(0, 3).join(" ")}'. Inspect current agent state with '${CLI_NAME} ${sandboxName} skill list' before retrying.`,
+          seconds: NATIVE_SKILL_REMOVE_INNER_TIMEOUT_SECONDS,
+        },
       );
-      await execSandbox(sandboxName, identityBoundCommand, {}, { exit: deferSandboxLifecycleExit });
+      await execSandbox(
+        sandboxName,
+        identityBoundCommand,
+        { timeoutSeconds: NATIVE_SKILL_REMOVE_TIMEOUT_SECONDS },
+        { exit: deferSandboxLifecycleExit },
+      );
     }),
   );
   if (sshConfigFailed || bindingFailed) {

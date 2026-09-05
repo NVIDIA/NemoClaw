@@ -230,4 +230,20 @@ describe("bindNativeSkillCommandToSandboxIdentity", () => {
     expect(command[2]).toContain("OPENSHELL_SANDBOX_ID");
     expect(command[2]).toContain("exec '/usr/local/bin/openclaw' 'skills' 'remove' 'demo-skill'");
   });
+
+  it("bounds native removal and retains the operator recovery diagnostic", () => {
+    const command = bindNativeSkillCommandToSandboxIdentity(
+      ["/usr/local/bin/hermes", "skills", "uninstall", "demo-skill"],
+      "f".repeat(64),
+      {
+        diagnostic:
+          "Native Hermes skill removal timed out in sandbox 'alpha'. Run 'nemoclaw alpha skill list' before retrying.",
+        seconds: 110,
+      },
+    );
+
+    expect(command[2]).toContain("timeout --signal=TERM --kill-after=5s 110s");
+    expect(command[2]).toContain("Native Hermes skill removal timed out in sandbox");
+    expect(command[2]).toContain("nemoclaw alpha skill list");
+  });
 });
