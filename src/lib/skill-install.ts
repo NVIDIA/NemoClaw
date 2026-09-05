@@ -614,21 +614,37 @@ function buildOpenClawNativeInstallScript(
   if (!paths.workspaceSkillDir || !paths.isOpenClaw) {
     throw new Error("OpenClaw native install requires a workspace skill destination");
   }
+  const receiptBase = `${paths.stateDir}/.nemoclaw`;
   const receiptDir = `${paths.stateDir}/.nemoclaw/skill-installs`;
   const receipt = `${receiptDir}/${skillName}.sha256`;
+  const verifyNativeJson = [
+    'const fs=require("node:fs");',
+    "const [listPath,infoPath,checkPath,skill,target]=process.argv.slice(1);",
+    'const read=(file)=>JSON.parse(fs.readFileSync(file,"utf8"));',
+    "const list=read(listPath);const info=read(infoPath);const check=read(checkPath);",
+    'const listed=Array.isArray(list.skills)&&list.skills.some((entry)=>entry&&typeof entry==="object"&&entry.name===skill);',
+    'const informed=info&&typeof info==="object"&&info.name===skill&&(info.baseDir===target||info.filePath===target+"/SKILL.md");',
+    'const checked=check&&typeof check==="object"&&check.agentId==="main"&&Array.isArray(check.eligible)&&check.eligible.includes(skill);',
+    "if(!listed||!informed||!checked)process.exit(1);",
+  ].join("");
+  // The pinned native installer owns source-origin metadata and may recreate
+  // payload modes under umask; hash only payload files with normalized modes.
   return [
     "set -eu",
     "umask 077",
     `root=${shellQuote(paths.stateDir)}`,
     `target=${shellQuote(paths.workspaceSkillDir)}`,
+    `receipt_base=${shellQuote(receiptBase)}`,
     `receipt_dir=${shellQuote(receiptDir)}`,
     `receipt=${shellQuote(receipt)}`,
     `skill=${shellQuote(skillName)}`,
     `expected=${shellQuote(expectedDigest)}`,
     'exists() { [ -e "$1" ] || [ -L "$1" ]; }',
     'safe_tree() { [ -d "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -mindepth 1 ! -type d ! -type f -print -quit)" ]; }',
-    'digest_tree() { tree="$1"; manifest="$2"; find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort > "$manifest.files"; : > "$manifest"; while IFS= read -r rel; do mode="$(stat -c "%a" "$tree/$rel")"; hash="$(sha256sum "$tree/$rel" | cut -d " " -f 1)"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$manifest"; done < "$manifest.files"; sha256sum "$manifest" | cut -d " " -f 1; }',
-    '[ -d "$root" ] && [ ! -L "$root" ]',
+    'digest_tree() { tree="$1"; manifest="$2"; find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort | grep -Fxv ".openclaw/source-origin.json" > "$manifest.files"; : > "$manifest"; while IFS= read -r rel; do if [ -n "$(find "$tree/$rel" -type f -perm /111 -print -quit)" ]; then mode=755; else mode=644; fi; hash="$(sha256sum "$tree/$rel" | cut -d " " -f 1)"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$manifest"; done < "$manifest.files"; sha256sum "$manifest" | cut -d " " -f 1; }',
+    '[ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]',
+    'if exists "$receipt_base"; then [ -d "$receipt_base" ] && [ ! -L "$receipt_base" ] && [ "$(realpath -e -- "$receipt_base")" = "$receipt_base" ]; fi',
+    'if exists "$receipt_dir"; then [ -d "$receipt_dir" ] && [ ! -L "$receipt_dir" ] && [ "$(realpath -e -- "$receipt_dir")" = "$receipt_dir" ]; fi',
     'stage="$(mktemp -d "$root/.nemoclaw-skill-stage.XXXXXX")"',
     'chmod 700 "$stage"',
     'cleanup() { rm -rf -- "$stage"; }',
@@ -648,17 +664,18 @@ function buildOpenClawNativeInstallScript(
     'force=""',
     'if exists "$target"; then safe_tree "$target" || { echo COLLISION; exit 2; }; [ -f "$receipt" ] && [ ! -L "$receipt" ] || { echo COLLISION; exit 2; }; previous="$(cat "$receipt")"; current="$(digest_tree "$target" "$stage/current.manifest")"; [ "$previous" = "$current" ] || { echo COLLISION; exit 2; }; force="--force"; fi',
     'if [ -n "$force" ]; then openclaw skills install "$payload" --agent main --force; else openclaw skills install "$payload" --agent main; fi',
-    'openclaw skills list --json > "$stage/list.json"',
-    'openclaw skills info "$skill" --json > "$stage/info.json"',
-    'openclaw skills check --json > "$stage/check.json"',
-    'grep -Fq -- "\\"$skill\\"" "$stage/list.json"',
-    'grep -Fq -- "\\"$skill\\"" "$stage/check.json"',
-    'grep -Fq -- "$skill" "$stage/info.json"',
-    'grep -Fq -- "$target" "$stage/info.json"',
+    'openclaw skills list --agent main --json > "$stage/list.json"',
+    'openclaw skills info "$skill" --agent main --json > "$stage/info.json"',
+    'openclaw skills check --agent main --json > "$stage/check.json"',
+    `node -e ${shellQuote(verifyNativeJson)} "$stage/list.json" "$stage/info.json" "$stage/check.json" "$skill" "$target" || { echo VERIFY_FAILED; exit 4; }`,
     'safe_tree "$target" || { echo VERIFY_FAILED; exit 4; }',
     'installed="$(digest_tree "$target" "$stage/installed.manifest")"',
     '[ "$installed" = "$expected" ] || { echo VERIFY_FAILED; exit 4; }',
-    'mkdir -p -- "$receipt_dir"',
+    'if ! exists "$receipt_base"; then mkdir -- "$receipt_base"; fi',
+    '[ -d "$receipt_base" ] && [ ! -L "$receipt_base" ] && [ "$(realpath -e -- "$receipt_base")" = "$receipt_base" ]',
+    'chmod 700 "$receipt_base"',
+    'if ! exists "$receipt_dir"; then mkdir -- "$receipt_dir"; fi',
+    '[ -d "$receipt_dir" ] && [ ! -L "$receipt_dir" ] && [ "$(realpath -e -- "$receipt_dir")" = "$receipt_dir" ]',
     'chmod 700 "$receipt_dir"',
     'printf "%s\\n" "$installed" > "$stage/receipt"',
     'chmod 600 "$stage/receipt"',
@@ -707,11 +724,7 @@ export function installOpenClawSkill(
     beforeSnapshotFileRead: opts.beforeSnapshotFileRead,
     beforeSnapshotRootRead: opts.beforeSnapshotRootRead,
   });
-  if (
-    !snapshot ||
-    snapshot.skillName !== skillName ||
-    !SHA256_RE.test(snapshot.contentDigest)
-  ) {
+  if (!snapshot || snapshot.skillName !== skillName || !SHA256_RE.test(snapshot.contentDigest)) {
     return { success: false, uploaded: 0, reason: "snapshot_failed" };
   }
   const result = (opts.sshExecImpl ?? sshExec)(

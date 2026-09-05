@@ -52,7 +52,11 @@ describe("checkWorkspaceSkillCollision", () => {
       {
         sshExecImpl: (_ctx, command) => {
           commands.push(command);
-          return { status: 0, stdout: "EXISTS", stderr: "" };
+          return {
+            status: 0,
+            stdout: command.includes(paths.workspaceSkillDir ?? "\0") ? "EXISTS" : "ABSENT",
+            stderr: "",
+          };
         },
       },
     );

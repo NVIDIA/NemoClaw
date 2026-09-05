@@ -42,13 +42,14 @@ afterEach(() => {
 
 describe("OpenClaw native skill installation", () => {
   it.runIf(process.platform === "linux")(
-    "executes native publication, provenance, replacement, and staging cleanup",
+    "executes native publication, provenance, replacement, refusal, and staging cleanup",
     () => {
       const skill = makeSkill();
       const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-root-"));
       const fakeBin = path.join(sandboxRoot, "bin");
       const workspaceSkillDir = path.join(sandboxRoot, "workspace", "skills", "demo-skill");
       const invocationLog = path.join(sandboxRoot, "openclaw.log");
+      let checkState = "eligible";
       const executionPaths: SkillPaths = {
         ...paths,
         stateDir: sandboxRoot,
@@ -69,13 +70,29 @@ case "$1 $2" in
       printf '%s\\n' '--agent --force'
       exit 0
     fi
+    case " $* " in *" --agent main "*) ;; *) exit 65 ;; esac
     printf '%s\\n' "$*" >> "$OPENCLAW_TEST_LOG"
     rm -rf -- "$OPENCLAW_TEST_TARGET"
     mkdir -p -- "$(dirname "$OPENCLAW_TEST_TARGET")"
-    cp -pR -- "$3" "$OPENCLAW_TEST_TARGET"
+    cp -R -- "$3" "$OPENCLAW_TEST_TARGET"
+    mkdir -- "$OPENCLAW_TEST_TARGET/.openclaw"
+    printf '{"version":1,"source":"path"}\\n' > "$OPENCLAW_TEST_TARGET/.openclaw/source-origin.json"
     ;;
-  "skills list"|"skills info"|"skills check")
-    printf '{"skills":["demo-skill"],"path":"%s"}\\n' "$OPENCLAW_TEST_TARGET"
+  "skills list")
+    case " $* " in *" --agent main "*) ;; *) exit 65 ;; esac
+    printf '{"skills":[{"name":"demo-skill"}]}\\n'
+    ;;
+  "skills info")
+    case " $* " in *" --agent main "*) ;; *) exit 65 ;; esac
+    printf '{"name":"demo-skill","baseDir":"%s","filePath":"%s/SKILL.md"}\\n' "$OPENCLAW_TEST_TARGET" "$OPENCLAW_TEST_TARGET"
+    ;;
+  "skills check")
+    case " $* " in *" --agent main "*) ;; *) exit 65 ;; esac
+    if [ "$OPENCLAW_TEST_CHECK_STATE" = eligible ]; then
+      printf '{"agentId":"main","eligible":["demo-skill"],"disabled":[],"blocked":[]}\\n'
+    else
+      printf '{"agentId":"main","eligible":[],"disabled":[],"blocked":["demo-skill"]}\\n'
+    fi
     ;;
   *)
     exit 64
@@ -94,6 +111,7 @@ esac
             encoding: "utf8",
             env: {
               ...process.env,
+              OPENCLAW_TEST_CHECK_STATE: checkState,
               OPENCLAW_TEST_LOG: invocationLog,
               OPENCLAW_TEST_TARGET: workspaceSkillDir,
               PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
@@ -140,9 +158,99 @@ esac
         expect.not.stringContaining("--force"),
         expect.stringContaining("--force"),
       ]);
+
+      checkState = "blocked";
+      expect(
+        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", {
+          sshExecImpl: sshExec,
+        }),
+      ).toEqual({ success: false, uploaded: 0, reason: "verification_failed" });
+      checkState = "eligible";
+
+      const receiptPath = path.join(
+        sandboxRoot,
+        ".nemoclaw",
+        "skill-installs",
+        "demo-skill.sha256",
+      );
+      const installedContent = fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8");
+      fs.rmSync(receiptPath);
+      expect(
+        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", {
+          sshExecImpl: sshExec,
+        }),
+      ).toEqual({ success: false, uploaded: 0, reason: "destination_exists" });
+      expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toBe(
+        installedContent,
+      );
+
+      fs.writeFileSync(receiptPath, `${"0".repeat(64)}\n`, { mode: 0o600 });
+      expect(
+        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", {
+          sshExecImpl: sshExec,
+        }),
+      ).toEqual({ success: false, uploaded: 0, reason: "destination_exists" });
+      expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toBe(
+        installedContent,
+      );
+      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(3);
       expect(
         fs.readdirSync(sandboxRoot).filter((entry) => entry.startsWith(".nemoclaw-skill-stage.")),
       ).toEqual([]);
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "rejects a state root reached through a symlinked parent",
+    () => {
+      const skill = makeSkill();
+      const container = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-root-link-"));
+      const realParent = path.join(container, "real");
+      const linkedParent = path.join(container, "linked");
+      const stateDir = path.join(realParent, "state");
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.symlinkSync(realParent, linkedParent);
+      roots.push(container);
+      const linkedPaths: SkillPaths = {
+        ...paths,
+        stateDir: path.join(linkedParent, "state"),
+        uploadDir: path.join(linkedParent, "state", "skills", "demo-skill"),
+        mirrorDir: null,
+        workspaceSkillDir: path.join(linkedParent, "state", "workspace", "skills", "demo-skill"),
+        sessionFile: path.join(
+          linkedParent,
+          "state",
+          "agents",
+          "main",
+          "sessions",
+          "sessions.json",
+        ),
+      };
+      const sshExec = vi.fn(
+        (
+          _ctx: SshContext,
+          command: string,
+          opts?: { input?: string | Buffer; timeout?: number },
+        ): SshResult => {
+          const execution = spawnSync("bash", ["--noprofile", "--norc", "-c", command], {
+            encoding: "utf8",
+            input: opts?.input,
+            timeout: opts?.timeout,
+          });
+          return {
+            status: execution.status ?? 1,
+            stdout: execution.stdout,
+            stderr: execution.stderr,
+          };
+        },
+      );
+
+      expect(
+        installOpenClawSkill(ctx, skill, linkedPaths, "demo-skill", {
+          sshExecImpl: sshExec,
+        }),
+      ).toEqual({ success: false, uploaded: 0, reason: "remote_state_unknown" });
+      expect(fs.readdirSync(stateDir)).toEqual([]);
     },
   );
 
