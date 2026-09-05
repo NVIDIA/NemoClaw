@@ -444,14 +444,14 @@ export async function installSandboxSkill(
           "  OpenClaw installed the skill, but native list, info, check, or digest verification failed.",
         );
         console.error(
-          `  Inspect ${paths.uploadDir}, then retry with the same local content to reconcile the pending install.`,
+          `  Inspect ${paths.uploadDir}. A same-content retry proceeds only when that ambiguous target is absent.`,
         );
       } else {
         console.error(
           "  OpenClaw did not confirm whether the staged native skill install completed.",
         );
         console.error(
-          `  Inspect ${paths.uploadDir}, then retry with the same local content to reconcile the pending install.`,
+          `  Inspect ${paths.uploadDir}. A same-content retry proceeds only when that ambiguous target is absent.`,
         );
       }
       process.exitCode = 1;

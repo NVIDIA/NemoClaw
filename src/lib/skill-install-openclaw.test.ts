@@ -274,17 +274,34 @@ esac
         sandboxRoot,
         `.nemoclaw-skill-stage.${pendingReceipt.stageNonce}`,
       );
+      fs.rmSync(workspaceSkillDir, { recursive: true, force: true });
+      fs.mkdirSync(workspaceSkillDir, { recursive: true });
+      fs.copyFileSync(path.join(skill, "SKILL.md"), path.join(workspaceSkillDir, "SKILL.md"));
       fs.mkdirSync(path.join(abandonedStage, "payload"), { recursive: true });
       fs.writeFileSync(path.join(abandonedStage, "payload", "partial"), "partial");
       checkState = "eligible";
+      expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
+        success: false,
+        uploaded: 0,
+        reason: "destination_exists",
+      });
+      expect(JSON.parse(fs.readFileSync(provenancePath, "utf8"))).toMatchObject({
+        phase: "pending",
+        contentDigest: firstDigest,
+        previousDigest: null,
+        stageNonce: pendingReceipt.stageNonce,
+      });
+      expect(fs.existsSync(abandonedStage)).toBe(false);
+      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(1);
+
+      fs.rmSync(workspaceSkillDir, { recursive: true, force: true });
       expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
         success: true,
         uploaded: 1,
         contentDigest: firstDigest,
       });
       expect(fs.readFileSync(provenancePath, "utf8")).toContain(`"contentDigest":"${firstDigest}"`);
-      expect(fs.existsSync(abandonedStage)).toBe(false);
-      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(1);
+      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(2);
       expect(fs.existsSync(shadowLog)).toBe(false);
       expect(
         fs.readdirSync(sandboxRoot).filter((entry) => entry.startsWith(".nemoclaw-skill-stage.")),
