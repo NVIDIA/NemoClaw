@@ -725,14 +725,22 @@ export function resolveManagedInferenceServing<TOutput>(
   }
 
   const matching: MatchingCandidate<TOutput>[] = [];
-  const runtimeFailures: RuntimeRequirementFailure[] = [];
+  let runtimeFailure: RuntimeRequirementFailure | undefined;
   let firstInvalidTopology: string | undefined;
   for (const compiledPreset of catalog.presets) {
     const preset = compiledPreset;
     if (preset.spec.selection !== "automatic") continue;
     const evaluated = matchingCandidate(catalog, compiledPreset, input);
     if (evaluated.outcome === "matched") matching.push(evaluated.candidate);
-    else if (evaluated.outcome === "runtime-unmet") runtimeFailures.push(evaluated);
+    else if (
+      evaluated.outcome === "runtime-unmet" &&
+      (!runtimeFailure ||
+        evaluated.priority > runtimeFailure.priority ||
+        (evaluated.priority === runtimeFailure.priority &&
+          compareStrings(evaluated.presetId, runtimeFailure.presetId) < 0))
+    ) {
+      runtimeFailure = evaluated;
+    }
     else if (evaluated.outcome === "invalid-topology") firstInvalidTopology ??= evaluated.message;
   }
   if (firstInvalidTopology) {
@@ -743,14 +751,10 @@ export function resolveManagedInferenceServing<TOutput>(
     };
   }
   if (matching.length === 0) {
-    runtimeFailures.sort(
-      (left, right) =>
-        right.priority - left.priority || compareStrings(left.presetId, right.presetId),
-    );
     return {
       outcome: "no-match",
       code: "requirements-not-met",
-      message: runtimeFailures[0]?.message ?? "No automatic managed inference preset matched.",
+      message: runtimeFailure?.message ?? "No automatic managed inference preset matched.",
     };
   }
   matching.sort(
