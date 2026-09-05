@@ -385,7 +385,8 @@ Use these details when your first-run path needs more control.
     If the exact forward process exits before it binds, NemoClaw waits 1 second and retries once.
     If the process remains unbound at the deadline, NemoClaw stops that exact process and confirms its exit before retrying.
     The complete two-attempt sequence can take just over 3 minutes for each forward.
-    NemoClaw does not adopt an unrelated listener or start another forward while it cannot confirm that the prior process stopped.
+    NemoClaw accepts each forward only when its spawned process owns the listener.
+    It does not adopt an unrelated listener or start another forward while it cannot confirm that the prior process stopped.
     NemoClaw releases the reservation immediately before OpenShell starts the dashboard forward.
     If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
     The Hermes dashboard URL does not include an OpenClaw `#token=` fragment.

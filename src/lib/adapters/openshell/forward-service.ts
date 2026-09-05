@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -36,6 +36,7 @@ export interface ForwardServiceLaunchOptions {
   readonly describeState?: () => string | null | undefined;
   readonly getProcessIdentity?: (pid: number) => string | null | undefined;
   readonly isProcessRunning?: (pid: number) => boolean;
+  readonly isListenerOwned?: (pid: number, port: number) => boolean | null;
   readonly isReachable?: (port: number) => boolean;
   readonly maxAttempts?: number;
   readonly retryDelayMs?: number;
@@ -66,7 +67,39 @@ function readLinuxProcessStat(pid: number): string[] | null | undefined {
 function getProcessIdentity(pid: number): string | null | undefined {
   const stat = readLinuxProcessStat(pid);
   const startTime = stat?.[19];
-  return startTime && /^\d+$/u.test(startTime) ? startTime : stat === null ? null : undefined;
+  if (startTime && /^\d+$/u.test(startTime)) return `linux:${startTime}`;
+  if (stat === null) return null;
+  if (process.platform === "linux") return undefined;
+  const result = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+    encoding: "utf8",
+    env: buildOpenShellSubprocessEnv(process.env),
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 1_000,
+  });
+  if (result.error) return undefined;
+  const startedAt = result.status === 0 ? result.stdout.trim() : "";
+  if (startedAt) return `${process.platform}:${startedAt}`;
+  return result.status === 1 ? null : undefined;
+}
+
+function isListenerOwned(pid: number, port: number): boolean | null {
+  const result = spawnSync(
+    "lsof",
+    ["-nP", "-a", "-p", String(pid), `-iTCP:${String(port)}`, "-sTCP:LISTEN", "-t"],
+    {
+      encoding: "utf8",
+      env: buildOpenShellSubprocessEnv(process.env),
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1_000,
+    },
+  );
+  if (result.error) return null;
+  const listenerPids = result.stdout
+    .split(/\r?\n/u)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (result.status === 0) return listenerPids.includes(String(pid));
+  return result.status === 1 && listenerPids.length === 0 ? false : null;
 }
 
 function isProcessRunning(pid: number): boolean {
@@ -179,14 +212,7 @@ function stopOwnedProcess(
     if (isMissingProcessError(error)) return "stopped";
     return "running";
   }
-  return waitForProcessExit(
-    pid,
-    identity,
-    readIdentity,
-    processIsRunning,
-    sleep,
-    timeoutMs,
-  );
+  return waitForProcessExit(pid, identity, readIdentity, processIsRunning, sleep, timeoutMs);
 }
 
 function isPort(value: unknown): value is number {
@@ -255,6 +281,7 @@ export function launchForwardService(
   const isReachable = options.isReachable ?? probeLocalForwardListener;
   const processIsRunning = options.isProcessRunning ?? isProcessRunning;
   const readProcessIdentity = options.getProcessIdentity ?? getProcessIdentity;
+  const listenerIsOwned = options.isListenerOwned ?? isListenerOwned;
   if (isReachable(target.localPort)) {
     throw new Error(`Host port ${String(target.localPort)} is already occupied`);
   }
@@ -294,11 +321,7 @@ export function launchForwardService(
     let ownershipLost = false;
     while (true) {
       if (childIdentity) {
-        const identityStatus = processIdentityStatus(
-          child.pid,
-          childIdentity,
-          readProcessIdentity,
-        );
+        const identityStatus = processIdentityStatus(child.pid, childIdentity, readProcessIdentity);
         if (identityStatus === "exited") {
           exited = true;
           break;
@@ -313,7 +336,37 @@ export function launchForwardService(
         break;
       }
       if (isReachable(target.localPort)) {
-        return;
+        const listenerOwnership = listenerIsOwned(child.pid, target.localPort);
+        if (
+          listenerOwnership === true &&
+          processIdentityStatus(child.pid, childIdentity, readProcessIdentity) === "owned"
+        ) {
+          return;
+        }
+        const stopResult = stopOwnedProcess(
+          child.pid,
+          childIdentity,
+          readProcessIdentity,
+          processIsRunning,
+          stopProcess,
+          sleep,
+          options.stopTimeoutMs ?? STOP_TIMEOUT_MS,
+        );
+        const ownershipFailure =
+          listenerOwnership === false
+            ? "is owned by another process"
+            : "could not be verified as owned by the launched process";
+        if (stopResult !== "stopped") {
+          throw new Error(
+            `Host port ${String(target.localPort)} became reachable but ${ownershipFailure}; ` +
+              `the launched process could not be stopped safely; refusing to report success or retry; ` +
+              `forward list: ${describeFailureState(options.describeState)}`,
+          );
+        }
+        throw new Error(
+          `Host port ${String(target.localPort)} became reachable but ${ownershipFailure}; ` +
+            `stopped the launched process and refused to report success; forward list: ${describeFailureState(options.describeState)}`,
+        );
       }
       if (Date.now() >= deadline) break;
       sleep(POLL_INTERVAL_MS);

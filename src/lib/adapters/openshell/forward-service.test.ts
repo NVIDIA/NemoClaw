@@ -53,6 +53,7 @@ describe("OpenShell forward service", () => {
 
     launchForwardService(target, {
       getProcessIdentity: stableProcessIdentity,
+      isListenerOwned: () => true,
       isReachable: () => ++probes >= 3,
       isProcessRunning: () => true,
       sleep: () => {},
@@ -106,6 +107,7 @@ describe("OpenShell forward service", () => {
       .mockReturnValueOnce({ pid: 52, unref: vi.fn() });
     launchForwardService(target, {
       getProcessIdentity: stableProcessIdentity,
+      isListenerOwned: () => true,
       isProcessRunning: (pid) => pid === 52,
       isReachable: () => spawnDetached.mock.calls.length === 2,
       retryDelayMs: 0,
@@ -148,8 +150,7 @@ describe("OpenShell forward service", () => {
     expect(() =>
       launchForwardService(target, {
         getProcessIdentity: stableProcessIdentity,
-        isProcessRunning: () =>
-          signals.at(-1) === "SIGKILL" ? ++killChecks < 2 : true,
+        isProcessRunning: () => (signals.at(-1) === "SIGKILL" ? ++killChecks < 2 : true),
         isReachable: () => false,
         maxAttempts: 1,
         sleep: () => {},
@@ -201,17 +202,71 @@ describe("OpenShell forward service", () => {
     expect(spawnDetached).toHaveBeenCalledOnce();
   });
 
+  it("refuses a reachable listener not owned by the launched process (#11084)", () => {
+    let running = true;
+    let probes = 0;
+    const stopProcess = vi.fn(() => {
+      running = false;
+    });
+
+    expect(() =>
+      launchForwardService(target, {
+        getProcessIdentity: stableProcessIdentity,
+        isListenerOwned: () => false,
+        isProcessRunning: () => running,
+        isReachable: () => ++probes >= 3,
+        sleep: () => {},
+        spawnDetached: () => ({ pid: 72, unref: vi.fn() }),
+        stopProcess,
+        timeoutMs: 1_000,
+      }),
+    ).toThrow(/became reachable.*owned by another process.*refused to report success/u);
+    expect(stopProcess).toHaveBeenCalledWith(72, "SIGTERM");
+  });
+
   it.runIf(process.platform === "linux")(
     "tracks the spawned process by its Linux start time (#11084)",
     () => {
       let probes = 0;
 
       launchForwardService(target, {
-        isReachable: () => ++probes >= 2,
+        isListenerOwned: () => true,
+        isReachable: () => ++probes >= 3,
         spawnDetached: () => ({ pid: process.pid, unref: vi.fn() }),
       });
 
-      expect(probes).toBe(2);
+      expect(probes).toBe(3);
+    },
+  );
+
+  it.runIf(process.platform === "darwin")(
+    "stops and retries a spawned process using its macOS start time (#11084)",
+    () => {
+      let running = true;
+      let spawnCount = 0;
+      const stopProcess = vi.fn(() => {
+        running = false;
+      });
+      const spawnDetached = vi.fn(() => {
+        spawnCount += 1;
+        running = true;
+        return { pid: process.pid, unref: vi.fn() };
+      });
+
+      launchForwardService(target, {
+        isListenerOwned: () => true,
+        isProcessRunning: () => running,
+        isReachable: () => spawnCount === 2,
+        retryDelayMs: 0,
+        sleep: () => {},
+        spawnDetached,
+        stopProcess,
+        timeoutMs: 0,
+      });
+
+      expect(spawnDetached).toHaveBeenCalledTimes(2);
+      expect(stopProcess).toHaveBeenCalledOnce();
+      expect(stopProcess).toHaveBeenCalledWith(process.pid, "SIGTERM");
     },
   );
 
