@@ -64,7 +64,6 @@ describe("removeSkill (unit — no SSH)", () => {
     });
 
     expect(result.removedUploadDir).toBe(false);
-    expect(result.removedMirrorDir).toBe(false);
     expect(result.success).toBe(false);
     expect(commands).toEqual([]);
   });
@@ -126,8 +125,6 @@ describe("removeSkill (unit — no SSH)", () => {
 
     expect(result.success).toBe(false);
     expect(result.removedUploadDir).toBe(false);
-    expect(result.removedMirrorDir).toBe(false);
-    expect(result.clearedSessions).toBe(false);
     expect(result.messages).toEqual([
       "Error: automatic removal is unavailable for the agent-owned skill directory /sandbox/.deepagents/agent/skills/test-skill.",
     ]);

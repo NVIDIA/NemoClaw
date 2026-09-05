@@ -138,8 +138,6 @@ describe("sandbox skill action orchestration", () => {
     skillInstall.removeSkill.mockReturnValue({
       success: true,
       removedUploadDir: true,
-      removedMirrorDir: true,
-      clearedSessions: true,
       messages: [],
     });
     skillInstall.verifyRemove.mockReturnValue(true);

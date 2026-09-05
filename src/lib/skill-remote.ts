@@ -98,8 +98,6 @@ export function checkExisting(
 export interface RemoveResult {
   success: boolean;
   removedUploadDir: boolean;
-  removedMirrorDir: boolean;
-  clearedSessions: boolean;
   messages: string[];
 }
 
@@ -121,8 +119,6 @@ export function removeSkill(
     return {
       success: false,
       removedUploadDir: false,
-      removedMirrorDir: false,
-      clearedSessions: false,
       messages: ["Error: automatic OpenClaw workspace skill removal is unavailable."],
     };
   }
@@ -131,8 +127,6 @@ export function removeSkill(
     return {
       success: false,
       removedUploadDir: false,
-      removedMirrorDir: false,
-      clearedSessions: false,
       messages: [
         `Error: automatic removal is unavailable for the agent-owned skill directory ${paths.uploadDir}.`,
       ],
@@ -156,8 +150,6 @@ export function removeSkill(
   return {
     success: removedUploadDir,
     removedUploadDir,
-    removedMirrorDir: false,
-    clearedSessions: false,
     messages,
   };
 }
