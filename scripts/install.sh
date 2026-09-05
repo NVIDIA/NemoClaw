@@ -790,7 +790,7 @@ usage() {
   printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
-  printf "    --force-station-install Bypass only the DGX release-metadata allowlist for Station GB300 express install\n"
+  printf "    --force-station-install Validate an unrecognized Station GB300 release profile without onboarding\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
@@ -5991,7 +5991,7 @@ describe_express_install() {
 
   if [ "$platform" = "DGX Station" ] && [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
     printf "  This validation-only run checks the existing factory GPU and container runtime without authorizing onboarding.\n"
-    printf "  A passing result exits with the supported recovery action because the Station software profile remains unqualified.\n"
+    printf "  A passing result stops before onboarding. Install a supported DGX Station software profile, then rerun without --force-station-install.\n"
     return 0
   fi
 

@@ -196,7 +196,7 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
 
     expect(result.status, output).toBe(0);
     expect(output).toMatch(
-      /--force-station-install\s+Bypass only the DGX release-metadata allowlist/,
+      /--force-station-install\s+Validate an unrecognized Station GB300 release profile without onboarding/,
     );
   });
 

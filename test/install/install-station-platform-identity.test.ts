@@ -141,6 +141,8 @@ driver_loaded_exact
     ["wrong vendor", writePciIdentityFixture("0x1234")],
     ["wrong device", writePciIdentityFixture("0x10de", "0x31c1")],
     ["non-GPU PCI class", writePciIdentityFixture("0x10de", "0x31c2", "0x020000")],
+    ["malformed PCI class", writePciIdentityFixture("0x10de", "0x31c2", "0x03not-a-class")],
+    ["PCI class with trailing data", writePciIdentityFixture("0x10de", "0x31c2", "0x030000extra")],
     ["missing vendor", writePciIdentityFixtureMissing("vendor")],
     ["missing device", writePciIdentityFixtureMissing("device")],
     ["missing class", writePciIdentityFixtureMissing("class")],

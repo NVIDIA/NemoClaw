@@ -568,7 +568,7 @@ station_pci_device_is_gb300() {
   IFS= read -r class <"$pci_path/class" || return 1
   [[ "$vendor" == "$GB300_PCI_VENDOR" ]] || return 1
   gb300_pci_device_is_known "$device" || return 1
-  [[ "$class" == "${GB300_PCI_CLASS_PREFIX}"* ]]
+  [[ "$class" =~ ^${GB300_PCI_CLASS_PREFIX}[0-9a-fA-F]{4}$ ]]
 }
 
 station_has_exact_gb300_pci_gpu() {

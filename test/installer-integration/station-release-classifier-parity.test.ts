@@ -156,6 +156,7 @@ function classifyFirmwareWithReadiness(
   boardName: string,
   deviceTreeModel = "",
   pciEntryCount = 1,
+  pciClass = "0x030000",
 ) {
   const values = new Map([
     ["product_name", productName],
@@ -164,7 +165,7 @@ function classifyFirmwareWithReadiness(
     ["model", deviceTreeModel],
     ["vendor", "0x10de"],
     ["device", "0x31c2"],
-    ["class", "0x030000"],
+    ["class", pciClass],
   ]);
   return collectPlatformIdentity({
     productNamePath: "/fixture/product_name",
@@ -262,6 +263,7 @@ function detectWithInstallerWrapper(
   productFamily: string,
   stationPci = true,
   pciEntryCount = 1,
+  pciClass = "0x030000",
 ): string {
   const fixtureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-handoff-"));
   fixtureDirectories.push(fixtureDirectory);
@@ -282,7 +284,7 @@ function detectWithInstallerWrapper(
     fs.mkdirSync(pciDevice, { recursive: true });
     fs.writeFileSync(path.join(pciDevice, "vendor"), "0x10de\n");
     fs.writeFileSync(path.join(pciDevice, "device"), stationPci ? "0x31c2\n" : "0xffff\n");
-    fs.writeFileSync(path.join(pciDevice, "class"), "0x030000\n");
+    fs.writeFileSync(path.join(pciDevice, "class"), `${pciClass}\n`);
   }
   fs.writeFileSync(
     path.join(fixtureDirectory, "prepare-dgx-station-host.sh"),
@@ -436,6 +438,32 @@ describe("DGX Station release classifier parity", () => {
     );
     expect(readiness.stationGb300PciGpu).toBeUndefined();
   });
+
+  it.each(["0x03not-a-class", "0x030000extra"])(
+    "rejects malformed PCI class %s in both hardware consumers (#10928)",
+    (pciClass) => {
+      const shell = detectWithInstallerWrapper(
+        "Generic ARM workstation",
+        "NVIDIA DGX Station GB300",
+        true,
+        1,
+        pciClass,
+      );
+      const readiness = classifyFirmwareWithReadiness(
+        "Generic ARM workstation",
+        "NVIDIA DGX Station GB300",
+        "Generic board",
+        "",
+        1,
+        pciClass,
+      );
+
+      expect(shell).toBe(
+        "hardware=station-gb300-pci-missing\nplatform=Unverified DGX Station hardware\n",
+      );
+      expect(readiness.stationGb300PciGpu).toBe(false);
+    },
+  );
 
   it.each([
     ["an unsafe marker", noOta("7.7.0", "2026-07-30"), "1000|0|644|256"],
