@@ -75,8 +75,8 @@ function dashboardForwardOwnershipFailureMessage(
     case "process-identity-mismatch":
       return (
         subject +
-        `Free port ${String(port)} and re-run \`${cliName} onboard --resume\`, or select another ` +
-        `port with \`${cliName} onboard --resume --control-ui-port <N>\`; the listener was not adopted.`
+        `Free port ${String(port)} and re-run \`${cliName} onboard --resume\`; ` +
+        "the listener was not adopted."
       );
     case "listener-enumeration-unavailable":
       return (

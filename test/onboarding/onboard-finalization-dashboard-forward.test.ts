@@ -165,7 +165,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
         preserveRegisteredForward: true,
       }),
     ).toThrow(
-      /port 18790 for sandbox 'reonboard-test'.*process-identity-mismatch.*onboard --resume.*--control-ui-port <N>.*not adopted/su,
+      /^Registered dashboard port 18790 for sandbox 'reonboard-test' is occupied, but its ForwardTcp ownership check failed \(process-identity-mismatch\)\. Free port 18790 and re-run `nemoclaw onboard --resume`; the listener was not adopted\.$/u,
     );
     expect(launch).not.toHaveBeenCalled();
     expect(process.env.CHAT_UI_URL).toBeUndefined();
