@@ -202,11 +202,13 @@ function runStationCheckPlatform(
     productName = "NVIDIA DGX Station GB300",
     productFamily = "Generic family",
     markerMetadata = "0|0|644|256",
+    stationPci = true,
   }: {
     force?: boolean;
     productName?: string;
     productFamily?: string;
     markerMetadata?: string;
+    stationPci?: boolean;
   } = {},
 ) {
   const fixtureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-consumer-"));
@@ -236,7 +238,7 @@ station_product_family_path() { printf '%s' "$FIXTURE/product_family"; }
 station_board_name_path() { printf '%s' "$FIXTURE/board_name"; }
 station_device_tree_model_path() { printf '%s' "$FIXTURE/model"; }
 dgx_station_release_path() { printf '%s' "$FIXTURE/dgx-release"; }
-station_has_exact_gb300_pci_gpu() { return 0; }
+station_has_exact_gb300_pci_gpu() { return "$STATION_PCI_STATUS"; }
 FORCE_STATION_INSTALL="$FORCE"
 check_platform
 printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"`,
@@ -251,6 +253,7 @@ printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"`,
         FIXTURE: fixtureDirectory,
         FORCE: force ? "1" : "0",
         MARKER_METADATA: markerMetadata,
+        STATION_PCI_STATUS: stationPci ? "0" : "1",
       },
       timeout: 15_000,
       killSignal: "SIGKILL",
@@ -352,6 +355,14 @@ describe("DGX Station release classifier parity", () => {
       "supported-colossus-baseos",
       noOta("7.5.0-GB300ws-GB200ws", "2026-04-02-08-20-16"),
     ],
+    [
+      "server-label Colossus BaseOS",
+      "supported-colossus-baseos",
+      noOta("7.5.0-GB300ws-GB200ws", "2026-04-02-08-20-16").replace(
+        DISPLAY_NAME,
+        'DGX_PRETTY_NAME="NVIDIA DGX Server"',
+      ),
+    ],
     ["AI Developer Tools", "supported-ai-developer-tools", noOta("7.5.0", "2026-06-16-11-48-10")],
     ["future no-OTA family", "unsupported-dgx-os", noOta("7.7.0", "2026-07-30")],
     [
@@ -400,6 +411,16 @@ describe("DGX Station release classifier parity", () => {
     expect(result.stdout).toContain("PROFILE=stock-dgx-os");
   });
 
+  it("requires exact GB300 PCI evidence for a supported Station profile (#10928)", () => {
+    const result = runStationCheckPlatform(noOta("7.6.0", "2026-07-14-13-59-06"), {
+      stationPci: false,
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("Expected an NVIDIA GB300 PCI GPU");
+  });
+
   it("passes family-only identity through the installer-to-helper boundary (#10928)", () => {
     expect(detectWithInstallerWrapper("Generic ARM workstation", "NVIDIA DGX Station GB300")).toBe(
       "hardware=station-gb300\nplatform=DGX Station\n",
@@ -410,6 +431,22 @@ describe("DGX Station release classifier parity", () => {
     expect(detectWithInstallerWrapper("NVIDIA DGX Spark", "NVIDIA DGX Station GB300")).toBe(
       "hardware=conflicting\nplatform=Conflicting NVIDIA firmware identity\n",
     );
+  });
+
+  it("rejects embedded firmware control characters in both consumers (#10928)", () => {
+    const shell = classifyFirmwareWithStationHelper(
+      "NVIDIA DGX Station\tGB300",
+      "Generic family",
+      "Generic board",
+    );
+    const readiness = classifyFirmwareWithReadiness(
+      "NVIDIA DGX Station\tGB300",
+      "Generic family",
+      "Generic board",
+    );
+
+    expect(shell).toBe("not-station");
+    expect(readiness.nvidiaPlatform).toBeUndefined();
   });
 
   it("blocks Station Express when exact GB300 PCI identity is absent (#10928)", () => {

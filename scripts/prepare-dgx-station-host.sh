@@ -462,6 +462,12 @@ is_station_gb300_product() {
   [[ "$(nvidia_firmware_product_class "${1:-}" 2>/dev/null || true)" == "station-gb300" ]]
 }
 
+station_firmware_value_is_printable() {
+  local printable value=${1:-}
+  printable="$(printf '%s' "$value" | LC_ALL=C tr -d '\000-\037\177')"
+  [[ "$printable" == "$value" ]]
+}
+
 station_firmware_identity() {
   local LC_ALL=C class="" output=${1:?firmware identity output is required} path recognized="" station_product="" value
   for path in "$(station_product_name_path)" "$(station_product_family_path)" "$(station_board_name_path)" "$(station_device_tree_model_path)"; do
@@ -471,7 +477,8 @@ station_firmware_identity() {
     else
       value="$(head -c 257 "$path" 2>/dev/null || true)"
     fi
-    [[ ${#value} -le 256 && "$value" != *$'\n'* && "$value" != *$'\r'* ]] || continue
+    [[ ${#value} -le 256 ]] || continue
+    station_firmware_value_is_printable "$value" || continue
     class="$(nvidia_firmware_product_class "$value" 2>/dev/null || true)"
     [[ -n "$class" ]] || continue
     if [[ -n "$recognized" && "$recognized" != "$class" ]]; then

@@ -32,7 +32,7 @@ function withFirmwareModel(model: string, fn: () => void): void {
   const origReadFileSync = fs.readFileSync;
   fs.readFileSync = (p: string, ...args: unknown[]) => {
     if (p === "/sys/class/dmi/id/product_name") return model;
-    if (p === "/sys/firmware/devicetree/base/model") return "";
+    if (/\/(?:product_family|board_name|devicetree\/base\/model)$/.test(p)) return "";
     return origReadFileSync(p, ...args);
   };
   try {
