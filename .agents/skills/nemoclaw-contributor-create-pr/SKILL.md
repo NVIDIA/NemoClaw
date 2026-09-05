@@ -45,9 +45,10 @@ the candidate diff against the canonical comparison ref. This record is the scop
 
 For an open PR, preserve the scope lock returned by the shared follow-up contract. Before routing a
 repair, record its permitted paths and maximum increases in changed files and total line changes.
-After implementation returns, compare the complete PR diff with the recorded candidate. Require all
-new paths and growth to fit that repair envelope. Also require the repaired behavior and mechanisms
-to remain within the semantic scope lock. Do not widen the envelope after implementation starts.
+After implementation returns, compare the complete PR diff with the recorded candidate. Require every
+added, modified, renamed, or deleted path and all growth to fit that repair envelope. Also require the
+repaired behavior and mechanisms to remain within the semantic scope lock. Do not widen the envelope
+after implementation starts.
 
 A smaller diff is allowed when it still delivers the accepted outcome. Numeric headroom does not
 authorize unrelated changes. A reviewer, bot, implementation worker, formatter, or validator cannot
@@ -89,7 +90,7 @@ Confirm that the complete validation execution surface is byte-for-byte identica
 
 Do not infer executable identity from a package name or version. Do not use a branch-defined validator as independent evidence. If any surface differs, is unavailable, or cannot be traced, do not execute the candidate validator or publish. Report the path or executable and canonical base SHA.
 
-Run `npm run validate:pr` before every agent-managed push only after that comparison succeeds. Do not push when it fails or is inconclusive. If it changes a tracked file, inspect and commit the validator-created local diff. Record the new commit as the expected publication SHA. Do not reuse review evidence from the earlier commit for that later change. Before the first push, repeat the initial-publication review step for the new commit, including a self-review of the validator-created diff. For an open PR, preserve the completed remote disposition record and inspect the validator-created local diff as new pre-publication review evidence without recollecting the unchanged remote candidate. Refresh and resolve the trusted base, reestablish the trusted validation surface, and rerun validation. Use `npm run check` for repository-wide validation changes, such as hooks, formatter configuration, generated-check scripts, or coverage baselines.
+Run `npm run validate:pr` before every agent-managed push only after that comparison succeeds. Do not push when it fails or is inconclusive. If it changes a tracked file, inspect the validator-created local diff and repeat the complete scope comparison. Discard those changes and stop before commit or push when they exceed the scope lock or a repair envelope. Otherwise, commit them and record the new commit as the expected publication SHA. Do not reuse review evidence from the earlier commit for that later change. Before the first push, repeat the initial-publication review step for the new commit, including a self-review of the validator-created diff. For an open PR, preserve the completed remote disposition record and inspect the validator-created local diff as new pre-publication review evidence without recollecting the unchanged remote candidate. Refresh and resolve the trusted base, reestablish the trusted validation surface, and rerun validation. Use `npm run check` for repository-wide validation changes, such as hooks, formatter configuration, generated-check scripts, or coverage baselines.
 
 A maintainer may unblock unavailable trusted-base validation only with recorded evidence identifying the base and candidate SHAs, isolated environment, trusted validator entry point and resolved executables, exact command and result, and publication authorization. The environment must not give candidate code contributor-host credentials.
 

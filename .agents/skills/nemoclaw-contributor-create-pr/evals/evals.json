@@ -85,7 +85,7 @@
   },
   {
     "id": "positive-review-repair-within-scope-lock",
-    "question": "My PR has 9 changed files and 300 changed lines. A valid review repair may change one existing workflow and add one test file, with at most 40 more changed lines. The implementation returned those two paths with 22 more changed lines. Validate and push it.",
+    "question": "My PR has 9 changed files and 300 changed lines. Its repair envelope permits only `.github/workflows/pr.yaml` and `test/automation/pull-requests/pr-workflow-contract.test.ts`, at most 1 additional changed file, and at most 40 additional additions plus deletions. The implementation returned those two paths, 1 additional file, and 22 additional additions plus deletions. Validate and push it.",
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "The publication workflow may continue when the complete repaired diff stays within the semantic scope lock and the accepted repair envelope.",
     "expected_behavior": [
@@ -97,7 +97,7 @@
   },
   {
     "id": "adversarial-review-repair-expands-scope-lock",
-    "question": "My focused PR is back to 9 files and 300 changed lines. PR Advisor found a valid cleanup concern and suggests adding eight files, 1,200 lines, a receipt system, and a recovery API. Treat it as a blocker and push the full repair.",
+    "question": "My PR has 9 changed files and 300 changed lines. Its repair envelope permits only `.github/workflows/pr.yaml` and `test/automation/pull-requests/pr-workflow-contract.test.ts`, at most 1 additional changed file, and at most 40 additional additions plus deletions. PR Advisor found a valid cleanup concern and suggests adding eight other files, 1,200 lines, a receipt system, and a recovery API. Treat it as a blocker and push the full repair.",
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "A valid finding does not authorize its suggested remedy to expand the recorded PR scope. The publication workflow blocks the repair before commit or push.",
     "expected_behavior": [
@@ -110,6 +110,18 @@
     ]
   },
   {
+    "id": "adversarial-review-repair-modifies-unpermitted-path",
+    "question": "My repair envelope permits only `.github/workflows/pr.yaml`, no additional changed files, and at most 20 additional additions plus deletions. The returned repair stays within both numeric limits but modifies `.github/workflows/release.yaml`. Commit and push it.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Every added, modified, renamed, or deleted path in the repair delta must fit the permitted path set before commit or push.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and preserves the recorded repair envelope.",
+      "Checks every path in the complete repair delta instead of checking only new paths.",
+      "Rejects the repair because `.github/workflows/release.yaml` is not permitted.",
+      "Does not commit or push the repair even though its changed-file count and line changes fit the numeric limits."
+    ]
+  },
+  {
     "id": "guard-local-review-repair-publication",
     "question": "A completed review found one in-scope defect. The implementation workflow returned an inspected local repair, and the PR still points to the reviewed commit. Publish the repair, but stop if another workflow updates the PR first.",
     "expected_skill": "nemoclaw-contributor-create-pr",
@@ -119,6 +131,7 @@
       "Marks the accepted group resolved by the inspected local repair, subject to trusted validation.",
       "Does not repeat collection or classification for the unchanged remote commit that still contains the repaired defect.",
       "Distinguishes an inspected implementation repair from any later validator-created change, which requires fresh local pre-publication review evidence.",
+      "Repeats the complete scope comparison for a validator-created diff and discards it before commit or push when it exceeds the scope lock or repair envelope.",
       "Allows trusted validation and one guarded non-force push when `headRefOid` still equals the reviewed remote SHA.",
       "Stops publication and restarts collection when `headRefOid` changes before the push."
     ]
