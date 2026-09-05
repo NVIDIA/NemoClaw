@@ -152,32 +152,40 @@ describe("OpenShell forward service", () => {
     expect(spawnDetached).toHaveBeenCalledTimes(2);
   });
 
-  it("retries the exact OpenShell sandbox readiness handoff on its bounded schedule (#11084)", () => {
-    const spawnDetached = vi
-      .fn()
-      .mockReturnValueOnce({
-        pid: 53,
-        readOutput: () =>
-          "Error:\n  × sandbox 'demo' is no longer ready (phase: creating); stopping service\n  ╰─▶ forward",
-        removeOutput: vi.fn(),
-        unref: vi.fn(),
-      })
-      .mockReturnValueOnce({ pid: 54, unref: vi.fn() });
-    const sleep = vi.fn();
+  it.each([
+    [
+      "phase transition",
+      "Error:\n  × sandbox 'demo' is no longer ready (phase: creating); stopping service\n  ╰─▶ forward",
+    ],
+    ["explicit message", 'Error:\n  ╰─▶ message: "sandbox is not ready"'],
+  ])(
+    "retries an exact OpenShell sandbox readiness handoff on its bounded schedule [%s] (#11084)",
+    (_case, diagnostic) => {
+      const spawnDetached = vi
+        .fn()
+        .mockReturnValueOnce({
+          pid: 53,
+          readOutput: () => diagnostic,
+          removeOutput: vi.fn(),
+          unref: vi.fn(),
+        })
+        .mockReturnValueOnce({ pid: 54, unref: vi.fn() });
+      const sleep = vi.fn();
 
-    launchForwardService(target, {
-      getProcessIdentity: stableProcessIdentity,
-      isListenerOwned: (pid) => pid === 54,
-      isProcessRunning: (pid) => pid === 54,
-      isReachable: () => false,
-      maxSandboxReadyRetries: 1,
-      sleep,
-      spawnDetached,
-    });
+      launchForwardService(target, {
+        getProcessIdentity: stableProcessIdentity,
+        isListenerOwned: (pid) => pid === 54,
+        isProcessRunning: (pid) => pid === 54,
+        isReachable: () => false,
+        maxSandboxReadyRetries: 1,
+        sleep,
+        spawnDetached,
+      });
 
-    expect(spawnDetached).toHaveBeenCalledTimes(2);
-    expect(sleep).toHaveBeenCalledWith(5_000);
-  });
+      expect(spawnDetached).toHaveBeenCalledTimes(2);
+      expect(sleep).toHaveBeenCalledWith(5_000);
+    },
+  );
 
   it("does not classify a missing sandbox as a readiness handoff (#11084)", () => {
     const sleep = vi.fn();

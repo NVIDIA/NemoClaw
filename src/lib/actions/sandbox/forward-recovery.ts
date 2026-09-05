@@ -194,6 +194,30 @@ function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
 
+function describeForwardListEntry(output: string, sandboxName: string, port: number): string {
+  const matchingLine = output
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => {
+      const columns = line.split(/\s+/u);
+      return columns[0] === sandboxName && columns[2] === String(port);
+    });
+  if (!matchingLine) return "no matching forward";
+  const [sandbox, bind, listedPort, pid, status, ...extra] = matchingLine.split(/\s+/u);
+  if (
+    extra.length > 0 ||
+    sandbox !== sandboxName ||
+    (bind !== "127.0.0.1" && bind !== "0.0.0.0") ||
+    listedPort !== String(port) ||
+    !/^\d+$/u.test(pid ?? "") ||
+    !/^[a-z][a-z-]{0,31}$/iu.test(status ?? "")
+  ) {
+    return "matching forward is malformed";
+  }
+  return `${sandbox} ${bind} ${listedPort} ${pid} ${status}`;
+}
+
 export function resolveSandboxDashboardPort(
   sandboxName: string,
   deps: SandboxPortDeps = {},
@@ -431,9 +455,25 @@ export function ensureSandboxPortForwardForPort(
         expectedBind ?? (forwardTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1"),
         runtimeSelection?.workspace ?? "default",
       ),
-      runtimeSelection
-        ? { sourceEnvironment: buildSelectedOpenShellSubprocessEnv(runtimeSelection) }
-        : {},
+      {
+        describeState: () => {
+          const listed = captureOpenshell(
+            ["forward", "list", "--gateway", gatewayName],
+            withSelectedOpenShellCommandOptions(
+              {
+                ignoreError: true,
+                includeStreams: true,
+                timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+              },
+              runtimeSelection,
+            ),
+          );
+          return describeForwardListEntry(listed.output, sandboxName, port);
+        },
+        ...(runtimeSelection
+          ? { sourceEnvironment: buildSelectedOpenShellSubprocessEnv(runtimeSelection) }
+          : {}),
+      },
     );
     return acceptSuccessfulForward();
   } catch (error) {
