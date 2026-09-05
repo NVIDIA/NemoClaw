@@ -4,6 +4,7 @@
 import * as agentRuntime from "../../../agent/runtime";
 import { inspectPortableAgentReceiptDisposition } from "../../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock";
+import * as registry from "../../../state/registry";
 import { connectSandbox } from "../connect";
 import {
   prepareHermesCronRestoreRecovery,
@@ -23,6 +24,7 @@ export async function recoverSandboxWithHermesCronRestore(sandboxName: string): 
           probeOnly: true,
           requireLaunchReadinessPublication: false,
         });
+        registry.updateSandbox(sandboxName, { stopped: false });
         return;
       }
       const agent = agentRuntime.getSessionAgent(sandboxName);
@@ -33,6 +35,7 @@ export async function recoverSandboxWithHermesCronRestore(sandboxName: string): 
         probeOnly: true,
         requireLaunchReadinessPublication: false,
       });
+      registry.updateSandbox(sandboxName, { stopped: false });
       if (agent?.name !== "hermes") return;
 
       const outcome = recoverHermesCronRestore(sandboxName);

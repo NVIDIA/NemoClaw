@@ -12,6 +12,7 @@ import {
 describe("sandbox status inference.local route health (#6192)", () => {
   function snapshotDeps(options: {
     agent?: string;
+    stopped?: boolean;
     lookupState?: "present" | "missing";
     provider?: string;
     liveProvider?: string;
@@ -35,6 +36,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
       model: "nvidia/nemotron",
       provider,
       preferredInferenceApi: options.preferredInferenceApi,
+      ...(options.stopped !== undefined ? { stopped: options.stopped } : {}),
     };
     return {
       getSandbox: () => sandbox,
@@ -121,6 +123,24 @@ describe("sandbox status inference.local route health (#6192)", () => {
 
     const report = await getSandboxStatusReport("alpha", deps);
     expect(report.servingProcessHealth).toBeNull();
+  });
+
+  it("does not probe terminal runtime health when the sandbox is stopped (#11025)", async () => {
+    const deps = snapshotDeps({
+      agent: "langchain-deepagents-code",
+      stopped: true,
+      routeHealth: {
+        ok: true,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus: 200,
+        detail: "route reachable",
+      },
+    });
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
+
+    expect(snapshot.terminalRuntimeHealth).toBeNull();
+    expect(deps.probeTerminalRuntimeHealth).not.toHaveBeenCalled();
   });
 
   it("does not invent serving-process health when the gateway is unavailable (#7003)", async () => {

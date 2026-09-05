@@ -690,7 +690,7 @@ export async function collectSandboxStatusSnapshot(
   }
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   const terminalRuntimeHealth =
-    lookup.state === "present" && statusAgent.agentRuntime === "terminal"
+    lookup.state === "present" && !sb?.stopped && statusAgent.agentRuntime === "terminal"
       ? (opts.deps?.probeTerminalRuntimeHealth ?? probeTerminalRuntimeCgroupOom)(sandboxName)
       : null;
   // The serving-process leg is only meaningful when the gateway is up. A

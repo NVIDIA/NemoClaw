@@ -9,9 +9,14 @@ const mocks = vi.hoisted(() => ({
   inspectPortableAgentReceiptDisposition: vi.fn(),
   prepareHermesCronRestoreRecovery: vi.fn(),
   recoverHermesCronRestore: vi.fn(),
+  updateSandbox: vi.fn(),
   withMcpLifecycleLock: vi.fn(
     async (_sandboxName: string, operation: () => Promise<void>, _options: unknown) => operation(),
   ),
+}));
+
+vi.mock("../../../state/registry", () => ({
+  updateSandbox: mocks.updateSandbox,
 }));
 
 vi.mock("../../../agent/runtime", async (importOriginal) => ({
@@ -74,6 +79,7 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
       requireLaunchReadinessPublication: false,
     });
     expect(mocks.recoverHermesCronRestore).toHaveBeenCalledWith("alpha");
+    expect(mocks.updateSandbox).toHaveBeenCalledWith("alpha", { stopped: false });
   });
 
   it("routes schema-5 recovery directly to receipt-owned probe without cron mutation (#9203)", async () => {
@@ -91,6 +97,7 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
     });
     expect(mocks.prepareHermesCronRestoreRecovery).not.toHaveBeenCalled();
     expect(mocks.recoverHermesCronRestore).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).toHaveBeenCalledWith("alpha", { stopped: false });
   });
 
   it("does not repair the gateway when Hermes gate preparation fails", async () => {
@@ -102,9 +109,9 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
     await expect(recoverSandboxWithHermesCronRestore("alpha")).rejects.toThrow(
       "recovery authority is unsafe",
     );
-
     expect(mocks.connectSandbox).not.toHaveBeenCalled();
     expect(mocks.recoverHermesCronRestore).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
   });
 
   it("keeps legacy Hermes recovery compatible when preparation is unsupported", async () => {

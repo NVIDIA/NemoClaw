@@ -220,6 +220,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         hermesAuthMethod: null,
       }),
     );
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { stopped: false });
     const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
       (call) =>
         Array.isArray(call[0]) &&

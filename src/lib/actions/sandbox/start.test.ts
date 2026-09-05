@@ -32,7 +32,8 @@ const FAILED_RECOVERY = { ...SUCCESSFUL_RECOVERY, wasRunning: false } as const;
 const REDACTED_TOKEN = "opaque-token-8662";
 
 function harness(overrides: Partial<SandboxStartDeps> = {}) {
-  const getSandbox = vi.fn<NonNullable<SandboxStartDeps["getSandbox"]>>(() => sandbox());
+  let storedSandbox = sandbox({ stopped: true });
+  const getSandbox = vi.fn<NonNullable<SandboxStartDeps["getSandbox"]>>(() => storedSandbox);
   const isDockerRuntimeDown = vi.fn<DockerRuntimeProviderDependencies["isRuntimeDown"]>(
     () => false,
   );
@@ -73,7 +74,10 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     NonNullable<SandboxStartDeps["waitForManagedGatewaySupervisor"]>
   >(() => false);
   const log = vi.fn<(message: string) => void>();
-  const updateSandbox = vi.fn<NonNullable<SandboxStartDeps["updateSandbox"]>>();
+  const updateSandbox = vi.fn<NonNullable<SandboxStartDeps["updateSandbox"]>>((_name, updates) => {
+    storedSandbox = { ...storedSandbox, ...updates };
+    return storedSandbox;
+  });
   const runtimeProviders = createRuntimeProviderBundleRegistry([
     [
       "docker",
@@ -254,6 +258,7 @@ describe("startSandbox", () => {
 
     expect(result.exitCode).toBe(0);
     expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
+    expect(h.getSandbox("my-sandbox")?.stopped).toBe(false);
   });
 
   it(
