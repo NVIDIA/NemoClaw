@@ -82,7 +82,7 @@ const SUBPROCESS_ENV_NAMES = new Set([
   "SSH_AUTH_SOCK",
 ]);
 
-const STATION_DISCOVERY_PROBE = String.raw`
+export const STATION_DISCOVERY_PROBE = String.raw`
 import csv
 import json
 from pathlib import Path
