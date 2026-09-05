@@ -295,6 +295,27 @@ describe("reconcileStalePinnedSessionModelsAfterRebuild", () => {
     );
   });
 
+  it("reuses the rebuild target for every restored session read and write (#10514)", () => {
+    executeSandboxCommandMock
+      .mockReturnValueOnce({ status: 0, stdout: config, stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: staleStore, stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
+    const runtimeSelection = {
+      gatewayName: "recorded-gateway",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+
+    reconcileStalePinnedSessionModelsAfterRebuild("alpha", vi.fn(), runtimeSelection);
+
+    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
+    expect(executeSandboxCommandMock.mock.calls.map((call) => call[2])).toEqual([
+      { runtimeSelection },
+      { runtimeSelection },
+      { runtimeSelection },
+    ]);
+  });
+
   it("stops when the restored config has no primary model (#7102)", () => {
     executeSandboxCommandMock.mockReturnValueOnce({
       status: 0,

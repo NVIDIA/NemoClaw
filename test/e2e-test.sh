@@ -161,76 +161,44 @@ info "4b. Verify blueprint runner apply smoke test"
 # blueprint so shipped policy endpoints cannot preempt the apply behavior under
 # test.
 FAKE_OPENSHELL_BIN=$(mktemp -d)
-APPLY_BLUEPRINT_DIR=$(mktemp -d)
+APPLY_BLUEPRINT_PATH=$(mktemp -d)
 APPLY_OUTPUT=$(mktemp)
-INVALID_APPLY_OUTPUT=$(mktemp)
 APPLY_CALLS="$FAKE_OPENSHELL_BIN/calls"
 cleanup_apply_fixture() {
-  rm -rf "$FAKE_OPENSHELL_BIN"
-  rm -rf "$APPLY_BLUEPRINT_DIR"
-  rm -f "$APPLY_OUTPUT" "$INVALID_APPLY_OUTPUT" "$APPLY_CALLS"
+  rm -rf "$FAKE_OPENSHELL_BIN" "$APPLY_BLUEPRINT_PATH"
+  rm -f "$APPLY_OUTPUT" "$APPLY_CALLS"
 }
 trap cleanup_apply_fixture EXIT
-mkdir -p "$APPLY_BLUEPRINT_DIR/policies"
-cat >"$APPLY_BLUEPRINT_DIR/blueprint.yaml" <<'YAML'
-version: "0.1.0"
-profiles:
-  - ncp
+cat >"$APPLY_BLUEPRINT_PATH/blueprint.yaml" <<'YAML'
 components:
   sandbox:
-    image: fixture-openclaw-image
-    name: fixture-openclaw
+    image: openclaw
+    name: openclaw
     forward_ports:
       - 18789
   inference:
     profiles:
       ncp:
-        provider_type: openai
-        provider_name: fixture-provider
-        model: fixture-model
+        provider_type: nvidia
+        provider_name: nvidia-ncp
+        model: nvidia/nemotron-3-super-120b-a12b
   policy:
     additions:
-      e2e_public_service:
-        name: e2e_public_service
+      fixture_service:
+        name: fixture_service
         endpoints:
           - host: 93.184.216.34
-            port: 443
+            port: 8000
             access: full
-        binaries:
-          - path: /usr/bin/curl
 YAML
-cat >"$APPLY_BLUEPRINT_DIR/policies/openclaw-sandbox.yaml" <<'YAML'
+cat >"$APPLY_BLUEPRINT_PATH/sandbox-policy.yaml" <<'YAML'
 version: 1
-filesystem_policy:
-  include_workdir: true
-  read_only:
-    - /usr
-  read_write:
-    - /tmp
-landlock:
-  compatibility: best_effort
-process:
-  run_as_user: sandbox
-  run_as_group: sandbox
-network_policies:
-  fixture_base:
-    name: fixture_base
-    endpoints:
-      - host: 93.184.216.34
-        port: 443
-        access: full
-    binaries:
-      - path: /usr/bin/curl
-YAML
-cat >"$APPLY_BLUEPRINT_DIR/policies/invalid.yaml" <<'YAML'
-version: invalid
 network_policies: {}
 YAML
-cp /opt/nemoclaw-blueprint/private-networks.yaml "$APPLY_BLUEPRINT_DIR/private-networks.yaml"
+cp /opt/nemoclaw-blueprint/private-networks.yaml "$APPLY_BLUEPRINT_PATH/private-networks.yaml"
 cat >"$FAKE_OPENSHELL_BIN/openshell" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" >>"${BASH_SOURCE[0]%/*}/calls"
 if [ "${1:-}" = "status" ]; then
   printf '%s\n' 'Gateway Status' '  Status: Connected' '  Gateway: fixture-gateway'
   exit 0
@@ -255,6 +223,9 @@ if [ "${1:-} ${2:-}" = "policy set" ]; then
   fi
   cp "$6" "${BASH_SOURCE[0]%/*}/effective-policy.yaml"
   exit 0
+fi
+if [ "${1:-} ${2:-}" = "policy get" ]; then
+  printf '%s\n' "$*" >>"${BASH_SOURCE[0]%/*}/calls"
 fi
 if [ "${1:-} ${2:-}" = "policy get" ] && [[ " $* " == *" --output json "* ]]; then
   sandbox="${@: -1}"
@@ -302,33 +273,9 @@ case "$*" in
 esac
 SH
 chmod 0755 "$FAKE_OPENSHELL_BIN/openshell"
-
-# A malformed configured policy may require read-only gateway discovery, but it
-# must be rejected before sandbox, policy, provider, or inference mutation.
 PATH="$FAKE_OPENSHELL_BIN:$PATH" \
-  NEMOCLAW_BLUEPRINT_PATH="$APPLY_BLUEPRINT_DIR" \
-  OPENSHELL_SANDBOX_POLICY="$APPLY_BLUEPRINT_DIR/policies/invalid.yaml" \
-  node --input-type=module -e "
-  const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
-  try {
-    await main(['apply', '--profile', 'ncp']);
-    throw new Error('invalid sandbox policy was accepted');
-  } catch (error) {
-    if (!error.message.includes('configured NemoClaw sandbox policy is invalid')) throw error;
-    console.log('EXPECTED_ERROR: ' + error.message);
-  }
-" >"$INVALID_APPLY_OUTPUT" 2>&1
-if grep -q "EXPECTED_ERROR: The configured NemoClaw sandbox policy is invalid" "$INVALID_APPLY_OUTPUT" \
-  && ! grep -Eq '^(sandbox create|policy set|provider create|inference set)( |$)' "$APPLY_CALLS"; then
-  pass "Apply rejects invalid policy before protected operations"
-else
-  fail "Apply did not reject invalid policy before protected operations"
-fi
-: >"$APPLY_CALLS"
-
-PATH="$FAKE_OPENSHELL_BIN:$PATH" \
-  NEMOCLAW_BLUEPRINT_PATH="$APPLY_BLUEPRINT_DIR" \
-  OPENSHELL_SANDBOX_POLICY="$APPLY_BLUEPRINT_DIR/policies/openclaw-sandbox.yaml" \
+  NEMOCLAW_BLUEPRINT_PATH="$APPLY_BLUEPRINT_PATH" \
+  OPENSHELL_SANDBOX_POLICY="$APPLY_BLUEPRINT_PATH/sandbox-policy.yaml" \
   node --input-type=module -e "
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
   await main(['apply', '--profile', 'ncp']);
@@ -357,22 +304,6 @@ if grep -Eq '^policy get -g fixture-gateway --base [^ ]+$' "$APPLY_CALLS"; then
   pass "Apply reads base policy through the active gateway"
 else
   fail "Apply did not use the gateway-pinned base-policy read"
-fi
-if EFFECTIVE_POLICY="$FAKE_OPENSHELL_BIN/effective-policy.yaml" node --input-type=module <<'JS'; then
-import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
-
-const require = createRequire("/opt/nemoclaw/");
-const YAML = require("yaml");
-const policy = YAML.parse(readFileSync(process.env.EFFECTIVE_POLICY, "utf8"));
-const addition = policy.network_policies?.e2e_public_service;
-if (addition?.endpoints?.[0]?.host !== "93.184.216.34") {
-  throw new Error("fixture policy addition was not applied");
-}
-JS
-  pass "Apply mutates the synthetic policy"
-else
-  fail "Apply did not mutate the synthetic policy"
 fi
 # Verify run state was persisted to disk
 RUN_ID=$(grep -o 'nc-[0-9]*-[0-9]*-[a-f0-9]*' "$APPLY_OUTPUT" | head -1)

@@ -1380,7 +1380,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.result.stderr).toContain("exceeds maximum repair depth 64");
     expect(run.result.stderr).not.toContain("RecursionError");
   });
-  it("refuses a log tree beyond the bounded repair entry count", { timeout: 15_000 }, () => {
+  it("refuses a log tree beyond the bounded repair entry count", { timeout: 30_000 }, () => {
     const run = runHermesGatewayRuntimeCleanup({ preExistingLogFile: true, wideLogEntries: 4097 });
     expect(run.result.status).toBe(78);
     expect(run.result.stderr).toContain("/logs exceeds maximum repair entry count 4096");

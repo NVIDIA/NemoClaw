@@ -4,6 +4,6 @@
 /** Hermes and OpenShell versions supported by the first lifecycle API. */
 export const HERMES_LIFECYCLE_DEFINITION = Object.freeze({
   agent: "hermes" as const,
-  agentVersion: "0.19.0" as const,
+  agentVersion: "0.20.6" as const,
   openshellVersion: "0.0.106" as const,
 });

@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+
 const START_SCRIPT = path.join(import.meta.dirname, "../../..", "agents", "hermes", "start.sh");
 
 function escapeRegExp(value: string): string {

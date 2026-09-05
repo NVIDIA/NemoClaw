@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { findDashboardForwardOwner } from "./dashboard-port";
+import {
+  replaceOpenShellRuntimeSelectionEnv,
+  snapshotOpenShellEnv,
+  type OpenShellRuntimeSelection,
+} from "../adapters/openshell/runtime-selection";
 import { resolveGatewayName } from "./gateway-binding";
 import type { InferenceRouteState } from "./inference-route";
 import { assertDashboardPortNotReserved } from "./preflight-ports";
@@ -34,9 +39,53 @@ export type AuthoritativeGatewayOptions = Pick<
   "authoritativeResumeConfig" | "targetGatewayName" | "targetGatewayPort" | "onboardLockAlreadyHeld"
 >;
 
+type AuthoritativeRuntimeSelectionOptions = AuthoritativeGatewayOptions &
+  Pick<OnboardOptions, "recreateSandbox" | "resume" | "runtimeSelection">;
+
+function beginOpenShellRuntimeSelectionEnvScope(
+  runtimeSelection: OpenShellRuntimeSelection,
+  env: NodeJS.ProcessEnv,
+): () => void {
+  const restore = snapshotOpenShellEnv(env);
+  replaceOpenShellRuntimeSelectionEnv(env, runtimeSelection);
+  return restore;
+}
+
+/** Keep every OpenShell child in an inner rebuild onboard on its frozen target. */
+export function beginAuthoritativeRebuildRuntimeSelectionScope(
+  opts: AuthoritativeRuntimeSelectionOptions,
+  env: NodeJS.ProcessEnv = process.env,
+): () => void {
+  const runtimeSelection = opts.runtimeSelection;
+  if (!runtimeSelection) return () => undefined;
+  const gateway = resolveAuthoritativeOnboardGatewayBinding(opts);
+  if (
+    opts.authoritativeResumeConfig !== true ||
+    opts.resume !== true ||
+    opts.recreateSandbox !== true ||
+    opts.onboardLockAlreadyHeld !== true ||
+    !gateway
+  ) {
+    throw new Error(
+      "An OpenShell runtime selection may be supplied only for a locked authoritative rebuild resume.",
+    );
+  }
+  if (runtimeSelection.gatewayName !== gateway.name) {
+    throw new Error(
+      `OpenShell runtime selection '${runtimeSelection.gatewayName}' does not match authoritative gateway '${gateway.name}'.`,
+    );
+  }
+  return beginOpenShellRuntimeSelectionEnvScope(runtimeSelection, env);
+}
+
 export type AuthoritativeRebuildPreflightOptions = Pick<
   OnboardOptions,
-  "sandboxGpu" | "sandboxGpuDevice" | "noGpu" | "controlUiPort" | "allowDeferredN1xManagedVllm"
+  | "sandboxGpu"
+  | "sandboxGpuDevice"
+  | "noGpu"
+  | "controlUiPort"
+  | "allowDeferredN1xManagedVllm"
+  | "runtimeSelection"
 > & {
   authoritativeResumeConfig: true;
   /** Internal prepared-backup recovery defers route repair to authoritative onboard. */
@@ -102,6 +151,7 @@ export type AuthoritativeRebuildTarget = {
   model: string;
   targetGatewayName: string;
   controlUiPort: number | null;
+  runtimeSelection?: OpenShellRuntimeSelection;
 };
 
 /** Validate the one-shot authority to reconstruct a provider during a locked rebuild resume. */
@@ -221,11 +271,23 @@ export async function preflightAuthoritativeRebuildTarget(
   deps: AuthoritativeRebuildTargetDeps,
 ): Promise<void> {
   const env = deps.env ?? process.env;
-  const previousGateway = env.OPENSHELL_GATEWAY;
   const fail = (message: string): never => {
     throw new Error(message);
   };
-  env.OPENSHELL_GATEWAY = target.targetGatewayName;
+  const runtimeSelection = target.runtimeSelection;
+  if (runtimeSelection && runtimeSelection.gatewayName !== target.targetGatewayName) {
+    fail(
+      `OpenShell runtime selection '${runtimeSelection.gatewayName}' does not match authoritative gateway '${target.targetGatewayName}'.`,
+    );
+  }
+  const previousGateway = env.OPENSHELL_GATEWAY;
+  const restoreRuntimeSelection = runtimeSelection
+    ? beginOpenShellRuntimeSelectionEnvScope(runtimeSelection, env)
+    : () => {
+        if (previousGateway === undefined) delete env.OPENSHELL_GATEWAY;
+        else env.OPENSHELL_GATEWAY = previousGateway;
+      };
+  if (!runtimeSelection) env.OPENSHELL_GATEWAY = target.targetGatewayName;
   try {
     if (!deps.resolveBaselinePolicy(target.sandboxName)) {
       fail(`Could not read the baseline policy for sandbox '${target.sandboxName}'.`);
@@ -261,7 +323,6 @@ export async function preflightAuthoritativeRebuildTarget(
     // sandbox unavailable first; the natural OpenShell lifecycle releases its
     // port. The replacement launch then refuses any port that stayed occupied.
   } finally {
-    if (previousGateway === undefined) delete env.OPENSHELL_GATEWAY;
-    else env.OPENSHELL_GATEWAY = previousGateway;
+    restoreRuntimeSelection();
   }
 }

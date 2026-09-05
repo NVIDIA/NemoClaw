@@ -12,8 +12,8 @@ describe("hermes light-skin boundary check", () => {
   it("passes when the pinned version is reviewed", () => {
     expect(
       checkHermesLightSkinBoundary({
-        dockerfileText: dockerfileWithVersion("v2026.7.20"),
-        reviewedVersions: ["v2026.6.19", "v2026.7.1", "v2026.7.20"],
+        dockerfileText: dockerfileWithVersion("v2026.8.27"),
+        reviewedVersions: ["v2026.6.19", "v2026.7.1", "v2026.8.27"],
       }),
     ).toBeNull();
   });
@@ -21,7 +21,7 @@ describe("hermes light-skin boundary check", () => {
   it("fails when the pinned version has not been reviewed", () => {
     const error = checkHermesLightSkinBoundary({
       dockerfileText: dockerfileWithVersion("v2026.8.1"),
-      reviewedVersions: ["v2026.6.19", "v2026.7.1", "v2026.7.20"],
+      reviewedVersions: ["v2026.6.19", "v2026.7.1", "v2026.8.27"],
     });
 
     expect(error).toContain("needs re-review");

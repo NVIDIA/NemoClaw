@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { loadAgent } from "../../agent/defs";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import {
   type InferenceEndpointSource,
   normalizeInferenceEndpointSource,
@@ -120,6 +121,7 @@ export type RebuildRecreateOnboardOpts = {
   controlUiPort: number | null;
   targetGatewayName: string;
   targetGatewayPort: number;
+  runtimeSelection?: OpenShellRuntimeSelection;
   onboardLockAlreadyHeld: true;
   deferProcessExit: true;
   /** Target fingerprint of the replacement journal opened before deletion. */
@@ -128,7 +130,7 @@ export type RebuildRecreateOnboardOpts = {
   rebuildRegistryInferenceRoute?: RebuildRouteHandoff;
   rebuildProviderReconfigure?: RebuildProviderReconfigureHandoff;
   providerRecoveryReceipt?: ProviderRecoveryReceipt;
-  /** Recorded managed-vLLM intent admitted only by the N1x readiness exception. */
+  /** Recorded provider intent admitted only by the N1x readiness exception. */
   allowDeferredN1xManagedVllm?: true;
   /** Target-scoped authority admitted by the authoritative rebuild preflight. */
   rebuildGatewayAuthority?: CheckpointGatewayAuthority;

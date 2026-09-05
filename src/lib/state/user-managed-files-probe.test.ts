@@ -13,12 +13,16 @@ type SandboxStateModule = typeof import("./sandbox");
 type RegistryModule = typeof import("./registry");
 type DefsModule = typeof import("../agent/defs");
 type ProbeModule = typeof import("./user-managed-files-probe");
+type OpenShellClientModule = typeof import("../adapters/openshell/client");
+type OpenShellResolveModule = typeof import("../adapters/openshell/resolve");
 
 const requireDist = createRequire(import.meta.url);
 const sandboxStatePath = "./sandbox.js";
 const registryPath = "./registry.js";
 const defsPath = "../agent/defs.js";
 const probePath = "./user-managed-files-probe.js";
+const openshellClientPath = "../adapters/openshell/client.js";
+const openshellResolvePath = "../adapters/openshell/resolve.js";
 
 function loadProbe(): ProbeModule {
   delete require.cache[requireDist.resolve(probePath)];
@@ -35,6 +39,14 @@ function loadRegistry(): RegistryModule {
 
 function loadDefs(): DefsModule {
   return requireDist(defsPath);
+}
+
+function loadOpenShellClient(): OpenShellClientModule {
+  return requireDist(openshellClientPath);
+}
+
+function loadOpenShellResolve(): OpenShellResolveModule {
+  return requireDist(openshellResolvePath);
 }
 
 function makeFakeAgent(declared: string[]): ReturnType<DefsModule["loadAgent"]> {
@@ -70,12 +82,14 @@ function makeFakeAgent(declared: string[]): ReturnType<DefsModule["loadAgent"]> 
 
 describe("probeUserManagedFiles", () => {
   let recordedArgs: string[][];
+  let recordedOptions: Array<Record<string, unknown>>;
   let spawnSpy: ReturnType<typeof vi.spyOn>;
   let tempSshFiles: Set<string>;
   let originalMkdtempSync: typeof fs.mkdtempSync;
 
   beforeEach(() => {
     recordedArgs = [];
+    recordedOptions = [];
     tempSshFiles = new Set<string>();
     const sandboxState = loadSandboxState();
     const registry = loadRegistry();
@@ -99,6 +113,7 @@ describe("probeUserManagedFiles", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     for (const dir of tempSshFiles) {
       try {
@@ -113,10 +128,12 @@ describe("probeUserManagedFiles", () => {
     spawnSpy = vi.spyOn(child_process, "spawnSync").mockImplementation(((
       command: string,
       args?: readonly string[],
+      options?: Record<string, unknown>,
     ) => {
       const argList = Array.isArray(args) ? [...args] : [];
       const sshCall = command === "ssh" && argList.length > 0;
       sshCall && recordedArgs.push(argList);
+      sshCall && recordedOptions.push(options ?? {});
       return {
         status,
         signal: null,
@@ -143,6 +160,44 @@ describe("probeUserManagedFiles", () => {
     expect(probeCmd).toContain("if [ -f '/sandbox/.env' ]");
     expect(probeCmd).toContain("if [ -f '/sandbox/.mcp.json' ]");
     expect(probeCmd).not.toContain("/sandbox/.fake/");
+  });
+
+  it("pins SSH config and ProxyCommand environment to the frozen target (#10514)", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    const runtimeSelection = {
+      gatewayName: "recorded-gateway",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    const sandboxState = loadSandboxState();
+    const getSshConfig = vi.mocked(sandboxState.getSshConfig);
+    stubSpawnSync(".env\n", 0);
+    const { probeUserManagedFiles } = loadProbe();
+
+    probeUserManagedFiles("alpha", runtimeSelection);
+
+    expect(getSshConfig).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        gatewayName: "recorded-gateway",
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "recorded-gateway",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+        }),
+      }),
+    );
+    const env = recordedOptions[0]?.env as Record<string, string>;
+    expect(env).toMatchObject({
+      OPENSHELL_GATEWAY: "recorded-gateway",
+      OPENSHELL_WORKSPACE: "default",
+      OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+    });
+    expect(env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
   });
 
   it("supports nested declared files relative to the sandbox root", () => {
@@ -253,5 +308,52 @@ describe("probeUserManagedFiles", () => {
     const result = probeUserManagedFiles("alpha");
     expect(result.declared).toEqual([]);
     expect(result.existing).toEqual([]);
+  });
+});
+
+describe("getSshConfig frozen target", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("uses replacement environment, workspace, TLS, and gateway for SSH config (#10514)", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.spyOn(loadOpenShellResolve(), "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
+    const capture = vi
+      .spyOn(loadOpenShellClient(), "captureSandboxSshConfigCommand")
+      .mockReturnValue({ status: 0, output: "Host openshell-alpha.default\n" });
+
+    const runtimeOptions = {
+      gatewayName: "recorded-gateway",
+      replaceEnv: true,
+      env: {
+        OPENSHELL_GATEWAY: "recorded-gateway",
+        OPENSHELL_WORKSPACE: "default",
+        OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+      },
+    };
+    expect(loadSandboxState().getSshConfig("alpha", runtimeOptions)).toContain(
+      "openshell-alpha.default",
+    );
+
+    expect(capture).toHaveBeenCalledWith(
+      "/usr/bin/openshell",
+      "alpha",
+      expect.objectContaining({
+        gatewayName: "recorded-gateway",
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "recorded-gateway",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+        }),
+      }),
+    );
+    const env = capture.mock.calls[0]?.[2]?.env as Record<string, string>;
+    expect(env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
   });
 });
