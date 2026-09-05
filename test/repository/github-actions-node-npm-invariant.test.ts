@@ -23,7 +23,13 @@ const IMMUTABLE_REVIEWED_NPM_ACTION =
 const IMMUTABLE_PREPARE_E2E_NPM_ACTION =
   "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e";
 
-type Step = { if?: string; run?: string; uses?: string; with?: Record<string, unknown> };
+type Step = {
+  if?: string;
+  name?: string;
+  run?: string;
+  uses?: string;
+  with?: Record<string, unknown>;
+};
 type ActionDocument = { runs?: { steps?: Step[] } };
 type WorkflowDocument = { jobs?: Record<string, { steps?: Step[] }> };
 type StepGroup = { file: string; label: string; steps: Step[] };
@@ -67,8 +73,22 @@ const setupNodeSteps = groups.flatMap(({ file, label, steps }) =>
 function installsReviewedNpm(step: Step): boolean {
   return Boolean(
     step.uses?.includes(REVIEWED_NPM_ACTION) ||
+    step.uses?.includes("/.github/actions/prepare-e2e@") ||
+    step.run?.includes("Install-WslNode") ||
     step.run?.includes("setup-reviewed-npm/verify-and-install-npm.sh"),
   );
+}
+
+function installsReviewedNode(step: Step): boolean {
+  return Boolean(
+    step.uses?.startsWith("actions/setup-node@") ||
+    step.uses?.includes("/.github/actions/prepare-e2e@") ||
+    step.run?.includes("Install-WslNode"),
+  );
+}
+
+function runsNpm(step: Step): boolean {
+  return /(?:^|[\n;&|({])\s*(?:npm|npx)(?:\s|$)/mu.test(step.run ?? "");
 }
 
 describe("controlled setup-node environments", () => {
@@ -90,9 +110,7 @@ describe("controlled setup-node environments", () => {
       .map(({ file, label, steps, step, index }) => {
         const laterSteps = steps.slice(index + 1);
         const reviewedIndex = laterSteps.findIndex(installsReviewedNpm);
-        const npmConsumerIndex = laterSteps.findIndex((step) =>
-          /(?:^|[\n;&|({])\s*(?:npm|npx)(?:\s|$)/mu.test(step.run ?? ""),
-        );
+        const npmConsumerIndex = laterSteps.findIndex(runsNpm);
         const matchingCondition =
           step.if === undefined ||
           laterSteps.some(
@@ -109,6 +127,30 @@ describe("controlled setup-node environments", () => {
       .filter(({ valid }) => !valid)
       .map(({ label }) => label);
     expect(invalidOrder).toEqual([]);
+
+    const invalidWorkflowConsumers = groups
+      .filter(({ file }) => path.relative(GITHUB_ROOT, file).startsWith(`workflows${path.sep}`))
+      .flatMap(({ file, label, steps }) =>
+        steps
+          .map((step, index) => ({ index, step }))
+          .filter(({ step }) => runsNpm(step))
+          .flatMap(({ index, step }) => {
+            const priorSteps = steps.slice(0, index);
+            const setupIndex = priorSteps.map(installsReviewedNode).lastIndexOf(true);
+            const reviewedIndex = priorSteps.map(installsReviewedNpm).lastIndexOf(true);
+            const setup = priorSteps[setupIndex];
+            const reviewed = priorSteps[reviewedIndex];
+            const matchingSetupCondition = setup?.if === undefined || setup.if === step.if;
+            const matchingReviewedCondition = reviewed?.if === undefined || reviewed.if === step.if;
+            return setupIndex >= 0 &&
+              reviewedIndex >= setupIndex &&
+              matchingSetupCondition &&
+              matchingReviewedCondition
+              ? []
+              : [`${path.relative(REPO_ROOT, file)}:${label}:${step.name ?? index}`];
+          }),
+      );
+    expect(invalidWorkflowConsumers).toEqual([]);
   });
 
   it("keeps every workflow-local reviewed npm action behind its matching checkout", () => {

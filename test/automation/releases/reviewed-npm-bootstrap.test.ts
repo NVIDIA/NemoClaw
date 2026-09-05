@@ -27,6 +27,7 @@ function identity(archive: string): Record<string, string> {
 
 type BootstrapFixtureOptions = {
   archive: string;
+  environment?: NodeJS.ProcessEnv;
   installedVersion?: string;
   reviewedIdentity?: Record<string, string>;
 };
@@ -46,6 +47,7 @@ set -euo pipefail
 printf '%s\\n' "$*" >> "$NEMOCLAW_TEST_NPM_LOG"
 case "$1" in
   pack)
+    pack_args="$*"
     shift
     download_dir=""
     while [ "$#" -gt 0 ]; do
@@ -56,6 +58,7 @@ case "$1" in
       shift
     done
     [ -n "$download_dir" ]
+    [ "$pack_args" = "pack npm@12.0.2 --pack-destination $download_dir --userconfig /dev/null --registry https://registry.npmjs.org/ --ignore-scripts --no-audit --no-fund" ]
     printf '%s' "$NEMOCLAW_TEST_ARCHIVE" > "$download_dir/npm-12.0.2.tgz"
     ;;
   install)
@@ -79,6 +82,7 @@ esac
     encoding: "utf8",
     env: {
       ...process.env,
+      ...options.environment,
       NEMOCLAW_TEST_ARCHIVE: options.archive,
       NEMOCLAW_TEST_INSTALL_MARKER: installMarker,
       NEMOCLAW_TEST_INSTALLED_VERSION: options.installedVersion ?? "12.0.2",
@@ -140,11 +144,31 @@ describe("reviewed npm bootstrap", () => {
       const { npmInvocations, result } = fixture;
       expect(result.status).toBe(0);
       expect(npmInvocations).toHaveLength(3);
-      expect(npmInvocations[0]).toContain("pack npm@12.0.2 --pack-destination");
+      expect(npmInvocations[0]).toMatch(
+        /^pack npm@12\.0\.2 --pack-destination .* --userconfig \/dev\/null --registry https:\/\/registry\.npmjs\.org\/ --ignore-scripts --no-audit --no-fund$/,
+      );
       expect(npmInvocations[1]).toMatch(
         /^install --global .*\/npm-12\.0\.2\.tgz --userconfig \/dev\/null --ignore-scripts --no-audit --no-fund --offline$/,
       );
       expect(npmInvocations[2]).toBe("--version");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("overrides ambient npm configuration for the archive download (#8253)", () => {
+    const fixture = runBootstrapFixture({
+      archive,
+      environment: {
+        NPM_CONFIG_REGISTRY: "https://registry.example.test/",
+        NPM_CONFIG_USERCONFIG: "/tmp/untrusted-npmrc",
+      },
+    });
+    try {
+      expect(fixture.result.status).toBe(0);
+      expect(fixture.npmInvocations[0]).toMatch(
+        /^pack npm@12\.0\.2 --pack-destination .* --userconfig \/dev\/null --registry https:\/\/registry\.npmjs\.org\/ --ignore-scripts --no-audit --no-fund$/,
+      );
     } finally {
       fixture.cleanup();
     }
