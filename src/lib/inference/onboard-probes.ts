@@ -56,7 +56,11 @@ const {
   getHostDockerInternalProbeFailure,
   isHijackedDockerInternalUrl,
 } = require("./onboard-host-docker-internal");
-const { isNvcfFunctionNotFoundForAccount, nvcfFunctionNotFoundMessage } = require("../validation");
+const {
+  isNvcfFunctionNotFoundForAccount,
+  nvcfFunctionNotFoundMessage,
+  shouldSkipResponsesProbe,
+} = require("../validation");
 const { isPrivateHostname, isPrivateIp, isLoopbackHostname } = require("../private-networks");
 const { buildResolvePinArgs, isOperatorTrustablePrivateIp } = require("./endpoint-ssrf-preflight");
 const {
@@ -78,6 +82,7 @@ const {
   STRICT_TOOL_PROBE_INITIAL_TOKENS,
   STRICT_TOOL_PROBE_RETRY_TOKEN_LADDER,
   strictToolProbeReasoningRetryMessage,
+  usesNvidiaEndpointProbePayload,
   vllmProbePolicyForModel,
 } = require("./openai-probe-models");
 const {
@@ -281,6 +286,16 @@ function shouldRequireResponsesToolCalling(provider) {
 // probes default to Bearer auth and Gemini onboarding succeeds.
 function getProbeAuthMode(_provider) {
   return undefined;
+}
+
+function getOpenAiSelectionProbeOptions(provider) {
+  return {
+    provider,
+    useNvidiaEndpointProbePayload: usesNvidiaEndpointProbePayload(provider),
+    requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
+    skipResponsesProbe: shouldSkipResponsesProbe(provider),
+    authMode: getProbeAuthMode(provider),
+  };
 }
 
 export function getProbeExtraHeaders(provider) {
@@ -559,6 +574,7 @@ export function getChatCompletionsProbeCurlArgs(opts: {
   isWsl?: boolean;
   pinnedAddresses?: readonly string[];
   validationTiming?: unknown;
+  useNvidiaEndpointProbePayload?: boolean;
 }) {
   const {
     credentialArgs,
@@ -568,6 +584,7 @@ export function getChatCompletionsProbeCurlArgs(opts: {
     isWsl: isWslOverride,
     pinnedAddresses,
     validationTiming,
+    useNvidiaEndpointProbePayload,
   } = opts;
   const platformOptions = getProbeTimingOptions({
     ...(typeof isWslOverride === "boolean" ? { isWsl: isWslOverride } : {}),
@@ -583,7 +600,7 @@ export function getChatCompletionsProbeCurlArgs(opts: {
     "Content-Type: application/json",
     ...credSlice,
     "-d",
-    JSON.stringify(getChatCompletionsProbePayload(model)),
+    JSON.stringify(getChatCompletionsProbePayload(model, { useNvidiaEndpointProbePayload })),
     url,
   ];
 }
@@ -597,6 +614,7 @@ function runChatCompletionsProbe({
   pinnedAddresses,
   trustedPrivateCapability,
   validationTiming,
+  useNvidiaEndpointProbePayload,
   spawnSyncImpl,
 }) {
   const args = getChatCompletionsProbeCurlArgs({
@@ -606,6 +624,7 @@ function runChatCompletionsProbe({
     isWsl: isWslOverride,
     pinnedAddresses,
     validationTiming,
+    useNvidiaEndpointProbePayload,
   });
   const probeOpts = {
     timeoutMs: getProbeProcessTimeoutMs(args),
@@ -649,7 +668,11 @@ function runDoubledTimeoutChatCompletionsRetry({
     "Content-Type: application/json",
     ...authConfig.args,
     "-d",
-    JSON.stringify(getChatCompletionsProbePayload(model)),
+    JSON.stringify(
+      getChatCompletionsProbePayload(model, {
+        useNvidiaEndpointProbePayload: options.useNvidiaEndpointProbePayload,
+      }),
+    ),
     `${baseUrl}/chat/completions`,
   ];
   const runRetryProbe = () =>
@@ -907,6 +930,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               pinnedAddresses,
               trustedPrivateCapability: options.trustedPrivateCapability,
               validationTiming,
+              useNvidiaEndpointProbePayload: options.useNvidiaEndpointProbePayload,
               spawnSyncImpl: options.spawnSyncImpl,
             }),
     };
@@ -1167,6 +1191,7 @@ module.exports = {
   hasChatCompletionsToolCallLeak,
   shouldRequireResponsesToolCalling,
   getProbeAuthMode,
+  getOpenAiSelectionProbeOptions,
   getProbeExtraHeaders,
   getDeepSeekV4ProValidationProbeCurlArgs,
   getKimiK26ValidationProbeCurlArgs,
@@ -1242,6 +1267,7 @@ export async function verifyOnboardInferenceSmoke(options: any, dependencies: an
     authMode: getProbeAuthMode(options.provider),
     extraHeaders: getProbeExtraHeaders(options.provider),
     skipResponsesProbe: true,
+    useNvidiaEndpointProbePayload: usesNvidiaEndpointProbePayload(options.provider),
     pinnedAddresses: options.pinnedAddresses,
     trustedPrivateCapability: options.trustedPrivateCapability,
   });
