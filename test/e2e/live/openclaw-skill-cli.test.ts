@@ -135,11 +135,6 @@ test(
     },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
-    expect(
-      fs.existsSync(CLI_ENTRYPOINT),
-      "run `npm run build:cli` before live repo CLI targets",
-    ).toBe(true);
-
     await artifacts.target.declare({
       id: "openclaw-skill-cli",
       boundary: "install-sh-onboard-and-nemoclaw-native-skill-install",
@@ -251,7 +246,9 @@ test(
         timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
       },
     );
-    expect(resultText(collision)).toContain("not proven to be owned by NemoClaw");
+    const collisionText = resultText(collision);
+    expect(collision.exitCode, collisionText).not.toBe(0);
+    expect(collisionText).toContain("not proven to be owned by NemoClaw");
     await expectSandboxShellZero(
       sandbox,
       `grep -Fq FOREIGN_WORKSPACE_CONTENT "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md" && rm -rf "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}"`,
