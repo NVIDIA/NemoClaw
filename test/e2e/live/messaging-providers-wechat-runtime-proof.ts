@@ -25,8 +25,8 @@ export const waitForInstalledWechatApi: (
   probe: () => Promise<unknown>,
   delay: (milliseconds: number) => Promise<void>,
 ) => Promise<void> = async function waitForInstalledWechatApi(probe, delay) {
-  const maxAttempts = 30;
-  const retryDelayMs = 1_000;
+  const maxAttempts = 20;
+  const retryDelayMs = 250;
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
@@ -198,11 +198,40 @@ const resolveInstalledOpenClawRoot: (
 export const WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function fetchFakeWechatWithNodeHttp(input, init) {
+  const url = new URL(String(input));
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        hostname: url.hostname,
+        port: Number(url.port),
+        path: url.pathname + url.search,
+        method: init?.method,
+        headers: Object.fromEntries(new Headers(init?.headers).entries()),
+      },
+      (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        response.on("end", () => {
+          resolve(
+            new Response(Buffer.concat(chunks), {
+              status: response.statusCode,
+            }),
+          );
+        });
+      },
+    );
+    request.on("error", reject);
+    request.end(init?.body);
+  });
 }
 
 const readWechatPackageName = ${readWechatPackageName.toString()};
@@ -266,37 +295,43 @@ try {
 
   const fakeWechatBaseUrl =
     "http://host.openshell.internal:" + process.env.FAKE_WECHAT_API_PORT;
-  await waitForInstalledWechatApi(
-    async () => {
-      const response = await fetch(fakeWechatBaseUrl + "/__nemoclaw_ready__", {
-        signal: AbortSignal.timeout(1_000),
-      });
-      await response.arrayBuffer();
-    },
-    (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-  );
-  const target = process.env.OPENCLAW_WECHAT_TARGET || "e2e-user@im.wechat";
-  const text = process.env.OPENCLAW_WECHAT_TEXT || "NemoClaw OpenClaw WeChat plugin mock E2E";
-  const result = await sendModule.sendMessageWeixin({
-    to: target,
-    text,
-    opts: {
-      baseUrl: fakeWechatBaseUrl,
-      token: account.token,
-      contextToken: "nemoclaw-e2e-context",
-      timeoutMs: 30_000,
-    },
-  });
-  invariant(typeof result.messageId === "string" && result.messageId, "WeChat send emitted no ID");
-  console.log(
-    JSON.stringify({
-      ok: true,
-      proof: "openclaw-weixin-runtime-send",
-      accountId: account.accountId,
-      messageId: result.messageId,
-      pluginVersion: pluginMetadata.version,
-    }),
-  );
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    const url = new URL(String(input));
+    return url.origin === fakeWechatBaseUrl
+      ? fetchFakeWechatWithNodeHttp(input, init)
+      : originalFetch(input, init);
+  };
+  try {
+    await waitForInstalledWechatApi(
+      () => fetch(fakeWechatBaseUrl + "/__nemoclaw_ready__"),
+      (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    );
+    const target = process.env.OPENCLAW_WECHAT_TARGET || "e2e-user@im.wechat";
+    const text = process.env.OPENCLAW_WECHAT_TEXT || "NemoClaw OpenClaw WeChat plugin mock E2E";
+    const result = await sendModule.sendMessageWeixin({
+      to: target,
+      text,
+      opts: {
+        baseUrl: fakeWechatBaseUrl,
+        token: account.token,
+        contextToken: "nemoclaw-e2e-context",
+        timeoutMs: 30_000,
+      },
+    });
+    invariant(typeof result.messageId === "string" && result.messageId, "WeChat send emitted no ID");
+    console.log(
+      JSON.stringify({
+        ok: true,
+        proof: "openclaw-weixin-runtime-send",
+        accountId: account.accountId,
+        messageId: result.messageId,
+        pluginVersion: pluginMetadata.version,
+      }),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 } finally {
   fs.rmSync(proofWorkspace, { recursive: true, force: true });
 }

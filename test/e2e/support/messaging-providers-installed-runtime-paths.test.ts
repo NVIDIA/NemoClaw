@@ -47,7 +47,11 @@ describe("messaging provider installed-runtime paths", () => {
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE).not.toContain("__vite_ssr_import_");
+    expect([
+      WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE.includes('import http from "node:http"'),
+      WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE.includes("globalThis.fetch ="),
+      WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE.includes("__vite_ssr_import_"),
+    ]).toEqual([true, true, false]);
   });
 
   it("waits for the fake WeChat API before exercising the installed runtime", async () => {
@@ -63,7 +67,7 @@ describe("messaging provider installed-runtime paths", () => {
     });
 
     expect(probe).toHaveBeenCalledTimes(3);
-    expect(delays).toEqual([1_000, 1_000]);
+    expect(delays).toEqual([250, 250]);
   });
 
   it("preserves the last WeChat API error after the route settlement deadline", async () => {
@@ -77,7 +81,7 @@ describe("messaging provider installed-runtime paths", () => {
       }),
     ).rejects.toBe(routeError);
 
-    expect(probe).toHaveBeenCalledTimes(30);
-    expect(delays).toEqual(Array.from({ length: 29 }, () => 1_000));
+    expect(probe).toHaveBeenCalledTimes(20);
+    expect(delays).toEqual(Array.from({ length: 19 }, () => 250));
   });
 });
