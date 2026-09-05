@@ -43,6 +43,32 @@ For PRs from this repository, the PR E2E controller separately rebuilds the plan
 changed-file list and dispatches every selected job after `CI / Pull Request` completes. `E2E / PR
 Gate` does not consume advisor output.
 
+### Manual repair pilot
+
+Accepted issue #10791 adds a separate, default-disabled repair path to the trusted manual dispatch.
+For an opted-in, same-repository, non-draft PR whose exact head still permits maintainer changes, a
+maintainer may select eligible finding IDs and request one two-turn repair attempt. Pi can edit only
+a disposable checkout in a credential-free OpenShell sandbox; it cannot run tests, commit, push, or
+call GitHub. A separate secret-free job reconstructs and validates the patch. When publication is
+explicitly requested, the protected deterministic publisher rechecks the live state and may make
+one verified, non-force, compare-and-swap branch update. A trusted-main reporter then runs and
+records the approved exact-generated-SHA checks without starting another repair attempt.
+
+Before dispatch, set the repository variable `PR_REVIEW_ADVISOR_REPAIR_ENABLED=true`. Dispatch the
+workflow from `main` with `target_repo`, `target_pr`, `target_base`, the exact
+`repair_head_sha` and `repair_base_sha`, `repair_finding_ids_json`, and explicit
+`repair_egress_authorized=true`; set `repair_publish=true` only for Phase 1. Selection requires a
+maintainer-triggered, open, same-repository, non-draft PR whose exact head is current and whose
+`maintainer_can_modify` value is true.
+
+The repair path retains bounded proposal, validation, publication, generated-head, and diagnostic
+artifacts. Ordinary `pull_request_target` review runs remain advisory-only and read-only.
+
+The Advisor owns eligibility, finding identity, resolution, publication, and lifecycle orchestration
+in `repair-contract.mts`, `repair-resolve.mts`, `repair-publish.mts`, and the two Advisor workflows.
+It reuses the existing OpenShell runtime and the neutral pull-request Git publication primitives;
+the conflict fixer retains only conflict discovery, resolution, and publication commands.
+
 Required-check status is point-in-time context, not a settled-CI gate. Earlier
 `PR_REVIEW_ADVISOR_WAIT_*` workflow variables were inert and have been removed; any future waiting
 behavior must be implemented and tested before the workflow claims to provide it.
@@ -53,19 +79,30 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 
 ## Safety model
 
-- Static analysis only.
-- PR-provided scripts, tests, package lifecycle hooks, and build tools are never executed.
+- Ordinary Advisor review runs perform static analysis only. The manually dispatched repair pilot
+  follows the separate bounded lifecycle above.
+- Ordinary review and model-bearing jobs never execute PR-provided scripts, tests, package
+  lifecycle hooks, or build tools. The manual repair validator may run only trusted-selected checks
+  against the reconstructed candidate in its disposable, secret-free job.
 - The model session runs in a digest-pinned OpenShell sandbox under a hard-required Landlock policy with no direct network policy and no ambient workdir. Four canonical host inputs are mounted read-only through the advisor's ephemeral Docker gateway outside `/sandbox`, so OpenShell v0.0.99 applies the final immutable boundary before the first process starts. Landlock independently grants those inputs read-only access. It grants application-data writes only to a bounded runtime tmpfs; required device access remains writable under `/dev`. The sandbox pins Git to `/pr-workdir/.git` and `/pr-workdir` instead of relying on cross-UID repository discovery. A startup proof must read every input canary, resolve the checkout and `HEAD`, fail chmod, overwrite, replacement, and creation in each input, and complete runtime writes. The model-facing Advisor tools remain repository-confined and read-only; generated configuration and artifacts use the dedicated runtime subtree.
-- The advisor receives repo-confined read-only repository tools plus deterministic context tools. Repository paths must remain inside the checked-out analysis workspace after lexical and symlink resolution. None of these tools can change repository or GitHub state.
+- Ordinary specialists receive repo-confined read-only repository tools plus deterministic context
+  tools. The repair conversation additionally receives confined edit/write tools for its disposable
+  checkout. Repository paths must remain inside the relevant workspace after lexical and symlink
+  resolution; no model-facing tool can change GitHub state.
 - PR bodies, comments, titles, branch names, and diffs are treated as untrusted evidence, never as instructions.
 - Manual target analysis validates the repository token, decimal PR number, and base-ref token before running any `git` command.
 - Generated Pi configuration is written under the sandbox's runtime-only configuration directory, not uploaded artifacts.
 - The review job is limited to `NVIDIA/NemoClaw` and has read-only GitHub permissions. Within it, only the trusted host provider-configuration step receives the upstream model secret.
 - A separate trusted host step collects deterministic GitHub context with `github.token` and writes a bounded, identity-checked context file before model work. The sandbox receives that file, not the token.
 - The OpenShell gateway binds only to loopback and holds the upstream provider credential. The sandbox uses `https://inference.local/v1` with an inert SDK key, and receives neither the provider credential nor a GitHub token.
-- The separate publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link.
+- The advisory-comment publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link.
+- The protected repair publisher separately has `contents: write`. It receives no model credential,
+  rechecks the complete live PR state, creates one verified commit, and advances the contributor
+  branch once with a non-force compare-and-swap update.
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target. Publication errors remain visible in the publisher logs.
-- The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
+- Ordinary review runs post advisory comments only; they do not approve, request changes, merge,
+  push, label, or dispatch E2E. The manual repair pilot can perform its single protected branch
+  update and trusted exact-SHA validation, but never approves or merges the PR.
 - The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed invariant and required job for missing evidence. The PR E2E controller separately dispatches every listed job without consuming advisor output.
 
 Risk plan version 20 selects the `gateway-topology` family for the production paths in the canonical `GATEWAY_TOPOLOGY_FILES` inventory in `tools/advisors/risk-plan.mts`.
@@ -130,7 +167,7 @@ workflow run also displays each Markdown review as a job summary. Replace `<inte
 specialist interest and `<attempt>` with the workflow run attempt number, then download the artifact
 with `gh run download <run-id> --name pr-review-specialist-<interest>-<attempt>`.
 
-The publisher has the only pull-request write permission. It receives neither the model credential
+The advisory-comment publisher has the only pull-request write permission. It receives neither the model credential
 nor the specialist artifacts. It posts only the workflow-run link.
 
 ## Local run

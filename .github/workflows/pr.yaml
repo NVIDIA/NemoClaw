@@ -3,23 +3,50 @@
 
 name: CI / Pull Request
 
-run-name: "CI PR #${{ github.event.pull_request.number }} head ${{ github.event.pull_request.head.sha }} base ${{ github.event.pull_request.base.sha }} gate ${{ github.event.action != 'edited' || github.event.changes.base != null }}"
+run-name: >-
+  ${{ inputs.repair_attempt_key != '' &&
+  format('Repair validation {0} head {1}', inputs.repair_attempt_key, inputs.repair_head_sha) ||
+  format('CI PR #{0} head {1} base {2} gate {3}', github.event.pull_request.number,
+  github.event.pull_request.head.sha, github.event.pull_request.base.sha,
+  github.event.action != 'edited' || github.event.changes.base != null) }}
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+    inputs:
+      repair_pr_number:
+        required: false
+        type: string
+        default: ""
+      repair_head_sha:
+        required: false
+        type: string
+        default: ""
+      repair_source_head_sha:
+        required: false
+        type: string
+        default: ""
+      repair_base_sha:
+        required: false
+        type: string
+        default: ""
+      repair_attempt_key:
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ inputs.repair_attempt_key || github.ref }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   # Detect which files changed so we can skip expensive jobs for docs-only PRs.
   changes:
-    if: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.action != 'edited' || github.event.changes.base != null }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
@@ -28,16 +55,49 @@ jobs:
       code: ${{ steps.filter.outputs.code }}
       hugging_face_models: ${{ steps.filter.outputs.hugging_face_models }}
     steps:
+      - name: Bind validation to the live generated head
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          BASE_SHA: ${{ inputs.repair_base_sha }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ inputs.repair_head_sha }}
+          SOURCE_HEAD_SHA: ${{ inputs.repair_source_head_sha }}
+          PR_NUMBER: ${{ inputs.repair_pr_number }}
+          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REPAIR_ATTEMPT_KEY" =~ ^sha256:[0-9a-f]{64}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" |
+            jq -e --arg head "$HEAD_SHA" --arg base "$BASE_SHA" '
+              .state == "open" and .draft == false and
+              .head.sha == $head and .head.repo.full_name == "NVIDIA/NemoClaw" and
+              .base.sha == $base and .base.ref == "main" and
+              .base.repo.full_name == "NVIDIA/NemoClaw"
+            ' >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA" |
+            jq -e --arg parent "$SOURCE_HEAD_SHA" '
+              (.parents | length) == 1 and .parents[0].sha == $parent
+            ' >/dev/null
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
           persist-credentials: false
 
       - name: Detect changed paths
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
+          base: ${{ inputs.repair_attempt_key != '' && inputs.repair_base_sha || '' }}
           predicate-quantifier: every
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
           filters: |
             code:
               - '**'
@@ -58,6 +118,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
           persist-credentials: false
 
       - name: Setup Node.js for docs-only checks
@@ -82,10 +144,13 @@ jobs:
           chmod +x /usr/local/bin/hadolint
 
       - name: Resolve checked-out merge base for docs-only checks
+        env:
+          REPAIR_BASE_SHA: ${{ inputs.repair_base_sha }}
         shell: bash
         run: |
           set -euo pipefail
-          DOCS_ONLY_FROM_REF="$(git merge-base HEAD "origin/${GITHUB_BASE_REF}")"
+          base_ref="${REPAIR_BASE_SHA:-origin/${GITHUB_BASE_REF}}"
+          DOCS_ONLY_FROM_REF="$(git merge-base HEAD "$base_ref")"
           [ -n "$DOCS_ONLY_FROM_REF" ]
           echo "DOCS_ONLY_FROM_REF=$DOCS_ONLY_FROM_REF" >> "$GITHUB_ENV"
 
@@ -108,12 +173,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ inputs.repair_attempt_key != '' && github.workflow_sha || github.event.pull_request.base.sha }}
           path: .trusted-ci-actions
           persist-credentials: false
           sparse-checkout: |
@@ -154,6 +221,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -182,6 +251,8 @@ jobs:
       - name: Checkout pull request lockfiles
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
           persist-credentials: false
           sparse-checkout: |
             package-lock.json
@@ -191,7 +262,7 @@ jobs:
       - name: Checkout base package decision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ inputs.repair_attempt_key != '' && github.workflow_sha || github.event.pull_request.base.sha }}
           path: .trusted-sdk-package-decision
           persist-credentials: false
           sparse-checkout: |
@@ -209,11 +280,11 @@ jobs:
       - name: Locate exact base-controlled SDK package run
         id: locate
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ inputs.repair_attempt_key != '' && inputs.repair_base_sha || github.event.pull_request.base.sha }}
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ inputs.repair_attempt_key != '' && inputs.repair_source_head_sha || github.event.pull_request.head.sha }}
+          HEAD_REPOSITORY: NVIDIA/NemoClaw
+          PR_NUMBER: ${{ inputs.repair_attempt_key != '' && inputs.repair_pr_number || github.event.pull_request.number }}
         run: |
           set -euo pipefail
 
@@ -343,7 +414,7 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ steps.locate.outputs.run_id }}
-          name: openshell-sdk-${{ github.event.pull_request.head.sha }}
+          name: openshell-sdk-${{ inputs.repair_attempt_key != '' && inputs.repair_source_head_sha || github.event.pull_request.head.sha }}
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Publish SDK archive inside this CI run
@@ -366,12 +437,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ inputs.repair_attempt_key != '' && github.workflow_sha || github.event.pull_request.base.sha }}
           path: .trusted-ci-actions
           persist-credentials: false
           sparse-checkout: |
@@ -433,12 +506,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ inputs.repair_attempt_key != '' && github.workflow_sha || github.event.pull_request.base.sha }}
           path: .trusted-ci-actions
           persist-credentials: false
           sparse-checkout: |
@@ -493,12 +568,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ inputs.repair_attempt_key != '' && github.workflow_sha || github.event.pull_request.base.sha }}
           path: .trusted-ci-actions
           persist-credentials: false
           sparse-checkout: |
@@ -533,12 +610,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
           persist-credentials: false
 
       - name: Checkout trusted reviewed npm audit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ inputs.repair_attempt_key != '' && github.workflow_sha || github.event.pull_request.base.sha }}
           path: .trusted-reviewed-npm-audit
           persist-credentials: false
           sparse-checkout: |
@@ -579,12 +658,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ inputs.repair_attempt_key != '' && github.workflow_sha || github.event.pull_request.base.sha }}
           path: .trusted-ci-actions
           persist-credentials: false
           sparse-checkout: |
@@ -707,12 +788,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ inputs.repair_attempt_key != '' && github.workflow_sha || github.event.pull_request.base.sha }}
           path: .trusted-ci-actions
           persist-credentials: false
           sparse-checkout: |
@@ -759,12 +842,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ inputs.repair_attempt_key != '' && github.workflow_sha || github.event.pull_request.base.sha }}
           path: .trusted-ci-actions
           persist-credentials: false
           sparse-checkout: |

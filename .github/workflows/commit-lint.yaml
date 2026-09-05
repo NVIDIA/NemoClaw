@@ -3,22 +3,72 @@
 
 name: Governance / Lint PR Title
 
+run-name: >-
+  ${{ inputs.repair_attempt_key != '' &&
+  format('Repair validation {0} head {1}', inputs.repair_attempt_key, inputs.repair_head_sha) ||
+  github.event.pull_request.title }}
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+    inputs:
+      repair_pr_number:
+        required: false
+        type: string
+        default: ""
+      repair_head_sha:
+        required: false
+        type: string
+        default: ""
+      repair_base_sha:
+        required: false
+        type: string
+        default: ""
+      repair_attempt_key:
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ inputs.repair_attempt_key || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   commit-lint:
+    if: ${{ github.event_name == 'pull_request' || inputs.repair_attempt_key != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
+      - name: Bind validation to the live generated head
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          BASE_SHA: ${{ inputs.repair_base_sha }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ inputs.repair_head_sha }}
+          PR_NUMBER: ${{ inputs.repair_pr_number }}
+          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REPAIR_ATTEMPT_KEY" =~ ^sha256:[0-9a-f]{64}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/repair-pr.json"
+          jq -e --arg head "$HEAD_SHA" --arg base "$BASE_SHA" '
+            .state == "open" and .draft == false and
+            .head.sha == $head and .head.repo.full_name == "NVIDIA/NemoClaw" and
+            .base.sha == $base and .base.ref == "main" and
+            .base.repo.full_name == "NVIDIA/NemoClaw"
+          ' "$RUNNER_TEMP/repair-pr.json" >/dev/null
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,5 +85,10 @@ jobs:
 
       - name: Lint PR title
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: printf '%s\n' "$PR_TITLE" | npx commitlint --verbose
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            jq -r .title "$RUNNER_TEMP/repair-pr.json" | npx commitlint --verbose
+          else
+            printf '%s\n' "$PR_TITLE" | npx commitlint --verbose
+          fi

@@ -17,6 +17,11 @@ import {
   type RunReadOnlyAdvisorOptions,
 } from "../advisors/session.mts";
 import { collectDeterministicContext } from "./deterministic-context.mts";
+import {
+  createAdvisorFindingToolController,
+  type AdvisorFindingToolController,
+  writeAdvisorFindingLedger,
+} from "./finding-ledger.mts";
 import { collectGitHubReviewContext } from "./github-context.mts";
 import {
   ADVISOR_SPECIALISTS,
@@ -56,13 +61,20 @@ export function writeSpecialistSummary(
 
 export function runSpecialistAdvisor(
   interest: AdvisorInterest,
-  refs: { baseRef: string; headRef: string },
+  refs: { baseRef: string; headRef: string; headSha?: string },
   options: Omit<RunReadOnlyAdvisorOptions, "customTools">,
   run: (options: RunReadOnlyAdvisorOptions) => Promise<RunAdvisorResult> = runReadOnlyAdvisor,
+  findingController: AdvisorFindingToolController = createAdvisorFindingToolController({
+    headSha: refs.headSha || getHeadSha(refs.headRef, options.cwd),
+    interest,
+  }),
 ): Promise<RunAdvisorResult> {
   return run({
     ...options,
-    customTools: specialistCustomTools(interest, { ...refs, cwd: options.cwd }),
+    customTools: [
+      ...specialistCustomTools(interest, { ...refs, cwd: options.cwd }),
+      ...findingController.tools,
+    ],
   });
 }
 
@@ -117,9 +129,10 @@ async function main(): Promise<void> {
     operations: buildOperationsTurnContext(deterministic),
     reconciliation: buildReconciliationTurnContext(deterministic),
   });
+  const findingController = createAdvisorFindingToolController({ headSha, interest });
   const run = await runSpecialistAdvisor(
     interest,
-    { baseRef, headRef },
+    { baseRef, headRef, headSha },
     {
       cwd: process.cwd(),
       additionalReadRoots: [path.dirname(diffPath)],
@@ -138,10 +151,13 @@ async function main(): Promise<void> {
       logPrefix: `pr-review-${interest}`,
       logProgress: (message) => console.log(`[pr-review-${interest}] ${message}`),
     },
+    runReadOnlyAdvisor,
+    findingController,
   );
   const errors = advisorRunErrors(run);
   if (errors.length > 0) throw new Error(errors.join("; "));
   writeSpecialistSummary(outDir, interest, run.text);
+  writeAdvisorFindingLedger(outDir, interest, findingController.snapshot());
   if (!run.sessionFile) throw new Error("Pi did not persist a specialist JSONL session");
   const sessionStat = fs.lstatSync(run.sessionFile);
   if (!sessionStat.isFile() || sessionStat.isSymbolicLink()) {
