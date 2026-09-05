@@ -200,8 +200,6 @@ esac
       expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toBe(
         installedContent,
       );
-      expect(fs.existsSync(provenancePath)).toBe(false);
-
       fs.writeFileSync(
         provenancePath,
         `${JSON.stringify({
@@ -214,7 +212,7 @@ esac
           contentDigest: "0".repeat(64),
           previousDigest: null,
         })}\n`,
-        { mode: 0o600 },
+        { flag: "wx", mode: 0o600 },
       );
       expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
         success: false,

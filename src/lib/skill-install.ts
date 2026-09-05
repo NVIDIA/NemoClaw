@@ -572,32 +572,27 @@ function readOpenClawSkillProvenance(
   expected: Omit<OpenClawSkillProvenance, "contentDigest" | "phase" | "previousDigest">,
 ): OpenClawSkillProvenance | null {
   ensureConfigDir(path.dirname(receiptPath));
-  let observed: fs.Stats;
+  if (typeof fs.constants.O_NOFOLLOW !== "number") {
+    throw new Error("OpenClaw skill provenance requires O_NOFOLLOW support");
+  }
+  let descriptor: number;
   try {
-    observed = fs.lstatSync(receiptPath);
+    descriptor = fs.openSync(
+      receiptPath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
-  if (!observed.isFile() || observed.isSymbolicLink() || (observed.mode & 0o077) !== 0) {
-    throw new Error("OpenClaw skill provenance is not a private regular file");
-  }
-  if (typeof fs.constants.O_NOFOLLOW !== "number") {
-    throw new Error("OpenClaw skill provenance requires O_NOFOLLOW support");
-  }
-  const descriptor = fs.openSync(
-    receiptPath,
-    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
-  );
   try {
     const pinned = fs.fstatSync(descriptor);
     if (
       !pinned.isFile() ||
-      pinned.dev !== observed.dev ||
-      pinned.ino !== observed.ino ||
+      (pinned.mode & 0o077) !== 0 ||
       pinned.size > OPENCLAW_PROVENANCE_MAX_BYTES
     ) {
-      throw new Error("OpenClaw skill provenance changed during inspection");
+      throw new Error("OpenClaw skill provenance is not a bounded private regular file");
     }
     const parsed: unknown = JSON.parse(fs.readFileSync(descriptor, "utf8"));
     if (!isOpenClawSkillProvenance(parsed, expected)) {
@@ -660,10 +655,7 @@ function restoreOpenClawSkillProvenance(
     return;
   }
   try {
-    const observed = fs.lstatSync(receiptPath);
-    if (!observed.isFile() || observed.isSymbolicLink()) {
-      throw new Error("Refusing to remove invalid OpenClaw skill provenance");
-    }
+    // unlink removes the directory entry itself and never follows a symlink.
     fs.unlinkSync(receiptPath);
     syncDirectory(path.dirname(receiptPath));
   } catch (error) {
