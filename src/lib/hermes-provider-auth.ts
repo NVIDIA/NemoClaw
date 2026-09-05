@@ -12,7 +12,10 @@
 import type { StdioOptions } from "node:child_process";
 
 import { checkOpenAiInferenceProviderProfile } from "./adapters/openshell/provider-profile-registration";
+import { HERMES_PROVIDER_NAME } from "./onboard/inference-providers/hermes-provider-identity";
 import * as oauth from "./oauth-device-code";
+
+export { HERMES_PROVIDER_NAME };
 
 const onboardProviders = require("./onboard/providers") as {
   providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
@@ -39,7 +42,6 @@ function getHermesToolGatewayBroker(): HermesToolGatewayBroker {
   return require("./hermes-tool-gateway-broker") as HermesToolGatewayBroker;
 }
 
-export const HERMES_PROVIDER_NAME = "hermes-provider";
 export const HERMES_INFERENCE_CREDENTIAL_ENV = "OPENAI_API_KEY";
 export const HERMES_NOUS_API_KEY_CREDENTIAL_ENV = "NOUS_API_KEY";
 export const AGENT_KEY_MIN_TTL_SECONDS = 1800;

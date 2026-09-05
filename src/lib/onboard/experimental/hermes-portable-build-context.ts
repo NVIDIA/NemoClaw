@@ -30,16 +30,22 @@ const SOURCE_DOCKERFILE_RELATIVE_PATH = "agents/hermes/Dockerfile" as const;
 const CONTEXT_DOCKERFILE_RELATIVE_PATH = "Dockerfile" as const;
 
 const LOCAL_COPY_SOURCES = [
+  "agents/hermes/a2a-neutral.patch",
   "agents/hermes/build-mcp-digest.py",
   "agents/hermes/config/",
   "agents/hermes/cron-restore-control.py",
   "agents/hermes/dashboard-external-host.patch",
+  "agents/hermes/finalize-image-layout.sh",
   "agents/hermes/finalize-tirith-marker.py",
   "agents/hermes/generate-config.ts",
   "agents/hermes/hermes-cli-adapter-v1.json",
   "agents/hermes/hermes-wrapper.py",
+  "agents/hermes/hindsight-client-probe-requirements.txt",
+  "agents/hermes/hindsight-lazy-integrity.patch",
   "agents/hermes/host/managed-tool-gateway-matrix.json",
   "agents/hermes/image-build-probes.py",
+  // Dockerfile copies the policy into build-time and runtime locations.
+  "agents/hermes/managed_policy.py",
   "agents/hermes/managed_policy.py",
   "agents/hermes/mcp-config-transaction.py",
   "agents/hermes/patch-cron-execution-runtime.py",
@@ -56,7 +62,7 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/plugin/plugin.yaml",
   "agents/hermes/runtime-config-guard.py",
   "agents/hermes/runtime-boundaries.patch",
-  "agents/hermes/security-dependencies.patch",
+  "agents/hermes/secure-dir-skip-chmod.patch",
   "agents/hermes/seed-dashboard-config.py",
   "agents/hermes/start.sh",
   "agents/hermes/validate-cli-adapter.py",

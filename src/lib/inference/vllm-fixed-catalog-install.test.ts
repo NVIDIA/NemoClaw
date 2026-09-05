@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HostLocalVllmSelectionResult } from "./serving/host-local-vllm-selection";
 import type { VllmProfile } from "./vllm";
 
+type ResolveHostLocalVllmSelection = (typeof import("./serving/host-local-vllm-selection"))["resolveHostLocalVllmSelection"];
+
 const mocks = vi.hoisted(() => ({
   dockerCapture: vi.fn(),
   dockerForceRm: vi.fn(),
@@ -21,9 +23,9 @@ const mocks = vi.hoisted(() => ({
   persistHostLocalVllmRuntimeReceipt: vi.fn(),
   probeDockerStorage: vi.fn(),
   probeHostStorage: vi.fn(),
-  resolveHostLocalVllmSelection: vi.fn<
-    typeof import("./serving/host-local-vllm-selection").resolveHostLocalVllmSelection
-  >(() => ({ kind: "not-selected" })),
+  resolveHostLocalVllmSelection: vi.fn<ResolveHostLocalVllmSelection>(() => ({
+    kind: "not-selected",
+  })),
   runCapture: vi.fn(),
   runCurlProbe: vi.fn(),
   tryInstallManagedClusterManagedVllm: vi.fn(async () => ({
@@ -175,17 +177,10 @@ describe("fixed catalog vLLM installs", () => {
     const actualSelection = await vi.importActual<
       typeof import("./serving/host-local-vllm-selection")
     >("./serving/host-local-vllm-selection");
-    const selection = actualSelection.resolveHostLocalVllmSelection(
-      profile,
-      {},
-      {
-        automatic: true,
-        readinessReports,
-      },
+    mocks.resolveHostLocalVllmSelection.mockImplementation((...args) =>
+      actualSelection.resolveHostLocalVllmSelection(...args),
     );
     const reason = `vllm-install-test-host: GPU memory capacity ${String(availableMemoryBytes)} is below the recipe minimum 64000000000 bytes.`;
-    expect(selection).toEqual({ kind: "rejected", reason });
-    mocks.resolveHostLocalVllmSelection.mockReturnValue(selection);
 
     const result = await installVllm(profile, {
       hasImage: false,
@@ -194,11 +189,19 @@ describe("fixed catalog vLLM installs", () => {
       readinessReports,
     });
 
-    expect(result).toEqual({ ok: false });
-    expect(spies.errSpy).toHaveBeenCalledWith(`  vLLM install failed: ${reason}`);
-    expect(mocks.runCapture).not.toHaveBeenCalled();
-    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
-    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect({
+      result,
+      errors: spies.errSpy.mock.calls,
+      installEffects: {
+        capture: mocks.runCapture.mock.calls.length,
+        pull: mocks.dockerPullWithProgressWatchdog.mock.calls.length,
+        run: mocks.dockerRunDetached.mock.calls.length,
+      },
+    }).toEqual({
+      result: { ok: false },
+      errors: expect.arrayContaining([[`  vLLM install failed: ${reason}`]]),
+      installEffects: { capture: 0, pull: 0, run: 0 },
+    });
   });
 
   it("reports the N1x memory rejection after interactive model selection", async () => {
@@ -208,8 +211,8 @@ describe("fixed catalog vLLM installs", () => {
     const actualSelection = await vi.importActual<
       typeof import("./serving/host-local-vllm-selection")
     >("./serving/host-local-vllm-selection");
-    mocks.resolveHostLocalVllmSelection.mockImplementation(
-      actualSelection.resolveHostLocalVllmSelection,
+    mocks.resolveHostLocalVllmSelection.mockImplementation((...args) =>
+      actualSelection.resolveHostLocalVllmSelection(...args),
     );
     const promptFn = vi.fn(async () => "1");
     const reason = `vllm-install-test-host: GPU memory capacity ${String(availableMemoryBytes)} is below the recipe minimum 64000000000 bytes.`;
@@ -221,12 +224,21 @@ describe("fixed catalog vLLM installs", () => {
       readinessReports,
     });
 
-    expect(result).toEqual({ ok: false });
-    expect(promptFn).toHaveBeenCalledOnce();
-    expect(spies.errSpy).toHaveBeenCalledWith(`  vLLM install failed: ${reason}`);
-    expect(mocks.runCapture).not.toHaveBeenCalled();
-    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
-    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect({
+      result,
+      promptCalls: promptFn.mock.calls.length,
+      errors: spies.errSpy.mock.calls,
+      installEffects: {
+        capture: mocks.runCapture.mock.calls.length,
+        pull: mocks.dockerPullWithProgressWatchdog.mock.calls.length,
+        run: mocks.dockerRunDetached.mock.calls.length,
+      },
+    }).toEqual({
+      result: { ok: false },
+      promptCalls: 1,
+      errors: expect.arrayContaining([[`  vLLM install failed: ${reason}`]]),
+      installEffects: { capture: 0, pull: 0, run: 0 },
+    });
   });
 
   it.each([

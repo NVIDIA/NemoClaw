@@ -95,13 +95,13 @@ The same #7338 sign-off gate applies to this work.
 
 Each reviewed npm audit report has a `*.provenance.json` sidecar.
 The sidecars include `coverage/reviewed-npm-audit/` artifacts and `npm-audit.provenance.json` for the WeChat locked runtime graph audit.
-A configured cache reuses a response only when the package and lock bytes, npm version, registry origin, command arguments, and parser identity match.
+A configured cache reuses a response only when the package and lock bytes, npm version, fixed Yarn audit registry origin, command arguments, and parser identity match. Until 2026-09-11, image builds may accept a still-current npmjs receipt only through the explicit legacy transition. Remove the legacy option and verifier path after Yarn-bound receipts replace the retained npmjs receipts.
 The sidecar records whether the response came from the cache or a live registry request, plus its creation time, age, input digest, and response digest.
 Each sidecar also records:
 
 - Scanner identity, including `npm audit`, npm version, and Node.js version.
-- The configured registry with URL credentials removed.
-  The sidecar also records the derived bulk advisory endpoint where npm posts the dependency graph.
+- The fixed Yarn audit registry.
+  The sidecar also records its derived bulk advisory endpoint where npm posts the dependency graph.
   npm 7 and newer have no quick-audit fallback.
   When the request fails, npm reports no advisory data, and the note records this condition.
 - Run start and finish timestamps in ISO 8601 format.

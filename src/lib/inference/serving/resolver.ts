@@ -695,7 +695,7 @@ export function resolveManagedInferenceServing<TOutput>(
     }
 
     const matching: MatchingCandidate<TOutput>[] = [];
-    const runtimeFailures: RuntimeRequirementFailure[] = [];
+    let runtimeFailure: RuntimeRequirementFailure | undefined;
     let firstFailure:
       | Exclude<
           ReturnType<typeof matchingCandidate<TOutput>>,
@@ -705,12 +705,15 @@ export function resolveManagedInferenceServing<TOutput>(
     for (const compiledPreset of modelPresets) {
       const evaluated = matchingCandidate(catalog, compiledPreset, input);
       if (evaluated.outcome === "matched") matching.push(evaluated.candidate);
-      else if (evaluated.outcome === "runtime-unmet") runtimeFailures.push(evaluated);
+      else if (evaluated.outcome === "runtime-unmet") {
+        if (!runtimeFailure || compareRuntimeRequirementFailures(evaluated, runtimeFailure) < 0) {
+          runtimeFailure = evaluated;
+        }
+      }
       else firstFailure ??= evaluated;
     }
     if (matching.length === 0) {
-      runtimeFailures.sort(compareRuntimeRequirementFailures);
-      const failure = runtimeFailures.at(0) ?? firstFailure;
+      const failure = runtimeFailure ?? firstFailure;
       return {
         outcome: "rejected",
         code: failure?.outcome === "invalid-topology" ? "invalid-topology" : "requirements-not-met",
@@ -738,14 +741,18 @@ export function resolveManagedInferenceServing<TOutput>(
   }
 
   const matching: MatchingCandidate<TOutput>[] = [];
-  const runtimeFailures: RuntimeRequirementFailure[] = [];
+  let runtimeFailure: RuntimeRequirementFailure | undefined;
   let firstInvalidTopology: string | undefined;
   for (const compiledPreset of catalog.presets) {
     const preset = compiledPreset;
     if (preset.spec.selection !== "automatic") continue;
     const evaluated = matchingCandidate(catalog, compiledPreset, input);
     if (evaluated.outcome === "matched") matching.push(evaluated.candidate);
-    else if (evaluated.outcome === "runtime-unmet") runtimeFailures.push(evaluated);
+    else if (evaluated.outcome === "runtime-unmet") {
+      if (!runtimeFailure || compareRuntimeRequirementFailures(evaluated, runtimeFailure) < 0) {
+        runtimeFailure = evaluated;
+      }
+    }
     else if (evaluated.outcome === "invalid-topology") firstInvalidTopology ??= evaluated.message;
   }
   if (firstInvalidTopology) {
@@ -756,11 +763,10 @@ export function resolveManagedInferenceServing<TOutput>(
     };
   }
   if (matching.length === 0) {
-    runtimeFailures.sort(compareRuntimeRequirementFailures);
     return {
       outcome: "no-match",
       code: "requirements-not-met",
-      message: runtimeFailures[0]?.message ?? "No automatic managed inference preset matched.",
+      message: runtimeFailure?.message ?? "No automatic managed inference preset matched.",
     };
   }
   matching.sort(
