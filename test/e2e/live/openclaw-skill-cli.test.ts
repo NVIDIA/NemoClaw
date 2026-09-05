@@ -284,7 +284,7 @@ test(
     progress.phase("inspect the installed skill through every CLI view");
     const diskCheck = await expectSandboxShellZero(
       sandbox,
-      `ls -1 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/" 2>&1 && grep -Fq HOST_FIXTURE_VERSION=1 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md" && test -z "$(find /sandbox/.openclaw -maxdepth 1 -name '.nemoclaw-skill-stage.*' -print -quit)"`,
+      `ls -1 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/" 2>&1 && grep -Fq HOST_FIXTURE_VERSION=1 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md" && staging_path="$(find /sandbox/.openclaw -maxdepth 1 -name '.nemoclaw-skill-stage.*' -print -quit)" && test -z "$staging_path"`,
       "sandbox-openclaw-skill-cli-disk-check",
       env,
     );
