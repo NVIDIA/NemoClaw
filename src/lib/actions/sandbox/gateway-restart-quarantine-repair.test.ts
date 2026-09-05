@@ -13,9 +13,9 @@ import {
 // attempting relaunch. `scripts/managed-gateway-control.py` allowlists these
 // before forwarding them to the host as `NEMOCLAW_START_LOG=` lines.
 const QUARANTINE_LINES = [
-  "[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log",
+  "[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is stopped for this supervisor instance; correct the reported failure, then stop and start the sandbox; check /tmp/gateway.log",
   "[gateway] CRITICAL: exact Hermes replacement could not be stopped; managed supervisor is quarantined without another launch",
-  "[CRITICAL] Unproven Hermes gateway child exited; managed supervisor remains quarantined until sandbox recreation",
+  "[CRITICAL] Unproven Hermes gateway child exited; relaunch is stopped for this supervisor instance; correct the reported failure, then stop and start the sandbox",
   "[CRITICAL] Newly launched Hermes gateway pid 4242 failed exact role identity capture; quarantining the managed startup supervisor without signaling the unproven child",
 ] as const;
 
@@ -24,7 +24,7 @@ const CRASH_LOOP_RESTART_OUTPUT = [
   "NEMOCLAW_CONTROL_STAGE=await-replacement",
   "NEMOCLAW_SUPERVISOR_PID=42",
   "NEMOCLAW_GATEWAY_PID=0",
-  "NEMOCLAW_START_LOG=[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log",
+  "NEMOCLAW_START_LOG=[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is stopped for this supervisor instance; correct the reported failure, then stop and start the sandbox; check /tmp/gateway.log",
 ].join("\n");
 
 function classify(stdout: string) {

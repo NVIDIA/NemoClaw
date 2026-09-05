@@ -583,7 +583,8 @@ describe("Hermes supervised auxiliary recovery", () => {
     expect(result.stdout).toContain("recover:5004");
     expect(result.stdout).not.toContain("recover:5005");
     expect(result.stdout).toContain("quarantine");
-    expect(result.stderr).toContain("relaunch is quarantined until sandbox recreation");
+    expect(result.stderr).toContain("relaunch is stopped for this supervisor instance");
+    expect(result.stderr).toContain("stop and start the sandbox");
   });
 
   it("starts a recovered gateway with a fresh consecutive health-failure budget", () => {
@@ -1018,7 +1019,8 @@ describe("Hermes supervised auxiliary recovery", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim().split("\n")).toEqual(["wait:4242", "quarantine-sleep:60"]);
     expect(result.stderr).toContain("quarantining the managed startup supervisor");
-    expect(result.stderr).toContain("remains quarantined until sandbox recreation");
+    expect(result.stderr).toContain("relaunch is stopped for this supervisor instance");
+    expect(result.stderr).toContain("stop and start the sandbox");
     expect(result.stdout).not.toContain("unexpected-signal");
     expect(result.stdout).not.toContain("unexpected-return");
   });
