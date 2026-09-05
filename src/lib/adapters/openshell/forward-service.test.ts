@@ -51,31 +51,32 @@ describe("OpenShell forward service", () => {
     );
   });
 
-  it("accepts only an exact same-user service-forward listener (#11084)", () => {
-    const currentUid = process.getuid?.();
-    expect(currentUid).toBeDefined();
-    if (currentUid === undefined) return;
-    const expectedArgv = [target.executable, ...buildForwardServiceArgs(target)];
-    const options = {
-      findListenerOwnerPids: () => [42],
-      isListenerOwned: () => true,
-      readProcess: () => ({ argv: expectedArgv, uid: currentUid }),
-    };
+  it.runIf(process.getuid !== undefined)(
+    "accepts only an exact same-user service-forward listener (#11084)",
+    () => {
+      const currentUid = process.getuid?.() ?? -1;
+      const expectedArgv = [target.executable, ...buildForwardServiceArgs(target)];
+      const options = {
+        findListenerOwnerPids: () => [42],
+        isListenerOwned: () => true,
+        readProcess: () => ({ argv: expectedArgv, uid: currentUid }),
+      };
 
-    expect(isForwardServiceListenerOwned(target, options)).toBe(true);
-    expect(
-      isForwardServiceListenerOwned(target, {
-        ...options,
-        readProcess: () => ({ argv: [...expectedArgv, "unexpected"], uid: currentUid }),
-      }),
-    ).toBe(false);
-    expect(
-      isForwardServiceListenerOwned(target, {
-        ...options,
-        readProcess: () => ({ argv: expectedArgv, uid: currentUid + 1 }),
-      }),
-    ).toBe(false);
-  });
+      expect(isForwardServiceListenerOwned(target, options)).toBe(true);
+      expect(
+        isForwardServiceListenerOwned(target, {
+          ...options,
+          readProcess: () => ({ argv: [...expectedArgv, "unexpected"], uid: currentUid }),
+        }),
+      ).toBe(false);
+      expect(
+        isForwardServiceListenerOwned(target, {
+          ...options,
+          readProcess: () => ({ argv: expectedArgv, uid: currentUid + 1 }),
+        }),
+      ).toBe(false);
+    },
+  );
 
   it("accepts an owned listener without opening a ForwardTcp connection (#11084)", () => {
     const unref = vi.fn();
