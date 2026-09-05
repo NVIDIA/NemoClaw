@@ -3087,6 +3087,7 @@ For `invalid` and `conflicting`, JSON also returns up to eight output-safe names
 The recovery action tells you to restore registry access, back up and remove a corrupt registry, repair state-directory ownership or permissions, repair the named registrations and rerun the command for another affected batch, align conflicting routes, use a credential-free root or `/v1` API base, or omit endpoint options for an adapter-managed same-provider model change.
 These endpoint-omission fields never include a stored URL, registry path, or underlying registry error.
 If a sandbox-first lookup cannot resolve its gateway because the registry is corrupt or unreadable, the command exits non-zero and retains the safe recovery steps and affected path.
+If the requested sandbox has an invalid gateway binding, the error names that sandbox and tells you to repair or remove its registration without displaying the rejected gateway value or port.
 
 For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
 When that registry contains `<name>`, the command resolves the sandbox's recorded gateway and reads that gateway's live route.

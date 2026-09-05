@@ -116,12 +116,16 @@ function formatStatusRecovery(cliName: string, sandboxName: string | undefined):
     : `Run '${cliName} status' to diagnose the selected gateway.`;
 }
 
-function formatGatewayResolutionFailure(error: unknown): string {
+function formatGatewayResolutionFailure(error: unknown, sandboxName: string | undefined): string {
   const summary = "NemoClaw could not resolve the sandbox's recorded gateway.";
   if (error instanceof ConfigCorruptError || error instanceof ConfigPermissionError) {
     return `${summary}\n\n${error.message}`;
   }
-  return summary;
+  const sandboxIdentity =
+    sandboxName && SAFE_DIAGNOSTIC_SANDBOX_NAME.test(sandboxName)
+      ? `'${sandboxName}' sandbox`
+      : "requested sandbox";
+  return `${summary}\n\nRepair or remove the ${sandboxIdentity} registration, then rerun inference get.`;
 }
 
 function endpointPathIsCredentialFreeForDisplay(endpointUrl: string): boolean {
@@ -270,7 +274,7 @@ export async function runInferenceGet(
   try {
     gatewayName = deps.getSandboxTargetGatewayName(options.sandboxName);
   } catch (error) {
-    throw new InferenceGetError(formatGatewayResolutionFailure(error));
+    throw new InferenceGetError(formatGatewayResolutionFailure(error, options.sandboxName));
   }
   const result = getLiveGatewayInference(deps.captureOpenshell, {
     gatewayName,

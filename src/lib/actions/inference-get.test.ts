@@ -729,7 +729,8 @@ describe("runInferenceGet", () => {
 
     const lookup = runInferenceGet({ sandboxName: "beta" }, deps);
     await expect(lookup).rejects.toMatchObject({
-      message: "NemoClaw could not resolve the sandbox's recorded gateway.",
+      message:
+        "NemoClaw could not resolve the sandbox's recorded gateway.\n\nRepair or remove the 'beta' sandbox registration, then rerun inference get.",
     });
     await expect(lookup).rejects.not.toThrow(/secret-invalid-gateway|31337/);
     expect(deps.captureOpenshell).not.toHaveBeenCalled();
