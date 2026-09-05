@@ -291,6 +291,10 @@ if (process.argv[2] !== "tui") {
     sessionFile,
     JSON.stringify({ message: { content: [{ text: content, type: "text" }], role }, type: "message" }) + "\n",
   );
+  const appendEmpty = (role) => fs.appendFileSync(
+    sessionFile,
+    JSON.stringify({ message: { content: [], role }, type: "message" }) + "\n",
+  );
   if (mode === "restored-canonical-timeout") {
     process.stdin.setRawMode(true);
     await new Promise((resolve) => setTimeout(resolve, 750));
@@ -346,7 +350,7 @@ if (process.argv[2] !== "tui") {
     append("user", firstInput);
   } else if (mode === "provider-empty-message") {
     append("user", firstInput);
-    append("assistant", "");
+    appendEmpty("assistant");
   } else {
     append("user", firstInput);
     append("assistant", "first response");
