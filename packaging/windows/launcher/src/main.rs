@@ -209,6 +209,12 @@ fn main() {
     if new_console {
         forwarded.remove(0);
     }
+    let native_turn = forwarded
+        .first()
+        .is_some_and(|value| value == "--native-turn");
+    if native_turn {
+        forwarded.remove(0);
+    }
     let configured = forwarded.iter().any(|value| value == "--configured");
     let configured_nemocua = configured
         && forwarded
@@ -218,7 +224,9 @@ fn main() {
         && forwarded
             .windows(2)
             .any(|values| values[0] == "--agent" && values[1] == "openclaw");
-    let entry = install.join("qualification").join(if configured_nemocua {
+    let entry = install.join("qualification").join(if native_turn {
+        "run-installed-native-turn.mts"
+    } else if configured_nemocua {
         "run-installed-native-nemocua.mts"
     } else if configured_openclaw {
         "run-installed-native-web-ui.mts"

@@ -582,7 +582,7 @@ try {
     }
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\MXC-LICENSE.txt') -Destination (Join-Path $output 'MXC-LICENSE.txt')
 
-    $launcher = "@echo off`r`nset `"NEMOCLAW_NATIVE_INSTALL_ROOT=%~dp0..`"`r`n`"%~dp0node.exe`" `"%~dp0..\nemoclaw\app\bin\nemoclaw.js`" %*`r`n"
+    $launcher = "@echo off`r`n`"%~dp0node.exe`" `"%~dp0..\nemoclaw\app\bin\nemoclaw.js`" %*`r`n"
     [IO.File]::WriteAllText((Join-Path $binRoot 'nemoclaw.cmd'), $launcher, [Text.ASCIIEncoding]::new())
     $openClawLauncher = "@echo off`r`n`"%~dp0node.exe`" `"%~dp0..\openclaw\node_modules\openclaw\openclaw.mjs`" %*`r`n"
     [IO.File]::WriteAllText((Join-Path $binRoot 'openclaw.cmd'), $openClawLauncher, [Text.ASCIIEncoding]::new())
