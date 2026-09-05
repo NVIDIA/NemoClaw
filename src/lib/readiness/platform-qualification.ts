@@ -32,6 +32,7 @@ export interface PlatformIdentity {
   productName?: string | null;
   productFamily?: string | null;
   boardName?: string | null;
+  deviceTreeModel?: string | null;
   stationFirmwareProduct?: string | null;
   stationSystemVendor?: string | null;
   stationCpuCoreCount?: number | null;
@@ -77,6 +78,7 @@ export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
   productNamePath?: string;
   productFamilyPath?: string;
   boardNamePath?: string;
+  deviceTreeModelPath?: string;
   systemVendorPath?: string;
   cpuPossiblePath?: string;
   memInfoPath?: string;
@@ -135,6 +137,26 @@ function readOptional(
     const contents = readFile(filePath);
     if (Buffer.byteLength(contents) > maxBytes) return undefined;
     return contents.replace(/\0/g, "").trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readFirmwareOptional(
+  readFile: (filePath: string) => string,
+  filePath: string,
+  stripNul = false,
+): string | undefined {
+  try {
+    const contents = readFile(filePath);
+    const normalized = (stripNul ? contents.replace(/\0/g, "") : contents).replace(/\n+$/u, "");
+    if (
+      Buffer.byteLength(normalized) > STATION_FIRMWARE_VALUE_MAX_BYTES ||
+      /[\r\n\0]/u.test(normalized)
+    ) {
+      return undefined;
+    }
+    return normalized.trim() || undefined;
   } catch {
     return undefined;
   }
@@ -381,27 +403,28 @@ export function collectPlatformIdentity(
   const readFileDescriptor = options.readFileDescriptor ?? readOpenedFile;
   const closeFileDescriptor =
     options.closeFileDescriptor ?? ((fileDescriptor) => fs.closeSync(fileDescriptor));
-  const productName = readOptional(
+  const productName = readFirmwareOptional(
     readFile,
     options.productNamePath ?? "/sys/class/dmi/id/product_name",
-    STATION_FIRMWARE_VALUE_MAX_BYTES,
   );
-  const productFamily = readOptional(
+  const productFamily = readFirmwareOptional(
     readFile,
     options.productFamilyPath ?? "/sys/class/dmi/id/product_family",
-    STATION_FIRMWARE_VALUE_MAX_BYTES,
   );
-  const boardName = readOptional(
+  const boardName = readFirmwareOptional(
     readFile,
     options.boardNamePath ?? "/sys/class/dmi/id/board_name",
-    STATION_FIRMWARE_VALUE_MAX_BYTES,
   );
-  const stationSystemVendor = readOptional(
+  const deviceTreeModel = readFirmwareOptional(
+    readFile,
+    options.deviceTreeModelPath ?? "/sys/firmware/devicetree/base/model",
+    true,
+  );
+  const stationSystemVendor = readFirmwareOptional(
     readFile,
     options.systemVendorPath ?? "/sys/class/dmi/id/sys_vendor",
-    STATION_FIRMWARE_VALUE_MAX_BYTES,
   );
-  const firmwareProducts = [productName, productFamily, boardName];
+  const firmwareProducts = [productName, productFamily, boardName, deviceTreeModel];
   const firmwareIdentity = classifyFirmwareProducts(firmwareProducts);
   const stationFirmwareProduct = firmwareIdentity.stationFirmwareProduct;
   const n1xWslProduct = collectN1xWslProduct(options);
@@ -411,6 +434,7 @@ export function collectPlatformIdentity(
       productName,
       ...(productFamily === undefined ? {} : { productFamily }),
       ...(boardName === undefined ? {} : { boardName }),
+      ...(deviceTreeModel === undefined ? {} : { deviceTreeModel }),
       platformIdentityConflict: true,
       ...wslIdentity,
     };
@@ -487,6 +511,7 @@ export function collectPlatformIdentity(
     productName,
     ...(productFamily === undefined ? {} : { productFamily }),
     ...(boardName === undefined ? {} : { boardName }),
+    ...(deviceTreeModel === undefined ? {} : { deviceTreeModel }),
     ...(stationFirmwareProduct === undefined ? {} : { stationFirmwareProduct }),
     ...(stationSystemVendor === undefined ? {} : { stationSystemVendor }),
     ...(stationCpuCoreCount === undefined ? {} : { stationCpuCoreCount }),
@@ -667,6 +692,7 @@ export function projectPlatformQualification(
         product: identityEvidenceText(input.productName),
         productFamily: identityEvidenceText(input.productFamily),
         boardName: identityEvidenceText(input.boardName),
+        deviceTreeModel: identityEvidenceText(input.deviceTreeModel),
         nvidiaPlatform: input.nvidiaPlatform ?? null,
         platformIdentityConflict: input.platformIdentityConflict ?? null,
         stationFirmwareProduct: identityEvidenceText(input.stationFirmwareProduct),

@@ -107,6 +107,7 @@ function classifyFirmwareWithStationHelper(
   productName: string,
   productFamily: string,
   boardName: string,
+  deviceTreeModel = "",
 ): string {
   const fixtureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-firmware-"));
   fixtureDirectories.push(fixtureDirectory);
@@ -114,6 +115,7 @@ function classifyFirmwareWithStationHelper(
     ["product_name", productName],
     ["product_family", productFamily],
     ["board_name", boardName],
+    ["model", deviceTreeModel],
   ]) {
     fs.writeFileSync(path.join(fixtureDirectory, name), `${value}\n`);
   }
@@ -127,7 +129,7 @@ function classifyFirmwareWithStationHelper(
 station_product_name_path() { printf '%s' "$FIXTURE/product_name"; }
 station_product_family_path() { printf '%s' "$FIXTURE/product_family"; }
 station_board_name_path() { printf '%s' "$FIXTURE/board_name"; }
-station_device_tree_model_path() { printf '%s' "$FIXTURE/absent-model"; }
+station_device_tree_model_path() { printf '%s' "$FIXTURE/model"; }
 station_firmware_identity_state`,
     ],
     {
@@ -151,11 +153,13 @@ function classifyFirmwareWithReadiness(
   productName: string,
   productFamily: string,
   boardName: string,
+  deviceTreeModel = "",
 ) {
   const values = new Map([
     ["product_name", productName],
     ["product_family", productFamily],
     ["board_name", boardName],
+    ["model", deviceTreeModel],
     ["vendor", "0x10de"],
     ["device", "0x31c2"],
     ["class", "0x030000"],
@@ -164,6 +168,7 @@ function classifyFirmwareWithReadiness(
     productNamePath: "/fixture/product_name",
     productFamilyPath: "/fixture/product_family",
     boardNamePath: "/fixture/board_name",
+    deviceTreeModelPath: "/fixture/model",
     stationReleasePath: "/fixture/absent-release",
     pciDevicesPath: "/fixture/pci",
     readFile: (filePath) => values.get(path.basename(filePath)) ?? "",
@@ -259,5 +264,65 @@ describe("DGX Station release classifier parity", () => {
     expect(shell).toBe("conflicting");
     expect(readiness).toMatchObject({ platformIdentityConflict: true });
     expect(readiness.nvidiaPlatform).toBeUndefined();
+  });
+
+  it("uses the device-tree model when DMI fields are generic (#10928)", () => {
+    const shell = classifyFirmwareWithStationHelper(
+      "Generic ARM workstation",
+      "Generic family",
+      "Generic board",
+      "NVIDIA DGX Station GB300",
+    );
+    const readiness = classifyFirmwareWithReadiness(
+      "Generic ARM workstation",
+      "Generic family",
+      "Generic board",
+      "NVIDIA DGX Station GB300",
+    );
+
+    expect(shell).toBe("station-gb300");
+    expect(readiness).toMatchObject({
+      nvidiaPlatform: "station",
+      stationFirmwareProduct: "NVIDIA DGX Station GB300",
+      deviceTreeModel: "NVIDIA DGX Station GB300",
+    });
+  });
+
+  it("rejects a device-tree model that conflicts with Station DMI (#10928)", () => {
+    const shell = classifyFirmwareWithStationHelper(
+      "NVIDIA DGX Station GB300",
+      "NVIDIA DGX Station GB300",
+      "NVIDIA DGX Station GB300",
+      "NVIDIA DGX Spark",
+    );
+    const readiness = classifyFirmwareWithReadiness(
+      "NVIDIA DGX Station GB300",
+      "NVIDIA DGX Station GB300",
+      "NVIDIA DGX Station GB300",
+      "NVIDIA DGX Spark",
+    );
+
+    expect(shell).toBe("conflicting");
+    expect(readiness).toMatchObject({ platformIdentityConflict: true });
+  });
+
+  it("ignores an oversized device-tree model in both consumers (#10928)", () => {
+    const model = "NVIDIA DGX Station GB300".padEnd(257, "x");
+    const shell = classifyFirmwareWithStationHelper(
+      "Generic ARM workstation",
+      "Generic family",
+      "Generic board",
+      model,
+    );
+    const readiness = classifyFirmwareWithReadiness(
+      "Generic ARM workstation",
+      "Generic family",
+      "Generic board",
+      model,
+    );
+
+    expect(shell).toBe("not-station");
+    expect(readiness.nvidiaPlatform).toBeUndefined();
+    expect(readiness.deviceTreeModel).toBeUndefined();
   });
 });

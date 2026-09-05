@@ -165,7 +165,7 @@ Managed llama.cpp admission also requires `host.platform.wsl_gpu_passthrough` to
 The N1x WSL qualification does not replace the separate Docker Desktop GPU proof.
 
 DGX Station qualification separates hardware identity from software and runtime handling.
-The hardware capability requires a bounded firmware product, product-family, or board value with separate `Station` and `GB300` tokens.
+The hardware capability requires a bounded firmware product, product-family, board, or device-tree value with separate `Station` and `GB300` tokens.
 It also requires a display-class PCI device with NVIDIA vendor ID `0x10de` and GB300 device ID `0x31c2` or `0x31c3`.
 Conflicting recognized firmware fields make `host.platform.identity_consistent` absent and block platform support.
 The runtime capability requires Linux ARM64, Ubuntu 24.04, and an effective NVIDIA GPU.
