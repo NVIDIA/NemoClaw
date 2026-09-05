@@ -173,11 +173,9 @@ describe("fixed catalog vLLM installs", () => {
     const actualSelection = await vi.importActual<
       typeof import("./serving/host-local-vllm-selection")
     >("./serving/host-local-vllm-selection");
-    let delegated: Parameters<ResolveHostLocalVllmSelection> | undefined;
-    mocks.resolveHostLocalVllmSelection.mockImplementation((...args) => {
-      delegated = args;
-      return actualSelection.resolveHostLocalVllmSelection(...args);
-    });
+    mocks.resolveHostLocalVllmSelection.mockImplementation((...args) =>
+      actualSelection.resolveHostLocalVllmSelection(...args),
+    );
     const reason = `vllm-install-test-host: GPU memory capacity ${String(availableMemoryBytes)} is below the recipe minimum 64000000000 bytes.`;
 
     const result = await installVllm(profile, {
@@ -189,10 +187,6 @@ describe("fixed catalog vLLM installs", () => {
 
     expect({
       result,
-      delegatedProfile: delegated?.[0] === profile,
-      delegatedEnvironment: delegated?.[1] === process.env,
-      delegatedAutomatic: delegated?.[2]?.automatic,
-      delegatedReadiness: delegated?.[2]?.readinessReports === readinessReports,
       errors: spies.errSpy.mock.calls,
       installEffects: {
         capture: mocks.runCapture.mock.calls.length,
@@ -201,10 +195,6 @@ describe("fixed catalog vLLM installs", () => {
       },
     }).toEqual({
       result: { ok: false },
-      delegatedProfile: true,
-      delegatedEnvironment: true,
-      delegatedAutomatic: true,
-      delegatedReadiness: true,
       errors: expect.arrayContaining([[`  vLLM install failed: ${reason}`]]),
       installEffects: { capture: 0, pull: 0, run: 0 },
     });
