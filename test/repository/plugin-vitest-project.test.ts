@@ -19,10 +19,14 @@ type NpmDependencyTree = {
 function lockedDependencyTree(prefix?: string): NpmDependencyTree {
   const prefixArgs = prefix ? ["--prefix", prefix] : [];
   return JSON.parse(
-    execFileSync("npm", [...prefixArgs, "ls", "--package-lock-only", "--json", "vitest", "vite"], {
-      cwd: repositoryRoot,
-      encoding: "utf8",
-    }),
+    execFileSync(
+      "npm",
+      [...prefixArgs, "ls", "--package-lock-only", "--json", "typescript", "vitest", "vite"],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+      },
+    ),
   ) as NpmDependencyTree;
 }
 
@@ -38,7 +42,7 @@ function listedTypeScriptFiles(configPath: string): string[] {
 }
 
 describe("plugin Vitest project contract", () => {
-  it("keeps the standalone plugin lock on the root Vitest toolchain", () => {
+  it("keeps the standalone plugin lock on the root test toolchain", () => {
     const rootTree = lockedDependencyTree();
     const pluginTree = lockedDependencyTree("nemoclaw");
 
@@ -47,6 +51,9 @@ describe("plugin Vitest project contract", () => {
     );
     expect(pluginTree.dependencies?.vitest?.dependencies?.vite?.version, "vite").toBe(
       rootTree.dependencies?.vitest?.dependencies?.vite?.version,
+    );
+    expect(pluginTree.dependencies?.typescript?.version, "typescript").toBe(
+      rootTree.dependencies?.typescript?.version,
     );
   });
 

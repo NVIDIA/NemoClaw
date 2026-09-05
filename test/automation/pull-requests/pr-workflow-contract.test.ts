@@ -598,7 +598,7 @@ describe("pull request and main workflow contracts", () => {
     (_name, workflow) => {
       expect([workflow.jobs["build-typecheck"].needs].flat()).toContain("compile-artifacts");
       expect(requiredStep(sharedActions.buildTypecheck, "Typecheck plugin tests").run).toBe(
-        "npx tsc --noEmit -p nemoclaw/tsconfig.test.json",
+        "npm --prefix nemoclaw exec -- tsc --noEmit -p nemoclaw/tsconfig.test.json",
       );
       expect(stepRuns(sharedActions.buildTypecheck)).not.toContain(
         "npm --prefix nemoclaw run typecheck",

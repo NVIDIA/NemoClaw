@@ -19,7 +19,7 @@ runs:
 
     - name: Typecheck plugin tests
       shell: bash
-      run: npx tsc --noEmit -p nemoclaw/tsconfig.test.json
+      run: npm --prefix nemoclaw exec -- tsc --noEmit -p nemoclaw/tsconfig.test.json
 
     - name: Typecheck JavaScript config
       shell: bash
