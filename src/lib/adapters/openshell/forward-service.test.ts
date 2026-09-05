@@ -158,7 +158,7 @@ describe("OpenShell forward service", () => {
       .mockReturnValueOnce({
         pid: 53,
         readOutput: () =>
-          "Error: sandbox 'demo' is no longer ready (phase: creating); stopping service forward",
+          "Error:\n  × sandbox 'demo' is no longer ready (phase: creating); stopping service\n  │ forward",
         removeOutput: vi.fn(),
         unref: vi.fn(),
       })

@@ -275,7 +275,7 @@ function readForwardStartState(child: ForwardServiceChild): {
   readonly sandboxReadinessHandoff: boolean;
 } {
   const output = child.readOutput?.() ?? "";
-  const sandboxReadinessHandoff = isSandboxReadinessHandoff(stripVTControlCharacters(output));
+  const sandboxReadinessHandoff = isSandboxReadinessHandoff(output);
   return {
     diagnostic: sandboxReadinessHandoff
       ? "sandbox readiness handoff"
@@ -287,7 +287,13 @@ function readForwardStartState(child: ForwardServiceChild): {
 }
 
 function isSandboxReadinessHandoff(output: string): boolean {
-  const compact = output.replace(/\s+/gu, " ").trim();
+  // Miette wraps long OpenShell errors with box-drawing continuation markers.
+  // Normalize those display-only characters so classification does not depend
+  // on the sandbox name length or terminal width.
+  const compact = stripVTControlCharacters(output)
+    .replace(/[×│]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
   return (
     /message: ["']sandbox is not ready["']/iu.test(compact) ||
     /sandbox ["'][^"']+["'] is no longer ready \(phase: [^)]+\); stopping service forward/iu.test(
