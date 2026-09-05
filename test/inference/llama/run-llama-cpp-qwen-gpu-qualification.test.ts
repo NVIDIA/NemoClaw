@@ -106,6 +106,7 @@ describe("Qwen llama.cpp RTX qualification plan", () => {
       ),
     ).toEqual({
       offloadedLayerCount: 41,
+      offloadRuntimeSignal: "offloaded 41/41 layers to GPU",
       processName: "/usr/local/bin/llama-server",
       usedGpuMemoryMiB: 16000,
       minimumFullOffloadMemoryMiB: 15360,
@@ -134,6 +135,14 @@ describe("Qwen llama.cpp RTX qualification plan", () => {
         modelSizeBytes,
       ),
     ).toThrow("did not report every model layer offloaded to the GPU");
+    expect(
+      validateQwenGpuProcessEvidence(
+        "PID COMMAND\n123 llama-server\n",
+        "123, /usr/local/bin/llama-server, 16000\n",
+        "llama_model_loader: offloaded 41/41 layers to GPU\n",
+        modelSizeBytes,
+      ).offloadRuntimeSignal,
+    ).toBe("offloaded 41/41 layers to GPU");
   });
 
   it("bounds probe diagnostics and redacts exact and credential-shaped secrets", () => {

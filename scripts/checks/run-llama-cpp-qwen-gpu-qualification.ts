@@ -225,6 +225,7 @@ export async function runQwenGpuQualification(): Promise<void> {
         readonly minimumFullOffloadMemoryMiB: number;
         readonly noDockerPublishedPort: true;
         readonly offloadedLayerCount: number;
+        readonly offloadRuntimeSignal: string;
         readonly platform: "linux/amd64";
         readonly processName: string;
         readonly usedGpuMemoryMiB: number;
@@ -395,6 +396,7 @@ export async function runQwenGpuQualification(): Promise<void> {
             minimumFullOffloadMemoryMiB: offload.minimumFullOffloadMemoryMiB,
             noDockerPublishedPort: true,
             offloadedLayerCount: offload.offloadedLayerCount,
+            offloadRuntimeSignal: offload.offloadRuntimeSignal,
           };
         },
         beforeCleanup() {

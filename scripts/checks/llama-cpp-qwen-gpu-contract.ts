@@ -157,6 +157,7 @@ export function validateQwenGpuProcessEvidence(
   modelSizeBytes: number,
 ): {
   readonly offloadedLayerCount: number;
+  readonly offloadRuntimeSignal: string;
   readonly processName: string;
   readonly usedGpuMemoryMiB: number;
   readonly minimumFullOffloadMemoryMiB: number;
@@ -189,9 +190,7 @@ export function validateQwenGpuProcessEvidence(
     throw new Error("Qwen llama-server is not the exact NVIDIA compute process");
   }
   const offloadMatches = [
-    ...runtimeLogs.matchAll(
-      /\b(?:load_tensors|llama_model_load):\s+offloaded\s+([1-9][0-9]*)\s*\/\s*([1-9][0-9]*)\s+layers to GPU\b/giu,
-    ),
+    ...runtimeLogs.matchAll(/offloaded\s+([1-9][0-9]*)\s*\/\s*([1-9][0-9]*)\s+layers to GPU/giu),
   ];
   const explicitOffload = offloadMatches.at(-1);
   const offloadedLayerCount = Number(explicitOffload?.[1]);
@@ -211,6 +210,7 @@ export function validateQwenGpuProcessEvidence(
   }
   return {
     offloadedLayerCount,
+    offloadRuntimeSignal: `offloaded ${String(offloadedLayerCount)}/${String(totalLayerCount)} layers to GPU`,
     processName,
     usedGpuMemoryMiB,
     minimumFullOffloadMemoryMiB,
