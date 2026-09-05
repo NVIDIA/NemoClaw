@@ -20,7 +20,7 @@ Use this procedure only when the maintainer requests a new trusted `main` dispat
 A generic E2E request must not authorize the Brev Launchable path. Do not infer full mode from “all”
 or “complete.” Ask only when the request contains conflicting mode phrases.
 
-Ordinary mode selects the default E2E suite without `Staging Brev Launchable`. Focused mode
+Ordinary mode selects the default E2E suite without `Exact staging Brev Launchable`. Focused mode
 selects named jobs or typed targets; set only one selector input. Launchable mode runs only that
 job. Full mode adds it to the default suite.
 
@@ -42,12 +42,13 @@ Before dispatch:
 - remove external resources that target cleanup did not remove; and
 - rotate or revoke any credential that candidate code could have copied.
 
-`Staging Brev Launchable` uses `BREV_API_KEY` and `BREV_ORG_ID` during trusted host
+`Exact staging Brev Launchable` uses `BREV_API_KEY` and `BREV_ORG_ID` during trusted host
 preparation. It exposes `NEMOCLAW_IMAGE_DISPATCH_TOKEN` only to the trusted host script as
 `GH_TOKEN`. It exports `NVIDIA_INFERENCE_API_KEY` into the Brev guest for full E2E. Candidate code in
 that guest can read the inference key. The workflow requires repository `maintain` or `admin`
-permission before source checkout. If cleanup fails, remove the recorded workspace. Rotate or revoke
-credentials that may remain accessible.
+permission before source checkout. If cleanup fails, report the recovery identity and stop. Delete no
+workspace until the recovery procedure validates workflow ownership. Follow
+[Validate Existing Launchable Evidence](launchable-evidence.md) for credential removal.
 
 Protected managed-image qualification supplies `NVIDIA_API_KEY` only to trusted qualification code.
 If its verified cleanup refuses removal, inspect the temporary NIM container and rotate the key.
@@ -65,8 +66,9 @@ git fetch --prune origin main
 CANDIDATE_SHA="$(git rev-parse origin/main)"
 ```
 
-A new dispatch tests the `origin/main` commit resolved here. If the caller supplied another candidate
-SHA, report the difference. Do not reject it or decide the release outcome.
+A new dispatch tests the `origin/main` commit resolved here. It cannot select an arbitrary historical
+commit. If the caller supplied another candidate SHA, report that this path cannot test it. Do not
+dispatch a different commit or decide the release outcome.
 
 ## Dispatch Once
 
@@ -162,8 +164,10 @@ Require the selected run to report `head_sha` equal to `CANDIDATE_SHA` and `stat
 `completed`. A successful ordinary, focused, Launchable, or full run has workflow conclusion
 `success`. Otherwise, return each failed, cancelled, skipped, or running job and URL.
 
-For Launchable mode, also require one completed, successful `Staging Brev Launchable` job.
-Preserve links to `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` for diagnosis.
+For Launchable mode, also require one completed, successful `Exact staging Brev Launchable` job.
+Preserve `workspace-recovery.json` for incomplete-cleanup recovery. Preserve links to
+`launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` as the successful-evidence set. Follow [Recover Incomplete Cleanup](launchable-evidence.md#recover-incomplete-cleanup) when cleanup is
+incomplete.
 
 For full mode, also require one completed, successful `Release qualification` job. A skipped, cancelled, queued, or failed aggregate is not a passing full run.
 

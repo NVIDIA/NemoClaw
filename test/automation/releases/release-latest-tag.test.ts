@@ -62,6 +62,7 @@ type Fixture = {
   remote: string;
   summary: string;
   firstCommit: string;
+  launchableInspector: string;
 };
 
 function createFixture(): Fixture {
@@ -74,16 +75,8 @@ function createFixture(): Fixture {
 
   run(root, ["git", "init", "--bare", remote]);
   run(root, [
-    "ssh-keygen",
-    "-q",
-    "-t",
-    "ed25519",
-    "-N",
-    "",
-    "-C",
-    "release-test@example.com",
-    "-f",
-    signingKey,
+    "ssh-keygen", "-q", "-t", "ed25519", "-N", "",
+    "-C", "release-test@example.com", "-f", signingKey,
   ]);
   fs.mkdirSync(work);
   run(work, ["git", "init"]);
@@ -98,8 +91,11 @@ function createFixture(): Fixture {
   run(work, ["git", "remote", "add", "origin", remote]);
   run(work, ["git", "push", "-u", "origin", "main"]);
   const firstCommit = run(work, ["git", "rev-parse", "HEAD"]).trim();
-
-  return { root, work, remote, summary, firstCommit };
+  const launchableInspector = path.join(root, "launchable-inspector.mts");
+  fs.writeFileSync(launchableInspector, `const candidate = process.argv[3];
+process.stdout.write(JSON.stringify({ version: 1, candidate: { sha: candidate }, run: { id: 10, attempt: 1, url: "https://github.com/NVIDIA/NemoClaw/actions/runs/10" }, job: { id: 20, url: "https://github.com/NVIDIA/NemoClaw/actions/runs/10/job/20" }, artifact: { name: \`staging-brev-launchable-\${candidate}-10-1\` }, producer: { runId: 30, status: "success", url: "https://github.com/brevdev/nemoclaw-image/actions/runs/30" }, boot: { bootImage: "image@sha256:123", schemaVersion: 1, sourceRepository: "NVIDIA/NemoClaw", sourcePath: "/opt/nemoclaw-image/NemoClaw", repoSha: candidate, provisionSha: candidate, imageRepositorySha: "b".repeat(40), repoClean: true, runtimeOverrides: false }, workspace: { name: "nclaw-e2e-10-1", id: "ws-1" }, fullE2e: { status: "passed", sentinel: "NEMOCLAW_FULL_E2E_PASSED" }, cleanup: { status: "ABSENT", verifiedAt: "2026-06-01T01:00:00Z" } }));
+`);
+  return { root, work, remote, summary, firstCommit, launchableInspector };
 }
 
 function commit(fixture: Fixture, text: string): string {
@@ -246,8 +242,7 @@ function confirmationFor(plan: Record<string, string>): string {
 function completeBrief(plan: Record<string, string>): string {
   const candidate = plan.candidateCommit ?? plan.originMainCommit;
   return [
-    `# NemoClaw ${plan.nextTag} release brief`,
-    "",
+    `# NemoClaw ${plan.nextTag} release brief`, "", "## Release range", "",
     `- Candidate: \`${candidate}\``,
     ...(plan.candidateSelection === "historical"
       ? [`- Historical candidate exception: ${plan.historicalCandidateException}`]
@@ -264,14 +259,13 @@ function completeBrief(plan: Record<string, string>): string {
     "- Latest included cumulative docs PR: #100.",
     `- Final PR commit and merge commit: \`${candidate}\``,
     `- Final automated refresh coverage commit: \`${candidate}\``,
-    "- Later commits and merged PRs: Only the docs PR merge.",
-    "- Changed paths: Allowed documentation paths only.",
-    "- Review and checks: Approved and successful.",
-    "- Open managed docs PRs: None.",
+    "- Later commits and merged PRs: Only the docs PR merge.", "- Changed paths: Allowed documentation paths only.",
+    "- Review and checks: Approved and successful.", "- Open managed docs PRs: None.",
     "- Maintainer decision: Proceed with the candidate as shown.",
     "",
-    "## Base and managed image evidence",
-    "",
+    "## Canonical Launchable evidence", "", `- Candidate: \`${candidate}\``,
+    `- Receipt: ${JSON.stringify({ version: 1, candidate: { sha: candidate }, run: { id: 10, attempt: 1, url: "https://github.com/NVIDIA/NemoClaw/actions/runs/10" }, job: { id: 20, url: "https://github.com/NVIDIA/NemoClaw/actions/runs/10/job/20" }, artifact: { name: `staging-brev-launchable-${candidate}-10-1` }, producer: { runId: 30, status: "success", url: "https://github.com/brevdev/nemoclaw-image/actions/runs/30" }, boot: { bootImage: "image@sha256:123", schemaVersion: 1, sourceRepository: "NVIDIA/NemoClaw", sourcePath: "/opt/nemoclaw-image/NemoClaw", repoSha: candidate, provisionSha: candidate, imageRepositorySha: "b".repeat(40), repoClean: true, runtimeOverrides: false }, workspace: { name: "nclaw-e2e-10-1", id: "ws-1" }, fullE2e: { status: "passed", sentinel: "NEMOCLAW_FULL_E2E_PASSED" }, cleanup: { status: "ABSENT", verifiedAt: "2026-06-01T01:00:00Z" } })}`,
+    "", "## Base and managed image evidence", "",
     `- Base-image candidate: \`${candidate}\``,
     "- Evidence: successful publication aggregate.",
     "",
@@ -323,7 +317,8 @@ function cutFromPlan(
       "--confirm",
       confirmation,
     ],
-    { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1", ...extraEnv },
+    { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1",
+      NEMOCLAW_RELEASE_TEST_LAUNCHABLE_INSPECTOR: fixture.launchableInspector, ...extraEnv },
   );
 }
 
@@ -536,9 +531,7 @@ describe("release-latest-tag.sh", () => {
     const secondCandidate = commit(fixture, "planned release commit");
     const secondPlanPath = path.join(fixture.root, "release-2", "plan.json");
     const { plan: secondPlan } = createPlan(fixture, secondPlanPath, secondCandidate);
-
     const result = cutFromPlan(fixture, secondPlanPath, confirmationFor(secondPlan), firstBrief);
-
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("candidate does not match planned commit");
     expect(localTagObject(fixture, "v0.0.2")).toBe("");
@@ -547,30 +540,32 @@ describe("release-latest-tag.sh", () => {
   it.each([["base image", "Base-image candidate", "plan-bound base-image candidate"]])(
     "does not accept %s evidence copied from an earlier candidate",
     (_kind, field, error) => {
-      const fixture = createFixture();
-      pushTag(fixture, "v0.0.1", fixture.firstCommit);
-      const earlierCandidate = commit(fixture, "earlier release candidate");
-      const releaseCommit = commit(fixture, "planned release commit");
-      const planPath = path.join(fixture.root, "release", "plan.json");
-      const { plan } = createPlan(fixture, planPath, releaseCommit);
-      const staleBrief = completeBrief(plan).replace(
-        `- ${field}: \`${releaseCommit}\``,
-        `- ${field}: \`${earlierCandidate}\``,
-      );
-
-      const result = cutFromPlan(
-        fixture,
-        planPath,
-        confirmationFor(plan),
-        writeBrief(fixture, staleBrief),
-      );
-
+      const fixture = createFixture(); pushTag(fixture, "v0.0.1", fixture.firstCommit);
+      const earlierCandidate = commit(fixture, "earlier release candidate"), releaseCommit = commit(fixture, "planned release commit"), planPath = path.join(fixture.root, "release", "plan.json"), { plan } = createPlan(fixture, planPath, releaseCommit);
+      const staleBrief = completeBrief(plan).replace(`- ${field}: \`${releaseCommit}\``, `- ${field}: \`${earlierCandidate}\``);
+      const result = cutFromPlan(fixture, planPath, confirmationFor(plan), writeBrief(fixture, staleBrief));
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain(error);
       expect(localTagObject(fixture, "v0.0.2")).toBe("");
     },
   );
-
+  it.each([["fails", "process.exit(1);"], ["emits no receipt", ""]])("rejects a Launchable inspector that %s", (_case, source) => {
+    const fixture = createFixture(); pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit"), planPath = path.join(fixture.root, "release", "plan.json"), { plan } = createPlan(fixture, planPath, releaseCommit);
+    fs.writeFileSync(fixture.launchableInspector, source);
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan), writeBrief(fixture));
+    expect([result.status, localTagObject(fixture, plan.nextTag), run(fixture.root, ["git", "--git-dir", fixture.remote, "tag", "--list", plan.nextTag])]).toEqual([1, "", ""]);
+  });
+  it("rejects a brief that differs from inspected Launchable evidence", () => {
+    const fixture = createFixture(); pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit"),
+      planPath = path.join(fixture.root, "release", "plan.json"),
+      { plan } = createPlan(fixture, planPath, releaseCommit);
+    fs.writeFileSync(fixture.launchableInspector, fs.readFileSync(fixture.launchableInspector, "utf8").replace("run: { id: 10", "run: { id: 11"));
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan));
+    expect([result.status, result.stderr, localTagObject(fixture, "v0.0.2")]).toEqual(
+      [1, expect.stringContaining("does not match current inspected evidence"), ""]);
+  });
   it("orders canonical semver components without numeric precision loss", () => {
     const fixture = createFixture();
     const previousTag = "v9007199254740992.0.0";

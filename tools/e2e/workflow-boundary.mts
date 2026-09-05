@@ -2195,6 +2195,26 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
   if (runEnv.WORK_DIR !== "${{ steps.workspace.outputs.work_dir }}") {
     errors.push("staging-brev-launchable must pass its private evidence directory to the lane");
   }
+  const upload = requireStep(errors, steps, "Upload Launchable evidence"),
+    uploadWith = asRecord(upload?.with),
+    expectedUploadPath = [
+      "${{ steps.workspace.outputs.work_dir }}/lane.log",
+      "${{ steps.workspace.outputs.work_dir }}/workspace-recovery.json",
+      "${{ steps.workspace.outputs.work_dir }}/launchable-e2e.json",
+      "${{ steps.workspace.outputs.work_dir }}/full-e2e.log",
+      "${{ steps.workspace.outputs.work_dir }}/cleanup.json",
+      "",
+    ].join("\n");
+  if (
+    upload?.if !== "${{ always() && steps.workspace.outputs.work_dir != '' }}" ||
+    upload?.uses !==
+      "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57" ||
+    uploadWith.name !==
+      "staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}" ||
+    uploadWith.path !== expectedUploadPath
+  ) {
+    errors.push("staging-brev-launchable upload-e2e-artifacts must preserve its explicit name/path contract");
+  }
   if (Object.hasOwn(runEnv, "NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY")) {
     errors.push("staging-brev-launchable must not stop after image publication");
   }
@@ -2490,6 +2510,24 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     !stringValue(apiCredentialCleanup?.run).includes('test ! -e "$credentials"')
   ) {
     errors.push(`${jobName} must always remove and verify removal of its Brev API credential file`);
+  }
+  const uploadWith = asRecord(upload?.with),
+    expectedUploadPath = [
+      "${{ steps.workspace.outputs.work_dir }}/lane.log",
+      "${{ steps.workspace.outputs.work_dir }}/workspace-recovery.json",
+      "${{ steps.workspace.outputs.work_dir }}/launchable-identity.json",
+      "${{ steps.workspace.outputs.work_dir }}/cleanup.json",
+      "",
+    ].join("\n");
+  if (
+    upload?.if !== "${{ always() && steps.workspace.outputs.work_dir != '' }}" ||
+    upload?.uses !==
+      "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57" ||
+    uploadWith.name !==
+      "staging-brev-launchable-identity-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}" ||
+    uploadWith.path !== expectedUploadPath
+  ) {
+    errors.push(`${jobName} upload-e2e-artifacts must preserve its explicit name/path contract`);
   }
   if (!isDeepStrictEqual(asRecord(upload?.env), {})) {
     errors.push(`${jobName} evidence upload step must not receive environment values`);

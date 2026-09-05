@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-e2e
-description: Dispatches and reports trusted GitHub Actions E2E runs. Use for focused, full, staging Launchable, manual PR, and release-decision requests.
+description: Runs local live E2E or dispatches and reports trusted GitHub Actions E2E. Use for local, focused, full, staging Launchable, manual PR, and release-decision requests.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -8,24 +8,32 @@ description: Dispatches and reports trusted GitHub Actions E2E runs. Use for foc
 
 # Run Maintainer E2E
 
-Use `.github/workflows/e2e.yaml` from trusted `main`. Do not substitute local live E2E unless the maintainer explicitly requests local execution.
-
-Push runs publish `Relevant E2E`. Only a full manual run publishes `Release qualification`. That
-aggregate reports the full suite; it does not decide whether a tag can proceed. A generic E2E
-request does not authorize `Staging Brev Launchable`.
-
 ## Route the Request
 
-- For E2E against a pull request revision, including failure-triggered comparison with its exact
-  base, read and follow [Manual PR Runs](references/manual-pr.md).
-- To dispatch ordinary, focused, staging Launchable, or full E2E on `main`, read and follow
-  [Main Runs](references/main-runs.md) and the Launchable boundary below.
-- For a release decision inspection, use the section below. Do not load a dispatch reference unless the maintainer requests a new run.
-- For one failed job, load `nemoclaw-maintainer-classify-ci-failure` for bounded, redacted log and optional artifact evidence. This skill still owns dispatch and run-level reporting.
+| Request | Procedure |
+| --- | --- |
+| Run working-tree source or a selected local commit | [Local Runs](references/local-runs.md) |
+| Run the latest PR commit on GitHub, including failure-triggered comparison with its exact base | [Manual PR Runs](references/manual-pr.md) |
+| Run the current `main` commit on GitHub | [Main Runs](references/main-runs.md) and the Launchable boundary below |
+| Inspect existing evidence for a release decision | [Report the Release Context](#report-the-release-context) |
+| Classify one failed GitHub Actions job | Load `nemoclaw-maintainer-classify-ci-failure`; this skill still owns dispatch and run-level reporting. |
+
+A GitHub dispatch tests the latest PR commit or the current `main` commit. It cannot test any
+other commit. Report that request as unsupported. Do not weaken the workflow's identity or trust
+checks.
+
+Push runs select change-relevant E2E and publish `Relevant E2E`; they do not always run the full
+suite. Only a full manual run publishes `Release qualification`. That aggregate reports the full
+suite; it does not decide whether a tag can proceed. A generic E2E request does not authorize
+`Exact staging Brev Launchable`.
+
+Use `.github/workflows/e2e.yaml` from trusted `main` for GitHub runs. Do not substitute local live
+E2E unless the maintainer explicitly requests local execution. Do not load a dispatch reference for
+a release inspection unless the maintainer requests a new run.
 
 ## Staging Brev Launchable Boundary
 
-`Staging Brev Launchable` runs only for a trusted manual dispatch against `main`. Launchable
+`Exact staging Brev Launchable` runs only for a trusted manual dispatch against `main`. Launchable
 mode selects only that job. Full mode adds it to the default E2E selection. The trusted workflow
 requires repository `maintain` or `admin` permission before the job's source checkout.
 
@@ -37,7 +45,7 @@ results before it succeeds:
 - hosted and sandbox inference through the preinstalled full E2E suite; and
 - Brev workspace deletion and confirmed absence.
 
-`Staging Brev Launchable` reads these credentials from repository Actions secrets:
+`Exact staging Brev Launchable` reads these credentials from repository Actions secrets:
 
 - `BREV_API_KEY` authenticates the trusted host-side Brev CLI for workspace operations in the
   organization identified by `BREV_ORG_ID`. Candidate code does not receive this API key.
@@ -52,8 +60,9 @@ GitHub-hosted runner. Later trusted steps and processes in that job can read the
 does not delete it explicitly. Runner teardown discards the ephemeral filesystem.
 
 The credentials remain valid until they expire or an administrator revokes them in their issuing
-services. If cleanup fails, remove the recorded Brev workspace. Rotate or revoke each credential to
-remove later access.
+services. If cleanup fails, report the recovery identity and stop. Delete no workspace until the
+recovery procedure validates workflow ownership. Rotate or revoke exposed credentials as described
+in [Validate Existing Launchable Evidence](references/launchable-evidence.md).
 
 The `NEMOCLAW_STAGING_LAUNCHABLE_ID` repository Actions variable selects the standing Launchable.
 Keep it equal to the Launchable ID in the default URL owned by
@@ -80,13 +89,13 @@ gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
   --jq 'map(select(.displayTitle | startswith("E2E full main"))) | first'
 ```
 
-Inspect `Release qualification`, `Staging Brev Launchable`, and every other job that is not
+Inspect `Release qualification`, `Exact staging Brev Launchable`, and every other job that is not
 successful:
 
 ```bash
 gh run view <run-id> --attempt <attempt> --repo NVIDIA/NemoClaw \
   --json jobs --jq '[.jobs[] |
-    select(.name == "Release qualification" or .name == "Staging Brev Launchable" or
+    select(.name == "Release qualification" or .name == "Exact staging Brev Launchable" or
       .status != "completed" or
       (.conclusion != null and .conclusion != "success")) |
     {name,status,conclusion,startedAt,completedAt,url}]'

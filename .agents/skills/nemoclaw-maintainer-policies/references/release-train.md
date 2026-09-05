@@ -72,9 +72,10 @@ At cutoff:
 6. Show the candidate's documentation coverage and required image evidence. If the maintainer
    requests documentation work, complete [Release-Prep Docs](#release-prep-docs), merge that PR,
    generate a new plan, and show the evidence for the new candidate.
-7. Show the newest full E2E context and record the maintainer's focused, full, or proceed decision.
-8. Build the Markdown release brief from the range and evidence.
-9. Cut the release tag only with the plan's explicit maintainer confirmation.
+7. Require successful canonical Launchable evidence for the candidate.
+8. Show the newest full E2E context and record the maintainer's focused, full, or proceed decision.
+9. Build the Markdown release brief from the range and evidence.
+10. Cut the release tag only with the plan's explicit maintainer confirmation.
 
 Merges may continue after planning. Keep the planned candidate when it remains an ancestor of
 `origin/main`, the previous release has not changed, and its own required evidence remains valid.
@@ -88,16 +89,14 @@ requires every managed publisher, and validates the immutable Deep Agents Code b
 Record the E2E workflow and aggregate-job URLs and the run attempt; do not repeat its publisher
 queries in the tag skill.
 
-The general E2E decision cannot waive required image evidence. A successful `Release
-qualification` aggregate does not replace the candidate result.
+The general E2E decision cannot waive required image or canonical Launchable evidence. A successful
+`Release qualification` aggregate does not replace either candidate result.
 
 ## General E2E Decision
 
-The general E2E decision records whether the maintainer chooses focused tests, the full suite, or the
-displayed general E2E status. General E2E informs the maintainer; it does not decide whether a tag
-can exist. Show the newest full run's full SHA, status, conclusion, attempt, created, started, and
-last-updated timestamps, age at inspection, workflow URL, `Release qualification` URL, and any
-failed, cancelled, skipped, queued, or active results.
+General E2E informs the maintainer; it does not decide whether a tag can exist. Follow
+[Run Maintainer E2E](../../nemoclaw-maintainer-e2e/SKILL.md) to inspect and report the newest full
+run and any maintainer-requested runs. Record its canonical handoff in the release decision.
 
 Offer three choices:
 
@@ -105,9 +104,8 @@ Offer three choices:
 2. run the full suite; or
 3. proceed with the status shown.
 
-Show and record every requested run result. A requested run remains unresolved while it is queued or
-running, or after it ends without success. It becomes resolved only when a successful result covers
-the same requested scope.
+Record every requested run. A run remains unresolved while queued or running, or when
+it ends without success. Resolve it only when a successful result covers the requested scope.
 
 Use `Exceptions: None` only when the maintainer accepts a successful full result for the candidate
 and no requested run remains unresolved. Otherwise, record one plain-language reason that names the
@@ -127,6 +125,8 @@ Create `../nemoclaw-release-vX.Y.Z/release-brief.md` from the plan range. Includ
 - the latest included cumulative docs PR, coverage commit, later commits and PRs, changed-path
   result, review and check state, open managed docs PRs, and maintainer decision;
 - the base-image aggregate URL and identity;
+- the plan-bound candidate and complete canonical Launchable receipt emitted by
+  `inspect-launchable-evidence.ts`, exactly matching current inspector output before tag confirmation;
 - the newest full E2E result and every requested run;
 - the maintainer's E2E decision; and
 - `Exceptions: None` or the plain-language exception reason.

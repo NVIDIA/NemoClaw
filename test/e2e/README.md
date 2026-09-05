@@ -922,7 +922,9 @@ only `staging Brev Launchable identity`. It builds the candidate
 image, deploys the standing Launchable, waits for workspace and SSH readiness,
 checks the concrete boot image and baked runtime identity, and confirms two
 consecutive absent workspace observations during cleanup. A passing run uploads
-`lane.log`, `launchable-identity.json`, and `cleanup.json`. A failed run uploads
+`lane.log`, `workspace-recovery.json`, `launchable-identity.json`, and `cleanup.json`. The
+recovery receipt records the workflow-bound workspace identity before creation and during recovery;
+use the [canonical incomplete-cleanup procedure](../../.agents/skills/nemoclaw-maintainer-e2e/references/launchable-evidence.md#recover-incomplete-cleanup). A failed run uploads
 the bounded evidence produced before failure only when preparation created the
 evidence directory; a preparation failure produces no lane artifact. After
 workspace preparation, `cleanup.json` records the final cleanup result. The
@@ -992,9 +994,10 @@ inference, and confirms workspace absence.
 
 After preparation succeeds, the Launchable upload retains `lane.log` and each
 phase artifact created before exit. A preparation failure can produce no
-artifact. A later early failure can retain only `lane.log`. A successful job
-contains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`;
-`cleanup.json` exists only after the job confirms workspace absence.
+artifact. Before workspace creation, the lane writes `workspace-recovery.json`;
+later failures retain it with `lane.log` and any partial phase artifacts. Follow the [canonical Launchable-evidence recovery procedure](../../.agents/skills/nemoclaw-maintainer-e2e/references/launchable-evidence.md#recover-incomplete-cleanup) when cleanup is incomplete.
+A successful job contains `launchable-e2e.json`, `full-e2e.log`, and
+`cleanup.json`; `cleanup.json` exists only after workspace absence is confirmed.
 When the preinstalled full E2E fails after SSH succeeds, the job attempts to
 append bounded, redacted host state and fixed lifecycle classifications to
 `lane.log` before cleanup. On the host, the SSH command reads the system journal
@@ -1347,11 +1350,14 @@ The job reads these credentials from repository Actions secrets:
 
 `brev login` writes `BREV_API_KEY` and `BREV_ORG_ID` to
 `$HOME/.brev/credentials.json` on the GitHub-hosted runner. Later trusted steps
-and processes in the same job can read that file. An always-run workflow step
-removes the temporary credential home and verifies its absence after the scenario.
+and processes in the same job can read that file. The normal lane does not explicitly
+remove it; GitHub-hosted runner teardown discards the credential file after the job.
 These credentials remain valid until they expire or an administrator revokes
-them in their issuing services. If cleanup fails, remove the recorded Brev
-workspace. Rotate or revoke each credential to remove later access.
+them in their issuing services. If cleanup fails, report the recorded workspace
+name and ID, and follow the
+[ID-bound recovery procedure](../../.agents/skills/nemoclaw-maintainer-e2e/references/launchable-evidence.md#recover-incomplete-cleanup).
+Rotate or revoke `NVIDIA_INFERENCE_API_KEY`. Rotate or revoke `BREV_API_KEY` and
+`NEMOCLAW_IMAGE_DISPATCH_TOKEN` only if the trusted host boundary was compromised.
 For an NVIDIA-owned PR revision, the job builds and runs the candidate commit with this same credential boundary.
 The PR branch must be in `NVIDIA/NemoClaw` because the image producer does not accept a sibling-repository candidate.
 

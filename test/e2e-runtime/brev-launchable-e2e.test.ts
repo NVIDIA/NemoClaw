@@ -140,6 +140,7 @@ describe("focused staging Brev Launchable lane", () => {
       "cleanup.json",
       "lane.log",
       "launchable-identity.json",
+      "workspace-recovery.json",
     ]);
 
     const evidence = JSON.parse(
@@ -207,7 +208,7 @@ describe("focused staging Brev Launchable lane", () => {
       fs
         .readFileSync(calls, "utf8")
         .split("\n")
-        .filter((call) => call === "brev delete nclaw-e2e-test-1"),
+        .filter((call) => call === "brev delete ws-1"),
     ).toHaveLength(1);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       deleteAttempts: 1,
@@ -323,10 +324,20 @@ describe("focused staging Brev Launchable lane", () => {
       "full-e2e.log",
       "lane.log",
       "launchable-e2e.json",
+      "workspace-recovery.json",
     ]);
     expect(fs.readFileSync(path.join(workDir, "full-e2e.log"), "utf8")).not.toContain(
       "nvapi-test-value",
     );
+    expect(
+      JSON.parse(fs.readFileSync(path.join(workDir, "workspace-recovery.json"), "utf8")),
+    ).toEqual({
+      schemaVersion: 1,
+      candidateSha,
+      runId: "789",
+      runAttempt: "1",
+      workspace: { name: "nclaw-e2e-test-1", id: "ws-1" },
+    });
     const evidence = JSON.parse(fs.readFileSync(path.join(workDir, "launchable-e2e.json"), "utf8"));
     expect(evidence).toMatchObject({
       candidateSha,
@@ -404,15 +415,27 @@ describe("focused staging Brev Launchable lane", () => {
     expect(unreadyResult.status).not.toBe(0);
     expect(fs.readFileSync(unready.calls, "utf8")).not.toMatch(/brev exec|full-e2e\.test\.ts/u);
     expect(fs.existsSync(unready.state)).toBe(false);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(unready.workDir, "workspace-recovery.json"), "utf8")),
+    ).toEqual({
+      schemaVersion: 1,
+      candidateSha,
+      runId: "789",
+      runAttempt: "1",
+      workspace: { name: "nclaw-e2e-test-1", id: "ws-1" },
+    });
 
     const wrongImage = fixture({
-      bootImage: "projects/brevdevprod/global/images/wrong-image",
+      bootImage: "projects/brevdevprod/global/images/wrong-image?token=guest-secret",
     });
     const wrongImageResult = run(identitySmokeEnv(wrongImage.env));
     expect(wrongImageResult.status).not.toBe(0);
     expect(wrongImageResult.stderr).toContain("booted image does not match the producer handoff");
     expect(fs.readFileSync(wrongImage.calls, "utf8")).not.toContain("full-e2e.test.ts");
     expect(fs.existsSync(wrongImage.state)).toBe(false);
+    expect(
+      fs.readFileSync(path.join(wrongImage.workDir, "launchable-identity.json"), "utf8"),
+    ).not.toContain("guest-secret");
     expect(
       JSON.parse(
         fs.readFileSync(path.join(wrongImage.workDir, "launchable-identity.json"), "utf8"),
@@ -577,7 +600,7 @@ describe("focused staging Brev Launchable lane", () => {
       commands.indexOf("ssh full-e2e diagnostic gateway state"),
     );
     expect(commands.indexOf("ssh full-e2e diagnostic gateway state")).toBeLessThan(
-      commands.indexOf("brev delete nclaw-e2e-test-1"),
+      commands.indexOf("brev delete ws-1"),
     );
     expect(commands.match(/ssh full-e2e diagnostic/gu)).toHaveLength(6);
 
@@ -682,7 +705,7 @@ describe("focused staging Brev Launchable lane", () => {
       commands.indexOf("ssh full-e2e diagnostic gateway lifecycle"),
     );
     expect(commands.indexOf("ssh full-e2e diagnostic gateway lifecycle")).toBeLessThan(
-      commands.indexOf("brev delete nclaw-e2e-test-1"),
+      commands.indexOf("brev delete ws-1"),
     );
     const output = emittedOutput(result, workDir);
     expect(
@@ -843,9 +866,7 @@ describe("focused staging Brev Launchable lane", () => {
     );
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands).not.toContain("ssh full-e2e diagnostic platform state");
-    expect(commands.indexOf("ExecMainCode")).toBeLessThan(
-      commands.indexOf("brev delete nclaw-e2e-test-1"),
-    );
+    expect(commands.indexOf("ExecMainCode")).toBeLessThan(commands.indexOf("brev delete ws-1"));
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
@@ -1145,6 +1166,7 @@ describe("focused staging Brev Launchable lane", () => {
       }),
     );
     const ownershipReceipt = `${owned.workDir}.workspace-owner`;
+    fs.writeFileSync(path.join(owned.workDir, "workspace-recovery.json"), JSON.stringify({ schemaVersion: 1, workspace: { name: owned.env.INSTANCE_NAME, id: "ws-1" } }));
     fs.writeFileSync(
       ownershipReceipt,
       JSON.stringify({
@@ -1160,13 +1182,14 @@ describe("focused staging Brev Launchable lane", () => {
     expect(ownedResult.status, `${ownedResult.stdout}\n${ownedResult.stderr}`).toBe(0);
     expect(fs.existsSync(owned.state)).toBe(false);
     expect(fs.existsSync(ownershipReceipt)).toBe(false);
-    expect(fs.readFileSync(owned.calls, "utf8")).toContain("brev delete nclaw-e2e-test-1");
+    expect(fs.readFileSync(owned.calls, "utf8")).toContain("brev delete ws-1");
     expect(
       JSON.parse(fs.readFileSync(path.join(owned.workDir, "cleanup.json"), "utf8")),
     ).toMatchObject({ workspaceId: "ws-1", status: "ABSENT" });
 
     const acceptedDelayed = fixture({ createAppearsAfterRefresh: 3 });
     const acceptedDelayedReceipt = `${acceptedDelayed.workDir}.workspace-owner`;
+    fs.writeFileSync(path.join(acceptedDelayed.workDir, "workspace-recovery.json"), JSON.stringify({ schemaVersion: 1, workspace: { name: acceptedDelayed.env.INSTANCE_NAME, id: "ws-1" } }));
     fs.writeFileSync(
       acceptedDelayedReceipt,
       JSON.stringify({
@@ -1190,12 +1213,20 @@ describe("focused staging Brev Launchable lane", () => {
       `${acceptedDelayedResult.stdout}\n${acceptedDelayedResult.stderr}`,
     ).toBe(0);
     expect(fs.existsSync(acceptedDelayed.state)).toBe(false);
-    expect(fs.readFileSync(acceptedDelayed.calls, "utf8")).toContain(
-      "brev delete nclaw-e2e-test-1",
-    );
+    expect(fs.readFileSync(acceptedDelayed.calls, "utf8")).toContain("brev delete ws-1");
     expect(
       JSON.parse(fs.readFileSync(path.join(acceptedDelayed.workDir, "cleanup.json"), "utf8")),
     ).toMatchObject({ workspaceId: "ws-1", status: "ABSENT" });
+
+    const replaced = fixture();
+    fs.writeFileSync(replaced.state, JSON.stringify({ workspaces: [{ id: "ws-2", name: replaced.env.INSTANCE_NAME }] }));
+    fs.writeFileSync(`${replaced.workDir}.workspace-owner`, JSON.stringify({ workspaceName: replaced.env.INSTANCE_NAME, createState: "accepted", deleteAttempts: 0 }), { mode: 0o600 });
+    fs.writeFileSync(path.join(replaced.workDir, "workspace-recovery.json"), JSON.stringify({ schemaVersion: 1, workspace: { name: replaced.env.INSTANCE_NAME, id: "ws-1" } }));
+    const replacedResult = run({ ...replaced.env, BREV_DELETE_TIMEOUT_SECONDS: "1", POLL_SECONDS: "1" }, ["cleanup-owned-workspace"]);
+    expect(replacedResult.status).not.toBe(0);
+    expect(fs.existsSync(replaced.calls) ? fs.readFileSync(replaced.calls, "utf8") : "").not.toContain("brev delete");
+    expect(JSON.parse(fs.readFileSync(replaced.state, "utf8"))).toMatchObject({ workspaces: [{ id: "ws-2" }] });
+    expect(JSON.parse(fs.readFileSync(path.join(replaced.workDir, "cleanup.json"), "utf8"))).toMatchObject({ workspaceId: "ws-1", status: "PRESENT" });
 
     const notOwned = fixture();
     fs.writeFileSync(
@@ -1246,6 +1277,25 @@ describe("focused staging Brev Launchable lane", () => {
     ).toMatchObject({ workspaceId: "foreign-2", status: "NOT_OWNED" });
   });
 
+  it("retains a pending recovery receipt when create cannot be reconciled (#9925)", () => {
+    const { env, workDir } = fixture({ createAppearsAfterRefresh: 99, createStatus: 17 });
+    const result = run({
+      ...identitySmokeEnv(env),
+      BREV_CREATE_RECONCILE_SECONDS: "1",
+      POLL_SECONDS: "1",
+    });
+    expect(result.status).toBe(17);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(workDir, "workspace-recovery.json"), "utf8")),
+    ).toEqual({
+      schemaVersion: 1,
+      candidateSha,
+      runId: "789",
+      runAttempt: "1",
+      workspace: { name: "nclaw-e2e-test-1", id: "" },
+    });
+  });
+
   it("reconciles and deletes an identity workspace after an ambiguous create failure (#9925)", () => {
     const { calls, env, state, workDir } = fixture({
       createAppearsAfterRefresh: 3,
@@ -1257,13 +1307,13 @@ describe("focused staging Brev Launchable lane", () => {
       BREV_DELETE_TIMEOUT_SECONDS: "3",
       POLL_SECONDS: "1",
     });
-    expect(result.status).toBe(17);
-    expect(fs.existsSync(state)).toBe(false);
-    expect(fs.readFileSync(calls, "utf8")).toContain("brev delete nclaw-e2e-test-1");
+    expect(result.status).not.toBe(0);
+    expect(fs.existsSync(state)).toBe(true);
+    expect(fs.existsSync(calls) ? fs.readFileSync(calls, "utf8") : "").not.toContain("brev delete");
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       workspaceName: "nclaw-e2e-test-1",
-      workspaceId: "ws-1",
-      status: "ABSENT",
+      workspaceId: "",
+      status: "PRESENT",
     });
   });
 
@@ -1291,7 +1341,7 @@ describe("focused staging Brev Launchable lane", () => {
       fs
         .readFileSync(calls, "utf8")
         .split("\n")
-        .filter((call) => call === "brev delete nclaw-e2e-test-1");
+        .filter((call) => call === "brev delete ws-1");
     expect(deleteCalls()).toHaveLength(1);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       deleteAttempts: 1,

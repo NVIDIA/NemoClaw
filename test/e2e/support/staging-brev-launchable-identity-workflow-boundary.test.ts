@@ -125,6 +125,17 @@ const workflowMutations: Array<[string, (value: Workflow) => void, string]> = [
     `${JOB} upload-e2e-artifacts must preserve its explicit name/path contract`,
   ],
   [
+    "missing recovery evidence",
+    (value) => {
+      const upload = step(value, "Upload Launchable identity evidence");
+      upload.with!.path = String(upload.with!.path).replace(
+        "${{ steps.workspace.outputs.work_dir }}/workspace-recovery.json\n",
+        "",
+      );
+    },
+    `${JOB} upload-e2e-artifacts must preserve its explicit name/path contract`,
+  ],
+  [
     "an injected secret-bearing step",
     (value) => {
       value.jobs[JOB]!.steps!.splice(4, 0, {

@@ -131,10 +131,6 @@ describe("focused staging Brev Launchable failure diagnostics", () => {
     const created = fixture({ e2eFails: true });
     const result = run(created.env);
     expect(result.status, result.stderr).not.toBe(0);
-    expect(
-      fs.existsSync(created.gatewayLifecycleCommand),
-      "the failing Launchable lane did not capture the OpenShell gateway diagnostic command",
-    ).toBe(true);
     lifecycleCommand = fs.readFileSync(created.gatewayLifecycleCommand, "utf8");
     cleanupFixtures();
   });
@@ -149,7 +145,7 @@ describe("focused staging Brev Launchable failure diagnostics", () => {
       commands.indexOf("ssh full-e2e diagnostic gateway state"),
     );
     expect(commands.indexOf("ssh full-e2e diagnostic gateway state")).toBeLessThan(
-      commands.indexOf("brev delete nclaw-e2e-test-1"),
+      commands.indexOf("brev delete ws-1"),
     );
     expect(commands.match(/ssh full-e2e diagnostic/gu)).toHaveLength(6);
 
@@ -240,17 +236,18 @@ describe("focused staging Brev Launchable failure diagnostics", () => {
   it.each(classifierCases)(
     "classifies %s without retaining OpenShell gateway journal text (#6409)",
     (_name, childJournal, expectedCategory) => {
-      const { env } = fixture();
-      const classified = spawnSync("bash", ["-c", lifecycleCommand], {
-        encoding: "utf8",
-        env: { ...env, FAKE_GATEWAY_CHILD_JOURNAL: childJournal },
-      });
-
-      expect(classified.status, classified.stderr).toBe(0);
-      expect(classified.stdout.trimEnd().split("\n").at(-1)).toBe(
-        `gateway-child-bind\t${expectedCategory}`,
-      );
-      expect(classified.stderr).toBe("");
+      const marker = "guest-journal-marker";
+      const markedJournal = childJournal
+        .split("\n")
+        .map((line) => JSON.stringify({ ...JSON.parse(line), GUEST_MARKER: marker }))
+        .join("\n");
+      const { env, workDir } = fixture({ e2eFails: true, gatewayChildJournal: markedJournal });
+      const result = run(env);
+      expect(result.status, result.stderr).not.toBe(0);
+      const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
+      expect(laneLog).toContain(`gateway-child-bind ${expectedCategory}`);
+      expect(laneLog).not.toContain(marker);
+      expect(emittedOutput(result, workDir)).not.toContain(marker);
     },
   );
 
@@ -344,7 +341,7 @@ describe("focused staging Brev Launchable failure diagnostics", () => {
       commands.indexOf("ssh full-e2e diagnostic gateway lifecycle"),
     );
     expect(commands.indexOf("ssh full-e2e diagnostic gateway lifecycle")).toBeLessThan(
-      commands.indexOf("brev delete nclaw-e2e-test-1"),
+      commands.indexOf("brev delete ws-1"),
     );
     const output = emittedOutput(result, workDir);
     expect(
@@ -505,9 +502,7 @@ describe("focused staging Brev Launchable failure diagnostics", () => {
     );
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands).not.toContain("ssh full-e2e diagnostic platform state");
-    expect(commands.indexOf("ExecMainCode")).toBeLessThan(
-      commands.indexOf("brev delete nclaw-e2e-test-1"),
-    );
+    expect(commands.indexOf("ExecMainCode")).toBeLessThan(commands.indexOf("brev delete ws-1"));
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
