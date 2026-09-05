@@ -27,7 +27,7 @@ Use the error location to select the correct setting.
 The readiness timeout does not govern inference requests or provider validation.
 
 `NEMOCLAW_AGENT_TIMEOUT` requires a positive integer; onboarding rejects any other value.
-`NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS` accepts positive finite seconds, rounds fractional values up, and caps higher values at `600` seconds. It only raises the connection and total deadlines; an unset, invalid, or lower value preserves the probe defaults.
+`NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS` accepts positive finite seconds, rounds fractional values up, and caps higher values at `600` seconds. An unset or invalid value preserves the probe defaults. NemoClaw raises each connection or total deadline only when the value exceeds that deadline.
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` and `NEMOCLAW_SANDBOX_READY_TIMEOUT` accept finite, nonnegative seconds, round fractional values, and use their defaults for invalid or negative values.
 `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` accepts finite, nonnegative seconds and preserves fractional values.
 A valid value overrides the internal budget for the current recovery phase.
