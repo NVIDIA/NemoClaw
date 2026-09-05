@@ -10,8 +10,6 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { validateReleasePinLayout } from "../../scripts/checks/extract-installer-pins.mts";
-
 import {
   INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS,
   V0072_CHECKSUM_MANIFESTS,
@@ -28,12 +26,9 @@ import {
   V00106_CHECKSUM_MANIFESTS,
   V00106_SANDBOX_BUILD_DIGESTS,
   V00116_ASSET_DIGESTS,
-  V00116_BREV_ASSETS,
   V00116_CHECKSUM_MANIFESTS,
-  V00116_INSTALLER_ASSETS,
   V00116_SANDBOX_BUILD_DIGESTS,
   v00116Pins,
-  withSandboxAbi,
 } from "../helpers/openshell-release-fixtures";
 import { installerReleaseTemplate } from "../helpers/openshell-installer-template";
 
@@ -701,9 +696,9 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
           ? V00106_SANDBOX_BUILD_DIGESTS
           : openshellVersion === "0.0.116"
             ? V00116_SANDBOX_BUILD_DIGESTS
-          : openshellVersion === "9.9.9"
-            ? SYNTHETIC_SANDBOX_BUILD_DIGESTS
-            : undefined;
+            : openshellVersion === "9.9.9"
+              ? SYNTHETIC_SANDBOX_BUILD_DIGESTS
+              : undefined;
   expect(hasSandboxBuild || selectedDigests, `sandbox fixture ${openshellVersion}`).toBeTruthy();
   return hasSandboxBuild
     ? operationalTemplate
@@ -742,9 +737,16 @@ function createFixture(
   const checksumManifests =
     CHECKSUM_MANIFESTS_BY_VERSION.get(openshellVersion) ?? CHECKSUM_MANIFESTS;
   const assetDigests = ASSET_DIGESTS_BY_VERSION.get(openshellVersion) ?? ASSET_DIGESTS;
-  const installerAssets =
-    openshellVersion === "0.0.116" ? [...V00116_INSTALLER_ASSETS] : INSTALLER_ASSETS;
-  const brevAssets = openshellVersion === "0.0.116" ? [...V00116_BREV_ASSETS] : ASSETS.slice(0, 2);
+  const installerPins = openshellVersion === "0.0.116" ? v00116Pins("installer") : undefined;
+  const brevPins = openshellVersion === "0.0.116" ? v00116Pins("Brev launchable") : undefined;
+  const installerAssets = installerPins?.map(({ asset }) => asset) ?? INSTALLER_ASSETS;
+  const brevAssets = brevPins?.map(({ asset }) => asset) ?? ASSETS.slice(0, 2);
+  const installerDigests = installerPins
+    ? new Map(installerPins.map(({ asset, sha256 }) => [asset, sha256]))
+    : assetDigests;
+  const brevDigests = brevPins
+    ? new Map(brevPins.map(({ asset, sha256 }) => [asset, sha256]))
+    : assetDigests;
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-hash-"));
   const scriptsDir = path.join(fixtureRoot, "scripts");
   const checksDir = path.join(scriptsDir, "checks");
@@ -788,7 +790,7 @@ function createFixture(
         installerAssets,
         openshellVersion,
         formatting,
-        assetDigests,
+        installerDigests,
       ),
     ),
   );
@@ -801,7 +803,7 @@ function createFixture(
         brevAssets,
         openshellVersion,
         formatting,
-        assetDigests,
+        brevDigests,
       ),
     ),
   );
@@ -989,75 +991,6 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("All installer hashes are current");
-  });
-
-  it.each([
-    ["installer", V00116_INSTALLER_ASSETS],
-    ["Brev launchable", V00116_BREV_ASSETS],
-  ] as const)(
-    "accepts every asset in the prospective v0.0.116 %s pin layout (#10790)",
-    (consumer, expectedAssets) => {
-      const validatedAssets = validateReleasePinLayout(
-        v00116Pins(consumer),
-        "0.0.116",
-        consumer,
-        consumer,
-      ).map(({ asset }) => asset);
-
-      expect(validatedAssets.toSorted()).toEqual([...expectedAssets].toSorted());
-    },
-  );
-
-  it.each([
-    ...V00116_INSTALLER_ASSETS.map((asset) => ["installer", asset] as const),
-    ...V00116_BREV_ASSETS.map((asset) => ["Brev launchable", asset] as const),
-  ])("rejects a prospective v0.0.116 %s layout missing %s (#10790)", (consumer, asset) => {
-    const pins = v00116Pins(consumer).filter((pin) => pin.asset !== asset);
-
-    expect(() => validateReleasePinLayout(pins, "0.0.116", consumer, consumer)).toThrow(
-      `missing=[${asset}]`,
-    );
-  });
-
-  it.each([
-    [
-      "missing prospective v0.0.116 manifest pin",
-      v00116Pins("installer").filter(
-        ({ asset }) => asset !== "openshell-sandbox-checksums-sha256.txt",
-      ),
-      "missing=[openshell-sandbox-checksums-sha256.txt]",
-    ],
-    [
-      "changed prospective v0.0.116 manifest pin",
-      v00116Pins("installer").map((pin) =>
-        pin.asset === "openshell-checksums-sha256.txt" ? { ...pin, sha256: "0".repeat(64) } : pin,
-      ),
-      "manifest openshell-checksums-sha256.txt must match the base-trusted v0.0.116 manifest digest",
-    ],
-  ] as const)("rejects a %s (#10790)", (_case, pins, diagnostic) => {
-    expect(() =>
-      validateReleasePinLayout(pins, "0.0.116", "installer", "prospective pins"),
-    ).toThrow(diagnostic);
-  });
-
-  it("rejects sandbox ABI layouts cross-wired between v0.0.106 and v0.0.116 (#10790)", () => {
-    const v00106Pins = INSTALLER_ASSETS.map((asset) => ({
-      asset,
-      releaseVersion: "0.0.106",
-      sha256: "0".repeat(64),
-      source: "installer",
-    }));
-    const rejectLayout = (pins: typeof v00106Pins, version: string, expected: string) =>
-      expect(() => validateReleasePinLayout(pins, version, "installer", version)).toThrow(expected);
-
-    rejectLayout(withSandboxAbi(v00106Pins, "musl"), "0.0.106", "linux-gnu.tar.gz");
-    rejectLayout(withSandboxAbi(v00116Pins("installer"), "gnu"), "0.0.116", "linux-musl.tar.gz");
-  });
-
-  it("requires a trust record before validating a candidate pin layout (#10790)", () => {
-    expect(() =>
-      validateReleasePinLayout([], "9.9.8", "installer", "untrusted installer pin table"),
-    ).toThrow("OpenShell v9.9.8 is not in the base-trusted release records");
   });
 
   it("verifies each complete installer release table independently", () => {

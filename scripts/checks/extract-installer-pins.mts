@@ -506,7 +506,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     // template, which selects a MUSL sandbox while retaining the GNU gateway. The sixth preserves
     // that dev-channel template with the historical flat installer-test paths. The seventh
     // authorizes the exact successor template after macOS install selection becomes method-bound
-    // and fail-closed.
+    // and fail-closed. The eighth authorizes the current base template after removing the
+    // v0.0.106-specific executable-identity exception for a prospective v0.0.116 pin table.
     // Homebrew owns the formula source state, so NemoClaw cannot correct it there; the installer
     // verifies the trusted release formula before reuse. installer-homebrew-formula-reuse-trust.test.ts
     // and installer-hash-check.test.ts lock the template and trust transitions. Remove the repair
@@ -520,6 +521,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "ee3db19d06d34a625bff9e0ab021f095ce97eadf5f7a98fc60def62af87577ad",
       "4b45161017a5936331300e982168160575701632711328cbbb97480eb087fb51",
       "c184083103f14247ea1c81e3a35aba3771cefdd46cf6c24d1fe6a145e0854117",
+      "ec5d942bf1b1af45ffbdb2c1ceeb8ede25a0169d9f856ad3a83577d81088ee37",
     ],
     manifests: [
       {
