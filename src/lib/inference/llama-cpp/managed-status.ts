@@ -126,10 +126,8 @@ export function inspectManagedLlamaCppStatus(
     imageReference: receipt.runtime.imageRef,
     endpoint: "https://inference.local/v1" as const,
   };
-  let engine: ContainerEngine;
-  let operation: ReturnType<typeof createDockerLlamaCppHostLocalOperation>;
+  const operationEnv = { ...(options.env ?? process.env) };
   try {
-    const operationEnv = { ...(options.env ?? process.env) };
     const gatewayStateDir = resolveGatewayStateDirForPort({
       configured: operationEnv.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
       home: homeDir,
@@ -141,6 +139,16 @@ export function inspectManagedLlamaCppStatus(
     if (recordedGatewayNetworkName) {
       operationEnv.OPENSHELL_DOCKER_NETWORK_NAME = recordedGatewayNetworkName;
     }
+  } catch {
+    return {
+      ...base,
+      state: "conflict",
+      detail: "managed llama.cpp gateway network authority could not be revalidated",
+    };
+  }
+  let engine: ContainerEngine;
+  let operation: ReturnType<typeof createDockerLlamaCppHostLocalOperation>;
+  try {
     operation = options.engine
       ? createDockerLlamaCppInspectionOperation(
           options.engine,

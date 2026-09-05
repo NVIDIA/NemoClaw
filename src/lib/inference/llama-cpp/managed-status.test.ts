@@ -365,6 +365,25 @@ describe("managed llama.cpp status", () => {
     );
   });
 
+  it("does not expose recorded gateway configuration errors through status", () => {
+    const runtimeEngine = engine(vi.fn());
+    const homeDir = temporaryHome();
+    publishState(homeDir, runtimeEngine);
+
+    expect(
+      inspectManagedLlamaCppStatus("spark-agent", {
+        homeDir,
+        engine: runtimeEngine,
+        readGatewayNetworkName: () => {
+          throw new Error("sensitive process environment value");
+        },
+      }),
+    ).toMatchObject({
+      state: "conflict",
+      detail: "managed llama.cpp gateway network authority could not be revalidated",
+    });
+  });
+
   it("reports invalid Docker authority construction as a conflict", () => {
     const runtimeEngine = engine(vi.fn());
     const homeDir = temporaryHome();
