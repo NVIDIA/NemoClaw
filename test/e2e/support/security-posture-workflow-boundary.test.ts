@@ -17,6 +17,8 @@ describe("security-posture catalogue boundary", () => {
       const openclaw = catalogueTarget("security-posture-openclaw");
       const hermes = catalogueTarget("security-posture-hermes");
 
+      expect(catalogueTarget("full-e2e").timeoutMinutes).toBe(90);
+
       const target = ({ OpenClaw: openclaw, Hermes: hermes } as const)[scenario]!;
       expect(target).toMatchObject({
         targetId: "security-posture",
@@ -33,6 +35,7 @@ describe("security-posture catalogue boundary", () => {
       expect(openclaw).toMatchObject({
         shard: "openclaw",
         testFile: "test/e2e/live/full-e2e.test.ts",
+        timeoutMinutes: 90,
       });
       expect(hermes).toMatchObject({
         shard: "hermes",

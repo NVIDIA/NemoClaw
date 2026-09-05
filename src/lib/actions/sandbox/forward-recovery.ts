@@ -301,7 +301,8 @@ export function teardownSandboxDashboardForward(
  * Re-establish the dashboard port forward to the sandbox.
  * Uses the recorded dashboard port when available, including custom ports for
  * non-OpenClaw agents, then falls back to the active agent's declared port.
- * Returns true when the detached OpenShell service makes the port reachable.
+ * Returns true when an existing forward is reachable or a newly launched
+ * OpenShell service owns the listener through its startup stability window.
  */
 export function ensureSandboxPortForward(
   sandboxName: string,
