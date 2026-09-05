@@ -37,7 +37,7 @@ function validate(
     imageName: metadata.imageName,
     requireOpenshellSandboxAbi: true,
     minGlibcVersion: "2.39",
-    inspected: imageMetadata,
+    inspectLocalImage: () => imageMetadata,
   });
 }
 

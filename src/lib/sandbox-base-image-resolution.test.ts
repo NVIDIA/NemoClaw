@@ -909,6 +909,7 @@ describe("sandbox base-image warm resolution", () => {
       ignoreError: true,
       suppressOutput: true,
     });
+    expect(dockerMocks.imageInspectFormat).not.toHaveBeenCalled();
     expect(dockerMocks.build).not.toHaveBeenCalled();
     expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.cache_stale", {
       reason: "key_mismatch",
