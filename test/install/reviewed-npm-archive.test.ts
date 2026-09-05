@@ -11,6 +11,7 @@ import {
   type ReviewedNpmCacheRequest,
   removeReviewedNpmArchive,
   resolveReviewedNpmArchivePath,
+  singleNpmPackResult,
   verifyReviewedNpmCache,
   verifyReviewedNpmLockPackages,
   verifyReviewedNpmMetadata,
@@ -127,6 +128,20 @@ afterEach(() => {
 });
 
 describe("reviewed npm archive", () => {
+  it.each([
+    ["legacy array", [{ filename: "reviewed.tgz" }], { filename: "reviewed.tgz" }],
+    [
+      "npm 12 package-keyed object",
+      { reviewed: { filename: "reviewed.tgz" } },
+      { filename: "reviewed.tgz" },
+    ],
+    ["multiple results", { first: {}, second: {} }, undefined],
+    ["non-object result", "reviewed.tgz", undefined],
+    ["single non-object entry", ["reviewed.tgz"], undefined],
+  ])("normalizes %s pack JSON", (_label, value, expected) => {
+    expect(singleNpmPackResult(value)).toEqual(expected);
+  });
+
   it("verifies exact registry metadata and returns only a contained local archive", () => {
     const calls: string[][] = [];
     const archive = packReviewedNpmArchive(request(), (args, reviewed) => {

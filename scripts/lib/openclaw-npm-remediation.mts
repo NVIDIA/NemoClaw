@@ -20,19 +20,9 @@ import {
 } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { packReviewedNpmArchive } from "./reviewed-npm-archive.mts";
+import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
 
 type JsonObject = Record<string, any>;
-
-export function singleNpmPackResult(value: unknown): JsonObject | undefined {
-  const entries = Array.isArray(value)
-    ? value
-    : typeof value === "object" && value !== null
-      ? Object.values(value)
-      : [];
-  const entry = entries.length === 1 ? entries[0] : undefined;
-  return typeof entry === "object" && entry !== null ? (entry as JsonObject) : undefined;
-}
 
 type Remediation = Readonly<{
   expectedPatchedMetadataIntegrity?: string;

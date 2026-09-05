@@ -24,7 +24,6 @@ import {
   patchOpenClawDiagnosticsOtelPackageGraph,
   patchOpenClawDiscordPackageGraph,
   patchOpenClawPluginPackageGraph,
-  singleNpmPackResult,
 } from "../../../scripts/lib/openclaw-npm-remediation.mts";
 
 const temporaryDirectories: string[] = [];
@@ -393,14 +392,6 @@ afterEach(() => {
 });
 
 describe("OpenClaw npm remediation", () => {
-  it("normalizes legacy array and npm 12 package-keyed pack results", () => {
-    const result = { filename: "openclaw-2026.7.1.tgz" };
-
-    expect(singleNpmPackResult([result])).toEqual(result);
-    expect(singleNpmPackResult({ openclaw: result })).toEqual(result);
-    expect(singleNpmPackResult({ first: result, second: result })).toBeUndefined();
-  });
-
   it("hashes package entries through opened file descriptors", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-tree-integrity-"));
     temporaryDirectories.push(directory);

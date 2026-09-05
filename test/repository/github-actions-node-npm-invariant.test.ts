@@ -31,7 +31,13 @@ type Step = {
   with?: Record<string, unknown>;
 };
 type ActionDocument = { runs?: { steps?: Step[] } };
-type WorkflowDocument = { jobs?: Record<string, { steps?: Step[] }> };
+type WorkflowDocument = {
+  jobs?: Record<string, { steps?: Step[] }>;
+  on?: {
+    pull_request?: { paths?: string[] };
+    push?: { paths?: string[] };
+  };
+};
 type StepGroup = { file: string; label: string; steps: Step[] };
 
 function yamlFiles(directory: string): string[] {
@@ -92,6 +98,20 @@ function runsNpm(step: Step): boolean {
 }
 
 describe("controlled setup-node environments", () => {
+  // source-shape-contract: security -- Changes to the reviewed npm bootstrap must select both PR image validation and the post-merge base-image publication path.
+  it("selects image validation when the reviewed npm bootstrap changes", () => {
+    const reviewedNpmBootstrap = ".github/actions/setup-reviewed-npm/**";
+    const readWorkflow = (file: string) =>
+      YAML.parse(
+        fs.readFileSync(path.join(GITHUB_ROOT, "workflows", file), "utf8"),
+      ) as WorkflowDocument;
+
+    expect(readWorkflow("managed-images.yaml").on?.pull_request?.paths).toContain(
+      reviewedNpmBootstrap,
+    );
+    expect(readWorkflow("base-image.yaml").on?.push?.paths).toContain(reviewedNpmBootstrap);
+  });
+
   // source-shape-contract: security -- Every controlled setup-node environment must install the integrity-bound npm release before an npm command executes.
   it("selects the reviewed Node and npm identities before further steps", () => {
     const setupIdentities = setupNodeSteps.map(({ step }) => [

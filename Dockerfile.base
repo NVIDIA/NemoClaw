@@ -637,14 +637,6 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && rm -f /tmp/mcporter-npm-audit.json /tmp/mcporter-npm-audit-policy.json \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 
-# npm 12 emits package-keyed objects from `npm pack --json`; OpenClaw 2026.7.1
-# expects the earlier array/direct-object shapes when installing local npm archives.
-RUN if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
-        node --experimental-strip-types /scripts/lib/patch-openclaw-npm12-pack-json.mts \
-            /usr/local/lib/node_modules/openclaw/dist "$OPENCLAW_VERSION"; \
-    fi
-
-
 # Baseline health check. The base image runs no service, so this only
 # verifies the Node.js runtime is functional. Child images that expose
 # a service (e.g. the production Dockerfile's gateway) MUST override
@@ -652,6 +644,13 @@ RUN if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
 # will still report healthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD node -e "process.exit(0)"
+
+# npm 12 emits package-keyed objects from `npm pack --json`; OpenClaw 2026.7.1
+# expects the earlier array/direct-object shapes when installing local npm archives.
+RUN if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
+        node --experimental-strip-types /scripts/lib/patch-openclaw-npm12-pack-json.mts \
+            /usr/local/lib/node_modules/openclaw/dist "$OPENCLAW_VERSION"; \
+    fi
 
 # Bake Homebrew core (Linuxbrew) into the sandbox base image (#3913).
 #

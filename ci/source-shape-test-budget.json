@@ -123,6 +123,11 @@
     },
     {
       "file": "test/repository/github-actions-node-npm-invariant.test.ts",
+      "test": "selects image validation when the reviewed npm bootstrap changes",
+      "category": "security"
+    },
+    {
+      "file": "test/repository/github-actions-node-npm-invariant.test.ts",
       "test": "keeps composite npm setup dependencies in matching workflow checkouts",
       "category": "security"
     },
