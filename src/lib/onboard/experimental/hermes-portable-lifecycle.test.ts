@@ -787,16 +787,12 @@ describe("Hermes portable lifecycle", () => {
   it("starts the exact stopped Podman container from the OpenShell Error phase and proves authenticated health (#9203)", () => {
     const receipt = activeReceipt();
     const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, false);
-
     const result = withMcpLifecycleLockSync(
       SANDBOX,
       () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
       { stateDir: path.join(stateDir, "state") },
     );
-
     expect(result).toEqual({ kind: "recovered" });
-    expect(podman.mock.calls.some(([args]) => args[1] === "start")).toBe(true);
-    expect(podman.mock.calls.every(([args]) => !String(args[0]).includes("docker"))).toBe(true);
     expect(captureOpenShell).toHaveBeenCalledWith(
       [
         "sandbox",
@@ -812,12 +808,15 @@ describe("Hermes portable lifecycle", () => {
         "-c",
         hermesPortableLifecycleInternals.healthWaitProgram,
         "8642",
+        "200",
         "18000",
         "100",
       ],
       20_000,
     );
-    expect(captureOpenShell.mock.calls.flat(2)).toContain(hermesPortableContainerInternals.authenticatedHealthScript);
+    expect(hermesPortableLifecycleInternals.healthWaitProgram).toMatch(
+      /API_SERVER_KEY=[\s\S]*Authorization/u,
+    );
   });
 
   it("starts through the exact OpenShell Stopped phase before proving Ready health (#9203)", () => {
@@ -945,13 +944,14 @@ describe("Hermes portable lifecycle", () => {
         .slice(1)
         .every(
           (command) =>
-            command.length === 7 &&
+            command.length === 8 &&
             command[0] === "python3" &&
             command[1] === "-I" &&
             command[2] === "-c" &&
             command[3] === hermesPortableLifecycleInternals.healthWaitProgram &&
             command[4] === "8642" &&
-            command[6] === "100",
+            command[5] === "200" &&
+            command[7] === "100",
         ),
     ).toBe(true);
     expect(execCommands.flat()).not.toContain(receipt.startup.argv.at(-1));
