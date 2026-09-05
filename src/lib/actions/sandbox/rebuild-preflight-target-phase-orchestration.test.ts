@@ -73,10 +73,13 @@ describe("prepareRebuildTargetPreflights", () => {
   async function prepareN1xTarget(
     endpointSource: "onboard" | "inference-set",
     mcp: { bridges: Record<string, { server: string }> } | null = null,
+    provider = "vllm-local",
+    model = "nvidia/Qwen3.6-35B-A3B-NVFP4",
+    nimContainer: string | null = null,
   ) {
     const resumeConfig = {
-      provider: "vllm-local",
-      model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      provider,
+      model,
       preferredInferenceApi: "openai-completions",
       pinEndpoint: true,
       endpointUrl: null,
@@ -115,6 +118,7 @@ describe("prepareRebuildTargetPreflights", () => {
         model: resumeConfig.model,
         endpointUrl: "http://host.openshell.internal:8000/v1",
         endpointSource,
+        nimContainer,
         mcp,
       } as never,
       rebuildAgent: "openclaw",
@@ -206,6 +210,26 @@ describe("prepareRebuildTargetPreflights", () => {
     expect(readinessOptions).toEqual(
       expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
     );
+  });
+
+  it("passes recorded Ollama intent into authoritative readiness (#11041)", async () => {
+    const readinessOptions = await prepareN1xTarget("onboard", null, "ollama-local", "qwen3.5:9b");
+
+    expect(readinessOptions).toEqual(
+      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
+    );
+  });
+
+  it("withholds recorded Local NIM intent from authoritative readiness (#11041)", async () => {
+    const readinessOptions = await prepareN1xTarget(
+      "onboard",
+      null,
+      "vllm-local",
+      "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      "nemoclaw-nim",
+    );
+
+    expect(readinessOptions).not.toHaveProperty("allowDeferredN1xManagedVllm");
   });
 
   it("withholds N1x intent for a mismatched endpoint source (#9292)", async () => {

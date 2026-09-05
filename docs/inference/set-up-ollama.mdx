@@ -99,7 +99,8 @@ When neither side can be read, the failure asks you to check that Ollama is inst
 Fresh installs skip this second probe because the bundled installers provide a daemon at or above the minimum.
 
 The version gate does not apply to Windows-host Ollama reached from Docker Desktop through `host.docker.internal`.
-With WSL mirrored networking, the same daemon can answer on `127.0.0.1`; NemoClaw treats it as Windows-host Ollama only when Windows installation and Docker reachability checks match and Linux procfs shows no WSL-local listener on the Ollama port.
+NemoClaw reuses that route only when Windows reports a loopback-only listener and a Docker-side request with an untrusted HTTP `Host` value receives `403`.
+With WSL mirrored networking, the same daemon can answer on `127.0.0.1`; NemoClaw also requires Windows installation and Docker reachability checks to match and Linux procfs to show no WSL-local listener on the Ollama port.
 Ambiguous evidence or a separate WSL-local listener stays on the Linux install and upgrade path.
 The Windows-host menu entries perform their own actions on the Windows side.
 
@@ -201,30 +202,34 @@ A missing or malformed runtime value also produces the daemon restart guidance.
 
 When NemoClaw runs in WSL, the provider menu can offer these Windows-host actions:
 
-- Use Ollama when the Windows daemon is reachable.
-- Restart Ollama when it is installed but bound only to Windows loopback.
-- Start Ollama when it is installed but not running.
-- Install Ollama when it is not installed on Windows.
+- Use Ollama when the Windows daemon is loopback-only, reachable from Docker Desktop, and rejects an untrusted HTTP `Host` value.
+- Restart an installed daemon with a loopback-only binding and verify the same checks.
+- Install a loopback-only daemon when Ollama is not installed on Windows.
 
-The install and restart paths set `OLLAMA_HOST=0.0.0.0:11434` on Windows so Docker Desktop containers can reach the daemon through `host.docker.internal`.
+The install and restart paths set `OLLAMA_HOST=127.0.0.1:11434` on Windows.
 NemoClaw relaunches Ollama from the detected Windows tray application or verified `ollama.exe` path and checks the endpoint from Docker Desktop's network context.
+It first requires a valid `/api/tags` response and then requires `403` from the same endpoint with an untrusted `Host` header.
 A direct request from WSL can fail because Docker Desktop defines this hostname for its containers.
 It pulls missing models through the Ollama HTTP API without requiring an Ollama CLI inside WSL.
 
 <Warning>
   Windows-host Ollama does not require authentication on port `11434`.
-  Keep the Windows network profile private, block inbound access to port `11434` on public interfaces, and allow only the local WSL/Docker network path that needs `host.docker.internal`.
-  Do not expose this port to your LAN or the internet.
+  Keep it on `127.0.0.1` so Ollama's HTTP `Host` validation remains active.
+  Do not set `OLLAMA_HOST=0.0.0.0:11434` or expose this port to your LAN or the internet.
+  NemoClaw rejects a reachable Windows daemon when it accepts the untrusted `Host` probe.
 </Warning>
 
 If the endpoint is not reachable, NemoClaw also checks the Windows `ollama.exe` process through PowerShell interop.
 When the daemon does not become reachable, onboarding prints PowerShell commands for inspecting the Windows process and port state.
+Choose the WSL-local Ollama install when Docker Desktop cannot reach the protected Windows loopback route.
 Run only one Ollama instance on port `11434` at a time.
 
 Windows-host Ollama requires Docker Desktop WSL integration.
+It also requires `DOCKER_HOST` to be unset and Docker to use its local `default` context.
+Switch to that context before onboarding, or choose WSL-local Ollama instead.
 When NemoClaw detects native Docker Engine inside WSL, it labels the Windows-host actions as requiring Docker Desktop integration; selecting one prints remediation guidance and returns to the menu, or exits when onboarding runs non-interactively.
 
-Qualified WSL Ollama paths use Docker Desktop integration and do not use the authenticated reverse proxy described below.
+Qualified Windows-host Ollama paths use Docker Desktop integration and do not use the authenticated reverse proxy described below.
 Native Docker Engine inside WSL is unqualified; enable Docker Desktop WSL integration before onboarding.
 
 ## Understand the Authenticated Proxy
