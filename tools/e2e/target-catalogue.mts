@@ -903,6 +903,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     testFile: "test/e2e/live/hermes-slack-e2e.test.ts",
     timeoutMinutes: 75,
     installMode: "none",
+    prAdvisorSelectable: true,
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: ["test/e2e/live/hermes-slack-e2e-helpers.ts"],
@@ -1230,8 +1231,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   ...GATEWAY_UPGRADE_TARGETS,
   dockerOnlyTarget("shields-retirement-upgrade", {
-    displayName:
-      "Upgrade: migrates a v0.0.115 Shields sandbox to the candidate image",
+    displayName: "Upgrade: migrates a v0.0.115 Shields sandbox to the candidate image",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint:
       "x86-64 Ubuntu; pinned v0.0.115 install and candidate managed image; local compatible endpoint",
@@ -1254,8 +1254,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...nonInteractive,
       NEMOCLAW_AGENT: "openclaw",
       NEMOCLAW_OLD_NEMOCLAW_REF: "v0.0.115",
-      NEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT:
-        "7503e700808655df1303ddc51888bb596c9afa34",
+      NEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT: "7503e700808655df1303ddc51888bb596c9afa34",
       NEMOCLAW_OLD_NEMOCLAW_COMMIT: "324a886fd05b01f6756bae0371ea503c651fbd11",
       NEMOCLAW_OLD_INSTALLER_SHA256:
         "0ed77ba8cf176641bd3b22cfd89b4977b3d9a6f47b76da8b03bf4091a20d1251",

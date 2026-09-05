@@ -11,7 +11,6 @@ import { NemoClawPassthroughCommand } from "../../../lib/cli/nemoclaw-passthroug
 export default class SkillListCliCommand extends NemoClawPassthroughCommand {
   static id = "sandbox:skill:list";
   static customHelp = true;
-  static strict = false;
   static summary = "List skills from the agent's native state";
   static description =
     "Pass through to the selected sandbox agent's native skill list command. Native output and filter flags are forwarded verbatim.";
@@ -31,8 +30,7 @@ export default class SkillListCliCommand extends NemoClawPassthroughCommand {
   };
 
   public async run(): Promise<void> {
-    this.parsed = true;
-    const [sandboxName, ...extraArgs] = this.argv;
+    const { extraArgs, sandboxName } = this.passthroughArgs();
     if (
       !sandboxName ||
       sandboxName.trim() === "" ||

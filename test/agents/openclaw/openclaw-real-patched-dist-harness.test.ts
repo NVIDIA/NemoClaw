@@ -458,8 +458,8 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         requireSpawnSuccess(skillRemovePatch, "apply native skill remove patch");
         requireRuntimeIncludes(
           skillRemovePatch.stdout,
-          "OpenClaw native skill removal patched",
-          "native skill remove patch output",
+          "OpenClaw native skill lifecycle patched",
+          "native skill lifecycle patch output",
         );
         const skillRemoveAudit = spawnSync(
           nodeRuntime.executable,
@@ -487,6 +487,35 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
         );
         requireSpawnSuccess(skillRemoveSyntax, "validate native skill remove patch syntax");
+        const skillInstallTargets = fs
+          .readdirSync(dist)
+          .filter((file) => file.endsWith(".js"))
+          .map((file) => path.join(dist, file))
+          .filter((file) =>
+            fs
+              .readFileSync(file, "utf-8")
+              .includes("nemoclaw: native skill install integrity (#10210)"),
+          );
+        requireRuntimeEqual(
+          String(skillInstallTargets.length),
+          "2",
+          "native skill install integrity target count",
+        );
+        const [skillInstallCliTarget, skillInstallStateTarget] = skillInstallTargets;
+        requireSpawnSuccess(
+          spawnSync(nodeRuntime.executable, ["--check", skillInstallCliTarget as string], {
+            encoding: "utf-8",
+            timeout: PATCH_COMMAND_TIMEOUT_MS,
+          }),
+          "validate native skill install CLI integrity patch syntax",
+        );
+        requireSpawnSuccess(
+          spawnSync(nodeRuntime.executable, ["--check", skillInstallStateTarget as string], {
+            encoding: "utf-8",
+            timeout: PATCH_COMMAND_TIMEOUT_MS,
+          }),
+          "validate native skill install state integrity patch syntax",
+        );
 
         [
           "nemoclaw: env-gated bypass",

@@ -454,7 +454,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=7356789b1518ced41f70657762629ce4481f759fb9c49c61739be235a17967eb
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=21e6e17adadff076d3af2353bda82a65bcd154e51328c21f9c19bb5fcc94c8ed
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -482,7 +482,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
 # same-version wheel selected by its lazy installer. Bind that production
 # boundary to NVIDIA/NemoClaw's reviewed wheel hashes.
 ARG NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256=5c619477c10e0b76cffd7adc214cbccf3beb77e7a1121f394c443502d9e0b736
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=7356789b1518ced41f70657762629ce4481f759fb9c49c61739be235a17967eb
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=21e6e17adadff076d3af2353bda82a65bcd154e51328c21f9c19bb5fcc94c8ed
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256" /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
@@ -710,7 +710,7 @@ ARG NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256=718315e7c36727ca49ac88a1
 # Keep skill lifecycle state inside Hermes. The host only stages a validated
 # payload; this pinned native command owns scanning, replacement, rollback,
 # lock metadata, loader verification, listing, and removal.
-ARG NEMOCLAW_HERMES_NATIVE_SKILL_IMPORT_PATCHER_SHA256=8004483ee8712225de829055bb81386b474328843c4ea162a185d7c78fcf5382
+ARG NEMOCLAW_HERMES_NATIVE_SKILL_IMPORT_PATCHER_SHA256=de6ecef79b63a9417ee1aa709e6ae7069019ae82c60e4ca10a81b85b45f3c69b
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-session-list-preview.py \

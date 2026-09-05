@@ -54,6 +54,7 @@ describe("OpenClaw native skill installation", () => {
       const invocationLog = path.join(sandboxRoot, "openclaw.log");
       const pinnedOpenClaw = path.join(fakeBin, "openclaw-pinned");
       let checkState = "eligible";
+      let mutatePayload = false;
       const executionPaths: NativeSkillState = {
         ...paths,
         stateDir: sandboxRoot,
@@ -71,11 +72,22 @@ set -eu
 case "$1 $2" in
   "skills install")
     if [ "\${3:-}" = "--help" ]; then
-      printf '%s\n' '--agent --force'
+      printf '%s\n' '--agent --force --expected-digest'
       exit 0
     fi
     case " $* " in *" --agent main "*) ;; *) exit 65 ;; esac
     case " $* " in *" --force "*) ;; *) exit 65 ;; esac
+    expected=""
+    previous=""
+    for argument in "$@"; do
+      if [ "$previous" = "--expected-digest" ]; then expected=$argument; fi
+      previous=$argument
+    done
+    [ -n "$expected" ] || exit 65
+    if [ "$OPENCLAW_TEST_MUTATE" = 1 ]; then printf '%s\n' '# changed after outer validation' >> "$3/SKILL.md"; fi
+    file_digest=$(sha256sum "$3/SKILL.md" | cut -d ' ' -f 1)
+    observed=$(printf '644 %s  SKILL.md\n' "$file_digest" | sha256sum | cut -d ' ' -f 1)
+    [ "$observed" = "$expected" ] || exit 74
     printf '%s\n' "$*" >> "$OPENCLAW_TEST_LOG"
     rm -rf -- "$OPENCLAW_TEST_TARGET"
     mkdir -p -- "$(dirname "$OPENCLAW_TEST_TARGET")"
@@ -121,6 +133,7 @@ esac
                 ...process.env,
                 OPENCLAW_TEST_CHECK_STATE: checkState,
                 OPENCLAW_TEST_LOG: invocationLog,
+                OPENCLAW_TEST_MUTATE: mutatePayload ? "1" : "0",
                 OPENCLAW_TEST_TARGET: workspaceSkillDir,
                 OPENSHELL_SANDBOX_ID: SANDBOX_ID,
               },
@@ -171,6 +184,15 @@ esac
       expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toContain(
         "# Updated",
       );
+
+      mutatePayload = true;
+      expect(
+        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOptions(sshExec)),
+      ).toEqual({ success: false, uploaded: 0, reason: "native_install_failed" });
+      expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toContain(
+        "# Updated",
+      );
+      mutatePayload = false;
 
       checkState = "blocked";
       expect(
@@ -247,6 +269,7 @@ esac
 
   it.each([
     [3, "CAPABILITY_MISSING\n", "native_capability_missing"],
+    [5, "NATIVE_INSTALL_FAILED\n", "native_install_failed"],
     [4, "installer output\nVERIFY_FAILED\n", "verification_failed"],
     [8, "AGENT_WORKSPACE_UNSUPPORTED\n", "agent_workspace_unsupported"],
     [9, "IDENTITY_CHANGED\n", "sandbox_identity_changed"],

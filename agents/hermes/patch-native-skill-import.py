@@ -19,16 +19,19 @@ PARSER = '''    # NemoClaw native local skill import (#10210).
     )
     skills_import_local.add_argument("path", help="Staged local skill directory")
     skills_import_local.add_argument("--name", required=True, help="Expected skill name")
+    skills_import_local.add_argument("--expected-digest", required=True, help="Expected normalized skill digest")
 
 '''
 
 FUNCTION = r'''
 # NemoClaw native local skill import (#10210).
-def do_import_local(skill_path: str, expected_name: str, console: Optional[Console] = None) -> bool:
+def do_import_local(skill_path: str, expected_name: str, expected_digest: str, console: Optional[Console] = None) -> bool:
     """Import a staged regular-file skill through Hermes' own lock and loader."""
+    import hashlib
     import json
     import os
     import shutil
+    import stat
     import uuid
 
     import yaml
@@ -50,14 +53,60 @@ def do_import_local(skill_path: str, expected_name: str, console: Optional[Conso
         if source.is_symlink() or not source.is_dir():
             raise OSError("staged skill is not a regular directory")
         source = source.resolve(strict=True)
-        skill_file = source / "SKILL.md"
-        if skill_file.is_symlink() or not skill_file.is_file():
-            raise OSError("SKILL.md is not a regular file")
-        text = skill_file.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
+    except OSError as exc:
         c.print(f"[bold red]Error:[/] Cannot read staged skill: {exc}")
         return False
 
+    if len(expected_digest) != 64 or any(character not in "0123456789abcdef" for character in expected_digest):
+        c.print("[bold red]Error:[/] Expected digest must be a lowercase SHA-256 value.")
+        return False
+
+    files = {}
+    file_modes = {}
+    try:
+        for directory, dirnames, filenames, directory_fd in os.fwalk(source, topdown=True, follow_symlinks=False):
+            for dirname in dirnames:
+                metadata = os.stat(dirname, dir_fd=directory_fd, follow_symlinks=False)
+                if not stat.S_ISDIR(metadata.st_mode):
+                    raise ValueError(f"unsupported staged path: {Path(directory) / dirname}")
+            for filename in filenames:
+                descriptor = os.open(
+                    filename,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    dir_fd=directory_fd,
+                )
+                try:
+                    before = os.fstat(descriptor)
+                    if not stat.S_ISREG(before.st_mode):
+                        raise ValueError(f"unsupported staged path: {Path(directory) / filename}")
+                    with os.fdopen(descriptor, "rb", closefd=False) as opened:
+                        content = opened.read()
+                    after = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+                    if not stat.S_ISREG(after.st_mode) or (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):
+                        raise ValueError(f"staged path changed while reading: {Path(directory) / filename}")
+                    relative = (Path(directory) / filename).relative_to(source).as_posix()
+                    files[relative] = content
+                    file_modes[relative] = "755" if before.st_mode & 0o111 else "644"
+                finally:
+                    os.close(descriptor)
+    except (OSError, ValueError) as exc:
+        c.print(f"[bold red]Error:[/] Cannot snapshot staged skill: {exc}")
+        return False
+
+    manifest = "".join(
+        f"{file_modes[relative]} {hashlib.sha256(files[relative]).hexdigest()}  {relative}\n"
+        for relative in sorted(files)
+    )
+    observed_digest = hashlib.sha256(manifest.encode("utf-8")).hexdigest()
+    if observed_digest != expected_digest:
+        c.print("[bold red]Error:[/] Staged skill digest changed before native publication.")
+        return False
+
+    try:
+        text = files["SKILL.md"].decode("utf-8")
+    except (KeyError, UnicodeError) as exc:
+        c.print(f"[bold red]Error:[/] Cannot read staged SKILL.md: {exc}")
+        return False
     lines = text.splitlines()
     closing = next((index for index, line in enumerate(lines[1:], 1) if line.strip() == "---"), -1) if lines and lines[0].strip() == "---" else -1
     try:
@@ -68,17 +117,6 @@ def do_import_local(skill_path: str, expected_name: str, console: Optional[Conso
     name = metadata.get("name") if isinstance(metadata, dict) else None
     if name != expected_name:
         c.print("[bold red]Error:[/] Staged skill name does not match the requested name.")
-        return False
-
-    files = {}
-    try:
-        for entry in source.rglob("*"):
-            if entry.is_symlink() or not (entry.is_dir() or entry.is_file()):
-                raise ValueError(f"unsupported staged path: {entry}")
-            if entry.is_file():
-                files[entry.relative_to(source).as_posix()] = entry.read_bytes()
-    except (OSError, ValueError) as exc:
-        c.print(f"[bold red]Error:[/] Cannot import staged skill: {exc}")
         return False
 
     try:
@@ -145,6 +183,23 @@ def do_import_local(skill_path: str, expected_name: str, console: Optional[Conso
             provenance,
         )
         installed = True
+        for relative, mode in file_modes.items():
+            os.chmod(installed_path / relative, int(mode, 8), follow_symlinks=False)
+        installed_entries = []
+        installed_files = set()
+        for entry in installed_path.rglob("*"):
+            if entry.is_symlink() or not (entry.is_dir() or entry.is_file()):
+                raise RuntimeError(f"unsupported installed skill path: {entry}")
+            if entry.is_file():
+                relative = entry.relative_to(installed_path).as_posix()
+                installed_files.add(relative)
+                mode = "755" if entry.stat(follow_symlinks=False).st_mode & 0o111 else "644"
+                installed_entries.append(
+                    (relative, f"{mode} {hashlib.sha256(entry.read_bytes()).hexdigest()}  {relative}\n")
+                )
+        installed_manifest = "".join(line for _, line in sorted(installed_entries))
+        if installed_files != set(files) or hashlib.sha256(installed_manifest.encode("utf-8")).hexdigest() != expected_digest:
+            raise RuntimeError("installed skill digest changed before native commit")
         try:
             from agent.prompt_builder import clear_skills_system_prompt_cache
 
@@ -161,7 +216,12 @@ def do_import_local(skill_path: str, expected_name: str, console: Optional[Conso
         print(
             "NEMOCLAW_NATIVE_SKILL_IMPORT="
             + json.dumps(
-                {"status": "installed", "name": expected_name, "path": str(installed_path.resolve())},
+                {
+                    "status": "installed",
+                    "name": expected_name,
+                    "path": str(installed_path.resolve()),
+                    "digest": expected_digest,
+                },
                 separators=(",", ":"),
             )
         )
@@ -183,7 +243,7 @@ def do_import_local(skill_path: str, expected_name: str, console: Optional[Conso
 
 ROUTER = '''    # NemoClaw native local skill import (#10210).
     elif action == "import-local":
-        if not do_import_local(args.path, args.name):
+        if not do_import_local(args.path, args.name, args.expected_digest):
             raise SystemExit(1)
 '''
 

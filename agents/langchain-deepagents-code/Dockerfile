@@ -247,11 +247,18 @@ RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
     && /opt/venv/bin/python3 -I -c 'import deepagents_code.skills.commands as commands; assert callable(commands._import_local)' \
     && dcode_skill_stage="$(mktemp -d)" \
     && printf '%s\n' '---' 'name: nemoclaw-native-import-probe' 'description: Controlled managed-image native import probe.' '---' '# Native import probe' > "$dcode_skill_stage/SKILL.md" \
-    && /opt/venv/bin/python3 -I -c 'import sys; from deepagents_code.skills.commands import _import_local; _import_local(sys.argv[1], "nemoclaw-native-import-probe", agent="agent", replace=True)' "$dcode_skill_stage" > /tmp/nemoclaw-dcode-skill-import.out \
+    && dcode_skill_file_digest="$(sha256sum "$dcode_skill_stage/SKILL.md" | cut -d ' ' -f 1)" \
+    && dcode_skill_digest="$(printf '644 %s  SKILL.md\n' "$dcode_skill_file_digest" | sha256sum | cut -d ' ' -f 1)" \
+    && /opt/venv/bin/dcode skills import "$dcode_skill_stage" --name nemoclaw-native-import-probe --agent agent --replace --expected-digest "$dcode_skill_digest" > /tmp/nemoclaw-dcode-skill-import.out \
     && grep -Fq 'NEMOCLAW_NATIVE_SKILL_IMPORT=' /tmp/nemoclaw-dcode-skill-import.out \
-    && /opt/venv/bin/python3 -I -c 'from deepagents_code.skills.commands import _delete; _delete("nemoclaw-native-import-probe", agent="agent", force=True, output_format="json")' \
+    && grep -Fq "\"digest\":\"$dcode_skill_digest\"" /tmp/nemoclaw-dcode-skill-import.out \
+    && /opt/venv/bin/dcode skills list --agent agent --json | grep -Fq 'nemoclaw-native-import-probe' \
+    && printf '%s\n' '# Mutated after host verification' >> "$dcode_skill_stage/SKILL.md" \
+    && if /opt/venv/bin/dcode skills import "$dcode_skill_stage" --name nemoclaw-native-import-probe --agent agent --replace --expected-digest "$dcode_skill_digest" >/tmp/nemoclaw-dcode-skill-rejected.out 2>&1; then echo 'ERROR: changed DCode staging payload was accepted' >&2; exit 1; fi \
+    && ! grep -Fq 'Mutated after host verification' /sandbox/.deepagents/agent/skills/nemoclaw-native-import-probe/SKILL.md \
+    && /opt/venv/bin/dcode skills delete nemoclaw-native-import-probe --agent agent --force --json \
     && test ! -e /sandbox/.deepagents/agent/skills/nemoclaw-native-import-probe \
-    && rm -rf "$dcode_skill_stage" /tmp/nemoclaw-dcode-skill-import.out \
+    && rm -rf "$dcode_skill_stage" /tmp/nemoclaw-dcode-skill-import.out /tmp/nemoclaw-dcode-skill-rejected.out \
     && rm -f /opt/nemoclaw-deepagents-code/patch-native-skill-import.py \
     && install -d -m 0700 /tmp/nemoclaw-progressive-validation \
     && TMPDIR=/tmp/nemoclaw-progressive-validation python3 /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py \

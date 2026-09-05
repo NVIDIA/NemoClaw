@@ -59,6 +59,9 @@ state_dirs:
   - workspace
   # Multi-agent OpenClaw deployments create workspace-<agent> siblings.
   - prefix: workspace-
+  # Pre-cutover NemoClaw installs can remain here. OpenClaw still discovers
+  # this native global state; its patched remove command resolves and removes
+  # one active same-name entry at a time without a host ownership registry.
   - skills
   - hooks
   # Machine-local gateway auth state is wiped on destroy but never captured.

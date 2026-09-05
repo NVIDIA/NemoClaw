@@ -11,7 +11,6 @@ import { NemoClawPassthroughCommand } from "../../../lib/cli/nemoclaw-passthroug
 export default class SandboxAgentsListCommand extends NemoClawPassthroughCommand {
   static id = "sandbox:agents:list";
   static customHelp = true;
-  static strict = false;
   static summary = "List OpenClaw agents configured in a sandbox";
   static description =
     "Pass through to `openclaw agents list` in the sandbox. Runs the OpenClaw lister via `openshell sandbox exec`; all OpenClaw flags (e.g. `--json`, `--bindings`) are forwarded verbatim.";
@@ -23,8 +22,7 @@ export default class SandboxAgentsListCommand extends NemoClawPassthroughCommand
   ];
 
   public async run(): Promise<void> {
-    this.parsed = true;
-    const [sandboxName, ...extraArgs] = this.argv;
+    const { extraArgs, sandboxName } = this.passthroughArgs();
     if (
       !sandboxName ||
       sandboxName.trim() === "" ||

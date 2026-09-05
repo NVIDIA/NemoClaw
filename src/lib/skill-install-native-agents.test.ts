@@ -61,6 +61,7 @@ describe("Hermes and DCode native skill installation", () => {
       ).toEqual({ success: true, uploaded: 1, contentDigest: digest });
       expect(command).toContain(shellQuote(binary));
       expect(command).toContain(`'skills' '${verb}' "$payload"`);
+      expect(command).toContain(`'--expected-digest' '${digest}'`);
       expect(command).toContain("NEMOCLAW_NATIVE_SKILL_IMPORT=");
       expect(command).not.toContain("/skills/demo-skill");
     },
@@ -100,6 +101,7 @@ describe("Hermes and DCode native skill installation", () => {
       );
       const fakeBinary = path.join(stateDir, "agent-cli");
       const nativeBinary = agent === "hermes" ? "/usr/local/bin/hermes" : "/usr/local/bin/dcode";
+      let mutatePayload = false;
       fs.writeFileSync(
         fakeBinary,
         `#!/bin/sh
@@ -108,10 +110,21 @@ if [ "\${3:-}" = "--help" ]; then exit 0; fi
 case "\${1:-} \${2:-}" in
   "skills import-local"|"skills import")
     source=\$3
+    expected=""
+    previous=""
+    for argument in "\$@"; do
+      if [ "\$previous" = "--expected-digest" ]; then expected=\$argument; fi
+      previous=\$argument
+    done
+    [ -n "\$expected" ] || exit 65
+    if [ "\$NATIVE_SKILL_MUTATE" = 1 ]; then printf '%s\n' '# changed after outer validation' >> "\$source/SKILL.md"; fi
+    file_digest=\$(sha256sum "\$source/SKILL.md" | cut -d ' ' -f 1)
+    observed=\$(printf '644 %s  SKILL.md\n' "\$file_digest" | sha256sum | cut -d ' ' -f 1)
+    [ "\$observed" = "\$expected" ] || exit 74
     rm -rf -- "$NATIVE_SKILL_TARGET"
     mkdir -p -- "\$(dirname "$NATIVE_SKILL_TARGET")"
     cp -R -- "\$source" "$NATIVE_SKILL_TARGET"
-    printf 'NEMOCLAW_NATIVE_SKILL_IMPORT={"status":"installed","name":"demo-skill","path":"%s"}\\n' "$NATIVE_SKILL_TARGET"
+    printf 'NEMOCLAW_NATIVE_SKILL_IMPORT={"status":"installed","name":"demo-skill","path":"%s","digest":"%s"}\\n' "$NATIVE_SKILL_TARGET" "\$expected"
     ;;
   "skills list") exit 0 ;;
   *) exit 64 ;;
@@ -140,6 +153,7 @@ esac
             encoding: "utf8",
             env: {
               ...process.env,
+              NATIVE_SKILL_MUTATE: mutatePayload ? "1" : "0",
               NATIVE_SKILL_TARGET: target,
               OPENSHELL_SANDBOX_ID: SANDBOX_ID,
             },
@@ -166,6 +180,14 @@ esac
           sshExecImpl: sshExec,
         }),
       ).toMatchObject({ success: true });
+      expect(fs.readFileSync(path.join(target, "SKILL.md"), "utf8")).toContain("# Updated");
+      mutatePayload = true;
+      expect(
+        installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {
+          expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
+          sshExecImpl: sshExec,
+        }),
+      ).toEqual({ success: false, uploaded: 0, reason: "native_install_failed" });
       expect(fs.readFileSync(path.join(target, "SKILL.md"), "utf8")).toContain("# Updated");
       expect(
         fs.readdirSync(stateDir).filter((name) => name.startsWith(".nemoclaw-skill-stage.")),

@@ -182,6 +182,8 @@ Sandbox restarts preserve workspace files because the persistent state volume ou
 The `$$nemoclaw <name> rebuild` command and the sandbox upgrade flow also preserve workspace state.
 Before replacing the container, NemoClaw snapshots the workspace state directories and restores them into the rebuilt sandbox.
 
+Current `skill install` operations publish through OpenClaw into `/sandbox/.openclaw/workspace/skills/`. A skill installed by an older NemoClaw release can remain in OpenClaw's native global directory at `/sandbox/.openclaw/skills/`; rebuilds preserve both agent-owned locations. `skill list` reports whichever entry OpenClaw resolves. `skill remove` removes that exact resolved workspace or global entry, and reports a same-name fallback if one becomes active. Run it again to remove the fallback. NemoClaw does not migrate these entries through a host registry or infer ownership from their paths.
+
 If NemoClaw cannot archive any requested state file or directory, it reports the backup failure and stops before replacing the sandbox.
 It does not continue with a partial backup.
 
@@ -271,8 +273,7 @@ Deep Agents Code creates them when you start the first `dcode` session.
 | `/sandbox/.deepagents/.state/` | Deep Agents Code runtime state, including persisted session and MCP-related state. |
 | `/sandbox/.deepagents/agent/AGENTS.md` | Global memory file for the default Deep Agents Code agent, loaded at session start. |
 | `/sandbox/.deepagents/agent/memories/` | Topic-specific markdown memories that Deep Agents Code can read and update across sessions. |
-| `/sandbox/.deepagents/skills/` | Legacy NemoClaw skill-upload state. Deep Agents Code does not load skills from this path, and `$$nemoclaw <name> skill install` leaves it untouched. |
-| `/sandbox/.deepagents/agent/skills/` | Skills that Deep Agents Code loads at session start, including skills created by the built-in skill creator and fresh-name skills installed directly by `$$nemoclaw <name> skill install`. Preserved by NemoClaw snapshots. |
+| `/sandbox/.deepagents/agent/skills/` | Agent-owned skills that Deep Agents Code loads at session start, including skills created by the built-in skill creator and skills imported by `$$nemoclaw <name> skill install`. Preserved by NemoClaw snapshots. |
 | `/sandbox/.deepagents/.nemoclaw-mcp.json` | NemoClaw-generated managed MCP projection with OpenShell credential placeholders. NemoClaw reconstructs it from host-side registry state. |
 | `/sandbox/.deepagents/.state/auth.json` | Upstream auth state. The managed launchers refuse to start when this file contains credentials. |
 | `/sandbox/.deepagents/.state/chatgpt-auth.json` | Upstream ChatGPT auth state. The managed launchers refuse to start when this file exists. |
@@ -293,7 +294,6 @@ The Deep Agents manifest declares these durable directories:
 
 ```text
 /sandbox/.deepagents/.state/
-/sandbox/.deepagents/skills/
 /sandbox/.deepagents/agent/skills/
 ```
 
@@ -304,6 +304,7 @@ NemoClaw keeps the newly generated inference route headers and the `models` and 
 On a NemoClaw-managed image, only the allowlisted `ui.show_scrollbar`, `ui.show_url_open_toast`, `threads.relative_time`, and `threads.sort_order` preferences can be restored from the previous file.
 
 Runtime-controlled, unknown, executable, and security-sensitive backup keys are dropped on that managed path.
+A pre-cutover `/sandbox/.deepagents/skills/` upload directory was only a duplicate staging destination and was never loaded by Deep Agents Code; current rebuilds intentionally do not preserve or recreate it. The agent-owned `/sandbox/.deepagents/agent/skills/` copy remains the durable native state.
 A Deep Agents target created from a custom Dockerfile restores `config.toml` as a whole file because the custom image owns its config schema.
 
 On the managed key-level restore path, if config validation or safe atomic replacement fails, NemoClaw marks the restore as failed instead of falling back to a whole-file copy.

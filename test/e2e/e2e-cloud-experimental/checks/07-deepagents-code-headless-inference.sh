@@ -369,6 +369,7 @@ is_empty_prompt_rejection() {
 classify_headless_output() {
   local dcode_exit="$1"
   local headless_output="$2"
+  local expected_response="${3:-PONG}"
   local payload
   payload="$(
     printf '%s' "$headless_output" \
@@ -410,8 +411,9 @@ classify_headless_output() {
     return 1
   fi
 
-  if printf '%s' "$payload" | python3 -c '
+  if printf '%s' "$payload" | EXPECTED_RESPONSE="$expected_response" python3 -c '
 import json
+import os
 import sys
 
 try:
@@ -434,7 +436,7 @@ if not isinstance(data, dict) or set(data) != {
     raise SystemExit(1)
 if data["status"] != "success" or data["exit_code"] != 0:
     raise SystemExit(1)
-if not isinstance(data["response"], str) or data["response"].strip() != "PONG":
+if not isinstance(data["response"], str) or data["response"].strip() != os.environ["EXPECTED_RESPONSE"]:
     raise SystemExit(1)
 completion = data["completion"]
 if not isinstance(completion, dict) or set(completion) != {
@@ -450,7 +452,7 @@ if not isinstance(completion["duration_ms"], int) or completion["duration_ms"] <
 if completion["response_bytes"] != len(data["response"].encode("utf-8")):
     raise SystemExit(1)
 '; then
-    printf '%s\n' "json-pong"
+    printf '%s\n' "json-response"
     return 0
   fi
 
@@ -597,6 +599,39 @@ main() {
     fail_test "login-shell proxy did not receive HTTP 200 from https://inference.local/v1/models (HTTP ${route_code:-000})"
   fi
 
+  # Bind the public NemoClaw caller to DCode's patched public lifecycle and
+  # agent-owned state before using a fresh inference session as the consumer.
+  skill_name="nemoclaw-native-lifecycle"
+  skill_marker="DCODE_NATIVE_SKILL_OK"
+  skill_root="$(mktemp -d "${TMPDIR:-/tmp}/${PREFIX}-skill.XXXXXX")"
+  cli_bin="${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}"
+  printf '%s\n' \
+    '---' \
+    "name: ${skill_name}" \
+    'description: Use when asked for the native lifecycle canary.' \
+    '---' \
+    '# Native lifecycle canary' \
+    "When asked for the native lifecycle canary, reply with exactly ${skill_marker} and nothing else." \
+    >"${skill_root}/SKILL.md"
+  if skill_install_output="$("$cli_bin" "$SANDBOX_NAME" skill install "$skill_root" 2>&1)"; then
+    pass "public NemoClaw skill install delegated to DCode native state"
+  else
+    fail_test "public NemoClaw skill install did not complete through DCode"
+  fi
+  rm -rf -- "$skill_root"
+  skill_list_output="$("$cli_bin" "$SANDBOX_NAME" skill list --json 2>&1 || true)"
+  if printf '%s\n' "$skill_list_output" | grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"${skill_name}\""; then
+    pass "public NemoClaw skill list reports DCode native state"
+  else
+    fail_test "public NemoClaw skill list did not report the imported DCode skill"
+  fi
+  skill_file_output="$(sandbox_exec "cat /sandbox/.deepagents/agent/skills/${skill_name}/SKILL.md" || true)"
+  if printf '%s\n' "$skill_file_output" | grep -Fxq "When asked for the native lifecycle canary, reply with exactly ${skill_marker} and nothing else."; then
+    pass "DCode native target contains the submitted lifecycle marker"
+  else
+    fail_test "DCode native target does not contain the submitted lifecycle marker"
+  fi
+
   # 5. The same login-shell path runs dcode and returns a JSON PONG envelope.
   headless_output="$(sandbox_login_exec "cd /sandbox && timeout ${HEADLESS_TIMEOUT} dcode -n 'Reply with exactly one word: PONG' --json; echo \"DCODE_EXIT:\$?\"" || true)"
   dcode_exit="$(printf '%s' "$headless_output" | sed -n 's/.*DCODE_EXIT:\([0-9]\+\).*/\1/p' | tail -n1)"
@@ -607,17 +642,23 @@ main() {
   fi
 
   # 6. The public direct-exec path reaches inference without shell startup files.
-  if direct_output="$(sandbox_direct_dcode -n "Reply with exactly one word: PONG" --json)"; then
+  if direct_output="$(sandbox_direct_dcode -n "Use the ${skill_name} skill for the native lifecycle canary." --json)"; then
     direct_exit=0
   else
     direct_exit=$?
   fi
   direct_headless_output="${direct_output}
 DCODE_EXIT:${direct_exit}"
-  if direct_classification="$(classify_headless_output "$direct_exit" "$direct_headless_output")"; then
-    pass "direct-exec dcode -n reached managed inference with ${direct_classification} (exit ${direct_exit}; direct DNS/hosts ${direct_dns_state})"
+  if direct_classification="$(classify_headless_output "$direct_exit" "$direct_headless_output" "$skill_marker")"; then
+    pass "fresh direct-exec dcode session consumed the natively imported skill (${direct_classification}; exit ${direct_exit})"
   else
-    fail_test "direct-exec dcode -n --json did not return a success envelope with PONG (${direct_classification}, exit ${direct_exit})"
+    fail_test "fresh direct-exec dcode session did not consume the natively imported skill (${direct_classification}, exit ${direct_exit})"
+  fi
+  if skill_remove_output="$("$cli_bin" "$SANDBOX_NAME" skill remove "$skill_name" 2>&1)" \
+    && ! sandbox_exec "dcode skills list --agent agent --json" | grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"${skill_name}\""; then
+    pass "public NemoClaw skill remove cleared DCode native state"
+  else
+    fail_test "public NemoClaw skill remove did not clear DCode native state"
   fi
 
   # 7. The user-facing bare-connect readiness path must route every observed
@@ -666,8 +707,12 @@ ${empty_direct_output}
 ${dns_hosts_output}
 ${proxy_contract_output}
 ${route_output}
+${skill_install_output}
+${skill_list_output}
+${skill_file_output}
 ${headless_output}
 ${direct_headless_output}
+${skill_remove_output}
 ${connect_output}
 ${fail_closed_connect_output}"
   if printf '%s' "$combined" | contains_secret; then

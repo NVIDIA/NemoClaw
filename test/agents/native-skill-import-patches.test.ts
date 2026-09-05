@@ -62,6 +62,8 @@ describe("agent-native local skill import patches", () => {
     expect(source.match(/NemoClaw native local skill import \(#10210\)/g)).toHaveLength(3);
     expect(source).toContain('skills_subparsers.add_parser(\n        "import"');
     expect(source).toContain('elif args.skills_command == "import"');
+    expect(source).toContain('"--expected-digest"');
+    expect(source).toContain("observed_digest != expected_digest");
     expect(source).toContain("NEMOCLAW_NATIVE_SKILL_IMPORT=");
     expect(runPython(["-m", "py_compile", target]).status).toBe(0);
   });
@@ -103,10 +105,13 @@ describe("agent-native local skill import patches", () => {
     expect(first.status, first.stderr).toBe(0);
     const second = runPython([HERMES_PATCH, parser, hub]);
     expect(second.status, second.stderr).toBe(0);
-    expect(fs.readFileSync(parser, "utf8")).toContain('"import-local"');
+    const parserSource = fs.readFileSync(parser, "utf8");
+    expect(parserSource).toContain('"import-local"');
+    expect(parserSource).toContain('"--expected-digest"');
     const source = fs.readFileSync(hub, "utf8");
     expect(source.match(/NemoClaw native local skill import \(#10210\)/g)).toHaveLength(3);
     expect(source).toContain('elif action == "import-local"');
+    expect(source).toContain("observed_digest != expected_digest");
     expect(source).toContain("if not before:");
     expect(source).toContain("NEMOCLAW_NATIVE_SKILL_IMPORT=");
     expect(runPython(["-m", "py_compile", parser, hub]).status).toBe(0);

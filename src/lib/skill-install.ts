@@ -21,12 +21,7 @@ import type { SshContext } from "./skill-remote";
 import { shellQuote, sshExec } from "./skill-remote";
 
 export { validateSkillName } from "./skill-name";
-export {
-  type SshContext,
-  type SshResult,
-  shellQuote,
-  sshExec,
-} from "./skill-remote";
+export { type SshContext, type SshResult, shellQuote, sshExec } from "./skill-remote";
 
 // ── Frontmatter parsing ──────────────────────────────────────────
 
@@ -456,7 +451,7 @@ function buildOpenClawNativeInstallScript(
     'const baseDir=info&&typeof info==="object"&&typeof info.baseDir==="string"?info.baseDir:info&&typeof info.filePath==="string"?path.dirname(info.filePath):"";',
     'const informed=info&&typeof info==="object"&&info.name===skill&&path.resolve(baseDir)===path.resolve(target)&&(info.filePath===undefined||path.resolve(info.filePath)===path.resolve(target,"SKILL.md"));',
     'const checked=check&&typeof check==="object"&&check.agentId==="main"&&Array.isArray(check.eligible)&&check.eligible.includes(skill);',
-    'if(!listed||!informed||!checked)process.exit(1);process.stdout.write(target);',
+    "if(!listed||!informed||!checked)process.exit(1);process.stdout.write(target);",
   ].join("");
   const verifyMainWorkspace = [
     'const fs=require("node:fs");',
@@ -464,7 +459,7 @@ function buildOpenClawNativeInstallScript(
     'const config=JSON.parse(fs.readFileSync(configPath,"utf8"));',
     "const entries=config&&config.agents&&config.agents.list;",
     'const main=Array.isArray(entries)&&entries.find((entry)=>entry&&typeof entry==="object"&&entry.id==="main");',
-    'if(!main||(main.workspace!==undefined&&main.workspace!==expected))process.exit(1);',
+    "if(!main||(main.workspace!==undefined&&main.workspace!==expected))process.exit(1);",
   ].join("");
   const identityCheck = sandboxIdentityCheckCommand(expectedSandboxIdentityFingerprint);
   // The pinned native installer owns source-origin metadata and may recreate
@@ -498,7 +493,8 @@ function buildOpenClawNativeInstallScript(
     `help="$(${shellQuote(OPENCLAW_NATIVE_BIN)} skills install --help 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
     'printf "%s" "$help" | grep -q -- "--agent" || { echo CAPABILITY_MISSING; exit 3; }',
     'printf "%s" "$help" | grep -q -- "--force" || { echo CAPABILITY_MISSING; exit 3; }',
-    `${shellQuote(OPENCLAW_NATIVE_BIN)} skills install "$payload" --agent main --force`,
+    'printf "%s" "$help" | grep -q -- "--expected-digest" || { echo CAPABILITY_MISSING; exit 3; }',
+    `if ! ${shellQuote(OPENCLAW_NATIVE_BIN)} skills install "$payload" --agent main --force --expected-digest "$expected"; then echo NATIVE_INSTALL_FAILED; exit 5; fi`,
     `${shellQuote(OPENCLAW_NATIVE_BIN)} skills list --agent main --json > "$stage/list.json"`,
     `${shellQuote(OPENCLAW_NATIVE_BIN)} skills info "$skill" --agent main --json > "$stage/info.json"`,
     `${shellQuote(OPENCLAW_NATIVE_BIN)} skills check --agent main --json > "$stage/check.json"`,
@@ -569,11 +565,13 @@ export function installOpenClawSkill(
         ? "agent_workspace_unsupported"
         : result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")
           ? "native_capability_missing"
-          : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
-            ? "verification_failed"
-            : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
-              ? "sandbox_identity_changed"
-            : "remote_state_unknown",
+          : result?.status === 5 && stdout.endsWith("NATIVE_INSTALL_FAILED")
+            ? "native_install_failed"
+            : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
+              ? "verification_failed"
+              : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
+                ? "sandbox_identity_changed"
+                : "remote_state_unknown",
   };
 }
 
@@ -590,11 +588,20 @@ function nativeLocalSkillCommand(
   agentName: NativeLocalSkillAgent,
   payloadPath: string,
   skillName: string,
+  expectedDigest: string,
 ): NativeLocalSkillCommand {
   if (agentName === "hermes") {
     return {
       binary: "/usr/local/bin/hermes",
-      importArgs: ["skills", "import-local", payloadPath, "--name", skillName],
+      importArgs: [
+        "skills",
+        "import-local",
+        payloadPath,
+        "--name",
+        skillName,
+        "--expected-digest",
+        expectedDigest,
+      ],
       listArgs: ["skills", "list"],
     };
   }
@@ -609,6 +616,8 @@ function nativeLocalSkillCommand(
       "--agent",
       "agent",
       "--replace",
+      "--expected-digest",
+      expectedDigest,
     ],
     listArgs: ["skills", "list", "--agent", "agent", "--json"],
   };
@@ -623,16 +632,16 @@ function buildNativeLocalSkillInstallScript(
   expectedSandboxIdentityFingerprint: string,
 ): string {
   const stageToken = "__NEMOCLAW_PAYLOAD__";
-  const command = nativeLocalSkillCommand(agentName, stageToken, skillName);
+  const command = nativeLocalSkillCommand(agentName, stageToken, skillName, expectedDigest);
   const nativeResultParser = [
     'const fs=require("node:fs");',
     'const path=require("node:path");',
-    "const [file,expectedName,stateRoot]=process.argv.slice(1);",
+    "const [file,expectedName,expectedDigest,stateRoot]=process.argv.slice(1);",
     'const prefix="NEMOCLAW_NATIVE_SKILL_IMPORT=";',
     'const lines=fs.readFileSync(file,"utf8").split(/\\r?\\n/).filter((line)=>line.startsWith(prefix));',
     "if(lines.length!==1)process.exit(1);",
     "const value=JSON.parse(lines[0].slice(prefix.length));",
-    'if(!value||value.status!=="installed"||value.name!==expectedName||typeof value.path!=="string"||!path.isAbsolute(value.path)||path.basename(value.path)!==expectedName)process.exit(1);',
+    'if(!value||value.status!=="installed"||value.name!==expectedName||value.digest!==expectedDigest||typeof value.path!=="string"||!path.isAbsolute(value.path)||path.basename(value.path)!==expectedName)process.exit(1);',
     "const relative=path.relative(stateRoot,value.path);",
     'if(!relative||relative.startsWith(".."+path.sep)||path.isAbsolute(relative))process.exit(1);',
     "process.stdout.write(path.resolve(value.path));",
@@ -667,7 +676,7 @@ function buildNativeLocalSkillInstallScript(
     'staged="$(digest_tree "$payload" "$stage/staged.manifest")"',
     '[ "$staged" = "$expected" ]',
     `if ! ${shellQuote(command.binary)} ${commandArgs} > "$stage/native.out" 2>&1; then cat "$stage/native.out" >&2; echo NATIVE_INSTALL_FAILED; exit 5; fi`,
-    `target="$(node -e ${shellQuote(nativeResultParser)} "$stage/native.out" "$skill" "$root")" || { cat "$stage/native.out" >&2; echo VERIFY_FAILED; exit 4; }`,
+    `target="$(node -e ${shellQuote(nativeResultParser)} "$stage/native.out" "$skill" "$expected" "$root")" || { cat "$stage/native.out" >&2; echo VERIFY_FAILED; exit 4; }`,
     'target_real="$(realpath -e -- "$target")" || { echo VERIFY_FAILED; exit 4; }',
     'case "$target_real" in "$root"/*) ;; *) echo VERIFY_FAILED; exit 4 ;; esac',
     'safe_tree "$target_real" || { echo VERIFY_FAILED; exit 4; }',
@@ -732,6 +741,6 @@ export function installNativeAgentSkill(
             ? "native_install_failed"
             : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
               ? "sandbox_identity_changed"
-            : "remote_state_unknown",
+              : "remote_state_unknown",
   };
 }

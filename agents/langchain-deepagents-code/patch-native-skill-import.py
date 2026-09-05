@@ -17,14 +17,17 @@ FUNCTION = r'''
 def _import_local(
     source_path: str,
     skill_name: str,
+    expected_digest: str,
     *,
     agent: str = "agent",
     replace: bool = False,
 ) -> None:
     """Import a staged regular-file skill through DCode-owned state resolution."""
+    import hashlib
     import json
     import os
     import shutil
+    import stat
     import tempfile
     import uuid
 
@@ -36,6 +39,10 @@ def _import_local(
     valid, error = _validate_name(skill_name)
     if not valid:
         console.print(f"[bold red]Error:[/bold red] Invalid skill name: {error}")
+        raise SystemExit(1)
+
+    if len(expected_digest) != 64 or any(character not in "0123456789abcdef" for character in expected_digest):
+        console.print("[bold red]Error:[/bold red] Expected digest must be a lowercase SHA-256 value.")
         raise SystemExit(1)
 
     source = Path(source_path).expanduser()
@@ -67,11 +74,6 @@ def _import_local(
     if not isinstance(metadata, dict) or metadata.get("name") != skill_name:
         console.print("[bold red]Error:[/bold red] Staged skill name does not match the requested name.")
         raise SystemExit(1)
-
-    for entry in source.rglob("*"):
-        if entry.is_symlink() or not (entry.is_dir() or entry.is_file()):
-            console.print(f"[bold red]Error:[/bold red] Unsupported staged skill path: {entry}")
-            raise SystemExit(1)
 
     settings = Settings.from_environment()
     destination_root = settings.ensure_user_skills_dir(agent).resolve()
@@ -114,12 +116,66 @@ def _import_local(
     moved_existing = False
     published = False
     try:
-        shutil.copytree(source, candidate, symlinks=False)
+        candidate.mkdir(mode=0o700)
+        manifest_entries = []
+        for directory, dirnames, filenames, directory_fd in os.fwalk(source, topdown=True, follow_symlinks=False):
+            relative_dir = Path(directory).relative_to(source)
+            candidate_dir = candidate / relative_dir
+            candidate_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
+            for dirname in dirnames:
+                metadata = os.stat(dirname, dir_fd=directory_fd, follow_symlinks=False)
+                if not stat.S_ISDIR(metadata.st_mode):
+                    raise ValueError(f"unsupported staged path: {Path(directory) / dirname}")
+            for filename in filenames:
+                descriptor = os.open(
+                    filename,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    dir_fd=directory_fd,
+                )
+                try:
+                    before = os.fstat(descriptor)
+                    if not stat.S_ISREG(before.st_mode):
+                        raise ValueError(f"unsupported staged path: {Path(directory) / filename}")
+                    with os.fdopen(descriptor, "rb", closefd=False) as opened:
+                        content = opened.read()
+                    after = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+                    if not stat.S_ISREG(after.st_mode) or (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):
+                        raise ValueError(f"staged path changed while reading: {Path(directory) / filename}")
+                finally:
+                    os.close(descriptor)
+                relative = (relative_dir / filename).as_posix()
+                mode = 0o755 if before.st_mode & 0o111 else 0o644
+                target_file = candidate_dir / filename
+                with target_file.open("xb") as copied:
+                    copied.write(content)
+                os.chmod(target_file, mode, follow_symlinks=False)
+                manifest_entries.append(
+                    (relative, f"{mode:o} {hashlib.sha256(content).hexdigest()}  {relative}\n")
+                )
+        manifest = "".join(line for _, line in sorted(manifest_entries))
+        observed_digest = hashlib.sha256(manifest.encode("utf-8")).hexdigest()
+        if observed_digest != expected_digest:
+            raise ValueError("staged skill digest changed before native publication")
         if destination.exists():
             os.replace(destination, backup)
             moved_existing = True
         os.replace(candidate, destination)
         published = True
+        installed_entries = []
+        installed_files = set()
+        for entry in destination.rglob("*"):
+            if entry.is_symlink() or not (entry.is_dir() or entry.is_file()):
+                raise RuntimeError(f"unsupported installed skill path: {entry}")
+            if entry.is_file():
+                relative = entry.relative_to(destination).as_posix()
+                installed_files.add(relative)
+                mode = "755" if entry.stat(follow_symlinks=False).st_mode & 0o111 else "644"
+                installed_entries.append(
+                    (relative, f"{mode} {hashlib.sha256(entry.read_bytes()).hexdigest()}  {relative}\n")
+                )
+        installed_manifest = "".join(line for _, line in sorted(installed_entries))
+        if installed_files != {entry[0] for entry in manifest_entries} or hashlib.sha256(installed_manifest.encode("utf-8")).hexdigest() != expected_digest:
+            raise RuntimeError("installed skill digest changed before native commit")
         observed = next(
             (
                 skill
@@ -143,7 +199,12 @@ def _import_local(
         print(
             "NEMOCLAW_NATIVE_SKILL_IMPORT="
             + json.dumps(
-                {"status": "installed", "name": skill_name, "path": str(destination.resolve())},
+                {
+                    "status": "installed",
+                    "name": skill_name,
+                    "path": str(destination.resolve()),
+                    "digest": expected_digest,
+                },
                 separators=(",", ":"),
             )
         )
@@ -170,6 +231,7 @@ PARSER = '''    # NemoClaw native local skill import (#10210).
     import_parser.add_argument("--name", required=True, help="Expected skill name")
     import_parser.add_argument("--agent", default="agent", help="Agent identifier for skills")
     import_parser.add_argument("--replace", action="store_true", help="Replace an existing user skill")
+    import_parser.add_argument("--expected-digest", required=True, help="Expected normalized skill digest")
 
 '''
 
@@ -178,6 +240,7 @@ DISPATCH = '''    # NemoClaw native local skill import (#10210).
         _import_local(
             args.path,
             args.name,
+            args.expected_digest,
             agent=args.agent,
             replace=args.replace,
         )

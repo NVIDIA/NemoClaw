@@ -76,6 +76,7 @@ describe("E2E recommendation normalizer", () => {
       expect.arrayContaining([
         "bedrock-runtime-compatible-anthropic",
         "channels-stop-start",
+        "openclaw-skill-cli",
         "security-posture",
       ]),
     );

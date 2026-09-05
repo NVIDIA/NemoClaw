@@ -659,6 +659,7 @@ def verify_googlechat_override_seams() -> None:
 
 def verify_native_skill_import() -> None:
     """Exercise the pinned public import/list/uninstall lifecycle in a private home."""
+    import hashlib
     import json
     import subprocess
     import tempfile
@@ -668,16 +669,29 @@ def verify_native_skill_import() -> None:
     name = "nemoclaw-native-import-probe"
     with tempfile.TemporaryDirectory(prefix="nemoclaw-hermes-skill-probe-") as staging:
         source = Path(staging)
-        (source / "SKILL.md").write_text(
+        skill_content = (
             "---\n"
             f"name: {name}\n"
             "description: Controlled managed-image native import probe.\n"
             "---\n"
-            "# Native import probe\n",
-            encoding="utf-8",
+            "# Native import probe\n"
         )
+        (source / "SKILL.md").write_text(skill_content, encoding="utf-8")
+        file_digest = hashlib.sha256(skill_content.encode("utf-8")).hexdigest()
+        expected_digest = hashlib.sha256(
+            f"644 {file_digest}  SKILL.md\n".encode("utf-8")
+        ).hexdigest()
         imported = subprocess.run(
-            ["/usr/local/bin/hermes", "skills", "import-local", staging, "--name", name],
+            [
+                "/usr/local/bin/hermes",
+                "skills",
+                "import-local",
+                staging,
+                "--name",
+                name,
+                "--expected-digest",
+                expected_digest,
+            ],
             check=False,
             capture_output=True,
             text=True,
@@ -688,8 +702,32 @@ def verify_native_skill_import() -> None:
         assert len(result_lines) == 1, imported.stdout
         result = json.loads(result_lines[0][len(prefix) :])
         target = Path(SKILLS_DIR) / name
-        assert result == {"status": "installed", "name": name, "path": str(target.resolve())}
+        assert result == {
+            "status": "installed",
+            "name": name,
+            "path": str(target.resolve()),
+            "digest": expected_digest,
+        }
         assert HubLockFile().get_installed(name) is not None
+
+        (source / "SKILL.md").write_text(skill_content + "# Mutated\n", encoding="utf-8")
+        rejected = subprocess.run(
+            [
+                "/usr/local/bin/hermes",
+                "skills",
+                "import-local",
+                staging,
+                "--name",
+                name,
+                "--expected-digest",
+                expected_digest,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert rejected.returncode != 0, rejected.stdout + rejected.stderr
+        assert (target / "SKILL.md").read_text(encoding="utf-8") == skill_content
 
         listed = subprocess.run(
             ["/usr/local/bin/hermes", "skills", "list"],
