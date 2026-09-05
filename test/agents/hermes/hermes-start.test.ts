@@ -1214,6 +1214,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.historyKind).toBe("regular");
     expect(run.historyMode).toBe("660");
     expect(run.historyContent).toBe("");
+    expect(run.pythonImportSentinelExists).toBe(false);
   });
   it.each([
     ["sessions", "symlink", "is a symlink"],
