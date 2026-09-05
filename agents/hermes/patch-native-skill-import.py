@@ -280,18 +280,44 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
         )
         return True
     except Exception as exc:
+        rollback_issues = []
+        failed_install = backup_root / f"nemoclaw-import-failed.{expected_name}.{uuid.uuid4().hex}"
         if installed and destination.exists():
-            shutil.rmtree(destination, ignore_errors=True)
-        lock.save(lock_before)
+            try:
+                os.replace(destination, failed_install)
+                installed = False
+            except OSError as rollback_exc:
+                rollback_issues.append(
+                    f"active target requires inspection: {destination}: {rollback_exc}"
+                )
+        try:
+            lock.save(lock_before)
+        except Exception as rollback_exc:
+            rollback_issues.append(f"Skills Hub lock requires inspection: {rollback_exc}")
         if moved_existing and backup.exists() and not destination.exists():
-            os.replace(backup, destination)
-            moved_existing = False
+            try:
+                os.replace(backup, destination)
+                moved_existing = False
+            except OSError as rollback_exc:
+                rollback_issues.append(
+                    f"prior skill backup requires inspection: {backup}: {rollback_exc}"
+                )
+        if failed_install.exists():
+            try:
+                shutil.rmtree(failed_install)
+            except OSError as rollback_exc:
+                rollback_issues.append(
+                    f"quarantined failed install retained at {failed_install}: {rollback_exc}"
+                )
         c.print(f"[bold red]Error:[/] Native skill import failed: {exc}")
+        if rollback_issues:
+            c.print(
+                "[bold red]Error:[/] Native skill rollback requires inspection: "
+                + "; ".join(rollback_issues)
+            )
         return False
     finally:
         shutil.rmtree(quarantine, ignore_errors=True)
-        if moved_existing and backup.exists() and not destination.exists():
-            os.replace(backup, destination)
 '''
 
 ROUTER = '''    # NemoClaw native local skill import (#10210).

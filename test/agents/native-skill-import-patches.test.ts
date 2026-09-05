@@ -80,6 +80,9 @@ describe("agent-native local skill import patches", () => {
     expect(source).toContain("Cannot reconcile native skill transaction");
     expect(source).toContain('import_prefix = f".{skill_name}.import."');
     expect(source).toContain("os.replace(abandoned_backup, destination)");
+    expect(source).toContain("os.replace(destination, failed_install)");
+    expect(source).toContain("quarantined failed install retained at");
+    expect(source).not.toContain("shutil.rmtree(destination, ignore_errors=True)");
     expect(source).toContain("NEMOCLAW_NATIVE_SKILL_IMPORT=");
     expect(runPython(["-m", "py_compile", target]).status).toBe(0);
   });
@@ -133,6 +136,9 @@ describe("agent-native local skill import patches", () => {
     expect(source).toContain("observed_digest != expected_digest");
     expect(source).toContain("Cannot reconcile native skill transaction");
     expect(source).toContain("os.replace(abandoned_backup, destination)");
+    expect(source).toContain("os.replace(destination, failed_install)");
+    expect(source).toContain("quarantined failed install retained at");
+    expect(source).not.toContain("shutil.rmtree(destination, ignore_errors=True)");
     expect(source).toContain("if not before:");
     expect(source).toContain("NEMOCLAW_NATIVE_SKILL_IMPORT=");
     expect(runPython(["-m", "py_compile", parser, hub]).status).toBe(0);

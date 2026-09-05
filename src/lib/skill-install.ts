@@ -615,7 +615,8 @@ const NATIVE_STAGE_RECOVERY_COMMANDS = [
   'for candidate in "$root"/.nemoclaw-skill-stage "$root"/.nemoclaw-skill-stage.*; do [ -e "$candidate" ] || [ -L "$candidate" ] || continue; [ ! -L "$candidate" ] && [ -d "$candidate" ] || stage_recovery_failed "$candidate"; [ "$(realpath -e -- "$(dirname -- "$candidate")")" = "$root" ] || stage_recovery_failed "$candidate"; [ "$(stat -c "%u:%a" -- "$candidate")" = "$current_uid:700" ] || stage_recovery_failed "$candidate"; unsafe="$(find -P "$candidate" -xdev \\( ! -user "$current_uid" -o \\( ! -type d ! -type f \\) \\) -print -quit)" || stage_recovery_failed "$candidate"; [ -z "$unsafe" ] || stage_recovery_failed "$candidate"; rm -rf --one-file-system -- "$candidate" || stage_recovery_failed "$candidate"; done',
 ] as const;
 
-const NATIVE_SKILL_INSTALL_TIMEOUT_SECONDS = 100;
+const NATIVE_SKILL_INSTALL_TIMEOUT_SECONDS = 90;
+const NATIVE_SKILL_VERIFICATION_TIMEOUT_SECONDS = 5;
 
 interface NativeSkillStagingScriptOptions {
   paths: NativeSkillState;
@@ -674,6 +675,14 @@ function buildBoundedNativeSkillInstallCommand(
   return `if timeout --signal=TERM --kill-after=5s ${NATIVE_SKILL_INSTALL_TIMEOUT_SECONDS}s ${command}; then :; else native_status=$?; ${replay}if [ "$native_status" -eq 124 ] || [ "$native_status" -eq 137 ]; then echo "Native skill installation timed out; inspect native skill list state before retrying." >&2; echo NATIVE_INSTALL_TIMEOUT; exit 6; fi; echo NATIVE_INSTALL_FAILED; exit 5; fi`;
 }
 
+function buildBoundedNativeSkillVerificationCommand(
+  invocation: string,
+  operation: string,
+  outputFile: string,
+): string {
+  return `if timeout --signal=TERM --kill-after=1s ${NATIVE_SKILL_VERIFICATION_TIMEOUT_SECONDS}s ${invocation} > ${outputFile}; then :; else echo "Native skill verification failed during ${operation}; inspect native skill list state before retrying." >&2; echo VERIFY_FAILED; exit 4; fi`;
+}
+
 function buildOpenClawNativeInstallScript(
   paths: NativeSkillState,
   skillName: string,
@@ -722,9 +731,36 @@ function buildOpenClawNativeInstallScript(
     ],
     lifecycleCommands: [
       buildBoundedNativeSkillInstallCommand(installCommand),
-      `${renderNativeSkillCommand(lifecycle.list(["--json"]))} > "$stage/list.json"`,
-      `${renderNativeSkillCommand([lifecycle.binary, "skills", "info", skillName, "--agent", fixedAgentTarget, "--json"])} > "$stage/info.json"`,
-      `${renderNativeSkillCommand([lifecycle.binary, "skills", "check", "--agent", fixedAgentTarget, "--json"])} > "$stage/check.json"`,
+      buildBoundedNativeSkillVerificationCommand(
+        renderNativeSkillCommand(lifecycle.list(["--json"])),
+        "skills list",
+        '"$stage/list.json"',
+      ),
+      buildBoundedNativeSkillVerificationCommand(
+        renderNativeSkillCommand([
+          lifecycle.binary,
+          "skills",
+          "info",
+          skillName,
+          "--agent",
+          fixedAgentTarget,
+          "--json",
+        ]),
+        "skills info",
+        '"$stage/info.json"',
+      ),
+      buildBoundedNativeSkillVerificationCommand(
+        renderNativeSkillCommand([
+          lifecycle.binary,
+          "skills",
+          "check",
+          "--agent",
+          fixedAgentTarget,
+          "--json",
+        ]),
+        "skills check",
+        '"$stage/check.json"',
+      ),
       `target="$(node -e ${shellQuote(verifyNativeJson)} "$stage/list.json" "$stage/info.json" "$stage/check.json" "$skill" "$root")" || { echo VERIFY_FAILED; exit 4; }`,
       'target_real="$(realpath -e -- "$target")" || { echo VERIFY_FAILED; exit 4; }',
       '[ "$target_real" = "$target" ] || { echo VERIFY_FAILED; exit 4; }',

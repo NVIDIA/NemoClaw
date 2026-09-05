@@ -254,17 +254,40 @@ def _import_local(
             )
         )
     except Exception as exc:
+        rollback_issues = []
+        failed_install = transaction_root / skill_name
         if published and destination.exists():
-            shutil.rmtree(destination, ignore_errors=True)
+            try:
+                os.replace(destination, failed_install)
+                published = False
+            except OSError as rollback_exc:
+                rollback_issues.append(
+                    f"active target requires inspection: {destination}: {rollback_exc}"
+                )
         if moved_existing and backup.exists() and not destination.exists():
-            os.replace(backup, destination)
-            moved_existing = False
+            try:
+                os.replace(backup, destination)
+                moved_existing = False
+            except OSError as rollback_exc:
+                rollback_issues.append(
+                    f"prior skill backup requires inspection: {backup}: {rollback_exc}"
+                )
+        if failed_install.exists():
+            try:
+                shutil.rmtree(failed_install)
+            except OSError as rollback_exc:
+                rollback_issues.append(
+                    f"quarantined failed install retained at {failed_install}: {rollback_exc}"
+                )
         console.print(f"[bold red]Error:[/bold red] Native skill import failed: {exc}")
+        if rollback_issues:
+            console.print(
+                "[bold red]Error:[/bold red] Native skill rollback requires inspection: "
+                + "; ".join(rollback_issues)
+            )
         raise SystemExit(1) from exc
     finally:
         shutil.rmtree(transaction_root, ignore_errors=True)
-        if moved_existing and backup.exists() and not destination.exists():
-            os.replace(backup, destination)
 '''
 
 PARSER = '''    # NemoClaw native local skill import (#10210).

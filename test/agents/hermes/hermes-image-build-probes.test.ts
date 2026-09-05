@@ -499,6 +499,15 @@ assert module._session_state_journal_mode(SimpleNamespace(_conn=Connection())) =
     );
   });
 
+  it("proves failed native replacement cleanup restores prior Hermes state", () => {
+    expect(probeSource).toContain("controlled failed-install cleanup refusal");
+    expect(probeSource).toContain("assert not native_skills_cli.do_import_local(");
+    expect(probeSource).toContain("assert len(failed_installs) == 1");
+    expect(probeSource).toContain(
+      'assert (target / "SKILL.md").read_text(encoding="utf-8") == skill_content',
+    );
+  });
+
   it.each(commands)(
     "uses a checked-in probe runner instead of builder-dependent heredocs [case %#] (#7981)",
     (command) => {

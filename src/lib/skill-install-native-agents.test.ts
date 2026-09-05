@@ -202,7 +202,7 @@ esac
         sshExecImpl: (sshContext, command, options) =>
           sshExec(
             sshContext,
-            command.replace("--kill-after=5s 100s", "--kill-after=1s 1s"),
+            command.replace("--kill-after=5s 90s", "--kill-after=1s 1s"),
             options,
           ),
       });

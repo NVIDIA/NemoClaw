@@ -74,6 +74,8 @@ describe("OpenClaw native skill installation", () => {
       const abandonedStage = path.join(sandboxRoot, ".nemoclaw-skill-stage.abandoned");
       let checkState = "eligible";
       let hangInstall = false;
+      let hangVerification = false;
+      let lastStderr = "";
       let mutatePayload = false;
       const lateInstallMarker = path.join(sandboxRoot, "late-install");
       const executionPaths: NativeSkillState = {
@@ -120,6 +122,7 @@ case "$1 $2" in
     printf '{"version":1,"source":"path"}\n' > "$OPENCLAW_TEST_TARGET/.openclaw/source-origin.json"
     ;;
   "skills list")
+    if [ "$OPENCLAW_TEST_HANG_VERIFICATION" = 1 ]; then sleep 10; fi
     printf '{"skills":[{"name":"demo-skill"}]}\n'
     ;;
   "skills info")
@@ -157,6 +160,7 @@ esac
                 ...process.env,
                 OPENCLAW_TEST_CHECK_STATE: checkState,
                 OPENCLAW_TEST_HANG: hangInstall ? "1" : "0",
+                OPENCLAW_TEST_HANG_VERIFICATION: hangVerification ? "1" : "0",
                 OPENCLAW_TEST_LATE_MARKER: lateInstallMarker,
                 OPENCLAW_TEST_LOG: invocationLog,
                 OPENCLAW_TEST_MUTATE: mutatePayload ? "1" : "0",
@@ -167,6 +171,7 @@ esac
               timeout: opts?.timeout,
             },
           );
+          lastStderr = execution.stderr;
           return {
             status: execution.status ?? 1,
             stdout: execution.stdout,
@@ -243,7 +248,7 @@ esac
         installOptions((sshContext, command, options) =>
           sshExec(
             sshContext,
-            command.replace("--kill-after=5s 100s", "--kill-after=1s 1s"),
+            command.replace("--kill-after=5s 90s", "--kill-after=1s 1s"),
             options,
           ),
         ),
@@ -262,6 +267,29 @@ esac
       expect(
         installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOptions(sshExec)),
       ).toMatchObject({ success: true });
+
+      hangVerification = true;
+      expect(
+        installOpenClawSkill(
+          ctx,
+          skill,
+          executionPaths,
+          "demo-skill",
+          installOptions((sshContext, command, options) =>
+            sshExec(
+              sshContext,
+              command.replace("--kill-after=1s 5s", "--kill-after=1s 1s"),
+              options,
+            ),
+          ),
+        ),
+      ).toEqual({ success: false, uploaded: 0, reason: "verification_failed" });
+      expect(lastStderr).toContain("verification failed during skills list");
+      expect(lastStderr).toContain("inspect native skill list state before retrying");
+      expect(
+        fs.readdirSync(sandboxRoot).filter((entry) => entry.startsWith(".nemoclaw-skill-stage.")),
+      ).toEqual([]);
+      hangVerification = false;
 
       nativeTarget = path.join(sandboxRoot, "other", "skills", "demo-skill");
       expect(

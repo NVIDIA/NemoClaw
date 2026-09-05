@@ -661,8 +661,10 @@ def verify_native_skill_import() -> None:
     """Exercise the pinned public import/list/uninstall lifecycle in a private home."""
     import hashlib
     import json
+    import shutil
     import subprocess
     import tempfile
+    from unittest.mock import patch
 
     from tools.skills_hub import HubLockFile, SKILLS_DIR
 
@@ -709,6 +711,47 @@ def verify_native_skill_import() -> None:
             "digest": expected_digest,
         }
         assert HubLockFile().get_installed(name) is not None
+
+        replacement_content = skill_content + "# Replacement rollback probe\n"
+        (source / "SKILL.md").write_text(replacement_content, encoding="utf-8")
+        replacement_file_digest = hashlib.sha256(replacement_content.encode("utf-8")).hexdigest()
+        replacement_digest = hashlib.sha256(
+            f"644 {replacement_file_digest}  SKILL.md\n".encode("utf-8")
+        ).hexdigest()
+        from hermes_cli import skills_hub as native_skills_cli
+        from tools import skills_tool
+
+        real_rmtree = shutil.rmtree
+
+        def refuse_failed_install_cleanup(candidate, *args, **kwargs):
+            if Path(candidate).name.startswith(f"nemoclaw-import-failed.{name}."):
+                raise OSError("controlled failed-install cleanup refusal")
+            return real_rmtree(candidate, *args, **kwargs)
+
+        with (
+            patch.object(
+                skills_tool,
+                "skill_view",
+                side_effect=[
+                    json.dumps({"success": True, "skill_dir": str(target)}),
+                    json.dumps({"success": False}),
+                ],
+            ),
+            patch.object(shutil, "rmtree", side_effect=refuse_failed_install_cleanup),
+        ):
+            assert not native_skills_cli.do_import_local(
+                staging,
+                name,
+                replacement_digest,
+            )
+        assert (target / "SKILL.md").read_text(encoding="utf-8") == skill_content
+        assert HubLockFile().get_installed(name) is not None
+        failed_installs = list(
+            (target.parent / ".hub").glob(f"nemoclaw-import-failed.{name}.*")
+        )
+        assert len(failed_installs) == 1
+        real_rmtree(failed_installs[0])
+        (source / "SKILL.md").write_text(skill_content, encoding="utf-8")
 
         interrupted_backup = target.parent / ".hub" / f"nemoclaw-import-backup.{name}.interrupted"
         target.replace(interrupted_backup)
