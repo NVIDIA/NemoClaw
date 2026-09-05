@@ -71,6 +71,44 @@ describe("finalization dashboard ForwardTcp launch", () => {
     expect(launch).not.toHaveBeenCalled();
   });
 
+  it("preserves the registered ForwardTcp listener during Ready sandbox reuse (#11074)", () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const { helpers, launch } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      isPortBound: (port) => port === 18_790,
+    });
+
+    expect(
+      helpers.ensureFinalizationDashboardForward("reonboard-test", {
+        preserveRegisteredForward: true,
+      }),
+    ).toBe(18_790);
+    expect(launch).not.toHaveBeenCalled();
+    expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
+  });
+
+  it("does not preserve a reused port registered to another sandbox (#11074)", () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const { helpers, launch } = harness({
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: "reonboard-test", dashboardPort: 18_790 },
+          { name: "other-sandbox", dashboardPort: 18_790 },
+        ],
+      }),
+      isPortBound: (port) => port === 18_790,
+    });
+
+    expect(() =>
+      helpers.ensureFinalizationDashboardForward("reonboard-test", {
+        preserveRegisteredForward: true,
+      }),
+    ).toThrow(/cannot be reallocated/u);
+    expect(launch).not.toHaveBeenCalled();
+  });
+
   it("honors an explicit dashboard URL", () => {
     vi.stubEnv("CHAT_UI_URL", "http://127.0.0.1:19001");
     const { helpers, launch } = harness({

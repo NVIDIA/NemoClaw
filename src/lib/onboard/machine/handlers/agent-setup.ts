@@ -28,7 +28,11 @@ export interface AgentSetupStateOptions<Agent> {
       context: unknown,
     ): Promise<void>;
     agentSetupContext(): unknown;
-    ensureAgentDashboardForward(sandboxName: string, agent: Agent | null): Promise<number> | number;
+    ensureAgentDashboardForward(
+      sandboxName: string,
+      agent: Agent | null,
+      options?: { preserveRegisteredForward?: boolean },
+    ): Promise<number> | number;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
     isOpenclawReady(sandboxName: string): boolean;
@@ -101,6 +105,9 @@ export async function handleAgentSetupState<Agent>({
     return { session, stateResult: advanceTo("policies", { metadata: { state: "agent_setup" } }) };
   }
 
+  // A skipped sandbox step is the durable machine receipt for Ready-sandbox
+  // reuse. Every other state keeps the strict occupied-port path.
+  const preserveRegisteredForward = session?.steps.sandbox.status === "skipped";
   const resumeOpenclaw = resume && sandboxName && deps.isOpenclawReady(sandboxName);
   if (resumeOpenclaw) {
     deps.skippedStepMessage("openclaw", sandboxName);
@@ -134,7 +141,9 @@ export async function handleAgentSetupState<Agent>({
       deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
     );
   }
-  const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, null);
+  const dashboardPort = await (preserveRegisteredForward
+    ? deps.ensureAgentDashboardForward(sandboxName, null, { preserveRegisteredForward: true })
+    : deps.ensureAgentDashboardForward(sandboxName, null));
   if (dashboardPort > 0) {
     deps.persistDashboardPort(sandboxName, dashboardPort);
   }

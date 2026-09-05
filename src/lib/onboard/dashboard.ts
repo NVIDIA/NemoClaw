@@ -27,6 +27,7 @@ import {
 } from "./dashboard-forward-control";
 import {
   findAvailableDashboardPort,
+  findDashboardForwardOwner,
   getPersistedDashboardPort,
   getRegistryOccupiedDashboardPorts,
   isPortBoundOnHost,
@@ -140,14 +141,20 @@ export interface OnboardDashboardHelpers {
   ): Promise<number>;
   ensureFinalizationDashboardForward(
     sandboxName: string,
-    revalidateSandboxIdentity?: (operation: string) => void,
+    options?: {
+      preserveRegisteredForward?: boolean;
+      revalidateSandboxIdentity?: (operation: string) => void;
+    },
   ): number;
   ensureFinalizationAgentDashboardForward(
     sandboxName: string,
     agent: { name: string; forwardPort?: number | null; forward_ports?: number[] | null } | null,
-    revalidateSandboxIdentity?: (operation: string) => void,
-    portReservation?: {
-      releaseBeforeForward(agentName: string, port: number): Promise<void> | void;
+    options?: {
+      preserveRegisteredForward?: boolean;
+      revalidateSandboxIdentity?: (operation: string) => void;
+      portReservation?: {
+        releaseBeforeForward(agentName: string, port: number): Promise<void> | void;
+      };
     },
   ): Promise<number> | number;
   ensureAgentFixedForward(
@@ -379,7 +386,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     options: DashboardForwardOptions = {},
   ): number {
     chatUiUrl ||= `http://127.0.0.1:${CONTROL_UI_PORT}`;
-    const { rollbackSandboxOnFailure, allowPortReallocation } =
+    const { rollbackSandboxOnFailure, allowPortReallocation, preserveRegisteredForward } =
       normalizeDashboardForwardOptions(options);
     const { revalidateSandboxIdentity } = options;
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
@@ -394,7 +401,19 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     );
     const isPortBound = deps.isPortBoundOnHost ?? isPortBoundOnHost;
     const persistedPort = getPersistedDashboardPort(sandboxName, listSandboxes);
+    const registryOccupiedPorts = getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes);
     if (persistedPort === preferredPort && isPortBound(preferredPort)) {
+      const listedOwner = findDashboardForwardOwner(existingForwards, String(preferredPort));
+      if (
+        preserveRegisteredForward &&
+        listedOwner === null &&
+        !registryOccupiedPorts.has(String(preferredPort))
+      ) {
+        revalidateSandboxIdentity?.(
+          `preserve registered dashboard forward ${String(preferredPort)} for sandbox '${sandboxName}'`,
+        );
+        return preferredPort;
+      }
       throw new Error(
         `Registered dashboard port ${String(preferredPort)} is already occupied; it cannot be reallocated or adopted.`,
       );
@@ -406,7 +425,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         preferredPort,
         existingForwards,
         isPortBound,
-        getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes),
+        registryOccupiedPorts,
       );
     } catch (err) {
       if (!rollbackSandboxOnFailure) throw err;
@@ -505,20 +524,28 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
    * binds the same port on both sides), so when the persisted port cannot be
    * forwarded this throws instead of reallocating: the resumed gateway only
    * listens on the persisted port, and a forward on any other port serves
-   * nothing. Post-verify builds its probe chain and Browser URL from
-   * `CHAT_UI_URL`, so after the forward starts this writes the bound port to
-   * `CHAT_UI_URL`. (#8970)
+   * nothing. A Ready-sandbox reuse may preserve the already-bound registered
+   * ForwardTcp listener; post-verify remains the authority that accepts the
+   * delivery chain. Every other occupied-port path still throws. Post-verify
+   * builds its probe chain and Browser URL from `CHAT_UI_URL`, so after the
+   * forward is reconciled this writes the bound port to `CHAT_UI_URL`.
+   * (#8970, #11074)
    */
   function ensureFinalizationDashboardForward(
     sandboxName: string,
-    revalidateSandboxIdentity?: (operation: string) => void,
+    options: {
+      preserveRegisteredForward?: boolean;
+      revalidateSandboxIdentity?: (operation: string) => void;
+    } = {},
   ): number {
+    const { preserveRegisteredForward = false, revalidateSandboxIdentity } = options;
     const envUrl = process.env.CHAT_UI_URL;
     const persistedPort = envUrl ? null : getPersistedDashboardPort(sandboxName, listSandboxes);
     const requestedUrl =
       envUrl || (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
     const actualPort = ensureDashboardForward(sandboxName, requestedUrl, {
       allowPortReallocation: false,
+      preserveRegisteredForward,
       ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
     });
     revalidateSandboxIdentity?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
@@ -553,11 +580,19 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   function ensureFinalizationAgentDashboardForward(
     sandboxName: string,
     agent: { name: string; forwardPort?: number | null; forward_ports?: number[] | null } | null,
-    revalidateSandboxIdentity?: (operation: string) => void,
-    portReservation?: {
-      releaseBeforeForward(agentName: string, port: number): Promise<void> | void;
-    },
+    options: {
+      preserveRegisteredForward?: boolean;
+      revalidateSandboxIdentity?: (operation: string) => void;
+      portReservation?: {
+        releaseBeforeForward(agentName: string, port: number): Promise<void> | void;
+      };
+    } = {},
   ): Promise<number> | number {
+    const {
+      portReservation,
+      preserveRegisteredForward = false,
+      revalidateSandboxIdentity,
+    } = options;
     return agent
       ? ensureAgentDashboardForward(sandboxName, agent, {
           revalidateSandboxIdentity,
@@ -565,7 +600,10 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
             ? (port) => portReservation.releaseBeforeForward(agent.name, port)
             : undefined,
         })
-      : ensureFinalizationDashboardForward(sandboxName, revalidateSandboxIdentity);
+      : ensureFinalizationDashboardForward(sandboxName, {
+          revalidateSandboxIdentity,
+          preserveRegisteredForward,
+        });
   }
 
   function ensureAgentFixedForward(

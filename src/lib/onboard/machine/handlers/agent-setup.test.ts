@@ -75,6 +75,7 @@ describe("handleAgentSetupState", () => {
     const { deps, calls } = createDeps();
     const agent = { name: "hermes", displayName: "Hermes" };
     const session = createSession();
+    session.steps.sandbox.status = "skipped";
 
     const result = await handleAgentSetupState({
       ...baseOptions(deps, agent),
@@ -167,6 +168,18 @@ describe("handleAgentSetupState", () => {
       provider: "provider",
       model: "model",
       steps: { openclaw: { status: "complete" }, agent_setup: { status: "skipped" } },
+    });
+  });
+
+  it("preserves the registered dashboard forward after Ready sandbox reuse (#11074)", async () => {
+    const { deps, calls } = createDeps();
+    const session = createSession();
+    session.steps.sandbox.status = "skipped";
+
+    await handleAgentSetupState({ ...baseOptions(deps), session });
+
+    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", null, {
+      preserveRegisteredForward: true,
     });
   });
 

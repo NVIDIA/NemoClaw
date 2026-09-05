@@ -3245,13 +3245,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             recordStepFailed,
             skippedStepMessage,
           }),
-          ensureAgentDashboardForward: (name, selectedAgent) =>
-            ensureFinalizationAgentDashboardForward(
-              name,
-              selectedAgent,
-              undefined,
-              hermesApiPortReservationScope,
-            ),
+          ensureAgentDashboardForward: (name, selectedAgent, options) =>
+            ensureFinalizationAgentDashboardForward(name, selectedAgent, {
+              portReservation: hermesApiPortReservationScope,
+              preserveRegisteredForward: options?.preserveRegisteredForward === true,
+            }),
           persistDashboardPort: (name, port) =>
             registry.updateSandbox(name, { dashboardPort: port }),
           recordStepSkipped,
