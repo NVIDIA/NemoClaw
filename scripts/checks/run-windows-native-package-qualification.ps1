@@ -822,6 +822,7 @@ try {
         $nativeTurnReceipt.artifactStagedAtDriveRoot -ne $true) {
         Fail-PackageQualification 'Installed NemoClaw native turn receipt is incomplete.'
     }
+    Write-Host "AGENT> $($nativeTurnReceipt.exactReply)"
     Write-Host '[PASS] Installed nemoclaw command created an MXC sandbox and completed an exact CHAT_OK turn'
     $webUiArtifacts = Join-Path $artifactRoot 'web-ui'
     Write-Host 'PS> Launch installed NemoClaw OpenClaw web UI and complete three agent turns'
