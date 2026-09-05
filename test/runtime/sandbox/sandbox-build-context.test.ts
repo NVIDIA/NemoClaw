@@ -518,16 +518,21 @@ describe("sandbox build context staging", () => {
     }
   }
 
-  function expectStagedScriptModes(buildCtx: string) {
+  function expectStagedScriptModes(buildCtx: string, sourceRoot: string) {
     const stagedScripts = path.join(buildCtx, "scripts");
     const stagedLib = path.join(stagedScripts, "lib");
     const stagedHelper = path.join(stagedLib, "reviewed-npm-archive.mts");
+    const stagedIdentity = path.join(stagedLib, "reviewed-npm-identity.mts");
     const stagedPackageHelper = path.join(stagedLib, "bundled-npm-package.mts");
     const stagedSeed = path.join(stagedLib, "seed-reviewed-npm-cache.mts");
 
     expect((fs.statSync(stagedScripts).mode & 0o777).toString(8)).toBe("755");
     expect((fs.statSync(stagedLib).mode & 0o777).toString(8)).toBe("755");
     expect((fs.statSync(stagedHelper).mode & 0o777).toString(8)).toBe("755");
+    expect(fs.readFileSync(stagedIdentity, "utf8")).toBe(
+      fs.readFileSync(path.join(sourceRoot, "scripts", "lib", "reviewed-npm-identity.mts"), "utf8"),
+    );
+    expect((fs.statSync(stagedIdentity).mode & 0o777).toString(8)).toBe("755");
     expect((fs.statSync(stagedPackageHelper).mode & 0o777).toString(8)).toBe("755");
     expect((fs.statSync(stagedSeed).mode & 0o777).toString(8)).toBe("755");
   }
@@ -691,7 +696,7 @@ describe("sandbox build context staging", () => {
       const previousUmask = process.umask(0o077);
       try {
         const { buildCtx } = stageOptimizedSandboxBuildContext(sourceRoot, tmpDir);
-        expectStagedScriptModes(buildCtx);
+        expectStagedScriptModes(buildCtx, sourceRoot);
       } finally {
         process.umask(previousUmask);
       }
@@ -712,7 +717,7 @@ describe("sandbox build context staging", () => {
       const previousUmask = process.umask(0o077);
       try {
         const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
-        expectStagedScriptModes(buildCtx);
+        expectStagedScriptModes(buildCtx, sourceRoot);
       } finally {
         process.umask(previousUmask);
       }
