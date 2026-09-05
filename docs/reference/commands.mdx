@@ -2380,10 +2380,14 @@ The primary `main` agent must use the default `/sandbox/.openclaw/workspace` dir
 
 Hermes plugins are different from skills. For a skill, NemoClaw passes the private staged snapshot to the pinned `hermes skills import-local` command. Hermes parses the staged skill, runs its native skill scanner, rejects a project or external same-name skill that would remain active, publishes or replaces profile state with rollback, records the install in its own Skills Hub lock, clears its loader cache, and verifies the active result before returning success. NemoClaw then verifies the published content digest. It does not keep a Hermes skill list or write `/sandbox/.hermes/skills` directly. Start a new Hermes chat session after an install or update; a gateway restart is not required.
 
+A Hermes sandbox image created before the native import capability was added refuses installation with rebuild-and-retry guidance. Rebuilding preserves Hermes' agent-owned skill state; NemoClaw does not fall back to direct publication.
+
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
 For Deep Agents Code, NemoClaw passes the private staged snapshot to the pinned `dcode skills import` command for agent `agent`. DCode validates the staged skill, resolves its user skill directory, refuses a project same-name skill that would remain active, and publishes or replaces its own user state with backup and rollback. It then re-runs DCode skill discovery and returns the resolved active path; NemoClaw verifies the content digest at that returned path. NemoClaw does not keep a DCode skill list or write `/sandbox/.deepagents/agent/skills` directly. The managed `dcode` launchers discover newly imported skills on the next session without accepting executable hook configuration. Installation does not enable project hooks or unmanaged MCP files.
+
+A Deep Agents Code sandbox image created before the native import capability was added refuses installation with rebuild-and-retry guidance. Rebuilding preserves DCode's agent-owned skill state; NemoClaw does not fall back to direct publication.
 
 </AgentOnly>
 

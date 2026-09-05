@@ -528,6 +528,41 @@ describe("sandbox skill action orchestration", () => {
     );
   });
 
+  it.each([
+    ["Hermes", genericAgent, genericPaths],
+    ["Deep Agents Code", deepAgent, sharedPaths],
+  ] as const)(
+    "directs a legacy %s image to rebuild without a host-side fallback",
+    async (displayName, selectedAgent, selectedPaths) => {
+      const skillDir = makeSkillDir();
+      getSessionAgent.mockReturnValue(selectedAgent);
+      skillInstall.resolveNativeSkillState.mockReturnValue(selectedPaths);
+      skillInstall.installNativeAgentSkill.mockReturnValue({
+        success: false,
+        uploaded: 0,
+        reason: "native_capability_missing",
+      });
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      try {
+        await installSandboxSkill("alpha", { command: "install", path: skillDir });
+      } finally {
+        fs.rmSync(skillDir, { recursive: true, force: true });
+      }
+
+      const output = error.mock.calls.map((args) => args.join(" ")).join("\n");
+      expect(process.exitCode).toBe(1);
+      expect(output).toContain(
+        `The pinned ${displayName} runtime does not expose the reviewed native local skill import capability.`,
+      );
+      expect(output).toContain(
+        `Rebuild with 'nemoclaw alpha rebuild' and retry; rebuild preserves ${displayName}'s agent-owned skill state.`,
+      );
+      expect(skillInstall.installNativeAgentSkill).toHaveBeenCalledOnce();
+      expect(skillInstall.installOpenClawSkill).not.toHaveBeenCalled();
+    },
+  );
+
   it("reports the supported OpenClaw primary workspace boundary", async () => {
     const skillDir = makeSkillDir();
     getSessionAgent.mockReturnValue(agent);

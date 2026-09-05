@@ -573,6 +573,10 @@ export async function installSandboxSkill(
         console.error(
           `  Rebuild with '${CLI_NAME} ${sandboxName} rebuild' and retry; rebuild preserves both workspace and legacy global skill directories.`,
         );
+      } else {
+        console.error(
+          `  Rebuild with '${CLI_NAME} ${sandboxName} rebuild' and retry; rebuild preserves ${displayName}'s agent-owned skill state.`,
+        );
       }
     } else if (native.reason === "native_install_failed") {
       console.error(`  The ${displayName} native skill import refused or failed the staged skill.`);
