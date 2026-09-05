@@ -74,6 +74,7 @@ To switch only the model for an existing adapter route, run `$$nemoclaw inferenc
 If the registry cannot be read for a compatible custom route, the command exits non-zero.
 Known corruption and permission errors retain their safe recovery steps and affected path.
 Unclassified errors use a generic message without exposing registry contents or error details.
+That message directs a direct lookup to `$$nemoclaw status` and a sandbox-first lookup to `$$nemoclaw <name> status`.
 
 The command exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no configured inference route.
 Run `$$nemoclaw onboard` to configure one.

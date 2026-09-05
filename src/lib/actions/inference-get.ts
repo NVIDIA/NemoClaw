@@ -60,13 +60,23 @@ const COMPATIBLE_CUSTOM_PROVIDERS = new Set([
   "compatible-anthropic-endpoint",
 ]);
 
-function formatRegistryReadFailure(error: unknown): string {
+function formatStatusRecovery(cliName: string, sandboxName: string | undefined): string {
+  return sandboxName
+    ? `Run '${cliName} ${sandboxName} status' to diagnose the sandbox's recorded gateway.`
+    : `Run '${cliName} status' to diagnose the selected gateway.`;
+}
+
+function formatRegistryReadFailure(
+  error: unknown,
+  cliName: string,
+  sandboxName: string | undefined,
+): string {
   const summary =
     "NemoClaw could not read sandbox registry metadata for the compatible inference endpoint.";
   if (error instanceof ConfigCorruptError || error instanceof ConfigPermissionError) {
     return `${summary}\n\n${error.message}`;
   }
-  return summary;
+  return `${summary} ${formatStatusRecovery(cliName, sandboxName)}`;
 }
 
 /** Select one safe endpoint from published rows on the live gateway. */
@@ -75,6 +85,7 @@ function getPersistedEndpointUrl(
   model: string | null,
   gatewayName: string,
   sandboxName: string | undefined,
+  cliName: string,
   deps: InferenceGetDeps,
 ): string | null {
   const liveModel = model?.trim();
@@ -86,7 +97,7 @@ function getPersistedEndpointUrl(
   try {
     sandboxes = deps.listSandboxes();
   } catch (error) {
-    throw new InferenceGetError(formatRegistryReadFailure(error));
+    throw new InferenceGetError(formatRegistryReadFailure(error, cliName, sandboxName));
   }
 
   const matchingEndpoints: { canonical: string; display: string }[] = [];
@@ -176,6 +187,7 @@ export async function runInferenceGet(
     result.inference.model,
     gatewayName,
     options.sandboxName,
+    options.cliName ?? "nemoclaw",
     deps,
   );
   const payload: InferenceGetResult = {
@@ -205,9 +217,7 @@ function formatLookupFailure(
   cliName: string,
   sandboxName: string | undefined,
 ): string {
-  const recovery = sandboxName
-    ? `Run '${cliName} ${sandboxName} status' to diagnose the sandbox's recorded gateway.`
-    : `Run '${cliName} status' to diagnose the selected gateway.`;
+  const recovery = formatStatusRecovery(cliName, sandboxName);
   if (failure === "timeout") {
     return `OpenShell inference route lookup for gateway '${gatewayName}' timed out. ${recovery}`;
   }

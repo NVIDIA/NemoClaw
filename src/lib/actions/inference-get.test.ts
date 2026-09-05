@@ -122,8 +122,16 @@ describe("runInferenceGet", () => {
   });
 
   it.each([
-    { label: "direct lookup with a stale model", sandboxName: undefined, persistedModel: "stale/model" },
-    { label: "sandbox lookup with a stale model", sandboxName: "custom", persistedModel: "stale/model" },
+    {
+      label: "direct lookup with a stale model",
+      sandboxName: undefined,
+      persistedModel: "stale/model",
+    },
+    {
+      label: "sandbox lookup with a stale model",
+      sandboxName: "custom",
+      persistedModel: "stale/model",
+    },
     { label: "direct lookup with missing model metadata", sandboxName: undefined },
   ])("omits a persisted endpoint for $label (#10784)", async ({ sandboxName, persistedModel }) => {
     const deps = createDeps(
@@ -457,23 +465,41 @@ describe("runInferenceGet", () => {
     });
   });
 
-  it("fails closed without exposing registry-read details for a compatible route", async () => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
-    deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
-    deps.listSandboxes.mockImplementation(() => {
-      throw new Error("secret registry path and contents");
-    });
+  it.each([
+    {
+      label: "direct",
+      options: { cliName: "nemoclaw", json: true },
+      recovery: "Run 'nemoclaw status' to diagnose the selected gateway.",
+    },
+    {
+      label: "sandbox-first",
+      options: { cliName: "nemoclaw", json: true, sandboxName: "custom" },
+      recovery: "Run 'nemoclaw custom status' to diagnose the sandbox's recorded gateway.",
+    },
+  ])(
+    "fails closed without exposing registry-read details for a compatible route ($label)",
+    async ({ options, recovery }) => {
+      const deps = createDeps(
+        "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+      );
+      deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
+      deps.listSandboxes.mockImplementation(() => {
+        throw new Error("secret registry path and contents");
+      });
 
-    await expect(
-      runInferenceGet({ cliName: "nemoclaw", json: true, sandboxName: "custom" }, deps),
-    ).rejects.toMatchObject({
-      message:
-        "NemoClaw could not read sandbox registry metadata for the compatible inference endpoint.",
-    });
-    expect(deps.log).not.toHaveBeenCalled();
-  });
+      const failure = await runInferenceGet(options, deps).catch((error: unknown) => error);
+      expect(failure).toMatchObject({
+        message: expect.stringContaining(
+          "NemoClaw could not read sandbox registry metadata for the compatible inference endpoint.",
+        ),
+      });
+      expect(failure).toMatchObject({ message: expect.stringContaining(recovery) });
+      expect(failure).toMatchObject({
+        message: expect.not.stringContaining("secret registry path and contents"),
+      });
+      expect(deps.log).not.toHaveBeenCalled();
+    },
+  );
 
   it("preserves safe recovery guidance for a corrupt sandbox registry", async () => {
     const deps = createDeps(
@@ -483,9 +509,7 @@ describe("runInferenceGet", () => {
       throw new ConfigCorruptError("/safe/state/sandboxes.json");
     });
 
-    const failure = await runInferenceGet({ json: true }, deps).catch(
-      (error: unknown) => error,
-    );
+    const failure = await runInferenceGet({ json: true }, deps).catch((error: unknown) => error);
     expect(failure).toMatchObject({
       message: expect.stringContaining(
         "Configuration file is present but is not valid JSON: /safe/state/sandboxes.json",
