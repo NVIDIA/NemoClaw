@@ -56,6 +56,11 @@ function recordRoute(
       provider: route.provider,
       model: route.model ?? "custom/model",
       endpointUrl: route.endpointUrl,
+      preferredInferenceApi:
+        route.provider === "compatible-anthropic-endpoint"
+          ? "anthropic-messages"
+          : "openai-completions",
+      credentialEnv: "CUSTOM_API_KEY",
     },
   ]);
 }
@@ -388,6 +393,8 @@ describe("runInferenceGet", () => {
           provider: "compatible-endpoint",
           model: "custom/model",
           endpointUrl,
+          preferredInferenceApi: "openai-completions",
+          credentialEnv: "CUSTOM_API_KEY",
         })),
       );
 
@@ -419,6 +426,8 @@ describe("runInferenceGet", () => {
           provider: "compatible-endpoint",
           model: "custom/model",
           endpointUrl,
+          preferredInferenceApi: "openai-completions",
+          credentialEnv: "CUSTOM_API_KEY",
         })),
       );
 
@@ -445,12 +454,16 @@ describe("runInferenceGet", () => {
           provider: "compatible-endpoint",
           model: "custom/model",
           endpointUrl: "https://selected.example.test/v1",
+          preferredInferenceApi: "openai-completions",
+          credentialEnv: "CUSTOM_API_KEY",
         },
         {
           name: "peer",
           provider: "compatible-endpoint",
           model: "custom/model",
           endpointUrl: "https://peer.example.test/v1",
+          preferredInferenceApi: "openai-completions",
+          credentialEnv: "CUSTOM_API_KEY",
         },
       ]);
 
@@ -465,6 +478,42 @@ describe("runInferenceGet", () => {
     },
   );
 
+  it.each([
+    {
+      label: "API-family",
+      peer: { preferredInferenceApi: "openai-responses", credentialEnv: "CUSTOM_API_KEY" },
+    },
+    {
+      label: "credential-identity",
+      peer: { preferredInferenceApi: "openai-completions", credentialEnv: "OTHER_API_KEY" },
+    },
+  ])("omits an endpoint for a same-gateway $label conflict", async ({ peer }) => {
+    const deps = createDeps(
+      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+    );
+    deps.listSandboxes.mockReturnValue([
+      {
+        name: "custom",
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointUrl: "https://inference.example.test/v1",
+        preferredInferenceApi: "openai-completions",
+        credentialEnv: "CUSTOM_API_KEY",
+      },
+      {
+        name: "peer",
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointUrl: "https://inference.example.test/v1",
+        ...peer,
+      },
+    ]);
+
+    await expect(runInferenceGet({ json: true }, deps)).resolves.toEqual(
+      expectedEndpointOmission("conflicting", "custom/model", ["custom", "peer"]),
+    );
+  });
+
   function recordGatewayRoutes(deps: ReturnType<typeof createDeps>): void {
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
     deps.listSandboxes.mockReturnValue([
@@ -473,6 +522,8 @@ describe("runInferenceGet", () => {
         provider: "compatible-endpoint",
         model: "custom/model",
         endpointUrl: "https://selected.example.test/v1",
+        preferredInferenceApi: "openai-completions",
+        credentialEnv: "CUSTOM_API_KEY",
         gatewayName: "nemoclaw-19090",
         gatewayPort: 19090,
       },
@@ -481,6 +532,8 @@ describe("runInferenceGet", () => {
         provider: "compatible-endpoint",
         model: "custom/model",
         endpointUrl: "https://other.example.test/v1",
+        preferredInferenceApi: "openai-completions",
+        credentialEnv: "CUSTOM_API_KEY",
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
       },
@@ -494,12 +547,16 @@ describe("runInferenceGet", () => {
         provider: "compatible-endpoint",
         model: "custom/model",
         endpointUrl: "https://inference.example.test/v1",
+        preferredInferenceApi: "openai-completions",
+        credentialEnv: "CUSTOM_API_KEY",
       },
       {
         name: "custom-b",
         provider: "compatible-endpoint",
         model: "custom/model",
         endpointUrl: "https://inference.example.test/v1/",
+        preferredInferenceApi: "openai-completions",
+        credentialEnv: "CUSTOM_API_KEY",
       },
     ]);
   }
@@ -597,12 +654,16 @@ describe("runInferenceGet", () => {
         provider: "compatible-endpoint",
         model: "custom/model",
         endpointUrl: "https://published.example.test/v1",
+        preferredInferenceApi: "openai-completions",
+        credentialEnv: "CUSTOM_API_KEY",
       },
       {
         name: "pending-create",
         provider: "compatible-endpoint",
         model: "custom/model",
         endpointUrl: "https://unpublished.example.test/v1",
+        preferredInferenceApi: "openai-completions",
+        credentialEnv: "CUSTOM_API_KEY",
         pendingRouteReservation: true,
       },
     ]);

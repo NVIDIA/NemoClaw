@@ -5,7 +5,11 @@ import { captureOpenshell } from "../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import { sanitizeRouteValueForDisplay } from "../inference/config";
-import { canonicalGatewayRouteEndpoint } from "../inference/gateway-route-compatibility";
+import {
+  canonicalGatewayRouteEndpoint,
+  gatewayRouteIdentityConflictReasons,
+  type GatewayInferenceRoute,
+} from "../inference/gateway-route-compatibility";
 import { parseHttpsPinRouteId } from "../inference/https-pin-runtime";
 import { getLiveGatewayInference } from "../inference/live";
 import { valueLooksLikeSecret } from "../security/credential-filter";
@@ -191,8 +195,13 @@ function getPersistedEndpoint(
     return endpointOmission("unavailable");
   }
 
-  const matchingEndpoints: { canonical: string; display: string; sandboxName: string }[] = [];
+  const matchingEndpoints: {
+    display: string;
+    route: GatewayInferenceRoute;
+    sandboxName: string;
+  }[] = [];
   const invalidSandboxNames = new Set<string>();
+  const conflictingSandboxNames = new Set<string>();
   let invalidMetadata = false;
   let withheldMetadata = false;
   let adapterMetadata = false;
@@ -246,7 +255,22 @@ function getPersistedEndpoint(
       invalidSandboxNames.add(sandbox.name);
       continue;
     }
-    matchingEndpoints.push({ canonical, display, sandboxName: sandbox.name });
+    const selfConflicts = gatewayRouteIdentityConflictReasons(sandbox, sandbox);
+    if (selfConflicts.length > 0) {
+      invalidMetadata = true;
+      invalidSandboxNames.add(sandbox.name);
+      continue;
+    }
+    const reference = matchingEndpoints[0];
+    if (
+      reference &&
+      gatewayRouteIdentityConflictReasons(reference.route, sandbox).length > 0
+    ) {
+      conflictingSandboxNames.add(reference.sandboxName);
+      conflictingSandboxNames.add(sandbox.name);
+      continue;
+    }
+    matchingEndpoints.push({ display, route: sandbox, sandboxName: sandbox.name });
   }
   if (!targetRowParticipates && sandboxName) {
     invalidMetadata = true;
@@ -255,14 +279,11 @@ function getPersistedEndpoint(
   if (withheldMetadata) return endpointOmission("withheld");
   if (invalidMetadata) return endpointOmission("invalid", invalidSandboxNames);
   if (adapterMetadata) return endpointOmission("adapter-managed");
+  if (conflictingSandboxNames.size > 0) {
+    return endpointOmission("conflicting", conflictingSandboxNames);
+  }
   if (matchingEndpoints.length === 0) return endpointOmission("unavailable");
-  const selected = matchingEndpoints[0];
-  return matchingEndpoints.some((candidate) => candidate.canonical !== selected.canonical)
-    ? endpointOmission(
-        "conflicting",
-        matchingEndpoints.map((candidate) => candidate.sandboxName),
-      )
-    : { endpointUrl: selected.display };
+  return { endpointUrl: matchingEndpoints[0].display };
 }
 
 /** Read the live route and add safe persisted endpoint evidence when applicable. */

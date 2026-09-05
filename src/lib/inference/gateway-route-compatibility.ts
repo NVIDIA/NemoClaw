@@ -135,6 +135,43 @@ function providerCredentialConflict(
 }
 
 /**
+ * Compare the complete shared-gateway route identity used by both mutation
+ * compatibility and read-only endpoint reporting.
+ */
+export function gatewayRouteIdentityConflictReasons(
+  requestedRoute: GatewayInferenceRoute,
+  recordedRoute: GatewayInferenceRoute,
+): GatewayRouteConflictReason[] {
+  const requested = configuredRoute(requestedRoute);
+  const recorded = configuredRoute(recordedRoute);
+  if (!requested || !recorded) return ["incomplete-route"];
+
+  if (
+    CUSTOM_ROUTE_PROVIDERS.has(recorded.provider) &&
+    customRouteConflict(recorded.provider, recordedRoute, recordedRoute) ===
+      "incomplete-custom-route"
+  ) {
+    return ["incomplete-custom-route"];
+  }
+
+  const conflicts: GatewayRouteConflictReason[] = [];
+  if (recorded.provider === requested.provider) {
+    if (CUSTOM_ROUTE_PROVIDERS.has(requested.provider)) {
+      const reason = customRouteConflict(requested.provider, requestedRoute, recordedRoute);
+      if (reason) conflicts.push(reason);
+    }
+    if (providerCredentialConflict(requestedRoute, recordedRoute)) {
+      conflicts.push("provider-credential");
+    }
+    if (conflicts.length > 0) return conflicts;
+  }
+
+  return recorded.provider !== requested.provider || recorded.model !== requested.model
+    ? ["provider-model"]
+    : [];
+}
+
+/**
  * Constrain read-only route discovery from durable same-gateway registry peers.
  * Missing requested model/API fields are allowed only when the gateway has no
  * configured peer, or when every peer supplies one identical value that
@@ -295,52 +332,14 @@ export function checkGatewayRouteCompatibility(
       continue;
     }
 
-    if (
-      CUSTOM_ROUTE_PROVIDERS.has(recorded.provider) &&
-      (!canonicalGatewayRouteEndpoint(recorded.provider, sandbox.endpointUrl) ||
-        !normalizedInferenceApi(sandbox.preferredInferenceApi))
-    ) {
-      conflicts.push({
-        sandboxName: sandbox.name,
-        reason: "incomplete-custom-route",
-        scope: "registered",
-        recordedRoute: recorded,
-      });
-      continue;
-    }
-
     // A provider/model-only mutation cannot safely replace provider-global
     // endpoint, API-family, or credential identity. Compare that fingerprint
     // first so a simultaneous model difference cannot hide a provider mutation.
-    if (recorded.provider === requested.provider) {
-      let providerIdentityConflict = false;
-      if (CUSTOM_ROUTE_PROVIDERS.has(requested.provider)) {
-        const reason = customRouteConflict(requested.provider, request.route, sandbox);
-        if (reason) {
-          conflicts.push({
-            sandboxName: sandbox.name,
-            reason,
-            scope: "registered",
-            recordedRoute: recorded,
-          });
-          providerIdentityConflict = true;
-        }
-      }
-      if (providerCredentialConflict(request.route, sandbox)) {
-        conflicts.push({
-          sandboxName: sandbox.name,
-          reason: "provider-credential",
-          scope: "registered",
-          recordedRoute: recorded,
-        });
-        providerIdentityConflict = true;
-      }
-      if (providerIdentityConflict) continue;
-    }
-    if (recorded.provider !== requested.provider || recorded.model !== requested.model) {
+    const identityConflicts = gatewayRouteIdentityConflictReasons(request.route, sandbox);
+    for (const reason of identityConflicts) {
       conflicts.push({
         sandboxName: sandbox.name,
-        reason: "provider-model",
+        reason,
         scope: "registered",
         recordedRoute: recorded,
       });

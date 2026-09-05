@@ -46,7 +46,8 @@ Expected output:
 }
 ```
 
-For `compatible-endpoint` and `compatible-anthropic-endpoint`, the text output adds `Endpoint` when every matching published registry row records the live provider and model plus the same canonical, credential-free, reusable HTTP(S) URL.
+For `compatible-endpoint` and `compatible-anthropic-endpoint`, the text output adds `Endpoint` only when every matching published registry row records the live provider and model.
+Those rows must also agree on one API family, credential identity, and canonical, credential-free, reusable HTTP(S) URL.
 The URL must use the documented root or `/v1` API-base path; NemoClaw omits other paths because an opaque segment can carry a credential.
 The JSON output adds `endpointUrl` under the same condition.
 For example:
@@ -72,7 +73,7 @@ NemoClaw omits the endpoint when participating registry metadata is absent, conf
 It also omits an internal HTTPS-pin adapter route because the upstream endpoint is intentionally not retained and the adapter URL cannot be reused as an upstream endpoint.
 When a compatible endpoint is omitted, text output reports `Endpoint: unavailable (<state>)` followed by a credential-free `Action`.
 JSON output adds `endpointStatus` and `endpointRecovery` instead of `endpointUrl`.
-The state is `unavailable` when durable registry metadata cannot be found or an unclassified registry read fails, `registry-corrupt` when the sandbox registry is not valid JSON, `registry-unreadable` when NemoClaw cannot read the registry because of its ownership or permissions, `invalid` when recorded metadata or URL validation cannot prove the live route, `conflicting` when eligible same-gateway rows disagree, `withheld` when a syntactically valid URL has an opaque path or recognized credential material that NemoClaw does not display, and `adapter-managed` for an internal HTTPS-pin adapter route.
+The state is `unavailable` when durable registry metadata cannot be found or an unclassified registry read fails, `registry-corrupt` when the sandbox registry is not valid JSON, `registry-unreadable` when NemoClaw cannot read the registry because of its ownership or permissions, `invalid` when recorded metadata or URL validation cannot prove the live route, `conflicting` when eligible same-gateway rows disagree on endpoint, API family, or credential identity, `withheld` when a syntactically valid URL has an opaque path or recognized credential material that NemoClaw does not display, and `adapter-managed` for an internal HTTPS-pin adapter route.
 For `invalid` and `conflicting`, JSON also returns up to eight output-safe names in `affectedSandboxes`; text output prints the same names after `Affected`. When more output-safe names exist, JSON sets `affectedSandboxesTruncated` to `true` and text output says that additional names are not shown.
 The recovery action tells you to restore registry access, restore a known-good registry backup or obtain recovery support, repair state-directory ownership or permissions, repair the named registrations and rerun the command for another affected batch, align conflicting routes, use a credential-free root or `/v1` API base, or omit endpoint options for an adapter-managed same-provider model change.
 These endpoint-omission fields never include a stored URL, registry path, or underlying registry error.
