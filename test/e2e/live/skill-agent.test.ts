@@ -370,7 +370,7 @@ test(
       assertions: {
         runtimeProviderAvailable: true,
         onboardCompleted: onboard.exitCode === 0,
-        skillInjected: addSkill.exitCode === 0,
+        skillInstalledNatively: addSkill.exitCode === 0,
         agentReturnedVerificationToken: agentOk,
       },
     });

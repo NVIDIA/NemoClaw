@@ -577,11 +577,13 @@ export interface FreshSharedSkillInstallResult {
     | "remote_state_unknown"
     | "snapshot_failed"
     | "snapshot_limit_exceeded"
+    | "staging_collision"
     | "update_unsupported"
     | "verification_failed";
 }
 
 const OPENCLAW_PROVENANCE_MAX_BYTES = 4096;
+const OPENCLAW_STAGE_NONCE_RE = /^[a-f0-9]{32}$/u;
 
 interface OpenClawSkillProvenance {
   readonly schemaVersion: 1;
@@ -592,6 +594,7 @@ interface OpenClawSkillProvenance {
   readonly phase: "installed" | "pending";
   readonly contentDigest: string;
   readonly previousDigest: string | null;
+  readonly stageNonce: string | null;
 }
 
 /** Resolve the host-protected ownership receipt for one exact OpenClaw sandbox identity. */
@@ -661,7 +664,10 @@ export function removeOpenClawSkillProvenanceForSandboxIdentity(
 /** Validate an ownership receipt against its exact host and sandbox identity. */
 function isOpenClawSkillProvenance(
   value: unknown,
-  expected: Omit<OpenClawSkillProvenance, "contentDigest" | "phase" | "previousDigest">,
+  expected: Omit<
+    OpenClawSkillProvenance,
+    "contentDigest" | "phase" | "previousDigest" | "stageNonce"
+  >,
 ): value is OpenClawSkillProvenance {
   if (!isObjectRecord(value)) return false;
   return (
@@ -675,14 +681,21 @@ function isOpenClawSkillProvenance(
     SHA256_RE.test(value.contentDigest) &&
     (value.previousDigest === null ||
       (typeof value.previousDigest === "string" && SHA256_RE.test(value.previousDigest))) &&
-    (value.phase !== "installed" || value.previousDigest === null)
+    (value.phase !== "installed" || value.previousDigest === null) &&
+    ((value.phase === "pending" &&
+      typeof value.stageNonce === "string" &&
+      OPENCLAW_STAGE_NONCE_RE.test(value.stageNonce)) ||
+      (value.phase === "installed" && value.stageNonce === null))
   );
 }
 
 /** Read a bounded private ownership receipt without following its final path. */
 function readOpenClawSkillProvenance(
   receiptPath: string,
-  expected: Omit<OpenClawSkillProvenance, "contentDigest" | "phase" | "previousDigest">,
+  expected: Omit<
+    OpenClawSkillProvenance,
+    "contentDigest" | "phase" | "previousDigest" | "stageNonce"
+  >,
 ): OpenClawSkillProvenance | null {
   ensureConfigDir(path.dirname(receiptPath));
   if (typeof fs.constants.O_NOFOLLOW !== "number") {
@@ -835,10 +848,14 @@ function buildOpenClawNativeInstallScript(
   skillName: string,
   expectedDigest: string,
   previousDigest: string | null,
+  stageNonce: string,
   allowReconciliation: boolean,
 ): string {
   if (!paths.isOpenClaw) {
     throw new Error("OpenClaw native install requires a workspace skill destination");
+  }
+  if (!OPENCLAW_STAGE_NONCE_RE.test(stageNonce)) {
+    throw new Error("OpenClaw native install staging identity is invalid");
   }
   const verifyNativeJson = [
     'const fs=require("node:fs");',
@@ -861,13 +878,16 @@ function buildOpenClawNativeInstallScript(
     `skill=${shellQuote(skillName)}`,
     `expected=${shellQuote(expectedDigest)}`,
     `previous=${shellQuote(previousDigest ?? "")}`,
+    `stage_nonce=${shellQuote(stageNonce)}`,
     `reconcile=${allowReconciliation ? "1" : "0"}`,
     'exists() { [ -e "$1" ] || [ -L "$1" ]; }',
     'safe_tree() { [ -d "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -mindepth 1 ! -type d ! -type f -print -quit)" ]; }',
     'digest_tree() { tree="$1"; manifest="$2"; find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort | grep -Fxv ".openclaw/source-origin.json" > "$manifest.files"; : > "$manifest"; while IFS= read -r rel; do if [ -n "$(find "$tree/$rel" -type f -perm /111 -print -quit)" ]; then mode=755; else mode=644; fi; hash="$(sha256sum "$tree/$rel" | cut -d " " -f 1)"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$manifest"; done < "$manifest.files"; sha256sum "$manifest" | cut -d " " -f 1; }',
     '[ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]',
     'if exists "$legacy"; then echo LEGACY_COLLISION; exit 5; fi',
-    'stage="$(mktemp -d "$root/.nemoclaw-skill-stage.XXXXXX")"',
+    'stage="$root/.nemoclaw-skill-stage.$stage_nonce"',
+    'if exists "$stage"; then [ "$reconcile" = 1 ] && safe_tree "$stage" || { echo STAGE_COLLISION; exit 7; }; rm -rf -- "$stage"; fi',
+    'mkdir -- "$stage"',
     'chmod 700 "$stage"',
     'cleanup() { rm -rf -- "$stage"; }',
     "trap cleanup EXIT HUP INT TERM",
@@ -938,6 +958,7 @@ export function installOpenClawSkill(
   };
   let receiptPath: string;
   let priorReceipt: OpenClawSkillProvenance | null;
+  let stageNonce: string;
   try {
     receiptPath = resolveOpenClawSkillProvenancePath(
       sandboxIdentityFingerprint,
@@ -951,6 +972,10 @@ export function installOpenClawSkill(
     ) {
       return { success: false, uploaded: 0, reason: "provenance_failed" };
     }
+    stageNonce =
+      priorReceipt?.phase === "pending" && priorReceipt.stageNonce
+        ? priorReceipt.stageNonce
+        : randomBytes(16).toString("hex");
     writeOpenClawSkillProvenance(receiptPath, {
       ...receiptIdentity,
       phase: "pending",
@@ -959,6 +984,7 @@ export function installOpenClawSkill(
         priorReceipt?.phase === "installed"
           ? priorReceipt.contentDigest
           : (priorReceipt?.previousDigest ?? null),
+      stageNonce,
     });
   } catch {
     return { success: false, uploaded: 0, reason: "provenance_failed" };
@@ -972,6 +998,7 @@ export function installOpenClawSkill(
       priorReceipt?.phase === "installed"
         ? priorReceipt.contentDigest
         : (priorReceipt?.previousDigest ?? null),
+      stageNonce,
       priorReceipt?.phase === "pending",
     ),
     { input: snapshot.archive, timeout: 120_000 },
@@ -988,6 +1015,7 @@ export function installOpenClawSkill(
         phase: "installed",
         contentDigest: snapshot.contentDigest,
         previousDigest: null,
+        stageNonce: null,
       });
     } catch {
       return { success: false, uploaded: 0, reason: "provenance_failed" };
@@ -1002,7 +1030,8 @@ export function installOpenClawSkill(
     (result?.status === 2 && stdout.endsWith("COLLISION")) ||
     (result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")) ||
     (result?.status === 5 && stdout.endsWith("LEGACY_COLLISION")) ||
-    (result?.status === 6 && stdout.endsWith("UPDATE_UNSUPPORTED"))
+    (result?.status === 6 && stdout.endsWith("UPDATE_UNSUPPORTED")) ||
+    (result?.status === 7 && stdout.endsWith("STAGE_COLLISION"))
   ) {
     try {
       restoreOpenClawSkillProvenance(receiptPath, priorReceipt);
@@ -1022,9 +1051,11 @@ export function installOpenClawSkill(
             ? "native_capability_missing"
             : result?.status === 6 && stdout.endsWith("UPDATE_UNSUPPORTED")
               ? "update_unsupported"
-              : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
-                ? "verification_failed"
-                : "remote_state_unknown",
+              : result?.status === 7 && stdout.endsWith("STAGE_COLLISION")
+                ? "staging_collision"
+                : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
+                  ? "verification_failed"
+                  : "remote_state_unknown",
   };
 }
 

@@ -251,7 +251,7 @@ test(
         timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
       },
     );
-    expect(collision.exitCode, resultText(collision)).not.toBe(0);
+    expect(resultText(collision)).toContain("not proven to be owned by NemoClaw");
     await expectSandboxShellZero(
       sandbox,
       `grep -Fq FOREIGN_WORKSPACE_CONTENT "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md" && rm -rf "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}"`,

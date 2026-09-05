@@ -210,7 +210,17 @@ esac
         phase: "pending",
         contentDigest: firstDigest,
         previousDigest: null,
+        stageNonce: expect.stringMatching(/^[a-f0-9]{32}$/u),
       });
+      const pendingReceipt = JSON.parse(fs.readFileSync(provenancePath, "utf8")) as {
+        stageNonce: string;
+      };
+      const abandonedStage = path.join(
+        sandboxRoot,
+        `.nemoclaw-skill-stage.${pendingReceipt.stageNonce}`,
+      );
+      fs.mkdirSync(path.join(abandonedStage, "payload"), { recursive: true });
+      fs.writeFileSync(path.join(abandonedStage, "payload", "partial"), "partial");
       checkState = "eligible";
       expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
         success: true,
@@ -218,6 +228,7 @@ esac
         contentDigest: firstDigest,
       });
       expect(fs.readFileSync(provenancePath, "utf8")).toContain(`"contentDigest":"${firstDigest}"`);
+      expect(fs.existsSync(abandonedStage)).toBe(false);
       expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(1);
       expect(fs.existsSync(shadowLog)).toBe(false);
       expect(
@@ -263,6 +274,7 @@ esac
           phase: "installed",
           contentDigest: "0".repeat(64),
           previousDigest: null,
+          stageNonce: null,
         })}\n`,
         { flag: "wx", mode: 0o600 },
       );
@@ -393,6 +405,7 @@ esac
     [4, "installer output\nVERIFY_FAILED\n", "verification_failed"],
     [5, "LEGACY_COLLISION\n", "legacy_destination_exists"],
     [6, "UPDATE_UNSUPPORTED\n", "update_unsupported"],
+    [7, "STAGE_COLLISION\n", "staging_collision"],
   ] as const)("maps native failure %s to %s", (status, stdout, reason) => {
     const skill = makeSkill();
     const provenanceStateDir = fs.mkdtempSync(

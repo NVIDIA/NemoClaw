@@ -1492,7 +1492,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("skill-agent", {
-    displayName: "Skills: OpenClaw reads an injected sandbox skill",
+    displayName: "Skills: OpenClaw installs and reads a native workspace skill",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
