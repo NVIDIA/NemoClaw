@@ -271,6 +271,7 @@ describe("createRemoteModelValidator", () => {
     );
     assert.deepEqual(receivedOptions, {
       provider: "gemini-api",
+      useNvidiaEndpointProbePayload: false,
       requireResponsesToolCalling: true,
       skipResponsesProbe: true,
       authMode: undefined,
@@ -278,4 +279,57 @@ describe("createRemoteModelValidator", () => {
       capabilityCache: undefined,
     });
   });
+
+  it.each(["nvidia-prod", "nvidia-nim"])(
+    "selects the Nemotron probe payload for NVIDIA Endpoints provider %s (#10880)",
+    async (provider) => {
+      const state = makeState();
+      state.provider = provider;
+      state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+      state.model = "nvidia/nemotron-3-super-120b-a12b";
+      let receivedOptions: { useNvidiaEndpointProbePayload?: boolean } | undefined;
+      const { validateSelectedRemoteModel } = createRemoteModelValidator({
+        OPENAI_ENDPOINT_URL: "https://default-openai.example/v1",
+        ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
+        requireValue,
+        isBackToSelection: (_value): _value is never => false,
+        validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+        validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
+        validateAnthropicSelectionWithRetryMessage: async () => ({
+          ok: false,
+          retry: "selection",
+        }),
+        validateOpenAiLikeSelection: async (
+          _label,
+          _endpointUrl,
+          _model,
+          _credentialEnv,
+          _retryMessage,
+          _helpUrl,
+          options,
+        ) => {
+          receivedOptions = options;
+          return { ok: true, api: "openai-completions" };
+        },
+        shouldRequireResponsesToolCalling: () => false,
+        shouldSkipResponsesProbe: () => true,
+        getProbeAuthMode: () => undefined,
+      });
+
+      assert.equal(
+        await validateSelectedRemoteModel({
+          selected: { key: "build" },
+          remoteConfig: {
+            label: "NVIDIA Endpoints",
+            endpointUrl: "https://integrate.api.nvidia.com/v1",
+            helpUrl: null,
+          },
+          state,
+          selectedCredentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        }),
+        "selected",
+      );
+      assert.equal(receivedOptions?.useNvidiaEndpointProbePayload, true);
+    },
+  );
 });
