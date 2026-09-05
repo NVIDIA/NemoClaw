@@ -262,12 +262,12 @@ async function forwardConfiguredModel(body, configuration, credential) {
     headers["http-referer"] = "https://www.nvidia.com/nemoclaw/";
     headers["x-openrouter-title"] = "NVIDIA NemoClaw";
   }
-  // lgtm[js/file-access-to-http] Only schema-checked onboarding fields and the bounded
-  // browser-agent message projection are intentionally sent to the selected inference provider.
   const upstream = await fetch(upstreamUrl, {
     method: "POST",
     headers,
-    body: JSON.stringify(upstreamBody),
+    // Only schema-checked onboarding fields and the bounded browser-agent message projection
+    // are intentionally sent to the selected inference provider.
+    body: JSON.stringify(upstreamBody), // lgtm[js/file-access-to-http]
     redirect: "error",
     signal: AbortSignal.timeout(180_000),
   });
