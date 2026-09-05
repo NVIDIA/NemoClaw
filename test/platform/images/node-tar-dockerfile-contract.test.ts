@@ -73,7 +73,13 @@ const reviewedNpmUpgradeArguments = [
   "--archive",
   reviewedNpmArchivePath,
 ] as const;
-const hermesFinalArchivePath = "/tmp/nemoclaw-bundled-npm-tar.tgz";
+const hermesReviewedNpmArchivePath = "/scripts/npm-12.0.2.tgz";
+const hermesReviewedNpmUpgradeArguments = [
+  ...npmRootArguments,
+  "--archive",
+  hermesReviewedNpmArchivePath,
+] as const;
+const hermesFinalArchivePath = "/scripts/nemoclaw-bundled-npm-tar.tgz";
 const hermesFinalPatchArguments = [
   ...npmRootArguments,
   "--archive",
@@ -450,7 +456,11 @@ describe("reviewed npm image remediation contract", () => {
     const source = completedStage(dockerfile);
     const portableOptions = file === "agents/hermes/Dockerfile" ? "" : "--chmod=0444 ";
     const archiveSource = `ADD ${portableOptions}--checksum=sha256:${REVIEWED_NPM_ARCHIVE_SHA256} ${REVIEWED_NPM_TARBALL} /npm-${REVIEWED_NPM_VERSION}.tgz`;
-    const directArchiveCopy = `COPY --from=reviewed-npm-archive /npm-${REVIEWED_NPM_VERSION}.tgz ${reviewedNpmArchivePath}`;
+    const selectedArchivePath =
+      file === "agents/hermes/Dockerfile"
+        ? hermesReviewedNpmArchivePath
+        : reviewedNpmArchivePath;
+    const directArchiveCopy = `COPY --from=reviewed-npm-archive /npm-${REVIEWED_NPM_VERSION}.tgz ${selectedArchivePath}`;
     const archiveCopy =
       file === "agents/hermes/Dockerfile"
         ? "COPY --from=hermes-npm-patch-payload / /"
@@ -459,7 +469,9 @@ describe("reviewed npm image remediation contract", () => {
     const upgradeRun = requireSingleReviewedDockerfileRunCommand(
       source,
       "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
-      reviewedNpmUpgradeArguments,
+      file === "agents/hermes/Dockerfile"
+        ? hermesReviewedNpmUpgradeArguments
+        : reviewedNpmUpgradeArguments,
     ).commandStart;
     const firstPrivatePatch = source.indexOf(patchCommand);
 
@@ -508,16 +520,23 @@ describe("reviewed npm image remediation contract", () => {
   it("keeps Hermes npm migration inputs and runtime finalization layer-bounded", () => {
     const dockerfile = fs.readFileSync(path.join(repoRoot, "agents/hermes/Dockerfile"), "utf8");
     const payload = namedStage(dockerfile, "hermes-npm-patch-payload");
+    const npmUpgrade = requireSingleReviewedDockerfileRunCommand(
+      completedStage(dockerfile),
+      "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+      hermesReviewedNpmUpgradeArguments,
+    );
     const finalization = dockerfileInstructions(completedStage(dockerfile)).filter(
       ({ body, keyword }) => keyword === "RUN" && body.includes('hermes_path="$(command -v hermes'),
     );
 
     expect(payload).toContain(
-      `COPY --from=reviewed-npm-archive /npm-${REVIEWED_NPM_VERSION}.tgz ${reviewedNpmArchivePath}`,
+      `COPY --from=reviewed-npm-archive /npm-${REVIEWED_NPM_VERSION}.tgz ${hermesReviewedNpmArchivePath}`,
     );
     expect(payload).toContain(
       `COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-${FIXED_TAR_VERSION}.tgz ${hermesFinalArchivePath}`,
     );
+    expect(payload).not.toContain("/tmp/");
+    expect(npmUpgrade.instruction.body).not.toContain("/tmp/");
     expect(finalization).toHaveLength(1);
     expect(
       [

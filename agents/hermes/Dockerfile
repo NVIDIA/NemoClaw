@@ -74,8 +74,8 @@ RUN set -eu; \
 
 FROM scratch AS hermes-npm-patch-payload
 
-COPY --from=reviewed-npm-archive /npm-12.0.2.tgz /tmp/npm-12.0.2.tgz
-COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz /tmp/nemoclaw-bundled-npm-tar.tgz
+COPY --from=reviewed-npm-archive /npm-12.0.2.tgz /scripts/npm-12.0.2.tgz
+COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz /scripts/nemoclaw-bundled-npm-tar.tgz
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
@@ -268,9 +268,9 @@ COPY --from=hermes-npm-patch-payload / /
 # reviewed npm tree from immutable local bytes before private-tree patches.
 RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
       --npm-root /usr/local/lib/node_modules/npm \
-      --archive /tmp/npm-12.0.2.tgz
+      --archive /scripts/npm-12.0.2.tgz
 # hadolint ignore=DL3059
-RUN rm /tmp/npm-12.0.2.tgz
+RUN rm /scripts/npm-12.0.2.tgz
 
 # The immutable selected base owns the reviewed Hindsight and agent-browser
 # patches and the root-owned agent-browser runtime. Verify that inherited boundary
@@ -352,7 +352,7 @@ RUN grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/
 # locked cache seed so protected rebuilds remain network-disabled.
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
       --npm-root /usr/local/lib/node_modules/npm \
-      --archive /tmp/nemoclaw-bundled-npm-tar.tgz
+      --archive /scripts/nemoclaw-bundled-npm-tar.tgz
 
 # Reassert the npm-private brace-expansion fix for the final filesystem.
 # When onboarding supplied a corporate CA, use it for the registry-backed
