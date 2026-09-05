@@ -431,6 +431,7 @@ COPY scripts/lib/reviewed-npm-archive.mts \
     scripts/lib/openclaw-npm-remediation.mts \
     /scripts/lib/
 COPY scripts/lib/npm-audit-receipt.mts /scripts/lib/npm-audit-receipt.mts
+COPY scripts/lib/patch-openclaw-npm12-pack-json.mts /scripts/lib/patch-openclaw-npm12-pack-json.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
@@ -635,6 +636,13 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && mv -f "$OPENCLAW_PROVENANCE_TMP" "$OPENCLAW_PROVENANCE_PATH" \
     && rm -f /tmp/mcporter-npm-audit.json /tmp/mcporter-npm-audit-policy.json \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
+
+# npm 12 emits package-keyed objects from `npm pack --json`; OpenClaw 2026.7.1
+# expects the earlier array/direct-object shapes when installing local npm archives.
+RUN if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
+        node --experimental-strip-types /scripts/lib/patch-openclaw-npm12-pack-json.mts \
+            /usr/local/lib/node_modules/openclaw/dist "$OPENCLAW_VERSION"; \
+    fi
 
 
 # Baseline health check. The base image runs no service, so this only

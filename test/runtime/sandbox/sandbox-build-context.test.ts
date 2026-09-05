@@ -274,6 +274,7 @@ describe("sandbox build context staging", () => {
       writeFixture(path.join("src", "lib", relativePath));
     }
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.mts"));
+    writeFixture(path.join("scripts", "lib", "patch-openclaw-npm12-pack-json.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-mcp-npx.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-mcp-reliability.mts"));

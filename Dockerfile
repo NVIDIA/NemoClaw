@@ -559,6 +559,7 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 FROM scratch AS openclaw-patch-payload
 
 COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts
+COPY scripts/lib/patch-openclaw-npm12-pack-json.mts /usr/local/lib/nemoclaw/npm12.mts
 COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts
 COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
 COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts
@@ -791,6 +792,7 @@ COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/we
 COPY --from=openclaw-patch-payload / /
 
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
+        /usr/local/lib/nemoclaw/npm12.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
@@ -1459,12 +1461,11 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-t
 RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
-# Run the compact tool catalog shim for OpenClaw selection runtimes that still
-# need it. OpenClaw 2026.7.1 ships a built-in catalog surface, so the script
-# skips cleanly after classifying the compiled selection-*.js shape.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
-    /usr/local/lib/node_modules/openclaw/dist
+    /usr/local/lib/node_modules/openclaw/dist \
+    && node --experimental-strip-types /usr/local/lib/nemoclaw/npm12.mts \
+    /usr/local/lib/node_modules/openclaw/dist "$OPENCLAW_VERSION"
 
 # OpenClaw 2026.7.1 moved gateway startup work into shared and per-agent SQLite
 # databases, but hardens them to owner-only modes on every open. NemoClaw's
@@ -2339,6 +2340,7 @@ RUN check_metadata() { \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root:755' \
     && check_metadata /opt/nemoclaw/openclaw.plugin.json 'root:root:644' \
     && check_metadata /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts 'root:root:755' \
+    && check_metadata /usr/local/lib/nemoclaw/npm12.mts 'root:root:755' \
     && check_metadata /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts 'root:root:755' \
     && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
     && check_metadata /usr/local/bin/nemoclaw-managed-bootstrap 'root:root:755' \
