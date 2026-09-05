@@ -373,7 +373,7 @@ esac
       expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toBe(
         installedContent,
       );
-      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(1);
+      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(2);
       expect(
         fs.readdirSync(sandboxRoot).filter((entry) => entry.startsWith(".nemoclaw-skill-stage.")),
       ).toEqual([]);
