@@ -113,7 +113,7 @@ describe("Hermes and DCode native skill installation", () => {
         fakeBinary,
         `#!/bin/sh
 set -eu
-if [ "\${3:-}" = "--help" ]; then exit 0; fi
+if [ "\${3:-}" = "--help" ]; then printf '%s\n' '--name --agent --replace --expected-digest'; exit 0; fi
 case "\${1:-} \${2:-}" in
   "skills import-local"|"skills import")
     source=\$3

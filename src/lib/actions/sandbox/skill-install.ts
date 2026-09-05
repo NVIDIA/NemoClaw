@@ -24,7 +24,6 @@ import { execSandbox } from "./exec";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 
-const OPENCLAW_NATIVE_BIN = "/usr/local/bin/openclaw";
 const NATIVE_SKILL_LIST_TIMEOUT_SECONDS = 30;
 const NATIVE_SKILL_REMOVE_TIMEOUT_SECONDS = 120;
 const NATIVE_SKILL_REMOVE_INNER_TIMEOUT_SECONDS = 110;
@@ -96,25 +95,6 @@ export type SkillRemoveRequest = {
 export type SkillListRequest = {
   extraArgs?: string[];
 };
-
-type NativeSkillAgent = "hermes" | "langchain-deepagents-code" | "openclaw";
-
-function nativeSkillAgentName(
-  agent: ReturnType<typeof agentRuntime.getSessionAgent>,
-): NativeSkillAgent | null {
-  const name = agent?.name ?? "openclaw";
-  return name === "openclaw" || name === "hermes" || name === "langchain-deepagents-code"
-    ? name
-    : null;
-}
-
-function nativeSkillAgentDisplayName(agentName: NativeSkillAgent): string {
-  return agentName === "openclaw"
-    ? "OpenClaw"
-    : agentName === "hermes"
-      ? "Hermes"
-      : "Deep Agents Code";
-}
 
 function lstatOrNull(candidatePath: string): fs.Stats | null {
   try {
@@ -193,27 +173,14 @@ export async function removeSandboxSkill(
   await ensureLiveSandboxOrExit(sandboxName);
 
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  const agentName = nativeSkillAgentName(agent);
-  if (!agentName) {
+  const lifecycle = skillInstall.getNativeSkillLifecycle(agent?.name);
+  if (!lifecycle) {
     console.error(`  Agent '${agent?.name ?? "unknown"}' has no native skill remove command.`);
     process.exitCode = 1;
     return;
   }
-  const command =
-    agentName === "openclaw"
-      ? [OPENCLAW_NATIVE_BIN, "skills", "remove", skillName, "--agent", "main"]
-      : agentName === "hermes"
-        ? ["/usr/local/bin/hermes", "skills", "uninstall", skillName, "--yes"]
-        : [
-            "/usr/local/bin/dcode",
-            "skills",
-            "delete",
-            skillName,
-            "--agent",
-            "agent",
-            "--force",
-            "--json",
-          ];
+  const agentName = lifecycle.agentName;
+  const command = lifecycle.remove(skillName);
   let bindingFailed = false;
   let capabilityMissing = false;
   let sshConfigFailed = false;
@@ -283,7 +250,7 @@ export async function removeSandboxSkill(
         command,
         expectedIdentity,
         {
-          diagnostic: `Native ${nativeSkillAgentDisplayName(agentName)} skill removal timed out in sandbox '${sandboxName}' while running '${command.slice(0, 3).join(" ")}'. Inspect current agent state with '${CLI_NAME} ${sandboxName} skill list' before retrying.`,
+          diagnostic: `Native ${lifecycle.displayName} skill removal timed out in sandbox '${sandboxName}' while running '${command.slice(0, 3).join(" ")}'. Inspect current agent state with '${CLI_NAME} ${sandboxName} skill list' before retrying.`,
           seconds: NATIVE_SKILL_REMOVE_INNER_TIMEOUT_SECONDS,
         },
       );
@@ -301,7 +268,7 @@ export async function removeSandboxSkill(
         ? "  Failed to obtain SSH configuration for the sandbox."
         : capabilityMissing
           ? `  This OpenClaw sandbox image does not expose native skill removal. Rebuild it with '${CLI_NAME} ${sandboxName} rebuild' and retry; rebuild preserves both workspace and legacy global skill directories.`
-          : `  Failed to bind the ${nativeSkillAgentDisplayName(agentName)} skill removal to the exact live sandbox identity.`,
+          : `  Failed to bind the ${lifecycle.displayName} skill removal to the exact live sandbox identity.`,
     );
     process.exitCode = 1;
   }
@@ -315,28 +282,22 @@ export async function listSandboxSkills(
   const extraArgs = request.extraArgs ?? [];
   await ensureLiveSandboxOrExit(sandboxName);
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  const agentName = nativeSkillAgentName(agent);
-  if (!agentName) {
+  const lifecycle = skillInstall.getNativeSkillLifecycle(agent?.name);
+  if (!lifecycle) {
     console.error(`  Agent '${agent?.name ?? "unknown"}' has no native skill list command.`);
     process.exitCode = 1;
     return;
   }
   if (
     extraArgs.includes("--") ||
-    (agentName !== "hermes" &&
+    (lifecycle.agentName !== "hermes" &&
       extraArgs.some((arg) => arg === "--agent" || arg.startsWith("--agent=")))
   ) {
     console.error("  `skill list` is bound to the sandbox's primary agent.");
     process.exitCode = 2;
     return;
   }
-  const command =
-    agentName === "openclaw"
-      ? [OPENCLAW_NATIVE_BIN, "skills", "list", "--agent", "main", ...extraArgs]
-      : agentName === "hermes"
-        ? ["/usr/local/bin/hermes", "skills", "list", ...extraArgs]
-        : ["/usr/local/bin/dcode", "skills", "list", "--agent", "agent", ...extraArgs];
-  const displayName = nativeSkillAgentDisplayName(agentName);
+  const command = lifecycle.list(extraArgs);
   await execSandbox(
     sandboxName,
     command,
@@ -345,7 +306,7 @@ export async function listSandboxSkills(
       exit: (exitCode): never => {
         if (exitCode !== 0) {
           console.error(
-            `  ${displayName} native skill state could not be inspected within the ${NATIVE_SKILL_LIST_TIMEOUT_SECONDS}-second sandbox command bound.`,
+            `  ${lifecycle.displayName} native skill state could not be inspected within the ${NATIVE_SKILL_LIST_TIMEOUT_SECONDS}-second sandbox command bound.`,
           );
           console.error(
             `  Retry '${CLI_NAME} ${sandboxName} skill list' after the sandbox becomes reachable.`,
@@ -494,14 +455,15 @@ export async function installSandboxSkill(
 
   // 3. Resolve agent and paths
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  const agentName = nativeSkillAgentName(agent);
-  if (!agentName) {
+  const lifecycle = skillInstall.getNativeSkillLifecycle(agent?.name);
+  if (!lifecycle) {
     console.error(
       `  Agent '${agent?.name ?? "unknown"}' has no native local skill import command.`,
     );
     process.exitCode = 1;
     return;
   }
+  const agentName = lifecycle.agentName;
   const paths = skillInstall.resolveNativeSkillState(agent);
 
   let sshConfigFailed = false;
@@ -568,13 +530,13 @@ export async function installSandboxSkill(
     console.error(
       sshConfigFailed
         ? "  Failed to obtain SSH configuration for the sandbox."
-        : `  Failed to bind the ${nativeSkillAgentDisplayName(agentName)} skill install to the exact live sandbox identity.`,
+        : `  Failed to bind the ${lifecycle.displayName} skill install to the exact live sandbox identity.`,
     );
     process.exitCode = 1;
     return;
   }
   if (!native.success || !native.contentDigest) {
-    const displayName = nativeSkillAgentDisplayName(agentName);
+    const displayName = lifecycle.displayName;
     if (native.reason === "native_capability_missing") {
       console.error(
         agentName === "openclaw"
@@ -632,7 +594,7 @@ export async function installSandboxSkill(
     process.exitCode = 1;
     return;
   }
-  const displayName = nativeSkillAgentDisplayName(agentName);
+  const displayName = lifecycle.displayName;
   console.log(`  ${G}✓${R} Skill '${frontmatter.name}' installed through ${displayName}`);
   console.log(`  ${D}Content digest (SHA-256): ${native.contentDigest}${R}`);
   console.log(`  ${D}Start a new ${displayName} session to load the skill.${R}`);

@@ -167,8 +167,136 @@ const SHA256_RE = /^[a-f0-9]{64}$/;
 const SKILL_SNAPSHOT_TIMEOUT_MS = 30_000;
 export const SKILL_SNAPSHOT_MAX_FILES = 1024;
 export const SKILL_SNAPSHOT_MAX_BYTES = 64 * 1024 * 1024;
-const OPENCLAW_NATIVE_BIN = "/usr/local/bin/openclaw";
 const OPENCLAW_REMOVE_HELP_EVIDENCE = "Remove a skill from the active agent workspace";
+
+export type NativeSkillAgent = "hermes" | "langchain-deepagents-code" | "openclaw";
+
+export interface NativeSkillLifecycleDescriptor {
+  readonly agentName: NativeSkillAgent;
+  readonly binary: string;
+  readonly displayName: string;
+  readonly fixedAgentTarget: string | null;
+  readonly installHelpArgs: readonly string[];
+  readonly installRequiredFlags: readonly string[];
+  readonly removeHelpArgs?: readonly string[];
+  readonly removeHelpEvidence?: string;
+  install(payloadPath: string, skillName: string, expectedDigest: string): string[];
+  list(extraArgs?: readonly string[]): string[];
+  remove(skillName: string): string[];
+}
+
+const NATIVE_SKILL_LIFECYCLES: Readonly<Record<NativeSkillAgent, NativeSkillLifecycleDescriptor>> =
+  {
+    openclaw: {
+      agentName: "openclaw",
+      binary: "/usr/local/bin/openclaw",
+      displayName: "OpenClaw",
+      fixedAgentTarget: "main",
+      installHelpArgs: ["skills", "install", "--help"],
+      installRequiredFlags: ["--agent", "--force", "--expected-digest"],
+      removeHelpArgs: ["skills", "remove", "--help"],
+      removeHelpEvidence: OPENCLAW_REMOVE_HELP_EVIDENCE,
+      install(payloadPath, _skillName, expectedDigest) {
+        return [
+          this.binary,
+          "skills",
+          "install",
+          payloadPath,
+          "--agent",
+          this.fixedAgentTarget!,
+          "--force",
+          "--expected-digest",
+          expectedDigest,
+        ];
+      },
+      list(extraArgs = []) {
+        return [this.binary, "skills", "list", "--agent", this.fixedAgentTarget!, ...extraArgs];
+      },
+      remove(skillName) {
+        return [this.binary, "skills", "remove", skillName, "--agent", this.fixedAgentTarget!];
+      },
+    },
+    hermes: {
+      agentName: "hermes",
+      binary: "/usr/local/bin/hermes",
+      displayName: "Hermes",
+      fixedAgentTarget: null,
+      installHelpArgs: ["skills", "import-local", "--help"],
+      installRequiredFlags: ["--name", "--expected-digest"],
+      install(payloadPath, skillName, expectedDigest) {
+        return [
+          this.binary,
+          "skills",
+          "import-local",
+          payloadPath,
+          "--name",
+          skillName,
+          "--expected-digest",
+          expectedDigest,
+        ];
+      },
+      list(extraArgs = []) {
+        return [this.binary, "skills", "list", ...extraArgs];
+      },
+      remove(skillName) {
+        return [this.binary, "skills", "uninstall", skillName, "--yes"];
+      },
+    },
+    "langchain-deepagents-code": {
+      agentName: "langchain-deepagents-code",
+      binary: "/usr/local/bin/dcode",
+      displayName: "Deep Agents Code",
+      fixedAgentTarget: "agent",
+      installHelpArgs: ["skills", "import", "--help"],
+      installRequiredFlags: ["--name", "--agent", "--replace", "--expected-digest"],
+      install(payloadPath, skillName, expectedDigest) {
+        return [
+          this.binary,
+          "skills",
+          "import",
+          payloadPath,
+          "--name",
+          skillName,
+          "--agent",
+          this.fixedAgentTarget!,
+          "--replace",
+          "--expected-digest",
+          expectedDigest,
+        ];
+      },
+      list(extraArgs = []) {
+        return [this.binary, "skills", "list", "--agent", this.fixedAgentTarget!, ...extraArgs];
+      },
+      remove(skillName) {
+        return [
+          this.binary,
+          "skills",
+          "delete",
+          skillName,
+          "--agent",
+          this.fixedAgentTarget!,
+          "--force",
+          "--json",
+        ];
+      },
+    },
+  };
+
+/** Resolve the one command contract for every operation on a supported agent's native state. */
+export function getNativeSkillLifecycle(
+  agentName: string | null | undefined,
+): NativeSkillLifecycleDescriptor | null {
+  const resolved = agentName ?? "openclaw";
+  return resolved in NATIVE_SKILL_LIFECYCLES
+    ? NATIVE_SKILL_LIFECYCLES[resolved as NativeSkillAgent]
+    : null;
+}
+
+function renderNativeSkillCommand(command: readonly string[], payloadToken?: string): string {
+  return command
+    .map((argument) => (argument === payloadToken ? '"$payload"' : shellQuote(argument)))
+    .join(" ");
+}
 
 /** Probe the pinned native removal capability without mutating agent state. */
 export function probeOpenClawSkillRemoveCapability(
@@ -177,12 +305,14 @@ export function probeOpenClawSkillRemoveCapability(
   sshExecImpl: typeof sshExec = sshExec,
 ): boolean {
   if (!SHA256_RE.test(expectedSandboxIdentityFingerprint)) return false;
+  const lifecycle = NATIVE_SKILL_LIFECYCLES.openclaw;
+  if (!lifecycle.removeHelpArgs || !lifecycle.removeHelpEvidence) return false;
   const identityCheck = sandboxIdentityCheckCommand(expectedSandboxIdentityFingerprint);
   const script = [
     "set -eu",
     `${identityCheck} || exit 9`,
-    `help="$(${shellQuote(OPENCLAW_NATIVE_BIN)} skills remove --help 2>&1)"`,
-    `printf '%s' "$help" | grep -Fq ${shellQuote(OPENCLAW_REMOVE_HELP_EVIDENCE)}`,
+    `help="$(${[lifecycle.binary, ...lifecycle.removeHelpArgs].map(shellQuote).join(" ")} 2>&1)"`,
+    `printf '%s' "$help" | grep -Fq ${shellQuote(lifecycle.removeHelpEvidence)}`,
     `${identityCheck} || exit 9`,
   ].join("; ");
   return sshExecImpl(ctx, script, { timeout: 30_000 })?.status === 0;
@@ -553,6 +683,14 @@ function buildOpenClawNativeInstallScript(
   if (!paths.isOpenClaw) {
     throw new Error("OpenClaw native install requires a workspace skill destination");
   }
+  const lifecycle = NATIVE_SKILL_LIFECYCLES.openclaw;
+  const fixedAgentTarget = lifecycle.fixedAgentTarget;
+  if (!fixedAgentTarget) throw new Error("OpenClaw native install requires a fixed agent target");
+  const stageToken = "__NEMOCLAW_PAYLOAD__";
+  const installCommand = renderNativeSkillCommand(
+    lifecycle.install(stageToken, skillName, expectedDigest),
+    stageToken,
+  );
   const verifyNativeJson = [
     'const fs=require("node:fs");',
     'const path=require("node:path");',
@@ -576,18 +714,17 @@ function buildOpenClawNativeInstallScript(
     expectedSandboxIdentityFingerprint,
     digestExcludedRelativePath: ".openclaw/source-origin.json",
     preStageCommands: [
-      `help="$(${shellQuote(OPENCLAW_NATIVE_BIN)} skills install --help 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
-      'printf "%s" "$help" | grep -q -- "--agent" || { echo CAPABILITY_MISSING; exit 3; }',
-      'printf "%s" "$help" | grep -q -- "--force" || { echo CAPABILITY_MISSING; exit 3; }',
-      'printf "%s" "$help" | grep -q -- "--expected-digest" || { echo CAPABILITY_MISSING; exit 3; }',
+      `help="$(${renderNativeSkillCommand([lifecycle.binary, ...lifecycle.installHelpArgs])} 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
+      ...lifecycle.installRequiredFlags.map(
+        (flag) =>
+          `printf "%s" "$help" | grep -q -- ${shellQuote(flag)} || { echo CAPABILITY_MISSING; exit 3; }`,
+      ),
     ],
     lifecycleCommands: [
-      buildBoundedNativeSkillInstallCommand(
-        `${shellQuote(OPENCLAW_NATIVE_BIN)} skills install "$payload" --agent main --force --expected-digest "$expected"`,
-      ),
-      `${shellQuote(OPENCLAW_NATIVE_BIN)} skills list --agent main --json > "$stage/list.json"`,
-      `${shellQuote(OPENCLAW_NATIVE_BIN)} skills info "$skill" --agent main --json > "$stage/info.json"`,
-      `${shellQuote(OPENCLAW_NATIVE_BIN)} skills check --agent main --json > "$stage/check.json"`,
+      buildBoundedNativeSkillInstallCommand(installCommand),
+      `${renderNativeSkillCommand(lifecycle.list(["--json"]))} > "$stage/list.json"`,
+      `${renderNativeSkillCommand([lifecycle.binary, "skills", "info", skillName, "--agent", fixedAgentTarget, "--json"])} > "$stage/info.json"`,
+      `${renderNativeSkillCommand([lifecycle.binary, "skills", "check", "--agent", fixedAgentTarget, "--json"])} > "$stage/check.json"`,
       `target="$(node -e ${shellQuote(verifyNativeJson)} "$stage/list.json" "$stage/info.json" "$stage/check.json" "$skill" "$root")" || { echo VERIFY_FAILED; exit 4; }`,
       'target_real="$(realpath -e -- "$target")" || { echo VERIFY_FAILED; exit 4; }',
       '[ "$target_real" = "$target" ] || { echo VERIFY_FAILED; exit 4; }',
@@ -668,50 +805,7 @@ export function installOpenClawSkill(
   };
 }
 
-export type NativeLocalSkillAgent = "hermes" | "langchain-deepagents-code";
-
-type NativeLocalSkillCommand = {
-  binary: string;
-  importArgs: string[];
-};
-
-/** Resolve the pinned agent-owned local import and list commands. */
-function nativeLocalSkillCommand(
-  agentName: NativeLocalSkillAgent,
-  payloadPath: string,
-  skillName: string,
-  expectedDigest: string,
-): NativeLocalSkillCommand {
-  if (agentName === "hermes") {
-    return {
-      binary: "/usr/local/bin/hermes",
-      importArgs: [
-        "skills",
-        "import-local",
-        payloadPath,
-        "--name",
-        skillName,
-        "--expected-digest",
-        expectedDigest,
-      ],
-    };
-  }
-  return {
-    binary: "/usr/local/bin/dcode",
-    importArgs: [
-      "skills",
-      "import",
-      payloadPath,
-      "--name",
-      skillName,
-      "--agent",
-      "agent",
-      "--replace",
-      "--expected-digest",
-      expectedDigest,
-    ],
-  };
-}
+export type NativeLocalSkillAgent = Exclude<NativeSkillAgent, "openclaw">;
 
 /** Build a secure staging wrapper around an agent's native local import command. */
 function buildNativeLocalSkillInstallScript(
@@ -722,7 +816,7 @@ function buildNativeLocalSkillInstallScript(
   expectedSandboxIdentityFingerprint: string,
 ): string {
   const stageToken = "__NEMOCLAW_PAYLOAD__";
-  const command = nativeLocalSkillCommand(agentName, stageToken, skillName, expectedDigest);
+  const lifecycle = NATIVE_SKILL_LIFECYCLES[agentName];
   const nativeResultParser = [
     'const fs=require("node:fs");',
     'const path=require("node:path");',
@@ -736,22 +830,24 @@ function buildNativeLocalSkillInstallScript(
     'if(!relative||relative.startsWith(".."+path.sep)||path.isAbsolute(relative))process.exit(1);',
     "process.stdout.write(path.resolve(value.path));",
   ].join("");
-  const commandArgs = command.importArgs
-    .map((arg) => (arg === stageToken ? '"$payload"' : shellQuote(arg)))
-    .join(" ");
+  const commandArgs = renderNativeSkillCommand(
+    lifecycle.install(stageToken, skillName, expectedDigest),
+    stageToken,
+  );
   return buildNativeSkillStagingScript({
     paths,
     skillName,
     expectedDigest,
     expectedSandboxIdentityFingerprint,
     preStageCommands: [
-      `help="$(${shellQuote(command.binary)} skills ${shellQuote(command.importArgs[1])} --help 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
+      `help="$(${renderNativeSkillCommand([lifecycle.binary, ...lifecycle.installHelpArgs])} 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
+      ...lifecycle.installRequiredFlags.map(
+        (flag) =>
+          `printf "%s" "$help" | grep -q -- ${shellQuote(flag)} || { echo CAPABILITY_MISSING; exit 3; }`,
+      ),
     ],
     lifecycleCommands: [
-      buildBoundedNativeSkillInstallCommand(
-        `${shellQuote(command.binary)} ${commandArgs}`,
-        '"$stage/native.out"',
-      ),
+      buildBoundedNativeSkillInstallCommand(commandArgs, '"$stage/native.out"'),
       `target="$(node -e ${shellQuote(nativeResultParser)} "$stage/native.out" "$skill" "$expected" "$root")" || { cat "$stage/native.out" >&2; echo VERIFY_FAILED; exit 4; }`,
       'target_real="$(realpath -e -- "$target")" || { echo VERIFY_FAILED; exit 4; }',
       'case "$target_real" in "$root"/*) ;; *) echo VERIFY_FAILED; exit 4 ;; esac',

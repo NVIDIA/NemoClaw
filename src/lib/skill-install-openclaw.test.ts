@@ -53,9 +53,11 @@ describe("OpenClaw native skill installation", () => {
     }));
 
     expect(probeOpenClawSkillRemoveCapability(ctx, SANDBOX_IDENTITY, sshExec)).toBe(true);
-    expect(sshExec).toHaveBeenCalledWith(ctx, expect.stringContaining("skills remove --help"), {
-      timeout: 30_000,
-    });
+    expect(sshExec).toHaveBeenCalledWith(
+      ctx,
+      expect.stringContaining("'skills' 'remove' '--help'"),
+      { timeout: 30_000 },
+    );
     expect(sshExec.mock.calls[0]?.[1]).toContain("OPENSHELL_SANDBOX_ID");
   });
 

@@ -53,7 +53,10 @@ vi.mock("../../agent/runtime", () => ({
   getSessionAgent,
 }));
 
-vi.mock("../../skill-install", () => skillInstall);
+vi.mock("../../skill-install", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../skill-install")>()),
+  ...skillInstall,
+}));
 
 vi.mock("../../state/mcp-lifecycle-lock", () => ({
   withSandboxMutationLock,
@@ -70,6 +73,7 @@ vi.mock("./gateway-target", () => ({
 vi.mock("./exec", () => ({ execSandbox }));
 
 import { installSandboxSkill, listSandboxSkills, removeSandboxSkill } from "./skill-install";
+import { getNativeSkillLifecycle } from "../../skill-install";
 
 const paths = {
   stateDir: "/sandbox/.openclaw",
@@ -157,6 +161,83 @@ describe("sandbox skill action orchestration", () => {
     restoreExitCode(previousExitCode);
     vi.restoreAllMocks();
   });
+
+  it.each([
+    [
+      "openclaw",
+      "OpenClaw",
+      "main",
+      [
+        "/usr/local/bin/openclaw",
+        "skills",
+        "install",
+        "/stage",
+        "--agent",
+        "main",
+        "--force",
+        "--expected-digest",
+        "digest",
+      ],
+      ["/usr/local/bin/openclaw", "skills", "list", "--agent", "main", "--json"],
+      ["/usr/local/bin/openclaw", "skills", "remove", "demo-skill", "--agent", "main"],
+    ],
+    [
+      "hermes",
+      "Hermes",
+      null,
+      [
+        "/usr/local/bin/hermes",
+        "skills",
+        "import-local",
+        "/stage",
+        "--name",
+        "demo-skill",
+        "--expected-digest",
+        "digest",
+      ],
+      ["/usr/local/bin/hermes", "skills", "list", "--json"],
+      ["/usr/local/bin/hermes", "skills", "uninstall", "demo-skill", "--yes"],
+    ],
+    [
+      "langchain-deepagents-code",
+      "Deep Agents Code",
+      "agent",
+      [
+        "/usr/local/bin/dcode",
+        "skills",
+        "import",
+        "/stage",
+        "--name",
+        "demo-skill",
+        "--agent",
+        "agent",
+        "--replace",
+        "--expected-digest",
+        "digest",
+      ],
+      ["/usr/local/bin/dcode", "skills", "list", "--agent", "agent", "--json"],
+      [
+        "/usr/local/bin/dcode",
+        "skills",
+        "delete",
+        "demo-skill",
+        "--agent",
+        "agent",
+        "--force",
+        "--json",
+      ],
+    ],
+  ] as const)(
+    "owns the complete %s native lifecycle command contract",
+    (agentName, displayName, fixedAgentTarget, install, list, remove) => {
+      const lifecycle = getNativeSkillLifecycle(agentName);
+
+      expect(lifecycle).toMatchObject({ agentName, displayName, fixedAgentTarget });
+      expect(lifecycle?.install("/stage", "demo-skill", "digest")).toEqual(install);
+      expect(lifecycle?.list(["--json"])).toEqual(list);
+      expect(lifecycle?.remove("demo-skill")).toEqual(remove);
+    },
+  );
 
   it("delegates OpenClaw removal to the native agent command", async () => {
     getSessionAgent.mockReturnValue(agent);
