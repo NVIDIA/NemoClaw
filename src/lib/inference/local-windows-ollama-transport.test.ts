@@ -45,12 +45,10 @@ function respondsOnlyThroughDockerDesktop(apiPath: string, response: string) {
       ? "127.0.0.1"
       : command.includes("Host: rebinding.invalid")
         ? "403"
-        : rendered.includes("host.docker.internal:11434/api/tags")
-          ? apiPath === "/api/tags"
-            ? response
-            : JSON.stringify({ models: [] })
-          : usesExpectedTransport
-            ? response
+        : usesExpectedTransport
+          ? response
+          : rendered.includes("host.docker.internal:11434/api/tags")
+            ? JSON.stringify({ models: [] })
             : "";
   });
 }
@@ -63,8 +61,7 @@ function respondsWithOllamaInventorySequence(responses: string[]) {
         return "127.0.0.1";
       case command.includes("Host: rebinding.invalid"):
         return "403";
-      case rendered.includes("host.docker.internal:11434/api/tags") &&
-        options?.timeout === 10_000:
+      case rendered.includes("host.docker.internal:11434/api/tags") && options?.timeout === 10_000:
         return JSON.stringify({ models: [] });
       default:
         return responses.shift() ?? "";
@@ -621,8 +618,7 @@ describe("Windows-host Ollama transport", () => {
     expect(
       capture.mock.calls.filter(
         ([command, options]) =>
-          command.some((argument) => argument.endsWith("/api/tags")) &&
-          options?.timeout !== 10_000,
+          command.some((argument) => argument.endsWith("/api/tags")) && options?.timeout !== 10_000,
       ),
     ).toHaveLength(3);
     expect(sleeps).toEqual([500, 1_000]);
@@ -639,8 +635,7 @@ describe("Windows-host Ollama transport", () => {
     expect(
       capture.mock.calls.filter(
         ([command, options]) =>
-          command.some((argument) => argument.endsWith("/api/tags")) &&
-          options?.timeout !== 10_000,
+          command.some((argument) => argument.endsWith("/api/tags")) && options?.timeout !== 10_000,
       ),
     ).toHaveLength(3);
     expect(sleeps).toEqual([500, 1_000]);
