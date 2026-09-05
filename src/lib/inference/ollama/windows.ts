@@ -37,6 +37,31 @@ type WindowsOllamaInstallerProcess = {
 };
 
 const WINDOWS_INSTALLER_PID_SENTINEL = "__NEMOCLAW_WINDOWS_INSTALLER_PID__:";
+const WINDOWS_INSTALLER_CANCELLATION_TIMEOUT_MS = 5_000;
+
+function reportUnconfirmedWindowsInstallerCancellation(): void {
+  console.error("  Could not confirm that the Windows Ollama installer stopped.");
+  console.error(
+    "  NemoClaw did not restore the previous Windows Ollama state because the installer may still change it.",
+  );
+  console.error(
+    "  In Windows PowerShell, stop the installer and Ollama processes, restore the previous User-scope OLLAMA_HOST value, then retry:",
+  );
+  console.error("    nemoclaw onboard");
+}
+
+function waitForWindowsInstallerCancellation(operation: Promise<void>): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error("Timed out while confirming Windows Ollama installer cancellation"));
+    }, WINDOWS_INSTALLER_CANCELLATION_TIMEOUT_MS);
+    timer.unref();
+  });
+  return Promise.race([operation, deadline]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
 
 function parseWindowsProcessId(value: string): number | null {
   if (!/^[1-9][0-9]*$/.test(value)) return null;
@@ -89,6 +114,7 @@ function startWindowsOllamaInstaller(): WindowsOllamaInstallerProcess {
   let windowsPid: number | null = null;
   let stdoutBuffer = "";
   let resolveWindowsPid: (pid: number | null) => void = () => {};
+  let rejectCompletion: (error: unknown) => void = () => {};
   const windowsPidReady = new Promise<number | null>((resolve) => {
     resolveWindowsPid = resolve;
   });
@@ -111,7 +137,8 @@ function startWindowsOllamaInstaller(): WindowsOllamaInstallerProcess {
       }
     }
   };
-  const completion = new Promise<void>((resolve) => {
+  const completion = new Promise<void>((resolve, reject) => {
+    rejectCompletion = reject;
     child.stdout?.on("data", (chunk: Buffer) => {
       stdoutBuffer += chunk.toString("utf8");
       flushStdoutLines(false);
@@ -132,20 +159,29 @@ function startWindowsOllamaInstaller(): WindowsOllamaInstallerProcess {
   return {
     completion,
     cancelAndWait: () => {
-      cancellation ??= (async () => {
-        if (windowsPid === null) {
-          try {
-            child.kill("SIGTERM");
-          } catch {
-            // The wrapper has already exited, so its close event remains authoritative.
+      cancellation ??= waitForWindowsInstallerCancellation(
+        (async () => {
+          if (windowsPid === null) {
+            try {
+              child.kill("SIGTERM");
+            } catch {
+              // The wrapper has already exited, so its close event remains authoritative.
+            }
           }
-        }
-        const pid = await windowsPidReady;
-        if (pid !== null) {
-          await terminateWindowsProcessTree(pid);
-        }
-        await completion;
-      })();
+          const pid = await windowsPidReady;
+          if (pid !== null) {
+            await terminateWindowsProcessTree(pid);
+          }
+          await completion;
+        })(),
+      ).catch((error: unknown) => {
+        reportUnconfirmedWindowsInstallerCancellation();
+        // Unblock the install path without treating the process as stopped.
+        // The rejected completion reaches the mutation owner, which leaves the
+        // snapshot untouched because cancellation was not confirmed.
+        rejectCompletion(error);
+        throw error;
+      });
       return cancellation;
     },
   };
@@ -543,11 +579,11 @@ function applyWindowsOllamaBinding(
   operations: WindowsOllamaSetupOperations,
   markMutated: () => void,
 ): { ok: true } | { ok: false; reason: "binding" | "readiness" } {
+  markMutated();
   if (!operations.persistBinding()) {
     console.error("  Could not persist the Windows Ollama host binding.");
     return { ok: false, reason: "binding" };
   }
-  markMutated();
   if (opts.announceStop) {
     console.log("  Stopping existing Ollama on Windows host...");
   }
@@ -577,11 +613,11 @@ async function installOllamaOnWindowsHost(
   console.log("  Installing Ollama on Windows host...");
   console.log("  This can take several minutes. Output may pause silently");
   try {
+    mutation.markMutated();
     if (!operations.persistBinding()) {
       await mutation.rollback();
       return { ok: false, path: "", reason: "binding" };
     }
-    mutation.markMutated();
     const installer = operations.startInstaller();
     mutation.setInterruptCancellation(installer.cancelAndWait);
     await installer.completion;
