@@ -471,6 +471,7 @@ export interface NativeSkillInstallResult {
     | "agent_workspace_unsupported"
     | "native_capability_missing"
     | "native_install_failed"
+    | "native_install_timed_out"
     | "remote_state_unknown"
     | "sandbox_identity_changed"
     | "snapshot_failed"
@@ -484,6 +485,65 @@ const NATIVE_STAGE_RECOVERY_COMMANDS = [
   'current_uid="$(id -u)"',
   'for candidate in "$root"/.nemoclaw-skill-stage "$root"/.nemoclaw-skill-stage.*; do [ -e "$candidate" ] || [ -L "$candidate" ] || continue; [ ! -L "$candidate" ] && [ -d "$candidate" ] || stage_recovery_failed "$candidate"; [ "$(realpath -e -- "$(dirname -- "$candidate")")" = "$root" ] || stage_recovery_failed "$candidate"; [ "$(stat -c "%u:%a" -- "$candidate")" = "$current_uid:700" ] || stage_recovery_failed "$candidate"; unsafe="$(find -P "$candidate" -xdev \\( ! -user "$current_uid" -o \\( ! -type d ! -type f \\) \\) -print -quit)" || stage_recovery_failed "$candidate"; [ -z "$unsafe" ] || stage_recovery_failed "$candidate"; rm -rf --one-file-system -- "$candidate" || stage_recovery_failed "$candidate"; done',
 ] as const;
+
+const NATIVE_SKILL_INSTALL_TIMEOUT_SECONDS = 100;
+
+interface NativeSkillStagingScriptOptions {
+  paths: NativeSkillState;
+  skillName: string;
+  expectedDigest: string;
+  expectedSandboxIdentityFingerprint: string;
+  preStageCommands: readonly string[];
+  lifecycleCommands: readonly string[];
+  digestExcludedRelativePath?: string;
+}
+
+/** Emit the one private staging, cleanup, digest, and identity contract for every native agent. */
+function buildNativeSkillStagingScript(options: NativeSkillStagingScriptOptions): string {
+  const identityCheck = sandboxIdentityCheckCommand(options.expectedSandboxIdentityFingerprint);
+  const fileSelection = options.digestExcludedRelativePath
+    ? `find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort | grep -Fxv ${shellQuote(options.digestExcludedRelativePath)} > "$manifest.files"`
+    : 'find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort > "$manifest.files"';
+  return [
+    "set -eu",
+    "umask 077",
+    `root=${shellQuote(options.paths.stateDir)}`,
+    `skill=${shellQuote(options.skillName)}`,
+    `expected=${shellQuote(options.expectedDigest)}`,
+    'safe_tree() { [ -d "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -mindepth 1 ! -type d ! -type f -print -quit)" ]; }',
+    `digest_tree() { tree="$1"; manifest="$2"; ${fileSelection}; : > "$manifest"; while IFS= read -r rel; do if [ -n "$(find "$tree/$rel" -type f -perm /111 -print -quit)" ]; then mode=755; else mode=644; fi; hash="$(sha256sum "$tree/$rel" | cut -d " " -f 1)"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$manifest"; done < "$manifest.files"; sha256sum "$manifest" | cut -d " " -f 1; }`,
+    '[ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]',
+    `${identityCheck} || { echo IDENTITY_CHANGED; exit 9; }`,
+    ...options.preStageCommands,
+    ...NATIVE_STAGE_RECOVERY_COMMANDS,
+    'stage="$(mktemp -d "$root/.nemoclaw-skill-stage.XXXXXX")"',
+    'chmod 700 "$stage"',
+    'cleanup() { rm -rf -- "$stage"; }',
+    "trap cleanup EXIT HUP INT TERM",
+    'payload="$stage/payload"',
+    'mkdir -- "$payload"',
+    'tar --no-same-owner -xf - -C "$payload"',
+    'safe_tree "$payload"',
+    'find "$payload" -type d -exec chmod 755 {} +',
+    'find "$payload" -type f -perm /111 -exec chmod 755 {} +',
+    'find "$payload" -type f ! -perm /111 -exec chmod 644 {} +',
+    'staged="$(digest_tree "$payload" "$stage/staged.manifest")"',
+    '[ "$staged" = "$expected" ]',
+    ...options.lifecycleCommands,
+    `${identityCheck} || { echo IDENTITY_CHANGED; exit 9; }`,
+    'printf "INSTALLED %s\\n" "$installed"',
+  ].join("; ");
+}
+
+/** Bound the agent-owned publisher below the outer SSH timeout so cleanup always completes first. */
+function buildBoundedNativeSkillInstallCommand(
+  invocation: string,
+  capturedOutput?: string,
+): string {
+  const command = capturedOutput ? `${invocation} > ${capturedOutput} 2>&1` : invocation;
+  const replay = capturedOutput ? `cat ${capturedOutput} >&2; ` : "";
+  return `if timeout --signal=TERM --kill-after=5s ${NATIVE_SKILL_INSTALL_TIMEOUT_SECONDS}s ${command}; then :; else native_status=$?; ${replay}if [ "$native_status" -eq 124 ] || [ "$native_status" -eq 137 ]; then echo "Native skill installation timed out; inspect native skill list state before retrying." >&2; echo NATIVE_INSTALL_TIMEOUT; exit 6; fi; echo NATIVE_INSTALL_FAILED; exit 5; fi`;
+}
 
 function buildOpenClawNativeInstallScript(
   paths: NativeSkillState,
@@ -515,51 +575,36 @@ function buildOpenClawNativeInstallScript(
     'const main=Array.isArray(entries)&&entries.find((entry)=>entry&&typeof entry==="object"&&entry.id==="main");',
     "if(!main||(main.workspace!==undefined&&main.workspace!==expected))process.exit(1);",
   ].join("");
-  const identityCheck = sandboxIdentityCheckCommand(expectedSandboxIdentityFingerprint);
   // The pinned native installer owns source-origin metadata and may recreate
   // payload modes under umask; hash only payload files with normalized modes.
-  return [
-    "set -eu",
-    "umask 077",
-    `root=${shellQuote(paths.stateDir)}`,
-    `config=${shellQuote(`${paths.stateDir}/openclaw.json`)}`,
-    `expected_workspace=${shellQuote(`${paths.stateDir}/workspace`)}`,
-    `skill=${shellQuote(skillName)}`,
-    `expected=${shellQuote(expectedDigest)}`,
-    'safe_tree() { [ -d "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -mindepth 1 ! -type d ! -type f -print -quit)" ]; }',
-    'digest_tree() { tree="$1"; manifest="$2"; find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort | grep -Fxv ".openclaw/source-origin.json" > "$manifest.files"; : > "$manifest"; while IFS= read -r rel; do if [ -n "$(find "$tree/$rel" -type f -perm /111 -print -quit)" ]; then mode=755; else mode=644; fi; hash="$(sha256sum "$tree/$rel" | cut -d " " -f 1)"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$manifest"; done < "$manifest.files"; sha256sum "$manifest" | cut -d " " -f 1; }',
-    '[ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]',
-    `${identityCheck} || { echo IDENTITY_CHANGED; exit 9; }`,
-    `node -e ${shellQuote(verifyMainWorkspace)} "$config" "$expected_workspace" || { echo AGENT_WORKSPACE_UNSUPPORTED; exit 8; }`,
-    ...NATIVE_STAGE_RECOVERY_COMMANDS,
-    'stage="$(mktemp -d "$root/.nemoclaw-skill-stage.XXXXXX")"',
-    'chmod 700 "$stage"',
-    'cleanup() { rm -rf -- "$stage"; }',
-    "trap cleanup EXIT HUP INT TERM",
-    'payload="$stage/payload"',
-    'mkdir -- "$payload"',
-    'tar --no-same-owner -xf - -C "$payload"',
-    'safe_tree "$payload"',
-    'find "$payload" -type d -exec chmod 755 {} +',
-    'find "$payload" -type f -perm /111 -exec chmod 755 {} +',
-    'find "$payload" -type f ! -perm /111 -exec chmod 644 {} +',
-    'staged="$(digest_tree "$payload" "$stage/staged.manifest")"',
-    '[ "$staged" = "$expected" ]',
-    `help="$(${shellQuote(OPENCLAW_NATIVE_BIN)} skills install --help 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
-    'printf "%s" "$help" | grep -q -- "--agent" || { echo CAPABILITY_MISSING; exit 3; }',
-    'printf "%s" "$help" | grep -q -- "--force" || { echo CAPABILITY_MISSING; exit 3; }',
-    'printf "%s" "$help" | grep -q -- "--expected-digest" || { echo CAPABILITY_MISSING; exit 3; }',
-    `if ! ${shellQuote(OPENCLAW_NATIVE_BIN)} skills install "$payload" --agent main --force --expected-digest "$expected"; then echo NATIVE_INSTALL_FAILED; exit 5; fi`,
-    `${shellQuote(OPENCLAW_NATIVE_BIN)} skills list --agent main --json > "$stage/list.json"`,
-    `${shellQuote(OPENCLAW_NATIVE_BIN)} skills info "$skill" --agent main --json > "$stage/info.json"`,
-    `${shellQuote(OPENCLAW_NATIVE_BIN)} skills check --agent main --json > "$stage/check.json"`,
-    `target="$(node -e ${shellQuote(verifyNativeJson)} "$stage/list.json" "$stage/info.json" "$stage/check.json" "$skill" "$expected_workspace")" || { echo VERIFY_FAILED; exit 4; }`,
-    'safe_tree "$target" || { echo VERIFY_FAILED; exit 4; }',
-    'installed="$(digest_tree "$target" "$stage/installed.manifest")"',
-    '[ "$installed" = "$expected" ] || { echo VERIFY_FAILED; exit 4; }',
-    `${identityCheck} || { echo IDENTITY_CHANGED; exit 9; }`,
-    'printf "INSTALLED %s\\n" "$installed"',
-  ].join("; ");
+  return buildNativeSkillStagingScript({
+    paths,
+    skillName,
+    expectedDigest,
+    expectedSandboxIdentityFingerprint,
+    digestExcludedRelativePath: ".openclaw/source-origin.json",
+    preStageCommands: [
+      `config=${shellQuote(`${paths.stateDir}/openclaw.json`)}`,
+      `expected_workspace=${shellQuote(`${paths.stateDir}/workspace`)}`,
+      `node -e ${shellQuote(verifyMainWorkspace)} "$config" "$expected_workspace" || { echo AGENT_WORKSPACE_UNSUPPORTED; exit 8; }`,
+      `help="$(${shellQuote(OPENCLAW_NATIVE_BIN)} skills install --help 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
+      'printf "%s" "$help" | grep -q -- "--agent" || { echo CAPABILITY_MISSING; exit 3; }',
+      'printf "%s" "$help" | grep -q -- "--force" || { echo CAPABILITY_MISSING; exit 3; }',
+      'printf "%s" "$help" | grep -q -- "--expected-digest" || { echo CAPABILITY_MISSING; exit 3; }',
+    ],
+    lifecycleCommands: [
+      buildBoundedNativeSkillInstallCommand(
+        `${shellQuote(OPENCLAW_NATIVE_BIN)} skills install "$payload" --agent main --force --expected-digest "$expected"`,
+      ),
+      `${shellQuote(OPENCLAW_NATIVE_BIN)} skills list --agent main --json > "$stage/list.json"`,
+      `${shellQuote(OPENCLAW_NATIVE_BIN)} skills info "$skill" --agent main --json > "$stage/info.json"`,
+      `${shellQuote(OPENCLAW_NATIVE_BIN)} skills check --agent main --json > "$stage/check.json"`,
+      `target="$(node -e ${shellQuote(verifyNativeJson)} "$stage/list.json" "$stage/info.json" "$stage/check.json" "$skill" "$expected_workspace")" || { echo VERIFY_FAILED; exit 4; }`,
+      'safe_tree "$target" || { echo VERIFY_FAILED; exit 4; }',
+      'installed="$(digest_tree "$target" "$stage/installed.manifest")"',
+      '[ "$installed" = "$expected" ] || { echo VERIFY_FAILED; exit 4; }',
+    ],
+  });
 }
 
 /**
@@ -624,11 +669,13 @@ export function installOpenClawSkill(
             ? "stage_recovery_failed"
             : result?.status === 5 && stdout.endsWith("NATIVE_INSTALL_FAILED")
               ? "native_install_failed"
-              : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
-                ? "verification_failed"
-                : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
-                  ? "sandbox_identity_changed"
-                  : "remote_state_unknown",
+              : result?.status === 6 && stdout.endsWith("NATIVE_INSTALL_TIMEOUT")
+                ? "native_install_timed_out"
+                : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
+                  ? "verification_failed"
+                  : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
+                    ? "sandbox_identity_changed"
+                    : "remote_state_unknown",
   };
 }
 
@@ -703,42 +750,27 @@ function buildNativeLocalSkillInstallScript(
   const commandArgs = command.importArgs
     .map((arg) => (arg === stageToken ? '"$payload"' : shellQuote(arg)))
     .join(" ");
-  const identityCheck = sandboxIdentityCheckCommand(expectedSandboxIdentityFingerprint);
-  return [
-    "set -eu",
-    "umask 077",
-    `root=${shellQuote(paths.stateDir)}`,
-    `skill=${shellQuote(skillName)}`,
-    `expected=${shellQuote(expectedDigest)}`,
-    'safe_tree() { [ -d "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -mindepth 1 ! -type d ! -type f -print -quit)" ]; }',
-    'digest_tree() { tree="$1"; manifest="$2"; find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort > "$manifest.files"; : > "$manifest"; while IFS= read -r rel; do if [ -n "$(find "$tree/$rel" -type f -perm /111 -print -quit)" ]; then mode=755; else mode=644; fi; hash="$(sha256sum "$tree/$rel" | cut -d " " -f 1)"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$manifest"; done < "$manifest.files"; sha256sum "$manifest" | cut -d " " -f 1; }',
-    '[ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]',
-    `${identityCheck} || { echo IDENTITY_CHANGED; exit 9; }`,
-    `help="$(${shellQuote(command.binary)} skills ${shellQuote(command.importArgs[1])} --help 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
-    ...NATIVE_STAGE_RECOVERY_COMMANDS,
-    'stage="$(mktemp -d "$root/.nemoclaw-skill-stage.XXXXXX")"',
-    'chmod 700 "$stage"',
-    'cleanup() { rm -rf -- "$stage"; }',
-    "trap cleanup EXIT HUP INT TERM",
-    'payload="$stage/payload"',
-    'mkdir -- "$payload"',
-    'tar --no-same-owner -xf - -C "$payload"',
-    'safe_tree "$payload"',
-    'find "$payload" -type d -exec chmod 755 {} +',
-    'find "$payload" -type f -perm /111 -exec chmod 755 {} +',
-    'find "$payload" -type f ! -perm /111 -exec chmod 644 {} +',
-    'staged="$(digest_tree "$payload" "$stage/staged.manifest")"',
-    '[ "$staged" = "$expected" ]',
-    `if ! ${shellQuote(command.binary)} ${commandArgs} > "$stage/native.out" 2>&1; then cat "$stage/native.out" >&2; echo NATIVE_INSTALL_FAILED; exit 5; fi`,
-    `target="$(node -e ${shellQuote(nativeResultParser)} "$stage/native.out" "$skill" "$expected" "$root")" || { cat "$stage/native.out" >&2; echo VERIFY_FAILED; exit 4; }`,
-    'target_real="$(realpath -e -- "$target")" || { echo VERIFY_FAILED; exit 4; }',
-    'case "$target_real" in "$root"/*) ;; *) echo VERIFY_FAILED; exit 4 ;; esac',
-    'safe_tree "$target_real" || { echo VERIFY_FAILED; exit 4; }',
-    'installed="$(digest_tree "$target_real" "$stage/installed.manifest")"',
-    '[ "$installed" = "$expected" ] || { echo VERIFY_FAILED; exit 4; }',
-    `${identityCheck} || { echo IDENTITY_CHANGED; exit 9; }`,
-    'printf "INSTALLED %s\\n" "$installed"',
-  ].join("; ");
+  return buildNativeSkillStagingScript({
+    paths,
+    skillName,
+    expectedDigest,
+    expectedSandboxIdentityFingerprint,
+    preStageCommands: [
+      `help="$(${shellQuote(command.binary)} skills ${shellQuote(command.importArgs[1])} --help 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
+    ],
+    lifecycleCommands: [
+      buildBoundedNativeSkillInstallCommand(
+        `${shellQuote(command.binary)} ${commandArgs}`,
+        '"$stage/native.out"',
+      ),
+      `target="$(node -e ${shellQuote(nativeResultParser)} "$stage/native.out" "$skill" "$expected" "$root")" || { cat "$stage/native.out" >&2; echo VERIFY_FAILED; exit 4; }`,
+      'target_real="$(realpath -e -- "$target")" || { echo VERIFY_FAILED; exit 4; }',
+      'case "$target_real" in "$root"/*) ;; *) echo VERIFY_FAILED; exit 4 ;; esac',
+      'safe_tree "$target_real" || { echo VERIFY_FAILED; exit 4; }',
+      'installed="$(digest_tree "$target_real" "$stage/installed.manifest")"',
+      '[ "$installed" = "$expected" ] || { echo VERIFY_FAILED; exit 4; }',
+    ],
+  });
 }
 
 /** Securely stage a host snapshot and delegate publication to Hermes or DCode. */
@@ -794,8 +826,10 @@ export function installNativeAgentSkill(
             ? "verification_failed"
             : result?.status === 5 && stdout.endsWith("NATIVE_INSTALL_FAILED")
               ? "native_install_failed"
-              : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
-                ? "sandbox_identity_changed"
-                : "remote_state_unknown",
+              : result?.status === 6 && stdout.endsWith("NATIVE_INSTALL_TIMEOUT")
+                ? "native_install_timed_out"
+                : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
+                  ? "sandbox_identity_changed"
+                  : "remote_state_unknown",
   };
 }

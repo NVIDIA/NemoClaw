@@ -619,6 +619,29 @@ describe("sandbox skill action orchestration", () => {
     );
   });
 
+  it("reports a terminated native install timeout with list-before-retry guidance", async () => {
+    const skillDir = makeSkillDir();
+    getSessionAgent.mockReturnValue(deepAgent);
+    skillInstall.resolveNativeSkillState.mockReturnValue(sharedPaths);
+    skillInstall.installNativeAgentSkill.mockReturnValue({
+      success: false,
+      uploaded: 0,
+      reason: "native_install_timed_out",
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await installSandboxSkill("alpha", { command: "install", path: skillDir });
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
+    const output = error.mock.calls.map((args) => args.join(" ")).join("\n");
+    expect(process.exitCode).toBe(1);
+    expect(output).toContain("native skill import timed out and was terminated");
+    expect(output).toContain("nemoclaw alpha skill list' before retrying");
+  });
+
   it("reports unknown Deep Agents native state with list-before-retry guidance", async () => {
     const skillDir = makeSkillDir();
     getSessionAgent.mockReturnValue(deepAgent);

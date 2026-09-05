@@ -671,6 +671,15 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it.each(["src/lib/skill-install.ts", "src/lib/actions/sandbox/skill-install.ts"])(
+    "selects the OpenClaw skill lifecycle target when %s changes",
+    (changedFile) => {
+      expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+        "openclaw-skill-cli",
+      );
+    },
+  );
+
   it.each([
     "nemoclaw-blueprint/router/pool-config.yaml",
     "test/e2e/live/model-router-provider-routed-inference-helpers.ts",

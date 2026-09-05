@@ -60,7 +60,7 @@ describe("OpenClaw native skill installation", () => {
   });
 
   it.runIf(process.platform === "linux")(
-    "delegates fresh installs and updates to native agent state",
+    "delegates fresh installs and updates and terminates a timed-out native publisher",
     () => {
       const skill = makeSkill();
       const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-root-"));
@@ -70,7 +70,9 @@ describe("OpenClaw native skill installation", () => {
       const pinnedOpenClaw = path.join(fakeBin, "openclaw-pinned");
       const abandonedStage = path.join(sandboxRoot, ".nemoclaw-skill-stage.abandoned");
       let checkState = "eligible";
+      let hangInstall = false;
       let mutatePayload = false;
+      const lateInstallMarker = path.join(sandboxRoot, "late-install");
       const executionPaths: NativeSkillState = {
         ...paths,
         stateDir: sandboxRoot,
@@ -102,6 +104,7 @@ case "$1 $2" in
       previous=$argument
     done
     [ -n "$expected" ] || exit 65
+    if [ "$OPENCLAW_TEST_HANG" = 1 ]; then sleep 10; printf late > "$OPENCLAW_TEST_LATE_MARKER"; fi
     if [ "$OPENCLAW_TEST_MUTATE" = 1 ]; then printf '%s\n' '# changed after outer validation' >> "$3/SKILL.md"; fi
     file_digest=$(sha256sum "$3/SKILL.md" | cut -d ' ' -f 1)
     observed=$(printf '644 %s  SKILL.md\n' "$file_digest" | sha256sum | cut -d ' ' -f 1)
@@ -150,6 +153,8 @@ esac
               env: {
                 ...process.env,
                 OPENCLAW_TEST_CHECK_STATE: checkState,
+                OPENCLAW_TEST_HANG: hangInstall ? "1" : "0",
+                OPENCLAW_TEST_LATE_MARKER: lateInstallMarker,
                 OPENCLAW_TEST_LOG: invocationLog,
                 OPENCLAW_TEST_MUTATE: mutatePayload ? "1" : "0",
                 OPENCLAW_TEST_TARGET: workspaceSkillDir,
@@ -224,6 +229,36 @@ esac
       expect(
         fs.readdirSync(sandboxRoot).filter((entry) => entry.startsWith(".nemoclaw-skill-stage.")),
       ).toEqual([]);
+
+      checkState = "eligible";
+      hangInstall = true;
+      const timedOut = installOpenClawSkill(
+        ctx,
+        skill,
+        executionPaths,
+        "demo-skill",
+        installOptions((sshContext, command, options) =>
+          sshExec(
+            sshContext,
+            command.replace("--kill-after=5s 100s", "--kill-after=1s 1s"),
+            options,
+          ),
+        ),
+      );
+      expect(timedOut).toEqual({
+        success: false,
+        uploaded: 0,
+        reason: "native_install_timed_out",
+      });
+      expect(fs.existsSync(lateInstallMarker)).toBe(false);
+      expect(
+        fs.readdirSync(sandboxRoot).filter((entry) => entry.startsWith(".nemoclaw-skill-stage.")),
+      ).toEqual([]);
+
+      hangInstall = false;
+      expect(
+        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOptions(sshExec)),
+      ).toMatchObject({ success: true });
     },
   );
 
@@ -289,6 +324,7 @@ esac
   it.each([
     [3, "CAPABILITY_MISSING\n", "native_capability_missing"],
     [5, "NATIVE_INSTALL_FAILED\n", "native_install_failed"],
+    [6, "NATIVE_INSTALL_TIMEOUT\n", "native_install_timed_out"],
     [7, "STAGE_RECOVERY_FAILED\n", "stage_recovery_failed"],
     [4, "installer output\nVERIFY_FAILED\n", "verification_failed"],
     [8, "AGENT_WORKSPACE_UNSUPPORTED\n", "agent_workspace_unsupported"],

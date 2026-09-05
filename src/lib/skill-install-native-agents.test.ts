@@ -71,6 +71,7 @@ describe("Hermes and DCode native skill installation", () => {
     [3, "CAPABILITY_MISSING\n", "native_capability_missing"],
     [4, "VERIFY_FAILED\n", "verification_failed"],
     [5, "NATIVE_INSTALL_FAILED\n", "native_install_failed"],
+    [6, "NATIVE_INSTALL_TIMEOUT\n", "native_install_timed_out"],
     [7, "STAGE_RECOVERY_FAILED\n", "stage_recovery_failed"],
     [9, "IDENTITY_CHANGED\n", "sandbox_identity_changed"],
   ] as const)("maps native staged import failure %s", (status, stdout, reason) => {
@@ -91,7 +92,7 @@ describe("Hermes and DCode native skill installation", () => {
   it
     .runIf(process.platform === "linux")
     .each(["hermes", "langchain-deepagents-code"] as NativeLocalSkillAgent[])(
-    "executes %s-emitted target resolution for fresh installs and updates",
+    "executes %s-emitted target resolution and terminates a timed-out native publisher",
     (agent) => {
       const skill = makeSkill();
       const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-${agent}-state-`));
@@ -103,7 +104,9 @@ describe("Hermes and DCode native skill installation", () => {
       const fakeBinary = path.join(stateDir, "agent-cli");
       const abandonedStage = path.join(stateDir, ".nemoclaw-skill-stage.abandoned");
       const nativeBinary = agent === "hermes" ? "/usr/local/bin/hermes" : "/usr/local/bin/dcode";
+      let hangInstall = false;
       let mutatePayload = false;
+      const lateInstallMarker = path.join(stateDir, "late-install");
       fs.mkdirSync(abandonedStage, { mode: 0o700 });
       fs.writeFileSync(path.join(abandonedStage, "stale"), "stale\n");
       fs.writeFileSync(
@@ -121,6 +124,7 @@ case "\${1:-} \${2:-}" in
       previous=\$argument
     done
     [ -n "\$expected" ] || exit 65
+    if [ "\$NATIVE_SKILL_HANG" = 1 ]; then sleep 10; printf late > "\$NATIVE_SKILL_LATE_MARKER"; fi
     if [ "\$NATIVE_SKILL_MUTATE" = 1 ]; then printf '%s\n' '# changed after outer validation' >> "\$source/SKILL.md"; fi
     file_digest=\$(sha256sum "\$source/SKILL.md" | cut -d ' ' -f 1)
     observed=\$(printf '644 %s  SKILL.md\n' "\$file_digest" | sha256sum | cut -d ' ' -f 1)
@@ -158,6 +162,8 @@ esac
             encoding: "utf8",
             env: {
               ...process.env,
+              NATIVE_SKILL_HANG: hangInstall ? "1" : "0",
+              NATIVE_SKILL_LATE_MARKER: lateInstallMarker,
               NATIVE_SKILL_MUTATE: mutatePayload ? "1" : "0",
               NATIVE_SKILL_TARGET: target,
               OPENSHELL_SANDBOX_ID: SANDBOX_ID,
@@ -189,6 +195,34 @@ esac
         }),
       ).toMatchObject({ success: true });
       expect(fs.readFileSync(path.join(target, "SKILL.md"), "utf8")).toContain("# Updated");
+      mutatePayload = false;
+      hangInstall = true;
+      const timedOut = installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {
+        expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
+        sshExecImpl: (sshContext, command, options) =>
+          sshExec(
+            sshContext,
+            command.replace("--kill-after=5s 100s", "--kill-after=1s 1s"),
+            options,
+          ),
+      });
+      expect(timedOut).toEqual({
+        success: false,
+        uploaded: 0,
+        reason: "native_install_timed_out",
+      });
+      expect(fs.existsSync(lateInstallMarker)).toBe(false);
+      expect(
+        fs.readdirSync(stateDir).filter((name) => name.startsWith(".nemoclaw-skill-stage.")),
+      ).toEqual([]);
+
+      hangInstall = false;
+      expect(
+        installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {
+          expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
+          sshExecImpl: sshExec,
+        }),
+      ).toMatchObject({ success: true });
       mutatePayload = true;
       expect(
         installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {

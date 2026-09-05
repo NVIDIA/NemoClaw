@@ -576,6 +576,11 @@ export async function installSandboxSkill(
       }
     } else if (native.reason === "native_install_failed") {
       console.error(`  The ${displayName} native skill import refused or failed the staged skill.`);
+    } else if (native.reason === "native_install_timed_out") {
+      console.error(`  The ${displayName} native skill import timed out and was terminated.`);
+      console.error(
+        `  Inspect the result with '${CLI_NAME} ${sandboxName} skill list' before retrying.`,
+      );
     } else if (native.reason === "sandbox_identity_changed") {
       console.error(
         `  The ${displayName} sandbox identity changed or could not be proven during native skill installation.`,

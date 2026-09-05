@@ -1124,6 +1124,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: ["src/lib/skill-install.ts", "src/lib/actions/sandbox/skill-install.ts"],
     environment: {
       ...hostedInference,
       NEMOCLAW_SANDBOX_NAME: "e2e-oc-skill-cli",
