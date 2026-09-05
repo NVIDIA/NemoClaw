@@ -29,6 +29,7 @@ type ValidationProbeOptions =
   | undefined;
 
 const ONBOARD_VALIDATION_TIMEOUT_ENV = "NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS";
+export const MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS = 600;
 const STANDARD_VALIDATION_TIMING: ValidationProbeTimingProfile = {
   connectTimeoutSeconds: 10,
   maxTimeSeconds: 15,
@@ -82,9 +83,20 @@ export function buildValidationProbeTimingProfile(
     CALIBRATED_MAX_TIME_MIN_SECONDS,
     CALIBRATED_MAX_TIME_MAX_SECONDS,
   );
+  // Calibration samples a cheap endpoint (`GET /models`) and scales that one
+  // observation up for the far heavier chat-completions POST. On WSL2 the
+  // virtualized network stack makes that scaling optimistic: the sample can
+  // return in milliseconds while the POST needs tens of seconds. Keep the
+  // floor the uncalibrated branch applies, so calibration can raise a slow
+  // host's budget but never lower it below what WSL2 already needs (#10413).
+  const wslFloor = isWsl(opts);
   return {
-    connectTimeoutSeconds,
-    maxTimeSeconds,
+    connectTimeoutSeconds: wslFloor
+      ? Math.max(connectTimeoutSeconds, WSL_VALIDATION_TIMING.connectTimeoutSeconds)
+      : connectTimeoutSeconds,
+    maxTimeSeconds: wslFloor
+      ? Math.max(maxTimeSeconds, WSL_VALIDATION_TIMING.maxTimeSeconds)
+      : maxTimeSeconds,
     observedMs: Math.max(0, Math.round(opts.calibration.durationMs)),
     source: "calibrated",
   };
@@ -103,7 +115,7 @@ function buildCurlTimingArgs(profile: ValidationProbeTimingProfile): string[] {
 // getCurlTimingArgs() because validation must not hang the wizard for a
 // minute on a misbehaving model. See issue #1601 (Bug 3).
 export function getValidationProbeCurlArgs(opts?: ValidationProbeOptions): string[] {
-  return withValidationMaxTimeOverride(
+  return withValidationTimeoutOverride(
     buildCurlTimingArgs(buildValidationProbeTimingProfile(opts)),
   );
 }
@@ -116,7 +128,7 @@ export const STREAMING_EVENT_PROBE_MAX_SECONDS = 5;
 // Cap the streaming probe's --max-time only (min, never lengthen); connect-timeout
 // stays and --max-time bounds the whole call. See #7792.
 export function getStreamingEventProbeCurlArgs(opts?: ValidationProbeOptions): string[] {
-  const args = getValidationProbeCurlArgs(opts);
+  const args = buildCurlTimingArgs(buildValidationProbeTimingProfile(opts));
   const maxTimeIndex = args.indexOf("--max-time");
   if (maxTimeIndex === -1) return args;
   const current = Number(args[maxTimeIndex + 1]);
@@ -132,14 +144,14 @@ export function getDeepSeekV4ProValidationProbeCurlArgs(opts?: ValidationProbeOp
   const args = isWsl(opts)
     ? ["--connect-timeout", "30", "--max-time", "150"]
     : ["--connect-timeout", "20", "--max-time", "120"];
-  return withValidationMaxTimeOverride(args);
+  return withValidationTimeoutOverride(args);
 }
 
 export function getKimiK26ValidationProbeCurlArgs(opts?: ValidationProbeOptions): string[] {
   const args = isWsl(opts)
     ? ["--connect-timeout", "20", "--max-time", "90"]
     : ["--connect-timeout", "10", "--max-time", "60"];
-  return withValidationMaxTimeOverride(args);
+  return withValidationTimeoutOverride(args);
 }
 
 export function getExtendedNvidiaEndpointValidationProbeCurlArgs(
@@ -148,7 +160,7 @@ export function getExtendedNvidiaEndpointValidationProbeCurlArgs(
   const args = isWsl(opts)
     ? ["--connect-timeout", "30", "--max-time", "300"]
     : ["--connect-timeout", "10", "--max-time", "300"];
-  return withValidationMaxTimeOverride(args);
+  return withValidationTimeoutOverride(args);
 }
 
 export function getCurlMaxTimeSeconds(args: readonly string[]): number {
@@ -158,17 +170,23 @@ export function getCurlMaxTimeSeconds(args: readonly string[]): number {
   return Number.isFinite(value) && value > 0 ? value : 30;
 }
 
-export function withValidationMaxTimeOverride(args: string[]): string[] {
+export function withValidationTimeoutOverride(args: string[]): string[] {
   const raw = (process.env[ONBOARD_VALIDATION_TIMEOUT_ENV] || "").trim();
   if (!raw) return args;
-  const overrideSeconds = Math.ceil(Number(raw));
-  if (!Number.isFinite(overrideSeconds) || overrideSeconds <= 0) return args;
-  if (overrideSeconds <= getCurlMaxTimeSeconds(args)) return args;
-  const maxTimeIndex = args.indexOf("--max-time");
-  if (maxTimeIndex === -1) return args;
+  const requestedSeconds = Math.ceil(Number(raw));
+  if (!Number.isFinite(requestedSeconds) || requestedSeconds <= 0) return args;
+  const overrideSeconds = Math.min(requestedSeconds, MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS);
   const next = [...args];
-  next[maxTimeIndex + 1] = String(overrideSeconds);
-  return next;
+  let changed = false;
+  for (const flag of ["--connect-timeout", "--max-time"]) {
+    const index = args.indexOf(flag);
+    if (index === -1) continue;
+    const current = Number(args[index + 1]);
+    if (Number.isFinite(current) && current > 0 && overrideSeconds <= current) continue;
+    next[index + 1] = String(overrideSeconds);
+    changed = true;
+  }
+  return changed ? next : args;
 }
 
 export function getProbeProcessTimeoutMs(args: readonly string[]): number {

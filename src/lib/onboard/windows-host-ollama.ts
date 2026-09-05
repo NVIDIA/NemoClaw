@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isWsl } from "../platform";
+import { OLLAMA_PORT } from "../core/ports";
+import { isWsl, windowsProcessListensOnlyOnLoopback } from "../platform";
 import { runCapture } from "../runner";
 
 export interface WindowsHostOllamaState {
@@ -14,8 +15,8 @@ export interface WindowsHostOllamaState {
   // restart path does not kill a daemon we cannot relaunch.
   installedPath: string;
   // True when the running daemon is listening on 127.0.0.1 only and not
-  // on 0.0.0.0 / ::. Drives the "Restart Ollama on Windows host with
-  // 0.0.0.0 binding" menu variant (#3949).
+  // on 0.0.0.0 / ::. Windows-host reuse requires this state; wildcard
+  // listeners are routed through the loopback repair action.
   loopbackOnly: boolean;
 }
 
@@ -28,18 +29,12 @@ const GET_COMMAND_OLLAMA =
 const GET_PROCESS_OLLAMA_PATH =
   "Get-Process ollama -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Path";
 
-const GET_PROCESS_OLLAMA_ID =
-  "Get-Process ollama -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Id";
-
 const GET_KNOWN_OLLAMA_INSTALL_PATH =
   "$candidates = @(); " +
   "if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\\Ollama\\ollama.exe') }; " +
   "if ($env:ProgramFiles) { $candidates += (Join-Path $env:ProgramFiles 'Ollama\\ollama.exe') }; " +
   "if (${env:ProgramFiles(x86)}) { $candidates += (Join-Path ${env:ProgramFiles(x86)} 'Ollama\\ollama.exe') }; " +
   "$candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1";
-
-const GET_NETTCP_OLLAMA_LISTEN =
-  "Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalAddress";
 
 export interface DetectWindowsHostOllamaDeps {
   isWsl: () => boolean;
@@ -82,10 +77,11 @@ function probeInstalledPath(deps: DetectWindowsHostOllamaDeps): string {
 }
 
 function probeLoopbackOnly(deps: DetectWindowsHostOllamaDeps): boolean {
-  const pid = powershell(GET_PROCESS_OLLAMA_ID, deps);
-  if (!pid) return false;
-  const listenAddrs = powershell(GET_NETTCP_OLLAMA_LISTEN, deps);
-  return /127\.0\.0\.1/.test(listenAddrs) && !/0\.0\.0\.0|^::\s*$/m.test(listenAddrs);
+  return windowsProcessListensOnlyOnLoopback(deps.runCapture, {
+    processName: "ollama",
+    port: OLLAMA_PORT,
+    timeoutMs: WINDOWS_HOST_OLLAMA_PROBE_TIMEOUT_MS,
+  });
 }
 
 export function detectWindowsHostOllama(
