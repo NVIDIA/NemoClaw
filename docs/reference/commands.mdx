@@ -2401,7 +2401,7 @@ Remove an installed skill from a running sandbox by skill name when the selected
 
 <AgentOnly variant="openclaw">
 
-Automatic OpenClaw skill removal is unavailable in this capability slice because pinned OpenClaw 2026.7.1 has no public native skill removal command. The command refuses before changing files. Use `$$nemoclaw <name> connect` to inspect both `/sandbox/.openclaw/workspace/skills/<skill>` and the legacy `/sandbox/.openclaw/skills/<skill>` path, and remove or migrate content manually only after confirming its provenance.
+Automatic OpenClaw skill removal is unavailable in this capability slice because pinned OpenClaw 2026.7.1 has no public native skill removal command. The command refuses before changing files. Use `$$nemoclaw <name> connect` to inspect `/sandbox/.openclaw/workspace/skills/<skill>` plus the legacy `/sandbox/.openclaw/skills/<skill>` and `$HOME/.openclaw/skills/<skill>` paths, and remove or migrate content manually only after confirming its provenance.
 
 </AgentOnly>
 <AgentOnly variant="hermes">

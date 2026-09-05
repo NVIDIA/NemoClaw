@@ -161,7 +161,7 @@ export async function removeSandboxSkill(
       "  Automatic OpenClaw skill removal is unavailable because the pinned runtime has no native removal capability.",
     );
     console.error(
-      `  Inspect both ${paths.uploadDir} and the legacy ${legacyPath} path; remove content only after confirming its provenance.`,
+      `  Inspect ${paths.uploadDir} plus the legacy ${legacyPath} and $HOME/.openclaw/skills/${skillName} paths; remove content only after confirming its provenance.`,
     );
     process.exitCode = 1;
     return;

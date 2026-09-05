@@ -241,6 +241,9 @@ describe("sandbox skill action orchestration", () => {
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining("Automatic OpenClaw skill removal is unavailable"),
     );
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("$HOME/.openclaw/skills/demo-skill"),
+    );
     expect(captureSandboxSshConfig).not.toHaveBeenCalled();
     expect(skillInstall.checkExisting).not.toHaveBeenCalled();
     expect(skillInstall.removeSkill).not.toHaveBeenCalled();
