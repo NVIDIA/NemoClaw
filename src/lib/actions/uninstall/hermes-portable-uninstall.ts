@@ -420,6 +420,7 @@ function loadAuthority(
       directory: runtime.inferenceStateDir,
       transactionId: inference.receipt.publication.transactionId,
       targetSha256: inference.receipt.publication.targetSha256,
+      gatewayName: receipt.gatewayName,
       sandboxName,
       model: row.model!,
       credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
