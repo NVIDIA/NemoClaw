@@ -573,7 +573,13 @@ station_pci_device_is_gb300() {
 
 station_has_exact_gb300_pci_gpu() {
   local pci_root=${1:-/sys/bus/pci/devices} pci_path
+  local -a pci_paths=()
   for pci_path in "$pci_root"/*; do
+    [[ -d "$pci_path" ]] || continue
+    pci_paths+=("$pci_path")
+  done
+  ((${#pci_paths[@]} > 0 && ${#pci_paths[@]} <= 256)) || return 1
+  for pci_path in "${pci_paths[@]}"; do
     station_pci_device_is_gb300 "${pci_path##*/}" "$pci_root" && return 0
   done
   return 1

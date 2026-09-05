@@ -115,6 +115,11 @@ export function discoverStationGb300SysfsReadOnlyPaths(
   } catch {
     // A Station image without PCI sysfs cannot use the scoped GPU exception.
   }
+  if (pciDeviceNames.length > 256) {
+    throw new Error(
+      `Cannot prepare Station GB300 direct GPU sandbox policy; more than 256 PCI entries were found under ${pciDevicesRoot}.`,
+    );
+  }
   for (const pciDeviceName of pciDeviceNames) {
     if (!PCI_BDF_PATTERN.test(pciDeviceName)) continue;
     const pciDeviceRoot = path.join(pciDevicesRoot, pciDeviceName);

@@ -155,6 +155,7 @@ function classifyFirmwareWithReadiness(
   productFamily: string,
   boardName: string,
   deviceTreeModel = "",
+  pciEntryCount = 1,
 ) {
   const values = new Map([
     ["product_name", productName],
@@ -173,7 +174,11 @@ function classifyFirmwareWithReadiness(
     stationReleasePath: "/fixture/absent-release",
     pciDevicesPath: "/fixture/pci",
     readFile: (filePath) => values.get(path.basename(filePath)) ?? "",
-    readdir: () => ["0000:01:00.0"],
+    readdir: () =>
+      Array.from(
+        { length: pciEntryCount },
+        (_, index) => `0000:${String(index).padStart(2, "0")}:00.0`,
+      ),
     openFile: () => {
       throw Object.assign(new Error("marker is absent"), { code: "ENOENT" });
     },
@@ -256,6 +261,7 @@ function detectWithInstallerWrapper(
   productName: string,
   productFamily: string,
   stationPci = true,
+  pciEntryCount = 1,
 ): string {
   const fixtureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-handoff-"));
   fixtureDirectories.push(fixtureDirectory);
@@ -267,11 +273,17 @@ function detectWithInstallerWrapper(
   ]) {
     fs.writeFileSync(path.join(fixtureDirectory, name), `${value}\n`);
   }
-  const pciDevice = path.join(fixtureDirectory, "pci", "0000:01:00.0");
-  fs.mkdirSync(pciDevice, { recursive: true });
-  fs.writeFileSync(path.join(pciDevice, "vendor"), "0x10de\n");
-  fs.writeFileSync(path.join(pciDevice, "device"), stationPci ? "0x31c2\n" : "0xffff\n");
-  fs.writeFileSync(path.join(pciDevice, "class"), "0x030000\n");
+  for (const index of Array.from({ length: pciEntryCount }, (_, entryIndex) => entryIndex)) {
+    const pciDevice = path.join(
+      fixtureDirectory,
+      "pci",
+      `0000:${String(index).padStart(2, "0")}:00.0`,
+    );
+    fs.mkdirSync(pciDevice, { recursive: true });
+    fs.writeFileSync(path.join(pciDevice, "vendor"), "0x10de\n");
+    fs.writeFileSync(path.join(pciDevice, "device"), stationPci ? "0x31c2\n" : "0xffff\n");
+    fs.writeFileSync(path.join(pciDevice, "class"), "0x030000\n");
+  }
   fs.writeFileSync(
     path.join(fixtureDirectory, "prepare-dgx-station-host.sh"),
     `#!/usr/bin/env bash
@@ -402,6 +414,27 @@ describe("DGX Station release classifier parity", () => {
     expect(
       detectWithInstallerWrapper("Generic ARM workstation", "NVIDIA DGX Station GB300", false),
     ).toBe("hardware=station-gb300-pci-missing\nplatform=Unverified DGX Station hardware\n");
+  });
+
+  it("rejects an oversized PCI scan before accepting a matching device (#10928)", () => {
+    const shell = detectWithInstallerWrapper(
+      "Generic ARM workstation",
+      "NVIDIA DGX Station GB300",
+      true,
+      257,
+    );
+    const readiness = classifyFirmwareWithReadiness(
+      "Generic ARM workstation",
+      "NVIDIA DGX Station GB300",
+      "Generic board",
+      "",
+      257,
+    );
+
+    expect(shell).toBe(
+      "hardware=station-gb300-pci-missing\nplatform=Unverified DGX Station hardware\n",
+    );
+    expect(readiness.stationGb300PciGpu).toBeUndefined();
   });
 
   it.each([

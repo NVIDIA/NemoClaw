@@ -97,8 +97,9 @@ export function hasDgxStationGb300PciGpu(
 ): boolean | undefined {
   try {
     const entries = readdir(pciDevicesPath);
-    let incompleteEvidence = entries.length > 256;
-    for (const entry of entries.slice(0, 256)) {
+    if (entries.length > 256) return undefined;
+    let incompleteEvidence = false;
+    for (const entry of entries) {
       const devicePath = path.join(pciDevicesPath, entry);
       const vendor = readBoundedNvidiaFirmwareValue(readFile, path.join(devicePath, "vendor"));
       const device = readBoundedNvidiaFirmwareValue(readFile, path.join(devicePath, "device"));
