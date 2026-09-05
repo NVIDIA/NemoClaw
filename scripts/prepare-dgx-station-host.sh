@@ -140,6 +140,26 @@ station_product_name_path() {
   printf '%s' /sys/class/dmi/id/product_name
 }
 
+station_product_family_path() {
+  printf '%s' /sys/class/dmi/id/product_family
+}
+
+station_board_name_path() {
+  printf '%s' /sys/class/dmi/id/board_name
+}
+
+station_system_vendor_path() {
+  printf '%s' /sys/class/dmi/id/sys_vendor
+}
+
+station_cpu_possible_path() {
+  printf '%s' /sys/devices/system/cpu/possible
+}
+
+station_meminfo_path() {
+  printf '%s' /proc/meminfo
+}
+
 station_pci_devices_path() {
   printf '%s' /sys/bus/pci/devices
 }
@@ -226,7 +246,7 @@ dgx_station_no_ota_stock_version_is_supported() {
 }
 
 dgx_station_release_profile() {
-  local path=$1 ota_pretty="" ota_key pretty version build_date platform
+  local path=$1 ota_pretty="" ota_key version build_date platform
   dgx_station_release_schema_is_valid "$path" || return 1
   platform="$(dgx_station_release_value "$path" DGX_PLATFORM)" || return 1
   [[ "$platform" == "DGX Server for GALAXY-GB300" ]] || return 1
@@ -234,56 +254,46 @@ dgx_station_release_profile() {
   # DGX OS keeps its upgrade history in the DGX_OTA_* fields, so a host that has
   # an OTA history is classified by the most recent OTA version it applied.
   #
-  # A host provisioned from a full DGX OS image also carries the identity field
-  # DGX_OTA_PRETTY_NAME="DGX OS"; when that field is present it must read exactly
-  # "DGX OS". It is absent on a host that was first installed from an older base
-  # image (for example 7.4.1-GB300ws) and later OTA-upgraded, because an OTA
-  # upgrade never adds that field. In that case, fall back to the hardware
-  # identity and require DGX_PRETTY_NAME="NVIDIA DGX GB300WS" so that other
-  # release lineages that also emit DGX_OTA_* fields stay fail-closed.
+  # A host provisioned from a full DGX OS image also carries the lineage field
+  # DGX_OTA_PRETTY_NAME="DGX OS". When present, it must match. OTA upgrades can
+  # omit that field, so the hardware, platform, and latest OTA version own the
+  # fallback. DGX_PRETTY_NAME remains diagnostic release text.
   if dgx_station_release_value "$path" DGX_OTA_VERSION >/dev/null 2>&1; then
     if ota_pretty="$(dgx_station_release_value "$path" DGX_OTA_PRETTY_NAME 2>/dev/null)"; then
       [[ "$ota_pretty" == "DGX OS" ]] || return 1
-    else
-      pretty="$(dgx_station_release_value "$path" DGX_PRETTY_NAME)" || return 1
-      [[ "$pretty" == "NVIDIA DGX GB300WS" ]] || return 1
     fi
     version="$(dgx_station_release_value "$path" DGX_OTA_VERSION)" || return 1
     case "$version" in
       7.2.0 | 7.4.0 | 7.5.0) printf '%s' supported-dgx-os ;;
-      *) return 1 ;;
+      *) printf '%s' validation-only-factory-runtime ;;
     esac
     return 0
   fi
 
-  # Stock DGX OS 7.6 omits DGX_OTA_* metadata. Reviewed builds use two exact
-  # DGX_PRETTY_NAME values. The factory-runtime path still proves GB300, driver,
-  # ECC, Docker, CDI, and container GPU capability before onboarding. Other
-  # no-OTA factory images remain exact profiles because they carry separately
-  # qualified stacks.
+  # Stock DGX OS 7.6 omits DGX_OTA_* metadata. Hardware, platform, version, and
+  # the factory-runtime checks own qualification. DGX_PRETTY_NAME remains
+  # diagnostic text. Other no-OTA factory images remain exact build profiles
+  # because they carry separately qualified stacks.
   for ota_key in DGX_OTA_PRETTY_NAME DGX_OTA_VERSION DGX_OTA_DATE; do
     dgx_station_release_value "$path" "$ota_key" >/dev/null 2>&1 && return 1
   done
-  pretty="$(dgx_station_release_value "$path" DGX_PRETTY_NAME)" || return 1
   version="$(dgx_station_release_value "$path" DGX_SWBUILD_VERSION)" || return 1
   build_date="$(dgx_station_release_value "$path" DGX_SWBUILD_DATE)" || return 1
 
-  if [[ "$pretty" == "NVIDIA DGX GB300WS" || "$pretty" == "NVIDIA DGX Server" ]] \
-    && dgx_station_no_ota_stock_version_is_supported "$version"; then
+  if dgx_station_no_ota_stock_version_is_supported "$version"; then
     printf '%s' supported-dgx-os
     return 0
   fi
 
-  case "${pretty}|${version}|${build_date}" in
-    "NVIDIA DGX Server|7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16" | \
-      "NVIDIA DGX GB300WS|7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16")
+  case "${version}|${build_date}" in
+    "7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16")
       printf '%s' supported-colossus-baseos
       ;;
-    "NVIDIA DGX GB300WS|7.5.0|2026-05-13-18-42-38" | \
-      "NVIDIA DGX GB300WS|7.5.0|2026-06-16-11-48-10")
+    "7.5.0|2026-05-13-18-42-38" | \
+      "7.5.0|2026-06-16-11-48-10")
       printf '%s' supported-ai-developer-tools
       ;;
-    *) return 1 ;;
+    *) printf '%s' validation-only-factory-runtime ;;
   esac
 }
 
@@ -404,6 +414,44 @@ is_station_gb300_product() {
   local product=${1:-}
   [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([^[:alnum:]]|$) &&
     "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([^[:alnum:]]|$) ]]
+}
+
+station_firmware_product() {
+  local path value
+  for path in "$(station_product_name_path)" "$(station_product_family_path)" "$(station_board_name_path)"; do
+    [[ -r "$path" ]] || continue
+    value="$(head -c 257 "$path" 2>/dev/null || true)"
+    [[ ${#value} -le 256 && "$value" != *$'\n'* && "$value" != *$'\r'* ]] || continue
+    if is_station_gb300_product "$value"; then
+      printf '%s' "$value"
+      return 0
+    fi
+  done
+  return 1
+}
+
+station_cpu_core_count() {
+  local path value first last
+  path="$(station_cpu_possible_path)"
+  [[ -r "$path" ]] || return 1
+  IFS= read -r value <"$path" || return 1
+  if [[ "$value" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+    first=${BASH_REMATCH[1]}
+    last=${BASH_REMATCH[2]}
+    ((last >= first && last < 4096)) || return 1
+    printf '%s' "$((last - first + 1))"
+  elif [[ "$value" =~ ^[0-9]+$ ]] && ((10#$value < 4096)); then
+    printf '%s' 1
+  else
+    return 1
+  fi
+}
+
+station_host_memory_kib() {
+  local path
+  path="$(station_meminfo_path)"
+  [[ -r "$path" ]] || return 1
+  awk '$1 == "MemTotal:" && $2 ~ /^[0-9]+$/ && $3 == "kB" { print $2; found=1; exit } END { if (!found) exit 1 }' "$path"
 }
 
 normalize_nvidia_pci_bus_id() {
@@ -622,7 +670,7 @@ is_qualified_factory_failed_unit() {
         *) return 1 ;;
       esac
       ;;
-    forced-factory-runtime)
+    validation-only-factory-runtime)
       case "${1:-}" in
         ibacm.service | rtkit-daemon.service) return 0 ;;
         *) return 1 ;;
@@ -809,7 +857,7 @@ verify_baseos_packages() {
 
 station_uses_factory_runtime() {
   case "$STATION_HOST_PROFILE" in
-    stock-dgx-os | colossus-baseos | ai-developer-tools | forced-factory-runtime) return 0 ;;
+    stock-dgx-os | colossus-baseos | ai-developer-tools | validation-only-factory-runtime) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -832,7 +880,7 @@ file_mode() {
 }
 
 check_platform() {
-  local arch os_release_path product product_name_path release_path release_state
+  local arch cpu_count="" host_memory_kib="" os_release_path product release_path release_state system_vendor=""
   arch="$(uname -m)"
   [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] || fatal "Expected ARM64, found ${arch}"
 
@@ -842,14 +890,17 @@ check_platform() {
   source "$os_release_path"
   [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "24.04" ]] \
     || fatal "Expected Ubuntu 24.04, found ${PRETTY_NAME:-unknown}"
-  product_name_path="$(station_product_name_path)"
-  [[ -r "$product_name_path" ]] || fatal "DGX Station product identity is unavailable"
-  product="$(<"$product_name_path")"
-  is_station_gb300_product "$product" || fatal "Expected DGX Station GB300 DMI, found ${product}"
+  product="$(station_firmware_product)" || fatal "DGX Station GB300 firmware identity is unavailable"
+  system_vendor="$(head -n 1 "$(station_system_vendor_path)" 2>/dev/null || true)"
+  cpu_count="$(station_cpu_core_count 2>/dev/null || true)"
+  host_memory_kib="$(station_host_memory_kib 2>/dev/null || true)"
   release_path="$(dgx_station_release_path)"
   release_state="$(dgx_station_release_state "$release_path")"
   if ((FORCE_STATION_INSTALL == 1)); then
     case "$release_state" in
+      validation-only-factory-runtime)
+        fatal "--force-station-install is not required for a trusted unrecognized Station profile; omit the flag to use validation-only factory-runtime handling."
+        ;;
       generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
         fatal "--force-station-install is only for unrecognized DGX Station release metadata. This host is already supported (${release_state}); omit --force-station-install."
         ;;
@@ -864,17 +915,24 @@ check_platform() {
     supported-dgx-os) STATION_HOST_PROFILE="stock-dgx-os" ;;
     supported-colossus-baseos) STATION_HOST_PROFILE="colossus-baseos" ;;
     supported-ai-developer-tools) STATION_HOST_PROFILE="ai-developer-tools" ;;
+    validation-only-factory-runtime)
+      station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
+        || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:$(gb300_pci_device_display)) before factory-runtime validation"
+      STATION_HOST_PROFILE="validation-only-factory-runtime"
+      warn "DGX Station release profile is unrecognized; host packages, the NVIDIA driver, and container-runtime configuration will remain unchanged"
+      ;;
     *)
       if ((FORCE_STATION_INSTALL == 1)); then
         station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
           || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:$(gb300_pci_device_display)) before forced factory-runtime validation"
-        STATION_HOST_PROFILE="forced-factory-runtime"
+        STATION_HOST_PROFILE="validation-only-factory-runtime"
         warn "DGX release metadata allowlist bypassed by explicit --force-station-install intent; all hardware and factory-runtime health checks remain required"
       else
         fatal "This DGX Station OS image is outside the validated boundary"
       fi
       ;;
   esac
+  info "station_hardware=confirmed firmware_product=${product} system_vendor=${system_vendor:-unknown} cpu_cores=${cpu_count:-unknown} host_memory_kib=${host_memory_kib:-unknown}"
   info "platform=${product} profile=${STATION_HOST_PROFILE} release=${release_state} os=${PRETTY_NAME} arch=${arch} kernel=$(uname -r)"
 }
 

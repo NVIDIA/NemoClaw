@@ -32,28 +32,60 @@ function runSourced(body: string, extraEnv: Record<string, string> = {}) {
   return { result, output: `${result.stdout}${result.stderr}` };
 }
 
-describe("DGX Station forced-factory-runtime preparation", () => {
-  it.each([
-    ["ibacm.service"],
-    ["rtkit-daemon.service"],
-  ])("tolerates the unrelated failed unit %s (#7236)", (unit) => {
-    const tolerated = runSourced(
-      `
-STATION_HOST_PROFILE=forced-factory-runtime
+describe("DGX Station validation-only factory-runtime preparation", () => {
+  it("selects validation-only handling without a metadata override (#10928)", () => {
+    const automatic = runSourced(`
+printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$HOME/os-release"
+uname() { printf 'aarch64\n'; }
+station_os_release_path() { printf '%s' "$HOME/os-release"; }
+station_firmware_product() { printf 'NVIDIA DGX Station GB300'; }
+station_system_vendor_path() { printf '%s' "$HOME/absent-vendor"; }
+dgx_station_release_state() { printf 'validation-only-factory-runtime'; }
+station_has_exact_gb300_pci_gpu() { return 0; }
+check_platform
+printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"
+`);
+
+    expect(automatic.result.status, automatic.output).toBe(0);
+    expect(automatic.output).toContain("release profile is unrecognized");
+    expect(automatic.output).toContain("PROFILE=validation-only-factory-runtime");
+
+    const forced = runSourced(`
+printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$HOME/os-release"
+uname() { printf 'aarch64\n'; }
+station_os_release_path() { printf '%s' "$HOME/os-release"; }
+station_firmware_product() { printf 'NVIDIA DGX Station GB300'; }
+station_system_vendor_path() { printf '%s' "$HOME/absent-vendor"; }
+dgx_station_release_state() { printf 'validation-only-factory-runtime'; }
+FORCE_STATION_INSTALL=1
+check_platform
+`);
+
+    expect(forced.result.status, forced.output).not.toBe(0);
+    expect(forced.output).toContain("omit the flag to use validation-only factory-runtime handling");
+  });
+
+  it.each([["ibacm.service"], ["rtkit-daemon.service"]])(
+    "tolerates the unrelated failed unit %s (#7236)",
+    (unit) => {
+      const tolerated = runSourced(
+        `
+STATION_HOST_PROFILE=validation-only-factory-runtime
 systemctl() { printf '${unit} loaded failed failed Unrelated\n'; }
 check_failed_units
 `,
-    );
-    expect(tolerated.result.status, tolerated.output).toBe(0);
-    expect(tolerated.output).toMatch(
-      new RegExp(`condition-qualified forced-factory-runtime failed unit: ${unit}`),
-    );
-  });
+      );
+      expect(tolerated.result.status, tolerated.output).toBe(0);
+      expect(tolerated.output).toMatch(
+        new RegExp(`condition-qualified validation-only-factory-runtime failed unit: ${unit}`),
+      );
+    },
+  );
 
   it("still blocks unrelated and preparation-critical failed units (#7236)", () => {
     const unrelated = runSourced(
       `
-STATION_HOST_PROFILE=forced-factory-runtime
+STATION_HOST_PROFILE=validation-only-factory-runtime
 systemctl() { printf 'ssh.service loaded failed failed SSH\n'; }
 check_failed_units
 `,
@@ -64,7 +96,7 @@ check_failed_units
 
     const critical = runSourced(
       `
-STATION_HOST_PROFILE=forced-factory-runtime
+STATION_HOST_PROFILE=validation-only-factory-runtime
 systemctl() { printf 'containerd.service loaded failed failed containerd\n'; }
 check_failed_units
 `,

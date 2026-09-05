@@ -64,8 +64,9 @@ describe("DGX Station documentation ownership", () => {
     expect(stationPreparation).toContain(
       "OTA-form qualification uses the latest `DGX_OTA_VERSION`",
     );
-    expect(stationPreparation).toContain("`DGX_PRETTY_NAME` must equal `NVIDIA DGX GB300WS`");
-    expect(stationPreparation).toContain("`DGX_PRETTY_NAME=NVIDIA DGX Server`");
+    expect(stationPreparation).toContain(
+      "`DGX_PRETTY_NAME` is diagnostic release text and does not determine Station identity",
+    );
     expect(stationPreparation).toContain("recognized GB300 hardware");
     expect(stationPreparation).not.toMatch(/\b(?:0x)?31c[23]\b/i);
     expect(stationPreparation).toContain("does not require the date to match a build");
@@ -80,8 +81,10 @@ describe("DGX Station documentation ownership", () => {
     );
     expect(quickstart).not.toContain("DGX Server for GALAXY-GB300");
     expect(stationPreparation).toContain("--force-station-install");
-    expect(stationPreparation).toContain("metadata omits or varies fields");
-    expect(stationPreparation).toContain("Remove the override after");
+    expect(stationPreparation).toContain("validation-only factory-runtime handling");
+    expect(stationPreparation).toContain(
+      "does not install packages, repair CDI, register a Docker runtime, restart Docker or containerd",
+    );
     expect(quickstart).not.toContain("--force-station-install");
     expect(platformSupport).toContain("explicit temporary metadata override");
     expect(platformSupport).toContain(

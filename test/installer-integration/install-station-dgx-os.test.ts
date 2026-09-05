@@ -237,8 +237,9 @@ dgx_station_release_state "$DGX_RELEASE"
     ["7.6.0", "NVIDIA DGX GB300WS", "2026-07-14-13-59-06"],
     ["7.6.0", "NVIDIA DGX Server", "2026-07-30-10-25-15"],
     ["7.6.1", "NVIDIA DGX GB300WS", "2026-08-01-00-00-00"],
+    ["7.6.1", "NVIDIA DGX GB300 Workstation", "2026-08-01-00-00-00"],
   ])(
-    "classifies no-OTA stock DGX OS %s with the %s display name without binding its build date (#7417, #9898)",
+    "classifies no-OTA stock DGX OS %s without binding the %s display name or build date (#7417, #9898, #10928)",
     (version, pretty, buildDate) => {
       const release = writeNoOtaDgxOs76Release({ version, pretty, buildDate });
       const { result, output } = runSourced(
@@ -257,65 +258,78 @@ dgx_station_release_state "$DGX_RELEASE"
 
   it.each([
     [
-      "unrecognized display name",
-      writeNoOtaDgxOs76Release({ pretty: "NVIDIA DGX Customer Image" }),
+      "older no-OTA version",
+      "validation-only-factory-runtime",
+      writeNoOtaDgxOs76Release({ version: "7.5.0" }),
     ],
-    ["older no-OTA version", writeNoOtaDgxOs76Release({ version: "7.5.0" })],
-    ["future release family", writeNoOtaDgxOs76Release({ version: "7.7.0" })],
-    ["non-numeric patch", writeNoOtaDgxOs76Release({ version: "7.6.rc1" })],
-    ["different platform", writeNoOtaDgxOs76Release({ platform: "DGX Server for GALAXY-GB200" })],
+    [
+      "future release family",
+      "validation-only-factory-runtime",
+      writeNoOtaDgxOs76Release({ version: "7.7.0" }),
+    ],
+    [
+      "non-numeric patch",
+      "validation-only-factory-runtime",
+      writeNoOtaDgxOs76Release({ version: "7.6.rc1" }),
+    ],
+    [
+      "different platform",
+      "unsupported-dgx-os",
+      writeNoOtaDgxOs76Release({ platform: "DGX Server for GALAXY-GB200" }),
+    ],
     [
       "partial OTA identity",
+      "unsupported-dgx-os",
       writeNoOtaDgxOs76Release({ otaMetadata: 'DGX_OTA_PRETTY_NAME="DGX OS"' }),
     ],
     [
       "complete OTA history",
+      "validation-only-factory-runtime",
       writeNoOtaDgxOs76Release({
         otaMetadata: 'DGX_OTA_VERSION="7.6.0"\nDGX_OTA_DATE="Tue Jul 14 13:59:06 UTC 2026"',
       }),
     ],
-  ])("keeps no-OTA release metadata fail-closed with %s (#7417)", (_scenario, release) => {
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
+  ])(
+    "classifies no-OTA release metadata with %s as %s (#7417, #10928)",
+    (_scenario, expected, release) => {
+      const { result, output } = runSourced(
+        STATION_PREPARE,
+        `
 stat() { printf '0|0|644|256\n'; }
 dgx_station_release_state "$DGX_RELEASE"
 `,
-      { DGX_RELEASE: release },
-    );
+        { DGX_RELEASE: release },
+      );
 
-    expect(result.status, output).toBe(0);
-    expect(result.stdout).toBe("unsupported-dgx-os");
-  });
+      expect(result.status, output).toBe(0);
+      expect(result.stdout).toBe(expected);
+    },
+  );
 
   it.each([
     [
       "BaseOS build version drift",
+      "validation-only-factory-runtime",
       writeNoOtaFactoryRelease("colossus-baseos", { version: "7.5.0" }),
     ],
     [
       "BaseOS build date drift",
+      "validation-only-factory-runtime",
       writeNoOtaFactoryRelease("colossus-baseos", { buildDate: "2026-04-03-00-00-00" }),
     ],
     [
-      "BaseOS display name drift",
-      writeNoOtaFactoryRelease("colossus-baseos", { pretty: "NVIDIA DGX Customer Image" }),
-    ],
-    [
-      "AI Developer Tools product drift",
-      writeNoOtaFactoryRelease("ai-developer-tools", { pretty: "NVIDIA DGX Server" }),
-    ],
-    [
       "AI Developer Tools build date drift",
+      "validation-only-factory-runtime",
       writeNoOtaFactoryRelease("ai-developer-tools", { buildDate: "2026-06-17-00-00-00" }),
     ],
     [
       "factory platform drift",
+      "unsupported-dgx-os",
       writeNoOtaFactoryRelease("ai-developer-tools", {
         platform: "DGX Server for GALAXY-GB200",
       }),
     ],
-  ])("rejects no-OTA factory identity with %s", (_scenario, release) => {
+  ])("classifies no-OTA factory identity with %s as %s", (_scenario, expected, release) => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
@@ -326,17 +340,14 @@ dgx_station_release_state "$DGX_RELEASE"
     );
 
     expect(result.status, output).toBe(0);
-    expect(result.stdout).toBe("unsupported-dgx-os");
+    expect(result.stdout).toBe(expected);
   });
 
   it.each([
-    ["out-of-scope OTA version", writeDgxReleaseFixture("7.6.0")],
-    ["future OTA version", writeDgxReleaseFixture("7.7.0")],
     [
       "unproven Station platform identity",
       writeDgxReleaseFixture("7.5.0", 'DGX_PLATFORM="Not Specified"'),
     ],
-    ["missing DGX_OTA_PRETTY_NAME", writeDgxReleaseFixture("7.5.0", "", null)],
     ["BaseOS identity", writeDgxReleaseFixture("7.5.0", "", "NVIDIA BaseOS")],
     ["unknown field", writeDgxReleaseFixture("7.5.0", 'PAYLOAD="$(touch /tmp/nope)"')],
     [
@@ -478,7 +489,7 @@ dgx_station_release_file_is_safe "$DGX_RELEASE"
 
   it.each([
     ["supported-dgx-os", writeDgxReleaseFixture("7.5.0")],
-    ["unsupported-dgx-os", writeDgxReleaseFixture("7.7.0")],
+    ["validation-only-factory-runtime", writeDgxReleaseFixture("7.7.0")],
   ])("classifies a present marker as %s", (expected, release) => {
     const { result, output } = runSourced(
       STATION_PREPARE,
@@ -493,37 +504,23 @@ dgx_station_release_state "$DGX_RELEASE"
     expect(result.stdout).toBe(expected);
   });
 
-  it("classifies an OTA-upgraded GB300 workstation without the fresh-install marker as supported-dgx-os (#7103)", () => {
-    const release = writeOtaUpgradedRelease();
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
+  it.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server", "NVIDIA DGX GB300 Workstation"])(
+    "classifies an OTA-upgraded GB300 workstation with the %s display name as supported-dgx-os (#7103, #10928)",
+    (pretty) => {
+      const release = writeOtaUpgradedRelease({ pretty });
+      const { result, output } = runSourced(
+        STATION_PREPARE,
+        `
 stat() { printf '0|0|644|256\n'; }
 dgx_station_release_state "$DGX_RELEASE"
 `,
-      { DGX_RELEASE: release },
-    );
+        { DGX_RELEASE: release },
+      );
 
-    expect(result.status, output).toBe(0);
-    expect(result.stdout).toBe("supported-dgx-os");
-  });
-
-  it.each([
-    [
-      "a non-workstation DGX Server identity",
-      writeOtaUpgradedRelease({ pretty: "NVIDIA DGX Server" }),
-    ],
-    ["an out-of-scope latest OTA version", writeOtaUpgradedRelease({ otaVersion: "7.6.0" })],
-    ["a future latest OTA version", writeOtaUpgradedRelease({ otaVersion: "7.7.0" })],
-  ])("keeps a marker-less OTA host fail-closed with %s (#7103)", (_scenario, release) => {
-    const { result } = runSourced(
-      STATION_PREPARE,
-      `dgx_station_release_contents_are_supported "$DGX_RELEASE"`,
-      { DGX_RELEASE: release },
-    );
-
-    expect(result.status).not.toBe(0);
-  });
+      expect(result.status, output).toBe(0);
+      expect(result.stdout).toBe("supported-dgx-os");
+    },
+  );
 
   it("keeps the classifier self-contained when the helper is transported alone", () => {
     const isolated = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-helper-only-"));
@@ -563,7 +560,7 @@ dgx_station_release_state "$DGX_RELEASE"
     expect(original.status, `${original.stdout}${original.stderr}`).toBe(0);
     expect(result.stdout).toBe(original.stdout);
     expect(result.stdout).toMatch(
-      /^(generic-ubuntu|supported-dgx-os|supported-colossus-baseos|supported-ai-developer-tools|unsupported-dgx-os)$/,
+      /^(generic-ubuntu|supported-dgx-os|supported-colossus-baseos|supported-ai-developer-tools|validation-only-factory-runtime|unsupported-dgx-os)$/,
     );
     expect(result.stderr).toBe("");
   });
@@ -588,7 +585,7 @@ printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"
 
     expect(forced.result.status, forced.output).toBe(0);
     expect(forced.output).toContain("release metadata allowlist bypassed");
-    expect(forced.output).toContain("PROFILE=forced-factory-runtime");
+    expect(forced.output).toContain("PROFILE=validation-only-factory-runtime");
 
     const unforced = runSourced(
       STATION_PREPARE,
@@ -743,7 +740,7 @@ require_command() {
   [[ "$1" == "sudo" ]] || { printf 'UNEXPECTED_REQUIREMENT %s\n' "$1"; return 1; }
 }
 acquire_sudo() { :; }
-common_preflight() { STATION_HOST_PROFILE=forced-factory-runtime; }
+common_preflight() { STATION_HOST_PROFILE=validation-only-factory-runtime; }
 reboot_required() { return 1; }
 verify_dgx_os_runtime_sudo() { printf 'FACTORY_RUNTIME_VALIDATED\n'; }
 ensure_docker_group() { printf 'DOCKER_GROUP_PRESENT\n'; }
@@ -1225,7 +1222,7 @@ verify_dgx_os_runtime_sudo
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
-STATION_HOST_PROFILE=forced-factory-runtime
+STATION_HOST_PROFILE=validation-only-factory-runtime
 check_dgx_os_runtime_commands() { printf 'FACTORY_GATES_OK\n'; }
 systemctl() {
   case "$*" in

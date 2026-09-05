@@ -4409,6 +4409,24 @@ is_station_gb300_product() {
     "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([^[:alnum:]]|$) ]]
 }
 
+station_firmware_product() {
+  local path value
+  for path in \
+    /sys/class/dmi/id/product_name \
+    /sys/class/dmi/id/product_family \
+    /sys/class/dmi/id/board_name; do
+    [ -r "$path" ] || continue
+    value="$(cat "$path" 2>/dev/null || true)"
+    [ "${#value}" -le 256 ] || continue
+    [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || continue
+    if is_station_gb300_product "$value"; then
+      printf "%s" "$value"
+      return 0
+    fi
+  done
+  return 1
+}
+
 classify_dgx_station_release() {
   local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
   [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
@@ -4555,7 +4573,7 @@ is_n1x_host() {
 }
 
 detect_express_platform() {
-  local model="" release_state=""
+  local model="" release_state="" station_product=""
   if is_wsl_host; then
     printf "Windows WSL"
     return
@@ -4576,10 +4594,11 @@ detect_express_platform() {
     printf "DGX Spark"
     return
   fi
-  if is_station_gb300_product "$model"; then
+  station_product="$(station_firmware_product 2>/dev/null || true)"
+  if [ -n "$station_product" ] || is_station_gb300_product "$model"; then
     release_state="$(classify_dgx_station_release)"
     case "$release_state" in
-      generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
+      generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools | validation-only-factory-runtime)
         printf "DGX Station"
         ;;
       *)
@@ -4606,7 +4625,7 @@ validate_express_platform_boundary() {
   case "${1:-}" in
     "Unsupported DGX Station OS")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
-      error "This DGX Station OS image is outside the recognized Station Express release-metadata boundary. Station Express accepts generic Ubuntu 24.04 ARM64, OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0, an explicitly qualified Station factory image, or the no-OTA DGX OS 7.6.x profile with DGX_PRETTY_NAME=\"NVIDIA DGX GB300WS\" or DGX_PRETTY_NAME=\"NVIDIA DGX Server\"."
+      error "This DGX Station OS image is outside the recognized Station Express release-metadata boundary. Station Express accepts generic Ubuntu 24.04 ARM64, OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0, the no-OTA DGX OS 7.6.x profile, or an explicitly qualified Station factory image. DGX_PRETTY_NAME is diagnostic and does not determine qualification."
       ;;
     "Unsupported DGX Station generation")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
@@ -4668,6 +4687,9 @@ validate_force_station_install_override() {
   fi
   release_state="$(classify_dgx_station_release)"
   case "$release_state" in
+    validation-only-factory-runtime)
+      error "--force-station-install is not required for this trusted unrecognized Station profile. Omit the flag to use validation-only factory-runtime handling."
+      ;;
     generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
       error "--force-station-install is only for unrecognized DGX Station release metadata. This host is already supported (${release_state}); omit --force-station-install."
       ;;
@@ -5601,6 +5623,9 @@ ensure_station_express_host() {
     supported-colossus-baseos)
       info "Validating the pinned BaseOS package inventory and preparing Docker access and CDI. Host packages and the NVIDIA driver will not be changed."
       ;;
+    validation-only-factory-runtime)
+      warn "The DGX Station software profile is unrecognized. NemoClaw will validate the existing factory runtime without changing host packages, the NVIDIA driver, or container-runtime configuration."
+      ;;
     *)
       if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
         warn "Proceeding with explicit --force-station-install intent; only DGX release metadata qualification is bypassed. Station GB300 hardware, workload quiescence, and factory-runtime health checks remain required."
@@ -5933,6 +5958,9 @@ describe_express_install() {
           ;;
         supported-ai-developer-tools)
           printf "  Factory Ubuntu with NVIDIA AI Developer Tools reuses its driver and container stack after local GPU, CDI, Docker, and Buildx validation. It may add this account to the Docker group, but does not install or replace host packages, rewrite the Docker runtime, or require a reboot.\n"
+          ;;
+        validation-only-factory-runtime)
+          printf "  This Station software profile is not in the qualified image catalog. Setup validates the existing GPU and container runtime, may add this account to the Docker group, and leaves host packages, the NVIDIA driver, and container-runtime configuration unchanged.\n"
           ;;
         *)
           if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then

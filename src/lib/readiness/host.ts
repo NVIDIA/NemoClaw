@@ -157,12 +157,11 @@ function adaptHostAssessment(
       gpu?.totalMemoryMB === undefined ? undefined : gpu.totalMemoryMB * 1024 * 1024,
     nvidiaGpuMemoryAvailableBytes:
       gpu?.availableMemoryMB === undefined ? undefined : gpu.availableMemoryMB * 1024 * 1024,
-    nvidiaGpuMemoryPerDeviceBytes:
-      gpu?.gpus?.length
-        ? Math.min(...gpu.gpus.map(({ memoryMB }) => memoryMB)) * 1024 * 1024
-        : gpu?.perGpuMB === undefined
-          ? undefined
-          : gpu.perGpuMB * 1024 * 1024,
+    nvidiaGpuMemoryPerDeviceBytes: gpu?.gpus?.length
+      ? Math.min(...gpu.gpus.map(({ memoryMB }) => memoryMB)) * 1024 * 1024
+      : gpu?.perGpuMB === undefined
+        ? undefined
+        : gpu.perGpuMB * 1024 * 1024,
     nvidiaGpuUnifiedMemory: gpu?.unifiedMemory,
     nvidiaGpuComputeConstrained: gpu?.computeConstrained,
     hostGpuPlatform,
@@ -349,6 +348,9 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.platform.n1x_wsl",
     "host.platform.dgx_spark",
     "host.platform.n1x",
+    "host.platform.dgx_station_hardware",
+    "host.platform.dgx_station_software",
+    "host.platform.dgx_station_runtime",
     "host.platform.dgx_station",
   ];
   return {
@@ -498,6 +500,8 @@ export function projectHostReadiness(
       runtime: host.runtime,
       hasNvidiaGpu: host.hasNvidiaGpu,
       ...host.platformIdentity,
+      nvidiaGpuCount: host.nvidiaGpuCount,
+      nvidiaGpuMemoryPerDeviceBytes: host.nvidiaGpuMemoryPerDeviceBytes,
     });
     evidence.push(...platform.evidence);
     qualifications = platform.qualifications;

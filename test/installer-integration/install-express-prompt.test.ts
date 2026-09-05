@@ -80,11 +80,18 @@ function [ {
   if [[ "$#" -eq 3 && "$1" = "-r" && "$2" = "/sys/class/dmi/id/product_name" && "$3" = "]" ]]; then
     return 0
   fi
+  if [[ "$#" -eq 3 && "$1" = "-r" && "$2" = "/sys/class/dmi/id/product_family" && "$3" = "]" && -n "$EXPRESS_PRODUCT_FAMILY" ]]; then
+    return 0
+  fi
   builtin [ "$@"
 }
 cat() {
   if [[ "$#" -eq 1 && "$1" = "/sys/class/dmi/id/product_name" ]]; then
     printf "%s" "$EXPRESS_PRODUCT_NAME"
+    return
+  fi
+  if [[ "$#" -eq 1 && "$1" = "/sys/class/dmi/id/product_family" ]]; then
+    printf "%s" "$EXPRESS_PRODUCT_FAMILY"
     return
   fi
   command cat "$@"
@@ -106,6 +113,7 @@ detect_express_platform
             "prepare-dgx-station-host.sh",
           ),
           EXPRESS_PRODUCT_NAME: productName,
+          EXPRESS_PRODUCT_FAMILY: "",
           EXPRESS_DGX_RELEASE_PATH: releasePath,
           ...extraEnv,
         },
@@ -1214,6 +1222,18 @@ detect_express_platform
     },
   );
 
+  it("uses a Station GB300 firmware-family value when the product name is generic (#10928)", () => {
+    const result = detectExpressPlatformForProductName("Generic ARM workstation");
+    const familyResult = detectExpressPlatform("Generic ARM workstation", "", {
+      EXPRESS_PRODUCT_FAMILY: "NVIDIA DGX Station GB300",
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).not.toBe("DGX Station");
+    expect(familyResult.status, `${familyResult.stdout}${familyResult.stderr}`).toBe(0);
+    expect(familyResult.stdout).toBe("DGX Station");
+  });
+
   it.each([
     "Acme XP3830 Workstation",
     "Dell Pro Max with Station GB200",
@@ -1235,8 +1255,8 @@ detect_express_platform
     expect(result.stdout).toBe("DGX Station");
   });
 
-  it.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server"])(
-    "recognizes the no-OTA DGX OS 7.6 family with the %s display name (#9898)",
+  it.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server", "NVIDIA DGX GB300 Workstation"])(
+    "recognizes the no-OTA DGX OS 7.6 family without binding the %s display name (#9898, #10928)",
     (pretty) => {
       const result = detectExpressPlatformForStockDgxRelease(
         "DGX Station GB300",
@@ -1272,22 +1292,18 @@ detect_express_platform
     expect(result.stdout).toBe("DGX Station");
   });
 
-  it(
-    "recognizes the exact Colossus BaseOS profile with the GB300WS display name (#10906)",
-    () => {
-      const release = noOtaFactoryRelease("colossus-baseos").replace(
-        "NVIDIA DGX Server",
-        "NVIDIA DGX GB300WS",
-      );
-      const result = detectExpressPlatformForStockDgxRelease("DGX Station GB300", release);
+  it("recognizes the exact Colossus BaseOS profile with the GB300WS display name (#10906)", () => {
+    const release = noOtaFactoryRelease("colossus-baseos").replace(
+      "NVIDIA DGX Server",
+      "NVIDIA DGX GB300WS",
+    );
+    const result = detectExpressPlatformForStockDgxRelease("DGX Station GB300", release);
 
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(result.stdout).toBe("DGX Station");
-    },
-    15_000,
-  );
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("DGX Station");
+  }, 15_000);
 
-  it("requires explicit intent before treating unrecognized metadata as Station Express", () => {
+  it("detects trusted unrecognized release metadata as validation-only Station Express (#10928)", () => {
     const releasePath = path.join(
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dgx-release-force-")),
       "dgx-release",
@@ -1304,15 +1320,10 @@ detect_express_platform
       ].join("\n"),
     );
 
-    const rejected = detectExpressPlatform("DGX Station GB300", releasePath);
-    const forced = detectExpressPlatform("DGX Station GB300", releasePath, {
-      FORCE_STATION_INSTALL: "1",
-    });
+    const detected = detectExpressPlatform("DGX Station GB300", releasePath);
 
-    expect(rejected.status, `${rejected.stdout}${rejected.stderr}`).toBe(0);
-    expect(rejected.stdout).toBe("Unsupported DGX Station OS");
-    expect(forced.status, `${forced.stdout}${forced.stderr}`).toBe(0);
-    expect(forced.stdout).toBe("DGX Station");
+    expect(detected.status, `${detected.stdout}${detected.stderr}`).toBe(0);
+    expect(detected.stdout).toBe("DGX Station");
   });
 
   it("does not let the metadata override impersonate Station GB300 hardware", () => {
@@ -1326,8 +1337,15 @@ detect_express_platform
     ["out-of-scope OTA version", stockDgxRelease("7.6.0")],
     ["future OTA version", stockDgxRelease("7.7.0")],
     ["unreviewed no-OTA version", noOtaDgxOs76Release("7.7.0")],
+  ])("detects a Station with %s for validation-only handling (#10928)", (_scenario, marker) => {
+    const result = detectExpressPlatformForStockDgxRelease("DGX Station GB300", marker);
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("DGX Station");
+  });
+
+  it.each([
     ["wrong DGX platform", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB200")],
-    ["missing DGX_OTA_PRETTY_NAME", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB300", null)],
     ["BaseOS identity", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB300", "NVIDIA BaseOS")],
     [
       "duplicate non-history field",
@@ -1430,9 +1448,8 @@ printf 'PROMPT_REACHED\n'
     expect(output).toContain("outside the recognized Station Express release-metadata boundary");
     expect(output).toContain("generic Ubuntu 24.04 ARM64");
     expect(output).toContain("OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0");
-    expect(output).toContain(
-      'no-OTA DGX OS 7.6.x profile with DGX_PRETTY_NAME="NVIDIA DGX GB300WS" or DGX_PRETTY_NAME="NVIDIA DGX Server"',
-    );
+    expect(output).toContain("no-OTA DGX OS 7.6.x profile");
+    expect(output).toContain("DGX_PRETTY_NAME is diagnostic and does not determine qualification");
     expect(output).not.toContain("PROMPT_REACHED");
   });
 

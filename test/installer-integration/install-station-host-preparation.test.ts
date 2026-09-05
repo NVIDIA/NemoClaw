@@ -474,7 +474,7 @@ check_agent_and_inference_conflicts
       STATION_PREPARE,
       `
 require_command() { :; }
-check_platform() { STATION_HOST_PROFILE=forced-factory-runtime; }
+check_platform() { STATION_HOST_PROFILE=validation-only-factory-runtime; }
 check_package_managers_idle() { :; }
 check_dgx_os_docker_selection() { :; }
 check_capacity() { :; }
