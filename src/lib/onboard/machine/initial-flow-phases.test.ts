@@ -147,6 +147,7 @@ describe("initial onboard flow phases", () => {
         detectGpu: () => gpu,
         runPreflight: async () => (preflightFailure ? Promise.reject(preflightFailure) : gpu),
         assessHost: () => ({}),
+        providerNameToOptionKey: vi.fn(() => null),
         assertOnboardHostReadiness: vi.fn(),
         resolveSandboxGpuConfig: config,
         validateSandboxGpuPreflight: vi.fn(),
@@ -399,6 +400,7 @@ describe("initial onboard flow phases", () => {
           calls.push("assess-host");
           return { docker: true };
         }),
+        providerNameToOptionKey: vi.fn(() => null),
         assertOnboardHostReadiness: vi.fn(() => {
           calls.push("assert-host-readiness");
         }),

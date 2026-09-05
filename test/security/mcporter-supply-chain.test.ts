@@ -224,6 +224,7 @@ describe("mcporter image supply-chain controls", () => {
     );
     expect(expectedReviewedNpmVersion).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
     expect(auditReceiptInvocation).not.toContain("--npm-version");
+    expect(contents).not.toContain("--raw-copy");
     expect(auditReceiptInvocation).not.toMatch(/\bnpm\s+--version\b/);
     expect(auditReceiptInvocation).not.toMatch(/\$\(|`/);
     expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
@@ -232,6 +233,15 @@ describe("mcporter image supply-chain controls", () => {
       `${runtimePrefix} ls --omit=dev --all @hono/node-server @modelcontextprotocol/sdk hono mcporter`,
     );
     expect(contents).toContain("StreamableHTTPServerTransport");
+  });
+
+  it("copies the cached base-image audit report only after receipt verification succeeds", () => {
+    const contents = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf8");
+    const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+
+    expect(flattenedContents).toContain(
+      '--result /tmp/mcporter-npm-audit-policy.json && cp "$MCPORTER_RAW_REPORT" /tmp/mcporter-npm-audit.json;',
+    );
   });
 
   it("verifies the exact committed dependency graph signatures in trusted CI (#8925)", () => {

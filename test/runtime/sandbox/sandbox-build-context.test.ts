@@ -546,6 +546,16 @@ describe("sandbox build context staging", () => {
     ).toBe("644");
   }
 
+  function expectStagedReviewedNpmAuditPolicy(buildCtx: string, sourceRoot: string) {
+    for (const fileName of ["npm-audit-exceptions.json", "reviewed-npm-audit.json"]) {
+      const stagedFile = path.join(buildCtx, "ci", fileName);
+      expect(fs.readFileSync(stagedFile, "utf8")).toBe(
+        fs.readFileSync(path.join(sourceRoot, "ci", fileName), "utf8"),
+      );
+      expect((fs.statSync(stagedFile).mode & 0o777).toString(8)).toBe("644");
+    }
+  }
+
   it("normalizes restrictive and group-writable modes for Docker COPY", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-unit-"));
     const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
@@ -597,6 +607,7 @@ describe("sandbox build context staging", () => {
     try {
       writeBuildContextFixture(sourceRoot);
       const { buildCtx } = stageOptimizedSandboxBuildContext(sourceRoot, tmpDir);
+      expectStagedReviewedNpmAuditPolicy(buildCtx, sourceRoot);
       expectStagedBlueprintModes(buildCtx);
       expectStagedOpenClawRuntimeGraphs(buildCtx, sourceRoot);
       expectStagedMcpToolDiscoveryRuntime(buildCtx, sourceRoot);
@@ -628,6 +639,7 @@ describe("sandbox build context staging", () => {
     try {
       writeBuildContextFixture(sourceRoot);
       const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
+      expectStagedReviewedNpmAuditPolicy(buildCtx, sourceRoot);
       expectStagedBlueprintModes(buildCtx);
       expectStagedOpenClawRuntimeGraphs(buildCtx, sourceRoot);
       expectStagedMcpToolDiscoveryRuntime(buildCtx, sourceRoot);

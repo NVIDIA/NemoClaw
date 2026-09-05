@@ -331,19 +331,20 @@ Review the data policies of any cloud provider you use.
 The `NEMOCLAW_EXPERIMENTAL=1` environment variable gates local NVIDIA NIM on eligible hosts other than native N1x FASTOS and generic Linux managed vLLM install/start.
 Managed vLLM install/start is Docker-backed and requires Docker on `PATH`; attaching an already-running local vLLM server is separate.
 DGX Spark and DGX Station managed vLLM entries appear by default when Docker is available.
-Native N1x FASTOS omits local NVIDIA NIM and offers only the Deferred managed-vLLM preview.
+Native N1x FASTOS omits local NVIDIA NIM and offers the Deferred managed-vLLM preview or explicitly selected standard onboarding.
 Native N1x FASTOS remains outside the supported-platform set because its physical NemoClaw Express E2E validation is incomplete.
-After NemoClaw qualifies the native N1x identity, you must provide explicit managed-vLLM preview intent before onboarding can use this path.
+After NemoClaw qualifies the native N1x identity, you must provide explicit Express or standard-onboarding intent.
 A qualifying Windows WSL N1x host uses managed llama.cpp through Windows Express.
 The installer uses local Docker Desktop, Arm64, the Windows N1x product identity, and at least 48,000 MiB of GPU memory as preliminary selection conditions.
 Onboarding also requires the default local Docker context, at least 48,000 MiB of Docker memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
 Onboarding stops managed selection when any required readiness check fails.
 Other Windows WSL hosts retain Windows-host or WSL-local Ollama.
-On hosts other than native N1x FASTOS, an already-running vLLM server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` also appears in the menu without a flag because selecting it is an explicit user action.
+An already-running vLLM server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` appears in standard onboarding because selecting it is an explicit user action.
+Native N1x requires you to decline or disable Express or set `NEMOCLAW_PROVIDER=vllm` first.
 
 | Aspect | Detail |
 |---|---|
-| Default | Local NVIDIA NIM and generic Linux managed vLLM install/start are hidden. When Docker is available, DGX Spark and DGX Station managed vLLM entries are offered by default. On hosts other than native N1x FASTOS, already-running vLLM on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` is offered when detected. Qualifying Windows WSL N1x Express runs use managed llama.cpp. |
+| Default | Local NVIDIA NIM and generic Linux managed vLLM install/start are hidden. When Docker is available, DGX Spark and DGX Station managed vLLM entries are offered by default. Native N1x separately offers the Deferred managed-vLLM preview; its standard onboarding offers already-running vLLM on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` when detected and requires explicit standard-onboarding intent. Qualifying Windows WSL N1x Express runs use managed llama.cpp. |
 | What you can change | On eligible hosts other than native N1x FASTOS, set `NEMOCLAW_EXPERIMENTAL=1` before onboarding to surface Local NIM and, when Docker is available on `PATH`, generic Linux managed vLLM. To request only the Docker-backed managed vLLM path non-interactively, set `NEMOCLAW_PROVIDER=install-vllm`. |
 | Risk if selected | NemoClaw has not fully validated these providers. NIM requires a NIM-capable GPU. The managed vLLM path requires Docker, pulls a container image, and starts it on a supported NVIDIA GPU host. Misconfiguration can cause failed inference or unexpected behavior. |
 | Recommendation | Use experimental providers only for evaluation. Do not rely on them for always-on assistants. |

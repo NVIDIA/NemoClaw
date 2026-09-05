@@ -110,7 +110,6 @@ _GATEWAY_PACKAGE_ENV_PREFIXES = ("DYLD_", "LD_", "UV_", "PIP_", "PYTHON")
 _GATEWAY_PACKAGE_ENV = {
     "UV_NO_CONFIG": "1",
     "UV_NO_CACHE": "1",
-    "UV_CACHE_DIR": f"{_GATEWAY_LAZY_INSTALL_TARGET}/.uv-cache",
     "PIP_CONFIG_FILE": "/dev/null",
     "PIP_DISABLE_PIP_VERSION_CHECK": "1",
     "PYTHONSAFEPATH": "1",
@@ -352,16 +351,30 @@ def _run_gateway_guard(guard_path: str) -> int:
             file=sys.stderr,
         )
         return 127
-    return subprocess.call([python3, "-I", guard_path, "runtime-env"])
+    logical_env = dict(os.environ)
+    env = dict(logical_env)
+    for key in tuple(env):
+        if key in _GATEWAY_PACKAGE_ENV_KEYS or key.startswith(_GATEWAY_PACKAGE_ENV_PREFIXES):
+            env.pop(key, None)
+    payload = json.dumps(
+        logical_env, ensure_ascii=True, separators=(",", ":")
+    ).encode("ascii")
+    return subprocess.run(
+        [python3, "-I", guard_path, "runtime-env-json"],
+        input=payload,
+        env=env,
+        check=False,
+    ).returncode
 
 
-def _harden_root_separated_gateway_package_env() -> None:
+def _harden_gateway_package_env(lazy_install_target: str) -> None:
     """Remove sandbox-controlled installer inputs before gateway exec."""
 
     for key in tuple(os.environ):
         if key in _GATEWAY_PACKAGE_ENV_KEYS or key.startswith(_GATEWAY_PACKAGE_ENV_PREFIXES):
             os.environ.pop(key, None)
     os.environ.update(_GATEWAY_PACKAGE_ENV)
+    os.environ["UV_CACHE_DIR"] = f"{lazy_install_target}/.uv-cache"
 
 
 _SUPPORTED_CLI_ADAPTER_VERSION = 1
@@ -784,12 +797,11 @@ def main(argv: list[str]) -> int:
             return 1
         os.environ["HERMES_HOME"] = _MANAGED_HERMES_HOME
         os.environ["HERMES_BUNDLED_PLUGINS"] = _MANAGED_BUNDLED_PLUGINS
-        os.environ["HERMES_LAZY_INSTALL_TARGET"] = _GATEWAY_LAZY_INSTALL_TARGET
         os.environ["HOME"] = _MANAGED_HOME
-        _harden_root_separated_gateway_package_env()
         rc = _run_gateway_guard(guard_path)
         if rc != 0:
             return rc
+        _harden_gateway_package_env(os.environ["HERMES_LAZY_INSTALL_TARGET"])
     try:
         adapter = _load_cli_adapter(_resolve_cli_adapter())
         adapter_result, exec_argv = _adapt_cli_argv(argv, adapter)

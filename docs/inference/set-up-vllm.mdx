@@ -36,7 +36,8 @@ Follow [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) or [Set Up
 
 ## Use an Existing Server
 
-On hosts other than N1x, when vLLM is already running on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`, NemoClaw detects it and queries `/v1/models` for the loaded model.
+When vLLM is already running on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`, NemoClaw detects it and queries `/v1/models` for the loaded model.
+On N1x, decline or disable Express, or set `NEMOCLAW_PROVIDER=vllm`, to supply explicit standard-onboarding intent.
 
 Run onboarding.
 
@@ -46,7 +47,7 @@ $$nemoclaw onboard
 
 Select **Local vLLM**.
 On generic hosts, the entry includes an experimental label.
-On N1x, the readiness gate admits only explicit managed-preview intent, so the user-facing onboarding flow does not offer the existing-server entry.
+On N1x, the existing-server route remains unvalidated even after standard-onboarding intent admits it.
 NemoClaw validates the detected endpoint and records the model reported by `/v1/models`.
 
 When you request a vLLM serving profile, the detected server must report the profile's served model alias or a safe `root` that matches the profile's declared model.
@@ -152,12 +153,13 @@ $$nemoclaw onboard --profile <profile-id> --vllm-gpu-device <index-or-uuid>
 
 The single-host managed vLLM runtime is host-global.
 Destroying a sandbox does not stop it, and the container remains available for other sandboxes.
-On hosts other than N1x, later onboarding normally reuses a server that is already listening on the configured vLLM port instead of replacing it automatically.
+Later standard onboarding normally reuses a server that is already listening on the configured vLLM port instead of replacing it automatically.
 When a managed GPU selection accompanies explicit managed-install intent, NemoClaw preserves that intent and reports the running-server conflict.
 
 Choose one action:
 
-- On hosts other than N1x, to reuse the running server, omit `--vllm-gpu-device` and select **Local vLLM**.
+- To reuse the running server, omit `--vllm-gpu-device` and select **Local vLLM**.
+  On N1x, decline or disable Express, or set `NEMOCLAW_PROVIDER=vllm`, before onboarding.
 - To change the GPU or port, inspect the sandbox registry for every gateway-port environment on the host.
   Run `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw list` for port `8080` and for every non-default port represented by a numeric directory under `~/.nemoclaw/gateways/`.
   Treat every sandbox that reports provider `vllm-local` as a possible consumer because the list output does not distinguish local vLLM from Local NIM.
@@ -471,7 +473,10 @@ Generic DMI values, such as `SKU 1` and `JMJWOA-Generic`, do not establish N1x i
 
 N1x Express does not activate DGX Spark cluster discovery, the fixed catalog path, managed llama.cpp, or NVIDIA NIM.
 Accepting the preview prompt sets explicit managed-vLLM intent for the narrow pending-validation readiness exception.
-Declining the prompt or setting only `NEMOCLAW_NO_EXPRESS=1` stops the installer before onboarding; neither path opens interactive provider selection.
+Declining the prompt continues with ordinary interactive onboarding.
+Setting `NEMOCLAW_NO_EXPRESS=1` also enters ordinary onboarding when no provider is preselected or the explicit provider is recognized and is not Local NVIDIA NIM.
+An invalid or Local NVIDIA NIM provider remains blocked.
+Set a recognized provider other than Local NVIDIA NIM or `install-vllm` to enter ordinary onboarding directly.
 Set `NEMOCLAW_PROVIDER=install-vllm` when you need to bypass the prompt with the same explicit preview intent.
 
 On a host that still meets the N1x identity checks, `rebuild` reuses the recorded route as explicit preview intent only when all of these conditions hold:
@@ -545,12 +550,14 @@ If no server is running, it selects the managed install or start entry.
 If neither local entry is available, it selects NVIDIA Endpoints.
 On DGX Station and other hosts, an unset provider keeps NVIDIA Endpoints as the automatic default.
 
-On hosts other than N1x, use an already-running server.
+Use an already-running server.
 
 ```bash
 NEMOCLAW_PROVIDER=vllm \
   $$nemoclaw onboard --non-interactive
 ```
+
+On N1x, this explicit provider supplies standard-onboarding intent, but the route remains unvalidated.
 
 Install or start managed vLLM on a supported host, or explicitly enter the Deferred N1x preview.
 
