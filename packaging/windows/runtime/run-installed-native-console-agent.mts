@@ -7,6 +7,8 @@ import fs from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 
+import { readOpenedRegularFile, resolveBrokerUpstreamUrl } from "./native-security.mts";
+
 import {
   allowlistedWindowsEnvironment,
   argumentValue,
@@ -47,7 +49,9 @@ function readConfiguration(agentId) {
     path.join(stateRoot, "native-windows.json"),
     `${AGENT_ADAPTERS[agentId].displayName} configuration`,
   );
-  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const configText = readOpenedRegularFile(configPath, { encoding: "utf8", maxBytes: 1024 * 1024 });
+  if (configText === null) fail("the graphical onboarding configuration disappeared");
+  const config = JSON.parse(configText);
   if (
     config?.schemaVersion !== 1 ||
     config?.classification !== "nemoclaw-native-windows-agent-configuration" ||
@@ -98,7 +102,6 @@ async function readRequest(request) {
 }
 
 async function startInferenceBroker(configuration, credential, brokerToken) {
-  const endpoint = new URL(`${configuration.endpoint.replace(/\/$/u, "")}/`);
   const server = createServer(async (request, response) => {
     try {
       if (!request.url?.startsWith("/v1/")) {
@@ -111,8 +114,7 @@ async function startInferenceBroker(configuration, credential, brokerToken) {
         response.end(JSON.stringify({ error: { message: "unauthorized" } }));
         return;
       }
-      const upstreamPath = request.url.slice("/v1/".length);
-      const upstreamUrl = new URL(upstreamPath, endpoint);
+      const upstreamUrl = resolveBrokerUpstreamUrl(configuration.endpoint, request.url);
       const body =
         request.method === "GET" || request.method === "HEAD"
           ? undefined
@@ -565,8 +567,10 @@ async function main() {
     if (!passed) {
       const diagnostic = sanitizedDiagnostic(
         [gatewayLogPath, gatewayErrorPath]
-          .filter((file) => fs.statSync(file, { throwIfNoEntry: false })?.isFile())
-          .map((file) => fs.readFileSync(file, "utf8"))
+          .map((file) =>
+            readOpenedRegularFile(file, { encoding: "utf8", maxBytes: 2 * 1024 * 1024 }),
+          )
+          .filter((content) => content !== null)
           .join("\n"),
         [
           [installRoot, "<install-root>"],

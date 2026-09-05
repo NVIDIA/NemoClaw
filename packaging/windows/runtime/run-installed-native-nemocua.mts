@@ -10,6 +10,12 @@ import net from "node:net";
 import path from "node:path";
 
 import {
+  readOpenedRegularFile,
+  resolveBrokerUpstreamUrl,
+  validatedChatMessages,
+} from "./native-security.mts";
+
+import {
   allowlistedWindowsEnvironment,
   argumentValue,
   freePort,
@@ -53,9 +59,9 @@ async function startFileTcpTargetRelay(relayRoot, token, targetPort) {
       if (streams.has(entry)) continue;
       const streamRoot = path.join(relayRoot, entry);
       const open = path.join(streamRoot, "open");
-      if (!fs.statSync(open, { throwIfNoEntry: false })?.isFile()) continue;
       if (fs.existsSync(path.join(streamRoot, "host-close"))) continue;
-      if (fs.readFileSync(open, "utf8") !== token) continue;
+      const openToken = readOpenedRegularFile(open, { encoding: "utf8", maxBytes: 4096 });
+      if (openToken !== token) continue;
       const socket = net.createConnection({ host: "127.0.0.1", port: targetPort });
       const state = { root: streamRoot, sequence: 0, socket };
       streams.set(entry, state);
@@ -79,7 +85,9 @@ async function startFileTcpTargetRelay(relayRoot, token, targetPort) {
         .filter((name) => /^sandbox-[0-9]{10}[.]bin$/u.test(name))
         .sort()) {
         const chunk = path.join(stream.root, entry);
-        stream.socket.write(fs.readFileSync(chunk));
+        const content = readOpenedRegularFile(chunk, { maxBytes: 16 * 1024 * 1024 });
+        if (content === null) continue;
+        stream.socket.write(content);
         fs.unlinkSync(chunk);
       }
       if (fs.existsSync(path.join(stream.root, "sandbox-close"))) stream.socket.end();
@@ -196,7 +204,9 @@ function readNativeConfiguration() {
     path.join(stateRoot, "native-windows.json"),
     "NemoCUA graphical configuration",
   );
-  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const configText = readOpenedRegularFile(configPath, { encoding: "utf8", maxBytes: 1024 * 1024 });
+  if (configText === null) fail("NemoCUA graphical configuration disappeared");
+  const config = JSON.parse(configText);
   if (
     config?.schemaVersion !== 1 ||
     config?.classification !== "nemoclaw-native-windows-agent-configuration" ||
@@ -232,11 +242,9 @@ async function readWindowsCredential(launcher, provider, required) {
 }
 
 async function forwardConfiguredModel(body, configuration, credential) {
-  const endpoint = new URL(`${configuration.endpoint.replace(/\/$/u, "")}/`);
-  const upstreamUrl = new URL("chat/completions", endpoint);
-  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  const upstreamUrl = resolveBrokerUpstreamUrl(configuration.endpoint, "/v1/chat/completions");
+  const messages = validatedChatMessages(body);
   const upstreamBody = {
-    ...body,
     model: configuration.model,
     messages: [
       {
@@ -729,7 +737,12 @@ async function main() {
       process.stderr.write(text);
     });
     await waitForFileText(resultPath, EXPECTED_TOKENS[2], 360_000);
-    const agentResult = JSON.parse(fs.readFileSync(resultPath, "utf8"));
+    const agentResultText = readOpenedRegularFile(resultPath, {
+      encoding: "utf8",
+      maxBytes: 1024 * 1024,
+    });
+    if (agentResultText === null) fail("NemoCUA result disappeared");
+    const agentResult = JSON.parse(agentResultText);
     const finalState = await bridge.page.evaluate(() => ({
       inputValue: document.querySelector("#task-input")?.value ?? null,
       completed: document.body.dataset.completed === "true",
@@ -833,8 +846,11 @@ async function main() {
     if (!passed) {
       const diagnosticParts = [createOutput, createError];
       for (const file of [gatewayLogPath, gatewayErrorPath]) {
-        if (fs.statSync(file, { throwIfNoEntry: false })?.isFile())
-          diagnosticParts.push(fs.readFileSync(file, "utf8"));
+        const content = readOpenedRegularFile(file, {
+          encoding: "utf8",
+          maxBytes: 2 * 1024 * 1024,
+        });
+        if (content !== null) diagnosticParts.push(content);
       }
       const diagnostic = sanitizedDiagnostic(diagnosticParts.filter(Boolean).join("\n"), [
         [installRoot, "<install-root>"],

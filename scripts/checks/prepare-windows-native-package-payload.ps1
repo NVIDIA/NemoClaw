@@ -606,6 +606,7 @@ debug = false
     [IO.File]::WriteAllText((Join-Path $configRoot 'mxc-gateway.toml'), $gatewayConfig, [Text.UTF8Encoding]::new($false))
     $qualificationRoot = Join-Path $output 'qualification'
     [IO.Directory]::CreateDirectory($qualificationRoot) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-security.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-turn.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-web-ui.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-console-agent.mts') -Destination $qualificationRoot
@@ -648,6 +649,7 @@ debug = false
         'onboarding\styles.css',
         'onboarding\app.ts',
         'config\mxc-gateway.toml',
+        'qualification\native-security.mts',
         'qualification\run-installed-native-turn.mts',
         'qualification\run-installed-native-web-ui.mts',
         'qualification\run-installed-native-console-agent.mts',

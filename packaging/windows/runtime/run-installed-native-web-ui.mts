@@ -9,6 +9,8 @@ import { createRequire } from "node:module";
 import net from "node:net";
 import path from "node:path";
 
+import { readOpenedRegularFile, resolveBrokerUpstreamUrl } from "./native-security.mts";
+
 import {
   allowlistedWindowsEnvironment,
   argumentValue,
@@ -87,7 +89,9 @@ async function startFileTcpRelay(relayRoot, token) {
         .filter((name) => /^sandbox-[0-9]{10}[.]bin$/u.test(name))
         .sort()) {
         const chunk = path.join(stream.root, entry);
-        stream.socket.write(fs.readFileSync(chunk));
+        const content = readOpenedRegularFile(chunk, { maxBytes: 16 * 1024 * 1024 });
+        if (content === null) continue;
+        stream.socket.write(content);
         fs.unlinkSync(chunk);
       }
       if (fs.existsSync(path.join(stream.root, "sandbox-close"))) {
@@ -99,8 +103,9 @@ async function startFileTcpRelay(relayRoot, token) {
   const ready = (async () => {
     const marker = path.join(relayRoot, "ready");
     while (!closed) {
-      if (fs.statSync(marker, { throwIfNoEntry: false })?.isFile()) {
-        if (fs.readFileSync(marker, "utf8") !== token) fail("MXC UI relay authentication failed");
+      const markerContent = readOpenedRegularFile(marker, { encoding: "utf8", maxBytes: 4096 });
+      if (markerContent !== null) {
+        if (markerContent !== token) fail("MXC UI relay authentication failed");
         return;
       }
       await sleep(25);
@@ -281,7 +286,9 @@ function readNativeAgentConfiguration(agent) {
     path.join(stateRoot, "native-windows.json"),
     `${agentNamesForLaunch[agent]} configuration`,
   );
-  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const configText = readOpenedRegularFile(configPath, { encoding: "utf8", maxBytes: 1024 * 1024 });
+  if (configText === null) fail("graphical onboarding configuration disappeared");
+  const config = JSON.parse(configText);
   if (
     config?.schemaVersion !== 1 ||
     config?.classification !== "nemoclaw-native-windows-agent-configuration" ||
@@ -328,7 +335,6 @@ async function readBrokerRequest(request) {
 }
 
 async function startHostInferenceBroker(configuration, credential, brokerToken) {
-  const endpoint = new URL(`${configuration.endpoint.replace(/\/$/u, "")}/`);
   const server = createServer(async (request, response) => {
     try {
       if (!request.url?.startsWith("/v1/")) {
@@ -341,7 +347,7 @@ async function startHostInferenceBroker(configuration, credential, brokerToken) 
         response.end(JSON.stringify({ error: { message: "unauthorized" } }));
         return;
       }
-      const upstreamUrl = new URL(request.url.slice("/v1/".length), endpoint);
+      const upstreamUrl = resolveBrokerUpstreamUrl(configuration.endpoint, request.url);
       const body =
         request.method === "GET" || request.method === "HEAD"
           ? undefined
@@ -771,7 +777,14 @@ async function startOnboardingServer(
         "content-type": contentType,
         "x-content-type-options": "nosniff",
       });
-      response.end(fs.readFileSync(requiredFile(path.join(onboardingRoot, relative), relative)));
+      const content = readOpenedRegularFile(
+        requiredFile(path.join(onboardingRoot, relative), relative),
+        {
+          maxBytes: 2 * 1024 * 1024,
+        },
+      );
+      if (content === null) fail("the onboarding asset disappeared");
+      response.end(content);
     } catch (error) {
       response.writeHead(400, { "content-type": "application/json" });
       response.end(
@@ -828,7 +841,7 @@ async function driveBrowser(
       "--window-size=1440,810",
     ],
   });
-  let browserVersion = "unknown";
+  let browserVersion;
   try {
     browserVersion = browser.version();
     const context = await browser.newContext({
@@ -1128,9 +1141,12 @@ async function runSelectedNonOpenClaw(
     );
   if (runtimeReceipts.length !== 1)
     fail(`${agentNamesForLaunch[targetAgent]} did not publish exactly one runtime receipt`);
-  const runtimeReceipt = JSON.parse(
-    fs.readFileSync(path.join(runtimeEvidence, runtimeReceipts[0]), "utf8"),
-  );
+  const runtimeReceiptText = readOpenedRegularFile(path.join(runtimeEvidence, runtimeReceipts[0]), {
+    encoding: "utf8",
+    maxBytes: 1024 * 1024,
+  });
+  if (runtimeReceiptText === null) fail("the configured agent runtime receipt disappeared");
+  const runtimeReceipt = JSON.parse(runtimeReceiptText);
   if (runtimeReceipt.verdict !== "pass" || runtimeReceipt.turnCount !== 3)
     fail(`${agentNamesForLaunch[targetAgent]} runtime receipt is incomplete`);
   const receipt = {
@@ -1530,8 +1546,11 @@ async function main() {
     if (!passed) {
       const diagnosticParts = [createOutput, createError];
       for (const file of [gatewayLogPath, gatewayErrorPath]) {
-        if (fs.statSync(file, { throwIfNoEntry: false })?.isFile())
-          diagnosticParts.push(fs.readFileSync(file, "utf8"));
+        const content = readOpenedRegularFile(file, {
+          encoding: "utf8",
+          maxBytes: 2 * 1024 * 1024,
+        });
+        if (content !== null) diagnosticParts.push(content);
       }
       const availableDiagnostics = diagnosticParts.filter(Boolean);
       if (availableDiagnostics.length > 0) {

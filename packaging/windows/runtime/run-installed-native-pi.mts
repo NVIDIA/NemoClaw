@@ -6,6 +6,8 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { readOpenedRegularFile } from "./native-security.mts";
+
 import {
   allowlistedWindowsEnvironment,
   argumentValue,
@@ -874,7 +876,12 @@ async function main() {
       });
     });
     await Promise.race([waitForFileText(resultPath, finalToken, 360_000), createFailure]);
-    const agentResult = JSON.parse(fs.readFileSync(resultPath, "utf8"));
+    const agentResultText = readOpenedRegularFile(resultPath, {
+      encoding: "utf8",
+      maxBytes: 1024 * 1024,
+    });
+    if (agentResultText === null) fail(`${agentLabel} result disappeared`);
+    const agentResult = JSON.parse(agentResultText);
     const reportedVersion = isHermes
       ? agentResult.hermesVersion
       : isDeepAgents
@@ -961,12 +968,19 @@ async function main() {
     if (!passed) {
       const diagnosticParts = [createOutput, createError];
       for (const file of [gatewayLogPath, gatewayErrorPath]) {
-        if (fs.statSync(file, { throwIfNoEntry: false })?.isFile())
-          diagnosticParts.push(fs.readFileSync(file, "utf8"));
+        const content = readOpenedRegularFile(file, {
+          encoding: "utf8",
+          maxBytes: 2 * 1024 * 1024,
+        });
+        if (content !== null) diagnosticParts.push(content);
       }
       if (isDeepAgents) {
         for (const file of deepAgentDiagnosticFiles(shareRoot)) {
-          diagnosticParts.push(fs.readFileSync(file, "utf8").slice(-512 * 1024));
+          const content = readOpenedRegularFile(file, {
+            encoding: "utf8",
+            maxBytes: 2 * 1024 * 1024,
+          });
+          if (content !== null) diagnosticParts.push(content.slice(-512 * 1024));
         }
       }
       const diagnostic = sanitizedDiagnostic(diagnosticParts.filter(Boolean).join("\n"), [

@@ -300,6 +300,7 @@ foreach ($requiredPayload in @(
     'mxc\wxc-exec.exe',
     'mxc\wxc-host-prep.exe',
     'config\mxc-gateway.toml',
+    'qualification\native-security.mts',
     'qualification\run-installed-native-turn.mts',
     'qualification\run-installed-native-web-ui.mts',
     'qualification\run-installed-native-console-agent.mts',

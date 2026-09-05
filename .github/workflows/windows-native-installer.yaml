@@ -363,6 +363,10 @@ jobs:
             if ($candidateQualifications.Count -ne 5) {
               throw 'The candidate native runtime qualification set is incomplete.'
             }
+            Copy-Item `
+              -LiteralPath (Join-Path $candidateQualificationRoot 'native-security.mts') `
+              -Destination (Join-Path $installedQualificationRoot 'native-security.mts') `
+              -Force
             foreach ($candidateQualification in $candidateQualifications) {
               Copy-Item `
                 -LiteralPath $candidateQualification.FullName `
