@@ -1395,7 +1395,9 @@ export type OllamaUnloadResult = {
 };
 
 type OllamaUnloadOptions = {
-  readonly getResolvedOllamaHost?: typeof getResolvedOllamaHost;
+  readonly findReachableOllamaHost?: (
+    stateRoot?: string,
+  ) => ReturnType<typeof findReachableOllamaHost>;
   readonly ollamaHostStateRoot?: string;
   readonly maxAttempts?: number;
   readonly sleep?: (milliseconds: number) => void;
@@ -1526,13 +1528,16 @@ function unloadOllamaModels(
   const requestedModels = onlyModels?.map((model) => model.trim()).filter(Boolean) ?? [];
   let selectedModels: readonly string[] | null = onlyModels?.length ? requestedModels : null;
   let releaseHost: string | null;
-  if (options.getResolvedOllamaHost) {
-    releaseHost = options.getResolvedOllamaHost();
+  if (options.findReachableOllamaHost) {
+    releaseHost = options.findReachableOllamaHost(options.ollamaHostStateRoot);
   } else {
     const persistedHost = loadPersistedOllamaHost(options.ollamaHostStateRoot);
-    releaseHost =
-      persistedHost ?? findReachableOllamaHost(undefined, {}, options.ollamaHostStateRoot);
-    if (releaseHost && !persistedHost) {
+    releaseHost = findReachableOllamaHost(undefined, {}, options.ollamaHostStateRoot, {
+      revalidate: true,
+    });
+    if (persistedHost && releaseHost !== persistedHost) {
+      releaseHost = null;
+    } else if (releaseHost && !persistedHost) {
       persistResolvedOllamaHost(releaseHost, options.ollamaHostStateRoot);
     }
   }
