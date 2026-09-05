@@ -516,6 +516,7 @@ export async function runInstalledSlackRuntimeProof(
       SLACK_ALLOWED_USER: allowedUser,
       SLACK_DENIED_USER: "U999DENIED",
     },
+    preserveSymlinks: false,
     redactionValues,
     timeoutMs: 120_000,
   });
