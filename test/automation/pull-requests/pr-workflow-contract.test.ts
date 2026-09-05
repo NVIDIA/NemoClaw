@@ -91,7 +91,7 @@ const trustedActionDirs = [
   ".github/actions/ci-installer-integration",
 ] as const;
 
-const cliShardCount = "12";
+const cliShardCount = "10";
 const cliShardTimeoutMinutes = 30;
 const dependencyInstallJobs = [
   "build-typecheck",
@@ -1036,7 +1036,7 @@ describe("pull request and main workflow contracts", () => {
         GITHUB_OUTPUT: output,
       });
       const invalidRange = runWorkflowShellStep(shardValidationStep, {
-        CLI_SHARD: "13",
+        CLI_SHARD: "11",
         CLI_SHARD_COUNT: cliShardCount,
         GITHUB_OUTPUT: join(temp, "github-output"),
       });
@@ -1143,7 +1143,7 @@ describe("pull request and main workflow contracts", () => {
       const failedShards = workflowJobListing([
         workflowJob(101, "cli-test-shards (1)", "success"),
         workflowJob(102, "cli-test-shards (2)", "failure"),
-        workflowJob(112, "cli-test-shards (12)", "cancelled"),
+        workflowJob(110, "cli-test-shards (10)", "cancelled"),
         workflowJob(109, "plugin-tests", "success"),
       ]);
       const malformedShards = workflowJobListing([
@@ -1181,7 +1181,7 @@ describe("pull request and main workflow contracts", () => {
 
       expect(failure.status, `${workflowName}: ${failure.stderr}`).not.toBe(0);
       expect(failure.stdout).toContain(`${runUrl}/job/102`);
-      expect(failure.stdout).toContain(`${runUrl}/job/112`);
+      expect(failure.stdout).toContain(`${runUrl}/job/110`);
       expect(malformed.status).not.toBe(0);
       expect(malformed.stdout).toContain(`Details: ${runUrl}`);
       expect(malformed.stdout).not.toContain(`${runUrl}/job/`);
