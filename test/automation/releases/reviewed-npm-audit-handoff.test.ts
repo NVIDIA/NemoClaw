@@ -30,6 +30,10 @@ type Workflow = {
       }
     >
   >;
+  readonly on?: {
+    readonly pull_request?: { readonly paths?: readonly string[] };
+    readonly push?: { readonly paths?: readonly string[] };
+  };
 };
 
 const TRUSTED_AUDIT_SPARSE_CHECKOUTS = TRUSTED_WORKFLOWS.flatMap((workflowFile) => {
@@ -67,6 +71,20 @@ function stageSparseCheckout(root: string, sparseCheckout: string): void {
 }
 
 describe("reviewed npm audit handoff", () => {
+  // source-shape-contract: security -- Image workflows must treat the shared reviewed npm bootstrap as a trigger so verifier drift cannot bypass qualification or publication
+  it("routes bootstrap-only changes through image qualification and publication", () => {
+    const bootstrapGlob = ".github/actions/setup-reviewed-npm/**";
+    const managedImages = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/managed-images.yaml"), "utf8"),
+    ) as Workflow;
+    const baseImages = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/base-image.yaml"), "utf8"),
+    ) as Workflow;
+
+    expect(managedImages.on?.pull_request?.paths).toContain(bootstrapGlob);
+    expect(baseImages.on?.push?.paths).toContain(bootstrapGlob);
+  });
+
   it.each(TRUSTED_AUDIT_SPARSE_CHECKOUTS)(
     "loads the audit producer from the $name trusted sparse checkout",
     ({ sparseCheckout }) => {

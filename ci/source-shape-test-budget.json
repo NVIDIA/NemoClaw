@@ -212,6 +212,11 @@
       "category": "security"
     },
     {
+      "file": "test/automation/releases/reviewed-npm-audit-handoff.test.ts",
+      "test": "routes bootstrap-only changes through image qualification and publication",
+      "category": "security"
+    },
+    {
       "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
       "test": "rejects the removed plural source-registry package shape",
       "category": "security"
