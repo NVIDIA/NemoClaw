@@ -67,7 +67,7 @@ Endpoint: https://inference.example.com/v1
 Managed providers keep the existing provider-and-model output.
 Unpublished sandbox rows do not participate in endpoint selection.
 Equivalent stored URL forms, such as a trailing slash difference, count as the same endpoint identity.
-NemoClaw omits the endpoint when participating registry metadata is absent, conflicting, invalid, too long, or contains userinfo, a query, a fragment, or control characters.
+NemoClaw omits the endpoint when participating registry metadata is absent, conflicting, invalid, too long, or contains userinfo, a query, a fragment, control characters, or recognized credential material in any URL component.
 It also omits an internal HTTPS-pin adapter route because the upstream endpoint is intentionally not retained and the adapter URL cannot be reused as an upstream endpoint.
 In that case, both formats retain the provider and model without adding endpoint details.
 To switch only the model for an existing adapter route, run `$$nemoclaw inference set` without `--endpoint-url` so NemoClaw reuses the recorded route.

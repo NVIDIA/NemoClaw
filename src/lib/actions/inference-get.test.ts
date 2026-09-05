@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { buildHttpsPinRouteBaseUrl } from "../inference/https-pin-runtime";
-import { ConfigCorruptError } from "../state/config-io";
+import { ConfigCorruptError, ConfigPermissionError } from "../state/config-io";
 
 vi.mock("../adapters/openshell/runtime", () => ({
   captureOpenshell: vi.fn(),
@@ -212,6 +212,26 @@ describe("runInferenceGet", () => {
       provider: "compatible-endpoint",
       model: "custom/model",
     });
+  });
+
+  it.each([
+    { json: false, label: "human-readable" },
+    { json: true, label: "JSON" },
+  ])("omits a recognized path credential from $label output", async ({ json }) => {
+    const deps = createDeps(
+      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+    );
+    const pathCredential = "sk-proj-" + "A".repeat(10);
+    recordRoute(deps, {
+      provider: "compatible-endpoint",
+      endpointUrl: `https://inference.example.test/${pathCredential}/v1`,
+    });
+
+    await expect(runInferenceGet({ json }, deps)).resolves.toEqual({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+    });
+    expect(deps.log.mock.calls.flat().join("\n")).not.toContain(pathCredential);
   });
 
   it.each([
@@ -519,6 +539,24 @@ describe("runInferenceGet", () => {
       message: expect.stringContaining(
         "Removing a sandbox registry file makes NemoClaw forget its registered sandboxes.",
       ),
+    });
+    expect(deps.log).not.toHaveBeenCalled();
+  });
+
+  it("preserves safe recovery guidance for an unreadable sandbox registry", async () => {
+    const deps = createDeps(
+      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+    );
+    deps.listSandboxes.mockImplementation(() => {
+      throw new ConfigPermissionError("/safe/state/sandboxes.json", "read");
+    });
+
+    const failure = await runInferenceGet({ json: true }, deps).catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      message: expect.stringContaining("Cannot read config file: /safe/state/sandboxes.json"),
+    });
+    expect(failure).toMatchObject({
+      message: expect.stringContaining("sudo chown"),
     });
     expect(deps.log).not.toHaveBeenCalled();
   });

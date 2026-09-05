@@ -8,6 +8,7 @@ import { sanitizeRouteValueForDisplay } from "../inference/config";
 import { canonicalGatewayRouteEndpoint } from "../inference/gateway-route-compatibility";
 import { parseHttpsPinRouteId } from "../inference/https-pin-runtime";
 import { getLiveGatewayInference } from "../inference/live";
+import { valueLooksLikeSecret } from "../security/credential-filter";
 import { ConfigCorruptError, ConfigPermissionError } from "../state/config-io";
 import { isPublishedSandboxRegistration } from "../state/registry/route-reservation";
 import {
@@ -123,6 +124,10 @@ function getPersistedEndpointUrl(
       continue;
     }
     if (unsafeEndpointUrlViolation(sandbox.endpointUrl)) {
+      incompleteMatchingMetadata = true;
+      continue;
+    }
+    if (valueLooksLikeSecret(sandbox.endpointUrl)) {
       incompleteMatchingMetadata = true;
       continue;
     }
