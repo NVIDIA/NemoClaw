@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  brokerOperationForRequest,
   readOpenedRegularFile,
   resolveBrokerUpstreamUrl,
   validatedChatMessages,
@@ -16,21 +17,17 @@ import {
 describe("native Windows runtime security boundaries", () => {
   it("keeps broker request targets on the configured provider origin", () => {
     expect(
-      resolveBrokerUpstreamUrl(
-        "https://provider.example/v1",
-        "/v1/chat/completions?stream=false",
-      ).toString(),
-    ).toBe("https://provider.example/v1/chat/completions?stream=false");
-    expect(() =>
-      resolveBrokerUpstreamUrl("https://provider.example/v1", "/v1//attacker.example/steal"),
-    ).toThrow(/escape the configured provider origin/u);
-    expect(() =>
-      resolveBrokerUpstreamUrl("https://provider.example/v1", "/v1/\\attacker.example\\steal"),
-    ).toThrow(/escape the configured provider origin/u);
-    expect(() => resolveBrokerUpstreamUrl("http://provider.example/v1", "/v1/models")).toThrow(
+      resolveBrokerUpstreamUrl("https://provider.example/v1", "chat-completions").toString(),
+    ).toBe("https://provider.example/v1/chat/completions");
+    expect(brokerOperationForRequest("POST", "/v1/chat/completions")).toBe("chat-completions");
+    expect(brokerOperationForRequest("GET", "/v1/models")).toBe("models");
+    expect(brokerOperationForRequest("POST", "/v1//attacker.example/steal")).toBeNull();
+    expect(brokerOperationForRequest("POST", "/v1/chat/completions?target=attacker")).toBeNull();
+    expect(brokerOperationForRequest("DELETE", "/v1/models")).toBeNull();
+    expect(() => resolveBrokerUpstreamUrl("http://provider.example/v1", "models")).toThrow(
       /provider endpoint violates/u,
     );
-    expect(resolveBrokerUpstreamUrl("http://127.0.0.1:8000/v1", "/v1/models").origin).toBe(
+    expect(resolveBrokerUpstreamUrl("http://127.0.0.1:8000/v1", "models").origin).toBe(
       "http://127.0.0.1:8000",
     );
   });

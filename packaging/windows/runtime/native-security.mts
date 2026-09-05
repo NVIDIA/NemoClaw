@@ -5,14 +5,23 @@ import fs from "node:fs";
 
 type NativeMessage = { role: "system" | "user" | "assistant"; content: string };
 type ReadOpenedRegularFileOptions = { encoding?: BufferEncoding; maxBytes?: number };
+export type BrokerOperation = "models" | "chat-completions";
 
 function fail(message: string): never {
   throw new Error(`NemoClaw native runtime security boundary failed: ${message}`);
 }
 
-export function resolveBrokerUpstreamUrl(endpointValue: string, requestTarget: string): URL {
-  if (typeof endpointValue !== "string" || typeof requestTarget !== "string")
-    fail("the provider endpoint or request target is invalid");
+export function brokerOperationForRequest(
+  method: string | undefined,
+  requestTarget: string | undefined,
+): BrokerOperation | null {
+  if (method === "GET" && requestTarget === "/v1/models") return "models";
+  if (method === "POST" && requestTarget === "/v1/chat/completions") return "chat-completions";
+  return null;
+}
+
+export function resolveBrokerUpstreamUrl(endpointValue: string, operation: BrokerOperation): URL {
+  if (typeof endpointValue !== "string") fail("the provider endpoint is invalid");
   const endpoint = new URL(`${endpointValue.replace(/\/$/u, "")}/`);
   const loopback = endpoint.hostname === "127.0.0.1" || endpoint.hostname === "[::1]";
   if (
@@ -23,16 +32,12 @@ export function resolveBrokerUpstreamUrl(endpointValue: string, requestTarget: s
     endpoint.hash
   )
     fail("the provider endpoint violates the native preview boundary");
-  if (!requestTarget.startsWith("/v1/")) fail("the broker request target is outside /v1");
-  const relativeTarget = requestTarget.slice("/v1/".length);
-  if (
-    !relativeTarget ||
-    relativeTarget.startsWith("/") ||
-    relativeTarget.startsWith("\\") ||
-    relativeTarget.includes("\\") ||
-    relativeTarget.includes("\0")
-  )
-    fail("the broker request target can escape the configured provider origin");
+  const relativeTarget =
+    operation === "models"
+      ? "models"
+      : operation === "chat-completions"
+        ? "chat/completions"
+        : fail("the broker operation is not allowlisted");
   const upstream = new URL(relativeTarget, endpoint);
   if (upstream.origin !== endpoint.origin)
     fail("the broker request target changed the configured provider origin");

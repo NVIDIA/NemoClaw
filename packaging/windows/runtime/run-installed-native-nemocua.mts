@@ -242,7 +242,7 @@ async function readWindowsCredential(launcher, provider, required) {
 }
 
 async function forwardConfiguredModel(body, configuration, credential) {
-  const upstreamUrl = resolveBrokerUpstreamUrl(configuration.endpoint, "/v1/chat/completions");
+  const upstreamUrl = resolveBrokerUpstreamUrl(configuration.endpoint, "chat-completions");
   const messages = validatedChatMessages(body);
   const upstreamBody = {
     model: configuration.model,
@@ -262,6 +262,8 @@ async function forwardConfiguredModel(body, configuration, credential) {
     headers["http-referer"] = "https://www.nvidia.com/nemoclaw/";
     headers["x-openrouter-title"] = "NVIDIA NemoClaw";
   }
+  // lgtm[js/file-access-to-http] Only schema-checked onboarding fields and the bounded
+  // browser-agent message projection are intentionally sent to the selected inference provider.
   const upstream = await fetch(upstreamUrl, {
     method: "POST",
     headers,

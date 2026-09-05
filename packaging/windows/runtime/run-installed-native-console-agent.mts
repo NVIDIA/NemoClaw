@@ -7,7 +7,11 @@ import fs from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 
-import { readOpenedRegularFile, resolveBrokerUpstreamUrl } from "./native-security.mts";
+import {
+  brokerOperationForRequest,
+  readOpenedRegularFile,
+  resolveBrokerUpstreamUrl,
+} from "./native-security.mts";
 
 import {
   allowlistedWindowsEnvironment,
@@ -104,7 +108,8 @@ async function readRequest(request) {
 async function startInferenceBroker(configuration, credential, brokerToken) {
   const server = createServer(async (request, response) => {
     try {
-      if (!request.url?.startsWith("/v1/")) {
+      const operation = brokerOperationForRequest(request.method, request.url);
+      if (operation === null) {
         response.writeHead(404, { "content-type": "application/json" });
         response.end(JSON.stringify({ error: { message: "not found" } }));
         return;
@@ -114,7 +119,7 @@ async function startInferenceBroker(configuration, credential, brokerToken) {
         response.end(JSON.stringify({ error: { message: "unauthorized" } }));
         return;
       }
-      const upstreamUrl = resolveBrokerUpstreamUrl(configuration.endpoint, request.url);
+      const upstreamUrl = resolveBrokerUpstreamUrl(configuration.endpoint, operation);
       const body =
         request.method === "GET" || request.method === "HEAD"
           ? undefined
@@ -127,6 +132,8 @@ async function startInferenceBroker(configuration, credential, brokerToken) {
         headers["http-referer"] = "https://www.nvidia.com/nemoclaw/";
         headers["x-openrouter-title"] = "NVIDIA NemoClaw";
       }
+      // lgtm[js/file-access-to-http] The per-user onboarding configuration is schema checked;
+      // the endpoint is protocol/origin checked and the request path is rebuilt from an exact allowlist.
       const upstream = await fetch(upstreamUrl, {
         method: request.method,
         headers,
