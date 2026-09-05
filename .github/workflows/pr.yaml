@@ -113,33 +113,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Checkout trusted CI actions
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .trusted-ci-actions
-          persist-credentials: false
-          sparse-checkout: |
-            .github/actions/setup-reviewed-npm
-            ci/reviewed-npm-audit.json
-            .github/actions/ci-static-checks
-            .github/actions/ci-build-typecheck
-            .github/actions/ci-compile-artifacts
-            .github/actions/ci-cli-coverage-shard
-            .github/actions/ci-cli-coverage-merge
-            .github/actions/ci-plugin-coverage
-            .github/actions/ci-installer-integration
-            .github/actions/ci-install-dependencies.sh
-            ci/reviewed-npm-audit.json
-            scripts/audit-reviewed-npm-graph.mts
-            scripts/checks/prepare-ci-npm-install.mts
-            scripts/lib/openclaw-npm-remediation.mts
-            scripts/lib/reviewed-npm-archive.mts
-            scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/npm-audit-receipt.mts
-            scripts/lib/repository-input-path.mts
-          sparse-checkout-cone-mode: false
-
       - name: Download verified OpenShell SDK archive
         if: needs.openshell-sdk-package.outputs.required == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -148,7 +121,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Run static checks
-        uses: ./.trusted-ci-actions/.github/actions/ci-static-checks
+        uses: NVIDIA/NemoClaw/.github/actions/ci-static-checks@7363df49a5f25b0dd1c20c80905917c31760a27e
 
   hugging-face-models:
     needs: changes
@@ -376,31 +349,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Checkout trusted CI actions
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .trusted-ci-actions
-          persist-credentials: false
-          sparse-checkout: |
-            .github/actions/ci-static-checks
-            .github/actions/ci-build-typecheck
-            .github/actions/ci-compile-artifacts
-            .github/actions/ci-cli-coverage-shard
-            .github/actions/ci-cli-coverage-merge
-            .github/actions/ci-plugin-coverage
-            .github/actions/ci-installer-integration
-            .github/actions/ci-install-dependencies.sh
-            ci/reviewed-npm-audit.json
-            scripts/audit-reviewed-npm-graph.mts
-            scripts/checks/prepare-ci-npm-install.mts
-            scripts/lib/openclaw-npm-remediation.mts
-            scripts/lib/reviewed-npm-archive.mts
-            scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/npm-audit-receipt.mts
-            scripts/lib/repository-input-path.mts
-          sparse-checkout-cone-mode: false
-
       - name: Download verified OpenShell SDK archive
         if: needs.openshell-sdk-package.outputs.required == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -409,7 +357,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Compile and verify CLI and plugin outputs
-        uses: ./.trusted-ci-actions/.github/actions/ci-compile-artifacts
+        uses: NVIDIA/NemoClaw/.github/actions/ci-compile-artifacts@7363df49a5f25b0dd1c20c80905917c31760a27e
 
       - name: Upload compiled test inputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -450,8 +398,6 @@ jobs:
           path: .trusted-ci-actions
           persist-credentials: false
           sparse-checkout: |
-            .github/actions/setup-reviewed-npm
-            ci/reviewed-npm-audit.json
             .github/actions/ci-build-typecheck
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
@@ -510,25 +456,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Checkout trusted CI actions
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .trusted-ci-actions
-          persist-credentials: false
-          sparse-checkout: |
-            .github/actions/ci-installer-integration
-            .github/actions/ci-install-dependencies.sh
-            ci/reviewed-npm-audit.json
-            scripts/audit-reviewed-npm-graph.mts
-            scripts/checks/prepare-ci-npm-install.mts
-            scripts/lib/openclaw-npm-remediation.mts
-            scripts/lib/reviewed-npm-archive.mts
-            scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/npm-audit-receipt.mts
-            scripts/lib/repository-input-path.mts
-          sparse-checkout-cone-mode: false
-
       - name: Download verified OpenShell SDK archive
         if: needs.openshell-sdk-package.outputs.required == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -537,7 +464,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Run installer integration tests
-        uses: ./.trusted-ci-actions/.github/actions/ci-installer-integration
+        uses: NVIDIA/NemoClaw/.github/actions/ci-installer-integration@7363df49a5f25b0dd1c20c80905917c31760a27e
 
   reviewed-npm-audit:
     needs: changes
@@ -550,26 +477,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Checkout trusted reviewed npm audit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .trusted-reviewed-npm-audit
-          persist-credentials: false
-          sparse-checkout: |
-            .github/actions/ci-reviewed-npm-audit
-            ci/npm-audit-exceptions.json
-            ci/reviewed-npm-audit.json
-            scripts/audit-reviewed-npm-graph.mts
-            scripts/lib/openclaw-npm-remediation.mts
-            scripts/lib/reviewed-npm-archive.mts
-            scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/npm-audit-receipt.mts
-            scripts/lib/repository-input-path.mts
-          sparse-checkout-cone-mode: false
-
       - name: Audit reviewed production npm graphs
-        uses: ./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit
+        uses: NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@7363df49a5f25b0dd1c20c80905917c31760a27e
         with:
           target-root: ${{ github.workspace }}
           report-dir: artifacts/reviewed-npm-audit
@@ -596,31 +505,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Checkout trusted CI actions
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .trusted-ci-actions
-          persist-credentials: false
-          sparse-checkout: |
-            .github/actions/ci-static-checks
-            .github/actions/ci-build-typecheck
-            .github/actions/ci-compile-artifacts
-            .github/actions/ci-cli-coverage-shard
-            .github/actions/ci-cli-coverage-merge
-            .github/actions/ci-plugin-coverage
-            .github/actions/ci-installer-integration
-            .github/actions/ci-install-dependencies.sh
-            ci/reviewed-npm-audit.json
-            scripts/audit-reviewed-npm-graph.mts
-            scripts/checks/prepare-ci-npm-install.mts
-            scripts/lib/openclaw-npm-remediation.mts
-            scripts/lib/reviewed-npm-archive.mts
-            scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/npm-audit-receipt.mts
-            scripts/lib/repository-input-path.mts
-          sparse-checkout-cone-mode: false
-
       - name: Download verified OpenShell SDK archive
         if: needs.openshell-sdk-package.outputs.required == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -643,7 +527,7 @@ jobs:
           test -s nemoclaw/dist/shared/sandbox-name.cjs
 
       - name: Run CLI coverage shard
-        uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard
+        uses: NVIDIA/NemoClaw/.github/actions/ci-cli-coverage-shard@7363df49a5f25b0dd1c20c80905917c31760a27e
         with:
           shard: ${{ matrix.shard }}
           shard-count: "12"
@@ -724,31 +608,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Checkout trusted CI actions
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .trusted-ci-actions
-          persist-credentials: false
-          sparse-checkout: |
-            .github/actions/ci-static-checks
-            .github/actions/ci-build-typecheck
-            .github/actions/ci-compile-artifacts
-            .github/actions/ci-cli-coverage-shard
-            .github/actions/ci-cli-coverage-merge
-            .github/actions/ci-plugin-coverage
-            .github/actions/ci-installer-integration
-            .github/actions/ci-install-dependencies.sh
-            ci/reviewed-npm-audit.json
-            scripts/audit-reviewed-npm-graph.mts
-            scripts/checks/prepare-ci-npm-install.mts
-            scripts/lib/openclaw-npm-remediation.mts
-            scripts/lib/reviewed-npm-archive.mts
-            scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/npm-audit-receipt.mts
-            scripts/lib/repository-input-path.mts
-          sparse-checkout-cone-mode: false
-
       - name: Download verified OpenShell SDK archive
         if: needs.openshell-sdk-package.outputs.required == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -757,7 +616,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Merge CLI coverage
-        uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge
+        uses: NVIDIA/NemoClaw/.github/actions/ci-cli-coverage-merge@7363df49a5f25b0dd1c20c80905917c31760a27e
         with:
           shard-count: "12"
 
@@ -776,31 +635,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Checkout trusted CI actions
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .trusted-ci-actions
-          persist-credentials: false
-          sparse-checkout: |
-            .github/actions/ci-static-checks
-            .github/actions/ci-build-typecheck
-            .github/actions/ci-compile-artifacts
-            .github/actions/ci-cli-coverage-shard
-            .github/actions/ci-cli-coverage-merge
-            .github/actions/ci-plugin-coverage
-            .github/actions/ci-installer-integration
-            .github/actions/ci-install-dependencies.sh
-            ci/reviewed-npm-audit.json
-            scripts/audit-reviewed-npm-graph.mts
-            scripts/checks/prepare-ci-npm-install.mts
-            scripts/lib/openclaw-npm-remediation.mts
-            scripts/lib/reviewed-npm-archive.mts
-            scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/npm-audit-receipt.mts
-            scripts/lib/repository-input-path.mts
-          sparse-checkout-cone-mode: false
-
       - name: Download verified OpenShell SDK archive
         if: needs.openshell-sdk-package.outputs.required == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -809,7 +643,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Run plugin coverage
-        uses: ./.trusted-ci-actions/.github/actions/ci-plugin-coverage
+        uses: NVIDIA/NemoClaw/.github/actions/ci-plugin-coverage@7363df49a5f25b0dd1c20c80905917c31760a27e
 
   checks:
     needs:

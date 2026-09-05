@@ -107,6 +107,11 @@
       "category": "security"
     },
     {
+      "file": "test/platform/images/node-tar-dockerfile-contract.test.ts",
+      "test": "keeps Hermes npm migration inputs and runtime finalization layer-bounded",
+      "category": "compatibility"
+    },
+    {
       "file": "test/repository/code-scanning-workflow.test.ts",
       "test": "installs npm from the immutable reviewed action bootstrap",
       "category": "security"
@@ -114,6 +119,11 @@
     {
       "file": "test/repository/github-actions-node-npm-invariant.test.ts",
       "test": "selects the reviewed Node and npm identities before further steps",
+      "category": "security"
+    },
+    {
+      "file": "test/repository/github-actions-node-npm-invariant.test.ts",
+      "test": "keeps composite npm setup dependencies in matching workflow checkouts",
       "category": "security"
     },
     {
@@ -194,6 +204,11 @@
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "executes pull request installer hash checks only from the PR base SHA",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "pins npm-consuming pull request composites to the reviewed migration revision",
       "category": "security"
     },
     {

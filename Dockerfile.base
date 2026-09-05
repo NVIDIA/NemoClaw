@@ -40,8 +40,8 @@
 #   1. OpenClaw CLI version bump    — update OPENCLAW_VERSION default below, or override via --build-arg / workflow_dispatch
 #   2. New apt package needed       — add it to the apt-get install list
 #   3. util-linux upgrade           — update the pinned apt package version
-#   4. node:24.18.1-trixie-slim digest rotated — update-docker-pin.sh updates all
-#                                      Dockerfile and Dockerfile.base
+#   4. node:24.18.1-trixie-slim digest rotated — run update-docker-pin.sh once
+#                                      for each Dockerfile containing the pin
 #   5. npm upgrade                  — update upgrade-bundled-npm.mts
 #   6. New .openclaw subdirectory   — add mkdir below
 #   7. PyYAML or other pip dep bump — change the version below

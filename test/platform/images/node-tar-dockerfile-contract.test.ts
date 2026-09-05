@@ -13,6 +13,7 @@ import {
   REVIEWED_NPM_VERSION,
 } from "../../../scripts/upgrade-bundled-npm.mts";
 import {
+  dockerfileInstructions,
   dockerfileRunCommandPositions,
   requireReviewedDockerfileRunCommands,
   requireSingleReviewedDockerfileRunCommand,
@@ -390,10 +391,11 @@ describe("node-tar image remediation contract", () => {
       const patchInputReady = patchPayloadLayer >= 0 ? patchPayloadLayer : patchCopy;
 
       const archiveCopy = `COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-${FIXED_TAR_VERSION}.tgz ${hermesFinalArchivePath}`;
-      const archiveCopyIndex = source.indexOf(archiveCopy);
+      const archiveInputIndex = patchInputStage.indexOf(archiveCopy);
+      const archiveReady = patchPayloadLayer >= 0 ? patchPayloadLayer : archiveInputIndex;
       expect({
-        archiveBeforePatch: archiveCopyIndex >= 0 && firstPatchRun > archiveCopyIndex,
-        archivePresent: archiveCopyIndex >= 0,
+        archiveBeforePatch: archiveInputIndex >= 0 && firstPatchRun > archiveReady,
+        archivePresent: archiveInputIndex >= 0,
       }).toEqual(
         file === "agents/hermes/Dockerfile"
           ? { archiveBeforePatch: true, archivePresent: true }
@@ -448,7 +450,11 @@ describe("reviewed npm image remediation contract", () => {
     const source = completedStage(dockerfile);
     const portableOptions = file === "agents/hermes/Dockerfile" ? "" : "--chmod=0444 ";
     const archiveSource = `ADD ${portableOptions}--checksum=sha256:${REVIEWED_NPM_ARCHIVE_SHA256} ${REVIEWED_NPM_TARBALL} /npm-${REVIEWED_NPM_VERSION}.tgz`;
-    const archiveCopy = `COPY --from=reviewed-npm-archive /npm-${REVIEWED_NPM_VERSION}.tgz ${reviewedNpmArchivePath}`;
+    const directArchiveCopy = `COPY --from=reviewed-npm-archive /npm-${REVIEWED_NPM_VERSION}.tgz ${reviewedNpmArchivePath}`;
+    const archiveCopy =
+      file === "agents/hermes/Dockerfile"
+        ? "COPY --from=hermes-npm-patch-payload / /"
+        : directArchiveCopy;
     const archiveCopyIndex = source.indexOf(archiveCopy);
     const upgradeRun = requireSingleReviewedDockerfileRunCommand(
       source,
@@ -458,6 +464,10 @@ describe("reviewed npm image remediation contract", () => {
     const firstPrivatePatch = source.indexOf(patchCommand);
 
     expect(archiveStage).toContain(archiveSource);
+    expect(
+      file !== "agents/hermes/Dockerfile" ||
+        namedStage(dockerfile, "hermes-npm-patch-payload").includes(directArchiveCopy),
+    ).toBe(true);
     expect(archiveCopyIndex, file).toBeGreaterThanOrEqual(0);
     expect(upgradeRun, file).toBeGreaterThan(archiveCopyIndex);
     expect(firstPrivatePatch, file).toBeGreaterThan(upgradeRun);
@@ -494,8 +504,33 @@ describe("reviewed npm image remediation contract", () => {
     expect(ipAddressRun).toBeGreaterThan(braceRun);
   });
 
+  // source-shape-contract: compatibility -- Hermes archive staging and adjacent runtime checks must share existing layers so the final image stays within the Docker import ceiling.
+  it("keeps Hermes npm migration inputs and runtime finalization layer-bounded", () => {
+    const dockerfile = fs.readFileSync(path.join(repoRoot, "agents/hermes/Dockerfile"), "utf8");
+    const payload = namedStage(dockerfile, "hermes-npm-patch-payload");
+    const finalization = dockerfileInstructions(completedStage(dockerfile)).filter(
+      ({ body, keyword }) => keyword === "RUN" && body.includes('hermes_path="$(command -v hermes'),
+    );
+
+    expect(payload).toContain(
+      `COPY --from=reviewed-npm-archive /npm-${REVIEWED_NPM_VERSION}.tgz ${reviewedNpmArchivePath}`,
+    );
+    expect(payload).toContain(
+      `COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-${FIXED_TAR_VERSION}.tgz ${hermesFinalArchivePath}`,
+    );
+    expect(finalization).toHaveLength(1);
+    expect(
+      [
+        "chmod -R a+rX /opt/hermes/.venv",
+        "hermes_web_dist=/opt/hermes/hermes_cli/web_dist",
+        "apt-get autoremove --purge -y",
+      ].every((marker) => finalization[0]!.body.includes(marker)),
+    ).toBe(true);
+  });
+
   // source-shape-contract: security -- Direct Node stages must upgrade reviewed npm before any npm-backed build boundary executes.
   it("upgrades and verifies reviewed npm before every direct Node stage npm boundary", () => {
+    const rootDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
     const stages = directNodeDockerfiles.flatMap((file) =>
       directNodeStages(file, fs.readFileSync(path.join(repoRoot, file), "utf8")),
     );
@@ -522,6 +557,12 @@ describe("reviewed npm image remediation contract", () => {
       "agents/pi/Dockerfile.base:native-security-builder",
       "agents/pi/Dockerfile.base:<final>",
     ]);
+    expect(rootDockerfile).toContain(
+      "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-identity.mts scripts/lib/seed-reviewed-npm-cache.mts /opt/nemoclaw-build-tools/",
+    );
+    expect(rootDockerfile).toContain(
+      "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-identity.mts scripts/lib/seed-reviewed-npm-cache.mts /opt/nemoclaw-build-tools/lib/",
+    );
     expect(invokingStages.map(({ file, name }) => `${file}:${name}`)).toEqual([
       "Dockerfile:builder",
       "Dockerfile:codex-acp-runtime",

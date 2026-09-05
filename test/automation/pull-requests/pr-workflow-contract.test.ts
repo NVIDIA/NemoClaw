@@ -70,13 +70,21 @@ const sharedActionPaths = {
 } as const;
 
 const trustedPrActionPaths = {
-  staticChecks: "./.trusted-ci-actions/.github/actions/ci-static-checks",
-  compileArtifacts: "./.trusted-ci-actions/.github/actions/ci-compile-artifacts",
+  staticChecks:
+    "NVIDIA/NemoClaw/.github/actions/ci-static-checks@7363df49a5f25b0dd1c20c80905917c31760a27e",
+  compileArtifacts:
+    "NVIDIA/NemoClaw/.github/actions/ci-compile-artifacts@7363df49a5f25b0dd1c20c80905917c31760a27e",
   buildTypecheck: "./.trusted-ci-actions/.github/actions/ci-build-typecheck",
-  cliCoverageShard: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard",
-  cliCoverageMerge: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge",
-  pluginCoverage: "./.trusted-ci-actions/.github/actions/ci-plugin-coverage",
-  installerIntegration: "./.trusted-ci-actions/.github/actions/ci-installer-integration",
+  cliCoverageShard:
+    "NVIDIA/NemoClaw/.github/actions/ci-cli-coverage-shard@7363df49a5f25b0dd1c20c80905917c31760a27e",
+  cliCoverageMerge:
+    "NVIDIA/NemoClaw/.github/actions/ci-cli-coverage-merge@7363df49a5f25b0dd1c20c80905917c31760a27e",
+  pluginCoverage:
+    "NVIDIA/NemoClaw/.github/actions/ci-plugin-coverage@7363df49a5f25b0dd1c20c80905917c31760a27e",
+  installerIntegration:
+    "NVIDIA/NemoClaw/.github/actions/ci-installer-integration@7363df49a5f25b0dd1c20c80905917c31760a27e",
+  reviewedNpmAudit:
+    "NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@7363df49a5f25b0dd1c20c80905917c31760a27e",
 } as const;
 
 const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
@@ -486,6 +494,36 @@ describe("pull request and main workflow contracts", () => {
     ["main", mainWorkflow],
   ] as const)("keeps the %s CLI coverage shard budget aligned", (_workflowName, workflow) => {
     expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
+  });
+
+  // source-shape-contract: security -- npm-consuming pull request composites must execute from the reviewed immutable migration revision until the base contains npm 12.
+  it("pins npm-consuming pull request composites to the reviewed migration revision", () => {
+    expect([
+      requiredWorkflowStep(prWorkflow.jobs["static-checks"], "Run static checks").uses,
+      requiredWorkflowStep(
+        prWorkflow.jobs["compile-artifacts"],
+        "Compile and verify CLI and plugin outputs",
+      ).uses,
+      requiredWorkflowStep(
+        prWorkflow.jobs["installer-integration"],
+        "Run installer integration tests",
+      ).uses,
+      requiredWorkflowStep(
+        prWorkflow.jobs["reviewed-npm-audit"],
+        "Audit reviewed production npm graphs",
+      ).uses,
+      requiredWorkflowStep(prWorkflow.jobs["cli-test-shards"], "Run CLI coverage shard").uses,
+      requiredWorkflowStep(prWorkflow.jobs["cli-tests"], "Merge CLI coverage").uses,
+      requiredWorkflowStep(prWorkflow.jobs["plugin-tests"], "Run plugin coverage").uses,
+    ]).toEqual([
+      trustedPrActionPaths.staticChecks,
+      trustedPrActionPaths.compileArtifacts,
+      trustedPrActionPaths.installerIntegration,
+      trustedPrActionPaths.reviewedNpmAudit,
+      trustedPrActionPaths.cliCoverageShard,
+      trustedPrActionPaths.cliCoverageMerge,
+      trustedPrActionPaths.pluginCoverage,
+    ]);
   });
 
   // source-shape-contract: security -- Credential-free workflow structure prevents pull request code from receiving Hugging Face or checkout credentials

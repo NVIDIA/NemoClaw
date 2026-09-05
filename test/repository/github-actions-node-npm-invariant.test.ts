@@ -153,6 +153,68 @@ describe("controlled setup-node environments", () => {
     expect(invalidCheckouts).toEqual([]);
   });
 
+  // source-shape-contract: security -- Sparse trusted-action checkouts must include the canonical installer and identity required by reviewed npm composite actions.
+  it("keeps composite npm setup dependencies in matching workflow checkouts", () => {
+    const workflowGroups = groups.filter(({ file }) =>
+      path.relative(GITHUB_ROOT, file).startsWith(`workflows${path.sep}`),
+    );
+    const requiredSparsePaths = [
+      ".github/actions/setup-reviewed-npm",
+      "ci/reviewed-npm-audit.json",
+    ];
+
+    const invalidCheckouts = workflowGroups
+      .flatMap(({ file, label, steps }) =>
+        steps.flatMap((step, index) => {
+          const localPath = step.uses?.startsWith("./") ? step.uses.slice(2) : "";
+          const actionMarker = localPath.indexOf(".github/actions/");
+          const actionPath = actionMarker < 0 ? "" : localPath.slice(actionMarker);
+          const actionFile = path.join(REPO_ROOT, actionPath, "action.yaml");
+          const actionSource =
+            actionPath !== "" && fs.existsSync(actionFile)
+              ? fs.readFileSync(actionFile, "utf8")
+              : "";
+          const requiresReviewedNpm = actionSource.includes(
+            "$GITHUB_ACTION_PATH/../setup-reviewed-npm/verify-and-install-npm.sh",
+          );
+          const checkoutPath =
+            actionMarker < 0 ? "" : localPath.slice(0, actionMarker).replace(/\/$/u, "");
+          return requiresReviewedNpm
+            ? [{ actionPath, checkoutPath, file, index, label, steps }]
+            : [];
+        }),
+      )
+      .map(({ actionPath, checkoutPath, file, index, label, steps }) => {
+        const matchingCheckout = steps
+          .slice(0, index)
+          .filter((candidate) => candidate.uses?.startsWith("actions/checkout@"))
+          .reverse()
+          .find(({ with: inputs }) =>
+            checkoutPath === ""
+              ? inputs?.path === undefined
+              : String(inputs?.path) === checkoutPath,
+          );
+        const sparseCheckout = matchingCheckout?.with?.["sparse-checkout"];
+        const sparsePaths = String(sparseCheckout ?? "")
+          .split("\n")
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+        const completeSparseCheckout =
+          sparseCheckout === undefined ||
+          requiredSparsePaths.every(
+            (requiredPath) => sparsePaths.filter((entry) => entry === requiredPath).length === 1,
+          );
+        return {
+          label: `${path.relative(REPO_ROOT, file)}:${label}:${actionPath}`,
+          valid: matchingCheckout !== undefined && completeSparseCheckout,
+        };
+      })
+      .filter(({ valid }) => !valid)
+      .map(({ label }) => label);
+
+    expect(invalidCheckouts).toEqual([]);
+  });
+
   it.each([
     ".github/workflows/managed-images.yaml:pr-staging-qa-deep-code",
     ".github/workflows/managed-images.yaml:pr-build-and-entrypoint",
@@ -160,6 +222,7 @@ describe("controlled setup-node environments", () => {
     ".github/workflows/managed-images.yaml:pr-openclaw-mcp-discovery",
     ".github/workflows/managed-images.yaml:pi-candidate",
     ".github/workflows/pr.yaml:build-typecheck",
+    ".github/workflows/docs-preview-pr.yaml:preview",
   ])("uses immutable npm setup in protected pull request job %s", (owner) => {
     const group = groups.find(
       ({ file, label }) => `${path.relative(REPO_ROOT, file)}:${label}` === owner,

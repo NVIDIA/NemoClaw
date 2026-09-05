@@ -74,6 +74,8 @@ RUN set -eu; \
 
 FROM scratch AS hermes-npm-patch-payload
 
+COPY --from=reviewed-npm-archive /npm-12.0.2.tgz /tmp/npm-12.0.2.tgz
+COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz /tmp/nemoclaw-bundled-npm-tar.tgz
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
@@ -261,7 +263,6 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 # Cross-stage root copies are accepted by Docker's legacy builder and create
 # one final-image layer while preserving metadata on existing parent paths.
 COPY --from=hermes-npm-patch-payload / /
-COPY --from=reviewed-npm-archive /npm-12.0.2.tgz /tmp/npm-12.0.2.tgz
 
 # A published base can lag the base-image rollout. Install the complete
 # reviewed npm tree from immutable local bytes before private-tree patches.
@@ -349,7 +350,6 @@ RUN grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix from the
 # locked cache seed so protected rebuilds remain network-disabled.
-COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz /tmp/nemoclaw-bundled-npm-tar.tgz
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
       --npm-root /usr/local/lib/node_modules/npm \
       --archive /tmp/nemoclaw-bundled-npm-tar.tgz
@@ -375,8 +375,17 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
     node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
       --npm-root /usr/local/lib/node_modules/npm
 
-# Keep the final image contract explicit even when the published base image
-# changes independently of this Dockerfile.
+# Published base images can lag Dockerfile.base while local feature branches
+# still layer this final image on top. Invalid state: the selected base has
+# Hermes source under /opt/hermes but lacks hermes_cli/web_dist. Prebuild the
+# dashboard bundle here too so `hermes dashboard` never tries to run npm from
+# the sandbox user account. Remove this fallback after all supported base image
+# tags are built from Dockerfile.base with HERMES_WEB_DIST prepopulated.
+ENV HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
+
+# Keep the inherited CLI, Python environment, and dashboard explicit. Strip
+# build-only compiler and network-probe packages in the same layer so the
+# managed image remains within its import ceiling.
 RUN set -eu; \
     hermes_path="$(command -v hermes 2>/dev/null || true)"; \
     if [ "$hermes_path" != "/usr/local/bin/hermes" ]; then \
@@ -384,19 +393,10 @@ RUN set -eu; \
         exit 1; \
     fi; \
     test -x /usr/local/bin/hermes; \
-    /usr/local/bin/hermes --version
-
-RUN chmod -R a+rX /opt/hermes/.venv \
-    && test -r /opt/hermes/.venv/pyvenv.cfg \
-    && su -s /bin/sh sandbox -c '/opt/hermes/.venv/bin/python3 -c "import urllib.request"'
-
-# Published base images can lag Dockerfile.base while local feature branches
-# still layer this final image on top. Invalid state: the selected base has
-# Hermes source under /opt/hermes but lacks hermes_cli/web_dist. Prebuild the
-# dashboard bundle here too so `hermes dashboard` never tries to run npm from
-# the sandbox user account. Remove this fallback after all supported base image
-# tags are built from Dockerfile.base with HERMES_WEB_DIST prepopulated.
-RUN set -eu; \
+    /usr/local/bin/hermes --version; \
+    chmod -R a+rX /opt/hermes/.venv; \
+    test -r /opt/hermes/.venv/pyvenv.cfg; \
+    su -s /bin/sh sandbox -c '/opt/hermes/.venv/bin/python3 -c "import urllib.request"'; \
     if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
         export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
         export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
@@ -423,15 +423,7 @@ RUN set -eu; \
         fi; \
     fi; \
     rm -rf /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; \
-    test -d "$hermes_web_dist"
-
-ENV HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
-
-# Harden: remove unnecessary build tools and network probes. build-essential
-# comes from the base image for npm/node-gyp builds; the final image does not
-# compile anything, so strip the installed compiler packages and fail closed if
-# command shims survive.
-RUN set -eu; \
+    test -d "$hermes_web_dist"; \
     dpkg-query -W -f='${Package}\n' >/tmp/hermes-runtime-packages.txt; \
     grep -E '^(build-essential|make|gcc|g\+\+|cpp|gcc-[0-9]+|g\+\+-[0-9]+|cpp-[0-9]+|[[:alnum:]_-]+-linux-gnu-(gcc|g\+\+|cpp)(-[0-9]+)?|netcat-openbsd|netcat-traditional|ncat)$' /tmp/hermes-runtime-packages.txt >/tmp/hermes-runtime-tool-packages.txt || true; \
     if [ -s /tmp/hermes-runtime-tool-packages.txt ]; then xargs -r apt-get purge -y </tmp/hermes-runtime-tool-packages.txt; fi; \
@@ -487,9 +479,10 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
     && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/tool-disclosure.ts \
     && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/bundled-npm-package.mts \
-        /scripts/lib/openclaw-npm-remediation.mts \
+        /scripts/lib/openclaw-npm-remediation.mts /scripts/lib/reviewed-npm-identity.mts \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/lib/patch-bundled-npm-ip-address.mts \
-        /scripts/patch-bundled-npm-tar.mts \
+        /scripts/patch-bundled-npm-tar.mts /scripts/upgrade-bundled-npm.mts \
+        /ci/reviewed-npm-audit.json \
     && chmod -R a+rX /src/lib/messaging
 
 # Hermes 0.20.6 pins the Hindsight version but does not authenticate a
@@ -1636,9 +1629,12 @@ RUN check_metadata() { \
     && check_metadata /opt/hermes/plugins/nemoclaw 'root:root 755' \
     && check_metadata /opt/hermes/plugins/nemoclaw/__init__.py 'root:root 444' \
     && check_metadata /scripts/lib/bundled-npm-package.mts 'root:root 444' \
+    && check_metadata /scripts/lib/reviewed-npm-identity.mts 'root:root 444' \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444' \
     && check_metadata /scripts/lib/patch-bundled-npm-ip-address.mts 'root:root 444' \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \
+    && check_metadata /scripts/upgrade-bundled-npm.mts 'root:root 444' \
+    && check_metadata /ci/reviewed-npm-audit.json 'root:root 444' \
     && check_metadata /opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444' \
     && check_metadata /opt/nemoclaw-hermes-config/hindsight-client-requirements.txt 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755' \
