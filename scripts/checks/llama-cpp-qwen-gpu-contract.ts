@@ -10,7 +10,7 @@ export const QWEN_GPU_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
 const QWEN_GPU_MAX_DIAGNOSTIC_BYTES = 4 * 1024;
 const OPENCLAW_IMAGE_PATTERN =
   /^ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[a-f0-9]{64}$/u;
-const SANDBOX_NAME = "nmc-lcpp-qwen-rtx";
+export const QWEN_GPU_SANDBOX_NAME = "nmc-lcpp-qwen-rtx";
 
 export function qwenGpuRecipeBinding(recipeRef: unknown): typeof QWEN_GPU_RECIPE_ID {
   if (recipeRef !== QWEN_GPU_RECIPE_ID) {
@@ -92,7 +92,7 @@ export function qwenGpuAgentPlan(
       upstreamBaseUrl: "http://host.openshell.internal:8081/v1",
     },
     runtimeProvider: "docker",
-    sandbox: { gpuAccess: "disabled", name: SANDBOX_NAME },
+    sandbox: { gpuAccess: "disabled", name: QWEN_GPU_SANDBOX_NAME },
     sessions: {
       normal: "llama-cpp-qwen-openclaw-normal",
       tool: "llama-cpp-qwen-openclaw-tool",

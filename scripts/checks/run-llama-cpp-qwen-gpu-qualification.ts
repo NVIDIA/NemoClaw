@@ -28,7 +28,6 @@ import { runManagedImageOpenShellE2e } from "./run-managed-image-openshell-e2e.t
 
 const TARGET_ID = "llama-cpp-qwen-gpu";
 const PRESET_ID = "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b";
-const SANDBOX_NAME = "nmc-lcpp-qwen-rtx";
 const OPENCLAW_IMAGE_PATTERN =
   /^ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[a-f0-9]{64}$/u;
 
@@ -275,7 +274,7 @@ export async function runQwenGpuQualification(): Promise<void> {
         localProvider: "llama-cpp",
         maxTokens: recipe.spec.serve.limits.maxOutputTokens,
         model: recipe.spec.model.servedName,
-        sandbox: SANDBOX_NAME,
+        sandbox: agentPlan.sandbox.name,
       },
       (context) =>
         runLlamaCppOpenClawAgentQualification(agentPlan, {
@@ -306,7 +305,7 @@ export async function runQwenGpuQualification(): Promise<void> {
             QWEN_GPU_GATEWAY_NETWORK_PATTERN,
           );
           const installed = await installManagedLlamaCpp(setting.selection, {
-            sandboxName: SANDBOX_NAME,
+            sandboxName: agentPlan.sandbox.name,
             runtimeProvider: createDockerRuntimeProviderBundle(),
             env: process.env,
             log: (message) => installLog.push(message),
@@ -425,7 +424,9 @@ export async function runQwenGpuQualification(): Promise<void> {
           try {
             if (!apiKey) return;
             runtimeCleanup = requireCleanup(
-              cleanupManagedLlamaCppRuntimeForSandbox(SANDBOX_NAME, { env: process.env }),
+              cleanupManagedLlamaCppRuntimeForSandbox(agentPlan.sandbox.name, {
+                env: process.env,
+              }),
             );
             if (transactionId) {
               createDockerLlamaCppPrivateBridgeController().assertStopped(transactionId);
@@ -493,7 +494,7 @@ export async function runQwenGpuQualification(): Promise<void> {
     }
     try {
       runtimeCleanup ??= requireCleanup(
-        cleanupManagedLlamaCppRuntimeForSandbox(SANDBOX_NAME, { env: process.env }),
+        cleanupManagedLlamaCppRuntimeForSandbox(agentPlan.sandbox.name, { env: process.env }),
       );
       if (transactionId) {
         createDockerLlamaCppPrivateBridgeController().assertStopped(transactionId);

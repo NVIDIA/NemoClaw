@@ -108,23 +108,36 @@ describe("generic NVIDIA GPU PR selection", () => {
     "src/lib/onboard/fatal-runtime-preflight.ts",
     "src/lib/onboard/overlayfs-auto-fix.ts",
     "src/lib/onboard/preflight.ts",
+    "test/e2e/live/llama-cpp-generic-gpu.test.ts",
+  ])("selects only the generic GPU job for %s", (changedFile) => {
+    expect(selectGenericGpuLane([changedFile])).toBe(
+      `base_sha=${BASE_SHA}\nqwen_selected=false\nselected=true`,
+    );
+  });
+
+  it.each([
+    ".github/workflows/pr-self-hosted.yaml",
     "scripts/checks/llama-cpp-openclaw-agent-qualification.mts",
     "scripts/checks/llama-cpp-compiled-runtime.ts",
     "scripts/checks/llama-cpp-qwen-gpu-contract.ts",
     "scripts/checks/managed-image-protected-runtime-contract.ts",
     "scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts",
+    "managed-inference/presets/llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b.yaml",
+    "managed-inference/recipes/llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1.yaml",
+    "src/lib/onboard/runtime-provider/docker-llama-cpp-operation.ts",
+    "test/inference/llama/run-llama-cpp-qwen-gpu-qualification.test.ts",
+    "test/package-contract/inference/run-llama-cpp-qwen-gpu-qualification.test.ts",
     "tools/e2e/exact-artifact-download.mts",
     "tools/e2e/managed-image-cohort-contract.mts",
-  ])(
-    "selects the generic NVIDIA GPU E2E job when %s can change installer readiness",
-    (changedFile) => {
-      expect(selectGenericGpuLane([changedFile])).toBe(`base_sha=${BASE_SHA}\nselected=true`);
-    },
-  );
+  ])("selects both GPU jobs for Qwen dependency %s", (changedFile) => {
+    expect(selectGenericGpuLane([changedFile])).toBe(
+      `base_sha=${BASE_SHA}\nqwen_selected=true\nselected=true`,
+    );
+  });
 
   it("does not select the generic NVIDIA GPU E2E job for unrelated documentation", () => {
     expect(selectGenericGpuLane(["docs/get-started/quickstart.mdx"])).toBe(
-      `base_sha=${BASE_SHA}\nselected=false`,
+      `base_sha=${BASE_SHA}\nqwen_selected=false\nselected=false`,
     );
   });
 
@@ -148,6 +161,7 @@ describe("generic NVIDIA GPU PR selection", () => {
       base_sha: "${{ steps.changed.outputs.base_sha }}",
       managed_image_receipt: "${{ steps.validate_managed_cohort.outputs.receipt }}",
       managed_image_revision: "${{ steps.publication.outputs.head_sha }}",
+      qwen_selected: "${{ steps.changed.outputs.qwen_selected }}",
     });
 
     const checkout = selector?.steps?.find(
@@ -200,7 +214,7 @@ describe("generic NVIDIA GPU PR selection", () => {
           "${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_receipt }}",
         NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ github.sha }}",
       },
-      if: "${{ needs.select-llama-cpp-generic-gpu.outputs.selected == 'true' }}",
+      if: "${{ needs.select-llama-cpp-generic-gpu.outputs.qwen_selected == 'true' }}",
       needs: "select-llama-cpp-generic-gpu",
       "runs-on": "linux-amd64-gpu-rtxpro6000-latest-1",
       "timeout-minutes": 150,
@@ -208,7 +222,7 @@ describe("generic NVIDIA GPU PR selection", () => {
     expect(
       value.jobs["llama-cpp-qwen-gpu"]?.steps?.find(
         (step) =>
-          step.name === "Run Qwen N1x WSL llama.cpp recipe compatibility on RTX GPU",
+          step.name === "Run Qwen llama.cpp recipe on RTX GPU (N1x WSL pending)",
       )?.run,
     ).toContain("npx tsx scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts");
   });

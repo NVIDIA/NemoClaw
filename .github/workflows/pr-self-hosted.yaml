@@ -38,6 +38,7 @@ jobs:
       base_sha: ${{ steps.changed.outputs.base_sha }}
       managed_image_receipt: ${{ steps.validate_managed_cohort.outputs.receipt }}
       managed_image_revision: ${{ steps.publication.outputs.head_sha }}
+      qwen_selected: ${{ steps.changed.outputs.qwen_selected }}
       selected: ${{ steps.changed.outputs.selected }}
     steps:
       - id: changed
@@ -59,9 +60,9 @@ jobs:
             echo "::error::Copied PR branch SHA does not match the current PR head" >&2
             exit 1
           }
-          if gh api --paginate --slurp \
-            "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files?per_page=100" \
-            | jq -e '
+          pr_files_json="$(gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files?per_page=100")"
+          if jq -e '
               flatten
               | any(
                   .filename == ".github/workflows/e2e.yaml"
@@ -89,13 +90,45 @@ jobs:
                   or .filename == "src/lib/onboard/preflight.ts"
                   or (.filename | startswith("src/lib/onboard/runtime-provider/docker-llama-cpp"))
                 )
-            ' >/dev/null; then
+            ' <<<"$pr_files_json" >/dev/null; then
             selected=true
           else
             selected=false
           fi
+          if jq -e '
+              flatten
+              | any(
+                  .filename == ".github/workflows/pr-self-hosted.yaml"
+                  or .filename == "scripts/checks/llama-cpp-openclaw-agent-qualification.mts"
+                  or .filename == "scripts/checks/llama-cpp-compiled-runtime.ts"
+                  or .filename == "scripts/checks/llama-cpp-qwen-gpu-contract.ts"
+                  or .filename == "scripts/checks/managed-image-protected-runtime-contract.ts"
+                  or .filename == "scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts"
+                  or .filename == "scripts/checks/run-managed-image-openshell-e2e.ts"
+                  or .filename == "tools/e2e/exact-artifact-download.mts"
+                  or .filename == "tools/e2e/managed-image-cohort-contract.mts"
+                  or .filename == "src/lib/onboard/runtime-provider/docker.ts"
+                  or .filename == "test/e2e/support/pr-self-hosted-llama-selector.test.ts"
+                  or .filename == "test/inference/llama/llama-cpp-openclaw-agent-qualification.test.ts"
+                  or .filename == "test/inference/llama/run-llama-cpp-qwen-gpu-qualification.test.ts"
+                  or .filename == "test/inference/managed/managed-image-protected-runtime-contract.test.ts"
+                  or .filename == "test/package-contract/inference/run-llama-cpp-qwen-gpu-qualification.test.ts"
+                  or .filename == "managed-inference/presets/llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b.yaml"
+                  or .filename == "managed-inference/recipes/llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1.yaml"
+                  or (.filename | startswith("src/lib/inference/llama-cpp/"))
+                  or (.filename | startswith("src/lib/onboard/runtime-provider/docker-llama-cpp"))
+                )
+            ' <<<"$pr_files_json" >/dev/null; then
+            qwen_selected=true
+          else
+            qwen_selected=false
+          fi
+          if [[ "$qwen_selected" == true ]]; then
+            selected=true
+          fi
           {
             printf 'base_sha=%s\n' "$base_sha"
+            printf 'qwen_selected=%s\n' "$qwen_selected"
             printf 'selected=%s\n' "$selected"
           } >>"$GITHUB_OUTPUT"
 
@@ -212,9 +245,9 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   llama-cpp-qwen-gpu:
-    name: Qwen N1x WSL llama.cpp recipe compatibility on RTX GPU
+    name: Qwen llama.cpp recipe on RTX GPU (N1x WSL pending)
     needs: select-llama-cpp-generic-gpu
-    if: ${{ needs.select-llama-cpp-generic-gpu.outputs.selected == 'true' }}
+    if: ${{ needs.select-llama-cpp-generic-gpu.outputs.qwen_selected == 'true' }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 150
     env:
@@ -249,7 +282,7 @@ jobs:
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
 
-      - name: Run Qwen N1x WSL llama.cpp recipe compatibility on RTX GPU
+      - name: Run Qwen llama.cpp recipe on RTX GPU (N1x WSL pending)
         shell: bash
         run: |
           set -euo pipefail
@@ -259,7 +292,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx tsx scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts
 
-      - name: Upload Qwen N1x WSL recipe compatibility artifacts
+      - name: Upload Qwen RTX recipe artifacts (N1x WSL pending)
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
