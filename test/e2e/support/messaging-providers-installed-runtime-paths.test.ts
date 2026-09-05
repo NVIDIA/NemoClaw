@@ -39,7 +39,7 @@ describe("messaging provider installed-runtime paths", () => {
     }
   });
 
-  it("routes the installed WeChat request through the sandbox-local policy relay", () => {
+  it("generates a standalone WeChat proof with the sandbox-local policy relay", () => {
     const result = spawnSync(process.execPath, ["--input-type=module", "--check"], {
       encoding: "utf8",
       input: WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE,
