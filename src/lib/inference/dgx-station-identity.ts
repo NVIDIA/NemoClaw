@@ -114,3 +114,50 @@ export function hasDgxStationGb300PciGpu(
     return undefined;
   }
 }
+
+export const DGX_STATION_PYTHON_IDENTITY_PROBE = String.raw`
+FIRMWARE_VALUE_MAX_BYTES = ${String(NVIDIA_FIRMWARE_VALUE_MAX_BYTES)}
+
+def firmware_value(path, strip_nul=False):
+    try:
+        with Path(path).open("rb") as handle:
+            raw = handle.read(FIRMWARE_VALUE_MAX_BYTES + 2)
+        if strip_nul:
+            raw = raw.replace(b"\x00", b"")
+        normalized = raw.decode("utf-8").rstrip("\n")
+        if len(normalized.encode("utf-8")) > FIRMWARE_VALUE_MAX_BYTES:
+            return ""
+        if any(character in normalized for character in ("\r", "\n", "\x00")):
+            return ""
+        return normalized.strip()
+    except (OSError, UnicodeError):
+        return ""
+
+def station_gb300_pci_gpu(pci_devices_path="/sys/bus/pci/devices"):
+    try:
+        candidates = sorted(Path(pci_devices_path).iterdir())
+    except OSError:
+        return False
+    if len(candidates) > 256:
+        return False
+    for candidate in candidates:
+        vendor = firmware_value(candidate / "vendor").lower()
+        device = firmware_value(candidate / "device").lower()
+        pci_class = firmware_value(candidate / "class").lower()
+        if vendor == "0x10de" and device in ("0x31c2", "0x31c3") and re.fullmatch(r"0x03[0-9a-f]{4}", pci_class):
+            return True
+    return False
+
+def station_identity_payload(
+    dmi_root="/sys/class/dmi/id",
+    device_tree_model_path="/sys/firmware/devicetree/base/model",
+    pci_devices_path="/sys/bus/pci/devices",
+):
+    return {
+        "productName": firmware_value(Path(dmi_root) / "product_name"),
+        "productFamily": firmware_value(Path(dmi_root) / "product_family"),
+        "boardName": firmware_value(Path(dmi_root) / "board_name"),
+        "deviceTreeModel": firmware_value(device_tree_model_path, strip_nul=True),
+        "stationGb300PciGpu": station_gb300_pci_gpu(pci_devices_path),
+    }
+`;

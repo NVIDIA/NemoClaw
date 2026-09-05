@@ -972,22 +972,22 @@ describe("probe command boundary", () => {
     );
     createStationClusterProbeDeps(recordingSpawn).probeLocalHost();
     const python = resolveStationFixturePython();
+    const dmiRoot = path.join(root, "dmi");
+    const modelPath = path.join(root, "model");
+    const pciRoot = path.join(root, "pci");
+    const pciDevice = path.join(pciRoot, "0000:01:00.0");
+    fs.mkdirSync(dmiRoot, { recursive: true });
+    fs.mkdirSync(pciDevice, { recursive: true });
+    fs.writeFileSync(path.join(dmiRoot, "product_name"), "Generic ARM workstation\n");
+    fs.writeFileSync(path.join(dmiRoot, "product_family"), "NVIDIA DGX Station GB300\n");
+    fs.writeFileSync(path.join(dmiRoot, "board_name"), "Generic board\n");
+    fs.writeFileSync(modelPath, "Generic device tree\0");
+    fs.writeFileSync(path.join(pciDevice, "vendor"), "0x10de\n");
+    fs.writeFileSync(path.join(pciDevice, "device"), "0x31c2\n");
+    fs.writeFileSync(path.join(pciDevice, "class"), "0x030000\n");
     const identityProbeScript = probeScript.replace(
-      "\npayload = {\n",
-      `
-def firmware_value(path, strip_nul=False):
-    return {
-        "/sys/class/dmi/id/product_name": "Generic ARM workstation",
-        "/sys/class/dmi/id/product_family": "NVIDIA DGX Station GB300",
-        "/sys/class/dmi/id/board_name": "Generic board",
-        "/sys/firmware/devicetree/base/model": "Generic device tree",
-    }.get(str(path), "")
-
-def station_gb300_pci_gpu():
-    return True
-
-payload = {
-`,
+      "**station_identity_payload(),",
+      `**station_identity_payload(dmi_root=${JSON.stringify(dmiRoot)}, device_tree_model_path=${JSON.stringify(modelPath)}, pci_devices_path=${JSON.stringify(pciRoot)}),`,
     );
 
     try {

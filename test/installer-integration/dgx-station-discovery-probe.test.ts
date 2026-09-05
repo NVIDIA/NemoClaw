@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   deriveDiscoveryCandidates,
@@ -11,20 +14,27 @@ import { STATION_DISCOVERY_PROBE } from "../../scripts/prepare-dual-dgx-station.
 import { TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
 function executeDiscoveryProbe(stationPci: boolean) {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-producer-"));
+  const dmiRoot = path.join(fixtureRoot, "dmi");
+  const modelPath = path.join(fixtureRoot, "model");
+  const pciRoot = path.join(fixtureRoot, "pci");
+  const pciDevice = path.join(pciRoot, "0000:01:00.0");
+  fs.mkdirSync(dmiRoot, { recursive: true });
+  fs.mkdirSync(pciDevice, { recursive: true });
+  fs.writeFileSync(path.join(dmiRoot, "product_name"), "Generic ARM workstation\n");
+  fs.writeFileSync(path.join(dmiRoot, "product_family"), "NVIDIA DGX Station GB300\n");
+  fs.writeFileSync(path.join(dmiRoot, "board_name"), "Generic board\n");
+  fs.writeFileSync(modelPath, "Generic device tree\0");
+  fs.writeFileSync(path.join(pciDevice, "vendor"), "0x10de\n");
+  fs.writeFileSync(path.join(pciDevice, "device"), stationPci ? "0x31c2\n" : "0xffff\n");
+  fs.writeFileSync(path.join(pciDevice, "class"), "0x030000\n");
+  const identityCall = `**station_identity_payload(dmi_root=${JSON.stringify(dmiRoot)}, device_tree_model_path=${JSON.stringify(modelPath)}, pci_devices_path=${JSON.stringify(pciRoot)}),`;
   const script = STATION_DISCOVERY_PROBE.replace(
+    "**station_identity_payload(),",
+    identityCall,
+  ).replace(
     "\nprint(json.dumps({\n",
     `
-def firmware_value(path, strip_nul=False):
-    return {
-        "/sys/class/dmi/id/product_name": "Generic ARM workstation",
-        "/sys/class/dmi/id/product_family": "NVIDIA DGX Station GB300",
-        "/sys/class/dmi/id/board_name": "Generic board",
-        "/sys/firmware/devicetree/base/model": "Generic device tree",
-    }.get(str(path), "")
-
-def station_gb300_pci_gpu():
-    return ${stationPci ? "True" : "False"}
-
 def gpu_inventory():
     return [{"index": 0, "name": "NVIDIA GB300", "uuid": "GPU-LOCAL-0001"}]
 
@@ -39,14 +49,18 @@ platform.machine = lambda: "aarch64"
 print(json.dumps({
 `,
   );
-  const executed = spawnSync("python3", ["-"], {
-    encoding: "utf8",
-    env: { ...process.env, PATH: TEST_SYSTEM_PATH },
-    input: script,
-    timeout: 20_000,
-  });
-  expect(executed.status, executed.stderr).toBe(0);
-  return parseStationDiscoveryHost(JSON.parse(executed.stdout));
+  try {
+    const executed = spawnSync("python3", ["-"], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: TEST_SYSTEM_PATH },
+      input: script,
+      timeout: 20_000,
+    });
+    expect(executed.status, executed.stderr).toBe(0);
+    return parseStationDiscoveryHost(JSON.parse(executed.stdout));
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 }
 
 describe("dual-Station discovery probe identity", () => {

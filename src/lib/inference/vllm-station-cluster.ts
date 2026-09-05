@@ -8,6 +8,7 @@ import path from "node:path";
 import { buildSubprocessEnv } from "../subprocess-env";
 import {
   classifyNvidiaFirmwareProducts,
+  DGX_STATION_PYTHON_IDENTITY_PROBE,
   NVIDIA_FIRMWARE_VALUE_MAX_BYTES,
 } from "./dgx-station-identity";
 import { buildVllmSshTransportEnv } from "./vllm-docker-env";
@@ -290,43 +291,13 @@ import subprocess
 MODEL_ID = ${JSON.stringify(DUAL_STATION_VLLM_RUNTIME.modelId)}
 MODEL_REVISION = ${JSON.stringify(DUAL_STATION_VLLM_RUNTIME.modelRevision)}
 MODEL_CACHE_NAME = "models--" + MODEL_ID.replace("/", "--")
-FIRMWARE_VALUE_MAX_BYTES = ${String(NVIDIA_FIRMWARE_VALUE_MAX_BYTES)}
+${DGX_STATION_PYTHON_IDENTITY_PROBE}
 
 def read_text(path):
     try:
         return Path(path).read_text(encoding="utf-8").rstrip("\x00").strip()
     except (OSError, UnicodeError):
         return ""
-
-def firmware_value(path, strip_nul=False):
-    try:
-        with Path(path).open("rb") as handle:
-            raw = handle.read(FIRMWARE_VALUE_MAX_BYTES + 2)
-        if strip_nul:
-            raw = raw.replace(b"\x00", b"")
-        normalized = raw.decode("utf-8").rstrip("\n")
-        if len(normalized.encode("utf-8")) > FIRMWARE_VALUE_MAX_BYTES:
-            return ""
-        if any(character in normalized for character in ("\r", "\n", "\x00")):
-            return ""
-        return normalized.strip()
-    except (OSError, UnicodeError):
-        return ""
-
-def station_gb300_pci_gpu():
-    try:
-        candidates = sorted(Path("/sys/bus/pci/devices").iterdir())
-    except OSError:
-        return False
-    if len(candidates) > 256:
-        return False
-    for candidate in candidates:
-        vendor = firmware_value(candidate / "vendor").lower()
-        device = firmware_value(candidate / "device").lower()
-        pci_class = firmware_value(candidate / "class").lower()
-        if vendor == "0x10de" and device in ("0x31c2", "0x31c3") and re.fullmatch(r"0x03[0-9a-f]{4}", pci_class):
-            return True
-    return False
 
 def run(argv, timeout=5):
     try:
@@ -597,11 +568,7 @@ def snapshot_state():
 payload = {
     "schemaVersion": ${String(HOST_PROBE_SCHEMA_VERSION)},
     "hostname": socket.gethostname(),
-    "productName": firmware_value("/sys/class/dmi/id/product_name"),
-    "productFamily": firmware_value("/sys/class/dmi/id/product_family"),
-    "boardName": firmware_value("/sys/class/dmi/id/board_name"),
-    "deviceTreeModel": firmware_value("/sys/firmware/devicetree/base/model", strip_nul=True),
-    "stationGb300PciGpu": station_gb300_pci_gpu(),
+    **station_identity_payload(),
     "architecture": platform.machine(),
     "home": str(Path.home()),
     "uid": os.getuid(),
