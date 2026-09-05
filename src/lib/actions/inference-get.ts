@@ -7,6 +7,7 @@ import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import { sanitizeRouteValueForDisplay } from "../inference/config";
 import { canonicalGatewayRouteEndpoint } from "../inference/gateway-route-compatibility";
 import { getLiveGatewayInference } from "../inference/live";
+import { ConfigCorruptError, ConfigPermissionError } from "../state/config-io";
 import { isPublishedSandboxRegistration } from "../state/registry/route-reservation";
 import {
   getPersistedSandboxTargetGatewayName,
@@ -58,6 +59,15 @@ const COMPATIBLE_CUSTOM_PROVIDERS = new Set([
   "compatible-anthropic-endpoint",
 ]);
 
+function formatRegistryReadFailure(error: unknown): string {
+  const summary =
+    "NemoClaw could not read sandbox registry metadata for the compatible inference endpoint.";
+  if (error instanceof ConfigCorruptError || error instanceof ConfigPermissionError) {
+    return `${summary}\n\n${error.message}`;
+  }
+  return summary;
+}
+
 /** Select one safe endpoint from published rows on the live gateway. */
 function getPersistedEndpointUrl(
   provider: string | null,
@@ -74,10 +84,8 @@ function getPersistedEndpointUrl(
   let sandboxes: ReturnType<InferenceGetDeps["listSandboxes"]>;
   try {
     sandboxes = deps.listSandboxes();
-  } catch {
-    throw new InferenceGetError(
-      "NemoClaw could not read sandbox registry metadata for the compatible inference endpoint.",
-    );
+  } catch (error) {
+    throw new InferenceGetError(formatRegistryReadFailure(error));
   }
 
   const matchingEndpoints: { canonical: string; display: string }[] = [];

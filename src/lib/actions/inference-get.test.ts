@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { ConfigCorruptError } from "../state/config-io";
 
 vi.mock("../adapters/openshell/runtime", () => ({
   captureOpenshell: vi.fn(),
@@ -449,6 +450,30 @@ describe("runInferenceGet", () => {
     ).rejects.toMatchObject({
       message:
         "NemoClaw could not read sandbox registry metadata for the compatible inference endpoint.",
+    });
+    expect(deps.log).not.toHaveBeenCalled();
+  });
+
+  it("preserves safe recovery guidance for a corrupt sandbox registry", async () => {
+    const deps = createDeps(
+      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+    );
+    deps.listSandboxes.mockImplementation(() => {
+      throw new ConfigCorruptError("/safe/state/sandboxes.json");
+    });
+
+    const failure = await runInferenceGet({ json: true }, deps).catch(
+      (error: unknown) => error,
+    );
+    expect(failure).toMatchObject({
+      message: expect.stringContaining(
+        "Configuration file is present but is not valid JSON: /safe/state/sandboxes.json",
+      ),
+    });
+    expect(failure).toMatchObject({
+      message: expect.stringContaining(
+        "Removing a sandbox registry file makes NemoClaw forget its registered sandboxes.",
+      ),
     });
     expect(deps.log).not.toHaveBeenCalled();
   });

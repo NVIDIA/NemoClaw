@@ -69,7 +69,9 @@ Unpublished sandbox rows do not participate in endpoint selection.
 Equivalent stored URL forms, such as a trailing slash difference, count as the same endpoint identity.
 NemoClaw omits the endpoint when participating registry metadata is absent, conflicting, invalid, too long, or contains userinfo, a query, a fragment, or control characters.
 In that case, both formats retain the provider and model without adding endpoint details.
-If the registry cannot be read for a compatible custom route, the command exits non-zero without exposing the underlying registry error.
+If the registry cannot be read for a compatible custom route, the command exits non-zero.
+Known corruption and permission errors retain their safe recovery steps and affected path.
+Unclassified errors use a generic message without exposing registry contents or error details.
 
 The command exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no configured inference route.
 Run `$$nemoclaw onboard` to configure one.
