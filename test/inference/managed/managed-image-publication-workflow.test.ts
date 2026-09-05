@@ -420,7 +420,7 @@ describe("complete managed-image publication workflow", () => {
     });
     const trustedCheckout = step(reviewedAudit, "Checkout trusted reviewed npm audit");
     expect(trustedCheckout.with).toMatchObject({
-      ref: "${{ github.event.pull_request.base.sha }}",
+      ref: "7363df49a5f25b0dd1c20c80905917c31760a27e",
       path: ".trusted-reviewed-npm-audit",
       "persist-credentials": false,
       "sparse-checkout-cone-mode": false,
@@ -431,8 +431,8 @@ describe("complete managed-image publication workflow", () => {
     expect(trustedCheckout.with?.["sparse-checkout"]).toContain("ci/reviewed-npm-audit.json");
     const verifyAuditIdentities = step(reviewedAudit, "Verify exact audit source and target");
     expect(verifyAuditIdentities.env).toEqual({
-      BASE_SHA: "${{ github.event.pull_request.base.sha }}",
       CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
+      REVIEWED_AUDIT_SHA: "7363df49a5f25b0dd1c20c80905917c31760a27e",
     });
     expect(verifyAuditIdentities.run).toContain(
       "git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD",

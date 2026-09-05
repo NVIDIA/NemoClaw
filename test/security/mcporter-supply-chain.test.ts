@@ -70,7 +70,7 @@ function extractIntegrityGate(contents: string): string {
 
 function extractAuditReceiptInvocation(contents: string): string {
   const startMarker = "node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts";
-  const endMarker = "--legacy-npmjs true";
+  const endMarker = "--threshold high";
   const start = contents.indexOf(startMarker);
   const end = contents.indexOf(endMarker, start);
   expect(start).toBeGreaterThanOrEqual(0);
@@ -223,8 +223,9 @@ describe("mcporter image supply-chain controls", () => {
       "--package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json --raw-report",
     );
     expect(auditReceiptInvocation).toContain(
-      "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json --registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true",
+      "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json --registry https://registry.yarnpkg.com --threshold high",
     );
+    expect(contents).not.toContain("--legacy-npmjs");
     expect(expectedReviewedNpmVersion).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
     expect(auditReceiptInvocation).not.toContain("--npm-version");
     expect(contents).not.toContain("--raw-copy");

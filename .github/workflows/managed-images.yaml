@@ -91,7 +91,7 @@ jobs:
       - name: Checkout trusted reviewed npm audit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: 7363df49a5f25b0dd1c20c80905917c31760a27e
           path: .trusted-reviewed-npm-audit
           persist-credentials: false
           sparse-checkout: |
@@ -110,13 +110,13 @@ jobs:
       - name: Verify exact audit source and target
         shell: bash
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEWED_AUDIT_SHA: 7363df49a5f25b0dd1c20c80905917c31760a27e
         run: |
           set -euo pipefail
-          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]
           [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
-          test "$(git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD)" = "$BASE_SHA"
+          [[ "$REVIEWED_AUDIT_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD)" = "$REVIEWED_AUDIT_SHA"
           test "$(git -C candidate rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
 
       - name: Audit exact PR production npm graphs
