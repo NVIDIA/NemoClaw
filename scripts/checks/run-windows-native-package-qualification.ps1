@@ -561,11 +561,13 @@ function Stop-ProhibitedProcessAudit {
                 $parentProcessId = [int]$processEvent.ParentProcessID
             }
             $records += [pscustomobject]@{
+                eventTime = [uint64]$processEvent.TIME_CREATED
                 eventIdentifier = $auditEvent.EventIdentifier
                 kind = $source.kind
                 parentProcessId = $parentProcessId
                 processId = [int]$processEvent.ProcessID
                 processName = [string]$processEvent.ProcessName
+                trackedParentProcessName = ''
                 timeGenerated = $auditEvent.TimeGenerated
             }
             Remove-Event -EventIdentifier $auditEvent.EventIdentifier
@@ -574,14 +576,23 @@ function Stop-ProhibitedProcessAudit {
     }
 
     $tracked = @{}
-    $tracked[[string]$RootProcessId] = $true
+    $tracked[[string]$RootProcessId] = [pscustomobject]@{
+        processName = '<qualification-root>'
+    }
     $descendantStarts = @()
-    foreach ($record in @($records | Sort-Object timeGenerated, eventIdentifier)) {
+    foreach ($record in @($records | Sort-Object eventTime, eventIdentifier)) {
         if ($record.kind -ceq 'stop') {
             [void]$tracked.Remove([string]$record.processId)
-        } elseif ($tracked.ContainsKey([string]$record.parentProcessId)) {
-            $descendantStarts += $record
-            $tracked[[string]$record.processId] = $true
+        } else {
+            # A numeric PID can be reused during the long all-agent replay.
+            # A new start always begins a new process generation, even when a
+            # delayed or missing stop event left the prior generation tracked.
+            [void]$tracked.Remove([string]$record.processId)
+            if ($tracked.ContainsKey([string]$record.parentProcessId)) {
+                $record.trackedParentProcessName = [string]$tracked[[string]$record.parentProcessId].processName
+                $descendantStarts += $record
+                $tracked[[string]$record.processId] = $record
+            }
         }
     }
     $startRecords = @($records | Where-Object { $_.kind -ceq 'start' })
@@ -1118,7 +1129,7 @@ try {
     $packageDescendantProhibitedStarts = @($auditResult.packageDescendantProhibitedStarts)
     if ($packageDescendantProhibitedStarts.Count -ne 0) {
         $names = @($packageDescendantProhibitedStarts | ForEach-Object {
-            "$($_.processName)(pid=$($_.processId),parent=$($_.parentProcessId))"
+            "$($_.processName)(pid=$($_.processId),parent=$($_.parentProcessId):$($_.trackedParentProcessName))"
         } | Sort-Object -Unique) -join ', '
         Fail-PackageQualification "Package operations started a prohibited descendant process: $names"
     }
