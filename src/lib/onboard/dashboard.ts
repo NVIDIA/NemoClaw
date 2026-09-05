@@ -8,6 +8,7 @@ import {
   launchForwardService,
   type ForwardServiceTarget,
 } from "../adapters/openshell/forward-service";
+import { isForwardServiceListenerOwned } from "../adapters/openshell/forward-service-ownership";
 import type { AgentDefinition } from "../agent/defs";
 import { getInteractiveAgentCommand } from "../agent/gateway-restart-scripts";
 import { DASHBOARD_PORT } from "../core/ports";
@@ -89,6 +90,7 @@ export interface OnboardDashboardDeps {
   forwardService?: {
     executable(): string;
     launch?(target: ForwardServiceTarget): void;
+    owns?(target: ForwardServiceTarget): boolean;
     retireLegacy?(sandboxName: string, gatewayName: string, ports: readonly number[]): number;
     resolveGatewayName(
       sandbox: { gatewayName?: string | null; gatewayPort?: number | null } | null | undefined,
@@ -231,6 +233,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
             if (!executable) throw new Error("OpenShell is unavailable");
             return executable;
           },
+          owns: isForwardServiceListenerOwned,
           resolveGatewayName: productionForwardService.resolveGatewayName,
           retireLegacy: (sandboxName: string, gatewayName: string, ports: readonly number[]) =>
             productionForwardService.retireLegacy(sandboxName, gatewayName, ports, {
@@ -412,7 +415,14 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         revalidateSandboxIdentity?.(
           `preserve registered dashboard forward ${String(preferredPort)} for sandbox '${sandboxName}'`,
         );
-        return preferredPort;
+        const preferredTarget = getDashboardForwardTarget(chatUiUrl);
+        if (
+          forwardService?.owns?.(
+            forwardTarget(sandboxName, forwardGateway, preferredPort, preferredTarget),
+          ) === true
+        ) {
+          return preferredPort;
+        }
       }
       throw new Error(
         `Registered dashboard port ${String(preferredPort)} is already occupied; it cannot be reallocated or adopted.`,

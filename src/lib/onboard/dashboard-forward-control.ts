@@ -6,9 +6,8 @@ export interface DashboardForwardOptions {
   gatewayName?: string;
   allowPortReallocation?: boolean;
   /**
-   * Preserve a bound port only when the caller has durable evidence that this
-   * onboarding attempt reused the registered sandbox and will run deployment
-   * verification before reporting success.
+   * Permit an ownership probe for a bound registered port only when the caller
+   * has durable evidence that this attempt reused the registered sandbox.
    */
   preserveRegisteredForward?: boolean;
   revalidateSandboxIdentity?: (operation: string) => void;

@@ -3,12 +3,14 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { ForwardServiceTarget } from "../../src/lib/adapters/openshell/forward-service";
 import { createOnboardDashboardHelpers } from "../../src/lib/onboard/dashboard";
 import type { ListSandboxesFn } from "../../src/lib/onboard/dashboard-port";
 
 function harness(options: {
   listSandboxes: ListSandboxesFn;
   isPortBound?: (port: number) => boolean;
+  ownsForward?: (target: ForwardServiceTarget) => boolean;
 }) {
   const launch = vi.fn();
   const helpers = createOnboardDashboardHelpers({
@@ -28,6 +30,7 @@ function harness(options: {
     forwardService: {
       executable: () => "/usr/local/bin/openshell",
       launch,
+      owns: options.ownsForward,
       resolveGatewayName: () => "nemoclaw",
       retireLegacy: vi.fn(() => 0),
     },
@@ -73,11 +76,13 @@ describe("finalization dashboard ForwardTcp launch", () => {
 
   it("preserves the registered ForwardTcp listener during Ready sandbox reuse (#11074)", () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
+    const ownsForward = vi.fn(() => true);
     const { helpers, launch } = harness({
       listSandboxes: () => ({
         sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
       }),
       isPortBound: (port) => port === 18_790,
+      ownsForward,
     });
 
     expect(
@@ -85,8 +90,35 @@ describe("finalization dashboard ForwardTcp launch", () => {
         preserveRegisteredForward: true,
       }),
     ).toBe(18_790);
+    expect(ownsForward).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gatewayName: "nemoclaw",
+        sandboxName: "reonboard-test",
+        localPort: 18_790,
+        targetPort: 18_790,
+      }),
+    );
     expect(launch).not.toHaveBeenCalled();
     expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
+  });
+
+  it("rejects an unowned listener during Ready sandbox reuse (#11074)", () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const { helpers, launch } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      isPortBound: (port) => port === 18_790,
+      ownsForward: () => false,
+    });
+
+    expect(() =>
+      helpers.ensureFinalizationDashboardForward("reonboard-test", {
+        preserveRegisteredForward: true,
+      }),
+    ).toThrow(/cannot be reallocated/u);
+    expect(launch).not.toHaveBeenCalled();
+    expect(process.env.CHAT_UI_URL).toBeUndefined();
   });
 
   it("does not preserve a reused port registered to another sandbox (#11074)", () => {
