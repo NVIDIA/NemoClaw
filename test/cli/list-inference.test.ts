@@ -230,6 +230,7 @@ describe("CLI dispatch", () => {
             agent: "openclaw",
             provider: "compatible-endpoint",
             model: "custom/model",
+            endpointUrl: "https://inference.example.test/v1",
             gatewayPort: 19_090,
             gatewayName: "nemoclaw-19090",
           },
@@ -270,10 +271,7 @@ describe("CLI dispatch", () => {
       expect(JSON.parse(result.out)).toEqual({
         provider: "compatible-endpoint",
         model: "custom/model",
-        endpointStatus: "invalid",
-        endpointRecovery:
-          "Repair the named sandbox registrations' compatible-route metadata, then rerun inference get.",
-        affectedSandboxes: ["beta"],
+        endpointUrl: "https://inference.example.test/v1",
       });
       expect(fs.readFileSync(openshellArgs, "utf8").trim()).toBe("inference get -g nemoclaw-19090");
     } finally {

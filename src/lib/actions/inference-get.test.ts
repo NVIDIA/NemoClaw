@@ -17,6 +17,7 @@ import {
   runInferenceGet,
   type InferenceEndpointStatus,
   type InferenceGetDeps,
+  type InferenceGetResult,
 } from "./inference-get";
 
 function createDeps(
@@ -84,9 +85,9 @@ const ENDPOINT_RECOVERY: Record<InferenceEndpointStatus, string> = {
   unavailable:
     "Restore registry access or record the trusted endpoint and API family again, then rerun inference get.",
   invalid:
-    "Repair the named sandbox registrations' compatible-route metadata, then rerun inference get.",
+    "Repair the named sandbox registrations' compatible-route metadata, then rerun inference get; repeat if additional affected registrations are reported.",
   conflicting:
-    "Align or remove the named conflicting same-gateway sandbox routes, then rerun inference get.",
+    "Align or remove the named conflicting same-gateway sandbox routes, then rerun inference get; repeat if additional affected registrations are reported.",
   withheld: "Use a credential-free root or /v1 API base if endpoint readback is required.",
   "adapter-managed":
     "For a same-provider model change, omit endpoint options so NemoClaw reuses the recorded route.",
@@ -96,12 +97,14 @@ function expectedEndpointOmission(
   endpointStatus: InferenceEndpointStatus,
   model = "custom/model",
   affectedSandboxes: string[] = [],
+  affectedSandboxesTruncated = false,
 ): {
   provider: string;
   model: string;
   endpointStatus: InferenceEndpointStatus;
   endpointRecovery: string;
   affectedSandboxes?: string[];
+  affectedSandboxesTruncated?: boolean;
 } {
   return {
     provider: "compatible-endpoint",
@@ -109,7 +112,47 @@ function expectedEndpointOmission(
     endpointStatus,
     endpointRecovery: ENDPOINT_RECOVERY[endpointStatus],
     ...(affectedSandboxes.length > 0 ? { affectedSandboxes } : {}),
+    ...(affectedSandboxesTruncated ? { affectedSandboxesTruncated } : {}),
   };
+}
+
+const BOUNDED_AFFECTED_SANDBOXES = [
+  "sandbox-00",
+  "sandbox-01",
+  "sandbox-02",
+  "sandbox-03",
+  "sandbox-04",
+  "sandbox-05",
+  "sandbox-06",
+  "sandbox-07",
+];
+
+function createBoundedAffectedDeps(): ReturnType<typeof createDeps> {
+  const deps = createDeps(
+    "Gateway inference:\n  Provider: compatible-endpoint\n  Model: live/model\n",
+  );
+  deps.listSandboxes.mockReturnValue([
+    ...Array.from({ length: 10 }, (_, index) => ({
+      name: `sandbox-${String(index).padStart(2, "0")}`,
+      provider: "compatible-endpoint",
+      model: "stale/model",
+      endpointUrl: "https://stale.example.test/v1",
+    })),
+    {
+      name: "unsafe\nregistry-name",
+      provider: "compatible-endpoint",
+      model: "stale/model",
+      endpointUrl: "https://stale.example.test/v1",
+    },
+  ]);
+  return deps;
+}
+
+function expectBoundedAffectedDiagnostics(result: InferenceGetResult, output: string): void {
+  expect(result.affectedSandboxes).toEqual(BOUNDED_AFFECTED_SANDBOXES);
+  expect(result.affectedSandboxesTruncated).toBe(true);
+  expect(output).not.toContain("unsafe");
+  expect(output).not.toContain("stale.example.test");
 }
 
 describe("runInferenceGet", () => {
@@ -194,38 +237,23 @@ describe("runInferenceGet", () => {
     expect(deps.log.mock.calls[0][0]).not.toContain("stale.example.test");
   });
 
-  it("bounds and validates affected sandbox identities", async () => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: live/model\n",
-    );
-    deps.listSandboxes.mockReturnValue([
-      ...Array.from({ length: 10 }, (_, index) => ({
-        name: `sandbox-${String(index).padStart(2, "0")}`,
-        provider: "compatible-endpoint",
-        model: "stale/model",
-        endpointUrl: "https://stale.example.test/v1",
-      })),
-      {
-        name: "unsafe\nregistry-name",
-        provider: "compatible-endpoint",
-        model: "stale/model",
-        endpointUrl: "https://stale.example.test/v1",
-      },
-    ]);
+  it("bounds and validates affected sandbox identities in human-readable output", async () => {
+    const deps = createBoundedAffectedDeps();
+    const result = await runInferenceGet({}, deps);
+    const output = deps.log.mock.calls.flat().join("\n");
+    expectBoundedAffectedDiagnostics(result, output);
+    expect(output).toContain("Affected: sandbox-00, sandbox-01, sandbox-02, sandbox-03");
+    expect(output).toContain("(additional output-safe names not shown)");
+  });
 
+  it("bounds and validates affected sandbox identities in JSON output", async () => {
+    const deps = createBoundedAffectedDeps();
     const result = await runInferenceGet({ json: true }, deps);
-    expect(result.affectedSandboxes).toEqual([
-      "sandbox-00",
-      "sandbox-01",
-      "sandbox-02",
-      "sandbox-03",
-      "sandbox-04",
-      "sandbox-05",
-      "sandbox-06",
-      "sandbox-07",
-    ]);
-    expect(deps.log.mock.calls[0][0]).not.toContain("unsafe");
-    expect(deps.log.mock.calls[0][0]).not.toContain("stale.example.test");
+    const output = deps.log.mock.calls[0][0];
+    expectBoundedAffectedDiagnostics(result, output);
+    expect(JSON.parse(output)).toMatchObject({
+      affectedSandboxesTruncated: true,
+    });
   });
 
   it.each(["compatible-endpoint", "compatible-anthropic-endpoint"])(

@@ -31,6 +31,7 @@ export interface InferenceGetResult {
   endpointStatus?: InferenceEndpointStatus;
   endpointRecovery?: string;
   affectedSandboxes?: string[];
+  affectedSandboxesTruncated?: boolean;
 }
 
 export type InferenceEndpointStatus =
@@ -80,9 +81,9 @@ const ENDPOINT_RECOVERY: Record<InferenceEndpointStatus, string> = {
   unavailable:
     "Restore registry access or record the trusted endpoint and API family again, then rerun inference get.",
   invalid:
-    "Repair the named sandbox registrations' compatible-route metadata, then rerun inference get.",
+    "Repair the named sandbox registrations' compatible-route metadata, then rerun inference get; repeat if additional affected registrations are reported.",
   conflicting:
-    "Align or remove the named conflicting same-gateway sandbox routes, then rerun inference get.",
+    "Align or remove the named conflicting same-gateway sandbox routes, then rerun inference get; repeat if additional affected registrations are reported.",
   withheld: "Use a credential-free root or /v1 API base if endpoint readback is required.",
   "adapter-managed":
     "For a same-provider model change, omit endpoint options so NemoClaw reuses the recorded route.",
@@ -94,6 +95,7 @@ type PersistedEndpointResult =
       endpointStatus: InferenceEndpointStatus;
       endpointRecovery: string;
       affectedSandboxes?: string[];
+      affectedSandboxesTruncated?: boolean;
     }
   | Record<string, never>;
 
@@ -125,22 +127,29 @@ function endpointPathIsCredentialFreeForDisplay(endpointUrl: string): boolean {
 }
 
 /** Select one safe endpoint from published rows on the live gateway. */
-function safeAffectedSandboxNames(names: Iterable<string>): string[] {
-  return [...new Set(names)]
+function safeAffectedSandboxNames(names: Iterable<string>): {
+  affectedSandboxes: string[];
+  affectedSandboxesTruncated: boolean;
+} {
+  const safeNames = [...new Set(names)]
     .filter((name) => SAFE_DIAGNOSTIC_SANDBOX_NAME.test(name))
-    .sort()
-    .slice(0, MAX_AFFECTED_SANDBOXES);
+    .sort();
+  return {
+    affectedSandboxes: safeNames.slice(0, MAX_AFFECTED_SANDBOXES),
+    affectedSandboxesTruncated: safeNames.length > MAX_AFFECTED_SANDBOXES,
+  };
 }
 
 function endpointOmission(
   endpointStatus: InferenceEndpointStatus,
   affectedNames: Iterable<string> = [],
 ): PersistedEndpointResult {
-  const affectedSandboxes = safeAffectedSandboxNames(affectedNames);
+  const { affectedSandboxes, affectedSandboxesTruncated } = safeAffectedSandboxNames(affectedNames);
   return {
     endpointStatus,
     endpointRecovery: ENDPOINT_RECOVERY[endpointStatus],
     ...(affectedSandboxes.length > 0 ? { affectedSandboxes } : {}),
+    ...(affectedSandboxesTruncated ? { affectedSandboxesTruncated } : {}),
   };
 }
 
@@ -296,7 +305,10 @@ export async function runInferenceGet(
       } else if (payload.endpointStatus && payload.endpointRecovery) {
         deps.log(`Endpoint: unavailable (${payload.endpointStatus})`);
         if (payload.affectedSandboxes?.length) {
-          deps.log(`Affected: ${payload.affectedSandboxes.join(", ")}`);
+          const truncation = payload.affectedSandboxesTruncated
+            ? " (additional output-safe names not shown)"
+            : "";
+          deps.log(`Affected: ${payload.affectedSandboxes.join(", ")}${truncation}`);
         }
         deps.log(`Action:   ${payload.endpointRecovery}`);
       }
