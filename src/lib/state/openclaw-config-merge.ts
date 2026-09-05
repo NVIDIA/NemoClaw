@@ -38,11 +38,17 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
    * `agents` is durable except its primary model routing reference, which the
    * fresh rebuild re-owns (see `agentPrimaryModelPath`) so a managed-model
    * switch followed by rebuild does not leave the agent pinned to the old
-   * model.
+   * model, and its heartbeat, which the fresh managed startup profile re-owns
+   * (see `agentHeartbeatPath`).
    */
   backupDurableSections: ["mcp", "mcpServers", "customAgents", "agents"],
   /** Fresh rebuild owns the agent's primary model routing within `agents`. */
   agentPrimaryModelPath: ["agents", "defaults", "model", "primary"],
+  /**
+   * Fresh managed startup profile owns the agent heartbeat within `agents`,
+   * including its absence when the profile configures no heartbeat.
+   */
+  agentHeartbeatPath: ["agents", "defaults", "heartbeat"],
   /** NemoClaw's cross-agent disclosure selection owns this generated key. */
   currentGeneratedToolFields: ["toolSearch"],
 } as const;
@@ -438,12 +444,18 @@ function ensureMergedObject(record: Record<string, unknown>, key: string): Recor
   return created;
 }
 
-/** Read the fresh rebuild's `agents.defaults.model.primary`, or undefined. */
-function readAgentPrimaryModelRef(config: Record<string, unknown>): string | undefined {
+/** Read a config's `agents.defaults` object, or undefined when absent. */
+function readAgentDefaults(config: Record<string, unknown>): Record<string, unknown> | undefined {
   const agents = config.agents;
   if (!isPlainObject(agents)) return undefined;
   const defaults = agents.defaults;
-  if (!isPlainObject(defaults)) return undefined;
+  return isPlainObject(defaults) ? (defaults as Record<string, unknown>) : undefined;
+}
+
+/** Read the fresh rebuild's `agents.defaults.model.primary`, or undefined. */
+function readAgentPrimaryModelRef(config: Record<string, unknown>): string | undefined {
+  const defaults = readAgentDefaults(config);
+  if (!defaults) return undefined;
   const model = defaults.model;
   if (!isPlainObject(model)) return undefined;
   return typeof model.primary === "string" ? model.primary : undefined;
@@ -499,6 +511,36 @@ function reconcileAgentPrimaryModel(
   updateMainAgentListModel(agents, freshPrimary);
 }
 
+/**
+ * Re-own the agent heartbeat from the fresh managed startup profile.
+ *
+ * `agents` is backup-durable, so the overlay inherits the snapshot's
+ * `agents.defaults.heartbeat` — including one captured before the sandbox was
+ * configured with `NEMOCLAW_AGENT_HEARTBEAT_EVERY`, or none at all. Without
+ * this the rebuilt sandbox silently falls back to OpenClaw's own default
+ * interval despite the configured value reaching the generated config (#10244,
+ * on the supported heartbeat behavior established by #2880 and #3158).
+ *
+ * Unlike the primary model above, absence is authoritative in both directions:
+ * a profile that configures no heartbeat must not have one restored from a
+ * stale backup. That mirrors how the fresh generator owns `tools.web.search`.
+ */
+function reconcileAgentHeartbeat(
+  merged: Record<string, unknown>,
+  currentConfig: Record<string, unknown>,
+): void {
+  const freshDefaults = readAgentDefaults(currentConfig);
+  if (freshDefaults && "heartbeat" in freshDefaults) {
+    const defaults = ensureMergedObject(ensureMergedObject(merged, "agents"), "defaults");
+    defaults.heartbeat = cloneJson(freshDefaults.heartbeat);
+    return;
+  }
+  // Drop a backup-only heartbeat without materializing empty containers for
+  // configs that never carried one.
+  const mergedDefaults = readAgentDefaults(merged);
+  if (mergedDefaults) delete mergedDefaults.heartbeat;
+}
+
 export function mergeOpenClawRestoredConfig(
   backedUpConfig: unknown,
   currentConfig: unknown,
@@ -537,6 +579,7 @@ export function mergeOpenClawRestoredConfig(
   );
   merged.tools = mergeOpenClawTools(backedUpConfig.tools, currentConfig.tools);
   reconcileAgentPrimaryModel(merged, currentConfig);
+  reconcileAgentHeartbeat(merged, currentConfig);
 
   return merged;
 }
