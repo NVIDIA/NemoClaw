@@ -153,11 +153,9 @@ export function qwenGpuAgentPlan(
 export function validateQwenGpuProcessEvidence(
   containerProcesses: string,
   computeApplications: string,
-  runtimeLogs: string,
   modelSizeBytes: number,
 ): {
-  readonly offloadedLayerCount: number;
-  readonly offloadRuntimeSignal: string;
+  readonly gpuLayerRequest: "all";
   readonly processName: string;
   readonly usedGpuMemoryMiB: number;
   readonly minimumFullOffloadMemoryMiB: number;
@@ -169,14 +167,25 @@ export function validateQwenGpuProcessEvidence(
     .trim()
     .split("\n")
     .slice(1)
-    .map((line) => line.trim().split(/\s+/u))
-    .filter(([, processName]) => processName === "llama-server");
+    .map((line) => /^([1-9][0-9]*)\s+(\S+)\s+(.+)$/u.exec(line.trim()))
+    .filter((match) => match?.[2] === "llama-server");
   if (llamaProcesses.length !== 1) {
     throw new Error("Qwen container does not expose one exact llama-server process");
   }
-  const llamaPid = Number(llamaProcesses[0]?.[0]);
+  const llamaPid = Number(llamaProcesses[0]?.[1]);
   if (!Number.isSafeInteger(llamaPid) || llamaPid < 1) {
     throw new Error("Qwen llama-server process identity is invalid");
+  }
+  const processArguments = (llamaProcesses[0]?.[3] ?? "").split(/\s+/u);
+  const gpuLayerIndexes = processArguments.flatMap((value, index) =>
+    value === "--gpu-layers" ? [index] : [],
+  );
+  if (
+    processArguments[0] !== "/usr/local/bin/llama-server" ||
+    gpuLayerIndexes.length !== 1 ||
+    processArguments[gpuLayerIndexes[0]! + 1] !== "all"
+  ) {
+    throw new Error("Qwen llama-server process does not request every GPU layer");
   }
   const matchingApplications = computeApplications
     .trim()
@@ -189,36 +198,14 @@ export function validateQwenGpuProcessEvidence(
   if (matchingApplications.length !== 1) {
     throw new Error("Qwen llama-server is not the exact NVIDIA compute process");
   }
-  const ansiControlSequence = new RegExp(`${String.fromCodePoint(27)}\\[[0-?]*[ -/]*[@-~]`, "gu");
-  const normalizedRuntimeLogs = runtimeLogs.replace(ansiControlSequence, "");
-  const offloadMatches = [
-    ...normalizedRuntimeLogs.matchAll(
-      /offloaded\s+([1-9][0-9]*)\s*\/\s*([1-9][0-9]*)\s+layers to GPU/giu,
-    ),
-  ];
-  const explicitOffload = offloadMatches.at(-1);
-  if (!explicitOffload) {
-    throw new Error("Qwen llama-server did not emit an all-layer GPU-offload runtime signal");
-  }
-  const offloadedLayerCount = Number(explicitOffload?.[1]);
-  const totalLayerCount = Number(explicitOffload?.[2]);
-  if (!Number.isSafeInteger(offloadedLayerCount) || !Number.isSafeInteger(totalLayerCount)) {
-    throw new Error("Qwen llama-server emitted a malformed GPU-offload runtime signal");
-  }
-  if (offloadedLayerCount !== totalLayerCount) {
-    throw new Error(
-      `Qwen llama-server reported partial GPU offload: ${String(offloadedLayerCount)}/${String(totalLayerCount)} layers`,
-    );
-  }
   const processName = matchingApplications[0]?.[1] ?? "";
   const usedGpuMemoryMiB = Number(matchingApplications[0]?.[2]);
-  const minimumFullOffloadMemoryMiB = Math.floor((modelSizeBytes / 1024 ** 2) * 0.75);
+  const minimumFullOffloadMemoryMiB = Math.ceil(modelSizeBytes / 1024 ** 2);
   if (!Number.isSafeInteger(usedGpuMemoryMiB) || usedGpuMemoryMiB < minimumFullOffloadMemoryMiB) {
     throw new Error("Qwen llama-server GPU memory is below the full-offload threshold");
   }
   return {
-    offloadedLayerCount,
-    offloadRuntimeSignal: `offloaded ${String(offloadedLayerCount)}/${String(totalLayerCount)} layers to GPU`,
+    gpuLayerRequest: "all",
     processName,
     usedGpuMemoryMiB,
     minimumFullOffloadMemoryMiB,

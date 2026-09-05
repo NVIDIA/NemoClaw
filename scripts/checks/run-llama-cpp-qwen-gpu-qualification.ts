@@ -221,13 +221,13 @@ export async function runQwenGpuQualification(): Promise<void> {
     | {
         readonly fullGpuOffload: true;
         readonly gatewayNetwork: string;
+        readonly gpuLayerRequest: "all";
         readonly image: string;
         readonly minimumFullOffloadMemoryMiB: number;
         readonly noDockerPublishedPort: true;
-        readonly offloadedLayerCount: number;
-        readonly offloadRuntimeSignal: string;
         readonly platform: "linux/amd64";
         readonly processName: string;
+        readonly serverRevision: string;
         readonly usedGpuMemoryMiB: number;
       }
     | undefined;
@@ -324,37 +324,12 @@ export async function runQwenGpuQualification(): Promise<void> {
               "top",
               MANAGED_LLAMA_CPP_CONTAINER_NAME,
               "-eo",
-              "pid,comm",
+              "pid,comm,args",
             ]),
             requireCommand("nvidia-smi", [
               "--query-compute-apps=pid,process_name,used_gpu_memory",
               "--format=csv,noheader,nounits",
             ]),
-            (() => {
-              const logs = run("docker", ["logs", MANAGED_LLAMA_CPP_CONTAINER_NAME]);
-              if (logs.status !== 0) {
-                throw new Error(
-                  `docker logs failed with status ${String(logs.status)}: ${logs.stderr.slice(-4_000)}`,
-                );
-              }
-              const combined = `${logs.stdout}\n${logs.stderr}`;
-              const startup = qwenGpuProbeDiagnostic(
-                "llama-server-startup",
-                logs,
-                apiKey === undefined ? [] : [apiKey],
-              );
-              writeJson(canonicalArtifactRoot, "offload-runtime-diagnostics.json", {
-                stderrBytes: Buffer.byteLength(logs.stderr),
-                stdoutBytes: Buffer.byteLength(logs.stdout),
-                startup,
-                candidateLines: combined
-                  .split("\n")
-                  .filter((line) => /offload|layers?\s+to\s+GPU/iu.test(line))
-                  .slice(-32)
-                  .map((line) => line.slice(-512)),
-              });
-              return combined;
-            })(),
             setting.modelFile.sizeBytes,
           );
           const unauthorized = requireCommand("curl", [
@@ -407,12 +382,12 @@ export async function runQwenGpuQualification(): Promise<void> {
             platform: "linux/amd64",
             fullGpuOffload: true,
             gatewayNetwork,
+            gpuLayerRequest: offload.gpuLayerRequest,
             processName: offload.processName,
+            serverRevision: recipe.spec.server.source.revision,
             usedGpuMemoryMiB: offload.usedGpuMemoryMiB,
             minimumFullOffloadMemoryMiB: offload.minimumFullOffloadMemoryMiB,
             noDockerPublishedPort: true,
-            offloadedLayerCount: offload.offloadedLayerCount,
-            offloadRuntimeSignal: offload.offloadRuntimeSignal,
           };
         },
         beforeCleanup() {
