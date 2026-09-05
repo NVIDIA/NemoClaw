@@ -18,7 +18,7 @@ You can also enter standard onboarding by setting `NEMOCLAW_NO_EXPRESS=1` withou
 Set `NEMOCLAW_PROVIDER=install-vllm` only to bypass the prompt with the same Deferred managed-vLLM preview intent.
 N1x remains Deferred, each standard provider keeps its existing requirements, and local NVIDIA NIM remains unavailable.
 On a qualifying Windows WSL N1x host, Windows Express uses managed llama.cpp after Docker Desktop GPU passthrough succeeds.
-Other Windows WSL hosts retain Windows-host or WSL-local Ollama.
+Other Windows WSL Express installs use WSL-local Ollama. Windows-host Ollama remains available through manual onboarding when Docker Desktop WSL integration is enabled, `DOCKER_HOST` is unset, Docker uses the local `default` context, and Ollama has a loopback-only listener that is reachable from Docker and rejects unrecognized HTTP `Host` headers.
 </Warning>
 
 ## Provider Support
