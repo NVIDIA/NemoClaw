@@ -12,6 +12,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const PARSER = path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts");
+const NPM_BOOTSTRAP = path.join(
+  REPO_ROOT,
+  ".github/actions/setup-reviewed-npm/verify-and-install-npm.sh",
+);
 const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
@@ -169,6 +173,12 @@ describe("reviewed npm 12 Brev template trust", () => {
     expect(npmVerifier).toBeGreaterThan(-1);
     expect(npmVersionCheck).toBeGreaterThan(npmVerifier);
     expect(dependencyInstall).toBeGreaterThan(npmVersionCheck);
+    expect(fs.statSync(NPM_BOOTSTRAP).isFile()).toBe(true);
+    expect(fs.statSync(NPM_BOOTSTRAP).mode & 0o111).not.toBe(0);
+    const bootstrapSource = fs.readFileSync(NPM_BOOTSTRAP, "utf8");
+    expect(bootstrapSource).toContain("config.npmVersion");
+    expect(bootstrapSource).toContain("config.npmIntegrity");
+    expect(bootstrapSource).toContain("config.npmArchiveSha256");
 
     const accepted = runParser(reviewedTemplate);
     expect(accepted.status, accepted.stderr).toBe(0);
