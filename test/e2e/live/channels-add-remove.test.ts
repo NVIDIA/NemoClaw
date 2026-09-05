@@ -35,6 +35,8 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "test-fake-telegram-tok
 const TELEGRAM_ALLOWED_IDS = process.env.TELEGRAM_ALLOWED_IDS ?? "123456789";
 const TELEGRAM_REQUIRE_MENTION = process.env.TELEGRAM_REQUIRE_MENTION ?? "0";
 const PROVIDER_NAME = `${SANDBOX_NAME}-telegram-bridge`;
+const TELEGRAM_REVISION_PLACEHOLDER_PATTERN_SOURCE =
+  "^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN$";
 const BASELINE_API_KEY = "channels-add-remove-baseline-credential";
 const BASELINE_MODEL = "channels-add-remove-baseline-model";
 const ONBOARD_ARGS = [
@@ -319,6 +321,84 @@ async function readOpenClawTelegramState(
   return JSON.parse(output) as OpenClawTelegramState;
 }
 
+async function expectRevisionScopedTelegramCredential(
+  sandbox: SandboxClient,
+  artifactName: string,
+): Promise<void> {
+  const result = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "node",
+      "-e",
+      [
+        'const value = process.env.TELEGRAM_BOT_TOKEN || ""',
+        `const ready = new RegExp(${JSON.stringify(TELEGRAM_REVISION_PLACEHOLDER_PATTERN_SOURCE)}, "u").test(value)`,
+        'console.log(ready ? "revision-scoped" : value ? "unexpected" : "missing")',
+        "process.exit(ready ? 0 : 1)",
+      ].join("; "),
+    ],
+    {
+      artifactName,
+      env: sandboxAccessEnv(),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    },
+  );
+  assertExitZero(result, "Telegram revision-scoped runtime credential");
+  expect(result.stdout.trim(), resultText(result)).toBe("revision-scoped");
+}
+
+async function expectTelegramCredentialAbsent(
+  sandbox: SandboxClient,
+  artifactName: string,
+): Promise<void> {
+  const result = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "node",
+      "-e",
+      [
+        'const present = Boolean(process.env.TELEGRAM_BOT_TOKEN)',
+        'console.log(present ? "present" : "missing")',
+        "process.exit(present ? 1 : 0)",
+      ].join("; "),
+    ],
+    {
+      artifactName,
+      env: sandboxAccessEnv(),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    },
+  );
+  assertExitZero(result, "removed Telegram runtime credential");
+  expect(result.stdout.trim(), resultText(result)).toBe("missing");
+}
+
+async function expectTelegramGatewayCredentialReady(
+  sandbox: SandboxClient,
+  artifactName: string,
+): Promise<void> {
+  const source = [
+    'const fs = require("node:fs")',
+    'let output = ""',
+    'try { output = fs.readFileSync("/tmp/gateway.log", "utf8").split(/\\r?\\n/u).slice(-400).join("\\n") } catch {}',
+    'const ready = output.includes("runtime credential is ready (revision-scoped)")',
+    'const invalid = /TELEGRAM_BOT_TOKEN is missing|identityless canonical placeholder|placeholder is malformed/u.test(output)',
+    'const state = ready && !invalid ? "ready" : "invalid"',
+    "console.log(state)",
+    'process.exit(state === "ready" ? 0 : 1)',
+  ].join("; ");
+  const result = await sandbox.exec(
+    SANDBOX_NAME,
+    ["node", "-e", source],
+    {
+      artifactName,
+      env: sandboxAccessEnv(),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    },
+  );
+  assertExitZero(result, "Telegram gateway credential diagnostic");
+  expect(result.stdout.trim(), resultText(result)).toBe("ready");
+}
+
 /** Detect an active policy preset in the human-readable policy listing. */
 function policyListHasActivePreset(output: string, preset: string): boolean {
   const activePreset = new RegExp(`^\\s*\\u25cf\\s+${escapeRegex(preset)}\\b`, "im");
@@ -348,11 +428,12 @@ async function telegramEgressProbe(
   artifactName: string,
 ): Promise<{ result: ShellProbeResult; status: EgressProbeStatus }> {
   const source = [
-    `const url = ${JSON.stringify(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/getMe`)};`,
+    'const url = "https://api.telegram.org/";',
     "fetch(url, { signal: AbortSignal.timeout(15000) })",
     "  .then((response) => console.log(`STATUS_${response.status}`))",
     "  .catch((error) => console.log(`ERROR_${error.cause?.code || error.code || error.message}`));",
   ].join(" ");
+  expect(source).not.toContain("/bot");
   const result = await sandbox.exec(SANDBOX_NAME, ["node", "-e", source], {
     artifactName,
     env: sandboxAccessEnv(),
@@ -560,6 +641,14 @@ test(
       pluginPresent: true,
     });
     await expectProvider(host, "present", "phase-4-provider-get-after-add");
+    await expectRevisionScopedTelegramCredential(
+      sandbox,
+      "phase-4-telegram-runtime-credential-after-add",
+    );
+    await expectTelegramGatewayCredentialReady(
+      sandbox,
+      "phase-4-telegram-gateway-credential-after-add",
+    );
     expectHostTelegramConfig("after add+rebuild");
     expectHostTelegramPlan("active", "after add+rebuild");
 
@@ -617,6 +706,10 @@ test(
       pluginEnabled: false,
       pluginPresent: false,
     });
+    await expectTelegramCredentialAbsent(
+      sandbox,
+      "phase-6-telegram-runtime-credential-after-remove",
+    );
     await expectProvider(host, "absent", "phase-6-provider-get-after-remove");
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-6-policy-list-after-remove");
     const policyAfterChannelLifecycle = await sandbox.openshell(
