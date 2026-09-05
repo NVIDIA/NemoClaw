@@ -85,6 +85,7 @@ describe("DGX Station documentation ownership", () => {
     expect(stationPreparation).toContain(
       "does not install packages, repair CDI, register a Docker runtime, restart Docker or containerd",
     );
+    expect(stationPreparation).toContain("`ibacm.service` and `rtkit-daemon.service`");
     expect(quickstart).not.toContain("--force-station-install");
     expect(platformSupport).toContain("explicit temporary metadata override");
     expect(platformSupport).toContain(

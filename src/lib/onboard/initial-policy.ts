@@ -15,7 +15,7 @@ import {
   type PlatformIdentity,
 } from "../readiness/platform-qualification";
 import {
-  isAdmittedStationProfile,
+  isQualifiedStationProfile,
   isQualifiedStationRuntime,
   isStationGb300PciDevice,
   isStationGb300ProductName,
@@ -100,7 +100,7 @@ export function discoverStationGb300SysfsReadOnlyPaths(
   stationProfile?: StationProfile | null,
 ): string[] {
   if (!isStationGb300ProductName(productName)) return [];
-  if (stationProfile !== undefined && !isAdmittedStationProfile(stationProfile)) {
+  if (stationProfile !== undefined && !isQualifiedStationProfile(stationProfile)) {
     throw new Error(
       "Cannot prepare Station GB300 direct GPU sandbox policy; the Station software profile is unsupported or unknown.",
     );
@@ -157,7 +157,7 @@ export function discoverHostStationGb300SysfsReadOnlyPaths(
       "Cannot prepare Station GB300 direct GPU sandbox policy; the detected Station product is not a qualified GB300 system.",
     );
   }
-  if (!isAdmittedStationProfile(identity.stationProfile)) {
+  if (!isQualifiedStationProfile(identity.stationProfile)) {
     throw new Error(
       "Cannot prepare Station GB300 direct GPU sandbox policy; the Station software profile is unsupported or unknown.",
     );

@@ -4403,34 +4403,16 @@ is_wsl_host() {
 # N1x from its protected FastOS and PCI identity, and Windows WSL from the host
 # environment. Used to gate the express install prompt; only platforms with an
 # accepted default are offered.
-is_station_gb300_product() {
-  local product=${1:-}
-  [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([^[:alnum:]]|$) &&
-    "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([^[:alnum:]]|$) ]]
-}
-
-station_firmware_product() {
-  local path value
-  for path in \
-    /sys/class/dmi/id/product_name \
-    /sys/class/dmi/id/product_family \
-    /sys/class/dmi/id/board_name; do
-    [ -r "$path" ] || continue
-    value="$(cat "$path" 2>/dev/null || true)"
-    [ "${#value}" -le 256 ] || continue
-    [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || continue
-    if is_station_gb300_product "$value"; then
-      printf "%s" "$value"
-      return 0
-    fi
-  done
-  return 1
-}
-
 classify_dgx_station_release() {
   local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
   [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
   bash "$helper" --classify-dgx-release
+}
+
+classify_dgx_station_firmware() {
+  local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
+  [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
+  bash "$helper" --classify-station-firmware
 }
 
 N1X_FASTOS_RELEASE_MAX_BYTES=4096
@@ -4573,7 +4555,7 @@ is_n1x_host() {
 }
 
 detect_express_platform() {
-  local model="" release_state="" station_product=""
+  local firmware_state="" model="" release_state=""
   if is_wsl_host; then
     printf "Windows WSL"
     return
@@ -4584,21 +4566,15 @@ detect_express_platform() {
   if [ -z "$model" ] && [ -r /sys/firmware/devicetree/base/model ]; then
     model="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null || true)"
   fi
-  case "$model" in
-    *DGX*Spark*)
-      printf "DGX Spark"
-      return
-      ;;
-  esac
-  if spark_fastos_release_is_trusted; then
-    printf "DGX Spark"
+  firmware_state="$(classify_dgx_station_firmware)"
+  if [ "$firmware_state" = "conflicting" ]; then
+    printf "Conflicting NVIDIA firmware identity"
     return
   fi
-  station_product="$(station_firmware_product 2>/dev/null || true)"
-  if [ -n "$station_product" ] || is_station_gb300_product "$model"; then
+  if [ "$firmware_state" = "station-gb300" ]; then
     release_state="$(classify_dgx_station_release)"
     case "$release_state" in
-      generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools | validation-only-factory-runtime)
+      generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
         printf "DGX Station"
         ;;
       *)
@@ -4609,6 +4585,16 @@ detect_express_platform() {
         fi
         ;;
     esac
+    return
+  fi
+  case "$model" in
+    *DGX*Spark*)
+      printf "DGX Spark"
+      return
+      ;;
+  esac
+  if spark_fastos_release_is_trusted; then
+    printf "DGX Spark"
     return
   fi
   if is_n1x_host; then
@@ -4630,6 +4616,9 @@ validate_express_platform_boundary() {
     "Unsupported DGX Station generation")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
       error "This DGX Station generation is outside the validated Station GB300 express boundary."
+      ;;
+    "Conflicting NVIDIA firmware identity")
+      error "NVIDIA platform identity conflicts across firmware fields. Resolve the firmware identity before installation."
       ;;
   esac
 }
@@ -4687,9 +4676,6 @@ validate_force_station_install_override() {
   fi
   release_state="$(classify_dgx_station_release)"
   case "$release_state" in
-    validation-only-factory-runtime)
-      error "--force-station-install is not required for this trusted unrecognized Station profile. Omit the flag to use validation-only factory-runtime handling."
-      ;;
     generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
       error "--force-station-install is only for unrecognized DGX Station release metadata. This host is already supported (${release_state}); omit --force-station-install."
       ;;
@@ -5623,9 +5609,6 @@ ensure_station_express_host() {
     supported-colossus-baseos)
       info "Validating the pinned BaseOS package inventory and preparing Docker access and CDI. Host packages and the NVIDIA driver will not be changed."
       ;;
-    validation-only-factory-runtime)
-      warn "The DGX Station software profile is unrecognized. NemoClaw will validate the existing factory runtime without changing host packages, the NVIDIA driver, or container-runtime configuration."
-      ;;
     *)
       if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
         warn "Proceeding with explicit --force-station-install intent; only DGX release metadata qualification is bypassed. Station GB300 hardware, workload quiescence, and factory-runtime health checks remain required."
@@ -5958,9 +5941,6 @@ describe_express_install() {
           ;;
         supported-ai-developer-tools)
           printf "  Factory Ubuntu with NVIDIA AI Developer Tools reuses its driver and container stack after local GPU, CDI, Docker, and Buildx validation. It may add this account to the Docker group, but does not install or replace host packages, rewrite the Docker runtime, or require a reboot.\n"
-          ;;
-        validation-only-factory-runtime)
-          printf "  This Station software profile is not in the qualified image catalog. Setup validates the existing GPU and container runtime, may add this account to the Docker group, and leaves host packages, the NVIDIA driver, and container-runtime configuration unchanged.\n"
           ;;
         *)
           if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then

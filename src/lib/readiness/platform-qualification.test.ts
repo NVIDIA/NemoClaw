@@ -436,7 +436,6 @@ describe("platform readiness qualification (#7410)", () => {
     ["supported-dgx-os", "qualified"],
     ["supported-colossus-baseos", "qualified"],
     ["supported-ai-developer-tools", "qualified"],
-    ["validation-only-factory-runtime", "qualified"],
     ["unsupported-dgx-os", "unqualified"],
     [null, "unknown"],
   ] as const)("projects Station profile %s as %s", (stationProfile, expected) => {
@@ -532,6 +531,26 @@ describe("platform readiness qualification (#7410)", () => {
       stationGb300PciGpu: true,
       osPrettyName: "Ubuntu 24.04.4 LTS",
     });
+  });
+
+  it("blocks conflicting NVIDIA platform firmware identities (#10928)", () => {
+    const identity = collectPlatformIdentity({
+      productNamePath: "/fixtures/product_name",
+      productFamilyPath: "/fixtures/product_family",
+      boardNamePath: "/fixtures/board_name",
+      readFile: (filePath) =>
+        new Map([
+          ["/fixtures/product_name", "NVIDIA DGX Spark"],
+          ["/fixtures/product_family", "NVIDIA DGX Station GB300"],
+          ["/fixtures/board_name", "Generic board"],
+        ]).get(filePath) ?? unexpectedFixturePath(filePath),
+    });
+    const result = projectPlatformQualification(input({ architecture: "arm64", ...identity }));
+
+    expect(identity).toMatchObject({ platformIdentityConflict: true });
+    expect(capability(result, "host.platform.identity_consistent")).toBe("absent");
+    expect(capability(result, "host.platform.supported")).toBe("absent");
+    expect(result.findings.map(({ id }) => id)).toContain("host.platform.identity_conflict");
   });
 
   it("marks Station unqualified when no exact GB300 PCI device is present", () => {
@@ -690,9 +709,9 @@ describe("platform readiness qualification (#7410)", () => {
     ["older no-OTA version", { version: "7.5.0" }],
     ["future release family", { version: "7.7.0" }],
     ["non-numeric patch", { version: "7.6.rc1" }],
-  ] as const)("selects validation-only handling for %s", (_scenario, overrides) => {
+  ] as const)("keeps unrecognized Station metadata unqualified with %s", (_scenario, overrides) => {
     expect(collectStationIdentity(noOtaStationRelease(overrides))).toMatchObject({
-      stationProfile: "validation-only-factory-runtime",
+      stationProfile: "unsupported-dgx-os",
       stationGb300PciGpu: true,
     });
   });
@@ -789,6 +808,8 @@ describe("platform readiness qualification (#7410)", () => {
       }),
     ).toEqual({
       productName: "NVIDIA DGX Station GB300",
+      productFamily: "DGX Station GB300 family",
+      boardName: "NVIDIA Station GB300 board",
       nvidiaPlatform: "station",
       stationFirmwareProduct: "NVIDIA DGX Station GB300",
       stationSystemVendor: "NVIDIA",
@@ -864,31 +885,6 @@ describe("platform readiness qualification (#7410)", () => {
     },
   );
 
-  it("admits a safe unrecognized Station profile for direct-GPU preparation (#10928)", () => {
-    const readiness = projectPlatformQualification(
-      input({
-        architecture: "arm64",
-        nvidiaPlatform: "station",
-        productName: "NVIDIA DGX Station GB300",
-        stationProfile: "validation-only-factory-runtime",
-        stationGb300PciGpu: true,
-        hasNvidiaGpu: true,
-      }),
-    );
-
-    expect(qualification(readiness, "host.platform.dgx_station")).toBe("qualified");
-    expect(readiness.findings.map(({ id }) => id)).toContain(
-      "host.platform.dgx_station_software_unrecognized",
-    );
-    expect(() =>
-      discoverStationGb300SysfsReadOnlyPaths(
-        "NVIDIA DGX Station GB300",
-        "/fixtures/pci",
-        "validation-only-factory-runtime",
-      ),
-    ).toThrow("no exact NVIDIA GB300 PCI device was found");
-  });
-
   it.each([
     [["0000:01:00.0"], "one"],
     [["0000:01:00.0", "0000:02:00.0"], "multiple"],
@@ -962,5 +958,20 @@ describe("platform readiness qualification (#7410)", () => {
       n1xFastOsMarker: false,
       n1xPciGpu: undefined,
     });
+  });
+
+  it("removes control characters from Station diagnostic evidence (#10928)", () => {
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        hasNvidiaGpu: true,
+        nvidiaPlatform: "station",
+        productName: "NVIDIA DGX Station GB300\u001b[31m",
+        stationProfile: "supported-dgx-os",
+        stationGb300PciGpu: true,
+      }),
+    );
+
+    expect(result.evidence[0]?.details?.product).toBe("NVIDIA DGX Station GB300\\u001b[31m");
   });
 });

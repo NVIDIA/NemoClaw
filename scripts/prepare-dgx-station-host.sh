@@ -148,6 +148,10 @@ station_board_name_path() {
   printf '%s' /sys/class/dmi/id/board_name
 }
 
+station_device_tree_model_path() {
+  printf '%s' /sys/firmware/devicetree/base/model
+}
+
 station_system_vendor_path() {
   printf '%s' /sys/class/dmi/id/sys_vendor
 }
@@ -265,7 +269,7 @@ dgx_station_release_profile() {
     version="$(dgx_station_release_value "$path" DGX_OTA_VERSION)" || return 1
     case "$version" in
       7.2.0 | 7.4.0 | 7.5.0) printf '%s' supported-dgx-os ;;
-      *) printf '%s' validation-only-factory-runtime ;;
+      *) return 1 ;;
     esac
     return 0
   fi
@@ -293,7 +297,7 @@ dgx_station_release_profile() {
       "7.5.0|2026-06-16-11-48-10")
       printf '%s' supported-ai-developer-tools
       ;;
-    *) printf '%s' validation-only-factory-runtime ;;
+    *) return 1 ;;
   esac
 }
 
@@ -397,7 +401,7 @@ parse_args() {
   FORCE_STATION_INSTALL=0
   for arg in "$@"; do
     case "$arg" in
-      --check | --apply | --verify | --bind-controller | --classify-dgx-release)
+      --check | --apply | --verify | --bind-controller | --classify-dgx-release | --classify-station-firmware)
         [[ -z "$MODE" ]] || return 1
         MODE="$arg"
         ;;
@@ -407,27 +411,64 @@ parse_args() {
   done
   [[ -n "$MODE" ]] || return 1
   [[ "$MODE" != "--classify-dgx-release" || "$FORCE_STATION_INSTALL" == "0" ]] \
+    && [[ "$MODE" != "--classify-station-firmware" || "$FORCE_STATION_INSTALL" == "0" ]] \
     && [[ "$MODE" != "--bind-controller" || "$FORCE_STATION_INSTALL" == "0" ]]
 }
 
-is_station_gb300_product() {
+nvidia_firmware_product_class() {
   local product=${1:-}
-  [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([^[:alnum:]]|$) &&
-    "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([^[:alnum:]]|$) ]]
+  if [[ "$product" =~ [Dd][Gg][Xx]([_[:space:]-]+)[Ss][Pp][Aa][Rr][Kk] ]]; then
+    printf '%s' spark
+  elif [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([_[:space:]-]+)[Gg][Bb]300($|[^[:alnum:]]) ]]; then
+    printf '%s' station-gb300
+  elif [[ "$product" =~ (^|[^[:alnum:]])[Pp]3830($|[^[:alnum:]]) || "$product" =~ [Dd][Gg][Xx]([_[:space:]-]+)[Ss][Tt][Aa][Tt][Ii][Oo][Nn] ]]; then
+    printf '%s' station-other
+  elif [[ "$product" =~ [Jj][Ee][Tt][Ss][Oo][Nn]|[Tt][Ee][Gg][Rr][Aa]|[Tt][Hh][Oo][Rr]|[Oo][Rr][Ii][Nn]|[Xx][Aa][Vv][Ii][Ee][Rr] ]]; then
+    printf '%s' jetson
+  else
+    return 1
+  fi
+}
+
+is_station_gb300_product() {
+  [[ "$(nvidia_firmware_product_class "${1:-}" 2>/dev/null || true)" == "station-gb300" ]]
 }
 
 station_firmware_product() {
-  local path value
-  for path in "$(station_product_name_path)" "$(station_product_family_path)" "$(station_board_name_path)"; do
+  local class="" path recognized="" station_product="" value
+  for path in "$(station_product_name_path)" "$(station_product_family_path)" "$(station_board_name_path)" "$(station_device_tree_model_path)"; do
     [[ -r "$path" ]] || continue
-    value="$(head -c 257 "$path" 2>/dev/null || true)"
-    [[ ${#value} -le 256 && "$value" != *$'\n'* && "$value" != *$'\r'* ]] || continue
-    if is_station_gb300_product "$value"; then
-      printf '%s' "$value"
-      return 0
+    if [[ "$path" == "$(station_device_tree_model_path)" ]]; then
+      value="$(tr -d '\0' <"$path" 2>/dev/null || true)"
+    else
+      value="$(head -c 257 "$path" 2>/dev/null || true)"
     fi
+    [[ ${#value} -le 256 && "$value" != *$'\n'* && "$value" != *$'\r'* ]] || continue
+    class="$(nvidia_firmware_product_class "$value" 2>/dev/null || true)"
+    [[ -n "$class" ]] || continue
+    if [[ -n "$recognized" && "$recognized" != "$class" ]]; then
+      return 2
+    fi
+    recognized=$class
+    [[ "$class" != "station-gb300" || -n "$station_product" ]] || station_product=$value
   done
-  return 1
+  [[ "$recognized" == "station-gb300" && -n "$station_product" ]] || return 1
+  printf '%s' "$station_product"
+}
+
+station_firmware_identity_state() {
+  local product status
+  if product="$(station_firmware_product)"; then
+    printf '%s' station-gb300
+    return 0
+  else
+    status=$?
+  fi
+  if ((status == 2)); then
+    printf '%s' conflicting
+  else
+    printf '%s' not-station
+  fi
 }
 
 station_cpu_core_count() {
@@ -880,7 +921,7 @@ file_mode() {
 }
 
 check_platform() {
-  local arch cpu_count="" host_memory_kib="" os_release_path product release_path release_state system_vendor=""
+  local arch cpu_count="" firmware_status=0 host_memory_kib="" os_release_path product release_path release_state system_vendor=""
   arch="$(uname -m)"
   [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] || fatal "Expected ARM64, found ${arch}"
 
@@ -890,7 +931,15 @@ check_platform() {
   source "$os_release_path"
   [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "24.04" ]] \
     || fatal "Expected Ubuntu 24.04, found ${PRETTY_NAME:-unknown}"
-  product="$(station_firmware_product)" || fatal "DGX Station GB300 firmware identity is unavailable"
+  if product="$(station_firmware_product)"; then
+    :
+  else
+    firmware_status=$?
+    if ((firmware_status == 2)); then
+      fatal "DGX Station firmware identity conflicts across product, family, board, or device-tree fields"
+    fi
+    fatal "DGX Station GB300 firmware identity is unavailable"
+  fi
   system_vendor="$(head -n 1 "$(station_system_vendor_path)" 2>/dev/null || true)"
   cpu_count="$(station_cpu_core_count 2>/dev/null || true)"
   host_memory_kib="$(station_host_memory_kib 2>/dev/null || true)"
@@ -898,9 +947,6 @@ check_platform() {
   release_state="$(dgx_station_release_state "$release_path")"
   if ((FORCE_STATION_INSTALL == 1)); then
     case "$release_state" in
-      validation-only-factory-runtime)
-        fatal "--force-station-install is not required for a trusted unrecognized Station profile; omit the flag to use validation-only factory-runtime handling."
-        ;;
       generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
         fatal "--force-station-install is only for unrecognized DGX Station release metadata. This host is already supported (${release_state}); omit --force-station-install."
         ;;
@@ -915,12 +961,6 @@ check_platform() {
     supported-dgx-os) STATION_HOST_PROFILE="stock-dgx-os" ;;
     supported-colossus-baseos) STATION_HOST_PROFILE="colossus-baseos" ;;
     supported-ai-developer-tools) STATION_HOST_PROFILE="ai-developer-tools" ;;
-    validation-only-factory-runtime)
-      station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
-        || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:$(gb300_pci_device_display)) before factory-runtime validation"
-      STATION_HOST_PROFILE="validation-only-factory-runtime"
-      warn "DGX Station release profile is unrecognized; host packages, the NVIDIA driver, and container-runtime configuration will remain unchanged"
-      ;;
     *)
       if ((FORCE_STATION_INSTALL == 1)); then
         station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
@@ -2838,6 +2878,10 @@ main() {
   fi
   if [[ "$MODE" == "--classify-dgx-release" ]]; then
     dgx_station_release_state
+    return 0
+  fi
+  if [[ "$MODE" == "--classify-station-firmware" ]]; then
+    station_firmware_identity_state
     return 0
   fi
   if [[ "$MODE" == "--apply" ]]; then

@@ -12,7 +12,6 @@ export type StationProfile =
   | "supported-dgx-os"
   | "supported-colossus-baseos"
   | "supported-ai-developer-tools"
-  | "validation-only-factory-runtime"
   | "unsupported-dgx-os"
   | "unknown";
 
@@ -27,10 +26,6 @@ export function isQualifiedStationProfile(profile: StationProfile | null | undef
     profile === "supported-colossus-baseos" ||
     profile === "supported-ai-developer-tools"
   );
-}
-
-export function isAdmittedStationProfile(profile: StationProfile | null | undefined): boolean {
-  return isQualifiedStationProfile(profile) || profile === "validation-only-factory-runtime";
 }
 
 export function isStationGb300PciDevice(

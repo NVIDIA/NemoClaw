@@ -166,16 +166,21 @@ describe("DGX Station release marker readiness", () => {
     },
   );
 
-  it("reports a trusted unrecognized Station profile as validation-only (#10928)", () => {
+  it("reports confirmed Station hardware while unrecognized software remains blocked (#10928)", () => {
     const release = STATION_RELEASE.replace("7.6.0", "7.7.0");
     const report = reportForStationHost(createStationFixture("regular-file", release));
     const findings = report.findings.map(({ id }) => id);
     const identity = report.evidence.find(({ id }) => id === "host.platform.identity");
 
-    expect(stationQualification(report)).toBe("qualified");
-    expect(stationCapability(report)).toBe("present");
-    expect(findings).toContain("host.platform.dgx_station_software_unrecognized");
-    expect(findings).not.toContain("host.platform.dgx_station_unqualified");
+    expect(stationQualification(report)).toBe("unqualified");
+    expect(stationCapability(report)).toBe("absent");
+    expect(
+      report.capabilities.find(({ id }) => id === "host.platform.dgx_station_hardware")?.state,
+    ).toBe("present");
+    expect(
+      report.capabilities.find(({ id }) => id === "host.platform.dgx_station_software")?.state,
+    ).toBe("absent");
+    expect(findings).toContain("host.platform.dgx_station_unqualified");
     expect(identity?.details).toMatchObject({
       stationFirmwareProduct: "NVIDIA DGX Station GB300",
       stationSystemVendor: "NVIDIA",

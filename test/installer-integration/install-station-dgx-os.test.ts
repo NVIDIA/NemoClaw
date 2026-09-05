@@ -257,21 +257,9 @@ dgx_station_release_state "$DGX_RELEASE"
   );
 
   it.each([
-    [
-      "older no-OTA version",
-      "validation-only-factory-runtime",
-      writeNoOtaDgxOs76Release({ version: "7.5.0" }),
-    ],
-    [
-      "future release family",
-      "validation-only-factory-runtime",
-      writeNoOtaDgxOs76Release({ version: "7.7.0" }),
-    ],
-    [
-      "non-numeric patch",
-      "validation-only-factory-runtime",
-      writeNoOtaDgxOs76Release({ version: "7.6.rc1" }),
-    ],
+    ["older no-OTA version", "unsupported-dgx-os", writeNoOtaDgxOs76Release({ version: "7.5.0" })],
+    ["future release family", "unsupported-dgx-os", writeNoOtaDgxOs76Release({ version: "7.7.0" })],
+    ["non-numeric patch", "unsupported-dgx-os", writeNoOtaDgxOs76Release({ version: "7.6.rc1" })],
     [
       "different platform",
       "unsupported-dgx-os",
@@ -284,7 +272,7 @@ dgx_station_release_state "$DGX_RELEASE"
     ],
     [
       "complete OTA history",
-      "validation-only-factory-runtime",
+      "unsupported-dgx-os",
       writeNoOtaDgxOs76Release({
         otaMetadata: 'DGX_OTA_VERSION="7.6.0"\nDGX_OTA_DATE="Tue Jul 14 13:59:06 UTC 2026"',
       }),
@@ -309,17 +297,17 @@ dgx_station_release_state "$DGX_RELEASE"
   it.each([
     [
       "BaseOS build version drift",
-      "validation-only-factory-runtime",
+      "unsupported-dgx-os",
       writeNoOtaFactoryRelease("colossus-baseos", { version: "7.5.0" }),
     ],
     [
       "BaseOS build date drift",
-      "validation-only-factory-runtime",
+      "unsupported-dgx-os",
       writeNoOtaFactoryRelease("colossus-baseos", { buildDate: "2026-04-03-00-00-00" }),
     ],
     [
       "AI Developer Tools build date drift",
-      "validation-only-factory-runtime",
+      "unsupported-dgx-os",
       writeNoOtaFactoryRelease("ai-developer-tools", { buildDate: "2026-06-17-00-00-00" }),
     ],
     [
@@ -489,7 +477,7 @@ dgx_station_release_file_is_safe "$DGX_RELEASE"
 
   it.each([
     ["supported-dgx-os", writeDgxReleaseFixture("7.5.0")],
-    ["validation-only-factory-runtime", writeDgxReleaseFixture("7.7.0")],
+    ["unsupported-dgx-os", writeDgxReleaseFixture("7.7.0")],
   ])("classifies a present marker as %s", (expected, release) => {
     const { result, output } = runSourced(
       STATION_PREPARE,
@@ -560,7 +548,7 @@ dgx_station_release_state "$DGX_RELEASE"
     expect(original.status, `${original.stdout}${original.stderr}`).toBe(0);
     expect(result.stdout).toBe(original.stdout);
     expect(result.stdout).toMatch(
-      /^(generic-ubuntu|supported-dgx-os|supported-colossus-baseos|supported-ai-developer-tools|validation-only-factory-runtime|unsupported-dgx-os)$/,
+      /^(generic-ubuntu|supported-dgx-os|supported-colossus-baseos|supported-ai-developer-tools|unsupported-dgx-os)$/,
     );
     expect(result.stderr).toBe("");
   });

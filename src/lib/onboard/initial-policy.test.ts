@@ -332,6 +332,38 @@ describe("initial sandbox policy helpers", () => {
     ).toThrow("the detected Station product is not a qualified GB300 system");
   });
 
+  it("uses a Station firmware-family identity for direct-GPU policy preparation (#10928)", () => {
+    const sysfsRoot = tmpSysfsRoot();
+    addPciDevice(sysfsRoot, "0009:06:00.0", "0x10de\n", "0x030200\n");
+    const discoveredPaths = discoverHostStationGb300SysfsReadOnlyPaths({
+      platform: "linux",
+      architecture: "arm64",
+      hasNvidiaGpu: true,
+      identity: {
+        nvidiaPlatform: "station",
+        productName: "Generic ARM workstation",
+        stationFirmwareProduct: "NVIDIA DGX Station GB300",
+        stationProfile: "supported-dgx-os",
+        stationGb300PciGpu: true,
+        osId: "ubuntu",
+        osVersionId: "24.04",
+      },
+      sysfsRoot,
+    });
+    const prepared = prepareInitialSandboxCreatePolicy(tmpPolicy(BASE_POLICY_FIXTURE), [], {
+      directGpu: true,
+      stationGb300SysfsReadOnlyPaths: discoveredPaths,
+    });
+    const preparedDoc = YAML.parse(fs.readFileSync(prepared.policyPath, "utf-8"));
+
+    expect(discoveredPaths).toEqual(["/sys/bus/pci/devices/0009:06:00.0"]);
+    expectSingleOccurrence(
+      preparedDoc.filesystem_policy.read_only,
+      "/sys/bus/pci/devices/0009:06:00.0",
+    );
+    expect(prepared.cleanup?.()).toBe(true);
+  });
+
   it("rejects Station GPU policy when host GPU availability fails", () => {
     expect(() =>
       discoverHostStationGb300SysfsReadOnlyPaths({
