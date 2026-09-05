@@ -24,7 +24,6 @@ import {
   main,
   resolvePrManagedImageCatalog,
   selectManagedImagePublicationRun,
-  writeLatestManagedImageCatalog,
   writeManagedImageCatalog,
 } from "../../../tools/e2e/pr-managed-image-publication.mts";
 import { artifactZip } from "../../helpers/artifact-zip";
@@ -78,20 +77,6 @@ function contract(agent: ManagedImageAgent, index: number): ManagedImageContract
   return contractForCohort(agent, index, `ghrun-${RUN_ID}-1`);
 }
 
-function writeContractForCohort(
-  root: string,
-  agent: ManagedImageAgent,
-  index: number,
-  cohort: ManagedImageContractV1["source"]["cohort"],
-): string {
-  const [runId, runAttempt] = cohort.slice("ghrun-".length).split("-");
-  const artifactRoot = path.join(root, `managed-pr-contract-${runId}-${runAttempt}-${agent}`);
-  fs.mkdirSync(artifactRoot);
-  const contractPath = path.join(artifactRoot, "contract.json");
-  fs.writeFileSync(contractPath, JSON.stringify(contractForCohort(agent, index, cohort)), "utf8");
-  return contractPath;
-}
-
 function contractArchive(agent: ManagedImageAgent, index: number): Buffer {
   return artifactZip([
     { name: "contract.json", contents: `${JSON.stringify(contract(agent, index))}\n` },
@@ -131,13 +116,11 @@ function candidateRequest(options: {
   readonly run?: unknown;
   readonly runPages?: readonly unknown[];
   readonly artifactHeadSha?: string;
-  readonly artifactRunAttempt?: number;
   readonly artifactRunId?: number;
   readonly missingAgent?: ManagedImageAgent;
 }) {
   const candidateRepository = options.candidateRepository ?? CANONICAL_REPOSITORY;
   const changedPath = options.changedPath ?? "Dockerfile.base";
-  const artifactRunAttempt = options.artifactRunAttempt ?? 1;
   const artifactRunId = options.artifactRunId ?? RUN_ID;
   const baseEntries = [
     treeEntry(changedPath, "3".repeat(40)),
@@ -188,7 +171,7 @@ function candidateRequest(options: {
     responses.set(`${runsPath}&page=${index + 1}`, page);
   }
   for (const [index, agent] of SHIPPED_MANAGED_IMAGE_AGENTS.entries()) {
-    const name = `managed-pr-contract-${artifactRunId}-${artifactRunAttempt}-${agent}`;
+    const name = `managed-pr-contract-${artifactRunId}-${agent}`;
     const archive = contractArchive(agent, index);
     const id = index + 100;
     responses.set(
@@ -389,141 +372,14 @@ describe("exact PR managed-image publication", () => {
       return contractPath;
     });
     const assembledPath = path.join(assemblyRoot, "assembled", "catalog.json");
-    writeManagedImageCatalog(contractPaths, CANDIDATE_SHA, assembledPath, `ghrun-${RUN_ID}-1`);
+    writeManagedImageCatalog(contractPaths, CANDIDATE_SHA, assembledPath, {
+      id: RUN_ID,
+      attempt: 1,
+    });
 
     expect(fs.readFileSync(assembledPath)).toEqual(fs.readFileSync(input.outputPath));
     expect(fs.statSync(assembledPath).mode & 0o777).toBe(0o600);
     expect(fs.statSync(input.outputPath).mode & 0o777).toBe(0o600);
-  });
-
-  it("reuses the latest complete producer cohort available to a failed-job rerun", () => {
-    const assemblyRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-catalog-rerun-"));
-    temporaryDirectories.push(assemblyRoot);
-    const contractPaths = SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) =>
-      writeContractForCohort(assemblyRoot, agent, index, `ghrun-${RUN_ID}-1`),
-    );
-    const assembledPath = path.join(assemblyRoot, "catalog.json");
-
-    writeLatestManagedImageCatalog(contractPaths, CANDIDATE_SHA, assembledPath, RUN_ID, 2);
-
-    expect(JSON.parse(fs.readFileSync(assembledPath, "utf8"))).toEqual(
-      Object.fromEntries(
-        SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)]),
-      ),
-    );
-  });
-
-  it("selects one newest producer cohort without mixing rerun attempts", () => {
-    const assemblyRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-catalog-rerun-"));
-    temporaryDirectories.push(assemblyRoot);
-    const contractPaths = [1, 2].flatMap((attempt) =>
-      SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) =>
-        writeContractForCohort(assemblyRoot, agent, index, `ghrun-${RUN_ID}-${attempt}`),
-      ),
-    );
-    const assembledPath = path.join(assemblyRoot, "catalog.json");
-
-    writeLatestManagedImageCatalog(contractPaths, CANDIDATE_SHA, assembledPath, RUN_ID, 2);
-
-    expect(
-      new Set(
-        Object.values(
-          JSON.parse(fs.readFileSync(assembledPath, "utf8")) as Record<
-            string,
-            ManagedImageContractV1
-          >,
-        ).map((value) => value.source.cohort),
-      ),
-    ).toEqual(new Set([`ghrun-${RUN_ID}-2`]));
-  });
-
-  it("falls back to the newest complete producer cohort without mixing a partial rerun", () => {
-    const assemblyRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-catalog-rerun-"));
-    temporaryDirectories.push(assemblyRoot);
-    const contractPaths = [
-      ...SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) =>
-        writeContractForCohort(assemblyRoot, agent, index, `ghrun-${RUN_ID}-1`),
-      ),
-      writeContractForCohort(assemblyRoot, "openclaw", 0, `ghrun-${RUN_ID}-2`),
-    ];
-
-    const assembledPath = path.join(assemblyRoot, "catalog.json");
-    writeLatestManagedImageCatalog(contractPaths, CANDIDATE_SHA, assembledPath, RUN_ID, 2);
-
-    expect(
-      new Set(
-        Object.values(
-          JSON.parse(fs.readFileSync(assembledPath, "utf8")) as Record<
-            string,
-            ManagedImageContractV1
-          >,
-        ).map((value) => value.source.cohort),
-      ),
-    ).toEqual(new Set([`ghrun-${RUN_ID}-1`]));
-  });
-
-  it("fails closed when no producer attempt contains a complete cohort", () => {
-    const assemblyRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-catalog-rerun-"));
-    temporaryDirectories.push(assemblyRoot);
-    const contractPaths = [
-      writeContractForCohort(assemblyRoot, "openclaw", 0, `ghrun-${RUN_ID}-1`),
-      writeContractForCohort(assemblyRoot, "hermes", 1, `ghrun-${RUN_ID}-1`),
-      writeContractForCohort(assemblyRoot, "langchain-deepagents-code", 2, `ghrun-${RUN_ID}-2`),
-    ];
-
-    expect(() =>
-      writeLatestManagedImageCatalog(
-        contractPaths,
-        CANDIDATE_SHA,
-        path.join(assemblyRoot, "catalog.json"),
-        RUN_ID,
-        2,
-      ),
-    ).toThrow("no complete producer cohort");
-  });
-
-  it.each([
-    ["another workflow run", RUN_ID + 1, 1, "selected workflow run"],
-    ["a future workflow attempt", RUN_ID, 3, "future workflow attempt"],
-  ])("rejects contracts from %s", (_label, producerRunId, producerAttempt, message) => {
-    const assemblyRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-catalog-rerun-"));
-    temporaryDirectories.push(assemblyRoot);
-    const contractPaths = SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) =>
-      writeContractForCohort(
-        assemblyRoot,
-        agent,
-        index,
-        `ghrun-${producerRunId}-${producerAttempt}`,
-      ),
-    );
-
-    expect(() =>
-      writeLatestManagedImageCatalog(
-        contractPaths,
-        CANDIDATE_SHA,
-        path.join(assemblyRoot, "catalog.json"),
-        RUN_ID,
-        2,
-      ),
-    ).toThrow(message);
-  });
-
-  it("rejects a contract whose artifact name does not bind its producer attempt", () => {
-    const assemblyRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-catalog-rerun-"));
-    temporaryDirectories.push(assemblyRoot);
-    const contractPath = writeContractForCohort(assemblyRoot, "openclaw", 0, `ghrun-${RUN_ID}-1`);
-    const mismatchedRoot = path.join(assemblyRoot, `managed-pr-contract-${RUN_ID}-2-openclaw`);
-    fs.renameSync(path.dirname(contractPath), mismatchedRoot);
-
-    expect(() =>
-      writeLatestManagedImageCatalog(
-        [path.join(mismatchedRoot, "contract.json")],
-        CANDIDATE_SHA,
-        path.join(assemblyRoot, "catalog.json"),
-        RUN_ID,
-        2,
-      ),
-    ).toThrow("artifact identity is invalid");
   });
 
   it("rejects an image-changing fork before any artifact download", async () => {
@@ -553,11 +409,23 @@ describe("exact PR managed-image publication", () => {
     expect(download).not.toHaveBeenCalled();
   });
 
+  it("resolves an earlier producer cohort after a failed-job rerun", async () => {
+    const request = vi.fn(
+      candidateRequest({ imageChanged: true, run: workflowRun({ run_attempt: 2 }) }),
+    );
+
+    await expect(
+      resolvePrManagedImageCatalog(resolverInput(), request, downloadContract),
+    ).resolves.toBe("candidate-catalog");
+    expect(request).toHaveBeenCalledWith(
+      expect.stringContaining(`name=managed-pr-contract-${RUN_ID}-openclaw`),
+    );
+  });
+
   it("uses the newest successful Images run after an earlier failure", async () => {
     const laterRunId = RUN_ID + 10;
     const request = vi.fn(
       candidateRequest({
-        artifactRunAttempt: 2,
         artifactRunId: laterRunId,
         imageChanged: true,
         run: {
@@ -644,14 +512,13 @@ describe("exact PR managed-image publication", () => {
       resolvePrManagedImageCatalog(
         resolverInput(),
         candidateRequest({
-          artifactRunAttempt: 2,
           artifactRunId: laterRunId,
           imageChanged: true,
           run: workflowRun({ id: laterRunId, run_attempt: 2 }),
         }),
         downloadContract,
       ),
-    ).rejects.toThrow("do not match the selected workflow run cohort");
+    ).rejects.toThrow("producer run does not match the consumer run");
   });
 
   it("rejects missing or ambiguous exact-candidate Images runs", async () => {
@@ -738,11 +605,10 @@ describe("exact PR managed-image publication", () => {
     };
 
     expect(() =>
-      assembleManagedImageCatalog(
-        [substituted, ...contracts.slice(1)],
-        CANDIDATE_SHA,
-        `ghrun-${RUN_ID}-1`,
-      ),
+      assembleManagedImageCatalog([substituted, ...contracts.slice(1)], CANDIDATE_SHA, {
+        id: RUN_ID,
+        attempt: 1,
+      }),
     ).toThrow("do not match the candidate commit");
   });
 
@@ -756,5 +622,39 @@ describe("exact PR managed-image publication", () => {
         },
       }),
     ).rejects.toThrow("GitHub API path must stay within an allowed repository");
+  });
+});
+
+describe("PR managed-image contract reruns", () => {
+  it("accepts one producer-owned cohort after a partial producer rerun", () => {
+    const contracts = SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) =>
+      contractForCohort(agent, index, `ghrun-${RUN_ID}-1`),
+    );
+
+    expect(
+      assembleManagedImageCatalog(contracts, CANDIDATE_SHA, { id: RUN_ID, attempt: 2 }),
+    ).toEqual(Object.fromEntries(contracts.map((value) => [value.agent, value])));
+  });
+
+  it.each([
+    [
+      "mixed attempts",
+      [`ghrun-${RUN_ID}-1`, `ghrun-${RUN_ID}-1`, `ghrun-${RUN_ID}-2`],
+      "one publication cohort",
+    ],
+    ["another run", ["ghrun-7000-1", "ghrun-7000-1", "ghrun-7000-1"], "producer run"],
+    [
+      "a future attempt",
+      [`ghrun-${RUN_ID}-3`, `ghrun-${RUN_ID}-3`, `ghrun-${RUN_ID}-3`],
+      "producer attempt",
+    ],
+  ])("rejects contracts from %s", (_case, cohorts, message) => {
+    const contracts = SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) =>
+      contractForCohort(agent, index, cohorts[index] as ManagedImageContractV1["source"]["cohort"]),
+    );
+
+    expect(() =>
+      assembleManagedImageCatalog(contracts, CANDIDATE_SHA, { id: RUN_ID, attempt: 2 }),
+    ).toThrow(message);
   });
 });

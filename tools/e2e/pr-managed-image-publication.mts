@@ -32,7 +32,6 @@ const MANAGED_IMAGE_WORKFLOW_NAME = "Images / Build, Test, and Publish Managed I
 const MANAGED_IMAGE_WORKFLOW_PATH = ".github/workflows/managed-images.yaml";
 const MAX_COMMIT_TREE_ENTRIES = 100_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
-const COHORT_PATTERN = /^ghrun-([1-9][0-9]{0,19})-([1-9][0-9]{0,9})$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const TREE_ENTRY_MODES = new Map([
   ["blob", new Set(["100644", "100755", "120000"])],
@@ -41,7 +40,10 @@ const TREE_ENTRY_MODES = new Map([
 ]);
 
 type JsonRecord = Record<string, unknown>;
-type ManagedImageCohort = ManagedImageContractV1["source"]["cohort"];
+type WorkflowRun = {
+  readonly id: number;
+  readonly attempt: number;
+};
 
 export type PrManagedImageSelection = "base-cohort" | "candidate-catalog";
 
@@ -72,7 +74,7 @@ function exactString(value: unknown, expected: string, label: string): void {
 export function assembleManagedImageCatalog(
   values: readonly unknown[],
   candidateSha: string,
-  expectedCohort: ManagedImageCohort,
+  consumerRun: WorkflowRun,
 ): ManagedImageContractCatalog {
   if (!SHA_PATTERN.test(candidateSha)) throw new Error("candidate SHA is invalid");
   if (values.length !== SHIPPED_MANAGED_IMAGE_AGENTS.length) {
@@ -99,10 +101,17 @@ export function assembleManagedImageCatalog(
   if (releases.size !== 1 || cohorts.size !== 1) {
     throw new Error("exact PR managed-image contracts do not form one publication cohort");
   }
-  if (!cohorts.has(expectedCohort)) {
-    throw new Error(
-      "exact PR managed-image contracts do not match the selected workflow run cohort",
-    );
+  const producerCohort = contracts[0]!.source.cohort;
+  const runPrefix = `ghrun-${consumerRun.id}-`;
+  if (!producerCohort.startsWith(runPrefix)) {
+    throw new Error("exact PR managed-image producer run does not match the consumer run");
+  }
+  const producerAttempt = positiveInteger(
+    Number(producerCohort.slice(runPrefix.length)),
+    "producer attempt",
+  );
+  if (producerAttempt > consumerRun.attempt) {
+    throw new Error("exact PR managed-image producer attempt is newer than the consumer attempt");
   }
   return Object.fromEntries(
     SHIPPED_MANAGED_IMAGE_AGENTS.map((agent) => [agent, byAgent.get(agent)!]),
@@ -113,87 +122,12 @@ export function writeManagedImageCatalog(
   contractPaths: readonly string[],
   candidateSha: string,
   outputPath: string,
-  expectedCohort: ManagedImageCohort,
+  consumerRun: WorkflowRun,
 ): void {
   const contracts = contractPaths.map(
     (contractPath) => JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown,
   );
-  const catalog = assembleManagedImageCatalog(contracts, candidateSha, expectedCohort);
-  writeValidatedManagedImageCatalog(catalog, outputPath);
-}
-
-export function writeLatestManagedImageCatalog(
-  contractPaths: readonly string[],
-  candidateSha: string,
-  outputPath: string,
-  runId: number,
-  runAttempt: number,
-): void {
-  if (!SHA_PATTERN.test(candidateSha)) throw new Error("candidate SHA is invalid");
-  positiveInteger(runId, "workflow run id");
-  positiveInteger(runAttempt, "workflow run attempt");
-  const contracts = contractPaths.map((contractPath) => ({
-    contract: parseManagedImageContractV1(
-      JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown,
-      undefined,
-      "linux/amd64",
-    ),
-    path: contractPath,
-  }));
-  if (contracts.length === 0) {
-    throw new Error("exact PR managed-image publication contracts are missing");
-  }
-
-  const byAttempt = new Map<number, ManagedImageContractV1[]>();
-  const artifactIdentities = new Set<string>();
-  for (const { contract, path: contractPath } of contracts) {
-    if (contract.source.revision !== candidateSha) {
-      throw new Error("exact PR managed-image contracts do not match the candidate commit");
-    }
-    const match = COHORT_PATTERN.exec(contract.source.cohort);
-    if (!match) throw new Error("exact PR managed-image contract cohort is invalid");
-    const producerRunId = positiveInteger(Number(match[1]), "contract workflow run id");
-    const producerAttempt = positiveInteger(Number(match[2]), "contract workflow run attempt");
-    if (producerRunId !== runId) {
-      throw new Error("exact PR managed-image contracts do not match the selected workflow run");
-    }
-    if (producerAttempt > runAttempt) {
-      throw new Error("exact PR managed-image contracts come from a future workflow attempt");
-    }
-    if (!(SHIPPED_MANAGED_IMAGE_AGENTS as readonly string[]).includes(contract.agent)) {
-      throw new Error("exact PR managed-image contract agent is not shipped");
-    }
-    const expectedArtifact = `managed-pr-contract-${runId}-${producerAttempt}-${contract.agent}`;
-    if (
-      path.basename(contractPath) !== "contract.json" ||
-      path.basename(path.dirname(contractPath)) !== expectedArtifact ||
-      artifactIdentities.has(expectedArtifact)
-    ) {
-      throw new Error("exact PR managed-image contract artifact identity is invalid");
-    }
-    artifactIdentities.add(expectedArtifact);
-    const cohort = byAttempt.get(producerAttempt) ?? [];
-    cohort.push(contract);
-    byAttempt.set(producerAttempt, cohort);
-  }
-
-  const latestAttempt = [...byAttempt.entries()]
-    .filter(
-      ([, cohort]) =>
-        cohort.length === SHIPPED_MANAGED_IMAGE_AGENTS.length &&
-        SHIPPED_MANAGED_IMAGE_AGENTS.every((agent) =>
-          cohort.some((contract) => contract.agent === agent),
-        ),
-    )
-    .reduce((latest, [attempt]) => Math.max(latest, attempt), 0);
-  if (latestAttempt === 0) {
-    throw new Error("exact PR managed-image publication has no complete producer cohort");
-  }
-  const catalog = assembleManagedImageCatalog(
-    byAttempt.get(latestAttempt) ?? [],
-    candidateSha,
-    `ghrun-${runId}-${latestAttempt}` as const,
-  );
+  const catalog = assembleManagedImageCatalog(contracts, candidateSha, consumerRun);
   writeValidatedManagedImageCatalog(catalog, outputPath);
 }
 
@@ -463,7 +397,7 @@ export async function resolvePrManagedImageCatalog(
   try {
     const contracts: ManagedImageContractV1[] = [];
     for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
-      const name = `managed-pr-contract-${run.id}-${run.attempt}-${agent}`;
+      const name = `managed-pr-contract-${run.id}-${agent}`;
       const metadata = await request(
         `/repos/${REPOSITORY}/actions/runs/${run.id}/artifacts?name=${encodeURIComponent(name)}&per_page=100`,
       );
@@ -481,11 +415,10 @@ export async function resolvePrManagedImageCatalog(
         JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown as ManagedImageContractV1,
       );
     }
-    const catalog = assembleManagedImageCatalog(
-      contracts,
-      managedImageSha,
-      `ghrun-${run.id}-${run.attempt}` as const,
-    );
+    const catalog = assembleManagedImageCatalog(contracts, managedImageSha, {
+      id: run.id,
+      attempt: run.attempt,
+    });
     writeValidatedManagedImageCatalog(catalog, input.outputPath);
     return "candidate-catalog";
   } finally {
@@ -503,9 +436,10 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     if (argv.length < 4) {
       throw new Error("expected candidate SHA, output path, and managed-image contract paths");
     }
-    const runId = requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID");
-    const runAttempt = requiredInteger(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT");
-    writeLatestManagedImageCatalog(argv.slice(3), argv[1], argv[2], runId, runAttempt);
+    writeManagedImageCatalog(argv.slice(3), argv[1], argv[2], {
+      id: requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID"),
+      attempt: requiredInteger(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT"),
+    });
     console.log("pr-managed-image-catalog outcome=assembled");
     return;
   }

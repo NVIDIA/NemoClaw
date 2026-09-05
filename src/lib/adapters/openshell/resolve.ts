@@ -6,6 +6,8 @@ import { accessSync, constants } from "node:fs";
 
 import { buildSubprocessEnv, isSubprocessEnvNameAllowed } from "../../subprocess-env";
 
+export { buildSubprocessEnv as buildOpenShellCommandBaseEnv };
+
 export interface ResolveOpenshellOptions {
   /** Mock result for `command -v` (undefined = run real command). */
   commandVResult?: string | null;

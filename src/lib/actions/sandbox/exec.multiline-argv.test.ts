@@ -5,16 +5,58 @@ import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// The default exec runner shells out via spawn and chooses whether to inherit
-// or ignore stdin. Mock node:child_process so the tests can assert that wiring
-// at the execSandbox boundary without spawning a real process. Every other test
-// injects a runner/probe seam.
+import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
+import type { OpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command";
+
+// The default CLI command executor shells out via spawn and chooses whether to
+// inherit or ignore stdin. Mock node:child_process so the tests can assert that
+// wiring at the execSandbox boundary without spawning a real process. Every
+// other test injects a typed command-executor seam.
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   return { ...actual, spawn: vi.fn() };
 });
 
-import { buildOpenshellExecArgs, execSandbox, wrapExecCommandWithRuntimeEnv } from "./exec";
+import {
+  buildOpenshellExecArgs,
+  execSandbox,
+  type ExecSandboxDeps,
+  type SandboxExecCleanupDeps,
+  wrapExecCommandWithRuntimeEnv,
+} from "./exec";
+
+const cleanupSkipped: SandboxExecCleanupDeps = {
+  getSandbox: () => null,
+  inspectMutableConfigPerms: () => {
+    throw new Error("cleanup should be skipped");
+  },
+  repairMutableConfigPerms: () => {
+    throw new Error("cleanup should be skipped");
+  },
+};
+
+function commandExecutor(options: {
+  run?: OpenShellSandboxCommandExecutor["runStreaming"];
+  probe?: OpenShellSandboxCommandExecutor["probeDirectory"];
+}): OpenShellSandboxCommandExecutor {
+  return {
+    probeDirectory: options.probe ?? (async () => ({ state: "present" })),
+    runStreaming:
+      options.run ??
+      (async () => ({
+        outcome: { kind: "completed", exitCode: 0 },
+        release: () => {},
+      })),
+  };
+}
+
+function execDeps(executor: OpenShellSandboxCommandExecutor): ExecSandboxDeps {
+  return {
+    commandExecutor: executor,
+    cleanupDeps: cleanupSkipped,
+    selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
+  };
+}
 
 function expectedExecArgs(sandboxName: string, command: readonly string[]): string[] {
   return buildOpenshellExecArgs(sandboxName, wrapExecCommandWithRuntimeEnv(command));
@@ -55,15 +97,17 @@ describe("execSandbox multi-line argv", () => {
   ])("forwards $label bytes unchanged through the OpenShell argv boundary", async ({ command }) => {
     const exitSpy = exitWithCode();
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const run = vi.fn((_binary: string, _args: readonly string[]) => ({ status: 0 }));
+    const run = vi.fn<OpenShellSandboxCommandExecutor["runStreaming"]>(async () => ({
+      outcome: { kind: "completed", exitCode: 0 },
+      release: () => {},
+    }));
 
     await expect(
-      execSandbox("multiline-test", command, {}, { run, resolveBinary: () => "openshell" }),
+      execSandbox("multiline-test", command, {}, execDeps(commandExecutor({ run }))),
     ).rejects.toThrow("exit:0");
 
     expect(run).toHaveBeenCalledOnce();
-    expect(run).toHaveBeenCalledWith("openshell", expectedExecArgs("multiline-test", command));
-    const forwarded = vi.mocked(run).mock.calls[0][1];
+    const forwarded = vi.mocked(run).mock.calls[0][0].command;
     expect(forwarded.slice(-command.length)).toEqual(command);
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
@@ -71,11 +115,12 @@ describe("execSandbox multi-line argv", () => {
   it("still rejects a NUL-bearing command argument before dispatch", async () => {
     const exitSpy = exitWithCode();
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const run = vi.fn(() => ({ status: 0 }));
+    const run = vi.fn();
+    const executor = commandExecutor({ run });
 
-    await expect(execSandbox("multiline-test", ["printf", "a\0b"], {}, { run })).rejects.toThrow(
-      "exit:2",
-    );
+    await expect(
+      execSandbox("multiline-test", ["printf", "a\0b"], {}, execDeps(executor)),
+    ).rejects.toThrow("exit:2");
 
     expect(run).not.toHaveBeenCalled();
     expect(errSpy).toHaveBeenCalledWith(
@@ -91,15 +136,15 @@ describe("execSandbox multi-line argv", () => {
   ])("still rejects a multi-line --workdir before probing or dispatch: %j", async (workdir) => {
     const exitSpy = exitWithCode();
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const probeWorkdir = vi.fn(() => ({ status: 0 }));
-    const run = vi.fn(() => ({ status: 0 }));
+    const probeWorkdir = vi.fn();
+    const run = vi.fn();
 
     await expect(
       execSandbox(
         "multiline-test",
         ["pwd"],
         { workdir },
-        { run, resolveBinary: () => "openshell", probeWorkdir },
+        execDeps(commandExecutor({ run, probe: probeWorkdir })),
       ),
     ).rejects.toThrow("exit:2");
 
@@ -114,15 +159,15 @@ describe("execSandbox multi-line argv", () => {
   it("still rejects a NUL-bearing --workdir before probing or dispatch", async () => {
     const exitSpy = exitWithCode();
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const probeWorkdir = vi.fn(() => ({ status: 0 }));
-    const run = vi.fn(() => ({ status: 0 }));
+    const probeWorkdir = vi.fn();
+    const run = vi.fn();
 
     await expect(
       execSandbox(
         "multiline-test",
         ["pwd"],
         { workdir: "/sandbox/a\0b" },
-        { run, resolveBinary: () => "openshell", probeWorkdir },
+        execDeps(commandExecutor({ run, probe: probeWorkdir })),
       ),
     ).rejects.toThrow("exit:2");
 
@@ -145,15 +190,17 @@ describe("execSandbox multi-line argv", () => {
   it("still validates a single-line --workdir before dispatch", async () => {
     const exitSpy = exitWithCode();
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const probeWorkdir = vi.fn(() => ({ status: 1 }));
-    const run = vi.fn(() => ({ status: 0 }));
+    const probeWorkdir = vi.fn<OpenShellSandboxCommandExecutor["probeDirectory"]>(async () => ({
+      state: "missing",
+    }));
+    const run = vi.fn();
 
     await expect(
       execSandbox(
         "multiline-test",
         ["pwd"],
         { workdir: "/no/such/dir" },
-        { run, resolveBinary: () => "openshell", probeWorkdir },
+        execDeps(commandExecutor({ run, probe: probeWorkdir })),
       ),
     ).rejects.toThrow("exit:1");
 
@@ -190,7 +237,16 @@ describe("execSandbox multi-line argv", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
 
     await expect(
-      execSandbox("multiline-test", ["bash"], { stdin }, { resolveBinary: () => "openshell" }),
+      execSandbox(
+        "multiline-test",
+        ["bash"],
+        { stdin },
+        execDeps(
+          createCliOpenShellSandboxCommandExecutor({
+            resolveBinary: () => "openshell",
+          }),
+        ),
+      ),
     ).rejects.toThrow("exit:0");
 
     expect(spawn).toHaveBeenCalledWith("openshell", expectedExecArgs("multiline-test", ["bash"]), {

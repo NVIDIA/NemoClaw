@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { R, YW } from "../../cli/terminal-style";
 import { prompt as askPrompt } from "../../credentials/store";
 import type { DestroySandboxOptions } from "../../domain/lifecycle/options";
@@ -12,11 +13,17 @@ import {
   type SandboxSession,
 } from "../../state/sandbox-session";
 
-function findActiveSandboxSessions(sandboxName: string): SandboxSession[] {
+function findActiveSandboxSessions(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): SandboxSession[] {
   const opsBin = resolveOpenshell();
   if (!opsBin) return [];
   try {
-    const result = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBin));
+    const result = getActiveSandboxSessions(
+      sandboxName,
+      createSessionDeps(opsBin, runtimeSelection ? { runtimeSelection } : {}),
+    );
     return result.detected ? result.sessions : [];
   } catch {
     return [];
@@ -47,8 +54,9 @@ export function assertSandboxDestroyCommandAvailable(sandboxName: string): void 
 export async function confirmSandboxDestroy(
   sandboxName: string,
   options: DestroySandboxOptions,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<boolean> {
-  const activeSessions = findActiveSandboxSessions(sandboxName);
+  const activeSessions = findActiveSandboxSessions(sandboxName, runtimeSelection);
   // #9855: --yes/--force waives the confirmation prompt, not the notice that
   // this destroy is about to break somebody else's live SSH session. Without
   // this the operator sees no warning and the connected terminal just gets a

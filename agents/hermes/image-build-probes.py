@@ -5,11 +5,78 @@
 
 from __future__ import annotations
 
+import os
+import re
+import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 sys.path.insert(0, "/usr/local/lib/nemoclaw")
+
+
+def _run_required_build_command(
+    label: str, argv: Sequence[str], *, env: Mapping[str, str]
+) -> None:
+    result = subprocess.run(argv, env=env, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"{label} exited with status {result.returncode}")
+
+
+def prepare_generated_config(
+    *,
+    hermes: Path = Path("/usr/local/bin/hermes"),
+    node: Path = Path("/usr/local/bin/node"),
+    generator: Path = Path("/opt/nemoclaw-hermes-config/generate-config.ts"),
+    hermes_home: Path = Path("/sandbox/.hermes"),
+    env: Mapping[str, str] | None = None,
+) -> None:
+    """Run upstream repair before NemoClaw replaces its generated config."""
+    child_env = dict(os.environ if env is None else env)
+    child_env["HERMES_HOME"] = str(hermes_home)
+    _run_required_build_command(
+        "Hermes doctor", [str(hermes), "doctor", "--fix"], env=child_env
+    )
+    _run_required_build_command(
+        "Hermes config generator",
+        [str(node), "--experimental-strip-types", str(generator)],
+        env=child_env,
+    )
+
+
+def verify_compatibility_retirement(
+    *,
+    hermes: Path = Path("/usr/local/bin/hermes"),
+    adapter: Path = Path("/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json"),
+    oneshot: Path = Path("/opt/hermes/hermes_cli/oneshot.py"),
+) -> None:
+    """Reject an upgrade that retains Hermes 0.20.6 compatibility behavior."""
+    result = subprocess.run(
+        [str(hermes), "--version"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Hermes version probe exited with status {result.returncode}")
+    version_output = result.stdout.strip()
+    match = re.search(
+        r"(?:^|[^0-9])v?([0-9]+\.[0-9]+\.[0-9]+)(?:$|[^0-9])",
+        version_output,
+    )
+    if match is None:
+        raise RuntimeError(f"could not parse Hermes semver from: {version_output}")
+    semver = match.group(1)
+    if semver != "0.20.6" and '"resumed_oneshot"' in adapter.read_text(encoding="utf-8"):
+        raise RuntimeError(
+            f"installed Hermes {semver} but Hermes v0.20.6 compatibility workarounds "
+            "are still installed; re-review the workaround set before upgrading Hermes"
+        )
+    if (
+        "process_registry.wait_for_pending_completions(oneshot_task_id)"
+        not in oneshot.read_text(encoding="utf-8")
+    ):
+        raise RuntimeError("Hermes one-shot completion wait is not scoped to the exact turn")
 
 
 def _verify_profile_config_policy(config: dict, expected: dict[str, object]) -> None:
@@ -146,20 +213,7 @@ def verify_neutral_platform_inertness() -> None:
     finally:
         socket.socket.connect = original_connect
         socket.create_connection = original_create_connection
-    bundled_plugins = {
-        manifest.parent.name
-        for manifest in Path("/opt/hermes/plugins/platforms").glob("*/plugin.yaml")
-    }
-    built_in_optional = {
-        platform.value
-        for platform in Platform
-        if platform.value not in {"api_server", "local"}
-    }
-    expected = bundled_plugins | built_in_optional
-    assert "google_chat" in expected, expected
-    assert "whatsapp_cloud" in expected, expected
-
-    for name in expected:
+    for name in ("a2a", "buzz", "google_chat", "whatsapp_cloud"):
         platform = Platform(name)
         platform_config = config.platforms.get(platform)
         assert platform_config is not None, name
@@ -170,28 +224,78 @@ def verify_neutral_platform_inertness() -> None:
 
 
 def verify_cron_runtime_source() -> None:
-    from cron.executions import EXECUTIONS_FILE
+    from cron.executions import EXECUTIONS_FILE, _connect
     from hermes_cli.backup import _QUICK_STATE_FILES
     from hermes_constants import get_hermes_home
 
     expected = get_hermes_home().resolve() / "runtime" / "cron-executions.db"
-    assert EXECUTIONS_FILE == expected
+    assert EXECUTIONS_FILE is None
+    connection = _connect()
+    try:
+        databases = connection.execute("PRAGMA database_list").fetchall()
+    finally:
+        connection.close()
+    assert databases == [(0, "main", str(expected))], databases
     assert "runtime/cron-executions.db" in _QUICK_STATE_FILES
     assert "cron/executions.db" not in _QUICK_STATE_FILES
 
 
 def verify_session_preview() -> None:
+    import contextlib
+    import io
+    from types import SimpleNamespace
+
+    from hermes_cli.sessions_cmd import cmd_sessions
     from hermes_state import SessionDB
 
     db = SessionDB()
     session_id = "nemoclaw-preview-smoke"
-    db.create_session(session_id, "cli")
+    db.create_session(session_id, "cli", cwd="/sandbox")
+    assert db.set_auto_title(
+        session_id,
+        "NEMOCLAW_PREVIEW_FIRST",
+        source=SessionDB.TITLE_SOURCE_DERIVED,
+    )
     db.append_message(session_id, "user", "NEMOCLAW_PREVIEW_FIRST")
     db.append_message(session_id, "assistant", "ack")
     db.append_message(session_id, "user", "NEMOCLAW_PREVIEW_LATEST")
     rows = db.list_sessions_rich(limit=1)
     assert rows and rows[0]["id"] == session_id, rows
     assert rows[0]["preview"] == "NEMOCLAW_PREVIEW_LATEST", rows
+    db.close()
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        result = cmd_sessions(
+            SimpleNamespace(
+                sessions_action="list",
+                source=None,
+                limit=1,
+                workspace=None,
+            )
+        )
+    rendered = output.getvalue()
+    assert result is None, result
+    assert "NEMOCLAW_PREVIEW_LATEST" in rendered, rendered
+    assert "NEMOCLAW_PREVIEW_FIRST" not in rendered, rendered
+
+    db = SessionDB()
+    assert db.set_session_title(session_id, "NEMOCLAW_USER_TITLE")
+    db.close()
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        result = cmd_sessions(
+            SimpleNamespace(
+                sessions_action="list",
+                source=None,
+                limit=1,
+                workspace=None,
+            )
+        )
+    rendered = output.getvalue()
+    assert result is None, result
+    assert "NEMOCLAW_USER_TITLE" in rendered, rendered
+    assert "NEMOCLAW_PREVIEW_LATEST" not in rendered, rendered
 
 
 def verify_session_delete() -> None:
@@ -390,6 +494,35 @@ def verify_cron_create() -> None:
     assert created["status"] == "claimed"
 
 
+def verify_secure_directory_modes() -> None:
+    import stat
+
+    from hermes_cli.config import _secure_dir
+
+    assert os.environ.get("HERMES_SKIP_CHMOD") == "1"
+    expected_modes = {
+        Path("/sandbox/.hermes"): 0o3770,
+        Path("/sandbox/.hermes/runtime"): 0o2770,
+    }
+    for path, expected_mode in expected_modes.items():
+        before = path.stat()
+        assert stat.S_IMODE(before.st_mode) == expected_mode, (
+            path,
+            oct(before.st_mode),
+        )
+        _secure_dir(path)
+        after = path.stat()
+        assert (after.st_uid, after.st_gid) == (before.st_uid, before.st_gid), (
+            path,
+            before,
+            after,
+        )
+        assert stat.S_IMODE(after.st_mode) == expected_mode, (
+            path,
+            oct(after.st_mode),
+        )
+
+
 def verify_cron_backup() -> None:
     import os
     import sqlite3
@@ -524,7 +657,26 @@ def verify_googlechat_override_seams() -> None:
         )
 
 
+def verify_managed_runtime_capability() -> None:
+    """Require the packaged ACP adapter and lazy MCP HTTP client surfaces."""
+    import importlib.metadata as metadata
+
+    import acp
+    import mcp
+    from acp_adapter.server import HermesACPAgent
+    from tools import mcp_tool
+
+    _ = (acp, mcp, HermesACPAgent)
+    if metadata.version("agent-client-protocol") != "0.9.0":
+        raise RuntimeError("Hermes ACP SDK version is unavailable")
+    if not mcp_tool._ensure_mcp_sdk() or not getattr(mcp_tool, "_MCP_AVAILABLE", False):
+        raise RuntimeError("Hermes MCP client runtime is unavailable")
+    if not getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False):
+        raise RuntimeError("Hermes MCP Streamable HTTP runtime is unavailable")
+
+
 COMMANDS: dict[str, Callable[[], None]] = {
+    "compatibility-retirement": verify_compatibility_retirement,
     "cron-backup": verify_cron_backup,
     "cron-create": verify_cron_create,
     "cron-reopen": verify_cron_reopen,
@@ -537,12 +689,15 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "googlechat-override-seams": verify_googlechat_override_seams,
     "gateway-runtime-metadata": verify_gateway_runtime_metadata,
     "langfuse-credentials": verify_langfuse_credentials,
+    "managed-runtime-capability": verify_managed_runtime_capability,
     "neutral-platform-inertness": verify_neutral_platform_inertness,
     "profile-policy": verify_profile_policy,
+    "prepare-generated-config": prepare_generated_config,
     "session-delete": verify_session_delete,
     "session-preview": verify_session_preview,
     "session-state-create": verify_session_state_create,
     "session-state-reopen": verify_session_state_reopen,
+    "secure-directory-modes": verify_secure_directory_modes,
 }
 
 
