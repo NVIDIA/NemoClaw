@@ -2371,9 +2371,9 @@ The skill directory must contain a `SKILL.md` file with YAML frontmatter that in
 
 <AgentOnly variant="openclaw">
 
-OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, refer to [Install OpenClaw Plugins](../manage-sandboxes/install-openclaw-plugins). For a skill, NemoClaw creates an exact host snapshot and transfers it into a private staging directory. It then invokes `openclaw skills install <stage> --agent main --force`. The pinned native installer resolves the active workspace target, replaces a same-name workspace or ClawHub skill through its staged backup and rollback flow, writes its source metadata, and determines precedence and activation. NemoClaw verifies the installed digest plus native `skills list`, `skills info`, and `skills check` results before reporting success.
+OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, refer to [Install OpenClaw Plugins](../manage-sandboxes/install-openclaw-plugins). For a skill, NemoClaw creates an exact host snapshot and transfers it into a private staging directory. It then invokes the pinned native OpenClaw installer in intentional replacement mode for agent `main`. The native installer resolves the active workspace target, replaces a same-name workspace or ClawHub skill through its staged backup and rollback flow, writes its source metadata, and determines precedence and activation. NemoClaw verifies the installed digest plus native `skills list`, `skills info`, and `skills check` results before reporting success.
 
-The primary `main` agent must use the default `/sandbox/.openclaw/workspace` directory. The command checks this support boundary and refuses a custom `main` workspace before native publication. Fresh installs, exact-content retries, and changed-content updates all use the same native `--force` path; NemoClaw does not decide whether an existing skill is owned or keep a parallel list of installed skills. Rebuild and destroy likewise have no NemoClaw skill receipt or inventory to transfer or clean up. Start a new OpenClaw session to load the installed skill; the command does not edit `sessions.json`.
+The primary `main` agent must use the default `/sandbox/.openclaw/workspace` directory. The command checks this support boundary and refuses a custom `main` workspace before native publication. Fresh installs, exact-content retries, and changed-content updates all use that same native replacement path; NemoClaw does not decide whether an existing skill is owned or keep a parallel list of installed skills. Rebuild and destroy likewise have no NemoClaw skill receipt or inventory to transfer or clean up. Start a new OpenClaw session to load the installed skill; the command does not edit `sessions.json`.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -2401,7 +2401,7 @@ List skills from the selected agent's own state.
 
 <AgentOnly variant="openclaw">
 
-This is a thin pass-through to `openclaw skills list --agent main` inside the sandbox. NemoClaw does not merge, cache, or maintain a second skill list. Native output and filter flags such as `--json`, `--eligible`, and `--verbose` are forwarded verbatim. An `--agent` override is refused because the lifecycle commands are bound to the sandbox's primary `main` agent.
+This is a thin pass-through to `openclaw skills list` for the primary `main` agent inside the sandbox. NemoClaw does not merge, cache, or maintain a second skill list. Native output and filter flags such as `--json`, `--eligible`, and `--verbose` are forwarded verbatim. An agent override is refused because the lifecycle commands are bound to the sandbox's primary agent state.
 
 ```bash
 $$nemoclaw my-assistant skill list
@@ -2422,7 +2422,7 @@ nemohermes my-assistant skill list --enabled-only
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-This is a thin pass-through to `dcode skills list --agent agent` inside the sandbox. Native flags such as `--json` and `--project` are forwarded. NemoClaw does not merge, cache, or maintain a second DCode skill list. An `--agent` override is refused because the lifecycle commands are bound to DCode's primary `agent` state.
+This is a thin pass-through to `dcode skills list` for DCode's primary `agent` state inside the sandbox. Native flags such as `--json` and `--project` are forwarded. NemoClaw does not merge, cache, or maintain a second DCode skill list. An agent override is refused because the lifecycle commands are bound to that primary state.
 
 ```bash
 nemo-deepagents my-assistant skill list

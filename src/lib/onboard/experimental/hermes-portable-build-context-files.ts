@@ -36,6 +36,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/patch-gateway-runtime-metadata.py", mode: "100755" },
   { path: "agents/hermes/patch-hermes-sqlite-temp-store.py", mode: "100755" },
   { path: "agents/hermes/patch-langfuse-credentials.mts", mode: "100644" },
+  { path: "agents/hermes/patch-native-skill-import.py", mode: "100644" },
   { path: "agents/hermes/patch-neutral-platform-env-activation.py", mode: "100755" },
   { path: "agents/hermes/patch-profile-policy-defaults.py", mode: "100755" },
   { path: "agents/hermes/patch-session-list-preview.py", mode: "100755" },

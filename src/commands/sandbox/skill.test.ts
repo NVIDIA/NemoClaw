@@ -6,11 +6,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const installSandboxSkill = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const removeSandboxSkill = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const listSandboxSkills = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const printSkillInstallUsage = vi.hoisted(() => vi.fn());
 
 vi.mock("../../lib/actions/sandbox/skill-install", () => ({
   installSandboxSkill,
   removeSandboxSkill,
   listSandboxSkills,
+  printSkillInstallUsage,
 }));
 
 import SkillCliCommand from "./skill";
@@ -24,6 +26,7 @@ function clearSkillMocks(): void {
   installSandboxSkill.mockClear();
   removeSandboxSkill.mockClear();
   listSandboxSkills.mockClear();
+  printSkillInstallUsage.mockClear();
 }
 
 describe("SkillCliCommand", () => {
@@ -110,5 +113,12 @@ describe("SkillListCliCommand", () => {
     expect(listSandboxSkills).toHaveBeenCalledWith("alpha", {
       extraArgs: ["--json", "--eligible"],
     });
+  });
+
+  it("renders wrapper help without contacting agent state", async () => {
+    await SkillListCliCommand.run(["alpha", "--help"], rootDir);
+
+    expect(printSkillInstallUsage).toHaveBeenCalledOnce();
+    expect(listSandboxSkills).not.toHaveBeenCalled();
   });
 });
