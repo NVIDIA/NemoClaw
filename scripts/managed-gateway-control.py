@@ -143,6 +143,9 @@ START_LOG_DIAGNOSTIC_PATTERNS = (
     ),
     re.compile(r"\[gateway\] Hermes gateway respawned \(pid [1-9][0-9]*\)"),
     re.compile(
+        r"\[gateway\] Hermes runtime preparation failed after 5 consecutive attempts; supervisor exiting without launching a gateway; correct the reported failure, then stop and start the sandbox"
+    ),
+    re.compile(
         r"\[gateway\] CRITICAL: [1-9][0-9]* exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway\.log"
     ),
     re.compile(

@@ -3085,14 +3085,20 @@ record_hermes_managed_gateway_exit() {
 }
 
 recover_hermes_gateway_current_user() {
-  local replacement_reached_internal_health
+  local replacement_reached_internal_health preparation_failures=0 preparation_failure_limit=5
 
   while :; do
     replacement_reached_internal_health=0
     until prepare_hermes_nonroot_runtime; do
+      preparation_failures=$((preparation_failures + 1))
+      if [ "$preparation_failures" -ge "$preparation_failure_limit" ]; then
+        echo "[gateway] Hermes runtime preparation failed after ${preparation_failures} consecutive attempts; supervisor exiting without launching a gateway; correct the reported failure, then stop and start the sandbox" >&2
+        return 1
+      fi
       echo "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s" >&2
       sleep 5 || true
     done
+    preparation_failures=0
     if ! launch_hermes_gateway_current_user; then
       echo "[gateway] Hermes gateway launch failed; retrying under the same supervisor" >&2
       sleep 5 || true

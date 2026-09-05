@@ -28,7 +28,8 @@ describe("managed gateway control trust contract", () => {
     );
 
     expect(docs).toContain("malicious process running under the same sandbox UID");
-    expect(docs).toContain("time-of-check/time-of-use limits of managed cold start");
+    expect(docs).toContain("does not make the complete Hermes config a relaunch allowlist");
+    expect(docs).toContain("no durable root-owned config anchor");
     expect(docs).toContain("does not create gateway and agent UID isolation");
     expect(docs).toContain(
       "minimum supported OpenShell provides a root-owned lifecycle supervisor",

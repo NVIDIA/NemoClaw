@@ -702,6 +702,39 @@ describe("Hermes supervised auxiliary recovery", () => {
     expect(result.stdout).not.toContain("unexpected-exit-record");
   });
 
+  it("bounds persistent preparation failure without config quarantine (#11108)", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      'prepare_hermes_nonroot_runtime() { prepare_calls=$((prepare_calls + 1)); trace "prepare:$prepare_calls"; return 1; }',
+      "launch_hermes_gateway_current_user() { trace unexpected-launch; }",
+      'sleep() { trace "sleep:$1"; }',
+      extractShellFunction(source, "recover_hermes_gateway_current_user"),
+      "prepare_calls=0",
+      "if recover_hermes_gateway_current_user; then trace unexpected-success; else trace failed; fi",
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "prepare:1",
+      "sleep:5",
+      "prepare:2",
+      "sleep:5",
+      "prepare:3",
+      "sleep:5",
+      "prepare:4",
+      "sleep:5",
+      "prepare:5",
+      "failed",
+    ]);
+    expect(result.stderr).toContain(
+      "runtime preparation failed after 5 consecutive attempts; supervisor exiting",
+    );
+    expect(result.stderr).toContain("correct the reported failure, then stop and start the sandbox");
+    expect(result.stderr).not.toContain("quarantin");
+    expect(result.stdout).not.toContain("unexpected-");
+  });
+
   it("keeps the initial non-root supervisor alive and recovers a failed first child", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([

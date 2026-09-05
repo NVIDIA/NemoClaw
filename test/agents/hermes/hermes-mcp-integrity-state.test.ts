@@ -335,6 +335,23 @@ _config_digest, _env_digest, superseded_mcp = guard._parse_config_hash(
 guard.refresh_hashes(hermes, anchor, "compat", mcp_transition="apply")
 superseded_applied_state = guard.inspect_mcp_integrity(hermes, anchor)
 
+strict = os.path.join(root, "hermes.config-hash")
+current_text = open(anchor, encoding="utf-8").read()
+guard._write_hash(strict, current_text)
+_config_digest, _env_digest, root_before = guard._parse_config_hash(
+    current_text, config, env
+)
+write_inputs("after", "two", "https://root.example/mcp")
+guard.refresh_hashes(hermes, strict, "both", mcp_transition="adopt")
+root_pending_text = open(strict, encoding="utf-8").read()
+_config_digest, _env_digest, root_pending = guard._parse_config_hash(
+    root_pending_text, config, env
+)
+root_pending_state = guard.inspect_mcp_integrity(hermes, strict)
+root_anchors_equal = root_pending_text == open(anchor, encoding="utf-8").read()
+guard.refresh_hashes(hermes, strict, "both", mcp_transition="apply")
+root_applied_state = guard.inspect_mcp_integrity(hermes, strict)
+
 proof = {
     "stale_rejected": stale_rejected,
     "refreshed_state": refreshed_state,
@@ -350,6 +367,11 @@ proof = {
     "superseded_applied_preserved": superseded_mcp.applied == adopted_mcp.intended,
     "pending_anchor_replaced": superseded_text != pending_text,
     "superseded_applied_state": superseded_applied_state,
+    "root_pending_state": root_pending_state,
+    "root_anchors_equal": root_anchors_equal,
+    "root_intended_changed": root_pending.intended != root_before.intended,
+    "root_applied_preserved": root_pending.applied == root_before.applied,
+    "root_applied_state": root_applied_state,
 }
 shutil.rmtree(root)
 print(json.dumps(proof))
@@ -375,6 +397,11 @@ print(json.dumps(proof))
       superseded_applied_preserved: true,
       pending_anchor_replaced: true,
       superseded_applied_state: "current",
+      root_pending_state: "pending",
+      root_anchors_equal: true,
+      root_intended_changed: true,
+      root_applied_preserved: true,
+      root_applied_state: "current",
     });
   });
 
