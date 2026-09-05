@@ -10,10 +10,6 @@ import {
   renderHermesPortableDockerfileBuildSettings,
   type HermesPortableDockerfileBuildSettings,
 } from "../dockerfile-patch";
-import {
-  REVIEWED_NPM_ARCHIVE_SHA256,
-  REVIEWED_NPM_TARBALL,
-} from "../../../../scripts/lib/reviewed-npm-identity.mts";
 import { HERMES_PORTABLE_BUILD_CONTEXT_FILES } from "./hermes-portable-build-context-files";
 
 const CONTEXT_SCHEMA_VERSION = 1 as const;
@@ -138,6 +134,11 @@ type DirectoryEvidence = {
   readonly ownerUid: string;
 };
 
+type ReviewedNpmAddAuthority = {
+  readonly checksum: string;
+  readonly source: string;
+};
+
 export interface HermesPortableBuildContextAuthority {
   readonly schemaVersion: typeof CONTEXT_SCHEMA_VERSION;
   readonly sourceRevision: string;
@@ -250,7 +251,10 @@ function sourceTokenMatches(relativePath: string, token: string): boolean {
   return relativePath === token;
 }
 
-function parseDockerfileSources(bytes: Buffer): readonly string[] {
+function parseDockerfileSources(
+  bytes: Buffer,
+  reviewedNpm: ReviewedNpmAddAuthority,
+): readonly string[] {
   let text: string;
   try {
     text = UTF8.decode(bytes);
@@ -312,8 +316,7 @@ function parseDockerfileSources(bytes: Buffer): readonly string[] {
       const checksum = options[0];
       const isReviewedPythonArchive = source?.startsWith("https://files.pythonhosted.org/");
       const isReviewedNpmArchive =
-        source === REVIEWED_NPM_TARBALL &&
-        checksum === `--checksum=sha256:${REVIEWED_NPM_ARCHIVE_SHA256}`;
+        source === reviewedNpm.source && checksum === reviewedNpm.checksum;
       if (
         sources.length !== 1 ||
         options.length !== 1 ||
@@ -340,6 +343,32 @@ function parseDockerfileSources(bytes: Buffer): readonly string[] {
     fail("Dockerfile local COPY sources disagree with the reviewed allowlist");
   }
   return local;
+}
+
+function reviewedNpmAddAuthority(sourceEntries: readonly SourceEntry[]): ReviewedNpmAddAuthority {
+  const config = sourceEntries.find((entry) => entry.relativePath === "ci/reviewed-npm-audit.json");
+  if (config?.kind !== "file" || !config.bytes) fail("reviewed npm identity is unavailable");
+  let identity: unknown;
+  try {
+    identity = JSON.parse(UTF8.decode(config.bytes));
+  } catch {
+    fail("reviewed npm identity is invalid");
+  }
+  if (!identity || typeof identity !== "object") fail("reviewed npm identity is invalid");
+  const candidate = identity as Record<string, unknown>;
+  if (
+    typeof candidate.npmVersion !== "string" ||
+    !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u.test(candidate.npmVersion) ||
+    typeof candidate.npmArchiveSha256 !== "string" ||
+    !SHA256.test(candidate.npmArchiveSha256) ||
+    candidate.registryOrigin !== "https://registry.npmjs.org/"
+  ) {
+    fail("reviewed npm identity is invalid");
+  }
+  return {
+    checksum: `--checksum=sha256:${candidate.npmArchiveSha256}`,
+    source: new URL(`npm/-/npm-${candidate.npmVersion}.tgz`, candidate.registryOrigin).href,
+  };
 }
 
 function readRevisionFile(filePath: string): {
@@ -785,7 +814,7 @@ function capture(
     (entry) => entry.relativePath === SOURCE_DOCKERFILE_RELATIVE_PATH,
   );
   if (dockerfile?.kind !== "file" || !dockerfile.bytes) fail("Dockerfile source is unavailable");
-  parseDockerfileSources(dockerfile.bytes);
+  parseDockerfileSources(dockerfile.bytes, reviewedNpmAddAuthority(sourceEntries));
   const contextEntries = renderContextEntries(sourceEntries, settings);
   return {
     authority: sourceAuthority(sourceEntries, contextEntries, revision, sourceDirectoryChain),

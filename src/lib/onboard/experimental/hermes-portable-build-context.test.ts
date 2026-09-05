@@ -415,6 +415,18 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(fs.existsSync(reservationRoot)).toBe(reservationExistedBefore);
   });
 
+  it("rejects a remote npm archive that disagrees with the reviewed identity", () => {
+    const source = primaryCloneFixture();
+    const configPath = path.join(source, "ci/reviewed-npm-audit.json");
+    const identity = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    identity.npmArchiveSha256 = "0".repeat(64);
+    fs.writeFileSync(configPath, `${JSON.stringify(identity, null, 2)}\n`, { mode: 0o644 });
+
+    expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).toThrow(
+      "unsupported local or unpinned ADD instruction",
+    );
+  });
+
   it.each([
     { instruction: "RUN", option: "--network=none", continued: false, commented: false },
     {
