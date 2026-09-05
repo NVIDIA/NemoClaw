@@ -22,6 +22,7 @@ const POLL_INTERVAL_MS = 100;
 // OpenShell checks the sandbox every two seconds after binding. Keep the
 // listener owned through one complete post-bind check before callers connect.
 const STABLE_LISTENER_OBSERVATIONS = 26;
+const STABLE_LISTENER_TIMEOUT_MS = STABLE_LISTENER_OBSERVATIONS * POLL_INTERVAL_MS;
 const FORWARD_INSTANCE_ENV = "NEMOCLAW_FORWARD_INSTANCE_ID";
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
 
@@ -626,9 +627,12 @@ export function launchForwardService(
         ? readProcessIdentity(child.pid)
         : `${process.platform}:${instanceId}`;
     child.unref();
-    const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
+    const timeoutMs = options.timeoutMs ?? START_TIMEOUT_MS;
+    const bindDeadline = Date.now() + timeoutMs;
+    let stabilityDeadline: number | undefined;
     let exited = false;
     let ownershipLost = false;
+    let stabilityTimedOut = false;
     let stableListenerObservations = 0;
     while (true) {
       if (childIdentity) {
@@ -651,6 +655,7 @@ export function launchForwardService(
         listenerOwnership === true &&
         processIdentityStatus(child.pid, childIdentity, readProcessIdentity) === "owned"
       ) {
+        stabilityDeadline ??= Date.now() + STABLE_LISTENER_TIMEOUT_MS;
         stableListenerObservations += 1;
         if (stableListenerObservations >= STABLE_LISTENER_OBSERVATIONS) {
           removeForwardStartOutput(child);
@@ -665,9 +670,14 @@ export function launchForwardService(
       // first relay and make the foreground service exit. Inspect the launched
       // process's listener ownership without connecting to the service.
       // The bind deadline governs the first owned-listener observation. Once
-      // binding starts, finish the short stability window instead of timing
-      // out a service that bound at the edge of the deadline.
-      if (Date.now() >= deadline && stableListenerObservations === 0) break;
+      // binding starts, a separate fixed deadline prevents repeated ownership
+      // loss from resetting the stability window forever.
+      const now = Date.now();
+      if (stabilityDeadline !== undefined && now >= stabilityDeadline) {
+        stabilityTimedOut = true;
+        break;
+      }
+      if (stabilityDeadline === undefined && now >= bindDeadline) break;
       sleep(POLL_INTERVAL_MS);
     }
     if (ownershipLost) {
@@ -695,8 +705,11 @@ export function launchForwardService(
           stopResult === "unverified"
             ? "could not verify that it still owned that process"
             : "could not stop that process";
+        const incompleteState = stabilityTimedOut
+          ? `did not retain listener ownership for ${String(STABLE_LISTENER_TIMEOUT_MS)}ms`
+          : `remained unbound after ${String(timeoutMs)}ms`;
         throw new Error(
-          `OpenShell forward service process ${String(child.pid)} remained unbound after ${String(options.timeoutMs ?? START_TIMEOUT_MS)}ms and ${reason}; ` +
+          `OpenShell forward service process ${String(child.pid)} ${incompleteState} and ${reason}; ` +
             `refusing to signal or retry; forward start: ${finalStartState.diagnostic}; forward list: ${describeFailureState(options.describeState)}`,
         );
       }
@@ -708,7 +721,9 @@ export function launchForwardService(
             `refusing to adopt its listener or retry; forward start: ${finalStartState.diagnostic}; forward list: ${describeFailureState(options.describeState)}`,
         );
       }
-      finalFailure = "was stopped after failing to bind";
+      finalFailure = stabilityTimedOut
+        ? "was stopped after listener ownership did not stabilize"
+        : "was stopped after failing to bind";
     }
     finalStartState = readForwardStartState(child);
     removeForwardStartOutput(child);

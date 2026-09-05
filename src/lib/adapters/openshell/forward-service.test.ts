@@ -162,6 +162,34 @@ describe("OpenShell forward service", () => {
     expect(sleep).toHaveBeenCalledTimes(35);
   });
 
+  it("stops when listener ownership never stabilizes (#11084)", () => {
+    let now = 0;
+    let ownershipChecks = 0;
+    let running = true;
+    const stopProcess = vi.fn(() => {
+      running = false;
+    });
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+
+    expect(() =>
+      launchForwardService(target, {
+        getProcessIdentity: stableProcessIdentity,
+        isListenerOwned: () => ++ownershipChecks % 2 === 1,
+        isProcessRunning: () => running,
+        isReachable: () => false,
+        maxAttempts: 1,
+        sleep: (milliseconds) => {
+          now += milliseconds;
+        },
+        spawnDetached: () => ({ pid: 44, unref: vi.fn() }),
+        stopProcess,
+        timeoutMs: 10_000,
+      }),
+    ).toThrow(/was stopped after listener ownership did not stabilize/u);
+    expect(ownershipChecks).toBeGreaterThan(1);
+    expect(stopProcess).toHaveBeenCalledWith(44, "SIGTERM");
+  });
+
   it("refuses an occupied port without launching or adopting its listener", () => {
     const spawnDetached = vi.fn();
 
