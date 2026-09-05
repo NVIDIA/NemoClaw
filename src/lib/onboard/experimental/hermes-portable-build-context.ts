@@ -10,6 +10,10 @@ import {
   renderHermesPortableDockerfileBuildSettings,
   type HermesPortableDockerfileBuildSettings,
 } from "../dockerfile-patch";
+import {
+  REVIEWED_NPM_ARCHIVE_SHA256,
+  REVIEWED_NPM_TARBALL,
+} from "../../../../scripts/lib/reviewed-npm-identity.mts";
 import { HERMES_PORTABLE_BUILD_CONTEXT_FILES } from "./hermes-portable-build-context-files";
 
 const CONTEXT_SCHEMA_VERSION = 1 as const;
@@ -77,6 +81,7 @@ const LOCAL_COPY_SOURCES = [
   "scripts/lib/openclaw-npm-remediation.mts",
   "scripts/lib/patch-bundled-npm-ip-address.mts",
   "scripts/lib/reviewed-npm-archive.mts",
+  "scripts/lib/reviewed-npm-identity.mts",
   "scripts/lib/sandbox-init.sh",
   "scripts/lib/sandbox-rlimits.sh",
   "scripts/managed-bootstrap-entrypoint.c",
@@ -85,6 +90,8 @@ const LOCAL_COPY_SOURCES = [
   "scripts/managed-startup-hold.sh",
   "scripts/patch-bundled-npm-brace-expansion.mts",
   "scripts/patch-bundled-npm-tar.mts",
+  "scripts/upgrade-bundled-npm.mts",
+  "ci/reviewed-npm-audit.json",
   "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
   "src/lib/hermes-managed-route.ts",
   "src/lib/messaging/",
@@ -301,11 +308,17 @@ function parseDockerfileSources(bytes: Buffer): readonly string[] {
     if (tokens.length < 2) fail("Dockerfile has an incomplete COPY or ADD instruction");
     const sources = tokens.slice(0, -1);
     if (command === "ADD") {
+      const source = sources[0];
+      const checksum = options[0];
+      const isReviewedPythonArchive = source?.startsWith("https://files.pythonhosted.org/");
+      const isReviewedNpmArchive =
+        source === REVIEWED_NPM_TARBALL &&
+        checksum === `--checksum=sha256:${REVIEWED_NPM_ARCHIVE_SHA256}`;
       if (
         sources.length !== 1 ||
-        !sources[0]!.startsWith("https://files.pythonhosted.org/") ||
         options.length !== 1 ||
-        !/^--checksum=sha256:[a-f0-9]{64}$/u.test(options[0]!)
+        !/^--checksum=sha256:[a-f0-9]{64}$/u.test(checksum ?? "") ||
+        (!isReviewedPythonArchive && !isReviewedNpmArchive)
       ) {
         fail("Dockerfile has an unsupported local or unpinned ADD instruction");
       }

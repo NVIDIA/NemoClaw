@@ -17,6 +17,7 @@ import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import {
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
+  FAKE_API_IMAGE,
   FAKE_API_PROXY_READINESS_PORT,
   FAKE_API_PROXY_READINESS_SOURCE,
   FAKE_API_PROXY_SOURCE,
@@ -43,6 +44,12 @@ const OPENSHELL_NETWORK_INSPECT = JSON.stringify([
   },
 ]);
 const execFileAsync = promisify(execFile);
+
+it("pins the fake messaging API to the reviewed Node runtime", () => {
+  expect(FAKE_API_IMAGE).toBe(
+    "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc",
+  );
+});
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
   const deadline = Date.now() + 5_000;

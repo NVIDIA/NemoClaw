@@ -491,6 +491,8 @@ jobs:
 
       - name: Install dependencies
         run: bash .trusted-ci-actions/.github/actions/ci-install-dependencies.sh
+        env:
+          NPM_CONFIG_ALLOW_REMOTE: root
 
       - name: Run package-contract and type checks
         uses: ./.trusted-ci-actions/.github/actions/ci-build-typecheck

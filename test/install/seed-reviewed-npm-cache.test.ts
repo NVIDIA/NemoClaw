@@ -4,6 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +21,15 @@ const REGISTRY_ORIGIN = "https://registry.npmjs.org/";
 const TARBALL_URL = "https://registry.npmjs.org/@example/reviewed/-/reviewed-1.2.3.tgz";
 const TARGET = { cpu: "x64", libc: "glibc", os: "linux" } as const;
 const roots: string[] = [];
+
+function cachePutFromInstalledNpm(): CachePut {
+  const npmRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+  const require = createRequire(import.meta.url);
+  const cacachePath = require.resolve("cacache", {
+    paths: [path.join(npmRoot, "npm", "node_modules")],
+  });
+  return (require(cacachePath) as Readonly<{ put: CachePut }>).put;
+}
 
 type PutCall = Readonly<{
   cachePath: string;
@@ -173,10 +183,13 @@ describe("reviewed npm cache seed", () => {
 
   it("serves npm view offline from lock-derived packuments", async () => {
     const input = fixture();
-    await seedReviewedNpmCache({
-      ...request(input, new Map()),
-      packumentsOnly: true,
-    });
+    await seedReviewedNpmCache(
+      {
+        ...request(input, new Map()),
+        packumentsOnly: true,
+      },
+      cachePutFromInstalledNpm(),
+    );
 
     const integrity = execFileSync(
       "npm",

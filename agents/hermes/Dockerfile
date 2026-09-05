@@ -14,7 +14,7 @@ ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 ARG TARGETARCH
 
 FROM scratch AS reviewed-npm-archive
-ADD --chmod=0444 --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz
+ADD --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz
 
 # The reviewed npm graph is audited in CI; image assembly copies only its
 # generated runtime artifacts and therefore needs neither npm nor network.

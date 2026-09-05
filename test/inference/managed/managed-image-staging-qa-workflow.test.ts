@@ -81,7 +81,16 @@ describe("managed-image staging QA workflow", () => {
     const overlaySource = required(overlay.run, "staging QA dependency overlay is missing");
     expect(overlaySource).toContain("agents/langchain-deepagents-code/Dockerfile.base");
     expect(overlaySource).toContain("agents/langchain-deepagents-code/requirements.lock");
-    expect(overlaySource).toContain("scripts/lib/bundled-npm-package.mts");
+    [
+      "ci/reviewed-npm-audit.json",
+      "scripts/lib/bundled-npm-package.mts",
+      "scripts/lib/patch-bundled-npm-ip-address.mts",
+      "scripts/lib/reviewed-npm-archive.mts",
+      "scripts/lib/reviewed-npm-identity.mts",
+      "scripts/patch-bundled-npm-brace-expansion.mts",
+      "scripts/patch-bundled-npm-tar.mts",
+      "scripts/upgrade-bundled-npm.mts",
+    ].forEach((npmSupportFile) => expect(overlaySource).toContain(npmSupportFile));
     expect(overlaySource).toContain(
       "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
     );

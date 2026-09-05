@@ -205,7 +205,14 @@ jobs:
             install -m 0644 "$source_file" "$destination_file"
           done
           for support_relative in \
+            ci/reviewed-npm-audit.json \
             scripts/lib/bundled-npm-package.mts \
+            scripts/lib/patch-bundled-npm-ip-address.mts \
+            scripts/lib/reviewed-npm-archive.mts \
+            scripts/lib/reviewed-npm-identity.mts \
+            scripts/patch-bundled-npm-brace-expansion.mts \
+            scripts/patch-bundled-npm-tar.mts \
+            scripts/upgrade-bundled-npm.mts \
             scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch
           do
             support_source="$candidate_root/$support_relative"

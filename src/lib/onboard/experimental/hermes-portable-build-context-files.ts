@@ -48,6 +48,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/start.sh", mode: "100755" },
   { path: "agents/hermes/validate-cli-adapter.py", mode: "100755" },
   { path: "agents/hermes/validate-env-secret-boundary.py", mode: "100755" },
+  { path: "ci/reviewed-npm-audit.json", mode: "100644" },
   { path: "nemoclaw-blueprint/blueprint.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/model-specific-setup/hermes/README.md", mode: "100644" },
   {
@@ -135,6 +136,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/lib/openclaw-npm-remediation.mts", mode: "100755" },
   { path: "scripts/lib/patch-bundled-npm-ip-address.mts", mode: "100755" },
   { path: "scripts/lib/reviewed-npm-archive.mts", mode: "100755" },
+  { path: "scripts/lib/reviewed-npm-identity.mts", mode: "100755" },
   { path: "scripts/lib/sandbox-init.sh", mode: "100755" },
   { path: "scripts/lib/sandbox-rlimits.sh", mode: "100644" },
   { path: "scripts/managed-bootstrap-entrypoint.c", mode: "100644" },
@@ -143,6 +145,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/managed-startup-hold.sh", mode: "100755" },
   { path: "scripts/patch-bundled-npm-brace-expansion.mts", mode: "100755" },
   { path: "scripts/patch-bundled-npm-tar.mts", mode: "100755" },
+  { path: "scripts/upgrade-bundled-npm.mts", mode: "100755" },
   {
     path: "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
     mode: "100644",

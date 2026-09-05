@@ -214,21 +214,38 @@ describe("reviewed bundled npm upgrade", () => {
     expect(
       upgradeBundledNpm(npmRoot, {
         commandRunner: (command) => commands.push(command),
-        prepareArchive: () => {
-          throw new Error("unexpected download");
-        },
       }).npmVersion,
     ).toBe(REVIEWED_NPM_VERSION);
     expect(commands).toEqual(["npm", "npx"]);
+  });
+
+  it("reinstalls explicit reviewed bytes over an already-remediated npm tree", () => {
+    const npmRoot = reviewedNpm();
+    writePackage(npmRoot, "brace-expansion", "brace-expansion", "5.0.9");
+    const replacementRoot = reviewedNpm();
+    const archivePath = path.join(temporaryDirectory(), "npm-12.0.2.tgz");
+    fs.writeFileSync(archivePath, "reviewed fixture\n");
+    const commands: string[] = [];
+
+    const result = upgradeBundledNpm(npmRoot, {
+      commandRunner: (command) => commands.push(command),
+      installArchive() {
+        commands.push("install-reviewed-npm");
+        fs.rmSync(npmRoot, { recursive: true });
+        fs.cpSync(replacementRoot, npmRoot, { recursive: true });
+      },
+      prepareArchive: () => ({ archivePath, cleanup: () => commands.push("cleanup") }),
+    });
+
+    expect(result.packages["brace-expansion"]).toEqual(["5.0.7"]);
+    expect(commands).toEqual(["install-reviewed-npm", "npm", "npx", "cleanup"]);
   });
 
   it("verifies a supplied archive even when the reviewed tree is already installed", () => {
     const archivePath = path.join(temporaryDirectory(), "npm.tgz");
     fs.writeFileSync(archivePath, "not npm\n");
 
-    expect(() => upgradeBundledNpm(reviewedNpm(), { archivePath })).toThrow(
-      "integrity mismatch",
-    );
+    expect(() => upgradeBundledNpm(reviewedNpm(), { archivePath })).toThrow("integrity mismatch");
   });
 
   it("fails closed on reviewed-package drift", () => {

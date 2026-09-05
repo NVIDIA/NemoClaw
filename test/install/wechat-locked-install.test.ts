@@ -167,7 +167,7 @@ printf 'verify|%s|%s|openclaw=%s|offline=%s|cache=%s\n' "$3" "$4" "$5" "$NPM_CON
         `npm|view|@tencent-weixin/openclaw-weixin@2.4.3|cache=${fs.realpathSync(installCache)}|offline=true`,
       );
       expect(calls).toContain(
-        `npm|pack|${WECHAT_TARBALL}|cache=${fs.realpathSync(installCache)}|offline=true`,
+        `npm|pack|@tencent-weixin/openclaw-weixin@2.4.3|cache=${fs.realpathSync(installCache)}|offline=true`,
       );
       expect(calls).toContain(`offline=true|peer=true|cache=${fs.realpathSync(installCache)}`);
       expect(calls).toContain(
@@ -192,51 +192,51 @@ printf 'verify|%s|%s|openclaw=%s|offline=%s|cache=%s\n' "$3" "$4" "$5" "$NPM_CON
     }
   });
 
-  it.each(INVALID_INSTALL_CACHE_CASES)("rejects $name before package tooling runs", ({
-    prepare,
-    expected,
-  }) => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-invalid-cache-"));
-    const trace = path.join(tmp, "trace");
-    executable(path.join(tmp, "npm"), '#!/bin/sh\nprintf "npm\\n" >> "$TRACE"\n');
-    executable(path.join(tmp, "openclaw"), '#!/bin/sh\nprintf "openclaw\\n" >> "$TRACE"\n');
-    executable(path.join(tmp, "node"), '#!/bin/sh\nprintf "node\\n" >> "$TRACE"\n');
+  it.each(INVALID_INSTALL_CACHE_CASES)(
+    "rejects $name before package tooling runs",
+    ({ prepare, expected }) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-invalid-cache-"));
+      const trace = path.join(tmp, "trace");
+      executable(path.join(tmp, "npm"), '#!/bin/sh\nprintf "npm\\n" >> "$TRACE"\n');
+      executable(path.join(tmp, "openclaw"), '#!/bin/sh\nprintf "openclaw\\n" >> "$TRACE"\n');
+      executable(path.join(tmp, "node"), '#!/bin/sh\nprintf "node\\n" >> "$TRACE"\n');
 
-    const plan = {
-      schemaVersion: 1,
-      sandboxName: "wechat-invalid-cache",
-      agent: "openclaw",
-      channels: [{ channelId: "wechat", active: true }],
-      credentialBindings: [],
-      agentRender: [],
-      buildSteps: [
-        {
-          channelId: "wechat",
-          kind: "package-install",
-          outputId: "openclawPluginPackage",
-          required: true,
-          value: {
-            manager: "openclaw-plugin",
-            spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
+      const plan = {
+        schemaVersion: 1,
+        sandboxName: "wechat-invalid-cache",
+        agent: "openclaw",
+        channels: [{ channelId: "wechat", active: true }],
+        credentialBindings: [],
+        agentRender: [],
+        buildSteps: [
+          {
+            channelId: "wechat",
+            kind: "package-install",
+            outputId: "openclawPluginPackage",
+            required: true,
+            value: {
+              manager: "openclaw-plugin",
+              spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
+            },
           },
-        },
-      ],
-    };
-    const env = {
-      PATH: `${tmp}:${process.env.PATH ?? "/usr/bin:/bin"}`,
-      TRACE: trace,
-      NEMOCLAW_WECHAT_NPM_INSTALL_CACHE: prepare(tmp),
-      NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(JSON.stringify(plan)).toString("base64"),
-    };
+        ],
+      };
+      const env = {
+        PATH: `${tmp}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+        TRACE: trace,
+        NEMOCLAW_WECHAT_NPM_INSTALL_CACHE: prepare(tmp),
+        NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(JSON.stringify(plan)).toString("base64"),
+      };
 
-    try {
-      const serialized = readMessagingBuildPlanFromEnv(env, "openclaw");
-      expect(() => applyMessagingBuildPhase(serialized, "agent-install", env)).toThrow(expected);
-      expect(fs.existsSync(trace)).toBe(false);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+      try {
+        const serialized = readMessagingBuildPlanFromEnv(env, "openclaw");
+        expect(() => applyMessagingBuildPhase(serialized, "agent-install", env)).toThrow(expected);
+        expect(fs.existsSync(trace)).toBe(false);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each(TRUSTED_INSTALL_CACHE_CASES)("rejects $name", ({ prepare }) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-trusted-cache-"));

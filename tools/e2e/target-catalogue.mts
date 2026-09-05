@@ -259,11 +259,13 @@ const nonInteractive = {
 const PI_IMAGE_SOURCE_OWNING_PATHS = [
   ".dockerignore",
   "agents/pi/",
+  "ci/reviewed-npm-audit.json",
   "nemoclaw-blueprint/",
   "scripts/lib/bundled-npm-package.mts",
   "scripts/lib/entrypoint-env-wrapper.sh",
   "scripts/lib/patch-bundled-npm-ip-address.mts",
   "scripts/lib/reviewed-npm-archive.mts",
+  "scripts/lib/reviewed-npm-identity.mts",
   "scripts/lib/sandbox-rlimits.sh",
   "scripts/managed-bootstrap-entrypoint.c",
   "scripts/managed-bootstrap-trampoline.sh",
@@ -1230,8 +1232,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   ...GATEWAY_UPGRADE_TARGETS,
   dockerOnlyTarget("shields-retirement-upgrade", {
-    displayName:
-      "Upgrade: migrates a v0.0.115 Shields sandbox to the candidate image",
+    displayName: "Upgrade: migrates a v0.0.115 Shields sandbox to the candidate image",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint:
       "x86-64 Ubuntu; pinned v0.0.115 install and candidate managed image; local compatible endpoint",
@@ -1254,8 +1255,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...nonInteractive,
       NEMOCLAW_AGENT: "openclaw",
       NEMOCLAW_OLD_NEMOCLAW_REF: "v0.0.115",
-      NEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT:
-        "7503e700808655df1303ddc51888bb596c9afa34",
+      NEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT: "7503e700808655df1303ddc51888bb596c9afa34",
       NEMOCLAW_OLD_NEMOCLAW_COMMIT: "324a886fd05b01f6756bae0371ea503c651fbd11",
       NEMOCLAW_OLD_INSTALLER_SHA256:
         "0ed77ba8cf176641bd3b22cfd89b4977b3d9a6f47b76da8b03bf4091a20d1251",

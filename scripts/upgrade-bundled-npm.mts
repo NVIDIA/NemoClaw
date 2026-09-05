@@ -225,16 +225,15 @@ export function upgradeBundledNpm(
     throw new Error("reviewed npm upgrade cannot select both archivePath and prepareArchive");
   }
 
-  if (currentVersion === REVIEWED_NPM_VERSION) {
-    if (dependencies.archivePath !== undefined) {
-      verifyReviewedNpmArchive(resolve(dependencies.archivePath));
-    }
+  const explicitArchiveSource =
+    dependencies.archivePath !== undefined || dependencies.prepareArchive !== undefined;
+  if (currentVersion === REVIEWED_NPM_VERSION && !explicitArchiveSource) {
     const reviewed = verifyReviewedNpm(root);
     commandRunner("npm", ["--version"]);
     commandRunner("npx", ["--version"]);
     return reviewed;
   }
-  if (!REPLACEABLE_NPM_VERSIONS.has(currentVersion)) {
+  if (currentVersion !== REVIEWED_NPM_VERSION && !REPLACEABLE_NPM_VERSIONS.has(currentVersion)) {
     throw new Error(
       `npm@${currentVersion} is outside the reviewed upgrade path to npm@${REVIEWED_NPM_VERSION}`,
     );

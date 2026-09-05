@@ -446,7 +446,8 @@ describe("reviewed npm image remediation contract", () => {
     const dockerfile = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const archiveStage = namedStage(dockerfile, "reviewed-npm-archive");
     const source = completedStage(dockerfile);
-    const archiveSource = `ADD --chmod=0444 --checksum=sha256:${REVIEWED_NPM_ARCHIVE_SHA256} ${REVIEWED_NPM_TARBALL} /npm-${REVIEWED_NPM_VERSION}.tgz`;
+    const portableOptions = file === "agents/hermes/Dockerfile" ? "" : "--chmod=0444 ";
+    const archiveSource = `ADD ${portableOptions}--checksum=sha256:${REVIEWED_NPM_ARCHIVE_SHA256} ${REVIEWED_NPM_TARBALL} /npm-${REVIEWED_NPM_VERSION}.tgz`;
     const archiveCopy = `COPY --from=reviewed-npm-archive /npm-${REVIEWED_NPM_VERSION}.tgz ${reviewedNpmArchivePath}`;
     const archiveCopyIndex = source.indexOf(archiveCopy);
     const upgradeRun = requireSingleReviewedDockerfileRunCommand(

@@ -107,6 +107,11 @@
       "category": "security"
     },
     {
+      "file": "test/repository/code-scanning-workflow.test.ts",
+      "test": "installs npm from the immutable reviewed action bootstrap",
+      "category": "security"
+    },
+    {
       "file": "test/repository/github-actions-node-npm-invariant.test.ts",
       "test": "selects the reviewed Node and npm identities before further steps",
       "category": "security"
