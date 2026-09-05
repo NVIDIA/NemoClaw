@@ -611,7 +611,8 @@ main() {
   # Bind the public NemoClaw caller to DCode's patched public lifecycle and
   # agent-owned state before using a fresh inference session as the consumer.
   skill_name="nemoclaw-native-lifecycle"
-  skill_marker="DCODE_NATIVE_SKILL_OK"
+  skill_marker_v1="DCODE_NATIVE_SKILL_V1"
+  skill_marker_v2="DCODE_NATIVE_SKILL_V2"
   skill_root="$(mktemp -d "${TMPDIR:-/tmp}/${PREFIX}-skill.XXXXXX")"
   cli_bin="${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}"
   printf '%s\n' \
@@ -620,25 +621,37 @@ main() {
     'description: Use when asked for the native lifecycle canary.' \
     '---' \
     '# Native lifecycle canary' \
-    "When asked for the native lifecycle canary, reply with exactly ${skill_marker} and nothing else." \
+    "When asked for the native lifecycle canary, reply with exactly ${skill_marker_v1} and nothing else." \
     >"${skill_root}/SKILL.md"
   if skill_install_output="$("$cli_bin" "$SANDBOX_NAME" skill install "$skill_root" 2>&1)"; then
     pass "public NemoClaw skill install delegated to DCode native state"
   else
     fail_test "public NemoClaw skill install did not complete through DCode"
   fi
-  rm -rf -- "$skill_root"
   skill_list_output="$("$cli_bin" "$SANDBOX_NAME" skill list --json 2>&1 || true)"
   if printf '%s\n' "$skill_list_output" | grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"${skill_name}\""; then
     pass "public NemoClaw skill list reports DCode native state"
   else
     fail_test "public NemoClaw skill list did not report the imported DCode skill"
   fi
+  printf '%s\n' \
+    '---' \
+    "name: ${skill_name}" \
+    'description: Use when asked for the native lifecycle canary.' \
+    '---' \
+    '# Native lifecycle canary' \
+    "When asked for the native lifecycle canary, reply with exactly ${skill_marker_v2} and nothing else." \
+    >"${skill_root}/SKILL.md"
+  skill_update_output="$("$cli_bin" "$SANDBOX_NAME" skill install "$skill_root" 2>&1)" \
+    && skill_update_status=0 || skill_update_status=$?
   skill_file_output="$(sandbox_exec "cat /sandbox/.deepagents/agent/skills/${skill_name}/SKILL.md" || true)"
-  if printf '%s\n' "$skill_file_output" | grep -Fxq "When asked for the native lifecycle canary, reply with exactly ${skill_marker} and nothing else."; then
-    pass "DCode native target contains the submitted lifecycle marker"
+  rm -rf -- "$skill_root"
+  if [ "$skill_update_status" -eq 0 ] \
+    && grep -Fxq "When asked for the native lifecycle canary, reply with exactly ${skill_marker_v2} and nothing else." <<<"$skill_file_output" \
+    && ! grep -Fq "$skill_marker_v1" <<<"$skill_file_output"; then
+    pass "public NemoClaw skill update replaced the active DCode native target"
   else
-    fail_test "DCode native target does not contain the submitted lifecycle marker"
+    fail_test "public NemoClaw skill update did not replace the active DCode native target"
   fi
 
   # 5. The same login-shell path runs dcode and returns a JSON PONG envelope.
@@ -658,10 +671,10 @@ main() {
   fi
   direct_headless_output="${direct_output}
 DCODE_EXIT:${direct_exit}"
-  if direct_classification="$(classify_headless_output "$direct_exit" "$direct_headless_output" "$skill_marker")"; then
-    pass "fresh direct-exec dcode session consumed the natively imported skill (${direct_classification}; exit ${direct_exit})"
+  if direct_classification="$(classify_headless_output "$direct_exit" "$direct_headless_output" "$skill_marker_v2")"; then
+    pass "fresh direct-exec dcode session consumed only the updated native skill (${direct_classification}; exit ${direct_exit})"
   else
-    fail_test "fresh direct-exec dcode session did not consume the natively imported skill (${direct_classification}, exit ${direct_exit})"
+    fail_test "fresh direct-exec dcode session did not consume only the updated native skill (${direct_classification}, exit ${direct_exit})"
   fi
   skill_remove_output="$("$cli_bin" "$SANDBOX_NAME" skill remove "$skill_name" 2>&1)" \
     && skill_remove_status=0 || skill_remove_status=$?
@@ -724,6 +737,7 @@ ${dns_hosts_output}
 ${proxy_contract_output}
 ${route_output}
 ${skill_install_output}
+${skill_update_output}
 ${skill_list_output}
 ${skill_file_output}
 ${headless_output}

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import path from "node:path";
 
 import { resultText } from "../fixtures/clients/command.ts";
@@ -22,6 +21,15 @@ const HERMES_SKILL_FIXTURE = path.join(
   "fixtures",
   "hermes-skill-runtime",
 );
+const HERMES_SKILL_UPDATE_FIXTURE = path.join(
+  REPO_ROOT,
+  "test",
+  "e2e",
+  "fixtures",
+  "hermes-skill-runtime-v2",
+);
+const HERMES_SKILL_V1_RESPONSE = "HERMES_NATIVE_SKILL_V1";
+const HERMES_SKILL_V2_RESPONSE = "HERMES_NATIVE_SKILL_V2";
 const HERMES_SKILL_PROMPT =
   "Follow the selected verification skill and return only its verification value.";
 const INFERENCE_REQUEST_PATHS = new Set([
@@ -66,10 +74,8 @@ export async function assertHermesSkillLifecycle({
     return result;
   };
 
-  const skillFixtureText = fs.readFileSync(path.join(HERMES_SKILL_FIXTURE, "SKILL.md"), "utf8");
-  expect(skillFixtureText).toContain(E2E_MOCK_REQUEST_CANARY);
   expect(HERMES_SKILL_PROMPT).not.toContain(E2E_MOCK_REQUEST_CANARY);
-  expect(HERMES_SKILL_PROMPT).not.toMatch(/PONG/i);
+  expect(HERMES_SKILL_PROMPT).not.toMatch(/HERMES_NATIVE_SKILL_V[12]/);
 
   const skillInstall = await host.command(
     "nemohermes",
@@ -95,6 +101,27 @@ export async function assertHermesSkillLifecycle({
   );
   expect(stripAnsi(resultText(skillList))).toContain(HERMES_SKILL_ID);
 
+  const skillUpdate = await host.command(
+    "nemohermes",
+    [sandboxName, "skill", "install", HERMES_SKILL_UPDATE_FIXTURE],
+    {
+      artifactName: "phase-4-hermes-skill-update",
+      cwd: REPO_ROOT,
+      env,
+      redactionValues,
+      timeoutMs: 120_000,
+    },
+  );
+  expect(skillUpdate.exitCode, resultText(skillUpdate)).toBe(0);
+  await exec(
+    [
+      "bash",
+      "-c",
+      `grep -Fq ${HERMES_SKILL_V2_RESPONSE} /sandbox/.hermes/skills/${HERMES_SKILL_ID}/SKILL.md && ! grep -Fq ${HERMES_SKILL_V1_RESPONSE} /sandbox/.hermes/skills/${HERMES_SKILL_ID}/SKILL.md`,
+    ],
+    "phase-4-hermes-skill-update-disk-check",
+  );
+
   const sessionsBeforeSkill = await exec(
     ["hermes", "sessions", "list"],
     "phase-4-hermes-skill-sessions-before",
@@ -106,7 +133,11 @@ export async function assertHermesSkillLifecycle({
     360,
     420_000,
   );
-  expect(stripAnsi(resultText(skillChat))).toMatch(/\bPONG\b/i);
+  const skillChatText = stripAnsi(resultText(skillChat));
+  expect(
+    skillChatText.includes(HERMES_SKILL_V2_RESPONSE) &&
+      !skillChatText.includes(HERMES_SKILL_V1_RESPONSE),
+  ).toBe(true);
 
   const sessionsAfterSkill = await exec(
     ["hermes", "sessions", "list"],
