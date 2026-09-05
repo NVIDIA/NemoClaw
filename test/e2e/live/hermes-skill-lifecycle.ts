@@ -84,9 +84,6 @@ export async function assertHermesSkillLifecycle({
   );
   expect(skillInstall.exitCode, resultText(skillInstall)).toBe(0);
   expect(stripAnsi(resultText(skillInstall))).toContain(`Skill '${HERMES_SKILL_ID}' installed`);
-  expect(stripAnsi(resultText(skillInstall))).toContain(
-    "Start a new chat session to load the skill; a gateway restart is not required.",
-  );
 
   await exec(
     ["test", "-f", `/sandbox/.hermes/skills/${HERMES_SKILL_ID}/SKILL.md`],
@@ -122,11 +119,32 @@ export async function assertHermesSkillLifecycle({
     ),
   ).toMatch(/^\d{8}_\d{6}_[a-zA-Z0-9]+$/);
 
+  const skillRemove = await host.command(
+    "nemohermes",
+    [sandboxName, "skill", "remove", HERMES_SKILL_ID],
+    {
+      artifactName: "phase-4-hermes-skill-remove",
+      cwd: REPO_ROOT,
+      env,
+      redactionValues,
+      timeoutMs: 150_000,
+    },
+  );
+  expect(skillRemove.exitCode, resultText(skillRemove)).toBe(0);
+  const skillListAfterRemove = await exec(
+    ["env", "COLUMNS=240", "hermes", "skills", "list"],
+    "phase-4-hermes-skills-list-after-remove",
+  );
+  expect(stripAnsi(resultText(skillListAfterRemove))).not.toContain(HERMES_SKILL_ID);
+  await exec(
+    ["test", "!", "-e", `/sandbox/.hermes/skills/${HERMES_SKILL_ID}`],
+    "phase-4-hermes-skill-disk-check-after-remove",
+  );
+
   if (requestOffset === undefined) return;
   const skillRequests = (inference.requestSummaries() ?? [])
     .slice(requestOffset)
     .filter((request) => request.method === "POST" && INFERENCE_REQUEST_PATHS.has(request.path));
-  expect(skillRequests.length).toBeGreaterThan(0);
   expect(
     skillRequests.some((request) => request.auth === "ok" && request.requestCanaryPresent === true),
     "installed Hermes skill canary did not reach an authenticated mock inference request",

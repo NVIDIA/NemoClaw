@@ -1419,6 +1419,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     runnerKey: "security-posture-hermes",
     hostPreparation: "hermes-swap",
     runnerComparison: true,
+    owningPaths: ["test/e2e/live/hermes-skill-lifecycle.ts"],
     shard: "hermes",
     artifactLayout: "flat-shard",
     environment: {
