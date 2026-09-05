@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 
 import {
@@ -17,6 +21,108 @@ export type InstalledWechatRuntimeProof = {
   pluginVersion: string;
 };
 
+const readWechatPackageName: (candidate: string) => string | undefined =
+  function readWechatPackageName(candidate) {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(candidate, "package.json"), "utf8")).name;
+    } catch {
+      return undefined;
+    }
+  };
+
+const addManagedNpmProjectWechatCandidates: (projectsDir: string, candidates: string[]) => void =
+  function addManagedNpmProjectWechatCandidates(projectsDir, candidates) {
+    const entries = (() => {
+      try {
+        return fs.readdirSync(projectsDir, { withFileTypes: true });
+      } catch {
+        return [];
+      }
+    })();
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      candidates.push(
+        path.join(projectsDir, entry.name, "node_modules", "@tencent-weixin", "openclaw-weixin"),
+      );
+    }
+  };
+
+const linkWechatNodeModulesEntries: (
+  nodeModulesRoot: string,
+  sourceNodeModules: string,
+  skip?: Set<string>,
+) => void = function linkWechatNodeModulesEntries(
+  nodeModulesRoot,
+  sourceNodeModules,
+  skip = new Set(),
+) {
+  if (!fs.existsSync(sourceNodeModules)) return;
+  for (const entry of fs.readdirSync(sourceNodeModules)) {
+    const sourceEntry = path.join(sourceNodeModules, entry);
+    const destEntry = path.join(nodeModulesRoot, entry);
+    if (entry.startsWith("@") && fs.statSync(sourceEntry).isDirectory()) {
+      fs.mkdirSync(destEntry, { recursive: true });
+      for (const scopedEntry of fs.readdirSync(sourceEntry)) {
+        const key = entry + "/" + scopedEntry;
+        if (skip.has(key)) continue;
+        const sourceScopedEntry = path.join(sourceEntry, scopedEntry);
+        const destScopedEntry = path.join(destEntry, scopedEntry);
+        if (!fs.existsSync(destScopedEntry)) {
+          fs.symlinkSync(sourceScopedEntry, destScopedEntry, "dir");
+        }
+      }
+    } else if (!skip.has(entry) && !fs.existsSync(destEntry)) {
+      fs.symlinkSync(sourceEntry, destEntry, "dir");
+    }
+  }
+};
+
+export const resolveInstalledWechatPluginRoot: (stateDir: string) => string | null =
+  function resolveInstalledWechatPluginRoot(stateDir) {
+    const candidates = [path.join(stateDir, "extensions", "openclaw-weixin")];
+    addManagedNpmProjectWechatCandidates(path.join(stateDir, "npm", "projects"), candidates);
+    const matches: string[] = [];
+    for (const candidate of candidates) {
+      if (readWechatPackageName(candidate) !== "@tencent-weixin/openclaw-weixin") continue;
+      try {
+        const resolved = fs.realpathSync(candidate);
+        if (!matches.includes(resolved)) matches.push(resolved);
+      } catch {}
+    }
+    return matches.length === 1 ? matches[0] : null;
+  };
+
+const resolveInstalledOpenClawRoot: () => string | null = function resolveInstalledOpenClawRoot() {
+  const candidates = [
+    "/usr/local/lib/node_modules/openclaw",
+    "/tmp/npm-global/lib/node_modules/openclaw",
+  ];
+  try {
+    const globalRoot = execFileSync("npm", ["root", "-g"], {
+      encoding: "utf8",
+      killSignal: "SIGKILL",
+      timeout: 5_000,
+    }).trim();
+    candidates.push(path.join(globalRoot, "openclaw"));
+  } catch {}
+  try {
+    const openclawBin = execFileSync("sh", ["-lc", "command -v openclaw"], {
+      encoding: "utf8",
+      killSignal: "SIGKILL",
+      timeout: 5_000,
+    }).trim();
+    let current = path.dirname(fs.realpathSync(openclawBin));
+    for (let depth = 0; depth < 8; depth += 1) {
+      candidates.push(current);
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  } catch {}
+  const root = candidates.find((candidate) => readWechatPackageName(candidate) === "openclaw");
+  return root ? fs.realpathSync(root) : null;
+};
+
 export const WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -27,48 +133,21 @@ function invariant(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-function packageName(candidate) {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(candidate, "package.json"), "utf8")).name;
-  } catch {
-    return undefined;
-  }
-}
-
-function resolveOpenClawRoot() {
-  const candidates = [
-    "/usr/local/lib/node_modules/openclaw",
-    "/tmp/npm-global/lib/node_modules/openclaw",
-  ];
-  try {
-    const globalRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
-    candidates.push(path.join(globalRoot, "openclaw"));
-  } catch {}
-  try {
-    const openclawBin = execFileSync("sh", ["-lc", "command -v openclaw"], {
-      encoding: "utf8",
-    }).trim();
-    let current = path.dirname(fs.realpathSync(openclawBin));
-    for (let depth = 0; depth < 8; depth += 1) {
-      candidates.push(current);
-      const parent = path.dirname(current);
-      if (parent === current) break;
-      current = parent;
-    }
-  } catch {}
-  return candidates.find((candidate) => packageName(candidate) === "openclaw") || null;
-}
+const readWechatPackageName = ${readWechatPackageName.toString()};
+const addManagedNpmProjectWechatCandidates = ${addManagedNpmProjectWechatCandidates.toString()};
+const linkWechatNodeModulesEntries = ${linkWechatNodeModulesEntries.toString()};
+const resolveInstalledWechatPluginRoot = ${resolveInstalledWechatPluginRoot.toString()};
+const resolveInstalledOpenClawRoot = ${resolveInstalledOpenClawRoot.toString()};
 
 const stateDir = process.env.OPENCLAW_STATE_DIR || "/sandbox/.openclaw";
-const extensionRoot = path.join(stateDir, "extensions", "openclaw-weixin");
-invariant(fs.existsSync(extensionRoot), "installed openclaw-weixin extension is missing");
-const pluginRoot = fs.realpathSync(extensionRoot);
+const pluginRoot = resolveInstalledWechatPluginRoot(stateDir);
+invariant(pluginRoot, "installed openclaw-weixin plugin is missing or has multiple installations");
 const pluginMetadata = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8"));
 invariant(
   pluginMetadata.name === "@tencent-weixin/openclaw-weixin",
-  "installed extension is not @tencent-weixin/openclaw-weixin",
+  "installed plugin is not @tencent-weixin/openclaw-weixin",
 );
-const openclawRoot = resolveOpenClawRoot();
+const openclawRoot = resolveInstalledOpenClawRoot();
 invariant(openclawRoot, "installed OpenClaw package root is missing");
 
 const proofWorkspace = fs.mkdtempSync("/tmp/openclaw-wechat-proof-");
@@ -78,6 +157,10 @@ try {
   fs.mkdirSync(wechatScope, { recursive: true });
   fs.symlinkSync(pluginRoot, path.join(wechatScope, "openclaw-weixin"), "dir");
   fs.symlinkSync(openclawRoot, path.join(nodeModules, "openclaw"), "dir");
+  const skip = new Set(["openclaw", "@tencent-weixin/openclaw-weixin"]);
+  linkWechatNodeModulesEntries(nodeModules, path.resolve(pluginRoot, "../.."), skip);
+  linkWechatNodeModulesEntries(nodeModules, path.dirname(openclawRoot), skip);
+  linkWechatNodeModulesEntries(nodeModules, path.join(openclawRoot, "node_modules"), skip);
   const proofPluginRoot = path.join(wechatScope, "openclaw-weixin");
   const [accountsModule, sendModule] = await Promise.all([
     import(pathToFileURL(path.join(proofPluginRoot, "dist/src/auth/accounts.js")).href),
