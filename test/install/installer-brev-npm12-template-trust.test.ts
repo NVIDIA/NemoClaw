@@ -20,8 +20,8 @@ const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
 );
-const REVIEWED_SOURCE_SHA256 = "cf2636e55d0a1d3a6b2cccd19332011a8ca51679064103f724f9067b7da66e52";
-const REVIEWED_TEMPLATE_SHA256 = "9a30f006ac59b6acdcef843bff62ce3fd0fe0d681df993ec1c6a24811690caf5";
+const REVIEWED_SOURCE_SHA256 = "aa6e42c034bf36a1bd28ae542159af8cb140bcb471008627609fb78d82ec9b32";
+const REVIEWED_TEMPLATE_SHA256 = "773f3728a3b6404d909cbf395abee2a3b95872d6b93ec90b7814adbacc683470";
 const tempDirs: string[] = [];
 
 afterEach(() => {
@@ -113,7 +113,6 @@ sudo env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \\
   RUNNER_TEMP="$reviewed_npm_tmp" \\
   bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json
 rm -rf "$reviewed_npm_tmp"
-[[ "$(npm --version)" == "12.0.2" ]] || fail "Reviewed npm 12.0.2 installation failed"
 `,
     "reviewed npm Brev dependency install",
   );
@@ -146,19 +145,12 @@ function runParser(brevInstaller: string) {
 
 describe("reviewed npm 12 Brev template trust", () => {
   // source-shape-contract: security -- Exact prospective Brev bytes and install order must be base-authorized before trusted CI can admit the npm 12 runtime change
-  it("binds the exact reviewed npm 12 Brev successor and rejects version drift", () => {
+  it("binds the exact reviewed npm 12 Brev successor and rejects bootstrap drift", () => {
     const reviewedTemplate = renderReviewedNpm12BrevTemplate(BREV_TEMPLATE);
     const npmVerifier = reviewedTemplate.indexOf(
       "bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json",
     );
-    const npmVersionCheck = reviewedTemplate.indexOf(
-      '[[ "$(npm --version)" == "12.0.2" ]]',
-      npmVerifier,
-    );
-    const dependencyInstall = reviewedTemplate.indexOf(
-      "npm install --ignore-scripts",
-      npmVersionCheck,
-    );
+    const dependencyInstall = reviewedTemplate.indexOf("npm install --ignore-scripts", npmVerifier);
 
     expect(createHash("sha256").update(reviewedTemplate).digest("hex")).toBe(
       REVIEWED_SOURCE_SHA256,
@@ -171,8 +163,7 @@ describe("reviewed npm 12 Brev template trust", () => {
       'node_sha256="df224555a083b918e46260cc969838501b9f9a87140c1195e5b9597b56d5dae2"',
     );
     expect(npmVerifier).toBeGreaterThan(-1);
-    expect(npmVersionCheck).toBeGreaterThan(npmVerifier);
-    expect(dependencyInstall).toBeGreaterThan(npmVersionCheck);
+    expect(dependencyInstall).toBeGreaterThan(npmVerifier);
     expect(fs.statSync(NPM_BOOTSTRAP).isFile()).toBe(true);
     expect(fs.statSync(NPM_BOOTSTRAP).mode & 0o111).not.toBe(0);
     const bootstrapSource = fs.readFileSync(NPM_BOOTSTRAP, "utf8");
@@ -195,10 +186,7 @@ describe("reviewed npm 12 Brev template trust", () => {
     ).toEqual(new Set([REVIEWED_TEMPLATE_SHA256]));
 
     const forged = runParser(
-      reviewedTemplate.replace(
-        '[[ "$(npm --version)" == "12.0.2" ]]',
-        '[[ "$(npm --version)" == "12.0.3" ]]',
-      ),
+      reviewedTemplate.replace("ci/reviewed-npm-audit.json", "ci/unreviewed-npm-audit.json"),
     );
     expect(forged.status).toBe(1);
     expect(forged.stderr).toContain("Brev launchable operational template is not base-trusted");

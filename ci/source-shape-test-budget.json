@@ -258,7 +258,7 @@
     },
     {
       "file": "test/install/installer-brev-npm12-template-trust.test.ts",
-      "test": "binds the exact reviewed npm 12 Brev successor and rejects version drift",
+      "test": "binds the exact reviewed npm 12 Brev successor and rejects bootstrap drift",
       "category": "security"
     },
     {
