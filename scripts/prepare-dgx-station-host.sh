@@ -1027,7 +1027,7 @@ check_platform() {
   fi
   station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
     || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:$(gb300_pci_device_display))"
-  system_vendor="$(head -n 1 "$(station_system_vendor_path)" 2>/dev/null || true)"
+  system_vendor="$(station_bounded_line_value "$(station_system_vendor_path)" 2>/dev/null || true)"
   cpu_count="$(station_cpu_core_count 2>/dev/null || true)"
   host_memory_kib="$(station_host_memory_kib 2>/dev/null || true)"
   release_path="$(dgx_station_release_path)"

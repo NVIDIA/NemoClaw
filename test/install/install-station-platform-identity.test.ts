@@ -243,4 +243,52 @@ run_apply
     expect(output).toContain("Expected an NVIDIA GB300 PCI GPU (10de:31c2/31c3)");
     expect(output).not.toContain("UNEXPECTED_MUTATION");
   });
+
+  it("omits an unsafe system-vendor diagnostic from platform evidence (#10928)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-vendor-"));
+    const osReleasePath = path.join(fixtureRoot, "os-release");
+    const productNamePath = path.join(fixtureRoot, "product_name");
+    const systemVendorPath = path.join(fixtureRoot, "sys_vendor");
+    const pciRoot = writePciIdentityFixture();
+    fs.writeFileSync(
+      osReleasePath,
+      'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS"\n',
+    );
+    fs.writeFileSync(productNamePath, "DGX Station GB300\n");
+    fs.writeFileSync(systemVendorPath, "NVIDIA\nFORGED_LOG=1\n");
+
+    const { result, output } = runStationPrepare(
+      `
+station_os_release_path() { printf '%s' "$OS_RELEASE_PATH"; }
+station_product_name_path() { printf '%s' "$PRODUCT_NAME_PATH"; }
+station_product_family_path() { printf '%s' "$FIXTURE_ROOT/absent-family"; }
+station_board_name_path() { printf '%s' "$FIXTURE_ROOT/absent-board"; }
+station_device_tree_model_path() { printf '%s' "$FIXTURE_ROOT/absent-model"; }
+station_system_vendor_path() { printf '%s' "$SYSTEM_VENDOR_PATH"; }
+station_cpu_possible_path() { printf '%s' "$FIXTURE_ROOT/absent-cpu"; }
+station_meminfo_path() { printf '%s' "$FIXTURE_ROOT/absent-meminfo"; }
+station_pci_devices_path() { printf '%s' "$PCI_ROOT"; }
+dgx_station_release_path() { printf '%s' "$FIXTURE_ROOT/absent-dgx-release"; }
+uname() {
+  case "$*" in
+    -m) printf 'aarch64' ;;
+    -r) printf 'test-kernel' ;;
+    *) return 1 ;;
+  esac
+}
+check_platform
+`,
+      {
+        FIXTURE_ROOT: fixtureRoot,
+        OS_RELEASE_PATH: osReleasePath,
+        PRODUCT_NAME_PATH: productNamePath,
+        SYSTEM_VENDOR_PATH: systemVendorPath,
+        PCI_ROOT: pciRoot,
+      },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("system_vendor=unknown");
+    expect(output).not.toContain("FORGED_LOG=1");
+  });
 });
