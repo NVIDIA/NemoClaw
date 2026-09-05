@@ -13,7 +13,11 @@ import {
 import { STATION_DISCOVERY_PROBE } from "../../scripts/prepare-dual-dgx-station.mts";
 import { TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
-function executeDiscoveryProbe(stationPci: boolean, deviceTreeModel = "Generic device tree\0") {
+function executeDiscoveryProbe(
+  stationPci: boolean,
+  deviceTreeModel = "Generic device tree\0",
+  productFamily = "NVIDIA DGX Station GB300\n",
+) {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-producer-"));
   const dmiRoot = path.join(fixtureRoot, "dmi");
   const modelPath = path.join(fixtureRoot, "model");
@@ -22,7 +26,7 @@ function executeDiscoveryProbe(stationPci: boolean, deviceTreeModel = "Generic d
   fs.mkdirSync(dmiRoot, { recursive: true });
   fs.mkdirSync(pciDevice, { recursive: true });
   fs.writeFileSync(path.join(dmiRoot, "product_name"), "Generic ARM workstation\n");
-  fs.writeFileSync(path.join(dmiRoot, "product_family"), "NVIDIA DGX Station GB300\n");
+  fs.writeFileSync(path.join(dmiRoot, "product_family"), productFamily);
   fs.writeFileSync(path.join(dmiRoot, "board_name"), "Generic board\n");
   fs.writeFileSync(modelPath, deviceTreeModel);
   fs.writeFileSync(path.join(pciDevice, "vendor"), "0x10de\n");
@@ -86,5 +90,21 @@ describe("dual-Station discovery probe identity", () => {
 
   it("drops an embedded-NUL device-tree value in the shared Python producer (#10928)", () => {
     expect(executeDiscoveryProbe(true, "NVIDIA DGX\0 Station GB300").deviceTreeModel).toBe("");
+  });
+
+  it("rejects repeated DMI line terminators in the shared Python producer (#10928)", () => {
+    expect(() =>
+      deriveDiscoveryCandidates(
+        executeDiscoveryProbe(true, "Generic device tree\0", "NVIDIA DGX Station GB300\n\n"),
+      ),
+    ).toThrow(/not a verified arm64 DGX Station GB300/);
+  });
+
+  it("rejects a device-tree line terminator in the shared Python producer (#10928)", () => {
+    expect(() =>
+      deriveDiscoveryCandidates(
+        executeDiscoveryProbe(true, "NVIDIA DGX Station GB300\n", "Generic family\n"),
+      ),
+    ).toThrow(/not a verified arm64 DGX Station GB300/);
   });
 });

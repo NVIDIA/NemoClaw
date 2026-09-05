@@ -42,10 +42,9 @@ export function readBoundedNvidiaFirmwareValue(
   stripNul = false,
 ): string | undefined {
   try {
-    const contents = readFile(filePath);
-    const withoutTerminator =
-      stripNul && contents.endsWith("\0") ? contents.slice(0, -1) : contents;
-    const normalized = withoutTerminator.replace(/\n+$/u, "");
+    let normalized = readFile(filePath);
+    if (stripNul && normalized.endsWith("\0")) normalized = normalized.slice(0, -1);
+    if (!stripNul && normalized.endsWith("\n")) normalized = normalized.slice(0, -1);
     if (
       Buffer.byteLength(normalized) > NVIDIA_FIRMWARE_VALUE_MAX_BYTES ||
       /[\u0000-\u001f\u007f]/u.test(normalized)
@@ -124,9 +123,12 @@ def firmware_value(path, strip_nul=False):
     try:
         with Path(path).open("rb") as handle:
             raw = handle.read(FIRMWARE_VALUE_MAX_BYTES + 2)
-        if strip_nul and raw.endswith(b"\x00"):
+        if strip_nul:
+            if raw.endswith(b"\x00"):
+                raw = raw[:-1]
+        elif raw.endswith(b"\n"):
             raw = raw[:-1]
-        normalized = raw.decode("utf-8").rstrip("\n")
+        normalized = raw.decode("utf-8")
         if len(normalized.encode("utf-8")) > FIRMWARE_VALUE_MAX_BYTES:
             return ""
         if any(ord(character) < 32 or ord(character) == 127 for character in normalized):

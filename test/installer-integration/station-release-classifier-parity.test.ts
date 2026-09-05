@@ -124,7 +124,10 @@ function classifyFirmwareWithStationHelper(
     ["board_name", boardName],
     ["model", deviceTreeModel],
   ]) {
-    fs.writeFileSync(path.join(fixtureDirectory, name), name === "model" ? value : `${value}\n`);
+    fs.writeFileSync(
+      path.join(fixtureDirectory, name),
+      name === "model" || value.includes("\n") ? value : `${value}\n`,
+    );
   }
   const result = spawnSync(
     "bash",
@@ -471,6 +474,42 @@ describe("DGX Station release classifier parity", () => {
       "Generic ARM workstation",
       productFamily,
       "Generic board",
+    );
+
+    expect(shell).toBe("not-station");
+    expect(readiness.nvidiaPlatform).toBeUndefined();
+  });
+
+  it("rejects repeated DMI line terminators in both consumers (#10928)", () => {
+    const productFamily = "NVIDIA DGX Station GB300\n\n";
+    const shell = classifyFirmwareWithStationHelper(
+      "Generic ARM workstation",
+      productFamily,
+      "Generic board",
+    );
+    const readiness = classifyFirmwareWithReadiness(
+      "Generic ARM workstation",
+      productFamily,
+      "Generic board",
+    );
+
+    expect(shell).toBe("not-station");
+    expect(readiness.nvidiaPlatform).toBeUndefined();
+  });
+
+  it("rejects a device-tree line terminator in both consumers (#10928)", () => {
+    const model = "NVIDIA DGX Station GB300\n";
+    const shell = classifyFirmwareWithStationHelper(
+      "Generic ARM workstation",
+      "Generic family",
+      "Generic board",
+      model,
+    );
+    const readiness = classifyFirmwareWithReadiness(
+      "Generic ARM workstation",
+      "Generic family",
+      "Generic board",
+      model,
     );
 
     expect(shell).toBe("not-station");

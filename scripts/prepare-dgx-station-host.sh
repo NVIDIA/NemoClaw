@@ -485,13 +485,15 @@ station_bounded_line_value() {
 }
 
 station_device_tree_model_value() {
-  local byte_count last_byte nul_count path=$1
+  local byte_count control_count last_byte nul_count path=$1
   byte_count="$(head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 2)) "$path" 2>/dev/null | wc -c | tr -d '[:space:]')"
   [[ "$byte_count" =~ ^[0-9]+$ ]] && ((byte_count <= STATION_IDENTITY_VALUE_MAX_BYTES + 1)) || return 1
+  control_count="$(head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 1)) "$path" 2>/dev/null | LC_ALL=C tr -cd '\000-\037\177' | wc -c | tr -d '[:space:]')"
+  [[ "$control_count" =~ ^[0-9]+$ ]] || return 1
   nul_count="$(head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 1)) "$path" 2>/dev/null | LC_ALL=C tr -cd '\000' | wc -c | tr -d '[:space:]')"
   [[ "$nul_count" =~ ^[0-9]+$ ]] || return 1
-  if ((nul_count > 0)); then
-    ((nul_count == 1)) || return 1
+  if ((control_count > 0)); then
+    ((control_count == 1 && nul_count == 1)) || return 1
     last_byte="$(tail -c 1 "$path" 2>/dev/null | od -An -tu1 | tr -d '[:space:]')"
     [[ "$last_byte" == "0" ]] || return 1
   fi

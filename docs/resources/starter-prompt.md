@@ -50,7 +50,9 @@ Set `NEMOCLAW_AGENT=langchain-deepagents-code` for Deep Agents, or use `nemo-dee
 - Check distribution, architecture, product and firmware identity, GPU and memory, NVIDIA driver, Container Toolkit, Docker, Node.js, disk space, existing NemoClaw, Ollama, vLLM, relevant ports, and administrator access.
 - Classify the computer as DGX Spark, DGX Station, NVIDIA GB300, another NVIDIA computer, ordinary macOS/Linux, or unknown.
 - Do not identify DGX Spark from the GPU name alone; combine product, firmware, architecture, and GPU evidence.
-- Classify a system as DGX Station only when its detected platform matches a supported DGX Station GB300 mapping. Do not load Station instructions for unsupported hardware or release profiles.
+- Treat DGX Station GB300 hardware as confirmed only when the Station hardware qualification passes. Do not load Station instructions for unsupported or inconclusive hardware.
+- If Station hardware is confirmed but its software profile is unqualified, load Station instructions only for the documented explicit validation-only recovery. This does not authorize Station Express onboarding.
+- Treat the host as qualified for Station Express only when the combined Station qualification passes.
 - A confirmed NVIDIA GB300 can independently qualify for expanded local-runtime choices.
 - If uncertain, explain that and let NemoClaw's official preflight make the final platform decision.
 
