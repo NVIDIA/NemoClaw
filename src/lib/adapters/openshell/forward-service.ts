@@ -2,15 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 
 import { isValidName } from "../../name-validation";
 import { buildOpenShellSubprocessEnv } from "./resolve-shared";
 import { probeLocalForwardListener } from "./local-forward-listener";
 
-const START_TIMEOUT_MS = 30_000;
+const START_TIMEOUT_MS = 90_000;
+const START_RETRY_DELAY_MS = 1_000;
+const START_ATTEMPTS = 2;
 const POLL_INTERVAL_MS = 100;
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+
+type ForwardServiceChild = {
+  readonly pid?: number;
+  unref(): void;
+};
+
+// Keep exact child identity only for this CLI process. A later recovery call may
+// observe the same child settling, but must never adopt an unrelated listener.
+const settlingChildren = new Map<string, ForwardServiceChild>();
 
 export interface ForwardServiceTarget {
   readonly executable: string;
@@ -24,17 +36,66 @@ export interface ForwardServiceTarget {
 }
 
 export interface ForwardServiceLaunchOptions {
+  readonly describeState?: () => string | null | undefined;
+  readonly isProcessRunning?: (pid: number) => boolean;
   readonly isReachable?: (port: number) => boolean;
+  readonly maxAttempts?: number;
+  readonly retryDelayMs?: number;
   readonly sleep?: (milliseconds: number) => void;
   readonly sourceEnvironment?: NodeJS.ProcessEnv;
   readonly spawnDetached?: (
     executable: string,
     args: readonly string[],
     environment: NodeJS.ProcessEnv,
-  ) => {
-    unref(): void;
-  };
+  ) => ForwardServiceChild;
   readonly timeoutMs?: number;
+}
+
+function forwardKey(target: ForwardServiceTarget): string {
+  return [
+    target.gatewayName,
+    target.workspace,
+    target.sandboxName,
+    target.localHost,
+    target.localPort,
+    target.targetHost,
+    target.targetPort,
+  ].join("\0");
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    if (process.platform === "linux") {
+      // Signal 0 still reports a zombie as present. Read its state so a failed
+      // forward may be retried without starting alongside a live process.
+      const stat = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf8");
+      const state = stat.slice(stat.lastIndexOf(")") + 2).split(" ", 1)[0];
+      if (state === "Z") return false;
+    }
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code =
+      typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+    return code !== "ENOENT" && code !== "ESRCH";
+  }
+}
+
+function boundedState(description: string | null | undefined): string {
+  const compact = (description ?? "").replace(/\s+/gu, " ").trim();
+  return compact ? compact.slice(0, 240) : "<empty>";
+}
+
+function describeFailureState(describe: (() => string | null | undefined) | undefined): string {
+  try {
+    return boundedState(describe?.());
+  } catch {
+    return "<unavailable>";
+  }
+}
+
+function isProcessIdentity(pid: number | undefined): pid is number {
+  return Number.isSafeInteger(pid) && Number(pid) > 0;
 }
 
 function isPort(value: unknown): value is number {
@@ -101,6 +162,19 @@ export function launchForwardService(
 ): void {
   validateForwardServiceTarget(target);
   const isReachable = options.isReachable ?? probeLocalForwardListener;
+  const processIsRunning = options.isProcessRunning ?? isProcessRunning;
+  const key = forwardKey(target);
+  const settling = settlingChildren.get(key);
+  if (isProcessIdentity(settling?.pid) && processIsRunning(settling.pid)) {
+    if (isReachable(target.localPort)) {
+      settlingChildren.delete(key);
+      return;
+    }
+    throw new Error(
+      `OpenShell forward service is still settling on ${target.localHost}:${String(target.localPort)}; refusing to start a duplicate service`,
+    );
+  }
+  settlingChildren.delete(key);
   if (isReachable(target.localPort)) {
     throw new Error(`Host port ${String(target.localPort)} is already occupied`);
   }
@@ -108,21 +182,56 @@ export function launchForwardService(
     options.spawnDetached ??
     ((executable, args, environment) =>
       spawn(executable, [...args], { detached: true, env: environment, stdio: "ignore" }));
-  const child = spawnDetached(
-    target.executable,
-    buildForwardServiceArgs(target),
-    buildOpenShellSubprocessEnv(options.sourceEnvironment ?? process.env),
-  );
-  child.unref();
-
   const sleep =
     options.sleep ?? ((milliseconds: number) => Atomics.wait(sleepBuffer, 0, 0, milliseconds));
-  const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
-  while (Date.now() < deadline) {
-    if (isReachable(target.localPort)) return;
-    sleep(POLL_INTERVAL_MS);
+  const attempts = options.maxAttempts ?? START_ATTEMPTS;
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > START_ATTEMPTS) {
+    throw new Error(`OpenShell forward service attempts must be between 1 and ${START_ATTEMPTS}`);
+  }
+  const args = buildForwardServiceArgs(target);
+  const environment = buildOpenShellSubprocessEnv(options.sourceEnvironment ?? process.env);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (isReachable(target.localPort)) {
+      throw new Error(
+        `Host port ${String(target.localPort)} became occupied before forward retry; refusing to adopt its listener`,
+      );
+    }
+    const child = spawnDetached(target.executable, args, environment);
+    child.unref();
+    if (!isProcessIdentity(child.pid)) {
+      throw new Error(
+        `OpenShell forward service returned no process identity for ${target.localHost}:${String(target.localPort)}; ` +
+          `refusing to start a duplicate service; forward list: ${describeFailureState(options.describeState)}`,
+      );
+    }
+    const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
+    let exited = false;
+    while (true) {
+      if (isProcessIdentity(child.pid) && !processIsRunning(child.pid)) {
+        exited = true;
+        break;
+      }
+      if (isReachable(target.localPort)) {
+        settlingChildren.delete(key);
+        return;
+      }
+      if (Date.now() >= deadline) break;
+      sleep(POLL_INTERVAL_MS);
+    }
+    if (!exited) {
+      settlingChildren.set(key, child);
+      throw new Error(
+        `OpenShell forward service remained running but did not bind ${target.localHost}:${String(target.localPort)} within ${String(options.timeoutMs ?? START_TIMEOUT_MS)}ms; ` +
+          `refusing to start a duplicate service; forward list: ${describeFailureState(options.describeState)}`,
+      );
+    }
+    settlingChildren.delete(key);
+    if (attempt < attempts) {
+      sleep(options.retryDelayMs ?? START_RETRY_DELAY_MS);
+    }
   }
   throw new Error(
-    `OpenShell forward service did not bind ${target.localHost}:${String(target.localPort)}`,
+    `OpenShell forward service exited before binding ${target.localHost}:${String(target.localPort)} after ${String(attempts)} attempts; ` +
+      `forward list: ${describeFailureState(options.describeState)}`,
   );
 }
