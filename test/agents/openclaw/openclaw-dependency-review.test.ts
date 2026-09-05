@@ -246,7 +246,7 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'spawnSync(request.npmExecutable ?? "npm", args' "$reviewed_archive_helper"
 	grep -Fq '["view", request.packageSpec, "dist.integrity"]' "$reviewed_archive_helper"
 	grep -Fq '["view", request.packageSpec, "dist.tarball"]' "$reviewed_archive_helper"
-	grep -Fq '["pack", request.tarballUrl, "--pack-destination", rootDirectory, "--json"]' "$reviewed_archive_helper"
+	grep -Fq '["pack", request.packageSpec, "--pack-destination", rootDirectory, "--json"]' "$reviewed_archive_helper"
 	grep -Fq 'reported unsafe archive filename' "$reviewed_archive_helper"
 	grep -Fq 'expectedPatchedTreeIntegrity' "$remediation_helper"
 	grep -Fq 'expectedPatchedMetadataIntegrity' "$remediation_helper"

@@ -142,7 +142,8 @@ ADD --chmod=0444 --checksum=sha256:b1b01eb1522aea8f652cc7b692d1c417195713deb12b3
 # hadolint ignore=DL3006
 FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
 
-# Enforce checksum-addressed archives, SRI, offline install, and target architecture (#5896).
+# Reviewed-archive invariants (#5896): checksum-addressed source archives,
+# committed SRI verification, offline installation, and architecture selection.
 FROM npm12 AS codex-acp-runtime
 ARG TARGETARCH
 ARG CODEX_ACP_0_11_1_INTEGRITY
@@ -169,10 +170,10 @@ RUN --network=none set -eu; \
 FROM npm12 AS wechat-npm-cache
 COPY agents/openclaw/wechat-runtime/package.json agents/openclaw/wechat-runtime/package-lock.json /opt/wechat-runtime/
 COPY scripts/checks/materialize-locked-npm-cache-seed.mts /opt/checks/
-COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-identity.mts scripts/lib/seed-reviewed-npm-cache.mts /opt/nemoclaw-build-tools/
+COPY scripts/lib/seed-reviewed-npm-cache.mts /scripts/lib/seed-reviewed-npm-cache.mts
 COPY --from=wechat-npm-archives / /opt/wechat-npm-archives/
 RUN --network=none install -d -o root -g root -m 0755 /out/wechat-npm-cache \
-    && node --experimental-strip-types /opt/nemoclaw-build-tools/seed-reviewed-npm-cache.mts \
+    && node --experimental-strip-types /scripts/lib/seed-reviewed-npm-cache.mts \
         --lockfile /opt/wechat-runtime/package-lock.json \
         --cache /out/wechat-npm-cache \
         --registry-origin https://registry.npmjs.org/ \
@@ -184,7 +185,7 @@ RUN --network=none install -d -o root -g root -m 0755 /out/wechat-npm-cache \
         --userconfig /dev/null --registry https://registry.npmjs.org/ \
         --cache /out/wechat-npm-cache \
     && NPM_CONFIG_OFFLINE=true \
-        node --experimental-strip-types /opt/nemoclaw-build-tools/reviewed-npm-archive.mts \
+        node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
         --lockfile /opt/wechat-runtime/package-lock.json \
         --cache /out/wechat-npm-cache \
         --registry-origin https://registry.npmjs.org/ \
@@ -501,7 +502,7 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 COPY agents/openclaw/managed-image-messaging-runtime/package.json agents/openclaw/managed-image-messaging-runtime/package-lock.json /opt/managed-image-messaging-runtime/
 COPY scripts/checks/materialize-locked-npm-cache-seed.mts /opt/nemoclaw-build-tools/checks/
-COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-identity.mts scripts/lib/seed-reviewed-npm-cache.mts /opt/nemoclaw-build-tools/lib/
+COPY scripts/lib/seed-reviewed-npm-cache.mts /scripts/lib/seed-reviewed-npm-cache.mts
 COPY --from=openclaw-managed-messaging-npm-archives / /opt/nemoclaw-build-tools/npm-cache-seed/
 RUN --network=none set -eu; \
     case "$TARGETARCH" in \
@@ -510,7 +511,7 @@ RUN --network=none set -eu; \
         *) echo "ERROR: unsupported managed messaging npm target: $TARGETARCH" >&2; exit 1 ;; \
     esac; \
     install -d -o root -g root -m 0755 /out/npm-cache; \
-    node --experimental-strip-types /opt/nemoclaw-build-tools/lib/seed-reviewed-npm-cache.mts \
+    node --experimental-strip-types /scripts/lib/seed-reviewed-npm-cache.mts \
         --lockfile /opt/managed-image-messaging-runtime/package-lock.json \
         --cache /out/npm-cache \
         --registry-origin https://registry.npmjs.org/ \
@@ -520,7 +521,7 @@ RUN --network=none set -eu; \
         --ignore-scripts --omit=dev --legacy-peer-deps \
         --userconfig /dev/null --registry https://registry.npmjs.org/ \
         --cache /out/npm-cache; \
-    node --experimental-strip-types /opt/nemoclaw-build-tools/lib/seed-reviewed-npm-cache.mts \
+    node --experimental-strip-types /scripts/lib/seed-reviewed-npm-cache.mts \
         --packuments-only \
         --lockfile /opt/managed-image-messaging-runtime/package-lock.json \
         --cache /out/npm-cache \

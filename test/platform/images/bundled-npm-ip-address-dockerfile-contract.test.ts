@@ -35,7 +35,7 @@ const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as co
 const hermesTarCacheSeedArguments = [
   ...npmRootArguments,
   "--archive",
-  "/tmp/nemoclaw-bundled-npm-tar.tgz",
+  "/scripts/nemoclaw-bundled-npm-tar.tgz",
 ] as const;
 const tarPatchArgumentsByDockerfile = {
   Dockerfile: npmRootArguments,

@@ -18,6 +18,7 @@ import {
   dockerRunCommandBetween,
   runDockerShell,
   runLoggedDockerShell,
+  shellCommandSegmentBetween,
 } from "../../helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -1039,10 +1040,15 @@ describe("Hermes sandbox provisioning", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-path-"));
     const manifestHermes = path.join(tmp, "usr", "local", "bin", "hermes");
-    const command = dockerRunCommandBetween(
+    const finalization = dockerRunCommandBetween(
       dockerfile,
-      "# Keep the final image contract explicit",
-      "# Harden: remove unnecessary build tools",
+      "# Keep the inherited CLI, Python environment, and dashboard explicit",
+      "# Hermes' WeChat adapter",
+    );
+    const command = shellCommandSegmentBetween(
+      finalization,
+      'hermes_path="$(command -v hermes',
+      "chmod -R a+rX /opt/hermes/.venv",
     ).replaceAll("/usr/local/bin/hermes", manifestHermes);
     const scriptPath = path.join(tmp, "run.sh");
     try {
@@ -1211,10 +1217,15 @@ describe("Hermes sandbox provisioning", () => {
       fs.mkdirSync(cachePath, { recursive: true });
       fs.writeFileSync(path.join(cachePath, "build-only-cache"), "unused after image assembly\n");
     });
-    const command = dockerRunCommandBetween(
+    const finalization = dockerRunCommandBetween(
       dockerfile,
-      "# Published base images can lag Dockerfile.base",
-      "# Harden: remove unnecessary build tools",
+      "# Keep the inherited CLI, Python environment, and dashboard explicit",
+      "# Hermes' WeChat adapter",
+    );
+    const command = shellCommandSegmentBetween(
+      finalization,
+      "if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]",
+      "dpkg-query -W",
     )
       .replaceAll("/opt/hermes", hermesRoot)
       .replaceAll("/root/.npm", path.join(rootCache, "npm"))

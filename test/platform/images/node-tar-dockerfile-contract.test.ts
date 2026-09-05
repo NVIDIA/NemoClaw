@@ -576,11 +576,22 @@ describe("reviewed npm image remediation contract", () => {
       "agents/pi/Dockerfile.base:native-security-builder",
       "agents/pi/Dockerfile.base:<final>",
     ]);
+    expect(
+      rootDockerfile.match(
+        /^COPY scripts\/lib\/seed-reviewed-npm-cache[.]mts \/scripts\/lib\/seed-reviewed-npm-cache[.]mts$/gmu,
+      ),
+    ).toHaveLength(2);
+    expect(
+      rootDockerfile.match(
+        /node --experimental-strip-types \/scripts\/lib\/seed-reviewed-npm-cache[.]mts/gmu,
+      ),
+    ).toHaveLength(3);
     expect(rootDockerfile).toContain(
-      "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-identity.mts scripts/lib/seed-reviewed-npm-cache.mts /opt/nemoclaw-build-tools/",
+      "node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts",
     );
-    expect(rootDockerfile).toContain(
-      "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-identity.mts scripts/lib/seed-reviewed-npm-cache.mts /opt/nemoclaw-build-tools/lib/",
+    expect(rootDockerfile).not.toContain("/opt/nemoclaw-build-tools/seed-reviewed-npm-cache.mts");
+    expect(rootDockerfile).not.toContain(
+      "/opt/nemoclaw-build-tools/lib/seed-reviewed-npm-cache.mts",
     );
     expect(invokingStages.map(({ file, name }) => `${file}:${name}`)).toEqual([
       "Dockerfile:builder",
