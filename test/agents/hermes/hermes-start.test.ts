@@ -177,7 +177,11 @@ function runHermesPortValidation(opts: {
   }
 }
 
-function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: boolean }) {
+function runHermesEnvSecretBoundary(opts: {
+  envFile?: string;
+  symlinkEnvFile?: boolean;
+  prepareMode?: "nonroot" | "root";
+}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-env-boundary-"));
   const hermesHome = path.join(tmpDir, ".hermes");
   const envFile = path.join(hermesHome, ".env");
@@ -193,6 +197,13 @@ function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: b
   }
 
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const boundaryInvocation = opts.prepareMode
+    ? [
+        'refresh_hermes_runtime_config_hashes() { printf "unexpected-adopt:%s\\n" "$*"; }',
+        extractShellFunctionFromSource(src, `prepare_hermes_${opts.prepareMode}_runtime`),
+        `prepare_hermes_${opts.prepareMode}_runtime`,
+      ]
+    : ["validate_hermes_env_secret_boundary"];
   fs.writeFileSync(
     scriptPath,
     [
@@ -207,7 +218,7 @@ function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: b
       extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
-      "validate_hermes_env_secret_boundary",
+      ...boundaryInvocation,
     ].join("\n"),
     { mode: 0o700 },
   );
@@ -1000,6 +1011,23 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.stderr).toContain("DEVTEST_API_TOKEN (line 1)");
     expect(result.stderr).not.toContain(rawToken);
   });
+
+  it.each(["nonroot", "root"] as const)(
+    "stops %s preparation before config adoption when the secret boundary refuses",
+    (prepareMode) => {
+      const rawToken = `SENTINEL_${prepareMode.toUpperCase()}_RAW_SECRET_VALUE`;
+      const result = runHermesEnvSecretBoundary({
+        envFile: `DEVTEST_API_TOKEN=${rawToken}\n`,
+        prepareMode,
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("raw secret-shaped values");
+      expect(result.stderr).toContain("DEVTEST_API_TOKEN (line 1)");
+      expect(result.stderr).not.toContain(rawToken);
+      expect(result.stdout).not.toContain("unexpected-adopt");
+    },
+  );
 
   it("adopts mutable config after the env boundary and before MCP integrity (#11108)", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");

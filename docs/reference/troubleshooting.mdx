@@ -4351,7 +4351,8 @@ A current Hermes supervisor does not refuse startup, restart, recovery, or autom
 It validates the secret boundary and records one stable snapshot before a replacement gateway consumes the config.
 A direct MCP change becomes pending and is marked as applied only after gateway health passes.
 
-An integrity failure can still report a missing or malformed metadata file, an unsafe path, or a raced snapshot.
+An unsafe config or metadata path reports `unsafe config path`.
+A missing, malformed, mismatched, or raced hash or restart metadata file reports `config hash mismatch`.
 Do not edit either hash file manually.
 
 If the error reports an MCP reconciliation refusal, restore the managed MCP projection and retry recovery:
@@ -4364,7 +4365,8 @@ nemohermes <name> recover
 If the error reports `secret-boundary refusal`, inspect `/sandbox/.hermes/.env` for raw secret-shaped values.
 Replace them through the supported credential flow so the file contains `openshell:resolve:env:<name>` placeholders, then run `nemohermes <name> recover`.
 
-If the error reports unsafe, missing, or malformed integrity state, rebuild from registered configuration:
+If the error reports `unsafe config path`, do not follow or edit the unsafe path in place. Rebuild from registered configuration to restore the managed layout.
+If it reports `config hash mismatch`, do not repair the hash or restart metadata by hand. Rebuild from registered configuration:
 
 ```bash
 nemohermes <name> rebuild --yes

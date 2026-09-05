@@ -1357,7 +1357,7 @@ The supervisor marks it as applied only after the replacement gateway passes its
 The host operation that owns a managed MCP transaction can report a registry mismatch after Hermes is healthy.
 The direct root-entrypoint supervisor relaunches the process as the `gateway` user.
 Use supported host commands such as `$$nemoclaw <name> config set` and `$$nemoclaw inference set` for settings that must match host registry state.
-The command reports `config hash mismatch` when restart transaction metadata is missing, malformed, unsafe, or changed during validation.
+The command reports `unsafe config path` when a config or metadata path is unsafe. It reports `config hash mismatch` when hash or restart transaction metadata is missing, malformed, mismatched, or changed during validation.
 Hermes host config writes and lifecycle seals share one root-only mutation lock.
 Config writes bind to the digest of the matching read and atomically refresh the strict and compatibility hashes before restoring mutable access.
 If a concurrent lifecycle request reports `SUPERVISOR_BUSY` or `Hermes config mutation is already in progress`, wait for the active operation to finish and retry.
