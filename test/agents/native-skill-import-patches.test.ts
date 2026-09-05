@@ -103,7 +103,8 @@ describe("agent-native local skill import patches", () => {
       [
         "from typing import Optional",
         "class Console:",
-        "    def print(self, *_args, **_kwargs): pass",
+        "    def __init__(self): self.messages = []",
+        '    def print(self, *args, **_kwargs): self.messages.append(" ".join(str(arg) for arg in args))',
         "_console = Console()",
         "",
         "def do_inspect(identifier: str, console: Optional[Console] = None) -> None:",
@@ -136,7 +137,7 @@ describe("agent-native local skill import patches", () => {
     expect(source).toContain("NEMOCLAW_NATIVE_SKILL_IMPORT=");
     expect(runPython(["-m", "py_compile", parser, hub]).status).toBe(0);
 
-    const escaped = path.join(root, "escaped");
+    const behaviorRoot = path.join(root, "behavior");
     const behavior = runPython([
       "-c",
       [
@@ -145,11 +146,16 @@ describe("agent-native local skill import patches", () => {
         "module = importlib.util.module_from_spec(spec)",
         "spec.loader.exec_module(module)",
         "assert module.do_import_local('/unused', '../escaped', '0' * 64) is False",
-        "assert module.do_import_local('/unused', '.hub', '0' * 64) is False",
-        "assert not pathlib.Path(sys.argv[2]).exists()",
+        "stage = pathlib.Path(sys.argv[2]) / 'reserved-stage'",
+        "stage.mkdir(parents=True)",
+        '(stage / "SKILL.md").write_text("---\\nname: .hub\\ndescription: reserved\\n---\\n")',
+        "module._console.messages.clear()",
+        "assert module.do_import_local(str(stage), '.hub', '0' * 64) is False",
+        "assert module._console.messages == ['[bold red]Error:[/] Invalid staged skill name.']",
+        "assert not (pathlib.Path(sys.argv[2]) / '.hub').exists()",
       ].join("; "),
       hub,
-      escaped,
+      behaviorRoot,
     ]);
     expect(behavior.status, behavior.stderr).toBe(0);
   });

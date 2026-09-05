@@ -31,6 +31,8 @@ set -euo pipefail
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="07-deepagents-code-headless-inference"
 HEADLESS_TIMEOUT="${DEEPAGENTS_HEADLESS_TIMEOUT:-120}"
+POST_REMOVE_LIST_REMOTE_TIMEOUT=20
+POST_REMOVE_LIST_HOST_TIMEOUT=25
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -73,6 +75,13 @@ sandbox_direct_rlimit_exec() {
 
 sandbox_direct_dcode() {
   openshell sandbox exec --name "$SANDBOX_NAME" --timeout "$HEADLESS_TIMEOUT" -- dcode "$@" 2>&1
+}
+
+sandbox_bounded_dcode_list() {
+  timeout --signal=TERM --kill-after=5s "${POST_REMOVE_LIST_HOST_TIMEOUT}s" \
+    openshell sandbox exec --name "$SANDBOX_NAME" \
+    --timeout "$POST_REMOVE_LIST_REMOTE_TIMEOUT" -- \
+    dcode skills list --agent agent --json 2>&1
 }
 
 sandbox_dcode_wrapper_contract() {
@@ -657,7 +666,8 @@ DCODE_EXIT:${direct_exit}"
   skill_remove_output="$("$cli_bin" "$SANDBOX_NAME" skill remove "$skill_name" 2>&1)" \
     && skill_remove_status=0 || skill_remove_status=$?
   skill_post_remove_list=""
-  skill_post_remove_list="$(sandbox_exec "dcode skills list --agent agent --json")" \
+  info "checking bounded DCode native state after skill removal"
+  skill_post_remove_list="$(sandbox_bounded_dcode_list)" \
     && skill_post_remove_list_status=0 || skill_post_remove_list_status=$?
   if [ "$skill_remove_status" -eq 0 ] \
     && [ "$skill_post_remove_list_status" -eq 0 ] \
