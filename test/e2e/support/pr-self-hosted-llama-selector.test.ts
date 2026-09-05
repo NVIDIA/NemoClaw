@@ -176,27 +176,5 @@ describe("generic NVIDIA GPU PR selection", () => {
     expect(value.jobs["llama-cpp-generic-gpu"]?.env?.E2E_MANAGED_IMAGE_REVISION).toBe(
       "${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_revision }}",
     );
-
-    const qwen = value.jobs["llama-cpp-qwen-gpu"];
-    expect(qwen).toMatchObject({
-      env: {
-        E2E_MANAGED_IMAGE_REVISION:
-          "${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_revision }}",
-        E2E_TARGET_ID: "llama-cpp-qwen-gpu",
-        NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ github.sha }}",
-        NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1",
-      },
-      if: "${{ needs.select-llama-cpp-generic-gpu.outputs.selected == 'true' }}",
-      needs: "select-llama-cpp-generic-gpu",
-      "runs-on": "linux-amd64-gpu-rtxpro6000-latest-1",
-      "timeout-minutes": 150,
-    });
-    const qwenRun = qwen?.steps?.find(
-      (step) => step.name === "Run declarative Qwen llama.cpp NVIDIA GPU live test",
-    )?.run;
-    expect(qwenRun).toContain(
-      "--test-path test/e2e/live/llama-cpp-generic-gpu.test.ts",
-    );
-    expect(qwenRun).not.toContain("docker");
   });
 });

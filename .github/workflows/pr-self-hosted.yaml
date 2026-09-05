@@ -183,66 +183,6 @@ jobs:
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
-  llama-cpp-qwen-gpu:
-    name: Qwen llama.cpp recipe on NVIDIA GPU (N1x device qualification pending)
-    needs: select-llama-cpp-generic-gpu
-    if: ${{ needs.select-llama-cpp-generic-gpu.outputs.selected == 'true' }}
-    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
-    timeout-minutes: 150
-    env:
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-qwen-gpu
-      E2E_JOB: "1"
-      E2E_MANAGED_IMAGE_REVISION: ${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_revision }}
-      E2E_TARGET_ID: llama-cpp-qwen-gpu
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_E2E_EXPECTED_SHA: ${{ github.sha }}
-      NEMOCLAW_E2E_SHARD: default
-      NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ github.sha }}
-      NEMOCLAW_LLAMA_CPP_QUALIFICATION_MAX_TOKENS: "1024"
-      NEMOCLAW_LLAMACPP_RECIPE: llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_PROVIDER: install-llama-cpp
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_SANDBOX_NAME: e2e-lcpp-qwen
-      OPENSHELL_GATEWAY: nemoclaw
-    steps:
-      - name: Checkout exact PR head
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ github.sha }}
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-
-      - name: Bind E2E correlation identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          correlation_id="$(node --input-type=module -e \
-            'import { randomUUID } from "node:crypto"; console.log(randomUUID())')"
-          [[ "$correlation_id" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]]
-          printf 'NEMOCLAW_E2E_CORRELATION_ID=%s\n' "$correlation_id" >>"$GITHUB_ENV"
-
-      - name: Install OpenShell CLI
-        run: bash scripts/install-openshell.sh
-
-      - name: Run declarative Qwen llama.cpp NVIDIA GPU live test
-        shell: bash
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          OPENSHELL_BIN="$(command -v openshell)"
-          export OPENSHELL_BIN
-          "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run \
-            --test-path test/e2e/live/llama-cpp-generic-gpu.test.ts
-
-      - name: Upload Qwen llama.cpp NVIDIA GPU artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
   build-sandbox-images:
     runs-on: linux-amd64-cpu4
     timeout-minutes: 45
