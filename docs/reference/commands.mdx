@@ -2407,6 +2407,8 @@ For OpenClaw, Hermes, and Deep Agents Code, fresh installs and updates always de
 
 List skills from the selected agent's own state.
 
+Native listing has a 30-second sandbox command bound. If the selected agent's state cannot be inspected within that bound, the command exits nonzero and directs you to retry after the sandbox becomes reachable.
+
 <AgentOnly variant="openclaw">
 
 This is a thin pass-through to `openclaw skills list` for the primary `main` agent inside the sandbox. NemoClaw does not merge, cache, or maintain a second skill list. Native output and filtering arguments are forwarded verbatim. An agent override is refused because the lifecycle commands are bound to the sandbox's primary agent state.

@@ -264,15 +264,12 @@ describe("sandbox skill action orchestration", () => {
 
     await listSandboxSkills("alpha", { extraArgs: ["--json", "--eligible"] });
 
-    expect(execSandbox).toHaveBeenCalledWith("alpha", [
-      "/usr/local/bin/openclaw",
-      "skills",
-      "list",
-      "--agent",
-      "main",
-      "--json",
-      "--eligible",
-    ]);
+    expect(execSandbox).toHaveBeenCalledWith(
+      "alpha",
+      ["/usr/local/bin/openclaw", "skills", "list", "--agent", "main", "--json", "--eligible"],
+      { timeoutSeconds: 30 },
+      { exit: expect.any(Function) },
+    );
   });
 
   it.each([
@@ -284,7 +281,34 @@ describe("sandbox skill action orchestration", () => {
 
     await listSandboxSkills("alpha", { extraArgs });
 
-    expect(execSandbox).toHaveBeenCalledWith("alpha", command);
+    expect(execSandbox).toHaveBeenCalledWith(
+      "alpha",
+      command,
+      { timeoutSeconds: 30 },
+      { exit: expect.any(Function) },
+    );
+  });
+
+  it("reports retry guidance when bounded native list inspection fails", async () => {
+    getSessionAgent.mockReturnValue(genericAgent);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await listSandboxSkills("alpha");
+
+    const exitCallback = execSandbox.mock.calls[0]?.[3]?.exit as
+      | ((exitCode: number) => never)
+      | undefined;
+    vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit ${code}`);
+    }) as typeof process.exit);
+
+    expect(() => exitCallback?.(124)).toThrow("process.exit 124");
+    expect(error).toHaveBeenCalledWith(
+      "  Hermes native skill state could not be inspected within the 30-second sandbox command bound.",
+    );
+    expect(error).toHaveBeenCalledWith(
+      "  Retry 'nemoclaw alpha skill list' after the sandbox becomes reachable.",
+    );
   });
 
   it("does not let forwarded list arguments change the selected native agent", async () => {

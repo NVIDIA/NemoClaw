@@ -25,6 +25,7 @@ import { ensureLiveSandboxOrExit } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 
 const OPENCLAW_NATIVE_BIN = "/usr/local/bin/openclaw";
+const NATIVE_SKILL_LIST_TIMEOUT_SECONDS = 30;
 const NATIVE_SKILL_REMOVE_TIMEOUT_SECONDS = 120;
 const NATIVE_SKILL_REMOVE_INNER_TIMEOUT_SECONDS = 110;
 
@@ -335,7 +336,25 @@ export async function listSandboxSkills(
       : agentName === "hermes"
         ? ["/usr/local/bin/hermes", "skills", "list", ...extraArgs]
         : ["/usr/local/bin/dcode", "skills", "list", "--agent", "agent", ...extraArgs];
-  await execSandbox(sandboxName, command);
+  const displayName = nativeSkillAgentDisplayName(agentName);
+  await execSandbox(
+    sandboxName,
+    command,
+    { timeoutSeconds: NATIVE_SKILL_LIST_TIMEOUT_SECONDS },
+    {
+      exit: (exitCode): never => {
+        if (exitCode !== 0) {
+          console.error(
+            `  ${displayName} native skill state could not be inspected within the ${NATIVE_SKILL_LIST_TIMEOUT_SECONDS}-second sandbox command bound.`,
+          );
+          console.error(
+            `  Retry '${CLI_NAME} ${sandboxName} skill list' after the sandbox becomes reachable.`,
+          );
+        }
+        process.exit(exitCode);
+      },
+    },
+  );
 }
 
 /**
