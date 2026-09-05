@@ -36,6 +36,7 @@ import {
 } from "./ollama-user-local-runtime";
 import {
   createPortableLifecycleTimingRecorder,
+  emitPortableOpenClawAlreadyRunningTiming,
   PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MAX_BYTES,
   PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS,
   PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_PATH,
@@ -55,6 +56,8 @@ import {
   portableDemoReceiptDirectory,
   portableDemoReceiptPath,
 } from "./portable-runtime-receipt-readiness";
+
+export { emitPortableOpenClawAlreadyRunningTiming };
 
 const MAX_RECEIPT_BYTES = 4096;
 const MAX_RECEIPT_DIRECTORY_ENTRIES = 1024;
