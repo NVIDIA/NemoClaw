@@ -529,6 +529,34 @@ describe("sandbox skill action orchestration", () => {
     expect(skillInstall.postInstall).not.toHaveBeenCalled();
   });
 
+  it("reports actionable recovery when OpenClaw provenance finalization fails", async () => {
+    const skillDir = makeSkillDir();
+    getSessionAgent.mockReturnValue(agent);
+    skillInstall.resolveSkillPaths.mockReturnValue(paths);
+    skillInstall.installOpenClawSkill.mockReturnValue({
+      success: false,
+      uploaded: 0,
+      reason: "provenance_finalization_failed",
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await installSandboxSkill("alpha", { command: "install", path: skillDir });
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      "  OpenClaw may have installed the skill, but protected host provenance could not be finalized.",
+    );
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Inspect /sandbox/.openclaw/workspace/skills/demo-skill and confirm its provenance before removal.",
+      ),
+    );
+  });
+
   it("fresh-installs and verifies Deep Agents content without generic upload mutation", async () => {
     const skillDir = makeSkillDir();
     getSessionAgent.mockReturnValue(deepAgent);

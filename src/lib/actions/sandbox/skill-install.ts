@@ -415,7 +415,7 @@ export async function installSandboxSkill(
         );
       } else if (native.reason === "legacy_destination_exists") {
         console.error(
-          `  Refusing to create a second OpenClaw skill authority: inspect the legacy ${paths.stateDir}/skills/${frontmatter.name} path and ${paths.uploadDir}, then migrate the legacy content manually.`,
+          `  Refusing to create a second OpenClaw skill authority: inspect the legacy ${paths.stateDir}/skills/${frontmatter.name} and $HOME/.openclaw/skills/${frontmatter.name} paths plus ${paths.uploadDir}, then migrate the legacy content manually.`,
         );
       } else if (native.reason === "native_capability_missing") {
         console.error(
@@ -438,6 +438,13 @@ export async function installSandboxSkill(
       } else if (native.reason === "provenance_failed") {
         console.error(
           "  Protected host provenance for this OpenClaw skill could not be validated or updated.",
+        );
+      } else if (native.reason === "provenance_finalization_failed") {
+        console.error(
+          "  OpenClaw may have installed the skill, but protected host provenance could not be finalized.",
+        );
+        console.error(
+          `  Inspect ${paths.uploadDir} and confirm its provenance before removal. A retry cannot adopt an existing target until this ownership state is reconciled.`,
         );
       } else if (native.reason === "verification_failed") {
         console.error(

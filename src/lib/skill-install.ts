@@ -574,6 +574,7 @@ export interface FreshSharedSkillInstallResult {
     | "legacy_destination_exists"
     | "native_capability_missing"
     | "provenance_failed"
+    | "provenance_finalization_failed"
     | "remote_state_unknown"
     | "snapshot_failed"
     | "snapshot_limit_exceeded"
@@ -1026,6 +1027,7 @@ function buildOpenClawNativeInstallScript(
     `target=${shellQuote(paths.uploadDir)}`,
     `legacy=${shellQuote(`${paths.stateDir}/skills/${skillName}`)}`,
     `skill=${shellQuote(skillName)}`,
+    'legacy_home="$HOME/.openclaw/skills/$skill"',
     `expected=${shellQuote(expectedDigest)}`,
     `previous=${shellQuote(previousDigest ?? "")}`,
     `stage_nonce=${shellQuote(stageNonce)}`,
@@ -1034,7 +1036,7 @@ function buildOpenClawNativeInstallScript(
     'safe_tree() { [ -d "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -mindepth 1 ! -type d ! -type f -print -quit)" ]; }',
     'digest_tree() { tree="$1"; manifest="$2"; find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort | grep -Fxv ".openclaw/source-origin.json" > "$manifest.files"; : > "$manifest"; while IFS= read -r rel; do if [ -n "$(find "$tree/$rel" -type f -perm /111 -print -quit)" ]; then mode=755; else mode=644; fi; hash="$(sha256sum "$tree/$rel" | cut -d " " -f 1)"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$manifest"; done < "$manifest.files"; sha256sum "$manifest" | cut -d " " -f 1; }',
     '[ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]',
-    'if exists "$legacy"; then echo LEGACY_COLLISION; exit 5; fi',
+    'if exists "$legacy" || exists "$legacy_home"; then echo LEGACY_COLLISION; exit 5; fi',
     'stage="$root/.nemoclaw-skill-stage.$stage_nonce"',
     'if exists "$stage"; then [ "$resume_stage" = 1 ] && safe_tree "$stage" || { echo STAGE_COLLISION; exit 7; }; rm -rf -- "$stage"; fi',
     'mkdir -- "$stage"',
@@ -1168,7 +1170,7 @@ export function installOpenClawSkill(
         stageNonce: null,
       });
     } catch {
-      return { success: false, uploaded: 0, reason: "provenance_failed" };
+      return { success: false, uploaded: 0, reason: "provenance_finalization_failed" };
     }
     return {
       success: true,

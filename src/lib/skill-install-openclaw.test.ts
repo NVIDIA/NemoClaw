@@ -148,6 +148,7 @@ describe("OpenClaw native skill installation", () => {
       const skill = makeSkill();
       const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-root-"));
       const fakeBin = path.join(sandboxRoot, "bin");
+      const sandboxHome = path.join(sandboxRoot, "home");
       const workspaceSkillDir = path.join(sandboxRoot, "workspace", "skills", "demo-skill");
       const provenanceStateDir = path.join(sandboxRoot, "host-state");
       const invocationLog = path.join(sandboxRoot, "openclaw.log");
@@ -161,6 +162,7 @@ describe("OpenClaw native skill installation", () => {
       };
       roots.push(sandboxRoot);
       fs.mkdirSync(fakeBin);
+      fs.mkdirSync(sandboxHome);
       fs.writeFileSync(
         pinnedOpenClaw,
         `#!/bin/sh
@@ -225,6 +227,7 @@ esac
               encoding: "utf8",
               env: {
                 ...process.env,
+                HOME: sandboxHome,
                 OPENCLAW_TEST_CHECK_STATE: checkState,
                 OPENCLAW_TEST_LOG: invocationLog,
                 OPENCLAW_TEST_SHADOW_LOG: shadowLog,
@@ -373,12 +376,52 @@ esac
       expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toBe(
         installedContent,
       );
+      fs.rmSync(legacySkillDir, { recursive: true });
+      fs.rmSync(workspaceSkillDir, { recursive: true });
+      const legacyHomeSkillDir = path.join(sandboxHome, ".openclaw", "skills", "demo-skill");
+      fs.mkdirSync(legacyHomeSkillDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(legacyHomeSkillDir, "SKILL.md"),
+        "---\nname: demo-skill\n---\n# Legacy home mirror\n",
+      );
+      expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
+        success: false,
+        uploaded: 0,
+        reason: "legacy_destination_exists",
+      });
       expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(2);
       expect(
         fs.readdirSync(sandboxRoot).filter((entry) => entry.startsWith(".nemoclaw-skill-stage.")),
       ).toEqual([]);
     },
   );
+
+  it("distinguishes failure to finalize provenance after native publication", () => {
+    const skill = makeSkill();
+    const provenanceStateDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-openclaw-provenance-"),
+    );
+    roots.push(provenanceStateDir);
+    const digest = computeSkillContentDigest(skill);
+    const receiptPath = resolveOpenClawSkillProvenancePath(
+      sandboxIdentityFingerprint,
+      "demo-skill",
+      provenanceStateDir,
+    );
+    const published = vi.fn((): SshResult => {
+      fs.rmSync(receiptPath);
+      fs.mkdirSync(receiptPath);
+      return { status: 0, stdout: `INSTALLED ${digest}\n`, stderr: "" };
+    });
+
+    expect(
+      installOpenClawSkill(ctx, skill, paths, "demo-skill", {
+        provenanceStateDir,
+        sandboxIdentityFingerprint,
+        sshExecImpl: published,
+      }),
+    ).toEqual({ success: false, uploaded: 0, reason: "provenance_finalization_failed" });
+  });
 
   it.runIf(process.platform === "linux")(
     "rejects a state root reached through a symlinked parent",
