@@ -38,6 +38,11 @@ const PATCH_OPENCLAW_MCP_RELIABILITY = path.join(
 );
 const OPENCLAW_VERSION_EXTRACTOR = path.join(REPO_ROOT, "scripts", "extract-semver.sh");
 const REAL_OPENCLAW_NODE_ENV = "NEMOCLAW_REAL_OPENCLAW_NODE";
+const REVIEWED_NODE_VERSION = (
+  JSON.parse(
+    fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf8"),
+  ) as { nodeVersion: string }
+).nodeVersion;
 // Focused patch scripts also scan the full generated dist. APFS cold-cache
 // reads can exceed one minute, so keep them bounded without using unit-fixture
 // timings as the real-artifact limit.
@@ -165,17 +170,13 @@ function resolveRealOpenClawNodeRuntime(
   });
   requireSpawnSuccess(versionProbe, `probe ${REAL_OPENCLAW_NODE_ENV}`);
   const version = versionProbe.stdout.trim();
-  const match =
-    version.match(/^v(\d+)\.(\d+)\.(\d+)$/u) ??
+  version.match(/^v(\d+)\.(\d+)\.(\d+)$/u) ??
     runtimeMismatch(version, "a stable Node version", REAL_OPENCLAW_NODE_ENV);
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  const patch = Number(match[3]);
-  const supportedNode22 = major === 22 && (minor > 22 || (minor === 22 && patch >= 3));
-  supportedNode22 ||
+  const reviewedVersion = `v${REVIEWED_NODE_VERSION}`;
+  version === reviewedVersion ||
     runtimeMismatch(
       version,
-      "Node >=22.22.3 <23 (the Dockerfile runtime is Node 22.23.2)",
+      `Node ${REVIEWED_NODE_VERSION} (the reviewed CI and Dockerfile runtime)`,
       REAL_OPENCLAW_NODE_ENV,
     );
 
@@ -299,6 +300,7 @@ describe("OpenClaw real patched-dist materialization guard", () => {
     expect(command).toContain(shellQuote(OPENCLAW_VERSION_EXTRACTOR));
   });
 
+  // source-shape-contract: security -- The real artifact harness must reject every Node runtime except the exact version reviewed for CI and production images
   it("rejects an unsupported explicit real-dist Node runtime before OpenClaw starts", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-node-runtime-"));
     try {
@@ -306,22 +308,25 @@ describe("OpenClaw real patched-dist materialization guard", () => {
       fs.writeFileSync(fakeNode, "#!/bin/sh\nprintf 'v22.22.2\\n'\n", { mode: 0o700 });
 
       expect(() => resolveRealOpenClawNodeRuntime({ [REAL_OPENCLAW_NODE_ENV]: fakeNode })).toThrow(
-        /Node >=22\.22\.3 <23/,
+        `Node ${REVIEWED_NODE_VERSION}`,
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 
+  // source-shape-contract: security -- The real artifact harness must accept the exact reviewed Node runtime before downloading or executing OpenClaw artifacts
   it("accepts an explicit absolute Node runtime in the reviewed production lane", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-node-runtime-"));
     try {
       const fakeNode = path.join(tmp, "node");
-      fs.writeFileSync(fakeNode, "#!/bin/sh\nprintf 'v22.23.2\\n'\n", { mode: 0o700 });
+      fs.writeFileSync(fakeNode, `#!/bin/sh\nprintf 'v${REVIEWED_NODE_VERSION}\\n'\n`, {
+        mode: 0o700,
+      });
 
       expect(resolveRealOpenClawNodeRuntime({ [REAL_OPENCLAW_NODE_ENV]: fakeNode })).toEqual({
         executable: fakeNode,
-        version: "v22.23.2",
+        version: `v${REVIEWED_NODE_VERSION}`,
       });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

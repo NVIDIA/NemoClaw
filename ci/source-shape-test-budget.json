@@ -187,6 +187,16 @@
       "category": "security"
     },
     {
+      "file": "test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts",
+      "test": "accepts an explicit absolute Node runtime in the reviewed production lane",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts",
+      "test": "rejects an unsupported explicit real-dist Node runtime before OpenClaw starts",
+      "category": "security"
+    },
+    {
       "file": "test/agents/openclaw/openclaw-locked-install.test.ts",
       "test": "fails closed on missing required packages and symlinked package roots",
       "category": "security"
