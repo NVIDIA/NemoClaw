@@ -20,8 +20,8 @@ const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
 );
-const REVIEWED_SOURCE_SHA256 = "aa6e42c034bf36a1bd28ae542159af8cb140bcb471008627609fb78d82ec9b32";
-const REVIEWED_TEMPLATE_SHA256 = "773f3728a3b6404d909cbf395abee2a3b95872d6b93ec90b7814adbacc683470";
+const REVIEWED_SOURCE_SHA256 = "a7c673cc7246f25e0ce25ba53680f70de6d58bcee95072c6889d4bfc00edad7b";
+const REVIEWED_TEMPLATE_SHA256 = "5674b528f6604b30b31fbf3877e4f5d53abc08e88c0a352070a898cfd7eaa7bf";
 const tempDirs: string[] = [];
 
 afterEach(() => {
@@ -109,10 +109,12 @@ cd "$NEMOCLAW_CLONE_DIR"
     withDescription,
     dependencyInstallStart,
     `${dependencyInstallStart}reviewed_npm_tmp="$(mktemp -d)"
+trap 'rm -rf "$reviewed_npm_tmp"' EXIT
 sudo env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \\
   RUNNER_TEMP="$reviewed_npm_tmp" \\
   bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json
 rm -rf "$reviewed_npm_tmp"
+trap - EXIT
 `,
     "reviewed npm Brev dependency install",
   );
@@ -150,6 +152,8 @@ describe("reviewed npm 12 Brev template trust", () => {
     const npmVerifier = reviewedTemplate.indexOf(
       "bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json",
     );
+    const cleanupTrap = reviewedTemplate.indexOf(`trap 'rm -rf "$reviewed_npm_tmp"' EXIT`);
+    const clearCleanupTrap = reviewedTemplate.indexOf("trap - EXIT", npmVerifier);
     const dependencyInstall = reviewedTemplate.indexOf("npm install --ignore-scripts", npmVerifier);
 
     expect(createHash("sha256").update(reviewedTemplate).digest("hex")).toBe(
@@ -163,7 +167,11 @@ describe("reviewed npm 12 Brev template trust", () => {
       'node_sha256="df224555a083b918e46260cc969838501b9f9a87140c1195e5b9597b56d5dae2"',
     );
     expect(npmVerifier).toBeGreaterThan(-1);
+    expect(cleanupTrap).toBeGreaterThan(-1);
+    expect(cleanupTrap).toBeLessThan(npmVerifier);
     expect(dependencyInstall).toBeGreaterThan(npmVerifier);
+    expect(clearCleanupTrap).toBeGreaterThan(npmVerifier);
+    expect(clearCleanupTrap).toBeLessThan(dependencyInstall);
     const bootstrap = fs.openSync(NPM_BOOTSTRAP, "r");
     try {
       expect(fs.fstatSync(bootstrap).isFile()).toBe(true);
