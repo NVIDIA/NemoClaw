@@ -62,8 +62,8 @@ import {
   type GatewayRestartDeps,
   type GatewayRestartFailureLayer,
   type GatewayRestartResult,
-  gatewayIntegrityRepairLines,
-  isGatewayIntegrityRepairLayer,
+  gatewayTerminalRepairLines,
+  isGatewayTerminalRepairLayer,
   MANAGED_CONTROL_IDENTITY_CHANGED_MARKER,
   type ManagedGatewayControlCompletion,
   parseManagedGatewayControlCompletion,
@@ -1333,11 +1333,10 @@ function printHostManagedGatewayRecoveryHints(
     console.error("  If rebuild is blocked, destroy and re-onboard the sandbox to restore it.");
     return;
   }
-  // A drifted protected config and a quarantined supervisor both refuse every
-  // relaunch deterministically, so the generic "retry the managed restart" hint
-  // below would send the operator into a loop that cannot succeed (#7801).
-  if (isGatewayIntegrityRepairLayer(failureLayer)) {
-    for (const line of gatewayIntegrityRepairLines(quotedSandboxName, failureLayer)) {
+  // These terminal states need their specific repair before another managed
+  // restart. The generic hint below would otherwise repeat the same failure.
+  if (isGatewayTerminalRepairLayer(failureLayer)) {
+    for (const line of gatewayTerminalRepairLines(quotedSandboxName, failureLayer)) {
       console.error(`  ${line}`);
     }
     return;

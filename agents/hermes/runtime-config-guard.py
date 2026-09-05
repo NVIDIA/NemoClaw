@@ -1326,10 +1326,12 @@ def refresh_hashes(
     mode: str,
     mcp_transition: str = "preserve",
 ) -> None:
-    """Advance the durable MCP intended/applied state without blessing drift.
+    """Advance the durable MCP intended/applied state around one config snapshot.
 
-    ``preserve`` requires current config to equal intended. ``intend`` records
-    current config as the next intent while retaining the last applied digest.
+    ``preserve`` requires current MCP config to equal intended. ``adopt`` records
+    Hermes-owned MCP config as the next intent and supersedes stale host intent.
+    ``intend`` records current config as the next managed intent while retaining
+    the last applied digest.
     ``rollback`` requires restored config to equal the prior applied digest,
     then conservatively records restored/failed-candidate until reload health is
     proven. ``apply`` is a metadata-only intended/intended commit and requires
@@ -1341,7 +1343,7 @@ def refresh_hashes(
     config_path = os.path.join(hermes_dir, "config.yaml")
     env_path = os.path.join(hermes_dir, ".env")
     compat_hash = os.path.join(hermes_dir, ".config-hash")
-    if mcp_transition not in {"preserve", "intend", "rollback", "apply"}:
+    if mcp_transition not in {"preserve", "adopt", "intend", "rollback", "apply"}:
         raise UnsafePathError("refusing unsupported Hermes MCP hash transition")
 
     # Snapshot-stability/TOCTOU contract: derive the config hash and canonical
@@ -1387,6 +1389,9 @@ def refresh_hashes(
             raise UnsafePathError(
                 "Hermes MCP config differs from persisted intended state"
             )
+    elif mcp_transition == "adopt":
+        if not secrets.compare_digest(current_mcp, state.intended):
+            state = McpHashState(current_mcp, state.applied)
     elif mcp_transition == "intend":
         if state.intended != state.applied and not secrets.compare_digest(
             current_mcp, state.intended
@@ -1432,6 +1437,28 @@ def refresh_hashes(
         finally:
             config.close()
             env.close()
+
+    # Restart validates once before sealing and once after. Keep a current
+    # anchor on the same inode so the second pass cannot invalidate seal state.
+    if mcp_transition == "adopt" and secrets.compare_digest(
+        hash_text, source_hash_text
+    ):
+        compatibility_matches = True
+        if mode == "both":
+            try:
+                compatibility_matches = secrets.compare_digest(
+                    _read_hash_file(compat_hash), source_hash_text
+                )
+            except FileNotFoundError:
+                compatibility_matches = False
+        if compatibility_matches:
+            integrity = inspect_mcp_integrity_snapshot(
+                hermes_dir,
+                state_path,
+                compat_hash if mode == "both" else None,
+            )
+            assert_mcp_integrity_snapshot_current(integrity)
+            return
 
     # `both` is the transaction contract: both trust anchors must advance or
     # the caller rolls the config write back. `compat` remains best-effort for
@@ -3361,6 +3388,9 @@ def main() -> int:
     parser.add_argument(
         "--mode", choices=("strict", "compat", "both"), default="strict"
     )
+    parser.add_argument(
+        "--mcp-transition", choices=("preserve", "adopt"), default="preserve"
+    )
     parser.add_argument("--state-file", default="")
     parser.add_argument("--expected-config-sha256", default="")
     parser.add_argument("--lock-token", default="")
@@ -3375,6 +3405,8 @@ def main() -> int:
             raise UnsafePathError(
                 "--mcp-state-exit-code requires inspect-mcp-integrity"
             )
+        if args.mcp_transition != "preserve" and args.action != "refresh-hashes":
+            raise UnsafePathError("--mcp-transition requires refresh-hashes")
         _validate_action_readiness(args.action, args.startup_owner)
         if args.action == "ensure-api-key":
             if not args.hash_file:
@@ -3383,7 +3415,12 @@ def main() -> int:
         elif args.action == "refresh-hashes":
             if not args.hash_file:
                 raise UnsafePathError("refresh-hashes requires --hash-file")
-            refresh_hashes(args.hermes_dir, args.hash_file, args.mode)
+            refresh_hashes(
+                args.hermes_dir,
+                args.hash_file,
+                args.mode,
+                mcp_transition=args.mcp_transition,
+            )
         elif args.action == "inspect-mcp-integrity":
             if not args.hash_file:
                 raise UnsafePathError("inspect-mcp-integrity requires --hash-file")

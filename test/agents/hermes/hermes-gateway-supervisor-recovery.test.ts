@@ -19,7 +19,7 @@ const SUPERVISOR_LIB = path.join(
   "gateway-supervisor.sh",
 );
 
-function runHermesHealthyGatewayRecovery(integrityStatus: 0 | 1) {
+function runHermesHealthyGatewayRecovery(adoptionStatus: 0 | 1) {
   const source = fs.readFileSync(START_SCRIPT, "utf-8");
   return runBashHarness([
     'trace() { printf "%s\\n" "$*"; }',
@@ -27,7 +27,9 @@ function runHermesHealthyGatewayRecovery(integrityStatus: 0 | 1) {
     'gateway_control_pid_is_live() { trace "pid-live:$1"; return 0; }',
     "hermes_gateway_healthy() { trace gateway-healthy; return 0; }",
     "validate_running_hermes_boundary() { trace boundary-validation; return 0; }",
-    `verify_hermes_config_integrity() { trace strict-integrity; return ${integrityStatus}; }\nprepare_hermes_lazy_dependencies() { return 0; }`,
+    `refresh_hermes_runtime_config_hashes() { trace "adopt-config:$*"; return ${adoptionStatus}; }`,
+    "inspect_hermes_mcp_integrity() { trace mcp-integrity; return 0; }",
+    "prepare_hermes_lazy_dependencies() { return 0; }",
     "hermes_auxiliaries_need_recovery() { trace auxiliaries-needed; return 0; }",
     "seal_hermes_restart_inputs() { trace seal-inputs; return 0; }",
     "unseal_hermes_restart_inputs() { trace unseal-inputs; return 0; }",
@@ -40,6 +42,7 @@ function runHermesHealthyGatewayRecovery(integrityStatus: 0 | 1) {
     extractShellFunction(source, "prepare_hermes_gateway_restart"),
     extractShellFunction(source, "handle_hermes_gateway_control_request"),
     "GATEWAY_PID=4242",
+    "HERMES_HASH_FILE=/etc/nemoclaw/hermes.config-hash",
     "HERMES_RESTART_FAILURE_CODE=internal",
     'if handle_hermes_gateway_control_request; then trace "handler-rc:0"; else trace "handler-rc:$?"; fi',
   ]);
@@ -134,7 +137,7 @@ describe("Hermes PID 1 supervisor recovery", () => {
     expect(result.stderr).toContain("privileged gateway control unavailable");
   });
 
-  it("validates the strict trust anchor before healthy-recover auxiliaries", () => {
+  it("adopts mutable config before healthy-recover auxiliaries (#11108)", () => {
     const result = runHermesHealthyGatewayRecovery(0);
 
     expect(result.status, result.stderr).toBe(0);
@@ -143,11 +146,13 @@ describe("Hermes PID 1 supervisor recovery", () => {
       "pid-live:4242",
       "gateway-healthy",
       "boundary-validation",
-      "strict-integrity",
+      "adopt-config:both adopt",
+      "mcp-integrity",
       "auxiliaries-needed",
       "seal-inputs",
       "boundary-validation",
-      "strict-integrity",
+      "adopt-config:both adopt",
+      "mcp-integrity",
       "auxiliaries",
       "unseal-inputs",
       "refresh-child-pids",
@@ -156,7 +161,7 @@ describe("Hermes PID 1 supervisor recovery", () => {
     ]);
   });
 
-  it("does not start healthy-recover auxiliaries when strict validation fails", () => {
+  it("does not start healthy-recover auxiliaries when config adoption fails (#11108)", () => {
     const result = runHermesHealthyGatewayRecovery(1);
 
     expect(result.status, result.stderr).toBe(0);
@@ -165,7 +170,7 @@ describe("Hermes PID 1 supervisor recovery", () => {
       "pid-live:4242",
       "gateway-healthy",
       "boundary-validation",
-      "strict-integrity",
+      "adopt-config:both adopt",
       "fail:hash-mismatch:4242",
       "handler-rc:1",
     ]);
@@ -656,7 +661,7 @@ describe("Hermes supervised auxiliary recovery", () => {
     expect(result.stdout).not.toContain("unexpected-auxiliary");
   });
 
-  it("does not count preparation refusals or launch before preparation succeeds", () => {
+  it("retries MCP preparation refusals without entering quarantine (#11108)", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([
       'trace() { printf "%s\\n" "$*"; }',

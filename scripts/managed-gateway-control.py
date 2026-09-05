@@ -149,9 +149,6 @@ START_LOG_DIAGNOSTIC_PATTERNS = (
         r"\[gateway\] CRITICAL: (?:exact Hermes replacement|unhealthy Hermes gateway|initial Hermes gateway) could not be stopped; managed supervisor is quarantined without another launch"
     ),
     re.compile(
-        r"\[SECURITY\] Hermes automatic respawn is quarantined until MCP integrity is restored by rebuilding the sandbox"
-    ),
-    re.compile(
         r"\[CRITICAL\] Newly launched Hermes (?:gateway|gateway-log|dashboard|dashboard-log|api-socat|dashboard-socat) pid [1-9][0-9]* failed exact role identity capture; quarantining the managed startup supervisor without signaling the unproven child"
     ),
     re.compile(

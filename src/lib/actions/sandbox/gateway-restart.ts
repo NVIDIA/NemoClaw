@@ -117,7 +117,6 @@ const GATEWAY_RESTART_SUPPORTED_AGENTS = ["openclaw", "hermes"] as const;
 // and their allowlist in scripts/managed-gateway-control.py.
 const GATEWAY_RELAUNCH_QUARANTINE_MARKERS = [
   "quarantined until sandbox recreation",
-  "quarantined until MCP integrity is restored",
   "quarantined without another launch",
   "quarantining the managed startup supervisor",
 ] as const;
@@ -257,10 +256,9 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
   }
   // A quarantined supervisor is the strictly more specific and terminal fact:
   // it stops attempting relaunch entirely, so the controller then reports the
-  // generic health timeout it would report for any unresponsive gateway, and a
-  // config refusal that tripped the crash budget is reported as MCP drift by the
-  // non-root startup guard. Classify the quarantine ahead of both so the host
-  // names the state that actually blocks recovery instead of its side effect.
+  // generic health timeout it would report for any unresponsive gateway.
+  // Classify the quarantine first so the host names the state that blocks
+  // recovery instead of its health-check side effect.
   if (GATEWAY_RELAUNCH_QUARANTINE_MARKERS.some((marker) => output.includes(marker))) {
     return {
       layer: "relaunch quarantined",
@@ -293,32 +291,28 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
   return { layer: "launch failure", detail: detail || `restart exited ${result.status}` };
 }
 
-export function isGatewayIntegrityRepairLayer(
+export function isGatewayTerminalRepairLayer(
   layer: GatewayRestartFailureLayer | null | undefined,
 ): layer is "config hash mismatch" | "relaunch quarantined" {
   return layer === "config hash mismatch" || layer === "relaunch quarantined";
 }
 
-/**
- * The supported repair for a sandbox whose protected configuration drifted away
- * from its recorded integrity metadata. Both layers are deterministic refusals:
- * every relaunch re-reads the same drifted file, so retrying a restart or a
- * recover only burns the supervisor's crash budget. `rebuild` is the documented
- * command that restores the registered configuration, refreshes the integrity
- * hashes, and brings the gateway back in one transaction (#7801).
- */
-export function gatewayIntegrityRepairLines(
+/** Report terminal restart repair without treating process quarantine as config drift. */
+export function gatewayTerminalRepairLines(
   sandboxName: string,
   layer: "config hash mismatch" | "relaunch quarantined",
 ): readonly string[] {
-  const cause =
-    layer === "config hash mismatch"
-      ? "A protected configuration file no longer matches its recorded integrity hash."
-      : "The in-sandbox supervisor quarantined gateway relaunch after a startup refusal.";
+  if (layer === "relaunch quarantined") {
+    return [
+      "The in-sandbox supervisor stopped relaunch after repeated process or health failures.",
+      `Inspect the Hermes failure with \`nemoclaw ${sandboxName} logs --tail 50\`.`,
+      `After correcting the cause, reset the supervisor with \`nemoclaw ${sandboxName} stop\`, then \`nemoclaw ${sandboxName} start\`.`,
+      `If the sandbox still cannot start, rebuild it with \`nemoclaw ${sandboxName} rebuild --yes\`.`,
+    ];
+  }
   return [
-    `${cause} Retrying the restart cannot clear it.`,
+    "The restart transaction could not validate its integrity metadata.",
     `Restore the registered configuration and refresh its integrity metadata with \`nemoclaw ${sandboxName} rebuild --yes\`.`,
-    `Then make intended changes through supported commands such as \`nemoclaw ${sandboxName} config set\` or \`nemoclaw inference set --sandbox ${sandboxName}\`, which update the configuration and its hashes together.`,
   ];
 }
 
@@ -365,8 +359,8 @@ export function printGatewayRestartFailure(
     console.error("  Hermes gateway log tail (sanitized):");
     for (const line of gatewayLogTail) console.error(`  ${line}`);
   }
-  if (isGatewayIntegrityRepairLayer(layer)) {
-    for (const line of gatewayIntegrityRepairLines(sandboxName, layer)) {
+  if (isGatewayTerminalRepairLayer(layer)) {
+    for (const line of gatewayTerminalRepairLines(sandboxName, layer)) {
       console.error(`  ${line}`);
     }
   }

@@ -66,7 +66,7 @@ import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
   exitOnMcpReconciliationRefusal,
   exitOnSecretBoundaryRefusal,
-  printGatewayIntegrityRepairGuidance,
+  printGatewayTerminalRepairGuidance,
 } from "./connect-boundary-refusal";
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
@@ -498,7 +498,7 @@ async function runSandboxConnectProbe(
     `  Probe failed: ${agentName} gateway is not running in '${sandboxName}' and automatic recovery failed.`,
   );
   probeTiming?.markFailureStage("processes");
-  if (printGatewayIntegrityRepairGuidance(sandboxName, recoveryFailureLayer)) {
+  if (printGatewayTerminalRepairGuidance(sandboxName, recoveryFailureLayer)) {
     process.exit(1);
   }
   // Surface the #4710 wedge signature: recovery ran with quiet=true, so this

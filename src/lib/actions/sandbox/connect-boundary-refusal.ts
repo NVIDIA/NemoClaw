@@ -3,8 +3,8 @@
 
 import {
   type GatewayRestartFailureLayer,
-  gatewayIntegrityRepairLines,
-  isGatewayIntegrityRepairLayer,
+  gatewayTerminalRepairLines,
+  isGatewayTerminalRepairLayer,
 } from "./gateway-restart";
 import type { SecretBoundaryRefusalReason } from "./hermes-secret-boundary-recovery";
 import {
@@ -15,19 +15,17 @@ import {
 type ConnectBoundaryContext = "Probe" | "Connect";
 
 /**
- * A managed recovery that failed on a deterministic integrity refusal cannot be
- * retried: every relaunch re-reads the same drifted protected configuration.
- * The probe path recovers quietly, so without this the operator only sees the
- * generic "check the gateway log" and never learns the supported repair (#7801).
+ * The probe path recovers quietly. Report the repair for a terminal transaction
+ * or process state before generic gateway-log guidance hides it (#7801).
  * Returns false when the layer is a retryable failure, leaving the caller's
  * existing wedge diagnostics in charge.
  */
-export function printGatewayIntegrityRepairGuidance(
+export function printGatewayTerminalRepairGuidance(
   sandboxName: string,
   layer: GatewayRestartFailureLayer | null | undefined,
 ): boolean {
-  if (!isGatewayIntegrityRepairLayer(layer)) return false;
-  for (const line of gatewayIntegrityRepairLines(sandboxName, layer)) {
+  if (!isGatewayTerminalRepairLayer(layer)) return false;
+  for (const line of gatewayTerminalRepairLines(sandboxName, layer)) {
     console.error(`  ${line}`);
   }
   return true;
