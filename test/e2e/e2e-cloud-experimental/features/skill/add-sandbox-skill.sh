@@ -95,8 +95,22 @@ known_hosts="$(mktemp)"
 remote_script="$(mktemp)"
 trap 'rm -f "${cleanup_payload:-}" "$ssh_config" "$known_hosts" "$remote_script"; rm -rf "$local_skill_dir"' EXIT
 
-command -v openshell >/dev/null 2>&1 || die "openshell not on PATH"
 command -v node >/dev/null 2>&1 || die "node not on PATH"
+declared_skill_id="$(node -e '
+const fs = require("node:fs");
+const YAML = require("yaml");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const match = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/u.exec(source);
+if (!match) process.exit(2);
+const parsed = YAML.parse(match[1]);
+const name = typeof parsed?.name === "string" ? parsed.name.trim() : "";
+if (!/^[A-Za-z0-9._-]+$/u.test(name)) process.exit(2);
+process.stdout.write(name);
+' "${local_skill_dir}/SKILL.md")" \
+  || die "SKILL.md must declare one simple name in YAML frontmatter"
+[ "$declared_skill_id" = "$SKILL_ID" ] \
+  || die "SKILL_ID '${SKILL_ID}' does not match SKILL.md name '${declared_skill_id}'"
+command -v openshell >/dev/null 2>&1 || die "openshell not on PATH"
 
 info "Installing skill through NemoClaw into sandbox '${SANDBOX_NAME}'..."
 set +e

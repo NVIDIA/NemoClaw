@@ -13,6 +13,7 @@ import {
   installOpenClawSkill,
   resolveOpenClawSkillProvenancePath,
   SKILL_SNAPSHOT_MAX_BYTES,
+  shellQuote,
   type SkillPaths,
   type SshContext,
   type SshResult,
@@ -50,6 +51,8 @@ describe("OpenClaw native skill installation", () => {
       const workspaceSkillDir = path.join(sandboxRoot, "workspace", "skills", "demo-skill");
       const provenanceStateDir = path.join(sandboxRoot, "host-state");
       const invocationLog = path.join(sandboxRoot, "openclaw.log");
+      const shadowLog = path.join(sandboxRoot, "shadow-openclaw.log");
+      const pinnedOpenClaw = path.join(fakeBin, "openclaw-pinned");
       let checkState = "eligible";
       const executionPaths: SkillPaths = {
         ...paths,
@@ -59,7 +62,7 @@ describe("OpenClaw native skill installation", () => {
       roots.push(sandboxRoot);
       fs.mkdirSync(fakeBin);
       fs.writeFileSync(
-        path.join(fakeBin, "openclaw"),
+        pinnedOpenClaw,
         `#!/bin/sh
 set -eu
 case "$1 $2" in
@@ -99,24 +102,39 @@ esac
 `,
         { mode: 0o755 },
       );
+      fs.writeFileSync(
+        path.join(fakeBin, "openclaw"),
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$OPENCLAW_TEST_SHADOW_LOG"\nexit 99\n',
+        { mode: 0o755 },
+      );
       const sshExec = vi.fn(
         (
           _ctx: SshContext,
           command: string,
           opts?: { input?: string | Buffer; timeout?: number },
         ): SshResult => {
-          const execution = spawnSync("bash", ["--noprofile", "--norc", "-c", command], {
-            encoding: "utf8",
-            env: {
-              ...process.env,
-              OPENCLAW_TEST_CHECK_STATE: checkState,
-              OPENCLAW_TEST_LOG: invocationLog,
-              OPENCLAW_TEST_TARGET: workspaceSkillDir,
-              PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          const execution = spawnSync(
+            "bash",
+            [
+              "--noprofile",
+              "--norc",
+              "-c",
+              command.replaceAll("'/usr/local/bin/openclaw'", shellQuote(pinnedOpenClaw)),
+            ],
+            {
+              encoding: "utf8",
+              env: {
+                ...process.env,
+                OPENCLAW_TEST_CHECK_STATE: checkState,
+                OPENCLAW_TEST_LOG: invocationLog,
+                OPENCLAW_TEST_SHADOW_LOG: shadowLog,
+                OPENCLAW_TEST_TARGET: workspaceSkillDir,
+                PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+              },
+              input: opts?.input,
+              timeout: opts?.timeout,
             },
-            input: opts?.input,
-            timeout: opts?.timeout,
-          });
+          );
           return {
             status: execution.status ?? 1,
             stdout: execution.stdout,
@@ -156,6 +174,7 @@ esac
       });
       expect(fs.readFileSync(provenancePath, "utf8")).toContain(`"contentDigest":"${firstDigest}"`);
       expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(1);
+      expect(fs.existsSync(shadowLog)).toBe(false);
       expect(
         fs.readdirSync(sandboxRoot).filter((entry) => entry.startsWith(".nemoclaw-skill-stage.")),
       ).toEqual([]);
@@ -241,11 +260,12 @@ esac
       const linkedParent = path.join(container, "linked");
       const stateDir = path.join(realParent, "state");
       const fakeBin = path.join(container, "bin");
+      const pinnedOpenClaw = path.join(fakeBin, "openclaw-pinned");
       const invocationLog = path.join(container, "openclaw.log");
       fs.mkdirSync(stateDir, { recursive: true });
       fs.mkdirSync(fakeBin);
       fs.writeFileSync(
-        path.join(fakeBin, "openclaw"),
+        pinnedOpenClaw,
         '#!/bin/sh\nprintf "%s\\n" "$*" >> "$OPENCLAW_TEST_LOG"\nexit 99\n',
         { mode: 0o755 },
       );
@@ -262,16 +282,25 @@ esac
           command: string,
           opts?: { input?: string | Buffer; timeout?: number },
         ): SshResult => {
-          const execution = spawnSync("bash", ["--noprofile", "--norc", "-c", command], {
-            encoding: "utf8",
-            env: {
-              ...process.env,
-              OPENCLAW_TEST_LOG: invocationLog,
-              PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          const execution = spawnSync(
+            "bash",
+            [
+              "--noprofile",
+              "--norc",
+              "-c",
+              command.replaceAll("'/usr/local/bin/openclaw'", shellQuote(pinnedOpenClaw)),
+            ],
+            {
+              encoding: "utf8",
+              env: {
+                ...process.env,
+                OPENCLAW_TEST_LOG: invocationLog,
+                PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+              },
+              input: opts?.input,
+              timeout: opts?.timeout,
             },
-            input: opts?.input,
-            timeout: opts?.timeout,
-          });
+          );
           return {
             status: execution.status ?? 1,
             stdout: execution.stdout,

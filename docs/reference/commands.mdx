@@ -2361,7 +2361,7 @@ $$nemoclaw my-assistant mcp remove github [--force]
 
 ### `$$nemoclaw <name> skill install <path>`
 
-Deploy a skill directory to a running sandbox. The command validates the `SKILL.md` frontmatter, which requires a `name` field. It snapshots selected non-dot regular files while preserving their subdirectory structure, then follows the selected agent's installation contract.
+Deploy a skill directory to a running sandbox. The command validates the `SKILL.md` frontmatter, which requires a `name` field, then follows the selected agent's installation contract. OpenClaw and Deep Agents create a bounded secure snapshot; Hermes uploads the selected files directly.
 
 ```bash
 $$nemoclaw my-assistant skill install ./my-skill/
@@ -2391,7 +2391,7 @@ Run `$$nemoclaw <name> skill install --help` to print usage for this subcommand.
 
 Files with names starting with `.` (dotfiles) are skipped and listed in the output. Files with unsafe path characters are rejected to prevent shell injection. Symlinks and other non-regular paths are rejected rather than followed or copied.
 
-Secure snapshot installation is limited to 1,024 selected files and 64 MiB of total file content. The command refuses larger inputs before contacting the sandbox.
+OpenClaw and Deep Agents snapshot installation is limited to 1,024 selected files and 64 MiB of total file content. The command refuses larger inputs before transfer or installation begins.
 
 For OpenClaw, exact-content retries are verified but changed-content updates are refused until the native installer provides an atomic conditional-update contract. Hermes updates its generic sandbox skill path in place. Chat history is preserved. Deep Agents supports only fresh-name installs because its active skill directory is shared with agent-authored content. Follow the agent-specific activation guidance above after installation.
 

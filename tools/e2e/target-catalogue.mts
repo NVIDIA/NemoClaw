@@ -1121,6 +1121,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     profile: "nvidia-inference",
     timeoutMinutes: 60,
     installMode: "none",
+    prAdvisorSelectable: true,
     restoreCli: true,
     exposeCliBin: true,
     environment: {

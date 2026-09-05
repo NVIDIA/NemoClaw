@@ -97,6 +97,23 @@ describe("E2E recommendation normalizer", () => {
       "bedrock-runtime-compatible-anthropic-openclaw",
     );
 
+    const skills = normalizeE2eTargetAdvisorResult(
+      {
+        required: [
+          {
+            id: "openclaw-skill-cli",
+            workflow: E2E_WORKFLOW,
+            selectorType: "target",
+            reason: "Exercise native OpenClaw skill collision and installation behavior.",
+          },
+        ],
+        optional: [],
+        confidence: "high",
+      },
+      metadata({ changedFiles: ["test/e2e/live/openclaw-skill-cli.test.ts"] }),
+    );
+    expect(skills.required.map(({ id }) => id)).toContain("openclaw-skill-cli");
+
     const rejected = normalizeE2eTargetAdvisorResult(
       {
         required: [

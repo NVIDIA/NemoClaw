@@ -263,6 +263,7 @@ const SHA256_RE = /^[a-f0-9]{64}$/;
 const SKILL_SNAPSHOT_TIMEOUT_MS = 30_000;
 export const SKILL_SNAPSHOT_MAX_FILES = 1024;
 export const SKILL_SNAPSHOT_MAX_BYTES = 64 * 1024 * 1024;
+const OPENCLAW_NATIVE_BIN = "/usr/local/bin/openclaw";
 
 function fileSha256(filePath: string): string {
   return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
@@ -832,14 +833,14 @@ function buildOpenClawNativeInstallScript(
     'find "$payload" -type f ! -perm /111 -exec chmod 644 {} +',
     'staged="$(digest_tree "$payload" "$stage/staged.manifest")"',
     '[ "$staged" = "$expected" ]',
-    'help="$(openclaw skills install --help 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }',
+    `help="$(${shellQuote(OPENCLAW_NATIVE_BIN)} skills install --help 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
     'printf "%s" "$help" | grep -q -- "--agent" || { echo CAPABILITY_MISSING; exit 3; }',
     'action="install"',
     'if exists "$target"; then safe_tree "$target" || { echo COLLISION; exit 2; }; current="$(digest_tree "$target" "$stage/current.manifest")"; if [ "$current" = "$expected" ] && { [ "$reconcile" = 1 ] || [ "$current" = "$previous" ]; }; then action="reconcile"; elif [ -n "$previous" ] && [ "$current" = "$previous" ]; then echo UPDATE_UNSUPPORTED; exit 6; else echo COLLISION; exit 2; fi; fi',
-    'if [ "$action" = install ]; then openclaw skills install "$payload" --agent main; fi',
-    'openclaw skills list --agent main --json > "$stage/list.json"',
-    'openclaw skills info "$skill" --agent main --json > "$stage/info.json"',
-    'openclaw skills check --agent main --json > "$stage/check.json"',
+    `if [ "$action" = install ]; then ${shellQuote(OPENCLAW_NATIVE_BIN)} skills install "$payload" --agent main; fi`,
+    `${shellQuote(OPENCLAW_NATIVE_BIN)} skills list --agent main --json > "$stage/list.json"`,
+    `${shellQuote(OPENCLAW_NATIVE_BIN)} skills info "$skill" --agent main --json > "$stage/info.json"`,
+    `${shellQuote(OPENCLAW_NATIVE_BIN)} skills check --agent main --json > "$stage/check.json"`,
     `node -e ${shellQuote(verifyNativeJson)} "$stage/list.json" "$stage/info.json" "$stage/check.json" "$skill" "$target" || { echo VERIFY_FAILED; exit 4; }`,
     'safe_tree "$target" || { echo VERIFY_FAILED; exit 4; }',
     'installed="$(digest_tree "$target" "$stage/installed.manifest")"',
