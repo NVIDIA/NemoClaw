@@ -142,20 +142,10 @@ if (!streaming) {
 
 export const LLAMA_CPP_OPENCLAW_SESSION_PROBE_SOURCE = String.raw`
 const fs = require("node:fs");
-const [sessionPath, trajectoryPath, toolName, fixturePath, fixtureValue] = process.argv.slice(1);
+const [sessionPath, , toolName, fixturePath, fixtureValue] = process.argv.slice(1);
 const items = fs.readFileSync(sessionPath, "utf8").split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
 const sessionMessages = items.filter((item) => item?.type === "message" && item?.message).map((item) => item.message);
-const trajectoryItems = fs.existsSync(trajectoryPath)
-  ? fs.readFileSync(trajectoryPath, "utf8").split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line))
-  : [];
-let projectedMessages = [];
-for (const item of trajectoryItems) {
-  if (item?.type === "model.completed" && Array.isArray(item?.data?.messagesSnapshot)) {
-    projectedMessages = item.data.messagesSnapshot.map((value) => value?.message ?? value);
-  }
-}
-const messages = [...sessionMessages, ...projectedMessages];
-const blocks = messages.flatMap((message) => Array.isArray(message.content) ? message.content : []);
+const blocks = sessionMessages.flatMap((message) => Array.isArray(message.content) ? message.content : []);
 const calls = blocks.filter((block) => block?.type === "toolCall");
 const exactCalls = calls.filter((call) => {
   const name = call.name ?? call.toolName;
@@ -165,7 +155,7 @@ const exactCalls = calls.filter((call) => {
     (argumentsValue?.id === toolName || argumentsValue?.id === "openclaw:core:" + toolName) &&
     argumentsValue?.args?.path === fixturePath;
 });
-const results = messages.filter((message) => message?.role === "toolResult");
+const results = sessionMessages.filter((message) => message?.role === "toolResult");
 const exactCallIds = new Set(exactCalls.map((call) => call.id ?? call.toolCallId ?? call.tool_call_id).filter(Boolean));
 const matchingResults = results.filter((message) =>
   exactCallIds.has(message.toolCallId ?? message.tool_call_id ?? message.id) &&

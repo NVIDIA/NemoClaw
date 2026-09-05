@@ -9,6 +9,10 @@ import {
   createDockerLlamaCppHostLocalOperation,
   createDockerLlamaCppInspectionOperation,
 } from "../../onboard/runtime-provider/docker-llama-cpp-operation";
+import type {
+  DockerLlamaCppManagedLifecycle,
+  DockerLlamaCppManagedLifecycleOptions,
+} from "../../onboard/runtime-provider/docker-llama-cpp-managed-lifecycle";
 import { requirePersistedEngineAuthority } from "../../onboard/runtime-provider/persisted-engine-authority";
 import { probeLlamaCppAttachment } from "./index";
 import {
@@ -49,6 +53,9 @@ export interface ManagedLlamaCppStatusOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly inspectExact?: typeof inspectManagedLlamaCppRuntimeExact;
   readonly probe?: typeof probeLlamaCppAttachment;
+  readonly createInspectionLifecycle?: (
+    input: DockerLlamaCppManagedLifecycleOptions,
+  ) => DockerLlamaCppManagedLifecycle;
 }
 
 function unknownStatus(recipeId: string, detail: string): ManagedLlamaCppStatus {
@@ -117,7 +124,11 @@ export function inspectManagedLlamaCppStatus(
   let operation: ReturnType<typeof createDockerLlamaCppHostLocalOperation>;
   try {
     operation = options.engine
-      ? createDockerLlamaCppInspectionOperation(options.engine, options.env ?? process.env)
+      ? createDockerLlamaCppInspectionOperation(
+          options.engine,
+          options.env ?? process.env,
+          options.createInspectionLifecycle,
+        )
       : createDockerLlamaCppHostLocalOperation(options.env ?? process.env);
     engine = operation.engine;
     requirePersistedEngineAuthority(

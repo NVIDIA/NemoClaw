@@ -333,6 +333,33 @@ describe("managed llama.cpp status", () => {
     });
   });
 
+  it("passes the configured OpenShell bridge through public status inspection", () => {
+    const createInspectionLifecycle = vi.fn(() => ({}) as never);
+    const inspectExact = vi.fn<NonNullable<ManagedLlamaCppStatusOptions["inspectExact"]>>(
+      ({ operation }) => {
+        operation.createLlamaCppLifecycle({} as never);
+        return { running: true, receipt: {} as never };
+      },
+    );
+    const runtimeEngine = engine(vi.fn(() => ({ status: 0, stdout: "[]", stderr: "" })));
+    const homeDir = temporaryHome();
+    publishState(homeDir, runtimeEngine);
+
+    expect(
+      inspectManagedLlamaCppStatus("spark-agent", {
+        createInspectionLifecycle,
+        env: { OPENSHELL_DOCKER_NETWORK_NAME: "nemoclaw-managed-pr-test" },
+        homeDir,
+        engine: runtimeEngine,
+        inspectExact,
+        probe: vi.fn(() => ({ ok: true as const, model: "nvidia-nemotron" })),
+      }),
+    ).toMatchObject({ state: "running" });
+    expect(createInspectionLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ gatewayNetworkName: "nemoclaw-managed-pr-test" }),
+    );
+  });
+
   it("reports invalid Docker authority construction as a conflict", () => {
     const runtimeEngine = engine(vi.fn());
     const homeDir = temporaryHome();

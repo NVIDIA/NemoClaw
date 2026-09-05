@@ -128,6 +128,69 @@ describe("llama.cpp OpenClaw qualification probe", () => {
     }
   });
 
+  it("rejects tool evidence from an unrelated trajectory snapshot", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "llama-cpp-openclaw-mismatch-"));
+    const sessionPath = path.join(root, "tool.jsonl");
+    const trajectoryPath = path.join(root, "tool.trajectory.jsonl");
+    try {
+      fs.writeFileSync(
+        sessionPath,
+        [
+          { type: "message", message: { role: "user", content: "read the fixture" } },
+          { type: "message", message: { role: "user", content: "repeat it" } },
+          { type: "message", message: { role: "assistant", content: "FIXTURE_OK" } },
+        ]
+          .map((value) => JSON.stringify(value))
+          .join("\n"),
+      );
+      fs.writeFileSync(
+        trajectoryPath,
+        `${JSON.stringify({
+          type: "model.completed",
+          data: {
+            messagesSnapshot: [
+              {
+                role: "assistant",
+                content: [
+                  {
+                    type: "toolCall",
+                    id: "foreign-call",
+                    name: "read",
+                    arguments: { path: "/tmp/fixture.txt" },
+                  },
+                ],
+              },
+              {
+                role: "toolResult",
+                toolCallId: "foreign-call",
+                content: [{ type: "text", text: "FIXTURE_OK" }],
+              },
+            ],
+          },
+        })}\n`,
+      );
+      const result = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          LLAMA_CPP_OPENCLAW_SESSION_PROBE_SOURCE,
+          sessionPath,
+          trajectoryPath,
+          "read",
+          "/tmp/fixture.txt",
+          "FIXTURE_OK",
+        ],
+        { encoding: "utf8" },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "OpenClaw session did not prove the declared tool-call continuation flow",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("executes every YAML-authored probe and emits only bounded structural evidence", async () => {
     const invocations: string[][] = [];
     const evidence = await runLlamaCppOpenClawAgentQualification(

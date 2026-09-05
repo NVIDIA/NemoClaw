@@ -217,6 +217,11 @@ describe("generic NVIDIA GPU PR selection", () => {
       "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
     );
 
+    const cohortDownload = selector?.steps?.find(
+      (step) => step.name === "Download immutable managed-image cohort contract",
+    );
+    expect(cohortDownload?.if).toBe("${{ steps.changed.outputs.qwen_selected == 'true' }}");
+
     const cohort = selector?.steps?.find((step) => step.id === "validate_managed_cohort");
     expect(cohort).toMatchObject({
       env: {
@@ -224,7 +229,7 @@ describe("generic NVIDIA GPU PR selection", () => {
         PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
         PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
       },
-      if: "${{ steps.changed.outputs.publication_selected == 'true' }}",
+      if: "${{ steps.changed.outputs.qwen_selected == 'true' }}",
     });
 
     expect(value.jobs["llama-cpp-generic-gpu"]?.env?.E2E_MANAGED_IMAGE_REVISION).toBe(

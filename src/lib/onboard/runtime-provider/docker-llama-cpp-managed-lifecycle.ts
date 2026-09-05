@@ -825,16 +825,19 @@ function expectedCommand(options: DockerLlamaCppManagedLifecycleOptions): readon
   return buildLlamaCppRequestGuardCommandArgv(options.contract);
 }
 
-function specificationDigest(
+function specificationDigestVersion(
   options: DockerLlamaCppManagedLifecycleOptions,
   apiKeyRootIdentity: string,
   receiptTargetSha256: string,
+  includeGatewayNetwork: boolean,
 ): string {
   return sha256({
     apiKeyRootIdentitySha256: apiKeyRootIdentity,
     contract: options.contract,
     containerName: options.bindings.containerName,
-    gatewayNetworkName: configuredGatewayNetworkName(options),
+    ...(includeGatewayNetwork
+      ? { gatewayNetworkName: configuredGatewayNetworkName(options) }
+      : {}),
     imageReference: options.bindings.imageReference,
     model: {
       planDigest: options.plan.planDigest,
@@ -851,6 +854,36 @@ function specificationDigest(
     runtimeGid: options.bindings.runtimeGid,
     runtimeUid: options.bindings.runtimeUid,
   });
+}
+
+function specificationDigest(
+  options: DockerLlamaCppManagedLifecycleOptions,
+  apiKeyRootIdentity: string,
+  receiptTargetSha256: string,
+): string {
+  return specificationDigestVersion(options, apiKeyRootIdentity, receiptTargetSha256, true);
+}
+
+function journalSpecificationMatches(
+  options: DockerLlamaCppManagedLifecycleOptions,
+  journal: HostLocalCreateJournalRecord,
+): boolean {
+  if (
+    journal.specSha256 ===
+    specificationDigest(options, journal.apiKeyRootIdentitySha256, journal.receiptTargetSha256)
+  ) {
+    return true;
+  }
+  return (
+    configuredGatewayNetworkName(options) === OPENSHELL_DOCKER_NETWORK &&
+    journal.specSha256 ===
+      specificationDigestVersion(
+        options,
+        journal.apiKeyRootIdentitySha256,
+        journal.receiptTargetSha256,
+        false,
+      )
+  );
 }
 
 function requireOwnedContainer(
@@ -1403,14 +1436,7 @@ export function createDockerLlamaCppManagedLifecycle(
       throw new Error("Docker llama.cpp receipt lacks container model authority.");
     }
     const journal = options.journalStore.load(receipt.runtime.model.generation);
-    const expectedSpecSha256 =
-      journal === null
-        ? null
-        : specificationDigest(
-            options,
-            journal.apiKeyRootIdentitySha256,
-            journal.receiptTargetSha256,
-          );
+    const specificationMatches = journal !== null && journalSpecificationMatches(options, journal);
     const serializedReceipt = serializeHostLocalInferenceReceipt(receipt);
     const publicationPrepared =
       journal?.phase === "receipt-prepared" || journal?.phase === "finalized";
@@ -1420,7 +1446,7 @@ export function createDockerLlamaCppManagedLifecycle(
       journal.service !== SERVICE ||
       journal.containerName !== options.bindings.containerName ||
       journal.runtimeId !== receipt.runtime.runtimeId ||
-      journal.specSha256 !== expectedSpecSha256 ||
+      !specificationMatches ||
       journal.specSha256 !== receipt.runtime.specSha256 ||
       JSON.stringify(journal.engineAuthority) !== JSON.stringify(qualifiedAuthority) ||
       !publicationPrepared ||
@@ -1961,12 +1987,7 @@ export function createDockerLlamaCppManagedLifecycle(
           if (JSON.stringify(journalAuthority) !== JSON.stringify(currentAuthority)) {
             throw new Error("Docker llama.cpp recovery engine authority changed.");
           }
-          const expectedSpecSha256 = specificationDigest(
-            options,
-            journal.apiKeyRootIdentitySha256,
-            journal.receiptTargetSha256,
-          );
-          if (journal.specSha256 !== expectedSpecSha256) {
+          if (!journalSpecificationMatches(options, journal)) {
             throw new Error(
               "Docker llama.cpp recovery journal differs from declarative authority.",
             );
