@@ -66,7 +66,11 @@ export function qwenGpuRecipeBinding(recipeRef: unknown): typeof QWEN_GPU_RECIPE
 
 export function qwenGpuProbeDiagnostic(
   label: string,
-  result: { readonly status: number | null; readonly stdout: string; readonly stderr: string },
+  result: {
+    readonly status: number | null;
+    readonly stdout: string;
+    readonly stderr: string;
+  },
   forbiddenValues: readonly string[],
 ): {
   readonly label: string;
@@ -149,8 +153,10 @@ export function qwenGpuAgentPlan(
 export function validateQwenGpuProcessEvidence(
   containerProcesses: string,
   computeApplications: string,
+  runtimeLogs: string,
   modelSizeBytes: number,
 ): {
+  readonly offloadedLayerCount: number;
   readonly processName: string;
   readonly usedGpuMemoryMiB: number;
   readonly minimumFullOffloadMemoryMiB: number;
@@ -182,11 +188,31 @@ export function validateQwenGpuProcessEvidence(
   if (matchingApplications.length !== 1) {
     throw new Error("Qwen llama-server is not the exact NVIDIA compute process");
   }
+  const offloadMatches = [
+    ...runtimeLogs.matchAll(
+      /\b(?:load_tensors|llama_model_load):\s+offloaded\s+([1-9][0-9]*)\s*\/\s*([1-9][0-9]*)\s+layers to GPU\b/giu,
+    ),
+  ];
+  const explicitOffload = offloadMatches.at(-1);
+  const offloadedLayerCount = Number(explicitOffload?.[1]);
+  const totalLayerCount = Number(explicitOffload?.[2]);
+  if (
+    !Number.isSafeInteger(offloadedLayerCount) ||
+    !Number.isSafeInteger(totalLayerCount) ||
+    offloadedLayerCount !== totalLayerCount
+  ) {
+    throw new Error("Qwen llama-server did not report every model layer offloaded to the GPU");
+  }
   const processName = matchingApplications[0]?.[1] ?? "";
   const usedGpuMemoryMiB = Number(matchingApplications[0]?.[2]);
   const minimumFullOffloadMemoryMiB = Math.floor((modelSizeBytes / 1024 ** 2) * 0.75);
   if (!Number.isSafeInteger(usedGpuMemoryMiB) || usedGpuMemoryMiB < minimumFullOffloadMemoryMiB) {
     throw new Error("Qwen llama-server GPU memory is below the full-offload threshold");
   }
-  return { processName, usedGpuMemoryMiB, minimumFullOffloadMemoryMiB };
+  return {
+    offloadedLayerCount,
+    processName,
+    usedGpuMemoryMiB,
+    minimumFullOffloadMemoryMiB,
+  };
 }

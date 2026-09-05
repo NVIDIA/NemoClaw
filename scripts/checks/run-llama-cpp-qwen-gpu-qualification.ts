@@ -128,7 +128,11 @@ function modelCacheEntry(setting: QualificationSetting): string {
 function responseText(source: string): string {
   const body = JSON.parse(source) as {
     choices?: Array<{
-      message?: { content?: unknown; reasoning?: unknown; reasoning_content?: unknown };
+      message?: {
+        content?: unknown;
+        reasoning?: unknown;
+        reasoning_content?: unknown;
+      };
       text?: unknown;
     }>;
   };
@@ -220,6 +224,7 @@ export async function runQwenGpuQualification(): Promise<void> {
         readonly image: string;
         readonly minimumFullOffloadMemoryMiB: number;
         readonly noDockerPublishedPort: true;
+        readonly offloadedLayerCount: number;
         readonly platform: "linux/amd64";
         readonly processName: string;
         readonly usedGpuMemoryMiB: number;
@@ -324,6 +329,15 @@ export async function runQwenGpuQualification(): Promise<void> {
               "--query-compute-apps=pid,process_name,used_gpu_memory",
               "--format=csv,noheader,nounits",
             ]),
+            (() => {
+              const logs = run("docker", ["logs", MANAGED_LLAMA_CPP_CONTAINER_NAME]);
+              if (logs.status !== 0) {
+                throw new Error(
+                  `docker logs failed with status ${String(logs.status)}: ${logs.stderr.slice(-4_000)}`,
+                );
+              }
+              return `${logs.stdout}\n${logs.stderr}`;
+            })(),
             setting.modelFile.sizeBytes,
           );
           const unauthorized = requireCommand("curl", [
@@ -380,6 +394,7 @@ export async function runQwenGpuQualification(): Promise<void> {
             usedGpuMemoryMiB: offload.usedGpuMemoryMiB,
             minimumFullOffloadMemoryMiB: offload.minimumFullOffloadMemoryMiB,
             noDockerPublishedPort: true,
+            offloadedLayerCount: offload.offloadedLayerCount,
           };
         },
         beforeCleanup() {
@@ -420,7 +435,10 @@ export async function runQwenGpuQualification(): Promise<void> {
         runId: managedImage.runId,
       },
       preset: { id: PRESET_ID, digest: setting.selection.presetDigest },
-      recipe: { id: QWEN_GPU_RECIPE_ID, digest: setting.selection.recipeDigest },
+      recipe: {
+        id: QWEN_GPU_RECIPE_ID,
+        digest: setting.selection.recipeDigest,
+      },
       model: {
         id: recipe.spec.model.id,
         revision: recipe.spec.model.revision,
@@ -456,7 +474,9 @@ export async function runQwenGpuQualification(): Promise<void> {
     }
     try {
       runtimeCleanup ??= requireCleanup(
-        cleanupManagedLlamaCppRuntimeForSandbox(agentPlan.sandbox.name, { env: process.env }),
+        cleanupManagedLlamaCppRuntimeForSandbox(agentPlan.sandbox.name, {
+          env: process.env,
+        }),
       );
       if (transactionId) {
         createDockerLlamaCppPrivateBridgeController().assertStopped(transactionId);

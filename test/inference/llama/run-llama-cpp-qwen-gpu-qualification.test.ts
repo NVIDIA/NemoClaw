@@ -70,7 +70,11 @@ describe("Qwen llama.cpp RTX qualification plan", () => {
       "mutable image",
       {
         ...MANAGED_IMAGE_RECEIPT,
-        images: { openclaw: { "linux/amd64": "ghcr.io/nvidia/nemoclaw/openclaw:latest" } },
+        images: {
+          openclaw: {
+            "linux/amd64": "ghcr.io/nvidia/nemoclaw/openclaw:latest",
+          },
+        },
       },
     ],
   ])("rejects a managed-image receipt with %s", (_label, receipt) => {
@@ -97,9 +101,11 @@ describe("Qwen llama.cpp RTX qualification plan", () => {
       validateQwenGpuProcessEvidence(
         "PID COMMAND\n123 llama-server\n",
         "123, /usr/local/bin/llama-server, 16000\n",
+        "load_tensors: offloaded 41/41 layers to GPU\n",
         modelSizeBytes,
       ),
     ).toEqual({
+      offloadedLayerCount: 41,
       processName: "/usr/local/bin/llama-server",
       usedGpuMemoryMiB: 16000,
       minimumFullOffloadMemoryMiB: 15360,
@@ -108,6 +114,7 @@ describe("Qwen llama.cpp RTX qualification plan", () => {
       validateQwenGpuProcessEvidence(
         "PID COMMAND\n123 llama-server\n",
         "456, /usr/local/bin/llama-server, 16000\n",
+        "load_tensors: offloaded 41/41 layers to GPU\n",
         modelSizeBytes,
       ),
     ).toThrow("Qwen llama-server is not the exact NVIDIA compute process");
@@ -115,9 +122,18 @@ describe("Qwen llama.cpp RTX qualification plan", () => {
       validateQwenGpuProcessEvidence(
         "PID COMMAND\n123 llama-server\n",
         "123, /usr/local/bin/llama-server, 15000\n",
+        "load_tensors: offloaded 41/41 layers to GPU\n",
         modelSizeBytes,
       ),
     ).toThrow("Qwen llama-server GPU memory is below the full-offload threshold");
+    expect(() =>
+      validateQwenGpuProcessEvidence(
+        "PID COMMAND\n123 llama-server\n",
+        "123, /usr/local/bin/llama-server, 16000\n",
+        "load_tensors: offloaded 40/41 layers to GPU\n",
+        modelSizeBytes,
+      ),
+    ).toThrow("did not report every model layer offloaded to the GPU");
   });
 
   it("bounds probe diagnostics and redacts exact and credential-shaped secrets", () => {

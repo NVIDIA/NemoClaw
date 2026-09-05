@@ -344,6 +344,7 @@ function preparedJournal(): HostLocalCreateJournalRecord {
       contract: contract(),
       apiKeyRootIdentitySha256: keyRootIdentitySha256(),
       containerName: "nemoclaw-llama-cpp",
+      gatewayNetworkName: "openshell-docker",
       imageReference: IMAGE,
       model: {
         planDigest: plan().planDigest,
@@ -489,6 +490,30 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
         "http://host.openshell.internal:8081/health",
       ]),
     );
+  });
+
+  it("rejects gateway-network drift from the durable lifecycle authority", () => {
+    const originalGatewayNetworkName = "nemoclaw-managed-pr-original";
+    const fixture = createDockerFixture({
+      apiKeyPath,
+      gatewayNetworkName: originalGatewayNetworkName,
+      modelPath,
+      networkName: bindings().network.name,
+    });
+    const store = journalStore();
+    const persistedAuthority = authorityStore();
+    const original = createLifecycle({
+      ...options(fixture, store, bindings(), persistedAuthority),
+      gatewayNetworkName: originalGatewayNetworkName,
+    });
+    const receipt = original.start(receiptWriter());
+    const drifted = createLifecycle({
+      ...options(fixture, store, bindings(), persistedAuthority),
+      gatewayNetworkName: "nemoclaw-managed-pr-drifted",
+    });
+
+    expect(() => drifted.resume(receipt)).toThrow("durable create journal");
+    expect(() => drifted.runtime.inspectManaged(receipt)).toThrow("durable create journal");
   });
 
   it("binds status inspection to the configured OpenShell bridge", () => {

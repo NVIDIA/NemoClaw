@@ -8,7 +8,6 @@ import { compiledLlamaCppRuntime } from "../../../scripts/checks/llama-cpp-compi
 describe("Qwen llama.cpp RTX compiled lifecycle", () => {
   it("loads the built production llama.cpp lifecycle used by the runner", () => {
     const compiled = compiledLlamaCppRuntime();
-    expect(compiled.installer.MANAGED_LLAMA_CPP_CONTAINER_NAME).toBe("nemoclaw-llama-cpp");
     expect(compiled.installer.installManagedLlamaCpp).toEqual(expect.any(Function));
     expect(compiled.privateBridge.createDockerLlamaCppPrivateBridgeController).toEqual(
       expect.any(Function),

@@ -834,6 +834,7 @@ function specificationDigest(
     apiKeyRootIdentitySha256: apiKeyRootIdentity,
     contract: options.contract,
     containerName: options.bindings.containerName,
+    gatewayNetworkName: configuredGatewayNetworkName(options),
     imageReference: options.bindings.imageReference,
     model: {
       planDigest: options.plan.planDigest,
