@@ -11,6 +11,10 @@ const BOUNDARY_VALIDATOR = path.join(
   "../../../agents/hermes/validate-env-secret-boundary.py",
 );
 const NONCE = "a".repeat(64);
+const PREPARATION_QUARANTINE_DIAGNOSTIC =
+  "[gateway] Hermes runtime preparation failed at messaging channel configuration; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted";
+const LAYOUT_QUARANTINE_DIAGNOSTIC =
+  "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation";
 const LAYOUT_REPAIR_DIAGNOSTICS = ["sessions", "gateway", "runtime"]
   .map((name) => `[gateway] Hermes pre-launch layout repair failed at ${name} state directory`)
   .concat(
@@ -1005,6 +1009,8 @@ with tempfile.TemporaryDirectory() as root:
         "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s",
         "[gateway] Hermes gateway launch failed; retrying under the same supervisor",
         *layout_repair_events,
+        "[gateway] Hermes runtime preparation failed at messaging channel configuration; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted",
+        "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation",
         "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
         "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
         "[gateway] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child",
@@ -1077,6 +1083,12 @@ with tempfile.TemporaryDirectory() as root:
         ),
         control._sanitize_start_log_diagnostic_line(
             start_log_events[0] + ("x" * 600)
+        ),
+        control._sanitize_start_log_diagnostic_line(
+            "[gateway] Hermes runtime preparation failed at attacker-controlled stage; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted"
+        ),
+        control._sanitize_start_log_diagnostic_line(
+            "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until manual repair"
         ),
     ]
 
@@ -1154,6 +1166,8 @@ with tempfile.TemporaryDirectory() as root:
     diagnostic_output_events = tuple(
         [
             *layout_repair_events,
+            "[gateway] Hermes runtime preparation failed at messaging channel configuration; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted",
+            "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation",
             "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
             "[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
         ]
@@ -1419,6 +1433,8 @@ describe("managed gateway root control", () => {
           "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s",
           "[gateway] Hermes gateway launch failed; retrying under the same supervisor",
           ...LAYOUT_REPAIR_DIAGNOSTICS,
+          PREPARATION_QUARANTINE_DIAGNOSTIC,
+          LAYOUT_QUARANTINE_DIAGNOSTIC,
           "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
           "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
           "[gateway] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child",
@@ -1434,7 +1450,7 @@ describe("managed gateway root control", () => {
           "[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log",
           "[CRITICAL] Newly launched Hermes gateway pid 5252 failed exact role identity capture; quarantining the managed startup supervisor without signaling the unproven child",
         ],
-        rejected_lines: [null, null, null, null, null],
+        rejected_lines: [null, null, null, null, null, null, null],
         wrong_mode: [],
         hardlink: [],
         wrong_owner: [],
@@ -1451,6 +1467,8 @@ describe("managed gateway root control", () => {
           "NEMOCLAW_SUPERVISOR_PID=40",
           "NEMOCLAW_GATEWAY_PID=44",
           ...LAYOUT_REPAIR_DIAGNOSTICS.map((line) => `NEMOCLAW_START_LOG=${line}`),
+          `NEMOCLAW_START_LOG=${PREPARATION_QUARANTINE_DIAGNOSTIC}`,
+          `NEMOCLAW_START_LOG=${LAYOUT_QUARANTINE_DIAGNOSTIC}`,
           "NEMOCLAW_START_LOG=[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
           "NEMOCLAW_START_LOG=[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
         ],
@@ -1463,6 +1481,8 @@ describe("managed gateway root control", () => {
           "NEMOCLAW_SUPERVISOR_PID=40",
           "NEMOCLAW_GATEWAY_PID=44",
           ...LAYOUT_REPAIR_DIAGNOSTICS.map((line) => `NEMOCLAW_START_LOG=${line}`),
+          `NEMOCLAW_START_LOG=${PREPARATION_QUARANTINE_DIAGNOSTIC}`,
+          `NEMOCLAW_START_LOG=${LAYOUT_QUARANTINE_DIAGNOSTIC}`,
           "NEMOCLAW_START_LOG=[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
           "NEMOCLAW_START_LOG=[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
         ],

@@ -113,12 +113,30 @@ START_LOG_PATH = "/tmp/nemoclaw-start.log"
 MAX_START_LOG_DIAGNOSTIC_BYTES = 16 * 1024
 MAX_START_LOG_DIAGNOSTIC_LINES = 6
 MAX_START_LOG_DIAGNOSTIC_LINE_CHARS = 512
+HERMES_NONROOT_PREPARATION_STAGE_PATTERN = (
+    r"(?:initial environment secret-boundary validation|"
+    r"runtime config-hash reconciliation|initial MCP integrity inspection|"
+    r"lazy dependency preparation|API server key preparation|"
+    r"final environment secret-boundary validation|"
+    r"runtime environment secret-boundary validation|"
+    r"provider placeholder refresh|final config-hash reconciliation|"
+    r"final MCP integrity inspection|messaging channel configuration|"
+    r"Tirith retry-marker preparation)"
+)
 START_LOG_DIAGNOSTIC_PATTERNS = (
     re.compile(
         r"\[gateway\] Hermes runtime preparation refused automatic respawn; retrying in 5s"
     ),
     re.compile(
         r"\[gateway\] Hermes gateway launch failed; retrying under the same supervisor"
+    ),
+    re.compile(
+        r"\[gateway\] Hermes runtime preparation failed at "
+        + HERMES_NONROOT_PREPARATION_STAGE_PATTERN
+        + r"; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted"
+    ),
+    re.compile(
+        r"\[gateway\] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation"
     ),
     re.compile(
         r"\[gateway\] Hermes pre-launch layout repair failed at (?:"
