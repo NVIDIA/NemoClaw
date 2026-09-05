@@ -364,6 +364,29 @@ describe("initial sandbox policy helpers", () => {
     expect(prepared.cleanup?.()).toBe(true);
   });
 
+  it("rejects family-only Station hardware with an unsupported software profile (#10928)", () => {
+    const sysfsRoot = tmpSysfsRoot();
+    addPciDevice(sysfsRoot, "0009:06:00.0", "0x10de\n", "0x030200\n");
+
+    expect(() =>
+      discoverHostStationGb300SysfsReadOnlyPaths({
+        platform: "linux",
+        architecture: "arm64",
+        hasNvidiaGpu: true,
+        identity: {
+          nvidiaPlatform: "station",
+          productName: "Generic ARM workstation",
+          stationFirmwareProduct: "NVIDIA DGX Station GB300",
+          stationProfile: "unsupported-dgx-os",
+          stationGb300PciGpu: true,
+          osId: "ubuntu",
+          osVersionId: "24.04",
+        },
+        sysfsRoot,
+      }),
+    ).toThrow("the Station software profile is unsupported or unknown");
+  });
+
   it("collects a Station family identity before direct-GPU policy preparation (#10928)", () => {
     const sysfsRoot = tmpSysfsRoot();
     const firmwareRoot = path.join(sysfsRoot, "firmware-fixture");
