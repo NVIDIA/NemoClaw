@@ -2,7 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
-import { isRecordedN1xManagedVllmRebuildEligible } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
+import {
+  isN1xManagedVllmProviderModel,
+  isRecordedN1xManagedVllmRebuildEligible,
+} from "../../domain/sandbox/n1x-managed-vllm-rebuild";
+import {
+  isN1xOnboardingProviderKey,
+  persistedProviderNameToSelectionKey,
+  type RemoteProviderConfigEntryLike,
+} from "../../onboard/inference-providers/provider-selection-keys";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import {
   createRebuildRouteHandoff,
@@ -22,6 +30,10 @@ import {
   type RebuildRecreateOnboardOpts,
 } from "./rebuild-gpu-opt-out";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
+
+const { REMOTE_PROVIDER_CONFIG } = require("../../onboard/providers") as {
+  REMOTE_PROVIDER_CONFIG: Record<string, RemoteProviderConfigEntryLike>;
+};
 
 export function prepareRebuildRecreateOptions(
   sandboxName: string,
@@ -86,8 +98,8 @@ export function stageRebuildHermesDashboardConfig(
   return true;
 }
 
-/** Stage the recorded N1x decision without moving action state into the domain layer. */
-export function stageRecordedManagedVllmIntent(
+/** Stage a validated recorded N1x provider decision for authoritative rebuild readiness. */
+export function stageRecordedDeferredN1xIntent(
   recreateOptions: Pick<RebuildRecreateOnboardOpts, "allowDeferredN1xManagedVllm">,
   sandboxEntry: Pick<
     RebuildSandboxEntry,
@@ -97,6 +109,7 @@ export function stageRecordedManagedVllmIntent(
     | "endpointSource"
     | "openshellDriver"
     | "hostLocalInferenceReceipt"
+    | "nimContainer"
   >,
   rebuildSelection: {
     provider: string;
@@ -105,13 +118,31 @@ export function stageRecordedManagedVllmIntent(
     endpointUrl: string | null;
   },
 ): void {
-  if (
+  const selectionMatchesRecord =
+    rebuildSelection.provider === sandboxEntry.provider &&
+    rebuildSelection.model === sandboxEntry.model;
+  const isManagedVllmIdentity = isN1xManagedVllmProviderModel(
+    sandboxEntry.provider,
+    sandboxEntry.model,
+  );
+  const recordedStandardProviderIsEligible =
+    selectionMatchesRecord &&
+    !isManagedVllmIdentity &&
+    isN1xOnboardingProviderKey(
+      persistedProviderNameToSelectionKey(
+        sandboxEntry.provider,
+        { hasNimContainer: Boolean(sandboxEntry.nimContainer) },
+        REMOTE_PROVIDER_CONFIG,
+      ),
+    );
+  const recordedManagedVllmIsEligible =
+    !sandboxEntry.nimContainer &&
     isRecordedN1xManagedVllmRebuildEligible(
       sandboxEntry,
       rebuildSelection,
       parseHostLocalInferenceReceipt,
-    )
-  ) {
+    );
+  if (recordedStandardProviderIsEligible || recordedManagedVllmIsEligible) {
     recreateOptions.allowDeferredN1xManagedVllm = true;
   }
 }

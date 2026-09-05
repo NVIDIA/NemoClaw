@@ -31,7 +31,7 @@ $$nemoclaw <name> status
 ```
 
 The `Inference` row first checks the sandbox's `inference.local` path.
-When that route responds, `status` sends one inference request through the same path.
+When that route responds, `status` sends an inference request through the same path.
 When the live provider matches the recorded provider, `status` validates the result against the recorded API family, even when only the model differs.
 When the live provider differs, `status` does not carry the recorded API family to the live provider.
 The row reports `healthy` only when the route returns a structurally valid result for the selected API family.

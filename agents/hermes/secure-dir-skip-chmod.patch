@@ -1,0 +1,16 @@
+diff --git a/hermes_cli/config.py b/hermes_cli/config.py
+index ef939e1..3cec737 100644
+--- a/hermes_cli/config.py
++++ b/hermes_cli/config.py
+@@ -844,3 +844,4 @@ def _secure_dir(path):
+-    Skipped in managed mode — the NixOS module sets group-readable
+-    permissions (0750) so interactive users in the hermes group can
++    Skipped in managed mode or when HERMES_SKIP_CHMOD is set. The NixOS
++    module sets group-readable permissions (0750), while container deployments
++    can provision their own shared-directory modes, so interactive users can
+     share state with the gateway service.
+@@ -858,3 +859,3 @@ def _secure_dir(path):
+     """
+-    if is_managed():
++    if is_managed() or os.environ.get("HERMES_SKIP_CHMOD"):
+         return

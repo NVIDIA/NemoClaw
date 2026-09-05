@@ -768,7 +768,10 @@ export function formatReliabilityReport(groups: readonly ReliabilityGroup[]): st
       `| ${group.source} | ${group.candidateSha ? `\`${group.candidateSha.slice(0, 12)}\`` : "unclassified"} | ${group.runs} | ${group.passedFirstAttempt} | ${group.passedAfterRetry} | ${group.exhausted} | ${group.failedFirstAttempt} | ${group.superseded} | ${group.unclassified} | ${group.passFailFlips} | ${(group.firstPassRate * 100).toFixed(1)}% | ${group.recoveryRate === null ? "n/a" : `${(group.recoveryRate * 100).toFixed(1)}%`} | ${classes || "none"} | ${formatEvidenceCounts(group.evidence)} | ${formatEvidenceCounts(group.failureClassEvidence)} |`,
     );
   }
-  lines.push("", `### Non-passing run links (maximum ${MAX_RUN_REFERENCES_PER_OUTCOME} per outcome)`);
+  lines.push(
+    "",
+    `### Non-passing run links (maximum ${MAX_RUN_REFERENCES_PER_OUTCOME} per outcome)`,
+  );
   for (const group of groups) {
     for (const outcome of ["failed-first-attempt", "exhausted", "unclassified"] as const) {
       const referenceGroup = group.runReferences[outcome];
@@ -826,14 +829,20 @@ type GithubAttemptFailure = {
 type GithubFailureCategory = "invalid-json" | "too-large" | "transport";
 
 class GithubHttpStatusError extends Error {
-  constructor(readonly status: number) {
+  readonly status: number;
+
+  constructor(status: number) {
     super("GitHub HTTP status failure");
+    this.status = status;
   }
 }
 
 class GithubCategorizedError extends Error {
-  constructor(readonly category: GithubFailureCategory) {
+  readonly category: GithubFailureCategory;
+
+  constructor(category: GithubFailureCategory) {
     super(`GitHub HTTP ${category} failure`);
+    this.category = category;
   }
 }
 

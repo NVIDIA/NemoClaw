@@ -61,14 +61,14 @@ Review the [Prerequisites](prerequisites) before you begin.
       Press Enter to use the recommended express install mode for that platform.
       This mode applies preset settings and runs the remaining onboarding non-interactively.
       Express install mode preserves the explicit Hermes selection in the install command.
-      On supported non-N1x express platforms, enter `n` if you want to select a sandbox name, an inference provider, and a model interactively.
-      On N1x, entering `n` stops installation because the Deferred managed-vLLM preview is the only admitted onboarding path.
+      Enter `n` if you want to select a sandbox name, an inference provider, and a model interactively.
+      On N1x, the selected provider must meet its existing requirements, and local NVIDIA NIM remains unavailable.
       Refer to [Use a container runtime and supported platforms](#use-a-container-runtime-and-supported-platforms) for more information.
     </Note>
 
     The install command creates the `my-hermes` sandbox used in the commands that follow.
     If you accept Express setup, wait for the installer to finish, then continue with **Confirm the Sandbox Is Ready**; Express selects the provider and model non-interactively.
-    If the installer does not offer Express setup, or if you enter `n` at the Express prompt on a supported non-N1x host, choose an inference provider and model, then provide its credential when prompted.
+    If the installer does not offer Express setup, or if you enter `n` at the Express prompt, choose an inference provider and model, then provide its credential when prompted.
     For that interactive path, skip optional web search and messaging setup on a first run, then accept the suggested network policy tier.
     With the OpenShell Docker driver, stock Hermes onboarding normally uses the release's exact managed-image digest.
     If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
@@ -267,9 +267,9 @@ Use these details when your first-run path needs more control.
     N1x remains outside the supported-platform set until that validation passes and the platform matrix status is promoted.
     Press Enter at the express install prompt to apply preset settings, switch the remaining onboarding to non-interactive mode, and select the managed local inference path for that platform.
     On N1x, accept the preview prompt to apply those settings as explicit Deferred preview intent.
-    On supported non-N1x express platforms, enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
-    On N1x, declining the preview or setting only `NEMOCLAW_NO_EXPRESS=1` stops installation before onboarding.
-    Accept the preview, or set `NEMOCLAW_PROVIDER=install-vllm` before installation to provide the required explicit managed-vLLM intent.
+    Enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
+    On N1x, setting `NEMOCLAW_NO_EXPRESS=1` also continues with ordinary onboarding.
+    Set `NEMOCLAW_PROVIDER=install-vllm` to bypass the prompt with managed-vLLM preview intent, or set a recognized provider other than Local NVIDIA NIM or `install-vllm` to enter standard onboarding directly.
     The first Hermes start can take several minutes while OpenShell pulls the managed image when it is not already cached.
     The N1x preview selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
     Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles and headless setup.
