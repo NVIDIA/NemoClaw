@@ -34,6 +34,7 @@ export interface ForwardServiceTarget {
 
 export interface ForwardServiceLaunchOptions {
   readonly describeState?: () => string | null | undefined;
+  readonly getProcessIdentity?: (pid: number) => string | null | undefined;
   readonly isProcessRunning?: (pid: number) => boolean;
   readonly isReachable?: (port: number) => boolean;
   readonly maxAttempts?: number;
@@ -50,14 +51,32 @@ export interface ForwardServiceLaunchOptions {
   readonly timeoutMs?: number;
 }
 
+function readLinuxProcessStat(pid: number): string[] | null | undefined {
+  if (process.platform !== "linux") return undefined;
+  try {
+    const stat = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+  } catch (error) {
+    const code =
+      typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+    return code === "ENOENT" || code === "ESRCH" ? null : undefined;
+  }
+}
+
+function getProcessIdentity(pid: number): string | null | undefined {
+  const stat = readLinuxProcessStat(pid);
+  const startTime = stat?.[19];
+  return startTime && /^\d+$/u.test(startTime) ? startTime : stat === null ? null : undefined;
+}
+
 function isProcessRunning(pid: number): boolean {
   try {
     if (process.platform === "linux") {
       // Signal 0 still reports a zombie as present. Read its state so a failed
       // forward may be retried without starting alongside a live process.
-      const stat = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf8");
-      const state = stat.slice(stat.lastIndexOf(")") + 2).split(" ", 1)[0];
-      if (state === "Z") return false;
+      const stat = readLinuxProcessStat(pid);
+      if (stat === null) return false;
+      if (stat?.[0] === "Z") return false;
     }
     process.kill(pid, 0);
     return true;
@@ -91,41 +110,83 @@ function isMissingProcessError(error: unknown): boolean {
   return code === "ENOENT" || code === "ESRCH";
 }
 
+type OwnedProcessStopResult = "stopped" | "running" | "unverified";
+
+function processIdentityStatus(
+  pid: number,
+  expectedIdentity: string | null | undefined,
+  readIdentity: (pid: number) => string | null | undefined,
+): "owned" | "exited" | "unverified" {
+  if (!expectedIdentity) return "unverified";
+  const observedIdentity = readIdentity(pid);
+  if (observedIdentity === null) return "exited";
+  return observedIdentity === expectedIdentity ? "owned" : "unverified";
+}
+
 function waitForProcessExit(
   pid: number,
+  expectedIdentity: string,
+  readIdentity: (pid: number) => string | null | undefined,
   processIsRunning: (pid: number) => boolean,
   sleep: (milliseconds: number) => void,
   timeoutMs: number,
-): boolean {
+): OwnedProcessStopResult {
   const deadline = Date.now() + timeoutMs;
-  while (processIsRunning(pid)) {
-    if (Date.now() >= deadline) return false;
+  while (true) {
+    const identityStatus = processIdentityStatus(pid, expectedIdentity, readIdentity);
+    if (identityStatus === "exited" || !processIsRunning(pid)) return "stopped";
+    if (identityStatus === "unverified") return "unverified";
+    if (Date.now() >= deadline) return "running";
     sleep(POLL_INTERVAL_MS);
   }
-  return true;
 }
 
 function stopOwnedProcess(
   pid: number,
+  expectedIdentity: string | null | undefined,
+  readIdentity: (pid: number) => string | null | undefined,
   processIsRunning: (pid: number) => boolean,
   stopProcess: (pid: number, signal: NodeJS.Signals) => void,
   sleep: (milliseconds: number) => void,
   timeoutMs: number,
-): boolean {
+): OwnedProcessStopResult {
+  if (!expectedIdentity) return "unverified";
+  const identity = expectedIdentity;
+  const initialStatus = processIdentityStatus(pid, identity, readIdentity);
+  if (initialStatus === "exited") return "stopped";
+  if (initialStatus === "unverified") return "unverified";
   try {
     stopProcess(pid, "SIGTERM");
   } catch (error) {
-    if (isMissingProcessError(error)) return true;
-    return false;
+    if (isMissingProcessError(error)) return "stopped";
+    return "running";
   }
-  if (waitForProcessExit(pid, processIsRunning, sleep, timeoutMs)) return true;
+  const termResult = waitForProcessExit(
+    pid,
+    identity,
+    readIdentity,
+    processIsRunning,
+    sleep,
+    timeoutMs,
+  );
+  if (termResult !== "running") return termResult;
+  if (processIdentityStatus(pid, identity, readIdentity) !== "owned") {
+    return "unverified";
+  }
   try {
     stopProcess(pid, "SIGKILL");
   } catch (error) {
-    if (isMissingProcessError(error)) return true;
-    return false;
+    if (isMissingProcessError(error)) return "stopped";
+    return "running";
   }
-  return waitForProcessExit(pid, processIsRunning, sleep, timeoutMs);
+  return waitForProcessExit(
+    pid,
+    identity,
+    readIdentity,
+    processIsRunning,
+    sleep,
+    timeoutMs,
+  );
 }
 
 function isPort(value: unknown): value is number {
@@ -193,6 +254,7 @@ export function launchForwardService(
   validateForwardServiceTarget(target);
   const isReachable = options.isReachable ?? probeLocalForwardListener;
   const processIsRunning = options.isProcessRunning ?? isProcessRunning;
+  const readProcessIdentity = options.getProcessIdentity ?? getProcessIdentity;
   if (isReachable(target.localPort)) {
     throw new Error(`Host port ${String(target.localPort)} is already occupied`);
   }
@@ -219,16 +281,33 @@ export function launchForwardService(
       );
     }
     const child = spawnDetached(target.executable, args, environment);
-    child.unref();
     if (!isProcessIdentity(child.pid)) {
       throw new Error(
         `OpenShell forward service returned no process identity for ${target.localHost}:${String(target.localPort)}; ` +
           `refusing to start a duplicate service; forward list: ${describeFailureState(options.describeState)}`,
       );
     }
+    const childIdentity = readProcessIdentity(child.pid);
+    child.unref();
     const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
     let exited = false;
+    let ownershipLost = false;
     while (true) {
+      if (childIdentity) {
+        const identityStatus = processIdentityStatus(
+          child.pid,
+          childIdentity,
+          readProcessIdentity,
+        );
+        if (identityStatus === "exited") {
+          exited = true;
+          break;
+        }
+        if (identityStatus === "unverified") {
+          ownershipLost = true;
+          break;
+        }
+      }
       if (isProcessIdentity(child.pid) && !processIsRunning(child.pid)) {
         exited = true;
         break;
@@ -239,18 +318,30 @@ export function launchForwardService(
       if (Date.now() >= deadline) break;
       sleep(POLL_INTERVAL_MS);
     }
+    if (ownershipLost) {
+      throw new Error(
+        `OpenShell forward service process ${String(child.pid)} changed identity before binding ${target.localHost}:${String(target.localPort)}; ` +
+          `refusing to signal or retry; forward list: ${describeFailureState(options.describeState)}`,
+      );
+    }
     if (!exited) {
-      const stopped = stopOwnedProcess(
+      const stopResult = stopOwnedProcess(
         child.pid,
+        childIdentity,
+        readProcessIdentity,
         processIsRunning,
         stopProcess,
         sleep,
         options.stopTimeoutMs ?? STOP_TIMEOUT_MS,
       );
-      if (!stopped) {
+      if (stopResult !== "stopped") {
+        const reason =
+          stopResult === "unverified"
+            ? "could not verify that it still owned that process"
+            : "could not stop that process";
         throw new Error(
-          `OpenShell forward service process ${String(child.pid)} remained running after its ${String(options.timeoutMs ?? START_TIMEOUT_MS)}ms bind deadline and could not be stopped; ` +
-            `do not retry until that process exits; forward list: ${describeFailureState(options.describeState)}`,
+          `OpenShell forward service process ${String(child.pid)} remained unbound after ${String(options.timeoutMs ?? START_TIMEOUT_MS)}ms and ${reason}; ` +
+            `refusing to signal or retry; forward list: ${describeFailureState(options.describeState)}`,
         );
       }
       finalFailure = "was stopped after failing to bind";

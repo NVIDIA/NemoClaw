@@ -19,6 +19,7 @@ const target: ForwardServiceTarget = {
   targetHost: "127.0.0.1",
   targetPort: 18_789,
 };
+const stableProcessIdentity = (pid: number): string => `start-${String(pid)}`;
 
 describe("OpenShell forward service", () => {
   it("builds the direct ForwardTcp command with explicit gateway authority", () => {
@@ -51,6 +52,7 @@ describe("OpenShell forward service", () => {
     let probes = 0;
 
     launchForwardService(target, {
+      getProcessIdentity: stableProcessIdentity,
       isReachable: () => ++probes >= 3,
       isProcessRunning: () => true,
       sleep: () => {},
@@ -84,6 +86,7 @@ describe("OpenShell forward service", () => {
     expect(() =>
       launchForwardService(unboundTarget, {
         describeState: () => "SANDBOX BIND PORT PID STATUS",
+        getProcessIdentity: stableProcessIdentity,
         isProcessRunning: () => running,
         isReachable: () => false,
         maxAttempts: 1,
@@ -102,6 +105,7 @@ describe("OpenShell forward service", () => {
       .mockReturnValueOnce({ pid: 51, unref: vi.fn() })
       .mockReturnValueOnce({ pid: 52, unref: vi.fn() });
     launchForwardService(target, {
+      getProcessIdentity: stableProcessIdentity,
       isProcessRunning: (pid) => pid === 52,
       isReachable: () => spawnDetached.mock.calls.length === 2,
       retryDelayMs: 0,
@@ -120,6 +124,7 @@ describe("OpenShell forward service", () => {
 
     expect(() =>
       launchForwardService(settlingTarget, {
+        getProcessIdentity: stableProcessIdentity,
         isProcessRunning: () => true,
         isReachable: () => false,
         sleep: () => {},
@@ -128,7 +133,7 @@ describe("OpenShell forward service", () => {
         stopTimeoutMs: 0,
         timeoutMs: 0,
       }),
-    ).toThrow(/process 61.*could not be stopped.*do not retry/u);
+    ).toThrow(/process 61.*could not stop.*refusing to signal or retry/u);
     expect(spawnDetached).toHaveBeenCalledOnce();
     expect(stopProcess.mock.calls).toEqual([
       [61, "SIGTERM"],
@@ -142,6 +147,7 @@ describe("OpenShell forward service", () => {
 
     expect(() =>
       launchForwardService(target, {
+        getProcessIdentity: stableProcessIdentity,
         isProcessRunning: () =>
           signals.at(-1) === "SIGKILL" ? ++killChecks < 2 : true,
         isReachable: () => false,
@@ -157,12 +163,33 @@ describe("OpenShell forward service", () => {
     expect(killChecks).toBe(2);
   });
 
+  it("does not signal or retry after the forward PID is reused (#11084)", () => {
+    const spawnDetached = vi.fn(() => ({ pid: 63, unref: vi.fn() }));
+    const stopProcess = vi.fn();
+    let identityReads = 0;
+
+    expect(() =>
+      launchForwardService(target, {
+        getProcessIdentity: () => (++identityReads === 1 ? "original" : "replacement"),
+        isProcessRunning: () => true,
+        isReachable: () => false,
+        sleep: () => {},
+        spawnDetached,
+        stopProcess,
+        timeoutMs: 0,
+      }),
+    ).toThrow(/process 63 changed identity.*refusing to signal or retry/u);
+    expect(stopProcess).not.toHaveBeenCalled();
+    expect(spawnDetached).toHaveBeenCalledOnce();
+  });
+
   it("refuses an unknown listener that appears before a safe retry (#11084)", () => {
     const spawnDetached = vi.fn(() => ({ pid: 71, unref: vi.fn() }));
     let probes = 0;
 
     expect(() =>
       launchForwardService(target, {
+        getProcessIdentity: stableProcessIdentity,
         isProcessRunning: () => false,
         isReachable: () => ++probes >= 3,
         retryDelayMs: 0,
@@ -173,6 +200,20 @@ describe("OpenShell forward service", () => {
     ).toThrow(/became occupied.*refusing to adopt/u);
     expect(spawnDetached).toHaveBeenCalledOnce();
   });
+
+  it.runIf(process.platform === "linux")(
+    "tracks the spawned process by its Linux start time (#11084)",
+    () => {
+      let probes = 0;
+
+      launchForwardService(target, {
+        isReachable: () => ++probes >= 2,
+        spawnDetached: () => ({ pid: process.pid, unref: vi.fn() }),
+      });
+
+      expect(probes).toBe(2);
+    },
+  );
 
   it("does not retry when the service returns no process identity (#11084)", () => {
     const spawnDetached = vi.fn(() => ({ unref: vi.fn() }));
