@@ -75,7 +75,6 @@ describe("handleAgentSetupState", () => {
     const { deps, calls } = createDeps();
     const agent = { name: "hermes", displayName: "Hermes" };
     const session = createSession();
-    session.steps.sandbox.status = "skipped";
 
     const result = await handleAgentSetupState({
       ...baseOptions(deps, agent),
@@ -102,6 +101,26 @@ describe("handleAgentSetupState", () => {
       transitionKind: "advance",
       updates: undefined,
       metadata: { state: "agent_setup" },
+    });
+  });
+
+  it("passes Ready-sandbox reuse authority to a non-OpenClaw agent (#11074)", async () => {
+    const { deps, calls } = createDeps();
+    const agent = { name: "hermes", displayName: "Hermes" };
+    const session = createSession();
+    session.steps.sandbox.status = "skipped";
+    const revalidateSandboxIdentity = vi.fn();
+
+    await handleAgentSetupState({
+      ...baseOptions(deps, agent),
+      session,
+      resume: true,
+      revalidateSandboxIdentity,
+    });
+
+    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent, {
+      preserveRegisteredForward: true,
+      revalidateSandboxIdentity,
     });
   });
 

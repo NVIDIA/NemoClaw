@@ -85,6 +85,17 @@ export async function handleAgentSetupState<Agent>({
   revalidateSandboxIdentity,
   deps,
 }: AgentSetupStateOptions<Agent>): Promise<AgentSetupStateResult> {
+  // A skipped sandbox step is the durable machine receipt for Ready-sandbox
+  // reuse. Every other state keeps the strict occupied-port path.
+  const preserveRegisteredForward =
+    session?.steps.sandbox.status === "skipped" || revalidateSandboxIdentity !== undefined;
+  const dashboardOptions =
+    preserveRegisteredForward || revalidateSandboxIdentity
+      ? {
+          ...(preserveRegisteredForward ? { preserveRegisteredForward: true } : {}),
+          ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
+        }
+      : undefined;
   if (agent) {
     await deps.handleAgentSetup(
       sandboxName,
@@ -100,7 +111,9 @@ export async function handleAgentSetupState<Agent>({
     // taken by another sandbox. Persist it to the registry so `dashboard-url`
     // reports the live port instead of the default. Discarding the return here
     // regressed multi-sandbox onboarding in the machine handler path (#8214).
-    const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, agent);
+    const dashboardPort = await (dashboardOptions
+      ? deps.ensureAgentDashboardForward(sandboxName, agent, dashboardOptions)
+      : deps.ensureAgentDashboardForward(sandboxName, agent));
     if (dashboardPort > 0) {
       deps.persistDashboardPort(sandboxName, dashboardPort);
     }
@@ -108,10 +121,6 @@ export async function handleAgentSetupState<Agent>({
     return { session, stateResult: advanceTo("policies", { metadata: { state: "agent_setup" } }) };
   }
 
-  // A skipped sandbox step is the durable machine receipt for Ready-sandbox
-  // reuse. Every other state keeps the strict occupied-port path.
-  const preserveRegisteredForward =
-    session?.steps.sandbox.status === "skipped" || revalidateSandboxIdentity !== undefined;
   const resumeOpenclaw = resume && sandboxName && deps.isOpenclawReady(sandboxName);
   if (resumeOpenclaw) {
     deps.skippedStepMessage("openclaw", sandboxName);
@@ -145,13 +154,6 @@ export async function handleAgentSetupState<Agent>({
       deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
     );
   }
-  const dashboardOptions =
-    preserveRegisteredForward || revalidateSandboxIdentity
-      ? {
-          ...(preserveRegisteredForward ? { preserveRegisteredForward: true } : {}),
-          ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
-        }
-      : undefined;
   const dashboardPort = await (dashboardOptions
     ? deps.ensureAgentDashboardForward(sandboxName, null, dashboardOptions)
     : deps.ensureAgentDashboardForward(sandboxName, null));
