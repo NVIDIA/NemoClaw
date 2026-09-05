@@ -42,6 +42,7 @@ import {
 } from "../../sandbox-base-image";
 import type { SandboxEntry } from "../../state/registry";
 import { load as loadRegistry } from "../../state/registry/persistence";
+import { transferOpenClawSkillProvenanceForSandboxReplacement } from "../../skill-install";
 import * as sandboxState from "../../state/sandbox";
 import { removeStaleRebuildDockerOrphan } from "../../onboard/openshell-docker-sandbox-containers";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
@@ -55,6 +56,30 @@ import * as snapshotBackup from "./snapshot/backup-authority";
 
 export { removeStaleRebuildDockerOrphan };
 export { replaceOpenShellRuntimeSelectionEnv, snapshotOpenShellEnv };
+
+type OpenClawSkillProvenanceRebuildDeps = {
+  loadRegistry?: typeof loadRegistry;
+  transfer?: typeof transferOpenClawSkillProvenanceForSandboxReplacement;
+};
+
+/** Transfer host provenance only to the exact replacement committed by the rebuild journal. */
+export function transferOpenClawSkillProvenanceForRebuild(
+  sandboxName: string,
+  sourceSandboxIdentityFingerprint: string,
+  targetGeneration: string,
+  deps: OpenClawSkillProvenanceRebuildDeps = {},
+): void {
+  const replacement = (deps.loadRegistry ?? loadRegistry)().sandboxes[sandboxName];
+  const targetSandboxIdentityFingerprint = replacement?.lifecycleLiveIdentityFingerprint;
+  if (replacement?.lifecycleGeneration !== targetGeneration || !targetSandboxIdentityFingerprint) {
+    throw new Error("the replacement registry identity does not match the rebuild journal");
+  }
+  (deps.transfer ?? transferOpenClawSkillProvenanceForSandboxReplacement)(
+    sandboxName,
+    sourceSandboxIdentityFingerprint,
+    targetSandboxIdentityFingerprint,
+  );
+}
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 

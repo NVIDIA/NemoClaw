@@ -22,6 +22,7 @@ import {
   ensureRebuildAgentBaseImage,
   ensureRebuildTargetGatewaySelected,
   pinRebuildAgentBaseImageForRecreate,
+  transferOpenClawSkillProvenanceForRebuild,
   warnUnpreservedUserManagedFiles,
 } from "./rebuild-flow-helpers";
 
@@ -64,6 +65,50 @@ function makeBail(): (msg: string, code?: number) => never {
     throw new Error(`bail: ${msg}`);
   };
 }
+
+describe("OpenClaw skill provenance rebuild handoff", () => {
+  it("binds the source receipts to the exact journaled replacement registry identity", () => {
+    const sourceIdentity = "a".repeat(64);
+    const targetIdentity = "b".repeat(64);
+    const transfer = vi.fn();
+
+    transferOpenClawSkillProvenanceForRebuild("alpha", sourceIdentity, "generation-2", {
+      loadRegistry: () =>
+        ({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              lifecycleGeneration: "generation-2",
+              lifecycleLiveIdentityFingerprint: targetIdentity,
+            },
+          },
+        }) as never,
+      transfer,
+    });
+
+    expect(transfer).toHaveBeenCalledWith("alpha", sourceIdentity, targetIdentity);
+  });
+
+  it("refuses a replacement registry identity outside the rebuild journal", () => {
+    const transfer = vi.fn();
+    expect(() =>
+      transferOpenClawSkillProvenanceForRebuild("alpha", "a".repeat(64), "generation-2", {
+        loadRegistry: () =>
+          ({
+            sandboxes: {
+              alpha: {
+                name: "alpha",
+                lifecycleGeneration: "other-generation",
+                lifecycleLiveIdentityFingerprint: "b".repeat(64),
+              },
+            },
+          }) as never,
+        transfer,
+      }),
+    ).toThrow("does not match the rebuild journal");
+    expect(transfer).not.toHaveBeenCalled();
+  });
+});
 
 describe("rebuild target gateway preflight", () => {
   const priorOpenShellEnv = {

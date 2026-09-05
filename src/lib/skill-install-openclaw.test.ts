@@ -18,6 +18,7 @@ import {
   type SkillPaths,
   type SshContext,
   type SshResult,
+  transferOpenClawSkillProvenanceForSandboxReplacement,
 } from "./skill-install";
 
 const roots: string[] = [];
@@ -85,6 +86,60 @@ describe("OpenClaw native skill installation", () => {
       removeOpenClawSkillProvenanceForSandboxIdentity(sandboxIdentityFingerprint, stateDir),
     ).toThrow("not a regular directory");
     expect(fs.readFileSync(externalReceipt, "utf8")).toBe("keep");
+  });
+
+  it("transfers a durable receipt to the replacement identity for exact-content retry", () => {
+    const skill = makeSkill();
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-provenance-"));
+    roots.push(stateDir);
+    const targetIdentity = "e".repeat(64);
+    const digest = computeSkillContentDigest(skill);
+    const confirmed = vi.fn((): SshResult => ({
+      status: 0,
+      stdout: `INSTALLED ${digest}\n`,
+      stderr: "",
+    }));
+    expect(
+      installOpenClawSkill(ctx, skill, paths, "demo-skill", {
+        provenanceStateDir: stateDir,
+        sandboxIdentityFingerprint,
+        sshExecImpl: confirmed,
+      }),
+    ).toEqual({ success: true, uploaded: 1, contentDigest: digest });
+
+    transferOpenClawSkillProvenanceForSandboxReplacement(
+      "alpha",
+      sandboxIdentityFingerprint,
+      targetIdentity,
+      stateDir,
+    );
+
+    const sourcePath = resolveOpenClawSkillProvenancePath(
+      sandboxIdentityFingerprint,
+      "demo-skill",
+      stateDir,
+    );
+    const targetPath = resolveOpenClawSkillProvenancePath(targetIdentity, "demo-skill", stateDir);
+    expect(fs.existsSync(path.dirname(sourcePath))).toBe(false);
+    expect(JSON.parse(fs.readFileSync(targetPath, "utf8"))).toMatchObject({
+      sandboxIdentityFingerprint: targetIdentity,
+      sandboxName: "alpha",
+      skillName: "demo-skill",
+      phase: "installed",
+      contentDigest: digest,
+    });
+    const reconciled = vi.fn((): SshResult => ({
+      status: 0,
+      stdout: `RECONCILED ${digest}\n`,
+      stderr: "",
+    }));
+    expect(
+      installOpenClawSkill(ctx, skill, paths, "demo-skill", {
+        provenanceStateDir: stateDir,
+        sandboxIdentityFingerprint: targetIdentity,
+        sshExecImpl: reconciled,
+      }),
+    ).toEqual({ success: true, uploaded: 1, contentDigest: digest });
   });
 
   it.runIf(process.platform === "linux")(

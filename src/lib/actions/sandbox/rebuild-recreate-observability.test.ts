@@ -156,6 +156,7 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
       id: "journal-1",
       acceptedTarget: false,
       sourceConfirmedAbsent: false,
+      sourceLiveIdentityFingerprint: null,
       gatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
       targetGeneration: "generation-1",
       targetIntentFingerprint: "intent-1",

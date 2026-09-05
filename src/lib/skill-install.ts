@@ -771,6 +771,156 @@ function writeOpenClawSkillProvenance(receiptPath: string, receipt: OpenClawSkil
   }
 }
 
+/** Publish a receipt only when its final path is absent. */
+function writeOpenClawSkillProvenanceIfAbsent(
+  receiptPath: string,
+  receipt: OpenClawSkillProvenance,
+): boolean {
+  const receiptDir = path.dirname(receiptPath);
+  ensureConfigDir(receiptDir);
+  if (typeof fs.constants.O_NOFOLLOW !== "number") {
+    throw new Error("OpenClaw skill provenance requires O_NOFOLLOW support");
+  }
+  const temporaryPath = path.join(
+    receiptDir,
+    `.${path.basename(receiptPath)}.${String(process.pid)}.${randomBytes(8).toString("hex")}.tmp`,
+  );
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(
+      temporaryPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.writeFileSync(descriptor, `${JSON.stringify(receipt)}\n`, "utf8");
+    fs.fchmodSync(descriptor, 0o600);
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    try {
+      fs.linkSync(temporaryPath, receiptPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw error;
+    }
+    syncDirectory(receiptDir);
+    return true;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    fs.rmSync(temporaryPath, { force: true });
+  }
+}
+
+function sameOpenClawSkillProvenance(
+  left: OpenClawSkillProvenance,
+  right: OpenClawSkillProvenance,
+): boolean {
+  return (
+    left.schemaVersion === right.schemaVersion &&
+    left.sandboxIdentityFingerprint === right.sandboxIdentityFingerprint &&
+    left.sandboxName === right.sandboxName &&
+    left.skillName === right.skillName &&
+    left.targetDir === right.targetDir &&
+    left.phase === right.phase &&
+    left.contentDigest === right.contentDigest &&
+    left.previousDigest === right.previousDigest &&
+    left.stageNonce === right.stageNonce
+  );
+}
+
+/** Durably move exact OpenClaw skill receipts to a proven replacement sandbox identity. */
+export function transferOpenClawSkillProvenanceForSandboxReplacement(
+  sandboxName: string,
+  sourceSandboxIdentityFingerprint: string,
+  targetSandboxIdentityFingerprint: string,
+  stateDir = resolveNemoclawStateDir(),
+): void {
+  if (
+    !SHA256_RE.test(sourceSandboxIdentityFingerprint) ||
+    !SHA256_RE.test(targetSandboxIdentityFingerprint)
+  ) {
+    throw new Error("OpenClaw skill provenance replacement identity is invalid");
+  }
+  if (sourceSandboxIdentityFingerprint === targetSandboxIdentityFingerprint) return;
+
+  const provenanceRoot = path.join(stateDir, "openclaw-skill-installs");
+  const sourceDir = path.join(provenanceRoot, sourceSandboxIdentityFingerprint);
+  rejectSymlinksOnPath(sourceDir);
+  let sourceStat: fs.Stats;
+  try {
+    sourceStat = fs.lstatSync(sourceDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
+    throw new Error("OpenClaw source skill provenance is not a regular directory");
+  }
+
+  const entries = fs.readdirSync(sourceDir, { withFileTypes: true });
+  if (entries.length > SKILL_SNAPSHOT_MAX_FILES) {
+    throw new Error("OpenClaw source skill provenance exceeds the transfer limit");
+  }
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const suffix = ".json";
+    const skillName = entry.name.endsWith(suffix) ? entry.name.slice(0, -suffix.length) : "";
+    const sourcePath = path.join(sourceDir, entry.name);
+    const sourceEntryStat = fs.lstatSync(sourcePath);
+    if (
+      !entry.isFile() ||
+      !sourceEntryStat.isFile() ||
+      sourceEntryStat.isSymbolicLink() ||
+      !validateSkillName(skillName)
+    ) {
+      throw new Error("OpenClaw source skill provenance contains an unsupported entry");
+    }
+    const targetDir = resolveSkillPaths(null, skillName).uploadDir;
+    const sourceReceipt = readOpenClawSkillProvenance(sourcePath, {
+      schemaVersion: 1,
+      sandboxIdentityFingerprint: sourceSandboxIdentityFingerprint,
+      sandboxName,
+      skillName,
+      targetDir,
+    });
+    if (!sourceReceipt) {
+      throw new Error("OpenClaw source skill provenance disappeared during transfer");
+    }
+    const targetReceipt: OpenClawSkillProvenance = {
+      ...sourceReceipt,
+      sandboxIdentityFingerprint: targetSandboxIdentityFingerprint,
+    };
+    const targetPath = resolveOpenClawSkillProvenancePath(
+      targetSandboxIdentityFingerprint,
+      skillName,
+      stateDir,
+    );
+    let existingTarget = readOpenClawSkillProvenance(targetPath, {
+      schemaVersion: 1,
+      sandboxIdentityFingerprint: targetSandboxIdentityFingerprint,
+      sandboxName,
+      skillName,
+      targetDir,
+    });
+    if (!existingTarget) {
+      writeOpenClawSkillProvenanceIfAbsent(targetPath, targetReceipt);
+      existingTarget = readOpenClawSkillProvenance(targetPath, {
+        schemaVersion: 1,
+        sandboxIdentityFingerprint: targetSandboxIdentityFingerprint,
+        sandboxName,
+        skillName,
+        targetDir,
+      });
+    }
+    if (!existingTarget || !sameOpenClawSkillProvenance(existingTarget, targetReceipt)) {
+      throw new Error("OpenClaw replacement skill provenance conflicts with the source receipt");
+    }
+    fs.unlinkSync(sourcePath);
+    syncDirectory(sourceDir);
+  }
+  fs.rmdirSync(sourceDir);
+  syncDirectory(provenanceRoot);
+}
+
 /** Restore the pre-attempt receipt after a proven non-mutating remote refusal. */
 function restoreOpenClawSkillProvenance(
   receiptPath: string,

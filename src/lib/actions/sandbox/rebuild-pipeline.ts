@@ -36,6 +36,7 @@ import {
   disposeRebuildAgentBaseImagePreflight,
   removeStaleRebuildDockerOrphan,
   snapshotOpenShellEnv,
+  transferOpenClawSkillProvenanceForRebuild,
 } from "./rebuild-flow-helpers";
 import { mcpRebuildRequiresRuntimeSelection } from "./rebuild-mcp-phase";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
@@ -292,6 +293,36 @@ async function rebuildSandboxUnlocked(
           );
           bail(
             "Recovered replacement cleanup is incomplete; the replacement journal was retained.",
+          );
+          return false;
+        }
+      };
+
+      const transferRestoredOpenClawSkillProvenance = (
+        recreateJournal: {
+          readonly sourceLiveIdentityFingerprint: string | null;
+          readonly targetGeneration: string;
+        },
+        backupManifest: RebuildBackupManifest,
+      ): boolean => {
+        const sourceIdentity = recreateJournal.sourceLiveIdentityFingerprint;
+        if ((rebuildAgent || "openclaw") !== "openclaw" || !sourceIdentity) return true;
+        try {
+          transferOpenClawSkillProvenanceForRebuild(
+            sandboxName,
+            sourceIdentity,
+            recreateJournal.targetGeneration,
+          );
+          return true;
+        } catch (error) {
+          console.error("");
+          console.error(
+            `  The restored replacement's OpenClaw skill provenance could not be transferred: ${rebuildFailureDetail(error)}`,
+          );
+          if (backupManifest)
+            console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+          bail(
+            "OpenClaw skill provenance transfer is incomplete; the replacement journal was retained.",
           );
           return false;
         }
@@ -582,6 +613,7 @@ async function rebuildSandboxUnlocked(
           bail,
         });
         if (!restored.restoreSucceeded) return;
+        if (!transferRestoredOpenClawSkillProvenance(recreateJournal, recoveryBackup)) return;
         // The accepted replacement belongs to an earlier run. Keep its
         // persisted gate active until the backup and all post-restore state
         // have been applied and verified, then validate the restored cron tree
@@ -829,6 +861,7 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
       });
+      if (!transferRestoredOpenClawSkillProvenance(recreateJournal, backup.backupManifest)) return;
       if (retireRemovedImmutabilityState) {
         if (!postRestoreVerification?.mutableConfigPermissionsVerified) {
           return bail(
