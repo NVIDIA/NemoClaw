@@ -46,6 +46,24 @@ export const fetchFakeWechatWithNodeHttp: (
 ) => Promise<Response> = function fetchFakeWechatWithNodeHttp(input, init) {
   const url = new URL(String(input));
   const signal = init?.signal;
+  const body = init?.body;
+  const headers = Array.isArray(init?.headers)
+    ? Object.fromEntries(init.headers)
+    : init?.headers instanceof Headers
+      ? Object.fromEntries(init.headers.entries())
+      : { ...(init?.headers ?? {}) };
+  const bodyLength =
+    typeof body === "string"
+      ? Buffer.byteLength(body)
+      : body instanceof Uint8Array
+        ? body.byteLength
+        : undefined;
+  if (
+    bodyLength !== undefined &&
+    !Object.keys(headers).some((name) => name.toLowerCase() === "content-length")
+  ) {
+    headers["Content-Length"] = String(bodyLength);
+  }
   const httpModule = process.getBuiltinModule("node:http") as typeof import("node:http");
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -66,7 +84,7 @@ export const fetchFakeWechatWithNodeHttp: (
         port: Number(url.port),
         path: url.pathname + url.search,
         method: init?.method,
-        headers: Object.fromEntries(new Headers(init?.headers).entries()),
+        headers,
       },
       (response) => {
         const chunks: Buffer[] = [];
@@ -95,7 +113,7 @@ export const fetchFakeWechatWithNodeHttp: (
         request.destroy(new Error("fake WeChat request timed out"));
       });
     }
-    request.end(init?.body);
+    request.end(body);
   });
 };
 

@@ -43,7 +43,7 @@ describe("messaging provider installed-runtime paths", () => {
     }
   });
 
-  it("keeps the installed WeChat runtime proof source syntactically valid", () => {
+  it("keeps the installed WeChat HTTP adapter source free of Vitest aliases", () => {
     const result = spawnSync(process.execPath, ["--input-type=module", "--check"], {
       encoding: "utf8",
       input: WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE,
@@ -55,6 +55,63 @@ describe("messaging provider installed-runtime paths", () => {
       WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE.includes("globalThis.fetch ="),
       WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE.includes("__vite_ssr_import_"),
     ]).toEqual([true, true, false]);
+  });
+
+  it("preserves WeChat credential headers and frames the request body", async () => {
+    let server!: http.Server;
+    const received = new Promise<{ body: string; rawHeaders: string[] }>((resolve) => {
+      server = http.createServer((request, response) => {
+        const chunks: Buffer[] = [];
+        request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        request.on("end", () => {
+          resolve({ body: Buffer.concat(chunks).toString("utf8"), rawHeaders: request.rawHeaders });
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end('{"ret":0}');
+        });
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    expect(address).toEqual(expect.objectContaining({ port: expect.any(Number) }));
+    const port = (address as AddressInfo).port;
+    const body = '{"msg":"hello"}';
+
+    try {
+      const response = await fetchFakeWechatWithNodeHttp(
+        `http://127.0.0.1:${String(port)}/ilink/bot/sendmessage`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer openshell:resolve:env:v9_WECHAT_BOT_TOKEN",
+            AuthorizationType: "ilink_bot_token",
+            "Content-Type": "application/json",
+          },
+          body,
+        },
+      );
+      const request = await received;
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ret: 0 });
+      expect(request.body).toBe(body);
+      expect(request.rawHeaders).toEqual(
+        expect.arrayContaining([
+          "Authorization",
+          "Bearer openshell:resolve:env:v9_WECHAT_BOT_TOKEN",
+          "AuthorizationType",
+          "ilink_bot_token",
+          "Content-Type",
+          "application/json",
+          "Content-Length",
+          String(Buffer.byteLength(body)),
+        ]),
+      );
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   });
 
   it("honors the installed WeChat request abort deadline", async () => {
@@ -96,7 +153,7 @@ describe("messaging provider installed-runtime paths", () => {
     expect(delays).toEqual([250, 250]);
   });
 
-  it("preserves the last WeChat API error after the route settlement deadline", async () => {
+  it("preserves the last WeChat API error after 20 failed readiness attempts", async () => {
     const routeError = new TypeError("fetch failed");
     const probe = vi.fn().mockRejectedValue(routeError);
     const delays: number[] = [];
