@@ -121,39 +121,6 @@ describe("rebuildSandbox flow: recovery", () => {
     },
   };
 
-  it("transfers OpenClaw skill provenance after restored replacement state", async () => {
-    const sourceIdentity = fingerprintSandboxLiveIdentity(
-      "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n",
-    )!;
-    const targetIdentity = "b".repeat(64);
-    let targetGeneration = "";
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: { lifecycleLiveIdentityFingerprint: sourceIdentity },
-      onboard: (session) => {
-        const transaction = (session.checkpoint as { sandboxRecreate: Record<string, unknown> })
-          .sandboxRecreate;
-        targetGeneration = String(transaction.targetGeneration);
-        Object.assign(transaction, {
-          phase: "created",
-          targetLiveIdentityFingerprint: targetIdentity,
-        });
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
-
-    expect(harness.transferOpenClawSkillProvenanceForRebuildSpy).toHaveBeenCalledWith(
-      "alpha",
-      sourceIdentity,
-      targetGeneration,
-    );
-    expect(harness.restoreSandboxStateSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.transferOpenClawSkillProvenanceForRebuildSpy.mock.invocationCallOrder[0],
-    );
-  });
-
   // Journal a replacement through the real pipeline, then die at the given
   // post-delete phase so the restart reads persisted state, not a hand-built
   // checkpoint.

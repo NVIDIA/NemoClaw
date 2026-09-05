@@ -45,7 +45,6 @@ export type DestroyHarness = {
   preparePortableDestroyAuthoritySpy: MockInstance;
   promptSpy: MockInstance;
   removeManagedAgentStateVolumesSpy: MockInstance;
-  removeOpenClawSkillProvenanceSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   resolveRetainedSandboxRecoverySpy: MockInstance;
   retireRemovedImmutabilityStateRecordSpy: MockInstance;
@@ -281,9 +280,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       events.push("retire-removed-immutability");
       return true;
     });
-  const removeOpenClawSkillProvenanceSpy = vi
-    .spyOn(destroyExecution, "removeOpenClawSkillProvenanceForSandboxIdentity")
-    .mockImplementation(() => undefined);
 
   const prepareManagedLlamaCppRuntimeCleanupSpy = vi
     .spyOn(localModelProfileCleanup, "prepareManagedLlamaCppRuntimeCleanupForSandbox")
@@ -686,7 +682,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     portableDestroyVerifyAbsentSpy,
     promptSpy,
     removeManagedAgentStateVolumesSpy,
-    removeOpenClawSkillProvenanceSpy,
     removeSandboxSpy,
     resolveRetainedSandboxRecoverySpy,
     retireRemovedImmutabilityStateRecordSpy,

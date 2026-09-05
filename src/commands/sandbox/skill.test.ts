@@ -5,14 +5,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const installSandboxSkill = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const removeSandboxSkill = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const listSandboxSkills = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock("../../lib/actions/sandbox/skill-install", () => ({
   installSandboxSkill,
   removeSandboxSkill,
+  listSandboxSkills,
 }));
 
 import SkillCliCommand from "./skill";
 import SkillInstallCliCommand from "./skill/install";
+import SkillListCliCommand from "./skill/list";
 import SkillRemoveCliCommand from "./skill/remove";
 
 const rootDir = process.cwd();
@@ -20,6 +23,7 @@ const rootDir = process.cwd();
 function clearSkillMocks(): void {
   installSandboxSkill.mockClear();
   removeSandboxSkill.mockClear();
+  listSandboxSkills.mockClear();
 }
 
 describe("SkillCliCommand", () => {
@@ -92,5 +96,19 @@ describe("SkillRemoveCliCommand", () => {
     await expect(SkillRemoveCliCommand.run(["alpha"], rootDir)).rejects.toThrow(/skill/i);
 
     expect(removeSandboxSkill).not.toHaveBeenCalled();
+  });
+});
+
+describe("SkillListCliCommand", () => {
+  beforeEach(() => {
+    clearSkillMocks();
+  });
+
+  it("forwards native agent list flags", async () => {
+    await SkillListCliCommand.run(["alpha", "--json", "--eligible"], rootDir);
+
+    expect(listSandboxSkills).toHaveBeenCalledWith("alpha", {
+      extraArgs: ["--json", "--eligible"],
+    });
   });
 });

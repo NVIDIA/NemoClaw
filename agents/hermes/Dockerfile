@@ -95,6 +95,7 @@ COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/p
 COPY agents/hermes/patch-cron-restore-drain.py /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py
 COPY agents/hermes/patch-neutral-platform-env-activation.py /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py
 COPY agents/hermes/patch-session-list-preview.py /opt/nemoclaw-hermes-config/patch-session-list-preview.py
+COPY agents/hermes/patch-native-skill-import.py /opt/nemoclaw-hermes-config/patch-native-skill-import.py
 COPY agents/hermes/patch-profile-policy-defaults.py /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py
 COPY agents/hermes/hindsight-lazy-integrity.patch /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch
 COPY agents/hermes/hindsight-client-probe-requirements.txt /opt/nemoclaw-hermes-config/hindsight-client-requirements.txt
@@ -717,6 +718,22 @@ RUN printf '%s  %s\n' \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py session-preview \
     && rm /opt/nemoclaw-hermes-config/patch-session-list-preview.py
+
+# Keep skill lifecycle state inside Hermes. The host only stages a validated
+# payload; this pinned native command owns scanning, replacement, rollback,
+# lock metadata, loader verification, listing, and removal.
+ARG NEMOCLAW_HERMES_NATIVE_SKILL_IMPORT_PATCHER_SHA256=7efb0ded538616bf7ff69229f3dda51dae755c0d0c86336d67da0c35e0c77bf8
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_NATIVE_SKILL_IMPORT_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-native-skill-import.py \
+    | sha256sum -c - \
+    || { echo "ERROR: patch-native-skill-import.py hash mismatch (update NEMOCLAW_HERMES_NATIVE_SKILL_IMPORT_PATCHER_SHA256)" >&2; exit 1; }; \
+    /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-native-skill-import.py \
+        /opt/hermes/hermes_cli/subcommands/skills.py \
+        /opt/hermes/hermes_cli/skills_hub.py \
+    && grep -Fq 'NemoClaw native local skill import (#10210)' /opt/hermes/hermes_cli/subcommands/skills.py \
+    && grep -Fq 'NEMOCLAW_NATIVE_SKILL_IMPORT=' /opt/hermes/hermes_cli/skills_hub.py \
+    && rm /opt/nemoclaw-hermes-config/patch-native-skill-import.py
 
 # Hermes v0.20.6 SessionDB does not set PRAGMA temp_store=MEMORY, so SQLite
 # falls back to file-based temp storage for FK constraint processing (for
@@ -1596,6 +1613,7 @@ RUN check_metadata() { \
     && check_absent /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
+    && check_absent /opt/nemoclaw-hermes-config/patch-native-skill-import.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
     && check_absent /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \

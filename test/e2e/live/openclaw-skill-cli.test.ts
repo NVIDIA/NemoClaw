@@ -95,11 +95,36 @@ function skillPayload(marker: string): string {
 
 function foreignSkillInstallScript(): string {
   const encoded = Buffer.from(skillPayload("FOREIGN_WORKSPACE_CONTENT"), "utf8").toString("base64");
+  const installedAt = 1_786_000_000_000;
+  const registry = "https://clawhub.ai";
+  const origin = Buffer.from(
+    JSON.stringify({
+      version: 1,
+      registry,
+      slug: SKILL_ID,
+      installedVersion: "1.0.0",
+      installedAt,
+    }),
+    "utf8",
+  ).toString("base64");
+  const lock = Buffer.from(
+    JSON.stringify({
+      version: 1,
+      skills: {
+        [SKILL_ID]: { version: "1.0.0", installedAt, registry },
+      },
+    }),
+    "utf8",
+  ).toString("base64");
   return [
     `rm -rf ${shellQuote(FOREIGN_SKILL_DIR)}`,
     `mkdir -p ${shellQuote(FOREIGN_SKILL_DIR)}`,
     `printf '%s' ${shellQuote(encoded)} | base64 -d > ${shellQuote(`${FOREIGN_SKILL_DIR}/SKILL.md`)}`,
-    `openclaw skills install ${shellQuote(FOREIGN_SKILL_DIR)} --agent main`,
+    `rm -rf "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}"`,
+    `mkdir -p "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/.clawhub" "\${OPENCLAW_WORKSPACE_DIR}/.clawhub"`,
+    `cp ${shellQuote(`${FOREIGN_SKILL_DIR}/SKILL.md`)} "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md"`,
+    `printf '%s' ${shellQuote(origin)} | base64 -d > "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/.clawhub/origin.json"`,
+    `printf '%s' ${shellQuote(lock)} | base64 -d > "\${OPENCLAW_WORKSPACE_DIR}/.clawhub/lock.json"`,
   ].join(" && ");
 }
 
@@ -119,7 +144,7 @@ async function expectSandboxShellZero(
 }
 
 test(
-  "openclaw-skill-cli: NemoClaw native install and collision roundtrip uses workspace path",
+  "openclaw-skill-cli: install, update, list, and remove use native agent state",
   {
     timeout: INSTALL_TIMEOUT_MS + 25 * 60_000,
     meta: {
@@ -128,8 +153,9 @@ test(
         "clear the OpenClaw skill CLI sandbox",
         "install and onboard the OpenClaw sandbox",
         "confirm OpenClaw runtime directories",
-        "refuse a foreign collision, then install through NemoClaw",
-        "inspect the installed skill through every CLI view",
+        "replace a same-name ClawHub skill through native install",
+        "update and inspect the skill through native agent state",
+        "remove the skill and confirm native agent state",
         "record the workspace skill contract",
       ],
     },
@@ -145,12 +171,14 @@ test(
         "install.sh creates/recreates a real OpenClaw sandbox",
         "OPENCLAW_HOME, OPENCLAW_STATE_DIR, and OPENCLAW_WORKSPACE_DIR reach the sandbox runtime shell",
         "nemoclaw skill install securely hands host content to the native OpenClaw installer",
-        "a same-name workspace skill without protected host provenance is not replaced",
-        "changed-content updates fail closed without a native compare-and-swap contract",
+        "a same-name ClawHub workspace skill is replaced through the native OpenClaw installer",
+        "changed-content updates use the native OpenClaw installer",
         "the installed SKILL.md lands under ${OPENCLAW_WORKSPACE_DIR}/skills/<id>",
-        "openclaw skills list --agent main --json enumerates the installed workspace skill",
+        "nemoclaw skill list delegates to openclaw skills list --agent main",
         "openclaw skills info <id> --agent main --json reports the workspace install path",
         "openclaw skills check --agent main --json includes the installed skill",
+        "nemoclaw skill remove delegates to the OpenClaw-resolved active workspace target",
+        "removal clears OpenClaw ClawHub tracking and native list state without a host inventory",
       ],
     });
 
@@ -227,7 +255,7 @@ test(
       ).toMatch(new RegExp(`^${requiredVar}=.+$`, "m"));
     });
 
-    progress.phase("refuse a foreign collision, then install through NemoClaw");
+    progress.phase("replace a same-name ClawHub skill through native install");
     fs.mkdirSync(localSkillDir, { recursive: true });
     fs.writeFileSync(path.join(localSkillDir, "SKILL.md"), skillPayload("HOST_FIXTURE_VERSION=1"));
 
@@ -237,67 +265,60 @@ test(
       "sandbox-install-foreign-openclaw-skill-fixture",
       env,
     );
-    const collision = await host.command(
-      "node",
-      [CLI_ENTRYPOINT, SANDBOX_NAME, "skill", "install", localSkillDir],
-      {
-        artifactName: "nemoclaw-openclaw-skill-foreign-collision",
-        env,
-        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-      },
-    );
-    const collisionText = resultText(collision);
-    expect(collision.exitCode, collisionText).not.toBe(0);
-    expect(collisionText).toContain("not proven to be owned by NemoClaw");
-    await expectSandboxShellZero(
-      sandbox,
-      `grep -Fq FOREIGN_WORKSPACE_CONTENT "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md" && rm -rf "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}"`,
-      "sandbox-verify-and-remove-foreign-openclaw-skill",
-      env,
-    );
-
     const skillInstall = await host.command(
       "node",
       [CLI_ENTRYPOINT, SANDBOX_NAME, "skill", "install", localSkillDir],
       {
-        artifactName: "nemoclaw-openclaw-skill-install-fixture",
+        artifactName: "nemoclaw-openclaw-skill-replace-clawhub-fixture",
         env,
         timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
       },
     );
     expect(skillInstall.exitCode, resultText(skillInstall)).toBe(0);
     await artifacts.writeText("openclaw-skills-install-output.txt", resultText(skillInstall));
+    await expectSandboxShellZero(
+      sandbox,
+      `grep -Fq HOST_FIXTURE_VERSION=1 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md" && test ! -e "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/.clawhub/origin.json" && ! grep -Fq ${shellQuote(`"${SKILL_ID}"`)} "\${OPENCLAW_WORKSPACE_DIR}/.clawhub/lock.json"`,
+      "sandbox-verify-native-replaced-clawhub-skill",
+      env,
+    );
 
+    progress.phase("update and inspect the skill through native agent state");
     fs.writeFileSync(path.join(localSkillDir, "SKILL.md"), skillPayload("HOST_FIXTURE_VERSION=2"));
     const skillUpdate = await host.command(
       "node",
       [CLI_ENTRYPOINT, SANDBOX_NAME, "skill", "install", localSkillDir],
       {
-        artifactName: "nemoclaw-openclaw-skill-update-refusal",
+        artifactName: "nemoclaw-openclaw-skill-native-update",
         env,
         timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
       },
     );
-    expect(skillUpdate.exitCode, resultText(skillUpdate)).not.toBe(0);
+    expect(skillUpdate.exitCode, resultText(skillUpdate)).toBe(0);
     await artifacts.writeText("openclaw-skills-update-output.txt", resultText(skillUpdate));
 
-    progress.phase("inspect the installed skill through every CLI view");
     const diskCheck = await expectSandboxShellZero(
       sandbox,
-      `ls -1 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/" 2>&1 && grep -Fq HOST_FIXTURE_VERSION=1 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md" && staging_path="$(find /sandbox/.openclaw -maxdepth 1 -name '.nemoclaw-skill-stage.*' -print -quit)" && test -z "$staging_path"`,
+      `ls -1 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/" 2>&1 && grep -Fq HOST_FIXTURE_VERSION=2 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md" && staging_path="$(find /sandbox/.openclaw -maxdepth 1 -name '.nemoclaw-skill-stage.*' -print -quit)" && test -z "$staging_path"`,
       "sandbox-openclaw-skill-cli-disk-check",
       env,
     );
     await artifacts.writeText("openclaw-skill-disk-check.txt", resultText(diskCheck));
 
-    const list = await expectSandboxShellZero(
-      sandbox,
-      "openclaw skills list --agent main --json",
-      "sandbox-openclaw-skills-list-json",
-      env,
+    const list = await host.command(
+      "node",
+      [CLI_ENTRYPOINT, SANDBOX_NAME, "skill", "list", "--json"],
+      {
+        artifactName: "nemoclaw-openclaw-skills-list-json",
+        env,
+        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+      },
     );
-    const listText = resultText(list);
-    expect(listText).toContain(`"${SKILL_ID}"`);
+    const listed = JSON.parse(list.stdout) as { skills?: Array<{ name?: string }> };
+    expect(
+      list.exitCode === 0 && listed.skills?.some((entry) => entry.name === SKILL_ID),
+      resultText(list),
+    ).toBe(true);
 
     const info = await expectSandboxShellZero(
       sandbox,
@@ -315,6 +336,42 @@ test(
       env,
     );
     expect(resultText(check)).toContain(`"${SKILL_ID}"`);
+
+    progress.phase("remove the skill and confirm native agent state");
+    const remove = await host.command(
+      "node",
+      [CLI_ENTRYPOINT, SANDBOX_NAME, "skill", "remove", SKILL_ID],
+      {
+        artifactName: "nemoclaw-openclaw-skill-native-remove",
+        env,
+        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+      },
+    );
+    expect(remove.exitCode, resultText(remove)).toBe(0);
+
+    const listAfterRemove = await host.command(
+      "node",
+      [CLI_ENTRYPOINT, SANDBOX_NAME, "skill", "list", "--json"],
+      {
+        artifactName: "nemoclaw-openclaw-skills-list-after-remove-json",
+        env,
+        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+      },
+    );
+    const listedAfterRemove = JSON.parse(listAfterRemove.stdout) as {
+      skills?: Array<{ name?: string }>;
+    };
+    expect(
+      listAfterRemove.exitCode === 0 &&
+        !listedAfterRemove.skills?.some((entry) => entry.name === SKILL_ID),
+      resultText(listAfterRemove),
+    ).toBe(true);
+    await expectSandboxShellZero(
+      sandbox,
+      `test ! -e "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}" && ! grep -Fq ${shellQuote(`"${SKILL_ID}"`)} "\${OPENCLAW_WORKSPACE_DIR}/.clawhub/lock.json"`,
+      "sandbox-verify-native-skill-removal",
+      env,
+    );
 
     progress.phase("record the workspace skill contract");
     await artifacts.target.complete({

@@ -221,9 +221,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockReturnValue(
       overrides.baseImagePreflight ?? { ok: true, imageRef: null, overrideEnvVar: null },
     );
-  const transferOpenClawSkillProvenanceForRebuildSpy = vi
-    .spyOn(rebuildFlowHelpers, "transferOpenClawSkillProvenanceForRebuild")
-    .mockImplementation(() => undefined);
   const imageIdsByRef = new Map([
     [agentBaseImageRef, agentBaseImageId],
     [agentBaseImageId, agentBaseImageId],
@@ -1029,7 +1026,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     enforceRemovedImmutabilityMigrationBoundarySpy,
     retireRemovedImmutabilityStateRecordSpy,
     restoreSandboxStateSpy,
-    transferOpenClawSkillProvenanceForRebuildSpy,
     captureOpenshellSpy,
     captureResolvedOpenshellSpy,
     runOpenshellSpy,

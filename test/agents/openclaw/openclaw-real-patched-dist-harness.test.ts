@@ -36,6 +36,12 @@ const PATCH_OPENCLAW_MCP_RELIABILITY = path.join(
   "scripts",
   "patch-openclaw-mcp-reliability.mts",
 );
+const PATCH_OPENCLAW_SKILL_REMOVE = path.join(
+  REPO_ROOT,
+  "scripts",
+  "openclaw",
+  "patch-skill-remove.mts",
+);
 const OPENCLAW_VERSION_EXTRACTOR = path.join(REPO_ROOT, "scripts", "extract-semver.sh");
 const REAL_OPENCLAW_NODE_ENV = "NEMOCLAW_REAL_OPENCLAW_NODE";
 // Focused patch scripts also scan the full generated dist. APFS cold-cache
@@ -443,6 +449,44 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           `Patch 6 applied to OpenClaw ${version}`,
           "Patch 6",
         );
+
+        const skillRemovePatch = spawnSync(
+          nodeRuntime.executable,
+          ["--experimental-strip-types", PATCH_OPENCLAW_SKILL_REMOVE, dist],
+          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+        );
+        requireSpawnSuccess(skillRemovePatch, "apply native skill remove patch");
+        requireRuntimeIncludes(
+          skillRemovePatch.stdout,
+          "OpenClaw native skill removal patched",
+          "native skill remove patch output",
+        );
+        const skillRemoveAudit = spawnSync(
+          nodeRuntime.executable,
+          ["--experimental-strip-types", PATCH_OPENCLAW_SKILL_REMOVE, "--audit", dist],
+          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+        );
+        requireSpawnSuccess(skillRemoveAudit, "audit native skill remove patch");
+        const skillRemoveTargets = fs
+          .readdirSync(dist)
+          .filter((file) => file.endsWith(".js"))
+          .map((file) => path.join(dist, file))
+          .filter((file) =>
+            fs
+              .readFileSync(file, "utf-8")
+              .includes("nemoclaw: native workspace skill removal (#10210)"),
+          );
+        requireRuntimeEqual(
+          String(skillRemoveTargets.length),
+          "1",
+          "native skill remove patch target count",
+        );
+        const skillRemoveSyntax = spawnSync(
+          nodeRuntime.executable,
+          ["--check", skillRemoveTargets[0] as string],
+          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+        );
+        requireSpawnSuccess(skillRemoveSyntax, "validate native skill remove patch syntax");
 
         [
           "nemoclaw: env-gated bypass",

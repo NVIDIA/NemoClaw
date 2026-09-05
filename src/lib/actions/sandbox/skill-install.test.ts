@@ -12,6 +12,7 @@ const inspectOpenShellSandboxIdentityFingerprint = vi.hoisted(() => vi.fn());
 const getSessionAgent = vi.hoisted(() => vi.fn());
 const ensureLiveSandboxOrExit = vi.hoisted(() => vi.fn());
 const getSandboxTargetGatewayName = vi.hoisted(() => vi.fn());
+const execSandbox = vi.hoisted(() => vi.fn());
 const mutationLockState = vi.hoisted(() => ({ active: false }));
 const withSandboxMutationLock = vi.hoisted(() =>
   vi.fn(async (_sandboxName: string, operation: () => unknown) => {
@@ -25,17 +26,11 @@ const withSandboxMutationLock = vi.hoisted(() =>
 );
 const skillInstall = vi.hoisted(() => ({
   validateSkillName: vi.fn(),
-  resolveSkillPaths: vi.fn(),
-  checkExisting: vi.fn(),
-  removeSkill: vi.fn(),
-  verifyRemove: vi.fn(),
+  resolveNativeSkillState: vi.fn(),
   parseFrontmatter: vi.fn(),
   collectFiles: vi.fn(),
-  uploadDirectory: vi.fn(),
-  installFreshSharedSkill: vi.fn(),
+  installNativeAgentSkill: vi.fn(),
   installOpenClawSkill: vi.fn(),
-  postInstall: vi.fn(),
-  verifyInstall: vi.fn(),
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
@@ -68,13 +63,12 @@ vi.mock("./gateway-target", () => ({
   getSandboxTargetGatewayName,
 }));
 
-import { installSandboxSkill, removeSandboxSkill } from "./skill-install";
+vi.mock("./exec", () => ({ execSandbox }));
+
+import { installSandboxSkill, listSandboxSkills, removeSandboxSkill } from "./skill-install";
 
 const paths = {
   stateDir: "/sandbox/.openclaw",
-  uploadDir: "/sandbox/.openclaw/workspace/skills/demo-skill",
-  uploadDirSharedWithAgent: false,
-  reloadsSkillsOnSessionStart: false,
   isOpenClaw: true,
 };
 
@@ -82,20 +76,15 @@ const agent = { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } };
 const genericAgent = { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } };
 const genericPaths = {
   stateDir: "/sandbox/.hermes",
-  uploadDir: "/sandbox/.hermes/skills/demo-skill",
-  uploadDirSharedWithAgent: false,
-  reloadsSkillsOnSessionStart: true,
   isOpenClaw: false,
 };
 const deepAgent = {
   name: "langchain-deepagents-code",
   configPaths: { dir: "/sandbox/.deepagents" },
 };
+const unsupportedAgent = { name: "pi", configPaths: { dir: "/sandbox/.pi/agent" } };
 const sharedPaths = {
   stateDir: "/sandbox/.deepagents",
-  uploadDir: "/sandbox/.deepagents/agent/skills/demo-skill",
-  uploadDirSharedWithAgent: true,
-  reloadsSkillsOnSessionStart: false,
   isOpenClaw: false,
 };
 
@@ -133,14 +122,7 @@ describe("sandbox skill action orchestration", () => {
     getSandboxTargetGatewayName.mockReturnValue("nemoclaw");
     getSessionAgent.mockReturnValue(genericAgent);
     skillInstall.validateSkillName.mockReturnValue(true);
-    skillInstall.resolveSkillPaths.mockReturnValue(genericPaths);
-    skillInstall.checkExisting.mockReturnValue(true);
-    skillInstall.removeSkill.mockReturnValue({
-      success: true,
-      removedUploadDir: true,
-      messages: [],
-    });
-    skillInstall.verifyRemove.mockReturnValue(true);
+    skillInstall.resolveNativeSkillState.mockReturnValue(genericPaths);
     skillInstall.parseFrontmatter.mockReturnValue({ name: "demo-skill" });
     skillInstall.collectFiles.mockReturnValue({
       files: ["SKILL.md"],
@@ -148,24 +130,16 @@ describe("sandbox skill action orchestration", () => {
       unsafePaths: [],
       unsupportedPaths: [],
     });
-    skillInstall.uploadDirectory.mockReturnValue({
-      uploaded: 1,
-      failed: [],
-      skippedDotfiles: [],
-      unsafePaths: [],
-    });
-    skillInstall.installFreshSharedSkill.mockReturnValue({
-      success: true,
-      uploaded: 1,
-      contentDigest: "a".repeat(64),
-    });
     skillInstall.installOpenClawSkill.mockReturnValue({
       success: true,
       uploaded: 1,
       contentDigest: "a".repeat(64),
     });
-    skillInstall.postInstall.mockReturnValue({ success: true, messages: [] });
-    skillInstall.verifyInstall.mockReturnValue(true);
+    skillInstall.installNativeAgentSkill.mockReturnValue({
+      success: true,
+      uploaded: 1,
+      contentDigest: "a".repeat(64),
+    });
   });
 
   afterEach(() => {
@@ -173,125 +147,113 @@ describe("sandbox skill action orchestration", () => {
     vi.restoreAllMocks();
   });
 
-  it("fails skill remove when SSH config capture fails", async () => {
-    captureSandboxSshConfig.mockReturnValue({ status: 1, output: "" });
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
-      throw new Error(`process.exit ${code}`);
-    }) as typeof process.exit);
-
-    await expect(removeSandboxSkill("alpha", { name: "demo-skill" })).rejects.toThrow(
-      "process.exit 1",
-    );
-
-    expect(ensureLiveSandboxOrExit).toHaveBeenCalledWith("alpha");
-    expect(captureSandboxSshConfig).toHaveBeenCalledWith("alpha", expect.any(Object));
-    expect(error).toHaveBeenCalledWith("  Failed to obtain SSH configuration for the sandbox.");
-    expect(skillInstall.checkExisting).not.toHaveBeenCalled();
-    expect(exit).toHaveBeenCalledWith(1);
-  });
-
-  it("treats unknown skill existence as fatal for remove and deletes the temp SSH config", async () => {
-    let tempConfig = "";
-    skillInstall.checkExisting.mockImplementation((ctx) => {
-      tempConfig = ctx.configFile;
-      expect(fs.existsSync(tempConfig)).toBe(true);
-      return null;
-    });
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    await removeSandboxSkill("alpha", { name: "demo-skill" });
-
-    expect(process.exitCode).toBe(1);
-    expect(error).toHaveBeenCalledWith(
-      "  Could not check if skill 'demo-skill' exists — sandbox may be unreachable.",
-    );
-    expect(skillInstall.removeSkill).not.toHaveBeenCalled();
-    expect(skillInstall.verifyRemove).not.toHaveBeenCalled();
-    expect(tempConfig).not.toBe("");
-    expect(fs.existsSync(tempConfig)).toBe(false);
-  });
-
-  it("reports an absent skill for remove and deletes the temp SSH config", async () => {
-    let tempConfig = "";
-    skillInstall.checkExisting.mockImplementation((ctx) => {
-      tempConfig = ctx.configFile;
-      return false;
-    });
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    await removeSandboxSkill("alpha", { name: "demo-skill" });
-
-    expect(process.exitCode).toBe(1);
-    expect(error).toHaveBeenCalledWith("  Skill 'demo-skill' is not installed in sandbox 'alpha'.");
-    expect(skillInstall.removeSkill).not.toHaveBeenCalled();
-    expect(skillInstall.verifyRemove).not.toHaveBeenCalled();
-    expect(tempConfig).not.toBe("");
-    expect(fs.existsSync(tempConfig)).toBe(false);
-  });
-
-  it("refuses OpenClaw removal until native workspace ownership is proven", async () => {
+  it("delegates OpenClaw removal to the native agent command", async () => {
     getSessionAgent.mockReturnValue(agent);
-    skillInstall.resolveSkillPaths.mockReturnValue(paths);
+
+    await removeSandboxSkill("alpha", { name: "demo-skill" });
+
+    expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function));
+    expect(execSandbox).toHaveBeenCalledWith(
+      "alpha",
+      ["/usr/local/bin/openclaw", "skills", "remove", "demo-skill", "--agent", "main"],
+      {},
+      { exit: expect.any(Function) },
+    );
+    expect(captureSandboxSshConfig).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      genericAgent,
+      ["/usr/local/bin/hermes", "skills", "uninstall", "demo-skill", "--yes"],
+    ],
+    [
+      deepAgent,
+      [
+        "/usr/local/bin/dcode",
+        "skills",
+        "delete",
+        "demo-skill",
+        "--agent",
+        "agent",
+        "--force",
+        "--json",
+      ],
+    ],
+  ])("delegates %s removal to native agent state", async (selectedAgent, command) => {
+    getSessionAgent.mockReturnValue(selectedAgent);
+
+    await removeSandboxSkill("alpha", { name: "demo-skill" });
+
+    expect(execSandbox).toHaveBeenCalledWith("alpha", command, {}, { exit: expect.any(Function) });
+    expect(captureSandboxSshConfig).not.toHaveBeenCalled();
+  });
+
+  it("refuses removal when the selected agent has no native skill state", async () => {
+    getSessionAgent.mockReturnValue(unsupportedAgent);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     await removeSandboxSkill("alpha", { name: "demo-skill" });
 
     expect(process.exitCode).toBe(1);
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("Automatic OpenClaw skill removal is unavailable"),
-    );
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("$HOME/.openclaw/skills/demo-skill"),
-    );
-    expect(captureSandboxSshConfig).not.toHaveBeenCalled();
-    expect(skillInstall.checkExisting).not.toHaveBeenCalled();
-    expect(skillInstall.removeSkill).not.toHaveBeenCalled();
-    expect(skillInstall.verifyRemove).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith("  Agent 'pi' has no native skill remove command.");
+    expect(execSandbox).not.toHaveBeenCalled();
   });
 
-  it("removes and verifies an existing skill, then deletes the temp SSH config", async () => {
-    let tempConfig = "";
-    skillInstall.checkExisting.mockImplementation((ctx, resolvedPaths) => {
-      tempConfig = ctx.configFile;
-      expect(resolvedPaths).toBe(genericPaths);
-      return true;
-    });
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  it("lists OpenClaw skills from native agent state", async () => {
+    getSessionAgent.mockReturnValue(agent);
 
-    await removeSandboxSkill("alpha", { name: "demo-skill" });
+    await listSandboxSkills("alpha", { extraArgs: ["--json", "--eligible"] });
 
+    expect(execSandbox).toHaveBeenCalledWith("alpha", [
+      "/usr/local/bin/openclaw",
+      "skills",
+      "list",
+      "--agent",
+      "main",
+      "--json",
+      "--eligible",
+    ]);
+  });
+
+  it.each([
+    [genericAgent, ["/usr/local/bin/hermes", "skills", "list", "--enabled-only"]],
+    [
+      deepAgent,
+      ["/usr/local/bin/dcode", "skills", "list", "--agent", "agent", "--json"],
+    ],
+  ])("lists skills through %s native state", async (selectedAgent, command) => {
+    getSessionAgent.mockReturnValue(selectedAgent);
+    const extraArgs = selectedAgent.name === "hermes" ? ["--enabled-only"] : ["--json"];
+
+    await listSandboxSkills("alpha", { extraArgs });
+
+    expect(execSandbox).toHaveBeenCalledWith("alpha", command);
+  });
+
+  it("does not let forwarded list arguments change the selected native agent", async () => {
+    getSessionAgent.mockReturnValue(agent);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await listSandboxSkills("alpha", { extraArgs: ["--agent", "other"] });
+
+    expect(process.exitCode).toBe(2);
+    expect(error).toHaveBeenCalledWith(
+      "  `skill list` is bound to the sandbox's primary agent.",
+    );
     expect(ensureLiveSandboxOrExit).toHaveBeenCalledWith("alpha");
-    expect(getSessionAgent).toHaveBeenCalledWith("alpha");
-    expect(skillInstall.resolveSkillPaths).toHaveBeenCalledWith(genericAgent, "demo-skill");
-    expect(skillInstall.removeSkill).toHaveBeenCalledWith(
-      expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
-      genericPaths,
-    );
-    expect(skillInstall.verifyRemove).toHaveBeenCalledWith(
-      expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
-      genericPaths,
-    );
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("Skill 'demo-skill' removed"));
-    expect(fs.existsSync(tempConfig)).toBe(false);
-    expectTempSshConfigCleanedUp(tempConfig);
-    expect(process.exitCode).toBeUndefined();
+    expect(execSandbox).not.toHaveBeenCalled();
   });
 
-  it("refuses Deep Agents removal before obtaining SSH configuration", async () => {
-    getSessionAgent.mockReturnValue(deepAgent);
-    skillInstall.resolveSkillPaths.mockReturnValue(sharedPaths);
+  it("refuses listing when the selected agent has no native skill state", async () => {
+    getSessionAgent.mockReturnValue(unsupportedAgent);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    await removeSandboxSkill("alpha", { name: "demo-skill" });
+    await listSandboxSkills("alpha");
 
     expect(process.exitCode).toBe(1);
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("Automatic removal is unavailable for Deep Agents skills"),
-    );
-    expect(captureSandboxSshConfig).not.toHaveBeenCalled();
-    expect(skillInstall.checkExisting).not.toHaveBeenCalled();
-    expect(skillInstall.removeSkill).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith("  Agent 'pi' has no native skill list command.");
+    expect(execSandbox).not.toHaveBeenCalled();
   });
 
   it("stops skill installation at the shared gateway liveness guard (#2276)", async () => {
@@ -309,7 +271,26 @@ describe("sandbox skill action orchestration", () => {
 
     expect(ensureLiveSandboxOrExit).toHaveBeenCalledWith("alpha");
     expect(captureSandboxSshConfig).not.toHaveBeenCalled();
-    expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
+  });
+
+  it("refuses installation when the selected agent has no native skill state", async () => {
+    const skillDir = makeSkillDir();
+    getSessionAgent.mockReturnValue(unsupportedAgent);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      await installSandboxSkill("alpha", { command: "install", path: skillDir });
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      "  Agent 'pi' has no native local skill import command.",
+    );
+    expect(skillInstall.resolveNativeSkillState).not.toHaveBeenCalled();
+    expect(captureSandboxSshConfig).not.toHaveBeenCalled();
   });
 
   it("refuses a SKILL.md symlink before parsing or contacting the sandbox", async () => {
@@ -369,46 +350,10 @@ describe("sandbox skill action orchestration", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
-  it("continues skill install when the existence probe is unknown because upload plus verify are authoritative", async () => {
-    const skillDir = makeSkillDir();
-    let tempConfig = "";
-    skillInstall.checkExisting.mockImplementation((ctx) => {
-      tempConfig = ctx.configFile;
-      return null;
-    });
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-
-    try {
-      await installSandboxSkill("alpha", { command: "install", path: skillDir });
-    } finally {
-      fs.rmSync(skillDir, { recursive: true, force: true });
-    }
-
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "Warning: could not check sandbox for existing skill — treating as fresh install.",
-      ),
-    );
-    expect(skillInstall.uploadDirectory).toHaveBeenCalledWith(
-      expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
-      skillDir,
-      genericPaths.uploadDir,
-    );
-    expect(skillInstall.verifyInstall).toHaveBeenCalledWith(
-      expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
-      genericPaths,
-    );
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("Skill 'demo-skill' installed"));
-    expect(fs.existsSync(tempConfig)).toBe(false);
-    expectTempSshConfigCleanedUp(tempConfig);
-    expect(process.exitCode).toBeUndefined();
-  });
-
   it("delegates OpenClaw installation through the lifecycle mutation lock", async () => {
     const skillDir = makeSkillDir();
     getSessionAgent.mockReturnValue(agent);
-    skillInstall.resolveSkillPaths.mockReturnValue(paths);
+    skillInstall.resolveNativeSkillState.mockReturnValue(paths);
     getSandboxTargetGatewayName.mockImplementationOnce(() => {
       expect(mutationLockState.active).toBe(true);
       return "nemoclaw-recorded";
@@ -447,7 +392,6 @@ describe("sandbox skill action orchestration", () => {
       "demo-skill",
       expect.objectContaining({
         expectedRootIdentity: expect.any(Object),
-        sandboxIdentityFingerprint: "f".repeat(64),
       }),
     );
     expect(inspectOpenShellSandboxIdentityFingerprint).toHaveBeenCalledWith({
@@ -457,15 +401,12 @@ describe("sandbox skill action orchestration", () => {
     });
     expect(log).toHaveBeenCalledWith(expect.stringContaining("installed through OpenClaw"));
     expect(process.exitCode).toBeUndefined();
-    expect(skillInstall.checkExisting).not.toHaveBeenCalled();
-    expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
-    expect(skillInstall.postInstall).not.toHaveBeenCalled();
   });
 
   it("refuses OpenClaw installation when SSH and live sandbox identities differ", async () => {
     const skillDir = makeSkillDir();
     getSessionAgent.mockReturnValue(agent);
-    skillInstall.resolveSkillPaths.mockReturnValue(paths);
+    skillInstall.resolveNativeSkillState.mockReturnValue(paths);
     fingerprintOpenShellSandboxSshConfigIdentity.mockReturnValueOnce("a".repeat(64));
     inspectOpenShellSandboxIdentityFingerprint.mockReturnValueOnce("b".repeat(64));
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -487,7 +428,7 @@ describe("sandbox skill action orchestration", () => {
   it("refuses OpenClaw installation when the exact sandbox identity is unavailable", async () => {
     const skillDir = makeSkillDir();
     getSessionAgent.mockReturnValue(agent);
-    skillInstall.resolveSkillPaths.mockReturnValue(paths);
+    skillInstall.resolveNativeSkillState.mockReturnValue(paths);
     inspectOpenShellSandboxIdentityFingerprint.mockImplementationOnce(() => {
       throw new Error("identity unavailable");
     });
@@ -510,7 +451,7 @@ describe("sandbox skill action orchestration", () => {
   it("fails closed when the pinned OpenClaw installer capability is unavailable", async () => {
     const skillDir = makeSkillDir();
     getSessionAgent.mockReturnValue(agent);
-    skillInstall.resolveSkillPaths.mockReturnValue(paths);
+    skillInstall.resolveNativeSkillState.mockReturnValue(paths);
     skillInstall.installOpenClawSkill.mockReturnValue({
       success: false,
       uploaded: 0,
@@ -528,14 +469,12 @@ describe("sandbox skill action orchestration", () => {
     expect(error).toHaveBeenCalledWith(
       "  The pinned OpenClaw runtime does not expose the reviewed native skill install capability.",
     );
-    expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
-    expect(skillInstall.postInstall).not.toHaveBeenCalled();
   });
 
   it("reports the supported OpenClaw primary workspace boundary", async () => {
     const skillDir = makeSkillDir();
     getSessionAgent.mockReturnValue(agent);
-    skillInstall.resolveSkillPaths.mockReturnValue(paths);
+    skillInstall.resolveNativeSkillState.mockReturnValue(paths);
     skillInstall.installOpenClawSkill.mockReturnValue({
       success: false,
       uploaded: 0,
@@ -558,40 +497,12 @@ describe("sandbox skill action orchestration", () => {
     );
   });
 
-  it("reports actionable recovery when OpenClaw provenance finalization fails", async () => {
-    const skillDir = makeSkillDir();
-    getSessionAgent.mockReturnValue(agent);
-    skillInstall.resolveSkillPaths.mockReturnValue(paths);
-    skillInstall.installOpenClawSkill.mockReturnValue({
-      success: false,
-      uploaded: 0,
-      reason: "provenance_finalization_failed",
-    });
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    try {
-      await installSandboxSkill("alpha", { command: "install", path: skillDir });
-    } finally {
-      fs.rmSync(skillDir, { recursive: true, force: true });
-    }
-
-    expect(process.exitCode).toBe(1);
-    expect(error).toHaveBeenCalledWith(
-      "  OpenClaw may have installed the skill, but protected host provenance could not be finalized.",
-    );
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "Inspect /sandbox/.openclaw/workspace/skills/demo-skill and confirm its provenance before removal.",
-      ),
-    );
-  });
-
-  it("fresh-installs and verifies Deep Agents content without generic upload mutation", async () => {
+  it("delegates Deep Agents installation to its native local import command", async () => {
     const skillDir = makeSkillDir();
     getSessionAgent.mockReturnValue(deepAgent);
-    skillInstall.resolveSkillPaths.mockReturnValue(sharedPaths);
+    skillInstall.resolveNativeSkillState.mockReturnValue(sharedPaths);
     let tempConfig = "";
-    skillInstall.installFreshSharedSkill.mockImplementation((ctx) => {
+    skillInstall.installNativeAgentSkill.mockImplementation((ctx) => {
       tempConfig = ctx.configFile;
       return { success: true, uploaded: 1, contentDigest: "a".repeat(64) };
     });
@@ -603,10 +514,12 @@ describe("sandbox skill action orchestration", () => {
       fs.rmSync(skillDir, { recursive: true, force: true });
     }
 
-    expect(skillInstall.installFreshSharedSkill).toHaveBeenCalledWith(
+    expect(skillInstall.installNativeAgentSkill).toHaveBeenCalledWith(
       expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
       skillDir,
       sharedPaths,
+      "langchain-deepagents-code",
+      "demo-skill",
       {
         expectedRootIdentity: {
           dev: expect.any(Number),
@@ -614,28 +527,27 @@ describe("sandbox skill action orchestration", () => {
         },
       },
     );
-    expect(skillInstall.checkExisting).not.toHaveBeenCalled();
-    expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
-    expect(skillInstall.postInstall).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("Skill 'demo-skill' installed"));
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("installed through Deep Agents Code"),
+    );
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining(`Content digest (SHA-256): ${"a".repeat(64)}`),
     );
     expect(log).toHaveBeenCalledWith(
-      expect.stringContaining("Start a new Deep Agents session to load the skill."),
+      expect.stringContaining("Start a new Deep Agents Code session to load the skill."),
     );
     expectTempSshConfigCleanedUp(tempConfig);
     expect(process.exitCode).toBeUndefined();
   });
 
-  it("refuses a colliding Deep Agents destination without generic mutation", async () => {
+  it("reports a native Deep Agents import refusal without a host-side fallback", async () => {
     const skillDir = makeSkillDir();
     getSessionAgent.mockReturnValue(deepAgent);
-    skillInstall.resolveSkillPaths.mockReturnValue(sharedPaths);
-    skillInstall.installFreshSharedSkill.mockReturnValue({
+    skillInstall.resolveNativeSkillState.mockReturnValue(sharedPaths);
+    skillInstall.installNativeAgentSkill.mockReturnValue({
       success: false,
       uploaded: 0,
-      reason: "destination_exists",
+      reason: "native_install_failed",
     });
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
@@ -647,18 +559,15 @@ describe("sandbox skill action orchestration", () => {
 
     expect(process.exitCode).toBe(1);
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("the Deep Agents skill destination already exists"),
+      expect.stringContaining("native skill import refused or failed"),
     );
-    expect(skillInstall.checkExisting).not.toHaveBeenCalled();
-    expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
-    expect(skillInstall.postInstall).not.toHaveBeenCalled();
   });
 
-  it("reports unknown Deep Agents commit state with inspect-before-retry guidance", async () => {
+  it("reports unknown Deep Agents native state with list-before-retry guidance", async () => {
     const skillDir = makeSkillDir();
     getSessionAgent.mockReturnValue(deepAgent);
-    skillInstall.resolveSkillPaths.mockReturnValue(sharedPaths);
-    skillInstall.installFreshSharedSkill.mockReturnValue({
+    skillInstall.resolveNativeSkillState.mockReturnValue(sharedPaths);
+    skillInstall.installNativeAgentSkill.mockReturnValue({
       success: false,
       uploaded: 0,
       reason: "remote_state_unknown",
@@ -673,21 +582,16 @@ describe("sandbox skill action orchestration", () => {
 
     const output = error.mock.calls.map((args) => args.join(" ")).join("\n");
     expect(process.exitCode).toBe(1);
-    expect(output).toContain("did not confirm whether the Deep Agents skill was committed");
-    expect(output).toContain(
-      "Inspect /sandbox/.deepagents/agent/skills/demo-skill before retrying",
-    );
-    expect(skillInstall.checkExisting).not.toHaveBeenCalled();
-    expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
-    expect(skillInstall.postInstall).not.toHaveBeenCalled();
+    expect(output).toContain("did not confirm whether the staged native skill import completed");
+    expect(output).toContain("skill list' before retrying");
   });
 
-  it("reports an upload failure and deletes the temporary SSH config (#6859)", async () => {
+  it("reports a Hermes native import failure and deletes the temporary SSH config", async () => {
     const skillDir = makeSkillDir();
     let tempConfig = "";
-    skillInstall.uploadDirectory.mockImplementation((ctx) => {
+    skillInstall.installNativeAgentSkill.mockImplementation((ctx) => {
       tempConfig = ctx.configFile;
-      return { uploaded: 0, failed: ["SKILL.md"], skippedDotfiles: [], unsafePaths: [] };
+      return { success: false, uploaded: 0, reason: "native_install_failed" };
     });
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
@@ -699,17 +603,24 @@ describe("sandbox skill action orchestration", () => {
 
     const output = error.mock.calls.map((args) => args.join(" ")).join("\n");
     expect(process.exitCode).toBe(1);
-    expect(output).toContain("Failed to upload 1 file(s): SKILL.md");
-    expect(skillInstall.postInstall).not.toHaveBeenCalled();
+    expect(output).toContain("Hermes native skill import refused or failed");
+    expect(skillInstall.installNativeAgentSkill).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: "alpha" }),
+      skillDir,
+      genericPaths,
+      "hermes",
+      "demo-skill",
+      expect.objectContaining({ expectedRootIdentity: expect.any(Object) }),
+    );
     expectTempSshConfigCleanedUp(tempConfig);
   });
 
-  it("fails skill install when the upload cannot be verified and deletes the temp SSH config", async () => {
+  it("fails when native Hermes state verification fails and deletes the temp SSH config", async () => {
     const skillDir = makeSkillDir();
     let tempConfig = "";
-    skillInstall.verifyInstall.mockImplementation((ctx) => {
+    skillInstall.installNativeAgentSkill.mockImplementation((ctx) => {
       tempConfig = ctx.configFile;
-      return false;
+      return { success: false, uploaded: 0, reason: "verification_failed" };
     });
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
@@ -720,7 +631,9 @@ describe("sandbox skill action orchestration", () => {
     }
 
     expect(process.exitCode).toBe(1);
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("verification failed"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Hermes imported the skill, but native state or digest verification failed"),
+    );
     expectTempSshConfigCleanedUp(tempConfig);
   });
 });

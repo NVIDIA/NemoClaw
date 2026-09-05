@@ -9,8 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   collectFiles,
   parseFrontmatter,
-  postInstall,
-  resolveSkillPaths,
+  resolveNativeSkillState,
   validateRelativePath,
 } from "./skill-install";
 
@@ -198,100 +197,21 @@ describe("collectFiles", () => {
   });
 });
 
-describe("resolveSkillPaths", () => {
-  it("returns OpenClaw defaults when agent is null", () => {
-    const paths = resolveSkillPaths(null, "weather");
-    expect(paths.stateDir).toBe("/sandbox/.openclaw");
-    expect(paths.uploadDir).toBe("/sandbox/.openclaw/workspace/skills/weather");
-    expect(paths.uploadDirSharedWithAgent).toBe(false);
-    expect(paths.reloadsSkillsOnSessionStart).toBe(false);
-    expect(paths.isOpenClaw).toBe(true);
+describe("resolveNativeSkillState", () => {
+  it("returns only the OpenClaw state boundary", () => {
+    expect(resolveNativeSkillState(null)).toEqual({
+      stateDir: "/sandbox/.openclaw",
+      isOpenClaw: true,
+    });
   });
 
-  it("returns OpenClaw paths when agent.name is 'openclaw'", () => {
-    const agent = {
-      name: "openclaw",
-      configPaths: {
-        dir: "/sandbox/.openclaw",
-      },
-    };
-    const paths = resolveSkillPaths(agent, "my-skill");
-    expect(paths.stateDir).toBe("/sandbox/.openclaw");
-    expect(paths.uploadDir).toBe("/sandbox/.openclaw/workspace/skills/my-skill");
-    expect(paths.uploadDirSharedWithAgent).toBe(false);
-    expect(paths.reloadsSkillsOnSessionStart).toBe(false);
-    expect(paths.isOpenClaw).toBe(true);
-  });
-
-  it("returns Hermes paths without session refresh", () => {
-    const agent = {
-      name: "hermes",
-      configPaths: {
-        dir: "/sandbox/.hermes",
-      },
-    };
-    const paths = resolveSkillPaths(agent, "demo-skill");
-    expect(paths.stateDir).toBe("/sandbox/.hermes");
-    expect(paths.uploadDir).toBe("/sandbox/.hermes/skills/demo-skill");
-    expect(paths.uploadDirSharedWithAgent).toBe(false);
-    expect(paths.reloadsSkillsOnSessionStart).toBe(true);
-    expect(paths.isOpenClaw).toBe(false);
-  });
-
-  it("installs Deep Agents skills directly into the agent skills dir dcode loads (#7634)", () => {
-    // dcode's user skill dir is ~/.deepagents/{agent}/skills (HOME=/sandbox,
-    // DEFAULT_AGENT_NAME="agent"); it never scans ~/.deepagents/skills, so the
-    // upload dir alone leaves the skill installed but unloadable.
-    const agent = {
-      name: "langchain-deepagents-code",
-      configPaths: {
-        dir: "/sandbox/.deepagents",
-      },
-    };
-    const paths = resolveSkillPaths(agent, "note-summarizer");
-    expect(paths.stateDir).toBe("/sandbox/.deepagents");
-    expect(paths.uploadDir).toBe("/sandbox/.deepagents/agent/skills/note-summarizer");
-    expect(paths.uploadDirSharedWithAgent).toBe(true);
-    expect(paths.reloadsSkillsOnSessionStart).toBe(false);
-    expect(paths.isOpenClaw).toBe(false);
-  });
-
-  it("returns generic paths for a hypothetical future agent", () => {
-    const agent = {
-      name: "future-agent",
-      configPaths: {
-        dir: "/sandbox/.future",
-      },
-    };
-    const paths = resolveSkillPaths(agent, "test-skill");
-    expect(paths.stateDir).toBe("/sandbox/.future");
-    expect(paths.uploadDir).toBe("/sandbox/.future/skills/test-skill");
-    expect(paths.uploadDirSharedWithAgent).toBe(false);
-    expect(paths.reloadsSkillsOnSessionStart).toBe(false);
-    expect(paths.isOpenClaw).toBe(false);
-  });
-});
-
-describe("postInstall", () => {
-  it("tells Hermes users to start a fresh session without restarting the gateway", () => {
-    const paths = resolveSkillPaths(
-      { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } },
-      "weather",
-    );
-    const result = postInstall(
-      { configFile: "/tmp/ssh-config", sandboxName: "alpha" },
-      paths,
-      "/unused",
-      {
-        sshExecImpl: () => {
-          throw new Error("Hermes activation must not require an SSH mutation");
-        },
-      },
-    );
-
-    expect(result).toEqual({
-      success: true,
-      messages: ["Start a new chat session to load the skill; a gateway restart is not required."],
+  it.each([
+    ["hermes", "/sandbox/.hermes"],
+    ["langchain-deepagents-code", "/sandbox/.deepagents"],
+  ])("returns only %s agent state without computing a skill destination", (name, stateDir) => {
+    expect(resolveNativeSkillState({ name, configPaths: { dir: stateDir } })).toEqual({
+      stateDir,
+      isOpenClaw: false,
     });
   });
 });

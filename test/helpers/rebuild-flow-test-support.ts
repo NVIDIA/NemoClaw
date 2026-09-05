@@ -201,7 +201,6 @@ export type RebuildFlowHarness = {
   enforceRemovedImmutabilityMigrationBoundarySpy: MockInstance;
   retireRemovedImmutabilityStateRecordSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
-  transferOpenClawSkillProvenanceForRebuildSpy: MockInstance;
   captureOpenshellSpy: MockInstance;
   captureResolvedOpenshellSpy: MockInstance;
   runOpenshellSpy: MockInstance;

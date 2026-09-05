@@ -9,19 +9,27 @@ import { captureSandboxSshConfig } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
-import { D, G, R, YW } from "../../cli/terminal-style";
+import { D, G, R } from "../../cli/terminal-style";
+import {
+  deferSandboxLifecycleExit,
+  runWithDeferredSandboxLifecycleExit,
+} from "../../core/process-exit";
 import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import * as skillInstall from "../../skill-install";
+import { execSandbox } from "./exec";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
+
+const OPENCLAW_NATIVE_BIN = "/usr/local/bin/openclaw";
 
 export function printSkillInstallUsage(): void {
   console.log("");
   console.log(`  Usage: ${CLI_NAME} <sandbox> skill install <path>`);
   console.log(`         ${CLI_NAME} <sandbox> skill remove <name>`);
+  console.log(`         ${CLI_NAME} <sandbox> skill list [agent-skill-list-flags...]`);
   console.log("");
-  console.log("  Deploy or remove a skill in a running sandbox.");
+  console.log("  Install, remove, or list skills in a running sandbox.");
   console.log("");
   console.log("  install <path>  Deploy a skill directory to the sandbox.");
   console.log(
@@ -33,6 +41,8 @@ export function printSkillInstallUsage(): void {
   console.log("");
   console.log("  remove <name>   Remove an installed skill from the sandbox by name.");
   console.log("    <name> is the skill name from SKILL.md frontmatter (e.g. my-skill).");
+  console.log("");
+  console.log("  list            List skills from the selected agent's native state.");
   console.log("");
 }
 
@@ -76,6 +86,29 @@ export type SkillRemoveRequest = {
   name?: string;
   extraArgs?: string[];
 };
+
+export type SkillListRequest = {
+  extraArgs?: string[];
+};
+
+type NativeSkillAgent = "hermes" | "langchain-deepagents-code" | "openclaw";
+
+function nativeSkillAgentName(
+  agent: ReturnType<typeof agentRuntime.getSessionAgent>,
+): NativeSkillAgent | null {
+  const name = agent?.name ?? "openclaw";
+  return name === "openclaw" || name === "hermes" || name === "langchain-deepagents-code"
+    ? name
+    : null;
+}
+
+function nativeSkillAgentDisplayName(agentName: NativeSkillAgent): string {
+  return agentName === "openclaw"
+    ? "OpenClaw"
+    : agentName === "hermes"
+      ? "Hermes"
+      : "Deep Agents Code";
+}
 
 function lstatOrNull(candidatePath: string): fs.Stats | null {
   try {
@@ -154,78 +187,64 @@ export async function removeSandboxSkill(
   await ensureLiveSandboxOrExit(sandboxName);
 
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  const paths = skillInstall.resolveSkillPaths(agent, skillName);
-  if (paths.isOpenClaw) {
-    const legacyPath = `${paths.stateDir}/skills/${skillName}`;
-    console.error(
-      "  Automatic OpenClaw skill removal is unavailable because the pinned runtime has no native removal capability.",
-    );
-    console.error(
-      `  Inspect ${paths.uploadDir} plus the legacy ${legacyPath} and $HOME/.openclaw/skills/${skillName} paths; remove content only after confirming its provenance.`,
-    );
+  const agentName = nativeSkillAgentName(agent);
+  if (!agentName) {
+    console.error(`  Agent '${agent?.name ?? "unknown"}' has no native skill remove command.`);
     process.exitCode = 1;
     return;
   }
-  if (paths.uploadDirSharedWithAgent) {
-    console.error(
-      "  Automatic removal is unavailable for Deep Agents skills because the destination is shared with agent-authored content.",
-    );
-    console.error(
-      "  Inspect and remove the skill with the agent's native or manual workflow after confirming ownership.",
-    );
+  const command =
+    agentName === "openclaw"
+      ? [OPENCLAW_NATIVE_BIN, "skills", "remove", skillName, "--agent", "main"]
+      : agentName === "hermes"
+        ? ["/usr/local/bin/hermes", "skills", "uninstall", skillName, "--yes"]
+        : [
+            "/usr/local/bin/dcode",
+            "skills",
+            "delete",
+            skillName,
+            "--agent",
+            "agent",
+            "--force",
+            "--json",
+          ];
+  await runWithDeferredSandboxLifecycleExit(() =>
+    withSandboxMutationLock(sandboxName, () =>
+      execSandbox(sandboxName, command, {}, { exit: deferSandboxLifecycleExit }),
+    ),
+  );
+}
+
+/** List skills from the selected agent's native state without a host-side inventory. */
+export async function listSandboxSkills(
+  sandboxName: string,
+  request: SkillListRequest = {},
+): Promise<void> {
+  const extraArgs = request.extraArgs ?? [];
+  await ensureLiveSandboxOrExit(sandboxName);
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const agentName = nativeSkillAgentName(agent);
+  if (!agentName) {
+    console.error(`  Agent '${agent?.name ?? "unknown"}' has no native skill list command.`);
     process.exitCode = 1;
     return;
   }
-
-  const sshConfigResult = captureSandboxSshConfig(sandboxName, {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (sshConfigResult.status !== 0) {
-    console.error("  Failed to obtain SSH configuration for the sandbox.");
-    process.exit(1);
+  if (
+    extraArgs.includes("--") ||
+    (agentName !== "hermes" &&
+      extraArgs.some((arg) => arg === "--agent" || arg.startsWith("--agent=")))
+  ) {
+    console.error("  `skill list` is bound to the sandbox's primary agent.");
+    process.exitCode = 2;
+    return;
   }
-
-  const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-skill-");
-
-  try {
-    const ctx = { configFile: tmpSshConfig.file, sandboxName };
-
-    const existsCheck = skillInstall.checkExisting(ctx, paths);
-    if (existsCheck === null) {
-      console.error(
-        `  Could not check if skill '${skillName}' exists — sandbox may be unreachable.`,
-      );
-      process.exitCode = 1;
-      return;
-    }
-    if (!existsCheck) {
-      console.error(`  Skill '${skillName}' is not installed in sandbox '${sandboxName}'.`);
-      process.exitCode = 1;
-      return;
-    }
-
-    const result = skillInstall.removeSkill(ctx, paths);
-    for (const msg of result.messages) {
-      if (msg.startsWith("Warning:")) {
-        console.error(`  ${YW}${msg}${R}`);
-      } else {
-        console.log(`  ${D}${msg}${R}`);
-      }
-    }
-
-    const gone = skillInstall.verifyRemove(ctx, paths);
-    if (gone) {
-      console.log(`  ${G}✓${R} Skill '${skillName}' removed`);
-    } else {
-      console.error("  Skill removal could not be verified.");
-      console.error("  The sandbox may be unreachable, or the skill directory may still exist.");
-      process.exitCode = 1;
-      return;
-    }
-  } finally {
-    tmpSshConfig.cleanup();
-  }
+  const command =
+    agentName === "openclaw"
+      ? [OPENCLAW_NATIVE_BIN, "skills", "list", "--agent", "main", ...extraArgs]
+      : agentName === "hermes"
+        ? ["/usr/local/bin/hermes", "skills", "list", ...extraArgs]
+        : ["/usr/local/bin/dcode", "skills", "list", "--agent", "agent", ...extraArgs];
+  await execSandbox(sandboxName, command);
 }
 
 /**
@@ -251,9 +270,14 @@ export async function installSandboxSkill(
     return;
   }
 
+  if (sub === "list") {
+    await listSandboxSkills(sandboxName, { extraArgs: [request.path, ...(request.extraArgs ?? [])].filter((value): value is string => typeof value === "string") });
+    return;
+  }
+
   if (sub !== "install") {
     console.error(`  Unknown skill subcommand: ${sub}`);
-    console.error("  Valid subcommands: install, remove");
+    console.error("  Valid subcommands: install, remove, list");
     process.exit(1);
   }
 
@@ -356,226 +380,117 @@ export async function installSandboxSkill(
 
   // 3. Resolve agent and paths
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  const paths = skillInstall.resolveSkillPaths(agent, frontmatter.name);
-
-  if (paths.isOpenClaw) {
-    let sshConfigFailed = false;
-    const native = await withSandboxMutationLock(sandboxName, () => {
-      const gatewayName = getSandboxTargetGatewayName(sandboxName);
-      const sshConfigResult = captureSandboxSshConfig(sandboxName, {
-        gatewayName,
-        ignoreError: true,
-        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-      });
-      if (sshConfigResult.status !== 0) {
-        sshConfigFailed = true;
-        return null;
-      }
-      const sshConfigIdentityFingerprint = fingerprintOpenShellSandboxSshConfigIdentity(
-        sshConfigResult.output,
-      );
-      if (!sshConfigIdentityFingerprint) return null;
-      const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-skill-");
-      try {
-        let sandboxIdentityFingerprint: string;
-        try {
-          sandboxIdentityFingerprint = inspectOpenShellSandboxIdentityFingerprint({
-            sandboxName,
-            gatewayName,
-            timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-          });
-        } catch {
-          return null;
-        }
-        if (sandboxIdentityFingerprint !== sshConfigIdentityFingerprint) return null;
-        return skillInstall.installOpenClawSkill(
-          { configFile: tmpSshConfig.file, sandboxName },
-          skillDir,
-          paths,
-          frontmatter.name,
-          { expectedRootIdentity, sandboxIdentityFingerprint },
-        );
-      } finally {
-        tmpSshConfig.cleanup();
-      }
-    });
-    if (!native) {
-      console.error(
-        sshConfigFailed
-          ? "  Failed to obtain SSH configuration for the sandbox."
-          : "  Failed to bind the OpenClaw skill install to the exact live sandbox identity.",
-      );
-      process.exitCode = 1;
-      return;
-    }
-    if (!native.success || !native.contentDigest) {
-      if (native.reason === "destination_exists") {
-        console.error(
-          `  Refusing to replace '${frontmatter.name}': the OpenClaw workspace skill is not proven to be owned by NemoClaw.`,
-        );
-      } else if (native.reason === "agent_workspace_unsupported") {
-        console.error(
-          "  OpenClaw skill install supports only the NemoClaw-managed primary 'main' agent in the default /sandbox/.openclaw/workspace directory.",
-        );
-        console.error(
-          "  The current 'main' agent has a custom workspace; no sandbox staging or publication occurred.",
-        );
-      } else if (native.reason === "legacy_destination_exists") {
-        console.error(
-          `  Refusing to create a second OpenClaw skill authority: inspect the legacy ${paths.stateDir}/skills/${frontmatter.name} and $HOME/.openclaw/skills/${frontmatter.name} paths plus ${paths.uploadDir}, then migrate the legacy content manually.`,
-        );
-      } else if (native.reason === "native_capability_missing") {
-        console.error(
-          "  The pinned OpenClaw runtime does not expose the reviewed native skill install capability.",
-        );
-      } else if (native.reason === "snapshot_failed") {
-        console.error("  Failed to create an exact regular-file snapshot of the local skill.");
-      } else if (native.reason === "snapshot_limit_exceeded") {
-        console.error(
-          `  Skill snapshot exceeds the ${skillInstall.SKILL_SNAPSHOT_MAX_FILES}-file or ${skillInstall.SKILL_SNAPSHOT_MAX_BYTES / (1024 * 1024)} MiB limit; no sandbox install began.`,
-        );
-      } else if (native.reason === "staging_collision") {
-        console.error(
-          "  Refusing to reuse an unexpected or unsafe OpenClaw skill staging directory.",
-        );
-      } else if (native.reason === "update_unsupported") {
-        console.error(
-          `  Refusing to update ${paths.uploadDir}: the pinned OpenClaw installer cannot atomically bind the checked content to a forced replacement.`,
-        );
-      } else if (native.reason === "provenance_failed") {
-        console.error(
-          "  Protected host provenance for this OpenClaw skill could not be validated or updated.",
-        );
-      } else if (native.reason === "provenance_finalization_failed") {
-        console.error(
-          "  OpenClaw may have installed the skill, but protected host provenance could not be finalized.",
-        );
-        console.error(
-          `  Inspect ${paths.uploadDir} and confirm its provenance before removal. A retry cannot adopt an existing target until this ownership state is reconciled.`,
-        );
-      } else if (native.reason === "verification_failed") {
-        console.error(
-          "  OpenClaw installed the skill, but native list, info, check, or digest verification failed.",
-        );
-        console.error(
-          `  Inspect ${paths.uploadDir}. A same-content retry proceeds only when that ambiguous target is absent.`,
-        );
-      } else {
-        console.error(
-          "  OpenClaw did not confirm whether the staged native skill install completed.",
-        );
-        console.error(
-          `  Inspect ${paths.uploadDir}. A same-content retry proceeds only when that ambiguous target is absent.`,
-        );
-      }
-      process.exitCode = 1;
-      return;
-    }
-    console.log(`  ${G}✓${R} Skill '${frontmatter.name}' installed through OpenClaw`);
-    console.log(`  ${D}Content digest (SHA-256): ${native.contentDigest}${R}`);
-    console.log(`  ${D}Start a new OpenClaw session to load the skill.${R}`);
+  const agentName = nativeSkillAgentName(agent);
+  if (!agentName) {
+    console.error(`  Agent '${agent?.name ?? "unknown"}' has no native local skill import command.`);
+    process.exitCode = 1;
     return;
   }
+  const paths = skillInstall.resolveNativeSkillState(agent);
 
-  // 4. Get SSH config for generic agent paths.
-  const sshConfigResult = captureSandboxSshConfig(sandboxName, {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  let sshConfigFailed = false;
+  const native = await withSandboxMutationLock(sandboxName, () => {
+    const gatewayName = getSandboxTargetGatewayName(sandboxName);
+    const sshConfigResult = captureSandboxSshConfig(sandboxName, {
+      gatewayName,
+      ignoreError: true,
+      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
+    if (sshConfigResult.status !== 0) {
+      sshConfigFailed = true;
+      return null;
+    }
+    const sshConfigIdentityFingerprint = fingerprintOpenShellSandboxSshConfigIdentity(
+      sshConfigResult.output,
+    );
+    if (!sshConfigIdentityFingerprint) return null;
+    const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-skill-");
+    try {
+      let sandboxIdentityFingerprint: string;
+      try {
+        sandboxIdentityFingerprint = inspectOpenShellSandboxIdentityFingerprint({
+          sandboxName,
+          gatewayName,
+          timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+        });
+      } catch {
+        return null;
+      }
+      if (sandboxIdentityFingerprint !== sshConfigIdentityFingerprint) return null;
+      const context = { configFile: tmpSshConfig.file, sandboxName };
+      return agentName === "openclaw"
+        ? skillInstall.installOpenClawSkill(
+            context,
+            skillDir,
+            paths,
+            frontmatter.name,
+            { expectedRootIdentity },
+          )
+        : skillInstall.installNativeAgentSkill(
+            context,
+            skillDir,
+            paths,
+            agentName,
+            frontmatter.name,
+            { expectedRootIdentity },
+          );
+    } finally {
+      tmpSshConfig.cleanup();
+    }
   });
-  if (sshConfigResult.status !== 0) {
-    console.error("  Failed to obtain SSH configuration for the sandbox.");
-    process.exit(1);
+  if (!native) {
+    console.error(
+      sshConfigFailed
+        ? "  Failed to obtain SSH configuration for the sandbox."
+        : `  Failed to bind the ${nativeSkillAgentDisplayName(agentName)} skill install to the exact live sandbox identity.`,
+    );
+    process.exitCode = 1;
+    return;
   }
-
-  const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-skill-");
-
-  try {
-    const ctx = { configFile: tmpSshConfig.file, sandboxName };
-
-    if (paths.uploadDirSharedWithAgent) {
-      const fresh = skillInstall.installFreshSharedSkill(ctx, skillDir, paths, {
-        expectedRootIdentity,
-      });
-      if (!fresh.success || !fresh.contentDigest) {
-        if (fresh.reason === "destination_exists") {
-          console.error(
-            `  Refusing to replace '${frontmatter.name}': the Deep Agents skill destination already exists.`,
-          );
-          console.error(
-            "  Deep Agents skill install supports fresh names only because that directory also contains agent-authored skills.",
-          );
-        } else if (fresh.reason === "snapshot_failed") {
-          console.error("  Failed to create an exact regular-file snapshot of the local skill.");
-        } else if (fresh.reason === "snapshot_limit_exceeded") {
-          console.error(
-            `  Skill snapshot exceeds the ${skillInstall.SKILL_SNAPSHOT_MAX_FILES}-file or ${skillInstall.SKILL_SNAPSHOT_MAX_BYTES / (1024 * 1024)} MiB limit; no sandbox install began.`,
-          );
-        } else {
-          console.error(
-            "  The remote install did not confirm whether the Deep Agents skill was committed.",
-          );
-          console.error(
-            `  Inspect ${paths.uploadDir} before retrying; NemoClaw will not replace or delete shared agent content.`,
-          );
-        }
-        process.exitCode = 1;
-        return;
-      }
-      console.log(`  ${G}✓${R} Installed ${fresh.uploaded} file(s) into the agent skill directory`);
-      console.log(`  ${G}✓${R} Skill '${frontmatter.name}' installed`);
-      console.log(`  ${D}Content digest (SHA-256): ${fresh.contentDigest}${R}`);
-      console.log(`  ${D}Start a new Deep Agents session to load the skill.${R}`);
-      return;
-    }
-
-    // 5. Check if skill already exists (update vs fresh install). This probe is
-    //    advisory for install only: stale SSH config files and transient remote
-    //    shell startup failures can make the stat probe inconclusive even when a
-    //    subsequent upload succeeds. Upload plus verifyInstall() remain the
-    //    source of truth for install success; remove keeps null fatal because it
-    //    is destructive. Once OpenShell exposes a typed stat API or SSH probe
-    //    failures are reliably distinguishable from absent dirs across supported
-    //    versions, remove this fallback and fail before upload.
-    const existingCheck = skillInstall.checkExisting(ctx, paths);
-    if (existingCheck === null) {
+  if (!native.success || !native.contentDigest) {
+    const displayName = nativeSkillAgentDisplayName(agentName);
+    if (native.reason === "agent_workspace_unsupported") {
       console.error(
-        `  ${YW}Warning: could not check sandbox for existing skill — treating as fresh install.${R}`,
+        "  OpenClaw skill install supports only the NemoClaw-managed primary 'main' agent in the default /sandbox/.openclaw/workspace directory.",
       );
-    }
-    const isUpdate = existingCheck === true;
-
-    // 6. Upload skill directory
-    const { uploaded, failed } = skillInstall.uploadDirectory(ctx, skillDir, paths.uploadDir);
-    if (failed.length > 0) {
-      console.error(`  Failed to upload ${failed.length} file(s): ${failed.join(", ")}`);
-      process.exitCode = 1;
-      return;
-    }
-    console.log(`  ${G}✓${R} Uploaded ${uploaded} file(s) to sandbox`);
-
-    // 7. Agent-specific activation guidance.
-    const post = skillInstall.postInstall(ctx, paths, skillDir);
-    for (const msg of post.messages) {
-      if (msg.startsWith("Warning:")) {
-        console.error(`  ${YW}${msg}${R}`);
-      } else {
-        console.log(`  ${D}${msg}${R}`);
-      }
-    }
-
-    // 8. Verify
-    const verified = skillInstall.verifyInstall(ctx, paths);
-    if (verified) {
-      const verb = isUpdate ? "updated" : "installed";
-      console.log(`  ${G}✓${R} Skill '${frontmatter.name}' ${verb}`);
+      console.error(
+        "  The current 'main' agent has a custom workspace; no sandbox staging or publication occurred.",
+      );
+    } else if (native.reason === "native_capability_missing") {
+      console.error(
+        agentName === "openclaw"
+          ? "  The pinned OpenClaw runtime does not expose the reviewed native skill install capability."
+          : `  The pinned ${displayName} runtime does not expose the reviewed native local skill import capability.`,
+      );
+    } else if (native.reason === "native_install_failed") {
+      console.error(`  The ${displayName} native skill import refused or failed the staged skill.`);
+    } else if (native.reason === "snapshot_failed") {
+      console.error("  Failed to create an exact regular-file snapshot of the local skill.");
+    } else if (native.reason === "snapshot_limit_exceeded") {
+      console.error(
+        `  Skill snapshot exceeds the ${skillInstall.SKILL_SNAPSHOT_MAX_FILES}-file or ${skillInstall.SKILL_SNAPSHOT_MAX_BYTES / (1024 * 1024)} MiB limit; no sandbox install began.`,
+      );
+    } else if (native.reason === "verification_failed") {
+      console.error(
+        `  ${displayName} imported the skill, but native state or digest verification failed.`,
+      );
+      console.error(
+        `  Inspect the result with '${CLI_NAME} ${sandboxName} skill list' before retrying.`,
+      );
     } else {
       console.error(
-        `  Skill uploaded but verification failed: SKILL.md missing at ${paths.uploadDir}`,
+        `  ${displayName} did not confirm whether the staged native skill import completed.`,
       );
-      process.exitCode = 1;
-      return;
+      console.error(
+        `  Inspect the result with '${CLI_NAME} ${sandboxName} skill list' before retrying.`,
+      );
     }
-  } finally {
-    tmpSshConfig.cleanup();
+    process.exitCode = 1;
+    return;
   }
+  const displayName = nativeSkillAgentDisplayName(agentName);
+  console.log(`  ${G}✓${R} Skill '${frontmatter.name}' installed through ${displayName}`);
+  console.log(`  ${D}Content digest (SHA-256): ${native.contentDigest}${R}`);
+  console.log(`  ${D}Start a new ${displayName} session to load the skill.${R}`);
+  return;
 }
