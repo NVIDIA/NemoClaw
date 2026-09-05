@@ -147,8 +147,8 @@ describe("initial onboard flow phases", () => {
         detectGpu: () => gpu,
         runPreflight: async () => (preflightFailure ? Promise.reject(preflightFailure) : gpu),
         assessHost: () => ({}),
+        providerNameToOptionKey: vi.fn(() => null),
         assertOnboardHostReadiness: vi.fn(),
-        assertDockerBridgeAndContainerDnsHealthy: vi.fn(),
         resolveSandboxGpuConfig: config,
         validateSandboxGpuPreflight: vi.fn(),
         skippedStepMessage: vi.fn(),
@@ -400,11 +400,9 @@ describe("initial onboard flow phases", () => {
           calls.push("assess-host");
           return { docker: true };
         }),
+        providerNameToOptionKey: vi.fn(() => null),
         assertOnboardHostReadiness: vi.fn(() => {
           calls.push("assert-host-readiness");
-        }),
-        assertDockerBridgeAndContainerDnsHealthy: vi.fn(() => {
-          calls.push("assert-bridge-dns");
         }),
         resolveSandboxGpuConfig: vi.fn((detectedGpu) => {
           calls.push("resolve-gpu-config");
@@ -538,7 +536,6 @@ describe("initial onboard flow phases", () => {
       "assert-gateway-readiness",
       "assert-host-readiness",
       "validate-gpu-preflight",
-      "assert-bridge-dns",
       "resolve-gpu-config",
       "ensure-resume-preflight-port",
       "commit-agent-transition",

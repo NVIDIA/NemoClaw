@@ -18,7 +18,7 @@ The PR resolves the issue or enables follow-up work on the changed code.
 
 ### Example A — incidental closure (direct evidence)
 
-PR description: "fix EACCES when shields-down user writes config"
+PR description: "fix EACCES when a sandbox user writes config"
 PR diff: adds `chmod g+w` to `.openclaw` directory at startup
 Candidate issue #2810: "Telegram preset writes fail intermittently after sandbox rebuild"
 Issue body cites: "EPERM on `.openclaw/credentials/telegram.json`"

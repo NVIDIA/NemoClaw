@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../../../state/onboard-session";
+import { hasExplicitDeferredN1xOnboardingIntent } from "../../../readiness/onboard-admission";
+import { isN1xOnboardingProviderKey } from "../../inference-providers/provider-selection-keys";
 import { withPreflightTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
@@ -48,6 +50,10 @@ export interface PreflightStateOptions<
     detectGpu(): Gpu;
     runPreflight(options: { optedOutGpuPassthrough?: boolean }): Promise<Gpu>;
     assessHost(): Host;
+    providerNameToOptionKey(
+      name: string | null | undefined,
+      options?: { hasNimContainer?: boolean },
+    ): string | null;
     assertOnboardHostReadiness(
       host: Host,
       gpu: Gpu,
@@ -56,7 +62,7 @@ export interface PreflightStateOptions<
         observedAt?: string;
         now?: () => Date;
         wslDockerDesktopGpuProofPassed?: boolean;
-        allowDeferredN1xManagedVllm?: boolean;
+        allowDeferredN1xOnboarding?: boolean;
         resuming: true;
         presentAdvisories?: boolean;
       },
@@ -65,13 +71,11 @@ export interface PreflightStateOptions<
     assertGatewayReadiness(): Promise<void>;
     now?: () => Date;
     /**
-     * Resume backstop for #3508/#3630. Runs the same bridge+DNS fatal
-     * gate that `preflight()` does, so a cached preflight step cannot
-     * skip the new fatal checks for hosts where Docker bridge networking
-     * or container DNS is broken. Optional for back-compat with callers
-     * that haven't been updated yet.
+     * Resume backstop for #3508/#3630. Runs the selected provider's host,
+     * bridge, and DNS gate so cached preflight cannot skip live runtime
+     * readiness checks. Optional for back-compat with older callers.
      */
-    assertDockerBridgeAndContainerDnsHealthy?(host: Host): void;
+    assertRuntimeProviderHealthy?(host: Host, config: Config): void;
     resolveSandboxGpuConfig(
       gpu: Gpu,
       options: {
@@ -153,6 +157,16 @@ export async function handlePreflightState<
     : { flag: null, device: null };
   const effectiveSandboxGpuFlag = explicitSandboxGpuFlag ?? resumedSandboxGpuOverrides.flag;
   const effectiveSandboxGpuDevice = sandboxGpuDevice ?? resumedSandboxGpuOverrides.device;
+  const recordedProviderAllowsDeferredN1x = isN1xOnboardingProviderKey(
+    deps.providerNameToOptionKey(session?.provider, {
+      hasNimContainer: Boolean(session?.nimContainer),
+    }),
+  );
+  // An explicit false is authoritative for rebuilds. Ordinary resume may use
+  // the current installer choice or the provider already validated and recorded.
+  const allowDeferredN1xOnboarding =
+    allowDeferredN1xManagedVllm ??
+    (recordedProviderAllowsDeferredN1x || hasExplicitDeferredN1xOnboardingIntent(env));
 
   let gpu: Gpu;
   if (resumePreflight) {
@@ -179,7 +193,7 @@ export async function handlePreflightState<
       explicitlyOptedOutGpuPassthrough: resumeSandboxGpuConfig.mode === "0",
       observedAt: hostObservedAt,
       now,
-      allowDeferredN1xManagedVllm,
+      allowDeferredN1xOnboarding,
       resuming: true,
     });
     // A full detector can run the bounded ARM64 WSL Docker GPU proof. Keep it
@@ -202,16 +216,19 @@ export async function handlePreflightState<
         observedAt: hostObservedAt,
         now,
         ...(wslDockerDesktopGpuProofPassed === undefined ? {} : { wslDockerDesktopGpuProofPassed }),
-        allowDeferredN1xManagedVllm,
+        allowDeferredN1xOnboarding,
         resuming: true,
         presentAdvisories: false,
       });
     }
-    deps.validateSandboxGpuPreflight(resumeSandboxGpuConfig);
     // Resume backstop for #3508/#3630. Cached preflight does not capture
-    // host Docker/DNS state, and a session written by an older NemoClaw
-    // may have skipped the new bridge/DNS fatal checks.
-    deps.assertDockerBridgeAndContainerDnsHealthy?.(resumeHost);
+    // live runtime/DNS state, and a session written by an older NemoClaw
+    // may have skipped the provider-owned checks.
+    if (deps.assertRuntimeProviderHealthy) {
+      deps.assertRuntimeProviderHealthy(resumeHost, resumeSandboxGpuConfig);
+    } else {
+      deps.validateSandboxGpuPreflight(resumeSandboxGpuConfig);
+    }
   } else {
     await deps.startRecordedStep("preflight");
     gpu = await withPreflightTrace(() => deps.runPreflight({ optedOutGpuPassthrough: noGpu }));

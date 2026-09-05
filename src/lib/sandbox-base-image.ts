@@ -282,11 +282,7 @@ function validatePulledCandidate(
     glibcVersion = check.version;
     if (!check.ok) {
       if (warn) {
-        console.warn(
-          `  Warning: ${options.label || "sandbox base image"} ${imageRef} has glibc ` +
-            `${glibcVersion || "unknown"}; OpenShell sandbox supervisor requires ` +
-            `glibc >= ${options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC}.`,
-        );
+        console.warn("  Warning: sandbox base image does not meet the required glibc version.");
       }
       return null;
     }
@@ -294,10 +290,7 @@ function validatePulledCandidate(
 
   if (options.validateImage && !options.validateImage(imageRef)) {
     if (warn) {
-      console.warn(
-        `  Warning: ${options.label || "sandbox base image"} ${imageRef} lacks ` +
-          `${options.validationDescription || "a required runtime capability"}.`,
-      );
+      console.warn("  Warning: sandbox base image lacks a required runtime capability.");
     }
     return null;
   }
@@ -434,19 +427,12 @@ function resolveLocalCandidate(
     ? imageMeetsMinimumGlibc(imageRef, options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC)
     : { ok: true, version: null };
   if (!check.ok) {
-    console.error(
-      `  Local ${label} ${imageRef} has glibc ` +
-        `${check.version || "unknown"}; expected >= ` +
-        `${options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC}.`,
-    );
+    console.error("  Local sandbox base image does not meet the required glibc version.");
     return null;
   }
 
   if (options.validateImage && !options.validateImage(imageRef)) {
-    console.error(
-      `  Local ${label} ${imageRef} lacks ` +
-        `${options.validationDescription || "a required runtime capability"}.`,
-    );
+    console.error("  Local sandbox base image lacks a required runtime capability.");
     return null;
   }
 
@@ -464,13 +450,21 @@ export function resolveSandboxBaseImage(
   options: ResolveBaseImageOptions,
 ): SandboxBaseImageResolution | null {
   const env = options.env || process.env;
-  const resolutionKey = createSandboxBaseImageResolutionKey(options);
+  const allowLocalFallback = options.allowLocalFallback !== false;
   const override = options.envVar ? String(env[options.envVar] || "").trim() : "";
+  if (options.requirePinnedRemoteRef === true && !options.pinnedRemoteRef?.trim()) {
+    throw new SandboxBaseImageResolutionError(
+      `${options.label || "Sandbox base image"} requires a non-empty pinned remote reference.`,
+    );
+  }
+  const resolutionKey = createSandboxBaseImageResolutionKey(options);
 
-  if (!options.forceRefresh) {
+  const canReuseResolutionHint =
+    allowLocalFallback || options.resolutionHint?.source !== "local";
+  if (!options.forceRefresh && canReuseResolutionHint) {
     const reused = reuseSandboxBaseImageResolutionHint(options, resolutionKey);
     if (reused) return reused;
-  } else {
+  } else if (options.forceRefresh) {
     addTraceEvent("nemoclaw.sandbox_base_image.force_refresh");
   }
   addTraceEvent("nemoclaw.sandbox_base_image.cache_miss", {
@@ -510,7 +504,7 @@ export function resolveSandboxBaseImage(
   } else {
     const rootDir = options.rootDir || ROOT;
     const inputPaths = [options.dockerfilePath, ...(options.inputPaths ?? [])];
-    const preferPinnedRemoteRef = options.preferPinnedRemoteRef === true;
+    const requirePinnedRemoteRef = options.requirePinnedRemoteRef === true;
     const versionTags = getVersionedBaseImageTags(options.rootDir || ROOT, env);
     const resolveVersionTags = (tags: string[]): SandboxBaseImageResolution | null => {
       for (const tag of tags) {
@@ -525,7 +519,7 @@ export function resolveSandboxBaseImage(
         if (resolved) return finish(resolved);
       }
 
-      if (tags.length === 0) return null;
+      if (tags.length === 0 || !allowLocalFallback) return null;
       const local = resolveLocalCandidate(options, true);
       if (local) return finish(local);
       throw new SandboxBaseImageResolutionError(
@@ -534,9 +528,11 @@ export function resolveSandboxBaseImage(
           "resolved or validated, and no compatible local base image could be produced.",
       );
     };
-    if (baseImageInputsDirty(rootDir, env, inputPaths)) return resolveChangedInputs();
+    if (allowLocalFallback && baseImageInputsDirty(rootDir, env, inputPaths)) {
+      return resolveChangedInputs();
+    }
 
-    if (preferPinnedRemoteRef && options.pinnedRemoteRef) {
+    if (requirePinnedRemoteRef && options.pinnedRemoteRef) {
       const resolved = resolvePulledCandidate(
         options.imageName,
         options.pinnedRemoteRef,
@@ -545,6 +541,18 @@ export function resolveSandboxBaseImage(
         { pinnedRemoteRef: options.pinnedRemoteRef },
       );
       if (resolved) return finish(resolved);
+      const local = allowLocalFallback ? resolveLocalCandidate(options) : null;
+      if (local) return finish(local);
+      const validationFailure = options.validationDescription
+        ? `did not pass ${options.validationDescription}`
+        : "did not pass required compatibility checks";
+      const fallbackFailure = allowLocalFallback
+        ? "No compatible local base image could be produced."
+        : "Local base image fallback is disabled for this operation.";
+      throw new SandboxBaseImageResolutionError(
+        `${options.label || "Sandbox base image"} '${options.pinnedRemoteRef}' is required but ` +
+          `could not be pulled or ${validationFailure}. ${fallbackFailure}`,
+      );
     }
 
     const versionTagResolution = resolveVersionTags(versionTags);
@@ -556,9 +564,14 @@ export function resolveSandboxBaseImage(
       if (resolved) return finish(resolved);
     }
 
-    if (baseImageInputsChangedSinceMain(rootDir, env, inputPaths)) return resolveChangedInputs();
+    if (
+      allowLocalFallback &&
+      baseImageInputsChangedSinceMain(rootDir, env, inputPaths)
+    ) {
+      return resolveChangedInputs();
+    }
 
-    if (!preferPinnedRemoteRef && options.pinnedRemoteRef) {
+    if (options.pinnedRemoteRef) {
       const resolved = resolvePulledCandidate(
         options.imageName,
         options.pinnedRemoteRef,
@@ -580,7 +593,7 @@ export function resolveSandboxBaseImage(
     if (resolved) return finish(resolved);
   }
 
-  if (options.requireOpenshellSandboxAbi || options.validateImage) {
+  if (allowLocalFallback && (options.requireOpenshellSandboxAbi || options.validateImage)) {
     const local = resolveLocalCandidate(options);
     return local ? finish(local) : null;
   }

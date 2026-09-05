@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { LAUNCH_READINESS_FIXTURE_POLICY } from "../helpers/launch-readiness-fixture";
 import {
   execTimeout,
   runWithEnv,
@@ -45,6 +46,10 @@ describe("CLI connect readiness", () => {
         `marker_file=${JSON.stringify(markerFile)}`,
         `state_file=${JSON.stringify(stateFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
+        'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+        `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
+        "  exit 0",
+        "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "alpha" ]; then',
         "  echo 'Sandbox:'",
         "  echo",
@@ -134,6 +139,10 @@ describe("CLI connect readiness", () => {
           "#!/usr/bin/env bash",
           `marker_file=${JSON.stringify(markerFile)}`,
           'printf \'%s\\n\' "$*" >> "$marker_file"',
+          'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+          `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
+          "  exit 0",
+          "fi",
           'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "alpha" ]; then',
           "  echo 'Sandbox:'",
           "  echo",
@@ -219,6 +228,10 @@ describe("CLI connect readiness", () => {
         "#!/usr/bin/env bash",
         `marker_file=${JSON.stringify(markerFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
+        'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+        `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
+        "  exit 0",
+        "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "alpha" ]; then',
         "  echo 'Sandbox:'",
         "  echo",

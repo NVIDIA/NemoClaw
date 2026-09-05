@@ -309,8 +309,35 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
-  it("keeps the default chat-completions probe bounded for other models", () => {
-    expect(getChatCompletionsProbePayload("nvidia/nemotron-3-super-120b-a12b")).toEqual({
+  it("serializes the Nemotron 3 Super validation request parameters (#10880)", () => {
+    const args = getChatCompletionsProbeCurlArgs({
+      credentialArgs: FAKE_CREDENTIAL_ARGS,
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      url: "https://integrate.api.nvidia.com/v1/chat/completions",
+      isWsl: false,
+      useNvidiaEndpointProbePayload: true,
+    });
+
+    expect(args).toContain("-d");
+    expect(JSON.parse(args[args.indexOf("-d") + 1])).toEqual({
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      max_tokens: 16,
+      temperature: 1,
+      top_p: 0.95,
+      chat_template_kwargs: { enable_thinking: false },
+    });
+  });
+
+  it("keeps compatible endpoints on the generic request shape for the same Nemotron model (#10880)", () => {
+    const args = getChatCompletionsProbeCurlArgs({
+      credentialArgs: FAKE_CREDENTIAL_ARGS,
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      url: "https://compatible.example.test/v1/chat/completions",
+      isWsl: false,
+    });
+
+    expect(JSON.parse(args[args.indexOf("-d") + 1])).toEqual({
       model: "nvidia/nemotron-3-super-120b-a12b",
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
       max_tokens: 16,
@@ -905,7 +932,7 @@ exit 0
     });
 
     it("retries chat-completions when /responses errors then chat-completions times out", () => {
-      const script = `#!/usr/bin/env bash
+        const script = `#!/usr/bin/env bash
 outfile=""
 url=""
 while [ "$#" -gt 0 ]; do
@@ -954,7 +981,7 @@ exit 0
     });
 
     it("preserves query-param auth on doubled-timeout chat-completions retry", () => {
-        const script = `#!/usr/bin/env bash
+      const script = `#!/usr/bin/env bash
 outfile=""
 n=$(cat "${HARNESS_COUNTER}")
 n=$((n + 1))
@@ -1417,7 +1444,8 @@ exit 0
 });
 
 describe("onboard inference smoke abort cleanup", () => {
-  it("tears down the orphan managed gateway before exiting after a failed smoke", async () => {
+  it("uses the legacy NVIDIA Endpoints payload before cleaning up a failed smoke (#10880)", async () => {
+    const optimizedProbe = vi.fn().mockResolvedValue({ ok: false, message: "smoke failed" });
     const teardownOrphanManagedGatewayOnAbort = vi.fn();
     const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -1428,18 +1456,18 @@ describe("onboard inference smoke abort cleanup", () => {
         {
           endpointUrl: "https://inference.example.com/v1",
           forceOpenAiLike: true,
-          model: "example/model",
-          provider: "example-provider",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-nim",
         },
         {
-          probeOpenAiLikeEndpointOptimized: vi.fn().mockResolvedValue({
-            ok: false,
-            message: "smoke failed",
-          }),
+          probeOpenAiLikeEndpointOptimized: optimizedProbe,
           teardownOrphanManagedGatewayOnAbort,
         },
       );
 
+      expect(optimizedProbe.mock.calls[0]?.[3]).toMatchObject({
+        useNvidiaEndpointProbePayload: true,
+      });
       expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledOnce();
       expect(exit).toHaveBeenCalledWith(1);
       expect(teardownOrphanManagedGatewayOnAbort.mock.invocationCallOrder[0]).toBeLessThan(

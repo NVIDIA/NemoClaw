@@ -12,7 +12,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { launchReadinessRegistryFixture } from "../helpers/launch-readiness-fixture";
+import {
+  LAUNCH_READINESS_FIXTURE_POLICY,
+  launchReadinessRegistryFixture,
+} from "../helpers/launch-readiness-fixture";
 import { runWithEnv, writeSandboxRegistry } from "./helpers";
 
 const DECODE_SANDBOX_EXEC_COMMAND_LINES = [
@@ -41,6 +44,10 @@ describe("CLI dispatch", () => {
         `state_file=${JSON.stringify(stateFile)}`,
         `ready_count_file=${JSON.stringify(readyCountFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
+        'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+        `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
+        "  exit 0",
+        "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
         `  echo '${sandboxName}  Ready'`,
         "  exit 0",

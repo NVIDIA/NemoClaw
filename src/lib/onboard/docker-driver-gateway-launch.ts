@@ -136,9 +136,11 @@ function buildGatewayProcessEnv(
 export function buildDockerDriverGatewayLaunch(
   options: BuildGatewayLaunchOptions,
 ): DockerDriverGatewayLaunch {
+  const baseEnv = options.env ?? process.env;
   const gatewayEnv = { ...options.gatewayEnv };
   if (options.ensureLocalTlsBundle) {
     ensureDockerDriverGatewayLocalTlsBundle({
+      env: baseEnv,
       gatewayBin: options.gatewayBin,
       stateDir: options.stateDir,
     });
@@ -160,7 +162,6 @@ export function buildDockerDriverGatewayLaunch(
     },
   );
   assertDockerDriverGatewayAuthConfigSafe(gatewayEnv);
-  const baseEnv = options.env ?? process.env;
   const compat = shouldUseContainerizedGateway(options);
   if (!compat.useContainer) {
     const env = buildGatewayProcessEnv(baseEnv, gatewayEnv);

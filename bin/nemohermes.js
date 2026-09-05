@@ -6,4 +6,4 @@
 // NemoHermes — alias for NemoClaw with the Hermes agent pre-selected.
 process.env.NEMOCLAW_AGENT = "hermes";
 process.env.NEMOCLAW_INVOKED_AS = "nemohermes";
-module.exports = require("../dist/nemoclaw");
+module.exports = require("./nemoclaw");

@@ -54,6 +54,13 @@ function journalFile(root: string): string {
   return path.join(root, PODMAN_BOOTSTRAP_JOURNAL_DIRECTORY, `${BOOTSTRAP_IDENTITY}.json`);
 }
 
+function recordOriginalStopped(store: ReturnType<typeof createFilePodmanBootstrapJournalStore>) {
+  store.create(journal);
+  store.recordStateVolume(BOOTSTRAP_IDENTITY, STATE_VOLUME_MOUNTPOINT);
+  store.recordReplacement(BOOTSTRAP_IDENTITY, REPLACEMENT_RUNTIME_ID);
+  return store.recordOriginalStopped(BOOTSTRAP_IDENTITY);
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
@@ -119,6 +126,35 @@ describe("Podman bootstrap phase journal", () => {
     expect(store.authorizeRollback(BOOTSTRAP_IDENTITY, ["replacement-created"])).toEqual(rollback);
     store.removeAfterRollback(BOOTSTRAP_IDENTITY);
     expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
+  });
+
+  it("makes commit durable before original removal and compacts it idempotently", () => {
+    const root = temporaryRoot();
+    const store = createFilePodmanBootstrapJournalStore(root);
+    recordOriginalStopped(store);
+
+    const authorized = store.authorizeCommit(BOOTSTRAP_IDENTITY, ["original-stopped"]);
+    expect(authorized.phase).toBe("commit-authorized");
+    expect(fs.readFileSync(`${journalFile(root)}.decision`, "utf8")).toBe("commit-authorized\n");
+    expect(store.recordCommitted(BOOTSTRAP_IDENTITY).phase).toBe("committed");
+
+    // Simulate a crash after decision-file removal but before committed-journal
+    // removal. The committed journal alone is sufficient terminal authority.
+    fs.unlinkSync(`${journalFile(root)}.decision`);
+    store.removeAfterCommit(BOOTSTRAP_IDENTITY);
+    expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
+  });
+
+  it("recovers a commit decision that survived its journal acknowledgement", () => {
+    const root = temporaryRoot();
+    const store = createFilePodmanBootstrapJournalStore(root);
+    recordOriginalStopped(store);
+    fs.writeFileSync(`${journalFile(root)}.decision`, "commit-authorized\n", {
+      flag: "wx",
+      mode: 0o600,
+    });
+
+    expect(store.load(BOOTSTRAP_IDENTITY)?.phase).toBe("commit-authorized");
   });
 
   it("recovers a rollback decision that survived its journal acknowledgement", () => {

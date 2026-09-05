@@ -19,6 +19,38 @@ function writeFakeProcCmdline(procRoot: string, pid: number, args: string[]): vo
 }
 
 describe("Hermes gateway auxiliary retry", () => {
+  it("holds the exact failed supervisor for an authenticated state-mutation retry", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      'nemoclaw_runtime_state_mutation_gate() { trace "gate:$1"; return 75; }',
+      'kill() { trace "signal:$1:$2"; exit 0; }',
+      extractShellFunction(source, "nemoclaw_runtime_state_mutation_hold_supervisor_failure"),
+      "nemoclaw_runtime_state_mutation_hold_supervisor_failure",
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "gate:admit",
+      expect.stringMatching(/^signal:-STOP:[1-9][0-9]*$/u),
+    ]);
+    expect(result.stderr).toContain("holding for authenticated retry");
+  });
+
+  it("preserves ordinary supervisor failure without an active state mutation", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      'nemoclaw_runtime_state_mutation_gate() { trace "gate:$1"; return 0; }',
+      'kill() { trace "unexpected-signal:$*"; }',
+      extractShellFunction(source, "nemoclaw_runtime_state_mutation_hold_supervisor_failure"),
+      'if nemoclaw_runtime_state_mutation_hold_supervisor_failure; then trace unsafe-success; else trace "failure:$?"; fi',
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual(["gate:admit", "failure:1"]);
+  });
+
   it("retries transient auxiliary failures without churning the healthy gateway", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([

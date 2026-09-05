@@ -120,7 +120,7 @@ export function bindJournaledRecreate(
       const transaction = updateSession((current) => current).checkpoint?.sandboxRecreate;
       expect(transaction).toBeDefined();
       const ownedTransaction = transaction as CheckpointSandboxRecreateTransaction;
-      const createIntent = args.at(-1) as
+      const createIntent = args.at(-2) as
         | { recreate?: boolean; recreateTransaction?: { id?: string } }
         | undefined;
       expect(createIntent?.recreate).toBe(true);
@@ -168,10 +168,17 @@ export function createDeps(
   const calls = {
     checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
     note: vi.fn(),
+    loadSession: vi.fn(() => session),
     updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
       session = mutator(session) ?? session;
       return session;
     }),
+    compareAndSwapSession: vi.fn(
+      (matches: (value: Session) => boolean, mutator: (value: Session) => Session | void) =>
+        matches(session)
+          ? ((session = mutator(session) ?? session), "updated" as const)
+          : ("mismatch" as const),
+    ),
     persistMessaging: vi.fn(),
     clearPlanEnv: vi.fn(),
     removeSandbox: vi.fn((): SandboxRemovalReceipt | null => null),
@@ -267,7 +274,9 @@ export function createDeps(
       agentSupportsWebSearch: () => true,
       note: calls.note,
       cliName: () => "nemoclaw",
+      loadSession: calls.loadSession,
       updateSession: calls.updateSession,
+      compareAndSwapSession: calls.compareAndSwapSession,
       getStoredMessagingChannelConfig: () => null,
       hydrateMessagingChannelConfig: (config: MessagingChannelConfig | null) => config,
       messagingChannelConfigsEqual: () => true,
@@ -309,7 +318,6 @@ export function createDeps(
       stageSandboxCredentialProviders: calls.stageCredentialProviders,
       promptValidatedSandboxName: calls.promptName,
       selectResourceProfileForSandbox: calls.selectResourceProfile,
-      stopStaleDashboardListenersForSandbox: calls.stopStale,
       listRegistrySandboxes: () => ({ sandboxes: [{ name: "old" }] }),
       planRegisteredExtraProviders: calls.planRegisteredExtraProviders,
       resolveSandboxCreateIntent: calls.resolveCreateIntent,
@@ -326,6 +334,8 @@ export function createDeps(
       error: calls.error,
       exitProcess: calls.exit,
       ...overrides,
+      inspectGatewayCredential:
+        overrides.inspectGatewayCredential ?? (() => ({ kind: "exact" as const })),
       checkGatewayRouteCompatibility:
         overrides.checkGatewayRouteCompatibility ?? calls.checkGatewayRouteCompatibility,
       withDashboardPortReservationLock: runWithDashboardPortReservationLock,

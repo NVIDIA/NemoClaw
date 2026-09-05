@@ -30,6 +30,8 @@ import {
 } from "./client";
 import { resolveOpenshell } from "./resolve";
 import { captureOpenshell, getInstalledOpenshellVersionOrNull } from "./runtime";
+import { buildSelectedOpenShellSubprocessEnv } from "./command-argv";
+import type { OpenShellRuntimeSelection } from "./runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
 export type { GatewayReuseState, ManagedGatewayEndpointBinding };
@@ -99,6 +101,7 @@ export function isHostProcessGatewayDrift(
 export type GatewayDriftOptions = {
   gatewayName?: string;
   deps?: GatewayDriftDeps;
+  runtimeSelection?: OpenShellRuntimeSelection;
   timeoutMs?: number;
 };
 
@@ -215,19 +218,34 @@ export function isGatewayClusterActiveForGateway(
   gatewayName = DEFAULT_GATEWAY_NAME,
   {
     expectedGatewayPort,
+    runtimeSelection,
     timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
-  }: { expectedGatewayPort?: number; timeoutMs?: number } = {},
+  }: {
+    expectedGatewayPort?: number;
+    runtimeSelection?: OpenShellRuntimeSelection;
+    timeoutMs?: number;
+  } = {},
 ): boolean {
+  if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) return false;
+  const selectedOptions = runtimeSelection
+    ? {
+        env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
+        replaceEnv: true,
+      }
+    : {};
   const status = captureOpenshell(["status"], {
     ignoreError: true,
+    ...selectedOptions,
     timeout: timeoutMs,
   });
   const gatewayInfo = captureOpenshell(["gateway", "info", "-g", gatewayName], {
     ignoreError: true,
+    ...selectedOptions,
     timeout: timeoutMs,
   });
   const activeGatewayInfo = captureOpenshell(["gateway", "info"], {
     ignoreError: true,
+    ...selectedOptions,
     timeout: timeoutMs,
   });
   if (!isGatewayHealthy(status.output, gatewayInfo.output, activeGatewayInfo.output, gatewayName)) {
@@ -255,6 +273,7 @@ export function isGatewayClusterActiveForGateway(
 export function getGatewayClusterImageDrift({
   gatewayName = DEFAULT_GATEWAY_NAME,
   deps = {},
+  runtimeSelection,
   timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
 }: GatewayDriftOptions = {}): GatewayClusterImageDrift | null {
   if (isGatewayDriftPreflightDisabled(deps)) {
@@ -268,7 +287,7 @@ export function getGatewayClusterImageDrift({
     deps.isGatewayClusterActive?.(gatewayName) ??
     (typeof deps.getGatewayClusterImageRef === "function"
       ? true
-      : isGatewayClusterActiveForGateway(gatewayName, { timeoutMs }));
+      : isGatewayClusterActiveForGateway(gatewayName, { runtimeSelection, timeoutMs }));
   if (!clusterActive) {
     return null;
   }
@@ -412,6 +431,7 @@ export function getHostProcessGatewayRuntimeOrNull({
 export function getGatewayHostProcessDrift({
   gatewayName = DEFAULT_GATEWAY_NAME,
   deps = {},
+  runtimeSelection,
   timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
 }: GatewayDriftOptions = {}): GatewayHostProcessDrift | null {
   if (isGatewayDriftPreflightDisabled(deps)) {
@@ -431,7 +451,7 @@ export function getGatewayHostProcessDrift({
   if (clusterImage) {
     const clusterActive =
       deps.isGatewayClusterActive?.(gatewayName) ??
-      isGatewayClusterActiveForGateway(gatewayName, { timeoutMs });
+      isGatewayClusterActiveForGateway(gatewayName, { runtimeSelection, timeoutMs });
     if (clusterActive) {
       return null;
     }
@@ -466,6 +486,7 @@ export function observeOpenShellGatewayVersionCompatibility({
   source,
   gatewayName = DEFAULT_GATEWAY_NAME,
   deps = {},
+  runtimeSelection,
   timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
 }: GatewayVersionCompatibilityOptions): GatewayVersionCompatibility {
   if (isGatewayDriftPreflightDisabled(deps)) return "unknown";
@@ -478,7 +499,7 @@ export function observeOpenShellGatewayVersionCompatibility({
   if (source === "legacy-cluster") {
     const clusterActive =
       deps.isGatewayClusterActive?.(gatewayName) ??
-      isGatewayClusterActiveForGateway(gatewayName, { timeoutMs });
+      isGatewayClusterActiveForGateway(gatewayName, { runtimeSelection, timeoutMs });
     if (!clusterActive) return "unknown";
     const clusterImage =
       typeof deps.getGatewayClusterImageRef === "function"
@@ -503,13 +524,24 @@ export function observeOpenShellGatewayVersionCompatibility({
 export function detectOpenShellStateRpcPreflightIssue({
   gatewayName = DEFAULT_GATEWAY_NAME,
   deps = {},
+  runtimeSelection,
   timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
 }: GatewayDriftOptions = {}): OpenShellStateRpcIssue | null {
-  const imageDrift = getGatewayClusterImageDrift({ gatewayName, deps, timeoutMs });
+  const imageDrift = getGatewayClusterImageDrift({
+    gatewayName,
+    deps,
+    runtimeSelection,
+    timeoutMs,
+  });
   if (imageDrift) {
     return { kind: "image_drift", drift: imageDrift };
   }
-  const hostDrift = getGatewayHostProcessDrift({ gatewayName, deps, timeoutMs });
+  const hostDrift = getGatewayHostProcessDrift({
+    gatewayName,
+    deps,
+    runtimeSelection,
+    timeoutMs,
+  });
   if (hostDrift) {
     return { kind: "host_process_drift", drift: hostDrift };
   }
@@ -521,6 +553,7 @@ export function detectOpenShellStateRpcResultIssue(
   {
     gatewayName = DEFAULT_GATEWAY_NAME,
     deps = {},
+    runtimeSelection,
     timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
   }: GatewayDriftOptions = {},
 ): OpenShellStateRpcIssue | null {
@@ -532,8 +565,8 @@ export function detectOpenShellStateRpcResultIssue(
     kind: "protobuf_mismatch",
     drift: isGatewayDriftPreflightDisabled(deps)
       ? null
-      : (getGatewayClusterImageDrift({ gatewayName, deps, timeoutMs }) ??
-        getGatewayHostProcessDrift({ gatewayName, deps, timeoutMs })),
+      : (getGatewayClusterImageDrift({ gatewayName, deps, runtimeSelection, timeoutMs }) ??
+        getGatewayHostProcessDrift({ gatewayName, deps, runtimeSelection, timeoutMs })),
     output,
   };
 }

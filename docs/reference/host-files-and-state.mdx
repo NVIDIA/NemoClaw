@@ -100,8 +100,7 @@ Run `$$nemoclaw onboard` to register a sandbox again.
 
 | Path | Purpose | Safe to delete |
 |---|---|---|
-| `~/.nemoclaw/state/` | Operational coordination and history for lifecycle locks, shields transitions, timers, and audit events, local routing, and port-forward helpers. | No. Deleting it can disrupt an active operation and discard security or recovery context. |
-| `~/.nemoclaw/state/runtime-provider-lifecycle/` | Owner-only durable transaction records, target claims, recovery state, and release receipts for Docker runtime provider state mutations. The records bind the registered sandbox lifecycle, container and engine authority, mount namespace, state-root inode, normalized plan and projection, target and rollback postures, and transaction nonce. | No. A retained record is the authority that lets a later host process recover the transition and prevents another target from mutating the same runtime. Do not remove it manually. |
+| `~/.nemoclaw/state/` | Operational coordination for lifecycle locks, local routing, and port-forward helpers. | No. Deleting it can disrupt an active operation and discard recovery context. |
 <AgentOnly variant="hermes">
 | `~/.nemoclaw/portable-inference/<sandbox-digest>/` | Current-user-owned, credential-free Portable Ollama provider and inference recovery state for one Hermes sandbox. Full uninstall removes it only after exclusive provider and inference cleanup succeeds. When a sibling registry row shares either the provider or inference runtime, uninstall preserves the directory as the sibling's recovery authority, including with `--destroy-user-data`. | No while the recorded provider or inference runtime exists, cleanup can be retried, or a sibling still owns the shared resource. |
 </AgentOnly>

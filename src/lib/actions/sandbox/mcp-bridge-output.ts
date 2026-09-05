@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { stripAnsi } from "../../adapters/openshell/client";
-import { redactStandaloneSecretsFull } from "../../security/redact";
+import { redactFullWithUrls, redactStandaloneSecretsFull } from "../../security/redact";
 import type { McpBridgeEntry } from "../../state/registry";
 
 export type OpenShellCommandResult = {
@@ -173,6 +173,14 @@ export function redactBridgeSecretsForDisplay(
   envValues: Record<string, string> = {},
 ): string {
   return redactMcpOutput(text, entry, envValues);
+}
+
+export function redactBridgeFailureForDisplay(
+  text: string,
+  entry?: Pick<McpBridgeEntry, "env">,
+  envValues: Record<string, string> = {},
+): string {
+  return redactFullWithUrls(redactMcpOutput(text, entry, envValues));
 }
 
 export function redactCredentialValuesForDisplay(

@@ -1,0 +1,135 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingRecipe
+
+metadata:
+  id: llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1
+  displayName: Qwen 3.6 35B-A3B with llama.cpp
+
+spec:
+  backend: install-llama-cpp
+  providerId: llama-cpp-local
+
+  server:
+    technology: llama.cpp
+    source:
+      repository: ggml-org/llama.cpp
+      revision: 8e7f22b67ef4667b4ddd50230771287f328cfb3f
+
+  model:
+    id: ggml-org/Qwen3.6-35B-A3B-GGUF
+    revision: baec3ebee244827cda0f4557eafa8b28f7545fa6
+    servedName: qwen3.6-35b-a3b
+    files:
+      - path: Qwen3.6-35B-A3B-Q4_K_M.gguf
+        digest: sha256:671e47e0ec53c665d048b98c3ecbfd5236b5ca9c3e02ed19fc8f81f7b85140c7
+        sizeBytes: 20419565568
+        format: gguf
+        quantization: Q4_K_M
+        license: Apache-2.0
+    acquisition:
+      ref: hugging-face-exact-file/v1
+      downloaderImage: nvcr.io/nvidia/vllm@sha256:94e21552f644e0c1627464ba89d2f7a4ce7442e196f72afa0bb5d7fba23cbb03
+      authentication:
+        mode: optional
+        environment: HF_TOKEN
+    cache:
+      ref: hugging-face-shared-cache/v1
+      root: user-cache
+      reuse: verify-exact-file
+      sharing: host-user
+      cleanup: preserve
+
+  runtime:
+    image: ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675
+    imageDownloadSizeBytes: 1827478485
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    containerRuntime: docker
+    networkExposure: loopback
+    restartPolicy: unless-stopped
+    hosts: 1
+    cuda:
+      baseImage: docker.io/nvidia/cuda@sha256:789e629e49401647e22b7054ae9c6c4f6427dba68010ba428deb4cc6b063676e
+      minimumDriverVersion: 580.65.06
+    gpu:
+      vendor: nvidia
+      count: 1
+      offload: full
+      cpuFallback: reject
+    resources:
+      memoryBytes: 50331648000
+      writableStorageBytes: 42949672960
+      pidsLimit: 256
+
+  execution:
+    receiptRef: llama-cpp.host-local.receipt/v1
+    materializerRef: llama-cpp.host-local/v1
+    lifecycleRef: llama-cpp.host-local.lifecycle/v1
+
+  serve:
+    protocol: openai-completions
+    authentication: bearer
+    port: 8081
+    chatTemplate: model-embedded-jinja
+    chatTemplateArguments:
+      reasoningStrength: low
+    contextSize: 131072
+    slots: 1
+    idleSleepSeconds: -1
+    batchSize: 2048
+    microBatchSize: 512
+    flashAttention: enabled
+    kvCache:
+      key: f16
+      value: f16
+    speculativeDecoding: disabled
+    limits:
+      maxRequestBodyBytes: 32768
+      maxRequestHeaderBytes: 32768
+      maxOutputTokens: 4096
+      requestTimeoutSeconds: 900
+      shutdownTimeoutSeconds: 25
+    requestGuard:
+      upstreamPort: 8082
+
+  readiness:
+    contractRef: llama-cpp.server-readiness/v1
+    timeoutSeconds: 1800
+    expectedModel: qwen3.6-35b-a3b
+    probeImage: nvcr.io/nvidia/vllm@sha256:94e21552f644e0c1627464ba89d2f7a4ce7442e196f72afa0bb5d7fba23cbb03
+    probes:
+      models: true
+      health: true
+      properties: true
+      metrics: true
+
+  policy:
+    egress: disabled
+    modelSource: verified-local
+    modelDownloads: disabled
+
+  surfaces:
+    ui: disabled
+    slotInspection: disabled
+    router: disabled
+    mcpProxy: disabled
+    serverTools: disabled
+    agentMode: disabled
+    multimodalProjection: disabled
+
+  capabilities:
+    agents: []
+    protocols:
+      - openai-completions
+    streaming: true
+    toolCalls: true
+    structuredOutputs: true
+    parallelToolCalls: false
+    responsesApi: false
+    embeddings: false
+    reranking: false
+    multimodal: false

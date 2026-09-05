@@ -310,12 +310,12 @@ The maintained onboarding path for this agent does not consume the component.
 
 ## Sandbox Environment
 
-Stock onboarding through the OpenShell Docker driver for OpenClaw, Hermes, and LangChain Deep Agents Code selects an immutable managed image for the installed release and host architecture.
+Stock onboarding through the default Docker provider or the explicitly selected native Podman provider for OpenClaw, Hermes, and LangChain Deep Agents Code selects an immutable managed image for the installed release and host architecture.
 Before selecting one agent image, NemoClaw validates a complete three-agent cohort with one release, source revision, publication cohort, and compatible startup and capability contracts.
 If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
 Available catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent fails closed before sandbox creation.
 An explicit `--from <Dockerfile>` remains a separate complete custom-image path.
-The portable experimental profile retains its existing workload path, and native Podman remains disabled.
+The portable experimental profile retains its existing workload path and lifecycle. Native Podman is independently selected with `NEMOCLAW_GATEWAY_RUNTIME=podman`, consumes the registered Podman provider bundle, and accepts only exact managed-image workload receipts; legacy and custom Dockerfile builds remain disabled for that provider.
 <AgentOnly variant="openclaw">
 The direct blueprint runner still carries a pinned OpenShell Community OpenClaw image for legacy `openshell sandbox create --from` compatibility.
 </AgentOnly>

@@ -7,8 +7,10 @@ import { compactSandboxMessagingPlanForPersistence } from "../messaging/persiste
 import {
   getConfiguredChannelIdsFromPlan,
   getDisabledChannelIdsFromPlan,
+  getMessagingChannelConfigFromPlan,
   parseSandboxMessagingPlan,
 } from "../messaging/plan-validation";
+import type { MessagingChannelConfig } from "../messaging-channel-config";
 import type { SandboxRegistry } from "./registry";
 
 export interface SandboxMessagingState {
@@ -60,6 +62,12 @@ export function getHydratedMessagingPlanFromEntry(
 ): SandboxMessagingPlan | null {
   const plan = getMessagingPlanFromEntry(entry);
   return plan ? hydrateDerivedSandboxMessagingPlanFields(plan) : null;
+}
+
+export function getMessagingChannelConfigFromEntry(
+  entry: EntryWithMessaging | null | undefined,
+): MessagingChannelConfig | null {
+  return getMessagingChannelConfigFromPlan(getHydratedMessagingPlanFromEntry(entry));
 }
 
 export function getConfiguredMessagingChannelsFromEntry(

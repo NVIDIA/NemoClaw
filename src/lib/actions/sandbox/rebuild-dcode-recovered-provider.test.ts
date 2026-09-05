@@ -14,7 +14,7 @@ import {
   installRebuildFlowTestHooks,
   makePreparedRecoveryManifest,
   snapshotEnv,
-} from "../../../../test/helpers/rebuild-flow-dcode-harness";
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
 
 describe("rebuildSandbox DCode recovered provider", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });

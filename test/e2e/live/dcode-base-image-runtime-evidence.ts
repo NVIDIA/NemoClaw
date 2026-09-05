@@ -10,7 +10,10 @@ import {
   type DcodeBaseImageContract,
   parseDcodeBaseImageContract,
 } from "../../../tools/e2e/dcode-base-image-contract.mts";
-import { requireDcodeBaseImageReference } from "../fixtures/dcode-base-image.ts";
+import {
+  DCODE_BASE_IMAGE_ENV,
+  requireDcodeBaseImageReference,
+} from "../fixtures/dcode-base-image.ts";
 import { readRegistrySandboxEntry } from "../fixtures/phases/index.ts";
 
 export const DCODE_BASE_IMAGE_TARGET_ID = "ubuntu-repo-cloud-langchain-deepagents-code";
@@ -106,6 +109,18 @@ export function loadDcodeBaseImagePublicationEvidence(
   environment: NodeJS.ProcessEnv = process.env,
 ): DcodeBaseImageContract | undefined {
   if (targetId !== DCODE_BASE_IMAGE_TARGET_ID) return undefined;
+  const workloadSource = environment.E2E_WORKLOAD_SOURCE?.trim() ?? "";
+  if (workloadSource === "local-dockerfile") {
+    if ((environment[DCODE_BASE_IMAGE_ENV]?.trim() ?? "") || fs.existsSync(evidencePath)) {
+      throw new Error(
+        "Deep Agents Code local-Dockerfile E2E cannot consume published base-image authority",
+      );
+    }
+    return undefined;
+  }
+  if (workloadSource !== "" && workloadSource !== "managed-image") {
+    throw new Error("Deep Agents Code E2E workload source is invalid");
+  }
   if (!fs.existsSync(evidencePath)) {
     requireDcodeBaseImageReference(environment);
     if (environment.GITHUB_ACTIONS === "true") {

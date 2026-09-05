@@ -119,6 +119,27 @@ describe("rebuild gateway drift preflight", () => {
     expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
   });
 
+  it("binds gateway schema preflight to the frozen runtime target (#10514)", () => {
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      localTlsDir: "/authority/tls",
+      workspace: "default",
+    };
+
+    expect(
+      checkRebuildGatewaySchemaPreflight(
+        "alpha",
+        makeSandboxEntry(),
+        bail,
+        runtimeSelection,
+      ),
+    ).toBe(true);
+    expect(gatewayDrift.detectOpenShellStateRpcPreflightIssue).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw",
+      runtimeSelection,
+    });
+  });
+
   it("prints the safe-abort diagnostic before bailing on gateway schema drift (#7794)", () => {
     vi.mocked(gatewayDrift.detectOpenShellStateRpcPreflightIssue).mockReturnValue(driftIssue);
     const nonThrowingBail = vi.fn();

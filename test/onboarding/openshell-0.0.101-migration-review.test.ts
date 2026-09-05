@@ -9,6 +9,9 @@ import { describe, expect, it } from "vitest";
 
 import { buildDockerDriverGatewayConfigToml } from "../../src/lib/onboard/docker-driver-gateway-config.js";
 import { PORTABLE_HOST_GATEWAY_IP } from "../../src/lib/onboard/experimental/portable-profile.js";
+import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../src/lib/onboard/runtime-provider/current.js";
+import { prepareNativePodmanGatewayHostRuntime } from "../../src/lib/onboard/runtime-provider/podman-runtime-surfaces.js";
+import { requireRuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/registry.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const review = fs.readFileSync(
@@ -200,21 +203,51 @@ describe("OpenShell 0.0.101 migration review", () => {
         OPENSHELL_EGRESS_ADAPTER: "unreviewed",
         OPENSHELL_VM_RUNTIME: "unreviewed",
       };
-      const dockerToml = buildDockerDriverGatewayConfigToml({
+      const dockerEnv = {
         ...untrustedNewSurfaceInputs,
         OPENSHELL_DRIVERS: "vm",
         OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
         OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
         OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
-      });
-      const podmanToml = buildDockerDriverGatewayConfigToml({
+      };
+      const dockerProvider = requireRuntimeProviderBundle(
+        "docker",
+        CURRENT_RUNTIME_PROVIDER_BUNDLES,
+      );
+      expect(dockerProvider.gateway.supported).toBe(true);
+      const dockerGateway = dockerProvider.gateway as Extract<
+        typeof dockerProvider.gateway,
+        { readonly supported: true }
+      >;
+      const dockerToml = buildDockerDriverGatewayConfigToml(
+        dockerEnv,
+        undefined,
+        undefined,
+        "nemoclaw",
+        dockerGateway.prepareHostRuntime({
+          environment: process.env,
+          platform: process.platform,
+        }),
+      );
+      const podmanEnv = {
         ...untrustedNewSurfaceInputs,
         OPENSHELL_DRIVERS: "podman",
         OPENSHELL_GRPC_ENDPOINT: `https://${PORTABLE_HOST_GATEWAY_IP}:8080`,
         OPENSHELL_DOCKER_NETWORK_NAME: "openshell-podman",
         OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
         OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
-      });
+      };
+      const podmanToml = buildDockerDriverGatewayConfigToml(
+        podmanEnv,
+        undefined,
+        undefined,
+        "nemoclaw",
+        prepareNativePodmanGatewayHostRuntime({
+          environment: process.env,
+          platform: "linux",
+          socketPath: podmanEnv.OPENSHELL_PODMAN_SOCKET,
+        }),
+      );
 
       expect(dockerToml).toContain('compute_drivers = ["docker"]');
       expect(dockerToml).toContain("[openshell.drivers.docker]");

@@ -3,9 +3,14 @@
 
 import os from "node:os";
 
+import { dockerContextIsDefaultFromBuild } from "../../adapters/docker/client-isolation";
 import { getBuildIdentity } from "../../core/version";
-import { createHostReadinessReport } from "../../readiness/host";
+import {
+  type CollectHostObservationsOptions,
+  createHostReadinessReport,
+} from "../../readiness/host";
 import type { SystemReadinessReport } from "../../readiness/types";
+import type { GpuDetection } from "../nim";
 import {
   isLlamaCppServingRecipe,
   LLAMA_CPP_HOST_LOCAL_LIFECYCLE_REF,
@@ -26,6 +31,21 @@ export type ManagedLlamaCppSelectionResult =
 export interface ManagedLlamaCppSelectionChoice {
   readonly priority: number;
   readonly selection: ResolvedLlamaCppInferenceSelection;
+}
+
+const N1X_WSL_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
+
+type ManagedLlamaCppSelectionOptions = {
+  readonly dockerContextIsDefault?: typeof dockerContextIsDefaultFromBuild;
+};
+
+function n1xWslDockerLocalityFailure(
+  env: NodeJS.ProcessEnv,
+  options: ManagedLlamaCppSelectionOptions,
+): string | null {
+  return (options.dockerContextIsDefault ?? dockerContextIsDefaultFromBuild)(env)
+    ? null
+    : "Managed N1x WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.";
 }
 
 function selectablePresetsForRecipe(
@@ -127,8 +147,13 @@ export function resolveManagedLlamaCppSelection(
   env: NodeJS.ProcessEnv = process.env,
   catalog: CompiledManagedInferenceCatalog = loadManagedInferenceCatalog(),
   report: SystemReadinessReport = createHostReadinessReport(getBuildIdentity()),
+  options: ManagedLlamaCppSelectionOptions = {},
 ): ManagedLlamaCppSelectionResult {
   const requestedRecipeId = String(env[LLAMA_CPP_RECIPE_ENV] ?? "").trim();
+  if (requestedRecipeId === N1X_WSL_RECIPE_ID) {
+    const localityFailure = n1xWslDockerLocalityFailure(env, options);
+    if (localityFailure) return { kind: "rejected", reason: localityFailure };
+  }
   if (String(env.NEMOCLAW_MODEL ?? "").trim()) {
     return {
       kind: "rejected",
@@ -208,4 +233,25 @@ export function resolveManagedLlamaCppSelection(
   }
   const resolution = selected[0]!.resolution;
   return validatedLlamaCppSelection(resolution, recipeId);
+}
+
+/** Resolve managed selection with the GPU proof already admitted by onboarding preflight. */
+export function resolveManagedLlamaCppSelectionForGpu(
+  env: NodeJS.ProcessEnv | undefined,
+  gpu: GpuDetection | null,
+  catalog: CompiledManagedInferenceCatalog = loadManagedInferenceCatalog(),
+  collectionOptions: Omit<
+    CollectHostObservationsOptions,
+    "detectGpu" | "wslDockerDesktopGpuProofPassed"
+  > = {},
+  selectionOptions: ManagedLlamaCppSelectionOptions = {},
+): ManagedLlamaCppSelectionResult {
+  const report = createHostReadinessReport(getBuildIdentity(), {
+    ...collectionOptions,
+    ...(gpu ? { detectGpu: () => gpu } : {}),
+    ...(gpu?.wslDockerDesktopGpuProofPassed === undefined
+      ? {}
+      : { wslDockerDesktopGpuProofPassed: gpu.wslDockerDesktopGpuProofPassed }),
+  });
+  return resolveManagedLlamaCppSelection(env, catalog, report, selectionOptions);
 }

@@ -3,7 +3,179 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { RetryPolicyError, runBoundedRetry } from "../fixtures/retry-policy.ts";
+import {
+  RetryPolicyError,
+  runBoundedRetry,
+  validateRetryEvidence,
+} from "../../../tools/e2e/retry-evidence.mts";
+
+describe("serialized retry evidence", () => {
+  it("accepts evidence whose attempt history matches its aggregate outcome", () => {
+    const serialized = JSON.stringify({
+      schemaVersion: 1,
+      operation: "provider.probe",
+      owner: "external-provider",
+      idempotence: "read-only",
+      maxAttempts: 2,
+      outcome: "passed-after-retry",
+      attempts: [
+        {
+          attempt: 1,
+          outcome: "failed",
+          failureClass: "transient-external",
+          retryScheduled: true,
+        },
+        { attempt: 2, outcome: "passed", retryScheduled: false },
+      ],
+    });
+
+    expect(validateRetryEvidence(JSON.parse(serialized))).toMatchObject({
+      outcome: "passed-after-retry",
+      attempts: [{ retryScheduled: true }, { outcome: "passed" }],
+    });
+  });
+
+  it("projects validated evidence onto canonical fields", () => {
+    const evidence = validateRetryEvidence({
+      schemaVersion: 1,
+      operation: "provider.probe",
+      owner: "external-provider",
+      idempotence: "read-only",
+      maxAttempts: 1,
+      outcome: "failed-no-retry",
+      credential: "must-not-survive-validation",
+      attempts: [
+        {
+          attempt: 1,
+          outcome: "failed",
+          failureClass: "deterministic",
+          retryScheduled: false,
+          diagnostic: "must-not-survive-validation",
+        },
+      ],
+    });
+
+    expect(evidence).toEqual({
+      schemaVersion: 1,
+      operation: "provider.probe",
+      owner: "external-provider",
+      idempotence: "read-only",
+      maxAttempts: 1,
+      outcome: "failed-no-retry",
+      attempts: [
+        {
+          attempt: 1,
+          outcome: "failed",
+          failureClass: "deterministic",
+          retryScheduled: false,
+        },
+      ],
+    });
+    expect(JSON.stringify(evidence)).not.toContain("must-not-survive-validation");
+  });
+
+  it.each([
+    {
+      name: "a successful attempt with failure metadata",
+      change: {
+        attempts: [
+          { attempt: 1, outcome: "passed", failureClass: "cleanup", retryScheduled: false },
+        ],
+      },
+    },
+    {
+      name: "a retry after a deterministic failure",
+      change: {
+        maxAttempts: 2,
+        outcome: "passed-after-retry",
+        attempts: [
+          { attempt: 1, outcome: "failed", failureClass: "deterministic", retryScheduled: true },
+          { attempt: 2, outcome: "passed", retryScheduled: false },
+        ],
+      },
+    },
+    {
+      name: "a first-attempt outcome with two attempts",
+      change: {
+        maxAttempts: 2,
+        outcome: "passed-first-attempt",
+        attempts: [
+          {
+            attempt: 1,
+            outcome: "failed",
+            failureClass: "transient-external",
+            retryScheduled: true,
+          },
+          { attempt: 2, outcome: "passed", retryScheduled: false },
+        ],
+      },
+    },
+    {
+      name: "an exhausted outcome before the attempt budget ends",
+      change: { maxAttempts: 2, outcome: "exhausted" },
+    },
+    {
+      name: "an exhausted outcome after a deterministic final failure",
+      change: {
+        maxAttempts: 2,
+        outcome: "exhausted",
+        attempts: [
+          {
+            attempt: 1,
+            outcome: "failed",
+            failureClass: "transient-external",
+            retryScheduled: true,
+          },
+          { attempt: 2, outcome: "failed", failureClass: "deterministic", retryScheduled: false },
+        ],
+      },
+    },
+    {
+      name: "a no-retry outcome after exhausting transient attempts",
+      change: {
+        maxAttempts: 2,
+        attempts: [
+          {
+            attempt: 1,
+            outcome: "failed",
+            failureClass: "transient-external",
+            retryScheduled: true,
+          },
+          {
+            attempt: 2,
+            outcome: "failed",
+            failureClass: "transient-external",
+            retryScheduled: false,
+          },
+        ],
+      },
+    },
+    {
+      name: "a reconciled mutation without reconciliation evidence",
+      change: { idempotence: "reconciled-mutation", maxAttempts: 2 },
+    },
+  ])("rejects serialized evidence with $name", ({ change }) => {
+    const serialized = JSON.stringify({
+      schemaVersion: 1,
+      operation: "provider.probe",
+      owner: "external-provider",
+      idempotence: "read-only",
+      maxAttempts: 1,
+      outcome: "failed-no-retry",
+      attempts: [
+        {
+          attempt: 1,
+          outcome: "failed",
+          failureClass: "transient-external",
+          retryScheduled: false,
+        },
+      ],
+      ...change,
+    });
+
+    expect(validateRetryEvidence(JSON.parse(serialized))).toBeNull();
+  });
+});
 
 describe("bounded E2E operation retry policy", () => {
   it("reports a first-attempt pass", async () => {

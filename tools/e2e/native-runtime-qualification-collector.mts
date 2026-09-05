@@ -6,10 +6,7 @@ import { appendFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import {
-  readValidatedArtifactZipEntry,
-  readValidatedArtifactZipEntryBytes,
-} from "../../scripts/scorecard/read-artifact-zip.mts";
+import { readValidatedArtifactZipEntries } from "../../scripts/lib/read-artifact-zip.mts";
 import {
   compileNativeRuntimeQualification,
   consumeNativeRuntimeQualificationEvidence,
@@ -373,30 +370,25 @@ async function loadEvidenceEnvelope(
   if (archive.length > MAX_ARCHIVE_BYTES) fail("protected evidence artifact is oversized");
   const actualDigest = `sha256:${createHash("sha256").update(archive).digest("hex")}`;
   if (actualDigest !== artifact.digest) fail("downloaded artifact digest does not match GitHub");
-  const source = readValidatedArtifactZipEntry(
-    archive,
-    NATIVE_RUNTIME_QUALIFICATION_EVIDENCE_FILE,
-    { maxBytes: MAX_EVIDENCE_BYTES, maxEntries: MAX_ARCHIVE_ENTRIES },
-  );
-  if (source === null) fail("artifact does not contain one bounded evidence JSON file");
+  const entries = readValidatedArtifactZipEntries(archive, {
+    maxEntries: MAX_ARCHIVE_ENTRIES,
+    maxTotalUncompressedBytes: MAX_EVIDENCE_BYTES + MAX_ARCHIVE_ENTRIES * MAX_RECEIPT_BYTES,
+  });
+  if (entries === null) fail("artifact does not contain one bounded evidence JSON file");
+  const source = entries
+    .find(({ name }) => name === NATIVE_RUNTIME_QUALIFICATION_EVIDENCE_FILE)
+    ?.bytes.toString("utf8");
+  if (source === undefined) fail("artifact does not contain one bounded evidence JSON file");
   let envelope: unknown;
   try {
     envelope = JSON.parse(source) as unknown;
   } catch {
     fail("protected evidence artifact is not valid JSON");
   }
-  const cache = new Map<string, Buffer | null>();
+  const cache = new Map(entries.map(({ name, bytes }) => [name, bytes]));
   const readReceipt: NativeRuntimeQualificationReceiptReader = (receiptPath) => {
-    if (!cache.has(receiptPath)) {
-      cache.set(
-        receiptPath,
-        readValidatedArtifactZipEntryBytes(archive, receiptPath, {
-          maxBytes: MAX_RECEIPT_BYTES,
-          maxEntries: MAX_ARCHIVE_ENTRIES,
-        }),
-      );
-    }
-    return cache.get(receiptPath) ?? null;
+    const receipt = cache.get(receiptPath);
+    return receipt !== undefined && receipt.length <= MAX_RECEIPT_BYTES ? receipt : null;
   };
   return { envelope, readReceipt };
 }

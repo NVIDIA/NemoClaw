@@ -519,7 +519,6 @@ describe("deferred provider effect authority", () => {
         gatewayName: "nemoclaw",
       },
       preparationDeps: {
-        providerExistsInGateway: vi.fn(() => true),
         runOpenshell: runOpenshell as never,
         cleanupCreateSources: vi.fn(),
       },
@@ -528,6 +527,59 @@ describe("deferred provider effect authority", () => {
         revalidate("cleaning up providers for sandbox 'alpha'");
         return ["first", "second"];
       },
+      revalidateSandboxIdentityBeforeCreate: vi.fn(),
+    });
+    const runAfterVerifiedCreate = boundary.runAfterVerifiedCreate;
+    expect(runAfterVerifiedCreate).toBeTypeOf("function");
+
+    const error = await runAfterVerifiedCreate!({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 18790,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      route: "direct" as never,
+      revalidateSandboxIdentity,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      "Do not delete it by mutable sandbox name. Ask an OpenShell administrator to remove the retained sandbox through an identity-bound procedure.",
+    );
+    expect((error as Error).message).toContain(
+      "After OpenShell confirms the retained sandbox is absent, run 'nemoclaw alpha destroy --yes' to reconcile its verified Docker containers and recovery record.",
+    );
+
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["sandbox", "provider", "attach"]),
+      expect.anything(),
+    );
+    expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
+      "attaching deferred providers to sandbox 'alpha'",
+    );
+  });
+
+  it("completes deferred provider effects when no attachment remains (#9833)", async () => {
+    const revalidateSandboxIdentity = vi.fn();
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const boundary = createProviderEffectBoundary({
+      deferred: true,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      preparationInput: {
+        openshellDriver: "docker",
+        inferenceProvider: null,
+        messagingProviders: [],
+        messagingProviderRequests: [],
+        extraProviders: [],
+        gatewayName: "nemoclaw",
+      },
+      preparationDeps: {
+        runOpenshell: runOpenshell as never,
+        cleanupCreateSources: vi.fn(),
+      },
+      runVerifiedSandboxCreateEffects: null,
+      activateDeferredProviderEffects: () => [],
       revalidateSandboxIdentityBeforeCreate: vi.fn(),
     });
     const runAfterVerifiedCreate = boundary.runAfterVerifiedCreate;
@@ -543,7 +595,7 @@ describe("deferred provider effect authority", () => {
         route: "direct" as never,
         revalidateSandboxIdentity,
       }),
-    ).rejects.toThrow("OpenShell cannot attach providers to the immutable identity");
+    ).resolves.toBeUndefined();
 
     expect(runOpenshell).not.toHaveBeenCalledWith(
       expect.arrayContaining(["sandbox", "provider", "attach"]),
@@ -1020,7 +1072,6 @@ describe("sandbox create identity checks", () => {
         gatewayName: "nemoclaw",
       },
       preparationDeps: {
-        providerExistsInGateway: vi.fn(() => true),
         runOpenshell: runOpenshell as never,
         cleanupCreateSources: vi.fn(),
       },

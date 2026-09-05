@@ -127,7 +127,7 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
       cwd: ROOT,
       encoding: "utf8",
     }).stdout.trim();
-    const sandboxName = `hermes-install-${process.pid}`;
+    const sandboxName = `hermes-${process.pid}`;
     const gatewayName = "nemoclaw";
     const payloadCheckout = path.join(fixtureRoot, "payload-checkout");
     const curlPipeCheckout = path.join(fixtureRoot, "curl-pipe-checkout");

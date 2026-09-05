@@ -12,6 +12,10 @@ import { applyOnboardToolDisclosureRequest } from "./tool-disclosure-flow";
 import type { OnboardOptions } from "./types";
 
 export { clearAgentScopedResumeState };
+export {
+  resolveCurrentOpenShellComputePlan,
+  resolveCurrentOpenShellRuntimeSelection,
+} from "./compute/plan";
 
 export interface RuntimeControlAgentDeps {
   error(message: string): void;

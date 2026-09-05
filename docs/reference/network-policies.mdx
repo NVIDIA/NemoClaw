@@ -275,13 +275,16 @@ Apply policy updates to a running sandbox without restarting:
 openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
 ```
 
-To replace the live policy with a complete base policy file, export the current base policy and use `openshell policy set`. Requires OpenShell 0.0.72+ for the round-trippable `policy get --base` and `policy set --wait` syntax.
+To replace the live policy with a complete base policy file, export the current base policy and use `openshell policy set`.
+This workflow requires OpenShell 0.0.72+ for `policy get --base` and `policy set --wait`.
 
 ```bash
 $$nemoclaw <sandbox-name> policy get > current-policy.yaml
 ```
 
-NemoClaw strips the OpenShell metadata header and exits non-zero if it cannot validate the base policy. Do not add `--raw` when you plan to edit and reapply the file.
+NemoClaw parses the policy, strips the OpenShell metadata header, and replaces literal credentials with `[STRIPPED_BY_MIGRATION]`. Replace every marker with a supported OpenShell credential binding or resolver placeholder before you apply the file.
+NemoClaw exits nonzero if it cannot validate the base policy.
+Do not add `--raw` when you plan to edit and reapply the file.
 
 Edit or review `current-policy.yaml`, then apply it:
 

@@ -244,7 +244,11 @@ export function shouldAssertStockManagedImageReceipt(
       path.basename(args[0] ?? "") === "nemoclaw.js" && args[1] === "onboard" ? 1 : -1;
   }
   if (onboardArgumentIndex < 0) return false;
-  return !args
-    .slice(onboardArgumentIndex + 1)
-    .some((argument) => argument === "--from" || argument.startsWith("--from="));
+  const onboardArguments = args.slice(onboardArgumentIndex + 1);
+  if (onboardArguments.some((argument) => argument === "--help" || argument === "-h")) {
+    return false;
+  }
+  return !onboardArguments.some(
+    (argument) => argument === "--from" || argument.startsWith("--from="),
+  );
 }

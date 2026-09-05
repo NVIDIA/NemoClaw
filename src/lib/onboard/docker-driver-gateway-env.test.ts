@@ -79,6 +79,7 @@ describe("buildDockerDriverGatewayEnv", () => {
   it("uses the Docker driver on macOS without VM helper state", () => {
     const env = buildDockerDriverGatewayEnv({
       platform: "darwin",
+      architecture: "arm64",
       stateDir: "/tmp/nemoclaw-gateway",
       getDockerSupervisorImage: () => "ghcr.io/nvidia/openshell/supervisor:0.0.37",
       resolveSandboxBin: () => "/usr/local/bin/openshell-sandbox",
@@ -143,6 +144,7 @@ describe("buildDockerDriverGatewayEnv", () => {
 
   it("builds the exact rootless gateway network contract for the portable profile", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "docker");
     vi.stubEnv("CONTAINERS_CONF", "/tmp/nemoclaw-portable/containers.conf");
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-gateway-"));
     try {
@@ -166,6 +168,36 @@ describe("buildDockerDriverGatewayEnv", () => {
       expect(toml).toContain("[openshell.drivers.podman]");
       expect(toml).toContain(`host_gateway_ip = "${PORTABLE_HOST_GATEWAY_IP}"`);
       expect(toml).toContain('socket_path = "/run/user/1001/podman/podman.sock"');
+      expect(toml).not.toContain("supervisor_bin");
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("selects the native Podman gateway without changing portable-only environment", () => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+    vi.stubEnv("CONTAINERS_CONF", "/tmp/nemoclaw-portable/containers.conf");
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-podman-gateway-"));
+    try {
+      const env = buildDockerDriverGatewayEnv({
+        platform: "linux",
+        stateDir,
+        getDockerSupervisorImage: () => "supervisor:test",
+        resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
+      });
+      expect(env).toMatchObject({
+        OPENSHELL_DRIVERS: "podman",
+        OPENSHELL_BIND_ADDRESS: "0.0.0.0",
+        OPENSHELL_GRPC_ENDPOINT: `https://${PORTABLE_HOST_GATEWAY_IP}:8080`,
+      });
+      expect(path.isAbsolute(env.OPENSHELL_PODMAN_SOCKET)).toBe(true);
+      expect(env.OPENSHELL_PODMAN_SOCKET).toMatch(/\/podman\/podman\.sock$/u);
+      expect(env.CONTAINERS_CONF).toBeUndefined();
+      expect(env.NETAVARK_FW).toBeUndefined();
+      const toml = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
+      expect(toml).toContain('compute_drivers = ["podman"]');
+      expect(toml).toContain(`socket_path = "${env.OPENSHELL_PODMAN_SOCKET}"`);
       expect(toml).not.toContain("supervisor_bin");
     } finally {
       vi.unstubAllEnvs();
@@ -199,9 +231,7 @@ describe("buildDockerDriverGatewayEnv", () => {
   });
 });
 
-
 describe("writeDockerGatewayDebEnvOverride", () => {
-
   it("rejects an env file swapped to a symlink after opening without writing its target", () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
     const envDir = path.join(tempHome, ".config", "openshell");
@@ -244,7 +274,6 @@ describe("writeDockerGatewayDebEnvOverride", () => {
     }
   });
 
-
   it("uses the provided HOME as the config root fallback when XDG_CONFIG_HOME is unset", () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-home-"));
     const envFile = path.join(tempHome, ".config", "openshell", "gateway.env");
@@ -275,6 +304,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
     const envFile = path.join(tempHome, ".config", "openshell", "gateway.env");
     const gatewayEnv = buildDockerDriverGatewayEnv({
       platform: "darwin",
+      architecture: "arm64",
       stateDir: path.join(tempHome, "state"),
       getDockerSupervisorImage: () => "ghcr.io/nvidia/openshell/supervisor:0.0.72",
       resolveSandboxBin: () => null,

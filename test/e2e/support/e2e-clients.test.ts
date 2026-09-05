@@ -113,6 +113,17 @@ describe("E2E fixture clients", () => {
     ]);
   });
 
+  it("does not require a stock-image receipt for onboarding help", async () => {
+    const runner = new FakeRunner();
+    const host = new HostCliClient(runner);
+
+    await expect(
+      host.command("node", ["/workspace/bin/nemoclaw.js", "onboard", "--help"], {
+        env: { E2E_MANAGED_IMAGE_REVISION: "a".repeat(40) },
+      }),
+    ).resolves.toMatchObject({ exitCode: 0 });
+  });
+
   it.each([
     { exitCode: 0, expected: true, label: "available" },
     { exitCode: 1, expected: false, label: "missing" },
@@ -484,7 +495,7 @@ describe("E2E fixture clients", () => {
     const containerGateway = new GatewayClient(containerHost, new SandboxClient(containerRunner));
     const runtime = containerGateway.resolveHostRuntime();
     containerRunner.exitCode = 0;
-    containerRunner.stdout = "abc123\n";
+    containerRunner.stdout = "abc123\topenshell-cluster-nemoclaw\n";
     await expect(runtime).resolves.toEqual({ kind: "container", id: "abc123" });
 
     const statusRunner = new FakeRunner();

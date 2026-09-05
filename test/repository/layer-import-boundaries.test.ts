@@ -6,7 +6,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { findLayerImportBoundaryViolations } from "../../scripts/checks/layer-import-boundaries.mts";
+import {
+  findLayerImportBoundaryViolations,
+  findManagedRuntimeBoundaryViolations,
+} from "../../scripts/checks/layer-import-boundaries.mts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 let fixtureCounter = 0;
@@ -41,6 +44,10 @@ function scanFixture(fixture: string, source: string) {
 describe("CLI layer import boundaries (#6245)", () => {
   it("keeps domain, adapter, action, and command layers separated (#6245)", () => {
     expect(findLayerImportBoundaryViolations()).toEqual([]);
+  });
+
+  it("keeps managed runtime orchestration provider-neutral (#9145)", () => {
+    expect(findManagedRuntimeBoundaryViolations()).toEqual([]);
   });
 
   it("collects TypeScript import-equals references (#6245)", () => {
@@ -181,38 +188,37 @@ describe("CLI layer import boundaries (#6245)", () => {
     );
   });
 
-  it.each([
-    "Command",
-    "NemoClawCommand",
-  ])("rejects an unrelated local %s class as a command base (#6245)", (baseName) => {
-    const violations = scanFixture(
-      fixturePath("src/commands", "local-command-base"),
-      `class ${baseName} {}\nexport default class Example extends ${baseName} {}\n`,
-    );
+  it.each(["Command", "NemoClawCommand"])(
+    "rejects an unrelated local %s class as a command base (#6245)",
+    (baseName) => {
+      const violations = scanFixture(
+        fixturePath("src/commands", "local-command-base"),
+        `class ${baseName} {}\nexport default class Example extends ${baseName} {}\n`,
+      );
 
-    expect(violations).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          detail: "command files must define exactly one registered oclif command class; found 0",
-        }),
-      ]),
-    );
-  });
+      expect(violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            detail: "command files must define exactly one registered oclif command class; found 0",
+          }),
+        ]),
+      );
+    },
+  );
 
-  it.each([
-    ".mts",
-    ".cts",
-    ".tsx",
-  ])("scans production %s modules for protected-layer violations (#6245)", (extension) => {
-    const violations = scanFixture(
-      fixturePath("src/lib/actions", "module-extension", extension),
-      'import { Command } from "@oclif/core";\n',
-    );
+  it.each([".mts", ".cts", ".tsx"])(
+    "scans production %s modules for protected-layer violations (#6245)",
+    (extension) => {
+      const violations = scanFixture(
+        fixturePath("src/lib/actions", "module-extension", extension),
+        'import { Command } from "@oclif/core";\n',
+      );
 
-    expect(violations).toEqual(
-      expect.arrayContaining([expect.objectContaining({ rule: "actions-no-oclif" })]),
-    );
-  });
+      expect(violations).toEqual(
+        expect.arrayContaining([expect.objectContaining({ rule: "actions-no-oclif" })]),
+      );
+    },
+  );
 
   it("recognizes alternate-extension action modules outside the actions directory (#6245)", () => {
     const violations = scanFixture(
@@ -311,18 +317,17 @@ describe("CLI layer import boundaries (#6245)", () => {
     }
   });
 
-  it.each([
-    ".test.mts",
-    ".spec.cts",
-    ".test.tsx",
-  ])("excludes %s test modules from the production scan (#6245)", (extension) => {
-    expect(
-      scanFixture(
-        fixturePath("src/lib/actions", "test-module-extension", extension),
-        'import { Command } from "@oclif/core";\n',
-      ),
-    ).toEqual([]);
-  });
+  it.each([".test.mts", ".spec.cts", ".test.tsx"])(
+    "excludes %s test modules from the production scan (#6245)",
+    (extension) => {
+      expect(
+        scanFixture(
+          fixturePath("src/lib/actions", "test-module-extension", extension),
+          'import { Command } from "@oclif/core";\n',
+        ),
+      ).toEqual([]);
+    },
+  );
 
   it("does not recurse through a symbolic-link loop (#6245)", () => {
     const fixtureRoot = fs.mkdtempSync(

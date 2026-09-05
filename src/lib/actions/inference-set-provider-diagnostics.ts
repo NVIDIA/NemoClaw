@@ -19,9 +19,7 @@ interface ProviderDiagnosticDeps {
   log: (message: string) => void;
 }
 
-export function queryRegisteredGatewayProviders(
-  deps: ProviderDiagnosticDeps,
-): string[] | undefined {
+export function queryRegisteredGatewayProviders(deps: ProviderDiagnosticDeps): string[] | undefined {
   try {
     const result = deps.captureOpenshell(["provider", "list", "--names"], {
       ignoreError: true,

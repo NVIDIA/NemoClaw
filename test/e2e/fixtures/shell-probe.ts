@@ -47,13 +47,39 @@ export interface ShellProbeOutputEvent {
 export type { TrustedShellCommand, TrustedShellCommandInput } from "./shell/trusted-command.ts";
 export { trustedShellCommand } from "./shell/trusted-command.ts";
 
+export type LiveE2EAgentName =
+  | "hermes"
+  | "langchain-deepagents-code"
+  | "nemocua"
+  | "openclaw"
+  | "pi";
+
+export function normalizeLiveE2EAgentName(value: string): LiveE2EAgentName {
+  switch (value) {
+    case "hermes":
+      return "hermes";
+    case "langchain-deepagents-code":
+      return "langchain-deepagents-code";
+    case "nemocua":
+      return "nemocua";
+    case "openclaw":
+      return "openclaw";
+    case "pi":
+      return "pi";
+    default:
+      throw new Error("Unsupported E2E agent selector.");
+  }
+}
+
 export function resolveLiveE2eWorkloadSourceEnv(input: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const targetId = input.E2E_TARGET_ID ?? process.env.E2E_TARGET_ID;
   const source = input.E2E_WORKLOAD_SOURCE ?? process.env.E2E_WORKLOAD_SOURCE;
   if (!targetId || source !== "local-dockerfile") return input;
   const localBuildEnvironment = { ...input, NEMOCLAW_SANDBOX_PREBUILD: "1" };
   if (input.NEMOCLAW_FROM_DOCKERFILE) return localBuildEnvironment;
-  const agentName = input.NEMOCLAW_AGENT ?? process.env.NEMOCLAW_AGENT ?? "openclaw";
+  const agentName = normalizeLiveE2EAgentName(
+    input.NEMOCLAW_AGENT ?? process.env.NEMOCLAW_AGENT ?? "openclaw",
+  );
   const agent = loadAgent(agentName, {
     [CANDIDATE_AGENT_FEATURE_ENV]:
       input[CANDIDATE_AGENT_FEATURE_ENV] ?? process.env[CANDIDATE_AGENT_FEATURE_ENV],

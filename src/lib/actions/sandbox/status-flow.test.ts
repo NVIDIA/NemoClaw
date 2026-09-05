@@ -259,7 +259,6 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("last CUDA proof failed: cuInit");
     expect(output).toContain("CUDA initialization failed");
     expect(output).toContain("SSH sessions: 2");
-    expect(output).toContain("Permissions: mutable default");
     expect(output).toContain("Update:");
     expect(output).toContain("Recovered NemoClaw gateway runtime via gateway reattach.");
     expect(output).toContain("Recovered sandbox 'alpha' from Docker via docker unpause");
@@ -576,21 +575,6 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("unreachable");
     expect(output).toContain("Start Ollama and retry");
     expect(output).toContain("http://127.0.0.1:11434/api/tags");
-  });
-
-  it("renders fresh shields posture as not configured rather than down", async () => {
-    const harness = createStatusFlowHarness({
-      shieldsPosture: {
-        mode: "mutable_default",
-        detail: "not configured (default mutable state)",
-      },
-    });
-
-    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
-
-    const output = harness.logSpy.mock.calls.flat().join("\n");
-    expect(output).toContain("Permissions: not configured (default mutable state)");
-    expect(output).not.toContain("Permissions: shields down");
   });
 
   it("renders the live agent version instead of stale registry metadata", async () => {

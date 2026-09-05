@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/schemas/nemoclaw-config-v1.schema.json",
+  "title": "NemoClawConfig v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "const": "nemoclaw.nvidia.com/v1" },
+    "kind": { "const": "NemoClawConfig" },
+    "metadata": { "$ref": "#/$defs/metadata" },
+    "spec": { "$ref": "#/$defs/spec" }
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 63,
+      "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+    },
+    "nonEmpty": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "uid"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "uid": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        }
+      }
+    },
+    "credential": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["env"],
+      "properties": { "env": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,127}$" } }
+    },
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["management", "name", "port"],
+      "properties": {
+        "management": { "const": "nemoclaw" },
+        "name": { "$ref": "#/$defs/name" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "provider", "api", "endpoint"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "provider": { "$ref": "#/$defs/nonEmpty" },
+        "api": { "$ref": "#/$defs/nonEmpty" },
+        "endpoint": { "type": "string", "pattern": "^https://[^\\s]+$" },
+        "credential": { "$ref": "#/$defs/credential" }
+      }
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "providerRef", "overrides"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "providerRef": { "$ref": "#/$defs/name" },
+        "overrides": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model"],
+          "properties": {
+            "model": { "$ref": "#/$defs/nonEmpty" }
+          }
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "inference"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "type": { "const": "openclaw" },
+        "inference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["routes"],
+          "properties": {
+            "routes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/route" } }
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "image"],
+      "properties": {
+        "provider": { "$ref": "#/$defs/nonEmpty" },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ref", "digest"],
+          "properties": {
+            "ref": { "$ref": "#/$defs/nonEmpty" },
+            "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+          }
+        }
+      }
+    },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "runtime", "network", "agents"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "runtime": { "$ref": "#/$defs/runtime" },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["policy"],
+          "properties": {
+            "policy": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["explicit"],
+              "properties": {
+                "explicit": {
+                  "$ref": "https://github.com/NVIDIA/NemoClaw/schemas/sandbox-policy.schema.json"
+                }
+              }
+            }
+          }
+        },
+        "agents": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/agent" } }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gateway", "inferenceProviders", "sandboxes"],
+      "properties": {
+        "gateway": { "$ref": "#/$defs/gateway" },
+        "inferenceProviders": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/provider" }
+        },
+        "sandboxes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/sandbox" } }
+      }
+    }
+  }
+}

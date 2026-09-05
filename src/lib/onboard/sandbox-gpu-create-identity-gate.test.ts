@@ -148,6 +148,7 @@ describe("created sandbox identity gate", () => {
 
     expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list", "-g", gatewayName], {
       ignoreError: true,
+      killProcessTreeOnTimeout: true,
       timeout: 5_000,
     });
     expect(deps.runOpenshell).toHaveBeenCalledWith(

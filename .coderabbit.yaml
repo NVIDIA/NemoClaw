@@ -144,7 +144,7 @@ reviews:
           state/backup invariants, and cover failure, recovery, rebuild, and resume
           behavior without bypassing the public action boundary.
 
-    - path: "src/lib/{security,credentials,shields}/**"
+    - path: "src/lib/{security,credentials}/**"
       instructions: &security-boundary |
         Treat this as a security boundary.
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { hasSandboxListEntry } from "../state/gateway";
+import { getSandboxFailurePhase, hasSandboxListEntry, isSandboxReady } from "../state/gateway";
 import {
   canFallbackToDockerGpuCompatibility,
   type DockerGpuRoutePlan,
@@ -20,6 +20,8 @@ import {
 } from "./sandbox-gpu-fallback-constants";
 
 export type SandboxGpuCreateFailureStage = "create" | "readiness" | "gpu-proof";
+
+export { getSandboxFailurePhase, isSandboxReady };
 
 export type SandboxGpuCreateAttemptSuccess<T> = {
   ok: true;

@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+import { restoreEnvBulk } from "../../../../test/helpers/env-test-helpers";
 import * as dockerImage from "../../adapters/docker/image";
 import * as agentDefs from "../../agent/defs";
 import * as agentOnboard from "../../agent/onboard";
@@ -65,20 +66,30 @@ function makeBail(): (msg: string, code?: number) => never {
 }
 
 describe("rebuild target gateway preflight", () => {
-  const priorGateway = process.env.OPENSHELL_GATEWAY;
+  const priorOpenShellEnv = {
+    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY,
+    OPENSHELL_GATEWAY_ENDPOINT: process.env.OPENSHELL_GATEWAY_ENDPOINT,
+    OPENSHELL_LOCAL_TLS_DIR: process.env.OPENSHELL_LOCAL_TLS_DIR,
+    OPENSHELL_TOKEN: process.env.OPENSHELL_TOKEN,
+    OPENSHELL_WORKSPACE: process.env.OPENSHELL_WORKSPACE,
+  };
 
   afterEach(() => {
     vi.restoreAllMocks();
-    switch (priorGateway) {
-      case undefined:
-        delete process.env.OPENSHELL_GATEWAY;
-        break;
-      default:
-        process.env.OPENSHELL_GATEWAY = priorGateway;
-    }
+    restoreEnvBulk(priorOpenShellEnv);
   });
 
   it("health-checks and pins the sandbox's persisted gateway", async () => {
+    process.env.OPENSHELL_GATEWAY = "hostile-gateway";
+    process.env.OPENSHELL_GATEWAY_ENDPOINT = "https://hostile.invalid";
+    process.env.OPENSHELL_LOCAL_TLS_DIR = "/hostile/tls";
+    process.env.OPENSHELL_TOKEN = "hostile-token";
+    process.env.OPENSHELL_WORKSPACE = "hostile-workspace";
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-19080",
+      localTlsDir: "/authority/tls",
+      workspace: "default",
+    };
     const recover = vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
       recovered: true,
       before: { state: "connected_other", status: "", gatewayInfo: "", activeGateway: null },
@@ -92,11 +103,54 @@ describe("rebuild target gateway preflight", () => {
         { name: "alpha", gatewayName: "nemoclaw-19080", gatewayPort: 19080 },
         () => undefined,
         makeBail(),
+        runtimeSelection,
+      ),
+    ).resolves.toBe(true);
+
+    expect(recover).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-19080",
+      runtimeSelection,
+    });
+    expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
+    expect(process.env.OPENSHELL_WORKSPACE).toBe("default");
+    expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBe("/authority/tls");
+    expect(process.env.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();
+    expect(process.env.OPENSHELL_TOKEN).toBeUndefined();
+  });
+
+  it("keeps non-MCP ambient selectors while pinning the recorded gateway (#10514)", async () => {
+    process.env.OPENSHELL_GATEWAY = "hostile-gateway";
+    process.env.OPENSHELL_GATEWAY_ENDPOINT = "https://hostile.invalid";
+    process.env.OPENSHELL_LOCAL_TLS_DIR = "/hostile/tls";
+    process.env.OPENSHELL_TOKEN = "hostile-token";
+    process.env.OPENSHELL_WORKSPACE = "hostile-workspace";
+    const recover = vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
+      recovered: true,
+      before: { state: "connected_other", status: "", gatewayInfo: "", activeGateway: null },
+      after: {
+        state: "healthy_named",
+        status: "",
+        gatewayInfo: "",
+        activeGateway: "nemoclaw-19080",
+      },
+      attempted: true,
+    });
+
+    await expect(
+      ensureRebuildTargetGatewaySelected(
+        "alpha",
+        { name: "alpha", gatewayName: "nemoclaw-19080", gatewayPort: 19080 },
+        vi.fn(),
+        makeBail(),
       ),
     ).resolves.toBe(true);
 
     expect(recover).toHaveBeenCalledWith({ gatewayName: "nemoclaw-19080" });
     expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
+    expect(process.env.OPENSHELL_GATEWAY_ENDPOINT).toBe("https://hostile.invalid");
+    expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBe("/hostile/tls");
+    expect(process.env.OPENSHELL_TOKEN).toBe("hostile-token");
+    expect(process.env.OPENSHELL_WORKSPACE).toBe("hostile-workspace");
   });
 
   it("fails closed when the target gateway cannot become healthy", async () => {
@@ -164,30 +218,37 @@ describe("rebuild agent base image preflight", () => {
     };
   }
 
-  it("forces a repository-local build and returns its exact ref when no override exists", () => {
-    const imageRef = `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`;
-    const trustedLocalOverride = {
-      ref: imageRef,
-      provenance: `${"b".repeat(64)}.${"c".repeat(64)}`,
-    };
+  it("uses the pinned Hermes base when a legacy sandbox has no resolution hint (#10903)", () => {
+    const imageRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
     const { ensureAgentBaseImage } = mockBaseImagePreflight(imageRef);
     ensureAgentBaseImage.mockReturnValue({
       imageTag: imageRef,
-      built: true,
-      trustedLocalOverride,
+      built: false,
     });
 
     const result = ensureRebuildAgentBaseImage("hermes", makeBail());
 
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.objectContaining({ name: "hermes" }), {
-      forceBaseImageRebuild: true,
+      allowLocalFallback: false,
+      forceBaseImageRebuild: false,
     });
     expect(result).toEqual({
       ok: true,
       imageRef,
       overrideEnvVar,
-      trustedLocalOverride,
     });
+  });
+
+  it("rejects a missing Hermes base when a legacy sandbox has no resolution hint (#10903)", () => {
+    const { ensureAgentBaseImage } = mockBaseImagePreflight("");
+    ensureAgentBaseImage.mockReturnValue({
+      imageTag: null,
+      built: false,
+    });
+
+    expect(() => ensureRebuildAgentBaseImage("hermes", makeBail())).toThrow(
+      "Hermes rebuild requires the release-pinned immutable base image",
+    );
   });
 
   it("hands a pinned NemoCUA image alias to the inner sandbox create (#9649)", () => {
@@ -655,14 +716,7 @@ describe("backupSandboxStateForRebuild failure safety", () => {
       manifest: null,
     });
     expect(() =>
-      backupSandboxStateForRebuild(
-        "alpha",
-        makeSandboxEntry(),
-        false,
-        () => undefined,
-        () => true,
-        makeBail(),
-      ),
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
     ).toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
@@ -690,20 +744,10 @@ describe("backupSandboxStateForRebuild failure safety", () => {
       // that claims otherwise.
       manifest: null,
     });
-    const relockShieldsIfNeeded = vi.fn(() => true);
 
     expect(() =>
-      backupSandboxStateForRebuild(
-        "alpha",
-        makeSandboxEntry(),
-        false,
-        () => undefined,
-        relockShieldsIfNeeded,
-        makeBail(),
-      ),
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
     ).toThrow("bail: Failed to back up sandbox state.");
-    expect(relockShieldsIfNeeded).toHaveBeenCalledOnce();
-    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(
@@ -740,14 +784,7 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     });
 
     expect(() =>
-      backupSandboxStateForRebuild(
-        "alpha",
-        makeSandboxEntry(),
-        false,
-        () => undefined,
-        () => true,
-        makeBail(),
-      ),
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
     ).toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
@@ -770,14 +807,7 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     });
 
     expect(() =>
-      backupSandboxStateForRebuild(
-        "alpha",
-        makeSandboxEntry(),
-        false,
-        () => undefined,
-        () => true,
-        makeBail(),
-      ),
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
     ).toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
@@ -787,7 +817,6 @@ describe("backupSandboxStateForRebuild failure safety", () => {
   });
 
   it("aborts when one state directory fails after other state was preserved", () => {
-    const relockShieldsIfNeeded = vi.fn(() => true);
     backupSpy.mockReturnValue({
       success: false,
       backedUpDirs: ["memories", "sessions"],
@@ -803,15 +832,12 @@ describe("backupSandboxStateForRebuild failure safety", () => {
         makeSandboxEntry(),
         false,
         () => undefined,
-        relockShieldsIfNeeded,
         makeBail(),
       ),
     ).toThrow("bail: Failed to back up sandbox state.");
-    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
   });
 
   it("aborts before rebuild when the workspace backup fails (#10639)", () => {
-    const relockShieldsIfNeeded = vi.fn(() => true);
     backupSpy.mockReturnValue({
       success: false,
       backedUpDirs: ["extensions"],
@@ -827,12 +853,10 @@ describe("backupSandboxStateForRebuild failure safety", () => {
         makeSandboxEntry(),
         false,
         () => undefined,
-        relockShieldsIfNeeded,
         makeBail(),
       ),
     ).toThrow("bail: Failed to back up sandbox state.");
 
-    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(errorLines.some((line: string) => line.includes("workspace"))).toBe(true);
     expect(
@@ -881,7 +905,7 @@ describe("warnUnpreservedUserManagedFiles", () => {
     warnUnpreservedUserManagedFiles("alpha", () => undefined);
 
     expect(probeSpy).toHaveBeenCalledOnce();
-    expect(probeSpy).toHaveBeenCalledWith("alpha");
+    expect(probeSpy).toHaveBeenCalledWith("alpha", undefined);
 
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(
@@ -922,7 +946,6 @@ describe("warnUnpreservedUserManagedFiles", () => {
       makeSandboxEntry(),
       true,
       () => undefined,
-      () => true,
       makeBail(),
     );
 
@@ -937,7 +960,6 @@ describe("warnUnpreservedUserManagedFiles", () => {
       makeSandboxEntry(),
       false,
       () => undefined,
-      () => true,
       makeBail(),
     );
 
@@ -977,14 +999,7 @@ describe("warnUnpreservedUserManagedFiles", () => {
     });
 
     expect(() =>
-      backupSandboxStateForRebuild(
-        "alpha",
-        makeSandboxEntry(),
-        false,
-        () => undefined,
-        () => true,
-        makeBail(),
-      ),
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
     ).toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));

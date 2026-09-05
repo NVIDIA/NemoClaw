@@ -4,9 +4,9 @@
 import {
   checkOpenAiInferenceProviderProfile,
   type EndpointlessProviderProfileRunner,
-} from "../../adapters/openshell/provider-profile";
+} from "../../adapters/openshell/provider-profile-registration";
 
-export { OPENAI_GATEWAY_PROVIDER_TYPE } from "../../adapters/openshell/provider-profile";
+export { OPENAI_GATEWAY_PROVIDER_TYPE } from "../../adapters/openshell/provider-profile-registration";
 
 export type InferenceProviderProfileDeps = {
   readonly runOpenshell: EndpointlessProviderProfileRunner;

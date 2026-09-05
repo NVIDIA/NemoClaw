@@ -17,11 +17,8 @@
  * onboard successful.
  */
 
-import { dockerCapture, dockerRun } from "../adapters/docker/run";
-import { cliName } from "./branding";
 import {
   DEFAULT_DOCKER_DRIVER_NETWORK_NAME,
-  DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
   parseDockerNetworkIpamEntries,
   resolveDockerDriverNetworkName,
 } from "./experimental/docker-network-authority";
@@ -29,6 +26,9 @@ import {
   isPortableExperimentalProfile,
   PORTABLE_HOST_GATEWAY_IP,
 } from "./experimental/portable-profile";
+import type { RuntimeProviderGatewayHostRuntime } from "./runtime-provider/contract";
+import { prepareConfiguredGatewayHostRuntime } from "./docker-driver-gateway-env";
+export { formatHostServiceUnreachableMessage } from "./reachability/host-service-message";
 
 export const DEFAULT_PROBE_NETWORK = DEFAULT_DOCKER_DRIVER_NETWORK_NAME;
 const HOST_INTERNAL_NAME = "host.openshell.internal";
@@ -69,52 +69,16 @@ export interface HostServiceReachabilityOptions {
   runImpl?: (args: readonly string[], timeoutMs: number) => ProbeRunResult;
   inspectNetworkImpl?: (networkName: string) => { subnet?: string; gatewayIp?: string } | undefined;
   usesHostGatewayRouteImpl?: () => boolean;
+  platform?: NodeJS.Platform;
+  gatewayRuntime?: RuntimeProviderGatewayHostRuntime;
 }
 
 function parseNetworkIpamConfig(raw: string): { subnet?: string; gatewayIp?: string } | undefined {
   for (const entry of parseDockerNetworkIpamEntries(raw) ?? []) {
     const { subnet, gatewayIp } = entry;
-    // Skip IPv6-only entries (contain colons)
     if (gatewayIp && !gatewayIp.includes(":")) return { subnet, gatewayIp };
   }
   return undefined;
-}
-
-function defaultInspectNetwork(
-  networkName: string,
-): { subnet?: string; gatewayIp?: string } | undefined {
-  const raw = dockerCapture(
-    ["network", "inspect", "--format", DOCKER_NETWORK_IPAM_INSPECT_FORMAT, networkName],
-    { ignoreError: true },
-  );
-  return parseNetworkIpamConfig(raw);
-}
-
-// Docker Desktop and VM-backed Docker use the runtime's host-gateway alias
-// instead of the inspected bridge IP. These routes do not support native
-// Docker bridge UFW remediation.
-function defaultUsesHostGatewayRoute(): boolean {
-  if (process.platform !== "linux") return true;
-  const info = dockerCapture(
-    ["info", "--format", "{{.OperatingSystem}}\n{{range .Labels}}{{.}}\n{{end}}"],
-    { ignoreError: true },
-  );
-  return /Docker Desktop|com\.docker\.desktop\./i.test(info);
-}
-
-function defaultRunImpl(args: readonly string[], timeoutMs: number): ProbeRunResult {
-  const result = dockerRun(args, {
-    timeout: timeoutMs,
-    ignoreError: true,
-    suppressOutput: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  return {
-    status: result.status ?? null,
-    signal: result.signal,
-    error: result.error?.message,
-    stderr: result.stderr,
-  };
 }
 
 function outputTail(value: unknown): string | undefined {
@@ -136,10 +100,16 @@ export async function probeHostServiceSandboxReachability(
   const port = opts.port;
   const timeoutSec = opts.timeoutSec ?? PROBE_TIMEOUT_SEC;
   const probeImage = opts.probeImage ?? PROBE_IMAGE;
-  const inspectNetwork = opts.inspectNetworkImpl ?? defaultInspectNetwork;
-  const usesHostGatewayRoute = opts.usesHostGatewayRouteImpl ?? defaultUsesHostGatewayRoute;
-  const runImpl = opts.runImpl ?? defaultRunImpl;
 
+  const portableProfile = isPortableExperimentalProfile();
+  const platform = opts.platform ?? process.platform;
+  const managedGatewayRuntime =
+    opts.gatewayRuntime ??
+    prepareConfiguredGatewayHostRuntime({ environment: process.env, platform });
+  const inspectNetwork = opts.inspectNetworkImpl ?? managedGatewayRuntime.network.inspect;
+  const usesHostGatewayRoute =
+    opts.usesHostGatewayRouteImpl ?? managedGatewayRuntime.network.usesHostGatewayRoute;
+  const runImpl = opts.runImpl ?? managedGatewayRuntime.network.run;
   const network = inspectNetwork(networkName);
   if (!network) {
     return {
@@ -147,13 +117,16 @@ export async function probeHostServiceSandboxReachability(
       reason: "probe_unavailable",
       port,
       networkName,
-      detail: `Docker network "${networkName}" not found`,
+      detail: `Runtime network "${networkName}" not found`,
     };
   }
-
-  const portableProfile = isPortableExperimentalProfile();
-  const isHostGateway = portableProfile ? false : usesHostGatewayRoute();
-  const usesNonBridgeRoute = portableProfile || isHostGateway;
+  const providerHostAddress = portableProfile
+    ? PORTABLE_HOST_GATEWAY_IP
+    : managedGatewayRuntime.sandboxHostAddress;
+  const isHostGateway =
+    providerHostAddress === null &&
+    (managedGatewayRuntime.usesHostGatewayRoute === true || usesHostGatewayRoute());
+  const usesNonBridgeRoute = providerHostAddress !== null || isHostGateway;
 
   if (!usesNonBridgeRoute && !network.gatewayIp) {
     return {
@@ -166,8 +139,8 @@ export async function probeHostServiceSandboxReachability(
     };
   }
 
-  const hostInternalTarget = portableProfile
-    ? PORTABLE_HOST_GATEWAY_IP
+  const hostInternalTarget = providerHostAddress
+    ? providerHostAddress
     : isHostGateway
       ? "host-gateway"
       : (network.gatewayIp as string);
@@ -234,32 +207,6 @@ export async function probeHostServiceSandboxReachability(
     gatewayIp: network.gatewayIp,
     detail: `sandbox container on "${networkName}" could not reach ${HOST_INTERNAL_NAME}:${port}`,
   };
-}
-
-export function formatHostServiceUnreachableMessage(
-  result: HostServiceReachabilityResult,
-  options: { serviceLabel: string; port?: number },
-): string {
-  if (result.ok || result.reason !== "tcp_failed") return "";
-
-  const port = options.port ?? result.port;
-  const allowCmd =
-    result.subnet && result.gatewayIp
-      ? `      sudo ufw allow from ${result.subnet} to ${result.gatewayIp} port ${port} proto tcp`
-      : result.subnet
-        ? `      sudo ufw allow from ${result.subnet} to any port ${port} proto tcp`
-        : [
-            `      SUBNET=$(docker network inspect ${result.networkName ?? DEFAULT_PROBE_NETWORK} --format '{{(index .IPAM.Config 0).Subnet}}')`,
-            `      sudo ufw allow from "$SUBNET" to any port ${port} proto tcp`,
-          ].join("\n");
-
-  return [
-    `  ✗ Sandbox containers cannot reach the ${options.serviceLabel} at ${HOST_INTERNAL_NAME}:${port}.`,
-    "    A host firewall may be blocking traffic from the OpenShell Docker bridge.",
-    "    To allow it:",
-    allowCmd,
-    `    Then rerun \`${cliName()} onboard\`.`,
-  ].join("\n");
 }
 
 export const __test = {
