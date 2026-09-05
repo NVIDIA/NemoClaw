@@ -50,15 +50,22 @@ describe("OpenShell forward service", () => {
     );
   });
 
-  it("detaches the OpenShell child and waits for its local port", () => {
+  it("accepts an owned listener without opening a ForwardTcp connection (#11084)", () => {
     const unref = vi.fn();
-    const spawnDetached = vi.fn(() => ({ pid: 41, unref }));
-    let probes = 0;
+    let spawned = false;
+    const spawnDetached = vi.fn(() => {
+      spawned = true;
+      return { pid: 41, unref };
+    });
+    const isReachable = vi.fn(() => {
+      expect(spawned).toBe(false);
+      return false;
+    });
 
     launchForwardService(target, {
       getProcessIdentity: stableProcessIdentity,
       isListenerOwned: () => true,
-      isReachable: () => ++probes >= 3,
+      isReachable,
       isProcessRunning: () => true,
       sleep: () => {},
       spawnDetached,
@@ -71,6 +78,7 @@ describe("OpenShell forward service", () => {
       expect.any(Object),
     );
     expect(unref).toHaveBeenCalledOnce();
+    expect(isReachable).toHaveBeenCalledTimes(2);
   });
 
   it("refuses an occupied port without launching or adopting its listener", () => {
@@ -113,7 +121,7 @@ describe("OpenShell forward service", () => {
       getProcessIdentity: stableProcessIdentity,
       isListenerOwned: () => true,
       isProcessRunning: (pid) => pid === 52,
-      isReachable: () => spawnDetached.mock.calls.length === 2,
+      isReachable: () => false,
       retryDelayMs: 0,
       sleep: () => {},
       spawnDetached,
@@ -224,22 +232,22 @@ describe("OpenShell forward service", () => {
         stopProcess,
         timeoutMs: 1_000,
       }),
-    ).toThrow(/became reachable.*owned by another process.*refused to report success/u);
+    ).toThrow(/remained reachable.*refusing to adopt its listener or retry/u);
     expect(stopProcess).toHaveBeenCalledWith(72, "SIGTERM");
   });
 
   it.runIf(process.platform === "linux")(
     "tracks the spawned process by its Linux start time (#11084)",
     () => {
-      let probes = 0;
+      const isReachable = vi.fn(() => false);
 
       launchForwardService(target, {
         isListenerOwned: () => true,
-        isReachable: () => ++probes >= 3,
+        isReachable,
         spawnDetached: () => ({ pid: process.pid, unref: vi.fn() }),
       });
 
-      expect(probes).toBe(3);
+      expect(isReachable).toHaveBeenCalledTimes(2);
     },
   );
 
@@ -292,9 +300,9 @@ describe("OpenShell forward service", () => {
 
       launchForwardService(target, {
         getProcessIdentity: stableProcessIdentity,
-        isListenerOwned: () => true,
+        isListenerOwned: () => spawnCount === 2,
         isProcessRunning: () => running,
-        isReachable: () => spawnCount === 2,
+        isReachable: () => false,
         retryDelayMs: 0,
         sleep: () => {},
         spawnDetached,

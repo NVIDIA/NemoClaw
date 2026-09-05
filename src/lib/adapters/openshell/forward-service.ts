@@ -414,39 +414,18 @@ export function launchForwardService(
         exited = true;
         break;
       }
-      if (isReachable(target.localPort)) {
-        const listenerOwnership = listenerIsOwned(child.pid, target.localPort);
-        if (
-          listenerOwnership === true &&
-          processIdentityStatus(child.pid, childIdentity, readProcessIdentity) === "owned"
-        ) {
-          return;
-        }
-        const stopResult = stopOwnedProcess(
-          child.pid,
-          childIdentity,
-          readProcessIdentity,
-          processIsRunning,
-          stopProcess,
-          sleep,
-          options.stopTimeoutMs ?? STOP_TIMEOUT_MS,
-        );
-        const ownershipFailure =
-          listenerOwnership === false
-            ? "is owned by another process"
-            : "could not be verified as owned by the launched process";
-        if (stopResult !== "stopped") {
-          throw new Error(
-            `Host port ${String(target.localPort)} became reachable but ${ownershipFailure}; ` +
-              `the launched process could not be stopped safely; refusing to report success or retry; ` +
-              `forward list: ${describeFailureState(options.describeState)}`,
-          );
-        }
-        throw new Error(
-          `Host port ${String(target.localPort)} became reachable but ${ownershipFailure}; ` +
-            `stopped the launched process and refused to report success; forward list: ${describeFailureState(options.describeState)}`,
-        );
+      const listenerOwnership = listenerIsOwned(child.pid, target.localPort);
+      if (
+        listenerOwnership === true &&
+        processIdentityStatus(child.pid, childIdentity, readProcessIdentity) === "owned"
+      ) {
+        return;
       }
+      // OpenShell opens the host listener before it creates a sandbox relay.
+      // Connecting here is not a passive readiness check: the accepted socket
+      // starts ForwardTcp, and a sandbox that is still settling can reject that
+      // first relay and make the foreground service exit. Inspect the launched
+      // process's listener ownership without connecting to the service.
       if (Date.now() >= deadline) break;
       sleep(POLL_INTERVAL_MS);
     }
@@ -473,7 +452,13 @@ export function launchForwardService(
             : "could not stop that process";
         throw new Error(
           `OpenShell forward service process ${String(child.pid)} remained unbound after ${String(options.timeoutMs ?? START_TIMEOUT_MS)}ms and ${reason}; ` +
-            `refusing to signal or retry; forward list: ${describeFailureState(options.describeState)}`,
+          `refusing to signal or retry; forward list: ${describeFailureState(options.describeState)}`,
+        );
+      }
+      if (isReachable(target.localPort)) {
+        throw new Error(
+          `Host port ${String(target.localPort)} remained reachable after the launched process stopped; ` +
+            `refusing to adopt its listener or retry; forward list: ${describeFailureState(options.describeState)}`,
         );
       }
       finalFailure = "was stopped after failing to bind";
