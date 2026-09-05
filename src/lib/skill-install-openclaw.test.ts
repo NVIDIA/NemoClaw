@@ -42,7 +42,7 @@ afterEach(() => {
 
 describe("OpenClaw native skill installation", () => {
   it.runIf(process.platform === "linux")(
-    "executes native publication, provenance, replacement, refusal, and staging cleanup",
+    "executes native publication, provenance, reconciliation, refusal, and staging cleanup",
     () => {
       const skill = makeSkill();
       const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-root-"));
@@ -65,7 +65,7 @@ set -eu
 case "$1 $2" in
   "skills install")
     if [ "\${3:-}" = "--help" ]; then
-      printf '%s\\n' '--agent --force'
+      printf '%s\\n' '--agent'
       exit 0
     fi
     case " $* " in *" --agent main "*) ;; *) exit 65 ;; esac
@@ -136,13 +136,26 @@ esac
       );
 
       const firstDigest = computeSkillContentDigest(skill);
+      checkState = "blocked";
+      expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
+        success: false,
+        uploaded: 0,
+        reason: "verification_failed",
+      });
+      expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toContain("# Demo");
+      expect(JSON.parse(fs.readFileSync(provenancePath, "utf8"))).toMatchObject({
+        phase: "pending",
+        contentDigest: firstDigest,
+        previousDigest: null,
+      });
+      checkState = "eligible";
       expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
         success: true,
         uploaded: 1,
         contentDigest: firstDigest,
       });
-      expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toContain("# Demo");
       expect(fs.readFileSync(provenancePath, "utf8")).toContain(`"contentDigest":"${firstDigest}"`);
+      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(1);
       expect(
         fs.readdirSync(sandboxRoot).filter((entry) => entry.startsWith(".nemoclaw-skill-stage.")),
       ).toEqual([]);
@@ -150,36 +163,12 @@ esac
       fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: demo-skill\n---\n# Updated\n");
       const updatedDigest = computeSkillContentDigest(skill);
       expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
-        success: true,
-        uploaded: 1,
-        contentDigest: updatedDigest,
-      });
-      expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toContain(
-        "# Updated",
-      );
-      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toEqual([
-        expect.not.stringContaining("--force"),
-        expect.stringContaining("--force"),
-      ]);
-
-      checkState = "blocked";
-      expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
         success: false,
         uploaded: 0,
-        reason: "verification_failed",
+        reason: "update_unsupported",
       });
-      checkState = "eligible";
-      expect(JSON.parse(fs.readFileSync(provenancePath, "utf8"))).toMatchObject({
-        phase: "pending",
-        contentDigest: updatedDigest,
-        previousDigest: updatedDigest,
-      });
-      expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
-        success: true,
-        uploaded: 1,
-        contentDigest: updatedDigest,
-      });
-      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(3);
+      expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toContain("# Demo");
+      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(1);
 
       const installedContent = fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8");
       fs.rmSync(provenancePath);
@@ -236,7 +225,7 @@ esac
       expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toBe(
         installedContent,
       );
-      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(3);
+      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(1);
       expect(
         fs.readdirSync(sandboxRoot).filter((entry) => entry.startsWith(".nemoclaw-skill-stage.")),
       ).toEqual([]);
@@ -329,6 +318,7 @@ esac
     [3, "CAPABILITY_MISSING\n", "native_capability_missing"],
     [4, "installer output\nVERIFY_FAILED\n", "verification_failed"],
     [5, "LEGACY_COLLISION\n", "legacy_destination_exists"],
+    [6, "UPDATE_UNSUPPORTED\n", "update_unsupported"],
   ] as const)("maps native failure %s to %s", (status, stdout, reason) => {
     const skill = makeSkill();
     const provenanceStateDir = fs.mkdtempSync(

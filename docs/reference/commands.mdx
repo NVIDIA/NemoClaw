@@ -2373,7 +2373,7 @@ The skill directory must contain a `SKILL.md` file with YAML frontmatter that in
 
 OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, refer to [Install OpenClaw Plugins](../manage-sandboxes/install-openclaw-plugins). For a skill, NemoClaw creates an exact host snapshot, transfers it into a private staging directory, and invokes the pinned native OpenClaw workspace installer for the explicit `main` agent. OpenClaw owns publication into `/sandbox/.openclaw/workspace/skills/<name>`, source metadata, precedence, and activation. NemoClaw verifies the installed digest plus native `skills list`, `skills info`, and `skills check` results before reporting success.
 
-NemoClaw stores ownership evidence in protected host state bound to the exact live sandbox identity. It updates an existing workspace skill only when that evidence matches the current workspace digest; otherwise it refuses the collision without replacing the skill. It also refuses installation when the former `/sandbox/.openclaw/skills/<name>` path exists, preventing old and native destinations from becoming competing authorities. Inspect both paths and migrate legacy content manually before retrying. If publication finishes but verification is interrupted, retry with the same local content so NemoClaw can reconcile the pending operation. Start a new OpenClaw session to load the installed or updated skill; the command does not edit `sessions.json`.
+NemoClaw stores ownership evidence in protected host state bound to the exact live sandbox identity. An exact-content retry verifies the unchanged workspace skill, and an interrupted fresh installation can reconcile the pending operation. Changed-content updates are refused because pinned OpenClaw 2026.7.1 has no compare-and-swap contract that can atomically bind the verified current content to a forced replacement. It also refuses installation when the former `/sandbox/.openclaw/skills/<name>` path exists, preventing old and native destinations from becoming competing authorities. Inspect both paths and migrate legacy or changed content manually before retrying. Start a new OpenClaw session to load the installed skill; the command does not edit `sessions.json`.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -2393,7 +2393,7 @@ Files with names starting with `.` (dotfiles) are skipped and listed in the outp
 
 Secure snapshot installation is limited to 1,024 selected files and 64 MiB of total file content. The command refuses larger inputs before contacting the sandbox.
 
-For OpenClaw, an existing workspace skill is updated only when protected provenance proves that NemoClaw installed the unchanged current content. Hermes updates its generic sandbox skill path in place. Chat history is preserved. Deep Agents supports only fresh-name installs because its active skill directory is shared with agent-authored content. Follow the agent-specific activation guidance above after installation.
+For OpenClaw, exact-content retries are verified but changed-content updates are refused until the native installer provides an atomic conditional-update contract. Hermes updates its generic sandbox skill path in place. Chat history is preserved. Deep Agents supports only fresh-name installs because its active skill directory is shared with agent-authored content. Follow the agent-specific activation guidance above after installation.
 
 ### `$$nemoclaw <name> skill remove <skill>`
 

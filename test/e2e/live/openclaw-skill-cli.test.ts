@@ -121,7 +121,7 @@ async function expectSandboxShellZero(
 }
 
 test(
-  "openclaw-skill-cli: NemoClaw native install/update roundtrip uses workspace path",
+  "openclaw-skill-cli: NemoClaw native install and collision roundtrip uses workspace path",
   {
   timeout: INSTALL_TIMEOUT_MS + 10 * 60_000,
   meta: {
@@ -130,7 +130,7 @@ test(
       "clear the OpenClaw skill CLI sandbox",
       "install and onboard the OpenClaw sandbox",
       "confirm OpenClaw runtime directories",
-      "refuse a foreign collision, then install and update through NemoClaw",
+      "refuse a foreign collision, then install through NemoClaw",
       "inspect the installed skill through every CLI view",
       "record the workspace skill contract",
     ],
@@ -153,7 +153,7 @@ test(
       "OPENCLAW_HOME, OPENCLAW_STATE_DIR, and OPENCLAW_WORKSPACE_DIR reach the sandbox runtime shell",
       "nemoclaw skill install securely hands host content to the native OpenClaw installer",
       "a same-name workspace skill without protected host provenance is not replaced",
-      "a second install updates only the receipt-owned unchanged workspace skill",
+      "changed-content updates fail closed without a native compare-and-swap contract",
       "the installed SKILL.md lands under ${OPENCLAW_WORKSPACE_DIR}/skills/<id>",
       "openclaw skills list --agent main --json enumerates the installed workspace skill",
       "openclaw skills info <id> --agent main --json reports the workspace install path",
@@ -234,7 +234,7 @@ test(
     ).toMatch(new RegExp(`^${requiredVar}=.+$`, "m"));
   });
 
-  progress.phase("refuse a foreign collision, then install and update through NemoClaw");
+  progress.phase("refuse a foreign collision, then install through NemoClaw");
   fs.mkdirSync(localSkillDir, { recursive: true });
   fs.writeFileSync(path.join(localSkillDir, "SKILL.md"), skillPayload("HOST_FIXTURE_VERSION=1"));
 
@@ -278,18 +278,18 @@ test(
     "node",
     [CLI_ENTRYPOINT, SANDBOX_NAME, "skill", "install", localSkillDir],
     {
-      artifactName: "nemoclaw-openclaw-skill-update-fixture",
+      artifactName: "nemoclaw-openclaw-skill-update-refusal",
       env,
       timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
     },
   );
-  expect(skillUpdate.exitCode, resultText(skillUpdate)).toBe(0);
+  expect(skillUpdate.exitCode, resultText(skillUpdate)).not.toBe(0);
   await artifacts.writeText("openclaw-skills-update-output.txt", resultText(skillUpdate));
 
   progress.phase("inspect the installed skill through every CLI view");
   const diskCheck = await expectSandboxShellZero(
     sandbox,
-    `ls -1 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/" 2>&1 && grep -Fq HOST_FIXTURE_VERSION=2 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md" && test -z "$(find /sandbox/.openclaw -maxdepth 1 -name '.nemoclaw-skill-stage.*' -print -quit)"`,
+    `ls -1 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/" 2>&1 && grep -Fq HOST_FIXTURE_VERSION=1 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md" && test -z "$(find /sandbox/.openclaw -maxdepth 1 -name '.nemoclaw-skill-stage.*' -print -quit)"`,
     "sandbox-openclaw-skill-cli-disk-check",
     env,
   );

@@ -421,6 +421,10 @@ export async function installSandboxSkill(
         console.error(
           `  Skill snapshot exceeds the ${skillInstall.SKILL_SNAPSHOT_MAX_FILES}-file or ${skillInstall.SKILL_SNAPSHOT_MAX_BYTES / (1024 * 1024)} MiB limit; no sandbox install began.`,
         );
+      } else if (native.reason === "update_unsupported") {
+        console.error(
+          `  Refusing to update ${paths.uploadDir}: the pinned OpenClaw installer cannot atomically bind the checked content to a forced replacement.`,
+        );
       } else if (native.reason === "provenance_failed") {
         console.error(
           "  Protected host provenance for this OpenClaw skill could not be validated or updated.",

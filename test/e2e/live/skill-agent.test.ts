@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
@@ -24,19 +23,17 @@ import {
   VERIFY_PHRASE,
 } from "../support/skill-agent-classifiers.ts";
 
-// Keep this as a direct live test: the contract is skill fixture
-// injection into a real OpenClaw sandbox plus an agent turn that must read
-// hands off to this live target.
+// Keep this as a direct live test: the contract is native skill installation
+// into a real OpenClaw sandbox plus an agent turn that must read it.
 
-const SKILL_TEMPLATE_FILE = path.join(
+const ADD_SKILL_SCRIPT = path.join(
   REPO_ROOT,
   "test",
   "e2e",
   "e2e-cloud-experimental",
   "features",
   "skill",
-  "fixtures",
-  "skill-smoke-template.SKILL.md",
+  "add-sandbox-skill.sh",
 );
 const VERIFY_SKILL_SCRIPT = path.join(
   REPO_ROOT,
@@ -103,7 +100,7 @@ async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
 }
 
 test(
-  "skill-agent: injected sandbox skill is read by a real OpenClaw agent turn",
+  "skill-agent: natively installed sandbox skill is read by a real OpenClaw agent turn",
   {
     timeout: testTimeout(30 * 60_000),
     meta: {
@@ -294,27 +291,18 @@ test(
     sandboxProvisioned = true;
 
     progress.phase("install and confirm the skill fixture");
-    const localSkillDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-agent-fixture-"));
-    cleanup.trackDisposable("remove skill-agent host fixture", () => {
-      fs.rmSync(localSkillDir, { recursive: true, force: true });
-    });
-    const skillPayload = fs
-      .readFileSync(SKILL_TEMPLATE_FILE, "utf8")
-      .replaceAll("__SKILL_ID__", SKILL_ID)
-      .replaceAll("__SKILL_DESCRIPTION__", "E2E native install and agent-consumption proof");
-    fs.writeFileSync(path.join(localSkillDir, "SKILL.md"), skillPayload);
-    const addSkill = await host.command(
-      "node",
-      [CLI_ENTRYPOINT, SANDBOX_NAME, "skill", "install", localSkillDir],
-      {
-        artifactName: "add-sandbox-skill-fixture",
-        cwd: REPO_ROOT,
-        env: {
-          ...buildAvailabilityProbeEnv(),
-        },
-        timeoutMs: 120_000,
+    const addSkill = await host.command("bash", [ADD_SKILL_SCRIPT], {
+      artifactName: "add-sandbox-skill-fixture",
+      cwd: REPO_ROOT,
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        NEMOCLAW_CLI_BIN: CLI_ENTRYPOINT,
+        SANDBOX_NAME,
+        SKILL_ID,
+        SKILL_DESCRIPTION: "E2E native install and agent-consumption proof",
       },
-    );
+      timeoutMs: 120_000,
+    });
     expect(addSkill.exitCode, resultText(addSkill)).toBe(0);
     expect(await verifySkillFixturePresent(sandbox, SANDBOX_NAME)).toBe(true);
 

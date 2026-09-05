@@ -576,6 +576,7 @@ export interface FreshSharedSkillInstallResult {
     | "remote_state_unknown"
     | "snapshot_failed"
     | "snapshot_limit_exceeded"
+    | "update_unsupported"
     | "verification_failed";
 }
 
@@ -833,10 +834,9 @@ function buildOpenClawNativeInstallScript(
     '[ "$staged" = "$expected" ]',
     'help="$(openclaw skills install --help 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }',
     'printf "%s" "$help" | grep -q -- "--agent" || { echo CAPABILITY_MISSING; exit 3; }',
-    'printf "%s" "$help" | grep -q -- "--force" || { echo CAPABILITY_MISSING; exit 3; }',
     'action="install"',
-    'if exists "$target"; then safe_tree "$target" || { echo COLLISION; exit 2; }; current="$(digest_tree "$target" "$stage/current.manifest")"; if [ "$reconcile" = 1 ] && [ "$current" = "$expected" ]; then action="reconcile"; elif [ -n "$previous" ] && [ "$current" = "$previous" ]; then action="update"; else echo COLLISION; exit 2; fi; fi',
-    'if [ "$action" = update ]; then openclaw skills install "$payload" --agent main --force; elif [ "$action" = install ]; then openclaw skills install "$payload" --agent main; fi',
+    'if exists "$target"; then safe_tree "$target" || { echo COLLISION; exit 2; }; current="$(digest_tree "$target" "$stage/current.manifest")"; if [ "$current" = "$expected" ] && { [ "$reconcile" = 1 ] || [ "$current" = "$previous" ]; }; then action="reconcile"; elif [ -n "$previous" ] && [ "$current" = "$previous" ]; then echo UPDATE_UNSUPPORTED; exit 6; else echo COLLISION; exit 2; fi; fi',
+    'if [ "$action" = install ]; then openclaw skills install "$payload" --agent main; fi',
     'openclaw skills list --agent main --json > "$stage/list.json"',
     'openclaw skills info "$skill" --agent main --json > "$stage/info.json"',
     'openclaw skills check --agent main --json > "$stage/check.json"',
@@ -844,7 +844,7 @@ function buildOpenClawNativeInstallScript(
     'safe_tree "$target" || { echo VERIFY_FAILED; exit 4; }',
     'installed="$(digest_tree "$target" "$stage/installed.manifest")"',
     '[ "$installed" = "$expected" ] || { echo VERIFY_FAILED; exit 4; }',
-    'if [ "$action" = update ]; then printf "UPDATED %s\\n" "$installed"; elif [ "$action" = reconcile ]; then printf "RECONCILED %s\\n" "$installed"; else printf "INSTALLED %s\\n" "$installed"; fi',
+    'if [ "$action" = reconcile ]; then printf "RECONCILED %s\\n" "$installed"; else printf "INSTALLED %s\\n" "$installed"; fi',
   ].join("; ");
 }
 
@@ -932,7 +932,6 @@ export function installOpenClawSkill(
   const success =
     result?.status === 0 &&
     (stdout.endsWith(`INSTALLED ${snapshot.contentDigest}`) ||
-      stdout.endsWith(`UPDATED ${snapshot.contentDigest}`) ||
       stdout.endsWith(`RECONCILED ${snapshot.contentDigest}`));
   if (success) {
     try {
@@ -954,7 +953,8 @@ export function installOpenClawSkill(
   if (
     (result?.status === 2 && stdout.endsWith("COLLISION")) ||
     (result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")) ||
-    (result?.status === 5 && stdout.endsWith("LEGACY_COLLISION"))
+    (result?.status === 5 && stdout.endsWith("LEGACY_COLLISION")) ||
+    (result?.status === 6 && stdout.endsWith("UPDATE_UNSUPPORTED"))
   ) {
     try {
       restoreOpenClawSkillProvenance(receiptPath, priorReceipt);
@@ -972,9 +972,11 @@ export function installOpenClawSkill(
           ? "legacy_destination_exists"
           : result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")
             ? "native_capability_missing"
-            : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
-              ? "verification_failed"
-              : "remote_state_unknown",
+            : result?.status === 6 && stdout.endsWith("UPDATE_UNSUPPORTED")
+              ? "update_unsupported"
+              : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
+                ? "verification_failed"
+                : "remote_state_unknown",
   };
 }
 
