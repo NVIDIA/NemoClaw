@@ -1,28 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
+import {
+  fingerprintOpenShellSandboxId,
+  isOpenShellSandboxId,
+} from "../../domain/sandbox/openshell-identity";
+
+export {
+  fingerprintOpenShellSandboxId,
+  isOpenShellSandboxId,
+} from "../../domain/sandbox/openshell-identity";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
-const SANDBOX_ID_RE = /^[A-Za-z0-9._-]+$/u;
-const SANDBOX_ID_MAX_LENGTH = 512;
-
-export function isOpenShellSandboxId(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= SANDBOX_ID_MAX_LENGTH &&
-    SANDBOX_ID_RE.test(value)
-  );
-}
-
-export function fingerprintOpenShellSandboxId(sandboxId: string): string | null {
-  return isOpenShellSandboxId(sandboxId)
-    ? createHash("sha256").update(sandboxId).digest("hex")
-    : null;
-}
-
 export const NEMOCLAW_CREATE_ATTEMPT_LABEL = "ai.nvidia.nemoclaw.create-attempt" as const;
 export const NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH = 62 as const;
 const CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS = 30_000;
