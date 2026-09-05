@@ -964,72 +964,7 @@ PYMUTABLELAYOUT
 }
 
 ensure_hermes_config_root_mode() {
-  if [ "${HERMES_CONFIG_ROOT_LOCKED:-0}" = "1" ]; then
-    verify_hermes_locked_config_root
-    return $?
-  fi
   ensure_hermes_mutable_layout_dir . 3770
-}
-
-verify_hermes_locked_config_root() {
-  NEMOCLAW_HERMES_CONFIG_ROOT="$HERMES_DIR" \
-    python3 -I - <<'PYLOCKEDCONFIGROOT'
-import grp
-import os
-import stat
-import sys
-
-root = os.environ["NEMOCLAW_HERMES_CONFIG_ROOT"]
-open_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-open_flags |= getattr(os, "O_CLOEXEC", 0)
-
-
-def fail(message: str) -> None:
-    print(f"[SECURITY] Refusing locked Hermes config root because {message}", file=sys.stderr)
-    sys.exit(1)
-
-
-try:
-    sandbox_gid = grp.getgrnam("sandbox").gr_gid
-except KeyError as exc:
-    fail(f"sandbox account lookup failed: {exc}")
-
-try:
-    root_before = os.lstat(root)
-except OSError as exc:
-    fail(f"{root} could not be inspected: {exc.strerror}")
-if stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
-    fail(f"{root} is not a safe directory")
-if (root_before.st_uid, root_before.st_gid, stat.S_IMODE(root_before.st_mode)) != (
-    0,
-    sandbox_gid,
-    0o3770,
-):
-    fail(f"{root} does not have the required root:sandbox 3770 metadata")
-
-root_fd = -1
-try:
-    root_fd = os.open(root, open_flags)
-    root_open = os.fstat(root_fd)
-    if (root_open.st_dev, root_open.st_ino) != (root_before.st_dev, root_before.st_ino):
-        fail(f"{root} changed while it was opened")
-    for name in ("config.yaml", ".env", ".config-hash"):
-        display = f"{root}/{name}"
-        try:
-            entry = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
-        except OSError as exc:
-            fail(f"{display} could not be inspected: {exc.strerror}")
-        if not stat.S_ISREG(entry.st_mode) or entry.st_nlink != 1:
-            fail(f"{display} is not a single-link regular file")
-        if (entry.st_uid, entry.st_gid, stat.S_IMODE(entry.st_mode)) != (0, 0, 0o444):
-            fail(f"{display} does not have the required root:root 0444 metadata")
-    root_after = os.lstat(root)
-    if (root_after.st_dev, root_after.st_ino) != (root_open.st_dev, root_open.st_ino):
-        fail(f"{root} changed during locked-root verification")
-finally:
-    if root_fd >= 0:
-        os.close(root_fd)
-PYLOCKEDCONFIGROOT
 }
 
 ensure_hermes_state_dir() {
@@ -3406,33 +3341,33 @@ prepare_hermes_nonroot_runtime() {
   # mutable default with a raw secret fails as generic MCP drift and bypasses
   # the actionable, redacted secret-boundary refusal. Repeat after the trusted
   # startup mutations below so their outputs remain covered as well.
-  HERMES_NONROOT_PREPARE_FAILURE_STAGE="initial environment secret-boundary validation"
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="initial-secret-boundary"
   validate_hermes_env_secret_boundary || return 1
   # The non-root Hermes runtime can persist safe config/env changes while it is
   # running. Reconcile that mutable compatibility anchor only after the secret
   # boundary is valid; refresh-hashes still requires the recorded MCP intent to
   # match exactly before it advances the anchor.
-  HERMES_NONROOT_PREPARE_FAILURE_STAGE="runtime config-hash reconciliation"
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="runtime-config-hash"
   refresh_hermes_runtime_config_hashes compat || return 1
-  HERMES_NONROOT_PREPARE_FAILURE_STAGE="initial MCP integrity inspection"
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="initial-mcp-integrity"
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
-  HERMES_NONROOT_PREPARE_FAILURE_STAGE="lazy dependency preparation"
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="lazy-dependencies"
   prepare_hermes_lazy_dependencies || return 1
-  HERMES_NONROOT_PREPARE_FAILURE_STAGE="API server key preparation"
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="api-server-key"
   ensure_hermes_runtime_api_server_key compat || return 1
-  HERMES_NONROOT_PREPARE_FAILURE_STAGE="final environment secret-boundary validation"
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="final-secret-boundary"
   validate_hermes_env_secret_boundary || return 1
-  HERMES_NONROOT_PREPARE_FAILURE_STAGE="runtime environment secret-boundary validation"
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="runtime-secret-boundary"
   validate_hermes_runtime_env_secret_boundary || return 1
-  HERMES_NONROOT_PREPARE_FAILURE_STAGE="provider placeholder refresh"
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="provider-placeholders"
   refresh_hermes_provider_placeholders compat || return 1
-  HERMES_NONROOT_PREPARE_FAILURE_STAGE="final config-hash reconciliation"
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="final-config-hash"
   refresh_hermes_runtime_config_hashes compat || return 1
-  HERMES_NONROOT_PREPARE_FAILURE_STAGE="final MCP integrity inspection"
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="final-mcp-integrity"
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
-  HERMES_NONROOT_PREPARE_FAILURE_STAGE="messaging channel configuration"
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="messaging-channels"
   configure_messaging_channels || return 1
-  HERMES_NONROOT_PREPARE_FAILURE_STAGE="Tirith retry-marker preparation"
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="tirith-retry-marker"
   prepare_tirith_marker_retry || return 1
   HERMES_NONROOT_PREPARE_FAILURE_STAGE=
 }
@@ -3705,8 +3640,8 @@ recover_hermes_gateway_current_user() {
         quarantine_hermes_managed_gateway_relaunch
         return 1
       fi
-      preparation_stage="${HERMES_NONROOT_PREPARE_FAILURE_STAGE:-unknown preparation stage}"
-      echo "[gateway] Hermes runtime preparation failed at ${preparation_stage}; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted" >&2
+      preparation_stage="${HERMES_NONROOT_PREPARE_FAILURE_STAGE:-unknown}"
+      echo "[gateway] HERMES_RUNTIME_PREPARATION_FAILED stage=${preparation_stage}; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted" >&2
       quarantine_hermes_managed_gateway_relaunch
       return 1
     fi
@@ -3864,15 +3799,6 @@ start_hermes_root_gateway() {
   # HERMES_HOME during its readiness check.
   prepare_hermes_dashboard_home sandbox:sandbox || return 1
 
-  # The embedded dispatcher writes kanban.db below the config root. A retained
-  # locked-root sandbox can run the gateway, but it must keep that writer off.
-  if [ "${HERMES_CONFIG_ROOT_LOCKED:-0}" -eq 1 ]; then
-    if [ "${HERMES_KANBAN_DISPATCH_IN_GATEWAY:-}" != 0 ]; then
-      echo "[gateway] Locked Hermes config root: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0 (embedded kanban dispatcher suspended)" >&2
-    fi
-    export HERMES_KANBAN_DISPATCH_IN_GATEWAY=0
-  fi
-
   # Start Hermes gateway. Messaging egress goes directly through OpenShell.
   launch_hermes_gateway || return 1
   start_gateway_log_stream || return 1
@@ -3908,16 +3834,10 @@ elif [ -e "$HERMES_CONFIG_MUTATION_LOCK" ] \
   exit 1
 fi
 
-HERMES_CONFIG_ROOT_LOCKED=0
 if [ "$(stat -c '%U' "$HERMES_DIR" 2>/dev/null || stat -f '%Su' "$HERMES_DIR" 2>/dev/null || echo unknown)" = "root" ]; then
-  if [ "$(id -u)" -eq 0 ] && verify_hermes_locked_config_root; then
-    HERMES_CONFIG_ROOT_LOCKED=1
-  else
-    echo "[SECURITY] Existing Hermes config is not in the supported mutable posture. Rebuild or recreate the sandbox." >&2
-    exit 1
-  fi
+  echo "[SECURITY] Existing Hermes config is not in the supported mutable posture. Rebuild or recreate the sandbox." >&2
+  exit 1
 fi
-readonly HERMES_CONFIG_ROOT_LOCKED
 
 # Migrate legacy symlink layout before anything else reads .hermes
 migrate_legacy_layout "/sandbox/.hermes" "/sandbox/.hermes-data" "hermes" || exit 1

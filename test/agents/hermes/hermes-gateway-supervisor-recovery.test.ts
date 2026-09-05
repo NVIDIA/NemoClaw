@@ -499,7 +499,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       "sleep() { :; }",
       "prepare_calls=0",
       "launch_calls=0",
-      'prepare_hermes_nonroot_runtime() { prepare_calls=$((prepare_calls + 1)); trace "prepare:$prepare_calls"; if [ "$prepare_calls" -eq 2 ]; then HERMES_NONROOT_PREPARE_FAILURE_STAGE="messaging channel configuration"; return 1; fi; }',
+      'prepare_hermes_nonroot_runtime() { prepare_calls=$((prepare_calls + 1)); trace "prepare:$prepare_calls"; if [ "$prepare_calls" -eq 2 ]; then HERMES_NONROOT_PREPARE_FAILURE_STAGE="messaging-channels"; return 1; fi; }',
       'launch_hermes_gateway_current_user() { launch_calls=$((launch_calls + 1)); [ "$launch_calls" -eq 1 ] && GATEWAY_PID=5252 || GATEWAY_PID=6262; trace "launch:$GATEWAY_PID"; }',
       'wait_for_hermes_gateway_internal() { trace "health:$1"; }',
       "ensure_hermes_supervised_auxiliaries() { trace auxiliaries; }",
@@ -508,7 +508,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       'refresh_hermes_supervised_child_pids() { trace "refresh:$GATEWAY_PID"; }',
       "hermes_gateway_healthy() { return 0; }",
       'hermes_stop_tracked_role() { trace "unexpected-stop:$2"; return 1; }',
-      'quarantine_hermes_managed_gateway_relaunch() { trace quarantine; return 0; }',
+      "quarantine_hermes_managed_gateway_relaunch() { trace quarantine; return 0; }",
       extractShellFunction(source, "record_hermes_managed_gateway_exit"),
       extractShellFunction(source, "recover_hermes_gateway_current_user"),
       extractShellFunction(source, "supervise_hermes_gateway_current_user"),
@@ -538,9 +538,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       "supervisor-status:1",
     ]);
     expect(result.stderr).toContain("Hermes gateway respawned (pid 5252)");
-    expect(result.stderr).toContain(
-      "Hermes runtime preparation failed at messaging channel configuration",
-    );
+    expect(result.stderr).toContain("HERMES_RUNTIME_PREPARATION_FAILED stage=messaging-channels");
     expect(result.stderr).toContain("automatic respawn is quarantined");
     expect(result.stdout).not.toContain("launch:6262");
   });
@@ -662,7 +660,7 @@ describe("Hermes supervised auxiliary recovery", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([
       'trace() { printf "%s\\n" "$*"; }',
-      'prepare_hermes_nonroot_runtime() { prepare_calls=$((prepare_calls + 1)); HERMES_NONROOT_PREPARE_FAILURE_STAGE="messaging channel configuration"; trace "prepare:$prepare_calls"; return 1; }',
+      'prepare_hermes_nonroot_runtime() { prepare_calls=$((prepare_calls + 1)); HERMES_NONROOT_PREPARE_FAILURE_STAGE="messaging-channels"; trace "prepare:$prepare_calls"; return 1; }',
       'launch_hermes_gateway_current_user() { launch_calls=$((launch_calls + 1)); trace "unexpected-launch"; }',
       'quarantine_hermes_managed_gateway_relaunch() { quarantine_calls=$((quarantine_calls + 1)); trace "quarantine:$quarantine_calls"; return 0; }',
       'date() { trace unexpected-exit-record; printf "100\\n"; }',
@@ -688,9 +686,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       "launch-count:0",
       "crash-count:0",
     ]);
-    expect(result.stderr).toContain(
-      "Hermes runtime preparation failed at messaging channel configuration",
-    );
+    expect(result.stderr).toContain("HERMES_RUNTIME_PREPARATION_FAILED stage=messaging-channels");
     expect(result.stderr).toContain("automatic respawn is quarantined");
     expect(result.stdout).not.toContain("unexpected-exit-record");
     expect(result.stdout).not.toContain("unexpected-launch");

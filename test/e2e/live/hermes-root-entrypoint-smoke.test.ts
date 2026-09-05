@@ -384,6 +384,10 @@ chmod 750 /sandbox/.hermes
 chown sandbox:sandbox /sandbox/.hermes/sessions /sandbox/.hermes/gateway /sandbox/.hermes/runtime
 chmod 750 /sandbox/.hermes/sessions /sandbox/.hermes/gateway /sandbox/.hermes/runtime
 rm -rf /sandbox/.hermes/hooks /sandbox/.hermes/image_cache /sandbox/.hermes/audio_cache /sandbox/.hermes/logs/curator
+install -d -m 755 /tmp/nemoclaw-hostile-python
+printf '%s\n' 'import os' 'from pathlib import Path' 'if os.geteuid() == 0:' '    Path("/tmp/nemoclaw-root-sitecustomize-ran").write_text("root")' >/tmp/nemoclaw-hostile-python/sitecustomize.py
+chmod 444 /tmp/nemoclaw-hostile-python/sitecustomize.py
+export PYTHONPATH=/tmp/nemoclaw-hostile-python
 exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
 
   await probe.expect(
@@ -400,55 +404,9 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
   await expectContainerSh(
     probe,
     container,
-    "legacy gateway.pid symlink migration was not logged",
-    "grep -F 'Removing unsafe stale Hermes legacy PID file symlink' /tmp/nemoclaw-start.log",
+    "legacy recovery or root Python isolation evidence was missing",
+    "grep -F 'Removing unsafe stale Hermes legacy PID file symlink' /tmp/nemoclaw-start.log && test ! -e /tmp/nemoclaw-root-sitecustomize-ran",
   );
-}
-
-async function runLockedRootVariant(
-  probe: DockerProbe,
-  image: string,
-  runId: string,
-  containers: string[],
-): Promise<void> {
-  const container = `nemoclaw-hermes-root-locked-${runId}`;
-  const lockedBootstrap = `set -euo pipefail
-rm -f /sandbox/.hermes/.hermes_history
-chown root:sandbox /sandbox /sandbox/.hermes
-chmod 1775 /sandbox
-chmod 3770 /sandbox/.hermes
-chown root:root /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /sandbox/.hermes/.config-hash
-chmod 444 /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /sandbox/.hermes/.config-hash
-sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /sandbox/.hermes/.config-hash >/tmp/nemoclaw-locked-config.sha256
-install -d -m 755 /tmp/nemoclaw-hostile-python
-printf '%s\n' 'import os' 'from pathlib import Path' 'if os.geteuid() == 0:' '    Path("/tmp/nemoclaw-root-sitecustomize-ran").write_text("root")' >/tmp/nemoclaw-hostile-python/sitecustomize.py
-chmod 444 /tmp/nemoclaw-hostile-python/sitecustomize.py
-export PYTHONPATH=/tmp/nemoclaw-hostile-python
-export HERMES_KANBAN_DISPATCH_IN_GATEWAY=1
-exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
-
-  await probe.expect(
-    ["run", "-d", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", lockedBootstrap],
-    { artifactName: "start-locked-root-entrypoint-container", timeoutMs: RUN_TIMEOUT_MS },
-  );
-  containers.push(container);
-
-  await waitForHealth(probe, container);
-  await expectContainerSh(
-    probe,
-    container,
-    "locked Hermes config changed while history was recovered",
-    String.raw`set -eu
-test "$(stat -c '%U:%G %a' /sandbox)" = "root:sandbox 1775"
-test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "root:sandbox 3770"
-for file in config.yaml .env .config-hash; do
-  test "$(stat -c '%U:%G %a' "/sandbox/.hermes/$file")" = "root:root 444"
-done
-test -f /tmp/nemoclaw-hostile-python/sitecustomize.py
-test ! -e /tmp/nemoclaw-root-sitecustomize-ran
-sha256sum -c /tmp/nemoclaw-locked-config.sha256`,
-  );
-  await assertGatewayProcess(probe, container, "0");
 }
 
 async function runHardLinkRefusalVariant(
@@ -464,11 +422,6 @@ async function runHardLinkRefusalVariant(
     kind === "history"
       ? String.raw`
 rm -f /sandbox/.hermes/.hermes_history
-chown root:sandbox /sandbox /sandbox/.hermes
-chmod 1775 /sandbox
-chmod 3770 /sandbox/.hermes
-chown root:root /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /sandbox/.hermes/.config-hash
-chmod 444 /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /sandbox/.hermes/.config-hash
 ln /sandbox/.hermes/config.yaml /sandbox/.hermes/.hermes_history`
       : String.raw`
 install -d -m 2770 -o sandbox -g sandbox /sandbox/.hermes/logs/curator
@@ -727,42 +680,12 @@ test(
           "legacy gateway.pid symlink and state shape are repaired and booted",
           "restored state directories permit gateway-user and sandbox-user writes",
           "legacy dashboard profile state is moved into profiles/dashboard-home",
+          "hostile inherited PYTHONPATH cannot execute sitecustomize as root",
         ],
       },
       async ({ containers, image, probe, runId }) => {
         context.progress.phase("validate restored Hermes state migration");
         await runLegacyVariant(probe, image, runId, containers);
-      },
-    );
-  },
-);
-
-test(
-  "recovers locked-root history without changing sealed Hermes configuration",
-  {
-    meta: {
-      e2ePhases: [
-        "check Docker and prepare the Hermes root-entrypoint image",
-        "validate locked-root Hermes history recovery",
-      ],
-    },
-  },
-  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
-    const context = { artifacts, cleanup, progress, secrets, signal, skip };
-    await runRootEntrypointScenario(
-      context,
-      {
-        id: "locked-root-history-recovery",
-        assertion: "lockedRootHistoryRecoveryVerified",
-        contract: [
-          "locked-root startup recreates protected group-writable Hermes history without changing sealed config",
-          "gateway process forces the embedded kanban dispatcher off while the root is locked",
-          "hostile inherited PYTHONPATH cannot execute sitecustomize as root",
-        ],
-      },
-      async ({ containers, image, probe, runId }) => {
-        context.progress.phase("validate locked-root Hermes history recovery");
-        await runLockedRootVariant(probe, image, runId, containers);
       },
     );
   },

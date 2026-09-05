@@ -12,7 +12,7 @@ const BOUNDARY_VALIDATOR = path.join(
 );
 const NONCE = "a".repeat(64);
 const PREPARATION_QUARANTINE_DIAGNOSTIC =
-  "[gateway] Hermes runtime preparation failed at messaging channel configuration; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted";
+  "[gateway] HERMES_RUNTIME_PREPARATION_FAILED stage=future-preparation-stage; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted";
 const LAYOUT_QUARANTINE_DIAGNOSTIC =
   "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation";
 const LAYOUT_REPAIR_DIAGNOSTICS = ["sessions", "gateway", "runtime"]
@@ -972,7 +972,7 @@ with tempfile.TemporaryDirectory() as root:
         "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s",
         "[gateway] Hermes gateway launch failed; retrying under the same supervisor",
         *layout_repair_events,
-        "[gateway] Hermes runtime preparation failed at messaging channel configuration; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted",
+        "[gateway] HERMES_RUNTIME_PREPARATION_FAILED stage=future-preparation-stage; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted",
         "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation",
         "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
         "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
@@ -1048,7 +1048,7 @@ with tempfile.TemporaryDirectory() as root:
             start_log_events[0] + ("x" * 600)
         ),
         control._sanitize_start_log_diagnostic_line(
-            "[gateway] Hermes runtime preparation failed at attacker-controlled stage; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted"
+            "[gateway] HERMES_RUNTIME_PREPARATION_FAILED stage=attacker_controlled; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted"
         ),
         control._sanitize_start_log_diagnostic_line(
             "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until manual repair"
@@ -1129,7 +1129,7 @@ with tempfile.TemporaryDirectory() as root:
     diagnostic_output_events = tuple(
         [
             *layout_repair_events,
-            "[gateway] Hermes runtime preparation failed at messaging channel configuration; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted",
+            "[gateway] HERMES_RUNTIME_PREPARATION_FAILED stage=future-preparation-stage; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted",
             "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation",
             "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
             "[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
