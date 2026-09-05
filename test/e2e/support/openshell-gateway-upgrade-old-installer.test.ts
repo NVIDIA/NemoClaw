@@ -20,6 +20,33 @@ import {
 const temporaryDirectories: string[] = [];
 const HISTORICAL_BUILD_CONTEXT_MODULE = "src/lib/sandbox/build-context.ts";
 
+function assertHistoricalReleaseIdentity(identity: {
+  nemoclawCommit: string;
+  nemoclawRef: string;
+}): void {
+  const resolved = spawnSync(
+    "git",
+    [
+      "-C",
+      REPO_ROOT,
+      "rev-parse",
+      "--verify",
+      "--end-of-options",
+      `${identity.nemoclawRef}^{commit}`,
+    ],
+    { encoding: "utf8" },
+  );
+  expect(
+    resolved.status,
+    `Historical NemoClaw release ${identity.nemoclawRef} could not be resolved: ${resolved.stderr.trim()}`,
+  ).toBe(0);
+
+  expect(
+    resolved.stdout.trim(),
+    `Historical NemoClaw release ${identity.nemoclawRef} must resolve to reviewed commit ${identity.nemoclawCommit}`,
+  ).toBe(identity.nemoclawCommit);
+}
+
 function writeInstallerHarness(sourceRoot: string): {
   archive: string;
   dockerfile: string;
@@ -186,6 +213,19 @@ afterEach(() => {
 });
 
 describe("historical OpenShell gateway upgrade installer adapter", () => {
+  it("binds the retained NemoClaw release tag to its reviewed commit (#10517)", () => {
+    expect(() => assertHistoricalReleaseIdentity(REVIEWED_GATEWAY_UPGRADE_FIXTURE)).not.toThrow();
+  });
+
+  it("rejects a retained NemoClaw release tag paired with another commit (#10517)", () => {
+    expect(() =>
+      assertHistoricalReleaseIdentity({
+        ...REVIEWED_GATEWAY_UPGRADE_FIXTURE,
+        nemoclawCommit: "0".repeat(40),
+      }),
+    ).toThrow(/must resolve to reviewed commit 0{40}/u);
+  });
+
   it("accepts the retained fixture advisory and signature audit boundary", () => {
     const dockerfile = runReviewedHistoricalFixture();
     expect(dockerfile).not.toContain("audit --omit=dev --audit-level=low");
