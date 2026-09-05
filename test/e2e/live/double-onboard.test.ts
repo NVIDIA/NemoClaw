@@ -22,12 +22,12 @@ import {
   dashboardForwardProcessIdentity,
   startForeignDashboardListener,
   waitForDashboardListenerToStop,
-} from "../fixtures/dashboard-listener-process.ts";
+} from "../lib/dashboard-listener-process.ts";
 
 //
-// This intentionally stays as one free-standing live test with local
-// helpers: the contract is a real OpenShell/Docker/nemoclaw lifecycle
-// boundary, but it does not need a new registry target or shared fixture.
+// This intentionally stays as one free-standing live test: the contract is a
+// real OpenShell/Docker/nemoclaw lifecycle boundary, but it does not need a
+// second registry target.
 
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SANDBOX_A = process.env.NEMOCLAW_DOUBLE_ONBOARD_SANDBOX_A ?? "e2e-double-a";

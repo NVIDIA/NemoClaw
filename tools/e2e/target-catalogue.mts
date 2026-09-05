@@ -766,7 +766,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/fixtures/dashboard-listener-process.ts"],
+    owningPaths: ["test/e2e/lib/dashboard-listener-process.ts"],
     environment: nonInteractive,
   }),
   managedRuntimeTarget("gpu-double-onboard", {
@@ -1096,7 +1096,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
-      "test/e2e/fixtures/dashboard-listener-process.ts",
+      "test/e2e/lib/dashboard-listener-process.ts",
       "tools/e2e/onboard-timeout-contract.mts",
     ],
     environment: { ...nonInteractive, NEMOCLAW_SANDBOX_NAME: "e2e-resume" },

@@ -663,11 +663,16 @@ describe("E2E workflow plan", () => {
   });
 
   it("selects every dashboard-listener helper consumer", () => {
-    const targets = catalogueTargetsForChangedFiles([
-      "test/e2e/fixtures/dashboard-listener-process.ts",
-    ]);
+    const changedFile = "test/e2e/lib/dashboard-listener-process.ts";
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+    const targets = catalogueTargetsForChangedFiles([changedFile]);
 
     expect(targets.map((target) => target.id)).toEqual(["double-onboard", "onboard-resume"]);
+    expect(Object.values(plan.catalogueMatrices).flat().map((row) => row.id)).toEqual([
+      "double-onboard",
+      "onboard-resume",
+    ]);
+    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
   it.each([

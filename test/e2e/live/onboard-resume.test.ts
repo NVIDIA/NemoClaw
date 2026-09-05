@@ -23,7 +23,7 @@ import {
   createCorporateCaFixture,
   registeredCorporateCaWorkloadKind,
 } from "../fixtures/corporate-ca.ts";
-import { dashboardForwardProcessIdentity } from "../fixtures/dashboard-listener-process.ts";
+import { dashboardForwardProcessIdentity } from "../lib/dashboard-listener-process.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   REGISTRY_FILE,

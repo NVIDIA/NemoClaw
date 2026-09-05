@@ -181,7 +181,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
       /port 18790 for sandbox 'reonboard-test'.*listener-not-unique.*stop the extra listener.*onboard --resume/su,
     ],
   ] as const)(
-    "reports %s ownership recovery during Ready sandbox reuse (#11074)",
+    "reports listener ownership failure (%s) during Ready sandbox reuse (#11074)",
     (failure, message) => {
       vi.stubEnv("CHAT_UI_URL", undefined);
       const { helpers, launch } = harness({
