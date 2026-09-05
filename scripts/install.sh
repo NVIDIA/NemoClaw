@@ -16,6 +16,15 @@ _cleanup_files=()
 # exact value can be removed from the Hermes onboarding child.
 unset _PORTABLE_INSTALLER_DOCKER_HOST
 _PORTABLE_INSTALLER_DOCKER_HOST=""
+if [[ "${NEMOCLAW_DOCKER_GROUP_REACTIVATED:-}" != "1" ]]; then
+  unset _PORTABLE_CALLER_DOCKER_CONTEXT
+  unset _PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED
+  unset _PORTABLE_CALLER_DOCKER_CONTEXT_SET
+fi
+_PORTABLE_CALLER_DOCKER_CONTEXT="${_PORTABLE_CALLER_DOCKER_CONTEXT-}"
+_PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED="${_PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED-}"
+_PORTABLE_CALLER_DOCKER_CONTEXT_SET="${_PORTABLE_CALLER_DOCKER_CONTEXT_SET-}"
+_INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED=""
 # #4414: When re-launched as a staged copy via `curl | bash`, queue the
 # staged tmpfile for removal on EXIT. NEMOCLAW_INSTALLER_STAGED carries
 # the staged path forward so both the loop guard and cleanup use one var.
@@ -692,6 +701,8 @@ print_done() {
   # not clean either.
   if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
     warn "=== Installation completed with warnings ==="
+  elif [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
+    warn "=== Installation completed with warnings ==="
   elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
     warn "=== Installation completed with warnings ==="
   else
@@ -701,23 +712,30 @@ print_done() {
   printf "  ${C_GREEN}${C_BOLD}%s${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$_CLI_DISPLAY" "$elapsed"
   printf "\n"
   if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
-    if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
-      # #6520: recovery exited 0 but recorded sandboxes were not found on
-      # their own recorded gateway; do not report them as recovered, and give
-      # a concrete remediation path instead.
-      printf "  ${C_YELLOW}Some recorded sandboxes were not found on their recorded gateway and were not recovered.${C_RESET}\n"
-      printf "  ${C_YELLOW}Their gateway registration or Docker image may have been removed (see the recovery notes above).${C_RESET}\n"
-      printf "  ${C_DIM}Clear a stranded sandbox with '%s <name> destroy', then rebuild it with '%s onboard'.${C_RESET}\n" "$_CLI_BIN" "$_CLI_BIN"
-    else
-      printf "  ${C_GREEN}Existing sandboxes were recovered and upgraded.${C_RESET}\n"
-    fi
     if [[ "$_needs_cli_refresh" == true ]]; then
       printf "  ${C_YELLOW}%s installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
       printf "\n"
       printf "  ${C_GREEN}For this terminal:${C_RESET}\n"
       print_cli_path_refresh_actions
     fi
-    if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
+    if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
+      printf "  ${C_YELLOW}The recovery command succeeded, but NemoClaw could not inspect its output.${C_RESET}\n"
+      printf "  ${C_DIM}Run '%s upgrade-sandboxes --check' to inspect the registered sandbox upgrade state.${C_RESET}\n" "$_CLI_BIN"
+    elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
+      # #6520: recovery exited 0 but recorded sandboxes were not found on
+      # their own recorded gateway; do not report them as recovered, and give
+      # a concrete remediation path instead.
+      printf "  ${C_YELLOW}Some recorded sandboxes were not found on their recorded gateway and were not recovered.${C_RESET}\n"
+      printf "  ${C_YELLOW}Their gateway registration or Docker image may have been removed (see the recovery notes above).${C_RESET}\n"
+      printf "  ${C_DIM}Check the recorded gateway with '%s <name> status', then retry '%s <name> destroy'.${C_RESET}\n" "$_CLI_BIN" "$_CLI_BIN"
+      printf "  ${C_DIM}If the gateway is unavailable, '%s <name> destroy --force' removes only the local record.${C_RESET}\n" "$_CLI_BIN"
+      printf "  ${C_DIM}Before running '%s onboard', verify or remove any remaining OpenShell sandbox if the gateway returns.${C_RESET}\n" "$_CLI_BIN"
+    else
+      printf "  ${C_GREEN}Existing sandboxes were recovered and upgraded.${C_RESET}\n"
+    fi
+    if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
+      printf "  ${C_DIM}Generic onboarding was skipped because recovery verification is incomplete.${C_RESET}\n"
+    elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
       printf "  ${C_DIM}Generic onboarding was skipped because recorded sandboxes exist.${C_RESET}\n"
     else
       printf "  ${C_DIM}No new sandbox onboarding was needed.${C_RESET}\n"
@@ -1087,6 +1105,47 @@ spin() {
 
 command_exists() { command -v "$1" &>/dev/null; }
 
+installer_docker_host_has_supported_shape() {
+  local raw="${DOCKER_HOST-}" candidate socket_path
+  [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
+  candidate="${raw#"${raw%%[![:space:]]*}"}"
+  candidate="${candidate%"${candidate##*[![:space:]]}"}"
+  [[ -n "$candidate" ]] || return 0
+  [[ "$candidate" == unix://* ]] || return 1
+  socket_path="${candidate#unix://}"
+  [[ "$socket_path" == /* && "$socket_path" != *"'"* ]]
+}
+
+validate_installer_docker_target_before_host_changes() {
+  local raw="${DOCKER_HOST-}" candidate active_context=""
+  installer_docker_host_has_supported_shape \
+    || error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Unset DOCKER_HOST or set it to an absolute local Unix socket URL, such as unix:///var/run/docker.sock. Then rerun the installer."
+  candidate="${raw#"${raw%%[![:space:]]*}"}"
+  candidate="${candidate%"${candidate##*[![:space:]]}"}"
+  if [[ -n "$candidate" ]]; then
+    export DOCKER_HOST="$candidate"
+    active_context="${DOCKER_CONTEXT:-default}"
+  else
+    unset DOCKER_HOST
+    if docker_context_needs_node; then
+      _INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED=1
+      export DOCKER_CONTEXT=default
+      return 0
+    fi
+    active_context="$(docker_active_context)"
+  fi
+  [[ "$active_context" == default ]] \
+    || error "The Docker context does not select the local default target. Unset DOCKER_CONTEXT or set it to default, and run 'docker context use default' if a non-default context is persisted. Then rerun the installer."
+}
+
+complete_deferred_installer_docker_context_validation() {
+  [[ "${_INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED:-}" == "1" ]] || return 0
+  _INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED=""
+  unset DOCKER_CONTEXT
+  validate_installer_docker_target_before_host_changes
+  export DOCKER_CONTEXT=default
+}
+
 MIN_NODE_VERSION="22.19.0"
 MIN_NPM_MAJOR=10
 
@@ -1130,9 +1189,11 @@ ONBOARD_RAN=false
 _CLI_PATH=""
 _NEMOCLAW_CLI_INSTALL_PREPARED=false
 _NEMOCLAW_CLI_INSTALL_MODE=""
+_INSTALLER_NODE_RUNTIME_PREPARED=false
 _OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=false
 _PREEXISTING_SANDBOX_COUNT=0
 _PREEXISTING_SANDBOX_RECOVERY_RAN=false
+_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED=false
 # #6520: set when the automatic recovery pass exited 0 but skipped recorded
 # sandboxes it could not observe on the selected gateway (e.g. their gateway
 # and Docker image were removed by a prior uninstall while sandboxes.json was
@@ -3863,9 +3924,12 @@ recover_preexisting_sandboxes_before_onboard() {
   # src/lib/actions/upgrade-sandboxes.ts.
   local recovery_log=""
   recovery_log="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-recovery-XXXXXX" 2>/dev/null)" || recovery_log=""
-  local recovery_status=0 recovery_pass=1
+  local recovery_status=0 recovery_pass=1 orphan_marker_status=0
+  local -a recovery_pipeline_status=()
   if [ -n "$recovery_log" ]; then
     _cleanup_files+=("$recovery_log")
+  else
+    _PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED=true
   fi
   while [ "$recovery_pass" -le 2 ]; do
     recovery_status=0
@@ -3877,7 +3941,11 @@ recover_preexisting_sandboxes_before_onboard() {
         # pipefail: take the CLI's own status, not tee's — a log-write failure
         # (e.g. ENOSPC on TMPDIR) must not convert a successful recovery into
         # the #5735 failure path.
-        recovery_status=${PIPESTATUS[0]}
+        recovery_pipeline_status=("${PIPESTATUS[@]}")
+        recovery_status="${recovery_pipeline_status[0]:-1}"
+        if [ "${recovery_pipeline_status[1]:-1}" -ne 0 ]; then
+          _PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED=true
+        fi
       fi
     else
       NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES="${_LEGACY_MANAGED_RECOVERY_NAMES_JSON:-[]}" \
@@ -3896,9 +3964,16 @@ recover_preexisting_sandboxes_before_onboard() {
   done
   if [ "$recovery_status" -eq 0 ]; then
     _PREEXISTING_SANDBOX_RECOVERY_RAN=true
-    if [ -n "$recovery_log" ] \
-      && grep -Fq "recorded sandbox(es) were not found on their recorded gateway" "$recovery_log"; then
-      _PREEXISTING_SANDBOX_ORPHANED=true
+    if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" != true ]] \
+      && [ -n "$recovery_log" ]; then
+      orphan_marker_status=0
+      grep -Fq "recorded sandbox(es) were not found on their recorded gateway" "$recovery_log" \
+        || orphan_marker_status=$?
+      case "$orphan_marker_status" in
+        0) _PREEXISTING_SANDBOX_ORPHANED=true ;;
+        1) ;;
+        *) _PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED=true ;;
+      esac
     fi
     rm -f "$recovery_log" 2>/dev/null || true
     return 0
@@ -4133,7 +4208,13 @@ run_onboard() {
     -n "$_PORTABLE_INSTALLER_DOCKER_HOST" &&
     "${DOCKER_HOST:-}" == "$_PORTABLE_INSTALLER_DOCKER_HOST" ]]; then
     invoke_bin="/usr/bin/env"
-    invoke_args=(-u DOCKER_HOST "$cli_invoke" "${onboard_cmd[@]}")
+    invoke_args=(-u DOCKER_HOST)
+    if [[ "${_PORTABLE_CALLER_DOCKER_CONTEXT_SET:-}" == x ]]; then
+      invoke_args+=("DOCKER_CONTEXT=$_PORTABLE_CALLER_DOCKER_CONTEXT")
+    else
+      invoke_args+=(-u DOCKER_CONTEXT)
+    fi
+    invoke_args+=("$cli_invoke" "${onboard_cmd[@]}")
   fi
 
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
@@ -4343,6 +4424,16 @@ ensure_docker() {
   fi
 }
 
+capture_portable_caller_docker_context() {
+  [[ "${_PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED:-}" == "1" ]] && return 0
+  _PORTABLE_CALLER_DOCKER_CONTEXT_SET="${DOCKER_CONTEXT+x}"
+  _PORTABLE_CALLER_DOCKER_CONTEXT="${DOCKER_CONTEXT-}"
+  _PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED=1
+  export _PORTABLE_CALLER_DOCKER_CONTEXT
+  export _PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED
+  export _PORTABLE_CALLER_DOCKER_CONTEXT_SET
+}
+
 # Select the rootless Podman API socket reported for the current user. This
 # must run before ensure_docker and the installer host preflight: both use
 # the Docker CLI, with DOCKER_HOST overriding its daemon to Podman's user
@@ -4350,6 +4441,7 @@ ensure_docker() {
 # local-registry configuration required by the OpenShell Podman driver.
 prepare_portable_experimental_runtime_override() {
   [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]] || return 0
+  capture_portable_caller_docker_context
   [[ "$(uname -s)" == "Linux" ]] \
     || error "The portable experimental profile requires Linux."
   command_exists podman \
@@ -4370,6 +4462,7 @@ prepare_portable_experimental_runtime_override() {
     /*) export DOCKER_HOST="unix://${podman_socket}" ;;
     *) error "Podman reported an invalid rootless API socket path: ${podman_socket:-empty}" ;;
   esac
+  unset DOCKER_CONTEXT
   _PORTABLE_INSTALLER_DOCKER_HOST="$DOCKER_HOST"
 
   info "Portable profile selected rootless Podman through DOCKER_HOST=${DOCKER_HOST}."
@@ -4622,6 +4715,7 @@ STATION_ULTRA_LEGACY_VLLM_IMAGE="vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899
 STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
 STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
 _SELECTED_EXPRESS_PLATFORM=""
+_PREFLIGHT_EXPRESS_PLATFORM=""
 _EXPRESS_WSL_PROVIDER_PENDING=""
 _STATION_EXPRESS_RESUME_REVISION=""
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
@@ -4740,11 +4834,10 @@ validate_station_deepseek_override() {
 }
 
 preflight_explicit_express_flags() {
-  local platform
-  platform="$(detect_express_platform)"
-  validate_express_platform_boundary "$platform"
-  validate_force_station_install_override "$platform"
-  validate_station_deepseek_override "$platform"
+  _PREFLIGHT_EXPRESS_PLATFORM="$(detect_express_platform)"
+  validate_express_platform_boundary "$_PREFLIGHT_EXPRESS_PLATFORM"
+  validate_force_station_install_override "$_PREFLIGHT_EXPRESS_PLATFORM"
+  validate_station_deepseek_override "$_PREFLIGHT_EXPRESS_PLATFORM"
 }
 
 configure_station_express_model() {
@@ -5234,7 +5327,7 @@ express_wsl_docker_operating_system() {
 # `docker context use` writes). A missing config or a config with no
 # currentContext uses Docker's "default"; an unreadable or unparseable config
 # fails closed as non-local.
-express_wsl_docker_active_context() {
+docker_active_context() {
   if [ -n "${DOCKER_CONTEXT:-}" ]; then
     printf '%s' "${DOCKER_CONTEXT}"
     return 0
@@ -5289,7 +5382,7 @@ NODE
 # (non-local) on any non-default, unreadable, or unparseable context.
 express_wsl_docker_target_is_local() {
   [ -z "${DOCKER_HOST:-}" ] || return 1
-  [ "$(express_wsl_docker_active_context)" = "default" ]
+  [ "$(docker_active_context)" = "default" ]
 }
 
 # Windows-host Ollama only works through LOCAL Docker Desktop WSL integration
@@ -5332,7 +5425,7 @@ express_wsl_can_use_n1x_managed_llama_cpp() {
 # window as non-local pinned WSL-local Ollama on hosts whose Docker Desktop
 # topology supports Windows-host Ollama, and onboarding then rejected the
 # preselected provider (#8199). Selection waits for the runtime instead.
-express_wsl_docker_context_needs_node() {
+docker_context_needs_node() {
   [ -z "${DOCKER_HOST:-}" ] || return 1
   [ -z "${DOCKER_CONTEXT:-}" ] || return 1
   local cfg="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
@@ -5354,7 +5447,7 @@ select_express_wsl_provider() {
     export NEMOCLAW_PROVIDER=install-windows-ollama
     return 0
   fi
-  if express_wsl_docker_context_needs_node; then
+  if docker_context_needs_node; then
     _EXPRESS_WSL_PROVIDER_PENDING=1
     return 0
   fi
@@ -5861,6 +5954,10 @@ prepare_installer_host() {
     unset DOCKER_HOST
     export DOCKER_CONTEXT=default
   fi
+  if [[ "${_PREFLIGHT_EXPRESS_PLATFORM:-}" == "DGX Station" ]] \
+    || [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]]; then
+    validate_installer_docker_target_before_host_changes
+  fi
   # Intentional ordering: Station preparation owns the reboot boundary before
   # generic Docker bootstrap; ensure_station_express_host is a no-op elsewhere.
   ensure_station_express_host
@@ -5953,7 +6050,7 @@ describe_express_install() {
         inference_disclosure="Managed llama.cpp downloads a pinned 20.4 GB GGUF file before it starts the loopback-only authenticated server."
       elif express_wsl_can_use_windows_host_ollama; then
         inference_summary="Windows-host Ollama through host.docker.internal"
-      elif express_wsl_docker_context_needs_node; then
+      elif docker_context_needs_node; then
         inference_summary="local inference, selected once the installed Node.js runtime reads the Docker configuration"
       else
         inference_summary="WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback"
@@ -6168,15 +6265,22 @@ maybe_offer_express_install() {
   esac
 }
 
+prepare_installer_node_runtime() {
+  [[ "${_INSTALLER_NODE_RUNTIME_PREPARED:-false}" == true ]] && return 0
+  step 1 "Node.js"
+  install_nodejs
+  ensure_supported_runtime
+  complete_deferred_installer_docker_context_validation
+  _INSTALLER_NODE_RUNTIME_PREPARED=true
+}
+
 # The qualification runner calls these phases without starting onboarding.
 # ---------------------------------------------------------------------------
 install_nemoclaw_before_onboarding() {
   _INSTALL_START=$SECONDS
   bash "${SCRIPT_DIR}/setup-jetson.sh"
 
-  step 1 "Node.js"
-  install_nodejs
-  ensure_supported_runtime
+  prepare_installer_node_runtime
   resolve_pending_express_wsl_provider
   ensure_station_express_pair
 
@@ -6325,6 +6429,13 @@ main() {
   # repeats the same authoritative validation at the prompt boundary because
   # it is also exercised directly by sourced-installer callers and tests.
   preflight_explicit_express_flags
+  if [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]]; then
+    capture_portable_caller_docker_context
+    unset DOCKER_HOST
+    export DOCKER_CONTEXT=default
+  elif [[ "${_PREFLIGHT_EXPRESS_PLATFORM:-}" != "DGX Station" ]]; then
+    validate_installer_docker_target_before_host_changes
+  fi
 
   print_banner
 
@@ -6333,6 +6444,10 @@ main() {
   # a real terminal are different: stdin is the script pipe, but /dev/tty can
   # still collect acceptance before Node.js or the CLI are installed.
   preflight_usage_notice_prompt
+
+  if [[ "${_INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED:-}" == "1" ]]; then
+    prepare_installer_node_runtime
+  fi
 
   # Offer express install on accepted platforms (DGX Spark / Station / N1x / WSL).
   # Runs AFTER the third-party notice so the user has explicitly accepted the
@@ -6374,33 +6489,48 @@ main() {
     fi
     if should_defer_hermes_onboarding "$_registered_sandbox_count"; then
       info "NVIDIA inference credentials are absent. Hermes onboarding did not run."
-    elif run_installer_host_preflight; then
+    else
       if ! recover_preexisting_sandboxes_before_onboard "$_cli_runner"; then
         finalize_install
         return 1
       fi
+
+      local _run_onboard_after_recovery=false
       if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
-        if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
+        if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
+          warn "Recovery output could not be inspected; skipping generic onboarding."
+        elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
           # #6520: do not claim recovery when recorded sandboxes are stranded.
           warn "Some recorded sandboxes could not be recovered; skipping generic onboarding."
         elif [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] \
           || [[ "${_STATION_EXPRESS_RESUME_LOADED:-}" == "1" ]] \
           || station_express_receipt_retirement_pending; then
-          info "Existing sandboxes recovered; reconciling DGX Station Express onboarding state."
-          run_onboard || fail_onboarding "$?"
-          ONBOARD_RAN=true
+          _run_onboard_after_recovery=true
         else
           info "Existing sandboxes recovered; skipping generic onboarding."
         fi
       else
-        run_onboard || fail_onboarding "$?"
-        ONBOARD_RAN=true
-        restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
+        _run_onboard_after_recovery=true
       fi
-    elif [ "${NON_INTERACTIVE:-}" = "1" ]; then
-      error "Skipping onboarding until the host prerequisites above are fixed."
-    else
-      warn "Skipping onboarding until the host prerequisites above are fixed."
+
+      if [[ "$_run_onboard_after_recovery" == true ]]; then
+        if run_installer_host_preflight; then
+          if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
+            info "Existing sandboxes recovered; reconciling DGX Station Express onboarding state."
+          fi
+          run_onboard || fail_onboarding "$?"
+          ONBOARD_RAN=true
+          if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" != true ]]; then
+            restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
+          fi
+        elif [ "${NON_INTERACTIVE:-}" = "1" ]; then
+          error "Skipping onboarding until the host prerequisites above are fixed."
+        elif [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
+          error "DGX Station reconciliation did not run. Fix the host prerequisites above, then rerun the installer."
+        else
+          warn "Skipping onboarding until the host prerequisites above are fixed."
+        fi
+      fi
     fi
   else
     warn "Skipping onboarding — could not locate the ${_CLI_BIN} executable on disk."

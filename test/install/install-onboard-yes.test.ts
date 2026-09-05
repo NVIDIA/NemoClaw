@@ -749,8 +749,8 @@ describe("Hermes deferred onboarding", () => {
     const result = runDeferredOnboardingMain({ deferFlag: true, registeredSandboxCount: 1 });
 
     expect(result.result.status, result.output).toBe(0);
-    expect(result.calls).toContain("host-preflight");
     expect(result.calls).toContain("recover-preexisting");
+    expect(result.calls).not.toContain("host-preflight");
     expect(result.calls).not.toContain("onboard");
   });
 

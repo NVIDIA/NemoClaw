@@ -242,7 +242,7 @@ finalize_install() { record finalize-install; }
 clear_station_resume_after_completed_onboarding() { :; }
 main --non-interactive --yes-i-accept-third-party-software
 `,
-      { CALL_LOG: callLog, SETUP_DIRECTORY: setupDirectory },
+      { CALL_LOG: callLog, HOME: fixtureRoot, SETUP_DIRECTORY: setupDirectory },
     );
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
