@@ -1029,11 +1029,16 @@ function buildLocalProviderProbeDetail(
   const label = getLocalProviderLabel(provider) || "Local inference provider";
   if (result.httpStatus === 0) {
     switch (provider) {
-      case "ollama-local":
+      case "ollama-local": {
+        const timeoutRecovery =
+          result.curlStatus === 28
+            ? " If Ollama is running but the probe times out, stale runner processes from a previous model may be holding GPU memory; run 'sudo systemctl restart ollama' and retry."
+            : "";
         return (
           `${label} is selected for inference, but the host probe to ${endpoint} failed. ` +
-          `Start Ollama and retry. (${result.message})`
+          `Start Ollama and retry.${timeoutRecovery} (${result.message})`
         );
+      }
       case "vllm-local":
         return (
           `${label} is selected for inference, but the host probe to ${endpoint} failed. ` +

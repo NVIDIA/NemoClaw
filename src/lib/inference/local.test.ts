@@ -635,7 +635,28 @@ describe("local inference helpers", () => {
     expect(result?.ok).toBe(false);
     expect(result?.detail).toContain("Local Ollama is selected for inference");
     expect(result?.detail).toContain("Start Ollama and retry");
+    expect(result?.detail).not.toContain("sudo systemctl restart ollama");
     expect(result?.detail).toContain("http://127.0.0.1:11434/api/tags");
+    expect(result?.probeLabel).toBe("ollama backend");
+  });
+
+  it("suggests restarting Ollama when the local backend probe times out (#10674)", () => {
+    const result = probeLocalProviderHealth("ollama-local", {
+      runCurlProbeImpl: () => ({
+        ok: false,
+        httpStatus: 0,
+        curlStatus: 28,
+        body: "",
+        stderr: "Operation timed out",
+        message: "curl failed (exit 28): Operation timed out",
+      }),
+      loadOllamaProxyTokenImpl: () => null,
+    });
+
+    expect(result?.ok).toBe(false);
+    expect(result?.detail).toContain("stale runner processes from a previous model");
+    expect(result?.detail).toContain("holding GPU memory");
+    expect(result?.detail).toContain("sudo systemctl restart ollama");
     expect(result?.probeLabel).toBe("ollama backend");
   });
 
