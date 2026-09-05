@@ -16,6 +16,9 @@ on:
         required: false
         default: ""
         type: string
+  push:
+    branches:
+      - feat/windows-native-installer
 
 permissions:
   actions: read
@@ -28,7 +31,7 @@ concurrency:
 jobs:
   windows-native-installer:
     name: Windows native installer candidate (ARM64, no WSL)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '') }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 240
     steps:
