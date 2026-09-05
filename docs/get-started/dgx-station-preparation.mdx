@@ -81,7 +81,7 @@ Run the override from an interactive terminal:
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --force-station-install
 ```
 
-Add `--station-deepseek` to the same command to select DeepSeek V4 Flash.
+Do not add model-selection flags to this command; validation-only handling does not select or serve a model.
 The installer records the override in the printed relogin command when Docker-group access requires a new session.
 </Warning>
 

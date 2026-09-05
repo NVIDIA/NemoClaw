@@ -18,6 +18,13 @@ const STATION_PREPARATION = path.join(
   "dgx-station-preparation.mdx",
 );
 const STATION_QUICKSTART = path.join(REPO_ROOT, "docs", "get-started", "quickstart.mdx");
+const STATION_PROMPT_ASSET = path.join(
+  REPO_ROOT,
+  "docs",
+  "resources",
+  "prompt-assets",
+  "dgx-station.md",
+);
 const PLATFORM_SUPPORT = path.join(REPO_ROOT, "docs", "reference", "platform-support.mdx");
 const VLLM_SETUP = path.join(REPO_ROOT, "docs", "inference", "set-up-vllm.mdx");
 const DUAL_STATION_VLLM_SETUP = path.join(
@@ -36,6 +43,7 @@ describe("DGX Station documentation ownership", () => {
     const prerequisites = fs.readFileSync(PREREQUISITES, "utf-8");
     const stationPreparation = fs.readFileSync(STATION_PREPARATION, "utf-8");
     const quickstart = fs.readFileSync(STATION_QUICKSTART, "utf-8");
+    const stationPromptAsset = fs.readFileSync(STATION_PROMPT_ASSET, "utf-8");
     const platformSupport = fs.readFileSync(PLATFORM_SUPPORT, "utf-8");
     const vllmSetup = fs.readFileSync(VLLM_SETUP, "utf-8");
     const dualStationVllmSetup = fs.readFileSync(DUAL_STATION_VLLM_SETUP, "utf-8");
@@ -82,6 +90,13 @@ describe("DGX Station documentation ownership", () => {
     expect(quickstart).not.toContain("DGX Server for GALAXY-GB300");
     expect(stationPreparation).toContain("--force-station-install");
     expect(stationPreparation).toContain("validation-only factory-runtime handling");
+    expect(stationPreparation).not.toContain("Add `--station-deepseek` to the same command");
+    expect(stationPromptAsset).toContain(
+      "If the hardware qualification passes but the software qualification is unqualified",
+    );
+    expect(stationPromptAsset).toContain("does not run onboarding or select a model");
+    expect(stationPromptAsset).toContain("Do not add `--station-deepseek`");
+    expect(stationPromptAsset).toContain("After validation-only handling, stop");
     expect(stationPreparation).toContain(
       "does not install packages, repair CDI, register a Docker runtime, restart Docker or containerd",
     );
