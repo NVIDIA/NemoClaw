@@ -117,7 +117,7 @@ interface DirectNodeStage {
 }
 
 function directNodeStages(file: string, source: string): DirectNodeStage[] {
-  const starts = [...source.matchAll(/^FROM\s+([^\s]+)(?:\s+AS\s+(\S+))?$/gmu)];
+  const starts = [...source.matchAll(/^FROM(?:\s+--\S+)*\s+([^\s]+)(?:\s+AS\s+(\S+))?$/gmu)];
   return starts.flatMap((match, index) =>
     match[1]!.startsWith("node:24.18.1-") || match[1] === "npm12"
       ? [
@@ -549,6 +549,12 @@ describe("reviewed npm image remediation contract", () => {
 
   // source-shape-contract: security -- Direct Node stages must upgrade reviewed npm before any npm-backed build boundary executes.
   it("upgrades and verifies reviewed npm before every direct Node stage npm boundary", () => {
+    expect(
+      directNodeStages(
+        "platform-fixture",
+        "FROM --platform=$BUILDPLATFORM node:24.18.1-trixie AS builder\nRUN npm ci\n",
+      ).map(({ file, name }) => `${file}:${name}`),
+    ).toEqual(["platform-fixture:builder"]);
     const rootDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
     const stages = directNodeDockerfiles.flatMap((file) =>
       directNodeStages(file, fs.readFileSync(path.join(repoRoot, file), "utf8")),
