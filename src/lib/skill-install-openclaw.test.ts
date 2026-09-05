@@ -72,7 +72,7 @@ case "$1 $2" in
     printf '%s\\n' "$*" >> "$OPENCLAW_TEST_LOG"
     rm -rf -- "$OPENCLAW_TEST_TARGET"
     mkdir -p -- "$(dirname "$OPENCLAW_TEST_TARGET")"
-    cp -R -- "$3" "$OPENCLAW_TEST_TARGET"
+    cp -pR -- "$3" "$OPENCLAW_TEST_TARGET"
     ;;
   "skills list"|"skills info"|"skills check")
     printf '{"skills":["demo-skill"],"path":"%s"}\\n' "$OPENCLAW_TEST_TARGET"
