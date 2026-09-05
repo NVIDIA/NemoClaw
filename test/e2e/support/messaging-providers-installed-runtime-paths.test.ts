@@ -6,10 +6,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   resolveInstalledWechatPluginRoot,
+  waitForInstalledWechatApi,
   WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE,
 } from "../live/messaging-providers-wechat-runtime-proof.ts";
 
@@ -47,5 +48,21 @@ describe("messaging provider installed-runtime paths", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE).not.toContain("__vite_ssr_import_");
+  });
+
+  it("waits for the fake WeChat API before exercising the installed runtime", async () => {
+    const probe = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValue(undefined);
+    const delays: number[] = [];
+
+    await waitForInstalledWechatApi(probe, async (milliseconds) => {
+      delays.push(milliseconds);
+    });
+
+    expect(probe).toHaveBeenCalledTimes(3);
+    expect(delays).toEqual([250, 250]);
   });
 });

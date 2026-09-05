@@ -21,19 +21,35 @@ export type InstalledWechatRuntimeProof = {
   pluginVersion: string;
 };
 
+export const waitForInstalledWechatApi: (
+  probe: () => Promise<unknown>,
+  delay: (milliseconds: number) => Promise<void>,
+) => Promise<void> = async function waitForInstalledWechatApi(probe, delay) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 20; attempt += 1) {
+    try {
+      await probe();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 20) await delay(250);
+    }
+  }
+  return Promise.reject(lastError);
+};
+
 const readWechatPackageName: (
   candidate: string,
   fileSystem: typeof fs,
   pathModule: typeof path,
 ) => string | undefined = function readWechatPackageName(candidate, fileSystem, pathModule) {
-    try {
-      return JSON.parse(
-        fileSystem.readFileSync(pathModule.join(candidate, "package.json"), "utf8"),
-      ).name;
-    } catch {
-      return undefined;
-    }
-  };
+  try {
+    return JSON.parse(fileSystem.readFileSync(pathModule.join(candidate, "package.json"), "utf8"))
+      .name;
+  } catch {
+    return undefined;
+  }
+};
 
 const addManagedNpmProjectWechatCandidates: (
   projectsDir: string,
@@ -46,26 +62,26 @@ const addManagedNpmProjectWechatCandidates: (
   fileSystem,
   pathModule,
 ) {
-    const entries = (() => {
-      try {
-        return fileSystem.readdirSync(projectsDir, { withFileTypes: true });
-      } catch {
-        return [];
-      }
-    })();
-    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
-      candidates.push(
-        pathModule.join(
-          projectsDir,
-          entry.name,
-          "node_modules",
-          "@tencent-weixin",
-          "openclaw-weixin",
-        ),
-      );
+  const entries = (() => {
+    try {
+      return fileSystem.readdirSync(projectsDir, { withFileTypes: true });
+    } catch {
+      return [];
     }
-  };
+  })();
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+    candidates.push(
+      pathModule.join(
+        projectsDir,
+        entry.name,
+        "node_modules",
+        "@tencent-weixin",
+        "openclaw-weixin",
+      ),
+    );
+  }
+};
 
 const linkWechatNodeModulesEntries: (
   nodeModulesRoot: string,
@@ -110,28 +126,27 @@ const resolveInstalledWechatPluginRootWithDependencies: (
   fileSystem,
   pathModule,
 ) {
-    const candidates = [pathModule.join(stateDir, "extensions", "openclaw-weixin")];
-    addManagedNpmProjectWechatCandidates(
-      pathModule.join(stateDir, "npm", "projects"),
-      candidates,
-      fileSystem,
-      pathModule,
-    );
-    const matches: string[] = [];
-    for (const candidate of candidates) {
-      if (
-        readWechatPackageName(candidate, fileSystem, pathModule) !==
-        "@tencent-weixin/openclaw-weixin"
-      ) {
-        continue;
-      }
-      try {
-        const resolved = fileSystem.realpathSync(candidate);
-        if (!matches.includes(resolved)) matches.push(resolved);
-      } catch {}
+  const candidates = [pathModule.join(stateDir, "extensions", "openclaw-weixin")];
+  addManagedNpmProjectWechatCandidates(
+    pathModule.join(stateDir, "npm", "projects"),
+    candidates,
+    fileSystem,
+    pathModule,
+  );
+  const matches: string[] = [];
+  for (const candidate of candidates) {
+    if (
+      readWechatPackageName(candidate, fileSystem, pathModule) !== "@tencent-weixin/openclaw-weixin"
+    ) {
+      continue;
     }
-    return matches.length === 1 ? matches[0] : null;
-  };
+    try {
+      const resolved = fileSystem.realpathSync(candidate);
+      if (!matches.includes(resolved)) matches.push(resolved);
+    } catch {}
+  }
+  return matches.length === 1 ? matches[0] : null;
+};
 
 export function resolveInstalledWechatPluginRoot(stateDir: string): string | null {
   return resolveInstalledWechatPluginRootWithDependencies(stateDir, fs, path);
@@ -193,6 +208,7 @@ const addManagedNpmProjectWechatCandidates = ${addManagedNpmProjectWechatCandida
 const linkWechatNodeModulesEntries = ${linkWechatNodeModulesEntries.toString()};
 const resolveInstalledWechatPluginRootWithDependencies = ${resolveInstalledWechatPluginRootWithDependencies.toString()};
 const resolveInstalledOpenClawRoot = ${resolveInstalledOpenClawRoot.toString()};
+const waitForInstalledWechatApi = ${waitForInstalledWechatApi.toString()};
 
 const stateDir = process.env.OPENCLAW_STATE_DIR || "/sandbox/.openclaw";
 const pluginRoot = resolveInstalledWechatPluginRootWithDependencies(stateDir, fs, path);
@@ -246,13 +262,19 @@ try {
     "installed WeChat runtime did not load the revision-scoped account token",
   );
 
+  const fakeWechatBaseUrl =
+    "http://host.openshell.internal:" + process.env.FAKE_WECHAT_API_PORT;
+  await waitForInstalledWechatApi(
+    () => fetch(fakeWechatBaseUrl + "/__nemoclaw_ready__"),
+    (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  );
   const target = process.env.OPENCLAW_WECHAT_TARGET || "e2e-user@im.wechat";
   const text = process.env.OPENCLAW_WECHAT_TEXT || "NemoClaw OpenClaw WeChat plugin mock E2E";
   const result = await sendModule.sendMessageWeixin({
     to: target,
     text,
     opts: {
-      baseUrl: "http://host.openshell.internal:" + process.env.FAKE_WECHAT_API_PORT,
+      baseUrl: fakeWechatBaseUrl,
       token: account.token,
       contextToken: "nemoclaw-e2e-context",
       timeoutMs: 30_000,
