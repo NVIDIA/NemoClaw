@@ -118,6 +118,31 @@ describe("buildChain", () => {
 
   // #3259 — explicit operator opt-in to bind dashboard on all interfaces
   // for remote-SSH-deployed hosts (Brev / cloud workstations).
+  it("marks the bind as widened when only a non-loopback CHAT_UI_URL caused it", () => {
+    const c = buildChain({ chatUiUrl: "https://dashboard.example.com:18789" });
+    expect(c.bindAddress).toBe("0.0.0.0");
+    expect(c.bindWidenedByChatUiUrl).toBe(true);
+  });
+
+  it("does not mark a loopback bind as widened", () => {
+    expect(buildChain({}).bindWidenedByChatUiUrl).toBe(false);
+    expect(
+      buildChain({ chatUiUrl: "http://127.0.0.1:18789" }).bindWidenedByChatUiUrl,
+    ).toBe(false);
+  });
+
+  it("does not mark the bind as widened when the operator opted in or the host is WSL", () => {
+    const optedIn = buildChain({
+      chatUiUrl: "https://dashboard.example.com:18789",
+      bindOverride: "0.0.0.0",
+    });
+    expect(optedIn.bindAddress).toBe("0.0.0.0");
+    expect(optedIn.bindWidenedByChatUiUrl).toBe(false);
+
+    const wsl = buildChain({ chatUiUrl: "https://dashboard.example.com:18789", isWsl: true });
+    expect(wsl.bindWidenedByChatUiUrl).toBe(false);
+  });
+
   it("binds to 0.0.0.0 when bindOverride='0.0.0.0' is set, even for loopback URL", () => {
     const c = buildChain({ chatUiUrl: "http://127.0.0.1:18789", bindOverride: "0.0.0.0" });
     expect(c.forwardTarget).toBe("0.0.0.0:18789");
