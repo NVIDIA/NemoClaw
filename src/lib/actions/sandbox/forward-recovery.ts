@@ -39,9 +39,10 @@ import {
   ensureHermesDashboardPortForwardIfEnabled as ensureHermesDashboardPortForward,
   getHermesDashboardRecoveryConfig,
 } from "./hermes-dashboard-recovery";
-import type {
-  HermesPortableForwardRecoveryInput,
-  HermesPortableForwardRecoveryTimingEvidence,
+import {
+  verifyHermesPortableLaunchForwards,
+  type HermesPortableForwardRecoveryInput,
+  type HermesPortableForwardRecoveryTimingEvidence,
 } from "./probe/hermes-portable-forward-recovery";
 export {
   HermesPortableForwardRecoveryError,
@@ -624,10 +625,47 @@ export function ensureDeclaredAgentForwardPortsHealthy(
  * Observe every host forward that the interactive preflight would recover,
  * without starting, stopping, or rebinding one.
  */
+type SandboxLaunchForwardCapture = (
+  args: string[],
+  options?: NonNullable<Parameters<typeof captureOpenshell>[1]>,
+) => ReturnType<typeof captureOpenshell>;
+
+function verifyPortableLaunchForwards(
+  sandboxName: string,
+  gatewayName: string,
+  ports: readonly number[],
+  capture: SandboxLaunchForwardCapture,
+): boolean | null {
+  const captureList = (args: readonly string[], timeout: number) =>
+    capture([...args], { ignoreError: true, includeStreams: true, timeout });
+  try {
+    return (
+      verifyHermesPortableLaunchForwards({
+        intent: "connect-probe-only",
+        sandboxName,
+        gatewayName,
+        operationTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+        ports,
+        probeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+        deps: {
+          assertCurrent: () => undefined,
+          assertRollbackCurrent: () => undefined,
+          captureCurrentList: captureList,
+          captureRollbackList: captureList,
+          runCurrentMutation: () => undefined,
+          isPortReachable: isLocalForwardReachable,
+        },
+      }).kind === "healthy"
+    );
+  } catch {
+    return null;
+  }
+}
+
 export function areSandboxLaunchForwardsHealthy(
   sandboxName: string,
   gatewayName?: string,
-  _capture?: unknown,
+  portableCapture?: SandboxLaunchForwardCapture,
 ): boolean | null {
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) return false;
@@ -636,8 +674,26 @@ export function areSandboxLaunchForwardsHealthy(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const requiredPorts = resolveSandboxLaunchForwardPortsFromAuthority(sandboxName, sandbox, agent);
   if (requiredPorts.length === 0) return true;
+  if (portableCapture) {
+    return verifyPortableLaunchForwards(
+      sandboxName,
+      owningGatewayName,
+      requiredPorts,
+      portableCapture,
+    );
+  }
   try {
-    return requiredPorts.every((port) => isLocalForwardReachable(port));
+    const primaryPort = resolveSandboxDashboardPort(sandboxName);
+    const allInterfaceDashboard = sandbox.dashboardRemoteBindPrepared === true || isWsl();
+    const runtimeSelection = { gatewayName: owningGatewayName, workspace: "default" };
+    return requiredPorts.every((port) =>
+      isSandboxPortForwardHealthy(
+        sandboxName,
+        port,
+        port === primaryPort && allInterfaceDashboard ? "0.0.0.0" : "127.0.0.1",
+        runtimeSelection,
+      ),
+    );
   } catch {
     return null;
   }
