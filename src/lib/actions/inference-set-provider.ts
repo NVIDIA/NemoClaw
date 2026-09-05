@@ -416,10 +416,10 @@ export async function prepareInferenceSetProviderBinding(options: {
       );
     }
     if (
+      createdRevision == null ||
       current.metadata.revision == null ||
-      (createdRevision != null &&
-        (current.metadata.revision.id !== createdRevision.id ||
-          current.metadata.revision.resourceVersion !== createdRevision.resourceVersion)) ||
+      current.metadata.revision.id !== createdRevision.id ||
+      current.metadata.revision.resourceVersion !== createdRevision.resourceVersion ||
       !matchesGatewayProviderBinding(current.metadata, expectedBinding)
     ) {
       throw new InferenceSetError(

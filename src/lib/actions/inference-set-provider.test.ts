@@ -197,7 +197,8 @@ describe("inference set provider binding", () => {
     ]);
   });
 
-  it("removes a newly created provider when post-create inspection fails (#9806)", async () => {
+  it("preserves a replacement when post-create inspection did not capture the created revision (#9806)", async () => {
+    const replacementId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
     const getProvider = vi
       .fn<OpenShellProviderAdapter["getProvider"]>()
       .mockResolvedValueOnce({
@@ -210,36 +211,28 @@ describe("inference set provider binding", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        value: metadata({ revision: { id: PROVIDER_ID, resourceVersion: 1 } }),
-      })
-      .mockResolvedValueOnce({
-        ok: false,
-        error: { kind: "command", reason: "not_found", message: "provider not found" },
+        value: metadata({ revision: { id: replacementId, resourceVersion: 2 } }),
       });
     const createProvider = vi.fn(async () => ({ ok: true as const }));
     const deleteProvider = vi.fn(async () => ({ ok: true as const }));
 
-    await expect(
-      prepareInferenceSetProviderBinding({
-        gatewayName: "nemoclaw",
-        providerName: "compatible-endpoint",
-        binding: binding(),
-        providerAdapter: providerAdapter({ getProvider, createProvider, deleteProvider }),
-      }),
-    ).rejects.toThrow(
-      "The provider created by this attempt was removed; no inference route was changed.",
-    );
-
-    expect(createProvider).toHaveBeenCalledOnce();
-    expect(deleteProvider).toHaveBeenCalledExactlyOnceWith({
-      target: TARGET,
+    const failure = await prepareInferenceSetProviderBinding({
+      gatewayName: "nemoclaw",
       providerName: "compatible-endpoint",
-    });
-    expect(getProvider).toHaveBeenCalledTimes(4);
+      binding: binding(),
+      providerAdapter: providerAdapter({ getProvider, createProvider, deleteProvider }),
+    }).catch((error: Error) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("Cleanup could not confirm removal");
+    expect((failure as Error).message).toContain("no provider deletion was attempted");
+    expect((failure as Error).message).toContain("Rerun onboarding");
+    expect(createProvider).toHaveBeenCalledOnce();
+    expect(deleteProvider).not.toHaveBeenCalled();
+    expect(getProvider).toHaveBeenCalledTimes(3);
   });
 
-  it("reports an unremoved provider when post-create cleanup fails (#9806)", async () => {
-    const createdMetadata = metadata({ revision: { id: PROVIDER_ID, resourceVersion: 1 } });
+  it("reports an inspection failure during post-create reconciliation (#9806)", async () => {
     const getProvider = vi
       .fn<OpenShellProviderAdapter["getProvider"]>()
       .mockResolvedValueOnce({
@@ -250,16 +243,11 @@ describe("inference set provider binding", () => {
         ok: false,
         error: { kind: "timeout", message: "safe post-create inspection timeout" },
       })
-      .mockResolvedValueOnce({ ok: true, value: createdMetadata })
-      .mockResolvedValueOnce({ ok: true, value: createdMetadata });
-    const deleteProvider = vi.fn(async () => ({
-      ok: false as const,
-      error: {
-        kind: "command" as const,
-        reason: "failed" as const,
-        message: "safe cleanup failure",
-      },
-    }));
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "authentication", message: "safe cleanup inspection failure" },
+      });
+    const deleteProvider = vi.fn(async () => ({ ok: true as const }));
 
     const failure = await prepareInferenceSetProviderBinding({
       gatewayName: "nemoclaw",
@@ -273,12 +261,8 @@ describe("inference set provider binding", () => {
       "Provider 'compatible-endpoint' did not converge to the expected type and binding-key shape after create.",
     );
     expect((failure as Error).message).toContain("Cleanup could not confirm removal");
-    expect((failure as Error).message).toContain("The provider remains registered");
-    expect((failure as Error).message).toContain("safe cleanup failure");
-    expect(deleteProvider).toHaveBeenCalledExactlyOnceWith({
-      target: TARGET,
-      providerName: "compatible-endpoint",
-    });
+    expect((failure as Error).message).toContain("safe cleanup inspection failure");
+    expect(deleteProvider).not.toHaveBeenCalled();
   });
 
   it("does not inspect an OpenAI profile for an Anthropic provider (#9806)", async () => {
