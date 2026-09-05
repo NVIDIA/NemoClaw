@@ -413,6 +413,13 @@ export async function installSandboxSkill(
         console.error(
           `  Refusing to replace '${frontmatter.name}': the OpenClaw workspace skill is not proven to be owned by NemoClaw.`,
         );
+      } else if (native.reason === "agent_workspace_unsupported") {
+        console.error(
+          "  OpenClaw skill install supports only the NemoClaw-managed primary 'main' agent in the default /sandbox/.openclaw/workspace directory.",
+        );
+        console.error(
+          "  The current 'main' agent has a custom workspace; no sandbox staging or publication occurred.",
+        );
       } else if (native.reason === "legacy_destination_exists") {
         console.error(
           `  Refusing to create a second OpenClaw skill authority: inspect the legacy ${paths.stateDir}/skills/${frontmatter.name} and $HOME/.openclaw/skills/${frontmatter.name} paths plus ${paths.uploadDir}, then migrate the legacy content manually.`,

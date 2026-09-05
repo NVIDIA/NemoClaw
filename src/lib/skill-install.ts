@@ -571,6 +571,7 @@ export interface FreshSharedSkillInstallResult {
   contentDigest?: string;
   reason?:
     | "destination_exists"
+    | "agent_workspace_unsupported"
     | "legacy_destination_exists"
     | "native_capability_missing"
     | "provenance_failed"
@@ -741,41 +742,11 @@ function syncDirectory(dirPath: string): void {
   }
 }
 
-/** Atomically publish one private host ownership receipt. */
-function writeOpenClawSkillProvenance(receiptPath: string, receipt: OpenClawSkillProvenance): void {
-  const receiptDir = path.dirname(receiptPath);
-  ensureConfigDir(receiptDir);
-  if (typeof fs.constants.O_NOFOLLOW !== "number") {
-    throw new Error("OpenClaw skill provenance requires O_NOFOLLOW support");
-  }
-  const temporaryPath = path.join(
-    receiptDir,
-    `.${path.basename(receiptPath)}.${String(process.pid)}.${randomBytes(8).toString("hex")}.tmp`,
-  );
-  let descriptor: number | undefined;
-  try {
-    descriptor = fs.openSync(
-      temporaryPath,
-      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
-      0o600,
-    );
-    fs.writeFileSync(descriptor, `${JSON.stringify(receipt)}\n`, "utf8");
-    fs.fchmodSync(descriptor, 0o600);
-    fs.fsyncSync(descriptor);
-    fs.closeSync(descriptor);
-    descriptor = undefined;
-    fs.renameSync(temporaryPath, receiptPath);
-    syncDirectory(receiptDir);
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
-    fs.rmSync(temporaryPath, { force: true });
-  }
-}
-
-/** Publish a receipt only when its final path is absent. */
-function writeOpenClawSkillProvenanceIfAbsent(
+/** Write one private receipt to a temporary file, then publish it with caller-selected semantics. */
+function publishOpenClawSkillProvenance(
   receiptPath: string,
   receipt: OpenClawSkillProvenance,
+  publish: (temporaryPath: string) => boolean,
 ): boolean {
   const receiptDir = path.dirname(receiptPath);
   ensureConfigDir(receiptDir);
@@ -798,18 +769,37 @@ function writeOpenClawSkillProvenanceIfAbsent(
     fs.fsyncSync(descriptor);
     fs.closeSync(descriptor);
     descriptor = undefined;
+    const published = publish(temporaryPath);
+    if (published) syncDirectory(receiptDir);
+    return published;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    fs.rmSync(temporaryPath, { force: true });
+  }
+}
+
+/** Atomically publish one private host ownership receipt. */
+function writeOpenClawSkillProvenance(receiptPath: string, receipt: OpenClawSkillProvenance): void {
+  publishOpenClawSkillProvenance(receiptPath, receipt, (temporaryPath) => {
+    fs.renameSync(temporaryPath, receiptPath);
+    return true;
+  });
+}
+
+/** Publish a receipt only when its final path is absent. */
+function writeOpenClawSkillProvenanceIfAbsent(
+  receiptPath: string,
+  receipt: OpenClawSkillProvenance,
+): boolean {
+  return publishOpenClawSkillProvenance(receiptPath, receipt, (temporaryPath) => {
     try {
       fs.linkSync(temporaryPath, receiptPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
       throw error;
     }
-    syncDirectory(receiptDir);
     return true;
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
-    fs.rmSync(temporaryPath, { force: true });
-  }
+  });
 }
 
 function sameOpenClawSkillProvenance(
@@ -1018,6 +1008,14 @@ function buildOpenClawNativeInstallScript(
     'const checked=check&&typeof check==="object"&&check.agentId==="main"&&Array.isArray(check.eligible)&&check.eligible.includes(skill);',
     "if(!listed||!informed||!checked)process.exit(1);",
   ].join("");
+  const verifyMainWorkspace = [
+    'const fs=require("node:fs");',
+    "const [configPath,expected]=process.argv.slice(1);",
+    'const config=JSON.parse(fs.readFileSync(configPath,"utf8"));',
+    "const entries=config&&config.agents&&config.agents.list;",
+    'const main=Array.isArray(entries)&&entries.find((entry)=>entry&&typeof entry==="object"&&entry.id==="main");',
+    'if(!main||(main.workspace!==undefined&&main.workspace!==expected))process.exit(1);',
+  ].join("");
   // The pinned native installer owns source-origin metadata and may recreate
   // payload modes under umask; hash only payload files with normalized modes.
   return [
@@ -1025,6 +1023,8 @@ function buildOpenClawNativeInstallScript(
     "umask 077",
     `root=${shellQuote(paths.stateDir)}`,
     `target=${shellQuote(paths.uploadDir)}`,
+    `config=${shellQuote(`${paths.stateDir}/openclaw.json`)}`,
+    `expected_workspace=${shellQuote(`${paths.stateDir}/workspace`)}`,
     `legacy=${shellQuote(`${paths.stateDir}/skills/${skillName}`)}`,
     `skill=${shellQuote(skillName)}`,
     'legacy_home="$HOME/.openclaw/skills/$skill"',
@@ -1036,6 +1036,7 @@ function buildOpenClawNativeInstallScript(
     'safe_tree() { [ -d "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -mindepth 1 ! -type d ! -type f -print -quit)" ]; }',
     'digest_tree() { tree="$1"; manifest="$2"; find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort | grep -Fxv ".openclaw/source-origin.json" > "$manifest.files"; : > "$manifest"; while IFS= read -r rel; do if [ -n "$(find "$tree/$rel" -type f -perm /111 -print -quit)" ]; then mode=755; else mode=644; fi; hash="$(sha256sum "$tree/$rel" | cut -d " " -f 1)"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$manifest"; done < "$manifest.files"; sha256sum "$manifest" | cut -d " " -f 1; }',
     '[ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]',
+    `node -e ${shellQuote(verifyMainWorkspace)} "$config" "$expected_workspace" || { echo AGENT_WORKSPACE_UNSUPPORTED; exit 8; }`,
     'if exists "$legacy" || exists "$legacy_home"; then echo LEGACY_COLLISION; exit 5; fi',
     'stage="$root/.nemoclaw-skill-stage.$stage_nonce"',
     'if exists "$stage"; then [ "$resume_stage" = 1 ] && safe_tree "$stage" || { echo STAGE_COLLISION; exit 7; }; rm -rf -- "$stage"; fi',
@@ -1183,7 +1184,8 @@ export function installOpenClawSkill(
     (result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")) ||
     (result?.status === 5 && stdout.endsWith("LEGACY_COLLISION")) ||
     (result?.status === 6 && stdout.endsWith("UPDATE_UNSUPPORTED")) ||
-    (result?.status === 7 && stdout.endsWith("STAGE_COLLISION"))
+    (result?.status === 7 && stdout.endsWith("STAGE_COLLISION")) ||
+    (result?.status === 8 && stdout.endsWith("AGENT_WORKSPACE_UNSUPPORTED"))
   ) {
     try {
       restoreOpenClawSkillProvenance(receiptPath, priorReceipt);
@@ -1197,7 +1199,9 @@ export function installOpenClawSkill(
     reason:
       result?.status === 2 && stdout.endsWith("COLLISION")
         ? "destination_exists"
-        : result?.status === 5 && stdout.endsWith("LEGACY_COLLISION")
+        : result?.status === 8 && stdout.endsWith("AGENT_WORKSPACE_UNSUPPORTED")
+          ? "agent_workspace_unsupported"
+          : result?.status === 5 && stdout.endsWith("LEGACY_COLLISION")
           ? "legacy_destination_exists"
           : result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")
             ? "native_capability_missing"

@@ -150,6 +150,7 @@ describe("OpenClaw native skill installation", () => {
       const fakeBin = path.join(sandboxRoot, "bin");
       const sandboxHome = path.join(sandboxRoot, "home");
       const workspaceSkillDir = path.join(sandboxRoot, "workspace", "skills", "demo-skill");
+      const openClawConfig = path.join(sandboxRoot, "openclaw.json");
       const provenanceStateDir = path.join(sandboxRoot, "host-state");
       const invocationLog = path.join(sandboxRoot, "openclaw.log");
       const shadowLog = path.join(sandboxRoot, "shadow-openclaw.log");
@@ -163,6 +164,10 @@ describe("OpenClaw native skill installation", () => {
       roots.push(sandboxRoot);
       fs.mkdirSync(fakeBin);
       fs.mkdirSync(sandboxHome);
+      fs.writeFileSync(
+        openClawConfig,
+        `${JSON.stringify({ agents: { list: [{ id: "main", default: true }] } })}\n`,
+      );
       fs.writeFileSync(
         pinnedOpenClaw,
         `#!/bin/sh
@@ -257,6 +262,30 @@ esac
       );
 
       const firstDigest = computeSkillContentDigest(skill);
+      fs.writeFileSync(
+        openClawConfig,
+        `${JSON.stringify({
+          agents: {
+            list: [
+              {
+                id: "main",
+                default: true,
+                workspace: path.join(sandboxRoot, "workspace-main"),
+              },
+            ],
+          },
+        })}\n`,
+      );
+      expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
+        success: false,
+        uploaded: 0,
+        reason: "agent_workspace_unsupported",
+      });
+      expect(fs.existsSync(invocationLog)).toBe(false);
+      fs.writeFileSync(
+        openClawConfig,
+        `${JSON.stringify({ agents: { list: [{ id: "main", default: true }] } })}\n`,
+      );
       checkState = "blocked";
       expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
         success: false,
@@ -521,6 +550,7 @@ esac
     [5, "LEGACY_COLLISION\n", "legacy_destination_exists"],
     [6, "UPDATE_UNSUPPORTED\n", "update_unsupported"],
     [7, "STAGE_COLLISION\n", "staging_collision"],
+    [8, "AGENT_WORKSPACE_UNSUPPORTED\n", "agent_workspace_unsupported"],
   ] as const)("maps native failure %s to %s", (status, stdout, reason) => {
     const skill = makeSkill();
     const provenanceStateDir = fs.mkdtempSync(

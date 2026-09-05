@@ -144,12 +144,11 @@ Use `$OPENCLAW_WORKSPACE_DIR/USER.md` and `$OPENCLAW_WORKSPACE_DIR/SOUL.md` inst
 
 A single NemoClaw sandbox can host more than one OpenClaw agent.
 When you configure OpenClaw with multiple named agents, each agent gets its own workspace directory alongside the default `workspace/`.
-For example, a Teams-integrated deployment can use a shared `main` agent plus per-user agents.
+NemoClaw reserves `main` for the primary agent, which continues to use the default workspace; secondary named agents use suffixed workspaces. For example, a Teams-integrated deployment can use the primary `main` agent plus per-user agents.
 
 ```text
 /sandbox/.openclaw/
-├── workspace/           # default agent (single-agent deployments)
-├── workspace-main/      # named agent "main"
+├── workspace/           # primary agent "main"
 ├── workspace-support/   # named agent "support"
 └── workspace-ops/       # named agent "ops"
 ```
@@ -159,7 +158,7 @@ NemoClaw seeds these files only in the default `workspace/`.
 The sandbox entrypoint provisions each named workspace directory without copying the default templates into it.
 OpenClaw creates `MEMORY.md` and `memory/` separately in each workspace when that agent first uses long-term or daily memory.
 Files are per-agent.
-Changes in `workspace-main/AGENTS.md` are not visible to `workspace-support/`.
+Changes in `workspace/AGENTS.md` are not visible to `workspace-support/`.
 
 NemoClaw handles persistence and snapshots automatically for per-agent workspaces.
 The sandbox entrypoint provisions each `workspace-<name>/` directly under the writable `.openclaw/` tree so state survives sandbox restart.
