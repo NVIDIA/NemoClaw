@@ -3,12 +3,15 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  fetchFakeWechatWithNodeHttp,
   resolveInstalledWechatPluginRoot,
   waitForInstalledWechatApi,
   WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE,
@@ -48,10 +51,33 @@ describe("messaging provider installed-runtime paths", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect([
-      WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE.includes('import http from "node:http"'),
+      WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE.includes('process.getBuiltinModule("node:http")'),
       WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE.includes("globalThis.fetch ="),
       WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE.includes("__vite_ssr_import_"),
     ]).toEqual([true, true, false]);
+  });
+
+  it("honors the installed WeChat request abort deadline", async () => {
+    const server = http.createServer((_request, _response) => {
+      // Keep the response open so only the request deadline can finish the probe.
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    expect(address).toEqual(expect.objectContaining({ port: expect.any(Number) }));
+    const port = (address as AddressInfo).port;
+
+    try {
+      await expect(
+        fetchFakeWechatWithNodeHttp(`http://127.0.0.1:${String(port)}/stalled`, {
+          signal: AbortSignal.timeout(50),
+        }),
+      ).rejects.toMatchObject({ name: "TimeoutError" });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   });
 
   it("waits for the fake WeChat API before exercising the installed runtime", async () => {

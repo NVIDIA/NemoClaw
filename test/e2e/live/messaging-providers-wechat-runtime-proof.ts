@@ -40,6 +40,65 @@ export const waitForInstalledWechatApi: (
   return Promise.reject(lastError);
 };
 
+export const fetchFakeWechatWithNodeHttp: (
+  input: string | URL,
+  init?: RequestInit,
+) => Promise<Response> = function fetchFakeWechatWithNodeHttp(input, init) {
+  const url = new URL(String(input));
+  const signal = init?.signal;
+  const httpModule = process.getBuiltinModule("node:http") as typeof import("node:http");
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+
+    let settled = false;
+    const settle = (complete: () => void): void => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      complete();
+    };
+    const request = httpModule.request(
+      {
+        hostname: url.hostname,
+        port: Number(url.port),
+        path: url.pathname + url.search,
+        method: init?.method,
+        headers: Object.fromEntries(new Headers(init?.headers).entries()),
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        response.once("error", (error) => settle(() => reject(error)));
+        response.once("end", () => {
+          settle(() => {
+            resolve(
+              new Response(Buffer.concat(chunks), {
+                status: response.statusCode ?? 500,
+              }),
+            );
+          });
+        });
+      },
+    );
+    function onAbort(): void {
+      request.destroy(
+        signal?.reason instanceof Error ? signal.reason : new Error("fake WeChat request aborted"),
+      );
+    }
+    request.once("error", (error) => settle(() => reject(error)));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (!signal) {
+      request.setTimeout(30_000, () => {
+        request.destroy(new Error("fake WeChat request timed out"));
+      });
+    }
+    request.end(init?.body);
+  });
+};
+
 const readWechatPackageName: (
   candidate: string,
   fileSystem: typeof fs,
@@ -198,7 +257,6 @@ const resolveInstalledOpenClawRoot: (
 export const WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import http from "node:http";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -206,33 +264,7 @@ function invariant(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-function fetchFakeWechatWithNodeHttp(input, init) {
-  const url = new URL(String(input));
-  return new Promise((resolve, reject) => {
-    const request = http.request(
-      {
-        hostname: url.hostname,
-        port: Number(url.port),
-        path: url.pathname + url.search,
-        method: init?.method,
-        headers: Object.fromEntries(new Headers(init?.headers).entries()),
-      },
-      (response) => {
-        const chunks = [];
-        response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-        response.on("end", () => {
-          resolve(
-            new Response(Buffer.concat(chunks), {
-              status: response.statusCode,
-            }),
-          );
-        });
-      },
-    );
-    request.on("error", reject);
-    request.end(init?.body);
-  });
-}
+const fetchFakeWechatWithNodeHttp = ${fetchFakeWechatWithNodeHttp.toString()};
 
 const readWechatPackageName = ${readWechatPackageName.toString()};
 const addManagedNpmProjectWechatCandidates = ${addManagedNpmProjectWechatCandidates.toString()};
@@ -304,7 +336,10 @@ try {
   };
   try {
     await waitForInstalledWechatApi(
-      () => fetch(fakeWechatBaseUrl + "/__nemoclaw_ready__"),
+      () =>
+        fetch(fakeWechatBaseUrl + "/__nemoclaw_ready__", {
+          signal: AbortSignal.timeout(1_000),
+        }),
       (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
     );
     const target = process.env.OPENCLAW_WECHAT_TARGET || "e2e-user@im.wechat";
