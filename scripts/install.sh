@@ -3683,7 +3683,10 @@ run_installer_host_preflight() {
       try {
         const { assessHost, planHostAdvisories } = require(preflightPath);
         const { createHostReadinessReport } = require(hostReadinessPath);
-        const { evaluateOnboardReadinessAdmission } = require(onboardAdmissionPath);
+        const {
+          evaluateOnboardReadinessAdmission,
+          hasExplicitDeferredN1xOnboardingIntent,
+        } = require(onboardAdmissionPath);
         const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
         const { configuredRuntimeProviderOwnsHostReadiness } = require(gatewayRuntimePath);
         const host = assessHost();
@@ -3718,6 +3721,7 @@ run_installer_host_preflight() {
           // authoritative onboarding gate apply supported storage remediation,
           // but only when the gateway declaration confirms NemoClaw ownership.
           allowStorageRemediation,
+          allowDeferredN1xManagedVllm: hasExplicitDeferredN1xOnboardingIntent(process.env),
         });
         const infoLines = [];
         const actionLines = [];
@@ -5280,20 +5284,19 @@ NODE
 # context is "default" and no DOCKER_HOST override is set. A DOCKER_HOST, a
 # DOCKER_CONTEXT override, or a persisted currentContext other than "default"
 # (a context name like desktop-linux is not proof of a local endpoint — it can be
-# pointed at a remote daemon) can reach a remote Docker Desktop whose sandbox
-# containers cannot reach this machine's Windows-host Ollama (PRA-1). Fails closed
-# (non-local) on any non-default, unreadable, or unparseable context.
+# pointed at a remote daemon) can reach a remote Docker Desktop that is not the
+# qualified local N1x runtime (PRA-1). Fails closed (non-local) on any
+# non-default, unreadable, or unparseable context.
 express_wsl_docker_target_is_local() {
   [ -z "${DOCKER_HOST:-}" ] || return 1
   [ "$(express_wsl_docker_active_context)" = "default" ]
 }
 
-# Windows-host Ollama only works through LOCAL Docker Desktop WSL integration
-# (host.docker.internal routes to the Windows host). Native Docker Engine (#3695),
-# a remote/unknown target, or a failed probe can't reach it, so use WSL-local
-# Ollama instead; the onboard provider setup fronts that loopback daemon with
-# the sandbox auth proxy when containers cannot reach host loopback (#7318).
-express_wsl_can_use_windows_host_ollama() {
+# The managed N1x WSL llama.cpp route requires LOCAL Docker Desktop WSL
+# integration. Keep this topology check narrow: Windows-host Ollama is no
+# longer an Express default because making raw port 11434 container-reachable
+# previously required a wildcard, unauthenticated listener.
+express_wsl_uses_local_docker_desktop() {
   express_wsl_docker_target_is_local || return 1
   express_wsl_docker_operating_system | grep -qi 'docker desktop'
 }
@@ -5302,7 +5305,7 @@ express_wsl_can_use_windows_host_ollama() {
 # identity, WSL architecture, Docker Desktop locality, and the 48 GB GPU class
 # all match. Later readiness still requires container GPU proof before launch.
 express_wsl_can_use_n1x_managed_llama_cpp() {
-  express_wsl_can_use_windows_host_ollama || return 1
+  express_wsl_uses_local_docker_desktop || return 1
   [ "$(uname -m 2>/dev/null | tr -d '[:space:]')" = "aarch64" ] || return 1
   command_exists timeout || return 1
   command_exists powershell.exe || return 1
@@ -5324,10 +5327,8 @@ express_wsl_can_use_n1x_managed_llama_cpp() {
 }
 
 # True when a readable Docker configuration decides the context but no Node.js can
-# parse it yet. The express prompt runs before install_nodejs, so treating that
-# window as non-local pinned WSL-local Ollama on hosts whose Docker Desktop
-# topology supports Windows-host Ollama, and onboarding then rejected the
-# preselected provider (#8199). Selection waits for the runtime instead.
+# parse it yet. The express prompt runs before install_nodejs; selection waits
+# for the runtime so a qualifying N1x host can still choose managed llama.cpp.
 express_wsl_docker_context_needs_node() {
   [ -z "${DOCKER_HOST:-}" ] || return 1
   [ -z "${DOCKER_CONTEXT:-}" ] || return 1
@@ -5336,18 +5337,15 @@ express_wsl_docker_context_needs_node() {
   ! command_exists node
 }
 
-# Choose between Windows-host and WSL-local Ollama, or defer when only the
-# missing Node.js runtime blocks the decision.
+# Choose managed llama.cpp on qualified N1x WSL; otherwise use WSL-local
+# Ollama. Defer when a missing Node.js runtime is the only thing preventing the
+# N1x Docker topology check.
 select_express_wsl_provider() {
   _EXPRESS_WSL_PROVIDER_PENDING=""
   unset NEMOCLAW_LLAMACPP_RECIPE
   if express_wsl_can_use_n1x_managed_llama_cpp; then
     export NEMOCLAW_PROVIDER=install-llama-cpp
     export NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1
-    return 0
-  fi
-  if express_wsl_can_use_windows_host_ollama; then
-    export NEMOCLAW_PROVIDER=install-windows-ollama
     return 0
   fi
   if express_wsl_docker_context_needs_node; then
@@ -5366,9 +5364,6 @@ resolve_pending_express_wsl_provider() {
   case "${NEMOCLAW_PROVIDER:-}" in
     install-llama-cpp)
       info "Express install will configure managed Qwen 3.6 35B with llama.cpp on N1x WSL."
-      ;;
-    install-windows-ollama)
-      info "Express install will configure Windows-host Ollama through host.docker.internal."
       ;;
     *)
       info "Express install will configure WSL-local Ollama."
@@ -5947,8 +5942,6 @@ describe_express_install() {
         show_hf_authentication="1"
         inference_summary="managed Qwen 3.6 35B with llama.cpp on N1x WSL"
         inference_disclosure="Managed llama.cpp downloads a pinned 20.4 GB GGUF file before it starts the loopback-only authenticated server."
-      elif express_wsl_can_use_windows_host_ollama; then
-        inference_summary="Windows-host Ollama through host.docker.internal"
       elif express_wsl_docker_context_needs_node; then
         inference_summary="local inference, selected once the installed Node.js runtime reads the Docker configuration"
       else
@@ -6053,9 +6046,6 @@ maybe_offer_express_install() {
   # On a detected Express platform but a skip condition applies — explain why so
   # the user understands they could have gotten express otherwise.
   if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
-    if [ "$platform" = "N1x" ] && [ "${NEMOCLAW_PROVIDER:-}" != "install-vllm" ]; then
-      error "N1x onboarding currently requires explicit Deferred managed-vLLM preview intent. Remove NEMOCLAW_NO_EXPRESS=1 and accept the preview, or set NEMOCLAW_PROVIDER=install-vllm."
-    fi
     if [ "$platform" = "DGX Station" ]; then
       station_dual_pair_resume_pending \
         && error "A dual-DGX Station pair resume is pending; finish exact pair revalidation before disabling Station setup."
@@ -6066,7 +6056,7 @@ maybe_offer_express_install() {
   fi
   if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
     if [ "$platform" = "N1x" ] && [ "$NEMOCLAW_PROVIDER" != "install-vllm" ]; then
-      error "N1x onboarding currently accepts only the Deferred managed-vLLM preview. Set NEMOCLAW_PROVIDER=install-vllm or use another host for provider ${NEMOCLAW_PROVIDER}."
+      export NEMOCLAW_NO_EXPRESS=1
     fi
     if [ "$platform" = "DGX Station" ] && [ "$NEMOCLAW_PROVIDER" = "install-vllm" ]; then
       # An explicit managed-vLLM provider selects the same Station host/pair
@@ -6160,7 +6150,7 @@ maybe_offer_express_install() {
       ;;
     *)
       if [ "$platform" = "N1x" ]; then
-        error "N1x onboarding currently requires the Deferred managed-vLLM preview. Re-run the installer and accept the preview, or set NEMOCLAW_PROVIDER=install-vllm."
+        export NEMOCLAW_NO_EXPRESS=1
       fi
       info "Skipping express install. Continuing with interactive flow."
       ;;

@@ -309,8 +309,35 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
-  it("keeps the default chat-completions probe bounded for other models", () => {
-    expect(getChatCompletionsProbePayload("nvidia/nemotron-3-super-120b-a12b")).toEqual({
+  it("serializes the Nemotron 3 Super validation request parameters (#10880)", () => {
+    const args = getChatCompletionsProbeCurlArgs({
+      credentialArgs: FAKE_CREDENTIAL_ARGS,
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      url: "https://integrate.api.nvidia.com/v1/chat/completions",
+      isWsl: false,
+      useNvidiaEndpointProbePayload: true,
+    });
+
+    expect(args).toContain("-d");
+    expect(JSON.parse(args[args.indexOf("-d") + 1])).toEqual({
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      max_tokens: 16,
+      temperature: 1,
+      top_p: 0.95,
+      chat_template_kwargs: { enable_thinking: false },
+    });
+  });
+
+  it("keeps compatible endpoints on the generic request shape for the same Nemotron model (#10880)", () => {
+    const args = getChatCompletionsProbeCurlArgs({
+      credentialArgs: FAKE_CREDENTIAL_ARGS,
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      url: "https://compatible.example.test/v1/chat/completions",
+      isWsl: false,
+    });
+
+    expect(JSON.parse(args[args.indexOf("-d") + 1])).toEqual({
       model: "nvidia/nemotron-3-super-120b-a12b",
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
       max_tokens: 16,
@@ -414,34 +441,40 @@ describe("OpenAI-compatible inference probes", () => {
     expect(args).toContain(JSON.stringify(getChatCompletionsProbePayload("moonshotai/kimi-k2.6")));
   });
 
-  it("uses an extended streaming validation budget for DeepSeek V4 Pro", () => {
-    expect(getDeepSeekV4ProValidationProbeCurlArgs({ isWsl: false })).toEqual([
-      "--connect-timeout",
-      "20",
-      "--max-time",
-      "120",
-    ]);
-    expect(getDeepSeekV4ProValidationProbeCurlArgs({ isWsl: true })).toEqual([
-      "--connect-timeout",
-      "30",
-      "--max-time",
-      "150",
-    ]);
-
-    const args = getChatCompletionsProbeCurlArgs({
-      credentialArgs: FAKE_CREDENTIAL_ARGS,
-      model: "deepseek-ai/deepseek-v4-pro",
-      url: "https://integrate.api.nvidia.com/v1/chat/completions",
-      isWsl: false,
+  it.each([
+    { label: "raised override", override: "360", expected: ["360", "360"] },
+    { label: "lower override", override: "10", expected: ["30", "150"] },
+  ])("applies the $label to DeepSeek V4 Pro streaming", ({ override, expected }) => {
+    vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", override);
+    const calls: Array<readonly string[]> = [];
+    const spawnSyncImpl = vi.fn((_command: string, args: readonly string[]) => {
+      calls.push(args);
+      fs.writeFileSync(
+        args[args.indexOf("-o") + 1],
+        'data: {"choices":[{"delta":{"content":"OK"}}]}\n\ndata: [DONE]\n',
+      );
+      return { pid: 1, output: [], stdout: "200", stderr: "", status: 0, signal: null };
     });
-
-    expect(args).toContain("--max-time");
-    expect(args[args.indexOf("--max-time") + 1]).toBe("120");
-    // The credentialArgs slice must appear verbatim in the generated argv so
-    // production probe call sites can route credentials via --config without
-    // the helper rewriting or dropping them.
-    expect(args).toContain("--config");
-    expect(args).toContain(FAKE_CONFIG_PATH);
+    try {
+      const result = probeOpenAiLikeEndpoint(
+        "http://127.0.0.1:11434/v1",
+        "deepseek-ai/deepseek-v4-pro",
+        "test-key",
+        { skipResponsesProbe: true, isWsl: true, spawnSyncImpl },
+      );
+      expect({ result, args: calls[0] }).toEqual({
+        result: expect.objectContaining({ ok: true, api: "openai-completions" }),
+        args: expect.arrayContaining([
+          "--connect-timeout",
+          expected[0],
+          "--max-time",
+          expected[1],
+          "--config",
+        ]),
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("retries a reasoning-only tool-call response with a larger output budget", () => {
@@ -905,7 +938,7 @@ exit 0
     });
 
     it("retries chat-completions when /responses errors then chat-completions times out", () => {
-      const script = `#!/usr/bin/env bash
+        const script = `#!/usr/bin/env bash
 outfile=""
 url=""
 while [ "$#" -gt 0 ]; do
@@ -954,7 +987,7 @@ exit 0
     });
 
     it("preserves query-param auth on doubled-timeout chat-completions retry", () => {
-        const script = `#!/usr/bin/env bash
+      const script = `#!/usr/bin/env bash
 outfile=""
 n=$(cat "${HARNESS_COUNTER}")
 n=$((n + 1))
@@ -1417,7 +1450,8 @@ exit 0
 });
 
 describe("onboard inference smoke abort cleanup", () => {
-  it("tears down the orphan managed gateway before exiting after a failed smoke", async () => {
+  it("uses the legacy NVIDIA Endpoints payload before cleaning up a failed smoke (#10880)", async () => {
+    const optimizedProbe = vi.fn().mockResolvedValue({ ok: false, message: "smoke failed" });
     const teardownOrphanManagedGatewayOnAbort = vi.fn();
     const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -1428,18 +1462,18 @@ describe("onboard inference smoke abort cleanup", () => {
         {
           endpointUrl: "https://inference.example.com/v1",
           forceOpenAiLike: true,
-          model: "example/model",
-          provider: "example-provider",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-nim",
         },
         {
-          probeOpenAiLikeEndpointOptimized: vi.fn().mockResolvedValue({
-            ok: false,
-            message: "smoke failed",
-          }),
+          probeOpenAiLikeEndpointOptimized: optimizedProbe,
           teardownOrphanManagedGatewayOnAbort,
         },
       );
 
+      expect(optimizedProbe.mock.calls[0]?.[3]).toMatchObject({
+        useNvidiaEndpointProbePayload: true,
+      });
       expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledOnce();
       expect(exit).toHaveBeenCalledWith(1);
       expect(teardownOrphanManagedGatewayOnAbort.mock.invocationCallOrder[0]).toBeLessThan(
