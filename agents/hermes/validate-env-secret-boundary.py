@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import errno
 import grp
+import json
 import os
 import pwd
 import re
@@ -26,7 +27,7 @@ import stat
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterable, TextIO
+from typing import BinaryIO, Iterable, TextIO
 
 SECRET_KEY_RE = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
 PLACEHOLDER_RE = re.compile(
@@ -608,20 +609,48 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
     return _validate_runtime_env(source, _expected_lazy_install_target())
 
 
-def validate_managed_gateway_env(supervisor_env: dict[str, str]) -> int:
-    """Validate the environment that the managed launcher gives Hermes."""
+def validate_runtime_env_json(stream: BinaryIO) -> int:
+    """Validate a bounded environment snapshot received on an anonymous pipe."""
 
-    runtime_env = dict(supervisor_env)
-    # PID 1 exposes the shell's initial environment. The trusted launcher pins
-    # these values after startup and again on the Hermes gateway command.
-    runtime_env.update(
+    payload = stream.read(MAX_ENV_BYTES + 1)
+    if len(payload) > MAX_ENV_BYTES:
+        print(
+            f"[SECURITY] Refusing Hermes startup because the process environment exceeds the {MAX_ENV_BYTES}-byte limit",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        source = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        print(
+            "[SECURITY] Refusing Hermes startup because the process environment snapshot is invalid",
+            file=sys.stderr,
+        )
+        return 1
+    if not isinstance(source, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in source.items()
+    ):
+        print(
+            "[SECURITY] Refusing Hermes startup because the process environment snapshot is invalid",
+            file=sys.stderr,
+        )
+        return 1
+    return validate_runtime_env(source)
+
+
+def validate_managed_gateway_env(supervisor_env: dict[str, str]) -> int:
+    """Validate the supervisor environment with managed launcher paths applied."""
+
+    gateway_env = dict(supervisor_env)
+    gateway_env.update(
         {
-            "HERMES_LAZY_INSTALL_TARGET": GATEWAY_LAZY_INSTALL_TARGET,
+            "HERMES_LAZY_INSTALL_TARGET": SANDBOX_LAZY_INSTALL_TARGET,
             "HERMES_HOME": MANAGED_HERMES_HOME,
             "HERMES_BUNDLED_PLUGINS": MANAGED_BUNDLED_PLUGINS,
         }
     )
-    return _validate_runtime_env(runtime_env, GATEWAY_LAZY_INSTALL_TARGET)
+    return _validate_runtime_env(gateway_env, SANDBOX_LAZY_INSTALL_TARGET)
 
 
 # Config-output masking layer for the wrapper-installed `hermes config show`
@@ -796,6 +825,10 @@ def main(argv: list[str]) -> int:
         help="Validate the current process environment",
     )
     sub.add_parser(
+        "runtime-env-json",
+        help=argparse.SUPPRESS,
+    )
+    sub.add_parser(
         "mask-config-output",
         help="Mask secret-shaped fields on stdin; print to stdout",
     )
@@ -804,6 +837,8 @@ def main(argv: list[str]) -> int:
         return validate_env_file(args.path)
     if args.mode == "mask-config-output":
         return mask_config_output(sys.stdin, sys.stdout)
+    if args.mode == "runtime-env-json":
+        return validate_runtime_env_json(sys.stdin.buffer)
     assert args.mode == "runtime-env", (
         f"unreachable: argparse subparsers are required ({args.mode!r})"
     )
