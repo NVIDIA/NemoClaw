@@ -5,6 +5,8 @@ import fs from "node:fs";
 import { createServer, type Server } from "node:net";
 import path from "node:path";
 
+import { listLinuxProcListenerPids } from "../../../src/lib/adapters/openshell/forward-service-ownership.ts";
+
 export interface DashboardListenerProcessIdentity {
   pid: number;
   uid: number;
@@ -12,52 +14,12 @@ export interface DashboardListenerProcessIdentity {
   argv: string[];
 }
 
-function tcpListenerInodes(port: number): Set<string> {
-  const inodes = new Set<string>();
-  for (const tablePath of ["/proc/net/tcp", "/proc/net/tcp6"]) {
-    let table: string;
-    try {
-      table = fs.readFileSync(tablePath, "utf8");
-    } catch {
-      continue;
-    }
-    for (const line of table.split(/\r?\n/u).slice(1)) {
-      const fields = line.trim().split(/\s+/u);
-      const localAddress = fields[1];
-      const state = fields[3];
-      const inode = fields[9];
-      const localPortHex = localAddress?.split(":").at(-1);
-      if (state === "0A" && inode && localPortHex && Number.parseInt(localPortHex, 16) === port) {
-        inodes.add(inode);
-      }
-    }
-  }
-  return inodes;
-}
-
 function dashboardListenerProcessIds(port: number): number[] {
-  const socketLinks = new Set([...tcpListenerInodes(port)].map((inode) => `socket:[${inode}]`));
-  if (socketLinks.size === 0) return [];
-
-  const processIds: number[] = [];
-  for (const entry of fs.readdirSync("/proc", { withFileTypes: true })) {
-    if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) continue;
-    let descriptors: string[];
-    try {
-      descriptors = fs.readdirSync(path.join("/proc", entry.name, "fd"));
-    } catch {
-      continue;
-    }
-    const ownsListener = descriptors.some((descriptor) => {
-      try {
-        return socketLinks.has(fs.readlinkSync(path.join("/proc", entry.name, "fd", descriptor)));
-      } catch {
-        return false;
-      }
-    });
-    if (ownsListener) processIds.push(Number(entry.name));
+  const processIds = listLinuxProcListenerPids(port);
+  if (processIds === null) {
+    throw new Error(`Could not inspect the listener process on dashboard port ${String(port)}.`);
   }
-  return processIds.sort((left, right) => left - right);
+  return [...processIds].sort((left, right) => left - right);
 }
 
 export function dashboardForwardProcessIdentity(port: number): DashboardListenerProcessIdentity {

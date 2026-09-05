@@ -153,9 +153,7 @@ export function applyReusedSandboxDashboardState(
           preserveRegisteredForward: true,
           revalidateSandboxIdentity: input.revalidateSandboxIdentity,
         })
-      : input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
-          preserveRegisteredForward: true,
-        })
+      : input.ensureDashboardForward(input.sandboxName, input.chatUiUrl)
     : 0;
   const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : input.chatUiUrl;
   if (manageDashboard) {

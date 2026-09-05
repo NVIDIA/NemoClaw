@@ -114,6 +114,27 @@ describe("finalization dashboard ForwardTcp launch", () => {
     expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
   });
 
+  it("rejects an owned listener without Ready sandbox identity authority (#11074)", () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const inspectOwnership = vi.fn(() => ({ owned: true }) as const);
+    const { helpers, launch } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      inspectOwnership,
+      isPortBound: (port) => port === 18_790,
+    });
+
+    expect(() =>
+      helpers.ensureFinalizationDashboardForward("reonboard-test", {
+        preserveRegisteredForward: true,
+      }),
+    ).toThrow(/cannot be reallocated or adopted/u);
+    expect(inspectOwnership).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+    expect(process.env.CHAT_UI_URL).toBeUndefined();
+  });
+
   it("preserves the registered Hermes dashboard through agent finalization (#11074)", async () => {
     vi.stubEnv("CHAT_UI_URL", "http://127.0.0.1:18789");
     const revalidateSandboxIdentity = vi.fn();
@@ -163,6 +184,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
     expect(() =>
       helpers.ensureFinalizationDashboardForward("reonboard-test", {
         preserveRegisteredForward: true,
+        revalidateSandboxIdentity: vi.fn(),
       }),
     ).toThrow(
       /^Registered dashboard port 18790 for sandbox 'reonboard-test' is occupied, but its ForwardTcp ownership check failed \(process-identity-mismatch\)\. Free port 18790 and re-run `nemoclaw onboard --resume`; the listener was not adopted\.$/u,
@@ -198,6 +220,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
       expect(() =>
         helpers.ensureFinalizationDashboardForward("reonboard-test", {
           preserveRegisteredForward: true,
+          revalidateSandboxIdentity: vi.fn(),
         }),
       ).toThrow(message);
       expect(launch).not.toHaveBeenCalled();
@@ -217,6 +240,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
     expect(() =>
       helpers.ensureFinalizationDashboardForward("reonboard-test", {
         preserveRegisteredForward: true,
+        revalidateSandboxIdentity: vi.fn(),
       }),
     ).toThrow(
       /port 18790 for sandbox 'reonboard-test'.*listener-enumeration-unavailable.*Install lsof or restore read access to Linux \/proc/su,
@@ -240,6 +264,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
     expect(() =>
       helpers.ensureFinalizationDashboardForward("reonboard-test", {
         preserveRegisteredForward: true,
+        revalidateSandboxIdentity: vi.fn(),
       }),
     ).toThrow(/cannot be reallocated/u);
     expect(launch).not.toHaveBeenCalled();

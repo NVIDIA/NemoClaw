@@ -451,10 +451,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       const listedOwner = findDashboardForwardOwner(existingForwards, String(preferredPort));
       if (
         preserveRegisteredForward &&
+        revalidateSandboxIdentity !== undefined &&
         listedOwner === null &&
         !registryOccupiedPorts.has(String(preferredPort))
       ) {
-        revalidateSandboxIdentity?.(
+        revalidateSandboxIdentity(
           `preserve registered dashboard forward ${String(preferredPort)} for sandbox '${sandboxName}'`,
         );
         const preferredTarget = getDashboardForwardTarget(chatUiUrl);

@@ -21,6 +21,8 @@ export function normalizeDashboardForwardOptions(options: DashboardForwardOption
   return {
     rollbackSandboxOnFailure: options.rollbackSandboxOnFailure === true,
     allowPortReallocation: options.allowPortReallocation !== false,
-    preserveRegisteredForward: options.preserveRegisteredForward === true,
+    preserveRegisteredForward:
+      options.preserveRegisteredForward === true &&
+      typeof options.revalidateSandboxIdentity === "function",
   };
 }

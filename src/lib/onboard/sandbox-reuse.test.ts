@@ -73,9 +73,10 @@ describe("applyReusedSandboxDashboardState", () => {
       gatewayPort: 8080,
     });
     expect(result.hermesDashboardState).toBe(hermesDashboardState);
-    expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
-      preserveRegisteredForward: true,
-    });
+    expect(ensureDashboardForward).toHaveBeenCalledWith(
+      "reuse-me",
+      "http://127.0.0.1:18789",
+    );
   });
 
   it("retains the exact live identity selected for reuse (#11074)", () => {
