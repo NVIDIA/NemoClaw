@@ -118,7 +118,7 @@ function classifyFirmwareWithStationHelper(
     ["board_name", boardName],
     ["model", deviceTreeModel],
   ]) {
-    fs.writeFileSync(path.join(fixtureDirectory, name), `${value}\n`);
+    fs.writeFileSync(path.join(fixtureDirectory, name), name === "model" ? value : `${value}\n`);
   }
   const result = spawnSync(
     "bash",
@@ -604,6 +604,48 @@ describe("DGX Station release classifier parity", () => {
       stationFirmwareProduct: "NVIDIA DGX Station GB300",
       deviceTreeModel: "NVIDIA DGX Station GB300",
     });
+  });
+
+  it("accepts one trailing device-tree NUL terminator in both consumers (#10928)", () => {
+    const model = "NVIDIA DGX Station GB300\0";
+    const shell = classifyFirmwareWithStationHelper(
+      "Generic ARM workstation",
+      "Generic family",
+      "Generic board",
+      model,
+    );
+    const readiness = classifyFirmwareWithReadiness(
+      "Generic ARM workstation",
+      "Generic family",
+      "Generic board",
+      model,
+    );
+
+    expect(shell).toBe("station-gb300");
+    expect(readiness).toMatchObject({
+      nvidiaPlatform: "station",
+      deviceTreeModel: "NVIDIA DGX Station GB300",
+    });
+  });
+
+  it("rejects an embedded device-tree NUL in both consumers (#10928)", () => {
+    const model = "NVIDIA DGX\0 Station GB300";
+    const shell = classifyFirmwareWithStationHelper(
+      "Generic ARM workstation",
+      "Generic family",
+      "Generic board",
+      model,
+    );
+    const readiness = classifyFirmwareWithReadiness(
+      "Generic ARM workstation",
+      "Generic family",
+      "Generic board",
+      model,
+    );
+
+    expect(shell).toBe("not-station");
+    expect(readiness.nvidiaPlatform).toBeUndefined();
+    expect(readiness.deviceTreeModel).toBeUndefined();
   });
 
   it("rejects a device-tree model that conflicts with Station DMI (#10928)", () => {

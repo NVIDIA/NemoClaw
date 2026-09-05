@@ -468,12 +468,26 @@ station_firmware_value_is_printable() {
   [[ "$printable" == "$value" ]]
 }
 
+station_device_tree_model_value() {
+  local byte_count last_byte nul_count path=$1
+  byte_count="$(head -c 258 "$path" 2>/dev/null | wc -c | tr -d '[:space:]')"
+  [[ "$byte_count" =~ ^[0-9]+$ ]] && ((byte_count <= 257)) || return 1
+  nul_count="$(LC_ALL=C tr -cd '\000' <"$path" | wc -c | tr -d '[:space:]')"
+  [[ "$nul_count" =~ ^[0-9]+$ ]] || return 1
+  if ((nul_count > 0)); then
+    ((nul_count == 1)) || return 1
+    last_byte="$(tail -c 1 "$path" 2>/dev/null | od -An -tu1 | tr -d '[:space:]')"
+    [[ "$last_byte" == "0" ]] || return 1
+  fi
+  head -c 257 "$path" 2>/dev/null | tr -d '\000'
+}
+
 station_firmware_identity() {
   local LC_ALL=C class="" output=${1:?firmware identity output is required} path recognized="" station_product="" value
   for path in "$(station_product_name_path)" "$(station_product_family_path)" "$(station_board_name_path)" "$(station_device_tree_model_path)"; do
     [[ -r "$path" ]] || continue
     if [[ "$path" == "$(station_device_tree_model_path)" ]]; then
-      value="$(head -c 257 "$path" 2>/dev/null | tr -d '\0' || true)"
+      value="$(station_device_tree_model_value "$path")" || continue
     else
       value="$(head -c 257 "$path" 2>/dev/null || true)"
     fi

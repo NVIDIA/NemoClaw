@@ -13,7 +13,7 @@ import {
 import { STATION_DISCOVERY_PROBE } from "../../scripts/prepare-dual-dgx-station.mts";
 import { TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
-function executeDiscoveryProbe(stationPci: boolean) {
+function executeDiscoveryProbe(stationPci: boolean, deviceTreeModel = "Generic device tree\0") {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-producer-"));
   const dmiRoot = path.join(fixtureRoot, "dmi");
   const modelPath = path.join(fixtureRoot, "model");
@@ -24,7 +24,7 @@ function executeDiscoveryProbe(stationPci: boolean) {
   fs.writeFileSync(path.join(dmiRoot, "product_name"), "Generic ARM workstation\n");
   fs.writeFileSync(path.join(dmiRoot, "product_family"), "NVIDIA DGX Station GB300\n");
   fs.writeFileSync(path.join(dmiRoot, "board_name"), "Generic board\n");
-  fs.writeFileSync(modelPath, "Generic device tree\0");
+  fs.writeFileSync(modelPath, deviceTreeModel);
   fs.writeFileSync(path.join(pciDevice, "vendor"), "0x10de\n");
   fs.writeFileSync(path.join(pciDevice, "device"), stationPci ? "0x31c2\n" : "0xffff\n");
   fs.writeFileSync(path.join(pciDevice, "class"), "0x030000\n");
@@ -82,5 +82,9 @@ describe("dual-Station discovery probe identity", () => {
     expect(() => deriveDiscoveryCandidates(executeDiscoveryProbe(false))).toThrow(
       /not a verified arm64 DGX Station GB300/,
     );
+  });
+
+  it("drops an embedded-NUL device-tree value in the shared Python producer (#10928)", () => {
+    expect(executeDiscoveryProbe(true, "NVIDIA DGX\0 Station GB300").deviceTreeModel).toBe("");
   });
 });
