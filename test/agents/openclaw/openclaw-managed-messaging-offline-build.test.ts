@@ -123,6 +123,12 @@ describe("OpenClaw managed messaging offline image build", () => {
     expect(cacheStage).toContain("--archive-directory /opt/nemoclaw-build-tools/npm-cache-seed");
     expect(cacheStage).toContain("NPM_CONFIG_OFFLINE=true npm ci");
     expect(cacheStage).toContain('--os linux --cpu "$npm_target_cpu" --libc glibc');
+    expect(cacheStage.indexOf("npm cache verify")).toBeGreaterThan(
+      cacheStage.indexOf("NPM_CONFIG_OFFLINE=true npm ci"),
+    );
+    expect(cacheStage.indexOf("--packuments-only")).toBeGreaterThan(
+      cacheStage.indexOf("npm cache verify"),
+    );
     expect(cacheStage).not.toContain("--network=default");
     expect(cacheStage).not.toContain("else \\");
     expect(cacheStage).not.toContain("find /opt/nemoclaw-build-tools/npm-cache-seed");

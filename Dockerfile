@@ -521,12 +521,12 @@ RUN --network=none set -eu; \
         --ignore-scripts --omit=dev --legacy-peer-deps \
         --userconfig /dev/null --registry https://registry.npmjs.org/ \
         --cache /out/npm-cache; \
+    npm cache verify --cache /out/npm-cache; \
     node --experimental-strip-types /scripts/lib/seed-reviewed-npm-cache.mts \
         --packuments-only \
         --lockfile /opt/managed-image-messaging-runtime/package-lock.json \
         --cache /out/npm-cache \
         --registry-origin https://registry.npmjs.org/; \
-    npm cache verify --cache /out/npm-cache; \
     rm -rf /opt/managed-image-messaging-runtime/node_modules \
         /opt/nemoclaw-build-tools/npm-cache-seed; \
     chown -R root:root /out/npm-cache; \

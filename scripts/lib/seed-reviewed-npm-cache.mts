@@ -322,6 +322,10 @@ export async function seedReviewedNpmCache(
       }),
     );
     const url = packumentUrl(registryOrigin, packageName);
+    // npm view requests full metadata while npm ci and npm pack request the
+    // compact install representation. Keep both Accept variants bound to the
+    // same lock-derived bytes. Consumers that run `npm cache verify` must seed
+    // these variant records afterward because verification keeps one URL entry.
     for (const accept of [INSTALL_ACCEPT, "application/json"]) {
       await put(cachePath, `make-fetch-happen:request-cache:${url}`, packument, {
         metadata: {
