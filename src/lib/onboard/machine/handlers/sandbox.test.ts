@@ -579,11 +579,13 @@ describe("handleSandboxState", () => {
     session.steps.sandbox.status = "complete";
     const skippedSession = createSession({ sandboxName: "saved-after-skip" });
     const recordStateSkipped = vi.fn(async () => skippedSession);
+    let liveIdentityFingerprint = "a".repeat(64);
     const readMessagingPlanFromEnv = vi.fn(() => {
       throw new Error("invalid environment plan");
     });
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
+      getSandboxRecreateObservation: () => ({ state: "ready", liveIdentityFingerprint }),
       getSandboxRegistryEntry: () => ({
         name: "saved",
         pendingRouteReservation: true,
@@ -595,18 +597,17 @@ describe("handleSandboxState", () => {
         toolDisclosure: "progressive",
         fromDockerfile: null,
         hermesAuthMethod: null,
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
       }),
       getRegistrySandboxMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
       readMessagingPlanFromEnv,
       recordStateSkipped,
     });
-
     const result = await handleSandboxState({
       ...baseOptions(deps, session),
       resume: true,
       sandboxName: "saved",
     });
-
     expect(readMessagingPlanFromEnv).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.finalizeRouteReservation).toHaveBeenCalledExactlyOnceWith(
@@ -621,6 +622,8 @@ describe("handleSandboxState", () => {
     expect(result.selectedMessagingChannels).toEqual(["telegram"]);
     expect(result.webSearchConfigChanged).toBe(false);
     expect(result.session).toBe(skippedSession);
+    liveIdentityFingerprint = "b".repeat(64);
+    expect(() => result.revalidateSandboxIdentity?.("dashboard")).toThrow(/changed identity/u);
   });
 
   it("treats checkpoint machine-state progress past sandbox as step-complete even when the legacy step status is stale (#6228)", async () => {

@@ -6,9 +6,9 @@ import { describe, expect, it, vi } from "vitest";
 import { buildForwardServiceArgs, type ForwardServiceTarget } from "./forward-service";
 import {
   inspectForwardServiceListenerOwnership,
-  isForwardServiceListenerOwned,
   listLinuxProcListenerPids,
   type ForwardServiceOwnershipDeps,
+  type ForwardServiceProcessSnapshot,
 } from "./forward-service-ownership";
 
 const target: ForwardServiceTarget = {
@@ -22,16 +22,20 @@ const target: ForwardServiceTarget = {
   targetPort: 18_790,
 };
 
+function ownedProcessSnapshot(): ForwardServiceProcessSnapshot {
+  return {
+    argv: [target.executable, ...buildForwardServiceArgs(target)],
+    commandLine: null,
+    environment: { HOME: "/home/operator" },
+    executable: target.executable,
+    uid: 1_000,
+  };
+}
+
 function ownership(overrides: Partial<ForwardServiceOwnershipDeps> = {}) {
   return {
     currentUid: () => 1_000,
-    inspectProcess: () => ({
-      argv: [target.executable, ...buildForwardServiceArgs(target)],
-      commandLine: null,
-      environment: { HOME: "/home/operator" },
-      executable: target.executable,
-      uid: 1_000,
-    }),
+    inspectProcess: () => ownedProcessSnapshot(),
     listListenerPids: vi.fn(() => [4_242]),
     realpath: (value: string) => value,
     sourceEnvironment: { HOME: "/home/operator" },
@@ -43,13 +47,13 @@ describe("direct ForwardTcp listener ownership", () => {
   it("accepts one stable listener with the exact user, executable, and target argv", () => {
     const deps = ownership();
 
-    expect(isForwardServiceListenerOwned(target, deps)).toBe(true);
+    expect(inspectForwardServiceListenerOwnership(target, deps)).toEqual({ owned: true });
     expect(deps.listListenerPids).toHaveBeenCalledTimes(2);
   });
 
   it("accepts the exact ps command line when procfs argv is unavailable", () => {
     expect(
-      isForwardServiceListenerOwned(
+      inspectForwardServiceListenerOwnership(
         target,
         ownership({
           inspectProcess: () => ({
@@ -61,7 +65,7 @@ describe("direct ForwardTcp listener ownership", () => {
           }),
         }),
       ),
-    ).toBe(true);
+    ).toEqual({ owned: true });
   });
 
   it.each([
@@ -78,7 +82,7 @@ describe("direct ForwardTcp listener ownership", () => {
     ],
   ])("rejects a %s listener", (_case, replacement) => {
     expect(
-      isForwardServiceListenerOwned(
+      inspectForwardServiceListenerOwnership(
         target,
         ownership({
           inspectProcess: () => ({
@@ -91,28 +95,30 @@ describe("direct ForwardTcp listener ownership", () => {
           }),
         }),
       ),
-    ).toBe(false);
+    ).toMatchObject({ owned: false });
   });
 
   it("rejects an incomplete or changing listener scan", () => {
     const listListenerPids = vi.fn<() => readonly number[] | null>();
     listListenerPids.mockReturnValueOnce([4_242]).mockReturnValueOnce([4_243]);
 
-    expect(isForwardServiceListenerOwned(target, ownership({ listListenerPids }))).toBe(false);
-    expect(isForwardServiceListenerOwned(target, ownership({ listListenerPids: () => null }))).toBe(
-      false,
-    );
+    expect(
+      inspectForwardServiceListenerOwnership(target, ownership({ listListenerPids })),
+    ).toMatchObject({ owned: false });
+    expect(
+      inspectForwardServiceListenerOwnership(target, ownership({ listListenerPids: () => null })),
+    ).toMatchObject({ owned: false });
   });
 
   it("rejects a listener when the current user cannot be proven", () => {
-    expect(isForwardServiceListenerOwned(target, ownership({ currentUid: () => null }))).toBe(
-      false,
-    );
+    expect(
+      inspectForwardServiceListenerOwnership(target, ownership({ currentUid: () => null })),
+    ).toMatchObject({ owned: false });
   });
 
   it("rejects a listener from another OpenShell configuration home", () => {
     expect(
-      isForwardServiceListenerOwned(
+      inspectForwardServiceListenerOwnership(
         target,
         ownership({
           inspectProcess: () => ({
@@ -124,7 +130,7 @@ describe("direct ForwardTcp listener ownership", () => {
           }),
         }),
       ),
-    ).toBe(false);
+    ).toMatchObject({ owned: false });
   });
 
   it("uses Linux procfs when lsof cannot enumerate the listener", () => {
@@ -132,13 +138,13 @@ describe("direct ForwardTcp listener ownership", () => {
     const listLinuxProcListenerPids = vi.fn(() => [4_242]);
 
     expect(
-      isForwardServiceListenerOwned(target, {
+      inspectForwardServiceListenerOwnership(target, {
         ...fallbackDeps,
         platform: "linux",
         listLsofListenerPids: () => null,
         listLinuxProcListenerPids,
       }),
-    ).toBe(true);
+    ).toEqual({ owned: true });
     expect(listLinuxProcListenerPids).toHaveBeenCalledTimes(2);
   });
 
@@ -155,6 +161,38 @@ describe("direct ForwardTcp listener ownership", () => {
         readLink: (file) => (file.endsWith("/3") ? "socket:[777]" : "socket:[999]"),
       }),
     ).toEqual([42]);
+  });
+
+  it("stops procfs enumeration when the process scan exceeds its bound", () => {
+    const readLink = vi.fn(() => "socket:[777]");
+
+    expect(
+      listLinuxProcListenerPids(18_790, {
+        readFile: () =>
+          "sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode\n" +
+          "0: 0100007F:4966 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 777\n",
+        readDirectory: (directory) =>
+          directory === "/proc"
+            ? Array.from({ length: 4_097 }, (_value, index) => String(index + 1))
+            : ["3"],
+        readLink,
+      }),
+    ).toBeNull();
+    expect(readLink).not.toHaveBeenCalled();
+  });
+
+  it("rejects PID reuse after the stable listener scan", () => {
+    const validProcess = ownedProcessSnapshot();
+    const inspectProcess = vi
+      .fn()
+      .mockReturnValueOnce(validProcess)
+      .mockReturnValueOnce({ ...validProcess, executable: "/usr/bin/python3" });
+
+    expect(inspectForwardServiceListenerOwnership(target, ownership({ inspectProcess }))).toEqual({
+      owned: false,
+      failure: "process-identity-mismatch",
+    });
+    expect(inspectProcess).toHaveBeenCalledTimes(2);
   });
 
   it("reports unavailable listener enumeration distinctly", () => {

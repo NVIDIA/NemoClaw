@@ -110,7 +110,8 @@ export async function handleAgentSetupState<Agent>({
 
   // A skipped sandbox step is the durable machine receipt for Ready-sandbox
   // reuse. Every other state keeps the strict occupied-port path.
-  const preserveRegisteredForward = session?.steps.sandbox.status === "skipped";
+  const preserveRegisteredForward =
+    session?.steps.sandbox.status === "skipped" || revalidateSandboxIdentity !== undefined;
   const resumeOpenclaw = resume && sandboxName && deps.isOpenclawReady(sandboxName);
   if (resumeOpenclaw) {
     deps.skippedStepMessage("openclaw", sandboxName);

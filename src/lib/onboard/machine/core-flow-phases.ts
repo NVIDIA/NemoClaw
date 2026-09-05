@@ -378,6 +378,9 @@ export function createSandboxOnboardFlowPhase<
         hermesToolGateways: sandboxStateResult.hermesToolGateways,
         selectedMessagingChannels: sandboxStateResult.selectedMessagingChannels,
         webSearchSupported: sandboxStateResult.webSearchSupported,
+        ...(sandboxStateResult.revalidateSandboxIdentity
+          ? { revalidateSandboxIdentity: sandboxStateResult.revalidateSandboxIdentity }
+          : {}),
       }),
       result: sandboxStateResult.stateResult,
     };

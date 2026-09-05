@@ -83,6 +83,7 @@ import type { SandboxCreateIntent as ResolvedSandboxCreateIntent } from "../../s
 import {
   advanceSandboxRecreateTransaction,
   clearCompletedSandboxRecreateTransaction,
+  createReusedSandboxIdentityRevalidation,
   fingerprintSandboxRecreateValue,
   ownSandboxRecreateTransaction,
   type ReplacedSandboxSourceEntry,
@@ -365,6 +366,7 @@ export interface SandboxStateOptions<
       createIntent: CompleteSandboxCreateIntent,
       runVerifiedSandboxCreateEffects?: import("../../types").VerifiedSandboxCreateEffects,
     ): Promise<string>;
+    takeReusedSandboxIdentityRevalidation?(): ((operation: string) => void) | undefined;
     finalizeSandboxRouteReservation(sandboxName: string, sessionId: string): boolean;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
     getSandboxAgentRegistryFields(
@@ -399,6 +401,7 @@ export interface SandboxStateResult<WebSearchConfig> {
   webSearchSupported: boolean;
   session: Session | null;
   stateResult: OnboardStateResult;
+  revalidateSandboxIdentity?: (operation: string) => void;
 }
 
 interface SandboxStepState<WebSearchConfig> {
@@ -410,6 +413,7 @@ interface SandboxStepState<WebSearchConfig> {
   readonly webSearchSupported: boolean;
   readonly webSearchSupportDropped: boolean;
   readonly webSearchSupportProbePath: string | null;
+  readonly revalidateSandboxIdentity?: (operation: string) => void;
 }
 
 function resolveRequestedWebSearchConfig<WebSearchConfig>(
@@ -1191,6 +1195,16 @@ class SandboxStateFlow<
     return this.deps.withGatewayRouteMutationLock(this.options.gatewayName, async () => {
       this.assertCheckpointBindingsStillLive(state);
       this.assertGatewayRouteCompatible(state.sandboxName);
+      const sandboxName = state.sandboxName as string;
+      const openingObservation = this.deps.getSandboxRecreateObservation(sandboxName);
+      const revalidateSandboxIdentity = createReusedSandboxIdentityRevalidation({
+        sandboxName,
+        openingObservation,
+        registeredIdentity:
+          this.deps.getSandboxRegistryEntry(sandboxName)?.lifecycleLiveIdentityFingerprint ?? null,
+        observe: () => this.deps.getSandboxRecreateObservation(sandboxName),
+      });
+      revalidateSandboxIdentity(`reusing sandbox '${sandboxName}'`);
       if (state.webSearchConfig) {
         const provider = webSearchProviderForConfig(
           state.webSearchConfig as unknown as SharedWebSearchConfig,
@@ -1231,6 +1245,7 @@ class SandboxStateFlow<
         ...state,
         session: recordedSession,
         selectedMessagingChannels: messaging.selectedChannels,
+        revalidateSandboxIdentity,
       };
     });
   }
@@ -2200,6 +2215,7 @@ class SandboxStateFlow<
         throw error;
       }
       let recordedTransaction: CheckpointSandboxRecreateTransaction | null;
+      const revalidateSandboxIdentity = this.deps.takeReusedSandboxIdentityRevalidation?.();
       try {
         recordedTransaction = this.reloadSandboxRecreateTransaction(transaction);
         this.retireSandboxRecreateSourceWorkload(recordedTransaction, sourceEntry, sandboxName);
@@ -2251,7 +2267,12 @@ class SandboxStateFlow<
         sandboxName,
         createIntent,
       );
-      return { ...state, sandboxName, session: recordedSession };
+      return {
+        ...state,
+        sandboxName,
+        session: recordedSession,
+        ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
+      };
     };
     const withGatewayLock = () =>
       this.deps.withGatewayRouteMutationLock(this.options.gatewayName, createAndRecord);
@@ -2489,6 +2510,9 @@ class SandboxStateFlow<
       selectedMessagingChannels: state.selectedMessagingChannels,
       webSearchSupported: state.webSearchSupported,
       session: state.session,
+      ...(state.revalidateSandboxIdentity
+        ? { revalidateSandboxIdentity: state.revalidateSandboxIdentity }
+        : {}),
       stateResult:
         this.options.apfInterceptorRequested === true
           ? completeOnboardMachine({}, metadata)

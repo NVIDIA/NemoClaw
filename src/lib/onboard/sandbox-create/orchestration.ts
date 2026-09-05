@@ -60,6 +60,7 @@ import { cliName } from "../branding";
 import type {
   CreatedSandboxLifecycle,
   CreatedSandboxLifecycleRegistration,
+  SandboxRecreateObservation,
 } from "../sandbox-recreate-transaction";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import type {
@@ -88,6 +89,16 @@ function cancelRecoveryIdentity(
     lifecycleLiveIdentityFingerprint:
       requireVerifiedCreateBoundary().lifecycleLiveIdentityFingerprint,
   };
+}
+
+function observeOpeningReuseIdentity(input: {
+  readonly liveExists: boolean;
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly observe: (sandboxName: string, gatewayName: string) => SandboxRecreateObservation;
+}): SandboxRecreateObservation | null {
+  if (!input.liveExists) return null;
+  return input.observe(input.sandboxName, input.gatewayName);
 }
 
 /** Finalize provider arguments from the exact policy that creation consumes. */
@@ -1302,6 +1313,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     runVerifiedSandboxCreateEffects: import("../types").VerifiedSandboxCreateEffects | null = null,
     preparedBuildContext: PreparedSandboxBuildContext | null = null,
     allowRemovedImmutabilityStateRecord = false,
+    retainReusedSandboxIdentityRevalidation?: (
+      revalidateSandboxIdentity: (operation: string) => void,
+    ) => void,
   ) {
     const portableRuntimeAuthority = portableRuntimeContext?.authority ?? null;
     const {
@@ -1647,6 +1661,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       prepareWorkload: ensurePreparedSandboxWorkload,
     });
     const apfInterceptorRequested = createIntent?.apfInterceptorRequested === true;
+    const openingReuseIdentity = observeOpeningReuseIdentity({
+      liveExists,
+      sandboxName,
+      gatewayName: GATEWAY_NAME,
+      observe: getSandboxRecreateObservation,
+    });
+    const registeredReuseIdentity = existingEntry?.lifecycleLiveIdentityFingerprint ?? null;
     let verifiedCreateBoundary: VerifiedSandboxCreateBoundary | null = null;
     let pendingCreateIdentity: PendingSandboxCreateIdentity | null = null;
     let admittedCreateReservation: QualifiedPendingSandboxCreateReservation | null = null;
@@ -1700,6 +1721,14 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     });
     const resumingVerifiedCreate = acceptedTargetPendingIdentity !== null;
     const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
+      const revalidateReusedSandboxIdentity = sandboxReuse.createReusedSandboxIdentityRevalidation({
+        sandboxName,
+        openingObservation: openingReuseIdentity,
+        registeredIdentity: registeredReuseIdentity,
+        observe: () => getSandboxRecreateObservation(sandboxName, GATEWAY_NAME),
+      });
+      revalidateReusedSandboxIdentity(`restoring dashboard state for sandbox '${sandboxName}'`);
+      retainReusedSandboxIdentityRevalidation?.(revalidateReusedSandboxIdentity);
       ({ chatUiUrl } = await sandboxReuse.restoreReusedSandboxDashboardState({
         sandboxName,
         chatUiUrl,
@@ -1716,7 +1745,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         hermesDashboardForwarding,
         updateReusedSandboxMetadata,
         releaseDashboardPort: dashboardPortReservationScope.release,
-        revalidateSandboxIdentity: (operation) => revalidateSandboxIdentity(true, operation),
+        revalidateSandboxIdentity: revalidateReusedSandboxIdentity,
       }));
     };
     if (recreateRuntime.acceptedTarget && !resumingVerifiedCreate) {

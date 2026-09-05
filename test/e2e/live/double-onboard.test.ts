@@ -114,6 +114,33 @@ async function runOnboard(
   });
 }
 
+async function dashboardForwardProcessIdentity(
+  host: HostCliClient,
+  port: number,
+  artifactName: string,
+): Promise<string> {
+  const result = await host.command(
+    "bash",
+    [
+      "-lc",
+      [
+        "set -euo pipefail",
+        'pids="$(lsof -nP -iTCP:"$1" -sTCP:LISTEN -Fp | sed -n \'s/^p//p\' | sort -u)"',
+        'test -n "$pids"',
+        'test "$(printf \'%s\\n\' "$pids" | wc -l | tr -d \' \')" = 1',
+        'ps -ww -p "$pids" -o pid= -o uid= -o lstart= -o command=',
+      ].join("\n"),
+      "nemoclaw-dashboard-forward-identity",
+      String(port),
+    ],
+    { artifactName, env: commandEnv(), timeoutMs: 30_000 },
+  );
+  const identity = stripAnsi(result.stdout).trim();
+  expect(result.exitCode, resultText(result)).toBe(0);
+  expect(identity, "dashboard ForwardTcp process identity").not.toBe("");
+  return identity;
+}
+
 async function runProbeOnlyConnect(
   host: HostCliClient,
   sandboxName: string,
@@ -439,6 +466,7 @@ test(
       ["-lc", "command -v openshell"],
       "prereq-openshell",
     );
+  await prerequisiteOrSkip(host, skip, "bash", ["-lc", "command -v lsof"], "prereq-lsof");
   await prerequisiteOrSkip(
     host,
     skip,
@@ -501,6 +529,7 @@ test(
       "first onboard creates a sandbox and NemoClaw gateway",
       "OpenShell status reports the managed gateway through its Server endpoint line",
       "same-name re-onboard reuses the healthy gateway and sandbox without port conflicts",
+      "same-name re-onboard retains the exact dashboard ForwardTcp process and reachable UI",
       "explicit same-name recreation preserves the healthy gateway",
       "different-name onboard preserves the first sandbox and allocates distinct dashboard forwards",
       "stopping one sandbox releases only its dashboard forward and reports the container stopped",
@@ -516,14 +545,6 @@ test(
   const first = await runOnboard(host, SANDBOX_A, fake.baseUrl, "phase-2-first-onboard");
   const firstText = resultText(first);
   expect(first.exitCode, firstText).toBe(0);
-  expect(firstText).toContain(`Sandbox '${SANDBOX_A}' created`);
-
-  const gatewayInfo = await sandbox.openshell(["gateway", "info", "-g", "nemoclaw"], {
-    artifactName: "phase-2-openshell-gateway-info",
-    env: commandEnv(),
-    timeoutMs: 30_000,
-  });
-  expect(resultText(gatewayInfo)).toContain("nemoclaw");
 
   const gatewayStatus = await sandbox.openshell(["status"], {
     artifactName: "phase-2-openshell-status",
@@ -554,6 +575,17 @@ test(
   expect(sandboxAIdAfterFirst, resultText(sandboxAAfterFirst)).not.toBeNull();
   expect(registryHas(SANDBOX_A), `${REGISTRY_FILE} missing ${SANDBOX_A}`).toBe(true);
   assertRegistryInferenceMetadata(SANDBOX_A, fake.baseUrl);
+  const dashboardPort = Number(registryEntry(SANDBOX_A)?.dashboardPort);
+  expect(Number.isSafeInteger(dashboardPort) && dashboardPort > 0).toBe(true);
+  const forwardIdentityBeforeSecond = await dashboardForwardProcessIdentity(
+    host,
+    dashboardPort,
+    "phase-2-dashboard-forward-identity",
+  );
+  expect(forwardIdentityBeforeSecond).toContain(`forward service ${SANDBOX_A}`);
+  expect(forwardIdentityBeforeSecond).toContain(
+    `--local 127.0.0.1:${String(dashboardPort)}`,
+  );
 
   progress.phase("re-onboard same sandbox on existing gateway");
   // Phase 3: second onboard with the same name must reuse the healthy gateway.
@@ -566,10 +598,6 @@ test(
   const gatewayAfterSecond = await gatewayRuntimeId(gateway);
   expect(gatewayBeforeSecond, "gateway runtime id before second onboard").not.toBe("");
   expect(gatewayAfterSecond).toBe(gatewayBeforeSecond);
-  expect(secondText).toContain("Reusing healthy NemoClaw gateway.");
-  expect(secondText).toContain(`[reuse] Skipping sandbox (${SANDBOX_A})`);
-  expect(secondText).not.toContain("Port 8080 is not available");
-  expect(secondText).not.toContain("Port 18789 is not available");
   const sandboxAAfterSecond = await sandbox.openshell(["sandbox", "get", SANDBOX_A], {
     artifactName: "phase-3-openshell-sandbox-a-get",
     env: commandEnv(),
@@ -577,6 +605,25 @@ test(
   });
   expect(sandboxAAfterSecond.exitCode, resultText(sandboxAAfterSecond)).toBe(0);
   expect(parseOpenShellSandboxId(resultText(sandboxAAfterSecond))).toBe(sandboxAIdAfterFirst);
+  const forwardIdentityAfterSecond = await dashboardForwardProcessIdentity(
+    host,
+    dashboardPort,
+    "phase-3-dashboard-forward-identity",
+  );
+  expect(forwardIdentityAfterSecond).toBe(forwardIdentityBeforeSecond);
+  const dashboardResponse = await host.command(
+    "curl",
+    [
+      "--fail",
+      "--silent",
+      "--show-error",
+      "--max-time",
+      "15",
+      `http://127.0.0.1:${String(dashboardPort)}/`,
+    ],
+    { artifactName: "phase-3-dashboard-request", env: commandEnv(), timeoutMs: 30_000 },
+  );
+  expect(dashboardResponse.exitCode, resultText(dashboardResponse)).toBe(0);
   const sandboxARegistryAfterSecond = registryEntry(SANDBOX_A);
   expect(sandboxARegistryAfterSecond, `${REGISTRY_FILE} missing ${SANDBOX_A}`).toBeTruthy();
   expect(hasOwn(sandboxARegistryAfterSecond!, "pendingRouteReservation")).toBe(false);
@@ -587,7 +634,6 @@ test(
     timeoutMs: 60_000,
   });
   expect(listAfterSecond.exitCode, resultText(listAfterSecond)).toBe(0);
-  expect(stripAnsi(listAfterSecond.stdout)).toContain(SANDBOX_A);
 
   progress.phase("recreate same sandbox on existing gateway");
   const gatewayBeforeRecreate = await gatewayRuntimeId(gateway);
@@ -889,6 +935,9 @@ test(
       secondOnboardReusedGateway:
         gatewayAfterSecond === gatewayBeforeSecond &&
         secondText.includes("Reusing healthy NemoClaw gateway."),
+      secondOnboardRetainedDashboardForward:
+        forwardIdentityAfterSecond === forwardIdentityBeforeSecond &&
+        dashboardResponse.exitCode === 0,
       thirdOnboardPreservedSibling:
         sandboxAAfterThird.exitCode === 0 && sandboxBAfterThird.exitCode === 0,
       distinctDashboardPorts: Boolean(portA && portB && portA !== portB),

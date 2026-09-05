@@ -46,6 +46,32 @@ export type ReplacedSandboxSourceEntry = Omit<SandboxEntry, "workload"> & {
       };
 };
 
+export function createReusedSandboxIdentityRevalidation(input: {
+  readonly sandboxName: string;
+  readonly openingObservation: SandboxRecreateObservation | null;
+  readonly registeredIdentity: string | null;
+  readonly observe: () => SandboxRecreateObservation;
+}): (operation: string) => void {
+  const expectedIdentity = input.openingObservation?.liveIdentityFingerprint;
+  if (
+    input.openingObservation?.state !== "ready" ||
+    !expectedIdentity ||
+    (input.registeredIdentity !== null && input.registeredIdentity !== expectedIdentity)
+  ) {
+    throw new Error(
+      `Sandbox '${input.sandboxName}' has no stable identity for reuse. Retry onboarding against the current sandbox.`,
+    );
+  }
+  return (operation: string): void => {
+    const current = input.observe();
+    if (current.state !== "ready" || current.liveIdentityFingerprint !== expectedIdentity) {
+      throw new Error(
+        `Sandbox '${input.sandboxName}' changed identity before ${operation}. Retry onboarding against the current sandbox.`,
+      );
+    }
+  };
+}
+
 interface ReplacedSandboxWorkloadCleanupDeps {
   readonly runtimeProviders?: RuntimeProviderBundleRegistry;
 }

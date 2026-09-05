@@ -13,6 +13,9 @@ import {
 
 const PROBE_TIMEOUT_MS = 1_000;
 const PROBE_MAX_BUFFER_BYTES = 16 * 1024;
+const LINUX_PROC_MAX_PROCESSES = 4_096;
+const LINUX_PROC_MAX_DESCRIPTORS_PER_PROCESS = 4_096;
+const LINUX_PROC_MAX_TOTAL_DESCRIPTORS = 32_768;
 
 export interface ForwardServiceProcessSnapshot {
   readonly argv: readonly string[] | null;
@@ -126,13 +129,22 @@ export function listLinuxProcListenerPids(
   if (socketInodes.size === 0) return [];
   const entries = (deps.readDirectory ?? readDirectory)("/proc");
   if (!entries) return null;
+  const processEntries = entries.filter((entry) => /^[1-9]\d*$/u.test(entry));
+  if (processEntries.length > LINUX_PROC_MAX_PROCESSES) return null;
   const readProcDirectory = deps.readDirectory ?? readDirectory;
   const readProcLink = deps.readLink ?? readLink;
   const pids = new Set<number>();
-  for (const entry of entries) {
-    if (!/^[1-9]\d*$/u.test(entry)) continue;
+  let descriptorCount = 0;
+  for (const entry of processEntries) {
     const descriptors = readProcDirectory(`/proc/${entry}/fd`);
     if (!descriptors) continue;
+    descriptorCount += descriptors.length;
+    if (
+      descriptors.length > LINUX_PROC_MAX_DESCRIPTORS_PER_PROCESS ||
+      descriptorCount > LINUX_PROC_MAX_TOTAL_DESCRIPTORS
+    ) {
+      return null;
+    }
     for (const descriptor of descriptors) {
       const link = readProcLink(`/proc/${entry}/fd/${descriptor}`);
       const match = /^socket:\[(\d+)\]$/u.exec(link ?? "");
@@ -258,6 +270,33 @@ function sameArgv(actual: readonly string[], expected: readonly string[]): boole
   );
 }
 
+function processMatchesForwardTarget(
+  pid: number,
+  deps: ForwardServiceOwnershipDeps,
+  currentUid: number,
+  expectedEnvironment: NodeJS.ProcessEnv,
+  expectedExecutable: string,
+  expectedArgv: readonly string[],
+): boolean {
+  const snapshot = (deps.inspectProcess ?? inspectProcess)(pid);
+  if (!snapshot || snapshot.uid !== currentUid) return false;
+  const environment = snapshot.environment;
+  if (
+    !environment ||
+    environment.HOME !== expectedEnvironment.HOME ||
+    environment.XDG_CONFIG_HOME !== expectedEnvironment.XDG_CONFIG_HOME ||
+    environment.XDG_RUNTIME_DIR !== expectedEnvironment.XDG_RUNTIME_DIR
+  ) {
+    return false;
+  }
+  const resolvePath = deps.realpath ?? realpath;
+  const observedExecutable = snapshot.executable ? resolvePath(snapshot.executable) : null;
+  if (observedExecutable !== expectedExecutable) return false;
+  return snapshot.argv
+    ? sameArgv(snapshot.argv, expectedArgv)
+    : snapshot.commandLine === expectedArgv.join(" ");
+}
+
 /** Explain whether a bound port belongs to the exact direct ForwardTcp command. */
 export function inspectForwardServiceListenerOwnership(
   target: ForwardServiceTarget,
@@ -278,44 +317,41 @@ export function inspectForwardServiceListenerOwnership(
     : typeof process.getuid === "function"
       ? process.getuid()
       : null;
-  const snapshot = (deps.inspectProcess ?? inspectProcess)(pid);
-  if (!snapshot || currentUid === null || snapshot.uid !== currentUid) {
+  const expectedEnvironment = buildOpenShellSubprocessEnv(deps.sourceEnvironment ?? process.env);
+  const expectedExecutable = (deps.realpath ?? realpath)(target.executable);
+  const expectedArgv = [target.executable, ...buildForwardServiceArgs(target)];
+  if (currentUid === null || !expectedEnvironment.HOME || !expectedExecutable) {
     return { owned: false, failure: "process-identity-mismatch" };
   }
-  const expectedEnvironment = buildOpenShellSubprocessEnv(deps.sourceEnvironment ?? process.env);
   if (
-    !expectedEnvironment.HOME ||
-    snapshot.environment?.HOME !== expectedEnvironment.HOME ||
-    snapshot.environment.XDG_CONFIG_HOME !== expectedEnvironment.XDG_CONFIG_HOME ||
-    snapshot.environment.XDG_RUNTIME_DIR !== expectedEnvironment.XDG_RUNTIME_DIR
+    !processMatchesForwardTarget(
+      pid,
+      deps,
+      currentUid,
+      expectedEnvironment,
+      expectedExecutable,
+      expectedArgv,
+    )
   ) {
     return { owned: false, failure: "process-identity-mismatch" };
   }
-  const resolvePath = deps.realpath ?? realpath;
-  const expectedExecutable = resolvePath(target.executable);
-  const observedExecutable = snapshot.executable ? resolvePath(snapshot.executable) : null;
-  if (!expectedExecutable || observedExecutable !== expectedExecutable) {
-    return { owned: false, failure: "process-identity-mismatch" };
-  }
-
-  const expectedArgv = [target.executable, ...buildForwardServiceArgs(target)];
-  const invocationMatches = snapshot.argv
-    ? sameArgv(snapshot.argv, expectedArgv)
-    : snapshot.commandLine === expectedArgv.join(" ");
-  if (!invocationMatches) return { owned: false, failure: "process-identity-mismatch" };
 
   const after = enumerate(target.localPort);
   if (after === null) return { owned: false, failure: "listener-enumeration-unavailable" };
   if (after.length !== 1 || after[0] !== pid) {
     return { owned: false, failure: "listener-changed" };
   }
+  if (
+    !processMatchesForwardTarget(
+      pid,
+      deps,
+      currentUid,
+      expectedEnvironment,
+      expectedExecutable,
+      expectedArgv,
+    )
+  ) {
+    return { owned: false, failure: "process-identity-mismatch" };
+  }
   return { owned: true };
-}
-
-/** Prove that a bound port belongs to the exact direct ForwardTcp command. */
-export function isForwardServiceListenerOwned(
-  target: ForwardServiceTarget,
-  deps: ForwardServiceOwnershipDeps = {},
-): boolean {
-  return inspectForwardServiceListenerOwnership(target, deps).owned;
 }

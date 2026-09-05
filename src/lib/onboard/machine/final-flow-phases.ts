@@ -74,6 +74,7 @@ export function createFinalOnboardFlowPhases<
       session: context.session,
       hermesAuthMethod: context.hermesAuthMethod,
       hermesToolGateways: context.hermesToolGateways,
+      revalidateSandboxIdentity: context.revalidateSandboxIdentity,
       deps: options.agentSetupDeps,
     });
     return {

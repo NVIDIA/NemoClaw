@@ -2701,6 +2701,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         initialHint: opts.baseImageResolutionHint,
         initialPreResolvedMetadata: opts.preResolvedBaseImageMetadata,
       });
+      let reusedSandboxIdentityRevalidation: ((operation: string) => void) | undefined;
       const lockedRuntime = await resumeRuntime.prepare(
         opts,
         resume,
@@ -2790,9 +2791,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       }
       const effectiveHostMounts = hostMountScope.activate(session?.metadata.hostMounts);
       await onboardRuntimeBoundary.recordOnboardStarted(resume);
-      // Resume backstop: a session may exist without a sandboxName if sandbox
-      // creation failed before that step. Non-interactive --from cannot infer a
-      // safe name in that state.
+      // A resumed session may lack a sandbox name when creation failed before that step;
+      // non-interactive --from cannot infer a safe name in that state.
       if (
         resume &&
         cannotPrompt &&
@@ -3191,9 +3191,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   hermesApiPortReservationScope,
                   ...createArgs,
                   opts.allowRemovedImmutabilityStateRecord === true,
+                  (revalidate) => (reusedSandboxIdentityRevalidation = revalidate),
                 ),
               ),
             ),
+            takeReusedSandboxIdentityRevalidation: () => reusedSandboxIdentityRevalidation,
             updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
             finalizeSandboxRouteReservation: registry.finalizeSandboxRouteReservation,
             getSandboxAgentRegistryFields,

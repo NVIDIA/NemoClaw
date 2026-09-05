@@ -38,6 +38,25 @@ describe("final onboard flow phases", () => {
     expect(result.context.selectedMessagingChannels).toEqual(["slack", "discord"]);
   });
 
+  it("retains reused sandbox identity authority through final flow (#11074)", async () => {
+    const revalidateSandboxIdentity = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("sandbox identity changed");
+      });
+    const order: string[] = [];
+    const [branchPhase] = createPhases("openclaw", order);
+    const session = createSession();
+    session.steps.sandbox.status = "skipped";
+
+    await expect(branchPhase.run(context({ session, revalidateSandboxIdentity }))).rejects.toThrow(
+      "sandbox identity changed",
+    );
+    expect(order).toEqual(["openclaw"]);
+  });
+
   it("rejects final phases when required context is missing", async () => {
     const [branchPhase, policiesPhase, finalizationPhase, postVerifyPhase] =
       createPhases("openclaw");

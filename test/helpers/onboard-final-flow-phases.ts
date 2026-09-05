@@ -196,7 +196,8 @@ export function createPhases(
         order.push("agent-setup");
       }),
       agentSetupContext: () => ({}),
-      ensureAgentDashboardForward: vi.fn(() => {
+      ensureAgentDashboardForward: vi.fn((_sandboxName, _agent, options) => {
+        options?.revalidateSandboxIdentity?.("inspect reused dashboard forward");
         order.push("agent-forward");
         return 45123;
       }),

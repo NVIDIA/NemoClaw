@@ -8,6 +8,7 @@ import { SANDBOX_RECREATE_PROBE_TIMEOUT_MS } from "./sandbox-recreate-probe";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 import {
   applyReusedSandboxDashboardState,
+  createReusedSandboxIdentityRevalidation,
   createSandboxReuseHelpers,
   restoreReusedSandboxDashboardState,
   type SandboxReuseDeps,
@@ -33,6 +34,7 @@ describe("applyReusedSandboxDashboardState", () => {
 
   it("clears Hermes dashboard registry fields when the reused sandbox has it disabled", () => {
     const updateSandbox = vi.fn();
+    const ensureDashboardForward = vi.fn(() => 18789);
     const sandboxGpuConfig: SandboxGpuConfig = {
       hostGpuDetected: false,
       hostGpuPlatform: null,
@@ -53,7 +55,7 @@ describe("applyReusedSandboxDashboardState", () => {
       sandboxGpuConfig,
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
-      ensureDashboardForward: vi.fn(() => 18789),
+      ensureDashboardForward,
       hermesDashboardForwarding: {
         resolveStateForPort: vi.fn(() => hermesDashboardState),
         ensureForState: vi.fn(),
@@ -71,6 +73,23 @@ describe("applyReusedSandboxDashboardState", () => {
       gatewayPort: 8080,
     });
     expect(result.hermesDashboardState).toBe(hermesDashboardState);
+    expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
+      preserveRegisteredForward: true,
+    });
+  });
+
+  it("retains the exact live identity selected for reuse (#11074)", () => {
+    let liveIdentityFingerprint = "a".repeat(64);
+    const revalidate = createReusedSandboxIdentityRevalidation({
+      sandboxName: "reuse-me",
+      openingObservation: { state: "ready", liveIdentityFingerprint },
+      registeredIdentity: liveIdentityFingerprint,
+      observe: () => ({ state: "ready", liveIdentityFingerprint }),
+    });
+
+    expect(() => revalidate("restoring its dashboard")).not.toThrow();
+    liveIdentityFingerprint = "b".repeat(64);
+    expect(() => revalidate("inspecting its dashboard forward")).toThrow(/changed identity/u);
   });
 
   it("skips dashboard forwarding while preserving reuse metadata for terminal agents", () => {
@@ -151,7 +170,10 @@ describe("applyReusedSandboxDashboardState", () => {
       (
         _sandboxName: string,
         _chatUiUrl: string,
-        options?: { revalidateSandboxIdentity?: (operation: string) => void },
+        options?: {
+          preserveRegisteredForward?: boolean;
+          revalidateSandboxIdentity?: (operation: string) => void;
+        },
       ) => {
         options?.revalidateSandboxIdentity?.("start the dashboard forward");
         return 18790;
@@ -194,6 +216,11 @@ describe("applyReusedSandboxDashboardState", () => {
     ).rejects.toThrow(/Sandbox identity changed before/u);
 
     expect(ensureDashboardForward).toHaveBeenCalledOnce();
+    expect(ensureDashboardForward).toHaveBeenCalledWith(
+      "reuse-me",
+      "http://127.0.0.1:18789",
+      expect.objectContaining({ preserveRegisteredForward: true }),
+    );
     expect(env.CHAT_UI_URL).toBeUndefined();
     expect(ensureForState).not.toHaveBeenCalled();
     expect(updateReusedSandboxMetadata).not.toHaveBeenCalled();
