@@ -144,6 +144,15 @@ function runDirectRuntimeEnvValidation(envOverrides: Record<string, string | und
   });
 }
 
+function runRuntimeEnvJsonValidation(input: string | Buffer) {
+  return spawnSync("python3", [VALIDATOR, "runtime-env-json"], {
+    encoding: "utf-8",
+    timeout: 5000,
+    input,
+    env: { HOME: os.tmpdir(), PATH: process.env.PATH ?? "" },
+  });
+}
+
 function runRuntimeEnvValidationAsRoot(lazyTarget: string) {
   return spawnSync(
     "python3",
@@ -178,6 +187,38 @@ function runRuntimeEnvValidationAsGateway(lazyTarget: string) {
       ].join("; "),
       VALIDATOR,
       lazyTarget,
+    ],
+    { encoding: "utf-8", timeout: 5000 },
+  );
+}
+
+function runManagedGatewayEnvValidation(
+  envOverrides: Record<string, string>,
+  includeCanonicalPaths = true,
+) {
+  const environment: Record<string, string> = {
+    PATH: "/usr/bin",
+    ...(includeCanonicalPaths
+      ? {
+          HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
+          HERMES_HOME: "/sandbox/.hermes",
+          HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
+        }
+      : {}),
+    ...envOverrides,
+  };
+  return spawnSync(
+    "python3",
+    [
+      "-I",
+      "-c",
+      [
+        "import json, runpy, sys",
+        "module = runpy.run_path(sys.argv[1], run_name='nemoclaw_managed_gateway_env_test')",
+        "raise SystemExit(module['validate_managed_gateway_env'](json.loads(sys.argv[2])))",
+      ].join("; "),
+      VALIDATOR,
+      JSON.stringify(environment),
     ],
     { encoding: "utf-8", timeout: 5000 },
   );
@@ -501,6 +542,51 @@ wait "$child"
 });
 
 describe("Hermes durable lazy-install target", () => {
+  it("accepts a valid environment snapshot at the JSON payload limit", () => {
+    const environment = {
+      HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
+      HERMES_HOME: "/sandbox/.hermes",
+      HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
+      SAFE_PADDING: "",
+    };
+    const emptyPayload = JSON.stringify(environment);
+    environment.SAFE_PADDING = "x".repeat(MAX_ENV_BYTES - Buffer.byteLength(emptyPayload));
+    const payload = JSON.stringify(environment);
+
+    expect(Buffer.byteLength(payload)).toBe(MAX_ENV_BYTES);
+    const result = runRuntimeEnvJsonValidation(payload);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("rejects malformed JSON environment snapshots", () => {
+    const result = runRuntimeEnvJsonValidation("{");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("process environment snapshot is invalid");
+  });
+
+  it("rejects non-string JSON environment values", () => {
+    const result = runRuntimeEnvJsonValidation(
+      JSON.stringify({
+        HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
+        HERMES_HOME: "/sandbox/.hermes",
+        HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
+        SAFE_VALUE: 1,
+      }),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("process environment snapshot is invalid");
+  });
+
+  it("rejects JSON environment snapshots over the payload limit", () => {
+    const result = runRuntimeEnvJsonValidation(Buffer.alloc(MAX_ENV_BYTES + 1, 0x20));
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`${MAX_ENV_BYTES}-byte limit`);
+  });
+
   it("accepts the provider-assigned Hermes API port in the runtime environment", () => {
     const result = runRuntimeEnvValidation({ NEMOCLAW_HERMES_API_PORT: "8645" });
 
@@ -547,6 +633,42 @@ describe("Hermes durable lazy-install target", () => {
     expect(accepted.status, accepted.stderr).toBe(0);
     expect(refused.status).toBe(1);
     expect(refused.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
+  });
+
+  it("derives launcher-owned sandbox paths for managed restart validation", () => {
+    const result = runManagedGatewayEnvValidation({}, false);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("replaces supervisor path values with the canonical managed-restart paths (#10963)", () => {
+    const result = runManagedGatewayEnvValidation(
+      {
+        HERMES_LAZY_INSTALL_TARGET: "/tmp/untrusted-packages",
+        HERMES_HOME: "/sandbox/other-home",
+        HERMES_BUNDLED_PLUGINS: "/sandbox/hostile-plugins",
+      },
+      false,
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it.each([
+    {
+      case: "runtime path control",
+      key: "HERMES_CONFIG",
+      value: "/sandbox/hostile-config.yaml",
+    },
+    { case: "raw credential", key: "AWS_SECRET_ACCESS_KEY", value: "raw-secret-value" },
+  ])("rejects a $case after applying launcher-owned paths", ({ key, value }) => {
+    const result = runManagedGatewayEnvValidation({ [key]: value });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(key);
+    expect(result.stderr).not.toContain(value);
   });
 
   it.each([

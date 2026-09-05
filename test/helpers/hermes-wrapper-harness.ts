@@ -112,7 +112,7 @@ export function runWrapper(
     const stubExit = opts.stub?.exitCode ?? 0;
     const stubScript = [
       "#!/usr/bin/env bash",
-      `if [ "\${NEMOCLAW_HERMES_ADAPTER_VERSION_PROBE:-}" = "1" ]; then printf 'Hermes Agent v${opts.upstreamVersion ?? "0.19.0"}\\n'; exit 0; fi`,
+      `if [ "\${NEMOCLAW_HERMES_ADAPTER_VERSION_PROBE:-}" = "1" ]; then printf 'Hermes Agent v${opts.upstreamVersion ?? "0.20.6"}\\n'; exit 0; fi`,
       `node -e 'const fs=require("node:fs"); fs.writeFileSync(process.argv[1], JSON.stringify(process.argv.slice(3))); fs.writeFileSync(process.argv[2], JSON.stringify(process.env))' ${JSON.stringify(marker)} ${JSON.stringify(envMarker)} "$@"`,
       stubStdout ? `cat <<'__NEMOCLAW_STUB_EOF__'\n${stubStdout}\n__NEMOCLAW_STUB_EOF__` : "",
       stubStderr
