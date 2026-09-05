@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Mocked shell-unit coverage for the Hermes gateway-PID-file cleanup contract.
-// remove_stale_gateway_file() is the seam guarding the root-owned gateway.pid
+// remove_stale_hermes_gateway_files() is the seam guarding the root-owned gateway.pid
 // path: a stale regular file OR a symlink at the PID path must be removed
 // (never symlink-followed) so the resulting gateway.pid is always a regular
 // file, never a symlink. Previously this was only proven by the live
@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 
 import { runRemoveStale } from "./hermes-gateway-pid-cleanup-helpers.ts";
 
-describe("Hermes remove_stale_gateway_file cleanup (legacy gateway.pid)", () => {
+describe("Hermes descriptor-anchored cleanup (legacy gateway.pid)", () => {
   it("removes a symlink at the PID path without following it, leaving no symlink target damage", () => {
     // A symlink pointing at a real target file must be removed itself; the
     // target must remain untouched (refuse to follow the link).

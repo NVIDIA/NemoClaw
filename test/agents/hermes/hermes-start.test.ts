@@ -12,6 +12,11 @@ import {
   runHermesSandboxInitPreludeWithFakePath,
   writeFakeProcCmdline,
 } from "../../support/hermes-shell-harness";
+import {
+  createStaleCleanupSwapFixture,
+  filesystemFingerprint,
+  runHermesDashboardPortBootstrap,
+} from "./hermes-start-test-helpers";
 
 const START_SCRIPT = path.join(import.meta.dirname, "../../..", "agents", "hermes", "start.sh");
 const ENV_WRAPPER = path.join(
@@ -35,17 +40,6 @@ const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
 const GENERATED_API_SERVER_KEY = Array.from({ length: 64 }, (_value, index) =>
   (index % 16).toString(16),
 ).join("");
-
-function filesystemFingerprint(entry: string): string {
-  const fd = fs.openSync(entry, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-  try {
-    const metadata = fs.fstatSync(fd);
-    const contents = metadata.isDirectory() ? "" : fs.readFileSync(fd, "utf8");
-    return `${metadata.dev}:${metadata.ino}:${metadata.uid}:${metadata.gid}:${metadata.mode & 0o7777}:${metadata.size}:${metadata.mtimeMs}:${contents}`;
-  } finally {
-    fs.closeSync(fd);
-  }
-}
 
 function createHermesUnsafeLogFixture(
   tmpDir: string,
@@ -146,55 +140,6 @@ function runHermesLazyInstallTargetBootstrap(childEnv: NodeJS.ProcessEnv) {
     ["-c", `${src.slice(start, end)}\nprintf '%s\\n' "$HERMES_LAZY_INSTALL_TARGET"`],
     { encoding: "utf-8", env: childEnv, timeout: 5000 },
   );
-}
-
-function extractDashboardPortBootstrap(src: string): string {
-  const start = src.indexOf('NEMOCLAW_CMD=("$@")');
-  const end = src.indexOf('\nHERMES="$(command -v hermes)"', start);
-  if (start < 0 || end < 0) {
-    throw new Error("Expected Hermes dashboard port bootstrap block in agents/hermes/start.sh");
-  }
-  return src.slice(start, end).trimEnd();
-}
-
-function runHermesDashboardPortBootstrap(env: Record<string, string | undefined> = {}) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-port-bootstrap-"));
-  const scriptPath = path.join(tmpDir, "run.sh");
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      // macOS Bash 3.2 treats an empty array expansion as unbound under nounset.
-      // This fixture deliberately starts with no command arguments.
-      "set -eo pipefail",
-      "set --",
-      extractDashboardPortBootstrap(src),
-      'printf "CHAT_UI_URL=%s\\n" "${CHAT_UI_URL:-}"',
-      'printf "DASHBOARD_PUBLIC_PORT=%s\\n" "$DASHBOARD_PUBLIC_PORT"',
-      'printf "DASHBOARD_INTERNAL_PORT=%s\\n" "$DASHBOARD_INTERNAL_PORT"',
-      'printf "PUBLIC_PORT=%s\\n" "$PUBLIC_PORT"',
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
-  try {
-    const childEnv = { ...process.env };
-    for (const [key, value] of Object.entries(env)) {
-      if (value === undefined) {
-        delete childEnv[key];
-      } else {
-        childEnv[key] = value;
-      }
-    }
-    return spawnSync("bash", [scriptPath], {
-      encoding: "utf-8",
-      timeout: 5000,
-      env: childEnv,
-    });
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
 }
 
 function runHermesDashboardArgs(tuiValue?: string) {
@@ -521,6 +466,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   wideLogEntries?: number;
   unsafeLog?: "root-symlink" | "nested-symlink" | "fifo";
   swapLayoutDir?: MutableLayoutTarget;
+  swapRuntimeBeforeStaleCleanup?: boolean;
   preExistingHistory?: "regular" | "symlink" | "directory" | "hardlink-to-config";
   unsafeState?: readonly [name: HermesStateDir, kind: "symlink" | "file"];
 }) {
@@ -584,6 +530,9 @@ function runHermesGatewayRuntimeCleanup(opts: {
     : undefined;
   const layoutSwapFixture = opts.swapLayoutDir
     ? createLayoutSwapFixture(tmpDir, hermesHome, opts.swapLayoutDir)
+    : undefined;
+  const staleCleanupSwapFixture = opts.swapRuntimeBeforeStaleCleanup
+    ? createStaleCleanupSwapFixture(tmpDir, hermesHome)
     : undefined;
   const historyPath = path.join(hermesHome, ".hermes_history");
   const symlinkTarget = path.join(tmpDir, "history-target");
@@ -665,7 +614,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
       extractShellFunctionFromSource(src, "cmdline_is_hermes_gateway"),
       extractShellFunctionFromSource(src, "has_live_hermes_gateway"),
       extractShellFunctionFromSource(src, "cleanup_orphan_socat_forwarders"),
-      extractShellFunctionFromSource(src, "remove_stale_gateway_file"),
+      extractShellFunctionFromSource(src, "remove_stale_hermes_gateway_files"),
       extractShellFunctionFromSource(src, "ensure_hermes_mutable_layout_dir"),
       extractShellFunctionFromSource(src, "ensure_hermes_config_root_mode"),
       extractShellFunctionFromSource(src, "ensure_hermes_state_dir"),
@@ -693,10 +642,14 @@ function runHermesGatewayRuntimeCleanup(opts: {
   try {
     const result = spawnSync("bash", [scriptPath], {
       encoding: "utf-8",
-      timeout: 15_000,
-      env: layoutSwapFixture
-        ? { ...process.env, PATH: `${layoutSwapFixture.fakeBin}:${process.env.PATH ?? ""}` }
-        : process.env,
+      timeout: 30_000,
+      env:
+        layoutSwapFixture || staleCleanupSwapFixture
+          ? {
+              ...process.env,
+              PATH: `${(layoutSwapFixture ?? staleCleanupSwapFixture)?.fakeBin}:${process.env.PATH ?? ""}`,
+            }
+          : process.env,
     });
     const legacyPidStat = fs.lstatSync(legacyPid, { throwIfNoEntry: false });
     const modeEntry = (entry: string, mask: number): [string, string] => {
@@ -790,6 +743,11 @@ function runHermesGatewayRuntimeCleanup(opts: {
       layoutSwapAfter: layoutSwapFixture?.fingerprint(),
       layoutSwapOriginalExists: Boolean(
         layoutSwapFixture && fs.existsSync(layoutSwapFixture.originalEntry),
+      ),
+      staleCleanupSwapBefore: staleCleanupSwapFixture?.before,
+      staleCleanupSwapAfter: staleCleanupSwapFixture?.fingerprint(),
+      staleCleanupSwapOriginalExists: Boolean(
+        staleCleanupSwapFixture && fs.existsSync(staleCleanupSwapFixture.originalEntry),
       ),
       symlinkTargetContent,
       unsafeStateBefore,
@@ -949,6 +907,20 @@ describe("agents/hermes/start.sh port validation", () => {
     expect(run.stdout).toContain("CHAT_UI_URL=https://hermes.example.test:29443");
     expect(run.stdout).toContain("DASHBOARD_PUBLIC_PORT=29443");
     expect(run.stdout).toContain("PUBLIC_PORT=8642");
+  });
+
+  it("isolates CHAT_UI_URL parsing from an inherited Python import path", () => {
+    const run = runHermesDashboardPortBootstrap(
+      {
+        CHAT_UI_URL: "https://hermes.example.test:29443",
+        NEMOCLAW_DASHBOARD_PORT: undefined,
+      },
+      true,
+    );
+
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.stdout).toContain("DASHBOARD_PUBLIC_PORT=29443");
+    expect(run.pythonImportSentinelExists).toBe(false);
   });
 
   it("rejects dashboard ports that collide with the API port during bootstrap", () => {
@@ -1373,6 +1345,18 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       expect(run.result.stderr).toContain("Restore a trusted snapshot into a recreated sandbox");
     },
   );
+  it("rejects a runtime swap after layout repair without deleting external stale-file sentinels", () => {
+    const run = runHermesGatewayRuntimeCleanup({ swapRuntimeBeforeStaleCleanup: true });
+
+    expect(run.result.status, run.result.stderr).toBe(78);
+    expect(run.staleCleanupSwapAfter).toEqual(run.staleCleanupSwapBefore);
+    expect(run.staleCleanupSwapOriginalExists).toBe(true);
+    expect(run.result.stderr).toContain("Refusing Hermes stale gateway cleanup because");
+    expect(run.result.stderr).toContain("/runtime is a symlink");
+    expect(run.result.stderr).toContain(
+      "Hermes pre-launch layout repair failed at runtime state directory",
+    );
+  });
   it("refuses a log tree beyond the bounded repair depth", () => {
     const run = runHermesGatewayRuntimeCleanup({ deepLogDepth: 65 });
     expect(run.result.status).not.toBe(0);

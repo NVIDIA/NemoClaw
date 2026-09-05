@@ -724,19 +724,103 @@ cleanup_orphan_socat_forwarders() {
   done
 }
 
-remove_stale_gateway_file() {
-  local path="$1"
-  local label="$2"
+remove_stale_hermes_gateway_files() {
+  NEMOCLAW_HERMES_STALE_CLEANUP_ROOT="$HERMES_DIR" \
+    python3 -I - <<'PYSTALEGATEWAY'
+import errno
+import os
+import stat
+import sys
 
-  if [ -L "$path" ]; then
-    echo "[gateway] Removing unsafe stale Hermes ${label} symlink: ${path}" >&2
-    rm -f "$path" 2>/dev/null || echo "[gateway] WARNING: could not remove stale ${label}: ${path}" >&2
-    return
-  fi
-  if [ -f "$path" ]; then
-    echo "[gateway] Removing stale Hermes ${label}: ${path}" >&2
-    rm -f "$path" 2>/dev/null || echo "[gateway] WARNING: could not remove stale ${label}: ${path}" >&2
-  fi
+root = os.environ["NEMOCLAW_HERMES_STALE_CLEANUP_ROOT"]
+open_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+open_flags |= getattr(os, "O_CLOEXEC", 0)
+
+
+def fail(message: str) -> None:
+    print(
+        f"[SECURITY] Refusing Hermes stale gateway cleanup because {message}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+def open_child_directory(parent_fd: int, name: str, display: str) -> tuple[int, os.stat_result]:
+    try:
+        before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as exc:
+        fail(f"{display} could not be inspected: {exc.strerror}")
+    if stat.S_ISLNK(before.st_mode):
+        fail(f"{display} is a symlink")
+    if not stat.S_ISDIR(before.st_mode):
+        fail(f"{display} is not a directory")
+    try:
+        fd = os.open(name, open_flags, dir_fd=parent_fd)
+    except OSError as exc:
+        fail(f"{display} could not be opened safely: {exc.strerror}")
+    opened = os.fstat(fd)
+    if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+        os.close(fd)
+        fail(f"{display} changed while it was opened")
+    return fd, opened
+
+
+def remove_entry(parent_fd: int, name: str, display: str, label: str) -> None:
+    try:
+        entry = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        fail(f"{display} could not be inspected: {exc.strerror}")
+    if stat.S_ISLNK(entry.st_mode):
+        print(f"[gateway] Removing unsafe stale Hermes {label} symlink: {display}", file=sys.stderr)
+    elif stat.S_ISREG(entry.st_mode):
+        print(f"[gateway] Removing stale Hermes {label}: {display}", file=sys.stderr)
+    else:
+        fail(f"{display} is not a regular file or symlink")
+    try:
+        os.unlink(name, dir_fd=parent_fd)
+    except OSError as exc:
+        detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+        fail(f"{display} could not be removed safely: {detail}")
+
+
+try:
+    root_before = os.lstat(root)
+except OSError as exc:
+    fail(f"{root} could not be inspected: {exc.strerror}")
+if stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
+    fail(f"{root} is not a safe directory")
+
+root_fd = -1
+runtime_fd = -1
+try:
+    try:
+        root_fd = os.open(root, open_flags)
+    except OSError as exc:
+        fail(f"{root} could not be opened safely: {exc.strerror}")
+    root_open = os.fstat(root_fd)
+    if (root_open.st_dev, root_open.st_ino) != (root_before.st_dev, root_before.st_ino):
+        fail(f"{root} changed while it was opened")
+
+    runtime_path = f"{root}/runtime"
+    runtime_fd, runtime_open = open_child_directory(root_fd, "runtime", runtime_path)
+    remove_entry(runtime_fd, "gateway.pid", f"{runtime_path}/gateway.pid", "runtime PID file")
+    remove_entry(root_fd, "gateway.pid", f"{root}/gateway.pid", "legacy PID file")
+    remove_entry(runtime_fd, "gateway.lock", f"{runtime_path}/gateway.lock", "lock file")
+
+    runtime_after = os.stat("runtime", dir_fd=root_fd, follow_symlinks=False)
+    if (runtime_after.st_dev, runtime_after.st_ino) != (runtime_open.st_dev, runtime_open.st_ino):
+        fail(f"{runtime_path} changed during stale gateway cleanup")
+    root_after = os.lstat(root)
+    if (root_after.st_dev, root_after.st_ino) != (root_open.st_dev, root_open.st_ino):
+        fail(f"{root} changed during stale gateway cleanup")
+finally:
+    if runtime_fd >= 0:
+        os.close(runtime_fd)
+    if root_fd >= 0:
+        os.close(root_fd)
+PYSTALEGATEWAY
 }
 
 ensure_hermes_mutable_layout_dir() {
@@ -880,7 +964,72 @@ PYMUTABLELAYOUT
 }
 
 ensure_hermes_config_root_mode() {
+  if [ "${HERMES_CONFIG_ROOT_LOCKED:-0}" = "1" ]; then
+    verify_hermes_locked_config_root
+    return $?
+  fi
   ensure_hermes_mutable_layout_dir . 3770
+}
+
+verify_hermes_locked_config_root() {
+  NEMOCLAW_HERMES_CONFIG_ROOT="$HERMES_DIR" \
+    python3 -I - <<'PYLOCKEDCONFIGROOT'
+import grp
+import os
+import stat
+import sys
+
+root = os.environ["NEMOCLAW_HERMES_CONFIG_ROOT"]
+open_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+open_flags |= getattr(os, "O_CLOEXEC", 0)
+
+
+def fail(message: str) -> None:
+    print(f"[SECURITY] Refusing locked Hermes config root because {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+try:
+    sandbox_gid = grp.getgrnam("sandbox").gr_gid
+except KeyError as exc:
+    fail(f"sandbox account lookup failed: {exc}")
+
+try:
+    root_before = os.lstat(root)
+except OSError as exc:
+    fail(f"{root} could not be inspected: {exc.strerror}")
+if stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
+    fail(f"{root} is not a safe directory")
+if (root_before.st_uid, root_before.st_gid, stat.S_IMODE(root_before.st_mode)) != (
+    0,
+    sandbox_gid,
+    0o3770,
+):
+    fail(f"{root} does not have the required root:sandbox 3770 metadata")
+
+root_fd = -1
+try:
+    root_fd = os.open(root, open_flags)
+    root_open = os.fstat(root_fd)
+    if (root_open.st_dev, root_open.st_ino) != (root_before.st_dev, root_before.st_ino):
+        fail(f"{root} changed while it was opened")
+    for name in ("config.yaml", ".env", ".config-hash"):
+        display = f"{root}/{name}"
+        try:
+            entry = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        except OSError as exc:
+            fail(f"{display} could not be inspected: {exc.strerror}")
+        if not stat.S_ISREG(entry.st_mode) or entry.st_nlink != 1:
+            fail(f"{display} is not a single-link regular file")
+        if (entry.st_uid, entry.st_gid, stat.S_IMODE(entry.st_mode)) != (0, 0, 0o444):
+            fail(f"{display} does not have the required root:root 0444 metadata")
+    root_after = os.lstat(root)
+    if (root_after.st_dev, root_after.st_ino) != (root_open.st_dev, root_open.st_ino):
+        fail(f"{root} changed during locked-root verification")
+finally:
+    if root_fd >= 0:
+        os.close(root_fd)
+PYLOCKEDCONFIGROOT
 }
 
 ensure_hermes_state_dir() {
@@ -1598,8 +1747,6 @@ repair_hermes_startup_layout() {
 }
 
 cleanup_stale_hermes_gateway_runtime() {
-  local runtime_dir="${HERMES_DIR}/runtime"
-
   if has_live_hermes_gateway; then
     echo "[gateway] Existing Hermes gateway process detected; preserving runtime lock state" >&2
     return 0
@@ -1609,9 +1756,10 @@ cleanup_stale_hermes_gateway_runtime() {
 
   # Hermes can leave gateway.lock behind after Docker GPU recreation kills the
   # old process namespace. Clear it only after confirming no gateway is alive.
-  remove_stale_gateway_file "${runtime_dir}/gateway.pid" "runtime PID file"
-  remove_stale_gateway_file "${HERMES_DIR}/gateway.pid" "legacy PID file"
-  remove_stale_gateway_file "${runtime_dir}/gateway.lock" "lock file"
+  if ! remove_stale_hermes_gateway_files; then
+    fail_hermes_startup_layout_repair "runtime state directory" || true
+    return "$HERMES_LAYOUT_REPAIR_REFUSED_STATUS"
+  fi
   cleanup_orphan_socat_forwarders
 }
 
@@ -3736,10 +3884,16 @@ elif [ -e "$HERMES_CONFIG_MUTATION_LOCK" ] \
   exit 1
 fi
 
+HERMES_CONFIG_ROOT_LOCKED=0
 if [ "$(stat -c '%U' "$HERMES_DIR" 2>/dev/null || stat -f '%Su' "$HERMES_DIR" 2>/dev/null || echo unknown)" = "root" ]; then
-  echo "[SECURITY] Existing Hermes config is not in the supported mutable posture. Rebuild or recreate the sandbox." >&2
-  exit 1
+  if [ "$(id -u)" -eq 0 ] && verify_hermes_locked_config_root; then
+    HERMES_CONFIG_ROOT_LOCKED=1
+  else
+    echo "[SECURITY] Existing Hermes config is not in the supported mutable posture. Rebuild or recreate the sandbox." >&2
+    exit 1
+  fi
 fi
+readonly HERMES_CONFIG_ROOT_LOCKED
 
 # Migrate legacy symlink layout before anything else reads .hermes
 migrate_legacy_layout "/sandbox/.hermes" "/sandbox/.hermes-data" "hermes" || exit 1
