@@ -556,27 +556,6 @@ describe("protected managed-image runtime contract", () => {
     expect(rewritten.agentConfig).toEqual(profile.agentConfig);
   });
 
-  it("binds an OpenClaw local-inference reply budget without changing the base fixture", () => {
-    const profile = managedStartupE2eProfile("openclaw", false, true, true);
-    const rewritten = withManagedImageLocalInferenceProfile(
-      profile,
-      resolveManagedImageLocalInferenceRoute("llama-cpp"),
-      "qwen3.6-35b-a3b",
-      { maxTokens: 4096 },
-    );
-
-    expect(rewritten.tuning.maxTokens).toBe(4096);
-    expect(profile.tuning.maxTokens).toBe(8192);
-    expect(() =>
-      withManagedImageLocalInferenceProfile(
-        managedStartupE2eProfile("hermes", false, true, true),
-        resolveManagedImageLocalInferenceRoute("llama-cpp"),
-        "qwen3.6-35b-a3b",
-        { maxTokens: 4096 },
-      ),
-    ).toThrow("maxTokens requires a positive OpenClaw bound");
-  });
-
   it("rejects mutable images and incomplete GPU provider tuples", () => {
     expect(() =>
       parseManagedImageOpenShellE2eInputs([

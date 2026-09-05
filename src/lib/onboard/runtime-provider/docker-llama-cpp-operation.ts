@@ -5,13 +5,11 @@ import {
   type ContainerEngine,
   type ContainerEngineCommandCapture,
 } from "../../adapters/container-engine";
-import { resolveDockerDriverNetworkName } from "../experimental/docker-network-authority";
 import { prependInstalledUserLocalOpenshellPath } from "../openshell-pin";
 import { getFutureShellPathHint } from "../remediation";
 import {
   createDockerLlamaCppManagedLifecycle,
   type DockerLlamaCppManagedLifecycle,
-  type DockerLlamaCppManagedLifecycleOptions,
 } from "./docker-llama-cpp-managed-lifecycle";
 import {
   createDockerOperationAuthority,
@@ -92,20 +90,17 @@ export function createDockerLlamaCppHostLocalOperation(
   capture?: ContainerEngineCommandCapture,
   spawnCommand?: HostLocalInferenceCommandSpawner,
   createLifecycle: (
-    input: DockerLlamaCppManagedLifecycleOptions,
+    input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0],
   ) => DockerLlamaCppManagedLifecycle = createDockerLlamaCppManagedLifecycle,
 ): HostLocalInferenceOperation {
   const authority = createDockerLlamaCppOperationAuthority(env, capture, spawnCommand);
-  const gatewayNetworkName = resolveDockerDriverNetworkName(env);
   return Object.freeze({
     providerId: "docker",
     engine: authority.engine,
     bindingSha256: dockerLlamaCppBindingSha256(authority.engine),
     assertAuthority: authority.assertAuthority,
     spawn: authority.spawn,
-    createLlamaCppLifecycle: (
-      input: Parameters<HostLocalInferenceOperation["createLlamaCppLifecycle"]>[0],
-    ) => createLifecycle({ ...input, gatewayNetworkName }),
+    createLlamaCppLifecycle: createLifecycle,
   });
 }
 
@@ -119,15 +114,10 @@ export function createManagedLlamaCppEngine(
 /** Rebind an already injected Docker engine for read-only status inspection. */
 export function createDockerLlamaCppInspectionOperation(
   engine: ContainerEngine,
-  env: NodeJS.ProcessEnv = process.env,
-  createLifecycle: (
-    input: DockerLlamaCppManagedLifecycleOptions,
-  ) => DockerLlamaCppManagedLifecycle = createDockerLlamaCppManagedLifecycle,
 ): HostLocalInferenceOperation {
   if (engine.operation !== "host-local-inference" || engine.engineId !== "docker") {
     throw new Error("Managed llama.cpp inspection requires a Docker host-local-inference engine.");
   }
-  const gatewayNetworkName = resolveDockerDriverNetworkName(env);
   return Object.freeze({
     providerId: "docker",
     engine,
@@ -136,8 +126,6 @@ export function createDockerLlamaCppInspectionOperation(
     spawn: () => {
       throw new Error("Managed llama.cpp inspection cannot spawn container-engine commands.");
     },
-    createLlamaCppLifecycle: (
-      input: Parameters<HostLocalInferenceOperation["createLlamaCppLifecycle"]>[0],
-    ) => createLifecycle({ ...input, gatewayNetworkName }),
+    createLlamaCppLifecycle: createDockerLlamaCppManagedLifecycle,
   });
 }

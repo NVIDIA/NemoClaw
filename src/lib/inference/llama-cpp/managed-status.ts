@@ -9,15 +9,6 @@ import {
   createDockerLlamaCppHostLocalOperation,
   createDockerLlamaCppInspectionOperation,
 } from "../../onboard/runtime-provider/docker-llama-cpp-operation";
-import type {
-  DockerLlamaCppManagedLifecycle,
-  DockerLlamaCppManagedLifecycleOptions,
-} from "../../onboard/runtime-provider/docker-llama-cpp-managed-lifecycle";
-import { readRecordedDockerDriverGatewayNetworkName } from "../../onboard/docker-driver-gateway-config";
-import {
-  DEFAULT_GATEWAY_PORT,
-  resolveGatewayStateDirForPort,
-} from "../../onboard/gateway/state-dir";
 import { requirePersistedEngineAuthority } from "../../onboard/runtime-provider/persisted-engine-authority";
 import { probeLlamaCppAttachment } from "./index";
 import {
@@ -58,10 +49,6 @@ export interface ManagedLlamaCppStatusOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly inspectExact?: typeof inspectManagedLlamaCppRuntimeExact;
   readonly probe?: typeof probeLlamaCppAttachment;
-  readonly createInspectionLifecycle?: (
-    input: DockerLlamaCppManagedLifecycleOptions,
-  ) => DockerLlamaCppManagedLifecycle;
-  readonly readGatewayNetworkName?: (stateDir: string) => string | null;
 }
 
 function unknownStatus(recipeId: string, detail: string): ManagedLlamaCppStatus {
@@ -126,36 +113,12 @@ export function inspectManagedLlamaCppStatus(
     imageReference: receipt.runtime.imageRef,
     endpoint: "https://inference.local/v1" as const,
   };
-  const operationEnv = { ...(options.env ?? process.env) };
-  try {
-    const gatewayStateDir = resolveGatewayStateDirForPort({
-      configured: operationEnv.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
-      home: homeDir,
-      port: options.gatewayPort ?? DEFAULT_GATEWAY_PORT,
-    });
-    const recordedGatewayNetworkName = (
-      options.readGatewayNetworkName ?? readRecordedDockerDriverGatewayNetworkName
-    )(gatewayStateDir);
-    if (recordedGatewayNetworkName) {
-      operationEnv.OPENSHELL_DOCKER_NETWORK_NAME = recordedGatewayNetworkName;
-    }
-  } catch {
-    return {
-      ...base,
-      state: "conflict",
-      detail: "managed llama.cpp gateway network authority could not be revalidated",
-    };
-  }
   let engine: ContainerEngine;
   let operation: ReturnType<typeof createDockerLlamaCppHostLocalOperation>;
   try {
     operation = options.engine
-      ? createDockerLlamaCppInspectionOperation(
-          options.engine,
-          operationEnv,
-          options.createInspectionLifecycle,
-        )
-      : createDockerLlamaCppHostLocalOperation(operationEnv);
+      ? createDockerLlamaCppInspectionOperation(options.engine)
+      : createDockerLlamaCppHostLocalOperation(options.env ?? process.env);
     engine = operation.engine;
     requirePersistedEngineAuthority(
       receipt.engineAuthority,

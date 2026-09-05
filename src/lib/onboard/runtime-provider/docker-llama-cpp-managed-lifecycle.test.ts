@@ -39,7 +39,6 @@ import {
   createTestDockerLlamaCppManagedLifecycle as createLifecycle,
   privateBridgeFixture,
 } from "./docker-llama-cpp-private-bridge.test-support";
-import { createDockerLlamaCppInspectionOperation } from "./docker-llama-cpp-operation";
 import type {
   HostLocalCreateJournalExecutionLease,
   HostLocalCreateJournalRecord,
@@ -191,7 +190,6 @@ interface TestJournalStore extends HostLocalCreateJournalStore {
   readonly failNextPrepareReceipt: () => void;
   readonly failNextPrepareReceiptAfterCommit: () => void;
   readonly failNextFinalize: () => void;
-  readonly replace: (record: HostLocalCreateJournalRecord) => void;
 }
 
 function journalStore(): TestJournalStore {
@@ -283,7 +281,6 @@ function journalStore(): TestJournalStore {
     failNextPrepareReceipt: () => (prepareReceiptFails = true),
     failNextPrepareReceiptAfterCommit: () => (prepareReceiptFailsAfterCommit = true),
     failNextFinalize: () => (finalizeFails = true),
-    replace: (record) => void records.set(record.transactionId, Object.freeze(record)),
   };
 }
 
@@ -332,41 +329,6 @@ function controller(fixture: DockerFixture, store = journalStore(), now: () => n
   });
 }
 
-function legacySpecificationSha256(
-  apiKeyRootIdentitySha256: string,
-  receiptTargetSha256: string,
-): string {
-  return rawDigest({
-    apiKeyRootIdentitySha256,
-    contract: contract(),
-    containerName: "nemoclaw-llama-cpp",
-    imageReference: IMAGE,
-    model: {
-      planDigest: plan().planDigest,
-      recipeId: plan().recipeId,
-      digest: MODEL_DIGEST,
-      filesystemIdentitySha256: rawDigest({
-        dev: identity().dev.toString(),
-        ino: identity().ino.toString(),
-        size: identity().size.toString(),
-        mtimeNs: identity().mtimeNs.toString(),
-        ctimeNs: identity().ctimeNs.toString(),
-      }),
-      sizeBytes: MODEL_CONTENT.length,
-    },
-    network: { isolation: "docker-internal", name: "nemoclaw-llama-cpp-internal" },
-    ownerLabel: {
-      name: "io.nvidia.nemoclaw.llama-cpp-owner",
-      value: "gateway.primary",
-    },
-    probeImageReference: PROBE_IMAGE,
-    readinessTimeoutSeconds: 1_800,
-    receiptTargetSha256,
-    runtimeGid: 1001,
-    runtimeUid: 1001,
-  });
-}
-
 function preparedJournal(): HostLocalCreateJournalRecord {
   return {
     schemaVersion: 1,
@@ -381,7 +343,6 @@ function preparedJournal(): HostLocalCreateJournalRecord {
       contract: contract(),
       apiKeyRootIdentitySha256: keyRootIdentitySha256(),
       containerName: "nemoclaw-llama-cpp",
-      gatewayNetworkName: "openshell-docker",
       imageReference: IMAGE,
       model: {
         planDigest: plan().planDigest,
@@ -505,121 +466,6 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
         "host.openshell.internal:172.29.0.1",
         "http://host.openshell.internal:8081/health",
       ]),
-    );
-  });
-
-  it("uses the operation-bound OpenShell bridge instead of the default network", () => {
-    const gatewayNetworkName = "nemoclaw-managed-pr-test";
-    const fixture = createDockerFixture({
-      apiKeyPath,
-      gatewayNetworkName,
-      modelPath,
-      networkName: bindings().network.name,
-    });
-    createLifecycle({ ...options(fixture), gatewayNetworkName }).start(receiptWriter());
-
-    expect(fixture.capture.mock.calls.map((call) => call[0])).toContainEqual(
-      expect.arrayContaining([
-        "--network",
-        gatewayNetworkName,
-        "--add-host",
-        "host.openshell.internal:172.29.0.1",
-        "http://host.openshell.internal:8081/health",
-      ]),
-    );
-  });
-
-  it("rejects gateway-network drift from the durable lifecycle authority", () => {
-    const originalGatewayNetworkName = "nemoclaw-managed-pr-original";
-    const fixture = createDockerFixture({
-      apiKeyPath,
-      gatewayNetworkName: originalGatewayNetworkName,
-      modelPath,
-      networkName: bindings().network.name,
-    });
-    const store = journalStore();
-    const persistedAuthority = authorityStore();
-    const original = createLifecycle({
-      ...options(fixture, store, bindings(), persistedAuthority),
-      gatewayNetworkName: originalGatewayNetworkName,
-    });
-    const receipt = original.start(receiptWriter());
-    const drifted = createLifecycle({
-      ...options(fixture, store, bindings(), persistedAuthority),
-      gatewayNetworkName: "nemoclaw-managed-pr-drifted",
-    });
-
-    expect(() => drifted.resume(receipt)).toThrow("durable create journal");
-    expect(() => drifted.runtime.inspectManaged(receipt)).toThrow("durable create journal");
-  });
-
-  it("retains legacy default-network journal authority until exact cleanup", () => {
-    const fixture = dockerFixture();
-    const store = journalStore();
-    const persistedAuthority = authorityStore();
-    const privateBridge = privateBridgeFixture();
-    const initial = createLifecycle(
-      options(fixture, store, bindings(), persistedAuthority),
-      {},
-      privateBridge,
-    );
-    const receipt = initial.start(receiptWriter());
-    const currentJournal = store.load(TRANSACTION_ID);
-    invariant(currentJournal, "finalized journal is missing");
-    invariant(receipt.runtime.kind === "container", "container receipt is missing");
-    const legacySpecSha256 = legacySpecificationSha256(
-      currentJournal.apiKeyRootIdentitySha256,
-      currentJournal.receiptTargetSha256,
-    );
-    const legacyReceipt = {
-      ...receipt,
-      runtime: { ...receipt.runtime, specSha256: legacySpecSha256 },
-    };
-    const serializedReceipt = serializeHostLocalInferenceReceipt(legacyReceipt);
-    const legacyJournal = {
-      ...currentJournal,
-      specSha256: legacySpecSha256,
-      serializedReceipt,
-      receiptSha256: createHash("sha256").update(serializedReceipt).digest("hex"),
-    };
-    store.replace(legacyJournal);
-    fixture.seed(legacyJournal, true);
-
-    const drifted = createLifecycle(
-      {
-        ...options(fixture, store, bindings(), persistedAuthority),
-        gatewayNetworkName: "nemoclaw-managed-pr-drifted",
-      },
-      {},
-      privateBridge,
-    );
-    expect(() => drifted.runtime.inspectManaged(legacyReceipt)).toThrow("durable create journal");
-
-    const legacy = createLifecycle(
-      options(fixture, store, bindings(), persistedAuthority),
-      {},
-      privateBridge,
-    );
-    expect(legacy.runtime.inspectManaged(legacyReceipt).running).toBe(true);
-    expect(legacy.resume(legacyReceipt)).toEqual(legacyReceipt);
-    expect(legacy.runtime.stopManaged(legacyReceipt).running).toBe(false);
-    expect(legacy.runtime.prepareDestroy(legacyReceipt)).toEqual(legacyReceipt);
-    expect(legacy.runtime.destroy(legacyReceipt).status).toBe("removed");
-  });
-
-  it("binds status inspection to the configured OpenShell bridge", () => {
-    const fixture = dockerFixture();
-    const createInspectionLifecycle = vi.fn(() => ({}) as never);
-    const operation = createDockerLlamaCppInspectionOperation(
-      fixture.engine,
-      { OPENSHELL_DOCKER_NETWORK_NAME: "nemoclaw-inspection-network" },
-      createInspectionLifecycle,
-    );
-
-    operation.createLlamaCppLifecycle({} as never);
-
-    expect(createInspectionLifecycle).toHaveBeenCalledWith(
-      expect.objectContaining({ gatewayNetworkName: "nemoclaw-inspection-network" }),
     );
   });
 

@@ -5,8 +5,6 @@ import { createHash } from "node:crypto";
 
 import YAML from "yaml";
 
-import type { LlamaCppOpenClawAgentQualificationPlan } from "./llama-cpp-openclaw-agent-qualification.mts";
-
 export {
   LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
@@ -314,8 +312,15 @@ export type LlamaCppDgxSparkExecutionPlan = {
   };
 };
 
-export type LlamaCppDgxSparkAgentQualificationPlan =
-  LlamaCppOpenClawAgentQualificationPlan & {
+export type LlamaCppDgxSparkAgentQualificationPlan = {
+  readonly agent: "openclaw";
+  readonly bounds: {
+    readonly commandTimeoutSeconds: number;
+    readonly maxResponseBytes: number;
+    readonly maxStreamEvents: number;
+    readonly maxTokens: number;
+  };
+  readonly execution: "disabled" | "enabled";
   readonly fixture: {
     readonly path: "/tmp/nemoclaw-llama-cpp-tool.txt";
     readonly value: "LLAMA_CPP_OPENCLAW_TOOL_OK";
@@ -333,6 +338,13 @@ export type LlamaCppDgxSparkAgentQualificationPlan =
     readonly normal: typeof LLAMA_CPP_DGX_SPARK_OPENCLAW_NORMAL_PROMPT;
     readonly tool: typeof LLAMA_CPP_DGX_SPARK_OPENCLAW_TOOL_PROMPT;
   };
+  readonly route: {
+    readonly api: "openai-completions";
+    readonly provider: "llama-cpp-local";
+    readonly routedBaseUrl: "https://inference.local/v1";
+    readonly upstreamBaseUrl: "http://host.openshell.internal:8081/v1";
+  };
+  readonly runtimeProvider: "docker";
   readonly sandbox: {
     readonly gpuAccess: "disabled";
     readonly name: typeof LLAMA_CPP_DGX_SPARK_OPENCLAW_SANDBOX;
@@ -341,7 +353,10 @@ export type LlamaCppDgxSparkAgentQualificationPlan =
     readonly normal: "llama-cpp-openclaw-normal";
     readonly tool: "llama-cpp-openclaw-tool";
   };
+  readonly tool: {
+    readonly name: "read";
   };
+};
 
 export type LlamaCppDgxSparkQualificationReceipt = {
   readonly agentQualification:

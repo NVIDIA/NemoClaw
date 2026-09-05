@@ -36,10 +36,7 @@ jobs:
       contents: read
     outputs:
       base_sha: ${{ steps.changed.outputs.base_sha }}
-      managed_image_receipt: ${{ steps.validate_managed_cohort.outputs.receipt }}
       managed_image_revision: ${{ steps.publication.outputs.head_sha }}
-      publication_selected: ${{ steps.changed.outputs.publication_selected }}
-      qwen_selected: ${{ steps.changed.outputs.qwen_selected }}
       selected: ${{ steps.changed.outputs.selected }}
     steps:
       - id: changed
@@ -61,86 +58,40 @@ jobs:
             echo "::error::Copied PR branch SHA does not match the current PR head" >&2
             exit 1
           }
-          pr_files_json="$(gh api --paginate --slurp \
-            "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files?per_page=100")"
-          selection_json="$(jq -c '
+          if gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files?per_page=100" \
+            | jq -e '
               flatten
-              | {
-                  generic_only: any(
-                    .filename == ".github/workflows/e2e.yaml"
-                    or .filename == "scripts/install.sh"
-                    or .filename == "test/e2e/live/llama-cpp-generic-gpu.test.ts"
-                    or .filename == "test/e2e/live/gpu-e2e-helpers.ts"
-                    or .filename == "test/e2e/mock-parity.json"
-                    or .filename == "tools/e2e/cli-artifact-workflow-boundary.mts"
-                    or .filename == "tools/e2e/workflow-boundary.mts"
-                    or (.filename | startswith("src/lib/readiness/"))
-                    or .filename == "src/lib/onboard/fatal-runtime-preflight.ts"
-                    or .filename == "src/lib/onboard/overlayfs-auto-fix.ts"
-                    or .filename == "src/lib/onboard/preflight.ts"
-                    or (
-                      (.filename | startswith("managed-inference/presets/llama-cpp."))
-                      and .filename != "managed-inference/presets/llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b.yaml"
-                    )
-                    or (
-                      (.filename | startswith("managed-inference/recipes/llama-cpp."))
-                      and .filename != "managed-inference/recipes/llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1.yaml"
-                    )
-                  ),
-                  qwen_only: any(
-                    .filename == "src/lib/adapters/http/auth-config.ts"
-                    or .filename == "scripts/checks/llama-cpp-openclaw-agent-qualification.mts"
-                    or .filename == "scripts/checks/llama-cpp-compiled-runtime.ts"
-                    or .filename == "scripts/checks/llama-cpp-qwen-gpu-contract.ts"
-                    or .filename == "scripts/checks/generate-managed-startup-profile-fixture.mts"
-                    or .filename == "scripts/checks/managed-image-protected-runtime-contract.ts"
-                    or .filename == "scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts"
-                    or .filename == "scripts/checks/run-managed-image-openshell-e2e.ts"
-                    or .filename == "tools/e2e/exact-artifact-download.mts"
-                    or .filename == "tools/e2e/managed-image-cohort-contract.mts"
-                    or .filename == "test/e2e/support/pr-self-hosted-llama-selector.test.ts"
-                    or .filename == "test/inference/llama/llama-cpp-openclaw-agent-qualification.test.ts"
-                    or .filename == "test/inference/llama/run-llama-cpp-qwen-gpu-qualification.test.ts"
-                    or .filename == "test/inference/managed/managed-image-protected-runtime-contract.test.ts"
-                    or .filename == "test/package-contract/inference/run-llama-cpp-qwen-gpu-qualification.test.ts"
-                    or .filename == "managed-inference/presets/llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b.yaml"
-                    or .filename == "managed-inference/recipes/llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1.yaml"
-                  ),
-                  shared: any(
-                    .filename == ".github/workflows/pr-self-hosted.yaml"
-                    or .filename == "src/lib/agent/onboard.ts"
-                    or (.filename | startswith("src/lib/adapters/openshell/"))
-                    or (.filename | startswith("src/lib/inference/serving/"))
-                    or .filename == "src/lib/name-validation.ts"
-                    or .filename == "src/lib/onboard/host-gateway-process.ts"
-                    or .filename == "src/lib/onboard/initial-policy.ts"
-                    or (.filename | startswith("src/lib/onboard/managed-bootstrap/"))
-                    or (.filename | startswith("src/lib/onboard/managed-image/"))
-                    or (.filename | startswith("src/lib/onboard/managed-startup/"))
-                    or .filename == "src/lib/onboard/runtime-provider/docker.ts"
-                    or .filename == "src/lib/onboard/runtime-provider/contract.ts"
-                    or .filename == "src/lib/onboard/sandbox-create-launch.ts"
-                    or .filename == "src/lib/onboard/sandbox-gpu-create-flow.ts"
-                    or .filename == "src/lib/onboard/sandbox-gpu-preflight.ts"
-                    or .filename == "src/lib/runtime-recovery.ts"
-                    or (.filename | startswith("src/lib/inference/llama-cpp/"))
-                    or (.filename | startswith("src/lib/onboard/runtime-provider/docker-llama-cpp"))
-                  )
-                }
-            ' <<<"$pr_files_json")"
-          qwen_selected="$(jq -r '.qwen_only or .shared' <<<"$selection_json")"
-          selected="$(jq -r '.generic_only or .shared' <<<"$selection_json")"
-          publication_selected="$(jq -r '.generic_only or .qwen_only or .shared' \
-            <<<"$selection_json")"
+              | any(
+                  .filename == ".github/workflows/e2e.yaml"
+                  or .filename == ".github/workflows/pr-self-hosted.yaml"
+                  or .filename == "scripts/install.sh"
+                  or .filename == "test/e2e/live/llama-cpp-generic-gpu.test.ts"
+                  or .filename == "test/e2e/live/gpu-e2e-helpers.ts"
+                  or .filename == "test/e2e/mock-parity.json"
+                  or .filename == "tools/e2e/cli-artifact-workflow-boundary.mts"
+                  or .filename == "tools/e2e/workflow-boundary.mts"
+                  or (.filename | startswith("managed-inference/presets/llama-cpp."))
+                  or (.filename | startswith("managed-inference/recipes/llama-cpp."))
+                  or (.filename | startswith("src/lib/inference/llama-cpp/"))
+                  or (.filename | startswith("src/lib/readiness/"))
+                  or .filename == "src/lib/onboard/fatal-runtime-preflight.ts"
+                  or .filename == "src/lib/onboard/overlayfs-auto-fix.ts"
+                  or .filename == "src/lib/onboard/preflight.ts"
+                  or (.filename | startswith("src/lib/onboard/runtime-provider/"))
+                )
+            ' >/dev/null; then
+            selected=true
+          else
+            selected=false
+          fi
           {
             printf 'base_sha=%s\n' "$base_sha"
-            printf 'publication_selected=%s\n' "$publication_selected"
-            printf 'qwen_selected=%s\n' "$qwen_selected"
             printf 'selected=%s\n' "$selected"
           } >>"$GITHUB_OUTPUT"
 
       - name: Check out PR base SHA for publication verification
-        if: ${{ steps.changed.outputs.publication_selected == 'true' }}
+        if: ${{ steps.changed.outputs.selected == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -148,18 +99,18 @@ jobs:
           ref: ${{ steps.changed.outputs.base_sha }}
 
       - name: Set up Node for publication verification
-        if: ${{ steps.changed.outputs.publication_selected == 'true' }}
+        if: ${{ steps.changed.outputs.selected == 'true' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
 
       - name: Install publication verifier dependencies
-        if: ${{ steps.changed.outputs.publication_selected == 'true' }}
+        if: ${{ steps.changed.outputs.selected == 'true' }}
         run: npm ci --ignore-scripts --no-audit --no-fund
 
       - id: publication
         name: Verify complete base and managed-image publication
-        if: ${{ steps.changed.outputs.publication_selected == 'true' }}
+        if: ${{ steps.changed.outputs.selected == 'true' }}
         env:
           EXPECTED_SHA: ${{ steps.changed.outputs.base_sha }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -172,25 +123,6 @@ jobs:
           export GITHUB_REF=refs/heads/main
           export GITHUB_SHA="$EXPECTED_SHA"
           node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30
-
-      - name: Download immutable managed-image cohort contract
-        if: ${{ steps.changed.outputs.qwen_selected == 'true' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          PUBLICATION_ARTIFACT_KIND: managed-image-cohort
-          PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
-          PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
-          PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/managed-image-cohort"
-
-      - id: validate_managed_cohort
-        name: Validate immutable managed-image cohort contract
-        if: ${{ steps.changed.outputs.qwen_selected == 'true' }}
-        env:
-          PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
-          PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
-          PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/managed-image-cohort-contract.mts "${RUNNER_TEMP}/managed-image-cohort/cohort.json"
 
   llama-cpp-generic-gpu:
     name: llama.cpp on generic NVIDIA GPU
@@ -252,21 +184,28 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   llama-cpp-qwen-gpu:
-    name: Qwen llama.cpp recipe on RTX GPU (N1x WSL qualification pending)
+    name: Qwen llama.cpp recipe on NVIDIA GPU (N1x device qualification pending)
     needs: select-llama-cpp-generic-gpu
-    if: ${{ needs.select-llama-cpp-generic-gpu.outputs.qwen_selected == 'true' }}
+    if: ${{ needs.select-llama-cpp-generic-gpu.outputs.selected == 'true' }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 150
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-qwen-gpu
       E2E_JOB: "1"
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_revision }}
       E2E_TARGET_ID: llama-cpp-qwen-gpu
-      NEMOCLAW_E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_receipt }}
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ github.sha }}
       NEMOCLAW_E2E_SHARD: default
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ github.sha }}
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_MAX_TOKENS: "1024"
+      NEMOCLAW_LLAMACPP_RECIPE: llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_PROVIDER: install-llama-cpp
       NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_SANDBOX_NAME: e2e-lcpp-qwen
+      OPENSHELL_GATEWAY: nemoclaw
     steps:
       - name: Checkout exact PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -289,7 +228,7 @@ jobs:
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
 
-      - name: Run Qwen llama.cpp recipe on RTX GPU (N1x WSL qualification pending)
+      - name: Run declarative Qwen llama.cpp NVIDIA GPU live test
         shell: bash
         run: |
           set -euo pipefail
@@ -297,9 +236,10 @@ jobs:
           OPENSHELL_BIN="$(command -v openshell)"
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx tsx scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run \
+            --test-path test/e2e/live/llama-cpp-generic-gpu.test.ts
 
-      - name: Upload Qwen RTX recipe artifacts (N1x WSL qualification pending)
+      - name: Upload Qwen llama.cpp NVIDIA GPU artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 

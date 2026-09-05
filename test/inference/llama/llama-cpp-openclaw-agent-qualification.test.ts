@@ -1,10 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { loadLlamaCppImageConfig } from "../../../scripts/checks/export-llama-cpp-image-config.mts";
@@ -12,10 +8,7 @@ import {
   LLAMA_CPP_DGX_SPARK_OPENCLAW_SANDBOX,
   parseLlamaCppDgxSparkExecutionPlan,
 } from "../../../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts";
-import {
-  LLAMA_CPP_OPENCLAW_SESSION_PROBE_SOURCE,
-  runLlamaCppOpenClawAgentQualification,
-} from "../../../scripts/checks/llama-cpp-openclaw-agent-qualification.mts";
+import { runLlamaCppOpenClawAgentQualification } from "../../../scripts/checks/llama-cpp-openclaw-agent-qualification.mts";
 import type { ManagedImageOpenShellE2eProbeContext } from "../../../scripts/checks/run-managed-image-openshell-e2e.ts";
 
 function enabledConfig() {
@@ -60,137 +53,6 @@ function context(
 }
 
 describe("llama.cpp OpenClaw qualification probe", () => {
-  it("proves progressive-tool execution from the persisted wrapper", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "llama-cpp-openclaw-session-"));
-    const sessionPath = path.join(root, "tool.jsonl");
-    const trajectoryPath = path.join(root, "tool.trajectory.jsonl");
-    try {
-      fs.writeFileSync(
-        sessionPath,
-        [
-          { type: "message", message: { role: "user", content: "read the fixture" } },
-          {
-            type: "message",
-            message: {
-              role: "assistant",
-              content: [
-                {
-                  type: "toolCall",
-                  id: "call-wrapper",
-                  name: "tool_call",
-                  arguments: {
-                    id: "openclaw:core:read",
-                    args: { path: "/tmp/fixture.txt" },
-                  },
-                },
-              ],
-            },
-          },
-          {
-            type: "message",
-            message: {
-              role: "toolResult",
-              toolCallId: "call-wrapper",
-              toolName: "tool_call",
-              content: [{ type: "text", text: "FIXTURE_OK" }],
-            },
-          },
-          { type: "message", message: { role: "user", content: "repeat it" } },
-          { type: "message", message: { role: "assistant", content: "FIXTURE_OK" } },
-        ]
-          .map((value) => JSON.stringify(value))
-          .join("\n"),
-      );
-      fs.writeFileSync(
-        trajectoryPath,
-        `${JSON.stringify({
-          type: "trace.artifacts",
-          data: { finalStatus: "success", toolMetas: [{ toolName: "read" }] },
-        })}\n`,
-      );
-      const result = spawnSync(
-        process.execPath,
-        [
-          "-e",
-          LLAMA_CPP_OPENCLAW_SESSION_PROBE_SOURCE,
-          sessionPath,
-          trajectoryPath,
-          "read",
-          "/tmp/fixture.txt",
-          "FIXTURE_OK",
-        ],
-        { encoding: "utf8" },
-      );
-      expect(result.status, result.stderr).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual({ calls: 1, results: 1, users: 2 });
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects tool evidence from an unrelated trajectory snapshot", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "llama-cpp-openclaw-mismatch-"));
-    const sessionPath = path.join(root, "tool.jsonl");
-    const trajectoryPath = path.join(root, "tool.trajectory.jsonl");
-    try {
-      fs.writeFileSync(
-        sessionPath,
-        [
-          { type: "message", message: { role: "user", content: "read the fixture" } },
-          { type: "message", message: { role: "user", content: "repeat it" } },
-          { type: "message", message: { role: "assistant", content: "FIXTURE_OK" } },
-        ]
-          .map((value) => JSON.stringify(value))
-          .join("\n"),
-      );
-      fs.writeFileSync(
-        trajectoryPath,
-        `${JSON.stringify({
-          type: "model.completed",
-          data: {
-            messagesSnapshot: [
-              {
-                role: "assistant",
-                content: [
-                  {
-                    type: "toolCall",
-                    id: "foreign-call",
-                    name: "read",
-                    arguments: { path: "/tmp/fixture.txt" },
-                  },
-                ],
-              },
-              {
-                role: "toolResult",
-                toolCallId: "foreign-call",
-                content: [{ type: "text", text: "FIXTURE_OK" }],
-              },
-            ],
-          },
-        })}\n`,
-      );
-      const result = spawnSync(
-        process.execPath,
-        [
-          "-e",
-          LLAMA_CPP_OPENCLAW_SESSION_PROBE_SOURCE,
-          sessionPath,
-          trajectoryPath,
-          "read",
-          "/tmp/fixture.txt",
-          "FIXTURE_OK",
-        ],
-        { encoding: "utf8" },
-      );
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain(
-        "OpenClaw session did not prove the declared tool-call continuation flow",
-      );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("executes every YAML-authored probe and emits only bounded structural evidence", async () => {
     const invocations: string[][] = [];
     const evidence = await runLlamaCppOpenClawAgentQualification(
@@ -199,7 +61,7 @@ describe("llama.cpp OpenClaw qualification probe", () => {
         [
           { status: 0, stdout: '{"ok":true}' },
           { status: 0, stdout: '{"done":true,"events":7}' },
-          { status: 0, stdout: '{"payloads":[{"text":"pong"}]}' },
+          { status: 0, stdout: '{"payloads":[{"text":"PONG"}]}' },
           { status: 0, stdout: "" },
           {
             status: 0,
@@ -226,14 +88,10 @@ describe("llama.cpp OpenClaw qualification probe", () => {
     expect(invocations).toHaveLength(7);
     expect(invocations[0]).toContain("https://inference.local/v1/chat/completions");
     expect(invocations[2]).toContain("llama-cpp-openclaw-normal");
-    expect(invocations[2]?.[invocations[2].indexOf("--timeout") + 1]).toBe("420");
     expect(invocations[4]).toContain("llama-cpp-openclaw-tool");
     expect(invocations[5]).toContain("llama-cpp-openclaw-tool");
     expect(invocations[6]).toContain(
       "/sandbox/.openclaw/agents/main/sessions/llama-cpp-openclaw-tool.jsonl",
-    );
-    expect(invocations[6]).toContain(
-      "/sandbox/.openclaw/agents/main/sessions/llama-cpp-openclaw-tool.trajectory.jsonl",
     );
     expect(JSON.stringify(evidence)).not.toContain("LLAMA_CPP_OPENCLAW_TOOL_OK");
   });

@@ -333,57 +333,6 @@ describe("managed llama.cpp status", () => {
     });
   });
 
-  it("passes the recorded OpenShell bridge through public status inspection", () => {
-    const createInspectionLifecycle = vi.fn(() => ({}) as never);
-    const inspectExact = vi.fn<NonNullable<ManagedLlamaCppStatusOptions["inspectExact"]>>(
-      ({ operation }) => {
-        operation.createLlamaCppLifecycle({} as never);
-        return { running: true, receipt: {} as never };
-      },
-    );
-    const runtimeEngine = engine(vi.fn(() => ({ status: 0, stdout: "[]", stderr: "" })));
-    const homeDir = temporaryHome();
-    publishState(homeDir, runtimeEngine);
-    const readGatewayNetworkName = vi.fn(() => "nemoclaw-managed-pr-test");
-
-    expect(
-      inspectManagedLlamaCppStatus("spark-agent", {
-        createInspectionLifecycle,
-        env: {},
-        homeDir,
-        engine: runtimeEngine,
-        inspectExact,
-        probe: vi.fn(() => ({ ok: true as const, model: "nvidia-nemotron" })),
-        readGatewayNetworkName,
-      }),
-    ).toMatchObject({ state: "running" });
-    expect(readGatewayNetworkName).toHaveBeenCalledWith(
-      path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway"),
-    );
-    expect(createInspectionLifecycle).toHaveBeenCalledWith(
-      expect.objectContaining({ gatewayNetworkName: "nemoclaw-managed-pr-test" }),
-    );
-  });
-
-  it("does not expose recorded gateway configuration errors through status", () => {
-    const runtimeEngine = engine(vi.fn());
-    const homeDir = temporaryHome();
-    publishState(homeDir, runtimeEngine);
-
-    expect(
-      inspectManagedLlamaCppStatus("spark-agent", {
-        homeDir,
-        engine: runtimeEngine,
-        readGatewayNetworkName: () => {
-          throw new Error("sensitive process environment value");
-        },
-      }),
-    ).toMatchObject({
-      state: "conflict",
-      detail: "managed llama.cpp gateway network authority could not be revalidated",
-    });
-  });
-
   it("reports invalid Docker authority construction as a conflict", () => {
     const runtimeEngine = engine(vi.fn());
     const homeDir = temporaryHome();

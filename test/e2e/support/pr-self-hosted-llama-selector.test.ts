@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -41,44 +40,16 @@ function workflow(): Workflow {
   return YAML.parse(readFileSync(WORKFLOW_PATH, "utf8")) as Workflow;
 }
 
-function selectorScript(): string {
-  const script = workflow().jobs["select-llama-cpp-generic-gpu"]?.steps?.find(
-    (step) => step.name === "Select llama.cpp generic GPU E2E from PR files",
-  )?.run;
-  assert(typeof script === "string", "llama.cpp GPU selector script is missing");
-  return script;
-}
-
-function declaredSelectionPaths(
-  classification: "generic_only" | "qwen_only" | "shared",
-): readonly string[] {
-  const script = selectorScript();
-  const classifications = ["generic_only", "qwen_only", "shared"] as const;
-  const classificationIndex = classifications.indexOf(classification);
-  const start = script.indexOf(`${classification}: any(`);
-  const nextClassification = classifications[classificationIndex + 1];
-  const end = nextClassification
-    ? script.indexOf(`${nextClassification}: any(`, start)
-    : script.length;
-  assert(start >= 0 && end >= 0, `llama.cpp GPU selector ${classification} inventory is missing`);
-  const inventory = script.slice(start, end);
-  const exactPaths = [...inventory.matchAll(/\.filename == "([^"]+)"/gu)].map(
-    ([, value]) => value!,
-  );
-  const representativePrefixPaths = [...inventory.matchAll(/startswith\("([^"]+)"\)/gu)].map(
-    ([, value]) => `${value!}selector-contract.ts`,
-  );
-  const paths = [...new Set([...exactPaths, ...representativePrefixPaths])].sort();
-  assert(paths.length > 0, `llama.cpp GPU selector ${classification} inventory is empty`);
-  return paths;
-}
-
 function selectGenericGpuLane(
   changedFiles: readonly string[],
   copiedSha = CANDIDATE_SHA,
   baseSha = BASE_SHA,
 ) {
-  const script = selectorScript();
+  const value = workflow();
+  const script = value.jobs["select-llama-cpp-generic-gpu"]?.steps?.find(
+    (step) => step.name === "Select llama.cpp generic GPU E2E from PR files",
+  )?.run;
+  expect(script).toEqual(expect.any(String));
 
   const directory = mkdtempSync(join(tmpdir(), "nemoclaw-generic-gpu-selector-"));
   const binDirectory = join(directory, "bin");
@@ -102,7 +73,7 @@ fi
   try {
     const result = spawnSync(
       "bash",
-      ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script],
+      ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script!],
       {
         encoding: "utf8",
         env: {
@@ -130,36 +101,24 @@ fi
 }
 
 describe("generic NVIDIA GPU PR selection", () => {
-  it.each(declaredSelectionPaths("generic_only"))(
-    "selects only the generic GPU job for declared dependency %s",
+  it.each([
+    "scripts/install.sh",
+    "src/lib/readiness/host.ts",
+    "src/lib/readiness/onboard-admission.ts",
+    "src/lib/onboard/fatal-runtime-preflight.ts",
+    "src/lib/onboard/overlayfs-auto-fix.ts",
+    "src/lib/onboard/preflight.ts",
+    "src/lib/onboard/runtime-provider/podman.ts",
+  ])(
+    "selects the generic NVIDIA GPU E2E job when %s can change installer readiness",
     (changedFile) => {
-      expect(selectGenericGpuLane([changedFile])).toBe(
-        `base_sha=${BASE_SHA}\npublication_selected=true\nqwen_selected=false\nselected=true`,
-      );
-    },
-  );
-
-  it.each(declaredSelectionPaths("qwen_only"))(
-    "selects only the Qwen GPU job for declared dependency %s",
-    (changedFile) => {
-      expect(selectGenericGpuLane([changedFile])).toBe(
-        `base_sha=${BASE_SHA}\npublication_selected=true\nqwen_selected=true\nselected=false`,
-      );
-    },
-  );
-
-  it.each(declaredSelectionPaths("shared"))(
-    "selects both GPU jobs for declared shared dependency %s",
-    (changedFile) => {
-      expect(selectGenericGpuLane([changedFile])).toBe(
-        `base_sha=${BASE_SHA}\npublication_selected=true\nqwen_selected=true\nselected=true`,
-      );
+      expect(selectGenericGpuLane([changedFile])).toBe(`base_sha=${BASE_SHA}\nselected=true`);
     },
   );
 
   it("does not select the generic NVIDIA GPU E2E job for unrelated documentation", () => {
     expect(selectGenericGpuLane(["docs/get-started/quickstart.mdx"])).toBe(
-      `base_sha=${BASE_SHA}\npublication_selected=false\nqwen_selected=false\nselected=false`,
+      `base_sha=${BASE_SHA}\nselected=false`,
     );
   });
 
@@ -181,17 +140,14 @@ describe("generic NVIDIA GPU PR selection", () => {
     expect(selector?.permissions).toEqual({ actions: "read", contents: "read" });
     expect(selector?.outputs).toMatchObject({
       base_sha: "${{ steps.changed.outputs.base_sha }}",
-      managed_image_receipt: "${{ steps.validate_managed_cohort.outputs.receipt }}",
       managed_image_revision: "${{ steps.publication.outputs.head_sha }}",
-      publication_selected: "${{ steps.changed.outputs.publication_selected }}",
-      qwen_selected: "${{ steps.changed.outputs.qwen_selected }}",
     });
 
     const checkout = selector?.steps?.find(
       (step) => step.name === "Check out PR base SHA for publication verification",
     );
     expect(checkout).toMatchObject({
-      if: "${{ steps.changed.outputs.publication_selected == 'true' }}",
+      if: "${{ steps.changed.outputs.selected == 'true' }}",
       uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
       with: {
         "fetch-depth": 0,
@@ -209,7 +165,7 @@ describe("generic NVIDIA GPU PR selection", () => {
         REQUIRE_MANAGED_IMAGE_PUBLICATION: "1",
         SELECT_NEAREST_SUCCESSFUL_PUBLICATION: "1",
       },
-      if: "${{ steps.changed.outputs.publication_selected == 'true' }}",
+      if: "${{ steps.changed.outputs.selected == 'true' }}",
     });
     expect(publication?.run).toContain("export GITHUB_REF=refs/heads/main");
     expect(publication?.run).toContain('export GITHUB_SHA="$EXPECTED_SHA"');
@@ -217,42 +173,30 @@ describe("generic NVIDIA GPU PR selection", () => {
       "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
     );
 
-    const cohortDownload = selector?.steps?.find(
-      (step) => step.name === "Download immutable managed-image cohort contract",
-    );
-    expect(cohortDownload?.if).toBe("${{ steps.changed.outputs.qwen_selected == 'true' }}");
-
-    const cohort = selector?.steps?.find((step) => step.id === "validate_managed_cohort");
-    expect(cohort).toMatchObject({
-      env: {
-        PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
-        PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
-        PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
-      },
-      if: "${{ steps.changed.outputs.qwen_selected == 'true' }}",
-    });
-
     expect(value.jobs["llama-cpp-generic-gpu"]?.env?.E2E_MANAGED_IMAGE_REVISION).toBe(
       "${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_revision }}",
     );
-    expect(value.jobs["llama-cpp-qwen-gpu"]).toMatchObject({
+
+    const qwen = value.jobs["llama-cpp-qwen-gpu"];
+    expect(qwen).toMatchObject({
       env: {
+        E2E_MANAGED_IMAGE_REVISION:
+          "${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_revision }}",
         E2E_TARGET_ID: "llama-cpp-qwen-gpu",
-        NEMOCLAW_E2E_MANAGED_IMAGE_COHORT_RECEIPT:
-          "${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_receipt }}",
         NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ github.sha }}",
+        NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1",
       },
-      if: "${{ needs.select-llama-cpp-generic-gpu.outputs.qwen_selected == 'true' }}",
+      if: "${{ needs.select-llama-cpp-generic-gpu.outputs.selected == 'true' }}",
       needs: "select-llama-cpp-generic-gpu",
       "runs-on": "linux-amd64-gpu-rtxpro6000-latest-1",
       "timeout-minutes": 150,
     });
-    expect(
-      value.jobs["llama-cpp-qwen-gpu"]?.steps?.find(
-        (step) =>
-          step.name ===
-          "Run Qwen llama.cpp recipe on RTX GPU (N1x WSL qualification pending)",
-      )?.run,
-    ).toContain("npx tsx scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts");
+    const qwenRun = qwen?.steps?.find(
+      (step) => step.name === "Run declarative Qwen llama.cpp NVIDIA GPU live test",
+    )?.run;
+    expect(qwenRun).toContain(
+      "--test-path test/e2e/live/llama-cpp-generic-gpu.test.ts",
+    );
+    expect(qwenRun).not.toContain("docker");
   });
 });

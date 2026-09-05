@@ -106,7 +106,6 @@ interface LegacyGatewayIdentity {
   gatewayId: string;
   jwtProof: LegacyJwtBundleProof;
   kind: "legacy";
-  networkName: string;
   sandboxNamespace: "default";
 }
 
@@ -116,7 +115,6 @@ type DockerDriverGatewayIdentity =
       configProof: ExistingConfigProof | null;
       kind: "scoped";
       gatewayId: string;
-      networkName: string;
       sandboxNamespace: string;
     };
 
@@ -648,7 +646,6 @@ function existingGatewayIdentityFromConfig(
         gatewayId: legacyGatewayId,
         jwtProof: openOwnedLegacyJwtBundle(stateDir, state.uid),
         kind: "legacy",
-        networkName: parsedEnv.OPENSHELL_DOCKER_NETWORK_NAME!,
         sandboxNamespace: "default",
       };
       configProof = null;
@@ -660,7 +657,6 @@ function existingGatewayIdentityFromConfig(
         configProof,
         gatewayId: scopedGatewayId,
         kind: "scoped",
-        networkName: parsedEnv.OPENSHELL_DOCKER_NETWORK_NAME!,
         sandboxNamespace: scopedGatewayId,
       };
       configProof = null;
@@ -687,28 +683,7 @@ function resolveDockerDriverGatewayIdentity(
   );
   if (existing) return existing;
   const gatewayId = gatewayIdForStateDir(stateDir);
-  return {
-    configProof: null,
-    kind: "scoped",
-    gatewayId,
-    networkName: gatewayEnv.OPENSHELL_DOCKER_NETWORK_NAME ?? "",
-    sandboxNamespace: gatewayId,
-  };
-}
-
-/** Read the network from an existing private, canonical Docker gateway config. */
-export function readRecordedDockerDriverGatewayNetworkName(
-  stateDir: string,
-): string | null {
-  const runtime = resolveGatewayRuntimeProjection({ OPENSHELL_DRIVERS: "docker" });
-  let identity: DockerDriverGatewayIdentity | null = null;
-  try {
-    identity = existingGatewayIdentityFromConfig(stateDir, runtime);
-    return identity?.networkName ?? null;
-  } finally {
-    if (identity?.kind === "legacy") closeLegacyJwtBundleProof(identity.jwtProof);
-    if (identity?.configProof) closeRegularFileProof(identity.configProof);
-  }
+  return { configProof: null, kind: "scoped", gatewayId, sandboxNamespace: gatewayId };
 }
 
 /** Prove that a NemoClaw-owned Docker gateway config uses its state-scoped namespace. */

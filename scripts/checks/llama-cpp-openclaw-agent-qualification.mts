@@ -1,63 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { LlamaCppDgxSparkAgentQualificationPlan } from "./llama-cpp-dgx-spark-qualification-contract.mts";
 import type {
   ManagedImageOpenShellE2eProbeContext,
   ManagedImageOpenShellE2eProbeResult,
 } from "./run-managed-image-openshell-e2e.ts";
-
-export type LlamaCppOpenClawAgentQualificationPlan = {
-  readonly agent: "openclaw";
-  readonly bounds: {
-    readonly commandTimeoutSeconds: number;
-    readonly maxResponseBytes: number;
-    readonly maxStreamEvents: number;
-    readonly maxTokens: number;
-  };
-  readonly execution: "disabled" | "enabled";
-  readonly fixture: {
-    readonly path: string;
-    readonly value: string;
-  };
-  readonly expectations: {
-    readonly normal: string;
-  };
-  readonly image: {
-    readonly reference: string;
-    readonly sourceRevision: string;
-  };
-  readonly probes: readonly string[];
-  readonly prompts: {
-    readonly continuation: string;
-    readonly normal: string;
-    readonly tool: string;
-  };
-  readonly route: {
-    readonly api: "openai-completions";
-    readonly provider: "llama-cpp-local";
-    readonly routedBaseUrl: "https://inference.local/v1";
-    readonly upstreamBaseUrl: "http://host.openshell.internal:8081/v1";
-  };
-  readonly runtimeProvider: "docker";
-  readonly sandbox: {
-    readonly gpuAccess: "disabled";
-    readonly name: string;
-  };
-  readonly sessions: {
-    readonly normal: string;
-    readonly tool: string;
-  };
-  readonly tool: {
-    readonly name: "read";
-  };
-};
 
 export type LlamaCppOpenClawAgentQualificationEvidence = {
   readonly agentMultiTurn: true;
   readonly agentNormalTurn: true;
   readonly agentToolCall: {
     readonly argumentsValid: true;
-    readonly name: LlamaCppOpenClawAgentQualificationPlan["tool"]["name"];
+    readonly name: LlamaCppDgxSparkAgentQualificationPlan["tool"]["name"];
   };
   readonly agentToolResultContinuation: true;
   readonly streamingChat: {
@@ -79,7 +34,7 @@ function requireSuccess(
   }
 }
 
-function agentArgv(session: string, prompt: string, timeoutSeconds: number): string[] {
+function agentArgv(session: string, prompt: string): string[] {
   return [
     "openclaw",
     "agent",
@@ -88,8 +43,6 @@ function agentArgv(session: string, prompt: string, timeoutSeconds: number): str
     "--json",
     "--thinking",
     "off",
-    "--timeout",
-    String(timeoutSeconds),
     "--session-id",
     session,
     "-m",
@@ -123,7 +76,7 @@ const source = Buffer.concat(chunks).toString("utf8");
 if (!streaming) {
   const body = JSON.parse(source);
   const text = body?.choices?.[0]?.message?.content ?? body?.choices?.[0]?.text ?? "";
-  if (!String(text).toLocaleUpperCase("en-US").includes(expected.toLocaleUpperCase("en-US"))) throw new Error("synchronous response mismatch");
+  if (!String(text).includes(expected)) throw new Error("synchronous response mismatch");
   process.stdout.write(JSON.stringify({ ok: true }));
 } else {
   const events = source.split(/\r?\n/).filter((line) => line.startsWith("data: "));
@@ -135,53 +88,30 @@ if (!streaming) {
     .filter((line) => line !== "data: [DONE]")
     .map((line) => JSON.parse(line.slice(6))?.choices?.[0]?.delta?.content ?? "")
     .join("");
-  if (!text.toLocaleUpperCase("en-US").includes(expected.toLocaleUpperCase("en-US"))) throw new Error("streaming response mismatch");
+  if (!text.includes(expected)) throw new Error("streaming response mismatch");
   process.stdout.write(JSON.stringify({ done: true, events: events.length }));
 }
 `;
 
-export const LLAMA_CPP_OPENCLAW_SESSION_PROBE_SOURCE = String.raw`
+const SESSION_PROBE_SOURCE = String.raw`
 const fs = require("node:fs");
-const [sessionPath, , toolName, fixturePath, fixtureValue] = process.argv.slice(1);
+const [sessionPath, toolName, fixturePath, fixtureValue] = process.argv.slice(1);
 const items = fs.readFileSync(sessionPath, "utf8").split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
-const sessionMessages = items.filter((item) => item?.type === "message" && item?.message).map((item) => item.message);
-const blocks = sessionMessages.flatMap((message) => Array.isArray(message.content) ? message.content : []);
+const messages = items.filter((item) => item?.type === "message" && item?.message).map((item) => item.message);
+const blocks = messages.flatMap((message) => Array.isArray(message.content) ? message.content : []);
 const calls = blocks.filter((block) => block?.type === "toolCall");
-const exactCalls = calls.filter((call) => {
-  const name = call.name ?? call.toolName;
-  const argumentsValue = call.arguments ?? call.input ?? call.args;
-  if (name === toolName && argumentsValue?.path === fixturePath) return true;
-  return name === "tool_call" &&
-    (argumentsValue?.id === toolName || argumentsValue?.id === "openclaw:core:" + toolName) &&
-    argumentsValue?.args?.path === fixturePath;
-});
-const results = sessionMessages.filter((message) => message?.role === "toolResult");
-const exactCallIds = new Set(exactCalls.map((call) => call.id ?? call.toolCallId ?? call.tool_call_id).filter(Boolean));
-const matchingResults = results.filter((message) =>
-  exactCallIds.has(message.toolCallId ?? message.tool_call_id ?? message.id) &&
-  JSON.stringify(message).includes(fixtureValue)
+const exactCalls = calls.filter((call) =>
+  (call.name === toolName || call.toolName === toolName) &&
+  call.arguments && call.arguments.path === fixturePath
 );
-const users = sessionMessages.filter((message) => message?.role === "user");
-const finalAssistant = sessionMessages.at(-1)?.role === "assistant";
-if (exactCalls.length < 1 || matchingResults.length < 1 || users.length < 2 || !finalAssistant) {
-  process.stderr.write(JSON.stringify({
-    calls: calls.map((call) => {
-      const argumentsValue = call.arguments ?? call.input ?? call.args;
-      return {
-        name: call.name ?? call.toolName ?? null,
-        target: argumentsValue?.id ?? null,
-        path: argumentsValue?.path ?? argumentsValue?.args?.path ?? null,
-      };
-    }),
-    exactCalls: exactCalls.length,
-    matchingResults: matchingResults.length,
-    resultNames: results.map((message) => message.toolName ?? message.tool_name ?? message.name ?? null),
-    users: users.length,
-    finalAssistant,
-  }));
+const results = messages.filter((message) => message?.role === "toolResult");
+const resultText = JSON.stringify(results);
+const users = messages.filter((message) => message?.role === "user");
+const finalAssistant = messages.at(-1)?.role === "assistant";
+if (exactCalls.length < 1 || results.length < 1 || !resultText.includes(fixtureValue) || users.length < 2 || !finalAssistant) {
   throw new Error("OpenClaw session did not prove the declared tool-call continuation flow");
 }
-process.stdout.write(JSON.stringify({ calls: exactCalls.length, results: matchingResults.length, users: users.length }));
+process.stdout.write(JSON.stringify({ calls: exactCalls.length, results: results.length, users: users.length }));
 `;
 
 function parseJson(value: string, label: string): Record<string, unknown> {
@@ -195,7 +125,7 @@ function parseJson(value: string, label: string): Record<string, unknown> {
 }
 
 export async function runLlamaCppOpenClawAgentQualification(
-  config: LlamaCppOpenClawAgentQualificationPlan,
+  config: LlamaCppDgxSparkAgentQualificationPlan,
   context: ManagedImageOpenShellE2eProbeContext,
 ): Promise<LlamaCppOpenClawAgentQualificationEvidence> {
   if (
@@ -264,14 +194,10 @@ export async function runLlamaCppOpenClawAgentQualification(
   }
 
   const normal = run(
-    agentArgv(config.sessions.normal, config.prompts.normal, config.bounds.commandTimeoutSeconds),
+    agentArgv(config.sessions.normal, config.prompts.normal),
     "OpenClaw normal agent turn",
   );
-  if (
-    !normal.stdout
-      .toLocaleUpperCase("en-US")
-      .includes(config.expectations.normal.toLocaleUpperCase("en-US"))
-  ) {
+  if (!normal.stdout.includes(config.expectations.normal)) {
     throw new Error("OpenClaw normal agent turn did not pass");
   }
 
@@ -288,18 +214,14 @@ export async function runLlamaCppOpenClawAgentQualification(
     "OpenClaw tool fixture creation",
   );
   const tool = run(
-    agentArgv(config.sessions.tool, config.prompts.tool, config.bounds.commandTimeoutSeconds),
+    agentArgv(config.sessions.tool, config.prompts.tool),
     "OpenClaw tool agent turn",
   );
   if (!tool.stdout.includes(config.fixture.value)) {
     throw new Error("OpenClaw tool agent turn did not return the declared fixture value");
   }
   const continuation = run(
-    agentArgv(
-      config.sessions.tool,
-      config.prompts.continuation,
-      config.bounds.commandTimeoutSeconds,
-    ),
+    agentArgv(config.sessions.tool, config.prompts.continuation),
     "OpenClaw tool-result continuation turn",
   );
   if (!continuation.stdout.includes(config.fixture.value)) {
@@ -310,9 +232,8 @@ export async function runLlamaCppOpenClawAgentQualification(
     [
       "node",
       "-e",
-      LLAMA_CPP_OPENCLAW_SESSION_PROBE_SOURCE,
+      SESSION_PROBE_SOURCE,
       `/sandbox/.openclaw/agents/main/sessions/${config.sessions.tool}.jsonl`,
-      `/sandbox/.openclaw/agents/main/sessions/${config.sessions.tool}.trajectory.jsonl`,
       config.tool.name,
       config.fixture.path,
       config.fixture.value,

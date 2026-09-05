@@ -54,7 +54,6 @@ export interface DockerFixture {
 
 interface DockerFixturePaths {
   readonly apiKeyPath: string;
-  readonly gatewayNetworkName?: string;
   readonly modelPath: string;
   readonly networkName: string;
 }
@@ -66,7 +65,6 @@ export function createDockerFixture(
   publishedHostIp = "127.0.0.1",
   publishedBindingCount = 0,
 ): DockerFixture {
-  const gatewayNetworkName = paths.gatewayNetworkName ?? "openshell-docker";
   const effectivePublishedHostPort = publishedHostPort ?? (configuredHostPort || "49152");
   let networkId = NETWORK_ID;
   let networkPresent = false;
@@ -189,12 +187,12 @@ export function createDockerFixture(
         switch (args[1]) {
           case "inspect":
             switch (args[2]) {
-              case gatewayNetworkName:
+              case "openshell-docker":
                 return {
                   status: 0,
                   stdout: JSON.stringify([
                     {
-                      Name: gatewayNetworkName,
+                      Name: "openshell-docker",
                       Internal: false,
                       Driver: "bridge",
                       Scope: "local",
@@ -334,7 +332,7 @@ export function createDockerFixture(
         probeHook?.();
         if (
           sandboxBridgeProbeFailure !== null &&
-          args[args.indexOf("--network") + 1] === gatewayNetworkName
+          args[args.indexOf("--network") + 1] === "openshell-docker"
         ) {
           return {
             ...sandboxBridgeProbeFailure,

@@ -121,7 +121,6 @@ export type ManagedImageOpenShellE2eInputs = {
   sandbox: string;
   gpu?: true;
   localProvider?: ManagedImageLocalInferenceKind;
-  maxTokens?: number;
   model?: string;
   failureInjection?: "bootstrap-completion";
 };
@@ -138,11 +137,6 @@ export type ManagedImageOpenShellE2eProbeContext = {
     argv: readonly string[],
     timeoutMilliseconds?: number,
   ) => ManagedImageOpenShellE2eProbeResult;
-};
-
-export type ManagedImageOpenShellE2eLifecycle = {
-  readonly afterGatewayStarted?: () => Promise<void> | void;
-  readonly beforeCleanup?: () => Promise<void> | void;
 };
 
 export type ManagedImageOpenShellE2eLocalInferenceEvidence = {
@@ -982,11 +976,10 @@ export function assertFailedSandboxOwnerCleanupRetention(
 async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = never>(
   input: Inputs,
   afterLocalInference?: (context: ManagedImageOpenShellE2eProbeContext) => Promise<T> | T,
-  lifecycle: ManagedImageOpenShellE2eLifecycle = {},
 ): Promise<ManagedImageOpenShellE2eResult<T>> {
-  const networkName = `nemoclaw-managed-pr-${process.pid}-${Date.now().toString(36)}`;
   const stateParent = process.env.RUNNER_TEMP || os.tmpdir();
   const stateDir = fs.mkdtempSync(path.join(stateParent, "nemoclaw-managed-openshell-"));
+  const networkName = `nemoclaw-managed-pr-${process.pid}-${Date.now().toString(36)}`;
   const previousEnvironment = Object.fromEntries(
     MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS.map((key) => [key, process.env[key]]),
   ) as Record<(typeof MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS)[number], string | undefined>;
@@ -1026,7 +1019,6 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       gatewayName: GATEWAY_NAME,
       gatewayPort: GATEWAY_PORT,
     });
-    await lifecycle.afterGatewayStarted?.();
     configureLocalInferenceRoute(onboard, input, process.env);
 
     const baseProfile = managedStartupE2eProfile(input.agent, false, true, true);
@@ -1036,7 +1028,6 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
             baseProfile,
             resolveManagedImageLocalInferenceRoute(input.localProvider),
             input.model,
-            input.maxTokens === undefined ? {} : { maxTokens: input.maxTokens },
           )
         : baseProfile;
     const profile = encodeManagedStartupProfile(protectedProfile);
@@ -1297,13 +1288,6 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     primaryError = error;
     hasPrimaryError = true;
   } finally {
-    try {
-      await lifecycle.beforeCleanup?.();
-    } catch (error) {
-      cleanupErrors.push(
-        `managed-image pre-cleanup lifecycle failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
     if (onboard) {
       commandResult(
         onboard.openshellArgv(["sandbox", "delete", input.sandbox]),
