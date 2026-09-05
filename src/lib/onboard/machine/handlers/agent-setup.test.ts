@@ -190,16 +190,14 @@ describe("handleAgentSetupState", () => {
     });
   });
 
-  it("preserves the registered dashboard forward after Ready sandbox reuse (#11074)", async () => {
+  it("does not preserve from a skipped sandbox receipt without a live identity lease (#11074)", async () => {
     const { deps, calls } = createDeps();
     const session = createSession();
     session.steps.sandbox.status = "skipped";
 
     await handleAgentSetupState({ ...baseOptions(deps), session });
 
-    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", null, {
-      preserveRegisteredForward: true,
-    });
+    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", null);
   });
 
   it("revalidates sandbox identity before inspecting a reused forward (#11074)", async () => {

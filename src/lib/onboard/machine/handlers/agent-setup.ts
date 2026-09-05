@@ -85,17 +85,12 @@ export async function handleAgentSetupState<Agent>({
   revalidateSandboxIdentity,
   deps,
 }: AgentSetupStateOptions<Agent>): Promise<AgentSetupStateResult> {
-  // A skipped sandbox step is the durable machine receipt for Ready-sandbox
-  // reuse. Every other state keeps the strict occupied-port path.
-  const preserveRegisteredForward =
-    session?.steps.sandbox.status === "skipped" || revalidateSandboxIdentity !== undefined;
-  const dashboardOptions =
-    preserveRegisteredForward || revalidateSandboxIdentity
-      ? {
-          ...(preserveRegisteredForward ? { preserveRegisteredForward: true } : {}),
-          ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
-        }
-      : undefined;
+  // Only the process-local Ready-sandbox identity lease authorizes retaining a
+  // bound forward. A persisted skipped-step receipt can outlive the sandbox it
+  // originally described and therefore cannot establish reuse by itself.
+  const dashboardOptions = revalidateSandboxIdentity
+    ? { preserveRegisteredForward: true, revalidateSandboxIdentity }
+    : undefined;
   if (agent) {
     await deps.handleAgentSetup(
       sandboxName,
