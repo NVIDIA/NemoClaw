@@ -429,7 +429,7 @@ parse_args() {
   FORCE_STATION_INSTALL=0
   for arg in "$@"; do
     case "$arg" in
-      --check | --apply | --verify | --bind-controller | --classify-dgx-release | --classify-station-firmware | --classify-station-hardware)
+      --check | --apply | --verify | --bind-controller | --classify-dgx-release | --classify-station-hardware)
         [[ -z "$MODE" ]] || return 1
         MODE="$arg"
         ;;
@@ -439,7 +439,6 @@ parse_args() {
   done
   [[ -n "$MODE" ]] || return 1
   [[ "$MODE" != "--classify-dgx-release" || "$FORCE_STATION_INSTALL" == "0" ]] \
-    && [[ "$MODE" != "--classify-station-firmware" || "$FORCE_STATION_INSTALL" == "0" ]] \
     && [[ "$MODE" != "--classify-station-hardware" || "$FORCE_STATION_INSTALL" == "0" ]] \
     && [[ "$MODE" != "--bind-controller" || "$FORCE_STATION_INSTALL" == "0" ]]
 }
@@ -2929,10 +2928,6 @@ main() {
   fi
   if [[ "$MODE" == "--classify-dgx-release" ]]; then
     dgx_station_release_state
-    return 0
-  fi
-  if [[ "$MODE" == "--classify-station-firmware" ]]; then
-    station_firmware_identity_state
     return 0
   fi
   if [[ "$MODE" == "--classify-station-hardware" ]]; then

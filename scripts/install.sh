@@ -4409,12 +4409,6 @@ classify_dgx_station_release() {
   bash "$helper" --classify-dgx-release
 }
 
-classify_dgx_station_firmware() {
-  local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
-  [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
-  bash "$helper" --classify-station-firmware
-}
-
 classify_dgx_station_hardware() {
   local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
   [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
