@@ -164,7 +164,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e
 
       - name: Validate staging QA source
         shell: bash
@@ -494,7 +494,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e
 
       - name: Validate Deep Agents PR base build arguments
         if: matrix.agent == 'langchain-deepagents-code'
@@ -969,7 +969,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e
 
       - name: Bind E2E correlation identity
         shell: bash
@@ -1074,7 +1074,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e
 
       - name: Bind E2E correlation identity
         shell: bash
@@ -1210,7 +1210,7 @@ jobs:
       # published-base contract with the rest of the release cohort.
       - name: Install reviewed npm
         if: github.event_name == 'pull_request'
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e
 
       - name: Install trusted-event reviewed npm
         if: github.event_name != 'pull_request'

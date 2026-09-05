@@ -795,7 +795,7 @@ function validateDevArtifactJob(errors: string[], job: UnknownRecord): void {
   if (!/^actions\/setup-node@[a-f0-9]{40}$/u.test(asString(setup.uses))) {
     errors.push(`${DEV_ARTIFACT_JOB} must use a SHA-pinned Node setup`);
   }
-  if (!hasExactEntries(asRecord(setup.with), { "node-version": 22 })) {
+  if (!hasExactEntries(asRecord(setup.with), { "node-version": "24.18.1" })) {
     errors.push(`${DEV_ARTIFACT_JOB} must use only the reviewed Node version`);
   }
   const resolve = namedStep(job, "Resolve immutable OpenShell dev artifact");

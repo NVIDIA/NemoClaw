@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { UPLOAD_E2E_ARTIFACTS_ACTION } from "../../../tools/e2e/upload-e2e-artifacts-workflow-boundary.mts";
+import { E2E_ACTION_PROVENANCE } from "../../../tools/e2e/workflow-boundary-policy.mts";
 import { validateJetsonDispatchBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 
 const REQUIRED_SELECTOR =
@@ -48,7 +49,11 @@ function syntheticJetsonWorkflow(selector = REQUIRED_SELECTOR): unknown {
           {
             name: "Set up Node for Jetson controller",
             uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-            with: { "node-version": 22 },
+            with: { "node-version": "24.18.1" },
+          },
+          {
+            name: "Install reviewed npm",
+            uses: E2E_ACTION_PROVENANCE.reviewedNpmSetup.reference,
           },
           {
             env: {

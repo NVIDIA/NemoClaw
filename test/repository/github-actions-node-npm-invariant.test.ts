@@ -19,6 +19,8 @@ const GITHUB_ROOT = path.join(REPO_ROOT, ".github");
 const SETUP_NODE = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const REVIEWED_NPM_ACTION = "setup-reviewed-npm";
 const IMMUTABLE_REVIEWED_NPM_ACTION =
+  "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e";
+const IMMUTABLE_PREPARE_E2E_NPM_ACTION =
   "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e";
 
 type Step = { if?: string; run?: string; uses?: string; with?: Record<string, unknown> };
@@ -173,7 +175,7 @@ describe("controlled setup-node environments", () => {
       .filter(({ file, steps, index }) => {
         const reviewed = steps.slice(index + 1).find(installsReviewedNpm);
         return path.relative(REPO_ROOT, file) === ".github/actions/prepare-e2e/action.yaml"
-          ? reviewed?.uses !== IMMUTABLE_REVIEWED_NPM_ACTION
+          ? reviewed?.uses !== IMMUTABLE_PREPARE_E2E_NPM_ACTION
           : reviewed?.uses !== undefined ||
               !reviewed?.run?.includes(
                 "$GITHUB_ACTION_PATH/../setup-reviewed-npm/verify-and-install-npm.sh",

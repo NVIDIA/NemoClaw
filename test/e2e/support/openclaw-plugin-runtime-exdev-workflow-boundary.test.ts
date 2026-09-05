@@ -10,7 +10,7 @@ import {
 
 const JOB_NAME = "openclaw-plugin-runtime-exdev";
 const BUILDER_IMAGE =
-  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
+  "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
 
 function validWorkflow(): OpenClawPluginRuntimeExdevWorkflow {
   const expression = (value: string) => "${{ " + value + " }}";
@@ -153,7 +153,7 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
         "openclaw-plugin-runtime-exdev action 'Checkout candidate' must pin a full SHA",
         "openclaw-plugin-runtime-exdev checkout must disable persisted credentials",
         "openclaw-plugin-runtime-exdev must use the reviewed prepare-e2e action",
-        "openclaw-plugin-runtime-exdev step 'Pre-pull current-checkout Docker Hub builder image' must run: docker pull node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
+        "openclaw-plugin-runtime-exdev step 'Pre-pull current-checkout Docker Hub builder image' must run: docker pull node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc",
         "openclaw-plugin-runtime-exdev must always revoke Docker auth before the current-checkout fixture",
         "openclaw-plugin-runtime-exdev must use the pinned Docker auth cleanup action before artifact restore",
         "openclaw-plugin-runtime-exdev runtime proof must not receive workflow credentials",

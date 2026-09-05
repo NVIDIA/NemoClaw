@@ -170,6 +170,43 @@ describe("reviewed bundled npm upgrade", () => {
     },
   );
 
+  it("installs the verified npm archive without consulting registry state", () => {
+    const npmRoot = affectedNpm("11.16.0");
+    const replacementRoot = reviewedNpm();
+    const archivePath = path.join(temporaryDirectory(), "npm-12.0.2.tgz");
+    fs.writeFileSync(archivePath, "reviewed fixture\n");
+    const commands: Array<{ args: readonly string[]; command: string }> = [];
+    const sideEffects: Readonly<Record<string, (() => void) | undefined>> = {
+      "npm install": () => {
+        fs.rmSync(npmRoot, { recursive: true });
+        fs.cpSync(replacementRoot, npmRoot, { recursive: true });
+      },
+    };
+
+    upgradeBundledNpm(npmRoot, {
+      commandRunner(command, args) {
+        commands.push({ args, command });
+        sideEffects[`${command} ${args[0] ?? ""}`]?.();
+      },
+      prepareArchive: () => ({ archivePath, cleanup: () => undefined }),
+    });
+
+    expect(commands[0]).toEqual({
+      command: "npm",
+      args: [
+        "install",
+        "--global",
+        archivePath,
+        "--userconfig",
+        "/dev/null",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        "--offline",
+      ],
+    });
+  });
+
   it("does not download npm when the reviewed tree is already installed", () => {
     const npmRoot = reviewedNpm();
     const commands: string[] = [];

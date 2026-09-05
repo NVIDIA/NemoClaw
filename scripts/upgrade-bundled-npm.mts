@@ -203,10 +203,13 @@ function installReviewedNpm(archivePath: string, commandRunner: BundledNpmComman
   commandRunner("npm", [
     "install",
     "--global",
+    archivePath,
+    "--userconfig",
+    "/dev/null",
     "--ignore-scripts",
     "--no-audit",
     "--no-fund",
-    archivePath,
+    "--offline",
   ]);
 }
 

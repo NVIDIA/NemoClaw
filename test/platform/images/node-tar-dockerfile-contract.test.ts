@@ -378,9 +378,7 @@ describe("node-tar image remediation contract", () => {
         .replace(/\s+/g, " ");
       const reviewedCopy = patchInputStage.indexOf("COPY scripts/lib/reviewed-npm-archive.mts");
       const helperCopy = patchInputStage.indexOf("scripts/lib/bundled-npm-package.mts");
-      const patchCopy = patchInputStage.indexOf(
-        "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
-      );
+      const patchCopy = patchInputStage.indexOf("scripts/patch-bundled-npm-tar.mts");
       const patchRuns = requireReviewedDockerfileRunCommands(
         source,
         patchCommand,
@@ -405,7 +403,7 @@ describe("node-tar image remediation contract", () => {
       expect(reviewedCopy, file).toBeGreaterThanOrEqual(0);
       expect(
         flattenedPatchInputStage.includes(
-          "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
+          "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts",
         ) ||
           patchInputStage.includes(
             "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
