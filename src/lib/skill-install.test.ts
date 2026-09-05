@@ -203,7 +203,6 @@ describe("resolveSkillPaths", () => {
     const paths = resolveSkillPaths(null, "weather");
     expect(paths.stateDir).toBe("/sandbox/.openclaw");
     expect(paths.uploadDir).toBe("/sandbox/.openclaw/workspace/skills/weather");
-    expect(paths.workspaceSkillDir).toBe("/sandbox/.openclaw/workspace/skills/weather");
     expect(paths.uploadDirSharedWithAgent).toBe(false);
     expect(paths.reloadsSkillsOnSessionStart).toBe(false);
     expect(paths.isOpenClaw).toBe(true);
@@ -219,7 +218,6 @@ describe("resolveSkillPaths", () => {
     const paths = resolveSkillPaths(agent, "my-skill");
     expect(paths.stateDir).toBe("/sandbox/.openclaw");
     expect(paths.uploadDir).toBe("/sandbox/.openclaw/workspace/skills/my-skill");
-    expect(paths.workspaceSkillDir).toBe("/sandbox/.openclaw/workspace/skills/my-skill");
     expect(paths.uploadDirSharedWithAgent).toBe(false);
     expect(paths.reloadsSkillsOnSessionStart).toBe(false);
     expect(paths.isOpenClaw).toBe(true);
@@ -235,7 +233,6 @@ describe("resolveSkillPaths", () => {
     const paths = resolveSkillPaths(agent, "demo-skill");
     expect(paths.stateDir).toBe("/sandbox/.hermes");
     expect(paths.uploadDir).toBe("/sandbox/.hermes/skills/demo-skill");
-    expect(paths.workspaceSkillDir).toBeNull();
     expect(paths.uploadDirSharedWithAgent).toBe(false);
     expect(paths.reloadsSkillsOnSessionStart).toBe(true);
     expect(paths.isOpenClaw).toBe(false);
@@ -254,7 +251,6 @@ describe("resolveSkillPaths", () => {
     const paths = resolveSkillPaths(agent, "note-summarizer");
     expect(paths.stateDir).toBe("/sandbox/.deepagents");
     expect(paths.uploadDir).toBe("/sandbox/.deepagents/agent/skills/note-summarizer");
-    expect(paths.workspaceSkillDir).toBeNull();
     expect(paths.uploadDirSharedWithAgent).toBe(true);
     expect(paths.reloadsSkillsOnSessionStart).toBe(false);
     expect(paths.isOpenClaw).toBe(false);
@@ -270,7 +266,6 @@ describe("resolveSkillPaths", () => {
     const paths = resolveSkillPaths(agent, "test-skill");
     expect(paths.stateDir).toBe("/sandbox/.future");
     expect(paths.uploadDir).toBe("/sandbox/.future/skills/test-skill");
-    expect(paths.workspaceSkillDir).toBeNull();
     expect(paths.uploadDirSharedWithAgent).toBe(false);
     expect(paths.reloadsSkillsOnSessionStart).toBe(false);
     expect(paths.isOpenClaw).toBe(false);

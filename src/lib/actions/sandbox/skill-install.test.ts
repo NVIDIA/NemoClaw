@@ -11,8 +11,16 @@ const inspectOpenShellSandboxIdentityFingerprint = vi.hoisted(() => vi.fn());
 const getSessionAgent = vi.hoisted(() => vi.fn());
 const ensureLiveSandboxOrExit = vi.hoisted(() => vi.fn());
 const getSandboxTargetGatewayName = vi.hoisted(() => vi.fn());
+const mutationLockState = vi.hoisted(() => ({ active: false }));
 const withSandboxMutationLock = vi.hoisted(() =>
-  vi.fn(async (_sandboxName: string, operation: () => unknown) => await operation()),
+  vi.fn(async (_sandboxName: string, operation: () => unknown) => {
+    mutationLockState.active = true;
+    try {
+      return await operation();
+    } finally {
+      mutationLockState.active = false;
+    }
+  }),
 );
 const skillInstall = vi.hoisted(() => ({
   validateSkillName: vi.fn(),
@@ -60,7 +68,6 @@ import { installSandboxSkill, removeSandboxSkill } from "./skill-install";
 const paths = {
   stateDir: "/sandbox/.openclaw",
   uploadDir: "/sandbox/.openclaw/workspace/skills/demo-skill",
-  workspaceSkillDir: "/sandbox/.openclaw/workspace/skills/demo-skill",
   uploadDirSharedWithAgent: false,
   reloadsSkillsOnSessionStart: false,
   isOpenClaw: true,
@@ -71,7 +78,6 @@ const genericAgent = { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } 
 const genericPaths = {
   stateDir: "/sandbox/.hermes",
   uploadDir: "/sandbox/.hermes/skills/demo-skill",
-  workspaceSkillDir: null,
   uploadDirSharedWithAgent: false,
   reloadsSkillsOnSessionStart: true,
   isOpenClaw: false,
@@ -83,7 +89,6 @@ const deepAgent = {
 const sharedPaths = {
   stateDir: "/sandbox/.deepagents",
   uploadDir: "/sandbox/.deepagents/agent/skills/demo-skill",
-  workspaceSkillDir: null,
   uploadDirSharedWithAgent: true,
   reloadsSkillsOnSessionStart: false,
   isOpenClaw: false,
@@ -114,6 +119,7 @@ describe("sandbox skill action orchestration", () => {
     previousExitCode = process.exitCode;
     process.exitCode = undefined;
     vi.clearAllMocks();
+    mutationLockState.active = false;
 
     captureSandboxSshConfig.mockReturnValue({ status: 0, output: "Host openshell-alpha\n" });
     inspectOpenShellSandboxIdentityFingerprint.mockReturnValue("f".repeat(64));
@@ -396,6 +402,24 @@ describe("sandbox skill action orchestration", () => {
     const skillDir = makeSkillDir();
     getSessionAgent.mockReturnValue(agent);
     skillInstall.resolveSkillPaths.mockReturnValue(paths);
+    getSandboxTargetGatewayName.mockImplementationOnce(() => {
+      expect(mutationLockState.active).toBe(true);
+      return "nemoclaw-recorded";
+    });
+    captureSandboxSshConfig.mockImplementationOnce((_sandboxName, options) => {
+      expect(mutationLockState.active).toBe(true);
+      expect(options).toMatchObject({ gatewayName: "nemoclaw-recorded" });
+      return { status: 0, output: "Host openshell-alpha\n" };
+    });
+    inspectOpenShellSandboxIdentityFingerprint.mockImplementationOnce((request) => {
+      expect(mutationLockState.active).toBe(true);
+      expect(request.gatewayName).toBe("nemoclaw-recorded");
+      return "f".repeat(64);
+    });
+    skillInstall.installOpenClawSkill.mockImplementationOnce(() => {
+      expect(mutationLockState.active).toBe(true);
+      return { success: true, uploaded: 1, contentDigest: "a".repeat(64) };
+    });
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     try {
@@ -417,7 +441,7 @@ describe("sandbox skill action orchestration", () => {
     );
     expect(inspectOpenShellSandboxIdentityFingerprint).toHaveBeenCalledWith({
       sandboxName: "alpha",
-      gatewayName: "nemoclaw",
+      gatewayName: "nemoclaw-recorded",
       timeoutMs: expect.any(Number),
     });
     expect(log).toHaveBeenCalledWith(expect.stringContaining("installed through OpenClaw"));
@@ -446,7 +470,7 @@ describe("sandbox skill action orchestration", () => {
     expect(error).toHaveBeenCalledWith(
       "  Failed to bind the OpenClaw skill install to the exact live sandbox identity.",
     );
-    expect(withSandboxMutationLock).not.toHaveBeenCalled();
+    expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function));
     expect(skillInstall.installOpenClawSkill).not.toHaveBeenCalled();
   });
 

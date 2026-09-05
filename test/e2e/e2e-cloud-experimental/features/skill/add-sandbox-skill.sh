@@ -36,9 +36,9 @@ SKILL_DESCRIPTION="${SKILL_DESCRIPTION:-$DEFAULT_SKILL_DESCRIPTION}"
 SKILL_BODY="${SKILL_BODY:-}"
 SKILL_FILE="${SKILL_FILE:-}"
 SKILL_TEMPLATE_FILE="${SKILL_TEMPLATE_FILE:-${SCRIPT_DIR}/fixtures/skill-smoke-template.SKILL.md}"
-# This helper owns only the live agent-consumption fixture. The product CLI's
-# native-install roundtrip is covered separately by openclaw-skill-cli.test.ts.
-SKILL_ROOT="${SKILL_ROOT:-/sandbox/.openclaw/workspace/skills}"
+# NemoClaw state lives under /sandbox/.openclaw; OpenClaw CLI inside the sandbox uses ~/.openclaw
+# (typically /home/sandbox/.openclaw). Deploy to both so `openclaw agent` can read managed skills.
+SKILL_ROOT="${SKILL_ROOT:-/sandbox/.openclaw/skills}"
 
 die() {
   printf '%s\n' "add-sandbox-skill: FAIL: $*" >&2
@@ -140,6 +140,14 @@ temp_file="$3"
 mkdir -p "$skill_dir"
 cp "$temp_file" "$skill_file"
 
+# Mirror into $HOME/.openclaw/skills so OpenClaw tools resolve the same SKILL.md (see agent ENOENT on /home/sandbox/.openclaw/skills/...).
+skill_id="$(basename "$skill_dir")"
+home_root="${HOME:-/home/sandbox}"
+home_skill_dir="${home_root}/.openclaw/skills/${skill_id}"
+home_skill_file="${home_skill_dir}/SKILL.md"
+mkdir -p "$home_skill_dir"
+cp "$temp_file" "$home_skill_file"
+
 rm -f "$temp_file"
 
 if [ ! -f "$skill_file" ]; then
@@ -155,6 +163,7 @@ else
 fi
 
 echo "QUERY_PATH=$skill_file"
+echo "HOME_QUERY_PATH=$home_skill_file"
 echo "QUERY_HEAD_BEGIN"
 sed -n '1,20p' "$skill_file"
 echo "QUERY_HEAD_END"
@@ -179,5 +188,7 @@ set -e
 
 [ "$query_rc" -eq 0 ] || die "remote add/query failed (exit ${query_rc}): ${query_out:0:300}"
 echo "$query_out" | grep -q "QUERY_PATH=${remote_skill_file}" || die "did not find query path marker"
+echo "$query_out" | grep -q "HOME_QUERY_PATH=" || die "did not find HOME_QUERY_PATH marker"
+
 ok "skill added and queryable at ${remote_skill_file}"
 printf '%s\n' "$query_out"

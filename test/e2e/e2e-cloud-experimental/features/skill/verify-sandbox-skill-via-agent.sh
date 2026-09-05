@@ -5,8 +5,8 @@
 # Run one openclaw agent turn inside the sandbox and check the reply for the
 # skill verification token (proves the skill content was available to the agent).
 #
-# Prereq: skill deployed with test/e2e/e2e-cloud-experimental/fixtures/skill-smoke-template.SKILL.md
-# (includes SKILL_SMOKE_VERIFY_K9X2). Re-run add-sandbox-skill.sh after template updates.
+# Prereq: deploy the skill-smoke template through `nemoclaw <sandbox> skill install`
+# or add-sandbox-skill.sh. The template includes SKILL_SMOKE_VERIFY_K9X2.
 #
 # Usage (from repo root):
 #   NVIDIA_INFERENCE_API_KEY=nvapi-... SANDBOX_NAME=test01 SKILL_ID=skill-smoke-fixture \

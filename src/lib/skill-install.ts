@@ -3,10 +3,9 @@
 //
 // Skill install/remove logic for `nemoclaw <sandbox> skill install <path>`
 // and `nemoclaw <sandbox> skill remove <name>`.
-// Validates a local SKILL.md, uploads it to the sandbox via SSH, and
-// performs agent-specific post-install steps (session refresh for
-// OpenClaw). Non-OpenClaw agents get a "restart gateway" hint until a
-// generic refresh contract is defined in the manifest schema.
+// Validates local SKILL.md content and applies the selected agent's install
+// contract. OpenClaw uses its native workspace installer after secure staging;
+// generic agents retain the direct upload path and activation guidance.
 
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -103,8 +102,6 @@ export interface SkillPaths {
   stateDir: string;
   /** Upload target directory for the skill */
   uploadDir: string;
-  /** OpenClaw-native workspace publication target, or null for other agents. */
-  workspaceSkillDir: string | null;
   /**
    * Whether the agent's own tooling also writes into uploadDir. Shared
    * destinations support only atomic fresh installs because their existing
@@ -143,13 +140,11 @@ export function resolveSkillPaths(
   const dir = agent ? agent.configPaths.dir : "/sandbox/.openclaw";
   const agentName = agent ? agent.name : "openclaw";
   const sharedDir = AGENT_SHARED_SKILL_DIRS[agentName];
-  const workspaceSkillDir = isOpenClaw ? `${dir}/workspace/skills/${skillName}` : null;
-
   return {
     stateDir: dir,
     uploadDir:
-      workspaceSkillDir ?? (sharedDir ? sharedDir(dir, skillName) : `${dir}/skills/${skillName}`),
-    workspaceSkillDir,
+      (isOpenClaw ? `${dir}/workspace/skills/${skillName}` : null) ??
+      (sharedDir ? sharedDir(dir, skillName) : `${dir}/skills/${skillName}`),
     uploadDirSharedWithAgent: Boolean(sharedDir),
     reloadsSkillsOnSessionStart: agentName === "hermes",
     isOpenClaw,
@@ -266,6 +261,8 @@ export function uploadDirectory(
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const SKILL_SNAPSHOT_TIMEOUT_MS = 30_000;
+export const SKILL_SNAPSHOT_MAX_FILES = 1024;
+export const SKILL_SNAPSHOT_MAX_BYTES = 64 * 1024 * 1024;
 
 function fileSha256(filePath: string): string {
   return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
@@ -321,23 +318,39 @@ function isPathInsideRoot(root: string, candidate: string, expectedRelativePath:
   );
 }
 
+/** Read exactly one already-bounded regular file and reject concurrent size changes. */
+function readBoundedSnapshotFile(descriptor: number, size: number): Buffer | null {
+  const content = Buffer.alloc(size);
+  let offset = 0;
+  while (offset < size) {
+    const bytesRead = fs.readSync(descriptor, content, offset, size - offset, null);
+    if (bytesRead === 0) return null;
+    offset += bytesRead;
+  }
+  const extra = Buffer.alloc(1);
+  return fs.readSync(descriptor, extra, 0, 1, null) === 0 ? content : null;
+}
+
 function copyRegularFileIntoSnapshot(
   sourceRoot: string,
   snapshotDir: string,
   relativePath: string,
-): boolean {
+  remainingBytes: number,
+): number | "limit_exceeded" | null {
   const noFollow = fs.constants.O_NOFOLLOW;
   const nonblock = fs.constants.O_NONBLOCK;
-  if (typeof noFollow !== "number" || typeof nonblock !== "number") return false;
+  if (typeof noFollow !== "number" || typeof nonblock !== "number") return null;
 
   const sourcePath = path.join(sourceRoot, relativePath);
   let sourceDescriptor: number | undefined;
   try {
     sourceDescriptor = fs.openSync(sourcePath, fs.constants.O_RDONLY | noFollow | nonblock);
     const opened = fs.fstatSync(sourceDescriptor);
-    if (!opened.isFile()) return false;
+    if (!opened.isFile() || !Number.isSafeInteger(opened.size) || opened.size < 0) return null;
+    if (opened.size > remainingBytes) return "limit_exceeded";
 
-    const content = fs.readFileSync(sourceDescriptor);
+    const content = readBoundedSnapshotFile(sourceDescriptor, opened.size);
+    if (!content) return null;
     const after = fs.lstatSync(sourcePath);
     const afterRealPath = fs.realpathSync(sourcePath);
     if (
@@ -347,7 +360,7 @@ function copyRegularFileIntoSnapshot(
       after.ino !== opened.ino ||
       !isPathInsideRoot(sourceRoot, afterRealPath, relativePath)
     ) {
-      return false;
+      return null;
     }
 
     const destination = path.join(snapshotDir, relativePath);
@@ -356,9 +369,9 @@ function copyRegularFileIntoSnapshot(
       flag: "wx",
       mode: (opened.mode & 0o111) === 0 ? 0o644 : 0o755,
     });
-    return true;
+    return content.length;
   } catch {
-    return false;
+    return null;
   } finally {
     if (sourceDescriptor !== undefined) fs.closeSync(sourceDescriptor);
   }
@@ -376,7 +389,7 @@ function createSkillArchiveSnapshot(
     beforeSnapshotFileRead?: (relativePath: string) => void;
     beforeSnapshotRootRead?: () => void;
   } = {},
-): SkillArchiveSnapshot | null {
+): SkillArchiveSnapshot | "limit_exceeded" | null {
   const snapshotDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-snapshot-"));
   try {
     fs.chmodSync(snapshotDir, 0o700);
@@ -393,9 +406,18 @@ function createSkillArchiveSnapshot(
       return null;
     }
 
+    let totalBytes = 0;
     for (const relativePath of files.slice().sort()) {
       opts.beforeSnapshotFileRead?.(relativePath);
-      if (!copyRegularFileIntoSnapshot(sourceRoot, snapshotDir, relativePath)) return null;
+      const copied = copyRegularFileIntoSnapshot(
+        sourceRoot,
+        snapshotDir,
+        relativePath,
+        SKILL_SNAPSHOT_MAX_BYTES - totalBytes,
+      );
+      if (copied === "limit_exceeded") return copied;
+      if (copied === null) return null;
+      totalBytes += copied;
     }
 
     const snapshot = collectFiles(snapshotDir);
@@ -437,6 +459,46 @@ function createSkillArchiveSnapshot(
   } finally {
     fs.rmSync(snapshotDir, { recursive: true, force: true });
   }
+}
+
+type SkillSnapshotOptions = {
+  beforeSnapshotFileRead?: (relativePath: string) => void;
+  beforeSnapshotRootRead?: () => void;
+  expectedRootIdentity?: SkillRootIdentity;
+};
+
+/** Prepare the single bounded host snapshot contract shared by native publishers. */
+function prepareSkillArchiveSnapshot(
+  localDir: string,
+  opts: SkillSnapshotOptions,
+): SkillArchiveSnapshot | "limit_exceeded" | null {
+  let expectedRootIdentity = opts.expectedRootIdentity;
+  if (!expectedRootIdentity) {
+    try {
+      const rootStat = fs.lstatSync(localDir);
+      if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null;
+      expectedRootIdentity = { dev: rootStat.dev, ino: rootStat.ino };
+    } catch {
+      return null;
+    }
+  }
+  const collected = collectFiles(localDir);
+  if (collected.files.length > SKILL_SNAPSHOT_MAX_FILES) return "limit_exceeded";
+  if (
+    collected.files.length === 0 ||
+    collected.unsafePaths.length > 0 ||
+    collected.unsupportedPaths.length > 0
+  ) {
+    return null;
+  }
+  const snapshot = createSkillArchiveSnapshot(
+    localDir,
+    collected.files,
+    expectedRootIdentity,
+    opts,
+  );
+  if (snapshot === null || snapshot === "limit_exceeded") return snapshot;
+  return SHA256_RE.test(snapshot.contentDigest) ? snapshot : null;
 }
 
 function buildFreshSharedInstallScript(paths: SkillPaths, expectedDigest: string): string {
@@ -508,10 +570,12 @@ export interface FreshSharedSkillInstallResult {
   contentDigest?: string;
   reason?:
     | "destination_exists"
+    | "legacy_destination_exists"
     | "native_capability_missing"
     | "provenance_failed"
     | "remote_state_unknown"
     | "snapshot_failed"
+    | "snapshot_limit_exceeded"
     | "verification_failed";
 }
 
@@ -522,7 +586,7 @@ interface OpenClawSkillProvenance {
   readonly sandboxIdentityFingerprint: string;
   readonly sandboxName: string;
   readonly skillName: string;
-  readonly workspaceSkillDir: string;
+  readonly targetDir: string;
   readonly phase: "installed" | "pending";
   readonly contentDigest: string;
   readonly previousDigest: string | null;
@@ -556,7 +620,7 @@ function isOpenClawSkillProvenance(
     value.sandboxIdentityFingerprint === expected.sandboxIdentityFingerprint &&
     value.sandboxName === expected.sandboxName &&
     value.skillName === expected.skillName &&
-    value.workspaceSkillDir === expected.workspaceSkillDir &&
+    value.targetDir === expected.targetDir &&
     (value.phase === "installed" || value.phase === "pending") &&
     typeof value.contentDigest === "string" &&
     SHA256_RE.test(value.contentDigest) &&
@@ -681,35 +745,15 @@ export function installFreshSharedSkill(
   if (!paths.uploadDirSharedWithAgent) {
     return { success: false, uploaded: 0, reason: "remote_state_unknown" };
   }
-  let expectedRootIdentity = opts.expectedRootIdentity;
-  if (!expectedRootIdentity) {
-    try {
-      const rootStat = fs.lstatSync(localDir);
-      if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
-        return { success: false, uploaded: 0, reason: "snapshot_failed" };
-      }
-      expectedRootIdentity = { dev: rootStat.dev, ino: rootStat.ino };
-    } catch {
-      return { success: false, uploaded: 0, reason: "snapshot_failed" };
-    }
-  }
-  const collected = collectFiles(localDir);
-  if (
-    collected.files.length === 0 ||
-    collected.unsafePaths.length > 0 ||
-    collected.unsupportedPaths.length > 0
-  ) {
-    return { success: false, uploaded: 0, reason: "snapshot_failed" };
-  }
-  const snapshot = createSkillArchiveSnapshot(localDir, collected.files, expectedRootIdentity, {
+  const snapshot = prepareSkillArchiveSnapshot(localDir, {
     beforeSnapshotFileRead: opts.beforeSnapshotFileRead,
     beforeSnapshotRootRead: opts.beforeSnapshotRootRead,
+    expectedRootIdentity: opts.expectedRootIdentity,
   });
-  if (
-    !snapshot ||
-    !SHA256_RE.test(snapshot.contentDigest) ||
-    snapshot.skillName !== path.posix.basename(paths.uploadDir)
-  ) {
+  if (snapshot === "limit_exceeded") {
+    return { success: false, uploaded: 0, reason: "snapshot_limit_exceeded" };
+  }
+  if (!snapshot || snapshot.skillName !== path.posix.basename(paths.uploadDir)) {
     return { success: false, uploaded: 0, reason: "snapshot_failed" };
   }
   const runSsh = opts.sshExecImpl ?? sshExec;
@@ -744,7 +788,7 @@ function buildOpenClawNativeInstallScript(
   previousDigest: string | null,
   allowReconciliation: boolean,
 ): string {
-  if (!paths.workspaceSkillDir || !paths.isOpenClaw) {
+  if (!paths.isOpenClaw) {
     throw new Error("OpenClaw native install requires a workspace skill destination");
   }
   const verifyNativeJson = [
@@ -763,7 +807,8 @@ function buildOpenClawNativeInstallScript(
     "set -eu",
     "umask 077",
     `root=${shellQuote(paths.stateDir)}`,
-    `target=${shellQuote(paths.workspaceSkillDir)}`,
+    `target=${shellQuote(paths.uploadDir)}`,
+    `legacy=${shellQuote(`${paths.stateDir}/skills/${skillName}`)}`,
     `skill=${shellQuote(skillName)}`,
     `expected=${shellQuote(expectedDigest)}`,
     `previous=${shellQuote(previousDigest ?? "")}`,
@@ -772,6 +817,7 @@ function buildOpenClawNativeInstallScript(
     'safe_tree() { [ -d "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -mindepth 1 ! -type d ! -type f -print -quit)" ]; }',
     'digest_tree() { tree="$1"; manifest="$2"; find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort | grep -Fxv ".openclaw/source-origin.json" > "$manifest.files"; : > "$manifest"; while IFS= read -r rel; do if [ -n "$(find "$tree/$rel" -type f -perm /111 -print -quit)" ]; then mode=755; else mode=644; fi; hash="$(sha256sum "$tree/$rel" | cut -d " " -f 1)"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$manifest"; done < "$manifest.files"; sha256sum "$manifest" | cut -d " " -f 1; }',
     '[ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]',
+    'if exists "$legacy"; then echo LEGACY_COLLISION; exit 5; fi',
     'stage="$(mktemp -d "$root/.nemoclaw-skill-stage.XXXXXX")"',
     'chmod 700 "$stage"',
     'cleanup() { rm -rf -- "$stage"; }',
@@ -820,35 +866,19 @@ export function installOpenClawSkill(
     sshExecImpl?: typeof sshExec;
   } = {},
 ): FreshSharedSkillInstallResult {
-  let expectedRootIdentity = opts.expectedRootIdentity;
-  if (!expectedRootIdentity) {
-    try {
-      const rootStat = fs.lstatSync(localDir);
-      if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
-        return { success: false, uploaded: 0, reason: "snapshot_failed" };
-      }
-      expectedRootIdentity = { dev: rootStat.dev, ino: rootStat.ino };
-    } catch {
-      return { success: false, uploaded: 0, reason: "snapshot_failed" };
-    }
-  }
-  const collected = collectFiles(localDir);
-  if (
-    collected.files.length === 0 ||
-    collected.unsafePaths.length > 0 ||
-    collected.unsupportedPaths.length > 0
-  ) {
-    return { success: false, uploaded: 0, reason: "snapshot_failed" };
-  }
-  const snapshot = createSkillArchiveSnapshot(localDir, collected.files, expectedRootIdentity, {
+  const snapshot = prepareSkillArchiveSnapshot(localDir, {
     beforeSnapshotFileRead: opts.beforeSnapshotFileRead,
     beforeSnapshotRootRead: opts.beforeSnapshotRootRead,
+    expectedRootIdentity: opts.expectedRootIdentity,
   });
-  if (!snapshot || snapshot.skillName !== skillName || !SHA256_RE.test(snapshot.contentDigest)) {
+  if (snapshot === "limit_exceeded") {
+    return { success: false, uploaded: 0, reason: "snapshot_limit_exceeded" };
+  }
+  if (!snapshot || snapshot.skillName !== skillName) {
     return { success: false, uploaded: 0, reason: "snapshot_failed" };
   }
   const sandboxIdentityFingerprint = opts.sandboxIdentityFingerprint ?? "";
-  if (!SHA256_RE.test(sandboxIdentityFingerprint) || !paths.workspaceSkillDir) {
+  if (!SHA256_RE.test(sandboxIdentityFingerprint)) {
     return { success: false, uploaded: 0, reason: "provenance_failed" };
   }
   const receiptIdentity = {
@@ -856,7 +886,7 @@ export function installOpenClawSkill(
     sandboxIdentityFingerprint,
     sandboxName: ctx.sandboxName,
     skillName,
-    workspaceSkillDir: paths.workspaceSkillDir,
+    targetDir: paths.uploadDir,
   };
   let receiptPath: string;
   let priorReceipt: OpenClawSkillProvenance | null;
@@ -923,7 +953,8 @@ export function installOpenClawSkill(
   }
   if (
     (result?.status === 2 && stdout.endsWith("COLLISION")) ||
-    (result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING"))
+    (result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")) ||
+    (result?.status === 5 && stdout.endsWith("LEGACY_COLLISION"))
   ) {
     try {
       restoreOpenClawSkillProvenance(receiptPath, priorReceipt);
@@ -937,11 +968,13 @@ export function installOpenClawSkill(
     reason:
       result?.status === 2 && stdout.endsWith("COLLISION")
         ? "destination_exists"
-        : result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")
-          ? "native_capability_missing"
-          : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
-            ? "verification_failed"
-            : "remote_state_unknown",
+        : result?.status === 5 && stdout.endsWith("LEGACY_COLLISION")
+          ? "legacy_destination_exists"
+          : result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")
+            ? "native_capability_missing"
+            : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
+              ? "verification_failed"
+              : "remote_state_unknown",
   };
 }
 

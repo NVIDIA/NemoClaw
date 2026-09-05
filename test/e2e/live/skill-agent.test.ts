@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
@@ -27,14 +28,15 @@ import {
 // injection into a real OpenClaw sandbox plus an agent turn that must read
 // hands off to this live target.
 
-const ADD_SKILL_SCRIPT = path.join(
+const SKILL_TEMPLATE_FILE = path.join(
   REPO_ROOT,
   "test",
   "e2e",
   "e2e-cloud-experimental",
   "features",
   "skill",
-  "add-sandbox-skill.sh",
+  "fixtures",
+  "skill-smoke-template.SKILL.md",
 );
 const VERIFY_SKILL_SCRIPT = path.join(
   REPO_ROOT,
@@ -108,7 +110,7 @@ test(
       e2ePhases: [
         "confirm the selected runtime and skill tooling",
         "onboard the OpenClaw skill sandbox",
-        "inject and confirm the skill fixture",
+        "install and confirm the skill fixture",
         "ask the agent to consume the skill",
         "record the verified skill behavior",
       ],
@@ -119,9 +121,6 @@ test(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",
     ).toBe(true);
-    expect(fs.existsSync(ADD_SKILL_SCRIPT), `missing skill add helper: ${ADD_SKILL_SCRIPT}`).toBe(
-      true,
-    );
     expect(
       fs.existsSync(VERIFY_SKILL_SCRIPT),
       `missing skill verify helper: ${VERIFY_SKILL_SCRIPT}`,
@@ -142,7 +141,7 @@ test(
         "the selected runtime is available before onboarding",
         "NVIDIA_INFERENCE_API_KEY is staged as the compatible endpoint credential",
         "nemoclaw onboard creates/recreates a real OpenClaw sandbox",
-        "skill-smoke-fixture is injected into the OpenClaw workspace skill root",
+        "nemoclaw skill install publishes skill-smoke-fixture through the native OpenClaw path",
         "openclaw agent reads SKILL.md and returns SKILL_SMOKE_VERIFY_K9X2",
         "provider/tool-call transport flakes only skip after the skill fixture is proven present",
       ],
@@ -294,22 +293,29 @@ test(
     expect(onboard.exitCode, onboardText).toBe(0);
     sandboxProvisioned = true;
 
-    progress.phase("inject and confirm the skill fixture");
-    const addSkill = await host.command("bash", [ADD_SKILL_SCRIPT], {
-      artifactName: "add-sandbox-skill-fixture",
-      cwd: REPO_ROOT,
-      env: {
-        ...buildAvailabilityProbeEnv(),
-        SANDBOX_NAME,
-        SKILL_ID,
-        SKILL_DESCRIPTION: "E2E smoke skill injected for agent verification",
-      },
-      timeoutMs: 120_000,
+    progress.phase("install and confirm the skill fixture");
+    const localSkillDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-agent-fixture-"));
+    cleanup.trackDisposable("remove skill-agent host fixture", () => {
+      fs.rmSync(localSkillDir, { recursive: true, force: true });
     });
-    expect(addSkill.exitCode, resultText(addSkill)).toBe(0);
-    expect(addSkill.stdout).toContain(
-      `QUERY_PATH=/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md`,
+    const skillPayload = fs
+      .readFileSync(SKILL_TEMPLATE_FILE, "utf8")
+      .replaceAll("__SKILL_ID__", SKILL_ID)
+      .replaceAll("__SKILL_DESCRIPTION__", "E2E native install and agent-consumption proof");
+    fs.writeFileSync(path.join(localSkillDir, "SKILL.md"), skillPayload);
+    const addSkill = await host.command(
+      "node",
+      [CLI_ENTRYPOINT, SANDBOX_NAME, "skill", "install", localSkillDir],
+      {
+        artifactName: "add-sandbox-skill-fixture",
+        cwd: REPO_ROOT,
+        env: {
+          ...buildAvailabilityProbeEnv(),
+        },
+        timeoutMs: 120_000,
+      },
     );
+    expect(addSkill.exitCode, resultText(addSkill)).toBe(0);
     expect(await verifySkillFixturePresent(sandbox, SANDBOX_NAME)).toBe(true);
 
     let lastAgentOutput = "";

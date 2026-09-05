@@ -12,6 +12,7 @@ import {
   computeSkillContentDigest,
   installOpenClawSkill,
   resolveOpenClawSkillProvenancePath,
+  SKILL_SNAPSHOT_MAX_BYTES,
   type SkillPaths,
   type SshContext,
   type SshResult,
@@ -23,7 +24,6 @@ const sandboxIdentityFingerprint = "f".repeat(64);
 const paths: SkillPaths = {
   stateDir: "/sandbox/.openclaw",
   uploadDir: "/sandbox/.openclaw/workspace/skills/demo-skill",
-  workspaceSkillDir: "/sandbox/.openclaw/workspace/skills/demo-skill",
   uploadDirSharedWithAgent: false,
   reloadsSkillsOnSessionStart: false,
   isOpenClaw: true,
@@ -54,8 +54,7 @@ describe("OpenClaw native skill installation", () => {
       const executionPaths: SkillPaths = {
         ...paths,
         stateDir: sandboxRoot,
-        uploadDir: path.join(sandboxRoot, "skills", "demo-skill"),
-        workspaceSkillDir,
+        uploadDir: workspaceSkillDir,
       };
       roots.push(sandboxRoot);
       fs.mkdirSync(fakeBin);
@@ -207,7 +206,7 @@ esac
           sandboxIdentityFingerprint,
           sandboxName: "alpha",
           skillName: "demo-skill",
-          workspaceSkillDir,
+          targetDir: workspaceSkillDir,
           phase: "installed",
           contentDigest: "0".repeat(64),
           previousDigest: null,
@@ -218,6 +217,21 @@ esac
         success: false,
         uploaded: 0,
         reason: "destination_exists",
+      });
+      expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toBe(
+        installedContent,
+      );
+
+      const legacySkillDir = path.join(sandboxRoot, "skills", "demo-skill");
+      fs.mkdirSync(legacySkillDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(legacySkillDir, "SKILL.md"),
+        "---\nname: demo-skill\n---\n# Legacy\n",
+      );
+      expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
+        success: false,
+        uploaded: 0,
+        reason: "legacy_destination_exists",
       });
       expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toBe(
         installedContent,
@@ -251,8 +265,7 @@ esac
       const linkedPaths: SkillPaths = {
         ...paths,
         stateDir: path.join(linkedParent, "state"),
-        uploadDir: path.join(linkedParent, "state", "skills", "demo-skill"),
-        workspaceSkillDir: path.join(linkedParent, "state", "workspace", "skills", "demo-skill"),
+        uploadDir: path.join(linkedParent, "state", "workspace", "skills", "demo-skill"),
       };
       const sshExec = vi.fn(
         (
@@ -290,10 +303,32 @@ esac
     },
   );
 
+  it("rejects an oversized host snapshot before contacting the sandbox", () => {
+    const skill = makeSkill();
+    const oversized = path.join(skill, "oversized.bin");
+    fs.writeFileSync(oversized, "");
+    fs.truncateSync(oversized, SKILL_SNAPSHOT_MAX_BYTES + 1);
+    const provenanceStateDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-openclaw-provenance-"),
+    );
+    roots.push(provenanceStateDir);
+    const sshExec = vi.fn();
+
+    expect(
+      installOpenClawSkill(ctx, skill, paths, "demo-skill", {
+        provenanceStateDir,
+        sandboxIdentityFingerprint,
+        sshExecImpl: sshExec,
+      }),
+    ).toEqual({ success: false, uploaded: 0, reason: "snapshot_limit_exceeded" });
+    expect(sshExec).not.toHaveBeenCalled();
+  });
+
   it.each([
     [2, "COLLISION\n", "destination_exists"],
     [3, "CAPABILITY_MISSING\n", "native_capability_missing"],
     [4, "installer output\nVERIFY_FAILED\n", "verification_failed"],
+    [5, "LEGACY_COLLISION\n", "legacy_destination_exists"],
   ] as const)("maps native failure %s to %s", (status, stdout, reason) => {
     const skill = makeSkill();
     const provenanceStateDir = fs.mkdtempSync(

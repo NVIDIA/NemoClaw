@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Buffer } from "node:buffer";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -25,6 +26,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-skill-cli";
 const SKILL_ID = "openclaw-skill-cli-fixture";
 const SKILL_DESCRIPTION = "E2E fixture proving openclaw skills install + list roundtrip";
+const FOREIGN_SKILL_DIR = `/tmp/${SKILL_ID}-foreign`;
 const EXPECTED_WORKSPACE_SKILL_PATH = `/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md`;
 const INSTALL_TIMEOUT_MS = 45 * 60_000;
 const SANDBOX_EXEC_TIMEOUT_MS = 120_000;
@@ -91,6 +93,18 @@ function skillPayload(marker: string): string {
   ].join("\n");
 }
 
+function foreignSkillInstallScript(): string {
+  const encoded = Buffer.from(skillPayload("FOREIGN_WORKSPACE_CONTENT"), "utf8").toString(
+    "base64",
+  );
+  return [
+    `rm -rf ${shellQuote(FOREIGN_SKILL_DIR)}`,
+    `mkdir -p ${shellQuote(FOREIGN_SKILL_DIR)}`,
+    `printf '%s' ${shellQuote(encoded)} | base64 -d > ${shellQuote(`${FOREIGN_SKILL_DIR}/SKILL.md`)}`,
+    `openclaw skills install ${shellQuote(FOREIGN_SKILL_DIR)} --agent main`,
+  ].join(" && ");
+}
+
 async function expectSandboxShellZero(
   sandbox: SandboxClient,
   script: string,
@@ -116,7 +130,7 @@ test(
       "clear the OpenClaw skill CLI sandbox",
       "install and onboard the OpenClaw sandbox",
       "confirm OpenClaw runtime directories",
-      "install and update the workspace skill fixture through NemoClaw",
+      "refuse a foreign collision, then install and update through NemoClaw",
       "inspect the installed skill through every CLI view",
       "record the workspace skill contract",
     ],
@@ -138,6 +152,7 @@ test(
       "install.sh creates/recreates a real OpenClaw sandbox",
       "OPENCLAW_HOME, OPENCLAW_STATE_DIR, and OPENCLAW_WORKSPACE_DIR reach the sandbox runtime shell",
       "nemoclaw skill install securely hands host content to the native OpenClaw installer",
+      "a same-name workspace skill without protected host provenance is not replaced",
       "a second install updates only the receipt-owned unchanged workspace skill",
       "the installed SKILL.md lands under ${OPENCLAW_WORKSPACE_DIR}/skills/<id>",
       "openclaw skills list --agent main --json enumerates the installed workspace skill",
@@ -219,9 +234,33 @@ test(
     ).toMatch(new RegExp(`^${requiredVar}=.+$`, "m"));
   });
 
-  progress.phase("install and update the workspace skill fixture through NemoClaw");
+  progress.phase("refuse a foreign collision, then install and update through NemoClaw");
   fs.mkdirSync(localSkillDir, { recursive: true });
   fs.writeFileSync(path.join(localSkillDir, "SKILL.md"), skillPayload("HOST_FIXTURE_VERSION=1"));
+
+  await expectSandboxShellZero(
+    sandbox,
+    foreignSkillInstallScript(),
+    "sandbox-install-foreign-openclaw-skill-fixture",
+    env,
+  );
+  const collision = await host.command(
+    "node",
+    [CLI_ENTRYPOINT, SANDBOX_NAME, "skill", "install", localSkillDir],
+    {
+      artifactName: "nemoclaw-openclaw-skill-foreign-collision",
+      env,
+      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+    },
+  );
+  expect(collision.exitCode, resultText(collision)).not.toBe(0);
+  await expectSandboxShellZero(
+    sandbox,
+    `grep -Fq FOREIGN_WORKSPACE_CONTENT "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md" && rm -rf "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}"`,
+    "sandbox-verify-and-remove-foreign-openclaw-skill",
+    env,
+  );
+
   const skillInstall = await host.command(
     "node",
     [CLI_ENTRYPOINT, SANDBOX_NAME, "skill", "install", localSkillDir],
@@ -264,7 +303,6 @@ test(
   );
   const listText = resultText(list);
   expect(listText).toContain(`"${SKILL_ID}"`);
-  expect(listText).toContain("openclaw-workspace");
 
   const info = await expectSandboxShellZero(
     sandbox,
