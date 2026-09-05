@@ -14,9 +14,17 @@ const OPENCLAW_LAUNCH_PROVIDER_RETRY_DELAY_MS = 1_000;
 export const OPENCLAW_PROVIDER_UNAVAILABLE_MARKER =
   "nemoclaw.e2e.launch-failure=provider-unavailable";
 const OPENCLAW_PROVIDER_UNAVAILABLE_PREFIX = `launch did not record the required structured session turns\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\n`;
+const OPENCLAW_LAUNCH_CLEANUP_FAILURES = [
+  "structured session baseline cleanup failed",
+  "launch host session cleanup failed",
+  "launch PTY monitor cleanup failed",
+] as const;
 
 function isTransientProviderAvailabilityFailure(result: Pick<ShellProbeResult, "stderr">): boolean {
-  return result.stderr.startsWith(OPENCLAW_PROVIDER_UNAVAILABLE_PREFIX);
+  return (
+    result.stderr.startsWith(OPENCLAW_PROVIDER_UNAVAILABLE_PREFIX) &&
+    OPENCLAW_LAUNCH_CLEANUP_FAILURES.every((diagnostic) => !result.stderr.includes(diagnostic))
+  );
 }
 
 export const OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT =

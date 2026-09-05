@@ -53,6 +53,7 @@ type FixtureMode =
   | "pty-socket-timeout"
   | "pty-path-unreadable"
   | "pty-termios-unavailable"
+  | "provider-cleanup-failure"
   | "provider-empty-message"
   | "recording-timeout"
   | "restored-canonical-timeout"
@@ -353,7 +354,7 @@ if (process.argv[2] !== "tui") {
   if (mode === "invalid-order") {
     append("assistant", "response before input");
     append("user", firstInput);
-  } else if (mode === "provider-empty-message") {
+  } else if (mode === "provider-empty-message" || mode === "provider-cleanup-failure") {
     append("user", firstInput);
     appendEmpty("assistant");
   } else {
@@ -420,7 +421,7 @@ if [[ "$NEMOCLAW_FIXTURE_MODE" == "restored-canonical-timeout" && "$4" == "input
   done
   [[ -e "$NEMOCLAW_FIXTURE_CANONICAL_RESTORED_MARKER" ]] || exit 1
 fi
-if [[ "$NEMOCLAW_FIXTURE_MODE" == "cleanup-failure" && "$4" == "cleanup-baseline" ]]; then
+if [[ ( "$NEMOCLAW_FIXTURE_MODE" == "cleanup-failure" || "$NEMOCLAW_FIXTURE_MODE" == "provider-cleanup-failure" ) && "$4" == "cleanup-baseline" ]]; then
   exit 71
 fi
 if [[ ( "$NEMOCLAW_FIXTURE_MODE" == "pty-cleanup-failure" || "$NEMOCLAW_FIXTURE_MODE" == "nonzero-pty-cleanup-failure" ) && "$4" == "cleanup-pty" ]]; then
@@ -1069,6 +1070,43 @@ it.runIf(process.platform === "linux")(
     } finally {
       vi.useRealTimers();
     }
+  },
+  testTimeout(30_000),
+);
+
+it.runIf(process.platform === "linux")(
+  "does not retry a provider failure when producer cleanup is incomplete (#10978)",
+  async () => {
+    const produced = runLaunchSessionFixture("provider-cleanup-failure", "provider").result;
+    let calls = 0;
+    const host = {
+      command: async () => {
+        calls += 1;
+        return calls === 1
+          ? {
+              exitCode: produced.status ?? 1,
+              signal: produced.signal,
+              stderr: produced.stderr,
+              stdout: produced.stdout,
+            }
+          : { exitCode: 0, signal: null, stderr: "", stdout: "" };
+      },
+      openshellCommandPath: "/usr/bin/openshell",
+    };
+
+    expect(produced.stderr).toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
+    expect(produced.stderr).toContain("structured session baseline cleanup failed");
+    await expect(
+      runOpenClawLaunchSession({
+        artifactName: "provider-cleanup-handoff",
+        cliCommand: "node",
+        env: {},
+        host: host as never,
+        redactionValues: [],
+        sandboxName: "alpha",
+      }),
+    ).rejects.toThrow("launch session failed");
+    expect(calls).toBe(1);
   },
   testTimeout(30_000),
 );

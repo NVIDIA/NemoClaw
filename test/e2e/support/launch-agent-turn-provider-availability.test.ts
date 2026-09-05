@@ -107,6 +107,10 @@ it.each([
     "invalid response",
     `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nServiceUnavailableError: HTTP 503\ninvalid provider response`,
   ],
+  [
+    "cleanup failure",
+    `launch did not record the required structured session turns\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nServiceUnavailableError: HTTP 503\nstructured session baseline cleanup failed`,
+  ],
   ["unstructured provider output", "ServiceUnavailableError: HTTP 503"],
   ["unknown failure", "launch failed for an unknown reason"],
 ])("does not retry a %s (#10978)", async (_case, stderr) => {
