@@ -11,6 +11,16 @@ import { runExpressPromptWithTty } from "../helpers/installer-express-prompt-pty
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
 describe("installer express install prompt (sourced)", () => {
+  const firmwareStates = [
+    [/(?:^|[^A-Za-z0-9])Station[\s_-]+GB300(?:$|[^A-Za-z0-9])/iu, "station-gb300"],
+    [/DGX[\s_-]+Spark/iu, "spark"],
+    [/(?:^|[^A-Za-z0-9])P3830(?:$|[^A-Za-z0-9])|DGX[\s_-]+Station/iu, "station-other"],
+    [/Jetson|Tegra|Thor|Orin|Xavier/iu, "jetson"],
+  ] as const;
+  function firmwareStateForProduct(productName: string): string {
+    return firmwareStates.find(([pattern]) => pattern.test(productName))?.[1] ?? "not-station";
+  }
+
   it("carries a declined N1x preview through preflight into ordinary onboarding (#11041)", () => {
     const result = runExpressPromptWithTty("n\n", "pipe", "N1x", {}, "n1x-standard-main");
     const output = `${result.stdout}${result.stderr}`;
@@ -107,11 +117,7 @@ detect_express_platform
             "prepare-dgx-station-host.sh",
           ),
           EXPRESS_PRODUCT_NAME: productName,
-          EXPRESS_FIRMWARE_STATE: /(?:^|[^A-Za-z0-9])Station[\s_-]+GB300(?:$|[^A-Za-z0-9])/iu.test(
-            productName,
-          )
-            ? "station-gb300"
-            : "not-station",
+          EXPRESS_FIRMWARE_STATE: firmwareStateForProduct(productName),
           EXPRESS_DGX_RELEASE_PATH: releasePath,
           ...extraEnv,
         },
@@ -1355,8 +1361,8 @@ detect_express_platform
   });
 
   it.each([
-    ["P3830", ""],
-    ["NVIDIA P3830 Rev A", ""],
+    ["P3830", "Unsupported DGX Station generation"],
+    ["NVIDIA P3830 Rev A", "Unsupported DGX Station generation"],
     ["Acme XP3830 Workstation", ""],
     ["Acme Workstation GB300", ""],
     ["NVIDIA DGX Station GB300X", "Unsupported DGX Station generation"],

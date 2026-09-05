@@ -553,22 +553,24 @@ dgx_station_release_state "$DGX_RELEASE"
     expect(result.stderr).toBe("");
   });
 
-  it("uses explicit intent to bypass only unsupported release metadata", () => {
+  it("uses explicit intent to bypass only a complete unrecognized release profile", () => {
+    const release = writeDgxReleaseFixture("7.7.0");
     const forced = runSourced(
       STATION_PREPARE,
       `
 printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$HOME/os-release"
 printf 'NVIDIA DGX Station GB300\n' >"$HOME/product-name"
+stat() { printf '0|0|644|256\n'; }
 uname() { printf 'aarch64\n'; }
 station_os_release_path() { printf '%s' "$HOME/os-release"; }
 station_product_name_path() { printf '%s' "$HOME/product-name"; }
-dgx_station_release_path() { printf '%s' "$HOME/dgx-release"; }
-dgx_station_release_state() { printf 'unsupported-dgx-os'; }
+dgx_station_release_path() { printf '%s' "$DGX_RELEASE"; }
 station_has_exact_gb300_pci_gpu() { return 0; }
 FORCE_STATION_INSTALL=1
 check_platform
 printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"
 `,
+      { DGX_RELEASE: release },
     );
 
     expect(forced.result.status, forced.output).toBe(0);
@@ -580,13 +582,15 @@ printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"
       `
 printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$HOME/os-release"
 printf 'NVIDIA DGX Station GB300\n' >"$HOME/product-name"
+stat() { printf '0|0|644|256\n'; }
 uname() { printf 'aarch64\n'; }
 station_os_release_path() { printf '%s' "$HOME/os-release"; }
 station_product_name_path() { printf '%s' "$HOME/product-name"; }
-dgx_station_release_path() { printf '%s' "$HOME/dgx-release"; }
-dgx_station_release_state() { printf 'unsupported-dgx-os'; }
+dgx_station_release_path() { printf '%s' "$DGX_RELEASE"; }
+station_has_exact_gb300_pci_gpu() { return 0; }
 check_platform
 `,
+      { DGX_RELEASE: release },
     );
 
     expect(unforced.result.status, unforced.output).not.toBe(0);
@@ -611,6 +615,7 @@ station_os_release_path() { printf '%s' "$HOME/os-release"; }
 station_product_name_path() { printf '%s' "$HOME/product-name"; }
 dgx_station_release_path() { printf '%s' "$HOME/dgx-release"; }
 dgx_station_release_state() { printf '%s' "$RELEASE_STATE"; }
+station_has_exact_gb300_pci_gpu() { return 0; }
 FORCE_STATION_INSTALL=1
 check_platform
 printf 'PREPARATION_REACHED\n'

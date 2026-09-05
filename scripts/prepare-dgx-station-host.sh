@@ -301,6 +301,34 @@ dgx_station_release_profile() {
   esac
 }
 
+dgx_station_release_contents_are_complete_station_profile() {
+  local path=$1 ota_key ota_pretty="" platform
+  dgx_station_release_schema_is_valid "$path" || return 1
+  platform="$(dgx_station_release_value "$path" DGX_PLATFORM)" || return 1
+  [[ "$platform" == "DGX Server for GALAXY-GB300" ]] || return 1
+
+  if dgx_station_release_value "$path" DGX_OTA_VERSION >/dev/null 2>&1; then
+    if ota_pretty="$(dgx_station_release_value "$path" DGX_OTA_PRETTY_NAME 2>/dev/null)"; then
+      [[ "$ota_pretty" == "DGX OS" ]] || return 1
+    fi
+    dgx_station_release_value "$path" DGX_OTA_DATE >/dev/null
+    return
+  fi
+
+  for ota_key in DGX_OTA_PRETTY_NAME DGX_OTA_VERSION DGX_OTA_DATE; do
+    dgx_station_release_value "$path" "$ota_key" >/dev/null 2>&1 && return 1
+  done
+  dgx_station_release_value "$path" DGX_SWBUILD_VERSION >/dev/null \
+    && dgx_station_release_value "$path" DGX_SWBUILD_DATE >/dev/null
+}
+
+dgx_station_release_is_complete_unrecognized_profile() {
+  local path=$1
+  dgx_station_release_file_is_safe "$path" \
+    && dgx_station_release_contents_are_complete_station_profile "$path" \
+    && ! dgx_station_release_contents_are_supported "$path"
+}
+
 dgx_station_release_contents_are_supported() {
   dgx_station_release_profile "$1" >/dev/null
 }
@@ -434,12 +462,12 @@ is_station_gb300_product() {
   [[ "$(nvidia_firmware_product_class "${1:-}" 2>/dev/null || true)" == "station-gb300" ]]
 }
 
-station_firmware_product() {
-  local class="" path recognized="" station_product="" value
+station_firmware_identity() {
+  local LC_ALL=C class="" output=${1:?firmware identity output is required} path recognized="" station_product="" value
   for path in "$(station_product_name_path)" "$(station_product_family_path)" "$(station_board_name_path)" "$(station_device_tree_model_path)"; do
     [[ -r "$path" ]] || continue
     if [[ "$path" == "$(station_device_tree_model_path)" ]]; then
-      value="$(tr -d '\0' <"$path" 2>/dev/null || true)"
+      value="$(head -c 257 "$path" 2>/dev/null | tr -d '\0' || true)"
     else
       value="$(head -c 257 "$path" 2>/dev/null || true)"
     fi
@@ -447,28 +475,30 @@ station_firmware_product() {
     class="$(nvidia_firmware_product_class "$value" 2>/dev/null || true)"
     [[ -n "$class" ]] || continue
     if [[ -n "$recognized" && "$recognized" != "$class" ]]; then
+      if [[ "$output" == "state" ]]; then
+        printf '%s' conflicting
+        return 0
+      fi
       return 2
     fi
     recognized=$class
     [[ "$class" != "station-gb300" || -n "$station_product" ]] || station_product=$value
   done
+  if [[ "$output" == "state" ]]; then
+    printf '%s' "${recognized:-not-station}"
+    return 0
+  fi
+  [[ "$output" == "product" ]] || return 1
   [[ "$recognized" == "station-gb300" && -n "$station_product" ]] || return 1
   printf '%s' "$station_product"
 }
 
+station_firmware_product() {
+  station_firmware_identity product
+}
+
 station_firmware_identity_state() {
-  local product status
-  if product="$(station_firmware_product)"; then
-    printf '%s' station-gb300
-    return 0
-  else
-    status=$?
-  fi
-  if ((status == 2)); then
-    printf '%s' conflicting
-  else
-    printf '%s' not-station
-  fi
+  station_firmware_identity state
 }
 
 station_cpu_core_count() {
@@ -940,6 +970,8 @@ check_platform() {
     fi
     fatal "DGX Station GB300 firmware identity is unavailable"
   fi
+  station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
+    || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:$(gb300_pci_device_display))"
   system_vendor="$(head -n 1 "$(station_system_vendor_path)" 2>/dev/null || true)"
   cpu_count="$(station_cpu_core_count 2>/dev/null || true)"
   host_memory_kib="$(station_host_memory_kib 2>/dev/null || true)"
@@ -950,12 +982,14 @@ check_platform() {
       generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
         fatal "--force-station-install is only for unrecognized DGX Station release metadata. This host is already supported (${release_state}); omit --force-station-install."
         ;;
+      unsupported-dgx-os)
+        dgx_station_release_is_complete_unrecognized_profile "$release_path" \
+          || fatal "--force-station-install requires a trusted, complete DGX Station release marker with an unrecognized profile tuple"
+        ;;
     esac
   fi
   case "$release_state" in
     generic-ubuntu)
-      station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
-        || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:$(gb300_pci_device_display)) before generic Ubuntu preparation"
       STATION_HOST_PROFILE="generic-ubuntu"
       ;;
     supported-dgx-os) STATION_HOST_PROFILE="stock-dgx-os" ;;
@@ -963,8 +997,6 @@ check_platform() {
     supported-ai-developer-tools) STATION_HOST_PROFILE="ai-developer-tools" ;;
     *)
       if ((FORCE_STATION_INSTALL == 1)); then
-        station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
-          || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:$(gb300_pci_device_display)) before forced factory-runtime validation"
         STATION_HOST_PROFILE="validation-only-factory-runtime"
         warn "DGX release metadata allowlist bypassed by explicit --force-station-install intent; all hardware and factory-runtime health checks remain required"
       else

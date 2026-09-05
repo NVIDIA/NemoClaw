@@ -188,6 +188,69 @@ function classifyFirmwareWithReadiness(
   });
 }
 
+function runStationCheckPlatform(
+  release: string,
+  {
+    force = false,
+    productName = "NVIDIA DGX Station GB300",
+    productFamily = "Generic family",
+    markerMetadata = "0|0|644|256",
+  }: {
+    force?: boolean;
+    productName?: string;
+    productFamily?: string;
+    markerMetadata?: string;
+  } = {},
+) {
+  const fixtureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-consumer-"));
+  fixtureDirectories.push(fixtureDirectory);
+  for (const [name, value] of [
+    ["os-release", 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n'],
+    ["product_name", `${productName}\n`],
+    ["product_family", `${productFamily}\n`],
+    ["board_name", "Generic board\n"],
+    ["model", "Generic device tree\0"],
+    ["dgx-release", release],
+  ]) {
+    fs.writeFileSync(path.join(fixtureDirectory, name), value);
+  }
+  return spawnSync(
+    "bash",
+    [
+      "--noprofile",
+      "--norc",
+      "-c",
+      `source "$STATION_PREPARE" >/dev/null
+stat() { printf '%s\n' "$MARKER_METADATA"; }
+uname() { printf 'aarch64\n'; }
+station_os_release_path() { printf '%s' "$FIXTURE/os-release"; }
+station_product_name_path() { printf '%s' "$FIXTURE/product_name"; }
+station_product_family_path() { printf '%s' "$FIXTURE/product_family"; }
+station_board_name_path() { printf '%s' "$FIXTURE/board_name"; }
+station_device_tree_model_path() { printf '%s' "$FIXTURE/model"; }
+dgx_station_release_path() { printf '%s' "$FIXTURE/dgx-release"; }
+station_has_exact_gb300_pci_gpu() { return 0; }
+FORCE_STATION_INSTALL="$FORCE"
+check_platform
+printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"`,
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env: {
+        HOME: fixtureDirectory,
+        PATH: TEST_SYSTEM_PATH,
+        STATION_PREPARE,
+        FIXTURE: fixtureDirectory,
+        FORCE: force ? "1" : "0",
+        MARKER_METADATA: markerMetadata,
+      },
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    },
+  );
+}
+
 afterEach(() => {
   fixtureDirectories
     .splice(0)
@@ -247,6 +310,82 @@ describe("DGX Station release classifier parity", () => {
       nvidiaPlatform: "station",
       stationFirmwareProduct: "NVIDIA DGX Station GB300",
     });
+  });
+
+  it("passes a family-only Station identity through host preparation (#10928)", () => {
+    const result = runStationCheckPlatform(noOta("7.6.0", "2026-07-14-13-59-06"), {
+      productName: "Generic ARM workstation",
+      productFamily: "NVIDIA DGX Station GB300",
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("firmware_product=NVIDIA DGX Station GB300");
+    expect(result.stdout).toContain("PROFILE=stock-dgx-os");
+  });
+
+  it.each([
+    ["an unsafe marker", noOta("7.7.0", "2026-07-30"), "1000|0|644|256"],
+    [
+      "a wrong-platform marker",
+      noOta("7.7.0", "2026-07-30", 'DGX_PLATFORM="DGX Server for GALAXY-GB200"'),
+      "0|0|644|256",
+    ],
+    [
+      "a partial OTA marker",
+      marker(
+        'DGX_OTA_PRETTY_NAME="DGX OS"',
+        'DGX_SWBUILD_DATE="2026-07-30"',
+        'DGX_SWBUILD_VERSION="7.7.0"',
+      ),
+      "0|0|644|256",
+    ],
+    [
+      "a duplicate-field marker",
+      `${noOta("7.7.0", "2026-07-30")}DGX_PLATFORM="DGX Server for GALAXY-GB300"\n`,
+      "0|0|644|256",
+    ],
+  ])("blocks forced host preparation for %s", (_scenario, release, markerMetadata) => {
+    const result = runStationCheckPlatform(release, { force: true, markerMetadata });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain(
+      "--force-station-install requires a trusted, complete DGX Station release marker",
+    );
+    expect(output).not.toContain("PROFILE=");
+  });
+
+  it("classifies a Spark family when the product name is generic (#10928)", () => {
+    const shell = classifyFirmwareWithStationHelper(
+      "Generic ARM workstation",
+      "NVIDIA DGX Spark",
+      "Generic board",
+    );
+    const readiness = classifyFirmwareWithReadiness(
+      "Generic ARM workstation",
+      "NVIDIA DGX Spark",
+      "Generic board",
+    );
+
+    expect(shell).toBe("spark");
+    expect(readiness.nvidiaPlatform).toBe("spark");
+  });
+
+  it("classifies another Station generation from the board field (#10928)", () => {
+    const shell = classifyFirmwareWithStationHelper(
+      "Generic ARM workstation",
+      "Generic family",
+      "NVIDIA DGX Station GB200",
+    );
+    const readiness = classifyFirmwareWithReadiness(
+      "Generic ARM workstation",
+      "Generic family",
+      "NVIDIA DGX Station GB200",
+    );
+
+    expect(shell).toBe("station-other");
+    expect(readiness.nvidiaPlatform).toBe("station");
+    expect(readiness.stationFirmwareProduct).toBeUndefined();
   });
 
   it("rejects conflicting platform identities in both consumers (#10928)", () => {
