@@ -61,23 +61,31 @@ const COMPATIBLE_CUSTOM_PROVIDERS = new Set([
   "compatible-anthropic-endpoint",
 ]);
 
+// Only display endpoint paths whose complete shape is a documented API base.
+// Other persisted paths can be valid for routing but may contain opaque
+// credentials, so the read path omits them instead of guessing their meaning.
+const DISPLAYABLE_ENDPOINT_PATHS = new Set(["/", "/v1", "/v1/"]);
+
 function formatStatusRecovery(cliName: string, sandboxName: string | undefined): string {
   return sandboxName
     ? `Run '${cliName} ${sandboxName} status' to diagnose the sandbox's recorded gateway.`
     : `Run '${cliName} status' to diagnose the selected gateway.`;
 }
 
-function formatRegistryReadFailure(
-  error: unknown,
-  cliName: string,
-  sandboxName: string | undefined,
-): string {
-  const summary =
-    "NemoClaw could not read sandbox registry metadata for the compatible inference endpoint.";
+function formatGatewayResolutionFailure(error: unknown): string {
+  const summary = "NemoClaw could not resolve the sandbox's recorded gateway.";
   if (error instanceof ConfigCorruptError || error instanceof ConfigPermissionError) {
     return `${summary}\n\n${error.message}`;
   }
-  return `${summary} ${formatStatusRecovery(cliName, sandboxName)}`;
+  return summary;
+}
+
+function endpointPathIsCredentialFreeForDisplay(endpointUrl: string): boolean {
+  try {
+    return DISPLAYABLE_ENDPOINT_PATHS.has(new URL(endpointUrl.trim()).pathname);
+  } catch {
+    return false;
+  }
 }
 
 /** Select one safe endpoint from published rows on the live gateway. */
@@ -86,7 +94,6 @@ function getPersistedEndpointUrl(
   model: string | null,
   gatewayName: string,
   sandboxName: string | undefined,
-  cliName: string,
   deps: InferenceGetDeps,
 ): string | null {
   const liveModel = model?.trim();
@@ -97,8 +104,8 @@ function getPersistedEndpointUrl(
   let sandboxes: ReturnType<InferenceGetDeps["listSandboxes"]>;
   try {
     sandboxes = deps.listSandboxes();
-  } catch (error) {
-    throw new InferenceGetError(formatRegistryReadFailure(error, cliName, sandboxName));
+  } catch {
+    return null;
   }
 
   const matchingEndpoints: { canonical: string; display: string }[] = [];
@@ -128,6 +135,10 @@ function getPersistedEndpointUrl(
       continue;
     }
     if (valueLooksLikeSecret(sandbox.endpointUrl)) {
+      incompleteMatchingMetadata = true;
+      continue;
+    }
+    if (!endpointPathIsCredentialFreeForDisplay(sandbox.endpointUrl)) {
       incompleteMatchingMetadata = true;
       continue;
     }
@@ -162,8 +173,8 @@ export async function runInferenceGet(
   let gatewayName: string;
   try {
     gatewayName = deps.getSandboxTargetGatewayName(options.sandboxName);
-  } catch {
-    throw new InferenceGetError("NemoClaw could not resolve the sandbox's recorded gateway.");
+  } catch (error) {
+    throw new InferenceGetError(formatGatewayResolutionFailure(error));
   }
   const result = getLiveGatewayInference(deps.captureOpenshell, {
     gatewayName,
@@ -192,7 +203,6 @@ export async function runInferenceGet(
     result.inference.model,
     gatewayName,
     options.sandboxName,
-    options.cliName ?? "nemoclaw",
     deps,
   );
   const payload: InferenceGetResult = {

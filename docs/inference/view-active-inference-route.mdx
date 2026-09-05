@@ -47,6 +47,7 @@ Expected output:
 ```
 
 For `compatible-endpoint` and `compatible-anthropic-endpoint`, the text output adds `Endpoint` when every matching published registry row records the live provider and model plus the same canonical, credential-free, reusable HTTP(S) URL.
+The URL must use the documented root or `/v1` API-base path; NemoClaw omits other paths because an opaque segment can carry a credential.
 The JSON output adds `endpointUrl` under the same condition.
 For example:
 
@@ -67,14 +68,13 @@ Endpoint: https://inference.example.com/v1
 Managed providers keep the existing provider-and-model output.
 Unpublished sandbox rows do not participate in endpoint selection.
 Equivalent stored URL forms, such as a trailing slash difference, count as the same endpoint identity.
-NemoClaw omits the endpoint when participating registry metadata is absent, conflicting, invalid, too long, or contains userinfo, a query, a fragment, control characters, or recognized credential material in any URL component.
+NemoClaw omits the endpoint when participating registry metadata is absent, conflicting, invalid, too long, uses another path shape, or contains userinfo, a query, a fragment, control characters, or recognized credential material in any URL component.
 It also omits an internal HTTPS-pin adapter route because the upstream endpoint is intentionally not retained and the adapter URL cannot be reused as an upstream endpoint.
 In that case, both formats retain the provider and model without adding endpoint details.
 To switch only the model for an existing adapter route, run `$$nemoclaw inference set` without `--endpoint-url` so NemoClaw reuses the recorded route.
-If the registry cannot be read for a compatible custom route, the command exits non-zero.
-Known corruption and permission errors retain their safe recovery steps and affected path.
-Unclassified errors use a generic message without exposing registry contents or error details.
-That message directs a direct lookup to `$$nemoclaw status` and a sandbox-first lookup to `$$nemoclaw <name> status`.
+If the live route is readable but optional endpoint registry metadata is not, both formats retain the live provider and model and omit the endpoint without exposing registry details.
+Run `$$nemoclaw status` after a direct lookup or `$$nemoclaw <name> status` after a sandbox-first lookup when an expected endpoint is absent.
+If a sandbox-first lookup cannot resolve its gateway because the registry is corrupt or unreadable, the command exits non-zero and retains the safe recovery steps and affected path.
 
 The command exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no configured inference route.
 Run `$$nemoclaw onboard` to configure one.
