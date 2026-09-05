@@ -87,8 +87,8 @@ RUN --mount=type=bind,from=weather-plugin-builder,source=/opt/weather-runtime-di
     && HOME=/sandbox openclaw plugins enable weather
 
 # Enabling the plugin changes openclaw.json after the managed runtime hashes it.
-# The runtime test copies this fixture from OpenShell's read-only /usr policy tree
-# into tmpfs after the sandbox starts.
+# The runtime test copies this image fixture into tmpfs before it installs the
+# plugin across the filesystem boundary.
 # hadolint ignore=DL3002
 USER root
 RUN chown sandbox:sandbox /sandbox/.openclaw/openclaw.json \
