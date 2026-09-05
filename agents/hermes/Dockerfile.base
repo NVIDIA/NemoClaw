@@ -3,7 +3,7 @@
 #
 # Hermes sandbox base image — expensive, rarely-changing layers.
 #
-# Contains: node:24-trixie-slim (OpenShell needs Node), apt packages, setpriv,
+# Contains: node:24.18.1-trixie-slim (OpenShell needs Node), apt packages, setpriv,
 # user/group setup, .hermes directory structure, Hermes CLI, and the
 # dependencies for NemoClaw-supported Hermes integrations.
 #
@@ -14,7 +14,7 @@
 #   1. Hermes version bump      — run scripts/update-hermes-agent.sh
 #   2. New apt package needed   — add it to the apt-get install list
 #   3. util-linux upgrade       — update the pinned apt package version
-#   4. node:24-trixie-slim digest rot — update-docker-pin.sh updates all
+#   4. node:24.18.1-trixie-slim digest rot — update-docker-pin.sh updates that tag's digest
 #   5. npm upgrade              — update upgrade-bundled-npm.mts
 #   6. New .hermes subdirectory — add mkdir/chmod below
 # ────────────────────────────────────────────────────────────────
