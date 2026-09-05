@@ -30,6 +30,7 @@ export interface GatewayRegistryEntry extends Record<string, unknown> {
   hermesApiPort?: number | null;
   gatewayName?: string | null;
   gatewayPort?: number | null;
+  openshellGatewayStateDir?: string | null;
 }
 
 export interface GatewayRegistryDocument extends Record<string, unknown> {
@@ -113,6 +114,19 @@ function parseRegistry(filePath: string, raw: string): GatewayRegistryDocument {
         throw stateError(`${filePath} has an invalid ${field} for sandbox ${JSON.stringify(name)}`);
       }
     }
+    const gatewayStateDir = value.openshellGatewayStateDir;
+    if (
+      gatewayStateDir !== undefined &&
+      gatewayStateDir !== null &&
+      (typeof gatewayStateDir !== "string" ||
+        gatewayStateDir.length === 0 ||
+        !path.isAbsolute(gatewayStateDir) ||
+        path.resolve(gatewayStateDir) !== gatewayStateDir)
+    ) {
+      throw stateError(
+        `${filePath} has an invalid openshellGatewayStateDir for sandbox ${JSON.stringify(name)}`,
+      );
+    }
     sandboxes[name] =
       value.dashboardPort === 0
         ? { ...(value as GatewayRegistryEntry), dashboardPort: null }
@@ -179,6 +193,33 @@ export function registryEntryGatewayPort(entry: GatewayRegistryEntry): number {
   }
   if (portFromName !== null) return portFromName;
   return DEFAULT_GATEWAY_PORT;
+}
+
+/** Recover one unambiguous onboard-time custom OpenShell state directory for a gateway port. */
+export function registryOpenShellGatewayStateDir(
+  registry: GatewayRegistryDocument,
+  gatewayPort: number,
+): string | null {
+  const recorded = new Set<string>();
+  for (const entry of Object.values(registry.sandboxes)) {
+    if (registryEntryGatewayPort(entry) !== gatewayPort) continue;
+    if (typeof entry.openshellGatewayStateDir === "string") {
+      recorded.add(entry.openshellGatewayStateDir);
+    }
+  }
+  if (recorded.size > 1) {
+    throw stateError(`gateway port ${String(gatewayPort)} has conflicting OpenShell state directories`);
+  }
+  return recorded.values().next().value ?? null;
+}
+
+/** Read one port's recorded custom OpenShell state directory from its canonical registry. */
+export function readGatewayOpenShellStateDir(home: string, gatewayPort: number): string | null {
+  const registry = readGatewayRegistryFile(
+    home,
+    path.join(nemoclawStateRoot(home, gatewayPort), "sandboxes.json"),
+  );
+  return registry ? registryOpenShellGatewayStateDir(registry, gatewayPort) : null;
 }
 
 /** Enumerate the default root plus bounded, real, numeric non-default gateway roots. */
