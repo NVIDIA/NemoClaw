@@ -11,6 +11,7 @@ import {
   probeOllamaEndpointInventory,
   resetOllamaHostCache,
   setResolvedOllamaHost,
+  shouldFrontOllamaWithProxy,
   validateSandboxFacingOllamaModel,
 } from "./local";
 
@@ -36,6 +37,7 @@ describe("sandbox-facing Ollama model validation", () => {
     const command = getLocalProviderContainerReachabilityCheck("ollama-local", "body");
 
     expect(getOllamaContainerPort()).toBe(OLLAMA_PORT);
+    expect(shouldFrontOllamaWithProxy()).toBe(false);
     expect(command).not.toBeNull();
     expect(commandUrl(command ?? [])).toBe(
       `http://host.openshell.internal:${OLLAMA_PORT}/api/tags`,
@@ -49,6 +51,7 @@ describe("sandbox-facing Ollama model validation", () => {
     setResolvedOllamaHost("127.0.0.1");
 
     expect(getOllamaContainerPort()).toBe(OLLAMA_PROXY_PORT);
+    expect(shouldFrontOllamaWithProxy()).toBe(true);
     expect(getLocalProviderContainerReachabilityCheck("ollama-local", "body")).toBeNull();
     expect(validateSandboxFacingOllamaModel("llama3.2:1b", capture)).toEqual({ ok: true });
     expect(capture).not.toHaveBeenCalled();

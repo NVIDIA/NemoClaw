@@ -206,7 +206,6 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const dockerAdapter = requireDist("../../src/lib/adapters/docker/container.js");
   const localInference = requireDist("../../src/lib/inference/local.js");
   const ollamaProxy = requireDist("../../src/lib/inference/ollama/proxy.js");
-  const localInferenceTopology = requireDist("../../src/lib/onboard/local-inference-topology.js");
   const platform = requireDist("../../src/lib/platform.js");
   const gatewayRouteMutationLock = requireDist(
     "../../src/lib/inference/gateway-route-mutation-lock.js",
@@ -494,7 +493,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     .spyOn(ollamaProxy, "probeOllamaAuthProxyHealth")
     .mockReturnValue({ ok: true });
   const shouldFrontOllamaWithProxySpy = vi
-    .spyOn(localInferenceTopology, "shouldFrontOllamaWithProxy")
+    .spyOn(localInference, "shouldFrontOllamaWithProxy")
     .mockReturnValue(options.frontOllamaWithProxy ?? options.isWsl !== true);
   const realIsWsl = platform.isWsl as (opts?: WslDetectionOptions) => boolean;
   // Pin the platform gate for every isWsl consumer the harness loads: isWsl

@@ -5,11 +5,11 @@ import { detectContainerRuntimeFromDockerInfo } from "../adapters/docker/runtime
 import {
   applyOllamaRuntimeContextWindow,
   findReachableOllamaHost,
-  getOllamaContainerPort,
   isLocalProviderHostHealthy,
   loadPersistedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
   OLLAMA_PORT,
+  shouldFrontOllamaWithProxy,
   validateOllamaModel,
 } from "../inference/local";
 import { ensureOllamaAuthProxy, isProxyHealthy } from "../inference/ollama/proxy";
@@ -143,11 +143,6 @@ export function rejectUnsupportedWindowsHostOllama(
 ): boolean {
   if (!isWindowsHostOllama || requirement.supported) return false;
   return requirement.reject(providerKey, isNonInteractive, abortNonInteractive);
-}
-
-// Keep proxy lifecycle and sandbox-facing port selection under one authority.
-export function shouldFrontOllamaWithProxy(): boolean {
-  return getOllamaContainerPort() !== OLLAMA_PORT;
 }
 
 export interface RepairLocalInferenceSystemdOverrideOptions {

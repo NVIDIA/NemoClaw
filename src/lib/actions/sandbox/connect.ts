@@ -40,10 +40,13 @@ import {
 } from "../../inference/config";
 import { GatewayRouteConflictError } from "../../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
-import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
+import {
+  findReachableOllamaHost,
+  probeLocalProviderHealth,
+  shouldFrontOllamaWithProxy,
+} from "../../inference/local";
 import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
-import { shouldFrontOllamaWithProxy } from "../../onboard/local-inference-topology";
 import {
   assertNoOpenShellGatewayEndpointOverride,
   OpenShellGatewayEndpointOverrideError,

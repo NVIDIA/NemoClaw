@@ -229,11 +229,20 @@ function setupWindowsOllamaLoopbackBinding(
   }
   killWindowsOllamaProcesses();
   delay(1);
-  return launchAndAwaitWindowsOllama({
+  const launched = launchAndAwaitWindowsOllama({
     watcherPath: watcherPath || undefined,
     installedPath: opts.installedPath,
     delay,
   });
+  if (!launched) {
+    console.error(
+      `  The Windows user OLLAMA_HOST=${OLLAMA_LOOPBACK_HOST} setting was persisted, and Ollama may now be stopped.`,
+    );
+    console.error(
+      "  Resolve the launch or probe failure below, then rerun `nemoclaw onboard` to retry the bounded restart.",
+    );
+  }
+  return launched;
 }
 
 function printWindowsOllamaTimeoutDiagnostics(): void {

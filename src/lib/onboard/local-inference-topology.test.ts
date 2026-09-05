@@ -9,11 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../inference/local", () => ({
   applyOllamaRuntimeContextWindow: vi.fn(),
   findReachableOllamaHost: vi.fn(),
-  getOllamaContainerPort: vi.fn(),
   isLocalProviderHostHealthy: vi.fn(),
   loadPersistedOllamaHost: vi.fn(),
   OLLAMA_HOST_DOCKER_INTERNAL: "host.docker.internal",
   OLLAMA_PORT: 11434,
+  shouldFrontOllamaWithProxy: vi.fn(),
   validateOllamaModel: vi.fn(),
 }));
 vi.mock("../inference/ollama/proxy", () => ({
@@ -26,9 +26,7 @@ vi.mock("./ollama-systemd", () => ({ ensureOllamaLoopbackSystemdOverride: vi.fn(
 import {
   applyOllamaRuntimeContextWindow,
   findReachableOllamaHost,
-  getOllamaContainerPort,
   loadPersistedOllamaHost,
-  OLLAMA_PORT,
   validateOllamaModel,
 } from "../inference/local";
 import {
@@ -39,13 +37,11 @@ import {
   ensureLocalProviderReachable,
   type LocalProviderReachabilityDeps,
   repairLocalInferenceSystemdOverrideOrExit,
-  shouldFrontOllamaWithProxy,
 } from "./local-inference-topology";
 import { ensureOllamaLoopbackSystemdOverride } from "./ollama-systemd";
 
 const mockedApplyRuntimeContext = vi.mocked(applyOllamaRuntimeContextWindow);
 const mockedFindReachableHost = vi.mocked(findReachableOllamaHost);
-const mockedGetOllamaContainerPort = vi.mocked(getOllamaContainerPort);
 const mockedLoadPersistedHost = vi.mocked(loadPersistedOllamaHost);
 const mockedValidateModel = vi.mocked(validateOllamaModel);
 const mockedEnsureSystemdOverride = vi.mocked(ensureOllamaLoopbackSystemdOverride);
@@ -54,7 +50,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockedEnsureSystemdOverride.mockReturnValue("ready");
   mockedFindReachableHost.mockReturnValue("127.0.0.1");
-  mockedGetOllamaContainerPort.mockReturnValue(OLLAMA_PORT + 1);
   mockedLoadPersistedHost.mockReturnValue(null);
   mockedValidateModel.mockReturnValue({ ok: true });
   mockedApplyRuntimeContext.mockReturnValue({ ok: true });
@@ -75,17 +70,6 @@ function makeDeps(
     ...over,
   };
 }
-
-describe("shouldFrontOllamaWithProxy", () => {
-  it.each([
-    [OLLAMA_PORT, false],
-    [OLLAMA_PORT + 1, true],
-  ])("agrees with sandbox-facing port %i", (port, expected) => {
-    mockedGetOllamaContainerPort.mockReturnValue(port);
-
-    expect(shouldFrontOllamaWithProxy()).toBe(expected);
-  });
-});
 
 describe("ensureLocalProviderReachable", () => {
   it("ollama-local behind the proxy: ensures the proxy and returns its health (healthy)", () => {

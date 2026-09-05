@@ -261,6 +261,44 @@ describe("Windows Ollama helper", () => {
     expect(delay.mock.calls.every(([seconds]) => seconds > 0 && seconds <= 2)).toBe(true);
   });
 
+  it("explains recovery when every launch fails after persisting the loopback binding", () => {
+    const watcherPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama app.exe";
+    const installedPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe";
+    const run = vi.fn(() => ({ status: 1, stderr: "launch failed" }));
+    const runCapture = vi.fn((command: string | string[]) => {
+      const rendered = commandText(command);
+      return rendered.includes("Get-Process 'ollama app'") &&
+        rendered.includes("ExpandProperty Path")
+        ? watcherPath
+        : rendered.includes("SetEnvironmentVariable('OLLAMA_HOST'")
+          ? "127.0.0.1:11434"
+          : "";
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
+    let errors: string[] = [];
+
+    try {
+      expect(
+        windows.setupWindowsOllamaLoopbackBinding({
+          installedPath,
+          delay: vi.fn(),
+        }),
+      ).toBe(false);
+      errors = errorSpy.mock.calls.map(([message]) => String(message));
+    } finally {
+      restore();
+      errorSpy.mockRestore();
+    }
+
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(errors).toContainEqual(
+      expect.stringContaining("OLLAMA_HOST=127.0.0.1:11434 setting was persisted"),
+    );
+    expect(errors).toContainEqual(expect.stringContaining("Ollama may now be stopped"));
+    expect(errors).toContainEqual(expect.stringContaining("rerun `nemoclaw onboard`"));
+  });
+
   it("fails repair before stopping Ollama when the persistent loopback setting is rejected", () => {
     const run = vi.fn();
     const runCapture = vi.fn((command: string | string[]) =>

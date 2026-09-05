@@ -100,6 +100,11 @@ export function getOllamaContainerPort(): number {
     : OLLAMA_PROXY_PORT;
 }
 
+/** Keep proxy lifecycle and sandbox-facing port selection under the route owner. */
+export function shouldFrontOllamaWithProxy(): boolean {
+  return getOllamaContainerPort() !== OLLAMA_PORT;
+}
+
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
 export const LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV = "NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL";
 export { CONTAINER_REACHABILITY_IMAGE } from "../adapters/http/container-curl-probe";
