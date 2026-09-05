@@ -91,11 +91,43 @@ import re
 import socket
 import subprocess
 
+FIRMWARE_VALUE_MAX_BYTES = 256
+
 def read_text(path):
     try:
         return Path(path).read_text(encoding="utf-8").rstrip("\x00").strip()
     except (OSError, UnicodeError):
         return ""
+
+def firmware_value(path, strip_nul=False):
+    try:
+        with Path(path).open("rb") as handle:
+            raw = handle.read(FIRMWARE_VALUE_MAX_BYTES + 2)
+        if strip_nul:
+            raw = raw.replace(b"\x00", b"")
+        normalized = raw.decode("utf-8").rstrip("\n")
+        if len(normalized.encode("utf-8")) > FIRMWARE_VALUE_MAX_BYTES:
+            return ""
+        if any(character in normalized for character in ("\r", "\n", "\x00")):
+            return ""
+        return normalized.strip()
+    except (OSError, UnicodeError):
+        return ""
+
+def station_gb300_pci_gpu():
+    try:
+        candidates = sorted(Path("/sys/bus/pci/devices").iterdir())
+    except OSError:
+        return False
+    if len(candidates) > 256:
+        return False
+    for candidate in candidates:
+        vendor = firmware_value(candidate / "vendor").lower()
+        device = firmware_value(candidate / "device").lower()
+        pci_class = firmware_value(candidate / "class").lower()
+        if vendor == "0x10de" and device in ("0x31c2", "0x31c3") and re.fullmatch(r"0x03[0-9a-f]{4}", pci_class):
+            return True
+    return False
 
 def run(argv, timeout=5):
     try:
@@ -111,17 +143,6 @@ def run(argv, timeout=5):
         return result.returncode, result.stdout.strip()
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return 127, ""
-
-def product_name():
-    for candidate in (
-        "/sys/class/dmi/id/product_name",
-        "/sys/devices/virtual/dmi/id/product_name",
-        "/sys/firmware/devicetree/base/model",
-    ):
-        value = read_text(candidate)
-        if value:
-            return value
-    return ""
 
 def gpu_inventory():
     rc, output = run([
@@ -204,9 +225,13 @@ def rail_inventory():
     return rails
 
 print(json.dumps({
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "hostname": socket.gethostname(),
-    "productName": product_name(),
+    "productName": firmware_value("/sys/class/dmi/id/product_name"),
+    "productFamily": firmware_value("/sys/class/dmi/id/product_family"),
+    "boardName": firmware_value("/sys/class/dmi/id/board_name"),
+    "deviceTreeModel": firmware_value("/sys/firmware/devicetree/base/model", strip_nul=True),
+    "stationGb300PciGpu": station_gb300_pci_gpu(),
     "architecture": platform.machine(),
     "gpus": gpu_inventory(),
     "rails": rail_inventory(),

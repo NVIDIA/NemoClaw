@@ -26,6 +26,7 @@ import { isSafeModelId } from "../validation";
 import {
   classifyNvidiaFirmwareProducts,
   hasDgxStationGb300PciGpu,
+  nvidiaFirmwareProductClass,
   readBoundedNvidiaFirmwareValue,
 } from "./dgx-station-identity";
 import {
@@ -214,7 +215,12 @@ function readPlatformFirmwareProducts(): readonly (string | undefined)[] {
 }
 
 function readPlatformModel(): string {
-  return readPlatformFirmwareProducts().find((value) => value !== undefined) ?? "";
+  const products = readPlatformFirmwareProducts();
+  return (
+    products.find((value) => value && nvidiaFirmwareProductClass(value) === "jetson") ??
+    products.find((value) => value !== undefined) ??
+    ""
+  );
 }
 
 function readHostMemoryMB(runCaptureImpl: typeof runCapture = runCapture): number {

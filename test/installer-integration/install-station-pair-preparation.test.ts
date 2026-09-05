@@ -205,15 +205,26 @@ describe("deterministic dual-DGX Station peer discovery", () => {
     expect(deriveDiscoveryCandidates(stationHost("local"))).toEqual(["10.10.0.2", "10.10.0.6"]);
   });
 
-  it.each(["DGX-Station", "P3830", "NVIDIA Station GB300"])(
-    "accepts an existing Station firmware product identifier: %s",
-    (productName) => {
-      const host = stationHost("local");
-      host.productName = productName;
+  it("accepts a bounded Station GB300 firmware product identifier", () => {
+    const host = stationHost("local");
+    host.productName = "NVIDIA Station GB300";
 
-      expect(deriveDiscoveryCandidates(host)).toEqual(["10.10.0.2", "10.10.0.6"]);
-    },
-  );
+    expect(deriveDiscoveryCandidates(host)).toEqual(["10.10.0.2", "10.10.0.6"]);
+  });
+
+  it("accepts a family-only Station GB300 identity (#10928)", () => {
+    const host = stationHost("local");
+    host.productName = "Generic ARM workstation";
+    host.productFamily = "NVIDIA DGX Station GB300";
+    expect(deriveDiscoveryCandidates(host)).toEqual(["10.10.0.2", "10.10.0.6"]);
+  });
+
+  it.each(["DGX-Station", "P3830"])("does not admit unqualified Station identifier %s", (value) => {
+    const host = stationHost("local");
+    host.productName = value;
+
+    expect(() => deriveDiscoveryCandidates(host)).toThrow(/not a verified arm64 DGX Station GB300/);
+  });
 
   it("rejects extra rails, duplicate identities, and non-jumbo links", () => {
     const extraRail = stationHost("local");
