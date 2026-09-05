@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
 import { captureSandboxSshConfig } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
@@ -12,6 +13,7 @@ import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import * as skillInstall from "../../skill-install";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 
 export function printSkillInstallUsage(): void {
   console.log("");
@@ -370,9 +372,24 @@ export async function installSandboxSkill(
     const ctx = { configFile: tmpSshConfig.file, sandboxName };
 
     if (paths.isOpenClaw) {
+      let sandboxIdentityFingerprint: string;
+      try {
+        sandboxIdentityFingerprint = inspectOpenShellSandboxIdentityFingerprint({
+          sandboxName,
+          gatewayName: getSandboxTargetGatewayName(sandboxName),
+          timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+        });
+      } catch {
+        console.error(
+          "  Failed to bind the OpenClaw skill install to the exact live sandbox identity.",
+        );
+        process.exitCode = 1;
+        return;
+      }
       const native = await withSandboxMutationLock(sandboxName, () =>
         skillInstall.installOpenClawSkill(ctx, skillDir, paths, frontmatter.name, {
           expectedRootIdentity,
+          sandboxIdentityFingerprint,
         }),
       );
       if (!native.success || !native.contentDigest) {
@@ -386,13 +403,23 @@ export async function installSandboxSkill(
           );
         } else if (native.reason === "snapshot_failed") {
           console.error("  Failed to create an exact regular-file snapshot of the local skill.");
+        } else if (native.reason === "provenance_failed") {
+          console.error(
+            "  Protected host provenance for this OpenClaw skill could not be validated or updated.",
+          );
         } else if (native.reason === "verification_failed") {
           console.error(
             "  OpenClaw installed the skill, but native list, info, check, or digest verification failed.",
           );
+          console.error(
+            `  Inspect ${paths.workspaceSkillDir}, then retry with the same local content to reconcile the pending install.`,
+          );
         } else {
           console.error(
             "  OpenClaw did not confirm whether the staged native skill install completed.",
+          );
+          console.error(
+            `  Inspect ${paths.workspaceSkillDir}, then retry with the same local content to reconcile the pending install.`,
           );
         }
         process.exitCode = 1;
@@ -461,9 +488,7 @@ export async function installSandboxSkill(
     }
     console.log(`  ${G}✓${R} Uploaded ${uploaded} file(s) to sandbox`);
 
-    // 7. Post-install (OpenClaw mirror + refresh, or agent-specific activation guidance).
-    //    OpenClaw caches skill content per session, so always refresh the
-    //    session index after an install/update to avoid stale SKILL.md data.
+    // 7. Agent-specific activation guidance.
     const post = skillInstall.postInstall(ctx, paths, skillDir);
     for (const msg of post.messages) {
       if (msg.startsWith("Warning:")) {
@@ -480,8 +505,7 @@ export async function installSandboxSkill(
       console.log(`  ${G}✓${R} Skill '${frontmatter.name}' ${verb}`);
     } else {
       console.error(
-        `  Skill uploaded but verification failed: SKILL.md missing at ${paths.uploadDir}` +
-          (paths.mirrorDir ? ` or its agent mirror ${paths.mirrorDir}` : ""),
+        `  Skill uploaded but verification failed: SKILL.md missing at ${paths.uploadDir}`,
       );
       process.exitCode = 1;
       return;

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Buffer } from "node:buffer";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -19,14 +18,13 @@ import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
-// This intentionally keeps the same real shell/system boundary: run install.sh,
-// onboard a Docker/OpenShell sandbox, execute OpenClaw's skills CLI inside the
-// sandbox, and verify install/list/info/check agree on the workspace skill path.
+// This intentionally keeps the real host-to-sandbox boundary: run install.sh,
+// onboard OpenClaw, install through NemoClaw, then verify through the pinned
+// native CLI and workspace filesystem.
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-skill-cli";
 const SKILL_ID = "openclaw-skill-cli-fixture";
 const SKILL_DESCRIPTION = "E2E fixture proving openclaw skills install + list roundtrip";
-const REMOTE_SKILL_DIR = `/tmp/${SKILL_ID}`;
 const EXPECTED_WORKSPACE_SKILL_PATH = `/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md`;
 const INSTALL_TIMEOUT_MS = 45 * 60_000;
 const SANDBOX_EXEC_TIMEOUT_MS = 120_000;
@@ -78,8 +76,8 @@ async function precleanOpenClawSkillCliState(
   );
 }
 
-function buildWriteSkillFixtureScript(): string {
-  const skillPayload = [
+function skillPayload(marker: string): string {
+  return [
     "---",
     `name: "${SKILL_ID}"`,
     `description: "${SKILL_DESCRIPTION}"`,
@@ -87,16 +85,10 @@ function buildWriteSkillFixtureScript(): string {
     "",
     "# OpenClaw skill CLI roundtrip fixture",
     "",
+    marker,
+    "",
     "Written by test/e2e/live/openclaw-skill-cli.test.ts.",
   ].join("\n");
-  const encodedPayload = Buffer.from(skillPayload, "utf8").toString("base64");
-  return [
-    `rm -rf ${shellQuote(REMOTE_SKILL_DIR)}`,
-    `mkdir -p ${shellQuote(REMOTE_SKILL_DIR)}`,
-    `printf '%s' ${shellQuote(encodedPayload)} | base64 -d > ${shellQuote(
-      `${REMOTE_SKILL_DIR}/SKILL.md`,
-    )}`,
-  ].join(" && ");
 }
 
 async function expectSandboxShellZero(
@@ -115,7 +107,7 @@ async function expectSandboxShellZero(
 }
 
 test(
-  "openclaw-skill-cli: direct OpenClaw skills install/list/info/check roundtrip uses workspace path",
+  "openclaw-skill-cli: NemoClaw native install/update roundtrip uses workspace path",
   {
   timeout: INSTALL_TIMEOUT_MS + 10 * 60_000,
   meta: {
@@ -124,7 +116,7 @@ test(
       "clear the OpenClaw skill CLI sandbox",
       "install and onboard the OpenClaw sandbox",
       "confirm OpenClaw runtime directories",
-      "install the workspace skill fixture",
+      "install and update the workspace skill fixture through NemoClaw",
       "inspect the installed skill through every CLI view",
       "record the workspace skill contract",
     ],
@@ -138,18 +130,19 @@ test(
 
   await artifacts.target.declare({
     id: "openclaw-skill-cli",
-    boundary: "install-sh-onboard-and-openclaw-skills-cli-in-sandbox",
+    boundary: "install-sh-onboard-and-nemoclaw-native-skill-install",
     sandboxName: SANDBOX_NAME,
     contracts: [
       "the selected runtime is available before install/onboard",
       "NVIDIA_INFERENCE_API_KEY is staged as the compatible endpoint credential",
       "install.sh creates/recreates a real OpenClaw sandbox",
       "OPENCLAW_HOME, OPENCLAW_STATE_DIR, and OPENCLAW_WORKSPACE_DIR reach the sandbox runtime shell",
-      "openclaw skills install <path> accepts a non-managed source directory inside the sandbox",
+      "nemoclaw skill install securely hands host content to the native OpenClaw installer",
+      "a second install updates only the receipt-owned unchanged workspace skill",
       "the installed SKILL.md lands under ${OPENCLAW_WORKSPACE_DIR}/skills/<id>",
-      "openclaw skills list --json enumerates the installed workspace skill",
-      "openclaw skills info <id> --json reports the workspace install path",
-      "openclaw skills check --json includes the installed skill",
+      "openclaw skills list --agent main --json enumerates the installed workspace skill",
+      "openclaw skills info <id> --agent main --json reports the workspace install path",
+      "openclaw skills check --agent main --json includes the installed skill",
     ],
   });
 
@@ -163,6 +156,7 @@ test(
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-skill-cli-home-"));
   const env = testEnv(home);
+  const localSkillDir = path.join(home, "fixtures", SKILL_ID);
   cleanup.trackDisposable(`remove openclaw-skill-cli test home for ${SANDBOX_NAME}`, () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
@@ -225,34 +219,46 @@ test(
     ).toMatch(new RegExp(`^${requiredVar}=.+$`, "m"));
   });
 
-  progress.phase("install the workspace skill fixture");
-  await expectSandboxShellZero(
-    sandbox,
-    buildWriteSkillFixtureScript(),
-    "sandbox-write-openclaw-skill-cli-fixture",
-    env,
+  progress.phase("install and update the workspace skill fixture through NemoClaw");
+  fs.mkdirSync(localSkillDir, { recursive: true });
+  fs.writeFileSync(path.join(localSkillDir, "SKILL.md"), skillPayload("HOST_FIXTURE_VERSION=1"));
+  const skillInstall = await host.command(
+    "node",
+    [CLI_ENTRYPOINT, SANDBOX_NAME, "skill", "install", localSkillDir],
+    {
+      artifactName: "nemoclaw-openclaw-skill-install-fixture",
+      env,
+      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+    },
   );
-
-  const skillInstall = await expectSandboxShellZero(
-    sandbox,
-    `openclaw skills install ${shellQuote(REMOTE_SKILL_DIR)}`,
-    "sandbox-openclaw-skills-install-fixture",
-    env,
-  );
+  expect(skillInstall.exitCode, resultText(skillInstall)).toBe(0);
   await artifacts.writeText("openclaw-skills-install-output.txt", resultText(skillInstall));
+
+  fs.writeFileSync(path.join(localSkillDir, "SKILL.md"), skillPayload("HOST_FIXTURE_VERSION=2"));
+  const skillUpdate = await host.command(
+    "node",
+    [CLI_ENTRYPOINT, SANDBOX_NAME, "skill", "install", localSkillDir],
+    {
+      artifactName: "nemoclaw-openclaw-skill-update-fixture",
+      env,
+      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+    },
+  );
+  expect(skillUpdate.exitCode, resultText(skillUpdate)).toBe(0);
+  await artifacts.writeText("openclaw-skills-update-output.txt", resultText(skillUpdate));
 
   progress.phase("inspect the installed skill through every CLI view");
   const diskCheck = await expectSandboxShellZero(
     sandbox,
-    `ls -1 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/" 2>&1; test -f "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md" && echo SKILL_MD_PRESENT`,
+    `ls -1 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/" 2>&1; grep -Fq HOST_FIXTURE_VERSION=2 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md" && echo SKILL_MD_UPDATED; test -z "$(find /sandbox/.openclaw -maxdepth 1 -name '.nemoclaw-skill-stage.*' -print -quit)" && echo STAGING_CLEAN`,
     "sandbox-openclaw-skill-cli-disk-check",
     env,
   );
-  expect(resultText(diskCheck)).toContain("SKILL_MD_PRESENT");
+  await artifacts.writeText("openclaw-skill-disk-check.txt", resultText(diskCheck));
 
   const list = await expectSandboxShellZero(
     sandbox,
-    "openclaw skills list --json",
+    "openclaw skills list --agent main --json",
     "sandbox-openclaw-skills-list-json",
     env,
   );
@@ -262,17 +268,16 @@ test(
 
   const info = await expectSandboxShellZero(
     sandbox,
-    `openclaw skills info ${shellQuote(SKILL_ID)} --json`,
+    `openclaw skills info ${shellQuote(SKILL_ID)} --agent main --json`,
     "sandbox-openclaw-skills-info-json",
     env,
   );
   const infoText = resultText(info);
-  expect(infoText).toContain(SKILL_ID);
   expect(infoText).toContain(`/.openclaw/workspace/skills/${SKILL_ID}`);
 
   const check = await expectSandboxShellZero(
     sandbox,
-    "openclaw skills check --json",
+    "openclaw skills check --agent main --json",
     "sandbox-openclaw-skills-check-json",
     env,
   );

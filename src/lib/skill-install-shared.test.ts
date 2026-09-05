@@ -101,7 +101,6 @@ describe("fresh shared-agent skill install", () => {
         contentDigest: expected,
       });
       expect(paths.uploadDir).toBe("/sandbox/.deepagents/agent/skills/note-summarizer");
-      expect(paths.mirrorDir).toBeNull();
       expect(paths.uploadDirSharedWithAgent).toBe(true);
     } finally {
       rmSync(skillDir, { recursive: true, force: true });

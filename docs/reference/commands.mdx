@@ -2361,7 +2361,7 @@ $$nemoclaw my-assistant mcp remove github [--force]
 
 ### `$$nemoclaw <name> skill install <path>`
 
-Deploy a skill directory to a running sandbox. The command validates the `SKILL.md` frontmatter, which requires a `name` field. It uploads selected non-dot regular files while preserving their subdirectory structure. It then performs agent-specific post-install steps.
+Deploy a skill directory to a running sandbox. The command validates the `SKILL.md` frontmatter, which requires a `name` field. It snapshots selected non-dot regular files while preserving their subdirectory structure, then follows the selected agent's installation contract.
 
 ```bash
 $$nemoclaw my-assistant skill install ./my-skill/
@@ -2371,7 +2371,9 @@ The skill directory must contain a `SKILL.md` file with YAML frontmatter that in
 
 <AgentOnly variant="openclaw">
 
-OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, refer to [Install OpenClaw Plugins](../manage-sandboxes/install-openclaw-plugins). For OpenClaw, the command uploads the skill to the OpenClaw state directory and mirrors it into `$HOME/.openclaw/skills/<name>` when the agent home directory differs from the state directory. That mirror makes skills listed by `openclaw skills list` available at session startup. If mirror creation fails, NemoClaw prints a warning so you can reinstall or inspect the home directory permissions. OpenClaw caches skill content per session, so the command also refreshes the OpenClaw session index after every install and update to avoid stale `SKILL.md` data.
+OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, refer to [Install OpenClaw Plugins](../manage-sandboxes/install-openclaw-plugins). For a skill, NemoClaw creates an exact host snapshot, transfers it into a private staging directory, and invokes the pinned native OpenClaw workspace installer for the explicit `main` agent. OpenClaw owns publication into `/sandbox/.openclaw/workspace/skills/<name>`, source metadata, precedence, and activation. NemoClaw verifies the installed digest plus native `skills list`, `skills info`, and `skills check` results before reporting success.
+
+NemoClaw stores ownership evidence in protected host state bound to the exact live sandbox identity. It updates an existing workspace skill only when that evidence matches the current workspace digest; otherwise it refuses the collision without replacing the skill. If publication finishes but verification is interrupted, retry with the same local content so NemoClaw can reconcile the pending operation. Start a new OpenClaw session to load the installed or updated skill; the command does not edit `sessions.json`.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -2389,7 +2391,7 @@ Run `$$nemoclaw <name> skill install --help` to print usage for this subcommand.
 
 Files with names starting with `.` (dotfiles) are skipped and listed in the output. Files with unsafe path characters are rejected to prevent shell injection. Symlinks and other non-regular paths are rejected rather than followed or copied.
 
-For OpenClaw and Hermes, an existing sandbox skill is updated in place and chat history is preserved. Deep Agents supports only fresh-name installs because its active skill directory is shared with agent-authored content. Follow the agent-specific activation guidance above after installation.
+For OpenClaw, an existing workspace skill is updated only when protected provenance proves that NemoClaw installed the unchanged current content. Hermes updates its generic sandbox skill path in place. Chat history is preserved. Deep Agents supports only fresh-name installs because its active skill directory is shared with agent-authored content. Follow the agent-specific activation guidance above after installation.
 
 ### `$$nemoclaw <name> skill remove <skill>`
 
@@ -2397,7 +2399,7 @@ Remove an installed skill from a running sandbox by skill name when the selected
 
 <AgentOnly variant="openclaw">
 
-For OpenClaw, the command also removes the OpenClaw home-directory mirror when present and refreshes the OpenClaw session index.
+Automatic OpenClaw skill removal is unavailable in this capability slice because pinned OpenClaw 2026.7.1 has no public native skill removal command. The command refuses before changing workspace files. Use `$$nemoclaw <name> connect` to inspect `/sandbox/.openclaw/workspace/skills/<skill>`, and remove it manually only after confirming its provenance.
 
 </AgentOnly>
 <AgentOnly variant="hermes">

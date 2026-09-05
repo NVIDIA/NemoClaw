@@ -21,32 +21,6 @@ export interface SshResult {
 }
 
 /**
- * Check for a higher-precedence OpenClaw workspace skill with the same name.
- * NemoClaw never mutates this agent-owned path.
- */
-export function checkWorkspaceSkillCollision(
-  ctx: SshContext,
-  paths: SkillPaths,
-  opts: { sshExecImpl?: typeof sshExec } = {},
-): boolean | null {
-  if (!paths.workspaceSkillDir) return false;
-  const runSsh = opts.sshExecImpl ?? sshExec;
-  const probe = [
-    "const fs=require('node:fs');",
-    "try{fs.lstatSync(process.argv[1]);console.log('EXISTS');}",
-    "catch(error){if(error?.code==='ENOENT')console.log('ABSENT');else process.exit(1);}",
-  ].join("");
-  const result = runSsh(
-    ctx,
-    `node --eval ${shellQuote(probe)} ${shellQuote(paths.workspaceSkillDir)}`,
-  );
-  if (result === null || result.status !== 0) return null;
-  if (result.stdout === "EXISTS") return true;
-  if (result.stdout === "ABSENT") return false;
-  return null;
-}
-
-/**
  * Run a command on the sandbox via SSH with optional stdin content.
  * Uses the same SSH flags as executeSandboxCommand in sandbox-process-recovery-action.ts.
  */
@@ -91,7 +65,7 @@ export function sshExec(
 
 /**
  * Check whether a skill directory already exists on the sandbox at the upload
- * path or (for OpenClaw) the mirror path. Probing directories instead of only
+ * path. Probing directories instead of only
  * SKILL.md lets `skill remove` clean up partial uploads whose manifest write
  * failed after the directory was created.
  *
@@ -108,12 +82,11 @@ export function checkExisting(
   // Existence gate for `skill remove`. Shared agent destinations are probed
   // only for user-facing diagnostics; removeSkill() still refuses to mutate
   // them because their presence is not proof of NemoClaw ownership (#5753).
-  const checks = [`test -e ${shellQuote(paths.uploadDir)}`];
-  if (paths.mirrorDir) {
-    checks.push(`test -e "${paths.mirrorDir}"`);
-  }
   const runSsh = opts.sshExecImpl ?? sshExec;
-  const result = runSsh(ctx, `{ ${checks.join(" || ")}; } && echo EXISTS || echo ABSENT`);
+  const result = runSsh(
+    ctx,
+    `test -e ${shellQuote(paths.uploadDir)} && echo EXISTS || echo ABSENT`,
+  );
   if (result === null || result.status !== 0) {
     return null;
   }
@@ -132,9 +105,7 @@ export interface RemoveResult {
 
 /**
  * Remove a skill from the sandbox by name.
- * Deletes the immutable upload directory, the agent's skill-load mirror
- * directory (if applicable), and clears sessions.json so the agent
- * re-discovers the remaining skills on the next session.
+ * Deletes the generic agent upload directory.
  *
  * Only the named skill directory is deleted — other skills are untouched.
  */
@@ -145,6 +116,16 @@ export function removeSkill(
 ): RemoveResult {
   const messages: string[] = [];
   const runSsh = opts.sshExecImpl ?? sshExec;
+
+  if (paths.isOpenClaw) {
+    return {
+      success: false,
+      removedUploadDir: false,
+      removedMirrorDir: false,
+      clearedSessions: false,
+      messages: ["Error: automatic OpenClaw workspace skill removal is unavailable."],
+    };
+  }
 
   if (paths.uploadDirSharedWithAgent) {
     return {
@@ -158,7 +139,7 @@ export function removeSkill(
     };
   }
 
-  // 1. Remove the immutable upload directory (/sandbox/.openclaw/skills/<name>/)
+  // Remove the generic upload directory.
   const uploadDir = shellQuote(paths.uploadDir);
   const removeUpload = runSsh(ctx, `rm -rf ${uploadDir}`);
   const removedUploadDir = removeUpload !== null && removeUpload.status === 0;
@@ -166,64 +147,35 @@ export function removeSkill(
     messages.push(`Warning: failed to remove upload directory ${paths.uploadDir}`);
   }
 
-  // 2. Remove the agent's skill-load mirror (see AGENT_SKILL_MIRRORS); leaving
-  //    it behind keeps the removed skill loadable even though uploadDir is gone.
-  //    mirrorDir may contain $HOME which must expand on the remote shell, so we
-  //    use double quotes (not shellQuote). This is safe because skill names
-  //    are restricted to [A-Za-z0-9._-] by parseFrontmatter / the name
-  //    validation regex, so $HOME expansion is the only variable substitution.
-  let removedMirrorDir = false;
-  if (paths.mirrorDir) {
-    const removeMirror = runSsh(ctx, `rm -rf "${paths.mirrorDir}"`);
-    removedMirrorDir = removeMirror !== null && removeMirror.status === 0;
-    if (!removedMirrorDir) {
-      messages.push(`Warning: failed to remove mirror directory ${paths.mirrorDir}`);
-    }
-  }
-
-  // 3. Clear sessions.json so the agent re-discovers the remaining skills.
-  let clearedSessions = false;
-  if (paths.sessionFile) {
-    const clearResult = runSsh(ctx, `printf '{}' > ${shellQuote(paths.sessionFile)}`);
-    clearedSessions = clearResult !== null && clearResult.status === 0;
-    if (!clearedSessions) {
-      messages.push("Warning: failed to clear sessions (agent may need manual restart)");
-    }
-  }
-
-  if (!paths.mirrorDir && !paths.sessionFile) {
-    messages.push(
-      paths.reloadsSkillsOnSessionStart
-        ? "Start a new chat session for the removal to take effect; a gateway restart is not required."
-        : "Restart the agent gateway for the removal to take effect.",
-    );
-  }
+  messages.push(
+    paths.reloadsSkillsOnSessionStart
+      ? "Start a new chat session for the removal to take effect; a gateway restart is not required."
+      : "Restart the agent gateway for the removal to take effect.",
+  );
 
   return {
-    success: removedUploadDir && (!paths.mirrorDir || removedMirrorDir),
+    success: removedUploadDir,
     removedUploadDir,
-    removedMirrorDir,
-    clearedSessions,
+    removedMirrorDir: false,
+    clearedSessions: false,
     messages,
   };
 }
 
 /**
  * Verify the skill directory no longer exists on the sandbox.
- * For agents with a skill-load mirror, both the upload dir and the mirror dir
- * must be gone.
+ * OpenClaw and shared agent destinations have separate ownership contracts.
  */
 export function verifyRemove(
   ctx: SshContext,
   paths: SkillPaths,
   opts: { sshExecImpl?: typeof sshExec } = {},
 ): boolean {
-  if (paths.uploadDirSharedWithAgent) return false;
-  const checks = [`test ! -e ${shellQuote(paths.uploadDir)}`];
-  if (paths.mirrorDir) {
-    checks.push(`test ! -e "${paths.mirrorDir}"`);
-  }
+  if (paths.isOpenClaw || paths.uploadDirSharedWithAgent) return false;
   const runSsh = opts.sshExecImpl ?? sshExec;
-  const result = runSsh(ctx, `${checks.join(" && ")} && echo GONE || echo EXISTS`);
+  const result = runSsh(
+    ctx,
+    `test ! -e ${shellQuote(paths.uploadDir)} && echo GONE || echo EXISTS`,
+  );
   return result !== null && result.stdout === "GONE";
 }

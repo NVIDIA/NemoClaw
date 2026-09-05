@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   computeSkillContentDigest,
   installOpenClawSkill,
+  resolveOpenClawSkillProvenancePath,
   type SkillPaths,
   type SshContext,
   type SshResult,
@@ -18,13 +19,12 @@ import {
 
 const roots: string[] = [];
 const ctx: SshContext = { configFile: "/tmp/ssh-config", sandboxName: "alpha" };
+const sandboxIdentityFingerprint = "f".repeat(64);
 const paths: SkillPaths = {
   stateDir: "/sandbox/.openclaw",
-  uploadDir: "/sandbox/.openclaw/skills/demo-skill",
-  mirrorDir: "$HOME/.openclaw/skills/demo-skill",
+  uploadDir: "/sandbox/.openclaw/workspace/skills/demo-skill",
   workspaceSkillDir: "/sandbox/.openclaw/workspace/skills/demo-skill",
   uploadDirSharedWithAgent: false,
-  sessionFile: "/sandbox/.openclaw/agents/main/sessions/sessions.json",
   reloadsSkillsOnSessionStart: false,
   isOpenClaw: true,
 };
@@ -48,15 +48,14 @@ describe("OpenClaw native skill installation", () => {
       const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-root-"));
       const fakeBin = path.join(sandboxRoot, "bin");
       const workspaceSkillDir = path.join(sandboxRoot, "workspace", "skills", "demo-skill");
+      const provenanceStateDir = path.join(sandboxRoot, "host-state");
       const invocationLog = path.join(sandboxRoot, "openclaw.log");
       let checkState = "eligible";
       const executionPaths: SkillPaths = {
         ...paths,
         stateDir: sandboxRoot,
         uploadDir: path.join(sandboxRoot, "skills", "demo-skill"),
-        mirrorDir: null,
         workspaceSkillDir,
-        sessionFile: path.join(sandboxRoot, "agents", "main", "sessions", "sessions.json"),
       };
       roots.push(sandboxRoot);
       fs.mkdirSync(fakeBin);
@@ -126,31 +125,36 @@ esac
           };
         },
       );
+      const installOpts = {
+        provenanceStateDir,
+        sandboxIdentityFingerprint,
+        sshExecImpl: sshExec,
+      };
+      const provenancePath = resolveOpenClawSkillProvenancePath(
+        sandboxIdentityFingerprint,
+        "demo-skill",
+        provenanceStateDir,
+      );
 
       const firstDigest = computeSkillContentDigest(skill);
-      expect(
-        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", {
-          sshExecImpl: sshExec,
-        }),
-      ).toEqual({ success: true, uploaded: 1, contentDigest: firstDigest });
+      expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
+        success: true,
+        uploaded: 1,
+        contentDigest: firstDigest,
+      });
       expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toContain("# Demo");
-      expect(
-        fs.readFileSync(
-          path.join(sandboxRoot, ".nemoclaw", "skill-installs", "demo-skill.sha256"),
-          "utf8",
-        ),
-      ).toBe(`${firstDigest}\n`);
+      expect(fs.readFileSync(provenancePath, "utf8")).toContain(`"contentDigest":"${firstDigest}"`);
       expect(
         fs.readdirSync(sandboxRoot).filter((entry) => entry.startsWith(".nemoclaw-skill-stage.")),
       ).toEqual([]);
 
       fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: demo-skill\n---\n# Updated\n");
       const updatedDigest = computeSkillContentDigest(skill);
-      expect(
-        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", {
-          sshExecImpl: sshExec,
-        }),
-      ).toEqual({ success: true, uploaded: 1, contentDigest: updatedDigest });
+      expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
+        success: true,
+        uploaded: 1,
+        contentDigest: updatedDigest,
+      });
       expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toContain(
         "# Updated",
       );
@@ -160,36 +164,63 @@ esac
       ]);
 
       checkState = "blocked";
-      expect(
-        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", {
-          sshExecImpl: sshExec,
-        }),
-      ).toEqual({ success: false, uploaded: 0, reason: "verification_failed" });
+      expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
+        success: false,
+        uploaded: 0,
+        reason: "verification_failed",
+      });
       checkState = "eligible";
+      expect(JSON.parse(fs.readFileSync(provenancePath, "utf8"))).toMatchObject({
+        phase: "pending",
+        contentDigest: updatedDigest,
+        previousDigest: updatedDigest,
+      });
+      expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
+        success: true,
+        uploaded: 1,
+        contentDigest: updatedDigest,
+      });
+      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(3);
 
-      const receiptPath = path.join(
+      const installedContent = fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8");
+      fs.rmSync(provenancePath);
+      const forgedRemoteReceipt = path.join(
         sandboxRoot,
         ".nemoclaw",
         "skill-installs",
         "demo-skill.sha256",
       );
-      const installedContent = fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8");
-      fs.rmSync(receiptPath);
-      expect(
-        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", {
-          sshExecImpl: sshExec,
-        }),
-      ).toEqual({ success: false, uploaded: 0, reason: "destination_exists" });
+      fs.mkdirSync(path.dirname(forgedRemoteReceipt), { recursive: true });
+      fs.writeFileSync(forgedRemoteReceipt, `${updatedDigest}\n`, { mode: 0o600 });
+      expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
+        success: false,
+        uploaded: 0,
+        reason: "destination_exists",
+      });
       expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toBe(
         installedContent,
       );
+      expect(fs.existsSync(provenancePath)).toBe(false);
 
-      fs.writeFileSync(receiptPath, `${"0".repeat(64)}\n`, { mode: 0o600 });
-      expect(
-        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", {
-          sshExecImpl: sshExec,
-        }),
-      ).toEqual({ success: false, uploaded: 0, reason: "destination_exists" });
+      fs.writeFileSync(
+        provenancePath,
+        `${JSON.stringify({
+          schemaVersion: 1,
+          sandboxIdentityFingerprint,
+          sandboxName: "alpha",
+          skillName: "demo-skill",
+          workspaceSkillDir,
+          phase: "installed",
+          contentDigest: "0".repeat(64),
+          previousDigest: null,
+        })}\n`,
+        { mode: 0o600 },
+      );
+      expect(installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOpts)).toEqual({
+        success: false,
+        uploaded: 0,
+        reason: "destination_exists",
+      });
       expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toBe(
         installedContent,
       );
@@ -208,23 +239,22 @@ esac
       const realParent = path.join(container, "real");
       const linkedParent = path.join(container, "linked");
       const stateDir = path.join(realParent, "state");
+      const fakeBin = path.join(container, "bin");
+      const invocationLog = path.join(container, "openclaw.log");
       fs.mkdirSync(stateDir, { recursive: true });
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(
+        path.join(fakeBin, "openclaw"),
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$OPENCLAW_TEST_LOG"\nexit 99\n',
+        { mode: 0o755 },
+      );
       fs.symlinkSync(realParent, linkedParent);
       roots.push(container);
       const linkedPaths: SkillPaths = {
         ...paths,
         stateDir: path.join(linkedParent, "state"),
         uploadDir: path.join(linkedParent, "state", "skills", "demo-skill"),
-        mirrorDir: null,
         workspaceSkillDir: path.join(linkedParent, "state", "workspace", "skills", "demo-skill"),
-        sessionFile: path.join(
-          linkedParent,
-          "state",
-          "agents",
-          "main",
-          "sessions",
-          "sessions.json",
-        ),
       };
       const sshExec = vi.fn(
         (
@@ -234,6 +264,11 @@ esac
         ): SshResult => {
           const execution = spawnSync("bash", ["--noprofile", "--norc", "-c", command], {
             encoding: "utf8",
+            env: {
+              ...process.env,
+              OPENCLAW_TEST_LOG: invocationLog,
+              PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            },
             input: opts?.input,
             timeout: opts?.timeout,
           });
@@ -247,10 +282,13 @@ esac
 
       expect(
         installOpenClawSkill(ctx, skill, linkedPaths, "demo-skill", {
+          provenanceStateDir: path.join(container, "host-state"),
+          sandboxIdentityFingerprint,
           sshExecImpl: sshExec,
         }),
       ).toEqual({ success: false, uploaded: 0, reason: "remote_state_unknown" });
       expect(fs.readdirSync(stateDir)).toEqual([]);
+      expect(fs.existsSync(invocationLog)).toBe(false);
     },
   );
 
@@ -260,6 +298,10 @@ esac
     [4, "installer output\nVERIFY_FAILED\n", "verification_failed"],
   ] as const)("maps native failure %s to %s", (status, stdout, reason) => {
     const skill = makeSkill();
+    const provenanceStateDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-openclaw-provenance-"),
+    );
+    roots.push(provenanceStateDir);
     const sshExec = vi.fn(
       (
         _ctx: SshContext,
@@ -268,8 +310,12 @@ esac
       ): SshResult => ({ status, stdout, stderr: "" }),
     );
 
-    expect(installOpenClawSkill(ctx, skill, paths, "demo-skill", { sshExecImpl: sshExec })).toEqual(
-      { success: false, uploaded: 0, reason },
-    );
+    expect(
+      installOpenClawSkill(ctx, skill, paths, "demo-skill", {
+        provenanceStateDir,
+        sandboxIdentityFingerprint,
+        sshExecImpl: sshExec,
+      }),
+    ).toEqual({ success: false, uploaded: 0, reason });
   });
 });

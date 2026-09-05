@@ -64,10 +64,7 @@ function buildVerifySkillFixtureScript(): string {
   // Keep this readable as discrete clauses while emitting one atomic `sh -lc`
   // expression with consistent error propagation.
   const skillPaths = [
-    `/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md`,
-    `\${HOME:-/home/sandbox}/.openclaw/skills/${SKILL_ID}/SKILL.md`,
-    `/home/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md`,
-    `/home/openclaw/.openclaw/skills/${SKILL_ID}/SKILL.md`,
+    `/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md`,
   ];
   return [
     `token=${shellQuote(VERIFY_PHRASE)}`,
@@ -145,7 +142,7 @@ test(
         "the selected runtime is available before onboarding",
         "NVIDIA_INFERENCE_API_KEY is staged as the compatible endpoint credential",
         "nemoclaw onboard creates/recreates a real OpenClaw sandbox",
-        "skill-smoke-fixture is injected into sandbox and home skill roots",
+        "skill-smoke-fixture is injected into the OpenClaw workspace skill root",
         "openclaw agent reads SKILL.md and returns SKILL_SMOKE_VERIFY_K9X2",
         "provider/tool-call transport flakes only skip after the skill fixture is proven present",
       ],
@@ -310,8 +307,9 @@ test(
       timeoutMs: 120_000,
     });
     expect(addSkill.exitCode, resultText(addSkill)).toBe(0);
-    expect(addSkill.stdout).toContain(`QUERY_PATH=/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md`);
-    expect(addSkill.stdout).toContain("HOME_QUERY_PATH=");
+    expect(addSkill.stdout).toContain(
+      `QUERY_PATH=/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md`,
+    );
     expect(await verifySkillFixturePresent(sandbox, SANDBOX_NAME)).toBe(true);
 
     let lastAgentOutput = "";

@@ -9,7 +9,7 @@
 // generic refresh contract is defined in the manifest schema.
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,6 +21,8 @@ import { isObjectRecord } from "./core/json-types";
 import { validateSkillName } from "./skill-name";
 import type { SshContext, SshResult } from "./skill-remote";
 import { shellQuote, sshExec } from "./skill-remote";
+import { ensureConfigDir } from "./state/config-io";
+import { resolveNemoclawStateDir } from "./state/paths";
 
 export { validateSkillName } from "./skill-name";
 export {
@@ -101,9 +103,7 @@ export interface SkillPaths {
   stateDir: string;
   /** Upload target directory for the skill */
   uploadDir: string;
-  /** Directory the agent actually loads skills from, or null when it equals uploadDir */
-  mirrorDir: string | null;
-  /** Higher-precedence agent-owned skill path that NemoClaw must not mutate. */
+  /** OpenClaw-native workspace publication target, or null for other agents. */
   workspaceSkillDir: string | null;
   /**
    * Whether the agent's own tooling also writes into uploadDir. Shared
@@ -111,28 +111,11 @@ export interface SkillPaths {
    * content is not proof that NemoClaw owns it.
    */
   uploadDirSharedWithAgent: boolean;
-  /** OpenClaw-only: session index to clear, or null */
-  sessionFile: string | null;
   /** Whether a fresh agent session reloads skills without a gateway restart */
   reloadsSkillsOnSessionStart: boolean;
   /** Whether the agent is OpenClaw (drives refresh behavior) */
   isOpenClaw: boolean;
 }
-
-/**
- * Agents whose loader reads skills from somewhere other than `uploadDir`.
- *
- * NemoClaw uploads to `uploadDir`, which the agent manifest declares as durable
- * `state_dirs`, but the agent scans its own directory at session start. Where
- * those diverge, an upload without a mirror leaves the skill on disk and
- * unregistered — absent from the agent's skill list (#4819 for OpenClaw, #7634
- * for Deep Agents Code, whose user skill dir is `~/.deepagents/{agent}/skills`).
- *
- * Remove an entry when its agent starts loading skills from `uploadDir`.
- */
-const AGENT_SKILL_MIRRORS: Record<string, (dir: string, skillName: string) => string> = {
-  openclaw: (_dir, skillName) => `$HOME/.openclaw/skills/${skillName}`,
-};
 
 /**
  * Agent-owned skill directories that are also the loader's canonical source.
@@ -160,15 +143,14 @@ export function resolveSkillPaths(
   const dir = agent ? agent.configPaths.dir : "/sandbox/.openclaw";
   const agentName = agent ? agent.name : "openclaw";
   const sharedDir = AGENT_SHARED_SKILL_DIRS[agentName];
-  const mirror = AGENT_SKILL_MIRRORS[agentName];
+  const workspaceSkillDir = isOpenClaw ? `${dir}/workspace/skills/${skillName}` : null;
 
   return {
     stateDir: dir,
-    uploadDir: sharedDir ? sharedDir(dir, skillName) : `${dir}/skills/${skillName}`,
-    mirrorDir: mirror ? mirror(dir, skillName) : null,
-    workspaceSkillDir: isOpenClaw ? `${dir}/workspace/skills/${skillName}` : null,
+    uploadDir:
+      workspaceSkillDir ?? (sharedDir ? sharedDir(dir, skillName) : `${dir}/skills/${skillName}`),
+    workspaceSkillDir,
     uploadDirSharedWithAgent: Boolean(sharedDir),
-    sessionFile: isOpenClaw ? `${dir}/agents/main/sessions/sessions.json` : null,
     reloadsSkillsOnSessionStart: agentName === "hermes",
     isOpenClaw,
   };
@@ -527,9 +509,166 @@ export interface FreshSharedSkillInstallResult {
   reason?:
     | "destination_exists"
     | "native_capability_missing"
+    | "provenance_failed"
     | "remote_state_unknown"
     | "snapshot_failed"
     | "verification_failed";
+}
+
+const OPENCLAW_PROVENANCE_MAX_BYTES = 4096;
+
+interface OpenClawSkillProvenance {
+  readonly schemaVersion: 1;
+  readonly sandboxIdentityFingerprint: string;
+  readonly sandboxName: string;
+  readonly skillName: string;
+  readonly workspaceSkillDir: string;
+  readonly phase: "installed" | "pending";
+  readonly contentDigest: string;
+  readonly previousDigest: string | null;
+}
+
+/** Resolve the host-protected ownership receipt for one exact OpenClaw sandbox identity. */
+export function resolveOpenClawSkillProvenancePath(
+  sandboxIdentityFingerprint: string,
+  skillName: string,
+  stateDir = resolveNemoclawStateDir(),
+): string {
+  if (!SHA256_RE.test(sandboxIdentityFingerprint) || !validateSkillName(skillName)) {
+    throw new Error("OpenClaw skill provenance identity is invalid");
+  }
+  return path.join(
+    stateDir,
+    "openclaw-skill-installs",
+    sandboxIdentityFingerprint,
+    `${skillName}.json`,
+  );
+}
+
+/** Validate an ownership receipt against its exact host and sandbox identity. */
+function isOpenClawSkillProvenance(
+  value: unknown,
+  expected: Omit<OpenClawSkillProvenance, "contentDigest" | "phase" | "previousDigest">,
+): value is OpenClawSkillProvenance {
+  if (!isObjectRecord(value)) return false;
+  return (
+    value.schemaVersion === 1 &&
+    value.sandboxIdentityFingerprint === expected.sandboxIdentityFingerprint &&
+    value.sandboxName === expected.sandboxName &&
+    value.skillName === expected.skillName &&
+    value.workspaceSkillDir === expected.workspaceSkillDir &&
+    (value.phase === "installed" || value.phase === "pending") &&
+    typeof value.contentDigest === "string" &&
+    SHA256_RE.test(value.contentDigest) &&
+    (value.previousDigest === null ||
+      (typeof value.previousDigest === "string" && SHA256_RE.test(value.previousDigest))) &&
+    (value.phase !== "installed" || value.previousDigest === null)
+  );
+}
+
+/** Read a bounded private ownership receipt without following its final path. */
+function readOpenClawSkillProvenance(
+  receiptPath: string,
+  expected: Omit<OpenClawSkillProvenance, "contentDigest" | "phase" | "previousDigest">,
+): OpenClawSkillProvenance | null {
+  ensureConfigDir(path.dirname(receiptPath));
+  let observed: fs.Stats;
+  try {
+    observed = fs.lstatSync(receiptPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  if (!observed.isFile() || observed.isSymbolicLink() || (observed.mode & 0o077) !== 0) {
+    throw new Error("OpenClaw skill provenance is not a private regular file");
+  }
+  if (typeof fs.constants.O_NOFOLLOW !== "number") {
+    throw new Error("OpenClaw skill provenance requires O_NOFOLLOW support");
+  }
+  const descriptor = fs.openSync(
+    receiptPath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+  );
+  try {
+    const pinned = fs.fstatSync(descriptor);
+    if (
+      !pinned.isFile() ||
+      pinned.dev !== observed.dev ||
+      pinned.ino !== observed.ino ||
+      pinned.size > OPENCLAW_PROVENANCE_MAX_BYTES
+    ) {
+      throw new Error("OpenClaw skill provenance changed during inspection");
+    }
+    const parsed: unknown = JSON.parse(fs.readFileSync(descriptor, "utf8"));
+    if (!isOpenClawSkillProvenance(parsed, expected)) {
+      throw new Error("OpenClaw skill provenance failed validation");
+    }
+    return parsed;
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+/** Flush a directory entry update before reporting durable provenance. */
+function syncDirectory(dirPath: string): void {
+  const descriptor = fs.openSync(dirPath, fs.constants.O_RDONLY);
+  try {
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+/** Atomically publish one private host ownership receipt. */
+function writeOpenClawSkillProvenance(receiptPath: string, receipt: OpenClawSkillProvenance): void {
+  const receiptDir = path.dirname(receiptPath);
+  ensureConfigDir(receiptDir);
+  if (typeof fs.constants.O_NOFOLLOW !== "number") {
+    throw new Error("OpenClaw skill provenance requires O_NOFOLLOW support");
+  }
+  const temporaryPath = path.join(
+    receiptDir,
+    `.${path.basename(receiptPath)}.${String(process.pid)}.${randomBytes(8).toString("hex")}.tmp`,
+  );
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(
+      temporaryPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.writeFileSync(descriptor, `${JSON.stringify(receipt)}\n`, "utf8");
+    fs.fchmodSync(descriptor, 0o600);
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    fs.renameSync(temporaryPath, receiptPath);
+    syncDirectory(receiptDir);
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    fs.rmSync(temporaryPath, { force: true });
+  }
+}
+
+/** Restore the pre-attempt receipt after a proven non-mutating remote refusal. */
+function restoreOpenClawSkillProvenance(
+  receiptPath: string,
+  receipt: OpenClawSkillProvenance | null,
+): void {
+  if (receipt) {
+    writeOpenClawSkillProvenance(receiptPath, receipt);
+    return;
+  }
+  try {
+    const observed = fs.lstatSync(receiptPath);
+    if (!observed.isFile() || observed.isSymbolicLink()) {
+      throw new Error("Refusing to remove invalid OpenClaw skill provenance");
+    }
+    fs.unlinkSync(receiptPath);
+    syncDirectory(path.dirname(receiptPath));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
 }
 
 /**
@@ -547,7 +686,7 @@ export function installFreshSharedSkill(
     sshExecImpl?: typeof sshExec;
   } = {},
 ): FreshSharedSkillInstallResult {
-  if (!paths.uploadDirSharedWithAgent || paths.mirrorDir) {
+  if (!paths.uploadDirSharedWithAgent) {
     return { success: false, uploaded: 0, reason: "remote_state_unknown" };
   }
   let expectedRootIdentity = opts.expectedRootIdentity;
@@ -610,13 +749,12 @@ function buildOpenClawNativeInstallScript(
   paths: SkillPaths,
   skillName: string,
   expectedDigest: string,
+  previousDigest: string | null,
+  allowReconciliation: boolean,
 ): string {
   if (!paths.workspaceSkillDir || !paths.isOpenClaw) {
     throw new Error("OpenClaw native install requires a workspace skill destination");
   }
-  const receiptBase = `${paths.stateDir}/.nemoclaw`;
-  const receiptDir = `${paths.stateDir}/.nemoclaw/skill-installs`;
-  const receipt = `${receiptDir}/${skillName}.sha256`;
   const verifyNativeJson = [
     'const fs=require("node:fs");',
     "const [listPath,infoPath,checkPath,skill,target]=process.argv.slice(1);",
@@ -634,17 +772,14 @@ function buildOpenClawNativeInstallScript(
     "umask 077",
     `root=${shellQuote(paths.stateDir)}`,
     `target=${shellQuote(paths.workspaceSkillDir)}`,
-    `receipt_base=${shellQuote(receiptBase)}`,
-    `receipt_dir=${shellQuote(receiptDir)}`,
-    `receipt=${shellQuote(receipt)}`,
     `skill=${shellQuote(skillName)}`,
     `expected=${shellQuote(expectedDigest)}`,
+    `previous=${shellQuote(previousDigest ?? "")}`,
+    `reconcile=${allowReconciliation ? "1" : "0"}`,
     'exists() { [ -e "$1" ] || [ -L "$1" ]; }',
     'safe_tree() { [ -d "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -mindepth 1 ! -type d ! -type f -print -quit)" ]; }',
     'digest_tree() { tree="$1"; manifest="$2"; find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort | grep -Fxv ".openclaw/source-origin.json" > "$manifest.files"; : > "$manifest"; while IFS= read -r rel; do if [ -n "$(find "$tree/$rel" -type f -perm /111 -print -quit)" ]; then mode=755; else mode=644; fi; hash="$(sha256sum "$tree/$rel" | cut -d " " -f 1)"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$manifest"; done < "$manifest.files"; sha256sum "$manifest" | cut -d " " -f 1; }',
     '[ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]',
-    'if exists "$receipt_base"; then [ -d "$receipt_base" ] && [ ! -L "$receipt_base" ] && [ "$(realpath -e -- "$receipt_base")" = "$receipt_base" ]; fi',
-    'if exists "$receipt_dir"; then [ -d "$receipt_dir" ] && [ ! -L "$receipt_dir" ] && [ "$(realpath -e -- "$receipt_dir")" = "$receipt_dir" ]; fi',
     'stage="$(mktemp -d "$root/.nemoclaw-skill-stage.XXXXXX")"',
     'chmod 700 "$stage"',
     'cleanup() { rm -rf -- "$stage"; }',
@@ -661,9 +796,9 @@ function buildOpenClawNativeInstallScript(
     'help="$(openclaw skills install --help 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }',
     'printf "%s" "$help" | grep -q -- "--agent" || { echo CAPABILITY_MISSING; exit 3; }',
     'printf "%s" "$help" | grep -q -- "--force" || { echo CAPABILITY_MISSING; exit 3; }',
-    'force=""',
-    'if exists "$target"; then safe_tree "$target" || { echo COLLISION; exit 2; }; [ -f "$receipt" ] && [ ! -L "$receipt" ] || { echo COLLISION; exit 2; }; previous="$(cat "$receipt")"; current="$(digest_tree "$target" "$stage/current.manifest")"; [ "$previous" = "$current" ] || { echo COLLISION; exit 2; }; force="--force"; fi',
-    'if [ -n "$force" ]; then openclaw skills install "$payload" --agent main --force; else openclaw skills install "$payload" --agent main; fi',
+    'action="install"',
+    'if exists "$target"; then safe_tree "$target" || { echo COLLISION; exit 2; }; current="$(digest_tree "$target" "$stage/current.manifest")"; if [ "$reconcile" = 1 ] && [ "$current" = "$expected" ]; then action="reconcile"; elif [ -n "$previous" ] && [ "$current" = "$previous" ]; then action="update"; else echo COLLISION; exit 2; fi; fi',
+    'if [ "$action" = update ]; then openclaw skills install "$payload" --agent main --force; elif [ "$action" = install ]; then openclaw skills install "$payload" --agent main; fi',
     'openclaw skills list --agent main --json > "$stage/list.json"',
     'openclaw skills info "$skill" --agent main --json > "$stage/info.json"',
     'openclaw skills check --agent main --json > "$stage/check.json"',
@@ -671,16 +806,7 @@ function buildOpenClawNativeInstallScript(
     'safe_tree "$target" || { echo VERIFY_FAILED; exit 4; }',
     'installed="$(digest_tree "$target" "$stage/installed.manifest")"',
     '[ "$installed" = "$expected" ] || { echo VERIFY_FAILED; exit 4; }',
-    'if ! exists "$receipt_base"; then mkdir -- "$receipt_base"; fi',
-    '[ -d "$receipt_base" ] && [ ! -L "$receipt_base" ] && [ "$(realpath -e -- "$receipt_base")" = "$receipt_base" ]',
-    'chmod 700 "$receipt_base"',
-    'if ! exists "$receipt_dir"; then mkdir -- "$receipt_dir"; fi',
-    '[ -d "$receipt_dir" ] && [ ! -L "$receipt_dir" ] && [ "$(realpath -e -- "$receipt_dir")" = "$receipt_dir" ]',
-    'chmod 700 "$receipt_dir"',
-    'printf "%s\\n" "$installed" > "$stage/receipt"',
-    'chmod 600 "$stage/receipt"',
-    'mv -f -- "$stage/receipt" "$receipt"',
-    'if [ -n "$force" ]; then printf "UPDATED %s\\n" "$installed"; else printf "INSTALLED %s\\n" "$installed"; fi',
+    'if [ "$action" = update ]; then printf "UPDATED %s\\n" "$installed"; elif [ "$action" = reconcile ]; then printf "RECONCILED %s\\n" "$installed"; else printf "INSTALLED %s\\n" "$installed"; fi',
   ].join("; ");
 }
 
@@ -697,6 +823,8 @@ export function installOpenClawSkill(
     beforeSnapshotFileRead?: (relativePath: string) => void;
     beforeSnapshotRootRead?: () => void;
     expectedRootIdentity?: SkillRootIdentity;
+    provenanceStateDir?: string;
+    sandboxIdentityFingerprint?: string;
     sshExecImpl?: typeof sshExec;
   } = {},
 ): FreshSharedSkillInstallResult {
@@ -727,22 +855,89 @@ export function installOpenClawSkill(
   if (!snapshot || snapshot.skillName !== skillName || !SHA256_RE.test(snapshot.contentDigest)) {
     return { success: false, uploaded: 0, reason: "snapshot_failed" };
   }
+  const sandboxIdentityFingerprint = opts.sandboxIdentityFingerprint ?? "";
+  if (!SHA256_RE.test(sandboxIdentityFingerprint) || !paths.workspaceSkillDir) {
+    return { success: false, uploaded: 0, reason: "provenance_failed" };
+  }
+  const receiptIdentity = {
+    schemaVersion: 1 as const,
+    sandboxIdentityFingerprint,
+    sandboxName: ctx.sandboxName,
+    skillName,
+    workspaceSkillDir: paths.workspaceSkillDir,
+  };
+  let receiptPath: string;
+  let priorReceipt: OpenClawSkillProvenance | null;
+  try {
+    receiptPath = resolveOpenClawSkillProvenancePath(
+      sandboxIdentityFingerprint,
+      skillName,
+      opts.provenanceStateDir,
+    );
+    priorReceipt = readOpenClawSkillProvenance(receiptPath, receiptIdentity);
+    if (
+      priorReceipt?.phase === "pending" &&
+      priorReceipt.contentDigest !== snapshot.contentDigest
+    ) {
+      return { success: false, uploaded: 0, reason: "provenance_failed" };
+    }
+    writeOpenClawSkillProvenance(receiptPath, {
+      ...receiptIdentity,
+      phase: "pending",
+      contentDigest: snapshot.contentDigest,
+      previousDigest:
+        priorReceipt?.phase === "installed"
+          ? priorReceipt.contentDigest
+          : (priorReceipt?.previousDigest ?? null),
+    });
+  } catch {
+    return { success: false, uploaded: 0, reason: "provenance_failed" };
+  }
   const result = (opts.sshExecImpl ?? sshExec)(
     ctx,
-    buildOpenClawNativeInstallScript(paths, skillName, snapshot.contentDigest),
+    buildOpenClawNativeInstallScript(
+      paths,
+      skillName,
+      snapshot.contentDigest,
+      priorReceipt?.phase === "installed"
+        ? priorReceipt.contentDigest
+        : (priorReceipt?.previousDigest ?? null),
+      priorReceipt?.phase === "pending",
+    ),
     { input: snapshot.archive, timeout: 120_000 },
   );
   const stdout = result?.stdout.trim() ?? "";
   const success =
     result?.status === 0 &&
     (stdout.endsWith(`INSTALLED ${snapshot.contentDigest}`) ||
-      stdout.endsWith(`UPDATED ${snapshot.contentDigest}`));
+      stdout.endsWith(`UPDATED ${snapshot.contentDigest}`) ||
+      stdout.endsWith(`RECONCILED ${snapshot.contentDigest}`));
   if (success) {
+    try {
+      writeOpenClawSkillProvenance(receiptPath, {
+        ...receiptIdentity,
+        phase: "installed",
+        contentDigest: snapshot.contentDigest,
+        previousDigest: null,
+      });
+    } catch {
+      return { success: false, uploaded: 0, reason: "provenance_failed" };
+    }
     return {
       success: true,
       uploaded: snapshot.files.length,
       contentDigest: snapshot.contentDigest,
     };
+  }
+  if (
+    (result?.status === 2 && stdout.endsWith("COLLISION")) ||
+    (result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING"))
+  ) {
+    try {
+      restoreOpenClawSkillProvenance(receiptPath, priorReceipt);
+    } catch {
+      return { success: false, uploaded: 0, reason: "provenance_failed" };
+    }
   }
   return {
     success: false,
@@ -758,89 +953,33 @@ export function installOpenClawSkill(
   };
 }
 
-/**
- * Run post-install steps: skill-load mirror for every agent that needs one,
- * session refresh for OpenClaw, and agent-specific activation guidance.
- */
+/** Return activation guidance after a generic agent skill upload. */
 export function postInstall(
-  ctx: SshContext,
+  _ctx: SshContext,
   paths: SkillPaths,
   _localSkillDir: string,
-  opts: {
+  _opts: {
     skipRefresh?: boolean;
     sshExecImpl?: typeof sshExec;
   } = {},
 ): { success: boolean; messages: string[] } {
-  const messages: string[] = [];
-  const runSsh = opts.sshExecImpl ?? sshExec;
-
-  // Copy the skill into the directory the agent's loader actually reads; see
-  // AGENT_SKILL_MIRRORS for which agents need this and why. Without it the
-  // upload never registers as a skill. `skill remove` deletes the mirror, so
-  // install must create it to stay symmetric. The copy is skipped when both
-  // paths resolve to the same directory, so it is a no-op for agents whose
-  // loader reads uploadDir directly.
-  if (paths.mirrorDir) {
-    const src = shellQuote(paths.uploadDir);
-    // mirrorDir may contain $HOME, which must expand on the remote shell, so we
-    // use double quotes (not shellQuote). Safe because skill names are
-    // restricted to [A-Za-z0-9._-] by parseFrontmatter / the name regex.
-    const dst = `"${paths.mirrorDir}"`;
-    const mirrorParent = `"${paths.mirrorDir.slice(0, paths.mirrorDir.lastIndexOf("/"))}"`;
-    const mirrorResult = runSsh(
-      ctx,
-      `[ ${src} -ef ${dst} ] || { mkdir -p ${mirrorParent} && rm -rf ${dst} && cp -a ${src} ${dst}; }`,
-    );
-    if (!mirrorResult || mirrorResult.status !== 0) {
-      messages.push(
-        `Warning: failed to mirror skill into ${paths.mirrorDir} (agent may not load it)`,
-      );
-    }
-  }
-
-  // Clear sessions.json so OpenClaw re-discovers skills on the next
-  // session even after an in-place skill update.
-  if (paths.sessionFile && !opts.skipRefresh) {
-    const refreshResult = runSsh(ctx, `printf '{}' > ${shellQuote(paths.sessionFile)}`);
-    if (!refreshResult || refreshResult.status !== 0) {
-      messages.push("Warning: failed to clear sessions (agent may need manual restart)");
-    }
-  }
-
-  if (!paths.mirrorDir && !paths.sessionFile) {
-    messages.push(
+  return {
+    success: true,
+    messages: [
       paths.reloadsSkillsOnSessionStart
         ? "Start a new chat session to load the skill; a gateway restart is not required."
         : "Restart the agent gateway to pick up the new skill.",
-    );
-  }
-
-  return { success: true, messages };
+    ],
+  };
 }
 
-/**
- * Verify the SKILL.md file exists on the sandbox.
- *
- * When the agent has a mirror directory it must also exist: that is the path
- * the agent loads skills from at session start (#4819 for OpenClaw, #7634 for
- * Deep Agents Code), so a successful upload whose mirror copy failed must NOT
- * verify as installed — otherwise the CLI reports success while the skill stays
- * invisible to the agent. This mirrors verifyRemove(), which already checks
- * both paths.
- */
+/** Verify the SKILL.md file exists at the generic agent upload destination. */
 export function verifyInstall(
   ctx: SshContext,
   paths: SkillPaths,
   opts: { sshExecImpl?: typeof sshExec } = {},
 ): boolean {
-  const checks = [`test -f ${shellQuote(`${paths.uploadDir}/SKILL.md`)}`];
-  if (paths.mirrorDir) {
-    // mirrorDir may contain $HOME, which must expand on the remote shell, so we
-    // use double quotes (not shellQuote) — safe because skill names are
-    // restricted to [A-Za-z0-9._-].
-    checks.push(`test -f "${paths.mirrorDir}/SKILL.md"`);
-  }
   const runSsh = opts.sshExecImpl ?? sshExec;
-  const result = runSsh(ctx, `${checks.join(" && ")} && echo EXISTS`);
+  const result = runSsh(ctx, `test -f ${shellQuote(`${paths.uploadDir}/SKILL.md`)} && echo EXISTS`);
   return result !== null && result.stdout === "EXISTS";
 }

@@ -7,8 +7,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const captureSandboxSshConfig = vi.hoisted(() => vi.fn());
+const inspectOpenShellSandboxIdentityFingerprint = vi.hoisted(() => vi.fn());
 const getSessionAgent = vi.hoisted(() => vi.fn());
 const ensureLiveSandboxOrExit = vi.hoisted(() => vi.fn());
+const getSandboxTargetGatewayName = vi.hoisted(() => vi.fn());
 const withSandboxMutationLock = vi.hoisted(() =>
   vi.fn(async (_sandboxName: string, operation: () => unknown) => await operation()),
 );
@@ -31,6 +33,10 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   captureSandboxSshConfig,
 }));
 
+vi.mock("../../adapters/openshell/sandbox-identity-cli", () => ({
+  inspectOpenShellSandboxIdentityFingerprint,
+}));
+
 vi.mock("../../agent/runtime", () => ({
   getSessionAgent,
 }));
@@ -45,15 +51,17 @@ vi.mock("./gateway-state", () => ({
   ensureLiveSandboxOrExit,
 }));
 
+vi.mock("./gateway-target", () => ({
+  getSandboxTargetGatewayName,
+}));
+
 import { installSandboxSkill, removeSandboxSkill } from "./skill-install";
 
 const paths = {
   stateDir: "/sandbox/.openclaw",
-  uploadDir: "/sandbox/.openclaw/skills/demo-skill",
-  mirrorDir: "$HOME/.openclaw/skills/demo-skill",
+  uploadDir: "/sandbox/.openclaw/workspace/skills/demo-skill",
   workspaceSkillDir: "/sandbox/.openclaw/workspace/skills/demo-skill",
   uploadDirSharedWithAgent: false,
-  sessionFile: "/sandbox/.openclaw/agents/main/sessions/sessions.json",
   reloadsSkillsOnSessionStart: false,
   isOpenClaw: true,
 };
@@ -63,10 +71,8 @@ const genericAgent = { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } 
 const genericPaths = {
   stateDir: "/sandbox/.hermes",
   uploadDir: "/sandbox/.hermes/skills/demo-skill",
-  mirrorDir: null,
   workspaceSkillDir: null,
   uploadDirSharedWithAgent: false,
-  sessionFile: null,
   reloadsSkillsOnSessionStart: true,
   isOpenClaw: false,
 };
@@ -77,10 +83,8 @@ const deepAgent = {
 const sharedPaths = {
   stateDir: "/sandbox/.deepagents",
   uploadDir: "/sandbox/.deepagents/agent/skills/demo-skill",
-  mirrorDir: null,
   workspaceSkillDir: null,
   uploadDirSharedWithAgent: true,
-  sessionFile: null,
   reloadsSkillsOnSessionStart: false,
   isOpenClaw: false,
 };
@@ -112,7 +116,9 @@ describe("sandbox skill action orchestration", () => {
     vi.clearAllMocks();
 
     captureSandboxSshConfig.mockReturnValue({ status: 0, output: "Host openshell-alpha\n" });
+    inspectOpenShellSandboxIdentityFingerprint.mockReturnValue("f".repeat(64));
     ensureLiveSandboxOrExit.mockResolvedValue(undefined);
+    getSandboxTargetGatewayName.mockReturnValue("nemoclaw");
     getSessionAgent.mockReturnValue(genericAgent);
     skillInstall.validateSkillName.mockReturnValue(true);
     skillInstall.resolveSkillPaths.mockReturnValue(genericPaths);
@@ -404,13 +410,44 @@ describe("sandbox skill action orchestration", () => {
       skillDir,
       paths,
       "demo-skill",
-      expect.objectContaining({ expectedRootIdentity: expect.any(Object) }),
+      expect.objectContaining({
+        expectedRootIdentity: expect.any(Object),
+        sandboxIdentityFingerprint: "f".repeat(64),
+      }),
     );
+    expect(inspectOpenShellSandboxIdentityFingerprint).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      timeoutMs: expect.any(Number),
+    });
     expect(log).toHaveBeenCalledWith(expect.stringContaining("installed through OpenClaw"));
     expect(process.exitCode).toBeUndefined();
     expect(skillInstall.checkExisting).not.toHaveBeenCalled();
     expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
     expect(skillInstall.postInstall).not.toHaveBeenCalled();
+  });
+
+  it("refuses OpenClaw installation when the exact sandbox identity is unavailable", async () => {
+    const skillDir = makeSkillDir();
+    getSessionAgent.mockReturnValue(agent);
+    skillInstall.resolveSkillPaths.mockReturnValue(paths);
+    inspectOpenShellSandboxIdentityFingerprint.mockImplementationOnce(() => {
+      throw new Error("identity unavailable");
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await installSandboxSkill("alpha", { command: "install", path: skillDir });
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      "  Failed to bind the OpenClaw skill install to the exact live sandbox identity.",
+    );
+    expect(withSandboxMutationLock).not.toHaveBeenCalled();
+    expect(skillInstall.installOpenClawSkill).not.toHaveBeenCalled();
   });
 
   it("fails closed when the pinned OpenClaw installer capability is unavailable", async () => {
