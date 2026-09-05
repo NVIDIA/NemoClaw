@@ -1,11 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createServer, type AddressInfo } from "node:net";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
   buildForwardServiceArgs,
+  getForwardListenerOwnership,
   launchForwardService,
+  parseForwardInstanceIdentity,
   type ForwardServiceTarget,
 } from "./forward-service";
 
@@ -239,8 +243,41 @@ describe("OpenShell forward service", () => {
     },
   );
 
+  it.runIf(process.platform === "linux")(
+    "proves listener ownership from Linux procfs without lsof (#11084)",
+    async () => {
+      const server = createServer();
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      try {
+        const address = server.address() as AddressInfo;
+        expect(getForwardListenerOwnership(process.pid, address.port)).toBe(true);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
+
+  it("distinguishes same-second POSIX processes by their launch token (#11084)", () => {
+    const first = "11111111-1111-4111-8111-111111111111";
+    const second = "22222222-2222-4222-8222-222222222222";
+
+    expect(
+      parseForwardInstanceIdentity(
+        `openshell ${"lstart=same ".repeat(2)}NEMOCLAW_FORWARD_INSTANCE_ID=${first}`,
+      ),
+    ).toBe(`${process.platform}:${first}`);
+    expect(
+      parseForwardInstanceIdentity(
+        `openshell ${"lstart=same ".repeat(2)}NEMOCLAW_FORWARD_INSTANCE_ID=${second}`,
+      ),
+    ).toBe(`${process.platform}:${second}`);
+  });
+
   it.runIf(process.platform === "darwin")(
-    "stops and retries a spawned process using its macOS start time (#11084)",
+    "stops and retries a spawned process after macOS identity verification (#11084)",
     () => {
       let running = true;
       let spawnCount = 0;
@@ -254,6 +291,7 @@ describe("OpenShell forward service", () => {
       });
 
       launchForwardService(target, {
+        getProcessIdentity: stableProcessIdentity,
         isListenerOwned: () => true,
         isProcessRunning: () => running,
         isReachable: () => spawnCount === 2,

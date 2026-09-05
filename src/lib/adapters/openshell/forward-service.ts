@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -14,6 +15,7 @@ const START_RETRY_DELAY_MS = 1_000;
 const START_ATTEMPTS = 2;
 const STOP_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
+const FORWARD_INSTANCE_ENV = "NEMOCLAW_FORWARD_INSTANCE_ID";
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
 
 type ForwardServiceChild = {
@@ -64,25 +66,96 @@ function readLinuxProcessStat(pid: number): string[] | null | undefined {
   }
 }
 
+export function parseForwardInstanceIdentity(
+  output: string,
+  platform = process.platform,
+): string | undefined {
+  const match = new RegExp(
+    `(?:^|\\s)${FORWARD_INSTANCE_ENV}=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\\s|$)`,
+    "iu",
+  ).exec(output);
+  return match?.[1] ? `${platform}:${match[1].toLowerCase()}` : undefined;
+}
+
 function getProcessIdentity(pid: number): string | null | undefined {
   const stat = readLinuxProcessStat(pid);
   const startTime = stat?.[19];
   if (startTime && /^\d+$/u.test(startTime)) return `linux:${startTime}`;
   if (stat === null) return null;
   if (process.platform === "linux") return undefined;
-  const result = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+  const result = spawnSync("ps", ["eww", "-p", String(pid), "-o", "command="], {
     encoding: "utf8",
     env: buildOpenShellSubprocessEnv(process.env),
     stdio: ["ignore", "pipe", "ignore"],
     timeout: 1_000,
   });
   if (result.error) return undefined;
-  const startedAt = result.status === 0 ? result.stdout.trim() : "";
-  if (startedAt) return `${process.platform}:${startedAt}`;
+  const identity = result.status === 0 ? parseForwardInstanceIdentity(result.stdout) : undefined;
+  if (identity) return identity;
   return result.status === 1 ? null : undefined;
 }
 
-function isListenerOwned(pid: number, port: number): boolean | null {
+function readLinuxListeningSocketInodes(port: number): Set<string> | null {
+  const expectedPort = port.toString(16).toUpperCase().padStart(4, "0");
+  const inodes = new Set<string>();
+  let readTable = false;
+  for (const tablePath of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    let table: string;
+    try {
+      table = fs.readFileSync(tablePath, "utf8");
+      readTable = true;
+    } catch (error) {
+      const code =
+        typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+      if (code === "ENOENT") continue;
+      return null;
+    }
+    for (const line of table.split(/\r?\n/u).slice(1)) {
+      const fields = line.trim().split(/\s+/u);
+      const localAddress = fields[1];
+      const state = fields[3];
+      const inode = fields[9];
+      if (
+        localAddress?.endsWith(`:${expectedPort}`) &&
+        state === "0A" &&
+        inode !== undefined &&
+        /^\d+$/u.test(inode)
+      ) {
+        inodes.add(inode);
+      }
+    }
+  }
+  return readTable ? inodes : null;
+}
+
+function isLinuxListenerOwned(pid: number, port: number): boolean | null {
+  const listenerInodes = readLinuxListeningSocketInodes(port);
+  if (!listenerInodes) return null;
+  let descriptors: string[];
+  try {
+    descriptors = fs.readdirSync(`/proc/${String(pid)}/fd`);
+  } catch (error) {
+    const code =
+      typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+    return code === "ENOENT" || code === "ESRCH" ? false : null;
+  }
+  let unreadableDescriptor = false;
+  for (const descriptor of descriptors) {
+    try {
+      const target = fs.readlinkSync(`/proc/${String(pid)}/fd/${descriptor}`);
+      const match = /^socket:\[(\d+)\]$/u.exec(target);
+      if (match?.[1] && listenerInodes.has(match[1])) return true;
+    } catch (error) {
+      const code =
+        typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+      if (code !== "ENOENT" && code !== "ESRCH") unreadableDescriptor = true;
+    }
+  }
+  return unreadableDescriptor ? null : false;
+}
+
+export function getForwardListenerOwnership(pid: number, port: number): boolean | null {
+  if (process.platform === "linux") return isLinuxListenerOwned(pid, port);
   const result = spawnSync(
     "lsof",
     ["-nP", "-a", "-p", String(pid), `-iTCP:${String(port)}`, "-sTCP:LISTEN", "-t"],
@@ -281,7 +354,7 @@ export function launchForwardService(
   const isReachable = options.isReachable ?? probeLocalForwardListener;
   const processIsRunning = options.isProcessRunning ?? isProcessRunning;
   const readProcessIdentity = options.getProcessIdentity ?? getProcessIdentity;
-  const listenerIsOwned = options.isListenerOwned ?? isListenerOwned;
+  const listenerIsOwned = options.isListenerOwned ?? getForwardListenerOwnership;
   if (isReachable(target.localPort)) {
     throw new Error(`Host port ${String(target.localPort)} is already occupied`);
   }
@@ -298,7 +371,7 @@ export function launchForwardService(
     throw new Error(`OpenShell forward service attempts must be between 1 and ${START_ATTEMPTS}`);
   }
   const args = buildForwardServiceArgs(target);
-  const environment = buildOpenShellSubprocessEnv(options.sourceEnvironment ?? process.env);
+  const baseEnvironment = buildOpenShellSubprocessEnv(options.sourceEnvironment ?? process.env);
   let finalFailure = "exited before binding";
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     finalFailure = "exited before binding";
@@ -307,6 +380,8 @@ export function launchForwardService(
         `Host port ${String(target.localPort)} became occupied before forward retry; refusing to adopt its listener`,
       );
     }
+    const instanceId = randomUUID();
+    const environment = { ...baseEnvironment, [FORWARD_INSTANCE_ENV]: instanceId };
     const child = spawnDetached(target.executable, args, environment);
     if (!isProcessIdentity(child.pid)) {
       throw new Error(
@@ -314,7 +389,11 @@ export function launchForwardService(
           `refusing to start a duplicate service; forward list: ${describeFailureState(options.describeState)}`,
       );
     }
-    const childIdentity = readProcessIdentity(child.pid);
+    const childIdentity = options.getProcessIdentity
+      ? readProcessIdentity(child.pid)
+      : process.platform === "linux"
+        ? readProcessIdentity(child.pid)
+        : `${process.platform}:${instanceId}`;
     child.unref();
     const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
     let exited = false;

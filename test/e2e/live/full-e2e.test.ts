@@ -56,7 +56,9 @@ const FULL_E2E_TARGET_ID = process.env.E2E_TARGET_ID ?? "full-e2e";
 const SETUP_MODE = process.env.NEMOCLAW_E2E_SETUP_MODE ?? "source-install";
 const USE_PREINSTALLED_LAUNCHABLE = SETUP_MODE === "preinstalled-launchable";
 const PORTABLE_PROFILE = process.env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable";
-const LIVE_TIMEOUT_MS = testTimeout(50 * 60_000);
+// Cold install plus two launch turns with one provider retry each can consume
+// almost 50 minutes before the remaining assertions and cleanup run.
+const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
 const INSTALL_TIMEOUT_MS = execTimeout(25 * 60_000);
 const FIRST_TURN_TIMEOUT_MS = 240_000;
 const MAX_SILENCE_SECS = 60;
