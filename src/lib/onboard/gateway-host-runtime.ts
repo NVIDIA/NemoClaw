@@ -56,6 +56,8 @@ export interface GatewayHostRuntimeDeps {
    */
   gatewayPort(): number;
   gatewayName(): string;
+  /** Optional narrow resolver for callers that already own the gateway network boundary. */
+  getGatewayStartNetworkEnv?(gatewayPort: number): Record<string, string>;
   /**
    * Unfiltered listener enumeration. An externally supervised gateway is an
    * ordinary systemd-run executable with no Docker-driver env markers, so the
@@ -545,9 +547,12 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     // reads NEMOCLAW_GATEWAY_BIND_ADDRESS at load, and callers that reload
     // onboarding with a different environment drop it from the require cache.
     // A hoisted binding would pin this module to the stale first instance.
-    const { getGatewayStartNetworkEnv } =
-      require("./docker-driver-gateway-env") as typeof import("./docker-driver-gateway-env");
-    const gatewayEnv = getGatewayStartNetworkEnv(deps.gatewayPort());
+    const gatewayPort = deps.gatewayPort();
+    const gatewayEnv = deps.getGatewayStartNetworkEnv
+      ? deps.getGatewayStartNetworkEnv(gatewayPort)
+      : (
+          require("./docker-driver-gateway-env") as typeof import("./docker-driver-gateway-env")
+        ).getGatewayStartNetworkEnv(gatewayPort);
     const openshellVersion = deps.getInstalledOpenshellVersion();
     if (openshellVersion) {
       const stableGatewayImage = `ghcr.io/nvidia/openshell/cluster:${openshellVersion}`;
