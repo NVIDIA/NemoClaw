@@ -30,6 +30,12 @@ function lockedDependencyTree(prefix?: string): NpmDependencyTree {
   ) as NpmDependencyTree;
 }
 
+function requiredLockedVersion(version: string | undefined, dependency: string): string {
+  expect(version, `${dependency} lockfile version`).toBeTypeOf("string");
+  expect(version, `${dependency} lockfile version`).not.toBe("");
+  return version as string;
+}
+
 function listedTypeScriptFiles(configPath: string): string[] {
   return execFileSync(
     process.execPath,
@@ -46,15 +52,23 @@ describe("plugin Vitest project contract", () => {
     const rootTree = lockedDependencyTree();
     const pluginTree = lockedDependencyTree("nemoclaw");
 
-    expect(pluginTree.dependencies?.vitest?.version, "vitest").toBe(
-      rootTree.dependencies?.vitest?.version,
+    expect(requiredLockedVersion(pluginTree.dependencies?.vitest?.version, "plugin vitest")).toBe(
+      requiredLockedVersion(rootTree.dependencies?.vitest?.version, "root vitest"),
     );
-    expect(pluginTree.dependencies?.vitest?.dependencies?.vite?.version, "vite").toBe(
-      rootTree.dependencies?.vitest?.dependencies?.vite?.version,
+    expect(
+      requiredLockedVersion(
+        pluginTree.dependencies?.vitest?.dependencies?.vite?.version,
+        "plugin vite",
+      ),
+    ).toBe(
+      requiredLockedVersion(
+        rootTree.dependencies?.vitest?.dependencies?.vite?.version,
+        "root vite",
+      ),
     );
-    expect(pluginTree.dependencies?.typescript?.version, "typescript").toBe(
-      rootTree.dependencies?.typescript?.version,
-    );
+    expect(
+      requiredLockedVersion(pluginTree.dependencies?.typescript?.version, "plugin typescript"),
+    ).toBe(requiredLockedVersion(rootTree.dependencies?.typescript?.version, "root typescript"));
   });
 
   it("typechecks plugin production and test sources without emitting tests", () => {
