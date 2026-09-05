@@ -238,6 +238,7 @@ export type { SandboxLifecycleResult } from "./runtime/lifecycle-runtime";
 export interface SandboxStopDeps {
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
+  updateSandbox?: typeof registry.updateSandbox;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   stopSandboxChannels?: typeof stopSandboxChannels;
   teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
@@ -310,6 +311,7 @@ function stopSandboxWithinLifecycleFence(
     },
   });
   if (outcome.exitCode !== 0) return outcome;
+  (deps.updateSandbox ?? registry.updateSandbox)(sandboxName, { stopped: true });
   const hermesPortableVerified =
     "hermesPortableVerified" in outcome && outcome.hermesPortableVerified === true;
   const ollamaRelease = releaseStoppedSandboxOllamaModel(resolved.sandbox, deps, log);

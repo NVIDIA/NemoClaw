@@ -73,6 +73,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     NonNullable<SandboxStartDeps["waitForManagedGatewaySupervisor"]>
   >(() => false);
   const log = vi.fn<(message: string) => void>();
+  const updateSandbox = vi.fn<NonNullable<SandboxStartDeps["updateSandbox"]>>();
   const runtimeProviders = createRuntimeProviderBundleRegistry([
     [
       "docker",
@@ -94,6 +95,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     restoreStartupState,
     waitForManagedGatewaySupervisor,
     verifyGateway,
+    updateSandbox,
     log,
     withLifecycleLock: async (_sandboxName, operation) => operation(),
     ...overrides,
@@ -110,6 +112,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     recoverDockerDriverSandbox,
     recoverPortableSandbox,
     restoreStartupState,
+    updateSandbox,
     waitForManagedGatewaySupervisor,
     verifyGateway,
   };
@@ -242,6 +245,15 @@ describe("startSandbox", () => {
     expect(h.restoreStartupState.mock.invocationCallOrder[0]).toBeLessThan(
       h.verifyGateway.mock.invocationCallOrder[0],
     );
+  });
+
+  it("records stopped: false in the sandbox registry on successful start (#11025)", async () => {
+    const h = harness();
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
   });
 
   it(
@@ -770,6 +782,7 @@ describe("startSandbox", () => {
     const result = await startSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(1);
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
     const output = h.log.mock.calls.map(([line]) => line).join("\n");
     expect(output).toContain("HTTP 401");
     expect(output).toContain("doctor");

@@ -92,6 +92,23 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("rebuild --yes");
   });
 
+  it("renders Phase: Stopped and clean stopped guidance when phase is Stopped (#11025)", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({
+      phase: "Stopped",
+      dockerRuntime: null,
+    });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("Phase: Stopped");
+    expect(text).toContain("Sandbox 'beta' is stopped.");
+    expect(text).toContain("Workspace state is preserved.");
+    expect(text).toContain("nemoclaw beta start");
+    expect(text).not.toContain("is stuck");
+    expect(text).not.toContain("rebuild --yes");
+  });
+
   it("keeps the unpause hint for a paused container and never suggests start/rebuild (#4495)", async () => {
     const cap = captureConsoleLog();
     await printGuidance({

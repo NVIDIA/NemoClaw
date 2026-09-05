@@ -761,7 +761,8 @@ async function buildSandboxStatusReport(
     lookup.state === "present" && hasLegacyStatusRuntimeObservation(sb)
       ? getSandboxDockerRuntime(sandboxName)
       : null;
-  const phase = lookup.state === "present" ? (lookup.phase ?? null) : null;
+  const isStopped = Boolean(sb?.stopped && (dockerRuntime ? !dockerRuntime.running : true));
+  const phase = isStopped ? "Stopped" : lookup.state === "present" ? (lookup.phase ?? null) : null;
   const effectivePreflight = withoutTerminalPhasePreflight(
     snapshot.postRecoveryPreflight ?? preflight,
     phase,
