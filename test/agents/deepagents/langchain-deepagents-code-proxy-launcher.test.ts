@@ -693,7 +693,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(headlessCheck).toContain("direct inference.local DNS/hosts is absent");
     expect(headlessCheck).toContain('stat -c "%u:%a"');
     expect(headlessCheck).toContain(
-      "fresh direct-exec dcode session consumed the natively imported skill",
+      "fresh direct-exec dcode session consumed only the updated native skill",
     );
     expect(headlessCheck).toContain("connect --probe-only accepted the managed inference route");
   });
