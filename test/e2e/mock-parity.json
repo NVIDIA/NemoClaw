@@ -473,6 +473,8 @@
         "src/lib/onboard/machine/core-flow-phases.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-route-publication.test.ts",
         "src/lib/onboard/sandbox-registration.test.ts",
+        "test/onboarding/onboard-finalization-dashboard-forward.test.ts",
+        "test/onboarding/onboard.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

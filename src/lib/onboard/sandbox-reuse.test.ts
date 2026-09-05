@@ -92,6 +92,32 @@ describe("applyReusedSandboxDashboardState", () => {
     expect(() => revalidate("inspecting its dashboard forward")).toThrow(/changed identity/u);
   });
 
+  it.each([
+    ["a missing observation", null],
+    ["a non-Ready observation", { state: "not_ready", liveIdentityFingerprint: "a".repeat(64) }],
+    ["a missing fingerprint", { state: "ready", liveIdentityFingerprint: null }],
+  ] as const)("rejects reuse with %s (#11074)", (_case, openingObservation) => {
+    expect(() =>
+      createReusedSandboxIdentityRevalidation({
+        sandboxName: "reuse-me",
+        openingObservation,
+        registeredIdentity: "a".repeat(64),
+        observe: () => ({ state: "ready", liveIdentityFingerprint: "a".repeat(64) }),
+      }),
+    ).toThrow(/no stable identity for reuse/u);
+  });
+
+  it("rejects reuse when the Ready identity differs from the registry (#11074)", () => {
+    expect(() =>
+      createReusedSandboxIdentityRevalidation({
+        sandboxName: "reuse-me",
+        openingObservation: { state: "ready", liveIdentityFingerprint: "a".repeat(64) },
+        registeredIdentity: "b".repeat(64),
+        observe: () => ({ state: "ready", liveIdentityFingerprint: "a".repeat(64) }),
+      }),
+    ).toThrow(/no stable identity for reuse/u);
+  });
+
   it("skips dashboard forwarding while preserving reuse metadata for terminal agents", () => {
     const updateSandbox = vi.fn();
     const env: NodeJS.ProcessEnv = { CHAT_UI_URL: "https://chat.example.test:19000" };

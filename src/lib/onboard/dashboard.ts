@@ -10,6 +10,7 @@ import {
 } from "../adapters/openshell/forward-service";
 import {
   inspectForwardServiceListenerOwnership,
+  type ForwardServiceOwnershipFailure,
   type ForwardServiceOwnershipResult,
 } from "../adapters/openshell/forward-service-ownership";
 import type { AgentDefinition } from "../agent/defs";
@@ -47,6 +48,43 @@ export const CONTROL_UI_PORT = DASHBOARD_PORT;
 
 function looksLikeForwardPortConflict(diagnostic: string): boolean {
   return /eaddrinuse|address already in use|port .* in use|bind: .*in use/iu.test(diagnostic);
+}
+
+function dashboardForwardOwnershipFailureMessage(
+  failure: ForwardServiceOwnershipFailure,
+  port: number,
+  sandboxName: string,
+  cliName: string,
+): string {
+  const subject =
+    `Registered dashboard port ${String(port)} for sandbox '${sandboxName}' is occupied, ` +
+    `but its ForwardTcp ownership check failed (${failure}). `;
+  switch (failure) {
+    case "listener-changed":
+      return (
+        subject +
+        `The listener changed during inspection. Re-run \`${cliName} onboard --resume\`; ` +
+        "the listener was not adopted."
+      );
+    case "listener-not-unique":
+      return (
+        subject +
+        `Identify and stop the extra listener on port ${String(port)}, then re-run ` +
+        `\`${cliName} onboard --resume\`; no listener was adopted.`
+      );
+    case "process-identity-mismatch":
+      return (
+        subject +
+        `Free port ${String(port)} and re-run \`${cliName} onboard --resume\`, or select another ` +
+        `port with \`${cliName} onboard --resume --control-ui-port <N>\`; the listener was not adopted.`
+      );
+    case "listener-enumeration-unavailable":
+      return (
+        subject +
+        "Install lsof or restore read access to Linux /proc, then re-run " +
+        `\`${cliName} onboard --resume\`; the listener was not adopted.`
+      );
+  }
 }
 
 type CommandResult = { status: number | null };
@@ -423,12 +461,14 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
           forwardTarget(sandboxName, forwardGateway, preferredPort, preferredTarget),
         );
         if (ownership?.owned === true) return preferredPort;
-        if (ownership?.failure === "listener-enumeration-unavailable") {
+        if (ownership?.owned === false) {
           throw new Error(
-            `Registered dashboard port ${String(preferredPort)} is occupied, but its ForwardTcp ` +
-              "ownership could not be verified because listener enumeration is unavailable. " +
-              "Install lsof or restore read access to Linux /proc, then re-run " +
-              `\`${deps.cliName()} onboard --resume\`; the listener was not adopted.`,
+            dashboardForwardOwnershipFailureMessage(
+              ownership.failure,
+              preferredPort,
+              sandboxName,
+              deps.cliName(),
+            ),
           );
         }
       }

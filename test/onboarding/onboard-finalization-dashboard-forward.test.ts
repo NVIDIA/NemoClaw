@@ -124,10 +124,45 @@ describe("finalization dashboard ForwardTcp launch", () => {
       helpers.ensureFinalizationDashboardForward("reonboard-test", {
         preserveRegisteredForward: true,
       }),
-    ).toThrow(/cannot be reallocated/u);
+    ).toThrow(
+      /port 18790 for sandbox 'reonboard-test'.*process-identity-mismatch.*onboard --resume.*--control-ui-port <N>.*not adopted/su,
+    );
     expect(launch).not.toHaveBeenCalled();
     expect(process.env.CHAT_UI_URL).toBeUndefined();
   });
+
+  it.each([
+    [
+      "listener-changed",
+      /port 18790 for sandbox 'reonboard-test'.*listener-changed.*changed during inspection.*onboard --resume/su,
+    ],
+    [
+      "listener-not-unique",
+      /port 18790 for sandbox 'reonboard-test'.*listener-not-unique.*stop the extra listener.*onboard --resume/su,
+    ],
+  ] as const)(
+    "reports %s ownership recovery during Ready sandbox reuse (#11074)",
+    (failure, message) => {
+      vi.stubEnv("CHAT_UI_URL", undefined);
+      const { helpers, launch } = harness({
+        listSandboxes: () => ({
+          sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+        }),
+        inspectOwnership: () => ({
+          owned: false,
+          failure,
+        }),
+        isPortBound: (port) => port === 18_790,
+      });
+
+      expect(() =>
+        helpers.ensureFinalizationDashboardForward("reonboard-test", {
+          preserveRegisteredForward: true,
+        }),
+      ).toThrow(message);
+      expect(launch).not.toHaveBeenCalled();
+    },
+  );
 
   it("reports unavailable ownership observation during Ready sandbox reuse (#11074)", () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
@@ -143,7 +178,9 @@ describe("finalization dashboard ForwardTcp launch", () => {
       helpers.ensureFinalizationDashboardForward("reonboard-test", {
         preserveRegisteredForward: true,
       }),
-    ).toThrow(/Install lsof or restore read access to Linux \/proc/u);
+    ).toThrow(
+      /port 18790 for sandbox 'reonboard-test'.*listener-enumeration-unavailable.*Install lsof or restore read access to Linux \/proc/su,
+    );
     expect(launch).not.toHaveBeenCalled();
     expect(process.env.CHAT_UI_URL).toBeUndefined();
   });

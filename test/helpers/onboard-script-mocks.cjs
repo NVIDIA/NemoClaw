@@ -713,7 +713,13 @@ function createCreatedSandboxFixture(options = {}) {
     assertState();
   };
 
-  const installRuntimeObservation = () => {
+  const installRuntimeObservation = (observationOptions = {}) => {
+    const restoreStructuredCapture = observationOptions.includeStructuredOpenShellCapture
+      ? mockStructuredOpenShellCaptureFromRunner({
+          gatewayName: state.gatewayName,
+          sandboxName: state.sandboxName,
+        })
+      : () => {};
     const openshellRuntime = require(
       path.resolve(__dirname, "../../src/lib/adapters/openshell/runtime.ts"),
     );
@@ -732,6 +738,7 @@ function createCreatedSandboxFixture(options = {}) {
     };
     openshellRuntime.captureResolvedOpenshell = fixtureCapture;
     return () => {
+      restoreStructuredCapture();
       if (openshellRuntime.captureResolvedOpenshell === fixtureCapture) {
         openshellRuntime.captureResolvedOpenshell = previousCapture;
       }

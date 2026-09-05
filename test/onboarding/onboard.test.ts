@@ -689,7 +689,7 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 const existingSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
-existingSandbox.installRuntimeObservation();
+existingSandbox.installRuntimeObservation({ includeStructuredOpenShellCapture: true });
 const sandboxCommand = (command) => Array.isArray(command) ? command : _n(command).split(/\s+/u);
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });

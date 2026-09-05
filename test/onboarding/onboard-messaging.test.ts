@@ -1263,7 +1263,7 @@ const registry = require(${registryPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
 
 const commands = [];
-const existingSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" }); existingSandbox.installRuntimeObservation();
+const existingSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" }); existingSandbox.installRuntimeObservation({ includeStructuredOpenShellCapture: true });
 const messagingProviderRunner = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
   commands,
   createdSandbox: existingSandbox,

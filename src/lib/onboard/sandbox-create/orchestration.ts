@@ -60,7 +60,6 @@ import { cliName } from "../branding";
 import type {
   CreatedSandboxLifecycle,
   CreatedSandboxLifecycleRegistration,
-  SandboxRecreateObservation,
 } from "../sandbox-recreate-transaction";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import type {
@@ -89,16 +88,6 @@ function cancelRecoveryIdentity(
     lifecycleLiveIdentityFingerprint:
       requireVerifiedCreateBoundary().lifecycleLiveIdentityFingerprint,
   };
-}
-
-function observeOpeningReuseIdentity(input: {
-  readonly liveExists: boolean;
-  readonly sandboxName: string;
-  readonly gatewayName: string;
-  readonly observe: (sandboxName: string, gatewayName: string) => SandboxRecreateObservation;
-}): SandboxRecreateObservation | null {
-  if (!input.liveExists) return null;
-  return input.observe(input.sandboxName, input.gatewayName);
 }
 
 /** Finalize provider arguments from the exact policy that creation consumes. */
@@ -1661,13 +1650,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       prepareWorkload: ensurePreparedSandboxWorkload,
     });
     const apfInterceptorRequested = createIntent?.apfInterceptorRequested === true;
-    const openingReuseIdentity = observeOpeningReuseIdentity({
-      liveExists,
-      sandboxName,
-      gatewayName: GATEWAY_NAME,
-      observe: getSandboxRecreateObservation,
-    });
-    const registeredReuseIdentity = existingEntry?.lifecycleLiveIdentityFingerprint ?? null;
     let verifiedCreateBoundary: VerifiedSandboxCreateBoundary | null = null;
     let pendingCreateIdentity: PendingSandboxCreateIdentity | null = null;
     let admittedCreateReservation: QualifiedPendingSandboxCreateReservation | null = null;
@@ -1720,15 +1702,29 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       readEntry: () => registry.getSandbox(sandboxName),
     });
     const resumingVerifiedCreate = acceptedTargetPendingIdentity !== null;
-    const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
-      const revalidateReusedSandboxIdentity = sandboxReuse.createReusedSandboxIdentityRevalidation({
+    let reusedSandboxIdentityRevalidation: ((operation: string) => void) | undefined;
+    const selectReusedSandboxIdentity = (): ((operation: string) => void) | undefined => {
+      if (!manageDashboard) return undefined;
+      reusedSandboxIdentityRevalidation ??= sandboxReuse.createReusedSandboxIdentityRevalidation({
         sandboxName,
-        openingObservation: openingReuseIdentity,
-        registeredIdentity: registeredReuseIdentity,
+        openingObservation: getSandboxRecreateObservation(sandboxName, GATEWAY_NAME),
+        registeredIdentity:
+          registry.getSandbox(sandboxName)?.lifecycleLiveIdentityFingerprint ?? null,
         observe: () => getSandboxRecreateObservation(sandboxName, GATEWAY_NAME),
       });
-      revalidateReusedSandboxIdentity(`restoring dashboard state for sandbox '${sandboxName}'`);
-      retainReusedSandboxIdentityRevalidation?.(revalidateReusedSandboxIdentity);
+      return reusedSandboxIdentityRevalidation;
+    };
+    const revalidateSelectedReuse = (operation: string): void => {
+      const revalidate = selectReusedSandboxIdentity();
+      if (revalidate) revalidate(operation);
+      else revalidateSandboxIdentity(true, operation);
+    };
+    const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
+      const revalidateReusedSandboxIdentity = selectReusedSandboxIdentity();
+      revalidateReusedSandboxIdentity?.(`restoring dashboard state for sandbox '${sandboxName}'`);
+      if (revalidateReusedSandboxIdentity) {
+        retainReusedSandboxIdentityRevalidation?.(revalidateReusedSandboxIdentity);
+      }
       ({ chatUiUrl } = await sandboxReuse.restoreReusedSandboxDashboardState({
         sandboxName,
         chatUiUrl,
@@ -1925,12 +1921,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             if (actionableSelectionDrift) {
               note("  [non-interactive] Recreating sandbox due to provider/model drift.");
             } else {
-              revalidateSandboxIdentity(true, `reusing sandbox '${sandboxName}'`);
+              revalidateSelectedReuse(`reusing sandbox '${sandboxName}'`);
               // Upsert messaging providers even on reuse so credential changes take
               // effect without requiring a full sandbox recreation.
               upsertMessagingProviders(messagingTokenDefs, {
-                revalidateSandboxIdentity: (operation) =>
-                  revalidateSandboxIdentity(true, operation),
+                revalidateSandboxIdentity: revalidateSelectedReuse,
               });
               if (selectionDrift.unknown) {
                 note(
@@ -1975,10 +1970,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             console.log(`  Sandbox '${sandboxName}' already exists.`);
             console.log("  Choosing 'n' will delete the existing sandbox and create a new one.");
             if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
-              revalidateSandboxIdentity(true, `reusing sandbox '${sandboxName}'`);
+              revalidateSelectedReuse(`reusing sandbox '${sandboxName}'`);
               upsertMessagingProviders(messagingTokenDefs, {
-                revalidateSandboxIdentity: (operation) =>
-                  revalidateSandboxIdentity(true, operation),
+                revalidateSandboxIdentity: revalidateSelectedReuse,
               });
               await restoreReusedSandboxDashboard(!selectionDrift.unknown);
               return sandboxName;
