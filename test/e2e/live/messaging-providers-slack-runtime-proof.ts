@@ -192,11 +192,17 @@ function createCoreProofRoot(openclawRoot) {
   fs.mkdirSync(nodeModulesRoot, { recursive: true });
   linkNodeModulesEntries(nodeModulesRoot, path.join(openclawRoot, "node_modules"));
   linkNodeModulesEntries(nodeModulesRoot, path.dirname(openclawRoot));
-  return proofRoot;
+  return {
+    proofRoot,
+    proofWorkspace,
+    cleanup: () => fs.rmSync(proofWorkspace, { recursive: true, force: true }),
+  };
 }
 
 function createExternalProofRoot(location) {
-  if (!location.openclawRoot) return location.root;
+  if (!location.openclawRoot) {
+    return { proofRoot: location.root, proofWorkspace: null, cleanup: () => {} };
+  }
   const proofWorkspace = fs.mkdtempSync("/tmp/openclaw-slack-external-proof-");
   const nodeModulesRoot = path.join(proofWorkspace, "node_modules");
   const openclawScopeRoot = path.join(nodeModulesRoot, "@openclaw");
@@ -209,7 +215,21 @@ function createExternalProofRoot(location) {
   linkNodeModulesEntries(nodeModulesRoot, path.join(location.root, "node_modules"), skip);
   linkNodeModulesEntries(nodeModulesRoot, path.dirname(location.openclawRoot), skip);
   linkNodeModulesEntries(nodeModulesRoot, path.join(location.openclawRoot, "node_modules"), skip);
-  return slackProofRoot;
+  return {
+    proofRoot: slackProofRoot,
+    proofWorkspace,
+    cleanup: () => fs.rmSync(proofWorkspace, { recursive: true, force: true }),
+  };
+}
+
+async function withSlackProofWorkspace(location, run) {
+  const workspace =
+    location.kind === "external" ? createExternalProofRoot(location) : createCoreProofRoot(location.root);
+  try {
+    return await run(workspace.proofRoot, workspace.proofWorkspace);
+  } finally {
+    workspace.cleanup();
+  }
 }
 
 function findPipelineRuntimePath(slackDir) {
@@ -250,16 +270,6 @@ async function importProofModules(slackDir) {
     prepareSlackMessage: pipelineModule.prepareSlackMessage,
     sendMessageSlack: runtimeModule.sendMessageSlack,
   };
-}
-
-async function importOpenClawSlackProofApi(location) {
-  const proofRoot =
-    location.kind === "external" ? createExternalProofRoot(location) : createCoreProofRoot(location.root);
-  const slackDir = path.join(
-    proofRoot,
-    location.kind === "external" ? "dist" : "dist/extensions/slack",
-  );
-  return importProofModules(slackDir);
 }
 
 function postForm(pathname, fields, authorization) {
@@ -442,7 +452,12 @@ const appClient = {
 
 const location = resolveOpenClawSlackApiLocation();
 invariant(location, "could not find installed OpenClaw Slack proof API");
-const slackApi = await importOpenClawSlackProofApi(location);
+await withSlackProofWorkspace(location, async (proofRoot) => {
+const slackDir = path.join(
+  proofRoot,
+  location.kind === "external" ? "dist" : "dist/extensions/slack",
+);
+const slackApi = await importProofModules(slackDir);
 const { prepareSlackMessage, sendMessageSlack } = slackApi;
 invariant(
   typeof prepareSlackMessage === "function" && typeof sendMessageSlack === "function",
@@ -535,6 +550,7 @@ console.log(
     channelId: sendResult.channelId,
   }),
 );
+});
 `;
 
 export function parseInstalledSlackProof(stdout: string, stderr = ""): InstalledSlackRuntimeProof {

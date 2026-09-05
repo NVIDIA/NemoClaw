@@ -1113,15 +1113,13 @@ describe("messaging provider installed-runtime proofs", () => {
     }
   });
 
-  it("links hoisted OpenClaw install-root dependencies into the Slack proof workspace", () => {
+  it("loads hoisted Slack dependencies and removes proof workspaces", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-proof-workspace-"));
     const installRoot = path.join(dir, "lib", "nemoclaw", "openclaw-runtime", "node_modules");
     const openclawPackageRoot = path.join(installRoot, "openclaw");
     const globalNodeModules = path.join(dir, "lib", "node_modules");
     const stateDir = path.join(dir, "state");
     const slackExtensionRoot = path.join(stateDir, "extensions", "slack");
-    let proofWorkspace = dir;
-
     try {
       fs.mkdirSync(path.join(openclawPackageRoot, "dist", "plugin-sdk"), { recursive: true });
       fs.writeFileSync(
@@ -1156,23 +1154,32 @@ describe("messaging provider installed-runtime proofs", () => {
         'import fs from "node:fs";',
         'import { createRequire } from "node:module";',
         'import path from "node:path";',
+        'import { pathToFileURL } from "node:url";',
         SLACK_PROOF_WORKSPACE_SOURCE,
         "const location = resolveOpenClawSlackApiLocation();",
-        "const slackProofRoot = createExternalProofRoot(location);",
-        "const workspaceNodeModules = path.dirname(path.dirname(slackProofRoot));",
-        "process.stdout.write(",
-        "  JSON.stringify({",
-        "    kind: location.kind,",
-        "    workspaceNodeModules,",
+        "const success = await withSlackProofWorkspace(location, async (slackProofRoot, proofWorkspace) => {",
+        "  const workspaceNodeModules = path.dirname(path.dirname(slackProofRoot));",
+        "  return {",
+        "    proofWorkspace,",
         "    entries: fs.readdirSync(workspaceNodeModules).sort(),",
-        "    hoistedDependencyResolved: fs.existsSync(",
-        '      path.join(workspaceNodeModules, "fast-uri", "package.json"),',
-        "    ),",
-        "    nestedDependencyResolved: fs.existsSync(",
-        '      path.join(workspaceNodeModules, "openclaw", "node_modules", "ajv", "package.json"),',
-        "    ),",
-        "  }),",
-        ");",
+        '    hoisted: fs.existsSync(path.join(workspaceNodeModules, "fast-uri", "package.json")),',
+        '    nested: fs.existsSync(path.join(workspaceNodeModules, "openclaw", "node_modules", "ajv", "package.json")),',
+        "  };",
+        "});",
+        "let failedProofWorkspace;",
+        "let failureCode;",
+        "try {",
+        "  await withSlackProofWorkspace(location, async (_root, proofWorkspace) => {",
+        "    failedProofWorkspace = proofWorkspace;",
+        '    await import(pathToFileURL(path.join(proofWorkspace, "missing-module.js")).href);',
+        "  });",
+        "} catch (error) { failureCode = error.code; }",
+        "process.stdout.write(JSON.stringify({",
+        "  ...success,",
+        "  successRemoved: !fs.existsSync(success.proofWorkspace),",
+        "  failureRemoved: !fs.existsSync(failedProofWorkspace),",
+        "  failureCode,",
+        "}));",
       ].join("\n");
       const result = spawnSync(process.execPath, ["--input-type=module", "-"], {
         encoding: "utf8",
@@ -1186,14 +1193,14 @@ describe("messaging provider installed-runtime proofs", () => {
 
       expect(result.status, result.stderr).toBe(0);
       const workspace = JSON.parse(result.stdout);
-      proofWorkspace = path.dirname(workspace.workspaceNodeModules);
-
-      expect(workspace.kind).toBe("external");
       expect(workspace.entries).toContain("fast-uri");
-      expect(workspace.hoistedDependencyResolved).toBe(true);
-      expect(workspace.nestedDependencyResolved).toBe(true);
+      expect(workspace.hoisted).toBe(true);
+      expect(workspace.nested).toBe(true);
+      expect(workspace.successRemoved).toBe(true);
+      expect(workspace.failureRemoved).toBe(true);
+      expect(workspace.failureCode).toBe("ERR_MODULE_NOT_FOUND");
+      expect(fs.existsSync(openclawPackageRoot)).toBe(true);
     } finally {
-      fs.rmSync(proofWorkspace, { recursive: true, force: true });
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
