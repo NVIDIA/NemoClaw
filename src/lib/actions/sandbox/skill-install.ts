@@ -214,6 +214,7 @@ export async function removeSandboxSkill(
             "--json",
           ];
   let bindingFailed = false;
+  let capabilityMissing = false;
   let sshConfigFailed = false;
   await runWithDeferredSandboxLifecycleExit(() =>
     withSandboxMutationLock(sandboxName, async () => {
@@ -258,6 +259,25 @@ export async function removeSandboxSkill(
         bindingFailed = true;
         return;
       }
+      if (agentName === "openclaw") {
+        const tmpSshConfig = createTempSshConfig(
+          sshConfigResult.output,
+          "nemoclaw-ssh-skill-remove-",
+        );
+        try {
+          if (
+            !skillInstall.probeOpenClawSkillRemoveCapability(
+              { configFile: tmpSshConfig.file, sandboxName },
+              expectedIdentity,
+            )
+          ) {
+            capabilityMissing = true;
+            return;
+          }
+        } finally {
+          tmpSshConfig.cleanup();
+        }
+      }
       const identityBoundCommand = skillInstall.bindNativeSkillCommandToSandboxIdentity(
         command,
         expectedIdentity,
@@ -274,11 +294,13 @@ export async function removeSandboxSkill(
       );
     }),
   );
-  if (sshConfigFailed || bindingFailed) {
+  if (sshConfigFailed || bindingFailed || capabilityMissing) {
     console.error(
       sshConfigFailed
         ? "  Failed to obtain SSH configuration for the sandbox."
-        : `  Failed to bind the ${nativeSkillAgentDisplayName(agentName)} skill removal to the exact live sandbox identity.`,
+        : capabilityMissing
+          ? `  This OpenClaw sandbox image does not expose native skill removal. Rebuild it with '${CLI_NAME} ${sandboxName} rebuild' and retry; rebuild preserves both workspace and legacy global skill directories.`
+          : `  Failed to bind the ${nativeSkillAgentDisplayName(agentName)} skill removal to the exact live sandbox identity.`,
     );
     process.exitCode = 1;
   }

@@ -435,6 +435,44 @@ describe("OpenClaw native skill remove patch", () => {
     expect(fs.existsSync(globalTarget)).toBe(true);
   });
 
+  it("removes an empty quarantine directory left after interrupted cleanup", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-remove-empty-"));
+    roots.push(root);
+    const workspaceDir = path.join(root, "workspace");
+    const quarantineDir = path.join(workspaceDir, "skills", ".demo-skill.remove.interrupted");
+    fs.mkdirSync(quarantineDir, { recursive: true });
+    const behaviorSource = [
+      'import fs from "node:fs/promises";',
+      'import path from "node:path";',
+      "const chain = { description() { return this; }, argument() { return this; }, option() { return this; }, action() { return this; } };",
+      "const skills = { command() { return chain; } };",
+      `const report = ${JSON.stringify({ workspaceDir, skills: [] })};`,
+      "async function loadSkillsStatusReport() { return report; }",
+      "function validateRequestedSkillSlug(value) { return value; }",
+      "function resolveSkillStatusEntry(entries, value) { return entries.find((entry) => entry.name === value) ?? null; }",
+      "async function untrackClawHubSkill() {}",
+      `const CONFIG_DIR = ${JSON.stringify(path.join(root, "global"))};`,
+      SOURCE,
+      "export { nemoClawRemoveWorkspaceSkillFromAgentState };",
+    ].join("\n");
+    const patched = patchSkillRemoveText(behaviorSource, "behavior-empty-quarantine.mjs");
+    const modulePath = path.join(root, "behavior-empty-quarantine.mjs");
+    fs.writeFileSync(modulePath, patched.text);
+    const behavior = (await import(
+      `${pathToFileURL(modulePath).href}?case=${String(Date.now())}`
+    )) as {
+      nemoClawRemoveWorkspaceSkillFromAgentState: (
+        name: string,
+        agentId: string,
+      ) => Promise<Record<string, unknown>>;
+    };
+
+    await expect(
+      behavior.nemoClawRemoveWorkspaceSkillFromAgentState("demo-skill", "main"),
+    ).resolves.toMatchObject({ status: "absent" });
+    expect(fs.existsSync(quarantineDir)).toBe(false);
+  });
+
   it("removes a pre-cutover skill selected from OpenClaw native global state", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-remove-global-"));
     roots.push(root);

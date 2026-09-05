@@ -168,6 +168,25 @@ const SKILL_SNAPSHOT_TIMEOUT_MS = 30_000;
 export const SKILL_SNAPSHOT_MAX_FILES = 1024;
 export const SKILL_SNAPSHOT_MAX_BYTES = 64 * 1024 * 1024;
 const OPENCLAW_NATIVE_BIN = "/usr/local/bin/openclaw";
+const OPENCLAW_REMOVE_HELP_EVIDENCE = "Remove a skill from the active agent workspace";
+
+/** Probe the pinned native removal capability without mutating agent state. */
+export function probeOpenClawSkillRemoveCapability(
+  ctx: SshContext,
+  expectedSandboxIdentityFingerprint: string,
+  sshExecImpl: typeof sshExec = sshExec,
+): boolean {
+  if (!SHA256_RE.test(expectedSandboxIdentityFingerprint)) return false;
+  const identityCheck = sandboxIdentityCheckCommand(expectedSandboxIdentityFingerprint);
+  const script = [
+    "set -eu",
+    `${identityCheck} || exit 9`,
+    `help="$(${shellQuote(OPENCLAW_NATIVE_BIN)} skills remove --help 2>&1)"`,
+    `printf '%s' "$help" | grep -Fq ${shellQuote(OPENCLAW_REMOVE_HELP_EVIDENCE)}`,
+    `${identityCheck} || exit 9`,
+  ].join("; ");
+  return sshExecImpl(ctx, script, { timeout: 30_000 })?.status === 0;
+}
 
 function sandboxIdentityCheckCommand(expectedFingerprint: string): string {
   const check = [
@@ -618,7 +637,6 @@ export type NativeLocalSkillAgent = "hermes" | "langchain-deepagents-code";
 type NativeLocalSkillCommand = {
   binary: string;
   importArgs: string[];
-  listArgs: string[];
 };
 
 /** Resolve the pinned agent-owned local import and list commands. */
@@ -640,7 +658,6 @@ function nativeLocalSkillCommand(
         "--expected-digest",
         expectedDigest,
       ],
-      listArgs: ["skills", "list"],
     };
   }
   return {
@@ -657,7 +674,6 @@ function nativeLocalSkillCommand(
       "--expected-digest",
       expectedDigest,
     ],
-    listArgs: ["skills", "list", "--agent", "agent", "--json"],
   };
 }
 
@@ -687,7 +703,6 @@ function buildNativeLocalSkillInstallScript(
   const commandArgs = command.importArgs
     .map((arg) => (arg === stageToken ? '"$payload"' : shellQuote(arg)))
     .join(" ");
-  const listArgs = command.listArgs.map((arg) => shellQuote(arg)).join(" ");
   const identityCheck = sandboxIdentityCheckCommand(expectedSandboxIdentityFingerprint);
   return [
     "set -eu",
@@ -721,7 +736,6 @@ function buildNativeLocalSkillInstallScript(
     'safe_tree "$target_real" || { echo VERIFY_FAILED; exit 4; }',
     'installed="$(digest_tree "$target_real" "$stage/installed.manifest")"',
     '[ "$installed" = "$expected" ] || { echo VERIFY_FAILED; exit 4; }',
-    `${shellQuote(command.binary)} ${listArgs} > "$stage/list.out" 2>&1 || { cat "$stage/list.out" >&2; echo VERIFY_FAILED; exit 4; }`,
     `${identityCheck} || { echo IDENTITY_CHANGED; exit 9; }`,
     'printf "INSTALLED %s\\n" "$installed"',
   ].join("; ");

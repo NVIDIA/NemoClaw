@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   computeSkillContentDigest,
   installOpenClawSkill,
+  probeOpenClawSkillRemoveCapability,
   SKILL_SNAPSHOT_MAX_BYTES,
   shellQuote,
   type NativeSkillState,
@@ -44,6 +45,20 @@ afterEach(() => {
 });
 
 describe("OpenClaw native skill installation", () => {
+  it("probes native removal on the identity-bound SSH target without mutation", () => {
+    const sshExec = vi.fn((_ctx: SshContext, _command: string): SshResult => ({
+      status: 0,
+      stdout: "remove help",
+      stderr: "",
+    }));
+
+    expect(probeOpenClawSkillRemoveCapability(ctx, SANDBOX_IDENTITY, sshExec)).toBe(true);
+    expect(sshExec).toHaveBeenCalledWith(ctx, expect.stringContaining("skills remove --help"), {
+      timeout: 30_000,
+    });
+    expect(sshExec.mock.calls[0]?.[1]).toContain("OPENSHELL_SANDBOX_ID");
+  });
+
   it.runIf(process.platform === "linux")(
     "delegates fresh installs and updates to native agent state",
     () => {
