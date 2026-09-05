@@ -411,7 +411,7 @@ export async function prepareInferenceSetProviderBinding(options: {
     if (current.kind === "error") {
       throw new InferenceSetError(
         `Could not inspect newly created provider '${providerName}': ${sentence(current.error.message)} ` +
-          "No provider deletion was attempted. Resolve the reported OpenShell error, then rerun onboarding to reconcile the provider.",
+          "No provider deletion was attempted. Provider state may be partial. Resolve the reported OpenShell error, then rerun onboarding before using this provider route or retrying this switch.",
         1,
       );
     }
@@ -423,7 +423,7 @@ export async function prepareInferenceSetProviderBinding(options: {
       !matchesGatewayProviderBinding(current.metadata, expectedBinding)
     ) {
       throw new InferenceSetError(
-        `Could not verify newly created provider '${providerName}' before rollback; no provider deletion was attempted. Rerun onboarding before rerunning this switch.`,
+        `Could not verify newly created provider '${providerName}' before rollback; no provider deletion was attempted. Provider state may be partial. Rerun onboarding before using this provider route or retrying this switch.`,
         1,
       );
     }

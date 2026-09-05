@@ -226,7 +226,10 @@ describe("inference set provider binding", () => {
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain("Cleanup could not confirm removal");
     expect((failure as Error).message).toContain("no provider deletion was attempted");
-    expect((failure as Error).message).toContain("Rerun onboarding");
+    expect((failure as Error).message).toContain("Provider state may be partial");
+    expect((failure as Error).message).toMatch(
+      /rerun onboarding before using this provider route or retrying this switch/i,
+    );
     expect(createProvider).toHaveBeenCalledOnce();
     expect(deleteProvider).not.toHaveBeenCalled();
     expect(getProvider).toHaveBeenCalledTimes(3);
@@ -262,6 +265,10 @@ describe("inference set provider binding", () => {
     );
     expect((failure as Error).message).toContain("Cleanup could not confirm removal");
     expect((failure as Error).message).toContain("safe cleanup inspection failure");
+    expect((failure as Error).message).toContain("Provider state may be partial");
+    expect((failure as Error).message).toMatch(
+      /rerun onboarding before using this provider route or retrying this switch/i,
+    );
     expect(deleteProvider).not.toHaveBeenCalled();
   });
 
