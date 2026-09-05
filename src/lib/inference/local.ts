@@ -608,6 +608,7 @@ export function prepareOllamaApiExecution(
     host === OLLAMA_HOST_DOCKER_INTERNAL &&
     windowsHostOllamaRouteProtectionProbeDepth === 0 &&
     !probeWindowsHostOllamaRouteProtection(options.runCaptureImpl ?? runCapture, {
+      dockerContextIsDefault: options.dockerContextIsDefault,
       env: sourceEnv,
       prepareDockerEnvironment: options.prepareDockerEnvironment,
     }).protected

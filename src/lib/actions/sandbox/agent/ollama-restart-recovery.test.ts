@@ -3,6 +3,9 @@
 
 import { EventEmitter } from "node:events";
 import type { StdioOptions } from "node:child_process";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
@@ -229,6 +232,81 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     );
   });
 
+  it("runs Windows recovery through the isolated Docker transport", async () => {
+    const fakeDockerDirectory = mkdtempSync(join(tmpdir(), "nemoclaw-recovery-docker-"));
+    const fakeDockerPath = join(fakeDockerDirectory, "docker");
+    writeFileSync(fakeDockerPath, "#!/bin/sh\nprintf '%s\\n' 'Operating System: Docker Desktop'\n");
+    chmodSync(fakeDockerPath, 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${fakeDockerDirectory}${delimiter}${originalPath ?? ""}`;
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.stubEnv("DOCKER_CONTEXT", "default");
+    vi.stubEnv("DOCKER_HOST", "");
+    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
+    const cleanup = vi.fn(() => ({ ok: true as const }));
+    const prepareDockerEnvironment = vi.fn(() => ({
+      env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+      isolatedCredentialConfig: true,
+      cleanup,
+    }));
+    const routeProtectionCapture = vi.fn((command: readonly string[]) => {
+      const rendered = command.join(" ");
+      return rendered.includes("Get-NetTCPConnection")
+        ? "127.0.0.1"
+        : command.includes("Host: rebinding.invalid")
+          ? "403"
+          : JSON.stringify({ models: [] });
+    });
+    const spawnRecoveryChild = completingRecoverySpawner([
+      unloadedProbeResult().stdout,
+      successfulWarmResult().stdout,
+    ]);
+
+    try {
+      const result = await maybeWarmOllamaAfterDaemonRestart(
+        {
+          provider: "ollama-local",
+          model: "qwen3.6:35b",
+          endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
+        },
+        {
+          dockerContextIsDefault: () => true,
+          getOllamaHost: () => "host.docker.internal",
+          prepareDockerEnvironment,
+          revalidateOllamaHost: () => "host.docker.internal",
+          routeProtectionCapture,
+          spawnRecoveryChild,
+        },
+      );
+      expect(result).toEqual({ kind: "warmed", ok: true });
+    } finally {
+      Reflect.deleteProperty(process.env, "PATH");
+      Object.assign(process.env, originalPath === undefined ? {} : { PATH: originalPath });
+      platformSpy.mockRestore();
+      vi.unstubAllEnvs();
+      rmSync(fakeDockerDirectory, { recursive: true, force: true });
+    }
+
+    const commands = spawnRecoveryChild.mock.calls.map(([binary, args]) => [binary, ...args]);
+    expect(commands.map(([binary]) => binary)).toEqual(["docker", "docker"]);
+    expect(commands).toEqual([
+      expect.arrayContaining([
+        CONTAINER_REACHABILITY_IMAGE,
+        `http://host.docker.internal:${OLLAMA_PORT}/api/ps`,
+      ]),
+      expect.arrayContaining([
+        CONTAINER_REACHABILITY_IMAGE,
+        `http://host.docker.internal:${OLLAMA_PORT}/api/generate`,
+      ]),
+    ]);
+    expect(spawnRecoveryChild.mock.calls.map(([, , , env]) => env.DOCKER_CONFIG)).toEqual([
+      "/tmp/credential-free-docker",
+      "/tmp/credential-free-docker",
+    ]);
+    expect(prepareDockerEnvironment).toHaveBeenCalled();
+    expect(cleanup).toHaveBeenCalled();
+  });
+
   it("stops recovery after an async status probe is cancelled", async () => {
     const runRecoveryCaptureImpl = vi.fn().mockResolvedValue({
       stdout: "",
@@ -356,6 +434,71 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     expect(cleanup).toHaveBeenCalledOnce();
     expect(signalEvents.listenerCount("SIGTERM")).toBe(0);
     expect(signalEvents.listenerCount("SIGINT")).toBe(0);
+  });
+
+  it("forces a timed-out recovery child to close and releases its Docker environment", async () => {
+    vi.useFakeTimers();
+    const childEvents = new EventEmitter();
+    const signalEvents = new EventEmitter();
+    const cleanup = vi.fn(() => ({ ok: true as const }));
+    let child: AgentDispatchChild;
+    const kill = vi
+      .fn<(signal: NodeJS.Signals) => boolean>()
+      .mockReturnValueOnce(true)
+      .mockImplementationOnce((signal) => {
+        child.signalCode = signal;
+        queueMicrotask(() => childEvents.emit("close", null, signal));
+        return true;
+      });
+    child = {
+      exitCode: null,
+      signalCode: null,
+      kill,
+      once: ((event: string, listener: (...args: unknown[]) => void) =>
+        childEvents.once(event, listener)) as AgentDispatchChild["once"],
+      stderr: new EventEmitter(),
+      stdout: new EventEmitter(),
+    };
+    const signalSource: SandboxExecSignalSource = {
+      add: (signal, listener) => signalEvents.on(signal, listener),
+      remove: (signal, listener) => signalEvents.off(signal, listener),
+    };
+
+    try {
+      const pending = runOllamaRecoveryCapture(
+        ["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE, "true"],
+        {
+          host: "127.0.0.1",
+          timeoutMilliseconds: 10,
+          prepareDockerEnvironment: () => ({
+            env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+            isolatedCredentialConfig: true,
+            cleanup,
+          }),
+          signalSource,
+          spawnRecoveryChild: vi.fn(() => child),
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(10);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(child.kill).toHaveBeenLastCalledWith("SIGTERM");
+      expect(cleanup).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(pending).resolves.toMatchObject({
+        exitCode: null,
+        signal: "SIGKILL",
+        timedOut: true,
+      });
+      expect(child.kill).toHaveBeenCalledTimes(2);
+      expect(child.kill).toHaveBeenLastCalledWith("SIGKILL");
+      expect(cleanup).toHaveBeenCalledOnce();
+      expect(signalEvents.listenerCount("SIGTERM")).toBe(0);
+      expect(signalEvents.listenerCount("SIGINT")).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("maps an auth-proxy route back to host loopback", async () => {

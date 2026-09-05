@@ -53,10 +53,13 @@ export interface OllamaRestartRecoveryOptions {
 type PrepareOllamaDockerEnvironment = NonNullable<
   Parameters<typeof prepareOllamaApiExecution>[2]
 >["prepareDockerEnvironment"];
+type OllamaExecutionOptions = NonNullable<Parameters<typeof prepareOllamaApiExecution>[2]>;
 
 export interface OllamaRestartRecoveryDeps extends OllamaRestartRecoveryOptions {
   getOllamaHost?: () => string;
+  dockerContextIsDefault?: OllamaExecutionOptions["dockerContextIsDefault"];
   prepareDockerEnvironment?: PrepareOllamaDockerEnvironment;
+  routeProtectionCapture?: OllamaExecutionOptions["runCaptureImpl"];
   runRecoveryCaptureImpl?: OllamaRecoveryCaptureFn;
   signalSource?: SandboxExecSignalSource;
   spawnRecoveryChild?: OllamaRecoverySpawner;
@@ -90,6 +93,7 @@ export const OLLAMA_LOCAL_PROVIDER = "ollama-local";
 const OLLAMA_RESTART_RECOVERY_TIMEOUT_SECONDS = 300;
 const OLLAMA_RESTART_RECOVERY_PROBE_TIMEOUT_MILLISECONDS = 5_000;
 const OLLAMA_RESTART_RECOVERY_MAX_BUFFER_BYTES = 1024 * 1024;
+const OLLAMA_RESTART_RECOVERY_TERMINATION_GRACE_MILLISECONDS = 1_000;
 const OPENSHELL_HOST_BRIDGE = "host.openshell.internal";
 const ALLOWED_RAW_OLLAMA_HOSTS = new Set([
   OLLAMA_LOCALHOST,
@@ -172,7 +176,9 @@ export type OllamaRecoveryCaptureFn = (
   options: {
     host: string;
     timeoutMilliseconds: number;
+    dockerContextIsDefault?: OllamaExecutionOptions["dockerContextIsDefault"];
     prepareDockerEnvironment?: PrepareOllamaDockerEnvironment;
+    routeProtectionCapture?: OllamaExecutionOptions["runCaptureImpl"];
     signalSource?: SandboxExecSignalSource;
     spawnRecoveryChild?: OllamaRecoverySpawner;
   },
@@ -194,9 +200,11 @@ export async function runOllamaRecoveryCapture(
   options: Parameters<OllamaRecoveryCaptureFn>[1],
 ): Promise<OllamaRecoveryCaptureResult> {
   const execution = prepareOllamaApiExecution(command, options.host, {
+    dockerContextIsDefault: options.dockerContextIsDefault,
     env: buildSubprocessEnv(),
     prepareDockerEnvironment: options.prepareDockerEnvironment,
     operation: "Ollama restart recovery",
+    runCaptureImpl: options.routeProtectionCapture,
   });
   const [binary, ...args] = execution.command;
   if (!binary) {
@@ -212,12 +220,19 @@ export async function runOllamaRecoveryCapture(
 
   let timedOut = false;
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  let forceTimeout: ReturnType<typeof setTimeout> | undefined;
   const spawnRecoveryChild = options.spawnRecoveryChild ?? defaultOllamaRecoverySpawner;
   const spawnChild: AgentDispatchSpawner = (runBinary, runArgs, stdio) => {
     const child = spawnRecoveryChild(runBinary, runArgs, stdio, execution.env ?? {});
     timeout = setTimeout(() => {
       timedOut = true;
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGTERM");
+        forceTimeout = setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        }, OLLAMA_RESTART_RECOVERY_TERMINATION_GRACE_MILLISECONDS);
+        forceTimeout.unref?.();
+      }
     }, options.timeoutMilliseconds);
     timeout.unref?.();
     return child;
@@ -240,6 +255,7 @@ export async function runOllamaRecoveryCapture(
     };
   } finally {
     if (timeout) clearTimeout(timeout);
+    if (forceTimeout) clearTimeout(forceTimeout);
     execution.cleanup();
   }
 }
@@ -391,7 +407,9 @@ export async function maybeWarmOllamaAfterDaemonRestart(
       {
         host: rawHost,
         timeoutMilliseconds: statusTimeoutMilliseconds,
+        dockerContextIsDefault: deps.dockerContextIsDefault,
         prepareDockerEnvironment: deps.prepareDockerEnvironment,
+        routeProtectionCapture: deps.routeProtectionCapture,
         signalSource: deps.signalSource,
         spawnRecoveryChild: deps.spawnRecoveryChild,
       },
@@ -424,7 +442,9 @@ export async function maybeWarmOllamaAfterDaemonRestart(
     const result = await (deps.runRecoveryCaptureImpl ?? runOllamaRecoveryCapture)(command, {
       host: rawHost,
       timeoutMilliseconds: warmupTimeoutMilliseconds,
+      dockerContextIsDefault: deps.dockerContextIsDefault,
       prepareDockerEnvironment: deps.prepareDockerEnvironment,
+      routeProtectionCapture: deps.routeProtectionCapture,
       signalSource: deps.signalSource,
       spawnRecoveryChild: deps.spawnRecoveryChild,
     });
@@ -484,7 +504,9 @@ export async function maybeWarmOllamaAfterDaemonRestart(
             {
               host: rawHost,
               timeoutMilliseconds: inventoryTimeoutMilliseconds,
+              dockerContextIsDefault: deps.dockerContextIsDefault,
               prepareDockerEnvironment: deps.prepareDockerEnvironment,
+              routeProtectionCapture: deps.routeProtectionCapture,
               signalSource: deps.signalSource,
               spawnRecoveryChild: deps.spawnRecoveryChild,
             },
