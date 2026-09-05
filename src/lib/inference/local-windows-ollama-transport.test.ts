@@ -168,7 +168,7 @@ describe("Windows-host Ollama transport", () => {
             ? "127.0.0.1"
             : command.includes("Host: rebinding.invalid")
               ? "403"
-              : command.includes(WINDOWS_OLLAMA_TAGS_URL)
+              : command.some((argument) => argument === WINDOWS_OLLAMA_TAGS_URL)
                 ? JSON.stringify({ models: [] })
                 : "";
         },

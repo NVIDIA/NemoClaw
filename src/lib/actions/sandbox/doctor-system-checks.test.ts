@@ -4,12 +4,18 @@
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../../adapters/docker/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/docker/runtime")>()),
+  detectContainerRuntimeFromDockerInfo: () => "docker-desktop",
+}));
+
 const requireDist = createRequire(import.meta.url);
 const modulePath = "./doctor-system-checks.js";
 
 describe("doctor system checks", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     delete requireDist.cache[requireDist.resolve(modulePath)];
   });
 
@@ -55,6 +61,10 @@ describe("doctor system checks", () => {
   });
 
   it("probes a persisted Windows Ollama route through credential-free Docker", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.stubEnv("DOCKER_CONTEXT", "default");
+    vi.stubEnv("DOCKER_HOST", "");
+    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
     const cleanup = vi.fn(() => ({ ok: true as const }));
     const prepareDockerEnvironment = vi.fn(() => ({
       env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
@@ -63,8 +73,17 @@ describe("doctor system checks", () => {
     }));
     const runCaptureImpl = vi.fn(
       (command: readonly string[], options?: { env?: NodeJS.ProcessEnv }) =>
-        command[0] === "docker" && options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
-          ? JSON.stringify({ models: [] })
+        command.join(" ").includes("Get-NetTCPConnection")
+          ? "127.0.0.1"
+          : command[0] === "docker" &&
+              options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
+          ? command.includes("Host: rebinding.invalid")
+            ? "403"
+            : command.some(
+                  (argument) => argument === "http://host.docker.internal:11434/api/tags",
+                )
+              ? JSON.stringify({ models: [] })
+              : ""
           : "",
     );
     const { ollamaDoctorCheck } = requireDist(modulePath);
@@ -79,12 +98,18 @@ describe("doctor system checks", () => {
       status: "ok",
       detail: "reachable at http://host.docker.internal:11434/api/tags (0 model(s))",
     });
-    expect(runCaptureImpl.mock.calls[0]?.[0]?.[0]).toBe("docker");
-    expect(runCaptureImpl.mock.calls[0]?.[0]).toContain(
-      "http://host.docker.internal:11434/api/tags",
+    expect(runCaptureImpl.mock.calls).toHaveLength(4);
+    expect(runCaptureImpl.mock.calls.slice(1).every(([command]) => command[0] === "docker")).toBe(
+      true,
     );
-    expect(prepareDockerEnvironment).toHaveBeenCalledOnce();
-    expect(cleanup).toHaveBeenCalledOnce();
+    expect(runCaptureImpl.mock.calls[1]?.[0]).toEqual(
+      expect.arrayContaining(["http://host.docker.internal:11434/api/tags"]),
+    );
+    expect(runCaptureImpl.mock.calls[2]?.[0]).toEqual(
+      expect.arrayContaining(["Host: rebinding.invalid"]),
+    );
+    expect(prepareDockerEnvironment).toHaveBeenCalledTimes(3);
+    expect(cleanup).toHaveBeenCalledTimes(3);
   });
 
   it.each([
