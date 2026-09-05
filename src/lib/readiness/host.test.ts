@@ -32,6 +32,8 @@ function emptyPlatformIdentity() {
     nvidiaPlatform: null,
     stationProfile: null,
     stationGb300PciGpu: null,
+    osId: "ubuntu",
+    osVersionId: "24.04",
   };
 }
 
@@ -334,6 +336,77 @@ describe("host readiness projection (#7408)", () => {
         { id: "host.gpu.driver_version", state: "present", value: "580.65.06" },
       ]),
     );
+  });
+
+  it("projects host OS distribution and version observations (#11026)", () => {
+    const result = report(
+      {},
+      {
+        platformIdentity: {
+          productName: null,
+          nvidiaPlatform: null,
+          stationProfile: null,
+          stationGb300PciGpu: null,
+          osId: "ubuntu",
+          osVersionId: "24.04.4 LTS (Noble Numbat)",
+        },
+      },
+    );
+
+    expect(result.observations).toEqual(
+      expect.arrayContaining([
+        { id: "host.os.distribution", state: "present", value: "ubuntu" },
+        {
+          id: "host.os.version",
+          state: "present",
+          value: "24.04.4 LTS (Noble Numbat)",
+        },
+      ]),
+    );
+  });
+
+  it("warns about an unqualified host operating system release (#11026)", () => {
+    const result = report(
+      {},
+      {
+        platformIdentity: {
+          productName: null,
+          nvidiaPlatform: null,
+          stationProfile: null,
+          stationGb300PciGpu: null,
+          osId: "fedora",
+          osVersionId: "40",
+        },
+      },
+    );
+
+    expect(result.status).toBe("supported");
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({
+        id: "host.platform.os_unqualified",
+        severity: "warning",
+        summary:
+          "Host operating system release 'fedora 40' is not qualified. NemoClaw is qualified on Ubuntu 24.04.",
+      }),
+    );
+  });
+
+  it("does not warn about qualified Ubuntu 24.04 operating system release (#11026)", () => {
+    const result = report(
+      {},
+      {
+        platformIdentity: {
+          productName: null,
+          nvidiaPlatform: null,
+          stationProfile: null,
+          stationGb300PciGpu: null,
+          osId: "ubuntu",
+          osVersionId: "24.04",
+        },
+      },
+    );
+
+    expect(result.findings.map(({ id }) => id)).not.toContain("host.platform.os_unqualified");
   });
 
   it("keeps the default WSL Docker Desktop GPU observation container-free", () => {

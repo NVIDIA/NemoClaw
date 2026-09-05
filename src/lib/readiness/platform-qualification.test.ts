@@ -847,4 +847,127 @@ describe("platform readiness qualification (#7410)", () => {
       n1xPciGpu: undefined,
     });
   });
+
+  it("collects host OS distribution and version from os-release across platforms (#11026)", () => {
+    const linuxIdentity = collectPlatformIdentity({
+      osReleasePath: "/fixtures/os-release",
+      readFile: (filePath) =>
+        filePath === "/fixtures/os-release"
+          ? 'NAME="Ubuntu"\nVERSION_ID="24.04.4 LTS (Noble Numbat)"\nID=ubuntu\n'
+          : unexpectedFixturePath(filePath),
+    });
+    expect(linuxIdentity.osId).toBe("ubuntu");
+    expect(linuxIdentity.osVersionId).toBe("24.04.4 LTS (Noble Numbat)");
+
+    const singleQuoteIdentity = collectPlatformIdentity({
+      osReleasePath: "/fixtures/os-release",
+      readFile: (filePath) =>
+        filePath === "/fixtures/os-release"
+          ? "ID='fedora'\nVERSION_ID='40'\n"
+          : unexpectedFixturePath(filePath),
+    });
+    expect(singleQuoteIdentity.osId).toBe("fedora");
+    expect(singleQuoteIdentity.osVersionId).toBe("40");
+
+    const wslIdentity = collectPlatformIdentity({
+      isWsl: true,
+      osReleasePath: "/fixtures/os-release",
+      readFile: (filePath) =>
+        filePath === "/fixtures/os-release"
+          ? 'ID="ubuntu"\nVERSION_ID="24.04"\n'
+          : unexpectedFixturePath(filePath),
+    });
+    expect(wslIdentity.osId).toBe("ubuntu");
+    expect(wslIdentity.osVersionId).toBe("24.04");
+
+    const macosIdentity = collectPlatformIdentity({
+      platform: "darwin",
+    });
+    expect(macosIdentity.osId).toBe("macos");
+    expect(typeof macosIdentity.osVersionId).toBe("string");
+  });
+
+  it("warns when host operating system release is not qualified (#11026)", () => {
+    const fedoraResult = projectPlatformQualification(
+      input({
+        platform: "linux",
+        architecture: "x64",
+        osId: "fedora",
+        osVersionId: "40",
+      }),
+    );
+    expect(capability(fedoraResult, "host.platform.linux_supported")).toBe("present");
+    expect(fedoraResult.findings).toContainEqual(
+      expect.objectContaining({
+        id: "host.platform.os_unqualified",
+        severity: "warning",
+        capabilityIds: ["host.platform.linux_supported"],
+        evidenceIds: ["host.platform.identity"],
+        summary:
+          "Host operating system release 'fedora 40' is not qualified. NemoClaw is qualified on Ubuntu 24.04.",
+      }),
+    );
+
+    const oldUbuntuResult = projectPlatformQualification(
+      input({
+        platform: "linux",
+        architecture: "x64",
+        osId: "ubuntu",
+        osVersionId: "22.04",
+      }),
+    );
+    expect(oldUbuntuResult.findings).toContainEqual(
+      expect.objectContaining({
+        id: "host.platform.os_unqualified",
+        severity: "warning",
+        summary:
+          "Host operating system release 'ubuntu 22.04' is not qualified. NemoClaw is qualified on Ubuntu 24.04.",
+      }),
+    );
+
+    const missingOsResult = projectPlatformQualification(
+      input({
+        platform: "linux",
+        architecture: "x64",
+        osId: null,
+        osVersionId: null,
+      }),
+    );
+    expect(missingOsResult.findings).toContainEqual(
+      expect.objectContaining({
+        id: "host.platform.os_unqualified",
+        severity: "warning",
+        summary:
+          "Host operating system release is not qualified. NemoClaw is qualified on Ubuntu 24.04.",
+      }),
+    );
+  });
+
+  it("does not warn about qualified Ubuntu 24.04, macOS, or N1x releases (#11026)", () => {
+    const ubuntu2404Result = projectPlatformQualification(
+      input({
+        platform: "linux",
+        architecture: "x64",
+        osId: "ubuntu",
+        osVersionId: "24.04.4 LTS (Noble Numbat)",
+      }),
+    );
+    expect(ubuntu2404Result.findings.map(({ id }) => id)).not.toContain(
+      "host.platform.os_unqualified",
+    );
+
+    const macosResult = projectPlatformQualification(
+      input({
+        platform: "darwin",
+        architecture: "arm64",
+        runtime: "docker-desktop",
+        dockerReachable: true,
+        osId: "macos",
+        osVersionId: "25.5.0",
+      }),
+    );
+    expect(macosResult.findings.map(({ id }) => id)).not.toContain(
+      "host.platform.os_unqualified",
+    );
+  });
 });

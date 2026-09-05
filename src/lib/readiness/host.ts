@@ -253,6 +253,7 @@ function observeHost(
             collectPlatformIdentity({
               ...options.platformIdentityOptions,
               isWsl: assessment.isWsl,
+              platform: assessment.platform,
               runCaptureImpl,
             }))
         )(),
@@ -300,6 +301,8 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.os.platform",
     "host.os.architecture",
     "host.os.wsl",
+    "host.os.distribution",
+    "host.os.version",
     "host.session.headless",
     "host.docker.installed",
     "host.docker.reachable",
@@ -424,6 +427,8 @@ export function projectHostReadiness(
       observation("host.os.platform", host.platform),
       observation("host.os.architecture", host.architecture),
       observation("host.os.wsl", host.isWsl),
+      observation("host.os.distribution", host.platformIdentity?.osId),
+      observation("host.os.version", host.platformIdentity?.osVersionId),
       observation("host.session.headless", host.isHeadlessLikely),
       observation("host.docker.installed", host.dockerInstalled),
       observation("host.docker.reachable", dockerHostBlocks ? undefined : host.dockerReachable),

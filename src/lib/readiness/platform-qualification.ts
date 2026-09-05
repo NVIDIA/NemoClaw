@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { NvidiaPlatform } from "../inference/nim.js";
 import { collectN1xIdentity, type N1xIdentityOptions } from "../inference/platform-identity/n1x.js";
@@ -61,6 +62,7 @@ export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
   stationReleasePath?: string;
   osReleasePath?: string;
   isWsl?: boolean;
+  platform?: string;
   runCaptureImpl?: (
     command: readonly string[],
     options?: { ignoreError?: boolean },
@@ -134,11 +136,12 @@ function nvidiaPlatformFromProduct(productName: string | undefined): NvidiaPlatf
 function parseOsRelease(contents: string): { osId?: string; osVersionId?: string } {
   const values = new Map<string, string>();
   for (const line of contents.split("\n")) {
-    const match = /^(ID|VERSION_ID)=(?:"([^"]*)"|([A-Za-z0-9._-]+))$/.exec(line);
+    const trimmed = line.trim();
+    const match = /^(ID|VERSION_ID)=(?:"([^"]*)"|'([^']*)'|([A-Za-z0-9._-]+))$/.exec(trimmed);
     if (!match) continue;
-    const [, key, quotedValue, plainValue] = match;
+    const [, key, doubleQuoted, singleQuoted, plainValue] = match;
     if (!key || values.has(key)) continue;
-    values.set(key, quotedValue ?? plainValue ?? "");
+    values.set(key, doubleQuoted ?? singleQuoted ?? plainValue ?? "");
   }
   return {
     osId: values.get("ID"),
@@ -274,6 +277,14 @@ export function collectPlatformIdentity(
   );
   const n1xWslProduct = collectN1xWslProduct(options);
   const wslIdentity = options.isWsl ? { n1xWslProduct } : {};
+
+  const osRelease = readOptional(readFile, options.osReleasePath ?? "/etc/os-release");
+  let { osId, osVersionId } = osRelease ? parseOsRelease(osRelease) : {};
+  if (!osId && options.platform === "darwin") {
+    osId = "macos";
+    osVersionId = os.release();
+  }
+
   let nvidiaPlatform = nvidiaPlatformFromProduct(productName);
   if (nvidiaPlatform === undefined) {
     const n1xIdentity = collectN1xIdentity({
@@ -296,12 +307,20 @@ export function collectPlatformIdentity(
         n1xCandidate: true,
         n1xFastOsMarker: n1xIdentity.fastOsMarker,
         n1xPciGpu: n1xIdentity.pciGpu,
+        ...(osId !== undefined ? { osId } : {}),
+        ...(osVersionId !== undefined ? { osVersionId } : {}),
       };
     }
   }
-  if (nvidiaPlatform !== "station") return { nvidiaPlatform, productName, ...wslIdentity };
-  const osRelease = readOptional(readFile, options.osReleasePath ?? "/etc/os-release");
-  const { osId, osVersionId } = osRelease ? parseOsRelease(osRelease) : {};
+  if (nvidiaPlatform !== "station") {
+    return {
+      nvidiaPlatform,
+      productName,
+      ...wslIdentity,
+      ...(osId !== undefined ? { osId } : {}),
+      ...(osVersionId !== undefined ? { osVersionId } : {}),
+    };
+  }
 
   const stationReleasePath = options.stationReleasePath ?? "/etc/dgx-release";
   let stationProfile: StationProfile = "generic-ubuntu";
@@ -340,8 +359,8 @@ export function collectPlatformIdentity(
       readdir,
       options.pciDevicesPath ?? "/sys/bus/pci/devices",
     ),
-    osId,
-    osVersionId,
+    ...(osId !== undefined ? { osId } : {}),
+    ...(osVersionId !== undefined ? { osVersionId } : {}),
   };
 }
 
@@ -393,6 +412,16 @@ function deriveN1xWslQualification(
     input.hasNvidiaGpu
     ? "qualified"
     : "unqualified";
+}
+
+function formatUnqualifiedOsSummary(
+  osId: string | null | undefined,
+  osVersionId: string | null | undefined,
+): string {
+  const label = [osId, osVersionId].filter(Boolean).join(" ");
+  return label
+    ? `Host operating system release '${label}' is not qualified. NemoClaw is qualified on Ubuntu 24.04.`
+    : "Host operating system release is not qualified. NemoClaw is qualified on Ubuntu 24.04.";
 }
 
 export function projectPlatformQualification(
@@ -671,6 +700,37 @@ export function projectPlatformQualification(
       summary: "N1x qualification is inconclusive and fails closed.",
       capabilityIds: ["host.platform.n1x", "host.platform.supported"],
       ...(evidence.length ? { evidenceIds: ["host.platform.identity"] } : {}),
+    });
+  }
+  const linuxOsQualified =
+    input.platform !== "linux" ||
+    n1x.identity ||
+    (input.osId === "ubuntu" && Boolean(input.osVersionId?.startsWith("24.04")));
+  if (!linuxOsQualified) {
+    if (!evidence.some(({ id }) => id === "host.platform.identity")) {
+      evidence.push({
+        id: "host.platform.identity",
+        summary: "Bounded platform identity used for qualification.",
+        details: {
+          product: input.productName?.slice(0, 256) ?? null,
+          nvidiaPlatform: input.nvidiaPlatform ?? null,
+          n1xCandidate: input.n1xCandidate ?? null,
+          n1xFastOsMarker: input.n1xFastOsMarker ?? null,
+          n1xPciGpu: input.n1xPciGpu ?? null,
+          n1xWslProduct: input.n1xWslProduct ?? null,
+          stationProfile: input.stationProfile ?? null,
+          stationGb300PciGpu: input.stationGb300PciGpu ?? null,
+          osId: input.osId ?? null,
+          osVersionId: input.osVersionId ?? null,
+        },
+      });
+    }
+    findings.push({
+      id: "host.platform.os_unqualified",
+      severity: "warning",
+      summary: formatUnqualifiedOsSummary(input.osId, input.osVersionId),
+      capabilityIds: ["host.platform.linux_supported"],
+      evidenceIds: ["host.platform.identity"],
     });
   }
   if (
