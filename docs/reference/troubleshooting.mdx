@@ -4388,7 +4388,7 @@ $$nemoclaw <name> start
 
 Use `$$nemoclaw <name> rebuild --yes` only when the input or sandbox state cannot be repaired safely. Repeated recovery requests do not retry the quarantined preparation.
 
-The refusal is deterministic, so retrying any of those commands cannot clear it. Restore the registered configuration and refresh its integrity metadata in one transaction:
+When the relaunch quarantine instead comes from an integrity mismatch or an exhausted gateway crash budget, retrying the recovery command cannot clear it. Restore the registered configuration and refresh its integrity metadata in one transaction:
 
 ```bash
 nemohermes <name> rebuild --yes

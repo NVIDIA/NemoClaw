@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import {
   extractShellFunction as extractShellFunctionFromSource,
+  runHermesBashHarness as runBashHarness,
   runHermesSandboxInitPreludeWithFakePath,
   writeFakeProcCmdline,
 } from "../../support/hermes-shell-harness";
@@ -813,7 +814,7 @@ function runRuntimeShellEnvBootstrap() {
   }
 }
 
-describe("agents/hermes/start.sh sandbox init bootstrap", () => {
+describe("agents/hermes/start.sh bootstrap isolation", () => {
   it("locks the trusted PATH before sourcing shared sandbox init", () => {
     const { result, dirnameCalled, sourcePath } = runHermesSandboxInitPreludeWithFakePath(
       START_SCRIPT,
@@ -823,6 +824,39 @@ describe("agents/hermes/start.sh sandbox init bootstrap", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(dirnameCalled).toBe(false);
     expect(sourcePath).toBe("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+  });
+
+  it("isolates CHAT_UI_URL parsing from an inherited Python import path", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness(
+      [
+        extractShellFunctionFromSource(source, "_chat_ui_url_dashboard_settings"),
+        'PYTHONPATH="$TEST_HOSTILE_PYTHONPATH"',
+        "export PYTHONPATH",
+        "CHAT_UI_URL=https://hermes.example.test:29443",
+        '_chat_ui_url_dashboard_settings; status=$?',
+        'if [ -e "$TEST_PYTHON_IMPORT_SENTINEL" ]; then sentinel=loaded; else sentinel=absent; fi',
+        'printf "status=%s\\nsentinel=%s\\n" "$status" "$sentinel"',
+      ],
+      (tmpDir) => {
+        const sentinel = path.join(tmpDir, "python-import-sentinel");
+        fs.writeFileSync(
+          path.join(tmpDir, "sitecustomize.py"),
+          `from pathlib import Path\nPath(${JSON.stringify(sentinel)}).write_text("loaded")\n`,
+        );
+        return {
+          TEST_HOSTILE_PYTHONPATH: tmpDir,
+          TEST_PYTHON_IMPORT_SENTINEL: sentinel,
+        };
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "29443|hermes.example.test",
+      "status=0",
+      "sentinel=absent",
+    ]);
   });
 });
 
