@@ -20,7 +20,7 @@ import { isObjectRecord } from "./core/json-types";
 import { validateSkillName } from "./skill-name";
 import type { SshContext, SshResult } from "./skill-remote";
 import { shellQuote, sshExec } from "./skill-remote";
-import { ensureConfigDir } from "./state/config-io";
+import { ensureConfigDir, rejectSymlinksOnPath } from "./state/config-io";
 import { resolveNemoclawStateDir } from "./state/paths";
 
 export { validateSkillName } from "./skill-name";
@@ -609,6 +609,53 @@ export function resolveOpenClawSkillProvenancePath(
     sandboxIdentityFingerprint,
     `${skillName}.json`,
   );
+}
+
+/** Remove every host-protected skill receipt owned by one destroyed sandbox identity. */
+export function removeOpenClawSkillProvenanceForSandboxIdentity(
+  sandboxIdentityFingerprint: string,
+  stateDir = resolveNemoclawStateDir(),
+): void {
+  if (!SHA256_RE.test(sandboxIdentityFingerprint)) {
+    throw new Error("OpenClaw skill provenance identity is invalid");
+  }
+  const provenanceRoot = path.join(stateDir, "openclaw-skill-installs");
+  const sandboxProvenanceDir = path.join(provenanceRoot, sandboxIdentityFingerprint);
+  rejectSymlinksOnPath(sandboxProvenanceDir);
+
+  let provenanceRootStat: fs.Stats;
+  try {
+    provenanceRootStat = fs.lstatSync(provenanceRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (!provenanceRootStat.isDirectory() || provenanceRootStat.isSymbolicLink()) {
+    throw new Error("OpenClaw skill provenance root is not a regular directory");
+  }
+
+  let sandboxProvenanceStat: fs.Stats;
+  try {
+    sandboxProvenanceStat = fs.lstatSync(sandboxProvenanceDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (!sandboxProvenanceStat.isDirectory() || sandboxProvenanceStat.isSymbolicLink()) {
+    throw new Error("OpenClaw sandbox skill provenance is not a regular directory");
+  }
+
+  for (const entry of fs.readdirSync(sandboxProvenanceDir, { withFileTypes: true })) {
+    const entryPath = path.join(sandboxProvenanceDir, entry.name);
+    const entryStat = fs.lstatSync(entryPath);
+    if (!entryStat.isFile() || entryStat.isSymbolicLink()) {
+      throw new Error("OpenClaw sandbox skill provenance contains an unsupported entry");
+    }
+    // unlink removes the exact directory entry and never follows a final symlink.
+    fs.unlinkSync(entryPath);
+  }
+  fs.rmdirSync(sandboxProvenanceDir);
+  syncDirectory(provenanceRoot);
 }
 
 /** Validate an ownership receipt against its exact host and sandbox identity. */

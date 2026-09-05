@@ -9,6 +9,7 @@ import {
   createOpenshellSandboxIdReader,
   fingerprintOpenShellSandboxId,
   fingerprintOpenShellSandboxLiveIdentity,
+  fingerprintOpenShellSandboxSshConfigIdentity,
   isOpenShellSandboxId,
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
   NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
@@ -88,6 +89,26 @@ describe("OpenShell sandbox identity parsing", () => {
     expect(isOpenShellSandboxId("sandbox.alpha_2")).toBe(true);
     expect(isOpenShellSandboxId("sandbox/alpha")).toBe(false);
     expect(isOpenShellSandboxId("a".repeat(513))).toBe(false);
+  });
+
+  it("binds an SSH config to one immutable sandbox ID", () => {
+    const expected = createHash("sha256").update("sandbox-alpha").digest("hex");
+    expect(
+      fingerprintOpenShellSandboxSshConfigIdentity(
+        "Host sandbox\n  ProxyCommand openshell ssh-proxy --sandbox-id sandbox-alpha --token t\n",
+      ),
+    ).toBe(expected);
+    expect(
+      fingerprintOpenShellSandboxSshConfigIdentity(
+        'Host sandbox\n  ProxyCommand openshell ssh-proxy --sandbox-id="sandbox-alpha" --token t\n',
+      ),
+    ).toBe(expected);
+    expect(fingerprintOpenShellSandboxSshConfigIdentity("Host sandbox\n")).toBeNull();
+    expect(
+      fingerprintOpenShellSandboxSshConfigIdentity(
+        "ProxyCommand p --sandbox-id first\nProxyCommand p --sandbox-id second\n",
+      ),
+    ).toBeNull();
   });
 });
 

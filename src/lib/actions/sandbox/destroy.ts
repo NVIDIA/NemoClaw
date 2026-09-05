@@ -56,6 +56,7 @@ import {
   executeSandboxDestroy,
   preparePortableDemoSandboxDestroyAuthority,
   redactDestroyError,
+  removeOpenClawSkillProvenanceForSandboxIdentity,
   retirePortableLifecycleAuthority,
 } from "./destroy-execution";
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
@@ -638,6 +639,8 @@ async function destroySandboxUnlocked(
   }
   const retainedSandboxIdentityFingerprint =
     retainedRecoveryAuthority?.sandboxIdentityFingerprint ?? undefined;
+  const openClawSkillProvenanceIdentity =
+    registeredSandbox?.lifecycleLiveIdentityFingerprint ?? retainedSandboxIdentityFingerprint;
   let portableContainerAuthority: ReturnType<typeof preparePortableDemoSandboxDestroyAuthority>;
   try {
     portableContainerAuthority = preparePortableDemoSandboxDestroyAuthority(sandboxName, () => {
@@ -1011,6 +1014,17 @@ async function destroySandboxUnlocked(
    */
   if (deleteSucceededOrAlreadyGone && retireRemovedImmutabilityState) {
     retireRemovedImmutabilityStateRecord(sandboxName, "sandbox-destroyed");
+  }
+  if (deleteSucceededOrAlreadyGone && openClawSkillProvenanceIdentity) {
+    try {
+      removeOpenClawSkillProvenanceForSandboxIdentity(openClawSkillProvenanceIdentity);
+    } catch (error) {
+      console.error(
+        `  Sandbox '${sandboxName}' is gone, but its OpenClaw skill provenance could not be removed: ${redactDestroyError(error)}`,
+      );
+      console.error("  The sandbox registry entry was preserved so exact cleanup can be retried.");
+      requestSandboxDestroyExit(1);
+    }
   }
   const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName);
   const removed = removalOutcome.removed;

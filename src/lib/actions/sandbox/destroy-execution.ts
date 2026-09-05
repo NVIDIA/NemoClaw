@@ -32,6 +32,7 @@ import {
   runSandboxProviderPreDeleteCleanup,
 } from "../../onboard/sandbox-provider-cleanup";
 import { redact, redactFull } from "../../security/redact";
+import { removeOpenClawSkillProvenanceForSandboxIdentity as removeOpenClawSkillProvenance } from "../../skill-install";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import type { SandboxEntry } from "../../state/registry";
 import {
@@ -59,6 +60,12 @@ export function redactDestroyError(error: unknown): string {
 
 export function retirePortableLifecycleAuthority(sandboxName: string): void {
   removePortableDemoSandboxLifecycleReceipt(sandboxName);
+}
+
+export function removeOpenClawSkillProvenanceForSandboxIdentity(
+  sandboxIdentityFingerprint: string,
+): void {
+  removeOpenClawSkillProvenance(sandboxIdentityFingerprint);
 }
 
 export { preparePortableDemoSandboxDestroyAuthority };

@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   computeSkillContentDigest,
   installOpenClawSkill,
+  removeOpenClawSkillProvenanceForSandboxIdentity,
   resolveOpenClawSkillProvenancePath,
   SKILL_SNAPSHOT_MAX_BYTES,
   shellQuote,
@@ -42,6 +43,50 @@ afterEach(() => {
 });
 
 describe("OpenClaw native skill installation", () => {
+  it("removes only the exact destroyed sandbox identity provenance directory", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-provenance-"));
+    roots.push(stateDir);
+    const otherIdentity = "e".repeat(64);
+    const receiptPath = resolveOpenClawSkillProvenancePath(
+      sandboxIdentityFingerprint,
+      "demo-skill",
+      stateDir,
+    );
+    const otherReceiptPath = resolveOpenClawSkillProvenancePath(
+      otherIdentity,
+      "other-skill",
+      stateDir,
+    );
+    fs.mkdirSync(path.dirname(receiptPath), { recursive: true, mode: 0o700 });
+    fs.mkdirSync(path.dirname(otherReceiptPath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(receiptPath, "receipt", { mode: 0o600 });
+    fs.writeFileSync(otherReceiptPath, "other", { mode: 0o600 });
+
+    removeOpenClawSkillProvenanceForSandboxIdentity(sandboxIdentityFingerprint, stateDir);
+
+    expect(fs.existsSync(path.dirname(receiptPath))).toBe(false);
+    expect(fs.readFileSync(otherReceiptPath, "utf8")).toBe("other");
+    expect(() =>
+      removeOpenClawSkillProvenanceForSandboxIdentity(sandboxIdentityFingerprint, stateDir),
+    ).not.toThrow();
+  });
+
+  it("refuses to follow a sandbox provenance directory symlink during cleanup", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-provenance-"));
+    const externalDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-external-"));
+    roots.push(stateDir, externalDir);
+    const provenanceRoot = path.join(stateDir, "openclaw-skill-installs");
+    const externalReceipt = path.join(externalDir, "keep.json");
+    fs.mkdirSync(provenanceRoot, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(externalReceipt, "keep", { mode: 0o600 });
+    fs.symlinkSync(externalDir, path.join(provenanceRoot, sandboxIdentityFingerprint));
+
+    expect(() =>
+      removeOpenClawSkillProvenanceForSandboxIdentity(sandboxIdentityFingerprint, stateDir),
+    ).toThrow("not a regular directory");
+    expect(fs.readFileSync(externalReceipt, "utf8")).toBe("keep");
+  });
+
   it.runIf(process.platform === "linux")(
     "executes native publication, provenance, reconciliation, refusal, and staging cleanup",
     () => {

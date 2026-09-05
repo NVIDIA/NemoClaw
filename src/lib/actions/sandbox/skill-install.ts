@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fingerprintOpenShellSandboxSshConfigIdentity } from "../../adapters/openshell/sandbox-identity";
 import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
 import { captureSandboxSshConfig } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
@@ -370,6 +371,10 @@ export async function installSandboxSkill(
         sshConfigFailed = true;
         return null;
       }
+      const sshConfigIdentityFingerprint = fingerprintOpenShellSandboxSshConfigIdentity(
+        sshConfigResult.output,
+      );
+      if (!sshConfigIdentityFingerprint) return null;
       const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-skill-");
       try {
         let sandboxIdentityFingerprint: string;
@@ -382,6 +387,7 @@ export async function installSandboxSkill(
         } catch {
           return null;
         }
+        if (sandboxIdentityFingerprint !== sshConfigIdentityFingerprint) return null;
         return skillInstall.installOpenClawSkill(
           { configFile: tmpSshConfig.file, sandboxName },
           skillDir,

@@ -23,6 +23,16 @@ export function fingerprintOpenShellSandboxId(sandboxId: string): string | null 
     : null;
 }
 
+/** Extract and fingerprint the one immutable sandbox ID carried by an SSH config. */
+export function fingerprintOpenShellSandboxSshConfigIdentity(sshConfig: string): string | null {
+  const matches = [
+    ...sshConfig.matchAll(
+      /(?:^|[ \t])--sandbox-id(?:=|[ \t]+)(['"]?)([A-Za-z0-9._-]+)\1(?=[ \t]|$)/gmu,
+    ),
+  ].map((match) => match[2] ?? "");
+  return matches.length === 1 ? fingerprintOpenShellSandboxId(matches[0]) : null;
+}
+
 export const NEMOCLAW_CREATE_ATTEMPT_LABEL = "ai.nvidia.nemoclaw.create-attempt" as const;
 export const NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH = 62 as const;
 const CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS = 30_000;

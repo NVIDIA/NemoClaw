@@ -83,19 +83,48 @@ describe("destroySandbox flow", () => {
     "selects the sandbox gateway, deletes live resources, cleans host state, and removes registry state",
     { timeout: 30_000 },
     async () => {
-      const harness = createDestroyHarness();
+      const lifecycleLiveIdentityFingerprint = "f".repeat(64);
+      const harness = createDestroyHarness({
+        registryEntryOverrides: { lifecycleLiveIdentityFingerprint },
+      });
 
       await expect(
         harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
       ).resolves.toBeUndefined();
 
       expectSuccessfulLiveDestroy(harness, exitSpy);
+      expect(harness.removeOpenClawSkillProvenanceSpy).toHaveBeenCalledWith(
+        lifecycleLiveIdentityFingerprint,
+      );
+      expect(harness.removeOpenClawSkillProvenanceSpy.mock.invocationCallOrder[0]).toBeLessThan(
+        harness.removeSandboxSpy.mock.invocationCallOrder[0],
+      );
       expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
       expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
         harness.retirePortableLifecycleReceiptSpy.mock.invocationCallOrder[0],
       );
     },
   );
+
+  it("preserves the registry when destroyed-sandbox skill provenance cleanup fails", async () => {
+    const lifecycleLiveIdentityFingerprint = "f".repeat(64);
+    const harness = createDestroyHarness({
+      registryEntryOverrides: { lifecycleLiveIdentityFingerprint },
+    });
+    harness.removeOpenClawSkillProvenanceSpy.mockImplementationOnce(() => {
+      throw new Error("injected provenance cleanup failure");
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.removeOpenClawSkillProvenanceSpy).toHaveBeenCalledWith(
+      lifecycleLiveIdentityFingerprint,
+    );
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "OpenClaw skill provenance could not be removed",
+    );
+  });
 
   it("blocks an unsafe removed-immutability record before destroy effects", async ({
     onTestFinished,
@@ -804,14 +833,17 @@ describe("destroySandbox flow", () => {
   );
 
   it("stops before local cleanup when OpenShell fails to delete the live sandbox", async () => {
+    const lifecycleLiveIdentityFingerprint = "f".repeat(64);
     const harness = createDestroyHarness({
       deleteStatus: 7,
       deleteOutput: "delete failed",
+      registryEntryOverrides: { lifecycleLiveIdentityFingerprint },
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(7)");
 
     expectFailedDeletePreservesHostState(harness, exitSpy);
+    expect(harness.removeOpenClawSkillProvenanceSpy).not.toHaveBeenCalled();
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
     expect(harness.withGatewayRouteMutationLockSpy).not.toHaveBeenCalled();
     expect(harness.stopModelRouterForDestroyedSandboxSpy).not.toHaveBeenCalled();

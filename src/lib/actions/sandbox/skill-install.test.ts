@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const captureSandboxSshConfig = vi.hoisted(() => vi.fn());
+const fingerprintOpenShellSandboxSshConfigIdentity = vi.hoisted(() => vi.fn());
 const inspectOpenShellSandboxIdentityFingerprint = vi.hoisted(() => vi.fn());
 const getSessionAgent = vi.hoisted(() => vi.fn());
 const ensureLiveSandboxOrExit = vi.hoisted(() => vi.fn());
@@ -39,6 +40,10 @@ const skillInstall = vi.hoisted(() => ({
 
 vi.mock("../../adapters/openshell/runtime", () => ({
   captureSandboxSshConfig,
+}));
+
+vi.mock("../../adapters/openshell/sandbox-identity", () => ({
+  fingerprintOpenShellSandboxSshConfigIdentity,
 }));
 
 vi.mock("../../adapters/openshell/sandbox-identity-cli", () => ({
@@ -122,6 +127,7 @@ describe("sandbox skill action orchestration", () => {
     mutationLockState.active = false;
 
     captureSandboxSshConfig.mockReturnValue({ status: 0, output: "Host openshell-alpha\n" });
+    fingerprintOpenShellSandboxSshConfigIdentity.mockReturnValue("f".repeat(64));
     inspectOpenShellSandboxIdentityFingerprint.mockReturnValue("f".repeat(64));
     ensureLiveSandboxOrExit.mockResolvedValue(undefined);
     getSandboxTargetGatewayName.mockReturnValue("nemoclaw");
@@ -411,6 +417,10 @@ describe("sandbox skill action orchestration", () => {
       expect(options).toMatchObject({ gatewayName: "nemoclaw-recorded" });
       return { status: 0, output: "Host openshell-alpha\n" };
     });
+    fingerprintOpenShellSandboxSshConfigIdentity.mockImplementationOnce(() => {
+      expect(mutationLockState.active).toBe(true);
+      return "f".repeat(64);
+    });
     inspectOpenShellSandboxIdentityFingerprint.mockImplementationOnce((request) => {
       expect(mutationLockState.active).toBe(true);
       expect(request.gatewayName).toBe("nemoclaw-recorded");
@@ -449,6 +459,28 @@ describe("sandbox skill action orchestration", () => {
     expect(skillInstall.checkExisting).not.toHaveBeenCalled();
     expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
     expect(skillInstall.postInstall).not.toHaveBeenCalled();
+  });
+
+  it("refuses OpenClaw installation when SSH and live sandbox identities differ", async () => {
+    const skillDir = makeSkillDir();
+    getSessionAgent.mockReturnValue(agent);
+    skillInstall.resolveSkillPaths.mockReturnValue(paths);
+    fingerprintOpenShellSandboxSshConfigIdentity.mockReturnValueOnce("a".repeat(64));
+    inspectOpenShellSandboxIdentityFingerprint.mockReturnValueOnce("b".repeat(64));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await installSandboxSkill("alpha", { command: "install", path: skillDir });
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      "  Failed to bind the OpenClaw skill install to the exact live sandbox identity.",
+    );
+    expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function));
+    expect(skillInstall.installOpenClawSkill).not.toHaveBeenCalled();
   });
 
   it("refuses OpenClaw installation when the exact sandbox identity is unavailable", async () => {
