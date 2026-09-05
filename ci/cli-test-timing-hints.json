@@ -169,7 +169,6 @@
     "test/onboarding/onboard.test.ts": 7766,
     "test/repository/e2e-assertion-census.test.ts": 6151,
     "test/repository/layer-import-boundaries.test.ts": 9165,
-    "test/repository/plugin-vitest-project.test.ts": 6683,
     "test/repository/source-architecture.test.ts": 15693,
     "test/repository/test-registration-boundary.test.ts": 11385,
     "test/runtime/gateway/gateway-serving-watchdog.test.ts": 12216,

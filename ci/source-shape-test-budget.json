@@ -183,6 +183,11 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "keeps %s plugin test typechecking after the trusted production build",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "passes only the base-packaged SDK archive to pull request dependency jobs",
       "category": "security"
     },

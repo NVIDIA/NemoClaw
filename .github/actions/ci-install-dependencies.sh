@@ -4,6 +4,25 @@
 
 set -euo pipefail
 
+if [ "$#" -gt 1 ]; then
+  echo "Usage: ci-install-dependencies.sh [full|production|none]" >&2
+  exit 1
+fi
+
+plugin_install_mode="${1:-full}"
+plugin_install_args=(--prefix nemoclaw ci)
+case "$plugin_install_mode" in
+  full) ;;
+  production)
+    plugin_install_args+=(--omit=dev)
+    ;;
+  none) ;;
+  *)
+    echo "Unsupported plugin dependency install mode: $plugin_install_mode" >&2
+    exit 1
+    ;;
+esac
+
 candidate_npmrc="$(find . -path './.git' -prune -o -name .npmrc -print -quit)"
 if [ -n "$candidate_npmrc" ]; then
   echo "Candidate repository npm configuration is not allowed during trusted dependency installation." >&2
@@ -57,4 +76,7 @@ if [ "$package_mode" = "registry" ] && [ -n "${NODE_AUTH_TOKEN:-}" ]; then
 fi
 
 npm ci --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
-npm --prefix nemoclaw ci --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
+if [ "$plugin_install_mode" != "none" ]; then
+  npm "${plugin_install_args[@]}" \
+    --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
+fi

@@ -466,9 +466,7 @@ describe("pull request and main workflow contracts", () => {
   ) as TypeScriptConfig;
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
-    compileArtifacts: readYaml<CompositeAction>(
-      ".github/actions/ci-compile-artifacts/action.yaml",
-    ),
+    compileArtifacts: readYaml<CompositeAction>(".github/actions/ci-compile-artifacts/action.yaml"),
     buildTypecheck: readYaml<CompositeAction>(".github/actions/ci-build-typecheck/action.yaml"),
     cliCoverageShard: readYaml<CompositeAction>(
       ".github/actions/ci-cli-coverage-shard/action.yaml",
@@ -507,10 +505,7 @@ describe("pull request and main workflow contracts", () => {
   it("verifies changed Hugging Face catalog references without credentials", () => {
     const job = prWorkflow.jobs["hugging-face-models"];
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
-    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<
-      string,
-      string[]
-    >;
+    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<string, string[]>;
     const huggingFaceModelFilters = filters.hugging_face_models ?? [];
 
     expect(
@@ -584,10 +579,32 @@ describe("pull request and main workflow contracts", () => {
         NODE_AUTH_TOKEN: "${{ github.event_name == 'push' && github.token || '' }}",
       })),
     );
-    expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual(
-      actions.map(() => 'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"'),
-    );
+    expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual([
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" none',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" production',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+    ]);
   });
+
+  // source-shape-contract: security -- The trusted split must retain test-config coverage after compiling candidate production code
+  it.each([
+    ["pull request", prWorkflow],
+    ["main", mainWorkflow],
+  ] as const)(
+    "keeps %s plugin test typechecking after the trusted production build",
+    (_name, workflow) => {
+      expect([workflow.jobs["build-typecheck"].needs].flat()).toContain("compile-artifacts");
+      expect(requiredStep(sharedActions.buildTypecheck, "Typecheck plugin tests").run).toBe(
+        "npx tsc --noEmit -p nemoclaw/tsconfig.test.json",
+      );
+      expect(stepRuns(sharedActions.buildTypecheck)).not.toContain(
+        "npm --prefix nemoclaw run typecheck",
+      );
+    },
+  );
 
   // source-shape-contract: security -- The PR workflow must select an exact base-controlled package run before publishing its archive internally
   it("passes only the base-packaged SDK archive to pull request dependency jobs", () => {

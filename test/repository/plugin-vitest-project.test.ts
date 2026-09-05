@@ -9,17 +9,27 @@ import { describe, expect, it } from "vitest";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 const rootRequire = createRequire(path.join(repositoryRoot, "package.json"));
-const pluginRequire = createRequire(path.join(repositoryRoot, "nemoclaw", "package.json"));
-const pluginTypeScript = pluginRequire.resolve("typescript/bin/tsc");
+const rootTypeScript = rootRequire.resolve("typescript/bin/tsc");
 
-function installedVersion(requireFromPackage: NodeJS.Require, packageName: string): string {
-  return (requireFromPackage(`${packageName}/package.json`) as { version: string }).version;
+type NpmDependencyTree = {
+  dependencies?: Record<string, NpmDependencyTree>;
+  version?: string;
+};
+
+function lockedDependencyTree(prefix?: string): NpmDependencyTree {
+  const prefixArgs = prefix ? ["--prefix", prefix] : [];
+  return JSON.parse(
+    execFileSync("npm", [...prefixArgs, "ls", "--package-lock-only", "--json", "vitest", "vite"], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+    }),
+  ) as NpmDependencyTree;
 }
 
 function listedTypeScriptFiles(configPath: string): string[] {
   return execFileSync(
     process.execPath,
-    [pluginTypeScript, "--noEmit", "-p", configPath, "--listFilesOnly"],
+    [rootTypeScript, "--noEmit", "-p", configPath, "--listFilesOnly"],
     { cwd: repositoryRoot, encoding: "utf8" },
   )
     .trim()
@@ -28,27 +38,25 @@ function listedTypeScriptFiles(configPath: string): string[] {
 }
 
 describe("plugin Vitest project contract", () => {
-  it.each(["vitest", "vite"] as const)(
-    "keeps standalone plugin dependencies on the root Vitest toolchain [case %#]",
-    (packageName) => {
-      expect(installedVersion(pluginRequire, packageName), packageName).toBe(
-        installedVersion(rootRequire, packageName),
-      );
-    },
-  );
+  it("keeps the standalone plugin lock on the root Vitest toolchain", () => {
+    const rootTree = lockedDependencyTree();
+    const pluginTree = lockedDependencyTree("nemoclaw");
+
+    expect(pluginTree.dependencies?.vitest?.version, "vitest").toBe(
+      rootTree.dependencies?.vitest?.version,
+    );
+    expect(pluginTree.dependencies?.vitest?.dependencies?.vite?.version, "vite").toBe(
+      rootTree.dependencies?.vitest?.dependencies?.vite?.version,
+    );
+  });
 
   it("typechecks plugin production and test sources without emitting tests", () => {
     const productionFiles = listedTypeScriptFiles("nemoclaw/tsconfig.json");
     const testFiles = listedTypeScriptFiles("nemoclaw/tsconfig.test.json");
-    const typecheckOutput = execFileSync("npm", ["--prefix", "nemoclaw", "run", "typecheck"], {
-      cwd: repositoryRoot,
-      encoding: "utf8",
-    });
 
     expect(productionFiles.some((file) => file.endsWith(".test.ts"))).toBe(false);
     expect(testFiles).toContain(path.join(repositoryRoot, "nemoclaw", "src", "register.test.ts"));
     expect(testFiles).toContain(path.join(repositoryRoot, "nemoclaw", "vitest.config.ts"));
     expect(testFiles).toContain(path.join(repositoryRoot, "nemoclaw", "vitest.project.ts"));
-    expect(typecheckOutput).toContain("tsc --noEmit -p tsconfig.test.json");
   });
 });
