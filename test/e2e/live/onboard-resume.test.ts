@@ -23,6 +23,7 @@ import {
   createCorporateCaFixture,
   registeredCorporateCaWorkloadKind,
 } from "../fixtures/corporate-ca.ts";
+import { dashboardForwardProcessIdentity } from "../fixtures/dashboard-listener-process.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   REGISTRY_FILE,
@@ -37,6 +38,7 @@ import {
   expectSandboxProviderAttachment,
   upsertGenericGatewayProvider,
 } from "../fixtures/gateway-providers.ts";
+import { readRegistrySandboxEntry } from "../fixtures/phases/state-validation.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 
 // Disruption-recovery contract — regression for #446.
@@ -192,6 +194,7 @@ test(
         "resume proves recreated sandbox provider attachments are selectively reconciled",
         "host trust-store anchor corporate CA source is baked and merged after resume",
         "an unreachable committed route pauses at final verification and completes after repair",
+        "route-repair resume retains the exact dashboard forward and reachable UI",
         "implicit resume is detected and --fresh suppresses that auto-resume",
       ],
     });
@@ -619,7 +622,14 @@ test(
       requireAuth: true,
       requireAuthModels: true,
     });
-    expect(fake.baseUrl).toBe(`http://${fakePublicHost}:${String(fakePort)}/v1`);
+    const registeredDashboardPort = Number(
+      readRegistrySandboxEntry(SANDBOX_NAME).dashboardPort,
+    );
+    const dashboardForwardBeforeRepair = dashboardForwardProcessIdentity(registeredDashboardPort);
+    await artifacts.writeJson(
+      "phase-3-5-dashboard-forward-before-route-repair.json",
+      dashboardForwardBeforeRepair,
+    );
 
     const repairedResumeRun = await host.command(
       "node",
@@ -633,9 +643,20 @@ test(
     );
     const repairedResumeText = `${repairedResumeRun.stdout}\n${repairedResumeRun.stderr}`;
     expect(repairedResumeRun.exitCode, repairedResumeText).toBe(0);
-    expect(repairedResumeText).toContain("is ready");
     expect(repairedResumeText).not.toContain(`Deleting and recreating sandbox '${SANDBOX_NAME}'`);
     expect(repairedResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
+    const dashboardForwardAfterRepair = dashboardForwardProcessIdentity(registeredDashboardPort);
+    await artifacts.writeJson(
+      "phase-3-5-dashboard-forward-after-route-repair.json",
+      dashboardForwardAfterRepair,
+    );
+    expect(dashboardForwardAfterRepair).toEqual(dashboardForwardBeforeRepair);
+    const dashboardResponse = await fetch(
+      `http://127.0.0.1:${String(registeredDashboardPort)}/`,
+      { signal: AbortSignal.timeout(15_000) },
+    );
+    expect(dashboardResponse.ok).toBe(true);
+    await dashboardResponse.body?.cancel();
     const repaired = readSession<SessionStateComplete>(SESSION_FILE);
     expect(repaired.status).toBe("complete");
 

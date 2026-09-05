@@ -766,6 +766,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: ["test/e2e/fixtures/dashboard-listener-process.ts"],
     environment: nonInteractive,
   }),
   managedRuntimeTarget("gpu-double-onboard", {
@@ -1094,7 +1095,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "credential-free",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
+    owningPaths: [
+      "test/e2e/fixtures/dashboard-listener-process.ts",
+      "tools/e2e/onboard-timeout-contract.mts",
+    ],
     environment: { ...nonInteractive, NEMOCLAW_SANDBOX_NAME: "e2e-resume" },
   }),
   managedRuntimeTarget("openclaw-discord-pairing", {

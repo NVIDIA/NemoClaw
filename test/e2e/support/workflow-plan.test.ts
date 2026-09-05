@@ -662,6 +662,14 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it("selects every dashboard-listener helper consumer", () => {
+    const targets = catalogueTargetsForChangedFiles([
+      "test/e2e/fixtures/dashboard-listener-process.ts",
+    ]);
+
+    expect(targets.map((target) => target.id)).toEqual(["double-onboard", "onboard-resume"]);
+  });
+
   it.each([
     "nemoclaw-blueprint/router/pool-config.yaml",
     "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
