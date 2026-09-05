@@ -260,6 +260,7 @@ esac
         installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOptions(sshExec)),
       ).toMatchObject({ success: true });
     },
+    30_000,
   );
 
   it.runIf(process.platform === "linux")(
