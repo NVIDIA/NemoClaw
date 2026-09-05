@@ -2391,6 +2391,8 @@ Run `$$nemoclaw <name> skill install --help` to print usage for this subcommand.
 
 Files with names starting with `.` (dotfiles) are skipped and listed in the output. Files with unsafe path characters are rejected to prevent shell injection. Symlinks and other non-regular paths are rejected rather than followed or copied.
 
+Before creating a private sandbox stage, the command reconciles abandoned `.nemoclaw-skill-stage*` directories left by an uncatchable interruption. It removes only same-user, mode-`0700`, regular-file directory trees inside the selected agent state root. If a candidate cannot be proven safe or removed, installation stops and reports the exact path for operator inspection instead of accumulating another stage.
+
 OpenClaw, Hermes, and Deep Agents Code snapshot installation is limited to 1,024 selected files and 64 MiB of total file content. The command refuses larger inputs before transfer or installation begins.
 
 For OpenClaw, Hermes, and Deep Agents Code, fresh installs and updates always delegate target resolution, publication, and lifecycle metadata to the pinned native agent command, then verify the resulting native state and content digest. Chat history is preserved. Follow the agent-specific activation guidance above after installation. Agents without a native skill lifecycle are rejected before sandbox skill state changes.

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 // Import source directly so tests cannot pass against a stale build.
 import {
+  bindNativeSkillCommandToSandboxIdentity,
   collectFiles,
   parseFrontmatter,
   resolveNativeSkillState,
@@ -213,5 +214,20 @@ describe("resolveNativeSkillState", () => {
       stateDir,
       isOpenClaw: false,
     });
+  });
+});
+
+describe("bindNativeSkillCommandToSandboxIdentity", () => {
+  it("checks the durable in-sandbox identity before the fixed native command", () => {
+    const expected = "f".repeat(64);
+    const command = bindNativeSkillCommandToSandboxIdentity(
+      ["/usr/local/bin/openclaw", "skills", "remove", "demo-skill"],
+      expected,
+    );
+
+    expect(command.slice(0, 2)).toEqual(["/bin/sh", "-c"]);
+    expect(command[2]).toContain(expected);
+    expect(command[2]).toContain("OPENSHELL_SANDBOX_ID");
+    expect(command[2]).toContain("exec '/usr/local/bin/openclaw' 'skills' 'remove' 'demo-skill'");
   });
 });

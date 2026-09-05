@@ -26,6 +26,7 @@ const withSandboxMutationLock = vi.hoisted(() =>
   }),
 );
 const skillInstall = vi.hoisted(() => ({
+  bindNativeSkillCommandToSandboxIdentity: vi.fn(),
   validateSkillName: vi.fn(),
   resolveNativeSkillState: vi.fn(),
   parseFrontmatter: vi.fn(),
@@ -125,6 +126,11 @@ describe("sandbox skill action orchestration", () => {
     getSandboxTargetGatewayName.mockReturnValue("nemoclaw");
     getSessionAgent.mockReturnValue(genericAgent);
     skillInstall.validateSkillName.mockReturnValue(true);
+    skillInstall.bindNativeSkillCommandToSandboxIdentity.mockReturnValue([
+      "/bin/sh",
+      "-c",
+      "identity-bound-native-skill-command",
+    ]);
     skillInstall.resolveNativeSkillState.mockReturnValue(genericPaths);
     skillInstall.parseFrontmatter.mockReturnValue({ name: "demo-skill" });
     skillInstall.collectFiles.mockReturnValue({
@@ -158,18 +164,18 @@ describe("sandbox skill action orchestration", () => {
     expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function));
     expect(execSandbox).toHaveBeenCalledWith(
       "alpha",
-      ["/usr/local/bin/openclaw", "skills", "remove", "demo-skill", "--agent", "main"],
+      ["/bin/sh", "-c", "identity-bound-native-skill-command"],
       {},
       { exit: expect.any(Function) },
     );
-    expect(captureSandboxSshConfig).not.toHaveBeenCalled();
+    expect(skillInstall.bindNativeSkillCommandToSandboxIdentity).toHaveBeenCalledWith(
+      ["/usr/local/bin/openclaw", "skills", "remove", "demo-skill", "--agent", "main"],
+      "f".repeat(64),
+    );
   });
 
   it.each([
-    [
-      genericAgent,
-      ["/usr/local/bin/hermes", "skills", "uninstall", "demo-skill", "--yes"],
-    ],
+    [genericAgent, ["/usr/local/bin/hermes", "skills", "uninstall", "demo-skill", "--yes"]],
     [
       deepAgent,
       [
@@ -188,8 +194,32 @@ describe("sandbox skill action orchestration", () => {
 
     await removeSandboxSkill("alpha", { name: "demo-skill" });
 
-    expect(execSandbox).toHaveBeenCalledWith("alpha", command, {}, { exit: expect.any(Function) });
-    expect(captureSandboxSshConfig).not.toHaveBeenCalled();
+    expect(skillInstall.bindNativeSkillCommandToSandboxIdentity).toHaveBeenCalledWith(
+      command,
+      "f".repeat(64),
+    );
+    expect(execSandbox).toHaveBeenCalledWith(
+      "alpha",
+      ["/bin/sh", "-c", "identity-bound-native-skill-command"],
+      {},
+      { exit: expect.any(Function) },
+    );
+  });
+
+  it("refuses native removal when the live sandbox identity changes before execution", async () => {
+    getSessionAgent.mockReturnValue(agent);
+    inspectOpenShellSandboxIdentityFingerprint
+      .mockReturnValueOnce("f".repeat(64))
+      .mockReturnValueOnce("e".repeat(64));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await removeSandboxSkill("alpha", { name: "demo-skill" });
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      "  Failed to bind the OpenClaw skill removal to the exact live sandbox identity.",
+    );
+    expect(execSandbox).not.toHaveBeenCalled();
   });
 
   it("refuses removal when the selected agent has no native skill state", async () => {
@@ -221,10 +251,7 @@ describe("sandbox skill action orchestration", () => {
 
   it.each([
     [genericAgent, ["/usr/local/bin/hermes", "skills", "list", "--enabled-only"]],
-    [
-      deepAgent,
-      ["/usr/local/bin/dcode", "skills", "list", "--agent", "agent", "--json"],
-    ],
+    [deepAgent, ["/usr/local/bin/dcode", "skills", "list", "--agent", "agent", "--json"]],
   ])("lists skills through %s native state", async (selectedAgent, command) => {
     getSessionAgent.mockReturnValue(selectedAgent);
     const extraArgs = selectedAgent.name === "hermes" ? ["--enabled-only"] : ["--json"];
@@ -241,9 +268,7 @@ describe("sandbox skill action orchestration", () => {
     await listSandboxSkills("alpha", { extraArgs: ["--agent", "other"] });
 
     expect(process.exitCode).toBe(2);
-    expect(error).toHaveBeenCalledWith(
-      "  `skill list` is bound to the sandbox's primary agent.",
-    );
+    expect(error).toHaveBeenCalledWith("  `skill list` is bound to the sandbox's primary agent.");
     expect(ensureLiveSandboxOrExit).toHaveBeenCalledWith("alpha");
     expect(execSandbox).not.toHaveBeenCalled();
   });
@@ -289,9 +314,7 @@ describe("sandbox skill action orchestration", () => {
     }
 
     expect(process.exitCode).toBe(1);
-    expect(error).toHaveBeenCalledWith(
-      "  Agent 'pi' has no native local skill import command.",
-    );
+    expect(error).toHaveBeenCalledWith("  Agent 'pi' has no native local skill import command.");
     expect(skillInstall.resolveNativeSkillState).not.toHaveBeenCalled();
     expect(captureSandboxSshConfig).not.toHaveBeenCalled();
   });
@@ -533,9 +556,7 @@ describe("sandbox skill action orchestration", () => {
         expectedSandboxIdentityFingerprint: "f".repeat(64),
       },
     );
-    expect(log).toHaveBeenCalledWith(
-      expect.stringContaining("installed through Deep Agents Code"),
-    );
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("installed through Deep Agents Code"));
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining(`Content digest (SHA-256): ${"a".repeat(64)}`),
     );
@@ -638,7 +659,9 @@ describe("sandbox skill action orchestration", () => {
 
     expect(process.exitCode).toBe(1);
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("Hermes imported the skill, but native state or digest verification failed"),
+      expect.stringContaining(
+        "Hermes imported the skill, but native state or digest verification failed",
+      ),
     );
     expectTempSshConfigCleanedUp(tempConfig);
   });

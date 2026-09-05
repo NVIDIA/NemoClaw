@@ -71,6 +71,7 @@ describe("Hermes and DCode native skill installation", () => {
     [3, "CAPABILITY_MISSING\n", "native_capability_missing"],
     [4, "VERIFY_FAILED\n", "verification_failed"],
     [5, "NATIVE_INSTALL_FAILED\n", "native_install_failed"],
+    [7, "STAGE_RECOVERY_FAILED\n", "stage_recovery_failed"],
     [9, "IDENTITY_CHANGED\n", "sandbox_identity_changed"],
   ] as const)("maps native staged import failure %s", (status, stdout, reason) => {
     const skill = makeSkill();
@@ -100,8 +101,11 @@ describe("Hermes and DCode native skill installation", () => {
         agent === "hermes" ? "skills/demo-skill" : "agent/skills/demo-skill",
       );
       const fakeBinary = path.join(stateDir, "agent-cli");
+      const abandonedStage = path.join(stateDir, ".nemoclaw-skill-stage.abandoned");
       const nativeBinary = agent === "hermes" ? "/usr/local/bin/hermes" : "/usr/local/bin/dcode";
       let mutatePayload = false;
+      fs.mkdirSync(abandonedStage, { mode: 0o700 });
+      fs.writeFileSync(path.join(abandonedStage, "stale"), "stale\n");
       fs.writeFileSync(
         fakeBinary,
         `#!/bin/sh
@@ -173,6 +177,7 @@ esac
           sshExecImpl: sshExec,
         }),
       ).toMatchObject({ success: true });
+      expect(fs.existsSync(abandonedStage)).toBe(false);
       fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: demo-skill\n---\n# Updated\n");
       expect(
         installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {

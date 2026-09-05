@@ -53,6 +53,7 @@ describe("OpenClaw native skill installation", () => {
       const workspaceSkillDir = path.join(sandboxRoot, "workspace", "skills", "demo-skill");
       const invocationLog = path.join(sandboxRoot, "openclaw.log");
       const pinnedOpenClaw = path.join(fakeBin, "openclaw-pinned");
+      const abandonedStage = path.join(sandboxRoot, ".nemoclaw-skill-stage.abandoned");
       let checkState = "eligible";
       let mutatePayload = false;
       const executionPaths: NativeSkillState = {
@@ -61,6 +62,8 @@ describe("OpenClaw native skill installation", () => {
       };
       roots.push(sandboxRoot);
       fs.mkdirSync(fakeBin);
+      fs.mkdirSync(abandonedStage, { mode: 0o700 });
+      fs.writeFileSync(path.join(abandonedStage, "stale"), "stale\n");
       fs.writeFileSync(
         path.join(sandboxRoot, "openclaw.json"),
         `${JSON.stringify({ agents: { list: [{ id: "main", default: true }] } })}\n`,
@@ -158,6 +161,7 @@ esac
         contentDigest: firstDigest,
       });
       expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toContain("# Demo");
+      expect(fs.existsSync(abandonedStage)).toBe(false);
 
       fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: demo-skill\n---\n# Updated\n");
       const updatedDigest = computeSkillContentDigest(skill);
@@ -270,6 +274,7 @@ esac
   it.each([
     [3, "CAPABILITY_MISSING\n", "native_capability_missing"],
     [5, "NATIVE_INSTALL_FAILED\n", "native_install_failed"],
+    [7, "STAGE_RECOVERY_FAILED\n", "stage_recovery_failed"],
     [4, "installer output\nVERIFY_FAILED\n", "verification_failed"],
     [8, "AGENT_WORKSPACE_UNSUPPORTED\n", "agent_workspace_unsupported"],
     [9, "IDENTITY_CHANGED\n", "sandbox_identity_changed"],

@@ -211,11 +211,66 @@ export async function removeSandboxSkill(
             "--force",
             "--json",
           ];
+  let bindingFailed = false;
+  let sshConfigFailed = false;
   await runWithDeferredSandboxLifecycleExit(() =>
-    withSandboxMutationLock(sandboxName, () =>
-      execSandbox(sandboxName, command, {}, { exit: deferSandboxLifecycleExit }),
-    ),
+    withSandboxMutationLock(sandboxName, async () => {
+      const gatewayName = getSandboxTargetGatewayName(sandboxName);
+      const sshConfigResult = captureSandboxSshConfig(sandboxName, {
+        gatewayName,
+        ignoreError: true,
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      });
+      if (sshConfigResult.status !== 0) {
+        sshConfigFailed = true;
+        return;
+      }
+      const observedSshTarget = fingerprintOpenShellSandboxSshConfigTarget(sshConfigResult.output);
+      const expectedSshTarget = fingerprintOpenShellSandboxSshTarget(
+        gatewayName,
+        sandboxName,
+        "default",
+      );
+      if (!observedSshTarget || !expectedSshTarget || observedSshTarget !== expectedSshTarget) {
+        bindingFailed = true;
+        return;
+      }
+      let expectedIdentity: string;
+      let confirmedIdentity: string;
+      try {
+        expectedIdentity = inspectOpenShellSandboxIdentityFingerprint({
+          sandboxName,
+          gatewayName,
+          timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+        });
+        confirmedIdentity = inspectOpenShellSandboxIdentityFingerprint({
+          sandboxName,
+          gatewayName,
+          timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+        });
+      } catch {
+        bindingFailed = true;
+        return;
+      }
+      if (expectedIdentity !== confirmedIdentity) {
+        bindingFailed = true;
+        return;
+      }
+      const identityBoundCommand = skillInstall.bindNativeSkillCommandToSandboxIdentity(
+        command,
+        expectedIdentity,
+      );
+      await execSandbox(sandboxName, identityBoundCommand, {}, { exit: deferSandboxLifecycleExit });
+    }),
   );
+  if (sshConfigFailed || bindingFailed) {
+    console.error(
+      sshConfigFailed
+        ? "  Failed to obtain SSH configuration for the sandbox."
+        : `  Failed to bind the ${nativeSkillAgentDisplayName(agentName)} skill removal to the exact live sandbox identity.`,
+    );
+    process.exitCode = 1;
+  }
 }
 
 /** List skills from the selected agent's native state without a host-side inventory. */
@@ -274,7 +329,11 @@ export async function installSandboxSkill(
   }
 
   if (sub === "list") {
-    await listSandboxSkills(sandboxName, { extraArgs: [request.path, ...(request.extraArgs ?? [])].filter((value): value is string => typeof value === "string") });
+    await listSandboxSkills(sandboxName, {
+      extraArgs: [request.path, ...(request.extraArgs ?? [])].filter(
+        (value): value is string => typeof value === "string",
+      ),
+    });
     return;
   }
 
@@ -385,7 +444,9 @@ export async function installSandboxSkill(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = nativeSkillAgentName(agent);
   if (!agentName) {
-    console.error(`  Agent '${agent?.name ?? "unknown"}' has no native local skill import command.`);
+    console.error(
+      `  Agent '${agent?.name ?? "unknown"}' has no native local skill import command.`,
+    );
     process.exitCode = 1;
     return;
   }
@@ -432,20 +493,20 @@ export async function installSandboxSkill(
       }
       const context = { configFile: tmpSshConfig.file, sandboxName };
       return agentName === "openclaw"
-        ? skillInstall.installOpenClawSkill(
-            context,
-            skillDir,
-            paths,
-            frontmatter.name,
-            { expectedRootIdentity, expectedSandboxIdentityFingerprint: sandboxIdentityFingerprint },
-          )
+        ? skillInstall.installOpenClawSkill(context, skillDir, paths, frontmatter.name, {
+            expectedRootIdentity,
+            expectedSandboxIdentityFingerprint: sandboxIdentityFingerprint,
+          })
         : skillInstall.installNativeAgentSkill(
             context,
             skillDir,
             paths,
             agentName,
             frontmatter.name,
-            { expectedRootIdentity, expectedSandboxIdentityFingerprint: sandboxIdentityFingerprint },
+            {
+              expectedRootIdentity,
+              expectedSandboxIdentityFingerprint: sandboxIdentityFingerprint,
+            },
           );
     } finally {
       tmpSshConfig.cleanup();
@@ -486,6 +547,13 @@ export async function installSandboxSkill(
     } else if (native.reason === "snapshot_limit_exceeded") {
       console.error(
         `  Skill snapshot exceeds the ${skillInstall.SKILL_SNAPSHOT_MAX_FILES}-file or ${skillInstall.SKILL_SNAPSHOT_MAX_BYTES / (1024 * 1024)} MiB limit; no sandbox install began.`,
+      );
+    } else if (native.reason === "stage_recovery_failed") {
+      console.error(
+        `  ${displayName} has an unresolved abandoned skill staging directory; no new native install began.`,
+      );
+      console.error(
+        `  Inspect the reported sandbox path, remove it safely, and retry the install.`,
       );
     } else if (native.reason === "verification_failed") {
       console.error(

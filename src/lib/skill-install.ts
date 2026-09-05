@@ -179,6 +179,22 @@ function sandboxIdentityCheckCommand(expectedFingerprint: string): string {
   return `node -e ${shellQuote(check)} ${shellQuote(expectedFingerprint)}`;
 }
 
+/** Prefix one fixed native lifecycle command with an in-sandbox identity guard. */
+export function bindNativeSkillCommandToSandboxIdentity(
+  command: readonly string[],
+  expectedFingerprint: string,
+): string[] {
+  if (command.length === 0 || !SHA256_RE.test(expectedFingerprint)) {
+    throw new Error("Native skill command requires a valid sandbox identity binding");
+  }
+  const nativeCommand = command.map((argument) => shellQuote(argument)).join(" ");
+  return [
+    "/bin/sh",
+    "-c",
+    `${sandboxIdentityCheckCommand(expectedFingerprint)} || { echo IDENTITY_CHANGED >&2; exit 9; }; exec ${nativeCommand}`,
+  ];
+}
+
 function fileSha256(filePath: string): string {
   return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
@@ -428,8 +444,15 @@ export interface NativeSkillInstallResult {
     | "sandbox_identity_changed"
     | "snapshot_failed"
     | "snapshot_limit_exceeded"
+    | "stage_recovery_failed"
     | "verification_failed";
 }
+
+const NATIVE_STAGE_RECOVERY_COMMANDS = [
+  'stage_recovery_failed() { echo "Unresolved abandoned skill staging path: $1. Inspect and remove it inside the sandbox before retrying." >&2; echo STAGE_RECOVERY_FAILED; exit 7; }',
+  'current_uid="$(id -u)"',
+  'for candidate in "$root"/.nemoclaw-skill-stage "$root"/.nemoclaw-skill-stage.*; do [ -e "$candidate" ] || [ -L "$candidate" ] || continue; [ ! -L "$candidate" ] && [ -d "$candidate" ] || stage_recovery_failed "$candidate"; [ "$(realpath -e -- "$(dirname -- "$candidate")")" = "$root" ] || stage_recovery_failed "$candidate"; [ "$(stat -c "%u:%a" -- "$candidate")" = "$current_uid:700" ] || stage_recovery_failed "$candidate"; unsafe="$(find -P "$candidate" -xdev \( ! -user "$current_uid" -o \( ! -type d ! -type f \) \) -print -quit)" || stage_recovery_failed "$candidate"; [ -z "$unsafe" ] || stage_recovery_failed "$candidate"; rm -rf --one-file-system -- "$candidate" || stage_recovery_failed "$candidate"; done',
+] as const;
 
 function buildOpenClawNativeInstallScript(
   paths: NativeSkillState,
@@ -477,6 +500,7 @@ function buildOpenClawNativeInstallScript(
     '[ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]',
     `${identityCheck} || { echo IDENTITY_CHANGED; exit 9; }`,
     `node -e ${shellQuote(verifyMainWorkspace)} "$config" "$expected_workspace" || { echo AGENT_WORKSPACE_UNSUPPORTED; exit 8; }`,
+    ...NATIVE_STAGE_RECOVERY_COMMANDS,
     'stage="$(mktemp -d "$root/.nemoclaw-skill-stage.XXXXXX")"',
     'chmod 700 "$stage"',
     'cleanup() { rm -rf -- "$stage"; }',
@@ -565,13 +589,15 @@ export function installOpenClawSkill(
         ? "agent_workspace_unsupported"
         : result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")
           ? "native_capability_missing"
-          : result?.status === 5 && stdout.endsWith("NATIVE_INSTALL_FAILED")
-            ? "native_install_failed"
-            : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
-              ? "verification_failed"
-              : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
-                ? "sandbox_identity_changed"
-                : "remote_state_unknown",
+          : result?.status === 7 && stdout.endsWith("STAGE_RECOVERY_FAILED")
+            ? "stage_recovery_failed"
+            : result?.status === 5 && stdout.endsWith("NATIVE_INSTALL_FAILED")
+              ? "native_install_failed"
+              : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
+                ? "verification_failed"
+                : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
+                  ? "sandbox_identity_changed"
+                  : "remote_state_unknown",
   };
 }
 
@@ -662,6 +688,7 @@ function buildNativeLocalSkillInstallScript(
     '[ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]',
     `${identityCheck} || { echo IDENTITY_CHANGED; exit 9; }`,
     `help="$(${shellQuote(command.binary)} skills ${shellQuote(command.importArgs[1])} --help 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
+    ...NATIVE_STAGE_RECOVERY_COMMANDS,
     'stage="$(mktemp -d "$root/.nemoclaw-skill-stage.XXXXXX")"',
     'chmod 700 "$stage"',
     'cleanup() { rm -rf -- "$stage"; }',
@@ -735,12 +762,14 @@ export function installNativeAgentSkill(
     reason:
       result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")
         ? "native_capability_missing"
-        : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
-          ? "verification_failed"
-          : result?.status === 5 && stdout.endsWith("NATIVE_INSTALL_FAILED")
-            ? "native_install_failed"
-            : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
-              ? "sandbox_identity_changed"
-              : "remote_state_unknown",
+        : result?.status === 7 && stdout.endsWith("STAGE_RECOVERY_FAILED")
+          ? "stage_recovery_failed"
+          : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
+            ? "verification_failed"
+            : result?.status === 5 && stdout.endsWith("NATIVE_INSTALL_FAILED")
+              ? "native_install_failed"
+              : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
+                ? "sandbox_identity_changed"
+                : "remote_state_unknown",
   };
 }
