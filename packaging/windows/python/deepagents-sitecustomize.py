@@ -60,7 +60,10 @@ if os.name == "nt":
             candidate = os.path.join(dir, prefix + name + suffix)
             sys.audit("tempfile.mkstemp", candidate)
             try:
-                file_descriptor = os.open(candidate, flags, 0o666)
+                # Windows access remains governed by the inherited DACL. Keep
+                # the portable mode restrictive so static analysis and any
+                # non-Windows reuse cannot interpret this as world-writable.
+                file_descriptor = os.open(candidate, flags, 0o600)
             except FileExistsError:
                 continue
             return file_descriptor, candidate
