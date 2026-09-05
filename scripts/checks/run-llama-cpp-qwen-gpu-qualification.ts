@@ -15,8 +15,10 @@ import type { ResolvedLlamaCppInferenceSelection } from "../../src/lib/inference
 import { runLlamaCppOpenClawAgentQualification } from "./llama-cpp-openclaw-agent-qualification.mts";
 import { compiledLlamaCppRuntime } from "./llama-cpp-compiled-runtime.ts";
 import {
+  qwenGpuAuthoritativeUpstreamRoute,
   qwenGpuAgentPlan,
   qwenGpuProbeDiagnostic,
+  qwenGpuQualificationFailure,
   qwenGpuRecipeBinding,
   parseQwenGpuManagedImageReceipt,
   QWEN_GPU_GATEWAY_NETWORK_PATTERN,
@@ -198,6 +200,7 @@ export async function runQwenGpuQualification(): Promise<void> {
   const setting = loadQwenGpuSetting();
   const managedImage = loadManagedImageReceipt();
   const agentPlan = qwenGpuAgentPlan(managedImage.openClawAmd64, managedImage.revision);
+  const authoritativeUpstreamBaseUrl = qwenGpuAuthoritativeUpstreamRoute(agentPlan.route);
   requireCommand("docker", ["pull", agentPlan.image.reference], 30 * 60_000);
   const recipe = setting.selection.recipe;
   const statePaths = managedLlamaCppStatePaths(os.homedir());
@@ -233,6 +236,7 @@ export async function runQwenGpuQualification(): Promise<void> {
     | undefined;
   let qualificationEvidence: Record<string, unknown> | undefined;
   let primaryError: unknown;
+  let cleanupError: unknown;
 
   try {
     const agentResult = await runManagedImageOpenShellE2e(
@@ -376,7 +380,7 @@ export async function runQwenGpuQualification(): Promise<void> {
             throw new Error("managed llama.cpp host inference did not return PONG");
           }
           process.env[credentialName] = apiKey;
-          process.env[baseUrlName] = agentPlan.route.upstreamBaseUrl;
+          process.env[baseUrlName] = authoritativeUpstreamBaseUrl;
           runtimeEvidence = {
             image: recipe.spec.runtime.image,
             platform: "linux/amd64",
@@ -490,16 +494,17 @@ export async function runQwenGpuQualification(): Promise<void> {
         preserved: runtimeCleanup.preserved,
         modelCachePreserved: Boolean(apiKey),
       });
-    } catch (cleanupError) {
+    } catch (error) {
+      cleanupError = error;
       writeJson(canonicalArtifactRoot, "cleanup.json", {
         status: "failed",
-        reason: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        reason: error instanceof Error ? error.message : String(error),
       });
-      if (!primaryError) primaryError = cleanupError;
     }
   }
 
-  if (primaryError) throw primaryError;
+  const finalError = qwenGpuQualificationFailure(primaryError, cleanupError);
+  if (finalError) throw finalError;
   if (!qualificationEvidence) throw new Error("Qwen GPU qualification produced no evidence");
   writeJson(canonicalArtifactRoot, "qualification-evidence.json", qualificationEvidence);
   writeJson(canonicalArtifactRoot, "target-result.json", {

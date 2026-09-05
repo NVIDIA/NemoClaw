@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { LlamaCppOpenClawAgentQualificationPlan } from "./llama-cpp-openclaw-agent-qualification.mts";
+import { resolveManagedImageLocalInferenceRoute } from "./managed-image-protected-runtime-contract.ts";
 
 export const QWEN_GPU_SHA_PATTERN = /^[a-f0-9]{40}$/u;
 export const QWEN_GPU_MAX_COMMAND_BYTES = 16 * 1024 * 1024;
@@ -62,6 +63,31 @@ export function qwenGpuRecipeBinding(recipeRef: unknown): typeof QWEN_GPU_RECIPE
     throw new Error("N1x WSL Qwen preset does not bind the expected llama.cpp recipe");
   }
   return QWEN_GPU_RECIPE_ID;
+}
+
+export function qwenGpuAuthoritativeUpstreamRoute(route: {
+  readonly provider: string;
+  readonly upstreamBaseUrl: string;
+}): string {
+  const authoritative = resolveManagedImageLocalInferenceRoute("llama-cpp");
+  if (
+    route.provider !== authoritative.providerName ||
+    route.upstreamBaseUrl !== authoritative.defaultBaseUrl
+  ) {
+    throw new Error("Qwen qualification route differs from protected-runtime authority");
+  }
+  return authoritative.defaultBaseUrl;
+}
+
+export function qwenGpuQualificationFailure(primaryError: unknown, cleanupError: unknown): unknown {
+  if (primaryError === undefined) return cleanupError;
+  if (cleanupError === undefined) return primaryError;
+  const message = (value: unknown): string =>
+    value instanceof Error ? value.message : String(value);
+  return new AggregateError(
+    [primaryError, cleanupError],
+    `Qwen GPU qualification failed: ${message(primaryError)}; cleanup also failed: ${message(cleanupError)}`,
+  );
 }
 
 export function qwenGpuProbeDiagnostic(

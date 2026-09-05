@@ -6,7 +6,9 @@ import { describe, expect, it } from "vitest";
 import {
   parseQwenGpuManagedImageReceipt,
   qwenGpuAgentPlan,
+  qwenGpuAuthoritativeUpstreamRoute,
   qwenGpuProbeDiagnostic,
+  qwenGpuQualificationFailure,
   qwenGpuRecipeBinding,
   QWEN_GPU_GATEWAY_NETWORK_PATTERN,
   QWEN_GPU_RECIPE_ID,
@@ -45,6 +47,30 @@ describe("Qwen llama.cpp RTX qualification plan", () => {
     ).toThrow("managed-image cohort returned an invalid OpenClaw identity");
     expect(() => qwenGpuAgentPlan(IMAGE, "main")).toThrow(
       "managed-image cohort returned an invalid OpenClaw identity",
+    );
+  });
+
+  it("binds the Qwen plan to the protected-runtime route owner", () => {
+    const route = qwenGpuAgentPlan(IMAGE, REVISION).route;
+    expect(qwenGpuAuthoritativeUpstreamRoute(route)).toBe("http://host.openshell.internal:8081/v1");
+    expect(() =>
+      qwenGpuAuthoritativeUpstreamRoute({
+        ...route,
+        upstreamBaseUrl: "http://host.openshell.internal:9999/v1",
+      }),
+    ).toThrow("differs from protected-runtime authority");
+  });
+
+  it("reports both a primary qualification error and cleanup failure", () => {
+    const primary = new Error("probe failed");
+    const cleanup = new Error("container remained");
+    expect(qwenGpuQualificationFailure(undefined, undefined)).toBeUndefined();
+    expect(qwenGpuQualificationFailure(primary, undefined)).toBe(primary);
+    expect(qwenGpuQualificationFailure(undefined, cleanup)).toBe(cleanup);
+    const combined = qwenGpuQualificationFailure(primary, cleanup);
+    expect(combined).toBeInstanceOf(AggregateError);
+    expect((combined as Error).message).toContain(
+      "probe failed; cleanup also failed: container remained",
     );
   });
 
