@@ -18,6 +18,7 @@ import type { LocalProviderHealthProbeOptions } from "./local";
 import { probeLocalProviderHealth } from "./local";
 import { MIN_PROBE_REPLY_TOKENS } from "./max-tokens-field";
 import { getChatCompletionsProbeCurlArgs } from "./onboard-probes";
+import { usesNvidiaEndpointProbePayload } from "./openai-probe-models";
 import { BUILD_ENDPOINT_URL } from "./provider-models";
 
 export interface ProviderHealthStatus {
@@ -55,7 +56,6 @@ export interface ProviderHealthProbeOptions {
 }
 
 const COMPATIBLE_PROVIDERS = new Set(["compatible-endpoint", "compatible-anthropic-endpoint"]);
-const NVIDIA_MANAGED_PROVIDERS = new Set(["nvidia-prod", "nvidia-nim"]);
 const NVIDIA_HEALTH_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
 const HEALTH_PROBE_CONNECT_TIMEOUT_SECONDS = "3";
 const HEALTH_PROBE_MAX_TIME_SECONDS = "5";
@@ -125,6 +125,7 @@ function buildChatCompletionsStatusProbeCurlArgs(
   endpoint: string,
   authArgs: readonly string[],
   isWsl?: boolean,
+  useNvidiaEndpointProbePayload = false,
 ): string[] {
   const args = capStatusProbeOutput(
     useStatusProbeTiming(
@@ -133,6 +134,7 @@ function buildChatCompletionsStatusProbeCurlArgs(
         model,
         url: endpoint,
         isWsl,
+        useNvidiaEndpointProbePayload,
       }),
     ),
   );
@@ -500,6 +502,7 @@ function probeChatCompletionsProviderHealth(
   credentialEnv: string,
   endpoint: string,
   options: ProviderHealthProbeOptions,
+  useNvidiaEndpointProbePayload = false,
 ): ProviderHealthStatus {
   let apiKey = "";
   try {
@@ -523,7 +526,13 @@ function probeChatCompletionsProviderHealth(
   const rawResult = (() => {
     try {
       return runCurlProbeImpl(
-        buildChatCompletionsStatusProbeCurlArgs(model, endpoint, authConfig.args, options.isWsl),
+        buildChatCompletionsStatusProbeCurlArgs(
+          model,
+          endpoint,
+          authConfig.args,
+          options.isWsl,
+          useNvidiaEndpointProbePayload,
+        ),
         { trustedConfigFiles: authConfig.trustedConfigFiles },
       );
     } finally {
@@ -652,13 +661,14 @@ export function probeRemoteProviderHealth(
 
   if (!config?.model) return null;
 
-  if (NVIDIA_MANAGED_PROVIDERS.has(provider)) {
+  if (usesNvidiaEndpointProbePayload(provider)) {
     return probeChatCompletionsProviderHealth(
       providerLabel,
       config.model,
       NVIDIA_HEALTH_CREDENTIAL_ENV,
       `${BUILD_ENDPOINT_URL}/chat/completions`,
       options,
+      true,
     );
   }
 
