@@ -30,6 +30,7 @@ export interface InferenceGetResult {
   endpointUrl?: string;
   endpointStatus?: InferenceEndpointStatus;
   endpointRecovery?: string;
+  affectedSandboxes?: string[];
 }
 
 export type InferenceEndpointStatus =
@@ -78,8 +79,10 @@ const DISPLAYABLE_ENDPOINT_PATHS = new Set(["/", "/v1", "/v1/"]);
 const ENDPOINT_RECOVERY: Record<InferenceEndpointStatus, string> = {
   unavailable:
     "Restore registry access or record the trusted endpoint and API family again, then rerun inference get.",
-  invalid: "Repair the affected sandbox's compatible-route metadata, then rerun inference get.",
-  conflicting: "Align or remove conflicting same-gateway sandbox routes, then rerun inference get.",
+  invalid:
+    "Repair the named sandbox registrations' compatible-route metadata, then rerun inference get.",
+  conflicting:
+    "Align or remove the named conflicting same-gateway sandbox routes, then rerun inference get.",
   withheld: "Use a credential-free root or /v1 API base if endpoint readback is required.",
   "adapter-managed":
     "For a same-provider model change, omit endpoint options so NemoClaw reuses the recorded route.",
@@ -87,8 +90,17 @@ const ENDPOINT_RECOVERY: Record<InferenceEndpointStatus, string> = {
 
 type PersistedEndpointResult =
   | { endpointUrl: string }
-  | { endpointStatus: InferenceEndpointStatus; endpointRecovery: string }
+  | {
+      endpointStatus: InferenceEndpointStatus;
+      endpointRecovery: string;
+      affectedSandboxes?: string[];
+    }
   | Record<string, never>;
+
+const MAX_AFFECTED_SANDBOXES = 8;
+// This is a diagnostic-output allowlist, not a sandbox-name validator. It may
+// omit a valid future name; it must never broaden name acceptance or authority.
+const SAFE_DIAGNOSTIC_SANDBOX_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
 function formatStatusRecovery(cliName: string, sandboxName: string | undefined): string {
   return sandboxName
@@ -113,8 +125,23 @@ function endpointPathIsCredentialFreeForDisplay(endpointUrl: string): boolean {
 }
 
 /** Select one safe endpoint from published rows on the live gateway. */
-function endpointOmission(endpointStatus: InferenceEndpointStatus): PersistedEndpointResult {
-  return { endpointStatus, endpointRecovery: ENDPOINT_RECOVERY[endpointStatus] };
+function safeAffectedSandboxNames(names: Iterable<string>): string[] {
+  return [...new Set(names)]
+    .filter((name) => SAFE_DIAGNOSTIC_SANDBOX_NAME.test(name))
+    .sort()
+    .slice(0, MAX_AFFECTED_SANDBOXES);
+}
+
+function endpointOmission(
+  endpointStatus: InferenceEndpointStatus,
+  affectedNames: Iterable<string> = [],
+): PersistedEndpointResult {
+  const affectedSandboxes = safeAffectedSandboxNames(affectedNames);
+  return {
+    endpointStatus,
+    endpointRecovery: ENDPOINT_RECOVERY[endpointStatus],
+    ...(affectedSandboxes.length > 0 ? { affectedSandboxes } : {}),
+  };
 }
 
 function getPersistedEndpoint(
@@ -139,13 +166,14 @@ function getPersistedEndpoint(
     return endpointOmission("unavailable");
   }
 
-  const matchingEndpoints: { canonical: string; display: string }[] = [];
+  const matchingEndpoints: { canonical: string; display: string; sandboxName: string }[] = [];
+  const invalidSandboxNames = new Set<string>();
   let invalidMetadata = false;
   let withheldMetadata = false;
   let adapterMetadata = false;
+  let targetRowParticipates = sandboxName === undefined;
   for (const sandbox of sandboxes) {
     if (!isPublishedSandboxRegistration(sandbox)) continue;
-    if (sandboxName && sandbox.name !== sandboxName) continue;
     if (sandbox.provider !== provider) continue;
     try {
       if (getPersistedSandboxTargetGatewayName(sandbox) !== gatewayName) continue;
@@ -153,18 +181,23 @@ function getPersistedEndpoint(
       // A matching row with an invalid binding could belong to this gateway.
       // Omit the endpoint unless every participating row can be scoped safely.
       invalidMetadata = true;
+      invalidSandboxNames.add(sandbox.name);
       continue;
     }
+    if (sandbox.name === sandboxName) targetRowParticipates = true;
     if (typeof sandbox.model !== "string" || sandbox.model.trim() !== liveModel) {
       invalidMetadata = true;
+      invalidSandboxNames.add(sandbox.name);
       continue;
     }
     if (typeof sandbox.endpointUrl !== "string" || !sandbox.endpointUrl.trim()) {
       invalidMetadata = true;
+      invalidSandboxNames.add(sandbox.name);
       continue;
     }
     if (unsafeEndpointUrlViolation(sandbox.endpointUrl)) {
       invalidMetadata = true;
+      invalidSandboxNames.add(sandbox.name);
       continue;
     }
     if (parseHttpsPinRouteId(sandbox.endpointUrl)) {
@@ -185,17 +218,25 @@ function getPersistedEndpoint(
     const canonical = canonicalGatewayRouteEndpoint(provider, display);
     if (!canonical) {
       invalidMetadata = true;
+      invalidSandboxNames.add(sandbox.name);
       continue;
     }
-    matchingEndpoints.push({ canonical, display });
+    matchingEndpoints.push({ canonical, display, sandboxName: sandbox.name });
+  }
+  if (!targetRowParticipates && sandboxName) {
+    invalidMetadata = true;
+    invalidSandboxNames.add(sandboxName);
   }
   if (withheldMetadata) return endpointOmission("withheld");
-  if (invalidMetadata) return endpointOmission("invalid");
+  if (invalidMetadata) return endpointOmission("invalid", invalidSandboxNames);
   if (adapterMetadata) return endpointOmission("adapter-managed");
   if (matchingEndpoints.length === 0) return endpointOmission("unavailable");
   const selected = matchingEndpoints[0];
   return matchingEndpoints.some((candidate) => candidate.canonical !== selected.canonical)
-    ? endpointOmission("conflicting")
+    ? endpointOmission(
+        "conflicting",
+        matchingEndpoints.map((candidate) => candidate.sandboxName),
+      )
     : { endpointUrl: selected.display };
 }
 
@@ -254,6 +295,9 @@ export async function runInferenceGet(
         deps.log(`Endpoint: ${formatRouteValueForDisplay(payload.endpointUrl)}`);
       } else if (payload.endpointStatus && payload.endpointRecovery) {
         deps.log(`Endpoint: unavailable (${payload.endpointStatus})`);
+        if (payload.affectedSandboxes?.length) {
+          deps.log(`Affected: ${payload.affectedSandboxes.join(", ")}`);
+        }
         deps.log(`Action:   ${payload.endpointRecovery}`);
       }
     }

@@ -204,6 +204,9 @@ describe("CLI dispatch", () => {
       expect(JSON.parse(result.out)).toEqual({
         provider: "compatible-endpoint",
         model: "custom/model",
+        endpointStatus: "unavailable",
+        endpointRecovery:
+          "Restore registry access or record the trusted endpoint and API family again, then rerun inference get.",
       });
       expect(fs.readFileSync(openshellArgs, "utf8").trim()).toBe("inference get -g nemoclaw-19090");
     } finally {
@@ -267,10 +270,12 @@ describe("CLI dispatch", () => {
       expect(JSON.parse(result.out)).toEqual({
         provider: "compatible-endpoint",
         model: "custom/model",
+        endpointStatus: "invalid",
+        endpointRecovery:
+          "Repair the named sandbox registrations' compatible-route metadata, then rerun inference get.",
+        affectedSandboxes: ["beta"],
       });
-      expect(fs.readFileSync(openshellArgs, "utf8").trim()).toBe(
-        "inference get -g nemoclaw-19090",
-      );
+      expect(fs.readFileSync(openshellArgs, "utf8").trim()).toBe("inference get -g nemoclaw-19090");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

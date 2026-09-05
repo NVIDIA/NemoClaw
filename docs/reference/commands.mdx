@@ -3083,8 +3083,9 @@ The command also omits internal HTTPS-pin adapter routes because their upstream 
 When a compatible endpoint is omitted, text output reports `Endpoint: unavailable (<state>)` followed by a credential-free `Action`.
 JSON output adds `endpointStatus` and `endpointRecovery` instead of `endpointUrl`.
 The state is `unavailable` when durable registry metadata cannot be read or found, `invalid` when recorded metadata cannot prove the live route, `conflicting` when eligible same-gateway rows disagree, `withheld` when the URL may expose a credential, and `adapter-managed` for an internal HTTPS-pin adapter route.
-The recovery action tells you to restore or repair registry metadata, align conflicting routes, use a credential-free root or `/v1` API base, or omit endpoint options for an adapter-managed same-provider model change.
-These diagnostics never include a stored URL, registry path, or underlying registry error.
+For `invalid` and `conflicting`, JSON also returns up to eight output-safe names in `affectedSandboxes`; text output prints the same names after `Affected`.
+The recovery action tells you to repair the named registrations, align conflicting routes, use a credential-free root or `/v1` API base, or omit endpoint options for an adapter-managed same-provider model change.
+These endpoint-omission fields never include a stored URL, registry path, or underlying registry error.
 If a sandbox-first lookup cannot resolve its gateway because the registry is corrupt or unreadable, the command exits non-zero and retains the safe recovery steps and affected path.
 
 For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
