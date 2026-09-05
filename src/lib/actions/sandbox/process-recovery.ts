@@ -50,6 +50,7 @@ import {
   resolveSandboxDashboardPort,
   resolveSandboxHealthProbeUrl,
   verifyHermesPortableLaunchForwards,
+  type DeclaredAgentForwardRecoveryFailure,
   type HermesPortableForwardRecoveryFailure,
   type HermesPortableForwardRecoveryInput,
   type HermesPortableForwardRecoveryResult,
@@ -1579,6 +1580,19 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     return { checked: false, wasRunning: null, recovered: false, forwardRecovered: false };
   }
   const recoveryPort = resolveSandboxDashboardPort(sandboxName);
+  const recoverDeclaredForwards = () => {
+    let failure: DeclaredAgentForwardRecoveryFailure | undefined;
+    const recovered = measure("forward", () =>
+      recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, {
+        quiet,
+        runtimeSelection,
+        onFailure: (value) => {
+          failure = value;
+        },
+      }),
+    );
+    return { failure, recovered };
+  };
   if (running) {
     const enforcement = enforceHermesSecretBoundaryOnRunningGateway(
       sandboxName,
@@ -1628,12 +1642,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       const messagingForwardRecovered = measure("forward", () =>
         recoverMessagingHostForward(sandboxName, { quiet, runtimeSelection }),
       );
-      const declaredForwardsRecovered = measure("forward", () =>
-        recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, {
-          quiet,
-          runtimeSelection,
-        }),
-      );
+      const { failure: declaredForwardFailure, recovered: declaredForwardsRecovered } =
+        recoverDeclaredForwards();
       const auxiliaryResults = [
         { label: "the Hermes dashboard host forward", recovered: dashboardForwardRecovered },
         { label: "the messaging webhook host forward", recovered: messagingForwardRecovered },
@@ -1673,6 +1683,12 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           forwardRecovered: false,
           forwardRecoveryFailed: true,
           forwardRecoveryFailureDetail: auxiliaryFailureDetail,
+          ...(declaredForwardFailure
+            ? {
+                forwardRecoveryFailurePorts: declaredForwardFailure.ports,
+                forwardRecoveryObservedRows: declaredForwardFailure.observedRows,
+              }
+            : {}),
         };
       }
       probeTiming?.setForwardAction("restored");
@@ -1689,9 +1705,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     const messagingForwardRecovered = measure("forward", () =>
       recoverMessagingHostForward(sandboxName, { quiet, runtimeSelection }),
     );
-    const declaredForwardsRecovered = measure("forward", () =>
-      recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, { quiet, runtimeSelection }),
-    );
+    const { failure: declaredForwardFailure, recovered: declaredForwardsRecovered } =
+      recoverDeclaredForwards();
     const auxiliaryResults = [
       { label: "the Hermes dashboard host forward", recovered: dashboardForwardRecovered },
       { label: "the messaging webhook host forward", recovered: messagingForwardRecovered },
@@ -1708,6 +1723,12 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail: auxiliaryFailureDetail,
+        ...(declaredForwardFailure
+          ? {
+              forwardRecoveryFailurePorts: declaredForwardFailure.ports,
+              forwardRecoveryObservedRows: declaredForwardFailure.observedRows,
+            }
+          : {}),
       };
     }
     probeTiming?.setForwardAction(
@@ -1963,9 +1984,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     const messagingForwardRecovered = measure("forward", () =>
       recoverMessagingHostForward(sandboxName, { quiet, runtimeSelection }),
     );
-    const declaredForwardsRecovered = measure("forward", () =>
-      recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, { quiet, runtimeSelection }),
-    );
+    const { failure: declaredForwardFailure, recovered: declaredForwardsRecovered } =
+      recoverDeclaredForwards();
     const auxiliaryResults = [
       { label: "the Hermes dashboard host forward", recovered: dashboardForwardRecovered },
       { label: "the messaging webhook host forward", recovered: messagingForwardRecovered },
@@ -2003,6 +2023,12 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail: auxiliaryFailureDetail,
+        ...(declaredForwardFailure
+          ? {
+              forwardRecoveryFailurePorts: declaredForwardFailure.ports,
+              forwardRecoveryObservedRows: declaredForwardFailure.observedRows,
+            }
+          : {}),
       });
     }
     probeTiming?.setForwardAction("restored");

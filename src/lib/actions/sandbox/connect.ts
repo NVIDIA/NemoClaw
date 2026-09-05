@@ -295,7 +295,6 @@ export function parseSandboxConnectArgs(
 function exitOnForwardRecoveryFailure(
   sandboxName: string,
   agentName: string,
-  port: number,
   detail?: string,
 ): never {
   console.error("");
@@ -442,12 +441,7 @@ async function runSandboxConnectProbe(
       "forwardRecoveryFailureDetail" in processCheck
         ? String(processCheck.forwardRecoveryFailureDetail)
         : undefined;
-    exitOnForwardRecoveryFailure(
-      sandboxName,
-      agentName,
-      resolveSandboxDashboardPort(sandboxName),
-      detail,
-    );
+    exitOnForwardRecoveryFailure(sandboxName, agentName, detail);
   }
   if ("recoveryFailureDetail" in processCheck && processCheck.recoveryFailureDetail) {
     probeTiming?.markFailureStage("processes");

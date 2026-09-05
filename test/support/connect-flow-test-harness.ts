@@ -114,6 +114,8 @@ export type ConnectHarnessOptions = {
     forwardRecovered?: boolean;
     forwardRecoveryFailed?: boolean;
     forwardRecoveryFailureDetail?: string;
+    forwardRecoveryFailurePorts?: number[];
+    forwardRecoveryObservedRows?: string[];
     recoveryFailureDetail?: string;
     secretBoundaryRefused?: boolean;
     secretBoundaryReason?: SecretBoundaryRefusalReason;
