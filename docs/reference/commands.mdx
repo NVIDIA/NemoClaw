@@ -3072,22 +3072,7 @@ $$nemoclaw inference get
 $$nemoclaw inference get --json
 ```
 
-Text output adds `Endpoint` for `compatible-endpoint` and `compatible-anthropic-endpoint` under that condition.
-JSON output adds `endpointUrl` under the same condition.
-The URL must use the documented root or `/v1` API-base path; NemoClaw omits other paths because an opaque segment can carry a credential.
-Managed providers keep the existing provider-and-model output.
-Unpublished sandbox rows do not participate in endpoint selection.
-Equivalent stored URL forms, such as a trailing slash difference, count as the same endpoint identity.
-When participating metadata is missing, invalid, conflicting, too long, has an invalid gateway binding or another path shape, or contains recognized credential material in any URL component, both formats retain the provider and model without exposing the endpoint URL.
-The command also omits internal HTTPS-pin adapter routes because their upstream endpoint is intentionally not retained and the adapter URL cannot be reused as an upstream endpoint.
-When a compatible endpoint is omitted, text output reports `Endpoint: unavailable (<state>)` followed by a credential-free `Action`.
-JSON output adds `endpointStatus` and `endpointRecovery` instead of `endpointUrl`.
-The state is `unavailable` when durable registry metadata cannot be found or an unclassified registry read fails, `registry-corrupt` when the sandbox registry is not valid JSON, `registry-unreadable` when NemoClaw cannot read the registry because of its ownership or permissions, `invalid` when recorded metadata or URL validation cannot prove the live route, `conflicting` when eligible same-gateway rows disagree, `withheld` when a syntactically valid URL has an opaque path or recognized credential material that NemoClaw does not display, and `adapter-managed` for an internal HTTPS-pin adapter route.
-For `invalid` and `conflicting`, JSON also returns up to eight output-safe names in `affectedSandboxes`; text output prints the same names after `Affected`. When more output-safe names exist, JSON sets `affectedSandboxesTruncated` to `true` and text output says that additional names are not shown.
-The recovery action tells you to restore registry access, restore a known-good registry backup or obtain recovery support, repair state-directory ownership or permissions, repair the named registrations and rerun the command for another affected batch, align conflicting routes, use a credential-free root or `/v1` API base, or omit endpoint options for an adapter-managed same-provider model change.
-These endpoint-omission fields never include a stored URL, registry path, or underlying registry error.
-If a sandbox-first lookup cannot resolve its gateway because the registry is corrupt or unreadable, the command exits non-zero and retains the safe recovery steps and affected path.
-If the requested sandbox has an invalid gateway binding, the error names that sandbox and tells you to repair or remove its registration without displaying the rejected gateway value or port.
+Managed providers keep the existing provider-and-model output. Compatible providers add the endpoint only when published same-gateway metadata matches the live route and is safe to display; otherwise the command keeps the live provider and model and returns credential-free recovery information. Refer to [View the Active Inference Route](../inference/manage-inference/view-active-inference-route) for the exact text and JSON fields, omission states, safety rules, and recovery procedures.
 
 For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
 When that registry contains `<name>`, the command resolves the sandbox's recorded gateway and reads that gateway's live route.
