@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { buildHttpsPinRouteBaseUrl } from "../inference/https-pin-runtime";
 import { ConfigCorruptError } from "../state/config-io";
 
 vi.mock("../adapters/openshell/runtime", () => ({
@@ -203,6 +204,26 @@ describe("runInferenceGet", () => {
       provider: "compatible-endpoint",
       model: "custom/model",
     });
+  });
+
+  it.each([
+    { json: false, label: "human-readable" },
+    { json: true, label: "JSON" },
+  ])("omits a non-reusable HTTPS-pin adapter endpoint from $label output", async ({ json }) => {
+    const deps = createDeps(
+      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+    );
+    const adapterEndpoint = buildHttpsPinRouteBaseUrl("a".repeat(64));
+    recordRoute(deps, {
+      provider: "compatible-endpoint",
+      endpointUrl: adapterEndpoint,
+    });
+
+    await expect(runInferenceGet({ json }, deps)).resolves.toEqual({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+    });
+    expect(deps.log.mock.calls.flat().join("\n")).not.toContain(adapterEndpoint);
   });
 
   it.each(ENDPOINT_OMISSION_CASES)(

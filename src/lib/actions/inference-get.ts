@@ -6,6 +6,7 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import { sanitizeRouteValueForDisplay } from "../inference/config";
 import { canonicalGatewayRouteEndpoint } from "../inference/gateway-route-compatibility";
+import { parseHttpsPinRouteId } from "../inference/https-pin-runtime";
 import { getLiveGatewayInference } from "../inference/live";
 import { ConfigCorruptError, ConfigPermissionError } from "../state/config-io";
 import { isPublishedSandboxRegistration } from "../state/registry/route-reservation";
@@ -111,6 +112,12 @@ function getPersistedEndpointUrl(
       continue;
     }
     if (unsafeEndpointUrlViolation(sandbox.endpointUrl)) {
+      incompleteMatchingMetadata = true;
+      continue;
+    }
+    if (parseHttpsPinRouteId(sandbox.endpointUrl)) {
+      // HTTPS-pin registry state intentionally retains only the opaque adapter
+      // route. It cannot be reused as the upstream endpoint with inference set.
       incompleteMatchingMetadata = true;
       continue;
     }

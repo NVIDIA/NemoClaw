@@ -3063,7 +3063,7 @@ When at least one sandbox is registered and the named NemoClaw gateway is unreac
 ### `$$nemoclaw inference get`
 
 Show the active live inference provider and model from the NemoClaw-managed OpenShell gateway that `NEMOCLAW_GATEWAY_PORT` selects.
-For a compatible custom provider, also show the persisted endpoint URL when the selected gateway's matching registry metadata is safe and unambiguous.
+For a compatible custom provider, also show the persisted endpoint URL when the selected gateway's matching registry metadata is safe, unambiguous, and reusable.
 Use this command when you want the direct runtime route without the rest of the sandbox status output.
 It is also available in sandbox-first form as `$$nemoclaw <name> inference get`.
 
@@ -3078,6 +3078,8 @@ Managed providers keep the existing provider-and-model output.
 Unpublished sandbox rows do not participate in endpoint selection.
 Equivalent stored URL forms, such as a trailing slash difference, count as the same endpoint identity.
 When participating metadata is missing, invalid, conflicting, too long, or has an invalid gateway binding, both formats retain the provider and model without adding endpoint details.
+The command also omits internal HTTPS-pin adapter routes because their upstream endpoint is intentionally not retained and the adapter URL cannot be reused as an upstream endpoint.
+To switch only the model for an existing adapter route, omit `--endpoint-url` so NemoClaw reuses the recorded route.
 If the registry cannot be read for a compatible custom route, the command exits non-zero.
 Known corruption and permission errors retain their safe recovery steps and affected path.
 Unclassified errors use a generic message without exposing registry contents or error details.
