@@ -87,6 +87,35 @@ function runCliParity(fixture: CliParityFixture, env: NodeJS.ProcessEnv = {}) {
   });
 }
 
+function createInstallParityFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docs-install-parity-"));
+  for (const relativeFile of [
+    "install.sh",
+    "scripts/install.sh",
+    "src/lib/onboard/inference-providers/provider-selection-keys.ts",
+    "docs/reference/commands.mdx",
+    "test/e2e/e2e-cloud-experimental/check-docs.sh",
+  ]) {
+    const destination = path.join(root, relativeFile);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(path.join(REPO_ROOT, relativeFile), destination);
+  }
+  return {
+    checkDocs: path.join(root, "test", "e2e", "e2e-cloud-experimental", "check-docs.sh"),
+    root,
+  };
+}
+
+function runInstallParity(fixture: ReturnType<typeof createInstallParityFixture>) {
+  return spawnSync("bash", [fixture.checkDocs, "--only-install"], {
+    cwd: fixture.root,
+    encoding: "utf-8",
+    env: { ...process.env, NODE: process.execPath },
+    killSignal: "SIGKILL",
+    timeout: 30_000,
+  });
+}
+
 function readCliInvocations(fixture: CliParityFixture): string[] {
   return fs.readFileSync(fixture.nodeInvocationLog, "utf-8").trim().split("\n");
 }
@@ -148,6 +177,39 @@ describe("public compiled CLI contracts", () => {
       expect(result.stderr).toContain("flag --synthetic-undocumented");
       expect(result.stderr).toContain("not in 'nemoclaw <name> agent' section");
       expect(readCliInvocations(fixture)).toContain("custom-help");
+    } finally {
+      fs.rmSync(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps installer provider help aligned with its shared owner (#11041)", () => {
+    const fixture = createInstallParityFixture();
+
+    try {
+      const result = runInstallParity(fixture);
+      expect(result.error).toBeUndefined();
+      expect(result.signal).toBeNull();
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("check-docs: running: [install]");
+      expect(result.stdout).toContain("[install] parity OK");
+    } finally {
+      fs.rmSync(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a canonical provider missing from installer help (#11041)", () => {
+    const fixture = createInstallParityFixture();
+    const bootstrap = path.join(fixture.root, "install.sh");
+    const source = fs.readFileSync(bootstrap, "utf-8");
+    fs.writeFileSync(bootstrap, source.replace("| gemini |", "|"));
+
+    try {
+      const result = runInstallParity(fixture);
+      expect(result.error).toBeUndefined();
+      expect(result.signal).toBeNull();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('provider "gemini" canonical but absent');
+      expect(result.stderr).toContain("install.sh bootstrap_usage");
     } finally {
       fs.rmSync(fixture.root, { force: true, recursive: true });
     }

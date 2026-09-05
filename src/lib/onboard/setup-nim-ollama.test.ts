@@ -47,11 +47,9 @@ function makeDeps(overrides: Partial<Deps> = {}): Deps {
       model: "llama3.1:8b",
       allowToolsIncompatible: true,
     }),
-    printOllamaExposureWarning: () => {},
-    switchToWindowsOllamaHost: () => {},
     installOllamaOnWindowsHost: async () => ({ ok: true, path: "C:/Ollama/ollama.exe" }),
     awaitWindowsOllamaReady: () => true,
-    setupWindowsOllamaWith0000Binding: () => true,
+    setupWindowsOllamaLoopbackBinding: () => true,
     printWindowsOllamaTimeoutDiagnostics: () => {},
     resetOllamaHostCache: () => {},
     installOllamaOnMacOS: () => ({ ok: true }),
@@ -258,19 +256,17 @@ describe("createSetupNimOllamaHandlers", () => {
     );
   });
 
-  it("does not switch, install, or restart Windows Ollama when preflight rejects", async () => {
+  it("does not install or restart Windows Ollama when preflight rejects", async () => {
     const state = makeState();
     state.assertRouteCompatible = () => {
       throw new Error("route conflict");
     };
-    const switchHost = vi.fn();
     const install = vi.fn(async () => ({ ok: true }));
     const restart = vi.fn(() => true);
     const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
       makeDeps({
-        switchToWindowsOllamaHost: switchHost,
         installOllamaOnWindowsHost: install,
-        setupWindowsOllamaWith0000Binding: restart,
+        setupWindowsOllamaLoopbackBinding: restart,
       }),
     );
 
@@ -279,13 +275,11 @@ describe("createSetupNimOllamaHandlers", () => {
         null,
         "start-windows-ollama",
         "conflict/model",
-        true,
         false,
         null,
         state,
       ),
     ).rejects.toThrow("route conflict");
-    expect(switchHost).not.toHaveBeenCalled();
     expect(install).not.toHaveBeenCalled();
     expect(restart).not.toHaveBeenCalled();
   });
@@ -300,7 +294,7 @@ describe("createSetupNimOllamaHandlers", () => {
     const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
       makeDeps({
         installOllamaOnWindowsHost: install,
-        setupWindowsOllamaWith0000Binding: start,
+        setupWindowsOllamaLoopbackBinding: start,
       }),
     );
 
@@ -309,7 +303,6 @@ describe("createSetupNimOllamaHandlers", () => {
         null,
         "install-windows-ollama",
         "qwen3:8b",
-        false,
         false,
         null,
         selection,
@@ -412,7 +405,6 @@ describe("createSetupNimOllamaHandlers", () => {
       null,
       "start-windows-ollama",
       "requested",
-      true,
       false,
       null,
       state,
@@ -421,6 +413,51 @@ describe("createSetupNimOllamaHandlers", () => {
     assert.equal(result, "selected");
     assert.equal(state.provider, "ollama-local");
     assert.equal(state.allowToolsIncompatible, true);
+  });
+
+  it("refreshes the selected endpoint after establishing the Windows-host route", async () => {
+    const state = makeState();
+    const compatibilityEndpoints: Array<string | null> = [];
+    let endpointUrl = "http://host.openshell.internal:11435/v1";
+    state.assertRouteCompatible = () => {
+      compatibilityEndpoints.push(state.endpointUrl);
+      return {
+        requiredModel: null,
+        requiredEndpointUrl: null,
+        requiredInferenceApi: null,
+      };
+    };
+    const selectModel = vi.fn<Deps["selectAndValidateOllamaModel"]>(async () => {
+      expect(state.endpointUrl).toBe("http://host.docker.internal:11434/v1");
+      return { outcome: "selected", model: "qwen3:8b", allowToolsIncompatible: false };
+    });
+    const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        getLocalProviderBaseUrl: () => endpointUrl,
+        setupWindowsOllamaLoopbackBinding: () => {
+          endpointUrl = "http://host.docker.internal:11434/v1";
+          return true;
+        },
+        selectAndValidateOllamaModel: selectModel,
+      }),
+    );
+
+    const result = await handleWindowsHostOllamaSelection(
+      null,
+      "start-windows-ollama",
+      "qwen3:8b",
+      false,
+      null,
+      state,
+    );
+
+    expect(result).toBe("selected");
+    expect(state.endpointUrl).toBe("http://host.docker.internal:11434/v1");
+    expect(compatibilityEndpoints).toEqual([
+      "http://host.openshell.internal:11435/v1",
+      "http://host.docker.internal:11434/v1",
+    ]);
+    expect(selectModel).toHaveBeenCalledTimes(1);
   });
 
   it("preserves accepted tools-incompatible state for installed Ollama", async () => {

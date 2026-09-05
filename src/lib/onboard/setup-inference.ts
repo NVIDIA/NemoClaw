@@ -18,7 +18,7 @@ import {
   withGatewayRouteMutationLock,
   withModelRouterPortLifecycleLock,
 } from "../inference/gateway-route-mutation-lock";
-import { getManagedVllmProviderBinding } from "../inference/local";
+import { getManagedVllmProviderBinding, shouldFrontOllamaWithProxy } from "../inference/local";
 import {
   clearPendingOllamaModelCleanup,
   isLocalOllamaRouteOwner,
@@ -43,7 +43,6 @@ import {
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import type { Session } from "../state/onboard-session";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
-import { shouldFrontOllamaWithProxy } from "./local-inference-topology";
 import { resolveModelRouterPort } from "./model-router";
 import {
   type RoutedProviderDeps,

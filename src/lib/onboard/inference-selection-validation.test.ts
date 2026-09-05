@@ -93,6 +93,84 @@ describe("inference selection validation", () => {
     }
   });
 
+  it.each([
+    {
+      variant: "NVIDIA",
+      useNvidiaEndpointProbePayload: true,
+      expectedBody: {
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        messages: [{ role: "user", content: "Reply with exactly: OK" }],
+        max_tokens: 16,
+        temperature: 1,
+        top_p: 0.95,
+        chat_template_kwargs: { enable_thinking: false },
+      },
+    },
+    {
+      variant: "generic",
+      useNvidiaEndpointProbePayload: false,
+      expectedBody: {
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        messages: [{ role: "user", content: "Reply with exactly: OK" }],
+        max_tokens: 16,
+      },
+    },
+  ])(
+    "emits the $variant Nemotron request through selection validation (#10880)",
+    async ({ useNvidiaEndpointProbePayload, expectedBody }) => {
+      let observedBody = "";
+      const server = http.createServer((request, response) => {
+        let body = "";
+        request.setEncoding("utf8");
+        request.on("data", (chunk) => {
+          body += chunk;
+        });
+        request.on("end", () => {
+          observedBody = body;
+          response.end('{"choices":[{"message":{"content":"OK"}}]}');
+        });
+      });
+      const port = await listen(server);
+      const helpers = createInferenceSelectionValidationHelpers({
+        isNonInteractive: () => false,
+        agentProductName: () => "OpenClaw",
+        promptValidationRecovery: vi.fn(async () => "selection" as const),
+      });
+      const probeOptions = {
+        apiKey: "test-key",
+        skipResponsesProbe: true,
+        validationTiming: {
+          connectTimeoutSeconds: 1,
+          maxTimeSeconds: 1,
+          source: "standard" as const,
+        },
+        validationSessionOptions: {
+          env: {},
+          lookup: async () => [{ address: "127.0.0.1", family: 4 as const }],
+          allowPrivateAddressesForTesting: true,
+        },
+      };
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      try {
+        await expect(
+          helpers.validateOpenAiLikeSelection(
+            "NVIDIA Endpoints",
+            `http://provider.example.com:${port}/v1`,
+            "nvidia/nemotron-3-super-120b-a12b",
+            null,
+            undefined,
+            undefined,
+            { ...probeOptions, useNvidiaEndpointProbePayload },
+          ),
+        ).resolves.toEqual({ ok: true, api: "openai-completions" });
+        expect(JSON.parse(observedBody)).toEqual(expectedBody);
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
+
   it("uses an explicit managed key without forwarding it as a probe option", async () => {
     const apiKey = "f".repeat(64);
     const getCredential = vi.fn(() => "ambient-key");
