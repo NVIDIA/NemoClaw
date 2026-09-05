@@ -76,10 +76,6 @@ import {
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import { enforceHermesSecretBoundaryOnRunningGateway } from "./hermes-secret-boundary-recovery";
 import {
-  inspectHermesMcpReconciliationRefusal,
-  processRecoveryMcpReconciliationRefusal,
-} from "./mcp-bridge-recovery";
-import {
   buildSandboxExecMarkedCommand,
   extractSandboxExecCommandStdout,
 } from "./sandbox-exec-output";
@@ -1011,12 +1007,6 @@ export function restartSandboxGateway(
               runtimeSelection,
             }),
           printGatewayWedgeDiagnostics,
-          inspectHermesMcpReconciliationRefusal: (name) =>
-            inspectHermesMcpReconciliationRefusal(
-              name,
-              undefined,
-              runtimeSelection,
-            ),
           ...deps,
         },
       }),
@@ -1594,13 +1584,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         secretBoundaryReason: enforcement.reason,
       };
     }
-    const mcpRefusal = processRecoveryMcpReconciliationRefusal(
-      sandboxName,
-      true,
-      undefined,
-      runtimeSelection,
-    );
-    if (mcpRefusal) return mcpRefusal;
   }
   if (running) {
     // Gateway is alive but the host-side forward can still be dead or
@@ -1928,13 +1911,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       );
       if (finalizationFailure) return finalizationFailure;
     }
-    const mcpRefusal = processRecoveryMcpReconciliationRefusal(
-      sandboxName,
-      false,
-      undefined,
-      runtimeSelection,
-    );
-    if (mcpRefusal) return mcpRefusal;
     const forwardRecovered = measure("forward", () =>
       ensureSandboxPortForward(sandboxName, {
         afterSuccess: confirmRelaunchedManagedHealthForForward ?? undefined,

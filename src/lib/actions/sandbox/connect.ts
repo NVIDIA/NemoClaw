@@ -64,7 +64,6 @@ import { runSetupDnsProxy } from "../dns";
 import { runSandboxExecChild } from "./exec";
 import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
-  exitOnMcpReconciliationRefusal,
   exitOnSecretBoundaryRefusal,
   printGatewayTerminalRepairGuidance,
 } from "./connect-boundary-refusal";
@@ -431,10 +430,6 @@ async function runSandboxConnectProbe(
   if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
     probeTiming?.markFailureStage("processes");
     exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Probe");
-  }
-  if ("mcpReconciliationRefused" in processCheck && processCheck.mcpReconciliationRefused) {
-    probeTiming?.markFailureStage("processes");
-    exitOnMcpReconciliationRefusal(sandboxName, agentName, processCheck, "Probe");
   }
   if ("forwardRecoveryFailed" in processCheck && processCheck.forwardRecoveryFailed) {
     probeTiming?.markFailureStage("forward");
@@ -2179,12 +2174,6 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
             agentRuntime.getSessionAgent(sandboxName),
           );
           exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Connect");
-        }
-        if ("mcpReconciliationRefused" in processCheck && processCheck.mcpReconciliationRefused) {
-          const agentName = agentRuntime.getAgentDisplayName(
-            agentRuntime.getSessionAgent(sandboxName),
-          );
-          exitOnMcpReconciliationRefusal(sandboxName, agentName, processCheck, "Connect");
         }
         const recoveryFailureDetail =
           "recoveryFailureDetail" in processCheck && processCheck.recoveryFailureDetail

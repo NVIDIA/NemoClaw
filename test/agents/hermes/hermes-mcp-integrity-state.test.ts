@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -403,6 +404,65 @@ print(json.dumps(proof))
       root_applied_preserved: true,
       root_applied_state: "current",
     });
+  });
+
+  it("passes adopt from the shell wrapper to the guard CLI (#11108)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-adopt-cli-"));
+    const hermesDir = path.join(root, ".hermes");
+    const configPath = path.join(hermesDir, "config.yaml");
+    const envPath = path.join(hermesDir, ".env");
+    const anchor = path.join(hermesDir, ".config-hash");
+    const strict = path.join(root, "hermes.config-hash");
+    const beforeConfig = "model: test\nmcp_servers: {}\n";
+    const afterConfig =
+      "model: test\nmcp_servers:\n  alpha:\n    url: https://alpha.example/mcp\n";
+    const env = "SAFE=1\n";
+    const digest = (value: string) => createHash("sha256").update(value).digest("hex");
+    const beforeMcp = digest("{}");
+    const afterMcp = digest('{"alpha":{"url":"https://alpha.example/mcp"}}');
+    const initialHash =
+      `${digest(beforeConfig)}  ${configPath}\n` +
+      `${digest(env)}  ${envPath}\n` +
+      `# nemoclaw-hermes-mcp-state-v1 intended=${beforeMcp} applied=${beforeMcp}\n`;
+    const source = fs.readFileSync(START, "utf-8");
+
+    fs.mkdirSync(hermesDir);
+    fs.writeFileSync(configPath, afterConfig);
+    fs.writeFileSync(envPath, env);
+    fs.writeFileSync(anchor, initialHash);
+
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            "set -uo pipefail",
+            extractShellFunction(source, "refresh_hermes_runtime_config_hashes"),
+            `_HERMES_PYTHON=${bashPrintfQ(process.env.PYTHON || "python3")}`,
+            `_HERMES_RUNTIME_CONFIG_GUARD=${bashPrintfQ(GUARD)}`,
+            `HERMES_DIR=${bashPrintfQ(hermesDir)}`,
+            `HERMES_HASH_FILE=${bashPrintfQ(strict)}`,
+            "STEP_DOWN_PREFIX_SANDBOX=(env)",
+            "if refresh_hermes_runtime_config_hashes compat; then preserve=0; else preserve=$?; fi",
+            "refresh_hermes_runtime_config_hashes compat adopt",
+            'printf "preserve=%s\\n" "$preserve"',
+          ].join("\n"),
+        ],
+        { encoding: "utf-8", timeout: 10_000 },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("preserve=1\n");
+      expect(result.stderr).toContain("Hermes MCP config differs from persisted intended state");
+      expect(fs.readFileSync(anchor, "utf-8")).toBe(
+        `${digest(afterConfig)}  ${configPath}\n` +
+          `${digest(env)}  ${envPath}\n` +
+          `# nemoclaw-hermes-mcp-state-v1 intended=${afterMcp} applied=${beforeMcp}\n`,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("uses the atomic write outcome for compat applied-state commits", () => {

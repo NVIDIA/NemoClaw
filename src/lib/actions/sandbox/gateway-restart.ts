@@ -6,7 +6,6 @@ import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { redactFullWithUrls } from "../../security/redact";
 import { hermesMcpReconciliationRemediationLines } from "./mcp-bridge-hermes-reconciliation";
-import { inspectHermesMcpReconciliationRefusal } from "./mcp-bridge-recovery";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 
@@ -85,13 +84,6 @@ export type GatewayRestartResult =
       detail: string;
       restarted?: never;
       healthPassed?: never;
-    }
-  | {
-      ok: false;
-      failureLayer: "MCP reconciliation refusal";
-      detail: string;
-      restarted: true;
-      healthPassed: true;
     };
 
 type SandboxAgentLookup = (sandboxName: string) => { agent?: string | null } | null | undefined;
@@ -147,7 +139,6 @@ export type GatewayRestartDeps = {
     sandboxName: string,
     exec: (sandboxName: string, command: string) => GatewayRestartCommandResult | null,
   ) => boolean;
-  inspectHermesMcpReconciliationRefusal: typeof inspectHermesMcpReconciliationRefusal;
 };
 
 export type RestartSandboxGatewayOptions = {
@@ -475,21 +466,6 @@ export function restartSandboxGatewayWithDeps(
     printGatewayRestartFailure(sandboxName, "health timeout", detail);
     deps.printGatewayWedgeDiagnostics(sandboxName, deps.executeSandboxExecCommand);
     return { ok: false, failureLayer: "health timeout", detail };
-  }
-
-  if (agentName === "hermes") {
-    const refusal = deps.inspectHermesMcpReconciliationRefusal(sandboxName);
-    if (refusal) {
-      const { detail } = refusal;
-      printGatewayRestartFailure(sandboxName, "MCP reconciliation refusal", detail);
-      return {
-        ok: false,
-        failureLayer: "MCP reconciliation refusal",
-        detail,
-        restarted: true,
-        healthPassed: true,
-      };
-    }
   }
 
   const forwardRecovered = deps.ensureSandboxPortForward(sandboxName);

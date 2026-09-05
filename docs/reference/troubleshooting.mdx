@@ -4371,7 +4371,8 @@ nemohermes <name> rebuild --yes
 ```
 
 The Hermes entrypoint supervisor remains responsible for the gateway, dashboard, internal API relay, dashboard relay, and gateway log stream throughout recovery.
-In the OpenShell-managed topology, that nonroot supervisor repairs failed auxiliaries continuously, recovers a gateway after four consecutive failed listener or HTTP health checks, and quarantines relaunch after five exits within 60 seconds until the sandbox is recreated.
+In the OpenShell-managed topology, that nonroot supervisor repairs failed auxiliaries continuously and recovers a gateway after four consecutive failed listener or HTTP health checks.
+Five exits within 60 seconds stop relaunch for the current supervisor instance.
 The host repairs only the host-side OpenShell forwards after the supervised processes pass health checks.
 
 ### Restart or recovery reports `relaunch quarantined`

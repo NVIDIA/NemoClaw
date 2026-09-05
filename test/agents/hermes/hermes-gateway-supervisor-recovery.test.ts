@@ -57,7 +57,9 @@ function runHermesGatewayProbe(opts: {
   return runBashHarness([
     'trace() { printf "%s\\n" "$*"; }',
     "gateway_control_take_request() { GATEWAY_CONTROL_ACTION=probe; trace take-request; }",
-    `prepare_hermes_gateway_restart() { HERMES_RESTART_FAILURE_CODE=hash-mismatch; trace preflight; return ${opts.prepareStatus}; }`,
+    `validate_running_hermes_boundary() { HERMES_RESTART_FAILURE_CODE=secret-boundary-refusal; trace preflight; return ${opts.prepareStatus}; }`,
+    "refresh_hermes_runtime_config_hashes() { trace unexpected-adopt; }",
+    "inspect_hermes_mcp_integrity() { trace unexpected-mcp-inspection; }",
     'gateway_control_pid_is_live() { trace "pid-live:$1"; return 0; }',
     `hermes_gateway_healthy() { trace "gateway-healthy:$1"; return ${opts.healthStatus}; }`,
     `hermes_auxiliaries_need_recovery() { trace auxiliaries-check; return ${opts.auxiliariesStatus}; }`,
@@ -71,6 +73,7 @@ function runHermesGatewayProbe(opts: {
     "kill() { trace unexpected-signal; }",
     extractShellFunction(source, "handle_hermes_gateway_control_request"),
     "GATEWAY_PID=4242",
+    "HERMES_MCP_RECONCILE_PENDING=1",
     "HERMES_RESTART_FAILURE_CODE=internal",
     'if handle_hermes_gateway_control_request; then trace "handler-rc:0"; else trace "handler-rc:$?"; fi',
   ]);
@@ -198,7 +201,12 @@ describe("Hermes PID 1 supervisor recovery", () => {
       prepareStatus: 1 as const,
       healthStatus: 0 as const,
       auxiliariesStatus: 1 as const,
-      expected: ["take-request", "preflight", "fail:hash-mismatch:4242", "handler-rc:1"],
+      expected: [
+        "take-request",
+        "preflight",
+        "fail:secret-boundary-refusal:4242",
+        "handler-rc:1",
+      ],
     },
     {
       label: "reports an unhealthy gateway",

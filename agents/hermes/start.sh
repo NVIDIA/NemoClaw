@@ -2639,12 +2639,10 @@ handle_hermes_gateway_control_request() {
   local failure_code
 
   if [ "$GATEWAY_CONTROL_ACTION" = "probe" ]; then
-    if ! prepare_hermes_gateway_restart; then
+    # Probe verifies the running process and credential boundary. It does not
+    # adopt mutable config or change MCP transaction state.
+    if ! validate_running_hermes_boundary; then
       gateway_control_fail "$HERMES_RESTART_FAILURE_CODE" "$old_pid"
-      return 1
-    fi
-    if [ "$HERMES_MCP_RECONCILE_PENDING" -eq 1 ]; then
-      gateway_control_fail mcp-reconcile-required "$old_pid"
       return 1
     fi
     if ! gateway_control_pid_is_live "$old_pid" \

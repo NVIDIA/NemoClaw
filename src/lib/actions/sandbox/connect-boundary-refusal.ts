@@ -7,10 +7,6 @@ import {
   isGatewayTerminalRepairLayer,
 } from "./gateway-restart";
 import type { SecretBoundaryRefusalReason } from "./hermes-secret-boundary-recovery";
-import {
-  hermesMcpReconciliationRemediationLines,
-  sanitizeHermesMcpReconciliationDetail,
-} from "./mcp-bridge-hermes-reconciliation";
 
 type ConnectBoundaryContext = "Probe" | "Connect";
 
@@ -71,27 +67,6 @@ export function exitOnSecretBoundaryRefusal(
       `  ${contextLabel} failed: secret-boundary check did not complete for ${agentName} gateway in '${sandboxName}'.`,
     );
     console.error("  Inspect the validator output above and re-run `nemoclaw <sandbox> recover`.");
-  }
-  process.exit(1);
-}
-
-export function exitOnMcpReconciliationRefusal(
-  sandboxName: string,
-  agentName: string,
-  processCheck: Record<string, unknown>,
-  contextLabel: ConnectBoundaryContext,
-): never {
-  const detail =
-    "mcpReconciliationReason" in processCheck
-      ? String(processCheck.mcpReconciliationReason)
-      : "the effective Hermes MCP configuration does not match persisted managed intent";
-  const sanitizedDetail = sanitizeHermesMcpReconciliationDetail(detail);
-  console.error("");
-  console.error(
-    `  ${contextLabel} failed: refused to confirm ${agentName} gateway in '${sandboxName}' — ${sanitizedDetail}.`,
-  );
-  for (const line of hermesMcpReconciliationRemediationLines(sandboxName)) {
-    console.error(`  ${line}`);
   }
   process.exit(1);
 }
