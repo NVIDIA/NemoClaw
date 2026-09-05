@@ -23,14 +23,44 @@ export function fingerprintOpenShellSandboxId(sandboxId: string): string | null 
     : null;
 }
 
-/** Extract and fingerprint the one immutable sandbox ID carried by an SSH config. */
-export function fingerprintOpenShellSandboxSshConfigIdentity(sshConfig: string): string | null {
+function oneSshProxyOption(sshConfig: string, option: string): string | null {
+  const escaped = option.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const matches = [
     ...sshConfig.matchAll(
-      /(?:^|[ \t])--sandbox-id(?:=|[ \t]+)(['"]?)([A-Za-z0-9._-]+)\1(?=[ \t]|$)/gmu,
+      new RegExp(
+        `(?:^|[ \\t])${escaped}(?:=|[ \\t]+)(['"]?)([A-Za-z0-9._-]+)\\1(?=[ \\t]|$)`,
+        "gmu",
+      ),
     ),
   ].map((match) => match[2] ?? "");
-  return matches.length === 1 ? fingerprintOpenShellSandboxId(matches[0]) : null;
+  return matches.length === 1 ? matches[0]! : null;
+}
+
+/** Fingerprint the one pinned OpenShell SSH target tuple without its token. */
+export function fingerprintOpenShellSandboxSshConfigTarget(sshConfig: string): string | null {
+  const gatewayName = oneSshProxyOption(sshConfig, "--gateway-name");
+  const sandboxName = oneSshProxyOption(sshConfig, "--name");
+  const workspace = oneSshProxyOption(sshConfig, "--workspace");
+  if (!gatewayName || !sandboxName || !workspace) return null;
+  return fingerprintOpenShellSandboxSshTarget(gatewayName, sandboxName, workspace);
+}
+
+/** Fingerprint an expected pinned OpenShell SSH target tuple. */
+export function fingerprintOpenShellSandboxSshTarget(
+  gatewayName: string,
+  sandboxName: string,
+  workspace: string,
+): string | null {
+  if (
+    !isOpenShellSandboxId(gatewayName) ||
+    !isOpenShellSandboxId(sandboxName) ||
+    !isOpenShellSandboxId(workspace)
+  ) {
+    return null;
+  }
+  return createHash("sha256")
+    .update(`${gatewayName}\0${sandboxName}\0${workspace}`)
+    .digest("hex");
 }
 
 export const NEMOCLAW_CREATE_ATTEMPT_LABEL = "ai.nvidia.nemoclaw.create-attempt" as const;

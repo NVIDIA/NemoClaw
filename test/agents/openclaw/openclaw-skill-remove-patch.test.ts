@@ -17,6 +17,7 @@ import {
 
 const roots: string[] = [];
 const SOURCE = [
+  '// reviewed bindings: from "node:fs/promises"; from "node:path"; validateRequestedSkillSlug loadSkillsStatusReport resolveSkillStatusEntry untrackClawHubSkill resolveAgentOption sanitizeForLog defaultRuntime',
   'skills.command("install").description("Install a skill from ClawHub, git, or a local directory")',
   "/**",
   "* Register the skills CLI commands",
@@ -57,6 +58,12 @@ describe("OpenClaw native skill remove patch", () => {
     expect(() => patchSkillRemoveText(`${SOURCE}\n${SOURCE}`, "skills-cli.js")).toThrow(
       "expected exactly one reviewed skill remove anchor",
     );
+    expect(() =>
+      patchSkillRemoveText(
+        SOURCE.replace("loadSkillsStatusReport", "missingStatusLoader"),
+        "skills-cli.js",
+      ),
+    ).toThrow("reviewed skill remove binding loadSkillsStatusReport is missing");
   });
 
   it("patches only the reviewed OpenClaw version", () => {

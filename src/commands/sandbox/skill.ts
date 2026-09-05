@@ -9,11 +9,11 @@ export default class SkillCliCommand extends Command {
   static strict = false;
   static summary = "Show skill command usage";
   static description = "Show skill install/remove/list usage or report unknown skill subcommands.";
-  static usage = ["install <name> <path>", "remove <name> <skill>", "list <name>"];
+  static usage = ["<name> install <path>", "<name> remove <skill>", "<name> list"];
   static examples = [
-    "<%= config.bin %> sandbox skill install alpha ./my-skill",
-    "<%= config.bin %> sandbox skill remove alpha my-skill",
-    "<%= config.bin %> sandbox skill list alpha --json",
+    "<%= config.bin %> sandbox skill alpha install ./my-skill",
+    "<%= config.bin %> sandbox skill alpha remove my-skill",
+    "<%= config.bin %> sandbox skill alpha list --json",
   ];
 
   public async run(): Promise<void> {

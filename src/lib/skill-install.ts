@@ -174,6 +174,16 @@ export const SKILL_SNAPSHOT_MAX_FILES = 1024;
 export const SKILL_SNAPSHOT_MAX_BYTES = 64 * 1024 * 1024;
 const OPENCLAW_NATIVE_BIN = "/usr/local/bin/openclaw";
 
+function sandboxIdentityCheckCommand(expectedFingerprint: string): string {
+  const check = [
+    'const crypto=require("node:crypto");',
+    "const expected=process.argv[1];",
+    'const id=process.env.OPENSHELL_SANDBOX_ID||"";',
+    'if(!/^[A-Za-z0-9._-]{1,512}$/.test(id)||crypto.createHash("sha256").update(id).digest("hex")!==expected)process.exit(1);',
+  ].join("");
+  return `node -e ${shellQuote(check)} ${shellQuote(expectedFingerprint)}`;
+}
+
 function fileSha256(filePath: string): string {
   return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
@@ -420,6 +430,7 @@ export interface NativeSkillInstallResult {
     | "native_capability_missing"
     | "native_install_failed"
     | "remote_state_unknown"
+    | "sandbox_identity_changed"
     | "snapshot_failed"
     | "snapshot_limit_exceeded"
     | "verification_failed";
@@ -429,6 +440,7 @@ function buildOpenClawNativeInstallScript(
   paths: NativeSkillState,
   skillName: string,
   expectedDigest: string,
+  expectedSandboxIdentityFingerprint: string,
 ): string {
   if (!paths.isOpenClaw) {
     throw new Error("OpenClaw native install requires a workspace skill destination");
@@ -454,6 +466,7 @@ function buildOpenClawNativeInstallScript(
     'const main=Array.isArray(entries)&&entries.find((entry)=>entry&&typeof entry==="object"&&entry.id==="main");',
     'if(!main||(main.workspace!==undefined&&main.workspace!==expected))process.exit(1);',
   ].join("");
+  const identityCheck = sandboxIdentityCheckCommand(expectedSandboxIdentityFingerprint);
   // The pinned native installer owns source-origin metadata and may recreate
   // payload modes under umask; hash only payload files with normalized modes.
   return [
@@ -467,6 +480,7 @@ function buildOpenClawNativeInstallScript(
     'safe_tree() { [ -d "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -mindepth 1 ! -type d ! -type f -print -quit)" ]; }',
     'digest_tree() { tree="$1"; manifest="$2"; find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort | grep -Fxv ".openclaw/source-origin.json" > "$manifest.files"; : > "$manifest"; while IFS= read -r rel; do if [ -n "$(find "$tree/$rel" -type f -perm /111 -print -quit)" ]; then mode=755; else mode=644; fi; hash="$(sha256sum "$tree/$rel" | cut -d " " -f 1)"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$manifest"; done < "$manifest.files"; sha256sum "$manifest" | cut -d " " -f 1; }',
     '[ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]',
+    `${identityCheck} || { echo IDENTITY_CHANGED; exit 9; }`,
     `node -e ${shellQuote(verifyMainWorkspace)} "$config" "$expected_workspace" || { echo AGENT_WORKSPACE_UNSUPPORTED; exit 8; }`,
     'stage="$(mktemp -d "$root/.nemoclaw-skill-stage.XXXXXX")"',
     'chmod 700 "$stage"',
@@ -492,6 +506,7 @@ function buildOpenClawNativeInstallScript(
     'safe_tree "$target" || { echo VERIFY_FAILED; exit 4; }',
     'installed="$(digest_tree "$target" "$stage/installed.manifest")"',
     '[ "$installed" = "$expected" ] || { echo VERIFY_FAILED; exit 4; }',
+    `${identityCheck} || { echo IDENTITY_CHANGED; exit 9; }`,
     'printf "INSTALLED %s\\n" "$installed"',
   ].join("; ");
 }
@@ -509,8 +524,9 @@ export function installOpenClawSkill(
     beforeSnapshotFileRead?: (relativePath: string) => void;
     beforeSnapshotRootRead?: () => void;
     expectedRootIdentity?: SkillRootIdentity;
+    expectedSandboxIdentityFingerprint: string;
     sshExecImpl?: typeof sshExec;
-  } = {},
+  },
 ): NativeSkillInstallResult {
   const snapshot = prepareSkillArchiveSnapshot(localDir, {
     beforeSnapshotFileRead: opts.beforeSnapshotFileRead,
@@ -523,9 +539,17 @@ export function installOpenClawSkill(
   if (!snapshot || snapshot.skillName !== skillName) {
     return { success: false, uploaded: 0, reason: "snapshot_failed" };
   }
+  if (!SHA256_RE.test(opts.expectedSandboxIdentityFingerprint)) {
+    return { success: false, uploaded: 0, reason: "sandbox_identity_changed" };
+  }
   const result = (opts.sshExecImpl ?? sshExec)(
     ctx,
-    buildOpenClawNativeInstallScript(paths, skillName, snapshot.contentDigest),
+    buildOpenClawNativeInstallScript(
+      paths,
+      skillName,
+      snapshot.contentDigest,
+      opts.expectedSandboxIdentityFingerprint,
+    ),
     { input: snapshot.archive, timeout: 120_000 },
   );
   const stdout = result?.stdout.trim() ?? "";
@@ -547,6 +571,8 @@ export function installOpenClawSkill(
           ? "native_capability_missing"
           : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
             ? "verification_failed"
+            : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
+              ? "sandbox_identity_changed"
             : "remote_state_unknown",
   };
 }
@@ -594,6 +620,7 @@ function buildNativeLocalSkillInstallScript(
   agentName: NativeLocalSkillAgent,
   skillName: string,
   expectedDigest: string,
+  expectedSandboxIdentityFingerprint: string,
 ): string {
   const stageToken = "__NEMOCLAW_PAYLOAD__";
   const command = nativeLocalSkillCommand(agentName, stageToken, skillName);
@@ -607,13 +634,14 @@ function buildNativeLocalSkillInstallScript(
     "const value=JSON.parse(lines[0].slice(prefix.length));",
     'if(!value||value.status!=="installed"||value.name!==expectedName||typeof value.path!=="string"||!path.isAbsolute(value.path)||path.basename(value.path)!==expectedName)process.exit(1);',
     "const relative=path.relative(stateRoot,value.path);",
-    'if(!relative||relative.startsWith(`..${path.sep}`)||path.isAbsolute(relative))process.exit(1);',
+    'if(!relative||relative.startsWith(".."+path.sep)||path.isAbsolute(relative))process.exit(1);',
     "process.stdout.write(path.resolve(value.path));",
   ].join("");
   const commandArgs = command.importArgs
     .map((arg) => (arg === stageToken ? '"$payload"' : shellQuote(arg)))
     .join(" ");
   const listArgs = command.listArgs.map((arg) => shellQuote(arg)).join(" ");
+  const identityCheck = sandboxIdentityCheckCommand(expectedSandboxIdentityFingerprint);
   return [
     "set -eu",
     "umask 077",
@@ -623,6 +651,7 @@ function buildNativeLocalSkillInstallScript(
     'safe_tree() { [ -d "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -mindepth 1 ! -type d ! -type f -print -quit)" ]; }',
     'digest_tree() { tree="$1"; manifest="$2"; find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort > "$manifest.files"; : > "$manifest"; while IFS= read -r rel; do if [ -n "$(find "$tree/$rel" -type f -perm /111 -print -quit)" ]; then mode=755; else mode=644; fi; hash="$(sha256sum "$tree/$rel" | cut -d " " -f 1)"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$manifest"; done < "$manifest.files"; sha256sum "$manifest" | cut -d " " -f 1; }',
     '[ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]',
+    `${identityCheck} || { echo IDENTITY_CHANGED; exit 9; }`,
     `help="$(${shellQuote(command.binary)} skills ${shellQuote(command.importArgs[1])} --help 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
     'stage="$(mktemp -d "$root/.nemoclaw-skill-stage.XXXXXX")"',
     'chmod 700 "$stage"',
@@ -645,6 +674,7 @@ function buildNativeLocalSkillInstallScript(
     'installed="$(digest_tree "$target_real" "$stage/installed.manifest")"',
     '[ "$installed" = "$expected" ] || { echo VERIFY_FAILED; exit 4; }',
     `${shellQuote(command.binary)} ${listArgs} > "$stage/list.out" 2>&1 || { cat "$stage/list.out" >&2; echo VERIFY_FAILED; exit 4; }`,
+    `${identityCheck} || { echo IDENTITY_CHANGED; exit 9; }`,
     'printf "INSTALLED %s\\n" "$installed"',
   ].join("; ");
 }
@@ -656,7 +686,10 @@ export function installNativeAgentSkill(
   paths: NativeSkillState,
   agentName: NativeLocalSkillAgent,
   skillName: string,
-  opts: SkillSnapshotOptions & { sshExecImpl?: typeof sshExec } = {},
+  opts: SkillSnapshotOptions & {
+    expectedSandboxIdentityFingerprint: string;
+    sshExecImpl?: typeof sshExec;
+  },
 ): NativeSkillInstallResult {
   const snapshot = prepareSkillArchiveSnapshot(localDir, opts);
   if (snapshot === "limit_exceeded") {
@@ -665,6 +698,9 @@ export function installNativeAgentSkill(
   if (!snapshot || snapshot.skillName !== skillName) {
     return { success: false, uploaded: 0, reason: "snapshot_failed" };
   }
+  if (!SHA256_RE.test(opts.expectedSandboxIdentityFingerprint)) {
+    return { success: false, uploaded: 0, reason: "sandbox_identity_changed" };
+  }
   const result = (opts.sshExecImpl ?? sshExec)(
     ctx,
     buildNativeLocalSkillInstallScript(
@@ -672,6 +708,7 @@ export function installNativeAgentSkill(
       agentName,
       skillName,
       snapshot.contentDigest,
+      opts.expectedSandboxIdentityFingerprint,
     ),
     { input: snapshot.archive, timeout: 120_000 },
   );
@@ -693,6 +730,8 @@ export function installNativeAgentSkill(
           ? "verification_failed"
           : result?.status === 5 && stdout.endsWith("NATIVE_INSTALL_FAILED")
             ? "native_install_failed"
+            : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
+              ? "sandbox_identity_changed"
             : "remote_state_unknown",
   };
 }

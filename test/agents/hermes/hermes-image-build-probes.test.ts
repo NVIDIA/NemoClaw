@@ -30,6 +30,7 @@ const commands = [
   "gateway-runtime-metadata",
   "googlechat-override-seams",
   "langfuse-credentials",
+  "native-skill-import",
   "neutral-platform-inertness",
   "profile-policy",
   "session-delete",

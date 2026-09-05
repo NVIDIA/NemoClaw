@@ -7,7 +7,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const captureSandboxSshConfig = vi.hoisted(() => vi.fn());
-const fingerprintOpenShellSandboxSshConfigIdentity = vi.hoisted(() => vi.fn());
+const fingerprintOpenShellSandboxSshConfigTarget = vi.hoisted(() => vi.fn());
+const fingerprintOpenShellSandboxSshTarget = vi.hoisted(() => vi.fn());
 const inspectOpenShellSandboxIdentityFingerprint = vi.hoisted(() => vi.fn());
 const getSessionAgent = vi.hoisted(() => vi.fn());
 const ensureLiveSandboxOrExit = vi.hoisted(() => vi.fn());
@@ -38,7 +39,8 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 }));
 
 vi.mock("../../adapters/openshell/sandbox-identity", () => ({
-  fingerprintOpenShellSandboxSshConfigIdentity,
+  fingerprintOpenShellSandboxSshConfigTarget,
+  fingerprintOpenShellSandboxSshTarget,
 }));
 
 vi.mock("../../adapters/openshell/sandbox-identity-cli", () => ({
@@ -116,7 +118,8 @@ describe("sandbox skill action orchestration", () => {
     mutationLockState.active = false;
 
     captureSandboxSshConfig.mockReturnValue({ status: 0, output: "Host openshell-alpha\n" });
-    fingerprintOpenShellSandboxSshConfigIdentity.mockReturnValue("f".repeat(64));
+    fingerprintOpenShellSandboxSshConfigTarget.mockReturnValue("t".repeat(64));
+    fingerprintOpenShellSandboxSshTarget.mockReturnValue("t".repeat(64));
     inspectOpenShellSandboxIdentityFingerprint.mockReturnValue("f".repeat(64));
     ensureLiveSandboxOrExit.mockResolvedValue(undefined);
     getSandboxTargetGatewayName.mockReturnValue("nemoclaw");
@@ -363,9 +366,9 @@ describe("sandbox skill action orchestration", () => {
       expect(options).toMatchObject({ gatewayName: "nemoclaw-recorded" });
       return { status: 0, output: "Host openshell-alpha\n" };
     });
-    fingerprintOpenShellSandboxSshConfigIdentity.mockImplementationOnce(() => {
+    fingerprintOpenShellSandboxSshConfigTarget.mockImplementationOnce(() => {
       expect(mutationLockState.active).toBe(true);
-      return "f".repeat(64);
+      return "t".repeat(64);
     });
     inspectOpenShellSandboxIdentityFingerprint.mockImplementationOnce((request) => {
       expect(mutationLockState.active).toBe(true);
@@ -392,6 +395,7 @@ describe("sandbox skill action orchestration", () => {
       "demo-skill",
       expect.objectContaining({
         expectedRootIdentity: expect.any(Object),
+        expectedSandboxIdentityFingerprint: "f".repeat(64),
       }),
     );
     expect(inspectOpenShellSandboxIdentityFingerprint).toHaveBeenCalledWith({
@@ -403,12 +407,12 @@ describe("sandbox skill action orchestration", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
-  it("refuses OpenClaw installation when SSH and live sandbox identities differ", async () => {
+  it("refuses OpenClaw installation when the SSH target differs from the selected sandbox", async () => {
     const skillDir = makeSkillDir();
     getSessionAgent.mockReturnValue(agent);
     skillInstall.resolveNativeSkillState.mockReturnValue(paths);
-    fingerprintOpenShellSandboxSshConfigIdentity.mockReturnValueOnce("a".repeat(64));
-    inspectOpenShellSandboxIdentityFingerprint.mockReturnValueOnce("b".repeat(64));
+    fingerprintOpenShellSandboxSshConfigTarget.mockReturnValueOnce("a".repeat(64));
+    fingerprintOpenShellSandboxSshTarget.mockReturnValueOnce("b".repeat(64));
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     try {
@@ -422,6 +426,7 @@ describe("sandbox skill action orchestration", () => {
       "  Failed to bind the OpenClaw skill install to the exact live sandbox identity.",
     );
     expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function));
+    expect(inspectOpenShellSandboxIdentityFingerprint).not.toHaveBeenCalled();
     expect(skillInstall.installOpenClawSkill).not.toHaveBeenCalled();
   });
 
@@ -525,6 +530,7 @@ describe("sandbox skill action orchestration", () => {
           dev: expect.any(Number),
           ino: expect.any(Number),
         },
+        expectedSandboxIdentityFingerprint: "f".repeat(64),
       },
     );
     expect(log).toHaveBeenCalledWith(

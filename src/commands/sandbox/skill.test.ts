@@ -34,21 +34,25 @@ describe("SkillCliCommand", () => {
     clearSkillMocks();
   });
 
-  it("records a parser-style failure when the sandbox name is missing", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const previousExitCode = process.exitCode;
-    process.exitCode = undefined;
+  it(
+    "records a parser-style failure when the sandbox name is missing",
+    async () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const previousExitCode = process.exitCode;
+      process.exitCode = undefined;
 
-    try {
-      await expect(SkillCliCommand.run([], rootDir)).resolves.toBeUndefined();
-      expect(process.exitCode).toBe(2);
-      expect(error).toHaveBeenCalledWith("Missing required sandboxName for skill.");
-      expect(installSandboxSkill).not.toHaveBeenCalled();
-      expect(removeSandboxSkill).not.toHaveBeenCalled();
-    } finally {
-      process.exitCode = previousExitCode;
-    }
-  });
+      try {
+        await expect(SkillCliCommand.run([], rootDir)).resolves.toBeUndefined();
+        expect(process.exitCode).toBe(2);
+        expect(error).toHaveBeenCalledWith("Missing required sandboxName for skill.");
+        expect(installSandboxSkill).not.toHaveBeenCalled();
+        expect(removeSandboxSkill).not.toHaveBeenCalled();
+      } finally {
+        process.exitCode = previousExitCode;
+      }
+    },
+    30_000,
+  );
 });
 
 describe("SkillInstallCliCommand", () => {

@@ -657,6 +657,58 @@ def verify_googlechat_override_seams() -> None:
         )
 
 
+def verify_native_skill_import() -> None:
+    """Exercise the pinned public import/list/uninstall lifecycle in a private home."""
+    import json
+    import subprocess
+    import tempfile
+
+    from tools.skills_hub import HubLockFile, SKILLS_DIR
+
+    name = "nemoclaw-native-import-probe"
+    with tempfile.TemporaryDirectory(prefix="nemoclaw-hermes-skill-probe-") as staging:
+        source = Path(staging)
+        (source / "SKILL.md").write_text(
+            "---\n"
+            f"name: {name}\n"
+            "description: Controlled managed-image native import probe.\n"
+            "---\n"
+            "# Native import probe\n",
+            encoding="utf-8",
+        )
+        imported = subprocess.run(
+            ["/usr/local/bin/hermes", "skills", "import-local", staging, "--name", name],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert imported.returncode == 0, imported.stdout + imported.stderr
+        prefix = "NEMOCLAW_NATIVE_SKILL_IMPORT="
+        result_lines = [line for line in imported.stdout.splitlines() if line.startswith(prefix)]
+        assert len(result_lines) == 1, imported.stdout
+        result = json.loads(result_lines[0][len(prefix) :])
+        target = Path(SKILLS_DIR) / name
+        assert result == {"status": "installed", "name": name, "path": str(target.resolve())}
+        assert HubLockFile().get_installed(name) is not None
+
+        listed = subprocess.run(
+            ["/usr/local/bin/hermes", "skills", "list"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert listed.returncode == 0 and name in listed.stdout, listed.stdout + listed.stderr
+        removed = subprocess.run(
+            ["/usr/local/bin/hermes", "skills", "uninstall", name, "--yes"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert removed.returncode == 0, removed.stdout + removed.stderr
+        assert HubLockFile().get_installed(name) is None
+        assert not target.exists()
+
+
 def verify_managed_runtime_capability() -> None:
     """Require the packaged ACP adapter and lazy MCP HTTP client surfaces."""
     import importlib.metadata as metadata
@@ -690,6 +742,7 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "gateway-runtime-metadata": verify_gateway_runtime_metadata,
     "langfuse-credentials": verify_langfuse_credentials,
     "managed-runtime-capability": verify_managed_runtime_capability,
+    "native-skill-import": verify_native_skill_import,
     "neutral-platform-inertness": verify_neutral_platform_inertness,
     "profile-policy": verify_profile_policy,
     "prepare-generated-config": prepare_generated_config,

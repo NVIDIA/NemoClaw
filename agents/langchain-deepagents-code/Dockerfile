@@ -244,6 +244,14 @@ RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
     && dcode_skills_commands="$(/opt/venv/bin/python3 -I -c 'import deepagents_code.skills.commands as commands; print(commands.__file__)')" \
     && python3 /opt/nemoclaw-deepagents-code/patch-native-skill-import.py "$dcode_skills_commands" \
     && grep -Fq 'NemoClaw native local skill import (#10210)' "$dcode_skills_commands" \
+    && /opt/venv/bin/python3 -I -c 'import deepagents_code.skills.commands as commands; assert callable(commands._import_local)' \
+    && dcode_skill_stage="$(mktemp -d)" \
+    && printf '%s\n' '---' 'name: nemoclaw-native-import-probe' 'description: Controlled managed-image native import probe.' '---' '# Native import probe' > "$dcode_skill_stage/SKILL.md" \
+    && /opt/venv/bin/python3 -I -c 'import sys; from deepagents_code.skills.commands import _import_local; _import_local(sys.argv[1], "nemoclaw-native-import-probe", agent="agent", replace=True)' "$dcode_skill_stage" > /tmp/nemoclaw-dcode-skill-import.out \
+    && grep -Fq 'NEMOCLAW_NATIVE_SKILL_IMPORT=' /tmp/nemoclaw-dcode-skill-import.out \
+    && /opt/venv/bin/python3 -I -c 'from deepagents_code.skills.commands import _delete; _delete("nemoclaw-native-import-probe", agent="agent", force=True, output_format="json")' \
+    && test ! -e /sandbox/.deepagents/agent/skills/nemoclaw-native-import-probe \
+    && rm -rf "$dcode_skill_stage" /tmp/nemoclaw-dcode-skill-import.out \
     && rm -f /opt/nemoclaw-deepagents-code/patch-native-skill-import.py \
     && install -d -m 0700 /tmp/nemoclaw-progressive-validation \
     && TMPDIR=/tmp/nemoclaw-progressive-validation python3 /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py \

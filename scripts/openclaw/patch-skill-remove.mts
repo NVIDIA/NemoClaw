@@ -15,6 +15,15 @@ const TARGET_SIGNATURE =
 const HELPER_ANCHOR = "/**\n* Register the skills CLI commands\n*/";
 const COMMAND_ANCHOR =
   '\tskills.command("update").description("Update ClawHub-installed skills in the active or shared managed directory")';
+const REQUIRED_BINDINGS = [
+  "validateRequestedSkillSlug",
+  "loadSkillsStatusReport",
+  "resolveSkillStatusEntry",
+  "untrackClawHubSkill",
+  "resolveAgentOption",
+  "sanitizeForLog",
+  "defaultRuntime",
+] as const;
 
 export const INJECTED_REMOVE_HELPER = [
   MARKER,
@@ -107,6 +116,18 @@ function countOccurrences(source: string, needle: string): number {
   return source.split(needle).length - 1;
 }
 
+/** Prove every module-scope binding referenced by the injected code exists. */
+function assertRequiredBindings(source: string, filePath: string): void {
+  for (const binding of REQUIRED_BINDINGS) {
+    if (!source.includes(binding)) {
+      throw new Error(`${filePath}: reviewed skill remove binding ${binding} is missing`);
+    }
+  }
+  if (!source.includes('from "node:fs/promises"') || !source.includes('from "node:path"')) {
+    throw new Error(`${filePath}: skill remove patch requires promise-fs and path bindings`);
+  }
+}
+
 /** Enumerate the reviewed dist's top-level generated JavaScript modules. */
 function listJsFiles(dir: string): string[] {
   return fs
@@ -134,6 +155,7 @@ export function patchSkillRemoveText(
   status: PatchStatus;
   text: string;
 } {
+  assertRequiredBindings(source, filePath);
   if (source.includes(MARKER)) {
     for (const required of [MARKER, INJECTED_REMOVE_COMMAND]) {
       if (countOccurrences(source, required) !== 1) {

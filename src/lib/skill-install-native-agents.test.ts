@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -19,6 +20,8 @@ import type { SshContext, SshResult } from "./skill-remote";
 
 const roots: string[] = [];
 const context: SshContext = { configFile: "/tmp/ssh-config", sandboxName: "alpha" };
+const SANDBOX_ID = "sandbox-alpha";
+const SANDBOX_IDENTITY = createHash("sha256").update(SANDBOX_ID).digest("hex");
 
 function makeSkill(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-agent-skill-"));
@@ -52,6 +55,7 @@ describe("Hermes and DCode native skill installation", () => {
 
       expect(
         installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {
+          expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
           sshExecImpl: sshExec,
         }),
       ).toEqual({ success: true, uploaded: 1, contentDigest: digest });
@@ -66,6 +70,7 @@ describe("Hermes and DCode native skill installation", () => {
     [3, "CAPABILITY_MISSING\n", "native_capability_missing"],
     [4, "VERIFY_FAILED\n", "verification_failed"],
     [5, "NATIVE_INSTALL_FAILED\n", "native_install_failed"],
+    [9, "IDENTITY_CHANGED\n", "sandbox_identity_changed"],
   ] as const)("maps native staged import failure %s", (status, stdout, reason) => {
     const skill = makeSkill();
     const paths: NativeSkillState = {
@@ -75,6 +80,7 @@ describe("Hermes and DCode native skill installation", () => {
 
     expect(
       installNativeAgentSkill(context, skill, paths, "hermes", "demo-skill", {
+        expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
         sshExecImpl: () => ({ status, stdout, stderr: "" }),
       }),
     ).toEqual({ success: false, uploaded: 0, reason });
@@ -132,7 +138,11 @@ esac
           ],
           {
             encoding: "utf8",
-            env: { ...process.env, NATIVE_SKILL_TARGET: target },
+            env: {
+              ...process.env,
+              NATIVE_SKILL_TARGET: target,
+              OPENSHELL_SANDBOX_ID: SANDBOX_ID,
+            },
             input: options?.input,
           },
         );
@@ -145,12 +155,14 @@ esac
 
       expect(
         installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {
+          expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
           sshExecImpl: sshExec,
         }),
       ).toMatchObject({ success: true });
       fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: demo-skill\n---\n# Updated\n");
       expect(
         installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {
+          expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
           sshExecImpl: sshExec,
         }),
       ).toMatchObject({ success: true });

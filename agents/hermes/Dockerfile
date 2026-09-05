@@ -454,7 +454,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=7c74c3f190845fef222e3aac1bd7074d58968447e78221114344545c149595c2
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=7356789b1518ced41f70657762629ce4481f759fb9c49c61739be235a17967eb
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -482,7 +482,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
 # same-version wheel selected by its lazy installer. Bind that production
 # boundary to NVIDIA/NemoClaw's reviewed wheel hashes.
 ARG NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256=5c619477c10e0b76cffd7adc214cbccf3beb77e7a1121f394c443502d9e0b736
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=7c74c3f190845fef222e3aac1bd7074d58968447e78221114344545c149595c2
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=7356789b1518ced41f70657762629ce4481f759fb9c49c61739be235a17967eb
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256" /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
@@ -722,7 +722,7 @@ RUN printf '%s  %s\n' \
 # Keep skill lifecycle state inside Hermes. The host only stages a validated
 # payload; this pinned native command owns scanning, replacement, rollback,
 # lock metadata, loader verification, listing, and removal.
-ARG NEMOCLAW_HERMES_NATIVE_SKILL_IMPORT_PATCHER_SHA256=7efb0ded538616bf7ff69229f3dda51dae755c0d0c86336d67da0c35e0c77bf8
+ARG NEMOCLAW_HERMES_NATIVE_SKILL_IMPORT_PATCHER_SHA256=8004483ee8712225de829055bb81386b474328843c4ea162a185d7c78fcf5382
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_NATIVE_SKILL_IMPORT_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-native-skill-import.py \
@@ -733,6 +733,10 @@ RUN printf '%s  %s\n' \
         /opt/hermes/hermes_cli/skills_hub.py \
     && grep -Fq 'NemoClaw native local skill import (#10210)' /opt/hermes/hermes_cli/subcommands/skills.py \
     && grep -Fq 'NEMOCLAW_NATIVE_SKILL_IMPORT=' /opt/hermes/hermes_cli/skills_hub.py \
+    && native_skill_home="$(mktemp -d)" \
+    && HERMES_HOME="$native_skill_home" /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py native-skill-import \
+    && rm -rf "$native_skill_home" \
     && rm /opt/nemoclaw-hermes-config/patch-native-skill-import.py
 
 # Hermes v0.20.6 SessionDB does not set PRAGMA temp_store=MEMORY, so SQLite

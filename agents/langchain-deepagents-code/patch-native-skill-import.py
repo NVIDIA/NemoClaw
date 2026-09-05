@@ -24,6 +24,7 @@ def _import_local(
     """Import a staged regular-file skill through DCode-owned state resolution."""
     import json
     import os
+    import shutil
     import tempfile
     import uuid
 

@@ -26,7 +26,9 @@ FUNCTION = r'''
 # NemoClaw native local skill import (#10210).
 def do_import_local(skill_path: str, expected_name: str, console: Optional[Console] = None) -> bool:
     """Import a staged regular-file skill through Hermes' own lock and loader."""
+    import json
     import os
+    import shutil
     import uuid
 
     import yaml
@@ -99,6 +101,7 @@ def do_import_local(skill_path: str, expected_name: str, console: Optional[Conso
         trust_level="community",
         metadata={"import": "local"},
     )
+    quarantine = None
     try:
         quarantine = quarantine_bundle(bundle)
         scan, provenance = scan_skill_cached(
@@ -114,6 +117,8 @@ def do_import_local(skill_path: str, expected_name: str, console: Optional[Conso
             return False
     except Exception as exc:
         c.print(f"[bold red]Error:[/] Native skill scan failed: {exc}")
+        if quarantine is not None:
+            shutil.rmtree(quarantine, ignore_errors=True)
         return False
 
     skills_root = Path(SKILLS_DIR).resolve()

@@ -3,7 +3,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { fingerprintOpenShellSandboxSshConfigIdentity } from "../../adapters/openshell/sandbox-identity";
+import {
+  fingerprintOpenShellSandboxSshConfigTarget,
+  fingerprintOpenShellSandboxSshTarget,
+} from "../../adapters/openshell/sandbox-identity";
 import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
 import { captureSandboxSshConfig } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
@@ -400,10 +403,21 @@ export async function installSandboxSkill(
       sshConfigFailed = true;
       return null;
     }
-    const sshConfigIdentityFingerprint = fingerprintOpenShellSandboxSshConfigIdentity(
+    const sshConfigTargetFingerprint = fingerprintOpenShellSandboxSshConfigTarget(
       sshConfigResult.output,
     );
-    if (!sshConfigIdentityFingerprint) return null;
+    const expectedSshTargetFingerprint = fingerprintOpenShellSandboxSshTarget(
+      gatewayName,
+      sandboxName,
+      "default",
+    );
+    if (
+      !sshConfigTargetFingerprint ||
+      !expectedSshTargetFingerprint ||
+      sshConfigTargetFingerprint !== expectedSshTargetFingerprint
+    ) {
+      return null;
+    }
     const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-skill-");
     try {
       let sandboxIdentityFingerprint: string;
@@ -416,7 +430,6 @@ export async function installSandboxSkill(
       } catch {
         return null;
       }
-      if (sandboxIdentityFingerprint !== sshConfigIdentityFingerprint) return null;
       const context = { configFile: tmpSshConfig.file, sandboxName };
       return agentName === "openclaw"
         ? skillInstall.installOpenClawSkill(
@@ -424,7 +437,7 @@ export async function installSandboxSkill(
             skillDir,
             paths,
             frontmatter.name,
-            { expectedRootIdentity },
+            { expectedRootIdentity, expectedSandboxIdentityFingerprint: sandboxIdentityFingerprint },
           )
         : skillInstall.installNativeAgentSkill(
             context,
@@ -432,7 +445,7 @@ export async function installSandboxSkill(
             paths,
             agentName,
             frontmatter.name,
-            { expectedRootIdentity },
+            { expectedRootIdentity, expectedSandboxIdentityFingerprint: sandboxIdentityFingerprint },
           );
     } finally {
       tmpSshConfig.cleanup();
@@ -464,6 +477,10 @@ export async function installSandboxSkill(
       );
     } else if (native.reason === "native_install_failed") {
       console.error(`  The ${displayName} native skill import refused or failed the staged skill.`);
+    } else if (native.reason === "sandbox_identity_changed") {
+      console.error(
+        `  The ${displayName} sandbox identity changed or could not be proven during native skill installation.`,
+      );
     } else if (native.reason === "snapshot_failed") {
       console.error("  Failed to create an exact regular-file snapshot of the local skill.");
     } else if (native.reason === "snapshot_limit_exceeded") {

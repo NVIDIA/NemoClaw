@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -20,6 +21,8 @@ import {
 
 const roots: string[] = [];
 const ctx: SshContext = { configFile: "/tmp/ssh-config", sandboxName: "alpha" };
+const SANDBOX_ID = "sandbox-alpha";
+const SANDBOX_IDENTITY = createHash("sha256").update(SANDBOX_ID).digest("hex");
 const paths: NativeSkillState = {
   stateDir: "/sandbox/.openclaw",
   isOpenClaw: true,
@@ -30,6 +33,10 @@ function makeSkill(): string {
   fs.writeFileSync(path.join(root, "SKILL.md"), "---\nname: demo-skill\n---\n# Demo\n");
   roots.push(root);
   return root;
+}
+
+function installOptions(sshExecImpl: typeof import("./skill-remote").sshExec) {
+  return { expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY, sshExecImpl };
 }
 
 afterEach(() => {
@@ -115,6 +122,7 @@ esac
                 OPENCLAW_TEST_CHECK_STATE: checkState,
                 OPENCLAW_TEST_LOG: invocationLog,
                 OPENCLAW_TEST_TARGET: workspaceSkillDir,
+                OPENSHELL_SANDBOX_ID: SANDBOX_ID,
               },
               input: opts?.input,
               timeout: opts?.timeout,
@@ -130,7 +138,7 @@ esac
 
       const firstDigest = computeSkillContentDigest(skill);
       expect(
-        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", { sshExecImpl: sshExec }),
+        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOptions(sshExec)),
       ).toEqual({
         success: true,
         uploaded: 1,
@@ -141,7 +149,7 @@ esac
       fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: demo-skill\n---\n# Updated\n");
       const updatedDigest = computeSkillContentDigest(skill);
       expect(
-        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", { sshExecImpl: sshExec }),
+        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOptions(sshExec)),
       ).toEqual({
         success: true,
         uploaded: 1,
@@ -154,7 +162,7 @@ esac
 
       fs.writeFileSync(path.join(workspaceSkillDir, "SKILL.md"), "# Foreign ClawHub content\n");
       expect(
-        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", { sshExecImpl: sshExec }),
+        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOptions(sshExec)),
       ).toEqual({
         success: true,
         uploaded: 1,
@@ -166,7 +174,7 @@ esac
 
       checkState = "blocked";
       expect(
-        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", { sshExecImpl: sshExec }),
+        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOptions(sshExec)),
       ).toEqual({
         success: false,
         uploaded: 0,
@@ -193,20 +201,27 @@ esac
         ...paths,
         stateDir: sandboxRoot,
       };
-      const sshExec = vi.fn((_ctx: SshContext, command: string, opts): SshResult => {
-        const execution = spawnSync("bash", ["--noprofile", "--norc", "-c", command], {
-          encoding: "utf8",
-          input: opts?.input,
-        });
-        return {
-          status: execution.status ?? 1,
-          stdout: execution.stdout,
-          stderr: execution.stderr,
-        };
-      });
+      const sshExec = vi.fn(
+        (
+          _ctx: SshContext,
+          command: string,
+          opts?: { input?: string | Buffer; timeout?: number },
+        ): SshResult => {
+          const execution = spawnSync("bash", ["--noprofile", "--norc", "-c", command], {
+            encoding: "utf8",
+            env: { ...process.env, OPENSHELL_SANDBOX_ID: SANDBOX_ID },
+            input: opts?.input,
+          });
+          return {
+            status: execution.status ?? 1,
+            stdout: execution.stdout,
+            stderr: execution.stderr,
+          };
+        },
+      );
 
       expect(
-        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", { sshExecImpl: sshExec }),
+        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOptions(sshExec)),
       ).toEqual({
         success: false,
         uploaded: 0,
@@ -222,13 +237,11 @@ esac
     fs.truncateSync(oversized, SKILL_SNAPSHOT_MAX_BYTES + 1);
     const sshExec = vi.fn();
 
-    expect(installOpenClawSkill(ctx, skill, paths, "demo-skill", { sshExecImpl: sshExec })).toEqual(
-      {
-        success: false,
-        uploaded: 0,
-        reason: "snapshot_limit_exceeded",
-      },
-    );
+    expect(installOpenClawSkill(ctx, skill, paths, "demo-skill", installOptions(sshExec))).toEqual({
+      success: false,
+      uploaded: 0,
+      reason: "snapshot_limit_exceeded",
+    });
     expect(sshExec).not.toHaveBeenCalled();
   });
 
@@ -236,16 +249,15 @@ esac
     [3, "CAPABILITY_MISSING\n", "native_capability_missing"],
     [4, "installer output\nVERIFY_FAILED\n", "verification_failed"],
     [8, "AGENT_WORKSPACE_UNSUPPORTED\n", "agent_workspace_unsupported"],
+    [9, "IDENTITY_CHANGED\n", "sandbox_identity_changed"],
   ] as const)("maps native failure %s to %s", (status, stdout, reason) => {
     const skill = makeSkill();
     const sshExec = vi.fn((): SshResult => ({ status, stdout, stderr: "" }));
 
-    expect(installOpenClawSkill(ctx, skill, paths, "demo-skill", { sshExecImpl: sshExec })).toEqual(
-      {
-        success: false,
-        uploaded: 0,
-        reason,
-      },
-    );
+    expect(installOpenClawSkill(ctx, skill, paths, "demo-skill", installOptions(sshExec))).toEqual({
+      success: false,
+      uploaded: 0,
+      reason,
+    });
   });
 });
