@@ -174,7 +174,7 @@ If you installed Ollama but it is not already running in WSL, onboarding starts 
 You can also start it yourself beforehand with `ollama serve`.
 
 You can also use Ollama for Windows through the manual onboarding menu.
-NemoClaw reuses a Windows-host daemon only when it is bound to `127.0.0.1:11434`, Docker Desktop can reach it, and it returns `403` for an untrusted HTTP `Host` value.
+NemoClaw reuses a Windows-host daemon only when it is bound exclusively to a loopback address on port `11434`, Docker Desktop can reach it, and it returns `403` for an untrusted HTTP `Host` value.
 The Windows install and restart actions enforce the same loopback binding and validation check.
 For WSL hosts that do not qualify for managed llama.cpp, accepting Express selects WSL-local Ollama.
 The Windows-host Ollama path remains an explicit manual option and requires Docker Desktop WSL integration.
