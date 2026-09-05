@@ -13,7 +13,7 @@
       "Treats normal hook results as supplemental evidence, including when hook installation or execution is missing or uncertain.",
       "Runs `npm run validate:pr` after the final commit and before every agent-managed push only when its complete execution surface, dependency-resolution inputs, and resolved validator executables match the trusted base; otherwise stops publication.",
       "Stops the push when direct validation fails or is inconclusive.",
-      "If direct validation applies an autofix before the first push, commits it, repeats the initial-publication review step, refreshes the trusted base, reestablishes trusted validation, and reruns validation without querying PR state.",
+      "If direct validation applies an autofix before the first push, repeats the complete scope comparison and discards the validator changes and stops when they exceed the scope lock; otherwise commits them, repeats the initial-publication review step, refreshes the trusted base, reestablishes trusted validation, and reruns validation without querying PR state.",
       "Stops before `gh pr create` when the body lacks the DCO declaration or a commit is unverified."
     ]
   },
@@ -32,7 +32,7 @@
       "Uses the shared contract only for candidate stabilization, evidence collection, classification, and permitted base integration, not as a second repair or publication owner.",
       "Inspects the returned repair, creates one local repair commit, and records its SHA as the expected publication commit before trusted validation, while retaining the reviewed remote `headRefOid` as the competing-update guard.",
       "After final review collection, binds `refs/remotes/origin/main` to the canonical GitHub base SHA, verifies the trusted validation surface, and runs `npm run validate:pr` before the push.",
-      "If direct validation changes a tracked file, commits and inspects the validator-created local diff as new pre-publication review evidence without recollecting the unchanged remote candidate, then rechecks `headRefOid`, refreshes the trusted base, reestablishes trusted validation, and pushes only after validation changes no tracked file."
+      "If direct validation changes a tracked file, repeats the complete scope comparison and discards the validator changes and stops when they exceed the scope lock or repair envelope; otherwise commits and inspects them as new pre-publication review evidence without recollecting the unchanged remote candidate, then rechecks `headRefOid`, refreshes the trusted base, reestablishes trusted validation, and pushes only after validation changes no tracked file."
     ]
   },
   {
@@ -78,20 +78,20 @@
     "ground_truth": "A review repair needs the original PR objective, accepted scope, deferred scope, and complete root-cause group so the implementation workflow can verify that the repair remains in scope.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr` and preserves the complete disposition record from the stable candidate.",
-      "Passes the original PR objective, accepted scope, deferred scope, and complete accepted root-cause group to `nemoclaw-contributor-implement-issue`.",
+      "Passes the original PR objective, accepted scope, deferred scope, complete accepted root-cause group, and repair envelope to `nemoclaw-contributor-implement-issue`.",
       "Requires the implementation workflow to make the local repair, validate it, and return change and test evidence without publication.",
-      "Resumes trusted validation and guarded publication in `nemoclaw-contributor-create-pr` without assigning repair or push authority to the shared contract."
+      "Measures the complete returned repair delta from the recorded candidate and enforces the envelope before trusted validation and guarded publication without assigning repair or push authority to the shared contract."
     ]
   },
   {
     "id": "positive-review-repair-within-scope-lock",
-    "question": "My PR has 9 changed files and 300 changed lines. Its repair envelope permits only `.github/workflows/pr.yaml` and `test/automation/pull-requests/pr-workflow-contract.test.ts`, at most 1 additional changed file, and at most 40 additional additions plus deletions. The implementation returned those two paths, 1 additional file, and 22 additional additions plus deletions. Validate and push it.",
+    "question": "My PR has 9 changed files and 300 changed lines, including `.github/workflows/pr.yaml`. Its repair envelope also permits `test/automation/pull-requests/pr-workflow-contract.test.ts`, at most 1 additional changed file, and at most 40 additional additions plus deletions. The implementation modified the workflow and added that permitted test, so the PR gained exactly 1 changed file and 22 additions plus deletions. Validate and push it.",
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "The publication workflow may continue when the complete repaired diff stays within the semantic scope lock and the accepted repair envelope.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr` and preserves the recorded candidate scope lock.",
       "Compares the complete repaired PR diff with the candidate baseline and accepted repair envelope.",
-      "Confirms that the paths, changed-file increase, line-change increase, behavior, and mechanisms remain within the lock.",
+      "Confirms that both named paths are permitted and that only the named test newly enters the PR, so the changed-file increase, line-change increase, behavior, and mechanisms remain within the lock.",
       "Continues through trusted validation and guarded publication only after the scope comparison passes."
     ]
   },
