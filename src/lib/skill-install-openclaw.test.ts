@@ -315,7 +315,7 @@ esac
         reason: "update_unsupported",
       });
       expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toContain("# Demo");
-      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(1);
+      expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toHaveLength(2);
 
       const installedContent = fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8");
       fs.rmSync(provenancePath);
