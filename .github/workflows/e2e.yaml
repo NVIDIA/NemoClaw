@@ -137,6 +137,7 @@ jobs:
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
             scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
           sparse-checkout-cone-mode: false
 
       - name: Set up Node for reviewed package download

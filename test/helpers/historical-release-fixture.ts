@@ -13,6 +13,7 @@ const temporaryRoots: string[] = [];
 
 export type HistoricalReleaseFixture = {
   firstCommit: string;
+  launchableInspector: string;
   remote: string;
   root: string;
   work: string;
@@ -74,7 +75,18 @@ export function createFixture(): HistoricalReleaseFixture {
   git(work, "branch", "-M", "main");
   git(work, "remote", "add", "origin", remote);
   git(work, "push", "-u", "origin", "main");
-  return { firstCommit: git(work, "rev-parse", "HEAD"), remote, root, work };
+  const launchableInspector = path.join(root, "launchable-inspector.mjs");
+  fs.writeFileSync(
+    launchableInspector,
+    `process.stdout.write(process.env.NEMOCLAW_RELEASE_TEST_LAUNCHABLE_RECEIPT ?? "");\n`,
+  );
+  return {
+    firstCommit: git(work, "rev-parse", "HEAD"),
+    launchableInspector,
+    remote,
+    root,
+    work,
+  };
 }
 
 export function cleanupFixtures(): void {
@@ -130,9 +142,40 @@ function markdownText(value: string): string {
   return value.replace(/([\\`*_[\]<>#])/g, "\\$1");
 }
 
+function launchableReceipt(candidate: string): Record<string, unknown> {
+  return {
+    version: 1,
+    candidate: { sha: candidate },
+    run: { id: 10, attempt: 1, url: "https://github.com/NVIDIA/NemoClaw/actions/runs/10" },
+    job: { id: 20, url: "https://github.com/NVIDIA/NemoClaw/actions/runs/10/job/20" },
+    artifact: { name: `staging-brev-launchable-${candidate}-10-1` },
+    producer: {
+      runId: 30,
+      status: "success",
+      url: "https://github.com/brevdev/nemoclaw-image/actions/runs/30",
+    },
+    boot: {
+      bootImage: "image@sha256:123",
+      schemaVersion: 1,
+      sourceRepository: "NVIDIA/NemoClaw",
+      sourcePath: "/opt/nemoclaw-image/NemoClaw",
+      repoSha: candidate,
+      provisionSha: candidate,
+      imageRepositorySha: "b".repeat(40),
+      repoClean: true,
+      runtimeOverrides: false,
+    },
+    workspace: { name: "nclaw-e2e-10-1", id: "ws-1" },
+    fullE2e: { status: "passed", sentinel: "NEMOCLAW_FULL_E2E_PASSED" },
+    cleanup: { status: "ABSENT", verifiedAt: "2026-06-01T01:00:00Z" },
+  };
+}
+
 export function releaseBrief(plan: Record<string, string>): string {
   return [
     `# NemoClaw ${plan.nextTag} release brief`,
+    "",
+    "## Release range",
     "",
     `- Candidate: \`${plan.candidateCommit}\``,
     `- Historical candidate exception: ${markdownText(plan.historicalCandidateException)}`,
@@ -151,6 +194,11 @@ export function releaseBrief(plan: Record<string, string>): string {
     "- Review and checks: Recorded.",
     "- Open managed docs PRs: None.",
     "- Maintainer decision: Proceed with the candidate as shown.",
+    "",
+    "## Canonical Launchable evidence",
+    "",
+    `- Candidate: \`${plan.candidateCommit}\``,
+    `- Receipt: ${JSON.stringify(launchableReceipt(plan.candidateCommit))}`,
     "",
     "## Base and managed image evidence",
     "",
@@ -190,7 +238,11 @@ export function cutHistoricalPlan(
       "--confirm",
       `CONFIRM RELEASE ${plan.nextTag} ${plan.candidateCommit}`,
     ],
-    { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+    {
+      NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1",
+      NEMOCLAW_RELEASE_TEST_LAUNCHABLE_INSPECTOR: fixture.launchableInspector,
+      NEMOCLAW_RELEASE_TEST_LAUNCHABLE_RECEIPT: JSON.stringify(launchableReceipt(plan.candidateCommit)),
+    },
   );
 }
 

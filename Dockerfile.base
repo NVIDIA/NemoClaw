@@ -597,7 +597,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
             --registry https://registry.yarnpkg.com --threshold high \
             --legacy-npmjs true \
             --result /tmp/mcporter-npm-audit-policy.json \
-            --raw-copy /tmp/mcporter-npm-audit.json; \
+        && cp "$MCPORTER_RAW_REPORT" /tmp/mcporter-npm-audit.json; \
       else \
         node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
             --directory /usr/local/lib/nemoclaw/mcporter-runtime \
