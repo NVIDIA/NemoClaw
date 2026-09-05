@@ -31,8 +31,13 @@ After an upgrade, root-separated startup warns when preserved user plugins are p
 ## Configure the Bundled Hindsight Plugin
 
 The stock Hermes image provides `/sandbox/.hermes/lazy-packages` for lazy dependencies used by interactive sandbox commands.
-The separated gateway never loads code from that sandbox-writable directory.
-Instead, gateway startup installs the bundled Hindsight dependency into a gateway-owned runtime directory under `/run/nemoclaw` and loads it only from there.
+The gateway target depends on the container process topology.
+
+| Topology | Gateway process | Gateway lazy-install target | Access and replacement boundary |
+|---|---|---|---|
+| Direct root-entrypoint topology | Root PID 1 launches the gateway under the separate `gateway` UID. | `/run/nemoclaw/hermes-gateway-lazy-packages` | The directory is gateway-owned with mode `0700`, so the `sandbox` UID cannot read or modify it. A rebuild or replacement container receives a newly created private directory, and Hindsight startup reinstalls the supported client. |
+| OpenShell-managed same-UID topology | OpenShell is PID 1 and launches `nemoclaw-start`, the gateway, and the agent under the `sandbox` UID. | `/sandbox/.hermes/lazy-packages` | The gateway and agent share access because they use the same UID. NemoClaw declares the directory as Hermes state and preserves it across rebuilds and transactional container replacements. |
+
 Neither target modifies the root virtual environment, and neither target is declared in the generated `.env` file.
 
 NemoClaw supports `hindsight-client==0.6.1` for this workflow.
@@ -69,10 +74,10 @@ nemohermes <name> gateway restart
 ```
 
 The setup command installs `hindsight-client==0.6.1` under `/sandbox/.hermes/lazy-packages` for the sandbox-side command.
-When `memory.provider` is `hindsight`, gateway startup independently installs the supported client into `/run/nemoclaw/hermes-gateway-lazy-packages` as the gateway user before it launches.
-The sandbox user cannot read or modify that gateway-owned tree, and the gateway does not activate the sandbox-owned tree.
+In the direct root-entrypoint topology, gateway startup independently installs the supported client into `/run/nemoclaw/hermes-gateway-lazy-packages` as the `gateway` user.
+The gateway does not activate the sandbox-owned tree in that topology.
+In the OpenShell-managed topology, gateway startup uses `/sandbox/.hermes/lazy-packages` under the shared `sandbox` UID.
 Both directories are outside the generated `.env`, `config.yaml`, and `.config-hash` files.
-The sandbox copy is part of the Hermes durable state plan; the gateway copy lasts for the container runtime and is recreated after a rebuild or container replacement.
 
 Verify the provider and dependency after the restart:
 
@@ -92,7 +97,8 @@ nemohermes <name> rebuild --yes
 ```
 
 A rebuild replaces the root virtual environment and preserves the sandbox lazy-install directory as declared Hermes state.
-Gateway startup always recreates its private runtime target when the container has been replaced and reinstalls the supported client as the gateway user when Hindsight is selected.
+Direct root-entrypoint startup recreates its private runtime target when the container has been replaced and reinstalls the supported client as the `gateway` user when Hindsight is selected.
+OpenShell-managed startup uses the preserved sandbox target under the shared `sandbox` UID.
 
 Do not edit `/sandbox/.hermes/.env` to set `HERMES_LAZY_INSTALL_TARGET`.
 Do not install the dependency into `/opt/hermes/.venv`.
