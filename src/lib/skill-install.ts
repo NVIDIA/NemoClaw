@@ -468,7 +468,6 @@ export interface NativeSkillInstallResult {
   uploaded: number;
   contentDigest?: string;
   reason?:
-    | "agent_workspace_unsupported"
     | "native_capability_missing"
     | "native_install_failed"
     | "native_install_timed_out"
@@ -557,23 +556,16 @@ function buildOpenClawNativeInstallScript(
   const verifyNativeJson = [
     'const fs=require("node:fs");',
     'const path=require("node:path");',
-    "const [listPath,infoPath,checkPath,skill,workspace]=process.argv.slice(1);",
+    "const [listPath,infoPath,checkPath,skill,stateRoot]=process.argv.slice(1);",
     'const read=(file)=>JSON.parse(fs.readFileSync(file,"utf8"));',
     "const list=read(listPath);const info=read(infoPath);const check=read(checkPath);",
     'const listed=Array.isArray(list.skills)&&list.skills.some((entry)=>entry&&typeof entry==="object"&&entry.name===skill);',
-    'const target=path.join(workspace,"skills",skill);',
     'const baseDir=info&&typeof info==="object"&&typeof info.baseDir==="string"?info.baseDir:info&&typeof info.filePath==="string"?path.dirname(info.filePath):"";',
-    'const informed=info&&typeof info==="object"&&info.name===skill&&path.resolve(baseDir)===path.resolve(target)&&(info.filePath===undefined||path.resolve(info.filePath)===path.resolve(target,"SKILL.md"));',
+    'const target=path.resolve(baseDir);const relative=path.relative(path.resolve(stateRoot),target);const segments=relative.split(path.sep);const workspace=segments[0]||"";',
+    'const bounded=segments.length===3&&(workspace==="workspace"||/^workspace-[A-Za-z0-9._-]+$/.test(workspace))&&segments[1]==="skills"&&segments[2]===skill&&!path.isAbsolute(relative)&&!relative.startsWith(".."+path.sep);',
+    'const informed=bounded&&info&&typeof info==="object"&&info.name===skill&&(info.filePath===undefined||path.resolve(info.filePath)===path.resolve(target,"SKILL.md"));',
     'const checked=check&&typeof check==="object"&&check.agentId==="main"&&Array.isArray(check.eligible)&&check.eligible.includes(skill);',
     "if(!listed||!informed||!checked)process.exit(1);process.stdout.write(target);",
-  ].join("");
-  const verifyMainWorkspace = [
-    'const fs=require("node:fs");',
-    "const [configPath,expected]=process.argv.slice(1);",
-    'const config=JSON.parse(fs.readFileSync(configPath,"utf8"));',
-    "const entries=config&&config.agents&&config.agents.list;",
-    'const main=Array.isArray(entries)&&entries.find((entry)=>entry&&typeof entry==="object"&&entry.id==="main");',
-    "if(!main||(main.workspace!==undefined&&main.workspace!==expected))process.exit(1);",
   ].join("");
   // The pinned native installer owns source-origin metadata and may recreate
   // payload modes under umask; hash only payload files with normalized modes.
@@ -584,9 +576,6 @@ function buildOpenClawNativeInstallScript(
     expectedSandboxIdentityFingerprint,
     digestExcludedRelativePath: ".openclaw/source-origin.json",
     preStageCommands: [
-      `config=${shellQuote(`${paths.stateDir}/openclaw.json`)}`,
-      `expected_workspace=${shellQuote(`${paths.stateDir}/workspace`)}`,
-      `node -e ${shellQuote(verifyMainWorkspace)} "$config" "$expected_workspace" || { echo AGENT_WORKSPACE_UNSUPPORTED; exit 8; }`,
       `help="$(${shellQuote(OPENCLAW_NATIVE_BIN)} skills install --help 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
       'printf "%s" "$help" | grep -q -- "--agent" || { echo CAPABILITY_MISSING; exit 3; }',
       'printf "%s" "$help" | grep -q -- "--force" || { echo CAPABILITY_MISSING; exit 3; }',
@@ -599,9 +588,11 @@ function buildOpenClawNativeInstallScript(
       `${shellQuote(OPENCLAW_NATIVE_BIN)} skills list --agent main --json > "$stage/list.json"`,
       `${shellQuote(OPENCLAW_NATIVE_BIN)} skills info "$skill" --agent main --json > "$stage/info.json"`,
       `${shellQuote(OPENCLAW_NATIVE_BIN)} skills check --agent main --json > "$stage/check.json"`,
-      `target="$(node -e ${shellQuote(verifyNativeJson)} "$stage/list.json" "$stage/info.json" "$stage/check.json" "$skill" "$expected_workspace")" || { echo VERIFY_FAILED; exit 4; }`,
-      'safe_tree "$target" || { echo VERIFY_FAILED; exit 4; }',
-      'installed="$(digest_tree "$target" "$stage/installed.manifest")"',
+      `target="$(node -e ${shellQuote(verifyNativeJson)} "$stage/list.json" "$stage/info.json" "$stage/check.json" "$skill" "$root")" || { echo VERIFY_FAILED; exit 4; }`,
+      'target_real="$(realpath -e -- "$target")" || { echo VERIFY_FAILED; exit 4; }',
+      '[ "$target_real" = "$target" ] || { echo VERIFY_FAILED; exit 4; }',
+      'safe_tree "$target_real" || { echo VERIFY_FAILED; exit 4; }',
+      'installed="$(digest_tree "$target_real" "$stage/installed.manifest")"',
       '[ "$installed" = "$expected" ] || { echo VERIFY_FAILED; exit 4; }',
     ],
   });
@@ -661,21 +652,19 @@ export function installOpenClawSkill(
     success: false,
     uploaded: 0,
     reason:
-      result?.status === 8 && stdout.endsWith("AGENT_WORKSPACE_UNSUPPORTED")
-        ? "agent_workspace_unsupported"
-        : result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")
-          ? "native_capability_missing"
-          : result?.status === 7 && stdout.endsWith("STAGE_RECOVERY_FAILED")
-            ? "stage_recovery_failed"
-            : result?.status === 5 && stdout.endsWith("NATIVE_INSTALL_FAILED")
-              ? "native_install_failed"
-              : result?.status === 6 && stdout.endsWith("NATIVE_INSTALL_TIMEOUT")
-                ? "native_install_timed_out"
-                : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
-                  ? "verification_failed"
-                  : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
-                    ? "sandbox_identity_changed"
-                    : "remote_state_unknown",
+      result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")
+        ? "native_capability_missing"
+        : result?.status === 7 && stdout.endsWith("STAGE_RECOVERY_FAILED")
+          ? "stage_recovery_failed"
+          : result?.status === 5 && stdout.endsWith("NATIVE_INSTALL_FAILED")
+            ? "native_install_failed"
+            : result?.status === 6 && stdout.endsWith("NATIVE_INSTALL_TIMEOUT")
+              ? "native_install_timed_out"
+              : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
+                ? "verification_failed"
+                : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
+                  ? "sandbox_identity_changed"
+                  : "remote_state_unknown",
   };
 }
 

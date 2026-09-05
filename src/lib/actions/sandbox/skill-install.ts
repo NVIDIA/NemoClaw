@@ -575,14 +575,7 @@ export async function installSandboxSkill(
   }
   if (!native.success || !native.contentDigest) {
     const displayName = nativeSkillAgentDisplayName(agentName);
-    if (native.reason === "agent_workspace_unsupported") {
-      console.error(
-        "  OpenClaw skill install supports only the NemoClaw-managed primary 'main' agent in the default /sandbox/.openclaw/workspace directory.",
-      );
-      console.error(
-        "  The current 'main' agent has a custom workspace; no sandbox staging or publication occurred.",
-      );
-    } else if (native.reason === "native_capability_missing") {
+    if (native.reason === "native_capability_missing") {
       console.error(
         agentName === "openclaw"
           ? "  The pinned OpenClaw runtime does not expose the reviewed native skill install capability."

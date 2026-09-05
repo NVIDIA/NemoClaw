@@ -587,32 +587,6 @@ describe("sandbox skill action orchestration", () => {
     },
   );
 
-  it("reports the supported OpenClaw primary workspace boundary", async () => {
-    const skillDir = makeSkillDir();
-    getSessionAgent.mockReturnValue(agent);
-    skillInstall.resolveNativeSkillState.mockReturnValue(paths);
-    skillInstall.installOpenClawSkill.mockReturnValue({
-      success: false,
-      uploaded: 0,
-      reason: "agent_workspace_unsupported",
-    });
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    try {
-      await installSandboxSkill("alpha", { command: "install", path: skillDir });
-    } finally {
-      fs.rmSync(skillDir, { recursive: true, force: true });
-    }
-
-    expect(process.exitCode).toBe(1);
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("supports only the NemoClaw-managed primary 'main' agent"),
-    );
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("no sandbox staging or publication occurred"),
-    );
-  });
-
   it("delegates Deep Agents installation to its native local import command", async () => {
     const skillDir = makeSkillDir();
     getSessionAgent.mockReturnValue(deepAgent);

@@ -60,12 +60,13 @@ describe("OpenClaw native skill installation", () => {
   });
 
   it.runIf(process.platform === "linux")(
-    "delegates fresh installs and updates and terminates a timed-out native publisher",
+    "delegates a legacy main workspace, updates, and a timed-out native publisher",
     () => {
       const skill = makeSkill();
       const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-root-"));
       const fakeBin = path.join(sandboxRoot, "bin");
-      const workspaceSkillDir = path.join(sandboxRoot, "workspace", "skills", "demo-skill");
+      const workspaceSkillDir = path.join(sandboxRoot, "workspace-main", "skills", "demo-skill");
+      let nativeTarget = workspaceSkillDir;
       const invocationLog = path.join(sandboxRoot, "openclaw.log");
       const pinnedOpenClaw = path.join(fakeBin, "openclaw-pinned");
       const abandonedStage = path.join(sandboxRoot, ".nemoclaw-skill-stage.abandoned");
@@ -83,7 +84,7 @@ describe("OpenClaw native skill installation", () => {
       fs.writeFileSync(path.join(abandonedStage, "stale"), "stale\n");
       fs.writeFileSync(
         path.join(sandboxRoot, "openclaw.json"),
-        `${JSON.stringify({ agents: { list: [{ id: "main", default: true }] } })}\n`,
+        `${JSON.stringify({ agents: { list: [{ id: "main", default: true, workspace: path.join(sandboxRoot, "workspace-main") }] } })}\n`,
       );
       fs.writeFileSync(
         pinnedOpenClaw,
@@ -157,7 +158,7 @@ esac
                 OPENCLAW_TEST_LATE_MARKER: lateInstallMarker,
                 OPENCLAW_TEST_LOG: invocationLog,
                 OPENCLAW_TEST_MUTATE: mutatePayload ? "1" : "0",
-                OPENCLAW_TEST_TARGET: workspaceSkillDir,
+                OPENCLAW_TEST_TARGET: nativeTarget,
                 OPENSHELL_SANDBOX_ID: SANDBOX_ID,
               },
               input: opts?.input,
@@ -259,52 +260,13 @@ esac
       expect(
         installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOptions(sshExec)),
       ).toMatchObject({ success: true });
-    },
-    30_000,
-  );
 
-  it.runIf(process.platform === "linux")(
-    "rejects a custom primary workspace before native publication",
-    () => {
-      const skill = makeSkill();
-      const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-root-"));
-      roots.push(sandboxRoot);
-      fs.mkdirSync(path.join(sandboxRoot, "workspace"));
-      fs.writeFileSync(
-        path.join(sandboxRoot, "openclaw.json"),
-        `${JSON.stringify({ agents: { list: [{ id: "main", default: true, workspace: path.join(sandboxRoot, "other") }] } })}\n`,
-      );
-      const executionPaths: NativeSkillState = {
-        ...paths,
-        stateDir: sandboxRoot,
-      };
-      const sshExec = vi.fn(
-        (
-          _ctx: SshContext,
-          command: string,
-          opts?: { input?: string | Buffer; timeout?: number },
-        ): SshResult => {
-          const execution = spawnSync("bash", ["--noprofile", "--norc", "-c", command], {
-            encoding: "utf8",
-            env: { ...process.env, OPENSHELL_SANDBOX_ID: SANDBOX_ID },
-            input: opts?.input,
-          });
-          return {
-            status: execution.status ?? 1,
-            stdout: execution.stdout,
-            stderr: execution.stderr,
-          };
-        },
-      );
-
+      nativeTarget = path.join(sandboxRoot, "other", "skills", "demo-skill");
       expect(
         installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOptions(sshExec)),
-      ).toEqual({
-        success: false,
-        uploaded: 0,
-        reason: "agent_workspace_unsupported",
-      });
+      ).toEqual({ success: false, uploaded: 0, reason: "verification_failed" });
     },
+    30_000,
   );
 
   it("rejects an oversized host snapshot before contacting the sandbox", () => {
@@ -328,7 +290,6 @@ esac
     [6, "NATIVE_INSTALL_TIMEOUT\n", "native_install_timed_out"],
     [7, "STAGE_RECOVERY_FAILED\n", "stage_recovery_failed"],
     [4, "installer output\nVERIFY_FAILED\n", "verification_failed"],
-    [8, "AGENT_WORKSPACE_UNSUPPORTED\n", "agent_workspace_unsupported"],
     [9, "IDENTITY_CHANGED\n", "sandbox_identity_changed"],
   ] as const)("maps native failure %s to %s", (status, stdout, reason) => {
     const skill = makeSkill();
