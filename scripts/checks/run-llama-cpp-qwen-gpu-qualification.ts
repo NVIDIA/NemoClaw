@@ -443,7 +443,7 @@ export async function runQwenGpuQualification(): Promise<void> {
     qualificationEvidence = {
       candidateSha,
       boundary:
-        "RTX validates the exact Qwen llama.cpp recipe; N1x WSL qualification remains pending",
+        "RTX validates candidate lifecycle code with the current-base OpenClaw image and exact Qwen llama.cpp recipe; N1x WSL qualification remains pending",
       host: {
         architecture,
         gpuName: gpuFields[0],

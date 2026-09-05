@@ -245,7 +245,7 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   llama-cpp-qwen-gpu:
-    name: Qwen llama.cpp recipe on RTX GPU (N1x WSL pending)
+    name: Qwen llama.cpp recipe on RTX GPU (N1x WSL qualification pending)
     needs: select-llama-cpp-generic-gpu
     if: ${{ needs.select-llama-cpp-generic-gpu.outputs.qwen_selected == 'true' }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
@@ -282,7 +282,7 @@ jobs:
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
 
-      - name: Run Qwen llama.cpp recipe on RTX GPU (N1x WSL pending)
+      - name: Run Qwen llama.cpp recipe on RTX GPU (N1x WSL qualification pending)
         shell: bash
         run: |
           set -euo pipefail
@@ -292,7 +292,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx tsx scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts
 
-      - name: Upload Qwen RTX recipe artifacts (N1x WSL pending)
+      - name: Upload Qwen RTX recipe artifacts (N1x WSL qualification pending)
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 

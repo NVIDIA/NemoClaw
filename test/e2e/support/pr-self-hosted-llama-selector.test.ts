@@ -222,7 +222,8 @@ describe("generic NVIDIA GPU PR selection", () => {
     expect(
       value.jobs["llama-cpp-qwen-gpu"]?.steps?.find(
         (step) =>
-          step.name === "Run Qwen llama.cpp recipe on RTX GPU (N1x WSL pending)",
+          step.name ===
+          "Run Qwen llama.cpp recipe on RTX GPU (N1x WSL qualification pending)",
       )?.run,
     ).toContain("npx tsx scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts");
   });
