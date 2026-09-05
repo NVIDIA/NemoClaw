@@ -633,6 +633,38 @@ describe("rebuildSandbox flow: lifecycle", () => {
     });
   });
 
+  it("rebuilds prepared-only MCP state without claiming runtime authority", async () => {
+    const preparedMcpEntry = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://mcp.example.test/mcp",
+      env: ["GITHUB_TOKEN"],
+      policyName: "mcp-bridge-github",
+      addedAt: "2026-06-01T00:00:00.000Z",
+      addState: "prepared" as const,
+    };
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {
+        mcp: { bridges: { github: preparedMcpEntry } },
+      },
+      mcpPreparation: {
+        entries: [],
+        detachedProviderEntries: [],
+        scrubbedAdapterEntries: [],
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+    );
+    expect(harness.onboardSpy).toHaveBeenCalledOnce();
+  });
+
   it("keeps the journaled row when replacement creation fails (#7734)", async () => {
     const harness = createRebuildFlowHarness({
       onboard: () => {

@@ -3683,7 +3683,10 @@ run_installer_host_preflight() {
       try {
         const { assessHost, planHostAdvisories } = require(preflightPath);
         const { createHostReadinessReport } = require(hostReadinessPath);
-        const { evaluateOnboardReadinessAdmission } = require(onboardAdmissionPath);
+        const {
+          evaluateOnboardReadinessAdmission,
+          hasExplicitDeferredN1xOnboardingIntent,
+        } = require(onboardAdmissionPath);
         const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
         const { configuredRuntimeProviderOwnsHostReadiness } = require(gatewayRuntimePath);
         const host = assessHost();
@@ -3718,6 +3721,7 @@ run_installer_host_preflight() {
           // authoritative onboarding gate apply supported storage remediation,
           // but only when the gateway declaration confirms NemoClaw ownership.
           allowStorageRemediation,
+          allowDeferredN1xManagedVllm: hasExplicitDeferredN1xOnboardingIntent(process.env),
         });
         const infoLines = [];
         const actionLines = [];
@@ -6053,9 +6057,6 @@ maybe_offer_express_install() {
   # On a detected Express platform but a skip condition applies — explain why so
   # the user understands they could have gotten express otherwise.
   if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
-    if [ "$platform" = "N1x" ] && [ "${NEMOCLAW_PROVIDER:-}" != "install-vllm" ]; then
-      error "N1x onboarding currently requires explicit Deferred managed-vLLM preview intent. Remove NEMOCLAW_NO_EXPRESS=1 and accept the preview, or set NEMOCLAW_PROVIDER=install-vllm."
-    fi
     if [ "$platform" = "DGX Station" ]; then
       station_dual_pair_resume_pending \
         && error "A dual-DGX Station pair resume is pending; finish exact pair revalidation before disabling Station setup."
@@ -6066,7 +6067,7 @@ maybe_offer_express_install() {
   fi
   if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
     if [ "$platform" = "N1x" ] && [ "$NEMOCLAW_PROVIDER" != "install-vllm" ]; then
-      error "N1x onboarding currently accepts only the Deferred managed-vLLM preview. Set NEMOCLAW_PROVIDER=install-vllm or use another host for provider ${NEMOCLAW_PROVIDER}."
+      export NEMOCLAW_NO_EXPRESS=1
     fi
     if [ "$platform" = "DGX Station" ] && [ "$NEMOCLAW_PROVIDER" = "install-vllm" ]; then
       # An explicit managed-vLLM provider selects the same Station host/pair
@@ -6160,7 +6161,7 @@ maybe_offer_express_install() {
       ;;
     *)
       if [ "$platform" = "N1x" ]; then
-        error "N1x onboarding currently requires the Deferred managed-vLLM preview. Re-run the installer and accept the preview, or set NEMOCLAW_PROVIDER=install-vllm."
+        export NEMOCLAW_NO_EXPRESS=1
       fi
       info "Skipping express install. Continuing with interactive flow."
       ;;

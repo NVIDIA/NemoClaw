@@ -19,6 +19,7 @@ import {
   pythonJsonLiteral,
 } from "./mcp-bridge-adapter-status";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 
 export function buildDeepAgentsMcpRegisterCommand(
@@ -224,9 +225,15 @@ function registryOwnedDeepAgentsEntries(
 function verifyDeepAgentsAdapterRegistration(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
 ): void {
-  const inspection = inspectDeepAgentsAdapterRegistration(sandboxName, entry, credentialRevision);
+  const inspection = inspectDeepAgentsAdapterRegistration(
+    sandboxName,
+    entry,
+    runtimeSelection,
+    credentialRevision,
+  );
   if (inspection.state === "registered") return;
   const detail = inspection.state === "error" ? inspection.detail : inspection.state;
   throw new McpBridgeError(
@@ -237,6 +244,7 @@ function verifyDeepAgentsAdapterRegistration(
 export function registerDeepAgentsAdapter(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   envValues: Record<string, string> = {},
   replaceExisting = false,
   teardownRollback = false,
@@ -253,6 +261,7 @@ export function registerDeepAgentsAdapter(
       credentialRevision,
     ),
     `Deep Agents Code MCP config registration failed for '${entry.server}'.`,
+    runtimeSelection,
     { envValues },
   );
   if (teardownRollback) {
@@ -262,13 +271,14 @@ export function registerDeepAgentsAdapter(
       );
     }
   } else {
-    verifyDeepAgentsAdapterRegistration(sandboxName, entry, credentialRevision);
+    verifyDeepAgentsAdapterRegistration(sandboxName, entry, runtimeSelection, credentialRevision);
   }
 }
 
 export function restoreDeepAgentsManagedMcpProjection(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
   const managedEntries = [...entries].sort((left, right) =>
     left.server.localeCompare(right.server),
@@ -290,6 +300,7 @@ export function restoreDeepAgentsManagedMcpProjection(
     commandEntry,
     buildDeepAgentsMcpRuntimeKindCommand(),
     "Could not identify the managed Deep Agents MCP runtime.",
+    runtimeSelection,
   )
     .trim()
     .split(/\r?\n/u)
@@ -298,7 +309,7 @@ export function restoreDeepAgentsManagedMcpProjection(
   if (runtimeKind !== "v2") {
     throw new McpBridgeError("Could not identify the managed Deep Agents MCP runtime.");
   }
-  assertDeepAgentsMcpMutationRuntimeCapability(sandboxName);
+  assertDeepAgentsMcpMutationRuntimeCapability(sandboxName, runtimeSelection);
   runDeepAgentsAdapterCommand(
     sandboxName,
     commandEntry,
@@ -306,8 +317,9 @@ export function restoreDeepAgentsManagedMcpProjection(
       resetManagedProjection: true,
     }),
     "Deep Agents Code managed MCP projection repair failed.",
+    runtimeSelection,
   );
   for (const managedEntry of managedEntries) {
-    verifyDeepAgentsAdapterRegistration(sandboxName, managedEntry);
+    verifyDeepAgentsAdapterRegistration(sandboxName, managedEntry, runtimeSelection);
   }
 }

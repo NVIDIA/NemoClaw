@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   authoritativeRebuildSandboxFlowOptions,
   authoritativeRebuildRuntimePreflightOptions,
+  beginAuthoritativeRebuildRuntimeSelectionScope,
   type AuthoritativeRebuildTargetDeps,
   type AuthoritativeRebuildPreflightOptions,
   preflightAuthoritativeRebuildTarget,
@@ -149,6 +150,48 @@ describe("authoritative rebuild gateway binding", () => {
     expect(() => resolve({ onboardLockAlreadyHeld: true })).toThrow(
       /lock handoff requires an authoritative rebuild resume/,
     );
+  });
+});
+
+describe("authoritative rebuild OpenShell runtime selection", () => {
+  it("replaces hostile ambient selectors for inner onboard and restores them (#10514)", () => {
+    const env: NodeJS.ProcessEnv = {
+      PATH: "/usr/bin",
+      OPENSHELL_GATEWAY: "hostile-gateway",
+      OPENSHELL_GATEWAY_AUTH_TOKEN: "hostile-token",
+      OPENSHELL_GATEWAY_ENDPOINT: "https://hostile.invalid",
+      OPENSHELL_LOCAL_TLS_DIR: "/hostile/tls",
+      OPENSHELL_WORKSPACE: "hostile-workspace",
+    };
+    const previous = { ...env };
+    const restore = beginAuthoritativeRebuildRuntimeSelectionScope(
+      {
+        authoritativeResumeConfig: true,
+        onboardLockAlreadyHeld: true,
+        recreateSandbox: true,
+        resume: true,
+        targetGatewayName: "nemoclaw-8081",
+        targetGatewayPort: 8081,
+        runtimeSelection: {
+          gatewayName: "nemoclaw-8081",
+          localTlsDir: "/authority/tls",
+          workspace: "default",
+        },
+      },
+      env,
+    );
+
+    expect(env).toMatchObject({
+      PATH: "/usr/bin",
+      OPENSHELL_GATEWAY: "nemoclaw-8081",
+      OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+      OPENSHELL_WORKSPACE: "default",
+    });
+    expect(env.OPENSHELL_GATEWAY_AUTH_TOKEN).toBeUndefined();
+    expect(env.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();
+
+    restore();
+    expect(env).toEqual(previous);
   });
 });
 

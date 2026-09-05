@@ -93,6 +93,7 @@ import {
   createSnapshotCloneLifecycle,
   confirmSandboxRuntimeRestore,
   fingerprintSandboxLiveIdentity,
+  getMcpProviderInspectionRuntimeSelection,
   isSandboxPolicyCredentialFree,
   type PreparedHostLocalInferenceAuthority,
   type PreparedSandboxRuntimeRestore,
@@ -1556,7 +1557,16 @@ async function runSnapshotRestoreUnlocked(
     }
     if (repairsManagedDeepAgentsProjection) {
       try {
-        restoreDeepAgentsManagedMcpProjection(targetSandbox, managedDeepAgentsEntries);
+        const currentTarget = registry.getSandbox(targetSandbox);
+        if (!currentTarget) {
+          throw new Error(`target '${targetSandbox}' is no longer registered`);
+        }
+        const runtimeSelection = getMcpProviderInspectionRuntimeSelection(currentTarget);
+        restoreDeepAgentsManagedMcpProjection(
+          targetSandbox,
+          managedDeepAgentsEntries,
+          runtimeSelection,
+        );
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         const recoveryCommand = deepAgentsManagedProjectionRecoveryCommand(targetSandbox);

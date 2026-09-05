@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Compose NemoClaw's rebuild drain with pinned Hermes operator drain control.
 
-Hermes v2026.7.20 / 0.19.0 scopes its operator marker to one container epoch.
+Hermes v2026.8.27 / 0.20.6 scopes its operator marker to one container epoch.
 That is correct for operator lifecycle actions, but a NemoClaw rebuild marker
 must survive replacement gateway and container restarts until restored scripts
 and cron jobs are revalidated. Keep those two owners on separate paths and OR
@@ -12,6 +12,10 @@ their predicates at the gateway boundary.
 GatewayRunner also hydrates the composed state during construction. The async
 watcher still reconciles state transitions, but cron and new-turn gates cannot
 observe a false value during the watcher's first-tick window after restart.
+When the root-owned release-recovery record is present, the root-owned
+controller re-arms only scheduled, unclaimed one-shots that became due at or
+after gate acquisition while dispatch was held. The gate remains active if
+that durable jobs update fails.
 Exact source-shape checks fail closed when the pinned Hermes implementation
 changes. Remove this patch when upstream provides an equivalent independently
 owned, restart-stable maintenance drain.
@@ -22,18 +26,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-OLD_MARKER_ANCHOR = '''_DRAIN_REQUEST_FILENAME = ".drain_request.json"
-
-
-@functools.lru_cache(maxsize=1)
-'''
+OLD_MARKER_ANCHOR = '_DRAIN_REQUEST_FILENAME = ".drain_request.json"'
 NEW_MARKER_ANCHOR = '''_DRAIN_REQUEST_FILENAME = ".drain_request.json"
 _NEMOCLAW_CRON_RESTORE_DRAIN_PATH = Path(
     "/sandbox/.nemoclaw/hermes-cron-restore-drain.json"
 )
-
-
-@functools.lru_cache(maxsize=1)
 '''
 
 OLD_OPERATOR_HEADER = '''def drain_requested(*, home: Optional[Path] = None) -> bool:
@@ -130,6 +127,75 @@ NEW_ENTER_BLOCK = '''        if self._external_drain_active:
             return
 '''
 
+JOBS_ANCHOR = '''def get_due_jobs() -> List[Dict[str, Any]]:
+'''
+JOBS_RELEASE_HELPER = '''def rearm_nemoclaw_drained_oneshots(not_before: datetime, profile_homes) -> int:
+    """Re-arm one-shots held overdue by NemoClaw's restore drain.
+
+    The root-owned controller calls this helper while the external drain still
+    blocks dispatch and passes the authenticated marker creation time. It
+    changes only enabled scheduled one-shots that have never run, carry no
+    dispatch or fire claim, and became due at or after that marker was acquired.
+    Each validated profile uses its own cron-store context, jobs lock, and
+    normal save path so profile isolation and ownership remain intact.
+    """
+    now = _hermes_now()
+    not_before = _ensure_aware(not_before)
+    if not_before > now:
+        raise RuntimeError("NemoClaw cron restore drain time is in the future")
+    rearm_gate = not_before.isoformat()
+    replacement = now + timedelta(seconds=2)
+    replacement_schedule = parse_schedule(replacement.isoformat())
+    replacement_next = compute_next_run(replacement_schedule)
+    if replacement_next is None:
+        raise RuntimeError("NemoClaw cron restore could not schedule delayed one-shots")
+
+    changed = 0
+    for profile_home in profile_homes:
+        profile_changed = 0
+        with use_cron_store(profile_home):
+            with _jobs_lock():
+                jobs = load_jobs()
+                for job in jobs:
+                    schedule = job.get("schedule")
+                    repeat = job.get("repeat")
+                    if (
+                        not isinstance(schedule, dict)
+                        or schedule.get("kind") != "once"
+                        or job.get("enabled", True) is not True
+                        or job.get("state") not in {None, "scheduled"}
+                        or job.get("last_run_at") is not None
+                        or job.get("run_claim") is not None
+                        or job.get("fire_claim") is not None
+                        or (isinstance(repeat, dict) and repeat.get("completed", 0) != 0)
+                    ):
+                        continue
+                    run_at = schedule.get("run_at")
+                    next_run_at = job.get("next_run_at")
+                    if not isinstance(run_at, str) or not isinstance(next_run_at, str):
+                        continue
+                    try:
+                        scheduled = _ensure_aware(datetime.fromisoformat(run_at))
+                        next_run = _ensure_aware(datetime.fromisoformat(next_run_at))
+                    except (TypeError, ValueError):
+                        continue
+                    if scheduled < not_before or next_run < not_before:
+                        continue
+                    if scheduled > now or next_run > now:
+                        continue
+                    job["schedule"] = dict(replacement_schedule)
+                    job["schedule_display"] = replacement_schedule.get("display")
+                    job["next_run_at"] = replacement_next
+                    job["nemoclaw_restore_rearm_gate"] = rearm_gate
+                    profile_changed += 1
+                if profile_changed:
+                    save_jobs(jobs)
+        changed += profile_changed
+    return changed
+
+
+'''
+
 DRAIN_CONTEXT = "from utils import atomic_json_write"
 RUN_CONTEXT = (
     "class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, "
@@ -165,9 +231,14 @@ def _state(
     )
 
 
-def patch_files(drain_control_path: Path, gateway_run_path: Path) -> None:
+def patch_files(
+    drain_control_path: Path,
+    gateway_run_path: Path,
+    cron_jobs_path: Path,
+) -> None:
     drain_source = drain_control_path.read_text(encoding="utf-8")
     run_source = gateway_run_path.read_text(encoding="utf-8")
+    jobs_source = cron_jobs_path.read_text(encoding="utf-8")
 
     _require_exact(drain_source, DRAIN_CONTEXT, "drain-control import context")
     _require_exact(
@@ -176,6 +247,7 @@ def patch_files(drain_control_path: Path, gateway_run_path: Path) -> None:
         "drain notification predicate",
     )
     _require_exact(run_source, RUN_CONTEXT, "GatewayRunner declaration")
+    _require_exact(jobs_source, JOBS_ANCHOR, "cron due-jobs boundary")
     drain_state = _state(
         drain_source,
         old_shapes=(OLD_MARKER_ANCHOR, OLD_OPERATOR_HEADER),
@@ -192,7 +264,17 @@ def patch_files(drain_control_path: Path, gateway_run_path: Path) -> None:
         new_shapes=(NEW_RUN_BLOCK, NEW_ENTER_BLOCK),
         description="GatewayRunner initialization",
     )
-    if drain_state != run_state:
+    helper_count = jobs_source.count(JOBS_RELEASE_HELPER)
+    if helper_count == 0:
+        jobs_state = "unpatched"
+    elif helper_count == 1:
+        jobs_state = "patched"
+    else:
+        raise SystemExit(
+            "ERROR: Hermes cron restore drain source shape changed; "
+            "cron release helper is duplicated"
+        )
+    if len({drain_state, run_state, jobs_state}) != 1:
         raise SystemExit(
             "ERROR: Hermes cron restore drain patch is only partially applied"
         )
@@ -207,8 +289,10 @@ def patch_files(drain_control_path: Path, gateway_run_path: Path) -> None:
     )
     run_source = run_source.replace(OLD_RUN_BLOCK, NEW_RUN_BLOCK)
     run_source = run_source.replace(OLD_ENTER_BLOCK, NEW_ENTER_BLOCK)
+    jobs_source = jobs_source.replace(JOBS_ANCHOR, f"{JOBS_RELEASE_HELPER}{JOBS_ANCHOR}")
     drain_control_path.write_text(drain_source, encoding="utf-8")
     gateway_run_path.write_text(run_source, encoding="utf-8")
+    cron_jobs_path.write_text(jobs_source, encoding="utf-8")
 
 
 def main() -> int:
@@ -223,8 +307,17 @@ def main() -> int:
         default="/opt/hermes/gateway/run.py",
         help="Hermes gateway runner module to patch",
     )
+    parser.add_argument(
+        "--cron-jobs",
+        default="/opt/hermes/cron/jobs.py",
+        help="Hermes cron jobs module to patch",
+    )
     args = parser.parse_args()
-    patch_files(Path(args.drain_control), Path(args.gateway_run))
+    patch_files(
+        Path(args.drain_control),
+        Path(args.gateway_run),
+        Path(args.cron_jobs),
+    )
     return 0
 
 
