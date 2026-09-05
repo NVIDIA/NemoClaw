@@ -497,7 +497,7 @@ if (process.argv[2] !== "tui") {
   }
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
   const ask = () => new Promise((resolve) => rl.question("", resolve));
-  if (terminalCopy === "ansi") process.stdout.write("\u001b[2Kgateway connected | idle\r");
+  if (terminalCopy === "ansi") process.stdout.write("\u001b[2KServiceUnavailableError\r");
   if (terminalCopy === "reordered") process.stdout.write("idle | gateway connected\n");
 
   if (mode === "delayed-recording") {
@@ -640,13 +640,14 @@ exec "$@"
         NEMOCLAW_LAUNCH_RUN_ID: runId,
         NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
         NEMOCLAW_LAUNCH_SANDBOX: "sandbox",
-        NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: mode === "restored-canonical-timeout"
-          ? "10"
-          : mode === "pty-socket-timeout"
-          ? "5"
-          : mode.endsWith("-timeout")
-            ? "2"
-            : "230",
+        NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS:
+          mode === "restored-canonical-timeout"
+            ? "10"
+            : mode === "pty-socket-timeout"
+              ? "5"
+              : mode.endsWith("-timeout")
+                ? "2"
+                : "230",
         NEMOCLAW_LAUNCH_SECOND_INPUT: "second input",
         NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
         NEMOCLAW_LAUNCH_SESSION_ROOT: sessionRoot,
@@ -1248,18 +1249,18 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux")(
-  "reports missing structured turns before the PTY child timeout (#9160)",
+  "marks provider unavailability when structured turns remain missing (#9160, #10978)",
   () => {
     const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
       "recording-timeout",
-      "absent",
+      "ansi",
     );
 
     expect(ttyObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("launch did not record the required structured session turns");
+    expect(result.stderr).toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
   },
 );
 

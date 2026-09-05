@@ -75,18 +75,25 @@ describe("OpenShell forward service", () => {
     expect(spawnDetached).not.toHaveBeenCalled();
   });
 
-  it("reports a running service that remains unbound at the deadline (#11084)", () => {
+  it("stops a running service that remains unbound at the deadline (#11084)", () => {
     const unboundTarget = { ...target, localPort: 18_791, targetPort: 18_791 };
+    let running = true;
+    const stopProcess = vi.fn(() => {
+      running = false;
+    });
     expect(() =>
       launchForwardService(unboundTarget, {
         describeState: () => "SANDBOX BIND PORT PID STATUS",
-        isProcessRunning: () => true,
+        isProcessRunning: () => running,
         isReachable: () => false,
+        maxAttempts: 1,
         sleep: () => {},
         spawnDetached: () => ({ pid: 42, unref: () => {} }),
+        stopProcess,
         timeoutMs: 0,
       }),
-    ).toThrow(/remained running but did not bind.*forward list: SANDBOX BIND PORT PID STATUS/u);
+    ).toThrow(/was stopped after failing to bind.*forward list: SANDBOX BIND PORT PID STATUS/u);
+    expect(stopProcess).toHaveBeenCalledWith(42, "SIGTERM");
   });
 
   it("retries only after the prior service process exited (#11084)", () => {
@@ -106,20 +113,48 @@ describe("OpenShell forward service", () => {
     expect(spawnDetached).toHaveBeenCalledTimes(2);
   });
 
-  it("does not duplicate a service that is still settling (#11084)", () => {
+  it("does not retry when the timed-out service cannot be stopped (#11084)", () => {
     const settlingTarget = { ...target, localPort: 18_790, targetPort: 18_790 };
     const spawnDetached = vi.fn(() => ({ pid: 61, unref: vi.fn() }));
-    const options = {
-      isProcessRunning: () => true,
-      isReachable: () => false,
-      sleep: () => {},
-      spawnDetached,
-      timeoutMs: 0,
-    };
+    const stopProcess = vi.fn();
 
-    expect(() => launchForwardService(settlingTarget, options)).toThrow(/remained running/u);
-    expect(() => launchForwardService(settlingTarget, options)).toThrow(/still settling/u);
+    expect(() =>
+      launchForwardService(settlingTarget, {
+        isProcessRunning: () => true,
+        isReachable: () => false,
+        sleep: () => {},
+        spawnDetached,
+        stopProcess,
+        stopTimeoutMs: 0,
+        timeoutMs: 0,
+      }),
+    ).toThrow(/process 61.*could not be stopped.*do not retry/u);
     expect(spawnDetached).toHaveBeenCalledOnce();
+    expect(stopProcess.mock.calls).toEqual([
+      [61, "SIGTERM"],
+      [61, "SIGKILL"],
+    ]);
+  });
+
+  it("confirms exit after escalating a timed-out service to SIGKILL (#11084)", () => {
+    const signals: NodeJS.Signals[] = [];
+    let killChecks = 0;
+
+    expect(() =>
+      launchForwardService(target, {
+        isProcessRunning: () =>
+          signals.at(-1) === "SIGKILL" ? ++killChecks < 2 : true,
+        isReachable: () => false,
+        maxAttempts: 1,
+        sleep: () => {},
+        spawnDetached: () => ({ pid: 62, unref: vi.fn() }),
+        stopProcess: (_pid, signal) => signals.push(signal),
+        stopTimeoutMs: 1_000,
+        timeoutMs: 0,
+      }),
+    ).toThrow(/was stopped after failing to bind/u);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(killChecks).toBe(2);
   });
 
   it("refuses an unknown listener that appears before a safe retry (#11084)", () => {

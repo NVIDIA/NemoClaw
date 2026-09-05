@@ -12,6 +12,7 @@ import { probeLocalForwardListener } from "./local-forward-listener";
 const START_TIMEOUT_MS = 90_000;
 const START_RETRY_DELAY_MS = 1_000;
 const START_ATTEMPTS = 2;
+const STOP_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
 
@@ -19,10 +20,6 @@ type ForwardServiceChild = {
   readonly pid?: number;
   unref(): void;
 };
-
-// Keep exact child identity only for this CLI process. A later recovery call may
-// observe the same child settling, but must never adopt an unrelated listener.
-const settlingChildren = new Map<string, ForwardServiceChild>();
 
 export interface ForwardServiceTarget {
   readonly executable: string;
@@ -43,24 +40,14 @@ export interface ForwardServiceLaunchOptions {
   readonly retryDelayMs?: number;
   readonly sleep?: (milliseconds: number) => void;
   readonly sourceEnvironment?: NodeJS.ProcessEnv;
+  readonly stopProcess?: (pid: number, signal: NodeJS.Signals) => void;
+  readonly stopTimeoutMs?: number;
   readonly spawnDetached?: (
     executable: string,
     args: readonly string[],
     environment: NodeJS.ProcessEnv,
   ) => ForwardServiceChild;
   readonly timeoutMs?: number;
-}
-
-function forwardKey(target: ForwardServiceTarget): string {
-  return [
-    target.gatewayName,
-    target.workspace,
-    target.sandboxName,
-    target.localHost,
-    target.localPort,
-    target.targetHost,
-    target.targetPort,
-  ].join("\0");
 }
 
 function isProcessRunning(pid: number): boolean {
@@ -96,6 +83,49 @@ function describeFailureState(describe: (() => string | null | undefined) | unde
 
 function isProcessIdentity(pid: number | undefined): pid is number {
   return Number.isSafeInteger(pid) && Number(pid) > 0;
+}
+
+function isMissingProcessError(error: unknown): boolean {
+  const code =
+    typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+  return code === "ENOENT" || code === "ESRCH";
+}
+
+function waitForProcessExit(
+  pid: number,
+  processIsRunning: (pid: number) => boolean,
+  sleep: (milliseconds: number) => void,
+  timeoutMs: number,
+): boolean {
+  const deadline = Date.now() + timeoutMs;
+  while (processIsRunning(pid)) {
+    if (Date.now() >= deadline) return false;
+    sleep(POLL_INTERVAL_MS);
+  }
+  return true;
+}
+
+function stopOwnedProcess(
+  pid: number,
+  processIsRunning: (pid: number) => boolean,
+  stopProcess: (pid: number, signal: NodeJS.Signals) => void,
+  sleep: (milliseconds: number) => void,
+  timeoutMs: number,
+): boolean {
+  try {
+    stopProcess(pid, "SIGTERM");
+  } catch (error) {
+    if (isMissingProcessError(error)) return true;
+    return false;
+  }
+  if (waitForProcessExit(pid, processIsRunning, sleep, timeoutMs)) return true;
+  try {
+    stopProcess(pid, "SIGKILL");
+  } catch (error) {
+    if (isMissingProcessError(error)) return true;
+    return false;
+  }
+  return waitForProcessExit(pid, processIsRunning, sleep, timeoutMs);
 }
 
 function isPort(value: unknown): value is number {
@@ -163,18 +193,6 @@ export function launchForwardService(
   validateForwardServiceTarget(target);
   const isReachable = options.isReachable ?? probeLocalForwardListener;
   const processIsRunning = options.isProcessRunning ?? isProcessRunning;
-  const key = forwardKey(target);
-  const settling = settlingChildren.get(key);
-  if (isProcessIdentity(settling?.pid) && processIsRunning(settling.pid)) {
-    if (isReachable(target.localPort)) {
-      settlingChildren.delete(key);
-      return;
-    }
-    throw new Error(
-      `OpenShell forward service is still settling on ${target.localHost}:${String(target.localPort)}; refusing to start a duplicate service`,
-    );
-  }
-  settlingChildren.delete(key);
   if (isReachable(target.localPort)) {
     throw new Error(`Host port ${String(target.localPort)} is already occupied`);
   }
@@ -184,13 +202,17 @@ export function launchForwardService(
       spawn(executable, [...args], { detached: true, env: environment, stdio: "ignore" }));
   const sleep =
     options.sleep ?? ((milliseconds: number) => Atomics.wait(sleepBuffer, 0, 0, milliseconds));
+  const stopProcess =
+    options.stopProcess ?? ((pid: number, signal: NodeJS.Signals) => process.kill(pid, signal));
   const attempts = options.maxAttempts ?? START_ATTEMPTS;
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > START_ATTEMPTS) {
     throw new Error(`OpenShell forward service attempts must be between 1 and ${START_ATTEMPTS}`);
   }
   const args = buildForwardServiceArgs(target);
   const environment = buildOpenShellSubprocessEnv(options.sourceEnvironment ?? process.env);
+  let finalFailure = "exited before binding";
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    finalFailure = "exited before binding";
     if (isReachable(target.localPort)) {
       throw new Error(
         `Host port ${String(target.localPort)} became occupied before forward retry; refusing to adopt its listener`,
@@ -212,26 +234,33 @@ export function launchForwardService(
         break;
       }
       if (isReachable(target.localPort)) {
-        settlingChildren.delete(key);
         return;
       }
       if (Date.now() >= deadline) break;
       sleep(POLL_INTERVAL_MS);
     }
     if (!exited) {
-      settlingChildren.set(key, child);
-      throw new Error(
-        `OpenShell forward service remained running but did not bind ${target.localHost}:${String(target.localPort)} within ${String(options.timeoutMs ?? START_TIMEOUT_MS)}ms; ` +
-          `refusing to start a duplicate service; forward list: ${describeFailureState(options.describeState)}`,
+      const stopped = stopOwnedProcess(
+        child.pid,
+        processIsRunning,
+        stopProcess,
+        sleep,
+        options.stopTimeoutMs ?? STOP_TIMEOUT_MS,
       );
+      if (!stopped) {
+        throw new Error(
+          `OpenShell forward service process ${String(child.pid)} remained running after its ${String(options.timeoutMs ?? START_TIMEOUT_MS)}ms bind deadline and could not be stopped; ` +
+            `do not retry until that process exits; forward list: ${describeFailureState(options.describeState)}`,
+        );
+      }
+      finalFailure = "was stopped after failing to bind";
     }
-    settlingChildren.delete(key);
     if (attempt < attempts) {
       sleep(options.retryDelayMs ?? START_RETRY_DELAY_MS);
     }
   }
   throw new Error(
-    `OpenShell forward service exited before binding ${target.localHost}:${String(target.localPort)} after ${String(attempts)} attempts; ` +
+    `OpenShell forward service ${finalFailure} ${target.localHost}:${String(target.localPort)} after ${String(attempts)} attempts; ` +
       `forward list: ${describeFailureState(options.describeState)}`,
   );
 }
