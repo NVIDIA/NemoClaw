@@ -1131,7 +1131,7 @@ transient_provider_availability_failure() {
   printf '%s\n' "$diagnostic" | grep -Fq \
     'Available Model Group Fallbacks=' || return 1
   ! printf '%s\n' "$diagnostic" | grep -Eiq \
-    'authentication failed|authorization failed|unauthorized|forbidden|HTTP( status)?[:= ]+40[13]|invalid.*(api[_ -]?key|credential|JSON|response)|\b(egress|request|connection|certificate|TLS|network|route|routing|policy|proxy)[^\r\n]*(blocked|denied|failed|invalid)\b|malformed'
+    'authentication failed|authorization failed|unauthorized|forbidden|HTTP( status)?[:= ]+40[13]|invalid.*(api[_ -]?key|credential|JSON|response)|\b(egress|request|connection|certificate|TLS|network|route|routing|policy|proxy|transport)[^\r\n]*(blocked|denied|failed|invalid)\b|\b(blocked|denied|failed|invalid)[^\r\n]*(egress|request|connection|certificate|TLS|network|route|routing|policy|proxy|transport)\b|malformed'
 }
 
 provider_empty_message_evidence() {
@@ -1203,10 +1203,6 @@ wait_for_turn_count() {
     fi
     sleep 1
   done
-  transient_provider_availability_failure && \
-    fail_launch_session \
-      "launch did not record the required structured session turns" \
-      "${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}"
   fail_launch_session "launch did not record the required structured session turns"
 }
 

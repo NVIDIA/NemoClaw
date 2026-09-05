@@ -100,7 +100,7 @@ it("reports a residual PTY monitor socket without removing it (#9384)", async ()
 
 function runLaunchSessionFixture(
   mode: FixtureMode,
-  terminalCopy: "absent" | "ansi" | "provider" | "reordered" | "security",
+  terminalCopy: "absent" | "ansi" | "policy" | "provider" | "reordered" | "security",
 ) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-turn-"));
   const canonicalRestoredMarker = join(fixtureRoot, "canonical-restored");
@@ -329,6 +329,11 @@ if (process.argv[2] !== "tui") {
     process.stdout.write("\u001b[2Krun error: litellm.ServiceUnavailableError: ServiceUnavailableError:\r\n");
     process.stdout.write("\u001b[2KOpenAIException - . Received Model Group=nvidia/model\r\n");
     process.stdout.write("\u001b[2KAvailable Model Group Fallbacks=None\r");
+  }
+  if (terminalCopy === "policy") {
+    process.stdout.write("\u001b[2Krun error: litellm.ServiceUnavailableError: ServiceUnavailableError:\r\n");
+    process.stdout.write("\u001b[2KOpenAIException - . Received Model Group=nvidia/model\r\n");
+    process.stdout.write("\u001b[2KAvailable Model Group Fallbacks=None; denied by network policy\r");
   }
   if (terminalCopy === "security") {
     process.stdout.write("\u001b[2Krun error: litellm.ServiceUnavailableError: ServiceUnavailableError:\r\n");
@@ -1068,10 +1073,13 @@ it.runIf(process.platform === "linux")(
   testTimeout(30_000),
 );
 
-it.runIf(process.platform === "linux")(
-  "does not retry real provider output that also reports a security denial (#10978)",
-  async () => {
-    const produced = runLaunchSessionFixture("provider-empty-message", "security").result;
+it.runIf(process.platform === "linux").each([
+  { denial: "egress blocked by sandbox guard", terminalCopy: "security" },
+  { denial: "denied by network policy", terminalCopy: "policy" },
+] as const)(
+  "does not retry real provider output that reports $denial (#10978)",
+  async ({ denial, terminalCopy }) => {
+    const produced = runLaunchSessionFixture("provider-empty-message", terminalCopy).result;
     const firstResult = {
       exitCode: produced.status ?? 1,
       signal: produced.signal,
@@ -1087,11 +1095,11 @@ it.runIf(process.platform === "linux")(
       openshellCommandPath: "/usr/bin/openshell",
     };
 
-    expect(firstResult.stderr).toContain("egress blocked by sandbox guard");
+    expect(firstResult.stderr).toContain(denial);
     expect(firstResult.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
     await expect(
       runOpenClawLaunchSession({
-        artifactName: "producer-auth-handoff",
+        artifactName: "producer-denial-handoff",
         cliCommand: "node",
         env: {},
         host: host as never,
@@ -1102,6 +1110,18 @@ it.runIf(process.platform === "linux")(
     expect(calls).toBe(1);
   },
   testTimeout(30_000),
+);
+
+it.runIf(process.platform === "linux")(
+  "does not mark provider output without structured empty-message evidence (#10978)",
+  () => {
+    const produced = runLaunchSessionFixture("recording-timeout", "provider").result;
+
+    expect(produced.status).toBe(1);
+    expect(produced.stderr).toContain("ServiceUnavailableError");
+    expect(produced.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
+  },
+  testTimeout(20_000),
 );
 
 it.runIf(process.platform === "linux")(

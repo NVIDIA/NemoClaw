@@ -82,7 +82,12 @@ describe("OpenShell forward service", () => {
   });
 
   it("uses the selected OpenShell configuration without exposing credentials (#11084)", () => {
-    const spawnDetached = vi.fn(() => ({ pid: 42, unref: vi.fn() }));
+    const spawnDetached = vi.fn(
+      (_executable: string, _args: readonly string[], _environment: NodeJS.ProcessEnv) => ({
+        pid: 42,
+        unref: vi.fn(),
+      }),
+    );
 
     launchForwardService(target, {
       getProcessIdentity: stableProcessIdentity,
