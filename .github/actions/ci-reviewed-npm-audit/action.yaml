@@ -58,10 +58,13 @@ runs:
         if (!/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(config.npmIntegrity) || /[\r\n]/.test(config.npmIntegrity)) {
           throw new Error("reviewed npm audit configuration has an invalid npmIntegrity");
         }
+        if (!/^[a-f0-9]{64}$/.test(config.npmArchiveSha256)) {
+          throw new Error("reviewed npm audit configuration has an invalid npmArchiveSha256");
+        }
         const directories = ["", ...config.lockedGraphs.map((graph) => graph.directory)].sort();
         const hash = createHash("sha256");
         hash.update(configSource);
-        hash.update(JSON.stringify({ argv: ["audit", "--registry=https://registry.yarnpkg.com", "--omit=dev", "--json"], npmVersion: config.npmVersion, registry: "https://registry.yarnpkg.com/", schemaVersion: 1 }));
+        hash.update(JSON.stringify({ argv: ["audit", "--registry=https://registry.yarnpkg.com", "--omit=dev", "--json"], npmArchiveSha256: config.npmArchiveSha256, npmIntegrity: config.npmIntegrity, npmVersion: config.npmVersion, registry: "https://registry.yarnpkg.com/", schemaVersion: 2 }));
         for (const directory of directories) {
           for (const file of ["package.json", "package-lock.json"]) {
             const relative = join(directory, file);
@@ -71,7 +74,7 @@ runs:
         }
         appendFileSync(
           process.env.GITHUB_OUTPUT,
-          `input-digest=${hash.digest("hex")}\nnpm-version=${config.npmVersion}\nnpm-integrity=${config.npmIntegrity}\n`,
+          `input-digest=${hash.digest("hex")}\n`,
         );
         NODE
         printf 'current=%s\nprevious=%s\n' "$current_bucket" "$previous_bucket" >> "$GITHUB_OUTPUT"
@@ -82,21 +85,21 @@ runs:
       uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
       with:
         path: ${{ inputs.cache-directory }}
-        key: reviewed-npm-audit-v1-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.current }}
+        key: reviewed-npm-audit-v2-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.current }}
 
     - name: Restore previous reviewed npm audit cache bucket
       if: steps.cache-current.outputs.cache-hit != 'true'
       uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
       with:
         path: ${{ inputs.cache-directory }}
-        key: reviewed-npm-audit-v1-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.previous }}
+        key: reviewed-npm-audit-v2-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.previous }}
 
     - name: Download and verify production npm
       shell: bash
-      env:
-        NEMOCLAW_REVIEWED_NPM_VERSION: ${{ steps.cache-buckets.outputs.npm-version }}
-        NEMOCLAW_REVIEWED_NPM_INTEGRITY: ${{ steps.cache-buckets.outputs.npm-integrity }}
-      run: env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN "$GITHUB_ACTION_PATH/verify-and-install-npm.sh"
+      run: >-
+        env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN
+        "$GITHUB_ACTION_PATH/../setup-reviewed-npm/verify-and-install-npm.sh"
+        "$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json"
 
     - name: Materialize and audit reviewed npm graphs
       shell: bash
@@ -113,7 +116,7 @@ runs:
       uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
       with:
         path: ${{ inputs.cache-directory }}
-        key: reviewed-npm-audit-v1-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.current }}
+        key: reviewed-npm-audit-v2-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.current }}
 
     - name: Upload reviewed npm audit reports
       if: always()

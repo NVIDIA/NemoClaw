@@ -27,8 +27,8 @@ function identity(archive: string): Record<string, string> {
 
 type BootstrapFixtureOptions = {
   archive: string;
+  archiveVersion?: string;
   environment?: NodeJS.ProcessEnv;
-  installedVersion?: string;
   reviewedIdentity?: Record<string, string>;
 };
 
@@ -64,13 +64,20 @@ case "$1" in
   install)
     : > "$NEMOCLAW_TEST_INSTALL_MARKER"
     ;;
-  --version)
-    printf '%s\\n' "$NEMOCLAW_TEST_INSTALLED_VERSION"
-    ;;
   *)
     exit 2
     ;;
 esac
+`,
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(bin, "tar"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+[ "$1" = "-xOf" ]
+[ "$3" = "package/package.json" ]
+printf '{"version":"%s"}\\n' "$NEMOCLAW_TEST_ARCHIVE_VERSION"
 `,
     { mode: 0o755 },
   );
@@ -84,8 +91,8 @@ esac
       ...process.env,
       ...options.environment,
       NEMOCLAW_TEST_ARCHIVE: options.archive,
+      NEMOCLAW_TEST_ARCHIVE_VERSION: options.archiveVersion ?? "12.0.2",
       NEMOCLAW_TEST_INSTALL_MARKER: installMarker,
-      NEMOCLAW_TEST_INSTALLED_VERSION: options.installedVersion ?? "12.0.2",
       NEMOCLAW_TEST_NPM_LOG: npmLog,
       PATH: `${bin}:${process.env.PATH ?? ""}`,
       RUNNER_TEMP: root,
@@ -124,15 +131,15 @@ describe("reviewed npm bootstrap", () => {
     },
   );
 
-  it("rejects a post-install npm version mismatch (#8253)", () => {
-    const fixture = runBootstrapFixture({ archive, installedVersion: "12.0.3" });
+  it("rejects an archive package version mismatch before installation (#8253)", () => {
+    const fixture = runBootstrapFixture({ archive, archiveVersion: "12.0.3" });
     try {
       expect(fixture.result.status).toBe(1);
       expect(fixture.result.stderr).toContain(
-        "installed npm@12.0.3 does not match reviewed npm@12.0.2",
+        "npm archive version 12.0.3 does not match reviewed npm@12.0.2",
       );
-      expect(fixture.npmInvocations).toHaveLength(3);
-      expect(fixture.installCalled).toBe(true);
+      expect(fixture.npmInvocations).toHaveLength(1);
+      expect(fixture.installCalled).toBe(false);
     } finally {
       fixture.cleanup();
     }
@@ -143,14 +150,13 @@ describe("reviewed npm bootstrap", () => {
     try {
       const { npmInvocations, result } = fixture;
       expect(result.status).toBe(0);
-      expect(npmInvocations).toHaveLength(3);
+      expect(npmInvocations).toHaveLength(2);
       expect(npmInvocations[0]).toMatch(
         /^pack npm@12\.0\.2 --pack-destination .* --userconfig \/dev\/null --registry https:\/\/registry\.npmjs\.org\/ --ignore-scripts --no-audit --no-fund$/,
       );
       expect(npmInvocations[1]).toMatch(
         /^install --global .*\/npm-12\.0\.2\.tgz --userconfig \/dev\/null --ignore-scripts --no-audit --no-fund --offline$/,
       );
-      expect(npmInvocations[2]).toBe("--version");
     } finally {
       fixture.cleanup();
     }

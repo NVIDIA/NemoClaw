@@ -63,12 +63,23 @@ if [ "$actual_integrity" != "$expected_integrity" ] || [ "$actual_sha256" != "$e
   exit 1
 fi
 
+archive_version="$(
+  tar -xOf "$archive" package/package.json | node -e '
+    let source = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => { source += chunk; });
+    process.stdin.on("end", () => {
+      const version = JSON.parse(source).version;
+      if (typeof version !== "string") process.exit(1);
+      process.stdout.write(version);
+    });
+  '
+)"
+if [ "$archive_version" != "$version" ]; then
+  echo "ERROR: npm archive version $archive_version does not match reviewed npm@$version." >&2
+  exit 1
+fi
+
 npm install --global "$archive" \
   --userconfig /dev/null \
   --ignore-scripts --no-audit --no-fund --offline
-
-installed_version="$(npm --version)"
-if [ "$installed_version" != "$version" ]; then
-  echo "ERROR: installed npm@$installed_version does not match reviewed npm@$version." >&2
-  exit 1
-fi

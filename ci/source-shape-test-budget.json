@@ -208,6 +208,11 @@
     },
     {
       "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
+      "test": "uses the single JSON-bound reviewed npm bootstrap owner",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
       "test": "rejects the removed plural source-registry package shape",
       "category": "security"
     },
