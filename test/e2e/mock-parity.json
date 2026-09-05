@@ -715,6 +715,7 @@
     {
       "live": "test/e2e/live/openclaw-skill-cli.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/skill-install.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -809,6 +810,7 @@
     {
       "live": "test/e2e/live/skill-agent.test.ts",
       "fast": [
+        "src/lib/skill-install.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
