@@ -145,6 +145,7 @@ describe("agent-native local skill import patches", () => {
         "module = importlib.util.module_from_spec(spec)",
         "spec.loader.exec_module(module)",
         "assert module.do_import_local('/unused', '../escaped', '0' * 64) is False",
+        "assert module.do_import_local('/unused', '.hub', '0' * 64) is False",
         "assert not pathlib.Path(sys.argv[2]).exists()",
       ].join("; "),
       hub,

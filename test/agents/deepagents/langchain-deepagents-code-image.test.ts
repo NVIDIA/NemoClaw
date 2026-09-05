@@ -971,6 +971,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     "public NemoClaw skill install delegated to DCode native state",
     "public NemoClaw skill list reports DCode native state",
     "public NemoClaw skill remove cleared DCode native state",
+    "skill_post_remove_list_status",
     "DCODE_NATIVE_SKILL_OK",
     "connect --probe-only accepted the managed inference route",
     'sandbox_login_exec "cd /sandbox',

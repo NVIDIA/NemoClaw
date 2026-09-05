@@ -39,7 +39,7 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
     if (
         not expected_name
         or len(expected_name) > 255
-        or expected_name in {".", ".."}
+        or expected_name in {".", "..", ".hub"}
         or re.fullmatch(r"[A-Za-z0-9._-]+", expected_name) is None
     ):
         c.print("[bold red]Error:[/] Invalid staged skill name.")

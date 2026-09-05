@@ -654,8 +654,14 @@ DCODE_EXIT:${direct_exit}"
   else
     fail_test "fresh direct-exec dcode session did not consume the natively imported skill (${direct_classification}, exit ${direct_exit})"
   fi
-  if skill_remove_output="$("$cli_bin" "$SANDBOX_NAME" skill remove "$skill_name" 2>&1)" \
-    && ! sandbox_exec "dcode skills list --agent agent --json" | grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"${skill_name}\""; then
+  skill_remove_output="$("$cli_bin" "$SANDBOX_NAME" skill remove "$skill_name" 2>&1)" \
+    && skill_remove_status=0 || skill_remove_status=$?
+  skill_post_remove_list=""
+  skill_post_remove_list="$(sandbox_exec "dcode skills list --agent agent --json")" \
+    && skill_post_remove_list_status=0 || skill_post_remove_list_status=$?
+  if [ "$skill_remove_status" -eq 0 ] \
+    && [ "$skill_post_remove_list_status" -eq 0 ] \
+    && ! grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"${skill_name}\"" <<<"$skill_post_remove_list"; then
     pass "public NemoClaw skill remove cleared DCode native state"
   else
     fail_test "public NemoClaw skill remove did not clear DCode native state"
@@ -713,6 +719,7 @@ ${skill_file_output}
 ${headless_output}
 ${direct_headless_output}
 ${skill_remove_output}
+${skill_post_remove_list}
 ${connect_output}
 ${fail_closed_connect_output}"
   if printf '%s' "$combined" | contains_secret; then
