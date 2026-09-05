@@ -218,7 +218,7 @@ async function assertRuntimeLayout(probe: DockerProbe, container: string): Promi
   await expectContainerSh(
     probe,
     container,
-    "Hermes shared runtime layout does not preserve cross-UID writes or history protection",
+    "Hermes runtime, API authorization, or dashboard credential-boundary contract failed",
     String.raw`set -eu
 /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -lc 'for dir in hooks image_cache audio_cache logs/curator; do p="/sandbox/.hermes/$dir/.nemoclaw-write-test"; : >"$p" && rm -f "$p"; done'
 for dir in sessions gateway runtime; do
@@ -230,7 +230,24 @@ history=/sandbox/.hermes/.hermes_history
 stat -c '%U:%G %a' "$history" | grep -Fx 'gateway:sandbox 660'
 /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -lc 'printf "sandbox history probe\n" >>/sandbox/.hermes/.hermes_history'
 ! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- rm -f "$history"
-stat -c '%F' "$history" | grep -Fx 'regular file'`,
+stat -c '%F' "$history" | grep -Fx 'regular file'
+token="$(python3 -I -c 'from pathlib import Path; lines=(line.strip().removeprefix("export ").lstrip() for line in Path("/sandbox/.hermes/.env").read_text(encoding="utf-8").splitlines()); print(next(line.split("=", 1)[1].strip().strip("\\\"'\"'\"'") for line in lines if line.startswith("API_SERVER_KEY=")))')"
+printf '%s\n' "$token" | grep -Eq '^[[:xdigit:]]{64}$'
+curl -sS -o /dev/null -w '%{http_code}\n' --max-time 15 http://127.0.0.1:8642/v1/models | grep -Fx 401
+printf 'header = "Authorization: Bearer %s"\n' wrong-token | curl -sS -o /dev/null -w '%{http_code}\n' --max-time 15 --config - http://127.0.0.1:8642/v1/models | grep -Fx 401
+printf 'header = "Authorization: Bearer %s"\n' "$token" | curl -sS -o /dev/null -w '%{http_code}\n' --max-time 15 --config - http://127.0.0.1:8642/v1/models | grep -Ex '(2..|3..|404)'
+dashboard=/sandbox/.hermes/profiles/dashboard-home
+timeout 30 sh -c 'until stat "$1/config.yaml" >/dev/null 2>&1 && stat "$1/.env" >/dev/null 2>&1; do sleep 1; done' sh "$dashboard"
+stat -c '%U:%G %a' "$dashboard" | grep -Fx 'sandbox:sandbox 700'
+stat -c '%U:%G %a' "$dashboard/config.yaml" | grep -Fx 'sandbox:sandbox 600'
+stat -c '%U:%G %a' "$dashboard/.env" | grep -Fx 'sandbox:sandbox 600'
+sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' -e 's/^[[:space:]]*export[[:space:]]*//' "$dashboard/.env" | cut -d= -f1 | sort > /tmp/nemoclaw-dashboard-env-keys
+printf '%s\n' API_SERVER_HOST API_SERVER_PORT NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER FIRECRAWL_GATEWAY_URL OPENAI_AUDIO_GATEWAY_URL BROWSER_USE_GATEWAY_URL FAL_QUEUE_GATEWAY_URL MODAL_GATEWAY_URL | sort > /tmp/nemoclaw-dashboard-env-keys.expected
+cmp /tmp/nemoclaw-dashboard-env-keys.expected /tmp/nemoclaw-dashboard-env-keys
+grep -Eq '^[[:space:]]*(export[[:space:]]+)?API_SERVER_KEY=' "$dashboard/.env" && exit 1 || :
+grep -F 'model:' "$dashboard/config.yaml" >/dev/null
+grep -F 'custom_providers:' "$dashboard/config.yaml" >/dev/null
+grep -F '_nemoclaw_upstream:' "$dashboard/config.yaml" >/dev/null`,
   );
   await expectContainerSh(
     probe,
@@ -659,7 +676,8 @@ test(
       ],
     },
   },
-  async (context) => {
+  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+    const context = { artifacts, cleanup, progress, secrets, signal, skip };
     await runRootEntrypointScenario(
       context,
       {
@@ -676,6 +694,8 @@ test(
           "build-only upstream tests and root caches are absent from the runtime image",
           "gateway.pid is stored as a regular file below the writable runtime directory",
           "gateway user cannot remove config.yaml from sticky config root",
+          "Hermes API denies missing and wrong bearer tokens and accepts API_SERVER_KEY",
+          "dashboard profile is sandbox-owned and excludes API_SERVER_KEY from its .env allowlist",
         ],
       },
       async ({ containers, image, probe, runId }) => {
@@ -696,7 +716,8 @@ test(
       ],
     },
   },
-  async (context) => {
+  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+    const context = { artifacts, cleanup, progress, secrets, signal, skip };
     await runRootEntrypointScenario(
       context,
       {
@@ -726,7 +747,8 @@ test(
       ],
     },
   },
-  async (context) => {
+  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+    const context = { artifacts, cleanup, progress, secrets, signal, skip };
     await runRootEntrypointScenario(
       context,
       {
@@ -756,7 +778,8 @@ test(
       ],
     },
   },
-  async (context) => {
+  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+    const context = { artifacts, cleanup, progress, secrets, signal, skip };
     await runRootEntrypointScenario(
       context,
       {
@@ -784,7 +807,8 @@ test(
       ],
     },
   },
-  async (context) => {
+  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+    const context = { artifacts, cleanup, progress, secrets, signal, skip };
     await runRootEntrypointScenario(
       context,
       {
@@ -812,7 +836,8 @@ test(
       ],
     },
   },
-  async (context) => {
+  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+    const context = { artifacts, cleanup, progress, secrets, signal, skip };
     await runRootEntrypointScenario(
       context,
       {
@@ -840,7 +865,8 @@ test(
       ],
     },
   },
-  async (context) => {
+  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+    const context = { artifacts, cleanup, progress, secrets, signal, skip };
     await runRootEntrypointScenario(
       context,
       {

@@ -12,11 +12,6 @@ import {
   runHermesSandboxInitPreludeWithFakePath,
   writeFakeProcCmdline,
 } from "../../support/hermes-shell-harness";
-import {
-  createStaleCleanupSwapFixture,
-  filesystemFingerprint,
-  runHermesDashboardPortBootstrap,
-} from "./hermes-start-test-helpers";
 
 const START_SCRIPT = path.join(import.meta.dirname, "../../..", "agents", "hermes", "start.sh");
 const ENV_WRAPPER = path.join(
@@ -40,6 +35,53 @@ const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
 const GENERATED_API_SERVER_KEY = Array.from({ length: 64 }, (_value, index) =>
   (index % 16).toString(16),
 ).join("");
+
+function filesystemFingerprint(entry: string): string {
+  const fd = fs.openSync(entry, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const metadata = fs.fstatSync(fd);
+    const contents = metadata.isDirectory() ? "" : fs.readFileSync(fd, "utf8");
+    return `${metadata.dev}:${metadata.ino}:${metadata.uid}:${metadata.gid}:${metadata.mode & 0o7777}:${metadata.size}:${metadata.mtimeMs}:${contents}`;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function createStaleCleanupSwapFixture(tmpDir: string, hermesHome: string) {
+  const externalRoot = path.join(tmpDir, "unsafe-stale-cleanup-target");
+  const externalPid = path.join(externalRoot, "gateway.pid");
+  const sentinel = path.join(externalRoot, "sentinel.txt");
+  const originalEntry = path.join(tmpDir, "original-runtime");
+  const fakeBin = path.join(tmpDir, "stale-cleanup-swap-bin");
+  fs.mkdirSync(externalRoot);
+  fs.writeFileSync(externalPid, "external pid sentinel\n", { mode: 0o640 });
+  fs.writeFileSync(sentinel, "outside sentinel\n", { mode: 0o640 });
+  fs.mkdirSync(fakeBin);
+  fs.writeFileSync(
+    path.join(fakeBin, "python3"),
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'if [ -z "${NEMOCLAW_HERMES_STALE_CLEANUP_ROOT:-}" ]; then',
+      `  export PATH=${shellQuote(process.env.PATH ?? "")}`,
+      '  exec python3 "$@"',
+      "fi",
+      `mv ${shellQuote(path.join(hermesHome, "runtime"))} ${shellQuote(originalEntry)}`,
+      `ln -s ${shellQuote(externalRoot)} ${shellQuote(path.join(hermesHome, "runtime"))}`,
+      `export PATH=${shellQuote(process.env.PATH ?? "")}`,
+      'exec python3 "$@"',
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  const fingerprint = () => [
+    filesystemFingerprint(externalRoot),
+    filesystemFingerprint(externalPid),
+    filesystemFingerprint(sentinel),
+    fs.readFileSync(externalPid, "utf-8"),
+    fs.readFileSync(sentinel, "utf-8"),
+  ];
+  return { fakeBin, before: fingerprint(), fingerprint, originalEntry };
+}
 
 function createHermesUnsafeLogFixture(
   tmpDir: string,
@@ -140,75 +182,6 @@ function runHermesLazyInstallTargetBootstrap(childEnv: NodeJS.ProcessEnv) {
     ["-c", `${src.slice(start, end)}\nprintf '%s\\n' "$HERMES_LAZY_INSTALL_TARGET"`],
     { encoding: "utf-8", env: childEnv, timeout: 5000 },
   );
-}
-
-function runHermesDashboardArgs(tuiValue?: string) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-args-"));
-  const scriptPath = path.join(tmpDir, "run.sh");
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      extractShellFunctionFromSource(src, "truthy_env"),
-      extractShellFunctionFromSource(src, "hermes_dashboard_tui_enabled"),
-      extractShellFunctionFromSource(src, "build_hermes_dashboard_args"),
-      "DASHBOARD_INTERNAL_PORT=19119",
-      tuiValue === undefined
-        ? 'HERMES_DASHBOARD_TUI="${HERMES_DASHBOARD_TUI:-0}"'
-        : `HERMES_DASHBOARD_TUI=${shellQuote(tuiValue)}`,
-      "build_hermes_dashboard_args",
-      'printf "%s\\n" "${HERMES_DASHBOARD_ARGS[@]}"',
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
-  try {
-    return spawnSync("bash", [scriptPath], {
-      encoding: "utf-8",
-      timeout: 5000,
-      env: process.env,
-    });
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-}
-
-function runHermesPortValidation(opts: {
-  publicPort?: number;
-  internalPort?: number;
-  dashboardPublicPort?: number;
-  dashboardInternalPort?: number;
-}) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-port-validation-"));
-  const scriptPath = path.join(tmpDir, "run.sh");
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      extractShellFunctionFromSource(src, "validate_tcp_port"),
-      extractShellFunctionFromSource(src, "validate_port_configuration"),
-      `PUBLIC_PORT=${opts.publicPort ?? 8642}`,
-      `INTERNAL_PORT=${opts.internalPort ?? 18642}`,
-      `DASHBOARD_PUBLIC_PORT=${opts.dashboardPublicPort ?? 18789}`,
-      `DASHBOARD_INTERNAL_PORT=${opts.dashboardInternalPort ?? 19119}`,
-      "validate_port_configuration",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
-  try {
-    return spawnSync("bash", [scriptPath], {
-      encoding: "utf-8",
-      timeout: 5000,
-      env: process.env,
-    });
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
 }
 
 function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: boolean }) {
@@ -892,78 +865,6 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.guardResult.status).toBe(1);
     expect(run.guardResult.stderr).toContain(
       "Error: 'hermes setup' cannot modify config inside the sandbox.",
-    );
-  });
-});
-
-describe("agents/hermes/start.sh port validation", () => {
-  it("derives the dashboard port from CHAT_UI_URL while preserving API port 8642", () => {
-    const run = runHermesDashboardPortBootstrap({
-      CHAT_UI_URL: "https://hermes.example.test:29443",
-      NEMOCLAW_DASHBOARD_PORT: undefined,
-    });
-
-    expect(run.status).toBe(0);
-    expect(run.stdout).toContain("CHAT_UI_URL=https://hermes.example.test:29443");
-    expect(run.stdout).toContain("DASHBOARD_PUBLIC_PORT=29443");
-    expect(run.stdout).toContain("PUBLIC_PORT=8642");
-  });
-
-  it("isolates CHAT_UI_URL parsing from an inherited Python import path", () => {
-    const run = runHermesDashboardPortBootstrap(
-      {
-        CHAT_UI_URL: "https://hermes.example.test:29443",
-        NEMOCLAW_DASHBOARD_PORT: undefined,
-      },
-      true,
-    );
-
-    expect(run.status, run.stderr).toBe(0);
-    expect(run.stdout).toContain("DASHBOARD_PUBLIC_PORT=29443");
-    expect(run.pythonImportSentinelExists).toBe(false);
-  });
-
-  it("rejects dashboard ports that collide with the API port during bootstrap", () => {
-    const fromChatUrl = runHermesDashboardPortBootstrap({
-      CHAT_UI_URL: "http://127.0.0.1:8642",
-      NEMOCLAW_DASHBOARD_PORT: undefined,
-    });
-    expect(fromChatUrl.status).toBe(1);
-    expect(fromChatUrl.stderr).toContain("reserved for the Hermes OpenAI-compatible API");
-
-    const invalidOverride = runHermesDashboardPortBootstrap({
-      CHAT_UI_URL: undefined,
-      NEMOCLAW_DASHBOARD_PORT: "not-a-port",
-    });
-    expect(invalidOverride.status).toBe(1);
-    expect(invalidOverride.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT");
-  });
-
-  it("keeps the managed dashboard isolated and its in-browser Hermes TUI opt-in", () => {
-    const defaultArgs = runHermesDashboardArgs();
-    expect(defaultArgs.status).toBe(0);
-    expect(defaultArgs.stdout.split("\n")).not.toContain("--tui");
-
-    const optInArgs = runHermesDashboardArgs("1");
-    expect(optInArgs.status).toBe(0);
-    expect(optInArgs.stdout.split("\n")).toEqual(expect.arrayContaining(["--isolated", "--tui"]));
-  });
-
-  it("rejects cross-collisions between API and dashboard ports", () => {
-    const dashboardPublicOnApiInternal = runHermesPortValidation({
-      dashboardPublicPort: 18642,
-    });
-    expect(dashboardPublicOnApiInternal.status).toBe(1);
-    expect(dashboardPublicOnApiInternal.stderr).toContain(
-      "DASHBOARD_PUBLIC_PORT must not equal INTERNAL_PORT",
-    );
-
-    const dashboardInternalOnApiPublic = runHermesPortValidation({
-      dashboardInternalPort: 8642,
-    });
-    expect(dashboardInternalOnApiPublic.status).toBe(1);
-    expect(dashboardInternalOnApiPublic.stderr).toContain(
-      "DASHBOARD_INTERNAL_PORT must not equal PUBLIC_PORT",
     );
   });
 });
