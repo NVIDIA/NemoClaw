@@ -265,6 +265,16 @@ function maybePromptForSupportedInferenceInputCapability(
   return deps.maybePromptForInferenceInputCapability(model);
 }
 
+function exitAfterVllmInstallFailure(
+  deps: Pick<SetupNimFlowDeps, "abortNonInteractive" | "exitProcess" | "isNonInteractive">,
+  requestedProvider: string | null,
+): void {
+  if (deps.isNonInteractive()) {
+    deps.abortNonInteractive("vLLM install failed. See errors above.");
+  }
+  if (requestedProvider) deps.exitProcess(1);
+}
+
 function requireSelectedProvider(
   selected: ProviderMenuChoice | undefined,
   deps: Pick<SetupNimFlowDeps, "error" | "exitProcess">,
@@ -1292,8 +1302,7 @@ export function createSetupNim(
             },
           });
           if (!result.ok) {
-            if (deps.isNonInteractive() || requestedProvider)
-              deps.abortNonInteractive("vLLM install failed. See errors above.");
+            exitAfterVllmInstallFailure(deps, requestedProvider);
             continue selectionLoop;
           }
           selected = {

@@ -22,9 +22,12 @@ describe("createSetupNim vLLM resume", () => {
     const profile = { name: "N1x", platform: "n1x" } as VllmProfile;
     const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>(async () => ({ ok: false }));
     const failure = new Error("pinned managed vLLM install aborted");
-    const abortNonInteractive = vi.fn<SetupNimFlowDeps["abortNonInteractive"]>(() => {
+    const exitProcess = vi.fn<SetupNimFlowDeps["exitProcess"]>(() => {
       throw failure;
     });
+    const abortNonInteractive = vi.fn<SetupNimFlowDeps["abortNonInteractive"]>(() =>
+      unexpected("non-interactive abort"),
+    );
     const setupNim = createSetupNim(
       makeDeps({
         getNonInteractiveProvider: () => "install-vllm",
@@ -33,17 +36,20 @@ describe("createSetupNim vLLM resume", () => {
           makeHostState({
             vllmProfile: profile,
             vllmEntries: [{ key: "install-vllm", label: "Install vLLM (N1x)" }],
-          }),
+        }),
         installVllm,
+        exitProcess,
         abortNonInteractive,
       }),
     );
 
     await expect(setupNim({ platform: "n1x" } as never)).rejects.toBe(failure);
 
-    expect(installVllm).toHaveBeenCalledOnce();
-    expect(abortNonInteractive).toHaveBeenCalledOnce();
-    expect(abortNonInteractive).toHaveBeenCalledWith("vLLM install failed. See errors above.");
+    expect({
+      installCalls: installVllm.mock.calls.length,
+      exitCalls: exitProcess.mock.calls,
+      nonInteractiveAbortCalls: abortNonInteractive.mock.calls.length,
+    }).toEqual({ installCalls: 1, exitCalls: [[1]], nonInteractiveAbortCalls: 0 });
   });
 
   it("resumes a checkpointed install without prompting for a provider (#9582)", async () => {
