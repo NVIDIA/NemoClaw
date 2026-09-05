@@ -18,6 +18,7 @@ import {
   qwenGpuAgentPlan,
   qwenGpuProbeDiagnostic,
   qwenGpuRecipeBinding,
+  parseQwenGpuManagedImageReceipt,
   QWEN_GPU_GATEWAY_NETWORK_PATTERN,
   QWEN_GPU_MAX_COMMAND_BYTES,
   QWEN_GPU_RECIPE_ID,
@@ -28,8 +29,6 @@ import { runManagedImageOpenShellE2e } from "./run-managed-image-openshell-e2e.t
 
 const TARGET_ID = "llama-cpp-qwen-gpu";
 const PRESET_ID = "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b";
-const OPENCLAW_IMAGE_PATTERN =
-  /^ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[a-f0-9]{64}$/u;
 
 type QualificationSetting = {
   readonly modelFile: {
@@ -44,14 +43,6 @@ type CommandResult = {
   readonly status: number | null;
   readonly stdout: string;
   readonly stderr: string;
-};
-
-type ManagedImageReceipt = {
-  readonly cohort: string;
-  readonly revision: string;
-  readonly runAttempt: number;
-  readonly runId: number;
-  readonly openClawAmd64: string;
 };
 
 function requiredEnvironment(name: string, pattern?: RegExp): string {
@@ -114,39 +105,10 @@ function loadQwenGpuSetting(): QualificationSetting {
   };
 }
 
-function loadManagedImageReceipt(): ManagedImageReceipt {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(requiredEnvironment("NEMOCLAW_E2E_MANAGED_IMAGE_COHORT_RECEIPT"));
-  } catch {
-    throw new Error("managed-image cohort receipt is not valid JSON");
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("managed-image cohort receipt must be an object");
-  }
-  const receipt = parsed as Record<string, unknown>;
-  const images = receipt.images as Record<string, unknown> | undefined;
-  const openClaw = images?.openclaw as Record<string, unknown> | undefined;
-  const openClawAmd64 = openClaw?.["linux/amd64"];
-  if (
-    receipt.kind !== "nemoclaw-managed-image-cohort-receipt-v1" ||
-    typeof receipt.cohort !== "string" ||
-    typeof receipt.revision !== "string" ||
-    !QWEN_GPU_SHA_PATTERN.test(receipt.revision) ||
-    !Number.isSafeInteger(receipt.runAttempt) ||
-    !Number.isSafeInteger(receipt.runId) ||
-    typeof openClawAmd64 !== "string" ||
-    !OPENCLAW_IMAGE_PATTERN.test(openClawAmd64)
-  ) {
-    throw new Error("managed-image cohort receipt does not bind one OpenClaw amd64 image");
-  }
-  return {
-    cohort: receipt.cohort,
-    revision: receipt.revision,
-    runAttempt: Number(receipt.runAttempt),
-    runId: Number(receipt.runId),
-    openClawAmd64,
-  };
+function loadManagedImageReceipt() {
+  return parseQwenGpuManagedImageReceipt(
+    requiredEnvironment("NEMOCLAW_E2E_MANAGED_IMAGE_COHORT_RECEIPT"),
+  );
 }
 
 function modelCacheEntry(setting: QualificationSetting): string {

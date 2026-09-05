@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  parseQwenGpuManagedImageReceipt,
   qwenGpuAgentPlan,
   qwenGpuProbeDiagnostic,
   qwenGpuRecipeBinding,
@@ -14,6 +15,14 @@ import {
 
 const IMAGE = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
 const REVISION = "b".repeat(40);
+const MANAGED_IMAGE_RECEIPT = {
+  kind: "nemoclaw-managed-image-cohort-receipt-v1",
+  cohort: "ghrun-123-1",
+  revision: REVISION,
+  runAttempt: 1,
+  runId: 123,
+  images: { openclaw: { "linux/amd64": IMAGE } },
+};
 
 describe("Qwen llama.cpp RTX qualification plan", () => {
   it("binds the validated managed image to the routed OpenClaw tool journey", () => {
@@ -36,6 +45,37 @@ describe("Qwen llama.cpp RTX qualification plan", () => {
     ).toThrow("managed-image cohort returned an invalid OpenClaw identity");
     expect(() => qwenGpuAgentPlan(IMAGE, "main")).toThrow(
       "managed-image cohort returned an invalid OpenClaw identity",
+    );
+  });
+
+  it("validates the actual managed-image receipt trust boundary", () => {
+    expect(parseQwenGpuManagedImageReceipt(JSON.stringify(MANAGED_IMAGE_RECEIPT))).toEqual({
+      cohort: "ghrun-123-1",
+      revision: REVISION,
+      runAttempt: 1,
+      runId: 123,
+      openClawAmd64: IMAGE,
+    });
+    expect(() => parseQwenGpuManagedImageReceipt("not-json")).toThrow("not valid JSON");
+    expect(() => parseQwenGpuManagedImageReceipt("[]")).toThrow("must be an object");
+  });
+
+  it.each([
+    ["wrong kind", { ...MANAGED_IMAGE_RECEIPT, kind: "other" }],
+    ["invalid revision", { ...MANAGED_IMAGE_RECEIPT, revision: "main" }],
+    ["invalid attempt", { ...MANAGED_IMAGE_RECEIPT, runAttempt: 0 }],
+    ["invalid run id", { ...MANAGED_IMAGE_RECEIPT, runId: 1.5 }],
+    ["unbound cohort", { ...MANAGED_IMAGE_RECEIPT, cohort: "ghrun-elsewhere" }],
+    [
+      "mutable image",
+      {
+        ...MANAGED_IMAGE_RECEIPT,
+        images: { openclaw: { "linux/amd64": "ghcr.io/nvidia/nemoclaw/openclaw:latest" } },
+      },
+    ],
+  ])("rejects a managed-image receipt with %s", (_label, receipt) => {
+    expect(() => parseQwenGpuManagedImageReceipt(JSON.stringify(receipt))).toThrow(
+      "does not bind one OpenClaw amd64 image",
     );
   });
 

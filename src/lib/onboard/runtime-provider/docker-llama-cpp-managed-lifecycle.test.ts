@@ -39,6 +39,7 @@ import {
   createTestDockerLlamaCppManagedLifecycle as createLifecycle,
   privateBridgeFixture,
 } from "./docker-llama-cpp-private-bridge.test-support";
+import { createDockerLlamaCppInspectionOperation } from "./docker-llama-cpp-operation";
 import type {
   HostLocalCreateJournalExecutionLease,
   HostLocalCreateJournalRecord,
@@ -487,6 +488,22 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
         "host.openshell.internal:172.29.0.1",
         "http://host.openshell.internal:8081/health",
       ]),
+    );
+  });
+
+  it("binds status inspection to the configured OpenShell bridge", () => {
+    const fixture = dockerFixture();
+    const createInspectionLifecycle = vi.fn(() => ({}) as never);
+    const operation = createDockerLlamaCppInspectionOperation(
+      fixture.engine,
+      { OPENSHELL_DOCKER_NETWORK_NAME: "nemoclaw-inspection-network" },
+      createInspectionLifecycle,
+    );
+
+    operation.createLlamaCppLifecycle({} as never);
+
+    expect(createInspectionLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ gatewayNetworkName: "nemoclaw-inspection-network" }),
     );
   });
 

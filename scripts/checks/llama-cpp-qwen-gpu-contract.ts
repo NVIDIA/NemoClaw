@@ -12,6 +12,51 @@ const OPENCLAW_IMAGE_PATTERN =
   /^ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[a-f0-9]{64}$/u;
 export const QWEN_GPU_SANDBOX_NAME = "nmc-lcpp-qwen-rtx";
 
+export type QwenGpuManagedImageReceipt = {
+  readonly cohort: string;
+  readonly revision: string;
+  readonly runAttempt: number;
+  readonly runId: number;
+  readonly openClawAmd64: string;
+};
+
+export function parseQwenGpuManagedImageReceipt(source: string): QwenGpuManagedImageReceipt {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    throw new Error("managed-image cohort receipt is not valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("managed-image cohort receipt must be an object");
+  }
+  const receipt = parsed as Record<string, unknown>;
+  const images = receipt.images as Record<string, unknown> | undefined;
+  const openClaw = images?.openclaw as Record<string, unknown> | undefined;
+  const openClawAmd64 = openClaw?.["linux/amd64"];
+  if (
+    receipt.kind !== "nemoclaw-managed-image-cohort-receipt-v1" ||
+    typeof receipt.revision !== "string" ||
+    !QWEN_GPU_SHA_PATTERN.test(receipt.revision) ||
+    !Number.isSafeInteger(receipt.runAttempt) ||
+    Number(receipt.runAttempt) < 1 ||
+    !Number.isSafeInteger(receipt.runId) ||
+    Number(receipt.runId) < 1 ||
+    receipt.cohort !== `ghrun-${String(receipt.runId)}-${String(receipt.runAttempt)}` ||
+    typeof openClawAmd64 !== "string" ||
+    !OPENCLAW_IMAGE_PATTERN.test(openClawAmd64)
+  ) {
+    throw new Error("managed-image cohort receipt does not bind one OpenClaw amd64 image");
+  }
+  return {
+    cohort: receipt.cohort,
+    revision: receipt.revision,
+    runAttempt: Number(receipt.runAttempt),
+    runId: Number(receipt.runId),
+    openClawAmd64,
+  };
+}
+
 export function qwenGpuRecipeBinding(recipeRef: unknown): typeof QWEN_GPU_RECIPE_ID {
   if (recipeRef !== QWEN_GPU_RECIPE_ID) {
     throw new Error("N1x WSL Qwen preset does not bind the expected llama.cpp recipe");

@@ -116,6 +116,7 @@ describe("generic NVIDIA GPU PR selection", () => {
   });
 
   it.each([
+    "src/lib/adapters/http/auth-config.ts",
     "scripts/checks/llama-cpp-openclaw-agent-qualification.mts",
     "scripts/checks/llama-cpp-compiled-runtime.ts",
     "scripts/checks/llama-cpp-qwen-gpu-contract.ts",
@@ -135,7 +136,10 @@ describe("generic NVIDIA GPU PR selection", () => {
 
   it.each([
     ".github/workflows/pr-self-hosted.yaml",
+    "src/lib/inference/serving/catalog-loader.ts",
+    "src/lib/onboard/managed-bootstrap/adapter.ts",
     "src/lib/onboard/runtime-provider/docker-llama-cpp-operation.ts",
+    "src/lib/onboard/sandbox-gpu-create-flow.ts",
   ])("selects both GPU jobs for shared dependency %s", (changedFile) => {
     expect(selectGenericGpuLane([changedFile])).toBe(
       `base_sha=${BASE_SHA}\npublication_selected=true\nqwen_selected=true\nselected=true`,

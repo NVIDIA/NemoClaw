@@ -88,7 +88,8 @@ jobs:
                     )
                   ),
                   qwen_only: any(
-                    .filename == "scripts/checks/llama-cpp-openclaw-agent-qualification.mts"
+                    .filename == "src/lib/adapters/http/auth-config.ts"
+                    or .filename == "scripts/checks/llama-cpp-openclaw-agent-qualification.mts"
                     or .filename == "scripts/checks/llama-cpp-compiled-runtime.ts"
                     or .filename == "scripts/checks/llama-cpp-qwen-gpu-contract.ts"
                     or .filename == "scripts/checks/managed-image-protected-runtime-contract.ts"
@@ -106,7 +107,21 @@ jobs:
                   ),
                   shared: any(
                     .filename == ".github/workflows/pr-self-hosted.yaml"
+                    or .filename == "src/lib/agent/onboard.ts"
+                    or (.filename | startswith("src/lib/adapters/openshell/"))
+                    or (.filename | startswith("src/lib/inference/serving/"))
+                    or .filename == "src/lib/name-validation.ts"
+                    or .filename == "src/lib/onboard/host-gateway-process.ts"
+                    or .filename == "src/lib/onboard/initial-policy.ts"
+                    or (.filename | startswith("src/lib/onboard/managed-bootstrap/"))
+                    or (.filename | startswith("src/lib/onboard/managed-image/"))
+                    or (.filename | startswith("src/lib/onboard/managed-startup/"))
                     or .filename == "src/lib/onboard/runtime-provider/docker.ts"
+                    or .filename == "src/lib/onboard/runtime-provider/contract.ts"
+                    or .filename == "src/lib/onboard/sandbox-create-launch.ts"
+                    or .filename == "src/lib/onboard/sandbox-gpu-create-flow.ts"
+                    or .filename == "src/lib/onboard/sandbox-gpu-preflight.ts"
+                    or .filename == "src/lib/runtime-recovery.ts"
                     or (.filename | startswith("src/lib/inference/llama-cpp/"))
                     or (.filename | startswith("src/lib/onboard/runtime-provider/docker-llama-cpp"))
                   )

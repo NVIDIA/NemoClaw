@@ -119,10 +119,15 @@ export function createManagedLlamaCppEngine(
 /** Rebind an already injected Docker engine for read-only status inspection. */
 export function createDockerLlamaCppInspectionOperation(
   engine: ContainerEngine,
+  env: NodeJS.ProcessEnv = process.env,
+  createLifecycle: (
+    input: DockerLlamaCppManagedLifecycleOptions,
+  ) => DockerLlamaCppManagedLifecycle = createDockerLlamaCppManagedLifecycle,
 ): HostLocalInferenceOperation {
   if (engine.operation !== "host-local-inference" || engine.engineId !== "docker") {
     throw new Error("Managed llama.cpp inspection requires a Docker host-local-inference engine.");
   }
+  const gatewayNetworkName = resolveDockerDriverNetworkName(env);
   return Object.freeze({
     providerId: "docker",
     engine,
@@ -131,6 +136,8 @@ export function createDockerLlamaCppInspectionOperation(
     spawn: () => {
       throw new Error("Managed llama.cpp inspection cannot spawn container-engine commands.");
     },
-    createLlamaCppLifecycle: createDockerLlamaCppManagedLifecycle,
+    createLlamaCppLifecycle: (
+      input: Parameters<HostLocalInferenceOperation["createLlamaCppLifecycle"]>[0],
+    ) => createLifecycle({ ...input, gatewayNetworkName }),
   });
 }
