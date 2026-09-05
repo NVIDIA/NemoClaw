@@ -252,6 +252,11 @@
       "category": "security"
     },
     {
+      "file": "test/install/installer-brev-npm12-template-trust.test.ts",
+      "test": "binds the exact reviewed npm 12 Brev successor and rejects version drift",
+      "category": "security"
+    },
+    {
       "file": "test/install/installer-supervisor-manifest-trust.test.ts",
       "test": "accepts the prospective shared gateway state resolver template (#10544)",
       "category": "security"
