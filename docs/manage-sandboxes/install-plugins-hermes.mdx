@@ -115,7 +115,7 @@ The supported path for custom Hermes plugins is to bake the plugin into a custom
 Use this path when the plugin adds Python code, runtime hooks, or dependencies that Hermes must see at gateway startup.
 
 `nemohermes <name> skill install <path>` is only for `SKILL.md` agent skills.
-It uploads skill instructions and refreshes skill discovery, but it does not install Hermes runtime plugins.
+NemoClaw stages a validated snapshot, then Hermes imports, verifies, and activates the skill through its native lifecycle; this does not install Hermes runtime plugins.
 
 When you change plugin code or dependencies, update the custom image and rebuild the sandbox so the plugin remains reproducible.
 When you change a supported startup-only setting with a NemoClaw host command, restart the Hermes gateway from the host:

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Flags } from "@oclif/core";
 import {
   listSandboxSkills,
   printSkillInstallUsage,
@@ -20,15 +19,6 @@ export default class SkillListCliCommand extends NemoClawPassthroughCommand {
     "<%= config.bin %> sandbox skill list alpha --json",
     "<%= config.bin %> sandbox skill list alpha --eligible --verbose",
   ];
-  static flags = {
-    json: Flags.boolean({ description: "Forward JSON output mode when the agent supports it" }),
-    eligible: Flags.boolean({ description: "Forward the OpenClaw eligible-only filter" }),
-    verbose: Flags.boolean({ char: "v", description: "Forward verbose OpenClaw output" }),
-    "enabled-only": Flags.boolean({ description: "Forward the Hermes enabled-only filter" }),
-    project: Flags.boolean({ description: "Forward the DCode project-only filter" }),
-    source: Flags.string({ description: "Forward the Hermes source filter" }),
-  };
-
   public async run(): Promise<void> {
     const { extraArgs, sandboxName } = this.passthroughArgs();
     if (

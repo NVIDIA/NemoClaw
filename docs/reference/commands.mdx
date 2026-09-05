@@ -2403,32 +2403,28 @@ List skills from the selected agent's own state.
 
 <AgentOnly variant="openclaw">
 
-This is a thin pass-through to `openclaw skills list` for the primary `main` agent inside the sandbox. NemoClaw does not merge, cache, or maintain a second skill list. Native output and filter flags such as `--json`, `--eligible`, and `--verbose` are forwarded verbatim. An agent override is refused because the lifecycle commands are bound to the sandbox's primary agent state.
+This is a thin pass-through to `openclaw skills list` for the primary `main` agent inside the sandbox. NemoClaw does not merge, cache, or maintain a second skill list. Native output and filtering arguments are forwarded verbatim. An agent override is refused because the lifecycle commands are bound to the sandbox's primary agent state.
 
 ```bash
 $$nemoclaw my-assistant skill list
-$$nemoclaw my-assistant skill list --json
-$$nemoclaw my-assistant skill list --eligible --verbose
 ```
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-This is a thin pass-through to `hermes skills list` inside the sandbox. Native flags such as `--source` and `--enabled-only` are forwarded. NemoClaw does not merge, cache, or maintain a second Hermes skill list.
+This is a thin pass-through to `hermes skills list` inside the sandbox. Native filtering and output arguments are forwarded. NemoClaw does not merge, cache, or maintain a second Hermes skill list.
 
 ```bash
 nemohermes my-assistant skill list
-nemohermes my-assistant skill list --enabled-only
 ```
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-This is a thin pass-through to `dcode skills list` for DCode's primary `agent` state inside the sandbox. Native flags such as `--json` and `--project` are forwarded. NemoClaw does not merge, cache, or maintain a second DCode skill list. An agent override is refused because the lifecycle commands are bound to that primary state.
+This is a thin pass-through to `dcode skills list` for DCode's primary `agent` state inside the sandbox. Native filtering and output arguments are forwarded. NemoClaw does not merge, cache, or maintain a second DCode skill list. An agent override is refused because the lifecycle commands are bound to that primary state.
 
 ```bash
 nemo-deepagents my-assistant skill list
-nemo-deepagents my-assistant skill list --json
 ```
 
 </AgentOnly>

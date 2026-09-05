@@ -523,6 +523,9 @@ describe("sandbox skill action orchestration", () => {
     expect(error).toHaveBeenCalledWith(
       "  The pinned OpenClaw runtime does not expose the reviewed native skill install capability.",
     );
+    expect(error).toHaveBeenCalledWith(
+      "  Rebuild with 'nemoclaw alpha rebuild' and retry; rebuild preserves both workspace and legacy global skill directories.",
+    );
   });
 
   it("reports the supported OpenClaw primary workspace boundary", async () => {

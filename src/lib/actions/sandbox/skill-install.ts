@@ -569,6 +569,11 @@ export async function installSandboxSkill(
           ? "  The pinned OpenClaw runtime does not expose the reviewed native skill install capability."
           : `  The pinned ${displayName} runtime does not expose the reviewed native local skill import capability.`,
       );
+      if (agentName === "openclaw") {
+        console.error(
+          `  Rebuild with '${CLI_NAME} ${sandboxName} rebuild' and retry; rebuild preserves both workspace and legacy global skill directories.`,
+        );
+      }
     } else if (native.reason === "native_install_failed") {
       console.error(`  The ${displayName} native skill import refused or failed the staged skill.`);
     } else if (native.reason === "sandbox_identity_changed") {
