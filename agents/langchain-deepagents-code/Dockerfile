@@ -309,6 +309,7 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-upstream-provider /usr/local/share/nemoclaw/dcode-auto-approval /usr/local/share/nemoclaw/dcode-reasoning-effort \
     && /opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py \
     && rm -f /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py \
+    && unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
     && dcode_skill_stage="$(mktemp -d)" \
     && printf '%s\n' '---' 'name: nemoclaw-native-import-probe' 'description: Controlled managed-image native import probe.' '---' '# Native import probe' > "$dcode_skill_stage/SKILL.md" \
     && dcode_skill_file_digest="$(sha256sum "$dcode_skill_stage/SKILL.md" | cut -d ' ' -f 1)" \
@@ -324,7 +325,6 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && test ! -e /sandbox/.deepagents/agent/skills/nemoclaw-native-import-probe \
     && { rmdir /sandbox/.deepagents/agent/skills /sandbox/.deepagents/agent 2>/dev/null || true; } \
     && rm -rf "$dcode_skill_stage" /tmp/nemoclaw-dcode-skill-import.out /tmp/nemoclaw-dcode-skill-rejected.out \
-    && unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
     && empty_prompt_log="$(mktemp)" \
     && if timeout 10 env -i /usr/local/lib/nemoclaw/dcode-wrapper.sh -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
     && empty_prompt_output="$(cat "$empty_prompt_log")" \

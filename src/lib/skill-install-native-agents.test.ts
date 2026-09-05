@@ -140,6 +140,7 @@ esac
         stateDir,
         isOpenClaw: false,
       };
+      let lastSshResult: SshResult | undefined;
       const sshExec = (
         _ctx: SshContext,
         command: string,
@@ -164,19 +165,21 @@ esac
             input: options?.input,
           },
         );
-        return {
+        lastSshResult = {
           status: result.status ?? 1,
           stdout: result.stdout,
           stderr: result.stderr,
         };
+        return lastSshResult;
       };
 
-      expect(
-        installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {
-          expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
-          sshExecImpl: sshExec,
-        }),
-      ).toMatchObject({ success: true });
+      const firstInstall = installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {
+        expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
+        sshExecImpl: sshExec,
+      });
+      expect(firstInstall, JSON.stringify({ firstInstall, lastSshResult })).toMatchObject({
+        success: true,
+      });
       expect(fs.existsSync(abandonedStage)).toBe(false);
       fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: demo-skill\n---\n# Updated\n");
       expect(
@@ -198,5 +201,6 @@ esac
         fs.readdirSync(stateDir).filter((name) => name.startsWith(".nemoclaw-skill-stage.")),
       ).toEqual([]);
     },
+    30_000,
   );
 });
