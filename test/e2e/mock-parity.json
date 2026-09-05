@@ -524,9 +524,12 @@
       "live": "test/e2e/live/hermes-e2e.test.ts",
       "liveSources": [
         "test/e2e/live/hermes-cli-adapter-live.ts",
-        "test/e2e/live/hermes-e2e-phases.ts"
+        "test/e2e/live/hermes-e2e-phases.ts",
+        "test/e2e/live/hermes-skill-lifecycle.ts"
       ],
       "fast": [
+        "src/lib/actions/sandbox/skill-install.test.ts",
+        "test/agents/hermes/hermes-image-build-probes.test.ts",
         "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
@@ -534,6 +537,7 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/inference-adapter.test.ts",
+        "test/e2e/support/workflow-plan.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts"
       ]
     },
