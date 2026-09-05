@@ -160,7 +160,7 @@ If the installer offers Express on WSL, a qualifying N1x WSL host uses managed l
 The installer uses local Docker Desktop, Arm64, the Windows N1x product identity, and at least 48,000 MiB of GPU memory as preliminary selection conditions.
 Onboarding also requires the default local Docker context, at least 48,000 MiB of Docker memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
 If any required readiness check fails, onboarding stops managed llama.cpp selection.
-Other WSL hosts retain the Windows-host and WSL-local Ollama rules in this section.
+Other WSL hosts use WSL-local Ollama for Express installation.
 
 If you plan to select Ollama as your inference provider during onboarding, use one Ollama instance.
 It can run inside WSL or on Windows through Docker Desktop.
@@ -173,20 +173,21 @@ curl -fsSL https://ollama.com/install.sh | sh
 If you installed Ollama but it is not already running in WSL, onboarding starts it for you.
 You can also start it yourself beforehand with `ollama serve`.
 
-You can also use Ollama for Windows.
-During onboarding, NemoClaw can use an already-running Windows-host daemon, start or restart an installed daemon, or install Ollama on the Windows host.
-For WSL hosts that do not qualify for managed llama.cpp, accepting Express selects a local Ollama path automatically based on the container runtime.
-The installer selects Windows-host Ollama only when it detects local Docker Desktop WSL integration, and it selects WSL-local Ollama otherwise.
-The Windows-host Ollama path requires Docker Desktop WSL integration; the express prompt appears on WSL regardless of the container runtime.
+You can also use Ollama for Windows through the manual onboarding menu.
+NemoClaw reuses a Windows-host daemon only when it is bound exclusively to a loopback address on port `11434`, Docker Desktop can reach it, and it returns `403` for an untrusted HTTP `Host` value.
+The Windows install and restart actions enforce the same loopback binding and validation check.
+For WSL hosts that do not qualify for managed llama.cpp, accepting Express selects WSL-local Ollama.
+The Windows-host Ollama path remains an explicit manual option and requires Docker Desktop WSL integration.
+For that path, unset `DOCKER_HOST` and use Docker's local `default` context; otherwise, choose WSL-local Ollama.
 When the installer must read the Docker configuration file to determine the effective Docker context and Node.js is unavailable, it defers provider selection until after it installs Node.js.
-It then reads the configuration and applies the same runtime check.
+It then reads the configuration to finish the managed N1x eligibility check.
 The express selection does not waive system readiness.
-With native Docker Engine inside WSL, a remote or unknown Docker target, or failed Docker detection, Express selects WSL-local Ollama.
-An installed Windows-host Ollama that Docker Desktop cannot reach leaves the WSL-local install available in the onboarding menu and through a requested `install-ollama` provider.
-Qualified WSL routes reach the applicable host route directly and do not use the Ollama auth proxy.
+An installed Windows-host Ollama that fails the loopback, reachability, or HTTP `Host` validation check leaves the WSL-local install available in the onboarding menu and through a requested `install-ollama` provider.
+Qualified Windows-host routes reach the protected host route directly and do not use the Ollama auth proxy.
 You can still decline the express prompt (or set `NEMOCLAW_NO_EXPRESS=1`) to choose a provider manually; the onboarding menu labels the Windows-host actions as requiring Docker Desktop integration.
 When Ollama runs on the Windows host, NemoClaw checks it from Docker Desktop through `host.docker.internal` and pulls missing models through the Ollama HTTP API.
 A direct request from WSL can fail because Docker Desktop defines this hostname in its container network context.
+Do not set Windows `OLLAMA_HOST` to `0.0.0.0:11434`; the wildcard listener is unauthenticated and disables the loopback-only HTTP `Host` validation that NemoClaw requires.
 Do not run both the Windows and WSL Ollama instances on port `11434` at the same time.
 Use one instance, or move one of them to a different port before running `$$nemoclaw onboard`.
 If a Windows on Arm N1x system does not qualify for managed llama.cpp and uses Ollama, let NemoClaw choose the starter model automatically.

@@ -206,6 +206,7 @@ const {
   getLocalProviderBaseUrl,
   getLocalProviderHealthCheck,
   getLocalProviderValidationBaseUrl,
+  shouldFrontOllamaWithProxy,
   validateLocalProvider,
 } = localInference;
 const resolveNonInteractiveModel = localInference.resolveNonInteractiveOllamaModel;
@@ -222,15 +223,13 @@ const {
   isProxyHealthy,
   persistAndProbeOllamaProxy,
   prepareOllamaModel,
-  printOllamaExposureWarning,
   promptOllamaModel,
   unloadOllamaModels,
 } = require("./inference/ollama/proxy");
 const {
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
-  setupWindowsOllamaWith0000Binding,
-  switchToWindowsOllamaHost,
+  setupWindowsOllamaLoopbackBinding,
   printWindowsOllamaTimeoutDiagnostics,
 } = require("./inference/ollama/windows");
 const vllmInference = require("./inference/vllm");
@@ -308,7 +307,6 @@ const {
   getContainerRuntime,
   repairLocalInferenceSystemdOverrideOrExit,
   rejectUnsupportedWindowsHostOllama,
-  shouldFrontOllamaWithProxy,
 }: typeof import("./onboard/local-inference-topology") = require("./onboard/local-inference-topology");
 const {
   getGatewayHealthWaitConfig,
@@ -936,6 +934,7 @@ const {
   verifyOnboardInferenceSmoke,
   getProbeAuthMode,
   getValidationProbeCurlArgs,
+  getOpenAiSelectionProbeOptions,
 } = require("./inference/onboard-probes");
 
 const {
@@ -988,11 +987,9 @@ const {
   shouldFrontOllamaWithProxy,
   getLocalProviderBaseUrl,
   selectAndValidateOllamaModel,
-  printOllamaExposureWarning,
-  switchToWindowsOllamaHost,
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
-  setupWindowsOllamaWith0000Binding,
+  setupWindowsOllamaLoopbackBinding,
   printWindowsOllamaTimeoutDiagnostics,
   resetOllamaHostCache,
   installOllamaOnMacOS,
@@ -2280,11 +2277,7 @@ async function handleRemoteProviderSelection(
           state.credentialEnv,
           "Please choose a provider/model again.",
           remoteConfig.helpUrl,
-          withCredentialMutationGuard(state, {
-            requireResponsesToolCalling: shouldRequireResponsesToolCalling(state.provider),
-            skipResponsesProbe: shouldSkipResponsesProbe(state.provider),
-            authMode: getProbeAuthMode(state.provider),
-          }),
+          withCredentialMutationGuard(state, getOpenAiSelectionProbeOptions(state.provider)),
         ),
     });
     if (buildValidation.retrySelection) return "retry-selection";
@@ -3525,6 +3518,5 @@ module.exports = {
   ensureOllamaAuthProxy,
   fetchGatewayAuthTokenFromSandbox,
   getProbeAuthMode,
-  getValidationProbeCurlArgs,
   verifyCompatibleEndpointSandboxSmoke,
 };

@@ -2541,7 +2541,7 @@ sudo ufw allow from "$SUBNET" to any port 11435 proto tcp
 $$nemoclaw onboard
 ```
 
-Qualified Docker Desktop WSL routes do not use the auth proxy. Other hosts without the OpenShell Docker network use different routing models; for proxy-fronted routes, NemoClaw treats an unavailable sandbox-side probe as non-blocking and relies on the regular proxy health check.
+Only an accepted Windows-host Ollama route uses direct Docker Desktop access to port `11434`. WSL-local Ollama uses the auth proxy, including on Docker Desktop WSL. Other hosts without the OpenShell Docker network use different routing models; for proxy-fronted routes, NemoClaw treats an unavailable sandbox-side probe as non-blocking and relies on the regular proxy health check.
 
 ### `host.docker.internal` does not reliably reach the host from the sandbox
 
@@ -2573,7 +2573,7 @@ For local Ollama on non-WSL hosts, use the auth-proxy URL that NemoClaw's "Local
 http://host.openshell.internal:11435/v1
 ```
 
-`host.openshell.internal` resolves to the same gateway IP, and the [token-gated Ollama auth proxy](#ollama-auth-proxy-did-not-start) binds port `11435` there and forwards requests to `127.0.0.1:11434` on the host. Docker Desktop WSL routes reach host loopback directly and do not use this proxy. Native Docker Engine inside WSL is unqualified; enable Docker Desktop WSL integration instead of configuring the proxy URL manually. If you need a different host service exposed to the sandbox, route it through the OpenShell gateway rather than relying on `host.docker.internal`. Refer to issue [#3136](https://github.com/NVIDIA/NemoClaw/issues/3136).
+`host.openshell.internal` resolves to the same gateway IP, and the [token-gated Ollama auth proxy](#ollama-auth-proxy-did-not-start) binds port `11435` there and forwards requests to `127.0.0.1:11434` on the host. Only an accepted Windows-host Ollama route uses direct Docker Desktop access to port `11434`; WSL-local Ollama uses the authenticated proxy even with Docker Desktop. Native Docker Engine inside WSL is unqualified; enable Docker Desktop WSL integration instead of configuring the proxy URL manually. If you need a different host service exposed to the sandbox, route it through the OpenShell gateway rather than relying on `host.docker.internal`. Refer to issue [#3136](https://github.com/NVIDIA/NemoClaw/issues/3136).
 
 ### Local inference health check resolves to IPv6
 
@@ -2809,7 +2809,10 @@ docker info
 
 ### Windows-host Ollama is installed but not shown during onboarding
 
-When NemoClaw runs inside WSL, it checks both the Windows-host Ollama HTTP endpoint and the Windows `ollama.exe` process. If Ollama is installed but the daemon is not reachable through `host.docker.internal:11434`, the wizard should still offer a start or restart action.
+When NemoClaw runs inside WSL, it checks the Windows-host Ollama HTTP endpoint, the Windows `ollama.exe` process, the listener address, and HTTP `Host` validation.
+It reuses the Windows route only when the listener is loopback-only, Docker Desktop can reach it, and an untrusted `Host` value receives `403`.
+The route also requires `DOCKER_HOST` to be unset and Docker to use its local `default` context.
+If Ollama is installed but does not pass those checks, the wizard should still offer a restart action and the WSL-local install.
 
 If the Windows-host option does not appear, confirm that PowerShell interop is enabled in WSL and that Windows can locate Ollama:
 
@@ -2817,7 +2820,12 @@ If the Windows-host option does not appear, confirm that PowerShell interop is e
 powershell.exe -NoProfile -Command "Get-Process ollama -ErrorAction SilentlyContinue"
 ```
 
-If the process is missing, start Ollama from Windows and rerun onboarding. If the process exists but the endpoint is unreachable, use the restart action when the wizard offers it, or restart Ollama from Windows with `OLLAMA_HOST=0.0.0.0:11434`.
+If the process is missing, start Ollama from Windows and rerun onboarding.
+If the process exists but the endpoint is unprotected or unreachable, use the restart action when the wizard offers it.
+The action sets `OLLAMA_HOST=127.0.0.1:11434` and verifies that an untrusted `Host` value is rejected.
+If Docker Desktop cannot reach that protected route, choose WSL-local Ollama.
+If Docker uses another context or `DOCKER_HOST` selects an endpoint, switch to the local `default` context and unset `DOCKER_HOST`, or choose WSL-local Ollama.
+Do not set `OLLAMA_HOST=0.0.0.0:11434`.
 
 ### Ollama inference fails or hangs in WSL
 
