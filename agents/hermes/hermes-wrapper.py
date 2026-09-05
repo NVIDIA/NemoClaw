@@ -530,6 +530,7 @@ def _parse_managed_invocation(argv: list[str], adapter: dict) -> dict | None:
     occurrences: list[dict] = []
     occurrence_ids: dict[str, int] = {}
     command: str | None = None
+    command_index: int | None = None
     session_boundaries: frozenset[str] | None = None
     unknown_option = False
     terminated = False
@@ -617,6 +618,7 @@ def _parse_managed_invocation(argv: list[str], adapter: dict) -> dict | None:
             return None
         if arg in adapter["managed_commands"]:
             command = arg
+            command_index = i
             i += 1
             continue
         if session_boundaries is not None and arg in session_boundaries:
@@ -632,6 +634,7 @@ def _parse_managed_invocation(argv: list[str], adapter: dict) -> dict | None:
     return {
         "argv": argv,
         "command": command,
+        "command_index": command_index,
         "occurrences": occurrences,
         "terminated": terminated,
         "unknown_option": unknown_option,
@@ -781,6 +784,47 @@ def _report_cli_adapter_error(exc: _CliAdapterError) -> int:
     return 2
 
 
+_GATEWAY_LAUNCH_COMMANDS = frozenset({"install", "restart", "run", "start"})
+
+
+def _requests_named_profile_gateway_launch(argv: list[str], adapter: dict) -> bool:
+    """Detect profile forms that select an unmanaged gateway."""
+    option_boundary = argv.index("--") if "--" in argv else len(argv)
+    if not any(
+        arg in ("-p", "--profile") or arg.startswith("--profile=")
+        for arg in argv[:option_boundary]
+    ):
+        return False
+    # Hermes removes its profile selector before argparse accepts `--` at the
+    # top-level or gateway subparser boundary.
+    gateway_argv = [arg for arg in argv if arg != "--"]
+    gateway_adapter = {**adapter, "managed_commands": frozenset({"gateway"})}
+    parsed = _parse_managed_invocation(gateway_argv, gateway_adapter)
+    if parsed is None or parsed["command"] != "gateway":
+        return False
+    profiles = _occurrences(parsed, "profile")
+    command_index = parsed["command_index"]
+    if len(profiles) != 1 or command_index is None:
+        return False
+    option_indexes = {
+        index
+        for occurrence in parsed["occurrences"]
+        for index in range(occurrence["start"], occurrence["end"])
+    }
+    launch_index = next(
+        (
+            index
+            for index in range(command_index + 1, len(gateway_argv))
+            if index not in option_indexes
+        ),
+        None,
+    )
+    return (
+        launch_index is not None
+        and gateway_argv[launch_index] in _GATEWAY_LAUNCH_COMMANDS
+    )
+
+
 def main(argv: list[str]) -> int:
     real_hermes = _resolve_real_hermes()
     guard_path = _resolve_guard()
@@ -804,6 +848,15 @@ def main(argv: list[str]) -> int:
         _harden_gateway_package_env(os.environ["HERMES_LAZY_INSTALL_TARGET"])
     try:
         adapter = _load_cli_adapter(_resolve_cli_adapter())
+        if _requests_named_profile_gateway_launch(argv, adapter):
+            print(
+                "[COMPATIBILITY] Refusing named-profile Hermes gateway: NemoClaw "
+                "manages only the default-profile gateway. Use a separate NemoClaw "
+                "sandbox for another supervised gateway; named-profile gateway "
+                "processes have no managed restart, crash quarantine, or protected log.",
+                file=sys.stderr,
+            )
+            return 2
         adapter_result, exec_argv = _adapt_cli_argv(argv, adapter)
         if adapter_result == "translated":
             _require_upstream_cli_version(real_hermes, adapter["upstream_cli_version"])
