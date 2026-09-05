@@ -74,7 +74,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: ./.github/actions/setup-reviewed-npm
+        uses: ./trusted-shellcheck-converter/.github/actions/setup-reviewed-npm
 
       - name: Install ShellCheck
         run: |

@@ -15,9 +15,12 @@ import {
 } from "../../../scripts/lib/npm-audit-receipt.mts";
 
 const NOW = new Date("2026-09-04T00:00:00.000Z");
+const NPM_INTEGRITY =
+  "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==";
 const inputs = {
   graphId: "mcporter-runtime",
-  npmVersion: "10.9.4",
+  npmIntegrity: NPM_INTEGRITY,
+  npmVersion: "12.0.2",
   exceptionPolicy: '{"schemaVersion":1,"exceptions":[]}\n',
   severityThreshold: "high",
   packageJson: "package",
@@ -34,6 +37,7 @@ function receipt(createdAt = NOW) {
     createdAt,
     exceptionPolicySha256: sha256(inputs.exceptionPolicy),
     graphId: inputs.graphId,
+    npmIntegrity: inputs.npmIntegrity,
     npmVersion: inputs.npmVersion,
     packageJson: inputs.packageJson,
     packageLock: inputs.packageLock,
@@ -127,6 +131,12 @@ describe("reviewed npm audit receipt", () => {
         value.exceptionPolicySha256 = "a".repeat(64);
       },
     ],
+    [
+      "different npm integrity",
+      (value: any) => {
+        value.npmIntegrity = `sha512-${Buffer.alloc(64, 1).toString("base64")}`;
+      },
+    ],
   ])("fails closed for %s", (_label, mutate) => {
     const value: any = receipt();
     mutate(value);
@@ -173,7 +183,7 @@ describe("reviewed npm audit receipt", () => {
         fs.writeFileSync(path.join(root, "raw.json"), inputs.rawResponse);
         fs.writeFileSync(
           path.join(root, "reviewed-npm-audit.json"),
-          JSON.stringify({ npmVersion: inputs.npmVersion }),
+          JSON.stringify({ npmIntegrity: inputs.npmIntegrity, npmVersion: inputs.npmVersion }),
         );
         const auditReceipt = legacy
           ? {
@@ -231,7 +241,7 @@ describe("reviewed npm audit receipt", () => {
       status: 0,
     },
     {
-      error: "receipt identity does not match expected graph and npm",
+      error: "receipt identity does not match expected graph and npm artifact",
       label: "a mismatched npm version",
       npmVersion: "11.18.0",
       policy: undefined,
@@ -255,7 +265,7 @@ describe("reviewed npm audit receipt", () => {
         );
         fs.writeFileSync(
           path.join(root, "reviewed-npm-audit.json"),
-          JSON.stringify({ npmVersion }),
+          JSON.stringify({ npmIntegrity: inputs.npmIntegrity, npmVersion }),
         );
 
         const result = spawnSync(

@@ -7,27 +7,9 @@ description: Install the exact npm release approved by the reviewed npm audit id
 runs:
   using: composite
   steps:
-    - name: Resolve reviewed npm identity
-      id: identity
-      shell: bash
-      run: |
-        set -euo pipefail
-        node --input-type=module - "$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json" <<'NODE'
-        import { appendFileSync, readFileSync } from "node:fs";
-        const [configFile] = process.argv.slice(2);
-        const config = JSON.parse(readFileSync(configFile, "utf8"));
-        if (!/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(config.npmVersion)) {
-          throw new Error("reviewed npm audit configuration has an invalid npmVersion");
-        }
-        if (!/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(config.npmIntegrity)) {
-          throw new Error("reviewed npm audit configuration has an invalid npmIntegrity");
-        }
-        appendFileSync(process.env.GITHUB_OUTPUT, "version=" + config.npmVersion + "\nintegrity=" + config.npmIntegrity + "\n");
-        NODE
-
     - name: Download, verify, and install reviewed npm
       shell: bash
-      env:
-        NEMOCLAW_REVIEWED_NPM_VERSION: ${{ steps.identity.outputs.version }}
-        NEMOCLAW_REVIEWED_NPM_INTEGRITY: ${{ steps.identity.outputs.integrity }}
-      run: env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN "$GITHUB_ACTION_PATH/../ci-reviewed-npm-audit/verify-and-install-npm.sh"
+      run: >-
+        env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN
+        "$GITHUB_ACTION_PATH/verify-and-install-npm.sh"
+        "$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json"

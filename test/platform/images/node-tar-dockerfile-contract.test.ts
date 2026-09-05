@@ -7,7 +7,11 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { FIXED_TAR_VERSION } from "../../../scripts/patch-bundled-npm-tar.mts";
-import { REVIEWED_NPM_VERSION } from "../../../scripts/upgrade-bundled-npm.mts";
+import {
+  REVIEWED_NPM_ARCHIVE_SHA256,
+  REVIEWED_NPM_TARBALL,
+  REVIEWED_NPM_VERSION,
+} from "../../../scripts/upgrade-bundled-npm.mts";
 import {
   dockerfileRunCommandPositions,
   requireReviewedDockerfileRunCommands,
@@ -62,6 +66,12 @@ const dockerfiles = [
 ] as const;
 const patchCommand = "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
+const reviewedNpmArchivePath = "/tmp/npm-12.0.2.tgz";
+const reviewedNpmUpgradeArguments = [
+  ...npmRootArguments,
+  "--archive",
+  reviewedNpmArchivePath,
+] as const;
 const hermesFinalArchivePath = "/tmp/nemoclaw-bundled-npm-tar.tgz";
 const hermesFinalPatchArguments = [
   ...npmRootArguments,
@@ -429,6 +439,62 @@ describe("node-tar image remediation contract", () => {
 });
 
 describe("reviewed npm image remediation contract", () => {
+  it.each([
+    "Dockerfile",
+    "agents/hermes/Dockerfile",
+    "agents/langchain-deepagents-code/Dockerfile",
+    "agents/pi/Dockerfile",
+  ])("installs reviewed npm in the final $file stage from immutable local bytes", (file) => {
+    const dockerfile = fs.readFileSync(path.join(repoRoot, file), "utf8");
+    const archiveStage = namedStage(dockerfile, "reviewed-npm-archive");
+    const source = completedStage(dockerfile);
+    const archiveSource = `ADD --chmod=0444 --checksum=sha256:${REVIEWED_NPM_ARCHIVE_SHA256} ${REVIEWED_NPM_TARBALL} /npm-${REVIEWED_NPM_VERSION}.tgz`;
+    const archiveCopy = `COPY --from=reviewed-npm-archive /npm-${REVIEWED_NPM_VERSION}.tgz ${reviewedNpmArchivePath}`;
+    const archiveCopyIndex = source.indexOf(archiveCopy);
+    const upgradeRun = requireSingleReviewedDockerfileRunCommand(
+      source,
+      "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+      reviewedNpmUpgradeArguments,
+    ).commandStart;
+    const firstPrivatePatch = source.indexOf(patchCommand);
+
+    expect(archiveStage).toContain(archiveSource);
+    expect(archiveCopyIndex, file).toBeGreaterThanOrEqual(0);
+    expect(upgradeRun, file).toBeGreaterThan(archiveCopyIndex);
+    expect(firstPrivatePatch, file).toBeGreaterThan(upgradeRun);
+  });
+
+  it("prepares the root npm build stage from the same immutable archive", () => {
+    const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+    const npm12 = directNodeStages("Dockerfile", dockerfile).find(({ name }) => name === "npm12");
+    assert(npm12, "Dockerfile must contain the npm12 stage");
+
+    expect(npm12.source).toContain(
+      `COPY --from=reviewed-npm-archive /npm-${REVIEWED_NPM_VERSION}.tgz ${reviewedNpmArchivePath}`,
+    );
+    const upgradeRun = requireSingleReviewedDockerfileRunCommand(
+      npm12.source,
+      "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+      reviewedNpmUpgradeArguments,
+    ).commandStart;
+    const tarRun = requireSingleReviewedDockerfileRunCommand(
+      npm12.source,
+      patchCommand,
+      npmRootArguments,
+    ).commandStart;
+    const braceRun = npm12.source.indexOf(
+      "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
+    );
+    const ipAddressRun = npm12.source.indexOf(
+      "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
+    );
+
+    expect(upgradeRun).toBeGreaterThan(npm12.source.indexOf(reviewedNpmArchivePath));
+    expect(tarRun).toBeGreaterThan(upgradeRun);
+    expect(braceRun).toBeGreaterThan(tarRun);
+    expect(ipAddressRun).toBeGreaterThan(braceRun);
+  });
+
   // source-shape-contract: security -- Direct Node stages must upgrade reviewed npm before any npm-backed build boundary executes.
   it("upgrades and verifies reviewed npm before every direct Node stage npm boundary", () => {
     const stages = directNodeDockerfiles.flatMap((file) =>

@@ -56,6 +56,7 @@ type AuditConfig = Readonly<{
   exceptionFile: string;
   lockedGraphs: readonly LockedGraph[];
   nodeVersion: string;
+  npmArchiveSha256: string;
   npmIntegrity: string;
   npmVersion: string;
   registryOrigin: string;
@@ -200,6 +201,8 @@ export function parseAuditConfig(contents: string): AuditConfig {
     typeof parsed.npmVersion !== "string" ||
     !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(parsed.npmVersion) ||
     /[\r\n]/.test(parsed.npmVersion) ||
+    typeof parsed.npmArchiveSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(parsed.npmArchiveSha256) ||
     typeof parsed.npmIntegrity !== "string" ||
     !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(parsed.npmIntegrity) ||
     /[\r\n]/.test(parsed.npmIntegrity) ||
@@ -288,6 +291,25 @@ export function reviewedArchiveGraphManifest(archiveTarVersion: unknown) {
   } as const;
 }
 
+export function stageReviewedArchiveForInstall(
+  graphDirectory: string,
+  archivePath: string,
+  index: number,
+): string {
+  if (!Number.isSafeInteger(index) || index < 0) {
+    throw new Error("reviewed archive install index must be a non-negative integer");
+  }
+  const filename = path.basename(archivePath);
+  if (!filename.endsWith(".tgz") || filename === ".tgz") {
+    throw new Error(`reviewed archive install filename is invalid: ${filename}`);
+  }
+  const relativeArchivePath = path.join("reviewed-archives", `${index}-${filename}`);
+  const archiveDirectory = path.join(graphDirectory, "reviewed-archives");
+  fs.mkdirSync(archiveDirectory, { recursive: true });
+  fs.copyFileSync(archivePath, path.join(graphDirectory, relativeArchivePath));
+  return `.${path.sep}${relativeArchivePath}`;
+}
+
 function materializeArchiveGraph(
   packages: readonly ReviewedPackage[],
   tempRoot: string,
@@ -299,7 +321,7 @@ function materializeArchiveGraph(
     path.join(graphDirectory, "package.json"),
     `${JSON.stringify(reviewedArchiveGraphManifest(archiveTarVersion), null, 2)}\n`,
   );
-  const archives = packages.map((reviewed) => {
+  const archives = packages.map((reviewed, index) => {
     const archive = packReviewedNpmArchive({
       expectedIntegrity: reviewed.integrity,
       label: reviewed.label,
@@ -307,11 +329,12 @@ function materializeArchiveGraph(
       tarballUrl: reviewed.tarballUrl,
       tempDirectory: tempRoot,
     });
-    return remediateReviewedOpenClawPluginArchive({
+    const remediated = remediateReviewedOpenClawPluginArchive({
       archivePath: archive.archivePath,
       packageSpec: reviewed.packageSpec,
       workingDirectory: archive.rootDirectory,
     });
+    return stageReviewedArchiveForInstall(graphDirectory, remediated.archivePath, index);
   });
   run(
     "npm",
@@ -321,7 +344,7 @@ function materializeArchiveGraph(
       "--omit=dev",
       "--no-audit",
       "--no-fund",
-      ...archives.map((archive) => archive.archivePath),
+      ...archives,
     ],
     graphDirectory,
   );
@@ -713,6 +736,7 @@ function auditLockedGraph(
   tempRoot: string,
   exceptionFile: string,
   artifactDirectory: string,
+  npmIntegrity: string,
   npmVersion: string,
 ) {
   const directory = materializeLockedGraph(graph, tempRoot, config.registryOrigin);
@@ -724,6 +748,7 @@ function auditLockedGraph(
     provenance: {
       label: graph.label,
       nodeVersion: process.version,
+      npmIntegrity,
       npmVersion,
       packageSpecs: [graph.packageSpec],
     },
@@ -754,6 +779,7 @@ function auditSourceGraph(
   tempRoot: string,
   exceptionFile: string,
   artifactDirectory: string,
+  npmIntegrity: string,
   npmVersion: string,
 ) {
   const sourcePackage = targetRepositoryPath("package.json", "NemoClaw CLI package manifest");
@@ -776,6 +802,7 @@ function auditSourceGraph(
     directory,
     exceptionFile,
     artifactDirectory,
+    npmIntegrity,
     npmVersion,
     packageSpec: `${sourceManifest.name}@${sourceManifest.version}`,
     threshold: config.severityThreshold,
@@ -787,6 +814,7 @@ export function auditMaterializedSourceGraph(
     artifactDirectory: string;
     directory: string;
     exceptionFile: string;
+    npmIntegrity: string;
     npmVersion: string;
     packageSpec: string;
     threshold: Severity;
@@ -804,6 +832,7 @@ export function auditMaterializedSourceGraph(
     provenance: {
       label: SOURCE_GRAPH.label,
       nodeVersion: process.version,
+      npmIntegrity: options.npmIntegrity,
       npmVersion: options.npmVersion,
       packageSpecs: [options.packageSpec],
     },
@@ -823,6 +852,7 @@ export function emitAuditReceipt(
   options: Readonly<{
     artifactDirectory: string;
     graphId: string;
+    npmIntegrity: string;
     npmVersion: string;
     packageJsonFile: string;
     packageLockFile: string;
@@ -855,6 +885,7 @@ export function emitAuditReceipt(
     ),
     exceptionPolicySha256: options.result.exceptionPolicySha256,
     graphId: options.graphId,
+    npmIntegrity: options.npmIntegrity,
     npmVersion: options.npmVersion,
     packageJson: fs.readFileSync(options.packageJsonFile),
     packageLock: fs.readFileSync(options.packageLockFile),
@@ -929,6 +960,7 @@ function main(): void {
       tempRoot,
       exceptionFile,
       artifactDirectory,
+      config.npmIntegrity,
       npmVersion,
     );
     const archiveDirectory = materializeArchiveGraph(
@@ -944,6 +976,7 @@ function main(): void {
       provenance: {
         label: "reviewed archive graph",
         nodeVersion: process.version,
+        npmIntegrity: config.npmIntegrity,
         npmVersion,
         packageSpecs: config.archivePackages.map((reviewed) => reviewed.packageSpec),
       },
@@ -960,6 +993,7 @@ function main(): void {
         tempRoot,
         exceptionFile,
         artifactDirectory,
+        config.npmIntegrity,
         npmVersion,
       ),
     );
@@ -977,6 +1011,7 @@ function main(): void {
     emitAuditReceipt({
       artifactDirectory,
       graphId: SOURCE_GRAPH.id,
+      npmIntegrity: config.npmIntegrity,
       npmVersion,
       packageJsonFile: targetRepositoryPath("package.json", "NemoClaw CLI package manifest"),
       packageLockFile: targetRepositoryPath("package-lock.json", "NemoClaw CLI lockfile"),
@@ -988,6 +1023,7 @@ function main(): void {
     emitAuditReceipt({
       artifactDirectory,
       graphId: config.archiveGraphId,
+      npmIntegrity: config.npmIntegrity,
       npmVersion,
       packageJsonFile: path.join(archiveDirectory, "package.json"),
       packageLockFile: path.join(archiveDirectory, "package-lock.json"),
@@ -1001,6 +1037,7 @@ function main(): void {
       emitAuditReceipt({
         artifactDirectory,
         graphId: graph.id,
+        npmIntegrity: config.npmIntegrity,
         npmVersion,
         packageJsonFile: targetRepositoryPath(
           path.join(graph.directory, "package.json"),

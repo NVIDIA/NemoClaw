@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Weekly check that the pinned Dockerfile base-image digest is still current.
-# Fails with an actionable message when a newer node:22-trixie-slim is available.
+# Fails with an actionable message if the node:24.18.1-trixie-slim digest changes.
 
 name: Images / Check Docker Base Image Pins
 

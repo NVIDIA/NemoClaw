@@ -42,13 +42,14 @@ describe("prepare-e2e workflow boundary", () => {
     const action = YAML.parse(source) as Record<string, unknown>;
     const runs = action.runs as { steps: WorkflowStep[] };
     runs.steps.find((step) => step.name === "Set up Node")!.uses = "actions/setup-node@v7";
+    runs.steps.find((step) => step.name === "Install reviewed npm")!.run = "npm install npm@latest";
     runs.steps.find((step) => step.name === "Install root dependencies")!.run = "npm install";
     runs.steps.find((step) => step.name === "Build CLI")!.run = "echo skipped";
     fs.writeFileSync(actionPath, YAML.stringify(action));
 
     try {
       expect(validatePrepareE2eAction(actionPath)).toContain(
-        "prepare-e2e must pin Node 22, run npm ci, and conditionally build the CLI",
+        "prepare-e2e must pin reviewed Node and npm, run npm ci, and conditionally build the CLI",
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });

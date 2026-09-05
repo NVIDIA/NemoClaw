@@ -211,7 +211,7 @@ export function packReviewedNpmArchive(
   );
   try {
     const packJson = npmRunner(
-      ["pack", request.tarballUrl, "--pack-destination", rootDirectory, "--json"],
+      ["pack", request.packageSpec, "--pack-destination", rootDirectory, "--json"],
       request,
     );
     let parsed: unknown;
@@ -220,7 +220,12 @@ export function packReviewedNpmArchive(
     } catch (error) {
       throw new Error(`npm pack ${request.packageSpec} did not return JSON: ${String(error)}`);
     }
-    const entry = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : undefined;
+    const entries = Array.isArray(parsed)
+      ? parsed
+      : typeof parsed === "object" && parsed !== null
+        ? Object.values(parsed)
+        : [];
+    const entry = entries.length === 1 ? entries[0] : undefined;
     const filename =
       typeof entry === "object" && entry !== null && "filename" in entry
         ? String(entry.filename ?? "")

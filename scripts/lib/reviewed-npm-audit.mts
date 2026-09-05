@@ -63,8 +63,13 @@ export type AuditCacheEvidence = Readonly<{
 }>;
 
 export type AuditProvenance = Readonly<{
-  schemaVersion: 1;
-  scanner: Readonly<{ name: "npm audit"; npmVersion: string; nodeVersion: string }>;
+  schemaVersion: 2;
+  scanner: Readonly<{
+    name: "npm audit";
+    npmIntegrity: string;
+    npmVersion: string;
+    nodeVersion: string;
+  }>;
   registry: AuditEndpoints;
   run: Readonly<{ startedAt: string; finishedAt: string }>;
   graph: Readonly<{ label: string; packageSpecs: readonly string[] }>;
@@ -77,6 +82,7 @@ export type AuditProvenance = Readonly<{
 export type AuditProvenanceContext = Readonly<{
   label: string;
   nodeVersion: string;
+  npmIntegrity: string;
   npmVersion: string;
   packageSpecs: readonly string[];
 }>;
@@ -123,7 +129,7 @@ export function npmAuditProcessOptions(directory: string) {
   };
 }
 const NPM_AUDIT_CACHE_MAX_BYTES = 64 * 1024 * 1024;
-const NPM_AUDIT_CACHE_SCHEMA_VERSION = 1;
+const NPM_AUDIT_CACHE_SCHEMA_VERSION = 2;
 const NPM_AUDIT_PARSER_IDENTITY = "reviewed-npm-audit-report-v1";
 
 type NpmAuditCommandResult = Readonly<{
@@ -460,6 +466,7 @@ export function buildAuditProvenance(
     finishedAt: string;
     label: string;
     nodeVersion: string;
+    npmIntegrity: string;
     npmVersion: string;
     packageSpecs: readonly string[];
     rawReportPath: string;
@@ -469,8 +476,13 @@ export function buildAuditProvenance(
   }>,
 ): AuditProvenance {
   return {
-    schemaVersion: 1,
-    scanner: { name: "npm audit", npmVersion: input.npmVersion, nodeVersion: input.nodeVersion },
+    schemaVersion: 2,
+    scanner: {
+      name: "npm audit",
+      npmIntegrity: input.npmIntegrity,
+      npmVersion: input.npmVersion,
+      nodeVersion: input.nodeVersion,
+    },
     registry: deriveAuditEndpoints(input.registry),
     run: { startedAt: input.startedAt, finishedAt: input.finishedAt },
     graph: { label: input.label, packageSpecs: input.packageSpecs },
@@ -499,6 +511,7 @@ function npmVersion(directory: string): string {
 
 type AuditCacheInput = Readonly<{
   argv: readonly string[];
+  npmIntegrity: string;
   npmVersion: string;
   packageJsonSha256: string;
   packageLockSha256: string;
@@ -507,7 +520,7 @@ type AuditCacheInput = Readonly<{
 }>;
 
 type AuditCacheRecord = Readonly<{
-  schemaVersion: 1;
+  schemaVersion: 2;
   createdAt: string;
   input: AuditCacheInput;
   result: Readonly<{ stdout: string; exitCode: number }>;
@@ -529,6 +542,7 @@ function canonicalRegistryOrigin(registry: string): string | null {
 
 export function buildAuditCacheInput(
   directory: string,
+  npmIntegrity: string,
   npmVersion: string,
   registry: string,
 ): AuditCacheInput {
@@ -536,6 +550,7 @@ export function buildAuditCacheInput(
   if (!registryOrigin) throw new Error("npm audit cache requires a valid HTTP(S) registry");
   return {
     argv: NPM_AUDIT_ARGV,
+    npmIntegrity,
     npmVersion,
     packageJsonSha256: sha256(fs.readFileSync(path.join(directory, "package.json"))),
     packageLockSha256: sha256(fs.readFileSync(path.join(directory, "package-lock.json"))),
@@ -562,6 +577,7 @@ function parseAuditCacheRecord(source: string): AuditCacheRecord {
     input,
     new Set([
       "argv",
+      "npmIntegrity",
       "npmVersion",
       "packageJsonSha256",
       "packageLockSha256",
@@ -575,6 +591,7 @@ function parseAuditCacheRecord(source: string): AuditCacheRecord {
   if (!Array.isArray(input.argv) || JSON.stringify(input.argv) !== JSON.stringify(NPM_AUDIT_ARGV))
     throw new Error("npm audit cache input.argv is invalid");
   for (const key of [
+    "npmIntegrity",
     "npmVersion",
     "packageJsonSha256",
     "packageLockSha256",
@@ -593,6 +610,7 @@ function parseAuditCacheRecord(source: string): AuditCacheRecord {
       throw new Error(`npm audit cache input.${key} is invalid`);
   }
   if (
+    !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(String(input.npmIntegrity)) ||
     input.parserIdentity !== NPM_AUDIT_PARSER_IDENTITY ||
     canonicalRegistryOrigin(String(input.registryOrigin)) !== input.registryOrigin
   )
@@ -650,7 +668,7 @@ function writeAuditCache(
 ): void {
   if (!Number.isSafeInteger(result.status)) return;
   const record: AuditCacheRecord = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     createdAt,
     input,
     result: { stdout: result.stdout, exitCode: result.status as number },
@@ -851,6 +869,7 @@ export function runReviewedNpmAudit(
     directory: string;
     exceptionFile: string;
     graph: string;
+    npmIntegrity?: string;
     provenance?: AuditProvenanceContext;
     reportFile?: string;
     resultFile?: string;
@@ -867,9 +886,14 @@ export function runReviewedNpmAudit(
   const registry = NPM_AUDIT_REGISTRY;
   let cacheInput: AuditCacheInput | undefined;
   if (cacheFile) {
+    const npmIntegrity = options.provenance?.npmIntegrity ?? options.npmIntegrity;
+    if (!npmIntegrity) {
+      throw new Error("reviewed npm audit cache requires the reviewed npm integrity");
+    }
     try {
       cacheInput = buildAuditCacheInput(
         options.directory,
+        npmIntegrity,
         options.provenance?.npmVersion ?? npmVersion(options.directory),
         registry,
       );
@@ -914,6 +938,7 @@ export function runReviewedNpmAudit(
       finishedAt,
       label: options.provenance.label,
       nodeVersion: options.provenance.nodeVersion,
+      npmIntegrity: options.provenance.npmIntegrity,
       npmVersion: options.provenance.npmVersion,
       packageSpecs: options.provenance.packageSpecs,
       rawReportPath: path.basename(options.reportFile),
@@ -954,6 +979,7 @@ function parseCliArgs(args: readonly string[]): {
   directory: string;
   exceptionFile: string;
   graph: string;
+  npmIntegrity?: string;
   reportFile?: string;
   resultFile?: string;
   threshold: Severity;
@@ -972,6 +998,7 @@ function parseCliArgs(args: readonly string[]): {
     "--directory",
     "--exceptions",
     "--graph",
+    "--npm-integrity",
     "--report",
     "--result",
     "--threshold",
@@ -990,11 +1017,19 @@ function parseCliArgs(args: readonly string[]): {
   }
   if (!SEVERITIES.includes(threshold as Severity))
     throw new Error("reviewed npm audit threshold is invalid");
+  const npmIntegrity = values.get("--npm-integrity");
+  if (values.has("--cache") && !npmIntegrity) {
+    throw new Error("reviewed npm audit --cache requires --npm-integrity");
+  }
+  if (npmIntegrity && !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(npmIntegrity)) {
+    throw new Error("reviewed npm audit npm integrity is invalid");
+  }
   return {
     ...(values.has("--cache") ? { cacheFile: values.get("--cache") } : {}),
     directory,
     exceptionFile,
     graph,
+    ...(npmIntegrity ? { npmIntegrity } : {}),
     threshold: threshold as Severity,
     ...(values.has("--report") ? { reportFile: values.get("--report") } : {}),
     ...(values.has("--result") ? { resultFile: values.get("--result") } : {}),

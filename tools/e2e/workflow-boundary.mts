@@ -2706,6 +2706,7 @@ function validateTrustedE2ePlannerBoundary(
     generateSteps,
     "Install trusted E2E planner dependencies",
   );
+  const trustedNpmInstall = requireStep(errors, generateSteps, "Install reviewed npm");
   requireFullShaAction(errors, trustedPlannerCheckout, "trusted E2E planner checkout");
   if (
     !isDeepStrictEqual(asRecord(trustedPlannerCheckout?.with), {
@@ -2720,10 +2721,13 @@ function validateTrustedE2ePlannerBoundary(
   requireFullShaAction(errors, trustedPlannerSetup, "trusted E2E planner Node setup");
   if (
     !isDeepStrictEqual(asRecord(trustedPlannerSetup?.with), {
-      "node-version": 22,
+      "node-version": "24.18.1",
     })
   ) {
-    errors.push("trusted E2E planner must use Node 22");
+    errors.push("trusted E2E planner must use reviewed Node 24.18.1");
+  }
+  if (trustedNpmInstall?.uses !== "./.github/actions/setup-reviewed-npm") {
+    errors.push("trusted E2E planner must install reviewed npm from the trusted checkout");
   }
   if (trustedPlannerInstall?.run !== "npm ci --ignore-scripts --no-audit --no-fund") {
     errors.push("trusted E2E planner dependencies must install without lifecycle scripts");
@@ -2732,6 +2736,7 @@ function validateTrustedE2ePlannerBoundary(
     ? generateSteps.indexOf(trustedPlannerCheckout)
     : -1;
   const trustedSetupIndex = trustedPlannerSetup ? generateSteps.indexOf(trustedPlannerSetup) : -1;
+  const trustedNpmIndex = trustedNpmInstall ? generateSteps.indexOf(trustedNpmInstall) : -1;
   const trustedInstallIndex = trustedPlannerInstall
     ? generateSteps.indexOf(trustedPlannerInstall)
     : -1;
@@ -2740,7 +2745,8 @@ function validateTrustedE2ePlannerBoundary(
   if (
     trustedPlannerIndex < 0 ||
     trustedSetupIndex <= trustedPlannerIndex ||
-    trustedInstallIndex <= trustedSetupIndex ||
+    trustedNpmIndex <= trustedSetupIndex ||
+    trustedInstallIndex <= trustedNpmIndex ||
     generateIndex <= trustedInstallIndex ||
     candidateCheckoutIndex <= generateIndex
   ) {

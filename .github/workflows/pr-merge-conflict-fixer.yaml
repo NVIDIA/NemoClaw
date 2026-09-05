@@ -78,7 +78,7 @@ jobs:
           node-version: "24.18.1"
 
       - name: Install reviewed npm
-        uses: ./.github/actions/setup-reviewed-npm
+        uses: ./trusted/.github/actions/setup-reviewed-npm
 
       - id: prepare
         name: Reproduce the recorded conflict
@@ -153,7 +153,7 @@ jobs:
           node-version: "24.18.1"
 
       - name: Install reviewed npm
-        uses: ./.github/actions/setup-reviewed-npm
+        uses: ./trusted/.github/actions/setup-reviewed-npm
 
       - id: download
         name: Download the resolution patch

@@ -80,7 +80,9 @@ COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+COPY scripts/lib/reviewed-npm-identity.mts /scripts/lib/reviewed-npm-identity.mts
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
+COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"

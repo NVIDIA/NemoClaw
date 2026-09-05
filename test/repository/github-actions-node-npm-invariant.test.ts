@@ -6,14 +6,22 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
+import { REVIEWED_NPM_VERSION as BRACE_NPM_VERSION } from "../../scripts/patch-bundled-npm-brace-expansion.mts";
+import { REVIEWED_NPM_VERSION as IP_ADDRESS_NPM_VERSION } from "../../scripts/lib/patch-bundled-npm-ip-address.mts";
+import {
+  REVIEWED_NPM_ARCHIVE_SHA256,
+  REVIEWED_NPM_INTEGRITY,
+  REVIEWED_NPM_VERSION as BUNDLED_NPM_VERSION,
+} from "../../scripts/upgrade-bundled-npm.mts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const GITHUB_ROOT = path.join(REPO_ROOT, ".github");
 const SETUP_NODE = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const REVIEWED_NPM_ACTION = "setup-reviewed-npm";
-const AUDIT_ACTION = ".github/actions/ci-reviewed-npm-audit/action.yaml";
+const IMMUTABLE_REVIEWED_NPM_ACTION =
+  "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e";
 
-type Step = { uses?: string; with?: Record<string, unknown> };
+type Step = { if?: string; run?: string; uses?: string; with?: Record<string, unknown> };
 type ActionDocument = { runs?: { steps?: Step[] } };
 type WorkflowDocument = { jobs?: Record<string, { steps?: Step[] }> };
 type StepGroup = { file: string; label: string; steps: Step[] };
@@ -41,32 +49,171 @@ function stepGroups(file: string): StepGroup[] {
 
 const identity = JSON.parse(
   fs.readFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
-) as { nodeVersion: string; npmVersion: string };
-const setupNodeSteps = yamlFiles(GITHUB_ROOT)
-  .flatMap(stepGroups)
-  .flatMap(({ file, label, steps }) =>
-    steps.flatMap((step, index) =>
-      step.uses?.startsWith("actions/setup-node@") ? [{ file, label, steps, step, index }] : [],
-    ),
+) as {
+  nodeVersion: string;
+  npmArchiveSha256: string;
+  npmIntegrity: string;
+  npmVersion: string;
+};
+const groups = yamlFiles(GITHUB_ROOT).flatMap(stepGroups);
+const setupNodeSteps = groups.flatMap(({ file, label, steps }) =>
+  steps.flatMap((step, index) =>
+    step.uses?.startsWith("actions/setup-node@") ? [{ file, label, steps, step, index }] : [],
+  ),
+);
+
+function installsReviewedNpm(step: Step): boolean {
+  return Boolean(
+    step.uses?.includes(REVIEWED_NPM_ACTION) ||
+    step.run?.includes("setup-reviewed-npm/verify-and-install-npm.sh"),
   );
+}
 
 describe("controlled setup-node environments", () => {
-  // source-shape-contract: security -- Every controlled setup-node environment must install the integrity-bound npm release before later workflow steps execute.
+  // source-shape-contract: security -- Every controlled setup-node environment must install the integrity-bound npm release before an npm command executes.
   it("selects the reviewed Node and npm identities before further steps", () => {
     const setupIdentities = setupNodeSteps.map(({ step }) => [
       step.uses,
       String(step.with?.["node-version"]),
     ]);
-    const reviewedNpmSteps = setupNodeSteps
-      .filter(({ file }) => path.relative(REPO_ROOT, file) !== AUDIT_ACTION)
-      .map(({ steps, index }) => steps[index + 1]?.uses);
 
     expect(identity).toMatchObject({ nodeVersion: "24.18.1", npmVersion: "12.0.2" });
+    expect(setupNodeSteps.length).toBeGreaterThan(0);
     expect(
       setupIdentities.every(
         ([action, node]) => action === SETUP_NODE && node === identity.nodeVersion,
       ),
     ).toBe(true);
-    expect(reviewedNpmSteps.every((action) => action?.includes(REVIEWED_NPM_ACTION))).toBe(true);
+    const invalidOrder = setupNodeSteps
+      .map(({ file, label, steps, step, index }) => {
+        const laterSteps = steps.slice(index + 1);
+        const reviewedIndex = laterSteps.findIndex(installsReviewedNpm);
+        const npmConsumerIndex = laterSteps.findIndex((step) =>
+          /(?:^|[\n;&|({])\s*(?:npm|npx)(?:\s|$)/mu.test(step.run ?? ""),
+        );
+        const matchingCondition =
+          step.if === undefined ||
+          laterSteps.some(
+            (candidate) => installsReviewedNpm(candidate) && candidate.if === step.if,
+          );
+        return {
+          label: `${path.relative(REPO_ROOT, file)}:${label}`,
+          valid:
+            reviewedIndex >= 0 &&
+            (npmConsumerIndex < 0 || reviewedIndex < npmConsumerIndex) &&
+            matchingCondition,
+        };
+      })
+      .filter(({ valid }) => !valid)
+      .map(({ label }) => label);
+    expect(invalidOrder).toEqual([]);
+  });
+
+  it("keeps every workflow-local reviewed npm action behind its matching checkout", () => {
+    const workflowGroups = groups.filter(({ file }) =>
+      path.relative(GITHUB_ROOT, file).startsWith(`workflows${path.sep}`),
+    );
+
+    const actionSteps = workflowGroups.flatMap(({ file, label, steps }) =>
+      steps.flatMap((step, index) =>
+        step.uses?.startsWith("./") && step.uses.includes(REVIEWED_NPM_ACTION)
+          ? [{ file, label, step, steps, index }]
+          : [],
+      ),
+    );
+    const invalidCheckouts = actionSteps
+      .map(({ file, label, step, steps, index }) => {
+        const match = /^\.\/(.*?)\.github\/actions\/setup-reviewed-npm$/u.exec(step.uses ?? "");
+        const checkoutPath = match?.[1].replace(/\/$/u, "") ?? "";
+        const matchingCheckout = steps
+          .slice(0, index)
+          .filter((candidate) => candidate.uses?.startsWith("actions/checkout@"))
+          .reverse()
+          .find(({ with: inputs }) =>
+            checkoutPath === ""
+              ? inputs?.path === undefined
+              : String(inputs?.path) === checkoutPath,
+          );
+        const sparsePaths = String(matchingCheckout?.with?.["sparse-checkout"] ?? "")
+          .split("\n")
+          .map((entry) => entry.trim());
+        const completeSparseCheckout =
+          sparsePaths.length === 1 ||
+          (sparsePaths.includes(".github/actions/setup-reviewed-npm") &&
+            sparsePaths.includes("ci/reviewed-npm-audit.json"));
+        return {
+          label: `${path.relative(REPO_ROOT, file)}:${label}:${step.uses}`,
+          valid: match !== null && matchingCheckout !== undefined && completeSparseCheckout,
+        };
+      })
+      .filter(({ valid }) => !valid)
+      .map(({ label }) => label);
+    expect(invalidCheckouts).toEqual([]);
+  });
+
+  it.each([
+    ".github/workflows/managed-images.yaml:pr-staging-qa-deep-code",
+    ".github/workflows/managed-images.yaml:pr-build-and-entrypoint",
+    ".github/workflows/managed-images.yaml:pr-managed-activation",
+    ".github/workflows/managed-images.yaml:pr-openclaw-mcp-discovery",
+    ".github/workflows/managed-images.yaml:pi-candidate",
+    ".github/workflows/pr.yaml:build-typecheck",
+  ])("uses immutable npm setup in protected pull request job %s", (owner) => {
+    const group = groups.find(
+      ({ file, label }) => `${path.relative(REPO_ROOT, file)}:${label}` === owner,
+    );
+    expect(group, owner).toBeDefined();
+    const action = group?.steps.find((step) => step.uses === IMMUTABLE_REVIEWED_NPM_ACTION);
+    expect(action, owner).toBeDefined();
+  });
+
+  it("keeps composite npm setup rooted in the trusted action checkout", () => {
+    const invalidActions = setupNodeSteps
+      .filter(({ file }) => path.relative(GITHUB_ROOT, file).startsWith(`actions${path.sep}`))
+      .filter(({ file, steps, index }) => {
+        const reviewed = steps.slice(index + 1).find(installsReviewedNpm);
+        return path.relative(REPO_ROOT, file) === ".github/actions/prepare-e2e/action.yaml"
+          ? reviewed?.uses !== IMMUTABLE_REVIEWED_NPM_ACTION
+          : reviewed?.uses !== undefined ||
+              !reviewed?.run?.includes(
+                "$GITHUB_ACTION_PATH/../setup-reviewed-npm/verify-and-install-npm.sh",
+              ) ||
+              !reviewed?.run?.includes("$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json");
+      })
+      .map(({ file }) => path.relative(REPO_ROOT, file));
+    expect(invalidActions).toEqual([]);
+  });
+
+  // source-shape-contract: security -- Cross-consumer version and digest equality prevents CI, image, and private-patch paths from authorizing different npm archives
+  it("uses one reviewed npm identity across audit, image, and private-patch consumers", () => {
+    expect(
+      new Set([
+        identity.npmVersion,
+        BUNDLED_NPM_VERSION,
+        BRACE_NPM_VERSION,
+        IP_ADDRESS_NPM_VERSION,
+      ]),
+    ).toEqual(new Set(["12.0.2"]));
+    expect(identity.npmIntegrity).toBe(REVIEWED_NPM_INTEGRITY);
+    expect(identity.npmArchiveSha256).toBe(REVIEWED_NPM_ARCHIVE_SHA256);
+
+    const actionRoot = path.join(GITHUB_ROOT, "actions/setup-reviewed-npm");
+    const action = fs.readFileSync(path.join(actionRoot, "action.yaml"), "utf8");
+    expect(fs.existsSync(path.join(actionRoot, "verify-and-install-npm.sh"))).toBe(true);
+    expect(action).toContain("$GITHUB_ACTION_PATH/verify-and-install-npm.sh");
+    expect(action).toContain("$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json");
+    expect(action).not.toContain("../ci-reviewed-npm-audit/");
+  });
+
+  // source-shape-contract: security -- Every npm-mutating script must import the canonical reviewed identity so independent version or digest pins cannot drift
+  it.each([
+    "scripts/upgrade-bundled-npm.mts",
+    "scripts/patch-bundled-npm-brace-expansion.mts",
+    "scripts/lib/patch-bundled-npm-ip-address.mts",
+    "scripts/lib/seed-reviewed-npm-cache.mts",
+  ])("imports the reviewed npm identity from %s", (source) => {
+    expect(fs.readFileSync(path.join(REPO_ROOT, source), "utf8"), source).toContain(
+      "reviewed-npm-identity.mts",
+    );
   });
 });

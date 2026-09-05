@@ -124,7 +124,11 @@ describe("sandbox build context staging", () => {
     );
     writeFixture(
       path.join("ci", "reviewed-npm-audit.json"),
-      `${JSON.stringify({ npmVersion: "10.9.4" })}\n`,
+      `${JSON.stringify({
+        npmIntegrity:
+          "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==",
+        npmVersion: "12.0.2",
+      })}\n`,
     );
     for (const runtimeName of [
       "managed-image-messaging-runtime",
@@ -286,6 +290,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "upgrade-bundled-npm.mts"));
     writeFixture(path.join("scripts", "verify-wechat-runtime-lock.mts"));
     writeFixture(path.join("scripts", "lib", "reviewed-npm-archive.mts"), "fixture\n", 0o700);
+    writeFixture(path.join("scripts", "lib", "reviewed-npm-identity.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "bundled-npm-package.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "seed-reviewed-npm-cache.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "reviewed-npm-audit.mts"), "fixture\n", 0o700);

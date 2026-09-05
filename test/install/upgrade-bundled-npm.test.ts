@@ -13,6 +13,7 @@ import {
   verifyBundledNpmTar,
 } from "../../scripts/patch-bundled-npm-tar.mts";
 import {
+  REVIEWED_NPM_ARCHIVE_SHA256,
   REVIEWED_NPM_INTEGRITY,
   REVIEWED_NPM_PACKAGES,
   REVIEWED_NPM_TARBALL,
@@ -55,7 +56,7 @@ function reviewedNpm(): string {
   writeJson(path.join(root, "package.json"), {
     bundleDependencies: ["tar"],
     dependencies: { tar: "^7.5.19" },
-    engines: { node: "^20.17.0 || >=22.9.0" },
+    engines: { node: "^22.22.2 || ^24.15.0 || >=26.0.0" },
     name: "npm",
     version: REVIEWED_NPM_VERSION,
   });
@@ -99,6 +100,9 @@ describe("reviewed bundled npm upgrade", () => {
       "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==",
     );
     expect(REVIEWED_NPM_TARBALL).toBe("https://registry.npmjs.org/npm/-/npm-12.0.2.tgz");
+    expect(REVIEWED_NPM_ARCHIVE_SHA256).toBe(
+      "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1",
+    );
   });
 
   it("verifies the complete reviewed dependency set", () => {
@@ -181,6 +185,15 @@ describe("reviewed bundled npm upgrade", () => {
     expect(commands).toEqual(["npm", "npx"]);
   });
 
+  it("verifies a supplied archive even when the reviewed tree is already installed", () => {
+    const archivePath = path.join(temporaryDirectory(), "npm.tgz");
+    fs.writeFileSync(archivePath, "not npm\n");
+
+    expect(() => upgradeBundledNpm(reviewedNpm(), { archivePath })).toThrow(
+      "integrity mismatch",
+    );
+  });
+
   it("fails closed on reviewed-package drift", () => {
     const drifted = reviewedNpm();
     writePackage(drifted, "sigstore", "sigstore", "4.1.1");
@@ -198,5 +211,20 @@ describe("reviewed bundled npm upgrade", () => {
     const archivePath = path.join(temporaryDirectory(), "npm.tgz");
     fs.writeFileSync(archivePath, "not npm\n");
     expect(() => verifyReviewedNpmArchive(archivePath)).toThrow("integrity mismatch");
+  });
+
+  it("verifies a caller-supplied archive before invoking the installer", () => {
+    const npmRoot = affectedNpm("11.18.0");
+    const archivePath = path.join(temporaryDirectory(), "npm.tgz");
+    fs.writeFileSync(archivePath, "not npm\n");
+
+    expect(() =>
+      upgradeBundledNpm(npmRoot, {
+        archivePath,
+        installArchive: () => {
+          throw new Error("installer must not run");
+        },
+      }),
+    ).toThrow("integrity mismatch");
   });
 });

@@ -112,6 +112,36 @@
       "category": "security"
     },
     {
+      "file": "test/repository/github-actions-node-npm-invariant.test.ts",
+      "test": "uses one reviewed npm identity across audit, image, and private-patch consumers",
+      "category": "security"
+    },
+    {
+      "file": "test/repository/github-actions-node-npm-invariant.test.ts",
+      "test": "imports the reviewed npm identity from %s",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test": "uses the reviewed Node and npm identities for the WSL build and test lane",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/openclaw/openclaw-npm-remediation.test.ts",
+      "test": "replaces the reviewed bundled Axios graph with the patched graph",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/openclaw/openclaw-npm-remediation.test.ts",
+      "test": "replaces the reviewed Jaeger propagator with its aligned patched core",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/openclaw/openclaw-npm-remediation.test.ts",
+      "test": "replaces the reviewed OpenClaw Discord undici dependency",
+      "category": "security"
+    },
+    {
       "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
       "test": "rebuilds a guarded core archive with the patched fs-safe package bundled",
       "category": "security"

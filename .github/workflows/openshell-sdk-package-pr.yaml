@@ -35,7 +35,6 @@ jobs:
           sparse-checkout: |
             .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
-            ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/checks/package-openshell-sdk-for-pr.mts
             scripts/lib/openclaw-npm-remediation.mts

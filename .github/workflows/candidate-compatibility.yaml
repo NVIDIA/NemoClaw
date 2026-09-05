@@ -60,7 +60,7 @@ jobs:
           node-version: "24.18.1"
 
       - name: Install reviewed npm
-        uses: ./.github/actions/setup-reviewed-npm
+        uses: ./controller/.github/actions/setup-reviewed-npm
 
       - id: identity
         name: Resolve official candidate provenance
@@ -150,7 +150,7 @@ jobs:
           cache-dependency-path: candidate-source/package-lock.json
 
       - name: Install reviewed npm
-        uses: ./.github/actions/setup-reviewed-npm
+        uses: ./controller/.github/actions/setup-reviewed-npm
 
       - name: Install repository dependencies
         working-directory: candidate-source
@@ -281,7 +281,7 @@ jobs:
           cache-dependency-path: candidate-source/package-lock.json
 
       - name: Install reviewed npm
-        uses: ./.github/actions/setup-reviewed-npm
+        uses: ./controller/.github/actions/setup-reviewed-npm
 
       - name: Install repository dependencies
         working-directory: candidate-source

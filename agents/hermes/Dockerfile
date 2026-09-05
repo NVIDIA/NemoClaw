@@ -13,6 +13,9 @@ ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 # context pins its accepted x86_64 target because Podman does not supply it.
 ARG TARGETARCH
 
+FROM scratch AS reviewed-npm-archive
+ADD --chmod=0444 --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz
+
 # The reviewed npm graph is audited in CI; image assembly copies only its
 # generated runtime artifacts and therefore needs neither npm nor network.
 FROM scratch AS mcp-tool-discovery-runtime
@@ -76,6 +79,9 @@ COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+COPY scripts/lib/reviewed-npm-identity.mts /scripts/lib/reviewed-npm-identity.mts
+COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
+COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
 COPY agents/hermes/runtime-boundaries.patch /scripts/hermes-runtime-boundaries.patch
 COPY agents/hermes/dashboard-external-host.patch /scripts/hermes-dashboard-external-host.patch
 COPY agents/hermes/secure-dir-skip-chmod.patch /scripts/hermes-secure-dir-skip-chmod.patch
@@ -255,6 +261,15 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 # Cross-stage root copies are accepted by Docker's legacy builder and create
 # one final-image layer while preserving metadata on existing parent paths.
 COPY --from=hermes-npm-patch-payload / /
+COPY --from=reviewed-npm-archive /npm-12.0.2.tgz /tmp/npm-12.0.2.tgz
+
+# A published base can lag the base-image rollout. Install the complete
+# reviewed npm tree from immutable local bytes before private-tree patches.
+RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
+      --npm-root /usr/local/lib/node_modules/npm \
+      --archive /tmp/npm-12.0.2.tgz
+# hadolint ignore=DL3059
+RUN rm /tmp/npm-12.0.2.tgz
 
 # The immutable selected base owns the reviewed Hindsight and agent-browser
 # patches and the root-owned agent-browser runtime. Verify that inherited boundary

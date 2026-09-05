@@ -234,7 +234,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   const prepare = requireStep(errors, workflowSteps, "Prepare E2E workspace");
   if (
     prepare?.uses !==
-    "NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75"
+    "NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d"
   ) {
     errors.push(`${JOB_ID} must pin the trusted E2E preparation action`);
   }

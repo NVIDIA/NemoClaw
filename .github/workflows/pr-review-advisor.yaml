@@ -110,7 +110,7 @@ jobs:
           cache: npm
           cache-dependency-path: advisor/package-lock.json
       - name: Install reviewed npm
-        uses: ./.github/actions/setup-reviewed-npm
+        uses: ./advisor/.github/actions/setup-reviewed-npm
 
       - name: Install locked runtime
         run: |
@@ -217,7 +217,7 @@ jobs:
           cache-dependency-path: advisor/package-lock.json
 
       - name: Install reviewed npm
-        uses: ./.github/actions/setup-reviewed-npm
+        uses: ./advisor/.github/actions/setup-reviewed-npm
 
       - name: Load advisor runtime image
         run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/export-runtime-env.mts"
@@ -349,7 +349,7 @@ jobs:
           node-version: "24.18.1"
 
       - name: Install reviewed npm
-        uses: ./.github/actions/setup-reviewed-npm
+        uses: ./advisor/.github/actions/setup-reviewed-npm
 
       - name: Post PR review advisor link
         env:

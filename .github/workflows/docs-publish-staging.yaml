@@ -115,6 +115,7 @@ jobs:
           node-version: "24.18.1"
 
       - name: Install reviewed npm
+        if: ${{ steps.previews.outputs.has_previews == 'true' }}
         uses: ./.github/actions/setup-reviewed-npm
 
       - name: Delete Fern previews

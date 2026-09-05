@@ -76,7 +76,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: ./.github/actions/setup-reviewed-npm
+        uses: ./trusted/.github/actions/setup-reviewed-npm
 
       - name: Authenticate and consume protected qualification evidence
         id: collect

@@ -14,8 +14,14 @@ import {
 const WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
 const WSL_HELPER_PATH = "tools/wsl/ci-helper.ps1";
 const MACOS_REQUIREMENTS_PATH = "ci/platform-vitest-macos-requirements.lock";
+const REVIEWED_NPM_CONFIG_PATH = "ci/reviewed-npm-audit.json";
 const workflow = readYaml<Workflow>(WORKFLOW_PATH);
 const wslHelperSource = readRepoText(WSL_HELPER_PATH);
+const reviewedNpmConfig = JSON.parse(readRepoText(REVIEWED_NPM_CONFIG_PATH)) as {
+  nodeVersion: string;
+  npmIntegrity: string;
+  npmVersion: string;
+};
 
 function job(name: string): WorkflowJob {
   const candidate = workflow.jobs[name];
@@ -30,6 +36,23 @@ function step(jobName: string, name: string): WorkflowStep {
 }
 
 describe("platform evidence workflow", () => {
+  // source-shape-contract: security -- The WSL boundary must embed the integrity-bound Node and npm bootstrap because it cannot import the TypeScript identity helper
+  it("uses the reviewed Node and npm identities for the WSL build and test lane", () => {
+    expect(wslHelperSource).toContain(`node_version="${reviewedNpmConfig.nodeVersion}"`);
+    expect(wslHelperSource).toContain(`npm_version="${reviewedNpmConfig.npmVersion}"`);
+    expect(wslHelperSource).toContain(
+      `expected_npm_integrity="${reviewedNpmConfig.npmIntegrity}"`,
+    );
+    expect(wslHelperSource).toContain('npm install --global "$npm_archive"');
+    expect(wslHelperSource.indexOf('test "$actual_npm_integrity"')).toBeLessThan(
+      wslHelperSource.indexOf('npm install --global "$npm_archive"'),
+    );
+    expect(wslHelperSource).toContain('test "$(npm --version)" = "$npm_version"');
+    expect(step("wsl-vitest", "Install reviewed Node.js and npm in WSL").run).toContain(
+      "Install-WslNode",
+    );
+  });
+
   it("marks the container checkout safe before generating build identity", () => {
     const run = step("ubuntu-2604-contract", "Build CLI").run ?? "";
     expect(run).toContain('git config --global --add safe.directory "$GITHUB_WORKSPACE"');

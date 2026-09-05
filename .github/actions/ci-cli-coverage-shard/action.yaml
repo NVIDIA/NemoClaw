@@ -51,7 +51,11 @@ runs:
           nemoclaw/package-lock.json
 
     - name: Install reviewed npm
-      uses: ./.github/actions/setup-reviewed-npm
+      shell: bash
+      run: >-
+        env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN
+        "$GITHUB_ACTION_PATH/../setup-reviewed-npm/verify-and-install-npm.sh"
+        "$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json"
 
     - name: Install pinned Pi search tools
       shell: bash

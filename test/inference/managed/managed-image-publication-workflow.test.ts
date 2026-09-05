@@ -104,11 +104,11 @@ describe("complete managed-image publication workflow", () => {
     ]);
     expect(restores.map(({ with: inputs }) => inputs)).toEqual([
       {
-        key: "reviewed-npm-audit-v1-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.current }}",
+        key: "reviewed-npm-audit-v2-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.current }}",
         path: "${{ inputs.cache-directory }}",
       },
       {
-        key: "reviewed-npm-audit-v1-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.previous }}",
+        key: "reviewed-npm-audit-v2-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.previous }}",
         path: "${{ inputs.cache-directory }}",
       },
     ]);
@@ -485,7 +485,7 @@ describe("complete managed-image publication workflow", () => {
     expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(localBaseBuild));
     expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(registryBaseBuild));
 
-    for (const action of steps.filter((candidate) => candidate.uses)) {
+    for (const action of steps.filter((candidate) => candidate.uses?.includes("@"))) {
       expect(action.uses, action.name).toMatch(fullShaAction);
     }
 

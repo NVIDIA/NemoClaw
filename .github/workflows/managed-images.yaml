@@ -99,7 +99,6 @@ jobs:
             ci/reviewed-npm-audit.json
             .github/actions/ci-reviewed-npm-audit
             ci/npm-audit-exceptions.json
-            ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/lib/npm-audit-receipt.mts
             scripts/lib/openclaw-npm-remediation.mts
@@ -164,7 +163,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: ./.github/actions/setup-reviewed-npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e
 
       - name: Validate staging QA source
         shell: bash
@@ -494,7 +493,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: ./.github/actions/setup-reviewed-npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e
 
       - name: Validate Deep Agents PR base build arguments
         if: matrix.agent == 'langchain-deepagents-code'
@@ -969,7 +968,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: ./.github/actions/setup-reviewed-npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e
 
       - name: Bind E2E correlation identity
         shell: bash
@@ -1074,7 +1073,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: ./.github/actions/setup-reviewed-npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e
 
       - name: Bind E2E correlation identity
         shell: bash
@@ -1209,6 +1208,11 @@ jobs:
       # base on the target architecture. The activation change adds the shared
       # published-base contract with the rest of the release cohort.
       - name: Install reviewed npm
+        if: github.event_name == 'pull_request'
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e
+
+      - name: Install trusted-event reviewed npm
+        if: github.event_name != 'pull_request'
         uses: ./.github/actions/setup-reviewed-npm
 
       - name: Build the exact Pi candidate base

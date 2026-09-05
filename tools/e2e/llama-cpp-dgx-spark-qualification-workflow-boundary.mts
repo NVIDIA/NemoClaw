@@ -24,7 +24,7 @@ const QUALIFICATION_SELECTOR = `\${{ inputs.${RUNNER_QUEUE_INPUT} && github.repo
 const CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const BUILDX = "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c";
 const PREPARE =
-  "NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75";
+  "NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d";
 
 function record(value: unknown): RecordValue {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as RecordValue) : {};

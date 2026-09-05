@@ -434,9 +434,11 @@ COPY scripts/lib/npm-audit-receipt.mts /scripts/lib/npm-audit-receipt.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+COPY scripts/lib/reviewed-npm-identity.mts /scripts/lib/reviewed-npm-identity.mts
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
+COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
 
-# npm 10.9.8 in the pinned Node 22 image bundles an affected node-tar copy.
+# npm 11.16.0 in the pinned Node 24.18.1 image bundles affected tar 7.5.15.
 # Replace it before npm processes the reviewed npm archive.
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm

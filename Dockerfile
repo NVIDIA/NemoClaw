@@ -1,14 +1,8 @@
-# NemoClaw sandbox image — OpenClaw + NemoClaw plugin inside OpenShell
-#
-# Layers PR-specific code (plugin, blueprint, config, startup script) on top
-# of the pre-built base image from GHCR. The base image contains all the
-# expensive, rarely-changing layers (apt, setpriv, users, openclaw CLI).
-#
-# For local builds without GHCR access, build the base first:
+# NemoClaw sandbox image layers PR-specific code on the pre-built OpenClaw and OpenShell base.
+# Build the base first when GHCR is unavailable:
 #   docker build -f Dockerfile.base -t ghcr.io/nvidia/nemoclaw/sandbox-base:latest .
 
-# Global ARG — must be declared before the first FROM to be visible
-# to all FROM directives. Can be overridden via --build-arg.
+# Global ARG values precede FROM so every stage can use them.
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 ARG NEMOCLAW_CORPORATE_CA_B64=
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
@@ -17,9 +11,23 @@ ARG CODEX_ACP_0_11_1_INTEGRITY=sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLr
 ARG CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY=sha512-30vSoZuW1DP6Nuz24Gg3jgVC37IYe0bZ/Fgc5+372gc0h72NN4zHYAbu5bRd/gUJ9GdwABKrrEPCoFPlOTVTnQ==
 ARG CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY=sha512-I1f6WoSLbLlsWq4zH+vtwdoc4Y41mqRXPpSkfgIifxBw34QmWJmi37etZ7lKTYp6R+J/Z4PUN0rsmnsmKpBZTw==
 
+FROM scratch AS reviewed-npm-archive
+ADD --chmod=0444 --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz
 FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS npm12
-COPY scripts/lib/bundled-npm-package.mts scripts/upgrade-bundled-npm.mts /scripts/
-RUN apt-get update && apt-get install -y --no-install-recommends curl=8.14.1-2+deb13u4 && rm -rf /var/lib/apt/lists/* && node --experimental-strip-types /scripts/upgrade-bundled-npm.mts --npm-root /usr/local/lib/node_modules/npm
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates=20250419 curl=8.14.1-2+deb13u4 && rm -rf /var/lib/apt/lists/*
+COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/
+COPY scripts/patch-bundled-npm-brace-expansion.mts scripts/patch-bundled-npm-tar.mts scripts/upgrade-bundled-npm.mts /scripts/
+COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
+COPY --from=reviewed-npm-archive /npm-12.0.2.tgz /tmp/npm-12.0.2.tgz
+RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts --npm-root /usr/local/lib/node_modules/npm --archive /tmp/npm-12.0.2.tgz
+# hadolint ignore=DL3059
+RUN rm /tmp/npm-12.0.2.tgz
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts --npm-root /usr/local/lib/node_modules/npm
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts --npm-root /usr/local/lib/node_modules/npm
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts --npm-root /usr/local/lib/node_modules/npm
 FROM npm12 AS builder
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
@@ -49,9 +57,7 @@ COPY src/lib/messaging/channels/ /opt/nemoclaw-root/src/lib/messaging/channels/
 RUN ln -s /opt/nemoclaw/node_modules /opt/nemoclaw-root/node_modules \
     && /opt/nemoclaw/node_modules/.bin/tsc -p tsconfig.runtime-preloads.json
 
-# Copy the reviewed, CI-audited runtime artifacts without materializing an npm
-# graph during image assembly. Protected rebuilds remain network-free and the
-# final image still receives only the generated bundles.
+# Copy reviewed generated runtime bundles without materializing an npm graph.
 FROM scratch AS mcp-tool-discovery-runtime
 COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt /opt/mcp-tool-discovery-runtime/dist/
 COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs
@@ -59,9 +65,8 @@ COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery
 FROM scratch AS managed-startup-runtime-builder
 COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs
 
-# Compile the bootstrap boundary on the target platform. The output is a
-# freestanding static ELF; only its reviewed, non-executable Bash body remains
-# interpreted at runtime after the native boundary has scrubbed process control.
+# Compile the target-platform bootstrap as a freestanding static ELF.
+# Its reviewed Bash body runs only after the native boundary scrubs process control.
 FROM node:24.18.1-trixie@sha256:dfa43abae25030f5456007944f725379d1f5be4bb723bd501ac39ac72ffa5474 AS managed-bootstrap-entrypoint-builder
 ARG TARGETARCH
 WORKDIR /opt/nemoclaw-managed-bootstrap-build
@@ -137,8 +142,7 @@ ADD --chmod=0444 --checksum=sha256:b1b01eb1522aea8f652cc7b692d1c417195713deb12b3
 # hadolint ignore=DL3006
 FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
 
-# Reviewed-archive invariants (#5896): checksum-addressed source archives,
-# committed SRI verification, offline installation, and architecture selection.
+# Enforce checksum-addressed archives, SRI, offline install, and target architecture (#5896).
 FROM npm12 AS codex-acp-runtime
 ARG TARGETARCH
 ARG CODEX_ACP_0_11_1_INTEGRITY
@@ -541,14 +545,9 @@ COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/
 COPY agents/openclaw/wechat-runtime/package.json /usr/local/lib/nemoclaw/wechat-runtime/package.json
 COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json
 COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/
-COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
-COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
-COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
-COPY scripts/lib/npm-audit-receipt.mts /scripts/lib/npm-audit-receipt.mts
-COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
-COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
-COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
-COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/npm-audit-receipt.mts scripts/lib/openclaw-npm-remediation.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/
+COPY scripts/patch-bundled-npm-brace-expansion.mts scripts/patch-bundled-npm-tar.mts scripts/upgrade-bundled-npm.mts /scripts/
+COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
 
 FROM scratch AS openclaw-plugin-payload
 
@@ -638,26 +637,22 @@ ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImu
 ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz
 ARG NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=
 
-# A cross-stage root copy is accepted by Docker's legacy builder and creates one
-# final-image layer while preserving metadata on existing parent directories.
+# Preserve existing parent metadata while creating one final-image layer.
 COPY --from=openclaw-dependency-payload / /
+COPY --from=reviewed-npm-archive /npm-12.0.2.tgz /tmp/npm-12.0.2.tgz
+# Standardize a lagging published base from immutable SHA-256- and SRI-bound bytes.
+RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts --npm-root /usr/local/lib/node_modules/npm --archive /tmp/npm-12.0.2.tgz
+# hadolint ignore=DL3059
+RUN rm /tmp/npm-12.0.2.tgz
 
-# OpenClaw 2026.7.1 loads some generated source through jiti. Disable its
-# filesystem transform cache so source fragments that mention provider marker
-# names do not persist under /tmp/jiti inside the sandbox.
+# Keep jiti-generated provider fragments out of the sandbox's /tmp.
 ENV JITI_FS_CACHE=false
 
-# Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
-# onboard detects an operator-supplied corporate CA on the host it bakes it
-# here; the RUN below decodes it to a root-owned file that the entrypoint
-# appends to the OpenShell trust bundle at runtime. The CA is a public
-# certificate, not a secret, so baking it into an image layer is acceptable.
+# Onboard can bake this public corporate CA into the OpenShell trust bundle (#6210).
+# It is empty by default and is not a secret.
 ARG NEMOCLAW_CORPORATE_CA_B64
 
-# Decode the host corporate-proxy CA (#6210) to a root-owned, read-only file
-# when onboard baked one in. No-op when NEMOCLAW_CORPORATE_CA_B64 is empty. The
-# ARG is expanded by the shell (not interpolated into source), and its value is
-# base64 sanitized host-side, so this is not an injection vector.
+# Decode a supplied, host-sanitized CA to a root-owned, read-only file.
 # hadolint ignore=DL3059,DL4006
 RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
       command -v base64 >/dev/null 2>&1 || { echo "[nemoclaw] base64 is required to decode NEMOCLAW_CORPORATE_CA_B64 but is not installed in the build image" >&2; exit 1; }; \
@@ -678,9 +673,7 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
       && echo "[nemoclaw] baked host corporate-proxy CA into image trust (#6210)"; \
     fi
 
-# Use the corporate CA for build-time Node TLS only when onboarding supplied
-# it. The runtime entrypoint builds its own merged OpenShell and corporate
-# bundle.
+# The runtime entrypoint builds its own merged OpenShell and corporate CA bundle.
 
 # The final image owns the shipped dependency boundary independently of base
 # freshness. Reassert the idempotent npm-private fixes after corporate CA setup
@@ -920,7 +913,7 @@ RUN --network=default \
         echo "ERROR: Base image has OpenClaw $CUR_VER, which is newer than reviewed target $OPENCLAW_VERSION" >&2; exit 1; \
     else \
         echo "INFO: Base image OpenClaw $CUR_VER lacks matching reviewed provenance; installing $OPENCLAW_VERSION"; \
-        # npm 10's atomic-move install can hit EROFS on overlayfs when the prior
+        # npm's atomic-move install can hit EROFS on overlayfs when the prior
         # install spans image layers. Removing it first also prevents unreviewed
         # files from surviving a same-version reinstall.
         rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \

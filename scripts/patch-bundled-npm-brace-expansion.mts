@@ -28,6 +28,9 @@ import {
   rejectUnsafePackageTree,
   requireRealDirectory as realDirectory,
 } from "./lib/bundled-npm-package.mts";
+import { REVIEWED_NPM_VERSION } from "./lib/reviewed-npm-identity.mts";
+
+export { REVIEWED_NPM_VERSION };
 
 export const AFFECTED_BRACE_EXPANSION_VERSION = "5.0.7";
 export const FIXED_BRACE_EXPANSION_VERSION = "5.0.9";
@@ -35,7 +38,6 @@ export const FIXED_BRACE_EXPANSION_INTEGRITY =
   "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==";
 export const FIXED_BRACE_EXPANSION_TARBALL =
   "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz";
-export const REVIEWED_NPM_VERSION = "12.0.2";
 
 const REVIEWED_BRACE_EXPANSION_VERSIONS = new Set([
   AFFECTED_BRACE_EXPANSION_VERSION,

@@ -150,12 +150,44 @@ describe("reviewed npm archive", () => {
     expect(calls).toEqual([
       ["view", PACKAGE_SPEC, "dist.integrity"],
       ["view", PACKAGE_SPEC, "dist.tarball"],
-      ["pack", TARBALL_URL, "--pack-destination", archive.rootDirectory, "--json"],
+      ["pack", PACKAGE_SPEC, "--pack-destination", archive.rootDirectory, "--json"],
     ]);
     expect(archive.archivePath).toBe(path.join(archive.rootDirectory, "reviewed-1.2.3.tgz"));
     expect(fs.existsSync(archive.archivePath)).toBe(true);
     removeReviewedNpmArchive(archive);
     expect(fs.existsSync(archive.rootDirectory)).toBe(false);
+  });
+
+  it("accepts npm 12's package-keyed pack JSON without weakening the single-result boundary", () => {
+    const archive = packReviewedNpmArchive(request(), (args, reviewed) => {
+      return args[0] === "view"
+        ? args[2] === "dist.integrity"
+          ? INTEGRITY
+          : TARBALL_URL
+        : (() => {
+            const destination = args[3] as string;
+            const filename = "reviewed-1.2.3.tgz";
+            fs.writeFileSync(path.join(destination, filename), "reviewed bytes");
+            return JSON.stringify({
+              reviewed: { filename, integrity: reviewed.expectedIntegrity },
+            });
+          })();
+    });
+
+    expect(archive.archivePath).toBe(path.join(archive.rootDirectory, "reviewed-1.2.3.tgz"));
+    removeReviewedNpmArchive(archive);
+  });
+
+  it("rejects npm 12 pack JSON containing more than one result", () => {
+    expect(() =>
+      packReviewedNpmArchive(request(), (args) => {
+        return args[0] === "view"
+          ? args[2] === "dist.integrity"
+            ? INTEGRITY
+            : TARBALL_URL
+          : JSON.stringify({ first: {}, second: {} });
+      }),
+    ).toThrow("did not report filename and integrity");
   });
 
   it.each([
