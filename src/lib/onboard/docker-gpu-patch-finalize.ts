@@ -253,22 +253,15 @@ export function finalizeDockerGpuPatchBackup(
     console.log(
       `  Starting the exact replacement through OpenShell to complete the final handoff (up to ${options.finalHandoffTimeoutSecs}s)...`,
     );
-    const replacementRestarted = runOpenShellLifecycleCommand(
+    const lifecycleStartAcknowledged = runOpenShellLifecycleCommand(
       deps.runOpenshell,
       ["sandbox", "start", options.sandboxName],
       options.finalHandoffTimeoutSecs,
     );
-    if (!replacementRestarted) {
-      return {
-        backupRemoved: true,
-        rolledBack: false,
-        replacementStoppedForCommit: true,
-        replacementRestarted: false,
-        lifecycleStopAcknowledged: true,
-        finalHandoffAcknowledged: false,
-        lastSandboxPhase: null,
-      };
-    }
+    // OpenShell can return nonzero after applying the start mutation when its
+    // internal Ready deadline expires. Reconcile that ambiguous result through
+    // the identity-bound handoff waiter, which rejects absent, foreign, and
+    // terminal replacement state.
     console.log(
       `  Waiting for OpenShell to confirm the final replacement handoff (up to ${options.finalHandoffTimeoutSecs}s)...`,
     );
@@ -292,7 +285,7 @@ export function finalizeDockerGpuPatchBackup(
       backupRemoved: true,
       rolledBack: false,
       replacementStoppedForCommit: true,
-      replacementRestarted: true,
+      replacementRestarted: lifecycleStartAcknowledged || acknowledgement.acknowledged,
       lifecycleStopAcknowledged: true,
       finalHandoffAcknowledged: acknowledgement.acknowledged,
       lastSandboxPhase: acknowledgement.lastSandboxPhase,

@@ -220,6 +220,60 @@ describe("finalizeDockerGpuPatchBackup", () => {
     );
   });
 
+  it("reconciles a nonzero OpenShell start when the exact replacement reaches Ready (#11096)", () => {
+    const result = exactDeferredCreateResult();
+    const phases = ["Provisioning", "Ready"];
+    const runCaptureOpenshell = vi.fn(
+      () => `alpha  2026-09-04 07:42:01  ${phases.shift() ?? "Ready"}\n`,
+    );
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 1, error: new Error("timed out waiting for Ready") })
+      .mockReturnValue({ status: 0 });
+    const dockerRun = vi.fn((args: readonly string[]) => {
+      const namespaceInspect = String(args[4]).includes("sandbox-namespace");
+      return args[0] === "ps"
+        ? { status: 0, stdout: `${result.newContainerId}\n` }
+        : namespaceInspect
+          ? { status: 0, stdout: "current-gateway\n" }
+          : { status: 0, stdout: "true\n" };
+    });
+
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result,
+        supervisorReady: true,
+        sandboxName: "alpha",
+        finalHandoffTimeoutSecs: 60,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRun,
+        dockerStart: vi.fn(() => ({ status: 0 })),
+        runCaptureOpenshell,
+        runOpenshell,
+        sleep: vi.fn(),
+      },
+    );
+
+    expect(outcome).toEqual({
+      backupRemoved: true,
+      rolledBack: false,
+      replacementStoppedForCommit: true,
+      replacementRestarted: true,
+      lifecycleStopAcknowledged: true,
+      finalHandoffAcknowledged: true,
+      lastSandboxPhase: "Ready",
+    });
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "exec", "-n", "alpha", "--", "true"],
+      expect.any(Object),
+    );
+  });
+
   it("fails immediately when OpenShell reports Deleting after the final start (#9531)", () => {
     const result = exactDeferredCreateResult();
     const events: string[] = [];
@@ -656,14 +710,24 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
-  it("reports a failed replacement restart after the backup is removed", () => {
+  it("rejects a nonzero OpenShell start when the exact replacement is not running (#11096)", () => {
+    const result = exactDeferredCreateResult();
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 1 });
+    const runCaptureOpenshell = vi.fn(() => "alpha  2026-09-04 07:42:01  Provisioning\n");
+    const dockerRun = vi.fn((args: readonly string[]) => {
+      const namespaceInspect = String(args[4]).includes("sandbox-namespace");
+      return args[0] === "ps"
+        ? { status: 0, stdout: `${result.newContainerId}\n` }
+        : namespaceInspect
+          ? { status: 0, stdout: "current-gateway\n" }
+          : { status: 0, stdout: "false\n" };
+    });
     const outcome = finalizeDockerGpuPatchBackup(
       {
-        result: deferredCreateResult(),
+        result,
         supervisorReady: true,
         sandboxName: "alpha",
         finalHandoffTimeoutSecs: 60,
@@ -671,8 +735,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
       {
         dockerStop: vi.fn(() => ({ status: 0 })),
         dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRun,
         dockerStart: vi.fn(() => ({ status: 1 })),
-        runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:02  Ready\n"),
+        runCaptureOpenshell,
         runOpenshell,
         sleep: vi.fn(),
       },
@@ -685,8 +750,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
       replacementRestarted: false,
       lifecycleStopAcknowledged: true,
       finalHandoffAcknowledged: false,
-      lastSandboxPhase: null,
+      lastSandboxPhase: "Provisioning",
     });
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(1);
     expect(runOpenshell).toHaveBeenNthCalledWith(
       1,
       ["sandbox", "stop", "alpha"],
