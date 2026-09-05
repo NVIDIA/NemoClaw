@@ -6,6 +6,7 @@ import {
   withSelectedOpenShellCommandOptions,
 } from "../../adapters/openshell/command-argv";
 import {
+  isForwardServiceListenerOwned,
   launchForwardService,
   type ForwardServiceTarget,
 } from "../../adapters/openshell/forward-service";
@@ -325,8 +326,8 @@ export function teardownSandboxDashboardForward(
  * Re-establish the dashboard port forward to the sandbox.
  * Uses the recorded dashboard port when available, including custom ports for
  * non-OpenClaw agents, then falls back to the active agent's declared port.
- * Returns true when an existing forward is reachable or a newly launched
- * OpenShell service owns the listener through its startup stability window.
+ * Returns true when an existing exact OpenShell service owns the reachable
+ * listener or a newly launched service owns it through the startup stability window.
  */
 export function ensureSandboxPortForward(
   sandboxName: string,
@@ -356,7 +357,7 @@ export function ensureSandboxPortForward(
   });
 }
 
-/** Probe local reachability for a registered sandbox port without claiming process ownership. */
+/** Verify local reachability and exact OpenShell service-forward process ownership. */
 export function isSandboxForwardHealthy(
   sandboxName: string,
   options: { isWsl?: boolean; runtimeSelection?: OpenShellRuntimeSelection } = {},
@@ -375,7 +376,7 @@ export function isSandboxForwardHealthy(
 export function isSandboxPortForwardHealthy(
   sandboxName: string,
   port: number,
-  _expectedBind?: string,
+  expectedBind?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
 ): SandboxForwardHealth {
   const sandbox = registry.getSandbox(sandboxName);
@@ -394,14 +395,27 @@ export function isSandboxPortForwardHealthy(
     ),
   );
   if (
-    !listed.error &&
-    !listed.signal &&
-    listed.status === 0 &&
+    listed.error ||
+    listed.signal ||
+    listed.status !== 0 ||
     isLegacySandboxForwardListed(listed.output, sandboxName, port)
   ) {
     return false;
   }
-  return true;
+  const executable = resolveOpenshell();
+  if (!executable) return false;
+  return (
+    isForwardServiceListenerOwned(
+      forwardServiceTarget(
+        executable,
+        gatewayName,
+        sandboxName,
+        port,
+        expectedBind,
+        runtimeSelection?.workspace ?? "default",
+      ),
+    ) === true
+  );
 }
 
 export function ensureSandboxPortForwardForPort(
@@ -444,6 +458,11 @@ export function ensureSandboxPortForwardForPort(
     if (!sandbox) throw new Error(`Sandbox '${sandboxName}' is not registered`);
     const gatewayName = runtimeSelection?.gatewayName ?? resolveSandboxGatewayName(sandbox);
     retireLegacyForwardServiceMigration(sandboxName, gatewayName, [port], runtimeSelection);
+    if (isLocalForwardReachable(port)) {
+      throw new Error(
+        `host port ${String(port)} is occupied by a listener that does not match the selected OpenShell service forward`,
+      );
+    }
     const executable = resolveOpenshell();
     if (!executable) throw new Error("OpenShell is unavailable");
     launchForwardService(

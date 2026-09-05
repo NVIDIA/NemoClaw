@@ -10,11 +10,13 @@ const mocks = vi.hoisted(() => ({
   getSandbox: vi.fn(),
   getHermesDashboardRecoveryConfig: vi.fn(() => null),
   isLocalForwardReachable: vi.fn(() => true),
+  isForwardServiceListenerOwned: vi.fn(() => true),
   launchForwardService: vi.fn(),
 }));
 
 vi.mock("../../adapters/openshell/forward-service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/forward-service")>()),
+  isForwardServiceListenerOwned: mocks.isForwardServiceListenerOwned,
   launchForwardService: mocks.launchForwardService,
 }));
 
@@ -63,6 +65,7 @@ beforeEach(() => {
   vi.unstubAllEnvs();
   mocks.runOpenshell.mockReturnValue({ status: 0 });
   mocks.isLocalForwardReachable.mockReturnValue(true);
+  mocks.isForwardServiceListenerOwned.mockReturnValue(true);
   mocks.launchForwardService.mockImplementation(() => {
     mocks.isLocalForwardReachable.mockReturnValue(true);
   });
@@ -83,6 +86,22 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
 
     expect(ensureSandboxPortForward("remote-box")).toBe(true);
     expect(mocks.launchForwardService).not.toHaveBeenCalled();
+  });
+
+  it("rejects a reachable listener without the selected service-forward identity (#11084)", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.getSandbox.mockReturnValue({ agent: "openclaw", dashboardPort: 18789 });
+    mocks.captureOpenshell.mockReturnValue(forwardList([]));
+    mocks.isForwardServiceListenerOwned.mockReturnValue(false);
+    const { ensureSandboxPortForward } = await import("./forward-recovery");
+
+    expect(ensureSandboxPortForward("unknown-listener")).toBe(false);
+    expect(mocks.launchForwardService).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "host port 18789 is occupied by a listener that does not match the selected OpenShell service forward",
+      ),
+    );
   });
 
   it("does not demand the manifest dashboard port from a sandbox that owns a different dashboard port (#8543)", async () => {

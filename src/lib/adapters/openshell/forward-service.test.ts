@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildForwardServiceArgs,
   getForwardListenerOwnership,
+  isForwardServiceListenerOwned,
   launchForwardService,
   parseForwardInstanceIdentity,
   type ForwardServiceTarget,
@@ -48,6 +49,32 @@ describe("OpenShell forward service", () => {
     expect(buildForwardServiceArgs({ ...target, workspace: "review-workspace" })).toContain(
       "review-workspace",
     );
+  });
+
+  it("accepts only an exact same-user service-forward listener (#11084)", () => {
+    const currentUid = process.getuid?.();
+    expect(currentUid).toBeDefined();
+    if (currentUid === undefined) return;
+    const expectedArgv = [target.executable, ...buildForwardServiceArgs(target)];
+    const options = {
+      findListenerOwnerPids: () => [42],
+      isListenerOwned: () => true,
+      readProcess: () => ({ argv: expectedArgv, uid: currentUid }),
+    };
+
+    expect(isForwardServiceListenerOwned(target, options)).toBe(true);
+    expect(
+      isForwardServiceListenerOwned(target, {
+        ...options,
+        readProcess: () => ({ argv: [...expectedArgv, "unexpected"], uid: currentUid }),
+      }),
+    ).toBe(false);
+    expect(
+      isForwardServiceListenerOwned(target, {
+        ...options,
+        readProcess: () => ({ argv: expectedArgv, uid: currentUid + 1 }),
+      }),
+    ).toBe(false);
   });
 
   it("accepts an owned listener without opening a ForwardTcp connection (#11084)", () => {
@@ -362,6 +389,23 @@ describe("OpenShell forward service", () => {
 
   it.runIf(process.platform === "linux")(
     "proves listener ownership from Linux procfs without lsof (#11084)",
+    async () => {
+      const server = createServer();
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      try {
+        const address = server.address() as AddressInfo;
+        expect(getForwardListenerOwnership(process.pid, address.port)).toBe(true);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
+
+  it.runIf(process.platform === "darwin")(
+    "proves listener ownership from macOS lsof (#11084)",
     async () => {
       const server = createServer();
       await new Promise<void>((resolve, reject) => {

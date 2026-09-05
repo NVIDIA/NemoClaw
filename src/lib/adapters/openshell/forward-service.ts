@@ -32,6 +32,12 @@ type ForwardServiceChild = {
   unref(): void;
 };
 
+type ForwardServiceProcess = {
+  readonly argv?: readonly string[];
+  readonly command?: string;
+  readonly uid: number;
+};
+
 export interface ForwardServiceTarget {
   readonly executable: string;
   readonly gatewayName: string;
@@ -63,6 +69,12 @@ export interface ForwardServiceLaunchOptions {
   ) => ForwardServiceChild;
   readonly timeoutMs?: number;
 }
+
+type ForwardServiceOwnershipOptions = {
+  readonly findListenerOwnerPids?: (port: number) => readonly number[] | null;
+  readonly isListenerOwned?: (pid: number, port: number) => boolean | null;
+  readonly readProcess?: (pid: number) => ForwardServiceProcess | null;
+};
 
 function readLinuxProcessStat(pid: number): string[] | null | undefined {
   if (process.platform !== "linux") return undefined;
@@ -138,9 +150,10 @@ function readLinuxListeningSocketInodes(port: number): Set<string> | null {
   return readTable ? inodes : null;
 }
 
-function isLinuxListenerOwned(pid: number, port: number): boolean | null {
-  const listenerInodes = readLinuxListeningSocketInodes(port);
-  if (!listenerInodes) return null;
+function linuxProcessOwnsListenerInodes(
+  pid: number,
+  listenerInodes: ReadonlySet<string>,
+): boolean | null {
   let descriptors: string[];
   try {
     descriptors = fs.readdirSync(`/proc/${String(pid)}/fd`);
@@ -162,6 +175,80 @@ function isLinuxListenerOwned(pid: number, port: number): boolean | null {
     }
   }
   return unreadableDescriptor ? null : false;
+}
+
+function findLinuxListenerOwnerPids(port: number): number[] | null {
+  const listenerInodes = readLinuxListeningSocketInodes(port);
+  if (!listenerInodes || listenerInodes.size === 0) return null;
+  let processes: fs.Dirent[];
+  try {
+    processes = fs.readdirSync("/proc", { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const owners: number[] = [];
+  for (const processEntry of processes) {
+    if (!processEntry.isDirectory() || !/^\d+$/u.test(processEntry.name)) continue;
+    const pid = Number(processEntry.name);
+    if (linuxProcessOwnsListenerInodes(pid, listenerInodes) === true) owners.push(pid);
+  }
+  return owners.length > 0 ? owners : null;
+}
+
+function findLsofListenerOwnerPids(port: number): number[] | null {
+  const result = spawnSync("lsof", ["-nP", "-t", `-iTCP:${String(port)}`, "-sTCP:LISTEN"], {
+    encoding: "utf8",
+    env: buildOpenShellSubprocessEnv(process.env),
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 1_000,
+  });
+  if (result.error || (result.status !== 0 && result.status !== 1)) return null;
+  const owners = result.stdout
+    .split(/\r?\n/u)
+    .map((value) => value.trim())
+    .filter((value) => /^\d+$/u.test(value))
+    .map(Number);
+  return owners.length > 0 ? [...new Set(owners)] : null;
+}
+
+function findListenerOwnerPids(port: number): number[] | null {
+  return process.platform === "linux"
+    ? findLinuxListenerOwnerPids(port)
+    : findLsofListenerOwnerPids(port);
+}
+
+function readForwardServiceProcess(pid: number): ForwardServiceProcess | null {
+  const currentUid = process.getuid?.();
+  if (currentUid === undefined) return null;
+  if (process.platform === "linux") {
+    try {
+      return {
+        argv: fs
+          .readFileSync(`/proc/${String(pid)}/cmdline`)
+          .toString("utf8")
+          .split("\0")
+          .filter(Boolean),
+        uid: fs.statSync(`/proc/${String(pid)}`).uid,
+      };
+    } catch {
+      return null;
+    }
+  }
+  const result = spawnSync("ps", ["-ww", "-p", String(pid), "-o", "uid=", "-o", "command="], {
+    encoding: "utf8",
+    env: buildOpenShellSubprocessEnv(process.env),
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 1_000,
+  });
+  if (result.error || result.status !== 0) return null;
+  const match = /^\s*(\d+)\s+(.+)$/u.exec(result.stdout.trim());
+  return match?.[1] && match[2] ? { command: match[2], uid: Number(match[1]) } : null;
+}
+
+function isLinuxListenerOwned(pid: number, port: number): boolean | null {
+  const listenerInodes = readLinuxListeningSocketInodes(port);
+  if (!listenerInodes) return null;
+  return linuxProcessOwnsListenerInodes(pid, listenerInodes);
 }
 
 export function getForwardListenerOwnership(pid: number, port: number): boolean | null {
@@ -443,6 +530,34 @@ export function buildForwardServiceArgs(target: ForwardServiceTarget): string[] 
     "--local",
     `${target.localHost}:${String(target.localPort)}`,
   ];
+}
+
+/** Verify that an existing listener belongs to the exact OpenShell service-forward command. */
+export function isForwardServiceListenerOwned(
+  target: ForwardServiceTarget,
+  options: ForwardServiceOwnershipOptions = {},
+): boolean | null {
+  validateForwardServiceTarget(target);
+  const ownerPids = (options.findListenerOwnerPids ?? findListenerOwnerPids)(target.localPort);
+  if (!ownerPids || ownerPids.length !== 1) return null;
+  const pid = ownerPids[0];
+  if (pid === undefined) return null;
+  const listenerOwned = (options.isListenerOwned ?? getForwardListenerOwnership)(
+    pid,
+    target.localPort,
+  );
+  if (listenerOwned !== true) return listenerOwned;
+  const owner = (options.readProcess ?? readForwardServiceProcess)(pid);
+  const currentUid = process.getuid?.();
+  if (!owner || currentUid === undefined || owner.uid !== currentUid) return false;
+  const expectedArgv = [target.executable, ...buildForwardServiceArgs(target)];
+  if (owner.argv) {
+    return (
+      owner.argv.length === expectedArgv.length &&
+      owner.argv.every((value, index) => value === expectedArgv[index])
+    );
+  }
+  return owner.command === expectedArgv.join(" ");
 }
 
 /** Launch one foreground OpenShell service forward as a detached host child. */

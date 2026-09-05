@@ -382,7 +382,7 @@ Use these details when your first-run path needs more control.
     For a new sandbox, NemoClaw reserves the selected dashboard loopback port through sandbox preparation and creation.
     If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources.
     NemoClaw waits up to 90 seconds for each forward to bind under its spawned OpenShell process.
-    It then verifies listener ownership through OpenShell's first post-bind sandbox check.
+    It then verifies that each spawned process owns its listener and keeps that ownership stable for one post-bind check interval.
     If OpenShell reports that the sandbox is still completing its readiness handoff, NemoClaw waits 5 seconds and retries up to 12 times.
     An exact forward process that exits for another reason receives one retry.
     If the process remains unbound at the deadline, NemoClaw stops that exact process and confirms its exit before retrying.
