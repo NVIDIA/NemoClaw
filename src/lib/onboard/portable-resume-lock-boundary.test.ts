@@ -214,12 +214,19 @@ describe("portable resume command lock boundary", () => {
             resolveResumeIntent: () => ({ effectiveResume: false, snapshot: null }),
             runOnboard: (options) => runWithObservedPreparation(onboardModule, options),
           }),
-        ).rejects.toThrow(
-          "Cannot update onboarding recovery while another onboarding run owns the lock.",
-        );
+        ).rejects.toThrow("exit:1");
         expect(preparePortableHost).not.toHaveBeenCalled();
         expect(fs.existsSync(configWriteMarker)).toBe(false);
         expect(fs.existsSync(socketActivationMarker)).toBe(false);
+        // The live-contention path must surface the shipped guidance
+        // (names the competing run, prints the holder PID, says to wait)
+        // instead of only the bare internal error (#11052).
+        const errorOutput = (console.error as unknown as ReturnType<typeof vi.fn>).mock.calls
+          .map((call: unknown[]) => String(call[0]))
+          .join("\n");
+        expect(errorOutput).toContain("another nemoclaw onboarding run is already in progress.");
+        expect(errorOutput).toContain("Lock holder PID:");
+        expect(errorOutput).toContain("Wait for the active onboarding run to finish.");
       } finally {
         const exited = once(child, "exit");
         child.kill();

@@ -34,6 +34,8 @@ import {
   type ExperimentalOnboardProfile,
   PORTABLE_EXPERIMENTAL_PROFILE,
 } from "./docker-driver-platform";
+import { isOnboardLockContentionError } from "../state/onboard-session";
+import { cliName } from "./branding";
 import {
   loadPortableInferenceDescriptor,
   PORTABLE_INFERENCE_CREDENTIAL_ENV,
@@ -535,6 +537,21 @@ function reportOnboardCommandError(deps: RunOnboardCommandDeps, message: string)
 }
 
 function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps): number | null {
+  // Live onboarding-lock contention: surface the shipped guard text (name the
+  // competing run, print the holder PID, say to wait) instead of the bare
+  // internal error (#11052).
+  if (isOnboardLockContentionError(error)) {
+    return reportOnboardCommandError(
+      deps,
+      [
+        `  another ${cliName()} onboarding run is already in progress.`,
+        error.holderPid ? `  Lock holder PID: ${error.holderPid}.` : "",
+        "  Wait for the active onboarding run to finish.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
   const cancellationCode = promptCancellationCode(error);
   if (cancellationCode === "SIGINT") {
     // The prompt has already restored terminal state and re-raised SIGINT.
