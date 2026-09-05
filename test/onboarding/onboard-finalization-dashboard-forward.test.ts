@@ -5,11 +5,14 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ForwardServiceTarget } from "../../src/lib/adapters/openshell/forward-service";
 import type { ForwardServiceOwnershipResult } from "../../src/lib/adapters/openshell/forward-service-ownership";
+import { loadAgent } from "../../src/lib/agent/defs";
 import { createOnboardDashboardHelpers } from "../../src/lib/onboard/dashboard";
+import type { OnboardDashboardDeps } from "../../src/lib/onboard/dashboard";
 import type { ListSandboxesFn } from "../../src/lib/onboard/dashboard-port";
 
 function harness(options: {
   listSandboxes: ListSandboxesFn;
+  getSandbox?: OnboardDashboardDeps["getSandbox"];
   inspectOwnership?: (target: ForwardServiceTarget) => ForwardServiceOwnershipResult;
   isPortBound?: (port: number) => boolean;
 }) {
@@ -27,6 +30,7 @@ function harness(options: {
     sleep: vi.fn(),
     printAgentDashboardUi: vi.fn(),
     listSandboxes: options.listSandboxes,
+    ...(options.getSandbox ? { getSandbox: options.getSandbox } : {}),
     isPortBoundOnHost: options.isPortBound ?? (() => false),
     forwardService: {
       executable: () => "/usr/local/bin/openshell",
@@ -108,6 +112,42 @@ describe("finalization dashboard ForwardTcp launch", () => {
     );
     expect(launch).not.toHaveBeenCalled();
     expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
+  });
+
+  it("preserves the registered Hermes dashboard through agent finalization (#11074)", async () => {
+    vi.stubEnv("CHAT_UI_URL", "http://127.0.0.1:18789");
+    const revalidateSandboxIdentity = vi.fn();
+    const inspectOwnership = vi.fn(() => ({ owned: true }) as const);
+    const { helpers, launch } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "hermes-reuse", dashboardPort: 18_789 }],
+      }),
+      getSandbox: () => ({ hermesApiPort: 8647 }) as never,
+      inspectOwnership,
+      isPortBound: (port) => port === 18_789,
+    });
+
+    expect(
+      await helpers.ensureFinalizationAgentDashboardForward("hermes-reuse", loadAgent("hermes"), {
+        preserveRegisteredForward: true,
+        revalidateSandboxIdentity,
+      }),
+    ).toBe(18_789);
+    expect(inspectOwnership).toHaveBeenCalledOnce();
+    expect(inspectOwnership).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "hermes-reuse",
+        localPort: 18_789,
+        targetPort: 18_789,
+      }),
+    );
+    expect(launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "hermes-reuse",
+        localPort: 8647,
+        targetPort: 8647,
+      }),
+    );
   });
 
   it("rejects an unowned listener during Ready sandbox reuse (#11074)", () => {

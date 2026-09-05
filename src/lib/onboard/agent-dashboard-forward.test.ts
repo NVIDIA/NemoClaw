@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { loadAgent } from "../agent/defs";
 import { ensureAgentDashboardForward } from "./agent-dashboard-forward";
 
 describe("ensureAgentDashboardForward", () => {
@@ -222,5 +223,46 @@ describe("ensureAgentDashboardForward", () => {
       },
     );
     expect(process.env.CHAT_UI_URL).toBe("https://hermes.example.test:9120/ui");
+  });
+
+  it("preserves only the registered Hermes dashboard forward during Ready reuse (#11074)", async () => {
+    const revalidateSandboxIdentity = vi.fn();
+    const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
+      return Number(new URL(chatUiUrl).port);
+    });
+
+    await ensureAgentDashboardForward({
+      sandboxName: "hermes-reuse",
+      agent: loadAgent("hermes"),
+      ensureDashboardForward,
+      hermesApiPort: 8647,
+      chatUiUrl: "http://127.0.0.1:9120",
+      controlUiPort: 9120,
+      preserveRegisteredForward: true,
+      revalidateSandboxIdentity,
+    });
+
+    expect(ensureDashboardForward).toHaveBeenNthCalledWith(
+      1,
+      "hermes-reuse",
+      "http://127.0.0.1:9120",
+      {
+        allowPortReallocation: false,
+        preserveRegisteredForward: true,
+        revalidateSandboxIdentity: expect.any(Function),
+      },
+    );
+    expect(ensureDashboardForward).toHaveBeenNthCalledWith(
+      2,
+      "hermes-reuse",
+      "http://127.0.0.1:8647",
+      {
+        allowPortReallocation: false,
+        revalidateSandboxIdentity: expect.any(Function),
+      },
+    );
+    expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
+      "report successful dashboard forwarding for sandbox 'hermes-reuse'",
+    );
   });
 });

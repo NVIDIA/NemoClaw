@@ -179,6 +179,7 @@ export interface OnboardDashboardHelpers {
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
     options?: {
       beforeForwardPort?: (port: number) => Promise<void> | void;
+      preserveRegisteredForward?: boolean;
       revalidateSandboxIdentity?: (operation: string) => void;
     },
   ): Promise<number>;
@@ -619,6 +620,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
     options: {
       beforeForwardPort?: (port: number) => Promise<void> | void;
+      preserveRegisteredForward?: boolean;
       revalidateSandboxIdentity?: (operation: string) => void;
     } = {},
   ): Promise<number> {
@@ -631,6 +633,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       controlUiPort: chatUiUrl ? Number(getDashboardForwardPort(chatUiUrl)) : undefined,
       hermesApiPort: getSandbox?.(sandboxName)?.hermesApiPort,
       beforeForwardPort: options.beforeForwardPort,
+      preserveRegisteredForward: options.preserveRegisteredForward,
       revalidateSandboxIdentity: options.revalidateSandboxIdentity,
     });
   }
@@ -653,6 +656,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     } = options;
     return agent
       ? ensureAgentDashboardForward(sandboxName, agent, {
+          preserveRegisteredForward,
           revalidateSandboxIdentity,
           beforeForwardPort: portReservation
             ? (port) => portReservation.releaseBeforeForward(agent.name, port)

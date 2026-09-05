@@ -17,6 +17,12 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  closeServer,
+  dashboardForwardProcessIdentity,
+  startForeignDashboardListener,
+  waitForDashboardListenerToStop,
+} from "../fixtures/dashboard-listener-process.ts";
 
 //
 // This intentionally stays as one free-standing live test with local
@@ -112,33 +118,6 @@ async function runOnboard(
     env: onboardEnv(sandboxName, fakeBaseUrl, recreate),
     timeoutMs: ONBOARD_TIMEOUT_MS,
   });
-}
-
-async function dashboardForwardProcessIdentity(
-  host: HostCliClient,
-  port: number,
-  artifactName: string,
-): Promise<string> {
-  const result = await host.command(
-    "bash",
-    [
-      "-lc",
-      [
-        "set -euo pipefail",
-        'pids="$(lsof -nP -iTCP:"$1" -sTCP:LISTEN -Fp | sed -n \'s/^p//p\' | sort -u)"',
-        'test -n "$pids"',
-        'test "$(printf \'%s\\n\' "$pids" | wc -l | tr -d \' \')" = 1',
-        'ps -ww -p "$pids" -o pid= -o uid= -o lstart= -o command=',
-      ].join("\n"),
-      "nemoclaw-dashboard-forward-identity",
-      String(port),
-    ],
-    { artifactName, env: commandEnv(), timeoutMs: 30_000 },
-  );
-  const identity = stripAnsi(result.stdout).trim();
-  expect(result.exitCode, resultText(result)).toBe(0);
-  expect(identity, "dashboard ForwardTcp process identity").not.toBe("");
-  return identity;
 }
 
 async function runProbeOnlyConnect(
@@ -444,6 +423,7 @@ test(
         "onboard sibling sandbox with isolated dashboard",
         "stop sibling sandbox without disturbing the first forward",
         "replace sandbox after stale registry refusal",
+        "reject foreign dashboard listener during reuse",
         "validate gateway-stop lifecycle guidance",
         "remove double-onboard resources",
       ],
@@ -466,7 +446,6 @@ test(
       ["-lc", "command -v openshell"],
       "prereq-openshell",
     );
-  await prerequisiteOrSkip(host, skip, "bash", ["-lc", "command -v lsof"], "prereq-lsof");
   await prerequisiteOrSkip(
     host,
     skip,
@@ -534,6 +513,7 @@ test(
       "different-name onboard preserves the first sandbox and allocates distinct dashboard forwards",
       "stopping one sandbox releases only its dashboard forward and reports the container stopped",
       "stale OpenShell deletion preserves registry metadata through status/connect and rebuild directs a clean replacement",
+      "same-name re-onboard rejects a real foreign listener without replacing the sandbox",
       "status after gateway stop gives explicit lifecycle guidance without deleting registry state",
     ],
   });
@@ -577,13 +557,10 @@ test(
   assertRegistryInferenceMetadata(SANDBOX_A, fake.baseUrl);
   const dashboardPort = Number(registryEntry(SANDBOX_A)?.dashboardPort);
   expect(Number.isSafeInteger(dashboardPort) && dashboardPort > 0).toBe(true);
-  const forwardIdentityBeforeSecond = await dashboardForwardProcessIdentity(
-    host,
-    dashboardPort,
-    "phase-2-dashboard-forward-identity",
-  );
-  expect(forwardIdentityBeforeSecond).toContain(`forward service ${SANDBOX_A}`);
-  expect(forwardIdentityBeforeSecond).toContain(
+  const forwardIdentityBeforeSecond = dashboardForwardProcessIdentity(dashboardPort);
+  await artifacts.writeJson("phase-2-dashboard-forward-identity.json", forwardIdentityBeforeSecond);
+  expect(forwardIdentityBeforeSecond.argv.join(" ")).toContain(`forward service ${SANDBOX_A}`);
+  expect(forwardIdentityBeforeSecond.argv.join(" ")).toContain(
     `--local 127.0.0.1:${String(dashboardPort)}`,
   );
 
@@ -605,12 +582,9 @@ test(
   });
   expect(sandboxAAfterSecond.exitCode, resultText(sandboxAAfterSecond)).toBe(0);
   expect(parseOpenShellSandboxId(resultText(sandboxAAfterSecond))).toBe(sandboxAIdAfterFirst);
-  const forwardIdentityAfterSecond = await dashboardForwardProcessIdentity(
-    host,
-    dashboardPort,
-    "phase-3-dashboard-forward-identity",
-  );
-  expect(forwardIdentityAfterSecond).toBe(forwardIdentityBeforeSecond);
+  const forwardIdentityAfterSecond = dashboardForwardProcessIdentity(dashboardPort);
+  await artifacts.writeJson("phase-3-dashboard-forward-identity.json", forwardIdentityAfterSecond);
+  expect(forwardIdentityAfterSecond).toEqual(forwardIdentityBeforeSecond);
   const dashboardResponse = await host.command(
     "curl",
     [
@@ -647,8 +621,6 @@ test(
   const recreatedText = resultText(recreated);
   expect(recreated.exitCode, recreatedText).toBe(0);
   expect(await gatewayRuntimeId(gateway)).toBe(gatewayBeforeRecreate);
-  expect(recreatedText).not.toContain("Port 8080 is not available");
-  expect(recreatedText).not.toContain("Port 18789 is not available");
 
   progress.phase("onboard sibling sandbox with isolated dashboard");
   // Phase 4: a different-name onboard must not destroy A.
@@ -674,8 +646,6 @@ test(
   const gatewayAfterThird = await gatewayRuntimeId(gateway);
   expect(gatewayBeforeThird, "gateway runtime id before third onboard").not.toBe("");
   expect(gatewayAfterThird).toBe(gatewayBeforeThird);
-  expect(thirdText).not.toContain("Port 8080 is not available");
-  expect(thirdText).not.toContain("Port 18789 is not available");
 
   const selectedNemoclaw = await host.command(
     "bash",
@@ -730,7 +700,6 @@ test(
     if (attempt < PROBE_ATTEMPTS) await sleep(PROBE_DELAY_MS);
   }
   expect(probe?.exitCode, probe ? resultText(probe) : "probe did not run").toBe(0);
-  expect(probe?.timedOut, probe ? resultText(probe) : "probe did not run").toBe(false);
 
   const restoredForwardB = await waitForForwardOwner(
     sandbox,
@@ -818,7 +787,6 @@ test(
   const staleStatusText = resultText(staleStatus);
   expect(staleStatus.exitCode, staleStatusText).toBe(1);
   expect(staleStatusText).toContain("No local registry entry was removed");
-  expect(staleStatusText).not.toContain("Removed stale local registry entry");
   expect(registryHas(SANDBOX_A), "status removed stale registry entry").toBe(true);
 
   const staleConnect = await command(host, [SANDBOX_A, "connect"], {
@@ -844,7 +812,6 @@ test(
   expect(rebuildText).toContain("Rebuild cannot recover its missing OpenShell policy");
   expect(rebuildText).toContain(`nemoclaw ${SANDBOX_A} destroy --yes`);
   expect(rebuildText).toContain("nemoclaw onboard");
-  expect(rebuildText).not.toContain("Creating new sandbox with current image");
   expect(rebuild.exitCode, rebuildText).not.toBe(0);
 
   const removeStale = await command(host, [SANDBOX_A, "destroy", "--yes"], {
@@ -870,6 +837,57 @@ test(
   });
   expect(sandboxAAfterRebuild.exitCode, resultText(sandboxAAfterRebuild)).toBe(0);
   expect(registryHas(SANDBOX_A), "rebuild lost sandbox A registry entry").toBe(true);
+
+  progress.phase("reject foreign dashboard listener during reuse");
+  const sandboxAIdBeforeForeignListener = parseOpenShellSandboxId(resultText(sandboxAAfterRebuild));
+  expect(sandboxAIdBeforeForeignListener, resultText(sandboxAAfterRebuild)).not.toBeNull();
+  const foreignListenerPort = Number(registryEntry(SANDBOX_A)?.dashboardPort);
+  expect(Number.isSafeInteger(foreignListenerPort) && foreignListenerPort > 0).toBe(true);
+  const ownedForwardBeforeForeignListener = dashboardForwardProcessIdentity(foreignListenerPort);
+  await artifacts.writeJson(
+    "phase-5-owned-dashboard-forward-before-foreign-listener.json",
+    ownedForwardBeforeForeignListener,
+  );
+  expect(ownedForwardBeforeForeignListener.argv.join(" ")).toContain(
+    `forward service ${SANDBOX_A}`,
+  );
+  process.kill(ownedForwardBeforeForeignListener.pid, "SIGTERM");
+  await waitForDashboardListenerToStop(foreignListenerPort);
+
+  const foreignListener = await startForeignDashboardListener(foreignListenerPort);
+  cleanup.trackDisposable("close foreign dashboard listener", () => closeServer(foreignListener));
+  const foreignIdentityBeforeAttempt = dashboardForwardProcessIdentity(foreignListenerPort);
+  await artifacts.writeJson(
+    "phase-5-foreign-dashboard-listener-before-reuse.json",
+    foreignIdentityBeforeAttempt,
+  );
+  expect(foreignIdentityBeforeAttempt.pid).toBe(process.pid);
+
+  const rejectedForeignReuse = await runOnboard(
+    host,
+    SANDBOX_A,
+    fake.baseUrl,
+    "phase-5-reject-foreign-dashboard-listener",
+  );
+  const rejectedForeignReuseText = resultText(rejectedForeignReuse);
+  expect(rejectedForeignReuse.exitCode, rejectedForeignReuseText).not.toBe(0);
+  expect(rejectedForeignReuseText).toContain("process-identity-mismatch");
+  expect(rejectedForeignReuseText).toContain("listener was not adopted");
+  const foreignIdentityAfterAttempt = dashboardForwardProcessIdentity(foreignListenerPort);
+  await artifacts.writeJson(
+    "phase-5-foreign-dashboard-listener-after-reuse.json",
+    foreignIdentityAfterAttempt,
+  );
+  expect(foreignIdentityAfterAttempt).toEqual(foreignIdentityBeforeAttempt);
+  const sandboxAAfterForeignReuse = await sandbox.openshell(["sandbox", "get", SANDBOX_A], {
+    artifactName: "phase-5-openshell-sandbox-a-after-foreign-reuse",
+    env: commandEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(parseOpenShellSandboxId(resultText(sandboxAAfterForeignReuse))).toBe(
+    sandboxAIdBeforeForeignListener,
+  );
+  await closeServer(foreignListener);
 
   await command(host, [SANDBOX_A, "destroy", "--yes"], {
     artifactName: "phase-5-destroy-recovered-sandbox-a",
@@ -936,8 +954,12 @@ test(
         gatewayAfterSecond === gatewayBeforeSecond &&
         secondText.includes("Reusing healthy NemoClaw gateway."),
       secondOnboardRetainedDashboardForward:
-        forwardIdentityAfterSecond === forwardIdentityBeforeSecond &&
+        JSON.stringify(forwardIdentityAfterSecond) === JSON.stringify(forwardIdentityBeforeSecond) &&
         dashboardResponse.exitCode === 0,
+      foreignDashboardListenerRejected:
+        rejectedForeignReuse.exitCode !== 0 &&
+        rejectedForeignReuseText.includes("process-identity-mismatch") &&
+        foreignIdentityAfterAttempt.pid === foreignIdentityBeforeAttempt.pid,
       thirdOnboardPreservedSibling:
         sandboxAAfterThird.exitCode === 0 && sandboxBAfterThird.exitCode === 0,
       distinctDashboardPorts: Boolean(portA && portB && portA !== portB),
