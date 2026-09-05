@@ -198,6 +198,9 @@ describe("repairLocalInferenceSystemdOverrideOrExit (#6760)", () => {
 
     repairHermesResume();
 
+    expect(mockedFindReachableHost).toHaveBeenCalledWith(undefined, {}, undefined, {
+      revalidate: true,
+    });
     expect(mockedEnsureSystemdOverride).not.toHaveBeenCalled();
     expect(mockedValidateModel).toHaveBeenCalledWith(recordedModel);
     expect(mockedApplyRuntimeContext).toHaveBeenCalledWith(recordedModel, {
