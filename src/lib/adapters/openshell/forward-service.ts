@@ -287,11 +287,11 @@ function readForwardStartState(child: ForwardServiceChild): {
 }
 
 function isSandboxReadinessHandoff(output: string): boolean {
-  // Miette wraps long OpenShell errors with box-drawing continuation markers.
-  // Normalize those display-only characters so classification does not depend
-  // on the sandbox name length or terminal width.
+  // Miette adds box-drawing lines and arrows around OpenShell errors. Retain
+  // only characters that can belong to the two readiness messages so the
+  // classification does not depend on its renderer or terminal width.
   const compact = stripVTControlCharacters(output)
-    .replace(/[×│]/gu, " ")
+    .replace(/[^\p{L}\p{N}\s'"():;._-]+/gu, " ")
     .replace(/\s+/gu, " ")
     .trim();
   return (
