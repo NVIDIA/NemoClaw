@@ -144,43 +144,6 @@ describe("Hermes gateway auxiliary retry", () => {
     expect(result.stderr).not.toContain("retrying under the same supervisor");
   });
 
-  it("quarantines a non-MCP preparation failure without an unbounded retry", () => {
-    const source = fs.readFileSync(START_SCRIPT, "utf-8");
-    const result = runBashHarness([
-      'prepare_hermes_nonroot_runtime() { HERMES_NONROOT_PREPARE_FAILURE_STAGE="messaging channel configuration"; return 1; }',
-      "launch_hermes_gateway_current_user() { launch_calls=$((launch_calls + 1)); }",
-      "quarantine_hermes_managed_gateway_relaunch() { quarantine_calls=$((quarantine_calls + 1)); return 0; }",
-      "sleep() { sleep_calls=$((sleep_calls + 1)); }",
-      extractShellFunction(source, "recover_hermes_gateway_current_user"),
-      "HERMES_MCP_INTEGRITY_FAILED=0",
-      "launch_calls=0",
-      "quarantine_calls=0",
-      "sleep_calls=0",
-      "if recover_hermes_gateway_current_user; then recovery_status=0; else recovery_status=$?; fi",
-      'printf "recovery_status=%s\\nlaunch_calls=%s\\nquarantine_calls=%s\\nsleep_calls=%s\\n" "$recovery_status" "$launch_calls" "$quarantine_calls" "$sleep_calls"',
-    ]);
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(
-      Object.fromEntries(
-        result.stdout
-          .trim()
-          .split("\n")
-          .map((line) => line.split("=")),
-      ),
-    ).toEqual({
-      recovery_status: "1",
-      launch_calls: "0",
-      quarantine_calls: "1",
-      sleep_calls: "0",
-    });
-    expect(result.stderr).toContain(
-      "Hermes runtime preparation failed at messaging channel configuration",
-    );
-    expect(result.stderr).toContain("automatic respawn is quarantined");
-    expect(result.stderr).not.toContain("retrying in 5s");
-  });
-
   it("stops and charges a replacement that loses health during auxiliary retry", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([

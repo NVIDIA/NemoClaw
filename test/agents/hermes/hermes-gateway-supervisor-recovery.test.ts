@@ -487,7 +487,7 @@ describe("Hermes supervised auxiliary recovery", () => {
     ]);
   });
 
-  it("re-prepares runtime inputs and retries a refused non-root gateway respawn", () => {
+  it("re-prepares runtime inputs and quarantines a later preparation refusal", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([
       'trace() { printf "%s\\n" "$*"; }',
@@ -499,7 +499,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       "sleep() { :; }",
       "prepare_calls=0",
       "launch_calls=0",
-      'prepare_hermes_nonroot_runtime() { prepare_calls=$((prepare_calls + 1)); trace "prepare:$prepare_calls"; [ "$prepare_calls" -ne 2 ]; }',
+      'prepare_hermes_nonroot_runtime() { prepare_calls=$((prepare_calls + 1)); trace "prepare:$prepare_calls"; if [ "$prepare_calls" -eq 2 ]; then HERMES_NONROOT_PREPARE_FAILURE_STAGE="messaging channel configuration"; return 1; fi; }',
       'launch_hermes_gateway_current_user() { launch_calls=$((launch_calls + 1)); [ "$launch_calls" -eq 1 ] && GATEWAY_PID=5252 || GATEWAY_PID=6262; trace "launch:$GATEWAY_PID"; }',
       'wait_for_hermes_gateway_internal() { trace "health:$1"; }',
       "ensure_hermes_supervised_auxiliaries() { trace auxiliaries; }",
@@ -508,7 +508,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       'refresh_hermes_supervised_child_pids() { trace "refresh:$GATEWAY_PID"; }',
       "hermes_gateway_healthy() { return 0; }",
       'hermes_stop_tracked_role() { trace "unexpected-stop:$2"; return 1; }',
-      extractShellFunction(source, "quarantine_hermes_managed_gateway_relaunch"),
+      'quarantine_hermes_managed_gateway_relaunch() { trace quarantine; return 0; }',
       extractShellFunction(source, "record_hermes_managed_gateway_exit"),
       extractShellFunction(source, "recover_hermes_gateway_current_user"),
       extractShellFunction(source, "supervise_hermes_gateway_current_user"),
@@ -518,7 +518,8 @@ describe("Hermes supervised auxiliary recovery", () => {
       "tracked_5252=0",
       "tracked_6262=0",
       "GATEWAY_PID=4242",
-      "supervise_hermes_gateway_current_user",
+      "if supervise_hermes_gateway_current_user; then supervisor_status=0; else supervisor_status=$?; fi",
+      'trace "supervisor-status:$supervisor_status"',
     ]);
 
     expect(result.status, result.stderr).toBe(0);
@@ -533,14 +534,15 @@ describe("Hermes supervised auxiliary recovery", () => {
       "wait:5252",
       "mark-stopped",
       "prepare:2",
-      "prepare:3",
-      "launch:6262",
-      "health:6262",
-      "auxiliaries",
-      "refresh:6262",
-      "supervised:6262",
+      "quarantine",
+      "supervisor-status:1",
     ]);
     expect(result.stderr).toContain("Hermes gateway respawned (pid 5252)");
+    expect(result.stderr).toContain(
+      "Hermes runtime preparation failed at messaging channel configuration",
+    );
+    expect(result.stderr).toContain("automatic respawn is quarantined");
+    expect(result.stdout).not.toContain("launch:6262");
   });
 
   it("quarantines after five gateway exits in one minute without a sixth launch", () => {
@@ -656,45 +658,43 @@ describe("Hermes supervised auxiliary recovery", () => {
     expect(result.stdout).not.toContain("unexpected-auxiliary");
   });
 
-  it("does not count preparation refusals or launch before preparation succeeds", () => {
+  it("quarantines a preparation refusal without charging the crash budget", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([
       'trace() { printf "%s\\n" "$*"; }',
-      'prepare_hermes_nonroot_runtime() { prepare_calls=$((prepare_calls + 1)); trace "prepare:$prepare_calls"; [ "$prepare_calls" -ge 3 ]; }',
-      'launch_hermes_gateway_current_user() { launch_calls=$((launch_calls + 1)); GATEWAY_PID=7001; trace "launch:$GATEWAY_PID"; }',
-      "wait_for_hermes_gateway_internal() { return 0; }",
-      "hermes_tracked_role_is_current() { return 0; }",
-      "hermes_gateway_healthy() { return 0; }",
-      "ensure_hermes_supervised_auxiliaries() { return 0; }",
-      "finalize_tirith_marker_retry() { :; }",
-      "commit_hermes_mcp_applied_if_pending() { return 0; }",
-      "refresh_hermes_supervised_child_pids() { trace refresh; }",
+      'prepare_hermes_nonroot_runtime() { prepare_calls=$((prepare_calls + 1)); HERMES_NONROOT_PREPARE_FAILURE_STAGE="messaging channel configuration"; trace "prepare:$prepare_calls"; return 1; }',
+      'launch_hermes_gateway_current_user() { launch_calls=$((launch_calls + 1)); trace "unexpected-launch"; }',
+      'quarantine_hermes_managed_gateway_relaunch() { quarantine_calls=$((quarantine_calls + 1)); trace "quarantine:$quarantine_calls"; return 0; }',
       'date() { trace unexpected-exit-record; printf "100\\n"; }',
-      'sleep() { trace "sleep:$1"; }',
-      extractShellFunction(source, "quarantine_hermes_managed_gateway_relaunch"),
-      extractShellFunction(source, "record_hermes_managed_gateway_exit"),
+      'sleep() { trace "unexpected-sleep:$1"; }',
       extractShellFunction(source, "recover_hermes_gateway_current_user"),
       "INTERNAL_PORT=18642",
       "HERMES_MANAGED_GATEWAY_EXIT_TIMES=()",
       "HERMES_MANAGED_GATEWAY_EXIT_COUNT=0",
       "prepare_calls=0",
       "launch_calls=0",
-      "recover_hermes_gateway_current_user",
+      "quarantine_calls=0",
+      "if recover_hermes_gateway_current_user; then recovery_status=0; else recovery_status=$?; fi",
+      'trace "recovery-status:$recovery_status"',
       'trace "launch-count:$launch_calls"',
+      'trace "crash-count:$HERMES_MANAGED_GATEWAY_EXIT_COUNT"',
     ]);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim().split("\n")).toEqual([
       "prepare:1",
-      "sleep:5",
-      "prepare:2",
-      "sleep:5",
-      "prepare:3",
-      "launch:7001",
-      "refresh",
-      "launch-count:1",
+      "quarantine:1",
+      "recovery-status:1",
+      "launch-count:0",
+      "crash-count:0",
     ]);
+    expect(result.stderr).toContain(
+      "Hermes runtime preparation failed at messaging channel configuration",
+    );
+    expect(result.stderr).toContain("automatic respawn is quarantined");
     expect(result.stdout).not.toContain("unexpected-exit-record");
+    expect(result.stdout).not.toContain("unexpected-launch");
+    expect(result.stdout).not.toContain("unexpected-sleep");
   });
 
   it("keeps the initial non-root supervisor alive and recovers a failed first child", () => {
