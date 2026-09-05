@@ -272,7 +272,7 @@ ADD --chmod=0444 --checksum=sha256:1773a16c02b4422653479b9c4d211268f7022bdac0d81
 ADD --chmod=0444 --checksum=sha256:1d91d0b0faa50cba223fa937c7b5a4a662968b1d78b3e59dca5c917dd5cf72b2 https://registry.npmjs.org/extend/-/extend-3.0.2.tgz /extend-3.0.2.tgz
 ADD --chmod=0444 --checksum=sha256:54481d9c62debce1c38b0239f2358eeb3b73f7bb1ba3105bd6123fd81b8b7268 https://registry.npmjs.org/@protobufjs/fetch/-/fetch-1.1.1.tgz /fetch-1.1.1.tgz
 ADD --chmod=0444 --checksum=sha256:4abf0d58a4977fce2240e08c280a2bc59f5363e9553a4f236cea6d74cce40c52 https://registry.npmjs.org/fetch-blob/-/fetch-blob-3.2.0.tgz /fetch-blob-3.2.0.tgz
-ADD --chmod=0444 --checksum=sha256:87fdc6557e71ec47373edfbde774165e976c760845d02733f81fbfe1ad232780 https://registry.npmjs.org/file-type/-/file-type-22.0.1.tgz /file-type-22.0.1.tgz
+ADD --chmod=0444 --checksum=sha256:1fbe3e298dfbfa1854600b7891c237a1d2fccaa644f1945919516480206002c9 https://registry.npmjs.org/file-type/-/file-type-21.3.4.tgz /file-type-21.3.4.tgz
 ADD --chmod=0444 --checksum=sha256:22949bfc51a620b3598bbe67d65619a9efd781d52704a38d7ba675e248a8b872 https://registry.npmjs.org/finalhandler/-/finalhandler-2.1.1.tgz /finalhandler-2.1.1.tgz
 ADD --chmod=0444 --checksum=sha256:ca8b00245b783f6f6f85e55b6df3d51be88ad74c4881a8ebf8e0796231352c5f https://registry.npmjs.org/@wasm-audio-decoders/flac/-/flac-0.2.10.tgz /flac-0.2.10.tgz
 ADD --chmod=0444 --checksum=sha256:20b3d612d53281b754602d52a8e6a6e09032169d5399e515f6f5e8b7d3de712d https://registry.npmjs.org/@protobufjs/float/-/float-1.0.2.tgz /float-1.0.2.tgz
@@ -409,7 +409,7 @@ ADD --chmod=0444 --checksum=sha256:66de2a025036de58bbe50ab1d42a24ec6d33eda338b81
 ADD --chmod=0444 --checksum=sha256:2aa86d462e4bcec95cca91c935002e102644e1bb2fcd36a9b52e4f4555c73f96 https://registry.npmjs.org/real-require/-/real-require-0.2.0.tgz /real-require-0.2.0.tgz
 ADD --chmod=0444 --checksum=sha256:d66004def64efb6c13629b0740639344e0775fe537373674571711a2bb2fc704 https://registry.npmjs.org/@pinojs/redact/-/redact-0.4.0.tgz /redact-0.4.0.tgz
 ADD --chmod=0444 --checksum=sha256:cad52ea77001223648829bfa3c4e677d30939928b12ed3566148bf2b7e1df18f https://registry.npmjs.org/reflect-metadata/-/reflect-metadata-0.2.2.tgz /reflect-metadata-0.2.2.tgz
-ADD --chmod=0444 --checksum=sha256:062c4d9d2b7ba41a3869cf55903d0b5d439d838e241b6b0f42d53aa22d3debd8 https://registry.npmjs.org/@types/retry/-/retry-0.12.5.tgz /retry-0.12.5.tgz
+ADD --chmod=0444 --checksum=sha256:7c97db75aba1e8cb911b9ff349ddeae6153fd3b11fa3f3b772c1dd474ea9f8c8 https://registry.npmjs.org/@types/retry/-/retry-0.12.0.tgz /retry-0.12.0.tgz
 ADD --chmod=0444 --checksum=sha256:7521d8445e845475e888ccb7af473c4afb17aabafefe35a23371a8a8c79b8084 https://registry.npmjs.org/retry/-/retry-0.13.1.tgz /retry-0.13.1.tgz
 ADD --chmod=0444 --checksum=sha256:b144af37b39a9517f7a89f1d867e9c2cf29f13f4147d3e80c499fe6ffab69461 https://registry.npmjs.org/router/-/router-2.2.0.tgz /router-2.2.0.tgz
 ADD --chmod=0444 --checksum=sha256:d29ace7117aaa0d6b119027e9a157c238e6899bbb35d03f508ae8d4fa9ca8c9d https://registry.npmjs.org/run-applescript/-/run-applescript-7.1.0.tgz /run-applescript-7.1.0.tgz
