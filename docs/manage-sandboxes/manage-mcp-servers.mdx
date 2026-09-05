@@ -31,11 +31,16 @@ $$nemoclaw my-sandbox mcp status github --json
 
 `list --json` and `status --json` never include environment values. They report provider presence, provider attachment, whether live policy matches registered policy, environment readiness, and adapter registration state.
 
-The per-server `warnings` array reports unsupported stored boundaries, trusted-private DNS pin changes, and credential-resolution findings. The `env.missing` field lists recorded host variable names that are currently unset.
+The per-server `warnings` array reports unsupported stored boundaries, public and trusted-private DNS pin changes, and credential-resolution findings. The `env.missing` field lists recorded host variable names that are currently unset.
 
 An existing valid provider can remain ready when a host variable is unset because OpenShell retains the credential. The JSON value `support.mode: "bridge"` identifies the agent's config-adapter capability, not a host-side traffic bridge.
 
-For a trusted private server, status resolves the endpoint without changing managed state. Text output reports `private address pins: match`, `drift`, or `unresolved`. JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins. Status never adds a new address to the policy.
+Status resolves public and trusted private endpoints without changing managed state.
+Text output reports `public address pins:` or `private address pins:` with `match`, `drift`, or `unresolved`.
+JSON output reports the same value and both address sets in `publicTarget` or `trustedPrivateTarget`.
+Status never adds a new address to the policy.
+For public drift, run `$$nemoclaw my-sandbox mcp restart <server>` to validate, apply, and record the current public answers.
+For trusted-private drift, review the address change and follow [Change Endpoint Pins](#change-endpoint-pins).
 
 ## Discover Advertised Tools
 

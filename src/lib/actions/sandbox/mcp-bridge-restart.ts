@@ -269,6 +269,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     );
     writeBridgeEntry(sandboxName, {
       ...entry,
+      ...(entry.trustedPrivateHost ? {} : { allowedIps: [...target.addresses] }),
       adapter: (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
       updatedAt: nowIso(),
     });
@@ -369,7 +370,16 @@ export async function restoreExistingMcpBridgeRuntime(
         teardownRollback: options.lifecyclePhase === "teardown-rollback",
       },
     );
-    writeBridgeEntry(sandboxName, { ...entry, adapter, updatedAt: nowIso() });
+    writeBridgeEntry(sandboxName, {
+      ...entry,
+      // Rebuild hands its already-validated pins to the replacement policy.
+      // Never persist a later DNS answer when this restore path did not apply it.
+      ...(options.applyPolicy === false || entry.trustedPrivateHost
+        ? {}
+        : { allowedIps: [...resolvedTargetPins(resolvedByServer, entry).addresses] }),
+      adapter,
+      updatedAt: nowIso(),
+    });
   }
   if (
     defaultAdapter === "hermes-config" ||
