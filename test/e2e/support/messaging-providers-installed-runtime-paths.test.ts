@@ -46,5 +46,6 @@ describe("messaging provider installed-runtime paths", () => {
     });
 
     expect(result.status, result.stderr).toBe(0);
+    expect(WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE).not.toContain("__vite_ssr_import_");
   });
 });
