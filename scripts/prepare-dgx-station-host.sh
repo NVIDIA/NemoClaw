@@ -12,6 +12,7 @@ readonly MIN_FREE_KIB=$((20 * 1024 * 1024))
 readonly GB300_PCI_VENDOR="0x10de"
 readonly -a GB300_PCI_DEVICES=("0x31c2" "0x31c3")
 readonly GB300_PCI_CLASS_PREFIX="0x03"
+readonly STATION_IDENTITY_VALUE_MAX_BYTES=256
 STATION_HOST_PROFILE="generic-ubuntu"
 FORCE_STATION_INSTALL=0
 # The qualified generic image currently ships this OEM telemetry bootcmd. Its
@@ -468,18 +469,33 @@ station_firmware_value_is_printable() {
   [[ "$printable" == "$value" ]]
 }
 
+station_bounded_line_value() {
+  local byte_count control_count last_byte newline_count path=$1
+  byte_count="$(head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 2)) "$path" 2>/dev/null | wc -c | tr -d '[:space:]')"
+  [[ "$byte_count" =~ ^[0-9]+$ ]] && ((byte_count <= STATION_IDENTITY_VALUE_MAX_BYTES + 1)) || return 1
+  control_count="$(head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 1)) "$path" 2>/dev/null | LC_ALL=C tr -cd '\000-\037\177' | wc -c | tr -d '[:space:]')"
+  [[ "$control_count" =~ ^[0-9]+$ ]] || return 1
+  if ((control_count > 0)); then
+    newline_count="$(head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 1)) "$path" 2>/dev/null | LC_ALL=C tr -cd '\012' | wc -c | tr -d '[:space:]')"
+    [[ "$newline_count" == "1" && "$control_count" == "1" ]] || return 1
+    last_byte="$(tail -c 1 "$path" 2>/dev/null | od -An -tu1 | tr -d '[:space:]')"
+    [[ "$last_byte" == "10" ]] || return 1
+  fi
+  head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 1)) "$path" 2>/dev/null | tr -d '\n'
+}
+
 station_device_tree_model_value() {
   local byte_count last_byte nul_count path=$1
-  byte_count="$(head -c 258 "$path" 2>/dev/null | wc -c | tr -d '[:space:]')"
-  [[ "$byte_count" =~ ^[0-9]+$ ]] && ((byte_count <= 257)) || return 1
-  nul_count="$(LC_ALL=C tr -cd '\000' <"$path" | wc -c | tr -d '[:space:]')"
+  byte_count="$(head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 2)) "$path" 2>/dev/null | wc -c | tr -d '[:space:]')"
+  [[ "$byte_count" =~ ^[0-9]+$ ]] && ((byte_count <= STATION_IDENTITY_VALUE_MAX_BYTES + 1)) || return 1
+  nul_count="$(head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 1)) "$path" 2>/dev/null | LC_ALL=C tr -cd '\000' | wc -c | tr -d '[:space:]')"
   [[ "$nul_count" =~ ^[0-9]+$ ]] || return 1
   if ((nul_count > 0)); then
     ((nul_count == 1)) || return 1
     last_byte="$(tail -c 1 "$path" 2>/dev/null | od -An -tu1 | tr -d '[:space:]')"
     [[ "$last_byte" == "0" ]] || return 1
   fi
-  head -c 257 "$path" 2>/dev/null | tr -d '\000'
+  head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 1)) "$path" 2>/dev/null | tr -d '\000'
 }
 
 station_firmware_identity() {
@@ -489,9 +505,9 @@ station_firmware_identity() {
     if [[ "$path" == "$(station_device_tree_model_path)" ]]; then
       value="$(station_device_tree_model_value "$path")" || continue
     else
-      value="$(head -c 257 "$path" 2>/dev/null || true)"
+      value="$(station_bounded_line_value "$path")" || continue
     fi
-    [[ ${#value} -le 256 ]] || continue
+    [[ ${#value} -le STATION_IDENTITY_VALUE_MAX_BYTES ]] || continue
     station_firmware_value_is_printable "$value" || continue
     class="$(nvidia_firmware_product_class "$value" 2>/dev/null || true)"
     [[ -n "$class" ]] || continue
@@ -583,9 +599,9 @@ station_pci_device_is_gb300() {
     -r "$pci_path/vendor" &&
     -r "$pci_path/device" &&
     -r "$pci_path/class" ]] || return 1
-  IFS= read -r vendor <"$pci_path/vendor" || return 1
-  IFS= read -r device <"$pci_path/device" || return 1
-  IFS= read -r class <"$pci_path/class" || return 1
+  vendor="$(station_bounded_line_value "$pci_path/vendor")" || return 1
+  device="$(station_bounded_line_value "$pci_path/device")" || return 1
+  class="$(station_bounded_line_value "$pci_path/class")" || return 1
   [[ "$vendor" == "$GB300_PCI_VENDOR" ]] || return 1
   gb300_pci_device_is_known "$device" || return 1
   [[ "$class" =~ ^${GB300_PCI_CLASS_PREFIX}[0-9a-fA-F]{4}$ ]]

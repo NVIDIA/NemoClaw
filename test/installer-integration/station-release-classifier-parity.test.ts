@@ -21,6 +21,12 @@ const DISPLAY_NAME = 'DGX_PRETTY_NAME="NVIDIA DGX GB300 Workstation"';
 const PLATFORM = 'DGX_PLATFORM="DGX Server for GALAXY-GB300"';
 const fixtureDirectories: string[] = [];
 
+interface PciFixtureValues {
+  vendor?: string;
+  device?: string;
+  pciClass?: string;
+}
+
 function marker(...lines: string[]): string {
   return [`DGX_NAME="DGX GB300WS"`, DISPLAY_NAME, ...lines, PLATFORM, ""].join("\n");
 }
@@ -157,15 +163,16 @@ function classifyFirmwareWithReadiness(
   deviceTreeModel = "",
   pciEntryCount = 1,
   pciClass = "0x030000",
+  pciValues: PciFixtureValues = {},
 ) {
   const values = new Map([
     ["product_name", productName],
     ["product_family", productFamily],
     ["board_name", boardName],
     ["model", deviceTreeModel],
-    ["vendor", "0x10de"],
-    ["device", "0x31c2"],
-    ["class", pciClass],
+    ["vendor", pciValues.vendor ?? "0x10de"],
+    ["device", pciValues.device ?? "0x31c2"],
+    ["class", pciValues.pciClass ?? pciClass],
   ]);
   return collectPlatformIdentity({
     productNamePath: "/fixture/product_name",
@@ -267,6 +274,7 @@ function detectWithInstallerWrapper(
   stationPci = true,
   pciEntryCount = 1,
   pciClass = "0x030000",
+  pciValues: PciFixtureValues = {},
 ): string {
   const fixtureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-handoff-"));
   fixtureDirectories.push(fixtureDirectory);
@@ -285,9 +293,12 @@ function detectWithInstallerWrapper(
       `0000:${String(index).padStart(2, "0")}:00.0`,
     );
     fs.mkdirSync(pciDevice, { recursive: true });
-    fs.writeFileSync(path.join(pciDevice, "vendor"), "0x10de\n");
-    fs.writeFileSync(path.join(pciDevice, "device"), stationPci ? "0x31c2\n" : "0xffff\n");
-    fs.writeFileSync(path.join(pciDevice, "class"), `${pciClass}\n`);
+    fs.writeFileSync(path.join(pciDevice, "vendor"), `${pciValues.vendor ?? "0x10de"}\n`);
+    fs.writeFileSync(
+      path.join(pciDevice, "device"),
+      `${pciValues.device ?? (stationPci ? "0x31c2" : "0xffff")}\n`,
+    );
+    fs.writeFileSync(path.join(pciDevice, "class"), `${pciValues.pciClass ?? pciClass}\n`);
   }
   fs.writeFileSync(
     path.join(fixtureDirectory, "prepare-dgx-station-host.sh"),
@@ -449,6 +460,15 @@ describe("DGX Station release classifier parity", () => {
     expect(readiness.nvidiaPlatform).toBeUndefined();
   });
 
+  it("rejects an embedded NUL in DMI firmware before shell conversion (#10928)", () => {
+    const productName = "NVIDIA DGX\0 Station GB300";
+    const shell = classifyFirmwareWithStationHelper(productName, "Generic family", "Generic board");
+    const readiness = classifyFirmwareWithReadiness(productName, "Generic family", "Generic board");
+
+    expect(shell).toBe("not-station");
+    expect(readiness.nvidiaPlatform).toBeUndefined();
+  });
+
   it("blocks Station Express when exact GB300 PCI identity is absent (#10928)", () => {
     expect(
       detectWithInstallerWrapper("Generic ARM workstation", "NVIDIA DGX Station GB300", false),
@@ -499,6 +519,38 @@ describe("DGX Station release classifier parity", () => {
         "hardware=station-gb300-pci-missing\nplatform=Unverified DGX Station hardware\n",
       );
       expect(readiness.stationGb300PciGpu).toBe(false);
+    },
+  );
+
+  it.each([
+    ["vendor", { vendor: "0x10de\0" }],
+    ["device", { device: "0x31c2\0" }],
+    ["class", { pciClass: "0x030000\0" }],
+  ] as const)(
+    "rejects a NUL-bearing PCI %s value before shell conversion (#10928)",
+    (_field, pciValues) => {
+      const shell = detectWithInstallerWrapper(
+        "Generic ARM workstation",
+        "NVIDIA DGX Station GB300",
+        true,
+        1,
+        "0x030000",
+        pciValues,
+      );
+      const readiness = classifyFirmwareWithReadiness(
+        "Generic ARM workstation",
+        "NVIDIA DGX Station GB300",
+        "Generic board",
+        "",
+        1,
+        "0x030000",
+        pciValues,
+      );
+
+      expect(shell).toBe(
+        "hardware=station-gb300-pci-missing\nplatform=Unverified DGX Station hardware\n",
+      );
+      expect(readiness.stationGb300PciGpu).toBeUndefined();
     },
   );
 
