@@ -111,12 +111,11 @@ describe("generic NVIDIA GPU PR selection", () => {
     "test/e2e/live/llama-cpp-generic-gpu.test.ts",
   ])("selects only the generic GPU job for %s", (changedFile) => {
     expect(selectGenericGpuLane([changedFile])).toBe(
-      `base_sha=${BASE_SHA}\nqwen_selected=false\nselected=true`,
+      `base_sha=${BASE_SHA}\npublication_selected=true\nqwen_selected=false\nselected=true`,
     );
   });
 
   it.each([
-    ".github/workflows/pr-self-hosted.yaml",
     "scripts/checks/llama-cpp-openclaw-agent-qualification.mts",
     "scripts/checks/llama-cpp-compiled-runtime.ts",
     "scripts/checks/llama-cpp-qwen-gpu-contract.ts",
@@ -124,20 +123,28 @@ describe("generic NVIDIA GPU PR selection", () => {
     "scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts",
     "managed-inference/presets/llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b.yaml",
     "managed-inference/recipes/llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1.yaml",
-    "src/lib/onboard/runtime-provider/docker-llama-cpp-operation.ts",
     "test/inference/llama/run-llama-cpp-qwen-gpu-qualification.test.ts",
     "test/package-contract/inference/run-llama-cpp-qwen-gpu-qualification.test.ts",
     "tools/e2e/exact-artifact-download.mts",
     "tools/e2e/managed-image-cohort-contract.mts",
-  ])("selects both GPU jobs for Qwen dependency %s", (changedFile) => {
+  ])("selects only the Qwen GPU job for Qwen dependency %s", (changedFile) => {
     expect(selectGenericGpuLane([changedFile])).toBe(
-      `base_sha=${BASE_SHA}\nqwen_selected=true\nselected=true`,
+      `base_sha=${BASE_SHA}\npublication_selected=true\nqwen_selected=true\nselected=false`,
+    );
+  });
+
+  it.each([
+    ".github/workflows/pr-self-hosted.yaml",
+    "src/lib/onboard/runtime-provider/docker-llama-cpp-operation.ts",
+  ])("selects both GPU jobs for shared dependency %s", (changedFile) => {
+    expect(selectGenericGpuLane([changedFile])).toBe(
+      `base_sha=${BASE_SHA}\npublication_selected=true\nqwen_selected=true\nselected=true`,
     );
   });
 
   it("does not select the generic NVIDIA GPU E2E job for unrelated documentation", () => {
     expect(selectGenericGpuLane(["docs/get-started/quickstart.mdx"])).toBe(
-      `base_sha=${BASE_SHA}\nqwen_selected=false\nselected=false`,
+      `base_sha=${BASE_SHA}\npublication_selected=false\nqwen_selected=false\nselected=false`,
     );
   });
 
@@ -161,6 +168,7 @@ describe("generic NVIDIA GPU PR selection", () => {
       base_sha: "${{ steps.changed.outputs.base_sha }}",
       managed_image_receipt: "${{ steps.validate_managed_cohort.outputs.receipt }}",
       managed_image_revision: "${{ steps.publication.outputs.head_sha }}",
+      publication_selected: "${{ steps.changed.outputs.publication_selected }}",
       qwen_selected: "${{ steps.changed.outputs.qwen_selected }}",
     });
 
@@ -168,7 +176,7 @@ describe("generic NVIDIA GPU PR selection", () => {
       (step) => step.name === "Check out PR base SHA for publication verification",
     );
     expect(checkout).toMatchObject({
-      if: "${{ steps.changed.outputs.selected == 'true' }}",
+      if: "${{ steps.changed.outputs.publication_selected == 'true' }}",
       uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
       with: {
         "fetch-depth": 0,
@@ -186,7 +194,7 @@ describe("generic NVIDIA GPU PR selection", () => {
         REQUIRE_MANAGED_IMAGE_PUBLICATION: "1",
         SELECT_NEAREST_SUCCESSFUL_PUBLICATION: "1",
       },
-      if: "${{ steps.changed.outputs.selected == 'true' }}",
+      if: "${{ steps.changed.outputs.publication_selected == 'true' }}",
     });
     expect(publication?.run).toContain("export GITHUB_REF=refs/heads/main");
     expect(publication?.run).toContain('export GITHUB_SHA="$EXPECTED_SHA"');
@@ -201,7 +209,7 @@ describe("generic NVIDIA GPU PR selection", () => {
         PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
         PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
       },
-      if: "${{ steps.changed.outputs.selected == 'true' }}",
+      if: "${{ steps.changed.outputs.publication_selected == 'true' }}",
     });
 
     expect(value.jobs["llama-cpp-generic-gpu"]?.env?.E2E_MANAGED_IMAGE_REVISION).toBe(
