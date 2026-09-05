@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -11,23 +12,16 @@ const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 const rootRequire = createRequire(path.join(repositoryRoot, "package.json"));
 const rootTypeScript = rootRequire.resolve("typescript/bin/tsc");
 
-type NpmDependencyTree = {
-  dependencies?: Record<string, NpmDependencyTree>;
-  version?: string;
+type PackageLock = {
+  packages?: Record<string, { version?: string }>;
 };
 
-function lockedDependencyTree(prefix?: string): NpmDependencyTree {
-  const prefixArgs = prefix ? ["--prefix", prefix] : [];
-  return JSON.parse(
-    execFileSync(
-      "npm",
-      [...prefixArgs, "ls", "--package-lock-only", "--json", "typescript", "vitest", "vite"],
-      {
-        cwd: repositoryRoot,
-        encoding: "utf8",
-      },
-    ),
-  ) as NpmDependencyTree;
+function readPackageLock(relativePath: string): PackageLock {
+  return JSON.parse(readFileSync(path.join(repositoryRoot, relativePath), "utf8")) as PackageLock;
+}
+
+function lockedVersion(lock: PackageLock, dependency: string): string | undefined {
+  return lock.packages?.[`node_modules/${dependency}`]?.version;
 }
 
 function requiredLockedVersion(version: string | undefined, dependency: string): string {
@@ -48,28 +42,18 @@ function listedTypeScriptFiles(configPath: string): string[] {
 }
 
 describe("plugin Vitest project contract", () => {
-  it("keeps the standalone plugin lock on the root test toolchain", () => {
-    const rootTree = lockedDependencyTree();
-    const pluginTree = lockedDependencyTree("nemoclaw");
+  // source-shape-contract: compatibility -- Root-driven plugin test tooling requires lockstep versions without installing plugin development dependencies
+  it.each(["typescript", "vite", "vitest"] as const)(
+    "keeps standalone plugin %s locked to the root test toolchain",
+    (dependency) => {
+      const rootLock = readPackageLock("package-lock.json");
+      const pluginLock = readPackageLock("nemoclaw/package-lock.json");
 
-    expect(requiredLockedVersion(pluginTree.dependencies?.vitest?.version, "plugin vitest")).toBe(
-      requiredLockedVersion(rootTree.dependencies?.vitest?.version, "root vitest"),
-    );
-    expect(
-      requiredLockedVersion(
-        pluginTree.dependencies?.vitest?.dependencies?.vite?.version,
-        "plugin vite",
-      ),
-    ).toBe(
-      requiredLockedVersion(
-        rootTree.dependencies?.vitest?.dependencies?.vite?.version,
-        "root vite",
-      ),
-    );
-    expect(
-      requiredLockedVersion(pluginTree.dependencies?.typescript?.version, "plugin typescript"),
-    ).toBe(requiredLockedVersion(rootTree.dependencies?.typescript?.version, "root typescript"));
-  });
+      expect(
+        requiredLockedVersion(lockedVersion(pluginLock, dependency), `plugin ${dependency}`),
+      ).toBe(requiredLockedVersion(lockedVersion(rootLock, dependency), `root ${dependency}`));
+    },
+  );
 
   it("typechecks plugin production and test sources without emitting tests", () => {
     const productionFiles = listedTypeScriptFiles("nemoclaw/tsconfig.json");

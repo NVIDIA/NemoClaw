@@ -907,8 +907,14 @@ export async function githubRequest(
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     let response: Response;
+    let requestSignal: AbortSignal | null = null;
+    let requestUsedRemainingBudget = false;
     try {
       const remainingMs = remainingBudget();
+      requestUsedRemainingBudget = remainingMs !== undefined && remainingMs <= timeoutMs;
+      requestSignal = AbortSignal.timeout(
+        remainingMs === undefined ? timeoutMs : Math.min(timeoutMs, remainingMs),
+      );
       response = await fetchImpl(`${API_ROOT}${path}`, {
         headers: {
           Accept: "application/vnd.github+json",
@@ -916,11 +922,12 @@ export async function githubRequest(
           "User-Agent": "NemoClaw-base-image-publication-gate",
           "X-GitHub-Api-Version": "2022-11-28",
         },
-        signal: AbortSignal.timeout(
-          remainingMs === undefined ? timeoutMs : Math.min(timeoutMs, remainingMs),
-        ),
+        signal: requestSignal,
       });
     } catch {
+      if (requestUsedRemainingBudget && requestSignal?.aborted) {
+        throw new Error("GitHub API request exceeded its time budget");
+      }
       remainingBudget();
       if (attempt === attempts) {
         throw new Error(`GitHub API request failed after ${attempts} attempts`);

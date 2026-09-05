@@ -187,6 +187,11 @@
       "category": "security"
     },
     {
+      "file": "test/repository/plugin-vitest-project.test.ts",
+      "test": "keeps standalone plugin %s locked to the root test toolchain",
+      "category": "compatibility"
+    },
+    {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "passes only the base-packaged SDK archive to pull request dependency jobs",
       "category": "security"
