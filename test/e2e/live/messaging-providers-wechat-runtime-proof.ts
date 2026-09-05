@@ -25,14 +25,16 @@ export const waitForInstalledWechatApi: (
   probe: () => Promise<unknown>,
   delay: (milliseconds: number) => Promise<void>,
 ) => Promise<void> = async function waitForInstalledWechatApi(probe, delay) {
+  const maxAttempts = 30;
+  const retryDelayMs = 1_000;
   let lastError: unknown;
-  for (let attempt = 1; attempt <= 20; attempt += 1) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       await probe();
       return;
     } catch (error) {
       lastError = error;
-      if (attempt < 20) await delay(250);
+      if (attempt < maxAttempts) await delay(retryDelayMs);
     }
   }
   return Promise.reject(lastError);
@@ -265,7 +267,12 @@ try {
   const fakeWechatBaseUrl =
     "http://host.openshell.internal:" + process.env.FAKE_WECHAT_API_PORT;
   await waitForInstalledWechatApi(
-    () => fetch(fakeWechatBaseUrl + "/__nemoclaw_ready__"),
+    async () => {
+      const response = await fetch(fakeWechatBaseUrl + "/__nemoclaw_ready__", {
+        signal: AbortSignal.timeout(1_000),
+      });
+      await response.arrayBuffer();
+    },
     (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   );
   const target = process.env.OPENCLAW_WECHAT_TARGET || "e2e-user@im.wechat";

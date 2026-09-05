@@ -63,6 +63,21 @@ describe("messaging provider installed-runtime paths", () => {
     });
 
     expect(probe).toHaveBeenCalledTimes(3);
-    expect(delays).toEqual([250, 250]);
+    expect(delays).toEqual([1_000, 1_000]);
+  });
+
+  it("preserves the last WeChat API error after the route settlement deadline", async () => {
+    const routeError = new TypeError("fetch failed");
+    const probe = vi.fn().mockRejectedValue(routeError);
+    const delays: number[] = [];
+
+    await expect(
+      waitForInstalledWechatApi(probe, async (milliseconds) => {
+        delays.push(milliseconds);
+      }),
+    ).rejects.toBe(routeError);
+
+    expect(probe).toHaveBeenCalledTimes(30);
+    expect(delays).toEqual(Array.from({ length: 29 }, () => 1_000));
   });
 });
