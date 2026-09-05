@@ -3,11 +3,14 @@
 
 import fs from "node:fs";
 
-function fail(message) {
+type NativeMessage = { role: "system" | "user" | "assistant"; content: string };
+type ReadOpenedRegularFileOptions = { encoding?: BufferEncoding; maxBytes?: number };
+
+function fail(message: string): never {
   throw new Error(`NemoClaw native runtime security boundary failed: ${message}`);
 }
 
-export function resolveBrokerUpstreamUrl(endpointValue, requestTarget) {
+export function resolveBrokerUpstreamUrl(endpointValue: string, requestTarget: string): URL {
   if (typeof endpointValue !== "string" || typeof requestTarget !== "string")
     fail("the provider endpoint or request target is invalid");
   const endpoint = new URL(`${endpointValue.replace(/\/$/u, "")}/`);
@@ -36,42 +39,55 @@ export function resolveBrokerUpstreamUrl(endpointValue, requestTarget) {
   return upstream;
 }
 
-export function readOpenedRegularFile(file, { encoding, maxBytes = 2 * 1024 * 1024 } = {}) {
-  let descriptor;
+export function readOpenedRegularFile(
+  file: string,
+  options: { encoding: BufferEncoding; maxBytes?: number },
+): string | null;
+export function readOpenedRegularFile(
+  file: string,
+  options?: { encoding?: undefined; maxBytes?: number },
+): Buffer | null;
+export function readOpenedRegularFile(
+  file: string,
+  { encoding, maxBytes = 2 * 1024 * 1024 }: ReadOpenedRegularFileOptions = {},
+): Buffer | string | null {
+  let descriptor: number;
   try {
     descriptor = fs.openSync(file, "r");
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null;
     throw error;
   }
   try {
     const stat = fs.fstatSync(descriptor);
     if (!stat.isFile()) fail("the opened relay or diagnostic path is not a regular file");
     if (stat.size > maxBytes) fail("the opened relay or diagnostic file exceeds its limit");
-    return fs.readFileSync(descriptor, encoding);
+    return encoding ? fs.readFileSync(descriptor, encoding) : fs.readFileSync(descriptor);
   } finally {
     fs.closeSync(descriptor);
   }
 }
 
-export function validatedChatMessages(body) {
+export function validatedChatMessages(body: unknown): NativeMessage[] {
   if (body === null || typeof body !== "object" || Array.isArray(body))
     fail("the model request body is invalid");
-  if (!Array.isArray(body.messages) || body.messages.length > 64)
+  const messages = (body as { messages?: unknown }).messages;
+  if (!Array.isArray(messages) || messages.length > 64)
     fail("the model request message list is invalid");
   let totalBytes = 0;
-  return body.messages.map((message) => {
+  return messages.map((message: unknown) => {
     if (
       message === null ||
       typeof message !== "object" ||
       Array.isArray(message) ||
-      !["system", "user", "assistant"].includes(message.role) ||
-      typeof message.content !== "string"
+      !["system", "user", "assistant"].includes((message as { role?: unknown }).role as string) ||
+      typeof (message as { content?: unknown }).content !== "string"
     )
       fail("the model request contains an invalid message");
-    totalBytes += Buffer.byteLength(message.content, "utf8");
-    if (message.content.length > 64 * 1024 || totalBytes > 1024 * 1024)
+    const validated = message as NativeMessage;
+    totalBytes += Buffer.byteLength(validated.content, "utf8");
+    if (validated.content.length > 64 * 1024 || totalBytes > 1024 * 1024)
       fail("the model request message content exceeds its limit");
-    return { role: message.role, content: message.content };
+    return { role: validated.role, content: validated.content };
   });
 }
