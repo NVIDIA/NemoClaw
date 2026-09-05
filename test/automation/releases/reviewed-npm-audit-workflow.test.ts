@@ -133,6 +133,7 @@ function runConsolidatedAuditFixture(
           },
         ],
         nodeVersion: process.version.slice(1),
+        npmArchiveSha256: REVIEWED_AUDIT_CONFIG.npmArchiveSha256,
         npmIntegrity: REVIEWED_AUDIT_CONFIG.npmIntegrity,
         npmVersion: REVIEWED_AUDIT_CONFIG.npmVersion,
         registryOrigin: "https://registry.npmjs.org/",
@@ -340,8 +341,8 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     expect(cacheBucketStep.run).toContain(
       "const targetRoot = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT;",
     );
-    expect(cacheBucketStep.run).toContain("npmIntegrity: config.npmIntegrity");
-    expect(cacheBucketStep.run).toContain("npmArchiveSha256: config.npmArchiveSha256");
+    expect(cacheBucketStep.run).toContain("parseReviewedNpmIdentity(config)");
+    expect(cacheBucketStep.run).toContain("...identity");
     expect(cacheBucketStep.run).not.toContain("${{ inputs.cache-directory }}");
     expect(cacheBucketStep.run).not.toContain("${{ inputs.target-root }}");
   });
@@ -604,6 +605,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
         },
       ],
       nodeVersion: "22.23.2",
+      npmArchiveSha256: REVIEWED_AUDIT_CONFIG.npmArchiveSha256,
       npmIntegrity: REVIEWED_AUDIT_CONFIG.npmIntegrity,
       npmVersion: REVIEWED_AUDIT_CONFIG.npmVersion,
       registryOrigin: "https://registry.npmjs.org/",

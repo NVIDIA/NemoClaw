@@ -39,32 +39,26 @@ runs:
         previous_bucket="$(( current_bucket - 1 ))"
         node --experimental-strip-types --input-type=module - \
           "$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json" \
-          "$GITHUB_ACTION_PATH/../../../scripts/lib/repository-input-path.mts" <<'NODE'
+          "$GITHUB_ACTION_PATH/../../../scripts/lib/repository-input-path.mts" \
+          "$GITHUB_ACTION_PATH/../../../scripts/lib/reviewed-npm-audit.mts" <<'NODE'
         import { createHash } from "node:crypto";
         import { appendFileSync, readFileSync } from "node:fs";
         import { join } from "node:path";
         import { pathToFileURL } from "node:url";
         const targetRoot = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT;
-        const [configFile, resolverFile] = process.argv.slice(2);
+        const [configFile, resolverFile, reviewedNpmAuditFile] = process.argv.slice(2);
         if (!targetRoot) {
           throw new Error("reviewed npm audit target root is required");
         }
         const { resolvePathWithinRoot } = await import(pathToFileURL(resolverFile).href);
+        const { parseReviewedNpmIdentity } = await import(pathToFileURL(reviewedNpmAuditFile).href);
         const configSource = readFileSync(configFile, "utf8");
         const config = JSON.parse(configSource);
-        if (!/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(config.npmVersion) || /[\r\n]/.test(config.npmVersion)) {
-          throw new Error("reviewed npm audit configuration has an invalid npmVersion");
-        }
-        if (!/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(config.npmIntegrity) || /[\r\n]/.test(config.npmIntegrity)) {
-          throw new Error("reviewed npm audit configuration has an invalid npmIntegrity");
-        }
-        if (!/^[a-f0-9]{64}$/.test(config.npmArchiveSha256)) {
-          throw new Error("reviewed npm audit configuration has an invalid npmArchiveSha256");
-        }
+        const identity = parseReviewedNpmIdentity(config);
         const directories = ["", ...config.lockedGraphs.map((graph) => graph.directory)].sort();
         const hash = createHash("sha256");
         hash.update(configSource);
-        hash.update(JSON.stringify({ argv: ["audit", "--registry=https://registry.yarnpkg.com", "--omit=dev", "--json"], npmArchiveSha256: config.npmArchiveSha256, npmIntegrity: config.npmIntegrity, npmVersion: config.npmVersion, registry: "https://registry.yarnpkg.com/", schemaVersion: 2 }));
+        hash.update(JSON.stringify({ argv: ["audit", "--registry=https://registry.yarnpkg.com", "--omit=dev", "--json"], ...identity, registry: "https://registry.yarnpkg.com/", schemaVersion: 2 }));
         for (const directory of directories) {
           for (const file of ["package.json", "package-lock.json"]) {
             const relative = join(directory, file);

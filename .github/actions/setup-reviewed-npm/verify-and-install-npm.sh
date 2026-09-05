@@ -10,25 +10,21 @@ if [ "$#" -ne 1 ]; then
 fi
 
 config_file="$1"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 download_dir="$(mktemp -d "$RUNNER_TEMP/reviewed-npm.XXXXXX")"
 trap 'rm -rf "$download_dir"' EXIT
 identity_file="$download_dir/identity"
 
-node --input-type=module - "$config_file" >"$identity_file" <<'NODE'
+node --experimental-strip-types --input-type=module - \
+  "$config_file" \
+  "$script_dir/../../../scripts/lib/reviewed-npm-audit.mts" >"$identity_file" <<'NODE'
 import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
-const [configFile] = process.argv.slice(2);
-const config = JSON.parse(readFileSync(configFile, "utf8"));
-if (!/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(config.npmVersion)) {
-  throw new Error("reviewed npm audit configuration has an invalid npmVersion");
-}
-if (!/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(config.npmIntegrity)) {
-  throw new Error("reviewed npm audit configuration has an invalid npmIntegrity");
-}
-if (!/^[a-f0-9]{64}$/.test(config.npmArchiveSha256)) {
-  throw new Error("reviewed npm audit configuration has an invalid npmArchiveSha256");
-}
-process.stdout.write(`${config.npmVersion}\n${config.npmIntegrity}\n${config.npmArchiveSha256}\n`);
+const [configFile, reviewedNpmAuditFile] = process.argv.slice(2);
+const { parseReviewedNpmIdentityConfig } = await import(pathToFileURL(reviewedNpmAuditFile).href);
+const identity = parseReviewedNpmIdentityConfig(readFileSync(configFile, "utf8"));
+process.stdout.write(`${identity.npmVersion}\n${identity.npmIntegrity}\n${identity.npmArchiveSha256}\n`);
 NODE
 
 IFS= read -r version <"$identity_file"

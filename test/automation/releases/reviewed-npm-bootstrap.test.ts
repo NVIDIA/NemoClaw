@@ -17,7 +17,7 @@ const BOOTSTRAP = path.join(
   "verify-and-install-npm.sh",
 );
 
-function identity(archive: string): Record<string, string> {
+function identity(archive: string | Buffer): Record<string, string> {
   return {
     npmArchiveSha256: createHash("sha256").update(archive).digest("hex"),
     npmIntegrity: `sha512-${createHash("sha512").update(archive).digest("base64")}`,
@@ -26,9 +26,10 @@ function identity(archive: string): Record<string, string> {
 }
 
 type BootstrapFixtureOptions = {
-  archive: string;
+  archive: string | Buffer;
   archiveVersion?: string;
   environment?: NodeJS.ProcessEnv;
+  realTar?: boolean;
   reviewedIdentity?: Record<string, string>;
 };
 
@@ -38,8 +39,10 @@ function runBootstrapFixture(options: BootstrapFixtureOptions) {
   const npmLog = path.join(root, "npm.log");
   const installMarker = path.join(root, "install-called");
   const identityPath = path.join(root, "reviewed-npm-audit.json");
+  const archivePath = path.join(root, "fixture.tgz");
 
   fs.mkdirSync(bin);
+  fs.writeFileSync(archivePath, options.archive);
   fs.writeFileSync(
     path.join(bin, "npm"),
     `#!/usr/bin/env bash
@@ -59,7 +62,7 @@ case "$1" in
     done
     [ -n "$download_dir" ]
     [ "$pack_args" = "pack npm@12.0.2 --pack-destination $download_dir --userconfig /dev/null --registry https://registry.npmjs.org/ --ignore-scripts --no-audit --no-fund" ]
-    printf '%s' "$NEMOCLAW_TEST_ARCHIVE" > "$download_dir/npm-12.0.2.tgz"
+    cp "$NEMOCLAW_TEST_ARCHIVE_FILE" "$download_dir/npm-12.0.2.tgz"
     ;;
   install)
     : > "$NEMOCLAW_TEST_INSTALL_MARKER"
@@ -75,9 +78,16 @@ esac
     path.join(bin, "tar"),
     `#!/usr/bin/env bash
 set -euo pipefail
+case "$NEMOCLAW_TEST_REAL_TAR" in
+  true)
+    exec env PATH="$NEMOCLAW_TEST_ORIGINAL_PATH" tar "$@"
+    ;;
+  false)
 [ "$1" = "-xOf" ]
 [ "$3" = "package/package.json" ]
 printf '{"version":"%s"}\\n' "$NEMOCLAW_TEST_ARCHIVE_VERSION"
+    ;;
+esac
 `,
     { mode: 0o755 },
   );
@@ -90,10 +100,12 @@ printf '{"version":"%s"}\\n' "$NEMOCLAW_TEST_ARCHIVE_VERSION"
     env: {
       ...process.env,
       ...options.environment,
-      NEMOCLAW_TEST_ARCHIVE: options.archive,
+      NEMOCLAW_TEST_ARCHIVE_FILE: archivePath,
       NEMOCLAW_TEST_ARCHIVE_VERSION: options.archiveVersion ?? "12.0.2",
       NEMOCLAW_TEST_INSTALL_MARKER: installMarker,
       NEMOCLAW_TEST_NPM_LOG: npmLog,
+      NEMOCLAW_TEST_ORIGINAL_PATH: process.env.PATH ?? "",
+      NEMOCLAW_TEST_REAL_TAR: String(options.realTar ?? false),
       PATH: `${bin}:${process.env.PATH ?? ""}`,
       RUNNER_TEMP: root,
     },
@@ -101,13 +113,50 @@ printf '{"version":"%s"}\\n' "$NEMOCLAW_TEST_ARCHIVE_VERSION"
   return {
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
     installCalled: fs.existsSync(installMarker),
-    npmInvocations: fs.readFileSync(npmLog, "utf8").trim().split("\n"),
+    npmInvocations: fs.existsSync(npmLog) ? fs.readFileSync(npmLog, "utf8").trim().split("\n") : [],
     result,
+  };
+}
+
+function createRealArchive(version?: string): { archive: Buffer; cleanup: () => void } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-archive-"));
+  const packageRoot = path.join(root, "package");
+  const archivePath = path.join(root, "fixture.tgz");
+  fs.mkdirSync(packageRoot);
+  const entry =
+    version === undefined
+      ? { contents: "missing package manifest\n", name: "README.md" }
+      : { contents: `${JSON.stringify({ version })}\n`, name: "package.json" };
+  fs.writeFileSync(path.join(packageRoot, entry.name), entry.contents);
+  const packed = spawnSync("tar", ["-czf", archivePath, "-C", root, "package"], {
+    encoding: "utf8",
+  });
+  expect(packed.status, packed.stderr).toBe(0);
+  return {
+    archive: fs.readFileSync(archivePath),
+    cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
   };
 }
 
 describe("reviewed npm bootstrap", () => {
   const archive = "verified archive\n";
+
+  it("rejects a malformed reviewed archive SHA-256 before download (#8253)", () => {
+    const fixture = runBootstrapFixture({
+      archive,
+      reviewedIdentity: { ...identity(archive), npmArchiveSha256: "not-a-reviewed-digest" },
+    });
+    try {
+      expect(fixture.result.status).toBe(1);
+      expect(fixture.result.stderr).toContain(
+        "reviewed npm audit configuration has an invalid npmArchiveSha256",
+      );
+      expect(fixture.npmInvocations).toEqual([]);
+      expect(fixture.installCalled).toBe(false);
+    } finally {
+      fixture.cleanup();
+    }
+  });
 
   it.each([
     ["SHA-256", { ...identity(archive), npmArchiveSha256: "0".repeat(64) }],
@@ -144,6 +193,26 @@ describe("reviewed npm bootstrap", () => {
       fixture.cleanup();
     }
   });
+
+  it.each([
+    ["matching", "12.0.2", true],
+    ["mismatched", "12.0.3", false],
+    ["missing", undefined, false],
+  ] as const)(
+    "%s real tar package metadata reaches installation only for the reviewed version (#8253)",
+    (_condition, archiveVersion, expectedInstall) => {
+      const archiveFixture = createRealArchive(archiveVersion);
+      const fixture = runBootstrapFixture({ archive: archiveFixture.archive, realTar: true });
+      try {
+        expect(fixture.result.status === 0).toBe(expectedInstall);
+        expect(fixture.installCalled).toBe(expectedInstall);
+        expect(fixture.npmInvocations).toHaveLength(expectedInstall ? 2 : 1);
+      } finally {
+        fixture.cleanup();
+        archiveFixture.cleanup();
+      }
+    },
+  );
 
   it("installs a matching archive offline (#8253)", () => {
     const fixture = runBootstrapFixture({ archive });

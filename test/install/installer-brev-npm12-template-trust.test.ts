@@ -164,12 +164,14 @@ describe("reviewed npm 12 Brev template trust", () => {
     );
     expect(npmVerifier).toBeGreaterThan(-1);
     expect(dependencyInstall).toBeGreaterThan(npmVerifier);
-    expect(fs.statSync(NPM_BOOTSTRAP).isFile()).toBe(true);
-    expect(fs.statSync(NPM_BOOTSTRAP).mode & 0o111).not.toBe(0);
-    const bootstrapSource = fs.readFileSync(NPM_BOOTSTRAP, "utf8");
-    expect(bootstrapSource).toContain("config.npmVersion");
-    expect(bootstrapSource).toContain("config.npmIntegrity");
-    expect(bootstrapSource).toContain("config.npmArchiveSha256");
+    const bootstrap = fs.openSync(NPM_BOOTSTRAP, "r");
+    try {
+      expect(fs.fstatSync(bootstrap).isFile()).toBe(true);
+      expect(fs.fstatSync(bootstrap).mode & 0o111).not.toBe(0);
+      expect(fs.readFileSync(bootstrap, "utf8")).toContain("parseReviewedNpmIdentityConfig");
+    } finally {
+      fs.closeSync(bootstrap);
+    }
 
     const accepted = runParser(reviewedTemplate);
     expect(accepted.status, accepted.stderr).toBe(0);

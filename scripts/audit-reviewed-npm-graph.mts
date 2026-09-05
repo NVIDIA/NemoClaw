@@ -21,6 +21,7 @@ import {
   type AuditPolicyResult,
   NPM_AUDIT_REGISTRY,
   assertExceptionGraphs,
+  parseReviewedNpmIdentity,
   readAuditExceptionRegistry,
   runReviewedNpmAudit,
   type Severity,
@@ -57,6 +58,7 @@ type AuditConfig = Readonly<{
   exceptionFile: string;
   lockedGraphs: readonly LockedGraph[];
   nodeVersion: string;
+  npmArchiveSha256: string;
   npmIntegrity: string;
   npmVersion: string;
   registryOrigin: string;
@@ -166,6 +168,7 @@ function run(command: string, args: readonly string[], cwd: string) {
 
 export function parseAuditConfig(contents: string): AuditConfig {
   const parsed = JSON.parse(contents) as AuditConfig;
+  const reviewedNpmIdentity = parseReviewedNpmIdentity(parsed);
   if (
     parsed.schemaVersion !== 2 ||
     !SEVERITIES.includes(parsed.severityThreshold) ||
@@ -174,12 +177,6 @@ export function parseAuditConfig(contents: string): AuditConfig {
     parsed.archiveTarVersion !== "7.5.21" ||
     typeof parsed.exceptionFile !== "string" ||
     !parsed.exceptionFile ||
-    typeof parsed.npmVersion !== "string" ||
-    !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(parsed.npmVersion) ||
-    /[\r\n]/.test(parsed.npmVersion) ||
-    typeof parsed.npmIntegrity !== "string" ||
-    !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(parsed.npmIntegrity) ||
-    /[\r\n]/.test(parsed.npmIntegrity) ||
     typeof parsed.registryOrigin !== "string" ||
     !parsed.registryOrigin ||
     !Array.isArray(parsed.archivePackages) ||
@@ -246,7 +243,7 @@ export function parseAuditConfig(contents: string): AuditConfig {
   ) {
     throw new Error("ci/reviewed-npm-audit.json is invalid");
   }
-  return parsed;
+  return { ...parsed, ...reviewedNpmIdentity };
 }
 
 function readConfig(): AuditConfig {

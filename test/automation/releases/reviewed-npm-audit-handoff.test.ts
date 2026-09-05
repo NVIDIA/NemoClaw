@@ -50,6 +50,9 @@ const TRUSTED_AUDIT_SPARSE_CHECKOUTS = TRUSTED_WORKFLOWS.flatMap((workflowFile) 
       })),
   );
 });
+const TRUSTED_AUDIT_ACTION_SPARSE_CHECKOUTS = TRUSTED_AUDIT_SPARSE_CHECKOUTS.filter(
+  ({ sparseCheckout }) => sparseCheckout.includes(".github/actions/ci-reviewed-npm-audit"),
+);
 
 function stageSparseCheckout(root: string, sparseCheckout: string): void {
   sparseCheckout
@@ -90,6 +93,28 @@ describe("reviewed npm audit handoff", () => {
     },
   );
 
+  it.each(TRUSTED_AUDIT_ACTION_SPARSE_CHECKOUTS)(
+    "loads the audit bootstrap from the $name trusted sparse checkout",
+    ({ sparseCheckout }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-audit-action-checkout-"));
+      try {
+        expect(sparseCheckout.split("\n").map((entry) => entry.trim())).toContain(
+          ".github/actions/setup-reviewed-npm",
+        );
+        stageSparseCheckout(root, sparseCheckout);
+        expect(
+          fs
+            .statSync(
+              path.join(root, ".github/actions/setup-reviewed-npm/verify-and-install-npm.sh"),
+            )
+            .isFile(),
+        ).toBe(true);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("passes producer output to the Docker receipt verifier and rejects an npm mismatch", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-audit-receipt-handoff-"));
     const packageJsonFile = path.join(root, "package.json");
@@ -108,7 +133,14 @@ describe("reviewed npm audit handoff", () => {
       fs.writeFileSync(packageLockFile, packageLock);
       fs.writeFileSync(rawReportFile, rawReport);
       fs.writeFileSync(exceptionFile, exceptionPolicy);
-      fs.writeFileSync(auditConfigFile, JSON.stringify({ npmVersion: "10.9.4" }));
+      fs.writeFileSync(
+        auditConfigFile,
+        JSON.stringify({
+          npmArchiveSha256: "0".repeat(64),
+          npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
+          npmVersion: "10.9.4",
+        }),
+      );
       fs.writeFileSync(
         path.join(root, "report.provenance.json"),
         JSON.stringify({ run: { startedAt: new Date().toISOString() } }),
@@ -173,7 +205,14 @@ describe("reviewed npm audit handoff", () => {
       });
 
       fs.rmSync(resultFile);
-      fs.writeFileSync(auditConfigFile, JSON.stringify({ npmVersion: "11.18.0" }));
+      fs.writeFileSync(
+        auditConfigFile,
+        JSON.stringify({
+          npmArchiveSha256: "0".repeat(64),
+          npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
+          npmVersion: "11.18.0",
+        }),
+      );
       const rejected = spawnSync(process.execPath, verifierArgs, { encoding: "utf8" });
       expect(rejected.status).not.toBe(0);
       expect(rejected.stderr).toContain("receipt identity does not match expected graph and npm");
