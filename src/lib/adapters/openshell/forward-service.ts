@@ -4,7 +4,9 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 
 import { isValidName } from "../../name-validation";
 import { buildOpenShellSubprocessEnv } from "./resolve-shared";
@@ -13,13 +15,20 @@ import { probeLocalForwardListener } from "./local-forward-listener";
 const START_TIMEOUT_MS = 90_000;
 const START_RETRY_DELAY_MS = 1_000;
 const START_ATTEMPTS = 2;
+const SANDBOX_READY_RETRY_DELAY_MS = 5_000;
+const SANDBOX_READY_MAX_RETRIES = 12;
 const STOP_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
+// OpenShell checks the sandbox every two seconds after binding. Keep the
+// listener owned through one complete post-bind check before callers connect.
+const STABLE_LISTENER_OBSERVATIONS = 26;
 const FORWARD_INSTANCE_ENV = "NEMOCLAW_FORWARD_INSTANCE_ID";
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
 
 type ForwardServiceChild = {
   readonly pid?: number;
+  readonly readOutput?: () => string;
+  readonly removeOutput?: () => void;
   unref(): void;
 };
 
@@ -41,6 +50,7 @@ export interface ForwardServiceLaunchOptions {
   readonly isListenerOwned?: (pid: number, port: number) => boolean | null;
   readonly isReachable?: (port: number) => boolean;
   readonly maxAttempts?: number;
+  readonly maxSandboxReadyRetries?: number;
   readonly retryDelayMs?: number;
   readonly sleep?: (milliseconds: number) => void;
   readonly sourceEnvironment?: NodeJS.ProcessEnv;
@@ -206,6 +216,90 @@ function describeFailureState(describe: (() => string | null | undefined) | unde
   }
 }
 
+function spawnForwardService(
+  executable: string,
+  args: readonly string[],
+  environment: NodeJS.ProcessEnv,
+): ForwardServiceChild {
+  const outputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-forward-service-"));
+  fs.chmodSync(outputDirectory, 0o700);
+  const outputPath = path.join(outputDirectory, "start.log");
+  const outputDescriptor = fs.openSync(outputPath, "wx", 0o600);
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(executable, [...args], {
+      detached: true,
+      env: environment,
+      stdio: ["ignore", outputDescriptor, outputDescriptor],
+    });
+  } catch (error) {
+    try {
+      fs.closeSync(outputDescriptor);
+    } catch {
+      // Preserve the spawn failure if closing its diagnostic file also fails.
+    }
+    try {
+      fs.rmSync(outputDirectory, { force: true, recursive: true });
+    } catch {
+      // Preserve the spawn failure if removing its diagnostic file also fails.
+    }
+    throw error;
+  }
+  try {
+    fs.closeSync(outputDescriptor);
+  } catch {
+    // The child owns its inherited descriptor; the parent no longer needs it.
+  }
+  return {
+    pid: child.pid,
+    unref: () => child.unref(),
+    readOutput: () => {
+      try {
+        return fs.readFileSync(outputPath, "utf8");
+      } catch {
+        return "";
+      }
+    },
+    removeOutput: () => {
+      try {
+        fs.rmSync(outputDirectory, { force: true, recursive: true });
+      } catch {
+        // The detached child may still hold the file on non-POSIX hosts.
+      }
+    },
+  };
+}
+
+function readForwardStartState(child: ForwardServiceChild): {
+  readonly diagnostic: string;
+  readonly sandboxReadinessHandoff: boolean;
+} {
+  const output = child.readOutput?.() ?? "";
+  const sandboxReadinessHandoff = isSandboxReadinessHandoff(stripVTControlCharacters(output));
+  return {
+    diagnostic: sandboxReadinessHandoff
+      ? "sandbox readiness handoff"
+      : output.trim()
+        ? "non-readiness OpenShell diagnostic"
+        : "<empty>",
+    sandboxReadinessHandoff,
+  };
+}
+
+function isSandboxReadinessHandoff(output: string): boolean {
+  const compact = output.replace(/\s+/gu, " ").trim();
+  return (
+    /message: ["']sandbox is not ready["']/iu.test(compact) ||
+    /sandbox ["'][^"']+["'] is no longer ready \(phase: [^)]+\); stopping service forward/iu.test(
+      compact,
+    )
+  );
+}
+
+function removeForwardStartOutput(child: ForwardServiceChild): void {
+  child.removeOutput?.();
+}
+
 function isProcessIdentity(pid: number | undefined): pid is number {
   return Number.isSafeInteger(pid) && Number(pid) > 0;
 }
@@ -360,8 +454,7 @@ export function launchForwardService(
   }
   const spawnDetached =
     options.spawnDetached ??
-    ((executable, args, environment) =>
-      spawn(executable, [...args], { detached: true, env: environment, stdio: "ignore" }));
+    ((executable, args, environment) => spawnForwardService(executable, args, environment));
   const sleep =
     options.sleep ?? ((milliseconds: number) => Atomics.wait(sleepBuffer, 0, 0, milliseconds));
   const stopProcess =
@@ -370,10 +463,25 @@ export function launchForwardService(
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > START_ATTEMPTS) {
     throw new Error(`OpenShell forward service attempts must be between 1 and ${START_ATTEMPTS}`);
   }
+  const maxSandboxReadyRetries = options.maxSandboxReadyRetries ?? SANDBOX_READY_MAX_RETRIES;
+  if (
+    !Number.isSafeInteger(maxSandboxReadyRetries) ||
+    maxSandboxReadyRetries < 0 ||
+    maxSandboxReadyRetries > SANDBOX_READY_MAX_RETRIES
+  ) {
+    throw new Error(
+      `OpenShell sandbox readiness retries must be between 0 and ${SANDBOX_READY_MAX_RETRIES}`,
+    );
+  }
   const args = buildForwardServiceArgs(target);
   const baseEnvironment = buildOpenShellSubprocessEnv(options.sourceEnvironment ?? process.env);
   let finalFailure = "exited before binding";
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+  let finalStartState = { diagnostic: "<empty>", sandboxReadinessHandoff: false };
+  let attempt = 0;
+  let standardFailures = 0;
+  let sandboxReadyRetries = 0;
+  while (true) {
+    attempt += 1;
     finalFailure = "exited before binding";
     if (isReachable(target.localPort)) {
       throw new Error(
@@ -384,9 +492,11 @@ export function launchForwardService(
     const environment = { ...baseEnvironment, [FORWARD_INSTANCE_ENV]: instanceId };
     const child = spawnDetached(target.executable, args, environment);
     if (!isProcessIdentity(child.pid)) {
+      finalStartState = readForwardStartState(child);
+      removeForwardStartOutput(child);
       throw new Error(
         `OpenShell forward service returned no process identity for ${target.localHost}:${String(target.localPort)}; ` +
-          `refusing to start a duplicate service; forward list: ${describeFailureState(options.describeState)}`,
+          `refusing to start a duplicate service; forward start: ${finalStartState.diagnostic}; forward list: ${describeFailureState(options.describeState)}`,
       );
     }
     const childIdentity = options.getProcessIdentity
@@ -398,6 +508,7 @@ export function launchForwardService(
     const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
     let exited = false;
     let ownershipLost = false;
+    let stableListenerObservations = 0;
     while (true) {
       if (childIdentity) {
         const identityStatus = processIdentityStatus(child.pid, childIdentity, readProcessIdentity);
@@ -419,20 +530,31 @@ export function launchForwardService(
         listenerOwnership === true &&
         processIdentityStatus(child.pid, childIdentity, readProcessIdentity) === "owned"
       ) {
-        return;
+        stableListenerObservations += 1;
+        if (stableListenerObservations >= STABLE_LISTENER_OBSERVATIONS) {
+          removeForwardStartOutput(child);
+          return;
+        }
+      } else {
+        stableListenerObservations = 0;
       }
       // OpenShell opens the host listener before it creates a sandbox relay.
       // Connecting here is not a passive readiness check: the accepted socket
       // starts ForwardTcp, and a sandbox that is still settling can reject that
       // first relay and make the foreground service exit. Inspect the launched
       // process's listener ownership without connecting to the service.
-      if (Date.now() >= deadline) break;
+      // The bind deadline governs the first owned-listener observation. Once
+      // binding starts, finish the short stability window instead of timing
+      // out a service that bound at the edge of the deadline.
+      if (Date.now() >= deadline && stableListenerObservations === 0) break;
       sleep(POLL_INTERVAL_MS);
     }
     if (ownershipLost) {
+      finalStartState = readForwardStartState(child);
+      removeForwardStartOutput(child);
       throw new Error(
         `OpenShell forward service process ${String(child.pid)} changed identity before binding ${target.localHost}:${String(target.localPort)}; ` +
-          `refusing to signal or retry; forward list: ${describeFailureState(options.describeState)}`,
+          `refusing to signal or retry; forward start: ${finalStartState.diagnostic}; forward list: ${describeFailureState(options.describeState)}`,
       );
     }
     if (!exited) {
@@ -446,29 +568,41 @@ export function launchForwardService(
         options.stopTimeoutMs ?? STOP_TIMEOUT_MS,
       );
       if (stopResult !== "stopped") {
+        finalStartState = readForwardStartState(child);
+        removeForwardStartOutput(child);
         const reason =
           stopResult === "unverified"
             ? "could not verify that it still owned that process"
             : "could not stop that process";
         throw new Error(
           `OpenShell forward service process ${String(child.pid)} remained unbound after ${String(options.timeoutMs ?? START_TIMEOUT_MS)}ms and ${reason}; ` +
-          `refusing to signal or retry; forward list: ${describeFailureState(options.describeState)}`,
+            `refusing to signal or retry; forward start: ${finalStartState.diagnostic}; forward list: ${describeFailureState(options.describeState)}`,
         );
       }
       if (isReachable(target.localPort)) {
+        finalStartState = readForwardStartState(child);
+        removeForwardStartOutput(child);
         throw new Error(
           `Host port ${String(target.localPort)} remained reachable after the launched process stopped; ` +
-            `refusing to adopt its listener or retry; forward list: ${describeFailureState(options.describeState)}`,
+            `refusing to adopt its listener or retry; forward start: ${finalStartState.diagnostic}; forward list: ${describeFailureState(options.describeState)}`,
         );
       }
       finalFailure = "was stopped after failing to bind";
     }
-    if (attempt < attempts) {
-      sleep(options.retryDelayMs ?? START_RETRY_DELAY_MS);
+    finalStartState = readForwardStartState(child);
+    removeForwardStartOutput(child);
+    if (exited && finalStartState.sandboxReadinessHandoff) {
+      if (sandboxReadyRetries >= maxSandboxReadyRetries) break;
+      sandboxReadyRetries += 1;
+      sleep(SANDBOX_READY_RETRY_DELAY_MS);
+      continue;
     }
+    standardFailures += 1;
+    if (standardFailures >= attempts) break;
+    sleep(options.retryDelayMs ?? START_RETRY_DELAY_MS);
   }
   throw new Error(
-    `OpenShell forward service ${finalFailure} ${target.localHost}:${String(target.localPort)} after ${String(attempts)} attempts; ` +
-      `forward list: ${describeFailureState(options.describeState)}`,
+    `OpenShell forward service ${finalFailure} ${target.localHost}:${String(target.localPort)} after ${String(attempt)} attempts; ` +
+      `forward start: ${finalStartState.diagnostic}; forward list: ${describeFailureState(options.describeState)}`,
   );
 }

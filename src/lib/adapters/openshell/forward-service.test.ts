@@ -81,6 +81,27 @@ describe("OpenShell forward service", () => {
     expect(isReachable).toHaveBeenCalledTimes(2);
   });
 
+  it("requires the owned listener to remain stable before callers connect (#11084)", () => {
+    let ownershipChecks = 0;
+    const sleep = vi.fn();
+
+    launchForwardService(target, {
+      getProcessIdentity: stableProcessIdentity,
+      isListenerOwned: () => {
+        ownershipChecks += 1;
+        return ownershipChecks !== 10;
+      },
+      isProcessRunning: () => true,
+      isReachable: () => false,
+      sleep,
+      spawnDetached: () => ({ pid: 43, unref: vi.fn() }),
+      timeoutMs: 10_000,
+    });
+
+    expect(ownershipChecks).toBe(36);
+    expect(sleep).toHaveBeenCalledTimes(35);
+  });
+
   it("refuses an occupied port without launching or adopting its listener", () => {
     const spawnDetached = vi.fn();
 
@@ -129,6 +150,54 @@ describe("OpenShell forward service", () => {
     });
 
     expect(spawnDetached).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries the exact OpenShell sandbox readiness handoff on its bounded schedule (#11084)", () => {
+    const spawnDetached = vi
+      .fn()
+      .mockReturnValueOnce({
+        pid: 53,
+        readOutput: () =>
+          "Error: sandbox 'demo' is no longer ready (phase: creating); stopping service forward",
+        removeOutput: vi.fn(),
+        unref: vi.fn(),
+      })
+      .mockReturnValueOnce({ pid: 54, unref: vi.fn() });
+    const sleep = vi.fn();
+
+    launchForwardService(target, {
+      getProcessIdentity: stableProcessIdentity,
+      isListenerOwned: (pid) => pid === 54,
+      isProcessRunning: (pid) => pid === 54,
+      isReachable: () => false,
+      maxSandboxReadyRetries: 1,
+      sleep,
+      spawnDetached,
+    });
+
+    expect(spawnDetached).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(5_000);
+  });
+
+  it("does not classify a missing sandbox as a readiness handoff (#11084)", () => {
+    const sleep = vi.fn();
+
+    expect(() =>
+      launchForwardService(target, {
+        getProcessIdentity: stableProcessIdentity,
+        isProcessRunning: () => false,
+        isReachable: () => false,
+        maxAttempts: 1,
+        sleep,
+        spawnDetached: () => ({
+          pid: 55,
+          readOutput: () => "Error: sandbox 'demo' no longer exists; stopping service forward",
+          removeOutput: vi.fn(),
+          unref: vi.fn(),
+        }),
+      }),
+    ).toThrow(/forward start: non-readiness OpenShell diagnostic/u);
+    expect(sleep).not.toHaveBeenCalledWith(5_000);
   });
 
   it("does not retry when the timed-out service cannot be stopped (#11084)", () => {
@@ -330,5 +399,32 @@ describe("OpenShell forward service", () => {
       }),
     ).toThrow(/no process identity.*forward list: <unavailable>/u);
     expect(spawnDetached).toHaveBeenCalledOnce();
+  });
+
+  it("classifies OpenShell start output without exposing its contents (#11084)", () => {
+    const removeOutput = vi.fn();
+    let error: unknown;
+
+    try {
+      launchForwardService(target, {
+        isProcessRunning: () => false,
+        isReachable: () => false,
+        maxAttempts: 1,
+        sleep: () => {},
+        spawnDetached: () => ({
+          pid: 81,
+          readOutput: () => "sandbox is not ready API_KEY=secret-value",
+          removeOutput,
+          unref: vi.fn(),
+        }),
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/forward start: non-readiness OpenShell diagnostic/u);
+    expect((error as Error).message).not.toContain("secret-value");
+    expect(removeOutput).toHaveBeenCalledOnce();
   });
 });
