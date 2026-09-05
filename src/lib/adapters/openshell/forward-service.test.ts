@@ -81,6 +81,33 @@ describe("OpenShell forward service", () => {
     expect(isReachable).toHaveBeenCalledTimes(2);
   });
 
+  it("uses the selected OpenShell configuration without exposing credentials (#11084)", () => {
+    const spawnDetached = vi.fn(() => ({ pid: 42, unref: vi.fn() }));
+
+    launchForwardService(target, {
+      getProcessIdentity: stableProcessIdentity,
+      isListenerOwned: () => true,
+      isProcessRunning: () => true,
+      isReachable: () => false,
+      sleep: () => {},
+      sourceEnvironment: {
+        HOME: "/tmp/isolated-home",
+        NVIDIA_INFERENCE_API_KEY: "secret-value",
+        PATH: "/usr/bin",
+        XDG_CONFIG_HOME: "/home/runner/.config",
+      },
+      spawnDetached,
+    });
+
+    const environment = spawnDetached.mock.calls[0]?.[2];
+    expect(environment).toMatchObject({
+      HOME: "/tmp/isolated-home",
+      PATH: "/usr/bin",
+      XDG_CONFIG_HOME: "/home/runner/.config",
+    });
+    expect(environment).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+  });
+
   it("requires the owned listener to remain stable before callers connect (#11084)", () => {
     let ownershipChecks = 0;
     const sleep = vi.fn();
