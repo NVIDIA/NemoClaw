@@ -25,6 +25,7 @@ import {
   hasStateScopedSandboxNamespace,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
+  readRecordedDockerDriverGatewayNetworkName,
 } from "./docker-driver-gateway-config";
 import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
 import {
@@ -149,6 +150,7 @@ describe("docker-driver-gateway config TOML", () => {
       expect(fs.statSync(signingKeyPath).mode & 0o777).toBe(0o600);
       expect(fs.statSync(publicKeyPath).mode & 0o777).toBe(0o600);
       expect(fs.statSync(kidPath).mode & 0o777).toBe(0o600);
+      expect(readRecordedDockerDriverGatewayNetworkName(stateDir)).toBe("openshell-docker");
 
       const signingKeyBeforeRestart = readRegularFileUtf8(signingKeyPath);
       const restartedEnv = writeGatewayConfig(stateDir);

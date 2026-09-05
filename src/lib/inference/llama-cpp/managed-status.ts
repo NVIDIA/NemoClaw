@@ -13,6 +13,11 @@ import type {
   DockerLlamaCppManagedLifecycle,
   DockerLlamaCppManagedLifecycleOptions,
 } from "../../onboard/runtime-provider/docker-llama-cpp-managed-lifecycle";
+import { readRecordedDockerDriverGatewayNetworkName } from "../../onboard/docker-driver-gateway-config";
+import {
+  DEFAULT_GATEWAY_PORT,
+  resolveGatewayStateDirForPort,
+} from "../../onboard/gateway/state-dir";
 import { requirePersistedEngineAuthority } from "../../onboard/runtime-provider/persisted-engine-authority";
 import { probeLlamaCppAttachment } from "./index";
 import {
@@ -56,6 +61,7 @@ export interface ManagedLlamaCppStatusOptions {
   readonly createInspectionLifecycle?: (
     input: DockerLlamaCppManagedLifecycleOptions,
   ) => DockerLlamaCppManagedLifecycle;
+  readonly readGatewayNetworkName?: (stateDir: string) => string | null;
 }
 
 function unknownStatus(recipeId: string, detail: string): ManagedLlamaCppStatus {
@@ -123,13 +129,25 @@ export function inspectManagedLlamaCppStatus(
   let engine: ContainerEngine;
   let operation: ReturnType<typeof createDockerLlamaCppHostLocalOperation>;
   try {
+    const operationEnv = { ...(options.env ?? process.env) };
+    const gatewayStateDir = resolveGatewayStateDirForPort({
+      configured: operationEnv.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+      home: homeDir,
+      port: options.gatewayPort ?? DEFAULT_GATEWAY_PORT,
+    });
+    const recordedGatewayNetworkName = (
+      options.readGatewayNetworkName ?? readRecordedDockerDriverGatewayNetworkName
+    )(gatewayStateDir);
+    if (recordedGatewayNetworkName) {
+      operationEnv.OPENSHELL_DOCKER_NETWORK_NAME = recordedGatewayNetworkName;
+    }
     operation = options.engine
       ? createDockerLlamaCppInspectionOperation(
           options.engine,
-          options.env ?? process.env,
+          operationEnv,
           options.createInspectionLifecycle,
         )
-      : createDockerLlamaCppHostLocalOperation(options.env ?? process.env);
+      : createDockerLlamaCppHostLocalOperation(operationEnv);
     engine = operation.engine;
     requirePersistedEngineAuthority(
       receipt.engineAuthority,

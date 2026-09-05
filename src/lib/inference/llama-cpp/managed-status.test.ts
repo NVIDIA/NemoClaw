@@ -333,7 +333,7 @@ describe("managed llama.cpp status", () => {
     });
   });
 
-  it("passes the configured OpenShell bridge through public status inspection", () => {
+  it("passes the recorded OpenShell bridge through public status inspection", () => {
     const createInspectionLifecycle = vi.fn(() => ({}) as never);
     const inspectExact = vi.fn<NonNullable<ManagedLlamaCppStatusOptions["inspectExact"]>>(
       ({ operation }) => {
@@ -344,17 +344,22 @@ describe("managed llama.cpp status", () => {
     const runtimeEngine = engine(vi.fn(() => ({ status: 0, stdout: "[]", stderr: "" })));
     const homeDir = temporaryHome();
     publishState(homeDir, runtimeEngine);
+    const readGatewayNetworkName = vi.fn(() => "nemoclaw-managed-pr-test");
 
     expect(
       inspectManagedLlamaCppStatus("spark-agent", {
         createInspectionLifecycle,
-        env: { OPENSHELL_DOCKER_NETWORK_NAME: "nemoclaw-managed-pr-test" },
+        env: {},
         homeDir,
         engine: runtimeEngine,
         inspectExact,
         probe: vi.fn(() => ({ ok: true as const, model: "nvidia-nemotron" })),
+        readGatewayNetworkName,
       }),
     ).toMatchObject({ state: "running" });
+    expect(readGatewayNetworkName).toHaveBeenCalledWith(
+      path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway"),
+    );
     expect(createInspectionLifecycle).toHaveBeenCalledWith(
       expect.objectContaining({ gatewayNetworkName: "nemoclaw-managed-pr-test" }),
     );

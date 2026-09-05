@@ -92,6 +92,7 @@ jobs:
                     or .filename == "scripts/checks/llama-cpp-openclaw-agent-qualification.mts"
                     or .filename == "scripts/checks/llama-cpp-compiled-runtime.ts"
                     or .filename == "scripts/checks/llama-cpp-qwen-gpu-contract.ts"
+                    or .filename == "scripts/checks/generate-managed-startup-profile-fixture.mts"
                     or .filename == "scripts/checks/managed-image-protected-runtime-contract.ts"
                     or .filename == "scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts"
                     or .filename == "scripts/checks/run-managed-image-openshell-e2e.ts"
