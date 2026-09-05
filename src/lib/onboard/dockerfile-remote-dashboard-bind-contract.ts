@@ -75,7 +75,7 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "7e5f7e1dfb90e5e4b863afdfb9ba58e57e3693bdc6f47ac8c13e80bdc9eff56b",
   "8f5966da093ef75cefd35c2b7f1361fbf5b32e63a4a8a34cb3ac7f76a1330e5e",
   "c6b042ac2cc3d5570ae43f1e387a951cbe89fbb22e8cd9df486f99719bb32939",
-  "ba29b499af923b4331cf7abf14648f187dc0e0b8f3dc2c33dac61f079981c187",
+  "b4b95b82af76bfab4c8a8182080f7fb1d9ab3f6eb6e3750c92aa3302a7686631",
   "9c39e3aefbfefb7a48c6ba6879701954ad300f3593d18713063a12056f71af93",
   // COPY --from=openclaw-runtime-payload / /
   // The reviewed scratch payload has no /sandbox/.openclaw content, so this
