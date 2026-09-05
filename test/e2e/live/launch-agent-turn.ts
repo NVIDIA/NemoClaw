@@ -13,17 +13,10 @@ const OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS = 2;
 const OPENCLAW_LAUNCH_PROVIDER_RETRY_DELAY_MS = 1_000;
 export const OPENCLAW_PROVIDER_UNAVAILABLE_MARKER =
   "nemoclaw.e2e.launch-failure=provider-unavailable";
-const TERMINAL_LAUNCH_FAILURE_RE =
-  /authentication failed|authorization failed|unauthorized|forbidden|HTTP(?: status)?[:= ]+40[13]\b|\b40[13]\b|invalid[^\r\n]*(?:api[_ -]?key|credential|JSON|response)|denied by network policy|network policy denied|policy [^\r\n]*failed|routing [^\r\n]*failed|route [^\r\n]*failed|proxy [^\r\n]*failed|malformed|structured session evidence was invalid|launch final structured session evidence did not qualify|message_(?:content_empty|order_invalid)|session_(?:record_incomplete|removed|rewritten|truncated)|multiple_sessions_changed|extra_message|verifier_failed|PTY [^\r\n]*(?:failed|invalid|unavailable)|structured session baseline cleanup failed|launch host session cleanup failed|launch PTY monitor cleanup failed|launch could not remove/iu;
+const OPENCLAW_PROVIDER_UNAVAILABLE_PREFIX = `launch did not record the required structured session turns\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\n`;
 
-function isTransientProviderAvailabilityFailure(
-  result: Pick<ShellProbeResult, "stdout" | "stderr">,
-): boolean {
-  const output = resultText(result);
-  return (
-    output.split(/\r?\n/u).includes(OPENCLAW_PROVIDER_UNAVAILABLE_MARKER) &&
-    !TERMINAL_LAUNCH_FAILURE_RE.test(output)
-  );
+function isTransientProviderAvailabilityFailure(result: Pick<ShellProbeResult, "stderr">): boolean {
+  return result.stderr.startsWith(OPENCLAW_PROVIDER_UNAVAILABLE_PREFIX);
 }
 
 export const OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT =
@@ -1131,10 +1124,18 @@ terminal_diagnostic() {
 transient_provider_availability_failure() {
   local diagnostic
   diagnostic="$(tail -c 4096 "$capture" 2>/dev/null || true)"
-  printf '%s\n' "$diagnostic" | grep -Eiq \
-    'ServiceUnavailable(Error)?|HTTP( status( code)?)?[:= ]+5[0-9]{2}|status( code)?[:= ]+5[0-9]{2}|5[0-9]{2} (Bad Gateway|Gateway Timeout|Internal Server Error|Service Unavailable)' || return 1
+  printf '%s\n' "$diagnostic" | grep -Fq \
+    'run error: litellm.ServiceUnavailableError: ServiceUnavailableError:' || return 1
+  printf '%s\n' "$diagnostic" | grep -Fq \
+    'OpenAIException - . Received Model Group=' || return 1
+  printf '%s\n' "$diagnostic" | grep -Fq \
+    'Available Model Group Fallbacks=' || return 1
   ! printf '%s\n' "$diagnostic" | grep -Eiq \
-    'authentication failed|authorization failed|unauthorized|forbidden|HTTP( status)?[:= ]+40[13]|invalid.*(api[_ -]?key|credential|JSON|response)|denied by network policy|network policy denied|policy .*failed|routing .*failed|route .*failed|proxy .*failed|malformed'
+    'authentication failed|authorization failed|unauthorized|forbidden|HTTP( status)?[:= ]+40[13]|invalid.*(api[_ -]?key|credential|JSON|response)|\b(egress|request|connection|certificate|TLS|network|route|routing|policy|proxy)[^\r\n]*(blocked|denied|failed|invalid)\b|malformed'
+}
+
+provider_empty_message_evidence() {
+  grep -Eq '^\{"reason":"message_content_empty","sessionId":"[^"]+"\}$' "$evidence_error"
 }
 
 fail_launch_session() {
@@ -1185,7 +1186,17 @@ wait_for_turn_count() {
       evidence_status=$?
     fi
     if [[ "$evidence_status" != 1 ]]; then
-      fail_launch_session "structured session evidence was invalid or unavailable (status $evidence_status)"
+      case "$evidence_status" in
+        2)
+          provider_empty_message_evidence && \
+            transient_provider_availability_failure && \
+            fail_launch_session \
+              "launch did not record the required structured session turns" \
+              "${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}"
+          ;;
+      esac
+      fail_launch_session \
+        "structured session evidence was invalid or unavailable (status $evidence_status)"
     fi
     if ! kill -0 "$session_pid" 2>/dev/null; then
       break

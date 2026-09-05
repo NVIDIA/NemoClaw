@@ -53,6 +53,7 @@ type FixtureMode =
   | "pty-socket-timeout"
   | "pty-path-unreadable"
   | "pty-termios-unavailable"
+  | "provider-empty-message"
   | "recording-timeout"
   | "restored-canonical-timeout"
   | "valid";
@@ -99,7 +100,7 @@ it("reports a residual PTY monitor socket without removing it (#9384)", async ()
 
 function runLaunchSessionFixture(
   mode: FixtureMode,
-  terminalCopy: "absent" | "ansi" | "auth" | "reordered",
+  terminalCopy: "absent" | "ansi" | "provider" | "reordered" | "security",
 ) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-turn-"));
   const canonicalRestoredMarker = join(fixtureRoot, "canonical-restored");
@@ -320,8 +321,15 @@ if (process.argv[2] !== "tui") {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
   const ask = () => new Promise((resolve) => rl.question("", resolve));
   if (terminalCopy === "ansi") process.stdout.write("\u001b[2KServiceUnavailableError\r");
-  if (terminalCopy === "auth") {
-    process.stdout.write("\u001b[2KServiceUnavailableError: HTTP 503; authentication failed: invalid API key\r");
+  if (terminalCopy === "provider") {
+    process.stdout.write("\u001b[2Krun error: litellm.ServiceUnavailableError: ServiceUnavailableError:\r\n");
+    process.stdout.write("\u001b[2KOpenAIException - . Received Model Group=nvidia/model\r\n");
+    process.stdout.write("\u001b[2KAvailable Model Group Fallbacks=None\r");
+  }
+  if (terminalCopy === "security") {
+    process.stdout.write("\u001b[2Krun error: litellm.ServiceUnavailableError: ServiceUnavailableError:\r\n");
+    process.stdout.write("\u001b[2KOpenAIException - . Received Model Group=nvidia/model\r\n");
+    process.stdout.write("\u001b[2KAvailable Model Group Fallbacks=None; egress blocked by sandbox guard\r");
   }
   if (terminalCopy === "reordered") process.stdout.write("idle | gateway connected\n");
 
@@ -336,6 +344,9 @@ if (process.argv[2] !== "tui") {
   if (mode === "invalid-order") {
     append("assistant", "response before input");
     append("user", firstInput);
+  } else if (mode === "provider-empty-message") {
+    append("user", firstInput);
+    append("assistant", "");
   } else {
     append("user", firstInput);
     append("assistant", "first response");
@@ -987,11 +998,11 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux")(
-  "marks provider unavailability when structured turns remain missing (#9160, #10978)",
+  "marks provider unavailability when it leaves an empty structured turn (#9160, #10978)",
   () => {
     const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
-      "recording-timeout",
-      "ansi",
+      "provider-empty-message",
+      "provider",
     );
 
     expect(ttyObserved).toBe(true);
@@ -1005,7 +1016,7 @@ it.runIf(process.platform === "linux")(
 it.runIf(process.platform === "linux")(
   "retries the provider marker emitted by the real launch producer (#10978)",
   async () => {
-    const produced = runLaunchSessionFixture("recording-timeout", "ansi").result;
+    const produced = runLaunchSessionFixture("provider-empty-message", "provider").result;
     const firstResult = {
       exitCode: produced.status ?? 1,
       signal: produced.signal,
@@ -1054,9 +1065,9 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux")(
-  "does not retry real provider output that also reports authentication failure (#10978)",
+  "does not retry real provider output that also reports a security denial (#10978)",
   async () => {
-    const produced = runLaunchSessionFixture("recording-timeout", "auth").result;
+    const produced = runLaunchSessionFixture("provider-empty-message", "security").result;
     const firstResult = {
       exitCode: produced.status ?? 1,
       signal: produced.signal,
@@ -1072,7 +1083,7 @@ it.runIf(process.platform === "linux")(
       openshellCommandPath: "/usr/bin/openshell",
     };
 
-    expect(firstResult.stderr).toContain("authentication failed");
+    expect(firstResult.stderr).toContain("egress blocked by sandbox guard");
     expect(firstResult.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
     await expect(
       runOpenClawLaunchSession({

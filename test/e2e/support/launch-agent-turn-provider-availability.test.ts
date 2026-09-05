@@ -33,7 +33,7 @@ it("retries a transient provider failure in a fresh launch session (#10978)", as
         ? {
             exitCode: 1,
             signal: null,
-            stderr: `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nlitellm.ServiceUnavailableError: NVIDIA upstream unavailable`,
+            stderr: `launch did not record the required structured session turns\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nlitellm.ServiceUnavailableError: NVIDIA upstream unavailable`,
             stdout: "",
           }
         : { exitCode: 0, signal: null, stderr: "", stdout: "" };
@@ -71,7 +71,7 @@ it("classifies exhausted transient launch attempts as provider unavailable (#109
       return {
         exitCode: 1,
         signal: null,
-        stderr: `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nlaunch did not record the required structured session turns\nHTTP ${calls.length === 1 ? "503" : "502"}`,
+        stderr: `launch did not record the required structured session turns\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nHTTP ${calls.length === 1 ? "503" : "502"}`,
         stdout: "",
       };
     },
