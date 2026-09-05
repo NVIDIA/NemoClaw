@@ -183,6 +183,47 @@ describe("handleAgentSetupState", () => {
     });
   });
 
+  it("revalidates sandbox identity before inspecting a reused forward (#11074)", async () => {
+    const inspectForward = vi.fn();
+    const revalidateSandboxIdentity = vi.fn();
+    revalidateSandboxIdentity
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("sandbox identity changed");
+      });
+    const ensureAgentDashboardForward = vi.fn(
+      (
+        _sandboxName: string,
+        _agent: Agent | null,
+        options?: {
+          preserveRegisteredForward?: boolean;
+          revalidateSandboxIdentity?: (operation: string) => void;
+        },
+      ) => {
+        options?.revalidateSandboxIdentity?.("inspect reused dashboard forward");
+        inspectForward();
+        return 18_789;
+      },
+    );
+    const { deps } = createDeps({ ensureAgentDashboardForward });
+    const session = createSession();
+    session.steps.sandbox.status = "skipped";
+
+    await expect(
+      handleAgentSetupState({
+        ...baseOptions(deps),
+        session,
+        revalidateSandboxIdentity,
+      }),
+    ).rejects.toThrow("sandbox identity changed");
+    expect(ensureAgentDashboardForward).toHaveBeenCalledWith("my-assistant", null, {
+      preserveRegisteredForward: true,
+      revalidateSandboxIdentity,
+    });
+    expect(inspectForward).not.toHaveBeenCalled();
+  });
+
   it("delegates shared OpenClaw configuration before ready-resume completion", async () => {
     const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(() => true) });
     const revalidateSandboxIdentity = vi.fn();

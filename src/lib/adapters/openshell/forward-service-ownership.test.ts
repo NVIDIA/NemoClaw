@@ -5,7 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { buildForwardServiceArgs, type ForwardServiceTarget } from "./forward-service";
 import {
+  inspectForwardServiceListenerOwnership,
   isForwardServiceListenerOwned,
+  listLinuxProcListenerPids,
   type ForwardServiceOwnershipDeps,
 } from "./forward-service-ownership";
 
@@ -123,5 +125,41 @@ describe("direct ForwardTcp listener ownership", () => {
         }),
       ),
     ).toBe(false);
+  });
+
+  it("uses Linux procfs when lsof cannot enumerate the listener", () => {
+    const { listListenerPids: _listListenerPids, ...fallbackDeps } = ownership();
+    const listLinuxProcListenerPids = vi.fn(() => [4_242]);
+
+    expect(
+      isForwardServiceListenerOwned(target, {
+        ...fallbackDeps,
+        platform: "linux",
+        listLsofListenerPids: () => null,
+        listLinuxProcListenerPids,
+      }),
+    ).toBe(true);
+    expect(listLinuxProcListenerPids).toHaveBeenCalledTimes(2);
+  });
+
+  it("resolves a listening IPv4 socket inode to its procfs PID", () => {
+    expect(
+      listLinuxProcListenerPids(18_790, {
+        readFile: (file) =>
+          file === "/proc/net/tcp"
+            ? "sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode\n" +
+              "0: 0100007F:4966 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 777\n"
+            : null,
+        readDirectory: (directory) =>
+          ({ "/proc": ["42", "self"], "/proc/42/fd": ["3", "4"] })[directory] ?? null,
+        readLink: (file) => (file.endsWith("/3") ? "socket:[777]" : "socket:[999]"),
+      }),
+    ).toEqual([42]);
+  });
+
+  it("reports unavailable listener enumeration distinctly", () => {
+    expect(
+      inspectForwardServiceListenerOwnership(target, ownership({ listListenerPids: () => null })),
+    ).toEqual({ owned: false, failure: "listener-enumeration-unavailable" });
   });
 });

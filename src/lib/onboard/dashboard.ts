@@ -8,7 +8,10 @@ import {
   launchForwardService,
   type ForwardServiceTarget,
 } from "../adapters/openshell/forward-service";
-import { isForwardServiceListenerOwned } from "../adapters/openshell/forward-service-ownership";
+import {
+  inspectForwardServiceListenerOwnership,
+  type ForwardServiceOwnershipResult,
+} from "../adapters/openshell/forward-service-ownership";
 import type { AgentDefinition } from "../agent/defs";
 import { getInteractiveAgentCommand } from "../agent/gateway-restart-scripts";
 import { DASHBOARD_PORT } from "../core/ports";
@@ -89,8 +92,8 @@ export interface OnboardDashboardDeps {
   /** Direct ForwardTcp launcher. */
   forwardService?: {
     executable(): string;
+    inspectOwnership?(target: ForwardServiceTarget): ForwardServiceOwnershipResult;
     launch?(target: ForwardServiceTarget): void;
-    owns?(target: ForwardServiceTarget): boolean;
     retireLegacy?(sandboxName: string, gatewayName: string, ports: readonly number[]): number;
     resolveGatewayName(
       sandbox: { gatewayName?: string | null; gatewayPort?: number | null } | null | undefined,
@@ -233,7 +236,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
             if (!executable) throw new Error("OpenShell is unavailable");
             return executable;
           },
-          owns: isForwardServiceListenerOwned,
+          inspectOwnership: inspectForwardServiceListenerOwnership,
           resolveGatewayName: productionForwardService.resolveGatewayName,
           retireLegacy: (sandboxName: string, gatewayName: string, ports: readonly number[]) =>
             productionForwardService.retireLegacy(sandboxName, gatewayName, ports, {
@@ -416,12 +419,17 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
           `preserve registered dashboard forward ${String(preferredPort)} for sandbox '${sandboxName}'`,
         );
         const preferredTarget = getDashboardForwardTarget(chatUiUrl);
-        if (
-          forwardService?.owns?.(
-            forwardTarget(sandboxName, forwardGateway, preferredPort, preferredTarget),
-          ) === true
-        ) {
-          return preferredPort;
+        const ownership = forwardService?.inspectOwnership?.(
+          forwardTarget(sandboxName, forwardGateway, preferredPort, preferredTarget),
+        );
+        if (ownership?.owned === true) return preferredPort;
+        if (ownership?.failure === "listener-enumeration-unavailable") {
+          throw new Error(
+            `Registered dashboard port ${String(preferredPort)} is occupied, but its ForwardTcp ` +
+              "ownership could not be verified because listener enumeration is unavailable. " +
+              "Install lsof or restore read access to Linux /proc, then re-run " +
+              `\`${deps.cliName()} onboard --resume\`; the listener was not adopted.`,
+          );
         }
       }
       throw new Error(

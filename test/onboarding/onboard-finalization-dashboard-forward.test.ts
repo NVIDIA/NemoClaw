@@ -4,13 +4,14 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { ForwardServiceTarget } from "../../src/lib/adapters/openshell/forward-service";
+import type { ForwardServiceOwnershipResult } from "../../src/lib/adapters/openshell/forward-service-ownership";
 import { createOnboardDashboardHelpers } from "../../src/lib/onboard/dashboard";
 import type { ListSandboxesFn } from "../../src/lib/onboard/dashboard-port";
 
 function harness(options: {
   listSandboxes: ListSandboxesFn;
+  inspectOwnership?: (target: ForwardServiceTarget) => ForwardServiceOwnershipResult;
   isPortBound?: (port: number) => boolean;
-  ownsForward?: (target: ForwardServiceTarget) => boolean;
 }) {
   const launch = vi.fn();
   const helpers = createOnboardDashboardHelpers({
@@ -29,8 +30,8 @@ function harness(options: {
     isPortBoundOnHost: options.isPortBound ?? (() => false),
     forwardService: {
       executable: () => "/usr/local/bin/openshell",
+      inspectOwnership: options.inspectOwnership,
       launch,
-      owns: options.ownsForward,
       resolveGatewayName: () => "nemoclaw",
       retireLegacy: vi.fn(() => 0),
     },
@@ -76,21 +77,28 @@ describe("finalization dashboard ForwardTcp launch", () => {
 
   it("preserves the registered ForwardTcp listener during Ready sandbox reuse (#11074)", () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
-    const ownsForward = vi.fn(() => true);
+    const revalidateSandboxIdentity = vi.fn();
+    const inspectOwnership = vi.fn(() => {
+      expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
+        "preserve registered dashboard forward 18790 for sandbox 'reonboard-test'",
+      );
+      return { owned: true } as const;
+    });
     const { helpers, launch } = harness({
       listSandboxes: () => ({
         sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
       }),
+      inspectOwnership,
       isPortBound: (port) => port === 18_790,
-      ownsForward,
     });
 
     expect(
       helpers.ensureFinalizationDashboardForward("reonboard-test", {
         preserveRegisteredForward: true,
+        revalidateSandboxIdentity,
       }),
     ).toBe(18_790);
-    expect(ownsForward).toHaveBeenCalledWith(
+    expect(inspectOwnership).toHaveBeenCalledWith(
       expect.objectContaining({
         gatewayName: "nemoclaw",
         sandboxName: "reonboard-test",
@@ -108,8 +116,8 @@ describe("finalization dashboard ForwardTcp launch", () => {
       listSandboxes: () => ({
         sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
       }),
+      inspectOwnership: () => ({ owned: false, failure: "process-identity-mismatch" }),
       isPortBound: (port) => port === 18_790,
-      ownsForward: () => false,
     });
 
     expect(() =>
@@ -117,6 +125,25 @@ describe("finalization dashboard ForwardTcp launch", () => {
         preserveRegisteredForward: true,
       }),
     ).toThrow(/cannot be reallocated/u);
+    expect(launch).not.toHaveBeenCalled();
+    expect(process.env.CHAT_UI_URL).toBeUndefined();
+  });
+
+  it("reports unavailable ownership observation during Ready sandbox reuse (#11074)", () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const { helpers, launch } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      inspectOwnership: () => ({ owned: false, failure: "listener-enumeration-unavailable" }),
+      isPortBound: (port) => port === 18_790,
+    });
+
+    expect(() =>
+      helpers.ensureFinalizationDashboardForward("reonboard-test", {
+        preserveRegisteredForward: true,
+      }),
+    ).toThrow(/Install lsof or restore read access to Linux \/proc/u);
     expect(launch).not.toHaveBeenCalled();
     expect(process.env.CHAT_UI_URL).toBeUndefined();
   });

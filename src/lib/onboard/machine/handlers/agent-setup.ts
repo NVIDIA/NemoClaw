@@ -31,7 +31,10 @@ export interface AgentSetupStateOptions<Agent> {
     ensureAgentDashboardForward(
       sandboxName: string,
       agent: Agent | null,
-      options?: { preserveRegisteredForward?: boolean },
+      options?: {
+        preserveRegisteredForward?: boolean;
+        revalidateSandboxIdentity?: (operation: string) => void;
+      },
     ): Promise<number> | number;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
@@ -141,8 +144,15 @@ export async function handleAgentSetupState<Agent>({
       deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
     );
   }
-  const dashboardPort = await (preserveRegisteredForward
-    ? deps.ensureAgentDashboardForward(sandboxName, null, { preserveRegisteredForward: true })
+  const dashboardOptions =
+    preserveRegisteredForward || revalidateSandboxIdentity
+      ? {
+          ...(preserveRegisteredForward ? { preserveRegisteredForward: true } : {}),
+          ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
+        }
+      : undefined;
+  const dashboardPort = await (dashboardOptions
+    ? deps.ensureAgentDashboardForward(sandboxName, null, dashboardOptions)
     : deps.ensureAgentDashboardForward(sandboxName, null));
   if (dashboardPort > 0) {
     deps.persistDashboardPort(sandboxName, dashboardPort);

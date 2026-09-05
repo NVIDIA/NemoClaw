@@ -3248,7 +3248,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           ensureAgentDashboardForward: (name, selectedAgent, options) =>
             ensureFinalizationAgentDashboardForward(name, selectedAgent, {
               portReservation: hermesApiPortReservationScope,
-              preserveRegisteredForward: options?.preserveRegisteredForward === true,
+              ...(options ?? {}),
             }),
           persistDashboardPort: (name, port) =>
             registry.updateSandbox(name, { dashboardPort: port }),
