@@ -109,6 +109,9 @@ describe("generic NVIDIA GPU PR selection", () => {
     "src/lib/onboard/overlayfs-auto-fix.ts",
     "src/lib/onboard/preflight.ts",
     "scripts/checks/llama-cpp-openclaw-agent-qualification.mts",
+    "scripts/checks/llama-cpp-compiled-runtime.ts",
+    "scripts/checks/llama-cpp-qwen-gpu-contract.ts",
+    "scripts/checks/managed-image-protected-runtime-contract.ts",
     "scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts",
     "tools/e2e/exact-artifact-download.mts",
     "tools/e2e/managed-image-cohort-contract.mts",
@@ -204,7 +207,8 @@ describe("generic NVIDIA GPU PR selection", () => {
     });
     expect(
       value.jobs["llama-cpp-qwen-gpu"]?.steps?.find(
-        (step) => step.name === "Run N1x Qwen llama.cpp recipe on RTX GPU",
+        (step) =>
+          step.name === "Run Qwen N1x WSL llama.cpp recipe compatibility on RTX GPU",
       )?.run,
     ).toContain("npx tsx scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts");
   });

@@ -68,6 +68,9 @@ jobs:
                   or .filename == ".github/workflows/pr-self-hosted.yaml"
                   or .filename == "scripts/install.sh"
                   or .filename == "scripts/checks/llama-cpp-openclaw-agent-qualification.mts"
+                  or .filename == "scripts/checks/llama-cpp-compiled-runtime.ts"
+                  or .filename == "scripts/checks/llama-cpp-qwen-gpu-contract.ts"
+                  or .filename == "scripts/checks/managed-image-protected-runtime-contract.ts"
                   or .filename == "scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts"
                   or .filename == "scripts/checks/run-managed-image-openshell-e2e.ts"
                   or .filename == "tools/e2e/exact-artifact-download.mts"
@@ -209,7 +212,7 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   llama-cpp-qwen-gpu:
-    name: N1x Qwen llama.cpp recipe on RTX GPU
+    name: Qwen N1x WSL llama.cpp recipe compatibility on RTX GPU
     needs: select-llama-cpp-generic-gpu
     if: ${{ needs.select-llama-cpp-generic-gpu.outputs.selected == 'true' }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
@@ -246,7 +249,7 @@ jobs:
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
 
-      - name: Run N1x Qwen llama.cpp recipe on RTX GPU
+      - name: Run Qwen N1x WSL llama.cpp recipe compatibility on RTX GPU
         shell: bash
         run: |
           set -euo pipefail
@@ -256,7 +259,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx tsx scripts/checks/run-llama-cpp-qwen-gpu-qualification.ts
 
-      - name: Upload N1x Qwen llama.cpp RTX qualification artifacts
+      - name: Upload Qwen N1x WSL recipe compatibility artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 

@@ -17,7 +17,10 @@ import { compiledLlamaCppRuntime } from "./llama-cpp-compiled-runtime.ts";
 import {
   qwenGpuAgentPlan,
   qwenGpuProbeDiagnostic,
+  qwenGpuRecipeBinding,
+  QWEN_GPU_GATEWAY_NETWORK_PATTERN,
   QWEN_GPU_MAX_COMMAND_BYTES,
+  QWEN_GPU_RECIPE_ID,
   QWEN_GPU_SHA_PATTERN,
   validateQwenGpuProcessEvidence,
 } from "./llama-cpp-qwen-gpu-contract.ts";
@@ -25,7 +28,6 @@ import { runManagedImageOpenShellE2e } from "./run-managed-image-openshell-e2e.t
 
 const TARGET_ID = "llama-cpp-qwen-gpu";
 const PRESET_ID = "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b";
-const RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
 const SANDBOX_NAME = "nmc-lcpp-qwen-rtx";
 const OPENCLAW_IMAGE_PATTERN =
   /^ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[a-f0-9]{64}$/u;
@@ -89,8 +91,9 @@ function requireCommand(command: string, args: readonly string[], timeout?: numb
 function loadQwenGpuSetting(): QualificationSetting {
   const catalog = loadManagedInferenceCatalog();
   const preset = catalog.presets.find(({ metadata }) => metadata.id === PRESET_ID);
-  const recipe = catalog.recipes.find(({ metadata }) => metadata.id === RECIPE_ID);
   if (!preset) throw new Error("N1x WSL Qwen serving preset is missing");
+  const recipeId = qwenGpuRecipeBinding(preset.spec.plan.recipeRef);
+  const recipe = catalog.recipes.find(({ metadata }) => metadata.id === recipeId);
   if (!recipe || !isLlamaCppServingRecipe(recipe)) {
     throw new Error("N1x WSL Qwen llama.cpp recipe is missing");
   }
@@ -252,6 +255,7 @@ export async function runQwenGpuQualification(): Promise<void> {
   let runtimeEvidence:
     | {
         readonly fullGpuOffload: true;
+        readonly gatewayNetwork: string;
         readonly image: string;
         readonly minimumFullOffloadMemoryMiB: number;
         readonly noDockerPublishedPort: true;
@@ -296,8 +300,11 @@ export async function runQwenGpuQualification(): Promise<void> {
           },
         }),
       {
-        networkName: "openshell-docker",
         async afterGatewayStarted() {
+          const gatewayNetwork = requiredEnvironment(
+            "OPENSHELL_DOCKER_NETWORK_NAME",
+            QWEN_GPU_GATEWAY_NETWORK_PATTERN,
+          );
           const installed = await installManagedLlamaCpp(setting.selection, {
             sandboxName: SANDBOX_NAME,
             runtimeProvider: createDockerRuntimeProviderBundle(),
@@ -312,7 +319,7 @@ export async function runQwenGpuQualification(): Promise<void> {
               : undefined;
           if (!modelAuthority) throw new Error("managed llama.cpp receipt runtime is incomplete");
           if (
-            modelAuthority.recipeId !== RECIPE_ID ||
+            modelAuthority.recipeId !== QWEN_GPU_RECIPE_ID ||
             modelAuthority.digest !== setting.modelFile.digest ||
             modelAuthority.sizeBytes !== setting.modelFile.sizeBytes
           ) {
@@ -407,6 +414,7 @@ export async function runQwenGpuQualification(): Promise<void> {
             image: recipe.spec.runtime.image,
             platform: "linux/amd64",
             fullGpuOffload: true,
+            gatewayNetwork,
             processName: offload.processName,
             usedGpuMemoryMiB: offload.usedGpuMemoryMiB,
             minimumFullOffloadMemoryMiB: offload.minimumFullOffloadMemoryMiB,
@@ -449,7 +457,7 @@ export async function runQwenGpuQualification(): Promise<void> {
         runId: managedImage.runId,
       },
       preset: { id: PRESET_ID, digest: setting.selection.presetDigest },
-      recipe: { id: RECIPE_ID, digest: setting.selection.recipeDigest },
+      recipe: { id: QWEN_GPU_RECIPE_ID, digest: setting.selection.recipeDigest },
       model: {
         id: recipe.spec.model.id,
         revision: recipe.spec.model.revision,

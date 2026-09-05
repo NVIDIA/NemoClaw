@@ -6,6 +6,9 @@ import { describe, expect, it } from "vitest";
 import {
   qwenGpuAgentPlan,
   qwenGpuProbeDiagnostic,
+  qwenGpuRecipeBinding,
+  QWEN_GPU_GATEWAY_NETWORK_PATTERN,
+  QWEN_GPU_RECIPE_ID,
   validateQwenGpuProcessEvidence,
 } from "../../../scripts/checks/llama-cpp-qwen-gpu-contract.ts";
 
@@ -34,6 +37,18 @@ describe("Qwen llama.cpp RTX qualification plan", () => {
     expect(() => qwenGpuAgentPlan(IMAGE, "main")).toThrow(
       "managed-image cohort returned an invalid OpenClaw identity",
     );
+  });
+
+  it("rejects a preset that no longer binds the intended Qwen recipe", () => {
+    expect(qwenGpuRecipeBinding(QWEN_GPU_RECIPE_ID)).toBe(QWEN_GPU_RECIPE_ID);
+    expect(() => qwenGpuRecipeBinding("llama-cpp.other.v1")).toThrow(
+      "preset does not bind the expected llama.cpp recipe",
+    );
+  });
+
+  it("requires a unique harness-owned OpenShell gateway network", () => {
+    expect(QWEN_GPU_GATEWAY_NETWORK_PATTERN.test("nemoclaw-managed-pr-123-mabc123")).toBe(true);
+    expect(QWEN_GPU_GATEWAY_NETWORK_PATTERN.test("openshell-docker")).toBe(false);
   });
 
   it("binds the Qwen container process to full-offload NVIDIA memory", () => {

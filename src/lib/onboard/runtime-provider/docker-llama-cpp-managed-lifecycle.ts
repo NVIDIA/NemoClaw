@@ -77,7 +77,9 @@ const STOP_GRACE_SECONDS = 30;
 const AT_REST = new Set(["created", "dead", "exited"]);
 const CURL_CONNECTIVITY_FAILURE_EXIT_CODES = new Set([7, 28]);
 
-export type DockerLlamaCppManagedLifecycleOptions = HostLocalLlamaCppLifecycleInput;
+export type DockerLlamaCppManagedLifecycleOptions = HostLocalLlamaCppLifecycleInput & {
+  readonly gatewayNetworkName?: string;
+};
 
 export interface DockerLlamaCppManagedLifecycleDependencies {
   readonly now?: () => number;
@@ -95,7 +97,7 @@ interface DockerNetworkAuthority {
 
 interface DockerGatewayBridgeAuthority {
   readonly gatewayIp: string;
-  readonly name: typeof OPENSHELL_DOCKER_NETWORK;
+  readonly name: string;
   readonly subnet?: string;
 }
 
@@ -278,10 +280,21 @@ function inspectNetworkIfPresent(
   });
 }
 
-function inspectGatewayBridge(engine: ContainerEngine): DockerGatewayBridgeAuthority {
+function configuredGatewayNetworkName(options: DockerLlamaCppManagedLifecycleOptions): string {
+  const name = options.gatewayNetworkName ?? OPENSHELL_DOCKER_NETWORK;
+  if (!SAFE_NAME.test(name)) {
+    throw new Error("Docker llama.cpp OpenShell bridge name is invalid.");
+  }
+  return name;
+}
+
+function inspectGatewayBridge(
+  engine: ContainerEngine,
+  networkName: string,
+): DockerGatewayBridgeAuthority {
   const output = requireSuccess(
     "OpenShell bridge inspection",
-    engine.capture(["network", "inspect", OPENSHELL_DOCKER_NETWORK], INSPECT_TIMEOUT_MS),
+    engine.capture(["network", "inspect", networkName], INSPECT_TIMEOUT_MS),
   );
   let parsed: unknown;
   try {
@@ -296,7 +309,7 @@ function inspectGatewayBridge(engine: ContainerEngine): DockerGatewayBridgeAutho
   const ipam = record(source.IPAM, "Docker llama.cpp OpenShell bridge IPAM");
   const configs = ipam.Config;
   if (
-    source.Name !== OPENSHELL_DOCKER_NETWORK ||
+    source.Name !== networkName ||
     source.Driver !== "bridge" ||
     source.Scope !== "local" ||
     source.Internal !== false ||
@@ -317,7 +330,7 @@ function inspectGatewayBridge(engine: ContainerEngine): DockerGatewayBridgeAutho
   if (gateways.length !== 1) {
     throw new Error("Docker llama.cpp requires one private IPv4 OpenShell bridge gateway.");
   }
-  return Object.freeze({ ...gateways[0]!, name: OPENSHELL_DOCKER_NETWORK });
+  return Object.freeze({ ...gateways[0]!, name: networkName });
 }
 
 function inspectNetwork(
@@ -988,7 +1001,7 @@ function probePrivateBridge(
   lease: HostLocalCreateJournalExecutionLease,
   execution: MutationExecutionState,
 ): void {
-  const gateway = inspectGatewayBridge(options.engine);
+  const gateway = inspectGatewayBridge(options.engine, configuredGatewayNetworkName(options));
   const authority = privateBridgeAuthority(options, journal, container, gateway);
   options.journalStore.assertExecution(lease);
   bridge.start(authority);
@@ -1333,6 +1346,7 @@ export function createDockerLlamaCppManagedLifecycle(
   options: DockerLlamaCppManagedLifecycleOptions,
   dependencies: DockerLlamaCppManagedLifecycleDependencies = {},
 ): DockerLlamaCppManagedLifecycle {
+  configuredGatewayNetworkName(options);
   assertLlamaCppGgufCachePlanDigest(options.plan);
   normalizeHostLocalInferenceImageRef(options.probeImageReference);
   readinessTimeoutSeconds(options);
@@ -1482,7 +1496,7 @@ export function createDockerLlamaCppManagedLifecycle(
             options,
             inspected.journal,
             inspected.container,
-            inspectGatewayBridge(options.engine),
+            inspectGatewayBridge(options.engine, configuredGatewayNetworkName(options)),
           ),
         );
       } else {

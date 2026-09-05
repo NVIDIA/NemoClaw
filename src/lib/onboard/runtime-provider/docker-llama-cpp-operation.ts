@@ -5,11 +5,13 @@ import {
   type ContainerEngine,
   type ContainerEngineCommandCapture,
 } from "../../adapters/container-engine";
+import { resolveDockerDriverNetworkName } from "../experimental/docker-network-authority";
 import { prependInstalledUserLocalOpenshellPath } from "../openshell-pin";
 import { getFutureShellPathHint } from "../remediation";
 import {
   createDockerLlamaCppManagedLifecycle,
   type DockerLlamaCppManagedLifecycle,
+  type DockerLlamaCppManagedLifecycleOptions,
 } from "./docker-llama-cpp-managed-lifecycle";
 import {
   createDockerOperationAuthority,
@@ -90,17 +92,20 @@ export function createDockerLlamaCppHostLocalOperation(
   capture?: ContainerEngineCommandCapture,
   spawnCommand?: HostLocalInferenceCommandSpawner,
   createLifecycle: (
-    input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0],
+    input: DockerLlamaCppManagedLifecycleOptions,
   ) => DockerLlamaCppManagedLifecycle = createDockerLlamaCppManagedLifecycle,
 ): HostLocalInferenceOperation {
   const authority = createDockerLlamaCppOperationAuthority(env, capture, spawnCommand);
+  const gatewayNetworkName = resolveDockerDriverNetworkName(env);
   return Object.freeze({
     providerId: "docker",
     engine: authority.engine,
     bindingSha256: dockerLlamaCppBindingSha256(authority.engine),
     assertAuthority: authority.assertAuthority,
     spawn: authority.spawn,
-    createLlamaCppLifecycle: createLifecycle,
+    createLlamaCppLifecycle: (
+      input: Parameters<HostLocalInferenceOperation["createLlamaCppLifecycle"]>[0],
+    ) => createLifecycle({ ...input, gatewayNetworkName }),
   });
 }
 

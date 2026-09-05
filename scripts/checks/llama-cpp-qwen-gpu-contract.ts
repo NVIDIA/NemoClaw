@@ -5,10 +5,19 @@ import type { LlamaCppOpenClawAgentQualificationPlan } from "./llama-cpp-opencla
 
 export const QWEN_GPU_SHA_PATTERN = /^[a-f0-9]{40}$/u;
 export const QWEN_GPU_MAX_COMMAND_BYTES = 16 * 1024 * 1024;
+export const QWEN_GPU_GATEWAY_NETWORK_PATTERN = /^nemoclaw-managed-pr-[1-9][0-9]*-[a-z0-9]+$/u;
+export const QWEN_GPU_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
 const QWEN_GPU_MAX_DIAGNOSTIC_BYTES = 4 * 1024;
 const OPENCLAW_IMAGE_PATTERN =
   /^ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[a-f0-9]{64}$/u;
 const SANDBOX_NAME = "nmc-lcpp-qwen-rtx";
+
+export function qwenGpuRecipeBinding(recipeRef: unknown): typeof QWEN_GPU_RECIPE_ID {
+  if (recipeRef !== QWEN_GPU_RECIPE_ID) {
+    throw new Error("N1x WSL Qwen preset does not bind the expected llama.cpp recipe");
+  }
+  return QWEN_GPU_RECIPE_ID;
+}
 
 export function qwenGpuProbeDiagnostic(
   label: string,

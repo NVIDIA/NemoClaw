@@ -469,6 +469,27 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     );
   });
 
+  it("uses the operation-bound OpenShell bridge instead of the default network", () => {
+    const gatewayNetworkName = "nemoclaw-managed-pr-test";
+    const fixture = createDockerFixture({
+      apiKeyPath,
+      gatewayNetworkName,
+      modelPath,
+      networkName: bindings().network.name,
+    });
+    createLifecycle({ ...options(fixture), gatewayNetworkName }).start(receiptWriter());
+
+    expect(fixture.capture.mock.calls.map((call) => call[0])).toContainEqual(
+      expect.arrayContaining([
+        "--network",
+        gatewayNetworkName,
+        "--add-host",
+        "host.openshell.internal:172.29.0.1",
+        "http://host.openshell.internal:8081/health",
+      ]),
+    );
+  });
+
   it.each([
     { failure: "connection refusal", status: 7, stderr: "curl: (7) failed to connect" },
     { failure: "timeout", status: 28, stderr: "curl: (28) timed out" },
