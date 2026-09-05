@@ -57,7 +57,7 @@
       "ci_tested": false,
       "_prd_note": "PRD tracks x86 and ARM (WOA) separately; treating as one entry until ARM is validated independently.",
       "prerequisites_notes": "Requires WSL2 with Docker Desktop backend. See [Additional Setup for Windows Machines](additional-setup/windows-preparation) before the Quickstart.",
-      "notes": "Requires WSL2 with Docker Desktop backend. Qualifying Windows WSL N1x hosts can use the explicit Experimental managed llama.cpp Qwen 3.6 recipe after local-default Docker authority, N1x product identity, ARM64, 48,000 MiB Docker and GPU memory, driver, NVIDIA integration, and Docker Desktop GPU-passthrough checks pass. Other Windows WSL hosts retain Windows-host or WSL-local Ollama. Dedicated N1x WSL CI and physical end-to-end validation are pending."
+      "notes": "Requires WSL2 with Docker Desktop backend. Qualifying Windows WSL N1x hosts can use the explicit Experimental managed llama.cpp Qwen 3.6 recipe after local-default Docker authority, N1x product identity, ARM64, 48,000 MiB Docker and GPU memory, driver, NVIDIA integration, and Docker Desktop GPU-passthrough checks pass. Other Windows WSL Express installs use WSL-local Ollama. Windows-host Ollama remains available through manual onboarding when Docker Desktop WSL integration, the local `default` Docker context, no `DOCKER_HOST` override, and the required route protections are present. Dedicated N1x WSL CI and physical end-to-end validation are pending."
     },
     {
       "name": "DGX OS (Station)",

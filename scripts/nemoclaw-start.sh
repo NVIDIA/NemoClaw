@@ -1449,11 +1449,11 @@ def read_messaging_plan():
             return json.loads(base64.b64decode(raw_plan).decode("utf-8"))
         except Exception:
             return None
-    artifact_path = os.environ.get(
-        "NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH",
-        MESSAGING_RUNTIME_PLAN_DEFAULT_PATH,
+    artifact_path = (
+        os.environ.get("NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH", "").strip()
+        or MESSAGING_RUNTIME_PLAN_DEFAULT_PATH
     )
-    if not artifact_path or not os.path.isfile(artifact_path):
+    if not os.path.isfile(artifact_path):
         return None
     try:
         with open(artifact_path, encoding="utf-8") as f:
