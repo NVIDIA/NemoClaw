@@ -188,6 +188,16 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "anchors pull request compile actions to the base checkout",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "restores candidate compiled inputs from the base-controlled action for %s consumers",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "passes the verified SDK archive to %s",
       "category": "security"
     },

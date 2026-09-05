@@ -80,7 +80,11 @@ const trustedPrActionPaths = {
 } as const;
 
 const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
+const trustedDownloadArtifactAction =
+  "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
 const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
+const trustedUploadArtifactAction =
+  "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 const trustedActionDirs = [
   ".github/actions/ci-static-checks",
   ".github/actions/ci-build-typecheck",
@@ -94,6 +98,7 @@ const trustedActionDirs = [
 const cliShardCount = "12";
 const cliShardTimeoutMinutes = 30;
 const dependencyInstallJobs = [
+  "compile-artifacts",
   "build-typecheck",
   "cli-tests",
   "installer-integration",
@@ -109,6 +114,10 @@ function stepRuns(jobOrAction: WorkflowJob | CompositeAction): string[] {
 
 function stepUses(job: WorkflowJob): string[] {
   return (job.steps ?? []).flatMap((step) => (step.uses ? [step.uses] : []));
+}
+
+function expectWorkflowStepNames(job: WorkflowJob, expected: string): void {
+  expect(job.steps?.map((step) => step.name)).toEqual(expected.split("|"));
 }
 
 function requiredStep(action: CompositeAction, stepName: string): WorkflowStep {
@@ -133,6 +142,13 @@ function requiredWorkflowStep(job: WorkflowJob, stepName: string): WorkflowStep 
     throw new Error(`Missing workflow step: ${stepName}`);
   }
   return step;
+}
+
+function expectCredentiallessCheckout(job: WorkflowJob): void {
+  expect(requiredWorkflowStep(job, "Checkout")).toMatchObject({
+    uses: trustedCheckoutAction,
+    with: { "persist-credentials": false },
+  });
 }
 
 function requiredWorkflowStepIndex(job: WorkflowJob, stepName: string): number {
@@ -466,9 +482,7 @@ describe("pull request and main workflow contracts", () => {
   ) as TypeScriptConfig;
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
-    compileArtifacts: readYaml<CompositeAction>(
-      ".github/actions/ci-compile-artifacts/action.yaml",
-    ),
+    compileArtifacts: readYaml<CompositeAction>(".github/actions/ci-compile-artifacts/action.yaml"),
     buildTypecheck: readYaml<CompositeAction>(".github/actions/ci-build-typecheck/action.yaml"),
     cliCoverageShard: readYaml<CompositeAction>(
       ".github/actions/ci-cli-coverage-shard/action.yaml",
@@ -489,26 +503,200 @@ describe("pull request and main workflow contracts", () => {
     expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
   });
 
+  // source-shape-contract: security -- The PR compile action must come from the pinned base checkout without persisted credentials
+  it("anchors pull request compile actions to the base checkout", () => {
+    const compileJob = prWorkflow.jobs["compile-artifacts"];
+    const compileSteps = compileJob.steps ?? [];
+    const trustedCheckout = requiredWorkflowStep(compileJob, "Checkout trusted CI actions");
+
+    expectWorkflowStepNames(
+      compileJob,
+      "Checkout|Checkout trusted CI actions|Download verified OpenShell SDK archive|Compile and verify CLI and plugin outputs|Upload compiled test inputs|Upload compiled CLI artifact",
+    );
+    expect(compileSteps[0]).toEqual({
+      name: "Checkout",
+      uses: trustedCheckoutAction,
+      with: { "persist-credentials": false },
+    });
+    expect(requiredWorkflowStepIndex(compileJob, "Checkout trusted CI actions")).toBe(1);
+    expect(trustedCheckout.uses).toBe(trustedCheckoutAction);
+    expect(trustedCheckout.with).toMatchObject({
+      ref: "${{ github.event.pull_request.base.sha }}",
+      path: ".trusted-ci-actions",
+      "persist-credentials": false,
+    });
+    expect(String(trustedCheckout.with?.["sparse-checkout"]).split("\n")).toContain(
+      ".github/actions/ci-compile-artifacts",
+    );
+    expect(requiredWorkflowStep(compileJob, "Compile and verify CLI and plugin outputs").uses).toBe(
+      trustedPrActionPaths.compileArtifacts,
+    );
+    expect(stepUses(compileJob)).toEqual([
+      trustedCheckoutAction,
+      trustedCheckoutAction,
+      trustedDownloadArtifactAction,
+      trustedPrActionPaths.compileArtifacts,
+      trustedUploadArtifactAction,
+      trustedUploadArtifactAction,
+    ]);
+  });
+
+  const compiledArtifactCases = [
+    ["pull request", prWorkflow, trustedPrActionPaths.compileArtifacts],
+    ["main", mainWorkflow, sharedActionPaths.compileArtifacts],
+  ] as const;
+
+  // source-shape-contract: security -- Base-controlled actions must produce candidate compiled inputs for same-run consumers without executing candidate-modified composite actions
+  it.each(compiledArtifactCases)(
+    "restores candidate compiled inputs from the base-controlled action for %s consumers",
+    (workflowName, workflow, expectedCompileAction) => {
+      const isPullRequest = workflowName === "pull request";
+      const compileJob = workflow.jobs["compile-artifacts"];
+      const buildJob = workflow.jobs["build-typecheck"];
+      const shardJob = workflow.jobs["cli-test-shards"];
+      const mergeJob = workflow.jobs["cli-tests"];
+      const buildNeeds = Array.isArray(buildJob.needs) ? buildJob.needs : [buildJob.needs];
+      const shardNeeds = Array.isArray(shardJob.needs) ? shardJob.needs : [shardJob.needs];
+
+      expect(compileJob.permissions).toEqual(
+        isPullRequest ? { contents: "read" } : { contents: "read", packages: "read" },
+      );
+      expect(buildJob.permissions).toEqual(
+        isPullRequest
+          ? { actions: "read", contents: "read" }
+          : { actions: "read", contents: "read", packages: "read" },
+      );
+      expect(shardJob.permissions).toEqual(
+        isPullRequest
+          ? { actions: "read", contents: "read" }
+          : { actions: "read", contents: "read", packages: "read" },
+      );
+      expect(buildNeeds).toContain("compile-artifacts");
+      expect(shardNeeds).toContain("compile-artifacts");
+      [buildJob, shardJob, mergeJob].forEach(expectCredentiallessCheckout);
+      expectWorkflowStepNames(
+        compileJob,
+        isPullRequest
+          ? "Checkout|Checkout trusted CI actions|Download verified OpenShell SDK archive|Compile and verify CLI and plugin outputs|Upload compiled test inputs|Upload compiled CLI artifact"
+          : "Checkout|Compile and verify CLI and plugin outputs|Upload compiled test inputs|Upload compiled CLI artifact",
+      );
+      expect(
+        requiredWorkflowStep(compileJob, "Compile and verify CLI and plugin outputs").uses,
+      ).toBe(expectedCompileAction);
+      const compileIndex = requiredWorkflowStepIndex(
+        compileJob,
+        "Compile and verify CLI and plugin outputs",
+      );
+      expect(compileIndex).toBeLessThan(
+        requiredWorkflowStepIndex(compileJob, "Upload compiled test inputs"),
+      );
+      expect(compileIndex).toBeLessThan(
+        requiredWorkflowStepIndex(compileJob, "Upload compiled CLI artifact"),
+      );
+
+      const upload = requiredWorkflowStep(compileJob, "Upload compiled test inputs");
+      expect(upload.uses).toBe(trustedUploadArtifactAction);
+      expect(String(upload.with?.path).trim().split("\n")).toEqual(["dist", "nemoclaw/dist"]);
+      expect(upload.with).toMatchObject({
+        name: "compiled-test-inputs",
+        "if-no-files-found": "error",
+        "retention-days": 1,
+      });
+
+      expectWorkflowStepNames(
+        buildJob,
+        isPullRequest
+          ? "Checkout|Checkout trusted CI actions|Download verified OpenShell SDK archive|Download compiled test inputs|Setup Node.js|Install dependencies|Run package-contract and type checks"
+          : "Checkout|Download compiled test inputs|Setup Node.js|Install dependencies|Run package-contract and type checks",
+      );
+      const buildDownload = requiredWorkflowStep(buildJob, "Download compiled test inputs");
+      expect(buildDownload.uses).toBe(trustedDownloadArtifactAction);
+      expect(buildDownload.with).toEqual({ name: "compiled-test-inputs", path: "." });
+      expect(requiredWorkflowStepIndex(buildJob, "Download compiled test inputs")).toBeLessThan(
+        requiredWorkflowStepIndex(buildJob, "Run package-contract and type checks"),
+      );
+      expect(requiredWorkflowStep(buildJob, "Install dependencies").run).toBe(
+        isPullRequest
+          ? "bash .trusted-ci-actions/.github/actions/ci-install-dependencies.sh"
+          : "bash .github/actions/ci-install-dependencies.sh",
+      );
+      expect(requiredWorkflowStep(buildJob, "Run package-contract and type checks").uses).toBe(
+        isPullRequest ? trustedPrActionPaths.buildTypecheck : sharedActionPaths.buildTypecheck,
+      );
+
+      expectWorkflowStepNames(
+        shardJob,
+        isPullRequest
+          ? "Checkout|Checkout trusted CI actions|Download verified OpenShell SDK archive|Download compiled test inputs|Verify compiled test inputs|Run CLI coverage shard"
+          : "Checkout|Download compiled test inputs|Verify compiled test inputs|Run CLI coverage shard",
+      );
+      const shardDownload = requiredWorkflowStep(shardJob, "Download compiled test inputs");
+      expect(shardDownload.uses).toBe(trustedDownloadArtifactAction);
+      expect(shardDownload.with).toEqual({ name: "compiled-test-inputs", path: "." });
+
+      const verifyIndex = requiredWorkflowStepIndex(shardJob, "Verify compiled test inputs");
+      expect(requiredWorkflowStepIndex(shardJob, "Download compiled test inputs")).toBeLessThan(
+        verifyIndex,
+      );
+      expect(verifyIndex).toBeLessThan(
+        requiredWorkflowStepIndex(shardJob, "Run CLI coverage shard"),
+      );
+      expect(requiredWorkflowStep(shardJob, "Verify compiled test inputs").run).toBe(
+        [
+          "test -s dist/nemoclaw.js",
+          "test -s dist/managed-inference/catalog.json",
+          "test -s nemoclaw/dist/index.js",
+          "test -s nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs",
+          "test -s nemoclaw/dist/shared/sandbox-name.cjs",
+        ].join("\n") + "\n",
+      );
+      expect(requiredWorkflowStep(shardJob, "Run CLI coverage shard").uses).toBe(
+        isPullRequest ? trustedPrActionPaths.cliCoverageShard : sharedActionPaths.cliCoverageShard,
+      );
+
+      const cliUpload = requiredWorkflowStep(compileJob, "Upload compiled CLI artifact");
+      expect(cliUpload.uses).toBe(trustedUploadArtifactAction);
+      expect(cliUpload.with).toMatchObject({
+        name: "cli-build-output",
+        path: "dist",
+        "if-no-files-found": "error",
+        "retention-days": 1,
+      });
+      const mergeDownload = requiredStep(
+        sharedActions.cliCoverageMerge,
+        "Download compiled CLI artifact",
+      );
+      expect(mergeDownload.uses).toBe(trustedDownloadArtifactAction);
+      expect(mergeDownload.with).toEqual({ name: "cli-build-output", path: "dist" });
+      expect(
+        requiredStepIndex(sharedActions.cliCoverageMerge, "Download compiled CLI artifact"),
+      ).toBe(requiredStepIndex(sharedActions.cliCoverageMerge, "Verify compiled CLI artifact") - 1);
+      expectWorkflowStepNames(
+        mergeJob,
+        isPullRequest
+          ? "Verify CLI shards completed|Checkout|Checkout trusted CI actions|Download verified OpenShell SDK archive|Merge CLI coverage"
+          : "Verify CLI shards completed|Checkout|Merge CLI coverage",
+      );
+      expect(requiredWorkflowStep(mergeJob, "Merge CLI coverage").uses).toBe(
+        isPullRequest ? trustedPrActionPaths.cliCoverageMerge : sharedActionPaths.cliCoverageMerge,
+      );
+    },
+  );
+
   // source-shape-contract: security -- Credential-free workflow structure prevents pull request code from receiving Hugging Face or checkout credentials
   it("verifies changed Hugging Face catalog references without credentials", () => {
     const job = prWorkflow.jobs["hugging-face-models"];
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
-    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<
-      string,
-      string[]
-    >;
+    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<string, string[]>;
     const huggingFaceModelFilters = filters.hugging_face_models ?? [];
+    const huggingFaceModelPaths = huggingFaceModelFilters.flatMap((pattern) =>
+      pattern.startsWith("{") && pattern.endsWith("}")
+        ? pattern.slice(1, -1).split(",")
+        : [pattern],
+    );
 
-    expect(
-      huggingFaceModelFilters.some((pattern) =>
-        pattern.includes("src/lib/inference/serving/catalog-loader.ts"),
-      ),
-    ).toBe(true);
-    expect(
-      huggingFaceModelFilters.some((pattern) =>
-        pattern.includes("src/lib/inference/serving/generate-catalog.ts"),
-      ),
-    ).toBe(true);
+    expect(huggingFaceModelPaths).toContain("src/lib/inference/serving/catalog-loader.ts");
+    expect(huggingFaceModelPaths).toContain("src/lib/inference/serving/generate-catalog.ts");
     expect(job.needs).toBe("changes");
     expect(job.if).toBe("needs.changes.outputs.hugging_face_models == 'true'");
     expect(stepUses(job)).toEqual([trustedCheckoutAction, trustedSetupNodeAction]);
@@ -519,7 +707,9 @@ describe("pull request and main workflow contracts", () => {
     expect(requiredWorkflowStep(job, "Verify Hugging Face model references").run).toBe(
       "npm run catalog:verify-hugging-face",
     );
-    expect(JSON.stringify(job)).not.toMatch(/HF_TOKEN|HUGGING_FACE_HUB_TOKEN|secrets\./u);
+    expect(JSON.stringify(job)).not.toMatch(
+      /HF_TOKEN|HUGGING_FACE_HUB_TOKEN|GH_TOKEN|GITHUB_TOKEN|github\.token|secrets\./u,
+    );
   });
 
   // source-shape-contract: security -- Pull request jobs must never receive the GitHub Packages credential
@@ -878,9 +1068,7 @@ describe("pull request and main workflow contracts", () => {
     expect(job.needs).toEqual(expect.arrayContaining(["changes", "openshell-sdk-package"]));
     expect(job.permissions?.packages).toBeUndefined();
     const download = requiredWorkflowStep(job, "Download verified OpenShell SDK archive");
-    expect(download.uses).toBe(
-      "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
-    );
+    expect(download.uses).toBe(trustedDownloadArtifactAction);
     expect(download.if).toBe("needs.openshell-sdk-package.outputs.required == 'true'");
     expect(download.with).toMatchObject({
       name: "openshell-sdk-package",
