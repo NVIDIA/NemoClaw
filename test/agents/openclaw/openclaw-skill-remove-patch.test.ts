@@ -383,6 +383,58 @@ describe("OpenClaw native skill remove patch", () => {
     expect(fs.existsSync(targetDir)).toBe(false);
   });
 
+  it("reconciles an interrupted workspace removal before processing an active global fallback", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-remove-fallback-"));
+    roots.push(root);
+    const workspaceDir = path.join(root, "workspace");
+    const workspaceSkills = path.join(workspaceDir, "skills");
+    const quarantineDir = path.join(workspaceSkills, ".demo-skill.remove.interrupted");
+    const quarantinedTarget = path.join(quarantineDir, "demo-skill");
+    const restoredFile = path.join(workspaceSkills, "demo-skill", "SKILL.md");
+    const configDir = path.join(root, "global");
+    const globalTarget = path.join(configDir, "skills", "demo-skill");
+    const globalFile = path.join(globalTarget, "SKILL.md");
+    fs.mkdirSync(quarantinedTarget, { recursive: true });
+    fs.mkdirSync(globalTarget, { recursive: true });
+    fs.writeFileSync(path.join(quarantinedTarget, "SKILL.md"), "workspace\n");
+    fs.writeFileSync(globalFile, "global\n");
+    const behaviorSource = [
+      'import fs from "node:fs/promises";',
+      'import path from "node:path";',
+      "const chain = { description() { return this; }, argument() { return this; }, option() { return this; }, action() { return this; } };",
+      "const skills = { command() { return chain; } };",
+      `let reports = [${JSON.stringify({ workspaceDir, skills: [{ name: "demo-skill", source: "openclaw-global", filePath: globalFile }] })}, ${JSON.stringify({ workspaceDir, skills: [{ name: "demo-skill", source: "openclaw-workspace", filePath: restoredFile }] })}, ${JSON.stringify({ workspaceDir, skills: [{ name: "demo-skill", source: "openclaw-global", filePath: globalFile }] })}];`,
+      "async function loadSkillsStatusReport() { return reports.shift(); }",
+      "function validateRequestedSkillSlug(value) { return value; }",
+      "function resolveSkillStatusEntry(entries, value) { return entries.find((entry) => entry.name === value) ?? null; }",
+      "async function untrackClawHubSkill() {}",
+      `const CONFIG_DIR = ${JSON.stringify(configDir)};`,
+      SOURCE,
+      "export { nemoClawRemoveWorkspaceSkillFromAgentState };",
+    ].join("\n");
+    const patched = patchSkillRemoveText(behaviorSource, "behavior-fallback-recovery.mjs");
+    const modulePath = path.join(root, "behavior-fallback-recovery.mjs");
+    fs.writeFileSync(modulePath, patched.text);
+    const behavior = (await import(
+      `${pathToFileURL(modulePath).href}?case=${String(Date.now())}`
+    )) as {
+      nemoClawRemoveWorkspaceSkillFromAgentState: (
+        name: string,
+        agentId: string,
+      ) => Promise<Record<string, unknown>>;
+    };
+
+    await expect(
+      behavior.nemoClawRemoveWorkspaceSkillFromAgentState("demo-skill", "main"),
+    ).resolves.toMatchObject({
+      status: "removed",
+      active: { source: "openclaw-global", filePath: globalFile },
+    });
+    expect(fs.existsSync(path.join(workspaceSkills, "demo-skill"))).toBe(false);
+    expect(fs.existsSync(quarantineDir)).toBe(false);
+    expect(fs.existsSync(globalTarget)).toBe(true);
+  });
+
   it("removes a pre-cutover skill selected from OpenClaw native global state", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-remove-global-"));
     roots.push(root);

@@ -34,7 +34,7 @@ export const INJECTED_REMOVE_HELPER = [
   "\tlet report = await loadSkillsStatusReport({ agentId });",
   '\tconst supportedTargets = [path.join(report.workspaceDir, "skills"), path.join(CONFIG_DIR, "skills")].map((skillsDir) => ({ skillsDir, targetDir: path.join(skillsDir, slug) }));',
   "\tlet selected = resolveSkillStatusEntry(report.skills, slug);",
-  "\tif (!selected) {",
+  "\t{",
   "\t\tconst recoveries = [];",
   "\t\tfor (const target of supportedTargets) {",
   "\t\t\tlet entries;",

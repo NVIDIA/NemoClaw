@@ -25,7 +25,8 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-skill-cli";
 const SKILL_ID = "openclaw-skill-cli-fixture";
-const SKILL_DESCRIPTION = "E2E fixture proving openclaw skills install + list roundtrip";
+const SKILL_DESCRIPTION = "Use when asked to verify OpenClaw native skill collision replacement";
+const CONSUMER_TOKEN = "OPENCLAW_NATIVE_COLLISION_REPLACEMENT_ACTIVE";
 const FOREIGN_SKILL_DIR = `/tmp/${SKILL_ID}-foreign`;
 const EXPECTED_WORKSPACE_SKILL_PATH = `/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md`;
 const INSTALL_TIMEOUT_MS = 45 * 60_000;
@@ -155,6 +156,7 @@ test(
         "confirm OpenClaw runtime directories",
         "replace a same-name ClawHub skill through native install",
         "update and inspect the skill through native agent state",
+        "consume the replacement in a fresh OpenClaw agent session",
         "remove the skill and confirm native agent state",
         "record the workspace skill contract",
       ],
@@ -177,6 +179,7 @@ test(
         "nemoclaw skill list delegates to openclaw skills list --agent main",
         "openclaw skills info <id> --agent main --json reports the workspace install path",
         "openclaw skills check --agent main --json includes the installed skill",
+        "a fresh OpenClaw main-agent session returns a token present only in the replacement skill",
         "nemoclaw skill remove delegates to the OpenClaw-resolved active workspace target",
         "removal clears OpenClaw ClawHub tracking and native list state without a host inventory",
       ],
@@ -284,7 +287,12 @@ test(
     );
 
     progress.phase("update and inspect the skill through native agent state");
-    fs.writeFileSync(path.join(localSkillDir, "SKILL.md"), skillPayload("HOST_FIXTURE_VERSION=2"));
+    fs.writeFileSync(
+      path.join(localSkillDir, "SKILL.md"),
+      skillPayload(
+        `HOST_FIXTURE_VERSION=2\nWhen asked to verify native skill collision replacement, reply with exactly ${CONSUMER_TOKEN} and nothing else.`,
+      ),
+    );
     const skillUpdate = await host.command(
       "node",
       [CLI_ENTRYPOINT, SANDBOX_NAME, "skill", "install", localSkillDir],
@@ -329,13 +337,15 @@ test(
     const infoText = resultText(info);
     expect(infoText).toContain(`/.openclaw/workspace/skills/${SKILL_ID}`);
 
-    const check = await expectSandboxShellZero(
+    progress.phase("consume the replacement in a fresh OpenClaw agent session");
+    const consumerSession = `${SKILL_ID}-${String(Date.now())}`;
+    const checkAndAgentTurn = await expectSandboxShellZero(
       sandbox,
-      "openclaw skills check --agent main --json",
-      "sandbox-openclaw-skills-check-json",
+      `check_output="$(mktemp)" && agent_output="$(mktemp)" && trap 'rm -f "$check_output" "$agent_output"' EXIT && openclaw skills check --agent main --json > "$check_output" && grep -Fq ${shellQuote(`"${SKILL_ID}"`)} "$check_output" && openclaw agent --agent main --json --thinking off --session-id ${shellQuote(consumerSession)} -m ${shellQuote("Verify native skill collision replacement using the matching skill. Follow that skill exactly.")} > "$agent_output" && grep -Fq ${shellQuote(CONSUMER_TOKEN)} "$agent_output" && cat "$check_output" "$agent_output"`,
+      "sandbox-openclaw-skills-check-and-agent-consumer",
       env,
     );
-    expect(resultText(check)).toContain(`"${SKILL_ID}"`);
+    expect(resultText(checkAndAgentTurn)).toContain(`"${SKILL_ID}"`);
 
     progress.phase("remove the skill and confirm native agent state");
     const remove = await host.command(

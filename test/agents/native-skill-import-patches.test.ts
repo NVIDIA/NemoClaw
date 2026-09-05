@@ -86,7 +86,9 @@ describe("agent-native local skill import patches", () => {
       hub,
       [
         "from typing import Optional",
-        "class Console: pass",
+        "class Console:",
+        "    def print(self, *_args, **_kwargs): pass",
+        "_console = Console()",
         "",
         "def do_inspect(identifier: str, console: Optional[Console] = None) -> None:",
         "    pass",
@@ -115,5 +117,21 @@ describe("agent-native local skill import patches", () => {
     expect(source).toContain("if not before:");
     expect(source).toContain("NEMOCLAW_NATIVE_SKILL_IMPORT=");
     expect(runPython(["-m", "py_compile", parser, hub]).status).toBe(0);
+
+    const escaped = path.join(root, "escaped");
+    const behavior = runPython([
+      "-c",
+      [
+        "import importlib.util, pathlib, sys",
+        "spec = importlib.util.spec_from_file_location('patched_hermes_skills', sys.argv[1])",
+        "module = importlib.util.module_from_spec(spec)",
+        "spec.loader.exec_module(module)",
+        "assert module.do_import_local('/unused', '../escaped', '0' * 64) is False",
+        "assert not pathlib.Path(sys.argv[2]).exists()",
+      ].join("; "),
+      hub,
+      escaped,
+    ]);
+    expect(behavior.status, behavior.stderr).toBe(0);
   });
 });

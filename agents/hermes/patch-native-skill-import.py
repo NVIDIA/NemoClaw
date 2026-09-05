@@ -30,9 +30,23 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
     import hashlib
     import json
     import os
+    import re
     import shutil
     import stat
     import uuid
+
+    c = console or _console
+    if (
+        not expected_name
+        or len(expected_name) > 255
+        or expected_name in {".", ".."}
+        or re.fullmatch(r"[A-Za-z0-9._-]+", expected_name) is None
+    ):
+        c.print("[bold red]Error:[/] Invalid staged skill name.")
+        return False
+    if len(expected_digest) != 64 or any(character not in "0123456789abcdef" for character in expected_digest):
+        c.print("[bold red]Error:[/] Expected digest must be a lowercase SHA-256 value.")
+        return False
 
     import yaml
 
@@ -47,7 +61,12 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
     )
     from tools.skills_tool import skill_view
 
-    c = console or _console
+    skills_root = Path(SKILLS_DIR).resolve()
+    destination = skills_root / expected_name
+    if destination.parent != skills_root or destination.name != expected_name:
+        c.print("[bold red]Error:[/] Skill target escapes Hermes native state.")
+        return False
+
     source = Path(skill_path).expanduser()
     try:
         if source.is_symlink() or not source.is_dir():
@@ -55,10 +74,6 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
         source = source.resolve(strict=True)
     except OSError as exc:
         c.print(f"[bold red]Error:[/] Cannot read staged skill: {exc}")
-        return False
-
-    if len(expected_digest) != 64 or any(character not in "0123456789abcdef" for character in expected_digest):
-        c.print("[bold red]Error:[/] Expected digest must be a lowercase SHA-256 value.")
         return False
 
     files = {}
@@ -159,8 +174,6 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
             shutil.rmtree(quarantine, ignore_errors=True)
         return False
 
-    skills_root = Path(SKILLS_DIR).resolve()
-    destination = skills_root / expected_name
     if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
         c.print("[bold red]Error:[/] Existing skill target is not a regular directory.")
         shutil.rmtree(quarantine, ignore_errors=True)
