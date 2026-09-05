@@ -177,6 +177,19 @@ describe("fresh create identity", () => {
       const dockerExecPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "adapters", "docker", "exec.ts"),
       );
+      const sandboxCommandCliPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "adapters", "openshell", "sandbox-command-cli.ts"),
+      );
+      const managedWorkloadOnboardPath = JSON.stringify(
+        path.join(
+          repoRoot,
+          "src",
+          "lib",
+          "onboard",
+          "managed-workload",
+          "onboard-orchestration.ts",
+        ),
+      );
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
 
@@ -311,6 +324,56 @@ runner.run = (command, opts = {}) => {
   if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
+const sandboxCommandCli = require(${sandboxCommandCliPath});
+const createCommandExecutor = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor;
+sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
+  const executor = createCommandExecutor(deps);
+  return {
+    ...executor,
+    runBuffered: async (request) => {
+      const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const stdout = runner.runCapture([
+        "openshell", "sandbox", "exec", "--name", request.sandboxName,
+        ...gatewayArgs, "--", ...request.command,
+      ]);
+      return { outcome: { kind: "completed", exitCode: 0 }, stdout: String(stdout || ""), stderr: "" };
+    },
+  };
+};
+const managedWorkloadOnboard = require(${managedWorkloadOnboardPath});
+const createManagedStateVolumeLifecycle =
+  managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle;
+const managedVolumes = new Map();
+managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle = (input, deps = {}) =>
+  createManagedStateVolumeLifecycle(input, {
+    ...deps,
+    runContainerEngine: (args) => {
+      const name = String(args.at(-1));
+      if (args[0] === "inspect") {
+        const volume = managedVolumes.get(name);
+        return volume
+          ? { status: 0, stdout: JSON.stringify(volume), stderr: "" }
+          : { status: 1, stdout: "", stderr: "no such volume" };
+      }
+      if (args[0] === "create") {
+        const labels = {};
+        for (let index = 1; index < args.length - 1; index += 1) {
+          if (args[index] !== "--label") continue;
+          const label = String(args[index + 1]);
+          const separator = label.indexOf("=");
+          labels[label.slice(0, separator)] = label.slice(separator + 1);
+          index += 1;
+        }
+        managedVolumes.set(name, { Name: name, Labels: labels });
+        return { status: 0, stdout: name, stderr: "" };
+      }
+      if (args[0] === "rm") {
+        managedVolumes.delete(name);
+        return { status: 0, stdout: name, stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "unexpected volume command" };
+    },
+  });
 	const retainedRegistryEntry = recoveryReentry && fs.existsSync(${JSON.stringify(payloadPath)})
 	  ? JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")).currentRegistryEntry
 	  : null;

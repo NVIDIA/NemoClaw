@@ -68,6 +68,9 @@ function runPreparedContextScenario(scenario: PreparedContextScenario): Prepared
     path.join(repoRoot, "src", "lib", "onboard", "docker-gpu-sandbox-create.ts"),
   );
   const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
+  const sandboxCommandCliPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "adapters", "openshell", "sandbox-command-cli.ts"),
+  );
   const onboardScriptMocksPath = JSON.stringify(
     path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
   );
@@ -78,6 +81,7 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const registry = require(${registryPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 const scenario = ${JSON.stringify(scenario)};
 const buildCtx = ${JSON.stringify(preparedBuildCtx)};
 const buildId = ${JSON.stringify(buildId)};
@@ -164,13 +168,7 @@ runner.runCapture = (command) => {
   const normalized = normalize(command);
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
-  if (
-    normalized.includes(
-      "sandbox exec --name " +
-        sandboxName +
-        " --gateway nemoclaw -- /usr/local/bin/dcode identity",
-    )
-  ) {
+  if (normalized.includes("sandbox exec") && normalized.includes("dcode identity")) {
     return [
       "Route:    inference",
       "Provider: nvidia-prod",
@@ -179,6 +177,28 @@ runner.runCapture = (command) => {
     ].join("\n");
   }
   return "";
+};
+const sandboxCommandCli = require(${sandboxCommandCliPath});
+const createCommandExecutor = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor;
+sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
+  const executor = createCommandExecutor(deps);
+  return {
+    ...executor,
+    runBuffered: async (request) => {
+      const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const stdout = runner.runCapture([
+        "openshell",
+        "sandbox",
+        "exec",
+        "--name",
+        request.sandboxName,
+        ...gatewayArgs,
+        "--",
+        ...request.command,
+      ]);
+      return { outcome: { kind: "completed", exitCode: 0 }, stdout: String(stdout || ""), stderr: "" };
+    },
+  };
 };
 registry.getDefault = () => null;
 registry.listExtraProviders = () => [];

@@ -485,21 +485,26 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   throw new Error("unexpected call: " + args.join(" "));
 };
 const providerActions = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
-let message = "";
-try {
-  providerActions.upsertMcpProvider(
-    "alpha-mcp-fake",
-    [{ name: "EXPECTED_TOKEN" }],
-    {
-      allowExisting: true,
-      expectedProviderId: "11111111-2222-4333-8444-555555555555",
-      runtimeSelection,
-    },
-  );
-} catch (error) {
-  message = error.message;
-}
-process.stdout.write(JSON.stringify({ message, resourceVersion, calls }));
+(async () => {
+  let message = "";
+  try {
+    await providerActions.upsertMcpProvider(
+      "alpha-mcp-fake",
+      [{ name: "EXPECTED_TOKEN" }],
+      {
+        allowExisting: true,
+        expectedProviderId: "11111111-2222-4333-8444-555555555555",
+        runtimeSelection,
+      },
+    );
+  } catch (error) {
+    message = error.message;
+  }
+  process.stdout.write(JSON.stringify({ message, resourceVersion, calls }));
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),
@@ -540,22 +545,27 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   throw new Error("unexpected call: " + args.join(" "));
 };
 const providerActions = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
-let message = "";
-try {
-  providerActions.upsertMcpProvider(
-    "alpha-mcp-fake",
-    [{ name: "EXPECTED_TOKEN" }],
-    {
-      allowExisting: true,
-      expectedProviderId: "11111111-2222-4333-8444-555555555555",
-      requireExisting: true,
-      runtimeSelection,
-    },
-  );
-} catch (error) {
-  message = error.message;
-}
-process.stdout.write(JSON.stringify({ message, calls }));
+(async () => {
+  let message = "";
+  try {
+    await providerActions.upsertMcpProvider(
+      "alpha-mcp-fake",
+      [{ name: "EXPECTED_TOKEN" }],
+      {
+        allowExisting: true,
+        expectedProviderId: "11111111-2222-4333-8444-555555555555",
+        requireExisting: true,
+        runtimeSelection,
+      },
+    );
+  } catch (error) {
+    message = error.message;
+  }
+  process.stdout.write(JSON.stringify({ message, calls }));
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),

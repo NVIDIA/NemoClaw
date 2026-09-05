@@ -224,6 +224,86 @@ describe("CLI OpenShell sandbox command executor", () => {
     expect(result.timedOut).toBeUndefined();
   });
 
+  it("delivers nonempty buffered stdin exactly", async () => {
+    const input = "first line\nsecond line\n";
+    const result = await runCliOpenShellBufferedCommand(
+      process.execPath,
+      [
+        "-e",
+        "let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => process.stdout.write(input));",
+      ],
+      { input, timeoutMilliseconds: 1000 },
+    );
+
+    expect(result).toMatchObject({ status: 0, stdout: input, stderr: "" });
+    expect(result.error).toBeUndefined();
+  });
+
+  it.each([
+    ["stdout", "process.stdout.write('x'.repeat(64))"],
+    ["stderr", "process.stderr.write('x'.repeat(64))"],
+  ] as const)("bounds real buffered %s capture", async (stream, script) => {
+    const result = await runCliOpenShellBufferedCommand(process.execPath, ["-e", script], {
+      outputLimitBytes: 8,
+      timeoutMilliseconds: 1000,
+    });
+
+    expect(result.status).toBeNull();
+    expect((result.error as NodeJS.ErrnoException | undefined)?.code).toBe(
+      "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+    );
+    expect(Buffer.byteLength(result[stream])).toBe(8);
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "forwards host cancellation to the buffered process group and releases handlers",
+    async () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-buffered-cancel-"));
+      const pidPath = path.join(directory, "descendant.pid");
+      const survivorPath = path.join(directory, "descendant-survived");
+      const signalEvents = new EventEmitter();
+      const signalSource: OpenShellCommandSignalSource = {
+        add: (signal, listener) => signalEvents.on(signal, listener),
+        remove: (signal, listener) => signalEvents.off(signal, listener),
+      };
+      let descendantPid: number | undefined;
+      try {
+        const descendantScript = [
+          "const fs = require('node:fs');",
+          "process.on('SIGINT', () => {});",
+          `setTimeout(() => fs.writeFileSync(${JSON.stringify(survivorPath)}, 'alive'), 500);`,
+          "setInterval(() => {}, 1000);",
+        ].join("");
+        const parentScript = [
+          "const { spawn } = require('node:child_process');",
+          "const fs = require('node:fs');",
+          `const child = spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { stdio: 'ignore' });`,
+          `fs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));`,
+          "process.on('SIGINT', () => process.exit(0));",
+          "setInterval(() => {}, 1000);",
+        ].join("");
+        const pending = runCliOpenShellBufferedCommand(process.execPath, ["-e", parentScript], {
+          signalSource,
+          timeoutMilliseconds: 3000,
+        });
+        await vi.waitFor(() => expect(fs.existsSync(pidPath)).toBe(true));
+        signalEvents.emit("SIGINT");
+        const result = await pending;
+
+        descendantPid = Number(fs.readFileSync(pidPath, "utf8"));
+        expect(result).toMatchObject({ status: null, signal: "SIGINT" });
+        expect((result.error as NodeJS.ErrnoException | undefined)?.code).toBe("ECANCELED");
+        expect(signalEvents.listenerCount("SIGTERM")).toBe(0);
+        expect(signalEvents.listenerCount("SIGINT")).toBe(0);
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        expect(fs.existsSync(survivorPath)).toBe(false);
+      } finally {
+        descendantPid === undefined || killTestProcess(descendantPid);
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("marks only its own buffered deadline as a timeout", async () => {
     const result = await runCliOpenShellBufferedCommand(
       process.execPath,

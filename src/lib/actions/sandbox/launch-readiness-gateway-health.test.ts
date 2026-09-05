@@ -106,6 +106,24 @@ function dcodeHealthDeps(
 }
 
 describe("Deep Agents Code OpenRouter launch readiness", () => {
+  it("accepts an injected terminal smoke without constructing a command executor", async () => {
+    const smoke = vi.fn(async () => ({ ok: true }) as const);
+
+    await expect(
+      requireLaunchSemanticHealth(
+        SANDBOX,
+        GATEWAY,
+        "langchain-deepagents-code",
+        dcodeEntry(),
+        dcodeAgent,
+        false,
+        { smoke },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(smoke).toHaveBeenCalledWith(SANDBOX, dcodeAgent);
+  });
+
   it("accepts readiness after an inference request succeeds (#9834)", async () => {
     const currentDeps = dcodeHealthDeps({ ok: true });
 

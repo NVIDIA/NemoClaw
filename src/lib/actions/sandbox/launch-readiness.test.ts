@@ -854,8 +854,6 @@ describe("launch readiness validation", () => {
     expect(smoke).toHaveBeenCalledWith(
       SANDBOX,
       expect.objectContaining({ name: "langchain-deepagents-code" }),
-      expect.objectContaining({ runBuffered: expect.any(Function) }),
-      GATEWAY_NAME,
     );
     expect(gatewayHealth).not.toHaveBeenCalled();
     expect(externalEvents).not.toContain("pairing-qualification");

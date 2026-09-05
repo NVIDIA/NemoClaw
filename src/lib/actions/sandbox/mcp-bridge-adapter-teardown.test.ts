@@ -137,11 +137,11 @@ describe("MCP adapter teardown rollback", () => {
       type: "nemoclaw-mcp-v1",
     });
     mocks.inspectMcpProvider.mockReset().mockReturnValue({ exists: false });
-    mocks.observeMcpCredentialRevision.mockReset().mockReturnValue("v12");
+    mocks.observeMcpCredentialRevision.mockReset().mockResolvedValue("v12");
     mocks.removeGeneratedPolicy.mockReset().mockImplementation(() => {
       throw new Error("forced lifecycle failure after adapter scrub");
     });
-    mocks.registerAgentAdapterAtCurrentCredentialRevision.mockReset();
+    mocks.registerAgentAdapterAtCurrentCredentialRevision.mockReset().mockResolvedValue("v12");
     mocks.restoreExistingMcpBridgeRuntime.mockReset();
     mocks.unregisterAgentAdapter.mockReset().mockReturnValue("removed");
   });
@@ -154,9 +154,9 @@ describe("MCP adapter teardown rollback", () => {
     async (_lifecycle, prepare) => {
       mocks.observeMcpCredentialRevision
         .mockReset()
-        .mockReturnValueOnce("v12")
-        .mockReturnValueOnce("v13")
-        .mockReturnValue("v13");
+        .mockResolvedValueOnce("v12")
+        .mockResolvedValueOnce("v13")
+        .mockResolvedValue("v13");
 
       await expect(prepare("alpha")).rejects.toThrow(
         "forced lifecycle failure after adapter scrub",
@@ -178,8 +178,8 @@ describe("MCP adapter teardown rollback", () => {
     },
   );
 
-  it("does not derive a Hermes credential revision from an exact provider resource version", () => {
-    mocks.observeMcpCredentialRevision.mockReturnValue("absent");
+  it("does not derive a Hermes credential revision from an exact provider resource version", async () => {
+    mocks.observeMcpCredentialRevision.mockResolvedValue("absent");
     mocks.inspectMcpProvider.mockReturnValue({
       credentialKeys: ["GITHUB_TOKEN"],
       exists: true,
@@ -188,7 +188,9 @@ describe("MCP adapter teardown rollback", () => {
       type: "nemoclaw-mcp-v1",
     });
 
-    expect(() => scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry, runtimeSelection)).toThrow(
+    await expect(
+      scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry, runtimeSelection),
+    ).rejects.toThrow(
       "Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server 'github'.",
     );
     expect(mocks.inspectMcpProvider).not.toHaveBeenCalled();

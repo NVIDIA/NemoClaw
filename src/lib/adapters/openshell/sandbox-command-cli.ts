@@ -74,6 +74,7 @@ export type OpenShellBufferedCommandRunner = (
     hostCwd?: string;
     input?: string;
     outputLimitBytes?: number;
+    signalSource?: OpenShellCommandSignalSource;
     timeoutMilliseconds?: number;
     timeoutKillSignal?: "SIGTERM" | "SIGKILL";
   }>,
@@ -189,6 +190,7 @@ export const runCliOpenShellBufferedCommand: OpenShellBufferedCommandRunner = (
     let child: ChildProcess;
     let settled = false;
     let timedOut = false;
+    let interruptedBy: "SIGTERM" | "SIGINT" | null = null;
     let timeoutSignal: NodeJS.Signals | null = null;
     let stdoutBytes = 0;
     let stderrBytes = 0;
@@ -198,6 +200,7 @@ export const runCliOpenShellBufferedCommand: OpenShellBufferedCommandRunner = (
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     let killHandle: ReturnType<typeof setTimeout> | undefined;
     let forceHandle: ReturnType<typeof setTimeout> | undefined;
+    let releaseSignals = () => {};
     const clearTimers = () => {
       if (timeoutHandle) clearTimeout(timeoutHandle);
       if (killHandle) clearTimeout(killHandle);
@@ -207,6 +210,7 @@ export const runCliOpenShellBufferedCommand: OpenShellBufferedCommandRunner = (
       if (settled) return;
       settled = true;
       clearTimers();
+      releaseSignals();
       resolve(result);
     };
     const captured = () => ({
@@ -245,9 +249,49 @@ export const runCliOpenShellBufferedCommand: OpenShellBufferedCommandRunner = (
       });
       return;
     }
+    const signalSource = options.signalSource ?? defaultSignalSource;
+    const interruptionError = (signal: "SIGTERM" | "SIGINT") =>
+      Object.assign(new Error(`OpenShell command cancelled by ${signal}`), { code: "ECANCELED" });
+    const beginInterruption = (signal: "SIGTERM" | "SIGINT") => {
+      if (settled || timedOut || interruptedBy) return;
+      interruptedBy = signal;
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      signalBufferedProcessTree(child, signal);
+      killHandle = setTimeout(() => {
+        signalBufferedProcessTree(child, "SIGKILL");
+        forceHandle = setTimeout(() => {
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+          settle({
+            status: null,
+            signal: "SIGKILL",
+            ...captured(),
+            error: interruptionError(signal),
+          });
+        }, DEFAULT_BUFFERED_KILL_GRACE_MS);
+      }, DEFAULT_BUFFERED_KILL_GRACE_MS);
+    };
+    const forwardTerm = () => beginInterruption("SIGTERM");
+    const forwardInt = () => beginInterruption("SIGINT");
+    releaseSignals = () => {
+      signalSource.remove("SIGTERM", forwardTerm);
+      signalSource.remove("SIGINT", forwardInt);
+    };
+    signalSource.add("SIGTERM", forwardTerm);
+    signalSource.add("SIGINT", forwardInt);
     child.stdout?.on("data", (chunk: Buffer | string) => capture("stdout", chunk));
     child.stderr?.on("data", (chunk: Buffer | string) => capture("stderr", chunk));
     child.once("error", (error) => {
+      if (interruptedBy) {
+        signalBufferedProcessTree(child, "SIGKILL");
+        settle({
+          status: null,
+          signal: child.signalCode ?? interruptedBy,
+          ...captured(),
+          error: interruptionError(interruptedBy),
+        });
+        return;
+      }
       settle({ status: null, signal: child.signalCode, ...captured(), error, timedOut });
     });
     child.once("close", (status, signal) => {
@@ -259,6 +303,16 @@ export const runCliOpenShellBufferedCommand: OpenShellBufferedCommandRunner = (
           signal: completionSignal,
           ...captured(),
           timedOut: true,
+        });
+        return;
+      }
+      if (interruptedBy) {
+        signalBufferedProcessTree(child, "SIGKILL");
+        settle({
+          status: null,
+          signal: signal ?? interruptedBy,
+          ...captured(),
+          error: interruptionError(interruptedBy),
         });
         return;
       }
@@ -458,6 +512,7 @@ export function createCliOpenShellSandboxCommandExecutor(
         hostCwd: deps.hostCwd,
         input: request.input,
         outputLimitBytes: request.outputLimitBytes,
+        ...(deps.signalSource ? { signalSource: deps.signalSource } : {}),
         timeoutMilliseconds: request.timeoutMilliseconds,
         ...(request.timeoutKillSignal ? { timeoutKillSignal: request.timeoutKillSignal } : {}),
       });

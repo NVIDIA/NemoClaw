@@ -781,8 +781,10 @@ function assertProtectedLocalInference(
 export function failureInjectingAdapter(
   onboard: OnboardModule,
   stateRoot: string,
+  commandExecutor = createCliOpenShellSandboxCommandExecutor({ hostCwd: REPOSITORY_ROOT }),
 ): ManagedBootstrapAdapter {
   const adapter = createDockerManagedBootstrapAdapter({
+    commandExecutor,
     runCaptureOpenshell: onboard.runCaptureOpenshell,
     runOpenshell: onboard.runOpenshell,
     sleep: onboard.sleepSeconds,
@@ -1136,6 +1138,9 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           detail: null,
           at: new Date().toISOString(),
         });
+    const commandExecutor = createCliOpenShellSandboxCommandExecutor({
+      hostCwd: REPOSITORY_ROOT,
+    });
     let flow: Awaited<ReturnType<typeof runSandboxGpuCreateFlow>> | null = null;
     try {
       flow = await runSandboxGpuCreateFlow(
@@ -1176,7 +1181,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           ...startupPlan,
         },
         {
-          commandExecutor: createCliOpenShellSandboxCommandExecutor({ hostCwd: REPOSITORY_ROOT }),
+          commandExecutor,
           runOpenshell: onboard.runOpenshell,
           runCaptureOpenshell: onboard.runCaptureOpenshell,
           sandboxObserver: createCliOpenShellSandboxObserverFromRunner(onboard.runOpenshell),
@@ -1186,7 +1191,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           ...(input.failureInjection
             ? {
                 createManagedBootstrapAdapter: (stateRoot: string) =>
-                  failureInjectingAdapter(onboard!, stateRoot),
+                  failureInjectingAdapter(onboard!, stateRoot, commandExecutor),
               }
             : {}),
         },

@@ -1147,6 +1147,10 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         .mockReturnValue({ status: 0 } as never);
       const probeTiming = {
         measure: <T>(_stage: "processes" | "forward", operation: () => T): T => operation(),
+        measureAsync: <T>(
+          _stage: "processes" | "forward",
+          operation: () => Promise<T>,
+        ): Promise<T> => operation(),
         setForwardAction: vi.fn(),
       };
 

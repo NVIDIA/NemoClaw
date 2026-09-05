@@ -24,9 +24,13 @@ export function recreateOpenShellDockerSandboxWithStartupCommand(
   deps?: DockerGpuPatchDeps,
 ): DockerGpuPatchResult;
 export function recreateOpenShellDockerSandboxWithStartupCommand(
-  options: RecreateStartupCommandOptions,
+  options: RecreateStartupCommandOptions & { waitForSupervisor?: true },
   deps?: DockerGpuPatchDeps,
 ): Promise<DockerGpuPatchResult>;
+export function recreateOpenShellDockerSandboxWithStartupCommand(
+  options: RecreateStartupCommandOptions,
+  deps?: DockerGpuPatchDeps,
+): DockerGpuPatchResult | Promise<DockerGpuPatchResult>;
 export function recreateOpenShellDockerSandboxWithStartupCommand(
   options: RecreateStartupCommandOptions,
   deps: DockerGpuPatchDeps = {},
@@ -34,8 +38,13 @@ export function recreateOpenShellDockerSandboxWithStartupCommand(
   if (options.openshellSandboxCommand.length === 0) {
     throw new Error("OpenShell sandbox startup command is required for restart persistence.");
   }
-  return recreateOpenShellDockerSandboxContainer(
-    { ...options, modeOverride: STARTUP_COMMAND_MODE },
-    deps,
-  );
+  return options.waitForSupervisor === false
+    ? recreateOpenShellDockerSandboxContainer(
+        { ...options, waitForSupervisor: false, modeOverride: STARTUP_COMMAND_MODE },
+        deps,
+      )
+    : recreateOpenShellDockerSandboxContainer(
+        { ...options, waitForSupervisor: true, modeOverride: STARTUP_COMMAND_MODE },
+        deps,
+      );
 }

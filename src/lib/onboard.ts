@@ -3235,10 +3235,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         preserveRebuildLivePolicy: opts.rebuildPolicySourcePath !== undefined,
         agentSetupDeps: {
           handleAgentSetup: agentOnboard.handleAgentSetup,
-          agentSetupContext: () => ({
-            ...{ step, runCaptureOpenshell, captureOpenshell },
-            openshellShellCommand,
-            openshellBinary: getOpenshellBinary(),
+          agentSetupContext: (): import("./agent/onboard").OnboardContext => ({
+            step,
+            sandboxCommandExecutor: sandboxExec,
             gatewayName: GATEWAY_NAME,
             startRecordedStep,
             recordStepComplete,

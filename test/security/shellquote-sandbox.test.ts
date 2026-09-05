@@ -66,6 +66,7 @@ describe("sandboxName command hardening in onboard.js", () => {
     const preflightPath = sourceModule("onboard", "preflight.ts");
     const credentialsPath = sourceModule("credentials", "store.ts");
     const streamPath = sourceModule("sandbox", "create-stream.ts");
+    const sandboxCommandCliPath = sourceModule("adapters", "openshell", "sandbox-command-cli.ts");
     const onboardScriptMocksPath = JSON.stringify(
       path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
     );
@@ -78,6 +79,7 @@ describe("sandboxName command hardening in onboard.js", () => {
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
 const sandboxCreateStream = require(${streamPath});
@@ -132,6 +134,29 @@ runner.runCapture = (command) => {
   const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
   if (mockedCapture !== null) return mockedCapture;
   return "";
+};
+const sandboxCommandCli = require(${sandboxCommandCliPath});
+const createCommandExecutor = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor;
+sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
+  const executor = createCommandExecutor(deps);
+  return {
+    ...executor,
+    runBuffered: async (request) => {
+      const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const command = [
+        "openshell",
+        "sandbox",
+        "exec",
+        "--name",
+        request.sandboxName,
+        ...gatewayArgs,
+        "--",
+        ...request.command,
+      ];
+      commands.push({ type: "buffered", command: asText(command), env: null });
+      return { outcome: { kind: "completed", exitCode: 0 }, stdout: "", stderr: "" };
+    },
+  };
 };
 registry.getSandbox = () => null;
 registry.getDisabledChannels = () => [];
@@ -236,7 +261,7 @@ try {
       ).toBe(true);
       expect(
         payload.commands.some((entry: { command: string }) =>
-          entry.command.includes("sandbox exec -g nemoclaw --name my-assistant -- true"),
+          entry.command.includes("sandbox exec --name my-assistant -g nemoclaw -- true"),
         ),
       ).toBe(true);
     } finally {

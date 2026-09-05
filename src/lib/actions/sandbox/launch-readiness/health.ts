@@ -57,7 +57,7 @@ export interface LaunchReadinessHealthDeps {
   commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   gatewayHealth?: (sandboxName: string, gatewayName: string) => Promise<boolean | null>;
   forwardsHealthy?: (sandboxName: string, gatewayName: string) => boolean | null;
-  smoke?: typeof runAgentSmokeCommands;
+  smoke?: (sandboxName: string, agent: AgentDefinition) => ReturnType<typeof runAgentSmokeCommands>;
   inferenceProbe?: (
     sandboxName: string,
     agent: InferenceRouteProbeAgent,
@@ -213,13 +213,12 @@ export async function requireLaunchSemanticHealth(
   deps: LaunchReadinessHealthDeps,
 ): Promise<void> {
   if (isTerminalAgent(agent)) {
-    if (!deps.smoke && !deps.commandExecutor) throw new LaunchReadinessEvidenceError();
-    const smoke = await (deps.smoke ?? runAgentSmokeCommands)(
-      sandboxName,
-      agent,
-      deps.commandExecutor as OpenShellSandboxBufferedCommandExecutor,
-      gatewayName,
-    );
+    const smoke = deps.smoke
+      ? await deps.smoke(sandboxName, agent)
+      : deps.commandExecutor
+        ? await runAgentSmokeCommands(sandboxName, agent, deps.commandExecutor, gatewayName)
+        : null;
+    if (!smoke) throw new LaunchReadinessEvidenceError();
     if (!smoke.ok) {
       const trustedExit = smoke.output?.match(/(?:^|\n)NEMOCLAW_AGENT_SMOKE_EXIT:(\d+)(?:\n|$)/);
       if (!trustedExit) throw new LaunchReadinessEvidenceError();

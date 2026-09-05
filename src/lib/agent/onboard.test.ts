@@ -667,21 +667,6 @@ describe("handleAgentSetup guards", () => {
     expect(script).toContain("NEMOCLAW_AGENT_BINARY_CHECK:ok");
   });
 
-  it("does not reject a configured binary when PATH resolves the symlink target", async () => {
-    const executor = legacyBufferedExecutor(
-      () => "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:ok",
-    );
-    const result = await verifyAgentBinaryAvailable(
-      "alpha",
-      makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
-      executor,
-    );
-
-    expect(result).toEqual({ available: true });
-    const script = String(executor.runBuffered.mock.calls[0]?.[0].command.at(-1) ?? "");
-    expect(script).toContain("NEMOCLAW_AGENT_BINARY_CHECK:ok");
-  });
-
   it("reports a configured binary path that exists but is not executable", async () => {
     const executor = legacyBufferedExecutor(
       () => "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:not_executable",

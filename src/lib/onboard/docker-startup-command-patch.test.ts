@@ -18,9 +18,13 @@ function recreateStartupCommandForTest(
   deps?: RecreateStartupCommandDeps,
 ): DockerGpuPatchResult;
 function recreateStartupCommandForTest(
-  options: RecreateStartupCommandOptions,
+  options: RecreateStartupCommandOptions & { waitForSupervisor?: true },
   deps?: RecreateStartupCommandDeps,
 ): Promise<DockerGpuPatchResult>;
+function recreateStartupCommandForTest(
+  options: RecreateStartupCommandOptions,
+  deps?: RecreateStartupCommandDeps,
+): DockerGpuPatchResult | Promise<DockerGpuPatchResult>;
 function recreateStartupCommandForTest(
   options: RecreateStartupCommandOptions,
   deps: RecreateStartupCommandDeps = {},

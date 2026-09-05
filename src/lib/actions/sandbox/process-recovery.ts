@@ -141,7 +141,7 @@ export type SandboxExecCommandExecutionOptions = SandboxExecCommandOptions & {
 
 type ProcessRecoveryProbeTiming = {
   measure<T>(stage: "processes" | "forward", operation: () => T): T;
-  measureAsync?<T>(stage: "processes" | "forward", operation: () => Promise<T>): Promise<T>;
+  measureAsync<T>(stage: "processes" | "forward", operation: () => Promise<T>): Promise<T>;
   setForwardAction(action: "skipped" | "verified" | "restored" | "failed"): void;
 };
 
@@ -1589,8 +1589,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
   const measureAsync = <T>(
     stage: "processes" | "forward",
     operation: () => Promise<T>,
-  ): Promise<T> =>
-    probeTiming?.measureAsync ? probeTiming.measureAsync(stage, operation) : operation();
+  ): Promise<T> => (probeTiming ? probeTiming.measureAsync(stage, operation) : operation());
   const effectiveGatewaySupervisorAction =
     runtimeSelection && requestGatewaySupervisorAction === executeGatewaySupervisorAction
       ? refuseHostLocalSupervisorForSelectedRuntime

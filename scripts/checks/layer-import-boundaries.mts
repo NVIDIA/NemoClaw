@@ -392,10 +392,7 @@ function checkBufferedExecHelperImport(
   sourceFile: ts.SourceFile,
   violations: Violation[],
 ): void {
-  if (
-    repoPath === LEGACY_BUFFERED_EXEC_HELPER ||
-    INTERACTIVE_EXEC_HELPER_IMPORTERS.has(repoPath)
-  ) {
+  if (repoPath === LEGACY_BUFFERED_EXEC_HELPER || INTERACTIVE_EXEC_HELPER_IMPORTERS.has(repoPath)) {
     return;
   }
   const namespaceImports = new Set<string>();
@@ -410,7 +407,8 @@ function checkBufferedExecHelperImport(
     const bindings = statement.importClause?.namedBindings;
     if (bindings && ts.isNamedImports(bindings)) {
       for (const binding of bindings.elements) {
-        if ((binding.propertyName?.text ?? binding.name.text) !== "buildOpenshellExecArgs") continue;
+        if ((binding.propertyName?.text ?? binding.name.text) !== "buildOpenshellExecArgs")
+          continue;
         const pos = position(sourceFile, binding);
         addViolation(
           violations,
@@ -575,11 +573,22 @@ export function findLayerImportBoundaryViolations(root = SRC_ROOT): Violation[] 
     const messagingManifestFile = isMessagingManifestFile(repoPath);
     const commandFile = isCommandFile(repoPath);
     const source = readFileSync(absPath, "utf8");
-    const sourceFile = sourceFileFor(absPath, source);
-    checkBufferedExecHelperImport(absPath, repoPath, sourceFile, violations);
-    if (!domainFile && !actionFile && !adapterFile && !messagingManifestFile && !commandFile) {
-      checkNoBinLibShimImport(absPath, repoPath, collectPreprocessedImportRefs(source), violations);
+    const preprocessedImports = collectPreprocessedImportRefs(source);
+    const importsBufferedExecHelper =
+      repoPath !== LEGACY_BUFFERED_EXEC_HELPER &&
+      !INTERACTIVE_EXEC_HELPER_IMPORTERS.has(repoPath) &&
+      preprocessedImports.some(
+        (ref) => resolveInternalImport(absPath, ref.specifier) === LEGACY_BUFFERED_EXEC_HELPER,
+      );
+    const layerFile =
+      domainFile || actionFile || adapterFile || messagingManifestFile || commandFile;
+    if (!layerFile && !importsBufferedExecHelper) {
+      checkNoBinLibShimImport(absPath, repoPath, preprocessedImports, violations);
       continue;
+    }
+    const sourceFile = sourceFileFor(absPath, source);
+    if (importsBufferedExecHelper) {
+      checkBufferedExecHelperImport(absPath, repoPath, sourceFile, violations);
     }
     const imports = collectImportRefs(sourceFile);
     checkNoBinLibShimImport(absPath, repoPath, imports, violations);

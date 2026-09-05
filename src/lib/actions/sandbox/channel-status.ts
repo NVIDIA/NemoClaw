@@ -447,7 +447,13 @@ async function runChannelHealthHook(
     currentSandbox: sandboxName,
     hookRegistry: createBuiltInMessagingHookRegistry({
       statusHealth: {
-        executeSandboxCommand: deps.execSandbox,
+        executeSandboxCommand: async (...args) => {
+          try {
+            return await deps.execSandbox(...args);
+          } catch {
+            return null;
+          }
+        },
         timeoutMs: probeTimeoutMs,
       },
     }),
