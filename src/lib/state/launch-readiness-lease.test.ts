@@ -509,6 +509,61 @@ describe("launch readiness lease storage", () => {
     ).toBe("changed");
   });
 
+  it("reports bounded persistent receipt permission evidence without authorizing mutation (#10638)", () => {
+    publish();
+    const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
+    const uid = process.getuid?.() ?? 0;
+    fs.chmodSync(receiptPath, 0o640);
+
+    expect(
+      checkLaunchReadinessMutationAuthority(SANDBOX, GATEWAY_NAME, GATEWAY_PORT, null, options()),
+    ).toEqual({
+      kind: "unsafe",
+      evidence: {
+        resource: "persistent receipt",
+        path: receiptPath,
+        expectedUid: uid,
+        observedUid: uid,
+        expectedMode: "0600",
+        observedMode: "0640",
+        operation: "inspect",
+        errorCode: null,
+        repair: "chmod",
+      },
+    });
+
+    fs.chmodSync(receiptPath, 0o600);
+  });
+
+  it("reports the unsafe persistent receipt directory instead of the safe receipt (#10638)", () => {
+    publish();
+    const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
+    const receiptDir = path.dirname(receiptPath);
+    const uid = process.getuid?.() ?? 0;
+    fs.chmodSync(receiptDir, 0o750);
+
+    try {
+      expect(
+        checkLaunchReadinessMutationAuthority(SANDBOX, GATEWAY_NAME, GATEWAY_PORT, null, options()),
+      ).toEqual({
+        kind: "unsafe",
+        evidence: {
+          resource: "persistent receipt directory",
+          path: receiptDir,
+          expectedUid: uid,
+          observedUid: uid,
+          expectedMode: "0700",
+          observedMode: "0750",
+          operation: "inspect",
+          errorCode: null,
+          repair: "manual",
+        },
+      });
+    } finally {
+      fs.chmodSync(receiptDir, 0o700);
+    }
+  });
+
   it("rejects a copied fence after the state volume changes during preflight", () => {
     const fence = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
     const stateRoot = path.join(home, ".nemoclaw");

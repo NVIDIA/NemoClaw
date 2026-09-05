@@ -43,6 +43,7 @@ import {
   type LaunchReadinessIdentity,
   type LaunchReadinessLeaseRead,
   type LaunchReadinessStoreOptions,
+  type LaunchReadinessUnsafeAuthorityEvidence,
   publishLaunchReadinessLease,
   readLaunchReadinessLease,
 } from "../../state/launch-readiness-lease";
@@ -168,7 +169,31 @@ export type LaunchReadinessPublicationResult =
 export type LaunchReadinessMutationGateResult<T> =
   | { kind: "entered"; value: T }
   | { kind: "changed" }
-  | { kind: "unsafe" };
+  | { kind: "unsafe"; evidence?: LaunchReadinessUnsafeAuthorityEvidence };
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+/** Render only structured authority metadata; never include receipt contents or OS error messages. */
+export function formatLaunchReadinessUnsafeAuthorityEvidence(
+  evidence: LaunchReadinessUnsafeAuthorityEvidence | undefined,
+): string {
+  if (!evidence) {
+    return " Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.";
+  }
+  const displayPath = JSON.stringify(evidence.path);
+  const observedUid = evidence.observedUid === null ? "unavailable" : String(evidence.observedUid);
+  const observedMode = evidence.observedMode ?? "unavailable";
+  const repair =
+    evidence.repair === "chmod"
+      ? `chmod ${evidence.expectedMode} -- ${shellQuote(evidence.path)}`
+      : "Repair this path only after verifying it is owned by the current user and has no links.";
+  const errorCode = evidence.errorCode
+    ? ` (${evidence.operation} error ${evidence.errorCode})`
+    : "";
+  return ` ${evidence.resource} ${displayPath} is unsafe: expected current-user UID ${evidence.expectedUid}, observed owner UID ${observedUid}; expected mode ${evidence.expectedMode}, observed mode ${observedMode}${errorCode}. Repair it with: ${repair}. Then retry.`;
+}
 
 export type PortableOpenClawPairingSettlementResult =
   | { readonly kind: "not-portable" }
@@ -1387,7 +1412,8 @@ export async function withLaunchReadinessMutationGate<T>(
         epochId,
         deps.storeOptions,
       );
-      if (authority !== "current") return { kind: authority };
+      if (authority === "changed") return { kind: "changed" };
+      if (authority !== "current") return { kind: "unsafe", evidence: authority.evidence };
       return { kind: "entered", value: await operation() };
     });
   });
