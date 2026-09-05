@@ -13,7 +13,11 @@ vi.mock("../inference/local", () => ({
   DEFAULT_OLLAMA_MODEL: "llama3.1",
 }));
 
-import { runInferenceGet, type InferenceGetDeps } from "./inference-get";
+import {
+  runInferenceGet,
+  type InferenceEndpointStatus,
+  type InferenceGetDeps,
+} from "./inference-get";
 
 function createDeps(
   output: string,
@@ -59,16 +63,46 @@ const ENDPOINT_OMISSION_CASES = [
   {
     name: "conflicting same-gateway URLs",
     endpoints: ["https://inference-a.example.test/v1", "https://inference-b.example.test/v1"],
+    status: "conflicting",
   },
   {
     name: "a non-HTTP URL",
     endpoints: ["ftp://inference.example.test/v1"],
+    status: "invalid",
   },
   {
     name: "a URL containing a control character",
     endpoints: ["https://inference.example.test/v1\u0007"],
+    status: "invalid",
   },
-];
+] as const;
+
+const ENDPOINT_RECOVERY: Record<InferenceEndpointStatus, string> = {
+  unavailable:
+    "Restore registry access or record the trusted endpoint and API family again, then rerun inference get.",
+  invalid: "Repair the affected sandbox's compatible-route metadata, then rerun inference get.",
+  conflicting: "Align or remove conflicting same-gateway sandbox routes, then rerun inference get.",
+  withheld: "Use a credential-free root or /v1 API base if endpoint readback is required.",
+  "adapter-managed":
+    "For a same-provider model change, omit endpoint options so NemoClaw reuses the recorded route.",
+};
+
+function expectedEndpointOmission(
+  endpointStatus: InferenceEndpointStatus,
+  model = "custom/model",
+): {
+  provider: string;
+  model: string;
+  endpointStatus: InferenceEndpointStatus;
+  endpointRecovery: string;
+} {
+  return {
+    provider: "compatible-endpoint",
+    model,
+    endpointStatus,
+    endpointRecovery: ENDPOINT_RECOVERY[endpointStatus],
+  };
+}
 
 describe("runInferenceGet", () => {
   it("prints the live provider and model", async () => {
@@ -146,10 +180,9 @@ describe("runInferenceGet", () => {
       },
     ]);
 
-    await expect(runInferenceGet({ json: true, sandboxName }, deps)).resolves.toEqual({
-      provider: "compatible-endpoint",
-      model: "live/model",
-    });
+    await expect(runInferenceGet({ json: true, sandboxName }, deps)).resolves.toEqual(
+      expectedEndpointOmission("invalid", "live/model"),
+    );
     expect(deps.log.mock.calls[0][0]).not.toContain("stale.example.test");
   });
 
@@ -203,15 +236,11 @@ describe("runInferenceGet", () => {
       endpointUrl: "https://operator:secret@inference.example.test/v1?token=secret",
     });
 
-    await expect(runInferenceGet({ json: true, sandboxName: "custom" }, deps)).resolves.toEqual({
-      provider: "compatible-endpoint",
-      model: "custom/model",
-    });
+    await expect(runInferenceGet({ json: true, sandboxName: "custom" }, deps)).resolves.toEqual(
+      expectedEndpointOmission("invalid"),
+    );
     expect(deps.log.mock.calls[0][0]).not.toContain("secret");
-    expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual({
-      provider: "compatible-endpoint",
-      model: "custom/model",
-    });
+    expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual(expectedEndpointOmission("invalid"));
   });
 
   it.each([
@@ -227,10 +256,9 @@ describe("runInferenceGet", () => {
       endpointUrl: `https://inference.example.test/${pathCredential}/v1`,
     });
 
-    await expect(runInferenceGet({ json }, deps)).resolves.toEqual({
-      provider: "compatible-endpoint",
-      model: "custom/model",
-    });
+    await expect(runInferenceGet({ json }, deps)).resolves.toEqual(
+      expectedEndpointOmission("withheld"),
+    );
     expect(deps.log.mock.calls.flat().join("\n")).not.toContain(pathCredential);
   });
 
@@ -247,10 +275,9 @@ describe("runInferenceGet", () => {
       endpointUrl: `https://inference.example.test/${pathCredential}/v1`,
     });
 
-    await expect(runInferenceGet({ json }, deps)).resolves.toEqual({
-      provider: "compatible-endpoint",
-      model: "custom/model",
-    });
+    await expect(runInferenceGet({ json }, deps)).resolves.toEqual(
+      expectedEndpointOmission("withheld"),
+    );
     expect(deps.log.mock.calls.flat().join("\n")).not.toContain(pathCredential);
   });
 
@@ -267,16 +294,15 @@ describe("runInferenceGet", () => {
       endpointUrl: adapterEndpoint,
     });
 
-    await expect(runInferenceGet({ json }, deps)).resolves.toEqual({
-      provider: "compatible-endpoint",
-      model: "custom/model",
-    });
+    await expect(runInferenceGet({ json }, deps)).resolves.toEqual(
+      expectedEndpointOmission("adapter-managed"),
+    );
     expect(deps.log.mock.calls.flat().join("\n")).not.toContain(adapterEndpoint);
   });
 
   it.each(ENDPOINT_OMISSION_CASES)(
     "omits $name from human-readable output",
-    async ({ endpoints }) => {
+    async ({ endpoints, status }) => {
       const deps = createDeps(
         "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
       );
@@ -289,13 +315,12 @@ describe("runInferenceGet", () => {
         })),
       );
 
-      await expect(runInferenceGet({}, deps)).resolves.toEqual({
-        provider: "compatible-endpoint",
-        model: "custom/model",
-      });
+      await expect(runInferenceGet({}, deps)).resolves.toEqual(expectedEndpointOmission(status));
       expect(deps.log.mock.calls.map(([line]) => line)).toEqual([
         "Provider: compatible-endpoint",
         "Model:    custom/model",
+        `Endpoint: unavailable (${status})`,
+        `Action:   ${ENDPOINT_RECOVERY[status]}`,
       ]);
       const output = deps.log.mock.calls.flat().join("\n");
       expect(output).not.toContain(endpoints[0]);
@@ -303,28 +328,28 @@ describe("runInferenceGet", () => {
     },
   );
 
-  it.each(ENDPOINT_OMISSION_CASES)("omits $name from JSON output", async ({ endpoints }) => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
-    deps.listSandboxes.mockReturnValue(
-      endpoints.map((endpointUrl, index) => ({
-        name: `custom-${String(index + 1)}`,
-        provider: "compatible-endpoint",
-        model: "custom/model",
-        endpointUrl,
-      })),
-    );
+  it.each(ENDPOINT_OMISSION_CASES)(
+    "omits $name from JSON output",
+    async ({ endpoints, status }) => {
+      const deps = createDeps(
+        "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+      );
+      deps.listSandboxes.mockReturnValue(
+        endpoints.map((endpointUrl, index) => ({
+          name: `custom-${String(index + 1)}`,
+          provider: "compatible-endpoint",
+          model: "custom/model",
+          endpointUrl,
+        })),
+      );
 
-    const expected = {
-      provider: "compatible-endpoint",
-      model: "custom/model",
-    };
-    await expect(runInferenceGet({ json: true }, deps)).resolves.toEqual(expected);
-    expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual(expected);
-    expect(deps.log.mock.calls[0][0]).not.toContain(endpoints[0]);
-    expect(deps.log.mock.calls[0][0]).not.toContain(endpoints[1] ?? endpoints[0]);
-  });
+      const expected = expectedEndpointOmission(status);
+      await expect(runInferenceGet({ json: true }, deps)).resolves.toEqual(expected);
+      expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual(expected);
+      expect(deps.log.mock.calls[0][0]).not.toContain(endpoints[0]);
+      expect(deps.log.mock.calls[0][0]).not.toContain(endpoints[1] ?? endpoints[0]);
+    },
+  );
 
   function recordGatewayRoutes(deps: ReturnType<typeof createDeps>): void {
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
@@ -442,14 +467,10 @@ describe("runInferenceGet", () => {
       endpointUrl: `https://inference.example.test/${"a".repeat(2048)}`,
     });
 
-    await expect(runInferenceGet({ json: true }, deps)).resolves.toEqual({
-      provider: "compatible-endpoint",
-      model: "custom/model",
-    });
-    expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual({
-      provider: "compatible-endpoint",
-      model: "custom/model",
-    });
+    await expect(runInferenceGet({ json: true }, deps)).resolves.toEqual(
+      expectedEndpointOmission("withheld"),
+    );
+    expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual(expectedEndpointOmission("withheld"));
   });
 
   it("ignores a pending route reservation when selecting the endpoint (#10784)", async () => {
@@ -494,15 +515,11 @@ describe("runInferenceGet", () => {
         gatewayPort: null,
       },
     ]);
-    await expect(runInferenceGet({ json: true }, deps)).resolves.toEqual({
-      provider: "compatible-endpoint",
-      model: "custom/model",
-    });
+    await expect(runInferenceGet({ json: true }, deps)).resolves.toEqual(
+      expectedEndpointOmission("invalid"),
+    );
     expect(deps.log.mock.calls[0][0]).not.toContain("secret-invalid-gateway");
-    expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual({
-      provider: "compatible-endpoint",
-      model: "custom/model",
-    });
+    expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual(expectedEndpointOmission("invalid"));
   });
 
   it.each([
@@ -542,28 +559,26 @@ describe("runInferenceGet", () => {
       error: new ConfigPermissionError("/safe/state/sandboxes.json", "read"),
       hiddenDetail: "/safe/state/sandboxes.json",
     },
-  ])("retains the live route and omits optional endpoint metadata after $label", async ({
-    options,
-    error,
-    hiddenDetail,
-  }) => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
-    deps.listSandboxes.mockImplementation(() => {
-      throw error;
-    });
+  ])(
+    "retains the live route and omits optional endpoint metadata after $label",
+    async ({ options, error, hiddenDetail }) => {
+      const deps = createDeps(
+        "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+      );
+      deps.listSandboxes.mockImplementation(() => {
+        throw error;
+      });
 
-    await expect(runInferenceGet(options, deps)).resolves.toEqual({
-      provider: "compatible-endpoint",
-      model: "custom/model",
-    });
-    const output = deps.log.mock.calls.flat().join("\n");
-    expect(output).toContain("compatible-endpoint");
-    expect(output).toContain("custom/model");
-    expect(output).not.toContain("endpointUrl");
-    expect(output).not.toContain(hiddenDetail);
-  });
+      await expect(runInferenceGet(options, deps)).resolves.toEqual(
+        expectedEndpointOmission("unavailable"),
+      );
+      const output = deps.log.mock.calls.flat().join("\n");
+      expect(output).toContain("compatible-endpoint");
+      expect(output).toContain("custom/model");
+      expect(output).not.toContain("endpointUrl");
+      expect(output).not.toContain(hiddenDetail);
+    },
+  );
 
   it("queries the gateway recorded for the sandbox (#10671)", async () => {
     const deps = createDeps(
@@ -571,10 +586,9 @@ describe("runInferenceGet", () => {
     );
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
 
-    await expect(runInferenceGet({ quiet: true, sandboxName: "beta" }, deps)).resolves.toEqual({
-      provider: "compatible-endpoint",
-      model: "custom/model",
-    });
+    await expect(runInferenceGet({ quiet: true, sandboxName: "beta" }, deps)).resolves.toEqual(
+      expectedEndpointOmission("unavailable"),
+    );
 
     expect(deps.getSandboxTargetGatewayName).toHaveBeenCalledWith("beta");
     expect(deps.captureOpenshell).toHaveBeenCalledWith(
@@ -608,20 +622,20 @@ describe("runInferenceGet", () => {
       error: new ConfigPermissionError("/safe/state/sandboxes.json", "read"),
       recovery: "Cannot read config file: /safe/state/sandboxes.json",
     },
-  ])("preserves safe recovery for a $label registry during gateway resolution", async ({
-    error,
-    recovery,
-  }) => {
-    const deps = createDeps("");
-    deps.getSandboxTargetGatewayName.mockImplementation(() => {
-      throw error;
-    });
+  ])(
+    "preserves safe recovery for a $label registry during gateway resolution",
+    async ({ error, recovery }) => {
+      const deps = createDeps("");
+      deps.getSandboxTargetGatewayName.mockImplementation(() => {
+        throw error;
+      });
 
-    await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
-      message: expect.stringContaining(recovery),
-    });
-    expect(deps.captureOpenshell).not.toHaveBeenCalled();
-  });
+      await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
+        message: expect.stringContaining(recovery),
+      });
+      expect(deps.captureOpenshell).not.toHaveBeenCalled();
+    },
+  );
 
   it("sanitizes route values only for human-readable output", async () => {
     const deps = createDeps(

@@ -28,7 +28,16 @@ export interface InferenceGetResult {
   provider: string | null;
   model: string | null;
   endpointUrl?: string;
+  endpointStatus?: InferenceEndpointStatus;
+  endpointRecovery?: string;
 }
+
+export type InferenceEndpointStatus =
+  | "unavailable"
+  | "invalid"
+  | "conflicting"
+  | "withheld"
+  | "adapter-managed";
 
 export interface InferenceGetDeps {
   captureOpenshell: typeof captureOpenshell;
@@ -66,6 +75,21 @@ const COMPATIBLE_CUSTOM_PROVIDERS = new Set([
 // credentials, so the read path omits them instead of guessing their meaning.
 const DISPLAYABLE_ENDPOINT_PATHS = new Set(["/", "/v1", "/v1/"]);
 
+const ENDPOINT_RECOVERY: Record<InferenceEndpointStatus, string> = {
+  unavailable:
+    "Restore registry access or record the trusted endpoint and API family again, then rerun inference get.",
+  invalid: "Repair the affected sandbox's compatible-route metadata, then rerun inference get.",
+  conflicting: "Align or remove conflicting same-gateway sandbox routes, then rerun inference get.",
+  withheld: "Use a credential-free root or /v1 API base if endpoint readback is required.",
+  "adapter-managed":
+    "For a same-provider model change, omit endpoint options so NemoClaw reuses the recorded route.",
+};
+
+type PersistedEndpointResult =
+  | { endpointUrl: string }
+  | { endpointStatus: InferenceEndpointStatus; endpointRecovery: string }
+  | Record<string, never>;
+
 function formatStatusRecovery(cliName: string, sandboxName: string | undefined): string {
   return sandboxName
     ? `Run '${cliName} ${sandboxName} status' to diagnose the sandbox's recorded gateway.`
@@ -89,27 +113,36 @@ function endpointPathIsCredentialFreeForDisplay(endpointUrl: string): boolean {
 }
 
 /** Select one safe endpoint from published rows on the live gateway. */
-function getPersistedEndpointUrl(
+function endpointOmission(endpointStatus: InferenceEndpointStatus): PersistedEndpointResult {
+  return { endpointStatus, endpointRecovery: ENDPOINT_RECOVERY[endpointStatus] };
+}
+
+function getPersistedEndpoint(
   provider: string | null,
   model: string | null,
   gatewayName: string,
   sandboxName: string | undefined,
   deps: InferenceGetDeps,
-): string | null {
+): PersistedEndpointResult {
   const liveModel = model?.trim();
-  if (!provider || !liveModel || !COMPATIBLE_CUSTOM_PROVIDERS.has(provider)) {
-    return null;
+  if (!provider || !COMPATIBLE_CUSTOM_PROVIDERS.has(provider)) {
+    return {};
+  }
+  if (!liveModel) {
+    return endpointOmission("invalid");
   }
 
   let sandboxes: ReturnType<InferenceGetDeps["listSandboxes"]>;
   try {
     sandboxes = deps.listSandboxes();
   } catch {
-    return null;
+    return endpointOmission("unavailable");
   }
 
   const matchingEndpoints: { canonical: string; display: string }[] = [];
-  let incompleteMatchingMetadata = false;
+  let invalidMetadata = false;
+  let withheldMetadata = false;
+  let adapterMetadata = false;
   for (const sandbox of sandboxes) {
     if (!isPublishedSandboxRegistration(sandbox)) continue;
     if (sandboxName && sandbox.name !== sandboxName) continue;
@@ -119,50 +152,51 @@ function getPersistedEndpointUrl(
     } catch {
       // A matching row with an invalid binding could belong to this gateway.
       // Omit the endpoint unless every participating row can be scoped safely.
-      incompleteMatchingMetadata = true;
+      invalidMetadata = true;
       continue;
     }
     if (typeof sandbox.model !== "string" || sandbox.model.trim() !== liveModel) {
-      incompleteMatchingMetadata = true;
+      invalidMetadata = true;
       continue;
     }
     if (typeof sandbox.endpointUrl !== "string" || !sandbox.endpointUrl.trim()) {
-      incompleteMatchingMetadata = true;
+      invalidMetadata = true;
       continue;
     }
     if (unsafeEndpointUrlViolation(sandbox.endpointUrl)) {
-      incompleteMatchingMetadata = true;
-      continue;
-    }
-    if (valueLooksLikeSecret(sandbox.endpointUrl)) {
-      incompleteMatchingMetadata = true;
-      continue;
-    }
-    if (!endpointPathIsCredentialFreeForDisplay(sandbox.endpointUrl)) {
-      incompleteMatchingMetadata = true;
+      invalidMetadata = true;
       continue;
     }
     if (parseHttpsPinRouteId(sandbox.endpointUrl)) {
       // HTTPS-pin registry state intentionally retains only the opaque adapter
       // route. It cannot be reused as the upstream endpoint with inference set.
-      incompleteMatchingMetadata = true;
+      adapterMetadata = true;
+      continue;
+    }
+    if (valueLooksLikeSecret(sandbox.endpointUrl)) {
+      withheldMetadata = true;
+      continue;
+    }
+    if (!endpointPathIsCredentialFreeForDisplay(sandbox.endpointUrl)) {
+      withheldMetadata = true;
       continue;
     }
     const display = sandbox.endpointUrl.trim();
     const canonical = canonicalGatewayRouteEndpoint(provider, display);
     if (!canonical) {
-      incompleteMatchingMetadata = true;
+      invalidMetadata = true;
       continue;
     }
     matchingEndpoints.push({ canonical, display });
   }
-  if (incompleteMatchingMetadata || matchingEndpoints.length === 0) {
-    return null;
-  }
+  if (withheldMetadata) return endpointOmission("withheld");
+  if (invalidMetadata) return endpointOmission("invalid");
+  if (adapterMetadata) return endpointOmission("adapter-managed");
+  if (matchingEndpoints.length === 0) return endpointOmission("unavailable");
   const selected = matchingEndpoints[0];
   return matchingEndpoints.some((candidate) => candidate.canonical !== selected.canonical)
-    ? null
-    : selected.display;
+    ? endpointOmission("conflicting")
+    : { endpointUrl: selected.display };
 }
 
 /** Read the live route and add safe persisted endpoint evidence when applicable. */
@@ -198,7 +232,7 @@ export async function runInferenceGet(
     );
   }
 
-  const endpointUrl = getPersistedEndpointUrl(
+  const endpoint = getPersistedEndpoint(
     result.inference.provider,
     result.inference.model,
     gatewayName,
@@ -208,7 +242,7 @@ export async function runInferenceGet(
   const payload: InferenceGetResult = {
     provider: result.inference.provider,
     model: result.inference.model,
-    ...(endpointUrl ? { endpointUrl } : {}),
+    ...endpoint,
   };
   if (!options.quiet) {
     if (options.json) {
@@ -218,6 +252,9 @@ export async function runInferenceGet(
       deps.log(`Model:    ${formatRouteValueForDisplay(payload.model)}`);
       if (payload.endpointUrl) {
         deps.log(`Endpoint: ${formatRouteValueForDisplay(payload.endpointUrl)}`);
+      } else if (payload.endpointStatus && payload.endpointRecovery) {
+        deps.log(`Endpoint: unavailable (${payload.endpointStatus})`);
+        deps.log(`Action:   ${payload.endpointRecovery}`);
       }
     }
   }

@@ -3078,11 +3078,13 @@ The URL must use the documented root or `/v1` API-base path; NemoClaw omits othe
 Managed providers keep the existing provider-and-model output.
 Unpublished sandbox rows do not participate in endpoint selection.
 Equivalent stored URL forms, such as a trailing slash difference, count as the same endpoint identity.
-When participating metadata is missing, invalid, conflicting, too long, has an invalid gateway binding or another path shape, or contains recognized credential material in any URL component, both formats retain the provider and model without adding endpoint details.
+When participating metadata is missing, invalid, conflicting, too long, has an invalid gateway binding or another path shape, or contains recognized credential material in any URL component, both formats retain the provider and model without exposing the endpoint URL.
 The command also omits internal HTTPS-pin adapter routes because their upstream endpoint is intentionally not retained and the adapter URL cannot be reused as an upstream endpoint.
-To switch only the model for an existing adapter route, omit the endpoint option so NemoClaw reuses the recorded route.
-If the live route is readable but optional endpoint registry metadata is not, both formats retain the live provider and model and omit the endpoint without exposing registry details.
-Run `$$nemoclaw status` after a direct lookup or `$$nemoclaw <name> status` after a sandbox-first lookup when an expected endpoint is absent.
+When a compatible endpoint is omitted, text output reports `Endpoint: unavailable (<state>)` followed by a credential-free `Action`.
+JSON output adds `endpointStatus` and `endpointRecovery` instead of `endpointUrl`.
+The state is `unavailable` when durable registry metadata cannot be read or found, `invalid` when recorded metadata cannot prove the live route, `conflicting` when eligible same-gateway rows disagree, `withheld` when the URL may expose a credential, and `adapter-managed` for an internal HTTPS-pin adapter route.
+The recovery action tells you to restore or repair registry metadata, align conflicting routes, use a credential-free root or `/v1` API base, or omit endpoint options for an adapter-managed same-provider model change.
+These diagnostics never include a stored URL, registry path, or underlying registry error.
 If a sandbox-first lookup cannot resolve its gateway because the registry is corrupt or unreadable, the command exits non-zero and retains the safe recovery steps and affected path.
 
 For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
