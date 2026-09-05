@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   runOpenshell: vi.fn(
     (
       _args: string[],
+      _options?: Record<string, unknown>,
     ): {
       status: number | null;
       stdout: string;
@@ -36,7 +37,8 @@ const mocks = vi.hoisted(() => ({
   ),
   stopNimContainer: vi.fn(),
   stopNimContainerByName: vi.fn(),
-  settleAgentForwardPortsForRebuild: vi.fn(),
+  teardownSandboxDashboardForward: vi.fn(() => true),
+  restoreSandboxLaunchForwards: vi.fn(() => true),
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
@@ -53,10 +55,6 @@ vi.mock("../../inference/nim", () => ({
   stopNimContainerByName: mocks.stopNimContainerByName,
 }));
 
-vi.mock("../../tunnel/agent-forward-stop", () => ({
-  settleAgentForwardPortsForRebuild: mocks.settleAgentForwardPortsForRebuild,
-}));
-
 vi.mock("../../state/registry", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/registry")>()),
   getSandbox: mocks.getSandbox,
@@ -69,6 +67,11 @@ vi.mock("./destroy", () => ({
 
 vi.mock("./rebuild-flow-helpers", () => ({
   warnUnpreservedUserManagedFiles: mocks.warnUnpreservedUserManagedFiles,
+}));
+
+vi.mock("./forward-recovery", () => ({
+  teardownSandboxDashboardForward: mocks.teardownSandboxDashboardForward,
+  restoreSandboxLaunchForwards: mocks.restoreSandboxLaunchForwards,
 }));
 
 vi.mock("./rebuild-mcp-phase", () => ({
@@ -133,7 +136,8 @@ describe("rebuild destroy phase", () => {
     mocks.waitUntil.mockImplementation(
       (condition: () => boolean) => condition() || condition() || condition(),
     );
-    mocks.settleAgentForwardPortsForRebuild.mockReturnValue(true);
+    mocks.teardownSandboxDashboardForward.mockReturnValue(true);
+    mocks.restoreSandboxLaunchForwards.mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -221,6 +225,7 @@ describe("rebuild destroy phase", () => {
       false,
       true,
       expect.any(Function),
+      undefined,
     );
   });
 
@@ -280,8 +285,22 @@ describe("rebuild destroy phase", () => {
     expect(onDeleted).toHaveBeenCalledOnce();
   });
 
-  it("pins deletion to the recorded gateway when ambient selection changes (#7062)", async () => {
+  it("pins deletion and the delete-edge user-file probe when ambient selection changes (#10514)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw-29080");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-19080",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    mocks.prepareMcpForRebuild.mockResolvedValue({
+      entries: [],
+      detachedProviderEntries: [],
+      scrubbedAdapterEntries: [],
+      runtimeSelection,
+    });
     mocks.getSandbox.mockReturnValue({
       name: "alpha",
       agent: "openclaw",
@@ -301,6 +320,7 @@ describe("rebuild destroy phase", () => {
       recreateJournal: stubRecreateJournal(),
       backupManifest: null,
       force: true,
+      runtimeSelection,
       log: vi.fn(),
       bail: vi.fn((message: string): never => {
         throw new Error(message);
@@ -310,8 +330,59 @@ describe("rebuild destroy phase", () => {
 
     expect(mocks.runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw-19080", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
+      expect.objectContaining({
+        ignoreError: true,
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw-19080",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+        }),
+      }),
     );
+    expect(mocks.warnUnpreservedUserManagedFiles).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Function),
+      runtimeSelection,
+    );
+    const deleteOptions = mocks.runOpenshell.mock.calls.find(
+      ([args]) => args[0] === "sandbox" && args[1] === "delete",
+    )?.[1] as { env?: Record<string, string> } | undefined;
+    expect(deleteOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw-19080", "alpha"],
+      expect.objectContaining({
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw-19080",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+        }),
+      }),
+    );
+  });
+
+  it("refuses deletion when the frozen OpenShell target does not match (#10514)", async () => {
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
+        staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
+        backupManifest: null,
+        force: true,
+        runtimeSelection: { gatewayName: "nemoclaw-19080", workspace: "default" },
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow(
+      "Rebuild delete target gateway 'nemoclaw' does not match recorded OpenShell gateway 'nemoclaw-19080'. NemoClaw did not delete the original sandbox. Restore recorded gateway 'nemoclaw-19080', confirm it is healthy, then retry.",
+    );
+
+    expectNoSandboxDelete(mocks.runOpenshell);
   });
 
   it.each([
@@ -373,6 +444,7 @@ describe("rebuild destroy phase", () => {
         "alpha",
         [{ server: "github" }],
         [],
+        undefined,
       );
       expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
       expect(mocks.stopNimContainer).not.toHaveBeenCalled();
@@ -411,7 +483,12 @@ describe("rebuild destroy phase", () => {
     expect(revalidateBeforeDelete).toHaveBeenCalledOnce();
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], []);
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
+      "alpha",
+      [],
+      [],
+      undefined,
+    );
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
   });
@@ -451,7 +528,14 @@ describe("rebuild destroy phase", () => {
     expect(revalidateBeforeDelete.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.runOpenshell.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], []);
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
+      "alpha",
+      [],
+      [],
+      undefined,
+    );
+    expect(mocks.teardownSandboxDashboardForward).not.toHaveBeenCalled();
+    expect(mocks.restoreSandboxLaunchForwards).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
     expect(onDeleted).not.toHaveBeenCalled();
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
@@ -934,10 +1018,6 @@ describe("rebuild destroy phase", () => {
   it("journals the delete boundary before the destructive command (#7734)", async () => {
     const order: string[] = [];
     const recreateJournal = stubRecreateJournal();
-    mocks.settleAgentForwardPortsForRebuild.mockImplementation(() => {
-      order.push("forward:stop");
-      return true;
-    });
     vi.mocked(recreateJournal.beginDelete).mockImplementation(() => {
       order.push("journal:deleting");
       return "source";
@@ -963,7 +1043,34 @@ describe("rebuild destroy phase", () => {
       onDeleted: vi.fn(),
     });
 
-    expect(order).toEqual(["forward:stop", "journal:deleting", "openshell:delete", "forward:stop"]);
+    expect(order).toEqual(["journal:deleting", "openshell:delete"]);
+  });
+
+  it("preserves recovery state when ForwardTcp ports remain after deletion", async () => {
+    const recreateJournal = stubRecreateJournal();
+    mocks.teardownSandboxDashboardForward.mockReturnValue(false);
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
+        staleRecovery: false,
+        recreateJournal,
+        backupManifest: null,
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow("Sandbox host ports did not release after deletion");
+
+    expect(mocks.restoreSandboxLaunchForwards).not.toHaveBeenCalled();
+    expect(recreateJournal.beginDelete).toHaveBeenCalledOnce();
+    expect(mocks.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.any(Object),
+    );
   });
 
   it("reattaches MCP providers when the delete boundary cannot be journaled (#7734)", async () => {
@@ -996,6 +1103,7 @@ describe("rebuild destroy phase", () => {
       "alpha",
       [{ providerName: "nemoclaw-mcp-alpha-github" }],
       [{ server: "github" }],
+      undefined,
     );
     expect(mocks.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],

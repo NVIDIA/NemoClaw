@@ -220,11 +220,20 @@ After a rebuild restores `dashboard-home` or `profiles`, NemoClaw reruns the das
 
 Credential-bearing Deep Agents files such as `.deepagents/.env` and user-authored `.deepagents/.mcp.json` are intentionally excluded from snapshots. Deep Agents auth state files such as `.deepagents/.state/auth.json` and `.deepagents/.state/chatgpt-auth.json` are also excluded because the managed launcher refuses to start when upstream credential state is present.
 
-The managed `.deepagents/.nemoclaw-mcp.json` projection and `hooks.json` are excluded because NemoClaw reconstructs managed MCP state and disables executable Deep Agents Code hooks in the managed harness. NemoClaw recreates the current inference route headers, `models` and `update` tables, managed MCP projection state, and provider credentials from host-side onboarding and OpenShell provider state during rebuild.
+The managed v2 `.deepagents/.nemoclaw-mcp.json` projection and `hooks.json` are excluded because NemoClaw disables executable Deep Agents Code hooks in the managed harness.
+For a managed v2 runtime, NemoClaw reconstructs the managed MCP projection from host-side registry state.
+NemoClaw recreates the current inference route headers, `models` and `update` tables, and provider credentials from host-side onboarding and OpenShell provider state during rebuild.
 
 ### Restore Managed Deep Agents Configuration
 
 For a NemoClaw-managed Deep Agents image, NemoClaw restores only the allowlisted `ui.show_scrollbar`, `ui.show_url_open_toast`, `threads.relative_time`, and `threads.sort_order` preferences from the previous `config.toml` when their values pass validation. Unknown, runtime-controlled, executable, and security-sensitive backup keys are dropped instead of replacing freshly generated settings on that managed path.
+
+Before it restores snapshot files for a managed v2 runtime, NemoClaw reconstructs the managed MCP projection from the host registry.
+For a legacy runtime, NemoClaw does not reconstruct the dedicated v2 projection.
+If the v2 projection path `/sandbox/.deepagents/.nemoclaw-mcp.json` is a directory, the restore leaves snapshot files unchanged and prints a recovery command.
+Run that command to move the directory into a new recovery location.
+The command prints the selected location and does not replace an existing recovery file or directory.
+Then rerun the same snapshot restore command.
 
 A Deep Agents target created from a custom Dockerfile restores `config.toml` as a whole file because the custom image owns its config schema. On the managed key-level restore path, malformed config, missing managed data, an unsafe link, or an unsafe file replacement fails the restore without falling back to a whole-file copy.
 

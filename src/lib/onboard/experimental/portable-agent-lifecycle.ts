@@ -18,6 +18,7 @@ import {
   type HermesPortableLifecycleDeps,
 } from "./hermes-portable-lifecycle";
 import {
+  hasHermesPortableReceiptCandidate,
   inspectPortableAgentReceiptAuthority,
   inspectPortableAgentReceiptAuthorityForClassification,
   inspectPortableAgentReceiptAuthorityForRequalification,
@@ -198,14 +199,27 @@ export function inspectPortableAgentReceiptDisposition(
   );
 }
 
-/** Classify copied Hermes authority while the probe owns its lifecycle fence. */
+/**
+ * Classify copied Hermes authority while the probe owns its lifecycle fence.
+ *
+ * A sandbox with no Hermes portable receipt directory has nothing for the
+ * requalifying reader to admit: the reader returns null on that directory's
+ * ENOENT before it consults any of its extra admission flags, so its answer is
+ * already the classifying reader's answer. Demanding its lifecycle-lock
+ * evidence therefore buys no information, and it cannot be satisfied off the
+ * default gateway: the evidence is keyed on the host-global portable receipt
+ * root while every acquisition keys on the per-gateway state root, so the held
+ * lock is invisible and a plain OpenClaw sandbox fails its probe (#10783).
+ */
 function inspectPortableAgentReceiptDispositionForRequalification(
   sandboxName: string,
   env: NodeJS.ProcessEnv = process.env,
   stateDir = defaultPortableDemoStateDir(env),
 ): PortableAgentReceiptDisposition {
   return receiptDisposition(
-    inspectPortableAgentReceiptAuthorityForRequalification(sandboxName, stateDir),
+    hasHermesPortableReceiptCandidate(sandboxName, stateDir)
+      ? inspectPortableAgentReceiptAuthorityForRequalification(sandboxName, stateDir)
+      : inspectPortableAgentReceiptAuthorityForClassification(sandboxName, stateDir),
   );
 }
 

@@ -25,7 +25,7 @@ export function runExpressPromptWithTty(
   stdinMode: "pipe" | "tty",
   platform = "DGX Spark",
   extraEnv: Record<string, string> = {},
-  entrypoint: "prompt" | "accepted-station-main" = "prompt",
+  entrypoint: "prompt" | "accepted-station-main" | "n1x-standard-main" = "prompt",
   entrypointArgs: string[] = [],
   harnessFixture?: InstallerExpressPtyFixture,
 ) {
@@ -51,7 +51,90 @@ harness_mode = sys.argv[6]
 timeout_seconds = float(sys.argv[7])
 pid_file = sys.argv[8]
 entrypoint_args = sys.argv[9:]
-if entrypoint == "accepted-station-main":
+if entrypoint == "n1x-standard-main":
+    script = r'''
+source "$INSTALLER_UNDER_TEST" >/dev/null
+node() { ${JSON.stringify(process.execPath)} "$@"; }
+detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
+validate_express_platform_boundary() { :; }
+validate_force_station_install_override() { :; }
+validate_station_deepseek_override() { :; }
+describe_express_install() { :; }
+load_station_vllm_conflict_helpers() { :; }
+consume_station_local_vllm_resume() { return 1; }
+resolve_nemoclaw_gateway_port() { printf '8080'; }
+preflight_explicit_express_flags() { :; }
+print_banner() { :; }
+preflight_usage_notice_prompt() { :; }
+validate_station_pair_selection() { :; }
+ensure_station_express_host() { :; }
+prepare_portable_experimental_runtime_override() { :; }
+installer_requires_legacy_docker_bootstrap() { return 1; }
+ensure_openshell_build_deps() { :; }
+step() { :; }
+show_usage_notice() { :; }
+nemoclaw_state_dir() { printf '%s' "$HOME/state"; }
+registered_sandbox_count() { printf '0'; }
+recover_preexisting_sandboxes_before_onboard() {
+  _PREEXISTING_SANDBOX_RECOVERY_RAN=false
+  return 0
+}
+restore_onboard_forward_after_post_checks() { return 0; }
+finalize_install() { :; }
+clear_station_resume_after_completed_onboarding() { :; }
+repair_installer_nvidia_cdi_spec() { :; }
+install_nemoclaw_before_onboarding() {
+  repo_root="$(cd "$(dirname "$INSTALLER_UNDER_TEST")/.." && pwd)"
+  NEMOCLAW_SOURCE_ROOT="$PWD/source"
+  onboard_dir="$NEMOCLAW_SOURCE_ROOT/dist/lib/onboard"
+  readiness_dir="$NEMOCLAW_SOURCE_ROOT/dist/lib/readiness"
+  provider_dir="$onboard_dir/inference-providers"
+  mkdir -p "$onboard_dir/experimental" "$readiness_dir" "$provider_dir"
+  printf '%s\n' \
+    'exports.assessHost = () => ({ runtime: "docker", isWsl: false });' \
+    'exports.planHostAdvisories = () => [];' \
+    >"$onboard_dir/preflight.js"
+  printf '%s\n' \
+    'exports.loadGatewayManagementDeclaration = () => ({ ok: true, declaration: null });' \
+    >"$onboard_dir/gateway-management.js"
+  printf '%s\n' \
+    'exports.configuredRuntimeProviderOwnsHostReadiness = () => false;' \
+    >"$onboard_dir/docker-driver-gateway-env.js"
+  printf '%s\n' \
+    'exports.isPortableExperimentalProfile = () => false;' \
+    >"$onboard_dir/experimental/portable-profile.js"
+  printf '%s\n' \
+    'exports.createHostReadinessReport = () => ({' \
+    '  schemaVersion: "1.1.0", status: "incompatible", exitCode: 2, observations: [],' \
+    '  capabilities: [' \
+    '    { id: "host.docker.available", state: "present" },' \
+    '    { id: "host.docker.daemon_reachable", state: "present" },' \
+    '    { id: "host.docker.runtime_supported", state: "present" },' \
+    '    { id: "host.docker.storage_compatible", state: "present" },' \
+    '    { id: "host.gpu.nvidia_available", state: "present" },' \
+    '    { id: "host.gpu.container_toolkit_available", state: "present" },' \
+    '    { id: "host.gpu.cdi_healthy", state: "present" },' \
+    '    { id: "host.platform.supported", state: "absent" },' \
+    '    { id: "host.platform.n1x", state: "present" },' \
+    '  ],' \
+    '  findings: [{ id: "host.platform.n1x_validation_pending", severity: "blocking", summary: "N1x validation pending" }],' \
+    '});' \
+    >"$readiness_dir/host.js"
+  cp "$repo_root/dist/lib/readiness/onboard-admission.js" "$readiness_dir/onboard-admission.js"
+  cp "$repo_root/dist/lib/onboard/inference-providers/provider-selection-keys.js" \
+    "$provider_dir/provider-selection-keys.js"
+  fake_cli="$PWD/nemoclaw-under-test"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'printf "ONBOARD NO_EXPRESS=%s PROVIDER=%s ARGS=%s\\n" "\${NEMOCLAW_NO_EXPRESS:-}" "\${NEMOCLAW_PROVIDER:-}" "$*"' \
+    >"$fake_cli"
+  chmod +x "$fake_cli"
+  _CLI_BIN="nemoclaw"
+  _CLI_PATH="$fake_cli"
+}
+main "$@"
+'''
+elif entrypoint == "accepted-station-main":
     script = r'''
 source "$INSTALLER_UNDER_TEST" >/dev/null
 detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
@@ -64,11 +147,11 @@ classify_dgx_station_release() { printf "%s" "\${EXPRESS_RELEASE_STATE:-generic-
 station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
 station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
 bash() {
-  printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s PROFILE_GATE=%s PROFILE_RUNTIME=%s SPARK_SELECTION=%s\\n" \
+  printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s PROFILE_GATE=%s PROFILE_RUNTIME=%s SPARK_SELECTION=%s NO_EXPRESS=%s\\n" \
     "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \
     "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}" \
     "\${NEMOCLAW_STATION_EXPRESS:-}" "\${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" "\${NEMOCLAW_LOCAL_MODEL_RUNTIME:-}" \
-    "\${_SPARK_EXPRESS_INFERENCE_SELECTION:-}"
+    "\${_SPARK_EXPRESS_INFERENCE_SELECTION:-}" "\${NEMOCLAW_NO_EXPRESS:-}"
   exit 0
 }
 main "$@"
@@ -85,11 +168,11 @@ if [ "\${FORCE_EXPRESS_PROMPT_READ_FAILURE:-}" = "1" ]; then
   read() { return 1; }
 fi
 maybe_offer_express_install
-printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s PROFILE_GATE=%s PROFILE_RUNTIME=%s SPARK_SELECTION=%s\\n" \\
+printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s PROFILE_GATE=%s PROFILE_RUNTIME=%s SPARK_SELECTION=%s NO_EXPRESS=%s\\n" \\
   "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
   "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}" \\
   "\${NEMOCLAW_STATION_EXPRESS:-}" "\${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" "\${NEMOCLAW_LOCAL_MODEL_RUNTIME:-}" \\
-  "\${_SPARK_EXPRESS_INFERENCE_SELECTION:-}"
+  "\${_SPARK_EXPRESS_INFERENCE_SELECTION:-}" "\${NEMOCLAW_NO_EXPRESS:-}"
 '''
 env = dict(os.environ)
 env["INSTALLER_UNDER_TEST"] = installer

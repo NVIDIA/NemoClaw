@@ -253,7 +253,8 @@ export function stripCredentials(obj: unknown): unknown {
   return result;
 }
 
-const DIAGNOSTIC_URL_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/giu;
+export const URL_TOKEN_PATTERN_SOURCE = String.raw`[a-z][a-z0-9+.-]*:\/\/(?:[^/?#\s'"]+['"][^/?#@\s]*@)?[^\s'"]+`;
+const DIAGNOSTIC_URL_PATTERN = new RegExp(URL_TOKEN_PATTERN_SOURCE, "giu");
 const DIAGNOSTIC_ASSIGNMENT_PATTERN =
   /\b([A-Za-z][A-Za-z0-9._-]{0,127})([ \t]*[:=][ \t]*)(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s,;]+)/gu;
 

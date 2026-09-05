@@ -33,6 +33,25 @@ describe("destroy confirmation", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it("uses the recorded OpenShell target for active-session detection (#10514)", async () => {
+    const createSessionDeps = vi.spyOn(sandboxSession, "createSystemDeps");
+    stubActiveSessions([]);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-9090",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+
+    await expect(
+      confirmSandboxDestroy("test-sb", { yes: true }, runtimeSelection),
+    ).resolves.toBe(true);
+
+    expect(createSessionDeps).toHaveBeenCalledWith("/usr/bin/openshell", {
+      runtimeSelection,
+    });
+  });
+
   it("warns about active sessions when --force skips the prompt (#9855)", async () => {
     stubActiveSessions([4242, 4243]);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);

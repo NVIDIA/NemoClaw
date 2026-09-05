@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   authoritativeRebuildSandboxFlowOptions,
   authoritativeRebuildRuntimePreflightOptions,
+  beginAuthoritativeRebuildRuntimeSelectionScope,
   type AuthoritativeRebuildTargetDeps,
   type AuthoritativeRebuildPreflightOptions,
   preflightAuthoritativeRebuildTarget,
@@ -88,7 +89,6 @@ function deps(overrides: Partial<AuthoritativeRebuildTargetDeps> = {}) {
     assertGatewayReadiness: vi.fn(),
     inferenceRouteState: vi.fn((): InferenceRouteState => "matched"),
     captureForwardList: vi.fn(() => "alpha 127.0.0.1 18789 42 active"),
-    checkPort: vi.fn(async () => ({ ok: true })),
     ...overrides,
   } satisfies AuthoritativeRebuildTargetDeps;
 }
@@ -150,6 +150,48 @@ describe("authoritative rebuild gateway binding", () => {
     expect(() => resolve({ onboardLockAlreadyHeld: true })).toThrow(
       /lock handoff requires an authoritative rebuild resume/,
     );
+  });
+});
+
+describe("authoritative rebuild OpenShell runtime selection", () => {
+  it("replaces hostile ambient selectors for inner onboard and restores them (#10514)", () => {
+    const env: NodeJS.ProcessEnv = {
+      PATH: "/usr/bin",
+      OPENSHELL_GATEWAY: "hostile-gateway",
+      OPENSHELL_GATEWAY_AUTH_TOKEN: "hostile-token",
+      OPENSHELL_GATEWAY_ENDPOINT: "https://hostile.invalid",
+      OPENSHELL_LOCAL_TLS_DIR: "/hostile/tls",
+      OPENSHELL_WORKSPACE: "hostile-workspace",
+    };
+    const previous = { ...env };
+    const restore = beginAuthoritativeRebuildRuntimeSelectionScope(
+      {
+        authoritativeResumeConfig: true,
+        onboardLockAlreadyHeld: true,
+        recreateSandbox: true,
+        resume: true,
+        targetGatewayName: "nemoclaw-8081",
+        targetGatewayPort: 8081,
+        runtimeSelection: {
+          gatewayName: "nemoclaw-8081",
+          localTlsDir: "/authority/tls",
+          workspace: "default",
+        },
+      },
+      env,
+    );
+
+    expect(env).toMatchObject({
+      PATH: "/usr/bin",
+      OPENSHELL_GATEWAY: "nemoclaw-8081",
+      OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+      OPENSHELL_WORKSPACE: "default",
+    });
+    expect(env.OPENSHELL_GATEWAY_AUTH_TOKEN).toBeUndefined();
+    expect(env.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();
+
+    restore();
+    expect(env).toEqual(previous);
   });
 });
 
@@ -294,7 +336,6 @@ describe("authoritative rebuild target preflight", () => {
   it("pins the requested gateway for route and forward checks, then restores it", async () => {
     process.env.OPENSHELL_GATEWAY = "before";
     const seen: string[] = [];
-    const checkPort = vi.fn();
     await preflightAuthoritativeRebuildTarget(
       target,
       deps({
@@ -306,12 +347,10 @@ describe("authoritative rebuild target preflight", () => {
           seen.push(`forward:${process.env.OPENSHELL_GATEWAY}`);
           return "alpha 127.0.0.1 18789 42 active";
         }),
-        checkPort,
       }),
     );
 
     expect(seen).toEqual(["route:nemoclaw-12345", "forward:nemoclaw-12345"]);
-    expect(checkPort).not.toHaveBeenCalled();
     expect(process.env.OPENSHELL_GATEWAY).toBe("before");
   });
 
@@ -360,16 +399,15 @@ describe("authoritative rebuild target preflight", () => {
     ).rejects.toThrow("belongs to sandbox 'beta'");
   });
 
-  it("rejects an occupied dashboard port with no OpenShell owner", async () => {
+  it("defers an unlisted port collision until the post-delete ForwardTcp launch", async () => {
     await expect(
       preflightAuthoritativeRebuildTarget(
         target,
         deps({
           captureForwardList: vi.fn(() => ""),
-          checkPort: vi.fn(async () => ({ ok: false, process: "node", pid: 99, reason: "" })),
         }),
       ),
-    ).rejects.toThrow("occupied by node (PID 99)");
+    ).resolves.toBeUndefined();
   });
 
   it("restores gateway scope when a fatal runtime check throws", async () => {

@@ -106,11 +106,13 @@ Keep that variable set for later type-check, build, and test commands.
 
 ### Image push fails with out-of-memory errors
 
-The sandbox image is approximately 2.4 GB compressed. During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer.
+The sandbox image is approximately 2.4 GB compressed. During image push, the selected container runtime, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer.
 
 If you cannot add memory, configure at least 8 GB of swap to work around the issue at the cost of slower performance.
 
 ### Docker is not running
+
+These steps apply to the default Docker path. Native rootless Podman does not require Docker; retain `NEMOCLAW_GATEWAY_RUNTIME=podman` and follow [Podman](#podman).
 
 Check the host before onboarding:
 
@@ -120,7 +122,7 @@ $$nemoclaw host probe
 
 The command does not start Docker or apply a repair. A `host.docker.daemon_unreachable` finding means Docker is installed but NemoClaw cannot reach the daemon. For JSON output and exit-code details, refer to [System Readiness](system-readiness).
 
-The installer and onboard wizard require Docker to be running. If you see a Docker connection error, start the Docker daemon:
+The installer and onboard wizard require Docker to be running on the default Docker path. If you see a Docker connection error on that path, start the Docker daemon:
 
 ```bash
 sudo systemctl start docker
@@ -133,7 +135,7 @@ On macOS with Docker Desktop, open the Docker Desktop application and wait for i
 On Linux, if the Docker daemon is running but you see "permission denied" errors, your user may not be in the `docker` group. The installer can add your user to the group, but Linux does not activate that membership in the current shell automatically. Add your user and activate the group in the current shell:
 
 <Warning title="Docker group access">
-  NemoClaw needs Docker access. On personal Linux development machines, adding your user to the
+  The default Docker path needs Docker access. On personal Linux development machines, adding your user to the
   `docker` group is the standard way to run Docker without sudo. Members of the `docker` group can
   control the daemon with root-level impact, so grant this access only to trusted local accounts; on
   shared or managed systems, use your organization's approved Docker access path. For background,
@@ -326,7 +328,7 @@ The NemoClaw dashboard uses port `18789` by default and the gateway uses port `8
 
 NemoClaw allocates each Hermes sandbox an OpenAI-compatible API port from `8642` through `8652`, so it rejects every port in that range as a dashboard port for any agent. When all ports in the API range are occupied, the error lists the owner for each port. Destroy a listed Hermes sandbox or stop a listed non-OpenShell listener, then rerun onboarding.
 
-On macOS, the port check also tries a privileged `lsof` probe without prompting for a password so root-owned listeners are detected before the sandbox build starts. For a new sandbox, NemoClaw reserves the selected loopback port through sandbox preparation and the image build. If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources. NemoClaw releases the reservation immediately before `openshell forward start` runs. If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
+On macOS, the port check also tries a privileged `lsof` probe without prompting for a password so root-owned listeners are detected before the sandbox build starts. For a new sandbox, NemoClaw reserves the selected loopback port through sandbox preparation and the image build. If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources. NemoClaw releases the reservation immediately before its receipt-owned ForwardTcp service starts. If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
 
 When a previous onboard, upgrade, or sandbox crash leaves a stale `openclaw-gateway` host process holding the dashboard port, `$$nemoclaw onboard --fresh`, `$$nemoclaw <name> destroy` (when destroying the last sandbox), and `$$nemoclaw uninstall` automatically sweep the dashboard port range and signal `SIGTERM` then `SIGKILL` to recover. The sweep only targets processes owned by the current user whose command line matches `openclaw-gateway` or `openshell forward` markers, and skips dashboard ports owned by other live sandboxes.
 
@@ -1824,12 +1826,14 @@ The probe runs only for a failed `openclaw` command. A command that succeeds, a 
 
 </AgentOnly>
 
-### Sandbox creation reports a TLS certificate mismatch
+### Onboarding or Sandbox Creation Reports a TLS Certificate Error
 
-If sandbox creation reports a TLS or certificate mismatch, the OpenShell gateway certificate may have changed since the CLI last registered it. Remove the stale local gateway registration and then resume onboarding so NemoClaw refreshes the registration:
+Use this recovery when the preserved OpenShell detail for global policy inspection or sandbox creation identifies a gateway certificate-trust failure during onboarding.
+The OpenShell gateway certificate may have changed since the CLI last trusted it.
+Refresh trust for the registered gateway, then resume onboarding:
 
 ```bash
-openshell gateway remove nemoclaw
+openshell gateway trust -g nemoclaw
 $$nemoclaw onboard --resume
 ```
 
@@ -1885,7 +1889,7 @@ Verify that the inference provider endpoint is reachable from the host. Check th
 $$nemoclaw <name> status
 ```
 
-The main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox and then sends one inference request over the same route, so it reflects the route the agent uses. If that line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
+The main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox and then sends an inference request over the same route, so it reflects the route the agent uses. When that request returns a transient gateway status, `status` repeats both probes up to three total attempts before it reports a failure. It prints the HTTP status, next attempt, and two-second delay to stderr before each retry; the configured timeout envelope for three complete probe pairs and two delays is about 124 seconds. If that line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
 
 For local Ollama and local vLLM, `Inference (ollama backend)` or the corresponding local-backend line reports the host-side service separately. If a local-backend diagnostic fails, start the backend. For Local Ollama, current releases can also print `Inference (auth proxy)` when a proxy token is available. Docker Desktop on Windows Subsystem for Linux (WSL) reaches host loopback directly, so its auth-proxy diagnostic is non-authoritative. Native Docker Engine inside WSL is unqualified; enable Docker Desktop WSL integration, then rerun onboarding.
 
@@ -2036,7 +2040,7 @@ Ollama can serve local chat and some simple tool surfaces, but agent loops with 
 | Long system prompts or sender metadata | Risky | Yes |
 | Multi-turn tool dispatch | Risky | Yes |
 
-On hosts other than N1x, [set up vLLM](../inference/local-inference/set-up-vllm) with automatic tool choice and the tool-call parser that matches the model family for persistent agent use. After the parser-aware server is ready, re-run onboarding. Select the **Local vLLM** entry marked **running (suggested)** for a server detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`; for another address, select **Other OpenAI-compatible endpoint**. On generic hosts, the Local vLLM entry includes an experimental label; on DGX Spark or DGX Station, it does not. On N1x, stop any server that occupies `${NEMOCLAW_VLLM_PORT:-8000}`, then use only the Deferred managed-vLLM preview; existing and compatible servers are not admitted.
+[Set up vLLM](../inference/local-inference/set-up-vllm) with automatic tool choice and the tool-call parser that matches the model family for persistent agent use. After the parser-aware server is ready, re-run onboarding. Select the **Local vLLM** entry for a server detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`; for another address, select **Other OpenAI-compatible endpoint**. On generic hosts, the Local vLLM entry includes an experimental label; on DGX Spark or DGX Station, it does not. On N1x, decline or disable Express, or set `NEMOCLAW_PROVIDER=vllm`, to enter standard onboarding; this route remains unvalidated on N1x.
 
 Do not rely on direct edits to `openclaw.json` for a persistent provider change. NemoClaw-managed rebuilds can overwrite those edits, while onboarding keeps the sandbox image, OpenShell route, and host-managed credentials aligned.
 
@@ -2239,11 +2243,11 @@ In that case:
 
 ### Discord preset validation behind a proxy
 
-The built-in Discord policy preset intentionally allows the Node binaries used by the messaging runtime and does not allow `curl`. As a result, `curl -s https://discord.com` failing, hanging, or printing no output is not proof that the Discord preset is broken.
+The built-in Discord policy preset allows the OpenClaw Node.js runtime and does not allow `curl`. As a result, `curl -s https://discord.com` failing, hanging, or printing no output is not proof that the Discord preset is broken.
 
 Behind the OpenShell proxy, direct DNS-only checks can also be the wrong signal. For example, `dns.resolve("gateway.discord.gg")` can fail even when HTTPS requests routed through the proxy are healthy.
 
-Use Node HTTPS as the manual REST probe:
+Use the OpenClaw Node.js runtime for the manual REST probe:
 
 ```bash
 node - <<'NODE'
@@ -2279,7 +2283,7 @@ https
 NODE
 ```
 
-Any HTTP status from these probes means the Node process reached the endpoint; the exact status can vary by unauthenticated path. If the Node REST probe works but the Discord channel is still unhealthy, investigate the native gateway path instead of widening the preset. Check the gateway logs and blocked-request output with `openshell term`, and look for `gateway.discord.gg` connection or WebSocket upgrade failures.
+Any HTTP status from these probes means the Node.js process reached the endpoint; the exact status can vary by unauthenticated path. A transport error or OpenShell policy denial means the probe failed. If the REST probe works but the Discord channel is still unhealthy, investigate the native gateway path instead of widening the preset. Check the gateway logs and blocked-request output with `openshell term`, and look for `gateway.discord.gg` connection or WebSocket upgrade failures.
 
 ### Messaging bridge appears running but no messages arrive
 
@@ -2537,7 +2541,7 @@ sudo ufw allow from "$SUBNET" to any port 11435 proto tcp
 $$nemoclaw onboard
 ```
 
-Qualified Docker Desktop WSL routes do not use the auth proxy. Other hosts without the OpenShell Docker network use different routing models; for proxy-fronted routes, NemoClaw treats an unavailable sandbox-side probe as non-blocking and relies on the regular proxy health check.
+Only an accepted Windows-host Ollama route uses direct Docker Desktop access to port `11434`. WSL-local Ollama uses the auth proxy, including on Docker Desktop WSL. Other hosts without the OpenShell Docker network use different routing models; for proxy-fronted routes, NemoClaw treats an unavailable sandbox-side probe as non-blocking and relies on the regular proxy health check.
 
 ### `host.docker.internal` does not reliably reach the host from the sandbox
 
@@ -2569,7 +2573,7 @@ For local Ollama on non-WSL hosts, use the auth-proxy URL that NemoClaw's "Local
 http://host.openshell.internal:11435/v1
 ```
 
-`host.openshell.internal` resolves to the same gateway IP, and the [token-gated Ollama auth proxy](#ollama-auth-proxy-did-not-start) binds port `11435` there and forwards requests to `127.0.0.1:11434` on the host. Docker Desktop WSL routes reach host loopback directly and do not use this proxy. Native Docker Engine inside WSL is unqualified; enable Docker Desktop WSL integration instead of configuring the proxy URL manually. If you need a different host service exposed to the sandbox, route it through the OpenShell gateway rather than relying on `host.docker.internal`. Refer to issue [#3136](https://github.com/NVIDIA/NemoClaw/issues/3136).
+`host.openshell.internal` resolves to the same gateway IP, and the [token-gated Ollama auth proxy](#ollama-auth-proxy-did-not-start) binds port `11435` there and forwards requests to `127.0.0.1:11434` on the host. Only an accepted Windows-host Ollama route uses direct Docker Desktop access to port `11434`; WSL-local Ollama uses the authenticated proxy even with Docker Desktop. Native Docker Engine inside WSL is unqualified; enable Docker Desktop WSL integration instead of configuring the proxy URL manually. If you need a different host service exposed to the sandbox, route it through the OpenShell gateway rather than relying on `host.docker.internal`. Refer to issue [#3136](https://github.com/NVIDIA/NemoClaw/issues/3136).
 
 ### Local inference health check resolves to IPv6
 
@@ -2805,7 +2809,10 @@ docker info
 
 ### Windows-host Ollama is installed but not shown during onboarding
 
-When NemoClaw runs inside WSL, it checks both the Windows-host Ollama HTTP endpoint and the Windows `ollama.exe` process. If Ollama is installed but the daemon is not reachable through `host.docker.internal:11434`, the wizard should still offer a start or restart action.
+When NemoClaw runs inside WSL, it checks the Windows-host Ollama HTTP endpoint, the Windows `ollama.exe` process, the listener address, and HTTP `Host` validation.
+It reuses the Windows route only when the listener is loopback-only, Docker Desktop can reach it, and an untrusted `Host` value receives `403`.
+The route also requires `DOCKER_HOST` to be unset and Docker to use its local `default` context.
+If Ollama is installed but does not pass those checks, the wizard should still offer a restart action and the WSL-local install.
 
 If the Windows-host option does not appear, confirm that PowerShell interop is enabled in WSL and that Windows can locate Ollama:
 
@@ -2813,7 +2820,12 @@ If the Windows-host option does not appear, confirm that PowerShell interop is e
 powershell.exe -NoProfile -Command "Get-Process ollama -ErrorAction SilentlyContinue"
 ```
 
-If the process is missing, start Ollama from Windows and rerun onboarding. If the process exists but the endpoint is unreachable, use the restart action when the wizard offers it, or restart Ollama from Windows with `OLLAMA_HOST=0.0.0.0:11434`.
+If the process is missing, start Ollama from Windows and rerun onboarding.
+If the process exists but the endpoint is unprotected or unreachable, use the restart action when the wizard offers it.
+The action sets `OLLAMA_HOST=127.0.0.1:11434` and verifies that an untrusted `Host` value is rejected.
+If Docker Desktop cannot reach that protected route, choose WSL-local Ollama.
+If Docker uses another context or `DOCKER_HOST` selects an endpoint, switch to the local `default` context and unset `DOCKER_HOST`, or choose WSL-local Ollama.
+Do not set `OLLAMA_HOST=0.0.0.0:11434`.
 
 ### Ollama inference fails or hangs in WSL
 
@@ -4297,6 +4309,28 @@ Continue only when onboarding no longer reports that the Podman service or OpenS
 
 The issues below are common problems you may encounter when running Hermes through `nemohermes`. For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart).
 
+### Discord preset validation behind a proxy
+
+The Hermes Discord policy allows its virtual-environment Python interpreter and the concrete system paths to which that interpreter resolves. It does not grant Node.js or `curl` Discord egress. A Node.js or `curl` failure is therefore not proof that the Discord preset is broken.
+
+Use the Hermes virtual-environment Python runtime inside the affected sandbox for the manual REST probe:
+
+```bash
+nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c 'import urllib.error, urllib.request; u="https://discord.com/api/v10/gateway";
+try: print(urllib.request.urlopen(u, timeout=20).status)
+except urllib.error.HTTPError as error: print(error.code)'
+```
+
+To check Discord CDN egress, use the same sandbox-qualified Python runtime:
+
+```bash
+nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c 'import urllib.error, urllib.request; u="https://cdn.discordapp.com/";
+try: print(urllib.request.urlopen(u, timeout=20).status)
+except urllib.error.HTTPError as error: print(error.code)'
+```
+
+Any HTTP status means the Python process reached the endpoint; the exact status can vary by unauthenticated path. A transport error or OpenShell policy denial means the probe failed. If the REST probe works but the Discord channel is still unhealthy, inspect the gateway logs and blocked-request output with `openshell term`. Look for `gateway.discord.gg` connection or WebSocket upgrade failures instead of widening the preset.
+
 ### Hermes dashboard config did not converge
 
 `nemohermes inference set` updates the OpenShell route, registry, and `/sandbox/.hermes/config.yaml` before it refreshes the separate dashboard profile. If the dashboard profile exists but NemoClaw cannot confirm that `/sandbox/.hermes/profiles/dashboard-home/config.yaml` was updated, the command exits nonzero without printing `Inference route synced`. The committed route and main Hermes config are not rolled back.
@@ -4364,32 +4398,24 @@ Deployment verification probes the OpenAI-compatible API inside the sandbox and 
 
 ```text
 ✗ api: port forward not working (connection refused)
-  The OpenAI-compatible API on port 8642 is not reachable from the host. Run: openshell forward start --background 8642 <name>
+  The OpenAI-compatible API on port 8642 is not reachable from the host. Run: nemoclaw <name> recover
 ```
 
-Use the forward recovery below only when the in-sandbox `gateway` check passed. The output omits passing checks, so confirm that it contains no `gateway` failure. If the output contains a `gateway` failure, follow that diagnostic first. Do not restart the host forward until the in-sandbox API responds.
+Use the forward recovery below only when the in-sandbox `gateway` check passed. The output omits passing checks, so confirm that it contains no `gateway` failure. If the output contains a `gateway` failure, follow that diagnostic first.
 
-When the `gateway` check passed and only the `api` check failed, the API remains reachable inside the sandbox. Each Hermes sandbox owns an API port allocated from `8642` through `8652`, so use the port from the `api` diagnostic instead of assuming the default. First, list the active OpenShell port forwards:
+When the `gateway` check passed and only the `api` check failed, the API remains reachable inside the sandbox. Restore the receipt-owned host forward through NemoClaw:
 
 ```bash
-openshell forward list
+nemoclaw <name> recover
 ```
 
-If no row owns the API port, start its port forward:
-
-```bash
-openshell forward start --background <port> <name>
-```
-
-Continue only when the command exits with status `0`. If the command reports that the port is in use, follow [Port Already in Use](#port-already-in-use) immediately. Replace that section's example port `18789` with the API port from the `api` diagnostic. Apply its process-ownership, service-manager, and active-work conditions before you stop a listener. Do not run the health probe after `openshell forward start` fails.
-
-After `openshell forward start` exits with status `0`, probe the health endpoint:
+Then probe the allocated API port from the diagnostic:
 
 ```bash
 curl -sS -o /dev/null -w '%{http_code}\n' --max-time 3 http://127.0.0.1:<port>/health
 ```
 
-An HTTP status of `200` or `401` means the host port forward is reachable. Any other status, `000`, or connection failure requires fresh diagnostics. Rerun `$$nemoclaw onboard` and follow the reported `gateway` or `api` failure.
+An HTTP status of `200` or `401` means the managed host forward is reachable. Any other status, `000`, or connection failure requires fresh diagnostics. Run `$$nemoclaw <name> status`, then follow the reported gateway or ForwardTcp ownership guidance. Do not create a separate `openshell forward start` process for a NemoClaw-managed port.
 
 ### `docker port` shows no mapping for 8642 even though forwarding works
 

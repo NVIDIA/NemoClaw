@@ -288,9 +288,7 @@ function rejectNonOpenclawAgent(
   proc.stderr.write(
     `  Hermes exposes an OpenAI-compatible API on port ${apiPort} inside the sandbox;\n`,
   );
-  proc.stderr.write(
-    `  forward it with 'openshell forward start --background ${apiPort} ${sandboxName}'\n`,
-  );
+  proc.stderr.write(`  restore its managed host forward with 'nemoclaw ${sandboxName} recover'\n`);
   proc.stderr.write(`  and POST to http://127.0.0.1:${apiPort}/v1/chat/completions instead.\n`);
   return proc.exit(2);
 }

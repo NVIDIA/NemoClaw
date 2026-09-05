@@ -8,7 +8,6 @@ import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebu
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import {
   agentDefs,
-  agentForwardStop,
   agentOnboard,
   agentRuntime,
   buildContextFingerprint,
@@ -19,6 +18,7 @@ import {
   dockerImage,
   dockerInspect,
   gatewayDrift,
+  forwardRecovery,
   gatewayRuntime,
   gatewayState,
   gatewayTeardownAuthority,
@@ -336,7 +336,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .spyOn(rebuildFlowHelpers, "warnUnpreservedUserManagedFiles")
     .mockImplementation(() => undefined);
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
-  vi.spyOn(agentForwardStop, "settleAgentForwardPortsForRebuild").mockReturnValue(true);
+  vi.spyOn(forwardRecovery, "teardownSandboxDashboardForward").mockReturnValue(true);
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
   const sessionAgentName =
     overrides.sessionAgentName === undefined ? agentName : overrides.sessionAgentName;
@@ -571,7 +571,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     detected: false,
     sessions: [],
   });
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockImplementation(() => {
+  vi.spyOn(sandboxVersion, "checkAgentVersion").mockImplementation((...args: unknown[]) => {
+    const options = args[1] as { forceProbe?: boolean } | undefined;
+    if (options?.forceProbe) {
+      const expectedVersion = overrides.versionCheck?.expectedVersion ?? "0.2.0";
+      return {
+        expectedVersion,
+        sandboxVersion: expectedVersion,
+        isStale: false,
+        verificationFailed: false,
+        detectionMethod: "ssh-exec",
+      };
+    }
     Object.assign(currentSandboxEntry, overrides.entryUpdatesAfterVersionCheck ?? {});
     return (
       overrides.versionCheck ?? {

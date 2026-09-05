@@ -278,8 +278,13 @@ describe("initial sandbox policy real preset merge", () => {
 
     const discordBinaries =
       policy.network_policies?.discord?.binaries?.map((binary) => binary.path) ?? [];
-    expect(discordBinaries).toContain("/usr/bin/python3*");
-    expect(discordBinaries).toContain("/opt/hermes/.venv/bin/python");
+    expect(discordBinaries).toEqual([
+      "/opt/hermes/.venv/bin/python3",
+      "/opt/hermes/.venv/bin/python",
+      "/usr/bin/python3",
+      "/usr/bin/python3.13",
+    ]);
+    expect(discordBinaries).not.toContain("/usr/bin/python3*");
     expect(discordBinaries).not.toContain("/usr/bin/node");
 
     const boundProviders =

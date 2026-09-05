@@ -547,6 +547,8 @@ export type RuntimeProviderPreflightDoctorSurface = RuntimeProviderSupportedSurf
 export type RuntimeProviderGatewaySurface = RuntimeProviderSupportedSurface<{
   readonly launcher: RuntimeProviderGatewayLauncher;
   readonly inspectLegacyContainer: boolean;
+  /** Explicit authority to replace standard Docker host readiness during admission. */
+  readonly ownsHostReadiness: boolean;
   prepareHostRuntime(
     input: RuntimeProviderGatewayHostRuntimeInput,
   ): RuntimeProviderGatewayHostRuntime;

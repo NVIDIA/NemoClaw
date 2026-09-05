@@ -2,16 +2,43 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { AsyncResource } from "node:async_hooks";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  resolveCurrentUserModelRouterLockStateDir,
+  resolveModelRouterPortLifecycleLockOptions,
   withGatewayRouteMutationLock,
   withGatewayRouteMutationLockSync,
+  withModelRouterPortLifecycleLock,
 } from "./gateway-route-mutation-lock";
 
+function observeNextLockPublicationAttempt(): { attempted: Promise<void>; restore: () => void } {
+  let reportAttempted!: () => void;
+  const attempted = new Promise<void>((resolve) => {
+    reportAttempted = resolve;
+  });
+  const link = fsSync.promises.link.bind(fsSync.promises);
+  const spy = vi.spyOn(fsSync.promises, "link").mockImplementation(async (existingPath, newPath) => {
+    reportAttempted();
+    await link(existingPath, newPath);
+  });
+  return { attempted, restore: () => spy.mockRestore() };
+}
+
 describe("gateway route mutation lock", () => {
+  it("resolves default and overridden router lock directories without filesystem access", () => {
+    const homeDir = "/srv/nemoclaw-controller";
+    const expectedStateDir = path.join(homeDir, ".nemoclaw", "state");
+    expect(resolveCurrentUserModelRouterLockStateDir(homeDir)).toBe(expectedStateDir);
+    expect(resolveModelRouterPortLifecycleLockOptions({}, homeDir).stateDir).toBe(expectedStateDir);
+    expect(
+      resolveModelRouterPortLifecycleLockOptions({ stateDir: "/isolated" }, homeDir).stateDir,
+    ).toBe("/isolated");
+  });
+
   it("serializes separate operations for the same gateway", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-gateway-lock-"));
     let releaseFirst!: () => void;
@@ -24,8 +51,11 @@ describe("gateway route mutation lock", () => {
     });
     const events: string[] = [];
     const options = { stateDir, pollIntervalMs: 1, timeoutMs: 5_000 };
+    let first: Promise<void> | undefined;
+    let second: Promise<void> | undefined;
+    let restorePublication = (): void => {};
     try {
-      const first = withGatewayRouteMutationLock(
+      first = withGatewayRouteMutationLock(
         "nemoclaw",
         async () => {
           events.push("first-enter");
@@ -36,20 +66,26 @@ describe("gateway route mutation lock", () => {
         options,
       );
       await firstEntered;
-      const second = withGatewayRouteMutationLock(
+      const publication = observeNextLockPublicationAttempt();
+      restorePublication = publication.restore;
+      second = withGatewayRouteMutationLock(
         "nemoclaw",
         () => {
           events.push("second-enter");
         },
         options,
       );
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await publication.attempted;
+      restorePublication();
+      restorePublication = (): void => {};
       expect(events).toEqual(["first-enter"]);
       releaseFirst();
       await Promise.all([first, second]);
       expect(events).toEqual(["first-enter", "first-exit", "second-enter"]);
     } finally {
+      restorePublication();
       releaseFirst();
+      await Promise.allSettled([first, second].filter((value): value is Promise<void> => Boolean(value)));
       await fs.rm(stateDir, { recursive: true, force: true });
     }
   });
@@ -116,9 +152,8 @@ describe("gateway route mutation lock", () => {
     }
   });
 
-  it("keeps cross-gateway router onboarding publication ahead of teardown", async () => {
-    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-router-port-lock-"));
-    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+  it("serializes router lifecycle operations for the same port", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-router-port-lock-"));
     let publishPeer!: () => void;
     const peerPublished = new Promise<void>((resolve) => {
       publishPeer = resolve;
@@ -128,12 +163,12 @@ describe("gateway route mutation lock", () => {
       reportOnboardEntered = resolve;
     });
     const events: string[] = [];
-    const options = { pollIntervalMs: 1, timeoutMs: 5_000 };
+    const options = { stateDir, pollIntervalMs: 1, timeoutMs: 5_000 };
+    let onboarding: Promise<void> | undefined;
+    let teardown: Promise<void> | undefined;
+    let restorePublication = (): void => {};
     try {
-      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
-      vi.resetModules();
-      const firstGateway = await import("./gateway-route-mutation-lock");
-      const onboarding = firstGateway.withModelRouterPortLifecycleLock(
+      onboarding = withModelRouterPortLifecycleLock(
         4000,
         async () => {
           events.push("onboard-enter");
@@ -144,10 +179,9 @@ describe("gateway route mutation lock", () => {
         options,
       );
       await onboardEntered;
-      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18081");
-      vi.resetModules();
-      const secondGateway = await import("./gateway-route-mutation-lock");
-      const teardown = secondGateway.withModelRouterPortLifecycleLock(
+      const publication = observeNextLockPublicationAttempt();
+      restorePublication = publication.restore;
+      teardown = withModelRouterPortLifecycleLock(
         4000,
         () => {
           events.push("teardown-peer-scan");
@@ -155,16 +189,20 @@ describe("gateway route mutation lock", () => {
         options,
       );
 
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await publication.attempted;
+      restorePublication();
+      restorePublication = (): void => {};
       expect(events).toEqual(["onboard-enter"]);
       publishPeer();
       await Promise.all([onboarding, teardown]);
       expect(events).toEqual(["onboard-enter", "peer-published", "teardown-peer-scan"]);
     } finally {
+      restorePublication();
       publishPeer();
-      vi.unstubAllEnvs();
-      homedirSpy.mockRestore();
-      await fs.rm(homeDir, { recursive: true, force: true });
+      await Promise.allSettled(
+        [onboarding, teardown].filter((value): value is Promise<void> => Boolean(value)),
+      );
+      await fs.rm(stateDir, { recursive: true, force: true });
     }
   });
 });

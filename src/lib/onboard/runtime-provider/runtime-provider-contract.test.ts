@@ -629,6 +629,31 @@ describe("RuntimeProviderBundle registry contract", () => {
     ).toThrow(/duplicate operation identities/u);
   });
 
+  it("requires an explicit boolean gateway readiness owner", () => {
+    const bundle = mxcBundle();
+    const { ownsHostReadiness: _ownsHostReadiness, ...gatewayWithoutReadinessOwner } =
+      bundle.gateway;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["mxc", replaceSurface(bundle, "gateway", gatewayWithoutReadinessOwner)],
+      ]),
+    ).toThrow(/gateway\.ownsHostReadiness must be a boolean/u);
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "gateway", {
+            ...bundle.gateway,
+            ownsHostReadiness: "true",
+          }),
+        ],
+      ]),
+    ).toThrow(/gateway\.ownsHostReadiness must be a boolean/u);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.gateway.ownsHostReadiness).toBe(false);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.gateway.ownsHostReadiness).toBe(true);
+  });
+
   it("rejects an unsupported host-local-inference capability with an actionable provider error", () => {
     const bundle = mxcBundle();
 

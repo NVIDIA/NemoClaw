@@ -164,6 +164,7 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
       "alpha",
       [detached],
       [scrubbed],
+      undefined,
     );
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.onboardSpy).not.toHaveBeenCalled();
