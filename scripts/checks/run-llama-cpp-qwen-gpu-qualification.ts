@@ -337,7 +337,17 @@ export async function runQwenGpuQualification(): Promise<void> {
                   `docker logs failed with status ${String(logs.status)}: ${logs.stderr.slice(-4_000)}`,
                 );
               }
-              return `${logs.stdout}\n${logs.stderr}`;
+              const combined = `${logs.stdout}\n${logs.stderr}`;
+              writeJson(canonicalArtifactRoot, "offload-runtime-diagnostics.json", {
+                stderrBytes: Buffer.byteLength(logs.stderr),
+                stdoutBytes: Buffer.byteLength(logs.stdout),
+                candidateLines: combined
+                  .split("\n")
+                  .filter((line) => /offload|layers?\s+to\s+GPU/iu.test(line))
+                  .slice(-32)
+                  .map((line) => line.slice(-512)),
+              });
+              return combined;
             })(),
             setting.modelFile.sizeBytes,
           );

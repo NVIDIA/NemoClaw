@@ -189,18 +189,26 @@ export function validateQwenGpuProcessEvidence(
   if (matchingApplications.length !== 1) {
     throw new Error("Qwen llama-server is not the exact NVIDIA compute process");
   }
+  const ansiControlSequence = new RegExp(`${String.fromCodePoint(27)}\\[[0-?]*[ -/]*[@-~]`, "gu");
+  const normalizedRuntimeLogs = runtimeLogs.replace(ansiControlSequence, "");
   const offloadMatches = [
-    ...runtimeLogs.matchAll(/offloaded\s+([1-9][0-9]*)\s*\/\s*([1-9][0-9]*)\s+layers to GPU/giu),
+    ...normalizedRuntimeLogs.matchAll(
+      /offloaded\s+([1-9][0-9]*)\s*\/\s*([1-9][0-9]*)\s+layers to GPU/giu,
+    ),
   ];
   const explicitOffload = offloadMatches.at(-1);
+  if (!explicitOffload) {
+    throw new Error("Qwen llama-server did not emit an all-layer GPU-offload runtime signal");
+  }
   const offloadedLayerCount = Number(explicitOffload?.[1]);
   const totalLayerCount = Number(explicitOffload?.[2]);
-  if (
-    !Number.isSafeInteger(offloadedLayerCount) ||
-    !Number.isSafeInteger(totalLayerCount) ||
-    offloadedLayerCount !== totalLayerCount
-  ) {
-    throw new Error("Qwen llama-server did not report every model layer offloaded to the GPU");
+  if (!Number.isSafeInteger(offloadedLayerCount) || !Number.isSafeInteger(totalLayerCount)) {
+    throw new Error("Qwen llama-server emitted a malformed GPU-offload runtime signal");
+  }
+  if (offloadedLayerCount !== totalLayerCount) {
+    throw new Error(
+      `Qwen llama-server reported partial GPU offload: ${String(offloadedLayerCount)}/${String(totalLayerCount)} layers`,
+    );
   }
   const processName = matchingApplications[0]?.[1] ?? "";
   const usedGpuMemoryMiB = Number(matchingApplications[0]?.[2]);

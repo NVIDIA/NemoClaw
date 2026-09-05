@@ -134,12 +134,20 @@ describe("Qwen llama.cpp RTX qualification plan", () => {
         "load_tensors: offloaded 40/41 layers to GPU\n",
         modelSizeBytes,
       ),
-    ).toThrow("did not report every model layer offloaded to the GPU");
+    ).toThrow("reported partial GPU offload: 40/41 layers");
+    expect(() =>
+      validateQwenGpuProcessEvidence(
+        "PID COMMAND\n123 llama-server\n",
+        "123, /usr/local/bin/llama-server, 16000\n",
+        "load_tensors: no GPU offload summary available\n",
+        modelSizeBytes,
+      ),
+    ).toThrow("did not emit an all-layer GPU-offload runtime signal");
     expect(
       validateQwenGpuProcessEvidence(
         "PID COMMAND\n123 llama-server\n",
         "123, /usr/local/bin/llama-server, 16000\n",
-        "llama_model_loader: offloaded 41/41 layers to GPU\n",
+        "llama_model_loader: \u001b[32moffloaded 41/41 layers to GPU\u001b[0m\n",
         modelSizeBytes,
       ).offloadRuntimeSignal,
     ).toBe("offloaded 41/41 layers to GPU");
