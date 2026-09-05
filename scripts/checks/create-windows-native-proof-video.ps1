@@ -515,14 +515,22 @@ try {
         -not $consoleTranscriptText.Contains(
             '[PASS] Installed nemoclaw command created an MXC sandbox and completed an exact CHAT_OK turn'
         ) -or
-        -not $consoleTranscriptText.Contains('WEB UI> TURN 1 PASS NATIVE_WINDOWS_TURN_1_OK') -or
-        -not $consoleTranscriptText.Contains('WEB UI> TURN 2 PASS NATIVE_WINDOWS_TURN_2_OK') -or
-        -not $consoleTranscriptText.Contains('WEB UI> TURN 3 PASS NATIVE_WINDOWS_TURN_3_OK') -or
-        -not $consoleTranscriptText.Contains('PI> TURN 3 PASS NATIVE_PI_TURN_3_OK') -or
-        -not $consoleTranscriptText.Contains('HERMES> TURN 3 PASS NATIVE_HERMES_TURN_3_OK') -or
-        -not $consoleTranscriptText.Contains('DEEP AGENTS> TURN 3 PASS NATIVE_DEEP_AGENTS_TURN_3_OK') -or
-        -not $consoleTranscriptText.Contains('NEMOCUA> TURN 3 PASS NATIVE_NEMOCUA_TURN_3_OK')) {
-        $captureFailures.Add('The recorded console did not show every installed native agent turn.')
+        -not $consoleTranscriptText.Contains(
+            '[PASS] Graphical onboarding selected OpenClaw and completed three exact Control UI agent turns'
+        ) -or
+        -not $consoleTranscriptText.Contains(
+            '[PASS] Installed Pi completed three real terminal agent turns inside native MXC'
+        ) -or
+        -not $consoleTranscriptText.Contains(
+            '[PASS] Installed Hermes completed three real terminal agent turns inside native MXC'
+        ) -or
+        -not $consoleTranscriptText.Contains(
+            '[PASS] Installed Deep Agents Code completed three real terminal agent turns inside native MXC'
+        ) -or
+        -not $consoleTranscriptText.Contains(
+            '[PASS] Installed NemoCUA completed three real model-driven browser actions inside native MXC'
+        )) {
+        $captureFailures.Add('The recorded console did not show every installed native agent qualification result.')
     }
 
     if ($installerWindowFrameCount -lt 4) {
@@ -776,11 +784,12 @@ public static class NemoClawConsoleVideoEncoder
     } else {
         $null
     }
-    $installedWebUiTurns = @(@(
-        $consoleTranscriptText.Contains('WEB UI> TURN 1 PASS NATIVE_WINDOWS_TURN_1_OK'),
-        $consoleTranscriptText.Contains('WEB UI> TURN 2 PASS NATIVE_WINDOWS_TURN_2_OK'),
-        $consoleTranscriptText.Contains('WEB UI> TURN 3 PASS NATIVE_WINDOWS_TURN_3_OK')
-    ) | Where-Object { $_ }).Count
+    $installedWebUiTurns = if ($null -ne $recordedQualification -and
+        $recordedQualification.webUi.verdict -ceq 'pass') {
+        @($recordedQualification.webUi.turns).Count
+    } else {
+        0
+    }
     $receipt = [pscustomobject]@{
         schemaVersion = 3
         classification = 'native-windows-candidate-preview-actual-window-recording'
