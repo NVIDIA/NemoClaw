@@ -4,7 +4,7 @@
 import fs, { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Import source directly so tests cannot pass against a stale build.
 import { OLLAMA_MODEL_REGISTRY } from "./ollama-model-registry";
@@ -61,7 +61,6 @@ import {
   probeLocalProviderHealth,
   probeOllamaAuthProxyHealth,
   QWEN3_6_OLLAMA_MODEL,
-  resetOllamaContainerPortCache,
   resetOllamaHostCache,
   setResolvedOllamaHost,
   validateLocalProvider,
@@ -72,6 +71,11 @@ describe("local inference helpers", () => {
   const originalSandboxHostUrl = process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV];
   const originalPath = process.env.PATH;
   let fakeDockerDir: string | null = null;
+
+  beforeEach(() => {
+    vi.stubEnv("DOCKER_CONTEXT", "default");
+    vi.stubEnv("DOCKER_HOST", "");
+  });
 
   beforeAll(() => {
     fakeDockerDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-docker-"));
@@ -90,7 +94,6 @@ describe("local inference helpers", () => {
     );
     chmodSync(fakeDockerPath, 0o755);
     process.env.PATH = `${fakeDockerDir}${path.delimiter}${originalPath ?? ""}`;
-    resetOllamaContainerPortCache();
   });
 
   afterAll(() => {
@@ -102,7 +105,6 @@ describe("local inference helpers", () => {
     if (fakeDockerDir) {
       rmSync(fakeDockerDir, { recursive: true, force: true });
     }
-    resetOllamaContainerPortCache();
   });
 
   afterEach(() => {
@@ -129,6 +131,26 @@ describe("local inference helpers", () => {
     });
   });
 
+  it("bounds an unavailable WSL networking-mode probe and keeps the conservative route", () => {
+    const stateRoot = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-wsl-mode-"));
+    const capture = vi.fn<NonNullable<Parameters<typeof findReachableOllamaHost>[0]>>(
+      (command) =>
+        command.includes("http://127.0.0.1:11434/api/tags")
+          ? JSON.stringify({ models: [] })
+          : "",
+    );
+
+    try {
+      expect(findReachableOllamaHost(capture, { isWsl: true }, stateRoot)).toBe(OLLAMA_LOCALHOST);
+      expect(capture).toHaveBeenCalledWith(["wslinfo", "--networking-mode"], {
+        ignoreError: true,
+        timeout: 5_000,
+      });
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
   it("enables retries for missing structured tool calls only when Ollama tool calls are required (#8714)", () => {
     expect(buildOllamaProbeOptions(false)).toMatchObject({
       requireChatCompletionsToolCalling: true,
@@ -151,34 +173,6 @@ describe("local inference helpers", () => {
       "--max-time",
       "5",
       "http://host.docker.internal:11434/api/tags",
-    ]);
-  });
-
-  it("probes WSL loopback before Windows-host Ollama", () => {
-    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
-    const commands: string[][] = [];
-    const endpoints: string[] = [];
-
-    const host = findReachableOllamaHost(
-      (command) => {
-        commands.push([...command]);
-        const endpoint = command.at(-1) ?? "";
-        endpoints.push(endpoint);
-        return endpoint.includes("host.docker.internal") ? "ollama" : "";
-      },
-      // Pin the WSL decision: isWsl answers false off Linux before it reads
-      // WSL_DISTRO_NAME, so the stub above cannot reach the WSL candidate order.
-      { isWsl: true },
-    );
-
-    expect(host).toBe("host.docker.internal");
-    expect(endpoints).toEqual([
-      "http://127.0.0.1:11434/api/tags",
-      "http://host.docker.internal:11434/api/tags",
-    ]);
-    expect(commands.map((command) => command.slice(2, 6))).toEqual([
-      ["--connect-timeout", "3", "--max-time", "5"],
-      ["--connect-timeout", "3", "--max-time", "5"],
     ]);
   });
 
@@ -334,7 +328,7 @@ describe("local inference helpers", () => {
     expect(result.message).toMatch(/not an Ollama networking failure/);
     expect(result.message).not.toMatch(/Docker container reachability check failed/);
     expect(result.message).not.toMatch(/sandbox uses a different network path/);
-    expect(result.diagnostic).toMatch(/DOCKER_CONFIG=\$\(mktemp -d\) docker pull curlimages\/curl/);
+    expect(result.diagnostic).toContain(CONTAINER_REACHABILITY_IMAGE);
     expect(result.diagnostic).toMatch(/credential helper/);
     expect(result.diagnostic).toMatch(/onboard --resume/);
   });
@@ -353,7 +347,7 @@ describe("local inference helpers", () => {
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/Docker image-pull failure/);
     expect(result.message).toMatch(/not a vLLM networking failure/);
-    expect(result.diagnostic).toMatch(/docker pull curlimages\/curl/);
+    expect(result.diagnostic).toContain(`docker pull ${CONTAINER_REACHABILITY_IMAGE}`);
   });
 
   it("keeps the runtime-failure report when the probe image is present locally (#9308)", () => {
@@ -943,16 +937,6 @@ describe("local inference helpers", () => {
     expect(parseOllamaList("NAME ID SIZE MODIFIED\n\n")).toEqual([]);
   });
 
-  it("returns no models when the Windows host reports an empty inventory", () => {
-    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const { capture, calls } = makeOllamaCapture([
-      { match: /\/api\/tags/, output: JSON.stringify({ models: [] }) },
-    ]);
-    expect(getOllamaModelOptions(capture)).toEqual([]);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].join(" ")).toContain(`http://${OLLAMA_HOST_DOCKER_INTERNAL}:11434/api/tags`);
-  });
-
   it("falls back to `ollama list` on loopback when /api/tags is empty", () => {
     setResolvedOllamaHost(OLLAMA_LOCALHOST);
     const { capture, calls } = makeOllamaCapture([
@@ -965,44 +949,6 @@ describe("local inference helpers", () => {
     ]);
     expect(getOllamaModelOptions(capture)).toEqual(["llama3.2:3b"]);
     expect(calls.some((argv) => argv.includes("list"))).toBe(true);
-  });
-
-  it("returns parsed tags without calling the loopback CLI", () => {
-    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const { capture, calls } = makeOllamaCapture([
-      {
-        match: /\/api\/tags/,
-        output: JSON.stringify({ models: [{ name: "qwen3.5:9b" }, { name: "gemma2:9b" }] }),
-      },
-    ]);
-    expect(getOllamaModelOptions(capture)).toEqual(["qwen3.5:9b", "gemma2:9b"]);
-    expect(calls).toHaveLength(1);
-  });
-
-  it("retries an invalid Windows-host inventory before returning installed models (#10259)", () => {
-    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const outputs = [
-      "",
-      "<html>proxy response</html>",
-      JSON.stringify({ models: [{ name: "qwen3.5:9b" }] }),
-    ];
-    const capture = vi.fn(() => outputs.shift() ?? "");
-    const sleeps: number[] = [];
-    const models = getOllamaModelOptions(capture, (milliseconds) => sleeps.push(milliseconds));
-    expect(models).toEqual(["qwen3.5:9b"]);
-    expect(capture).toHaveBeenCalledTimes(3);
-    expect(sleeps).toEqual([500, 1_000]);
-  });
-
-  it("rejects an invalid Windows-host inventory after bounded retries (#10259)", () => {
-    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const capture = vi.fn(() => "");
-    const sleeps: number[] = [];
-    expect(() =>
-      getOllamaModelOptions(capture, (milliseconds) => sleeps.push(milliseconds)),
-    ).toThrow(/Could not read Ollama models from host\.docker\.internal:11434 after 3 attempts/);
-    expect(capture).toHaveBeenCalledTimes(3);
-    expect(sleeps).toEqual([500, 1_000]);
   });
 
   it("prefers the default ollama model when present", () => {
@@ -1215,7 +1161,8 @@ describe("local inference helpers", () => {
   it("builds a background warmup command for ollama models", () => {
     const command = getOllamaWarmupCommand("nemotron-3-nano:30b");
     expect(command).toEqual(expect.arrayContaining(["bash", "-c"]));
-    expect(command[2]).toMatch(/^nohup curl -s http:\/\/127.0.0.1:11434\/api\/generate /);
+    expect(command[2]).toContain("'--connect-timeout' '10' '--max-time' '120'");
+    expect(command[2]).toContain("http://127.0.0.1:11434/api/generate");
     expect(command[2]).toMatch(/"model":"nemotron-3-nano:30b"/);
     expect(command[2]).toMatch(/"keep_alive":"15m"/);
   });
@@ -1226,7 +1173,7 @@ describe("local inference helpers", () => {
     const probe1 = getOllamaProbeCommand("qwen3.5:9b", 30, "5m");
     expect(probe1).toContain("--max-time");
     expect(probe1).toContain("30");
-    const payload1 = probe1[probe1.length - 1];
+    const payload1 = probe1[probe1.indexOf("-d") + 1];
     expect(payload1).toMatch(/"keep_alive":"5m"/);
   });
 
@@ -1237,7 +1184,7 @@ describe("local inference helpers", () => {
     expect(command).toContain("--max-time");
     expect(command).toContain("120");
     expect(command).toContain("http://127.0.0.1:11434/api/generate");
-    const payload = command[command.length - 1];
+    const payload = command[command.indexOf("-d") + 1];
     expect(payload).toMatch(/"model":"nemotron-3-nano:30b"/);
   });
 

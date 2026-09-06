@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+interface:
+  display_name: "NemoClaw CI Failure Classification"
+  short_description: "Classify a failed NemoClaw CI job"
+  default_prompt: "Use $nemoclaw-maintainer-classify-ci-failure to classify this failed GitHub Actions job from bounded evidence."

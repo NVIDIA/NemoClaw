@@ -93,6 +93,7 @@ describe("Docker managed bootstrap restart recovery", () => {
           sourcePhase: null,
           sandbox: authority().handle.sandbox,
           code: "legacy-agent-required",
+          blockingScope: "sandbox",
           retryable: true,
           detail: expect.stringContaining(OLD_ID),
         },
@@ -155,6 +156,7 @@ describe("Docker managed bootstrap restart recovery", () => {
           bootstrapIdentity: IDENTITY,
           sourcePhase: "owner-cleanup-required",
           code: "owner-cleanup-required",
+          blockingScope: "sandbox",
           retryable: true,
         },
       ],
@@ -282,6 +284,7 @@ describe("Docker managed bootstrap restart recovery", () => {
         {
           sourcePhase: "owner-cleanup-required",
           code: "commit-state-indeterminate",
+          blockingScope: "sandbox",
           retryable: true,
         },
       ],
@@ -339,6 +342,7 @@ describe("Docker managed bootstrap restart recovery", () => {
         {
           sourcePhase: "shared-state-committed",
           code: "durable-cleanup-pending",
+          blockingScope: "sandbox",
           retryable: true,
         },
       ],

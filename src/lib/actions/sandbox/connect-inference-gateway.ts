@@ -7,8 +7,18 @@ import {
   isAdvisoryProviderModelRouteConflict,
 } from "../../inference/gateway-route-compatibility";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
+import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+
+/** Identify the legacy cluster gateway without branching on managed provider IDs. */
+export function sandboxUsesLegacyClusterGateway(sandbox: SandboxEntry | null): boolean {
+  const driver = sandbox?.openshellDriver;
+  if (!driver) return true;
+  const provider = resolveRegisteredRuntimeProvider(driver);
+  if (provider) return provider.gateway.launcher !== "nemoclaw";
+  return driver !== "vm";
+}
 
 function sandboxGatewayRouteCompatibility(
   sandboxName: string,

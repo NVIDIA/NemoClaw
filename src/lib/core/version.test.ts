@@ -6,7 +6,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { getBuildIdentity, getVersion, validateBuildIdentity } from "./version";
+import {
+  getBuildIdentity,
+  getVersion,
+  resolveSourceBuildIdentity,
+  validateBuildIdentity,
+} from "./version";
 
 const repoRoot = join(import.meta.dirname, "..", "..", "..");
 
@@ -112,6 +117,18 @@ describe("lib/version", () => {
 
     expect(getVersion({ rootDir: testDir })).toBe(identity.nemoclawVersion);
     expect(getBuildIdentity({ rootDir: testDir })).toEqual(identity);
+  });
+
+  it("preserves an exact compiled identity when rebuilding the same source revision", () => {
+    const identity = {
+      nemoclawVersion: "0.0.113-195-ga52f16721",
+      sourceRevision: `a52f16721${"5".repeat(31)}`,
+    };
+    mkdirSync(join(testDir, "dist"));
+    writeFileSync(join(testDir, "dist", "build-identity.json"), JSON.stringify(identity));
+    writeFileSync(join(testDir, ".source-revision"), identity.sourceRevision);
+
+    expect(resolveSourceBuildIdentity({ rootDir: testDir })).toEqual(identity);
   });
 
   it("rejects a described version whose revision does not match (#7777)", () => {

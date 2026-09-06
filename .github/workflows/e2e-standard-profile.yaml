@@ -12,6 +12,15 @@ on:
       candidate_sha:
         required: true
         type: string
+      runtime_provider:
+        required: true
+        type: string
+      execution_id:
+        required: true
+        type: string
+      coverage_variant:
+        required: true
+        type: string
       risk_signal_expected_sha:
         required: true
         type: string
@@ -21,13 +30,13 @@ on:
       cli_artifact_provenance:
         required: true
         type: string
+      managed_image_catalog:
+        required: true
+        type: string
       managed_image_revision:
         required: true
         type: string
       managed_image_receipt:
-        required: true
-        type: string
-      managed_image_catalog:
         required: true
         type: string
       workload_source:
@@ -115,6 +124,7 @@ jobs:
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
       E2E_JOB: "1"
+      E2E_EXECUTION_ID: ${{ inputs.execution_id }}
       E2E_MANAGED_IMAGE_REVISION: ${{ inputs.managed_image_revision }}
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ inputs.managed_image_catalog }}
       E2E_WORKLOAD_SOURCE: ${{ inputs.workload_source }}
@@ -135,13 +145,16 @@ jobs:
           CANDIDATE_REPOSITORY: ${{ inputs.candidate_repository }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           CATALOGUE_ID: ${{ inputs.catalogue_id }}
+          COVERAGE_VARIANT: ${{ inputs.coverage_variant }}
           ENV: /dev/null
+          EXECUTION_ID: ${{ inputs.execution_id }}
           GITHUB_WORKSPACE_VALUE: ${{ github.workspace }}
           HOST_PACKAGES: ${{ inputs.host_packages }}
           HOST_PREPARATION: ${{ inputs.host_preparation }}
           INSTALL_MODE: ${{ inputs.install_mode }}
           LC_ALL: C
           SHARD: ${{ inputs.shard }}
+          RUNTIME_PROVIDER: ${{ inputs.runtime_provider }}
           TARGET_ID: ${{ inputs.target_id }}
           TEST_FILE: ${{ inputs.test_file }}
         run: |
@@ -151,6 +164,10 @@ jobs:
             exit 1
           }
           [[ "$CATALOGUE_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "catalogue ID"
+          [[ "$COVERAGE_VARIANT" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "coverage variant"
+          [[ "$EXECUTION_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "execution ID"
+          [[ "$EXECUTION_ID" == "${CATALOGUE_ID}-${COVERAGE_VARIANT}" ]] || fail "execution identity"
+          [[ "$RUNTIME_PROVIDER" == "docker" || "$RUNTIME_PROVIDER" == "podman" || "$RUNTIME_PROVIDER" == "none" ]] || fail "runtime provider"
           [[ "$TARGET_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "target ID"
           [[ "$SHARD" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "shard"
           [[ "$CANDIDATE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "candidate repository"
@@ -164,9 +181,8 @@ jobs:
             fail "flat shard layout requires a named shard"
           fi
           artifact_directory="e2e-artifacts/live/${TARGET_ID}"
-          upload_name="e2e-${TARGET_ID}"
+          upload_name="e2e-${EXECUTION_ID}"
           if [[ "$SHARD" != "default" ]]; then
-            upload_name="${upload_name}-${SHARD}"
             if [[ "$ARTIFACT_LAYOUT" == "flat-shard" ]]; then
               artifact_directory="${artifact_directory}-${SHARD}"
             else
@@ -177,6 +193,9 @@ jobs:
           printf 'upload_name=%s\n' "$upload_name" >>"$GITHUB_OUTPUT"
           printf 'E2E_ARTIFACT_DIR=%s/%s\n' "$GITHUB_WORKSPACE_VALUE" "$artifact_directory" >>"$GITHUB_ENV"
           printf 'NEMOCLAW_E2E_SHARD=%s\n' "$SHARD" >>"$GITHUB_ENV"
+          if [[ "$RUNTIME_PROVIDER" != "none" ]]; then
+            printf 'NEMOCLAW_GATEWAY_RUNTIME=%s\n' "$RUNTIME_PROVIDER" >>"$GITHUB_ENV"
+          fi
 
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
@@ -401,9 +420,40 @@ jobs:
 
       - name: Restore exact-commit CLI artifact
         if: ${{ inputs.restore_cli }}
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
         with:
           provenance-json: ${{ inputs.cli_artifact_provenance }}
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        with:
+          enabled: ${{ inputs.runtime_provider == 'podman' && 'true' || 'false' }}
+
+      - name: Stage immutable stopped-state cleanup helper
+        if: ${{ inputs.target_id == 'channels-stop-start' && (inputs.runtime_provider == 'docker' || inputs.runtime_provider == 'podman') }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          CLEANUP_IMAGE: node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c
+          RUNTIME_PROVIDER: ${{ inputs.runtime_provider }}
+        run: |
+          set -euo pipefail
+          case "$RUNTIME_PROVIDER" in
+            docker)
+              docker image inspect "$CLEANUP_IMAGE" >/dev/null 2>&1 || docker pull "$CLEANUP_IMAGE"
+              ;;
+            podman)
+              [[ -S "${OPENSHELL_PODMAN_SOCKET:?}" ]]
+              [[ -f "${DOCKER_CONFIG:?}/config.json" ]]
+              podman --url "unix://$OPENSHELL_PODMAN_SOCKET" image inspect "$CLEANUP_IMAGE" \
+                >/dev/null 2>&1 || \
+                podman --url "unix://$OPENSHELL_PODMAN_SOCKET" pull \
+                  --authfile "$DOCKER_CONFIG/config.json" "$CLEANUP_IMAGE"
+              ;;
+            *)
+              echo "::error::Unsupported managed runtime provider '$RUNTIME_PROVIDER'" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Install reviewed cloudflared
         if: ${{ inputs.cloudflared }}
@@ -593,9 +643,12 @@ jobs:
           ARTIFACT_DIRECTORY: ${{ steps.execution_plan.outputs.artifact_directory }}
           CANDIDATE_REPOSITORY: ${{ inputs.candidate_repository }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          COVERAGE_VARIANT: ${{ inputs.coverage_variant }}
+          EXECUTION_ID: ${{ inputs.execution_id }}
           JOB_STATUS: ${{ job.status }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
+          RUNTIME_PROVIDER: ${{ inputs.runtime_provider }}
           TARGET_ID: ${{ inputs.target_id }}
           WORKFLOW_REPOSITORY: ${{ github.repository }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
@@ -603,6 +656,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$TARGET_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || { echo "::error::E2E target ID is invalid" >&2; exit 1; }
+          [[ "$COVERAGE_VARIANT" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && "$EXECUTION_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || { echo "::error::E2E execution identity is invalid" >&2; exit 1; }
+          [[ "$RUNTIME_PROVIDER" == "docker" || "$RUNTIME_PROVIDER" == "podman" || "$RUNTIME_PROVIDER" == "none" ]] || { echo "::error::E2E runtime provider is invalid" >&2; exit 1; }
           [[ "$CANDIDATE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::candidate repository is invalid" >&2; exit 1; }
           [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::E2E evidence requires exact commit SHAs" >&2; exit 1; }
           [[ "$RUN_ID" =~ ^[1-9][0-9]*$ && "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || { echo "::error::E2E workflow run identity is invalid" >&2; exit 1; }
@@ -618,9 +673,12 @@ jobs:
             --arg artifactDirectory "$ARTIFACT_DIRECTORY" \
             --arg candidateRepository "$CANDIDATE_REPOSITORY" \
             --arg candidateSha "$CANDIDATE_SHA" \
+            --arg coverageVariant "$COVERAGE_VARIANT" \
+            --arg executionId "$EXECUTION_ID" \
             --arg jobStatus "$JOB_STATUS" \
             --arg runAttempt "$RUN_ATTEMPT" \
             --arg runId "$RUN_ID" \
+            --arg runtimeProvider "$RUNTIME_PROVIDER" \
             --arg targetId "$TARGET_ID" \
             --arg workflowRepository "$WORKFLOW_REPOSITORY" \
             --arg workflowSha "$WORKFLOW_SHA" \
@@ -628,6 +686,9 @@ jobs:
             '{
               kind: "nemoclaw-e2e-evidence-v1",
               targetId: $targetId,
+              executionId: $executionId,
+              coverageVariant: $coverageVariant,
+              runtimeProvider: $runtimeProvider,
               candidate: {repository: $candidateRepository, sha: $candidateSha},
               workflow: {
                 repository: $workflowRepository,

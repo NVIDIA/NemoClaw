@@ -3,7 +3,7 @@
 
 import { CLI_NAME } from "../cli/branding";
 import type { ConfigObject } from "../security/credential-filter";
-import type { ShieldsAuditEntry } from "../shields/audit";
+import type { OperationalAuditEntry } from "../state/audit/operational";
 import { type InferenceApi, readOpenClawPrimaryRouteApi } from "./inference-route-api";
 import { InferenceSetError } from "./inference-set-error";
 import {
@@ -34,7 +34,10 @@ export type InferenceSetOpenClawPairingFailureLayer =
 
 export type InferenceSetOpenClawPairingResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly failureLayer: InferenceSetOpenClawPairingFailureLayer };
+  | {
+      readonly ok: false;
+      readonly failureLayer: InferenceSetOpenClawPairingFailureLayer;
+    };
 
 export type InferenceSetOpenClawPairingDeps = {
   observePairing: (
@@ -107,7 +110,7 @@ export function settleInferenceSetOpenClawPairing(
 }
 
 export interface InferenceGatewayRestartDeps {
-  appendAuditEntry: (entry: ShieldsAuditEntry) => void;
+  appendAuditEntry: (entry: OperationalAuditEntry) => void;
   log: (message: string) => void;
   restartSandboxGateway: (sandboxName: string) => GatewayRestartResult;
   settleOpenClawPairing: (
@@ -136,7 +139,10 @@ export interface InferenceMutation<T extends InferenceResultForGateway> {
   openClawGatewayRestartRequired: boolean;
   openClawPairing:
     | { readonly state: "not-required" }
-    | { readonly state: "required"; readonly target: InferenceSetOpenClawPairingTarget }
+    | {
+        readonly state: "required";
+        readonly target: InferenceSetOpenClawPairingTarget;
+      }
     | { readonly state: "target-unavailable" };
 }
 
@@ -168,7 +174,7 @@ export function readPreviousOpenClawInferenceApi(
 
 function appendPostCommitInferenceAudit(
   deps: Pick<InferenceGatewayRestartDeps, "appendAuditEntry" | "log">,
-  entry: ShieldsAuditEntry,
+  entry: OperationalAuditEntry,
 ): void {
   try {
     deps.appendAuditEntry(entry);
@@ -203,7 +209,7 @@ export function finalizeInferenceMutation<T extends InferenceResultForGateway>(
   const openClawPairingConvergenceRequired =
     agentName === "openclaw" && configChanged && result.inSandboxConfigSynced;
 
-  const auditEntry: ShieldsAuditEntry = {
+  const auditEntry: OperationalAuditEntry = {
     action: "inference_set",
     sandbox: result.sandboxName,
     timestamp: new Date().toISOString(),

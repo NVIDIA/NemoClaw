@@ -39,12 +39,6 @@ export const securityCoverageThresholds = {
     branches: 65,
     statements: 80,
   },
-  "src/lib/shields/transition-lock.ts": {
-    lines: 70,
-    functions: 60,
-    branches: 60,
-    statements: 65,
-  },
   "src/lib/state/mcp-lifecycle-lock-{acquisition,identity,storage}.ts": {
     lines: 60,
     functions: 75,

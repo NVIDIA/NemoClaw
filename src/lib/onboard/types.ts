@@ -132,12 +132,16 @@ export type OnboardOptions = {
     "prompt" | "sandboxName"
   >;
   authoritativeResumeConfig?: boolean;
+  /** Internal permission granted only by a validated prepared-backup rebuild. */
+  allowRemovedImmutabilityStateRecord?: true;
   /** Internal endpoint provenance preserved across an authoritative rebuild. */
   endpointSource?: import("../inference/selection").InferenceEndpointSource | null;
   /** Internal authoritative rebuild target; never exposed as a public CLI option. */
   targetGatewayName?: string | null;
   /** Internal authoritative rebuild target; must match targetGatewayName. */
   targetGatewayPort?: number | null;
+  /** Exact OpenShell client target frozen by the outer rebuild transaction. */
+  runtimeSelection?: import("../adapters/openshell/runtime-selection").OpenShellRuntimeSelection;
   /** Internal rebuild handoff: the outer destructive lifecycle owns the onboard lock. */
   onboardLockAlreadyHeld?: boolean;
   /** Internal command handoff: propagate an exit request after onboarding restores its scopes. */
@@ -152,7 +156,7 @@ export type OnboardOptions = {
   rebuildProviderReconfigure?: import("./rebuild-route-handoff").RebuildProviderReconfigureHandoff;
   /** Internal one-shot authority to recover the recorded provider during a locked rebuild resume. */
   providerRecoveryReceipt?: import("./rebuild-route-handoff").ProviderRecoveryReceipt;
-  /** Internal rebuild handoff for a recorded managed-vLLM N1x preview selection. */
+  /** Internal rebuild handoff for a recorded provider admitted by Deferred N1x readiness. */
   allowDeferredN1xManagedVllm?: true;
   /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;

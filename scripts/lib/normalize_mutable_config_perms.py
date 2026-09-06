@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import array
-import errno
 import grp
 import hashlib
 import os
@@ -811,60 +810,6 @@ def cleanup_staged_file(
         os.close(temp_fd)
 
 
-def locked_nemoclaw_sealed_tree_matches(
-    config_dir: str,
-    parent_fd: int,
-    parent_metadata: os.stat_result,
-    root_fd: int,
-    root_metadata: os.stat_result,
-    config_name: str,
-    target_fd: int,
-    target_metadata: os.stat_result,
-) -> bool:
-    """Recognize the pinned shields-up topology where the cache is immutable."""
-
-    if os.geteuid() == 0 or not sys.platform.startswith("linux"):
-        return False
-    try:
-        sandbox_gid = grp.getgrnam("sandbox").gr_gid
-        normalized = os.path.normpath(config_dir)
-        current_parent = os.stat(
-            os.path.dirname(normalized), follow_symlinks=False
-        )
-        current_root = os.stat(
-            config_name, dir_fd=parent_fd, follow_symlinks=False
-        )
-        current_target = os.stat(
-            LEGACY_UPDATE_CHECK_NAME,
-            dir_fd=root_fd,
-            follow_symlinks=False,
-        )
-        current_opened = os.fstat(target_fd)
-        return (
-            stat.S_ISDIR(parent_metadata.st_mode)
-            and parent_metadata.st_uid == 0
-            and parent_metadata.st_gid == sandbox_gid
-            and stat.S_IMODE(parent_metadata.st_mode) == 0o1775
-            and stat.S_ISDIR(root_metadata.st_mode)
-            and root_metadata.st_uid == 0
-            and root_metadata.st_gid == 0
-            and stat.S_IMODE(root_metadata.st_mode) == 0o755
-            and parent_metadata.st_dev == root_metadata.st_dev
-            and root_metadata.st_dev == target_metadata.st_dev
-            and stable_file_key(current_parent)
-            == stable_file_key(parent_metadata)
-            and stable_file_key(current_root) == stable_file_key(root_metadata)
-            and stable_file_key(current_opened)
-            == stable_file_key(target_metadata)
-            and stable_file_key(current_target)
-            == stable_file_key(target_metadata)
-            and fd_mount_id(parent_fd) == fd_mount_id(root_fd)
-            and fd_mount_id(root_fd) == fd_mount_id(target_fd)
-        )
-    except (KeyError, OSError, UnsafeTree):
-        return False
-
-
 def remove_legacy_update_check(config_dir: str) -> int:
     """Remove only a stable regular legacy update-check cache file."""
 
@@ -930,29 +875,7 @@ def remove_legacy_update_check(config_dir: str) -> int:
         ):
             raise UnsafeTree()
 
-        try:
-            os.unlink(LEGACY_UPDATE_CHECK_NAME, dir_fd=root_fd)
-        except PermissionError as exc:
-            if exc.errno not in (errno.EACCES, errno.EPERM) or not (
-                locked_nemoclaw_sealed_tree_matches(
-                    config_dir,
-                    parent_fd,
-                    parent_metadata,
-                    root_fd,
-                    root_metadata,
-                    config_name,
-                    target_fd,
-                    opened,
-                )
-            ):
-                raise
-            print(
-                f"[migration] Retained protected legacy "
-                f"{config_dir}/{LEGACY_UPDATE_CHECK_NAME}; "
-                "the patched OpenClaw runtime ignores this pinned-version cache",
-                file=sys.stderr,
-            )
-            return 0
+        os.unlink(LEGACY_UPDATE_CHECK_NAME, dir_fd=root_fd)
         os.fsync(root_fd)
 
         try:

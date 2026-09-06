@@ -235,6 +235,15 @@ try:
 
     try:
         plugin_fd = os.open("openclaw-weixin", directory_flags, dir_fd=root_fd)
+    except FileNotFoundError:
+        # Offline channel cleanup deliberately removes the complete managed
+        # WeChat tree before the channel is removed and rebuilt.  With no tree
+        # there is no placeholder-bearing file to refresh; keep it absent.
+        raise SystemExit(0)
+    except OSError:
+        fail("the managed account directory is missing or unsafe")
+
+    try:
         accounts_fd = os.open("accounts", directory_flags, dir_fd=plugin_fd)
     except OSError:
         fail("the managed account directory is missing or unsafe")

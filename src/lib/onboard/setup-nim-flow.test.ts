@@ -1155,7 +1155,10 @@ describe("createSetupNim", () => {
 
     expect(error).toHaveBeenCalledWith(expect.stringContaining("requires managed vLLM"));
     expect(error).toHaveBeenCalledWith(expect.stringContaining("localhost:8000"));
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Stop the existing server"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("only if no other gateway or distributed deployment uses it"),
+    );
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("NEMOCLAW_VLLM_PORT"));
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining("NEMOCLAW_PROVIDER=install-vllm"),
     );
@@ -1479,7 +1482,10 @@ describe("createSetupNim", () => {
 
     expect(prompt).toHaveBeenCalledTimes(2);
     expect(selectFromNumberedMenu).toHaveBeenCalledTimes(2);
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("stop the existing server"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("only if no other gateway or distributed deployment uses it"),
+    );
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("NEMOCLAW_VLLM_PORT"));
     expect(installVllm).not.toHaveBeenCalled();
     expect(handleVllmSelection).not.toHaveBeenCalled();
     expect(handleRemoteProviderSelection).toHaveBeenCalledOnce();

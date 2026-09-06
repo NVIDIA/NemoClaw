@@ -18,7 +18,8 @@ vi.mock("./adapters/openshell/gateway-drift", () => ({
   detectOpenShellStateRpcResultIssue: mocks.detectResultIssue,
   printOpenShellStateRpcIssue: mocks.printIssue,
 }));
-vi.mock("./adapters/openshell/runtime", () => ({
+vi.mock("./adapters/openshell/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./adapters/openshell/runtime")>()),
   captureOpenshell: mocks.captureOpenshell,
 }));
 vi.mock("./gateway-runtime-action", () => ({

@@ -20,7 +20,7 @@ Before you start, verify that your machine has the software and hardware needed 
 | Disk     | 20 GB free     | 40 GB free       |
 
 The sandbox image is approximately 2.4 GB compressed.
-During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline.
+During image push, the selected container runtime, k3s, and the OpenShell gateway run alongside the export pipeline.
 The pipeline buffers decompressed layers in memory.
 On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer.
 If you cannot add memory, configure at least 8 GB of swap to work around the issue at the cost of slower performance.
@@ -33,14 +33,21 @@ If you cannot add memory, configure at least 8 GB of swap to work around the iss
 | npm        | 10 or later |
 | SHA-256 tool | `sha256sum` or `shasum`, required only when the installer must install or upgrade Node.js through nvm |
 | Python     | Python 3 at a trusted system location, with POSIX descriptor-relative filesystem support |
-| Docker     | Docker Engine, Docker Desktop, or Colima on a tested platform |
+| Container runtime | Docker Engine, Docker Desktop, or Colima on a tested platform (default), or native rootless Podman on qualified Linux |
 | Platform   | Refer to [Platforms](#platforms) below |
 
-On Linux, the installer checks Docker before it installs the NemoClaw CLI.
+Docker is the default runtime provider and the primary onboarding path.
+On Linux, the installer checks Docker before it installs the NemoClaw CLI unless you explicitly select native rootless Podman with `NEMOCLAW_GATEWAY_RUNTIME=podman`.
 The installer can install Docker, start the Docker service, and add your user to the `docker` group.
 When Docker is missing, the installer downloads Docker's official convenience script, prompts for `sudo`, and starts the service when systemd is available.
 In a non-interactive run, the installer can reactivate the group through `sg docker` and continue onboarding.
 If that path is unavailable or does not restore Docker access, the installer exits with `newgrp docker` guidance before it starts onboarding.
+
+Native rootless Podman is an explicit Linux path and does not require the Docker CLI or daemon.
+Start standard onboarding with `NEMOCLAW_GATEWAY_RUNTIME=podman $$nemoclaw onboard`.
+Before selecting it, review its qualified host requirements and limitations in [Platform Support](../reference/platform-support#deployment-paths) and the [Podman troubleshooting guide](../reference/troubleshooting#podman).
+Managed local vLLM install/start remains Docker-backed and is unavailable when Docker is absent; attaching an already-running local vLLM server remains a separate path.
+The portable experimental profile is separate and still requires a Docker-compatible `docker` command.
 
 NemoClaw uses an isolated `python3` helper for descriptor-relative migration snapshot sanitization and deletion.
 NemoClaw does not resolve this credential-bearing helper through the host `PATH`.
@@ -52,8 +59,8 @@ Native Windows is not a supported execution path; use WSL.
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
 The installer also requires `strings` from `binutils` to verify the OpenShell binary before it continues with OpenShell install work.
 
-<Warning title="Docker Group Access">
-NemoClaw needs Docker access.
+<Warning title="Docker Group Access (Default Docker Path)">
+The default Docker runtime path needs Docker access.
 On personal Linux development machines, adding your user to the `docker` group is the standard way to run Docker without sudo.
 Members of the `docker` group can control the daemon with root-level impact.
 Grant this access only to trusted local accounts.
@@ -99,6 +106,7 @@ The following table lists platforms with a documented installation path.
 A Tested with limitations row applies only to the configuration in its notes.
 The table comes from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoClaw/blob/main/ci/platform-matrix.json), the single source of truth kept in sync by CI and QA.
 
+<!-- markdownlint-disable MD037 MD058 -->
 {/* platform-matrix:begin */}
 | OS | Container runtime | Status | Notes |
 |----|-------------------|--------|-------|
@@ -111,6 +119,7 @@ The table comes from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoC
 
 For the complete platform support matrix, including all deferred platforms and CI coverage, refer to [Platform Support](../reference/platform-support).
 {/* platform-matrix:end */}
+<!-- markdownlint-enable MD037 MD058 -->
 
 ## Additional Setup
 

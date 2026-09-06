@@ -225,9 +225,6 @@ describe("writeTimedOutAgentTurnFailure", () => {
     expect(written).toContain(
       "'my-assistant' config set --key <deadline-key> --value <seconds> --restart",
     );
-    // Writing the config fails while shields are up, so the order is part of
-    // the guidance rather than a detail the reader has to discover.
-    expect(written.indexOf("shields down")).toBeLessThan(written.indexOf("config set"));
   });
 
   it("names both deadlines instead of offering --timeout as the fix (#8723)", () => {

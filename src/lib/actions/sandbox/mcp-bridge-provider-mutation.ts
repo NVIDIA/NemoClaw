@@ -16,18 +16,20 @@
  */
 
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
+import { endpointlessProviderProfilePath } from "../../adapters/openshell/provider-profile";
 import {
   checkOpenAiInferenceProviderProfile,
-  endpointlessProviderProfilePath,
-  ensureEndpointlessProviderProfile,
-} from "../../adapters/openshell/provider-profile";
+  registerCheckedInProviderProfile,
+} from "../../adapters/openshell/provider-profile-registration";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
+import { reportsExactProviderNotFound } from "../../adapters/openshell/provider-diagnostic-cli";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError, type ParsedEnvReference } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
 import {
   inspectMcpProvider,
   MCP_BRIDGE_PROVIDER_TYPE,
+  type McpProviderInspectionRuntimeSelection,
   type McpProviderInspection,
   providerMatchesCredential,
   providerMatchesManagedCredential,
@@ -67,32 +69,40 @@ export {
  * removalCondition: remove this import when the minimum supported OpenShell
  * release classifies the `openai` inference credential as gateway-only itself.
  */
-function ensureOpenAiGatewayProviderProfile(): void {
+function ensureOpenAiGatewayProviderProfile(
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): void {
   const result = checkOpenAiInferenceProviderProfile({
     runOpenshell: (args, options) =>
-      runOpenshellProviderCommand(args, options) as OpenShellCommandResult,
+      runOpenshellProviderCommand(args, {
+        ...options,
+        runtimeSelection,
+      }) as OpenShellCommandResult,
   });
   if (result.ok) return;
   throw new McpBridgeError(result.messages.join("\n"));
 }
 
 /** Ensure the endpointless profile required by OpenShell static credential binding. */
-export function ensureMcpBridgeProviderProfile(): void {
-  ensureOpenAiGatewayProviderProfile();
-  const result = ensureEndpointlessProviderProfile({
-    profileId: MCP_BRIDGE_PROVIDER_TYPE,
-    inferenceCapable: false,
+export function ensureMcpBridgeProviderProfile(
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): void {
+  ensureOpenAiGatewayProviderProfile(runtimeSelection);
+  const result = registerCheckedInProviderProfile({
     profilePath: endpointlessProviderProfilePath(REPOSITORY_ROOT, MCP_BRIDGE_PROVIDER_TYPE),
     runOpenshell: (args, options) =>
-      runOpenshellProviderCommand(args, options) as OpenShellCommandResult,
+      runOpenshellProviderCommand(args, {
+        ...options,
+        runtimeSelection,
+      }) as OpenShellCommandResult,
   });
   if (result.ok) return;
-  if (result.reason === "import-failed") {
+  if (result.operation === "import") {
     throw new McpBridgeError(
       `Could not import OpenShell provider profile '${MCP_BRIDGE_PROVIDER_TYPE}'.`,
     );
   }
-  if (result.reason === "export-failed") {
+  if (!(result.error.kind === "command" && result.error.reason === "profile_incompatible")) {
     throw new McpBridgeError(
       `OpenShell provider profile '${MCP_BRIDGE_PROVIDER_TYPE}' could not be exported for validation. Refusing to attach MCP credentials to it.`,
     );
@@ -130,6 +140,7 @@ export function upsertMcpProvider(
     expectedProviderId?: string;
     requireExisting?: boolean;
     prepareMutation?: (action: "create" | "update") => void;
+    runtimeSelection: McpProviderInspectionRuntimeSelection;
   },
 ): {
   action: "created" | "updated" | "reused" | "none";
@@ -149,7 +160,7 @@ export function upsertMcpProvider(
     };
   }
   const envValues = resolveCredentialEnv(env);
-  const inspection = inspectMcpProvider(providerName);
+  const inspection = inspectMcpProvider(providerName, options.runtimeSelection);
   if (inspection.exists === null) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect OpenShell provider '${providerName}'.`,
@@ -202,7 +213,7 @@ export function upsertMcpProvider(
   // removalCondition: use native immutable provider IDs or caller-supplied CAS
   // once OpenShell exposes them, then remove this inspect-mutate-inspect
   // compensation.
-  const beforeMutation = inspectMcpProvider(providerName);
+  const beforeMutation = inspectMcpProvider(providerName, options.runtimeSelection);
   if (action === "create" && beforeMutation.exists !== false) {
     const detail =
       beforeMutation.exists === null
@@ -225,6 +236,7 @@ export function upsertMcpProvider(
     {
       ignoreError: true,
       env: envValues,
+      runtimeSelection: options.runtimeSelection,
       stdio: ["ignore", "pipe", "pipe"],
     },
   ) as OpenShellCommandResult;
@@ -236,7 +248,7 @@ export function upsertMcpProvider(
       commandOutput(result, envValues) || `Failed to ${action} MCP provider '${providerName}'.`,
     );
   }
-  const after = inspectMcpProvider(providerName);
+  const after = inspectMcpProvider(providerName, options.runtimeSelection);
   if (after.exists !== true || !after.id) {
     throw new McpBridgeError(
       after.error ??
@@ -263,14 +275,17 @@ export function upsertMcpProvider(
  * revision without reading or rotating the stored credential, giving the
  * sidecar a post-policy generation to synchronize.
  */
-export function refreshMcpProviderEnvironment(entry: McpBridgeEntry): McpProviderInspection {
+export function refreshMcpProviderEnvironment(
+  entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): McpProviderInspection {
   assertPersistedAuthenticatedBridgeEntry(entry);
   if (!entry.providerName || !entry.providerId) {
     throw new McpBridgeError(
       `MCP server '${entry.server}' has no stable OpenShell provider identity for credential synchronization.`,
     );
   }
-  const before = inspectMcpProvider(entry.providerName);
+  const before = inspectMcpProvider(entry.providerName, runtimeSelection);
   if (!providerMatchesCredential(before, entry.env[0], entry.providerId)) {
     throw new McpBridgeError(
       `OpenShell provider '${entry.providerName}' changed before credential synchronization. ${providerShapeDetail(before, entry.env[0], entry.providerId)} Refusing to mutate it.`,
@@ -278,6 +293,7 @@ export function refreshMcpProviderEnvironment(entry: McpBridgeEntry): McpProvide
   }
   const result = runOpenshellProviderCommand(["provider", "update", entry.providerName], {
     ignoreError: true,
+    runtimeSelection,
     stdio: ["ignore", "pipe", "pipe"],
   }) as OpenShellCommandResult;
   if (result.status !== 0) {
@@ -286,7 +302,7 @@ export function refreshMcpProviderEnvironment(entry: McpBridgeEntry): McpProvide
         `Failed to synchronize MCP provider '${entry.providerName}' after policy binding.`,
     );
   }
-  const after = inspectMcpProvider(entry.providerName);
+  const after = inspectMcpProvider(entry.providerName, runtimeSelection);
   if (
     !providerMatchesCredential(after, entry.env[0], entry.providerId) ||
     !after.resourceVersion ||
@@ -301,7 +317,12 @@ export function refreshMcpProviderEnvironment(entry: McpBridgeEntry): McpProvide
 
 function inspectMcpProviderForDeletion(
   entry: McpBridgeEntry,
-  options: { allowLegacyGeneric?: boolean; allowMissing?: boolean; bestEffort?: boolean } = {},
+  options: {
+    allowLegacyGeneric?: boolean;
+    allowMissing?: boolean;
+    bestEffort?: boolean;
+    runtimeSelection: McpProviderInspectionRuntimeSelection;
+  },
 ): McpProviderInspection | null {
   if (!entry.providerName) return null;
   try {
@@ -311,7 +332,7 @@ function inspectMcpProviderForDeletion(
         `MCP server '${entry.server}' has no stable OpenShell provider ID. Refusing to delete same-name provider '${entry.providerName}'.`,
       );
     }
-    const inspection = inspectMcpProvider(entry.providerName);
+    const inspection = inspectMcpProvider(entry.providerName, options.runtimeSelection);
     if (inspection.exists === false) {
       if (options.allowMissing) return inspection;
       throw new McpBridgeError(
@@ -336,23 +357,35 @@ function inspectMcpProviderForDeletion(
 
 export function deleteProvider(
   entry: McpBridgeEntry,
-  options: { allowLegacyGeneric?: boolean; allowMissing?: boolean; bestEffort?: boolean } = {},
+  options: {
+    allowLegacyGeneric?: boolean;
+    allowMissing?: boolean;
+    bestEffort?: boolean;
+    runtimeSelection: McpProviderInspectionRuntimeSelection;
+  },
 ): void {
   if (!entry.providerName) return;
   const inspection = inspectMcpProviderForDeletion(entry, options);
   if (!inspection?.exists || !inspection.id || !inspection.resourceVersion) return;
   const result = runOpenshellProviderCommand(["provider", "delete", entry.providerName], {
     ignoreError: true,
+    runtimeSelection: options.runtimeSelection,
     stdio: ["ignore", "pipe", "pipe"],
     suppressOutput: true,
   } as Record<string, unknown>) as OpenShellCommandResult;
   if (result.status !== 0) {
     const output = commandOutput(result);
-    if (options.allowMissing && /not\s+found|NotFound/i.test(output)) return;
+    if (
+      options.allowMissing &&
+      result.status === 1 &&
+      reportsExactProviderNotFound(output, entry.providerName, output.length)
+    ) {
+      return;
+    }
     if (options.bestEffort) return;
     throw new McpBridgeError(output || `Failed to delete MCP provider '${entry.providerName}'.`);
   }
-  const after = inspectMcpProvider(entry.providerName);
+  const after = inspectMcpProvider(entry.providerName, options.runtimeSelection);
   if (after.exists !== false && !options.bestEffort) {
     throw new McpBridgeError(
       after.error ?? `OpenShell provider '${entry.providerName}' still exists after delete.`,

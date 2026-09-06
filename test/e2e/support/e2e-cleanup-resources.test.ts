@@ -174,22 +174,22 @@ describe("cleanup resources", () => {
     });
   });
 
-  it("reports failed shields restoration before continuing sandbox cleanup", async () => {
+  it("reports a failed dependent cleanup before continuing primary cleanup", async () => {
     const calls: string[] = [];
     const cleanup = new CleanupRegistry();
-    cleanup.trackDisposable("destroy shields sandbox", () => {
+    cleanup.trackDisposable("destroy sandbox", () => {
       calls.push("destroy");
     });
-    cleanup.trackDisposable("restore shields before destroy", () => {
+    cleanup.trackDisposable("stop gateway before destroy", () => {
       calls.push("restore");
-      throw new Error("shields up exited 1");
+      throw new Error("gateway stop exited 1");
     });
 
     const result = await cleanup.runAll();
     expect(calls).toEqual(["restore", "destroy"]);
     expect(result).toEqual({
-      passed: ["destroy shields sandbox"],
-      failures: [{ name: "restore shields before destroy", message: "shields up exited 1" }],
+      passed: ["destroy sandbox"],
+      failures: [{ name: "stop gateway before destroy", message: "gateway stop exited 1" }],
     });
   });
 

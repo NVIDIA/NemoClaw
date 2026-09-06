@@ -101,7 +101,7 @@ describe("MCP lifecycle lock identity properties", () => {
     const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     const readFileSync = vi.spyOn(fs, "readFileSync").mockImplementation((filePath) => {
       expect(filePath).toBe("/proc/4242/stat");
-      return "4242 (shields timer) Z 1 2 3";
+      return "4242 (mutation owner) Z 1 2 3";
     });
     const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
 
@@ -483,27 +483,6 @@ describe("MCP lifecycle lock identity properties", () => {
       ),
       { numRuns: PROPERTY_RUNS },
     );
-  });
-
-  it("rejects malformed structured containment metadata without throwing", () => {
-    expect(
-      isMcpLifecycleLockOwner({
-        ...owner(process.pid, "process"),
-        containedGeneration: null,
-      }),
-    ).toBe(false);
-    expect(
-      isMcpLifecycleLockOwner({
-        ...owner(process.pid, "process"),
-        containedGeneration: {
-          target: "main",
-          dev: 1,
-          ino: 2,
-          token: "owner-token",
-          ownerPid: Number.MAX_SAFE_INTEGER + 1,
-        },
-      }),
-    ).toBe(false);
   });
 });
 

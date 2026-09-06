@@ -12,6 +12,7 @@
 
 import { DEFAULT_CONTEXT_WINDOW } from "./config";
 import {
+  createOllamaApiCaptureEx,
   getLocalProviderHealthEndpoint,
   getManagedVllmProviderBinding,
   getOllamaProbeCommand,
@@ -44,6 +45,7 @@ const defaultContextWindowDeps: ContextWindowDeps = {
     // Lazy require: ../runner is CJS and a top-level require fails to resolve
     // under the test runner. Runs only for the real (non-injected) deps.
     const { runCaptureEx } = require("../runner") as { runCaptureEx: RunCaptureExFn };
+    const captureEx = createOllamaApiCaptureEx(runCaptureEx);
     console.log(`  Priming Ollama model: ${model}`);
     // Blocking probe, the command onboarding also waits for. A backgrounded
     // warm-up returns before the daemon has the model resident, and `/api/ps`
@@ -51,8 +53,8 @@ const defaultContextWindowDeps: ContextWindowDeps = {
     // model can exceed the 120 s default on unified-memory and tight-VRAM
     // hosts, so retry once at 300 s as onboarding does.
     // A connection-refused result keeps `timedOut` false and skips the retry.
-    if (runCaptureEx(getOllamaProbeCommand(model)).timedOut) {
-      runCaptureEx(getOllamaProbeCommand(model, 300));
+    if (captureEx(getOllamaProbeCommand(model)).timedOut) {
+      captureEx(getOllamaProbeCommand(model, 300));
     }
   },
   // currentContextWindow = null → always probe (we recompute on every switch

@@ -99,6 +99,12 @@ function enforceDockerGpuPatchPreserveNetwork(
   return impl(...args);
 }
 
+function reverifySandboxBridgeGatewayReachability(port?: number): Promise<void> {
+  const { verifySandboxBridgeGatewayReachableOrExit } =
+    require("./gateway-sandbox-reachability") as typeof import("./gateway-sandbox-reachability");
+  return verifySandboxBridgeGatewayReachableOrExit(true, { skip: false, port });
+}
+
 function patchStagedDockerfile(
   ...args: Parameters<PatchStagedDockerfile>
 ): ReturnType<PatchStagedDockerfile> {
@@ -181,6 +187,7 @@ export async function prepareSandboxDockerfilePatch({
       selectedRoute: selectedGpuRoute,
       gatewayPort,
       log,
+      reverifyBridgeReachability: () => reverifySandboxBridgeGatewayReachability(gatewayPort),
     },
   );
   const darwinVmCompat = false;

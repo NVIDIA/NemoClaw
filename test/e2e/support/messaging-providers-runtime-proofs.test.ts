@@ -11,8 +11,9 @@ import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
-import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { applyFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
+import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import {
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
@@ -27,8 +28,9 @@ import {
 } from "../live/messaging-providers-helpers.ts";
 import {
   parseInstalledSlackProof,
-  SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
+  SLACK_RUNTIME_DISCOVERY_SOURCE,
 } from "../live/messaging-providers-slack-runtime-proof.ts";
+import { resolveInstalledTelegramRuntimePath } from "../live/messaging-providers-telegram-runtime-proof.ts";
 import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-runtime-proof.ts";
 
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
@@ -72,6 +74,22 @@ function successfulCommand(stdout = "") {
 
 function failedCommand(stderr: string) {
   return { ...successfulCommand(), exitCode: 1, stderr };
+}
+
+function fakeEndpointPolicy(
+  port: number,
+  protocol: "rest" | "websocket",
+  binaries: readonly string[],
+): string {
+  return JSON.stringify({
+    version: 1,
+    network_policies: {
+      fixture: {
+        endpoints: [{ host: "host.openshell.internal", port, protocol }],
+        binaries: binaries.map((binaryPath) => ({ path: binaryPath })),
+      },
+    },
+  });
 }
 
 function optionValues(args: string[], option: string): string[] {
@@ -128,6 +146,7 @@ function fakeDockerInspect(
     missingProxyControl?: MissingProxyControl;
     proxyEnvironment: readonly string[];
     publishedAddress?: string;
+    runtimeProviderId: "docker" | "podman";
   },
 ): string {
   const [apiRun, proxyRun] = calls.filter((call) => call[0] === "run") as [string[], string[]];
@@ -137,12 +156,19 @@ function fakeDockerInspect(
   const connectedProxyNetworks = calls
     .filter((call) => call[0] === "network" && call[1] === "connect" && call[3] === proxyContainer)
     .map((call) => call[2]!);
-  const proxyNetworks = [optionValue(proxyRun, "--network"), ...connectedProxyNetworks].filter(
-    (network) => options.missingProxyControl !== "internal-network" || network !== apiNetwork,
-  );
+  const proxyNetworks = [optionValue(proxyRun, "--network"), ...connectedProxyNetworks]
+    .filter(
+      (network) => options.missingProxyControl !== "internal-network" || network !== apiNetwork,
+    )
+    .map((network) =>
+      options.runtimeProviderId === "podman" && network === "bridge" ? "podman" : network,
+    );
+  const proxyDropsAllCapabilities = options.missingProxyControl !== "--cap-drop";
+  const inspectName = (name: string): string =>
+    options.runtimeProviderId === "podman" ? name : `/${name}`;
   return JSON.stringify([
     {
-      Name: "/" + apiContainer,
+      Name: inspectName(apiContainer),
       HostConfig: {},
       NetworkSettings: {
         Networks: { [apiNetwork]: {} },
@@ -153,13 +179,31 @@ function fakeDockerInspect(
       },
     },
     {
+      BoundingCaps:
+        options.runtimeProviderId === "podman"
+          ? proxyDropsAllCapabilities
+            ? null
+            : ["CAP_CHOWN"]
+          : undefined,
       Config: {
         Env: [...optionValues(proxyRun, "-e"), ...options.proxyEnvironment],
       },
-      Name: "/" + proxyContainer,
+      EffectiveCaps:
+        options.runtimeProviderId === "podman"
+          ? proxyDropsAllCapabilities
+            ? null
+            : ["CAP_CHOWN"]
+          : undefined,
+      Name: inspectName(proxyContainer),
       HostConfig: {
         CapDrop:
-          options.missingProxyControl === "--cap-drop" ? [] : optionValues(proxyRun, "--cap-drop"),
+          options.runtimeProviderId === "podman"
+            ? proxyDropsAllCapabilities
+              ? ["CAP_CHOWN"]
+              : []
+            : proxyDropsAllCapabilities
+              ? optionValues(proxyRun, "--cap-drop")
+              : [],
         PidsLimit:
           options.missingProxyControl === "--pids-limit"
             ? undefined
@@ -203,6 +247,7 @@ function fakeDockerHost(
   const containers = new Set<string>();
   const networks = new Set<string>();
   const networkInspect = options.networkInspect ?? OPENSHELL_NETWORK_INSPECT;
+  let runtimeProviderId: "docker" | "podman" = "docker";
   let proxyRunning = options.proxyRunning !== false;
   const dockerCommand = (args: string[]) => {
     const executedArgs = [...args];
@@ -219,7 +264,15 @@ function fakeDockerHost(
               executedArgs[2] === "openshell-docker"
                 ? networkInspect
                 : JSON.stringify([
-                    { Driver: "bridge", Internal: createdNetwork?.includes("--internal") === true },
+                    runtimeProviderId === "podman"
+                      ? {
+                          driver: "bridge",
+                          internal: createdNetwork?.includes("--internal") === true,
+                        }
+                      : {
+                          Driver: "bridge",
+                          Internal: createdNetwork?.includes("--internal") === true,
+                        },
                   ]),
             );
           }
@@ -250,6 +303,7 @@ function fakeDockerHost(
                   missingProxyControl: options.missingProxyControl,
                   proxyEnvironment: options.proxyEnvironment ?? [],
                   publishedAddress: options.publishedAddress,
+                  runtimeProviderId,
                 }),
               )
             : executedArgs[2] === "{{json .State}}"
@@ -290,13 +344,16 @@ function fakeDockerHost(
       commandOptions?: { artifactName?: string },
     ) => {
       commands.push({ command, args: [...args] });
-      expect(["docker", "node"]).toContain(command);
+      expect(["docker", "node", "podman"]).toContain(command);
+      runtimeProviderId =
+        command === "podman" ? "podman" : command === "docker" ? "docker" : runtimeProviderId;
+      const runtimeArgs = command === "podman" && args[0] === "--url" ? args.slice(2) : args;
       const result =
         command === "node"
           ? options.proxyReady === false
             ? failedCommand("proxy could not reach the upstream API")
             : successfulCommand()
-          : dockerCommand(args);
+          : dockerCommand(runtimeArgs);
       const artifactNames =
         commandOptions?.artifactName === undefined ? [] : [commandOptions.artifactName];
       for (const artifactName of artifactNames) {
@@ -341,7 +398,11 @@ function expectFakeDiscordDiagnosticArtifacts(artifacts: Map<string, string>): v
   expect(artifacts.get("diagnose-fake-discord-gateway-api-logs")).toContain("api diagnostic logs");
 }
 
-function startFakeDiscordApi(host: HostCliClient, cleanup: CleanupAction[]) {
+function startFakeDiscordApi(
+  host: HostCliClient,
+  cleanup: CleanupAction[],
+  env: NodeJS.ProcessEnv = {},
+) {
   return startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
     kind: "discord-gateway",
     imageScript: "fake-discord-gateway.cjs",
@@ -350,7 +411,7 @@ function startFakeDiscordApi(host: HostCliClient, cleanup: CleanupAction[]) {
     captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
     expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: "fixture-discord-token" },
     redactionValues: ["fixture-discord-token"],
-    env: {},
+    env,
   });
 }
 
@@ -388,6 +449,157 @@ async function tcpRequest(host: string, port: number, payload: string): Promise<
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("propagates caller-selected binaries through fake policy application", async () => {
+    const commands: Array<{ command: string; args: string[] }> = [];
+    const providerName = "e2e-hermes-discord-discord-bridge";
+    const allowedBinaries = ["/opt/hermes/.venv/bin/python3", "/opt/hermes/.venv/bin/python"];
+    const host = {
+      openshellCommandPath: "/usr/local/bin/openshell",
+      command: async (command: string, args: string[]) => {
+        commands.push({ command, args });
+        return args[0] === "sandbox"
+          ? successfulCommand(providerName)
+          : args[0] === "policy" && args[1] === "get"
+            ? successfulCommand(fakeEndpointPolicy(43_117, "websocket", allowedBinaries))
+            : successfulCommand();
+      },
+    } as unknown as HostCliClient;
+
+    await applyFixtureProviderPolicyEndpoint(host, "e2e-hermes-discord", {
+      endpoint: { port: "43117" },
+      protocol: "websocket",
+      rewrite: "websocket-credential-rewrite",
+      providerName,
+      env: { DISCORD_BOT_TOKEN: "test-fixture-token" },
+      redactionValues: ["test-fixture-token"],
+      artifactName: "apply-hermes-fake-discord-gateway-policy",
+      allowedBinaries,
+    });
+
+    expect(commands).toHaveLength(4);
+    expect(commands[0]?.args).toEqual([
+      "sandbox",
+      "provider",
+      "list",
+      "-g",
+      "nemoclaw",
+      "e2e-hermes-discord",
+    ]);
+    expect(commands[1]?.args).toEqual([
+      "policy",
+      "update",
+      "e2e-hermes-discord",
+      "--add-endpoint",
+      "host.openshell.internal:43117:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
+      "--add-allow",
+      "host.openshell.internal:43117:GET:/**",
+      "--add-allow",
+      "host.openshell.internal:43117:WEBSOCKET_TEXT:/**",
+      "--binary",
+      allowedBinaries[0],
+      "--binary",
+      allowedBinaries[1],
+      "--wait",
+    ]);
+    expect(commands[2]?.args).toEqual(["policy", "get", "--base", "e2e-hermes-discord"]);
+    expect(commands[3]?.args).toEqual([
+      "policy",
+      "set",
+      "--policy",
+      expect.any(String),
+      "--wait",
+      "e2e-hermes-discord",
+    ]);
+  });
+
+  it("binds the fake Discord REST proof to Hermes Python and excludes Node", async () => {
+    const commands: Array<{ command: string; args: string[] }> = [];
+    const providerName = "e2e-hermes-discord-discord-bridge";
+    const allowedBinaries = ["/opt/hermes/.venv/bin/python"];
+    const host = {
+      openshellCommandPath: "/usr/local/bin/openshell",
+      command: async (command: string, args: string[]) => {
+        commands.push({ command, args });
+        return args[0] === "sandbox"
+          ? successfulCommand(providerName)
+          : args[0] === "policy" && args[1] === "get"
+            ? successfulCommand(fakeEndpointPolicy(43_118, "rest", allowedBinaries))
+            : successfulCommand();
+      },
+    } as unknown as HostCliClient;
+
+    await applyFixtureProviderPolicyEndpoint(host, "e2e-hermes-discord", {
+      endpoint: { port: "43118" },
+      protocol: "rest",
+      rewrite: "request-body-credential-rewrite",
+      providerName,
+      env: { DISCORD_BOT_TOKEN: "test-fixture-token" },
+      redactionValues: ["test-fixture-token"],
+      artifactName: "apply-hermes-fake-discord-rest-policy",
+      allowedBinaries,
+    });
+
+    expect(commands[0]?.args).toEqual([
+      "sandbox",
+      "provider",
+      "list",
+      "-g",
+      "nemoclaw",
+      "e2e-hermes-discord",
+    ]);
+    expect(commands[1]?.args).toEqual([
+      "policy",
+      "update",
+      "e2e-hermes-discord",
+      "--add-endpoint",
+      "host.openshell.internal:43118:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
+      "--add-allow",
+      "host.openshell.internal:43118:GET:/**",
+      "--add-allow",
+      "host.openshell.internal:43118:POST:/**",
+      "--binary",
+      allowedBinaries[0],
+      "--wait",
+    ]);
+    expect(commands[1]?.args).not.toContain("/usr/local/bin/node");
+    expect(commands[2]?.args).toEqual(["policy", "get", "--base", "e2e-hermes-discord"]);
+    expect(commands[3]?.args).toEqual([
+      "policy",
+      "set",
+      "--policy",
+      expect.any(String),
+      "--wait",
+      "e2e-hermes-discord",
+    ]);
+  });
+
+  it("rejects fake endpoint policy mutation when the provider is not attached", async () => {
+    const commands: Array<{ command: string; args: string[] }> = [];
+    const host = {
+      openshellCommandPath: "/usr/local/bin/openshell",
+      command: async (command: string, args: string[]) => {
+        commands.push({ command, args });
+        return successfulCommand("another-provider");
+      },
+    } as unknown as HostCliClient;
+
+    await expect(
+      applyFixtureProviderPolicyEndpoint(host, "e2e-hermes-discord", {
+        endpoint: { port: "43118" },
+        protocol: "rest",
+        rewrite: "request-body-credential-rewrite",
+        providerName: "e2e-hermes-discord-discord-bridge",
+        env: { DISCORD_BOT_TOKEN: "test-fixture-token" },
+        redactionValues: ["test-fixture-token"],
+        artifactName: "apply-hermes-fake-discord-rest-policy",
+        allowedBinaries: ["/opt/hermes/.venv/bin/python"],
+      }),
+    ).rejects.toThrow("is not attached to sandbox e2e-hermes-discord");
+    expect(commands.map(({ args }) => args)).toEqual([
+      ["sandbox", "provider", "list", "-g", "nemoclaw", "e2e-hermes-discord"],
+    ]);
+  });
+
   it("rejects Docker state that publishes the credential-bearing fake API", async () => {
     const { host } = fakeDockerHost({ apiPublished: true });
     const cleanup: CleanupAction[] = [];
@@ -542,6 +754,49 @@ describe("messaging provider installed-runtime proofs", () => {
       await expect(startFakeDiscordApi(host, cleanup)).rejects.toThrow(
         /Docker topology did not preserve isolation/u,
       );
+    } finally {
+      await runCleanup(cleanup);
+    }
+  });
+
+  it("publishes the isolated proxy through rootless Podman without binding its bridge gateway", async () => {
+    const { calls, host } = fakeDockerHost({ networkInspect: "[]" });
+    const cleanup: CleanupAction[] = [];
+
+    try {
+      const api = await startFakeDiscordApi(host, cleanup, {
+        NEMOCLAW_GATEWAY_RUNTIME: "podman",
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+      });
+      const proxyRun = calls.filter((args) => args[0] === "run").at(-1)!;
+      const publications = optionValues(proxyRun, "-p");
+
+      expect(publications).toContain("0.0.0.0::8080");
+      expect(publications).toContain(`0.0.0.0::${String(FAKE_API_PROXY_READINESS_PORT)}`);
+      expect(publications.some((entry) => entry.startsWith(`${OPENSHELL_BRIDGE_ADDRESS}::`))).toBe(
+        false,
+      );
+      expect(calls).not.toContainEqual(["network", "inspect", "openshell-docker"]);
+      expect(api.port).toBe("32100");
+    } finally {
+      await runCleanup(cleanup);
+    }
+  });
+
+  it("rejects effective proxy capabilities reported by rootless Podman", async () => {
+    const { host } = fakeDockerHost({
+      missingProxyControl: "--cap-drop",
+      networkInspect: "[]",
+    });
+    const cleanup: CleanupAction[] = [];
+
+    try {
+      await expect(
+        startFakeDiscordApi(host, cleanup, {
+          NEMOCLAW_GATEWAY_RUNTIME: "podman",
+          OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+        }),
+      ).rejects.toThrow(/Podman topology did not preserve isolation/u);
     } finally {
       await runCleanup(cleanup);
     }
@@ -767,6 +1022,21 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(result.stdout).toBe(source);
   });
 
+  it("can resolve installed package symlinks for runtime proofs", () => {
+    const invocation = buildSandboxNodeInvocation("process.stdout.write('ok')", {
+      artifactName: "runtime-proof-realpaths",
+      preserveSymlinks: false,
+    });
+    const shellScript = Buffer.from(invocation.slice(4).join(""), "base64").toString("utf8");
+
+    expect(shellScript).not.toContain("--preserve-symlinks");
+    expect(shellScript).toContain("node '/tmp/nemoclaw-runtime-proof-realpaths.mjs'");
+    const [command, ...args] = invocation;
+    const result = spawnSync(command, args, { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("ok");
+  });
+
   it.each([
     ["1", 1],
     ["443", 443],
@@ -837,7 +1107,7 @@ describe("messaging provider installed-runtime proofs", () => {
       const source = [
         'import fs from "node:fs";',
         'import path from "node:path";',
-        SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
+        SLACK_RUNTIME_DISCOVERY_SOURCE,
         "const candidates = [];",
         "addManagedNpmProjectSlackCandidates(",
         "  process.env.NEMOCLAW_TEST_PROJECTS_DIR,",
@@ -853,6 +1123,180 @@ describe("messaging provider installed-runtime proofs", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual([path.resolve(slackPackageRoot)]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("loads Slack through its real managed-project root and nested OpenClaw symlink", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-runtime-root-"));
+    const installRoot = path.join(dir, "lib", "nemoclaw", "openclaw-runtime", "node_modules");
+    const openclawPackageRoot = path.join(installRoot, "openclaw");
+    const slackProjectRoot = path.join(dir, "state", "npm", "projects", "openclaw-slack");
+    const slackPackageRoot = path.join(slackProjectRoot, "node_modules", "@openclaw", "slack");
+    const globalNodeModules = path.join(dir, "lib", "node_modules");
+    try {
+      fs.mkdirSync(path.join(openclawPackageRoot, "dist", "plugin-sdk"), { recursive: true });
+      fs.writeFileSync(
+        path.join(openclawPackageRoot, "package.json"),
+        JSON.stringify({ name: "openclaw", version: "2026.7.1" }),
+      );
+      fs.writeFileSync(path.join(openclawPackageRoot, "dist", "plugin-sdk", "temp-path.js"), "");
+      fs.mkdirSync(path.join(openclawPackageRoot, "node_modules", "ajv"), { recursive: true });
+      fs.writeFileSync(
+        path.join(openclawPackageRoot, "node_modules", "ajv", "package.json"),
+        JSON.stringify({ name: "ajv", version: "8.20.0" }),
+      );
+      fs.mkdirSync(path.join(installRoot, "fast-uri"), { recursive: true });
+      fs.writeFileSync(
+        path.join(installRoot, "fast-uri", "package.json"),
+        JSON.stringify({ name: "fast-uri", version: "3.1.0" }),
+      );
+      fs.mkdirSync(globalNodeModules, { recursive: true });
+      fs.symlinkSync(openclawPackageRoot, path.join(globalNodeModules, "openclaw"), "dir");
+      fs.writeFileSync(
+        path.join(openclawPackageRoot, "node_modules", "ajv", "index.js"),
+        'import uri from "fast-uri"; export default uri;',
+      );
+      fs.mkdirSync(path.join(slackPackageRoot, "dist"), { recursive: true });
+      fs.writeFileSync(
+        path.join(slackProjectRoot, "package.json"),
+        JSON.stringify({ dependencies: { "@openclaw/slack": "2026.7.1" } }),
+      );
+      fs.writeFileSync(
+        path.join(slackPackageRoot, "package.json"),
+        JSON.stringify({ name: "@openclaw/slack", type: "module" }),
+      );
+      fs.writeFileSync(
+        path.join(slackPackageRoot, "dist", "runtime-api.js"),
+        'export function sendMessageSlack() { return "sent"; }',
+      );
+      fs.writeFileSync(
+        path.join(slackPackageRoot, "dist", "pipeline.runtime-abc.js"),
+        'import uri from "../node_modules/openclaw/node_modules/ajv/index.js"; export function prepareSlackMessage() { return uri; }',
+      );
+      fs.mkdirSync(path.join(slackPackageRoot, "node_modules"), { recursive: true });
+      fs.symlinkSync(
+        openclawPackageRoot,
+        path.join(slackPackageRoot, "node_modules", "openclaw"),
+        "dir",
+      );
+      fs.writeFileSync(path.join(installRoot, "fast-uri", "index.js"), 'export default "loaded";');
+      fs.writeFileSync(
+        path.join(installRoot, "fast-uri", "package.json"),
+        JSON.stringify({ name: "fast-uri", type: "module", exports: "./index.js" }),
+      );
+      fs.mkdirSync(path.join(globalNodeModules, "@openclaw"), { recursive: true });
+      fs.symlinkSync(slackPackageRoot, path.join(globalNodeModules, "@openclaw", "slack"), "dir");
+
+      const source = [
+        'import { execFileSync } from "node:child_process";',
+        'import fs from "node:fs";',
+        'import { createRequire } from "node:module";',
+        'import path from "node:path";',
+        'import { pathToFileURL } from "node:url";',
+        SLACK_RUNTIME_DISCOVERY_SOURCE,
+        "const location = resolveOpenClawSlackApiLocation();",
+        'const slackDir = path.join(location.root, "dist");',
+        "const api = await importProofModules(slackDir);",
+        "process.stdout.write(JSON.stringify({",
+        "  kind: location.kind,",
+        "  root: location.root,",
+        "  prepared: api.prepareSlackMessage(),",
+        "  sent: api.sendMessageSlack(),",
+        "}));",
+      ].join("\n");
+      const result = spawnSync(process.execPath, ["--input-type=module", "-"], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          OPENCLAW_PACKAGE_ROOT: path.join(globalNodeModules, "openclaw"),
+          OPENCLAW_SLACK_PACKAGE_ROOT: path.join(globalNodeModules, "@openclaw", "slack"),
+          OPENCLAW_STATE_DIR: path.join(dir, "state"),
+        },
+        input: source,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        kind: "external",
+        root: fs.realpathSync(slackPackageRoot),
+        prepared: "loaded",
+        sent: "sent",
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("loads Telegram through the real OpenClaw root with hoisted dependencies", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-runtime-root-"));
+    const installRoot = path.join(dir, "lib", "nemoclaw", "openclaw-runtime", "node_modules");
+    const openclawRoot = path.join(installRoot, "openclaw");
+    const globalNodeModules = path.join(dir, "lib", "node_modules");
+    const runtimeApi = path.join(openclawRoot, "dist", "extensions", "telegram", "runtime-api.js");
+
+    try {
+      fs.mkdirSync(path.dirname(runtimeApi), { recursive: true });
+      fs.writeFileSync(
+        path.join(openclawRoot, "package.json"),
+        JSON.stringify({ name: "openclaw", type: "module" }),
+      );
+      fs.writeFileSync(
+        runtimeApi,
+        'import uri from "../../../node_modules/ajv/index.js"; export const proof = uri;',
+      );
+      fs.mkdirSync(path.join(openclawRoot, "node_modules", "ajv"), { recursive: true });
+      fs.writeFileSync(
+        path.join(openclawRoot, "node_modules", "ajv", "package.json"),
+        JSON.stringify({ name: "ajv", type: "module" }),
+      );
+      fs.writeFileSync(
+        path.join(openclawRoot, "node_modules", "ajv", "index.js"),
+        'import uri from "fast-uri"; export default uri;',
+      );
+      fs.mkdirSync(path.join(installRoot, "fast-uri"), { recursive: true });
+      fs.writeFileSync(
+        path.join(installRoot, "fast-uri", "package.json"),
+        JSON.stringify({ name: "fast-uri", type: "module", exports: "./index.js" }),
+      );
+      fs.writeFileSync(path.join(installRoot, "fast-uri", "index.js"), 'export default "loaded";');
+      fs.mkdirSync(globalNodeModules, { recursive: true });
+      fs.symlinkSync(openclawRoot, path.join(globalNodeModules, "openclaw"), "dir");
+
+      const linkedRuntimeApi = path.join(
+        globalNodeModules,
+        "openclaw",
+        "dist",
+        "extensions",
+        "telegram",
+        "runtime-api.js",
+      );
+      const runtimePath = resolveInstalledTelegramRuntimePath(linkedRuntimeApi, fs.realpathSync);
+      const source = [
+        'import { pathToFileURL } from "node:url";',
+        "const runtimePath = process.env.NEMOCLAW_TEST_TELEGRAM_RUNTIME_PATH;",
+        "const runtime = await import(pathToFileURL(runtimePath).href);",
+        "process.stdout.write(JSON.stringify({ runtimePath, proof: runtime.proof }));",
+      ].join("\n");
+      const result = spawnSync(
+        process.execPath,
+        ["--preserve-symlinks", "--input-type=module", "-"],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            NEMOCLAW_TEST_TELEGRAM_RUNTIME_PATH: runtimePath,
+          },
+          input: source,
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        runtimePath,
+        proof: "loaded",
+      });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

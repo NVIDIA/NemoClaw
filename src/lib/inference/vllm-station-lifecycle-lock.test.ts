@@ -9,6 +9,7 @@ import {
   DUAL_STATION_CONTROLLER_UID_FILE,
   type DualStationControllerUidFileStat,
   readDualStationControllerUid,
+  resolveHostGlobalVllmLifecycleLockOptions,
   withDualStationVllmLifecycleLock,
   withHostGlobalVllmLifecycleLock,
 } from "./vllm-station-lifecycle-lock";
@@ -119,39 +120,29 @@ describe("dual-Station controller UID binding", () => {
     }
   });
 
-  it("shares the managed-state home even when passwd and HOME directories differ", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-vllm-lock-"));
-    const passwdHome = path.join(root, "passwd-home");
-    const managedHome = path.join(root, "managed-home");
-    fs.mkdirSync(passwdHome, { mode: 0o700 });
-    fs.mkdirSync(managedHome, { mode: 0o700 });
-    const userInfo = os.userInfo();
-    const userInfoSpy = vi.spyOn(os, "userInfo").mockReturnValue({
-      ...userInfo,
-      homedir: passwdHome,
-    });
-    vi.stubEnv("HOME", managedHome);
+  it("resolves default and overridden host-global lock directories without filesystem access", () => {
+    const homeDir = "/srv/nemoclaw-controller";
+    expect(managedVllmStateDir(homeDir)).toBe(path.join(homeDir, ".nemoclaw"));
+    expect(resolveHostGlobalVllmLifecycleLockOptions({}, homeDir).stateDir).toBe(
+      path.join(homeDir, ".nemoclaw", "state"),
+    );
+    expect(resolveHostGlobalVllmLifecycleLockOptions({ stateDir: "/isolated" }, homeDir).stateDir).toBe(
+      "/isolated",
+    );
+  });
+
+  it("uses an explicitly isolated state directory for filesystem lock behavior", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-vllm-lock-"));
 
     try {
-      expect(managedVllmStateDir()).toBe(path.join(managedHome, ".nemoclaw"));
       await withHostGlobalVllmLifecycleLock(
         () => {
-          expect(
-            fs.existsSync(path.join(managedHome, ".nemoclaw", "state", "mcp-lifecycle-locks")),
-          ).toBe(true);
-          expect(fs.existsSync(path.join(passwdHome, ".nemoclaw"))).toBe(false);
+          expect(fs.existsSync(path.join(stateDir, "mcp-lifecycle-locks"))).toBe(true);
         },
-        {
-          stateDir: path.join(managedVllmStateDir(), "state"),
-          pollIntervalMs: 5,
-          timeoutMs: 250,
-          corruptLockGraceMs: 5,
-        },
+        { stateDir },
       );
     } finally {
-      vi.unstubAllEnvs();
-      userInfoSpy.mockRestore();
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(stateDir, { recursive: true, force: true });
     }
   });
 });

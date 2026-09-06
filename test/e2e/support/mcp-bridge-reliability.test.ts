@@ -46,7 +46,6 @@ const HERMES_BROKEN_PIPE = `  Effective egress that would be opened:
   Removed preset: mcp-bridge-concurrent
 \u001b[1m\u001b[32m✓\u001b[39m\u001b[0m Policy version 3 submitted (hash: abcdef0123)
 \u001b[1m\u001b[32m✓\u001b[39m\u001b[0m Policy version 3 loaded (active version: 3)
-  Preset not found: mcp-bridge-concurrent
 \u001b[1m\u001b[32m✓\u001b[39m\u001b[0m Policy version 4 submitted (hash: 0123abcdef)
 \u001b[1m\u001b[32m✓\u001b[39m\u001b[0m Policy version 4 loaded (active version: 4)
   Error:   \u00d7 code: 'Unknown error', message: "h2 protocol error: error reading a body

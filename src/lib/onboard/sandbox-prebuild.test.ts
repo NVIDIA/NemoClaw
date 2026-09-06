@@ -62,7 +62,16 @@ describe("sandbox BuildKit prebuild", () => {
   });
 
   it.each([
-    ["explicit remote context", { DOCKER_CONTEXT: "remote-builder" }, "remote-builder", false],
+    ["remote-builder", false],
+    ["default", true],
+  ] as const)("classifies an explicit %s context without invoking Docker", (context, expected) => {
+    const showContext = vi.fn(() => "default");
+
+    expect(dockerContextIsDefaultFromBuild({ DOCKER_CONTEXT: context }, showContext)).toBe(expected);
+    expect(showContext).not.toHaveBeenCalled();
+  });
+
+  it.each([
     ["persisted remote context", {}, "remote-builder", false],
     ["unreadable context", {}, null, false],
     ["default context", {}, "default", true],

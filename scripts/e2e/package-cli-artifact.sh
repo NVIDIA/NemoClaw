@@ -79,6 +79,37 @@ artifact_catalog="dist/e2e-managed-image-catalog.json"
   echo "::error::candidate build created the managed-image catalog path" >&2
   exit 1
 }
+managed_catalog="${RUNNER_TEMP}/pr-managed-image-catalog.json"
+catalog_json="${MANAGED_IMAGE_CATALOG:-}"
+catalog_sha256="${MANAGED_IMAGE_CATALOG_SHA256:-}"
+if [[ -n "$catalog_json" ]]; then
+  [[ "$catalog_sha256" =~ ^[a-f0-9]{64}$ ]] || {
+    echo "::error::trusted PR managed-image catalog digest is invalid" >&2
+    exit 1
+  }
+  [[ -f "$managed_catalog" && ! -L "$managed_catalog" && -s "$managed_catalog" ]] || {
+    echo "::error::trusted PR managed-image catalog is not a nonempty regular file" >&2
+    exit 1
+  }
+  [[ "$(sha256sum "$managed_catalog" | awk '{print $1}')" == "$catalog_sha256" ]] || {
+    echo "::error::trusted PR managed-image catalog changed after authentication" >&2
+    exit 1
+  }
+  (umask 077 && set -o noclobber && printf '%s\n' "$catalog_json" >"$artifact_catalog")
+  [[ -f "$artifact_catalog" && ! -L "$artifact_catalog" && -s "$artifact_catalog" ]] || {
+    echo "::error::packaged PR managed-image catalog is invalid" >&2
+    exit 1
+  }
+  [[ "$(sha256sum "$artifact_catalog" | awk '{print $1}')" == "$catalog_sha256" ]] || {
+    echo "::error::packaged PR managed-image catalog does not match trusted output" >&2
+    exit 1
+  }
+else
+  [[ -z "$catalog_sha256" && ! -e "$managed_catalog" && ! -L "$managed_catalog" ]] || {
+    echo "::error::managed-image catalog authority is inconsistent" >&2
+    exit 1
+  }
+fi
 
 artifact_dir="${RUNNER_TEMP}/nemoclaw-cli-artifact"
 install -d -m 0700 "$artifact_dir"

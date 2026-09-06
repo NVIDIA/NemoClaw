@@ -18,11 +18,13 @@ vi.mock("../../gateway-runtime-action", () => ({
 
 vi.mock("../../inference/local", () => ({
   findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
+  isLocalProviderHostHealthy: vi.fn(() => true),
   probeLocalProviderHealth: vi.fn(() => ({ ok: true })),
 }));
 
 vi.mock("../../inference/ollama/proxy", () => ({
   ensureOllamaAuthProxy: vi.fn(() => true),
+  isProxyHealthy: vi.fn(() => true),
   probeOllamaAuthProxyHealth: vi.fn(() => ({ ok: true })),
 }));
 
@@ -185,22 +187,25 @@ describe("sandbox connect route repair unit flow", () => {
     expect(calls.reapplications).toEqual([]);
   });
 
-  it("uses inference route reapply instead of legacy DNS repair for docker sandboxes", () => {
-    const { calls, deps } = makeRepairDeps([broken(), healthy()]);
+  it.each(["docker", "podman"])(
+    "uses inference route reapply instead of legacy DNS repair for %s sandboxes",
+    (driver) => {
+      const { calls, deps } = makeRepairDeps([broken(), healthy()]);
 
-    const result = repairSandboxInferenceRouteWithDeps(
-      "docker-box",
-      sandbox({ openshellDriver: "docker" }),
-      {},
-      deps,
-    );
+      const result = repairSandboxInferenceRouteWithDeps(
+        `${driver}-box`,
+        sandbox({ openshellDriver: driver }),
+        {},
+        deps,
+      );
 
-    expect(result.healthy).toBe(true);
-    expect(result.repairAttempted).toBe(true);
-    expect(calls.legacyRepairs).toEqual([]);
-    expect(calls.reapplications).toEqual(["docker-box"]);
-    expect(calls.logs).toContain("  inference.local route repaired.");
-  });
+      expect(result.healthy).toBe(true);
+      expect(result.repairAttempted).toBe(true);
+      expect(calls.legacyRepairs).toEqual([]);
+      expect(calls.reapplications).toEqual([`${driver}-box`]);
+      expect(calls.logs).toContain("  inference.local route repaired.");
+    },
+  );
 
   it("lets the VM monkeypatch satisfy the route before inference reapply", () => {
     const { calls, deps } = makeRepairDeps([broken(), healthy()], {

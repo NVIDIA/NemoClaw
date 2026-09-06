@@ -5,7 +5,7 @@ import { type CaptureOpenshellResult, stripAnsi } from "../adapters/openshell/cl
 import {
   checkOpenAiInferenceProviderProfile,
   OPENAI_GATEWAY_PROVIDER_TYPE,
-} from "../adapters/openshell/provider-profile";
+} from "../adapters/openshell/provider-profile-registration";
 import { retryUntilAsync } from "../core/retry";
 import {
   matchesGatewayProviderBinding,
@@ -14,6 +14,7 @@ import {
 import { assertHermesPortableCommandUnavailable } from "../onboard/experimental/portable-agent-lifecycle";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   RuntimeProviderSelectionError,
   requireRuntimeProviderBundleForSandbox,
@@ -106,9 +107,10 @@ export async function probeInferenceSetSandboxRouteUntilConverged(
 export function requireInferenceSetRuntimeAuthority(
   entry: SandboxEntry,
   providers: RuntimeProviderBundleRegistry = CURRENT_RUNTIME_PROVIDER_BUNDLES,
-): void {
+): RuntimeProviderBundle {
   const runtimeProvider = requireRuntimeProviderBundleForSandbox(entry, providers);
   requireRuntimeProviderMutationAuthority(runtimeProvider, "inference-set");
+  return runtimeProvider;
 }
 
 export function assertInferenceSetCommandAvailable(sandboxName: string): void {
@@ -141,7 +143,9 @@ type ProviderObservation =
     }
   | { kind: "error"; status: number | null };
 
-function providerSurface(providerType: InferenceSetProviderBinding["providerType"]): ProviderSurface {
+function providerSurface(
+  providerType: InferenceSetProviderBinding["providerType"],
+): ProviderSurface {
   return providerType === "anthropic"
     ? { type: "anthropic", configKey: "ANTHROPIC_BASE_URL" }
     : { type: "openai", configKey: "OPENAI_BASE_URL" };

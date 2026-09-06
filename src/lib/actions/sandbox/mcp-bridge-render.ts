@@ -45,7 +45,7 @@ export function renderMcpBridgeStatus(
   if (statuses.length === 0) {
     console.log("");
     console.log(`  MCP servers for sandbox '${sandboxName}': none`);
-    console.log(`    agent: ${agent.name}`);
+    console.log("    agent: configured");
     console.log(`    support: ${agent.mcpCapability.support}`);
     if (agent.mcpCapability.reason) console.log(`    reason: ${agent.mcpCapability.reason}`);
     console.log("");

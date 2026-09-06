@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+id: langfuse-hermes-v1
+display_name: Langfuse Cloud Observability for Hermes
+description: Langfuse Cloud credentials and trace-ingestion boundary for Hermes
+category: agent
+credentials:
+  - name: public_key
+    description: Langfuse project public key
+    env_vars:
+      - LANGFUSE_PUBLIC_KEY
+    required: true
+    auth_style: basic
+  - name: secret_key
+    description: Langfuse project secret key
+    env_vars:
+      - LANGFUSE_SECRET_KEY
+    required: true
+    auth_style: basic
+endpoints:
+  - host: cloud.langfuse.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: GET, path: "/api/public/**" }
+      - allow: { method: POST, path: "/api/public/**" }
+binaries:
+  - /opt/hermes/.venv/bin/python
+inference_capable: false

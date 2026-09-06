@@ -23,6 +23,7 @@ import {
 import {
   buildDockerGpuCloneRunArgs,
   dockerContainerName,
+  normalizeDockerUlimitName,
   shouldOmitOpenShellOciImageUser,
 } from "../docker-gpu-patch-clone";
 import {
@@ -42,11 +43,11 @@ import {
 } from "../docker-gpu-supervisor-reconnect";
 import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
 import {
-  OPENSHELL_MANAGED_BY_LABEL,
-  OPENSHELL_MANAGED_BY_VALUE,
+  hasOpenShellSandboxOwnership,
   OPENSHELL_SANDBOX_ID_LABEL,
   OPENSHELL_SANDBOX_NAME_LABEL,
   queryOpenShellDockerSandboxContainers,
+  resolveOpenShellSandboxOwnershipLabel,
 } from "../openshell-docker-sandbox-containers";
 import { cleanupTempDir, secureTempFile } from "../temp-files";
 import {
@@ -113,6 +114,7 @@ import {
   parseManagedBootstrapImageCompletion,
   serializeManagedBootstrapEnvelopeTar,
 } from "./envelope";
+import { prepareManagedBootstrapStateRoots } from "./state-root-authority";
 
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const FULL_SHA256_RE = /^sha256:[a-f0-9]{64}$/u;
@@ -167,6 +169,7 @@ function dockerManagedBootstrapRecoveryFailure(
     sandbox: journal?.sandbox ?? legacyJournalContext?.sandbox ?? null,
     bootstrapIdentity,
     code: classified.code,
+    blockingScope: "sandbox",
     retryable: classified.retryable,
     detail: boundedRecoveryFailureDetail(error),
   });
@@ -493,7 +496,7 @@ function assertMetadata(
 ): void {
   const labels = inspect.Config?.Labels ?? {};
   if (
-    labels[OPENSHELL_MANAGED_BY_LABEL] !== OPENSHELL_MANAGED_BY_VALUE ||
+    !hasOpenShellSandboxOwnership(labels) ||
     labels[OPENSHELL_SANDBOX_NAME_LABEL] !== sandbox.sandboxName ||
     labels[OPENSHELL_SANDBOX_ID_LABEL] !== sandbox.sandboxId
   ) {
@@ -792,6 +795,16 @@ function objectField(record: Record<string, unknown>, key: string): Record<strin
   return value as Record<string, unknown>;
 }
 
+function soleNetworkAliases(inspect: Record<string, unknown>): unknown {
+  const networkSettings = objectField(inspect, "NetworkSettings");
+  const networks = objectField(networkSettings, "Networks");
+  const entries = Object.values(networks);
+  if (entries.length !== 1 || typeof entries[0] !== "object" || entries[0] === null) {
+    return null;
+  }
+  return (entries[0] as Record<string, unknown>).Aliases;
+}
+
 function exactJson(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
@@ -904,7 +917,7 @@ function canonicalUlimits(value: unknown, label: string): string {
       throw new Error(`Managed bootstrap Docker ${label} is invalid.`);
     }
     const record = entry as Record<string, unknown>;
-    const name = String(record.Name ?? "");
+    const name = normalizeDockerUlimitName(record.Name);
     const soft = record.Soft;
     const hard = record.Hard;
     if (!name || !Number.isSafeInteger(soft) || !Number.isSafeInteger(hard)) {
@@ -1125,8 +1138,12 @@ function assertReplacementMatchesIntent(
     )
       .sort()
       .slice(0, 16);
+    const aliasDetail =
+      changedPaths.length === 1 && changedPaths[0]?.endsWith(".Aliases")
+        ? ` Expected aliases ${exactJson(soleNetworkAliases(originalInspect))}; observed aliases ${exactJson(soleNetworkAliases(observedInspect))}.`
+        : "";
     throw new Error(
-      `Managed bootstrap Docker replacement normalized spec changed outside declared deltas: ${changedPaths.join(", ")}.`,
+      `Managed bootstrap Docker replacement normalized spec changed outside declared deltas: ${changedPaths.join(", ")}.${aliasDetail}`,
     );
   }
   return replacementSpec.hash;
@@ -1195,6 +1212,28 @@ function assertTransactionReplacement(
       "Managed bootstrap refused mutation because the exact replacement launch spec changed.",
     );
   }
+}
+
+function assertPreparedReplacementSpec(
+  transaction: DockerBootstrapTransaction,
+  inspect: DockerContainerInspect,
+  expectedCanonicalJson: string,
+  phase: string,
+): void {
+  const normalized = normalizeDockerManagedBootstrapLaunchSpec({
+    ...inspect,
+    Name: `/${transaction.originalName}`,
+  });
+  if (normalized.hash === transaction.replacementSpecHash) return;
+  const changedPaths = differingJsonPaths(
+    JSON.parse(expectedCanonicalJson),
+    JSON.parse(normalized.canonicalJson),
+  )
+    .sort()
+    .slice(0, 16);
+  throw new Error(
+    `Managed bootstrap refused mutation because the exact replacement launch spec changed during ${phase}: ${changedPaths.join(", ")}.`,
+  );
 }
 
 function assertCompletedCutoverRuntimeState(
@@ -1385,6 +1424,7 @@ function retainOwnedWorkloadForOwnerCleanup(
       ? `sandbox ${sandbox.sandboxId} with no previously resolved runtime ID`
       : `sandbox ${sandbox.sandboxId} expected runtime ${expectedRuntimeId}`;
   let containers: DockerCommandResult;
+  const ownership = resolveOpenShellSandboxOwnershipLabel();
   try {
     containers = deps.dockerRun(
       [
@@ -1392,7 +1432,7 @@ function retainOwnedWorkloadForOwnerCleanup(
         "-a",
         "--no-trunc",
         "--filter",
-        `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
+        `label=${ownership.label}=${ownership.value}`,
         "--filter",
         `label=${OPENSHELL_SANDBOX_ID_LABEL}=${sandbox.sandboxId}`,
         "--format",
@@ -1447,7 +1487,7 @@ function retainOwnedWorkloadForOwnerCleanup(
   }
   const labels = inspect.Config?.Labels ?? {};
   if (
-    labels[OPENSHELL_MANAGED_BY_LABEL] !== OPENSHELL_MANAGED_BY_VALUE ||
+    !hasOpenShellSandboxOwnership(labels) ||
     labels[OPENSHELL_SANDBOX_NAME_LABEL] !== sandbox.sandboxName ||
     labels[OPENSHELL_SANDBOX_ID_LABEL] !== sandbox.sandboxId
   ) {
@@ -3426,6 +3466,7 @@ export function createDockerManagedBootstrapAdapter(
         containerEntrypoint: MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE,
         containerCommand: trampolineCommand,
         containerName: stagingName,
+        preserveManagedLaunchSpec: true,
       });
       const options = {
         ignoreError: true,
@@ -3633,6 +3674,16 @@ export function createDockerManagedBootstrapAdapter(
         assertTransactionReplacement(authority, preparedBeforeJournal);
         assertStableRunning(originalBeforeJournal, "pre-activation original");
         assertExplicitlyStopped(preparedBeforeJournal, "pre-activation replacement");
+        prepareManagedBootstrapStateRoots({
+          inspect: originalBeforeJournal as Record<string, unknown>,
+          roots: handle.plan.managedStateRoots,
+          captureVolume: (args) =>
+            deps.dockerCapture(["volume", ...args], {
+              ignoreError: true,
+              suppressOutput: true,
+              timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+            }),
+        });
         if (
           dockerContainerName(originalBeforeJournal) !== authority.originalName ||
           dockerContainerName(preparedBeforeJournal) !== authority.replacementStagingName ||
@@ -3695,6 +3746,12 @@ export function createDockerManagedBootstrapAdapter(
           options,
         );
         const afterReplacementRename = inspectExact(prepared.preparedRuntimeId, deps);
+        assertPreparedReplacementSpec(
+          journal,
+          afterReplacementRename,
+          prepared.expectedActivatedSpecCanonicalJson,
+          "Podman rename",
+        );
         assertTransactionReplacement(journal, afterReplacementRename);
         if (dockerContainerName(afterReplacementRename) !== journal.originalName) {
           throw new Error(
@@ -3705,6 +3762,12 @@ export function createDockerManagedBootstrapAdapter(
 
         const started = deps.dockerStart(prepared.preparedRuntimeId, options);
         const running = inspectExact(prepared.preparedRuntimeId, deps);
+        assertPreparedReplacementSpec(
+          journal,
+          running,
+          prepared.expectedActivatedSpecCanonicalJson,
+          "Podman start",
+        );
         assertTransactionReplacement(journal, running);
         if (!isStableRunning(running)) {
           throw replacementNotStableError(

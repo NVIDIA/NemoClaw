@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ShellProbeResult } from "./shell-probe.ts";
-import { runBoundedRetry, type RetryEvidence } from "./retry-policy.ts";
+import { runBoundedRetry, type RetryEvidence } from "../../../tools/e2e/retry-evidence.mts";
 
 const TRANSIENT_INFERENCE_SET_FAILURE =
   /timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|\b50[234]\b/iu;
@@ -44,7 +44,7 @@ export function inferenceResponseModel(raw: string): string {
 export async function runInferenceSetWithRetry(options: {
   attempts: number;
   delay?: (milliseconds: number) => Promise<void>;
-  run: (attempt: number, verify: boolean) => Promise<ShellProbeResult>;
+  run: (attempt: number) => Promise<ShellProbeResult>;
   onEvidence?: (evidence: RetryEvidence) => Promise<void> | void;
 }): Promise<ShellProbeResult> {
   const execution = await runBoundedRetry({
@@ -52,7 +52,7 @@ export async function runInferenceSetWithRetry(options: {
     owner: "inference-provider",
     idempotence: "idempotent",
     maxAttempts: options.attempts,
-    run: (attempt) => options.run(attempt, true),
+    run: options.run,
     classify: (result) => {
       if (result?.exitCode === 0) return { outcome: "passed" };
       return {

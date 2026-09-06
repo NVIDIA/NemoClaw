@@ -26,6 +26,8 @@ import {
 } from "./podman-bootstrap-replacement";
 import {
   PODMAN_MANAGED_LABEL,
+  PODMAN_OPENSHELL_MANAGED_BY_LABEL,
+  PODMAN_OPENSHELL_MANAGED_BY_VALUE,
   PODMAN_SANDBOX_CONTAINER_PREFIX,
   PODMAN_SANDBOX_ID_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
@@ -65,6 +67,10 @@ const LABELS = Object.freeze({
   [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
   [PODMAN_SANDBOX_NAMESPACE_LABEL]: "",
   [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
+});
+const REPLACEMENT_LABELS = Object.freeze({
+  ...LABELS,
+  [PODMAN_OPENSHELL_MANAGED_BY_LABEL]: PODMAN_OPENSHELL_MANAGED_BY_VALUE,
 });
 const STATE_VOLUME_LABELS = Object.freeze({
   [PODMAN_BOOTSTRAP_IDENTITY_LABEL]: BOOTSTRAP_IDENTITY,
@@ -273,13 +279,21 @@ class PodmanHarness {
     this.capturedEnvironmentContents = fs.readFileSync(environmentFile, "utf8");
     this.capturedEnvironmentMode = fs.statSync(environmentFile).mode & 0o777;
     const configuredResult = this.createResult;
+    const labels = Object.fromEntries(
+      args
+        .map((argument, index) => ({ argument, label: args[index + 1] ?? "" }))
+        .filter(({ argument }) => argument === "--label")
+        .map(({ label }) => ({ label, separator: label.indexOf("=") }))
+        .filter(({ separator }) => separator > 0)
+        .map(({ label, separator }) => [label.slice(0, separator), label.slice(separator + 1)]),
+    );
     switch (configuredResult) {
       case null:
         this.replacement = {
           id: REPLACEMENT_RUNTIME_ID,
           name: STAGING_NAME,
           image: REPLACEMENT_IMAGE_ID,
-          labels: LABELS,
+          labels,
           entrypoint: ENTRYPOINT_ARGV,
           command: COMMAND_ARGV,
           environment: this.replacementEnvironment,
@@ -335,6 +349,8 @@ function journalStore(): PodmanBootstrapJournalStore {
 function watcherLease() {
   const assertStillStopped = vi.fn();
   const resumeAndProve = vi.fn();
+  const resumeForObservationAndProve = vi.fn();
+  const requiesceAndProve = vi.fn();
   const lease: PodmanGatewayWatcherLease = {
     record: {
       schemaVersion: PODMAN_WATCHER_LEASE_SCHEMA_VERSION,
@@ -349,7 +365,10 @@ function watcherLease() {
       pid: 1234,
       processStartIdentity: "pid-start-1234",
     },
+    assertStillHeld: assertStillStopped,
     assertStillStopped,
+    resumeForObservationAndProve,
+    requiesceAndProve,
     resumeAndProve,
   };
   return { assertStillStopped, lease, resumeAndProve };
@@ -392,7 +411,7 @@ describe("Podman bootstrap stopped replacement", () => {
       id: REPLACEMENT_RUNTIME_ID,
       name: STAGING_NAME,
       image: REPLACEMENT_IMAGE_ID,
-      labels: LABELS,
+      labels: REPLACEMENT_LABELS,
       running: false,
     });
     expect(harness.stateVolume).toEqual({
@@ -415,6 +434,12 @@ describe("Podman bootstrap stopped replacement", () => {
       `${PODMAN_SANDBOX_NAME_LABEL}=${SANDBOX_NAME}`,
       STATE_VOLUME_NAME,
     ]);
+    expect(harness.calls).toContainEqual(
+      expect.arrayContaining([
+        "--volume",
+        `${STATE_VOLUME_NAME}:${PODMAN_BOOTSTRAP_STATE_DIRECTORY}:rw,z,copy`,
+      ]),
+    );
     expect(harness.capturedEnvironmentMode).toBe(0o600);
     expect(harness.capturedEnvironmentContents).toBe(`${ENVIRONMENT.join("\n")}\n`);
     expect(fs.existsSync(harness.capturedEnvironmentFile as string)).toBe(false);
@@ -525,26 +550,25 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(harness.calls).toEqual([]);
   });
 
-  it.each([
-    "-eSECRET=1",
-    "-lcom.nvidia.nemoclaw.override=true",
-    "-d=true",
-  ])("rejects attached protected shorthand %s before invoking Podman", (argument) => {
-    const harness = new PodmanHarness();
-    const store = journalStore();
-    const watcher = watcherLease();
+  it.each(["-eSECRET=1", "-lcom.nvidia.nemoclaw.override=true", "-d=true"])(
+    "rejects attached protected shorthand %s before invoking Podman",
+    (argument) => {
+      const harness = new PodmanHarness();
+      const store = journalStore();
+      const watcher = watcherLease();
 
-    expect(() =>
-      prepareStoppedPodmanBootstrapReplacement({
-        engine: harness.engine,
-        journalStore: store,
-        watcherLease: watcher.lease,
-        plan: { ...plan, runtimeArgs: [argument] },
-      }),
-    ).toThrow("cannot set");
-    expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
-    expect(harness.calls).toEqual([]);
-  });
+      expect(() =>
+        prepareStoppedPodmanBootstrapReplacement({
+          engine: harness.engine,
+          journalStore: store,
+          watcherLease: watcher.lease,
+          plan: { ...plan, runtimeArgs: [argument] },
+        }),
+      ).toThrow("cannot set");
+      expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
+      expect(harness.calls).toEqual([]);
+    },
+  );
 
   it("does not confuse supported long options with protected shorthand", () => {
     const harness = new PodmanHarness();
@@ -688,6 +712,7 @@ describe("Podman bootstrap stopped replacement", () => {
 
   it("stops only the exact original after the stopped replacement remains stable", () => {
     const harness = new PodmanHarness();
+    const capture = vi.spyOn(harness.engine, "capture");
     const store = journalStore();
     const watcher = watcherLease();
     const prepared = prepare(harness, store, watcher.lease);
@@ -704,6 +729,7 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(harness.original.running).toBe(false);
     expect(harness.replacement?.running).toBe(false);
     expect(harness.calls).toContainEqual(["container", "stop", ORIGINAL_RUNTIME_ID]);
+    expect(capture).toHaveBeenCalledWith(["container", "stop", ORIGINAL_RUNTIME_ID], 60_000);
     expect(watcher.resumeAndProve).not.toHaveBeenCalled();
   });
 

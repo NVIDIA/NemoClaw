@@ -14,6 +14,7 @@ import {
   PODMAN_SANDBOX_NAMESPACE_LABEL,
   PODMAN_SANDBOX_WORKSPACE,
   PODMAN_SANDBOX_WORKSPACE_LABEL,
+  recoverPodmanSandbox,
   startPodmanSandbox,
   stopPodmanSandbox,
 } from "./podman-lifecycle";
@@ -77,6 +78,9 @@ function harness(initial: HarnessState) {
       case "unpause":
         setState({ running: true, status: "running" });
         return { status: 0, stdout: CONTAINER_ID, stderr: "" };
+      case "restart":
+        setState({ running: true, status: "running" });
+        return { status: 0, stdout: CONTAINER_ID, stderr: "" };
       case "stop":
         setState({ running: false, status: "exited" });
         return { status: 0, stdout: CONTAINER_ID, stderr: "" };
@@ -103,6 +107,18 @@ function harness(initial: HarnessState) {
 }
 
 describe("Podman basic CPU lifecycle", () => {
+  it("restarts the exact running container during gateway recovery", () => {
+    const runtime = harness({ running: true, status: "running" });
+
+    expect(recoverPodmanSandbox(runtime.input, runtime.engine)).toEqual({ exitCode: 0 });
+    expect(runtime.capture.mock.calls.map(([args]) => args)).toContainEqual([
+      "restart",
+      "--time",
+      "30",
+      CONTAINER_ID,
+    ]);
+  });
+
   it("stops and restarts the exact managed container", () => {
     const stopped = harness({ running: true, status: "running" });
     const beforeStop = vi.fn();

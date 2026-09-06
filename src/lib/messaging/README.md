@@ -300,6 +300,12 @@ It is a serializable declaration for one channel and one set of supported agents
 Secret inputs cannot declare `statePath` or defaults.
 Plans may carry `credentialAvailable`, `credentialHash`, and placeholders, but they must not carry raw tokens.
 
+WeChat's validated enrollment response can select an account-specific iLink IDC origin. The
+enrollment handler must validate that value before persisting `WECHAT_BASE_URL`. Policy loading
+revalidates the stored origin and clones only the reviewed `ilinkai.wechat.com` endpoint for the
+one exact IDC host. It rejects ports, credentials, paths, queries, fragments, wildcard hosts, and
+hosts outside the WeChat iLink contract.
+
 ## Manifest Skeleton
 
 Use `satisfies ChannelManifest` so TypeScript checks the manifest while preserving literal IDs and template strings.

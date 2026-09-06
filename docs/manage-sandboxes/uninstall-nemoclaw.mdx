@@ -18,7 +18,7 @@ $$nemoclaw uninstall
 ```
 
 Within each gateway pass, uninstall creates a fresh host-side snapshot for each eligible registered non-portable sandbox before it deletes that pass's OpenShell sandboxes.
-It uses the same state contract as `$$nemoclaw backup-all`, including temporarily starting an eligible stopped Docker sandbox and restoring its previous Shields posture.
+It uses the same state contract as `$$nemoclaw backup-all`, including temporarily starting an eligible stopped Docker sandbox.
 If any current sandbox cannot be backed up, that gateway pass exits nonzero before sandbox deletion.
 During `--all-gateway-ports`, the sweep continues with later ports and reports the aggregate failure.
 `--yes` skips the confirmation prompt but does not skip this backup gate.

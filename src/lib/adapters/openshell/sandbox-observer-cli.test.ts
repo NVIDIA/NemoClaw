@@ -258,6 +258,8 @@ describe("CLI OpenShell sandbox observer", () => {
     });
     expect(run).toHaveBeenCalledWith(["sandbox", "list", "-g", "nemoclaw"], {
       ignoreError: true,
+      killProcessTreeOnTimeout: true,
+      killSignal: "SIGKILL",
       suppressOutput: true,
       timeout: 9_000,
     });

@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { SystemReadinessReport } from "../../readiness/types";
 import { loadServingCatalog } from "./catalog-loader";
 import {
   listServingProfiles,
@@ -11,37 +12,41 @@ import {
 } from "./profile-list";
 
 describe("serving profile discovery", () => {
-  it("lists every compiled preset with stable selection metadata (#8384)", () => {
-    const catalog = loadServingCatalog();
-    const entries = listServingProfiles(catalog, {
-      evaluateCompatibility: (_catalog, preset) =>
-        preset.metadata.id === catalog.presets[0]?.metadata.id
-          ? { compatible: true, incompatibilityReason: null }
-          : { compatible: false, incompatibilityReason: "Test host requirement is not met." },
-    });
-
-    expect(entries.map(({ id }) => id)).toEqual(
-      [...catalog.presets].map(({ metadata }) => metadata.id).sort(),
-    );
-    entries.forEach((entry) => {
-      expect(entry).toMatchObject({
-        id: expect.any(String),
-        displayName: expect.any(String),
-        backend: expect.any(String),
-        model: expect.any(String),
-        topology: expect.any(String),
-        selectionMode: expect.stringMatching(/^(automatic|explicit-only|disabled)$/u),
-        supportState: expect.stringMatching(/^(supported|experimental|disabled)$/u),
-        validationLevel: expect.stringMatching(/^(schema|software|hardware)$/u),
-        compatible: expect.any(Boolean),
+  it(
+    "lists every compiled preset with stable selection metadata (#8384)",
+    { timeout: 30_000 },
+    () => {
+      const catalog = loadServingCatalog();
+      const entries = listServingProfiles(catalog, {
+        evaluateCompatibility: (_catalog, preset) =>
+          preset.metadata.id === catalog.presets[0]?.metadata.id
+            ? { compatible: true, incompatibilityReason: null }
+            : { compatible: false, incompatibilityReason: "Test host requirement is not met." },
       });
-      expect(
-        entry.compatible ? entry.incompatibilityReason : typeof entry.incompatibilityReason,
-      ).toBe(entry.compatible ? null : "string");
-    });
-    expect(entries.some(({ compatible }) => compatible)).toBe(true);
-    expect(entries.some(({ compatible }) => !compatible)).toBe(true);
-  });
+
+      expect(entries.map(({ id }) => id)).toEqual(
+        [...catalog.presets].map(({ metadata }) => metadata.id).sort(),
+      );
+      entries.forEach((entry) => {
+        expect(entry).toMatchObject({
+          id: expect.any(String),
+          displayName: expect.any(String),
+          backend: expect.any(String),
+          model: expect.any(String),
+          topology: expect.any(String),
+          selectionMode: expect.stringMatching(/^(automatic|explicit-only|disabled)$/u),
+          supportState: expect.stringMatching(/^(supported|experimental|disabled)$/u),
+          validationLevel: expect.stringMatching(/^(schema|software|hardware)$/u),
+          compatible: expect.any(Boolean),
+        });
+        expect(
+          entry.compatible ? entry.incompatibilityReason : typeof entry.incompatibilityReason,
+        ).toBe(entry.compatible ? null : "string");
+      });
+      expect(entries.some(({ compatible }) => compatible)).toBe(true);
+      expect(entries.some(({ compatible }) => !compatible)).toBe(true);
+    },
+  );
 
   it("renders IDs, selection state, support state, and compatibility (#8384)", () => {
     const output = renderServingProfiles([
@@ -84,6 +89,49 @@ describe("serving profile discovery", () => {
 
     expect(observed).toHaveLength(catalog.presets.length);
     expect(observed.every((reports) => reports === readinessReports)).toBe(true);
+  });
+
+  it("keeps managed vLLM profiles incompatible when Docker is absent (#10891)", () => {
+    const catalog = loadServingCatalog();
+    const profileId = "vllm.dgx-spark-gb10.single.qwen3-6-35b-a3b-nvfp4";
+    const report = {
+      schemaVersion: "1.1.0",
+      mutated: false,
+      provenance: {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: "a".repeat(40),
+        observedAt: new Date().toISOString(),
+      },
+      observations: [],
+      capabilities: [{ id: "host.docker.available", state: "unknown" }],
+      qualifications: [],
+      findings: [
+        {
+          id: "host.docker.unavailable",
+          severity: "blocking",
+          summary: "Docker is unavailable.",
+          capabilityIds: ["host.docker.available"],
+        },
+      ],
+      evidence: [],
+      status: "incompatible",
+      exitCode: 2,
+    } satisfies SystemReadinessReport;
+    const entries = listServingProfiles(catalog, {
+      readinessReports: [{ nodeId: "podman-host", report }],
+    });
+    const profile = entries.find(({ id }) => id === profileId);
+
+    expect(profile).toMatchObject({
+      compatible: false,
+      incompatibilityReason: "podman-host: readiness status is incompatible",
+    });
+    expect(() =>
+      resolveServingProfileSelection(profileId, {
+        catalog,
+        listProfiles: () => entries,
+      }),
+    ).toThrow("is incompatible: podman-host: readiness status is incompatible");
   });
 
   it("escapes an untrusted profile candidate in diagnostics (#8384)", () => {

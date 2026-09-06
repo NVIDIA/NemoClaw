@@ -177,8 +177,14 @@ function providerRunner(initial: readonly LiveBinding[] = []) {
   const run = vi.fn((args: string[]) => {
     commands.push(args.join(" "));
     switch (args.slice(0, 2).join(" ")) {
-      case "provider profile":
-        return args[2] === "import" ? profileImportResult : profileExportResult;
+      case "provider profile": {
+        const importing = args[2] === "import";
+        profileExportResult =
+          importing && profileImportResult.status === 0
+            ? EXACT_MESSAGING_PROFILE
+            : profileExportResult;
+        return importing ? profileImportResult : profileExportResult;
+      }
       case "provider get": {
         const name = args[2] ?? "";
         const binding = live.get(name);
@@ -264,26 +270,25 @@ function prepareWithBinding(input: {
 }
 
 describe("managed clone provider transaction", () => {
-  it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("keeps the %s transaction provider-neutral, secret-free, and deeply frozen", (agent) => {
-    const { prepared } = prepareWithBinding({ agent });
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "keeps the %s transaction provider-neutral, secret-free, and deeply frozen (#8931)",
+    (agent) => {
+      const { prepared } = prepareWithBinding({ agent });
 
-    expect(prepared).toMatchObject({
-      providerId: "docker",
-      sourceSandboxName: "source",
-      destinationSandboxName: "destination",
-      snapshotRestoreAuthority: CONTENT_AUTHORITY,
-      providers: [{ binding: TOKEN_BINDING, action: "create" }],
-    });
-    expect(JSON.stringify(prepared)).not.toContain("test-only-runtime-token");
-    expect(Object.isFrozen(prepared)).toBe(true);
-    expect(Object.isFrozen(prepared.snapshotRestoreAuthority)).toBe(true);
-    expect(Object.isFrozen(prepared.sourceRegistryAuthority.workload)).toBe(true);
-    expect(Object.isFrozen(prepared.providers[0]?.binding)).toBe(true);
-  });
+      expect(prepared).toMatchObject({
+        providerId: "docker",
+        sourceSandboxName: "source",
+        destinationSandboxName: "destination",
+        snapshotRestoreAuthority: CONTENT_AUTHORITY,
+        providers: [{ binding: TOKEN_BINDING, action: "create" }],
+      });
+      expect(JSON.stringify(prepared)).not.toContain("test-only-runtime-token");
+      expect(Object.isFrozen(prepared)).toBe(true);
+      expect(Object.isFrozen(prepared.snapshotRestoreAuthority)).toBe(true);
+      expect(Object.isFrozen(prepared.sourceRegistryAuthority.workload)).toBe(true);
+      expect(Object.isFrozen(prepared.providers[0]?.binding)).toBe(true);
+    },
+  );
 
   it("resolves active messaging providers from the handoff", () => {
     const profile = managedStartupE2eProfile("openclaw");
@@ -711,21 +716,24 @@ describe("managed clone provider transaction", () => {
       0,
       { ...TOKEN_BINDING, providerType: "other" } satisfies ManagedCloneProviderBinding,
     ],
-  ] as const)("preserves an unowned provider after an ambiguous create: %s", (_name, status, materialize) => {
-    const runner = providerRunner();
-    runner.setCreateBehavior(() => ({ status, ...(materialize ? { materialize } : {}) }));
-    const { prepared, source } = prepareWithBinding({ runner });
+  ] as const)(
+    "preserves an unowned provider after an ambiguous create: %s",
+    (_name, status, materialize) => {
+      const runner = providerRunner();
+      runner.setCreateBehavior(() => ({ status, ...(materialize ? { materialize } : {}) }));
+      const { prepared, source } = prepareWithBinding({ runner });
 
-    expect(() =>
-      provisionManagedCloneProviderTransaction(prepared, {
-        ...authorityDeps(source),
-        environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
-        runOpenshell: runner.run,
-      }),
-    ).toThrow(/preserving the observed/u);
-    expect(runner.commands).not.toContain(`provider delete ${TOKEN_BINDING.providerName}`);
-    expect(runner.live.has(TOKEN_BINDING.providerName)).toBe(Boolean(materialize));
-  });
+      expect(() =>
+        provisionManagedCloneProviderTransaction(prepared, {
+          ...authorityDeps(source),
+          environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
+          runOpenshell: runner.run,
+        }),
+      ).toThrow(/preserving the observed/u);
+      expect(runner.commands).not.toContain(`provider delete ${TOKEN_BINDING.providerName}`);
+      expect(runner.live.has(TOKEN_BINDING.providerName)).toBe(Boolean(materialize));
+    },
+  );
 
   it("reconciles and preserves an exact provider when the create adapter throws", () => {
     const runner = providerRunner();

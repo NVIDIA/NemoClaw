@@ -84,6 +84,8 @@ export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
     waivedFindingIds: [],
   };
 };
+exports.hasExplicitDeferredN1xOnboardingIntent = (env) =>
+  env.NEMOCLAW_PROVIDER === "install-vllm" || env.NEMOCLAW_NO_EXPRESS === "1";
 `,
   );
   fs.writeFileSync(
@@ -98,6 +100,10 @@ export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
   fs.writeFileSync(
     `${experimentalDir}/portable-profile.js`,
     `exports.isPortableExperimentalProfile = (env = process.env) => env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable";\n`,
+  );
+  fs.writeFileSync(
+    `${onboardDir}/docker-driver-gateway-env.js`,
+    `exports.configuredRuntimeProviderOwnsHostReadiness = () => false;\n`,
   );
 }
 

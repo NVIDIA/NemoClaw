@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { parseLogsSinceDuration, parseShieldsTimeoutDuration } from "./duration-flags";
+import { parseLogsSinceDuration } from "./duration-flags";
 
 describe("oclif duration flag parsers", () => {
   it("normalizes logs --since durations", () => {
@@ -18,10 +18,5 @@ describe("oclif duration flag parsers", () => {
     expect(() => parseLogsSinceDuration("someday")).toThrow(
       "--since requires a positive duration like 5m, 1h, or 30s",
     );
-  });
-
-  it("uses the shields duration parser for bounded shields timeouts", () => {
-    expect(parseShieldsTimeoutDuration(" 5m ")).toBe("5m");
-    expect(() => parseShieldsTimeoutDuration("2h")).toThrow(/exceeds maximum/);
   });
 });

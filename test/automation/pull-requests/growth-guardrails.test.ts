@@ -7,6 +7,8 @@ import {
   addedJavaScriptViolations,
   conditionalGrowthViolations,
   diagnostics,
+  dockerfileBudgetGrowthViolations,
+  e2eAssertionBudgetGrowthViolations,
   loopGrowthViolations,
   onboardGrowthViolations,
   testOnly as checkTestOnly,
@@ -18,6 +20,7 @@ import {
   testOnly as diffTestOnly,
 } from "../../helpers/growth-guardrail-diff";
 
+/** Build an in-memory PR diff so guardrail tests do not read repository files. */
 function fixtureDiff(
   files: GrowthGuardrailDiff["files"],
   base: Readonly<Record<string, string>>,
@@ -25,16 +28,78 @@ function fixtureDiff(
 ): GrowthGuardrailDiff {
   return {
     files,
+    /**
+     * Return each requested base-revision fixture file.
+     *
+     * @param paths - Repository-relative paths requested by the guardrail.
+     * @returns A map from each path to fixture content or the missing-file marker.
+     */
     async readBase(paths) {
       return new Map(paths.map((file) => [file, base[file] ?? null]));
     },
+    /**
+     * Return each requested candidate-revision fixture file.
+     *
+     * @param paths - Repository-relative paths requested by the guardrail.
+     * @returns A map from each path to fixture content or the missing-file marker.
+     */
     async readHead(paths) {
       return new Map(paths.map((file) => [file, head[file] ?? null]));
     },
   };
 }
 
-describe("codebase growth guardrails", () => {
+function e2eAssertionBudget(
+  expectCalls: number,
+  referenceSha = "a".repeat(40),
+  file = "test/e2e/live/example.test.ts",
+): string {
+  const metrics = {
+    expectCalls,
+    matcherAssertions: expectCalls,
+    nodeAssertions: 0,
+    namedAssertionHelpers: 0,
+    failCalls: 0,
+    throwGuards: 0,
+    objectFieldAssertions: 0,
+    assertionPoints: expectCalls,
+    generatedProbeBlocks: 0,
+    generatedProbeConditions: 0,
+  };
+  return JSON.stringify({
+    $comment: "fixture",
+    schemaVersion: 1,
+    issue: 10934,
+    epic: 10920,
+    reference: {
+      mainSha: referenceSha,
+      currentMainCollectedTests: 1,
+      epicMainSha: "b".repeat(40),
+      epicCollectedTests: 95,
+      epicDirectExpectCalls: 2184,
+      epicLiveExpectCalls: 2677,
+    },
+    limits: {
+      testFileCount: 1,
+      liveFileCount: 1,
+      direct: metrics,
+      unique: metrics,
+      fileMetricOrder: [
+        "directExpectCalls",
+        "directAssertionPoints",
+        "transitiveExpectCalls",
+        "transitiveAssertionPoints",
+        "transitiveGeneratedProbeBlocks",
+      ],
+      files: {
+        [file]: [expectCalls, expectCalls, expectCalls, expectCalls, 0],
+      },
+    },
+  });
+}
+
+/** Register repository-diff assertions that enforce each codebase growth ratchet. */
+function defineCodebaseGrowthGuardrails(): void {
   let diff: GrowthGuardrailDiff;
 
   beforeAll(async () => {
@@ -51,9 +116,22 @@ describe("codebase growth guardrails", () => {
     expect(violations, diagnostics.onboard(violations)).toEqual([]);
   });
 
+  /** Active managed-image production does not exempt the deprecated host-build recipe. */
+  async function enforceCurrentDockerfileBudget(): Promise<void> {
+    const violations = await dockerfileBudgetGrowthViolations(diff);
+    expect(violations, diagnostics.dockerfileBudget(violations)).toEqual([]);
+  }
+
+  it("keeps the root Dockerfile within its ratcheted budget", enforceCurrentDockerfileBudget);
+
   it("keeps changed test files within the size budget", async () => {
     const violations = await testSizeViolations(diff);
     expect(violations, diagnostics.size(violations)).toEqual([]);
+  });
+
+  it("does not increase the live E2E assertion baseline", async () => {
+    const violations = await e2eAssertionBudgetGrowthViolations(diff);
+    expect(violations, diagnostics.e2eAssertions(violations)).toEqual([]);
   });
 
   it("does not add if statements to changed test files", async () => {
@@ -61,17 +139,16 @@ describe("codebase growth guardrails", () => {
     expect(violations, diagnostics.conditionals(violations)).toEqual([]);
   });
 
-  it(
-    "does not add test loops directly, through one-use helpers, or through callback-forwarding helpers",
-    async () => {
-      const violations = await loopGrowthViolations(diff);
-      expect(violations, diagnostics.loops(violations)).toEqual([]);
-    },
-    60_000,
-  );
-});
+  it("does not add test loops directly, through one-use helpers, or through callback-forwarding helpers", async () => {
+    const violations = await loopGrowthViolations(diff);
+    expect(violations, diagnostics.loops(violations)).toEqual([]);
+  }, 60_000);
+}
 
-describe("codebase growth guardrail test support", () => {
+describe("codebase growth guardrails", defineCodebaseGrowthGuardrails);
+
+/** Register synthetic cases for the growth guardrail parsers and diagnostics. */
+function defineCodebaseGrowthGuardrailTestSupport(): void {
   it("caches repeated blob reads across guardrail checks", () => {
     const read = vi.fn((file: string) => `${file} content`);
     const cache = new Map<string, string | null>();
@@ -107,6 +184,84 @@ describe("codebase growth guardrail test support", () => {
     expect(await onboardGrowthViolations(diff)).toEqual(["src/lib/onboard.ts grew by 1 line(s)"]);
   });
 
+  /** Separate failures identify both the visible and byte-level budget increases. */
+  async function rejectDockerfileLineAndByteGrowth(): Promise<void> {
+    const diff = fixtureDiff(
+      [{ filename: "Dockerfile", status: "modified" }],
+      { Dockerfile: "FROM scratch\nRUN true\n" },
+      { Dockerfile: "FROM scratch\nRUN true\nCOPY setup /setup\nRUN /setup\n" },
+    );
+    expect(await dockerfileBudgetGrowthViolations(diff)).toEqual([
+      "Dockerfile line budget increased from 2 to 4",
+      "Dockerfile byte budget increased from 22 to 51",
+    ]);
+  }
+
+  it("rejects root Dockerfile line and byte growth", rejectDockerfileLineAndByteGrowth);
+
+  /** Byte growth closes the bypass left by instruction and physical-line counters. */
+  async function rejectDockerfileSameLineGrowth(): Promise<void> {
+    const diff = fixtureDiff(
+      [{ filename: "Dockerfile", status: "modified" }],
+      { Dockerfile: "FROM scratch\nRUN true\n" },
+      { Dockerfile: "FROM scratch\nRUN true && second\n" },
+    );
+    expect(await dockerfileBudgetGrowthViolations(diff)).toEqual([
+      "Dockerfile byte budget increased from 22 to 32",
+    ]);
+
+    const multibyteDiff = fixtureDiff(
+      [{ filename: "Dockerfile", status: "modified" }],
+      { Dockerfile: "FROM scratch\nRUN echo\n" },
+      { Dockerfile: "FROM scratch\nRUN echo é\n" },
+    );
+    expect(await dockerfileBudgetGrowthViolations(multibyteDiff)).toEqual([
+      "Dockerfile byte budget increased from 22 to 25",
+    ]);
+  }
+
+  it("rejects root Dockerfile growth within an existing line", rejectDockerfileSameLineGrowth);
+
+  /** Comments share the budget because the ratchet applies to the complete producer file. */
+  async function rejectDockerfileDocumentationGrowth(): Promise<void> {
+    const diff = fixtureDiff(
+      [{ filename: "Dockerfile", status: "modified" }],
+      { Dockerfile: "FROM scratch\n" },
+      { Dockerfile: "# Managed image recipe\nFROM scratch\n" },
+    );
+    expect(await dockerfileBudgetGrowthViolations(diff)).toEqual([
+      "Dockerfile line budget increased from 1 to 2",
+      "Dockerfile byte budget increased from 13 to 36",
+    ]);
+  }
+
+  it("rejects documentation-only root Dockerfile growth", rejectDockerfileDocumentationGrowth);
+
+  /** The ratchet permits simplification without a maintainer override. */
+  async function allowDockerfileBudgetShrinkage(): Promise<void> {
+    const diff = fixtureDiff(
+      [{ filename: "Dockerfile", status: "modified" }],
+      { Dockerfile: "FROM scratch\nRUN true\n" },
+      { Dockerfile: "FROM scratch\n" },
+    );
+    expect(await dockerfileBudgetGrowthViolations(diff)).toEqual([]);
+  }
+
+  it("allows the root Dockerfile budget to shrink", allowDockerfileBudgetShrinkage);
+
+  /** The remediation text records the escalation path for intentional growth. */
+  function requireDockerfileBudgetDecision(): void {
+    const message = diagnostics.dockerfileBudget(["Dockerfile byte budget increased"]);
+    expect(message).toContain("Host-side stock Dockerfile onboarding is deprecated");
+    expect(message).toContain("managed-image startup profile, bootstrap, or runtime-provider path");
+    expect(message).toContain("record a maintainer decision before increasing this budget");
+  }
+
+  it(
+    "requires a maintainer decision to increase the root Dockerfile budget",
+    requireDockerfileBudgetDecision,
+  );
+
   it("rejects a larger default test file budget", async () => {
     const diff = fixtureDiff(
       [{ filename: "ci/test-file-size-budget.json", status: "modified" }],
@@ -114,6 +269,92 @@ describe("codebase growth guardrail test support", () => {
       { "ci/test-file-size-budget.json": '{"defaultMaxLines":2000}' },
     );
     expect(await testSizeViolations(diff)).toContain("defaultMaxLines increased from 1500 to 2000");
+  });
+
+  it("accepts the initial live E2E assertion budget", async () => {
+    const budget = e2eAssertionBudget(1);
+    const diff = fixtureDiff(
+      [{ filename: "ci/e2e-assertion-budget.json", status: "added" }],
+      {},
+      { "ci/e2e-assertion-budget.json": budget },
+    );
+
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
+  });
+
+  it("accepts a lower live E2E assertion budget", async () => {
+    const diff = fixtureDiff(
+      [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
+      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(2) },
+      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(1) },
+    );
+
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
+  });
+
+  it("rejects a larger live E2E assertion budget and changed reference", async () => {
+    const diff = fixtureDiff(
+      [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
+      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(1) },
+      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(2, "c".repeat(40)) },
+    );
+    const violations = await e2eAssertionBudgetGrowthViolations(diff);
+
+    expect(violations).toContain("live E2E assertion reference metadata changed");
+    expect(violations).toContain("direct.expectCalls increased from 1 to 2");
+    expect(violations).toContain(
+      "test/e2e/live/example.test.ts directExpectCalls increased from 1 to 2",
+    );
+  });
+
+  it("rejects an omitted live E2E assertion budget unless its test was removed", async () => {
+    const withoutFile = JSON.parse(e2eAssertionBudget(1)) as {
+      limits: { files: Record<string, unknown> };
+    };
+    withoutFile.limits.files = {};
+    const base = { "ci/e2e-assertion-budget.json": e2eAssertionBudget(1) };
+    const head = {
+      "ci/e2e-assertion-budget.json": JSON.stringify(withoutFile),
+    };
+
+    const omitted = fixtureDiff(
+      [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
+      base,
+      head,
+    );
+    expect(await e2eAssertionBudgetGrowthViolations(omitted)).toContain(
+      "test/e2e/live/example.test.ts omitted its live E2E assertion budget",
+    );
+
+    const removed = fixtureDiff(
+      [
+        { filename: "ci/e2e-assertion-budget.json", status: "modified" },
+        { filename: "test/e2e/live/example.test.ts", status: "removed" },
+      ],
+      base,
+      head,
+    );
+    expect(await e2eAssertionBudgetGrowthViolations(removed)).toEqual([]);
+  });
+
+  it("carries a live E2E assertion budget across a test rename", async () => {
+    const renamed = "test/e2e/live/renamed.test.ts";
+    const diff = fixtureDiff(
+      [
+        { filename: "ci/e2e-assertion-budget.json", status: "modified" },
+        {
+          filename: renamed,
+          previous_filename: "test/e2e/live/example.test.ts",
+          status: "renamed",
+        },
+      ],
+      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(2) },
+      {
+        "ci/e2e-assertion-budget.json": e2eAssertionBudget(1, "a".repeat(40), renamed),
+      },
+    );
+
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
   });
 
   it("rejects a changed test that is missing from the latest PR commit", async () => {
@@ -305,4 +546,6 @@ describe("codebase growth guardrail test support", () => {
       "spawn failed",
     );
   });
-});
+}
+
+describe("codebase growth guardrail test support", defineCodebaseGrowthGuardrailTestSupport);

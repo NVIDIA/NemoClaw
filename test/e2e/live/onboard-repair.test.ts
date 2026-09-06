@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   assertCleanupSucceededOrAbsent,
@@ -35,7 +36,7 @@ const STALE_EXTRA_PROVIDER = "e2e-stale-extra-provider";
 const LIVE_EXTRA_PROVIDER = "e2e-live-extra-provider";
 const EXTRA_PROVIDER_TOKEN_ENV = "NEMOCLAW_E2E_EXTRA_PROVIDER_TOKEN";
 const EXTRA_PROVIDER_TOKEN = "e2e-extra-provider-token";
-const LIVE_TIMEOUT_MS = 70 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
 
 validateSandboxName(SANDBOX_NAME);
 validateSandboxName(OTHER_SANDBOX_NAME);
@@ -131,11 +132,13 @@ async function waitSandboxAbsent(sandbox: SandboxClient, name: string): Promise<
   throw new Error(`${name} still exists after forced deletion`);
 }
 
-test("onboard repair resumes missing sandbox and rejects conflicting resume inputs", {
+test(
+  "onboard repair resumes missing sandbox and rejects conflicting resume inputs",
+  {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
-      "confirm Docker and start the compatible endpoint",
+      "confirm the selected runtime and start the compatible endpoint",
       "clear prior onboard-repair state",
       "interrupt onboarding after sandbox creation",
       "remove the recorded sandbox and resume repair",
@@ -145,7 +148,8 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
       "clear the repaired onboarding state",
     ],
   },
-}, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, skip }) => {
+  },
+  async ({ artifacts, cleanup: cleanupRegistry, host, progress, runtimeProvider, sandbox }) => {
   const corporateCa = createCorporateCaFixture("requests", "nemoclaw-repair-corporate-ca-");
   cleanupRegistry.trackDisposable("remove corporate CA fixture", () =>
     cleanupCorporateCaFixture(corporateCa),
@@ -166,15 +170,10 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
     ],
   });
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "phase-0-docker-info",
-    env: env(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "phase-0-runtime-info",
+      scenarioLabel: "onboard repair",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
-    skip(`Docker is required: ${resultText(docker)}`);
-  }
 
   const fake = await startFakeOpenAiCompatibleServer({
     host: "0.0.0.0",
@@ -296,6 +295,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
       NEMOCLAW_RECREATE_SANDBOX: "1",
       ...corporateCa.env,
     }),
+    execTimeout(20 * 60_000),
   );
   expect(first.exitCode, resultText(first)).toBe(1);
   expect(resultText(first)).toContain("Forced onboarding failure at step 'policies'");
@@ -339,6 +339,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
       NEMOCLAW_POLICY_MODE: "skip",
       ...corporateCa.env,
     }),
+    execTimeout(20 * 60_000),
   );
   expect(repair.exitCode, resultText(repair)).toBe(0);
   expect(resultText(repair)).toContain("[resume] Skipping preflight (cached)");
@@ -383,6 +384,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
       NEMOCLAW_RECREATE_SANDBOX: "1",
       ...corporateCa.env,
     }),
+    execTimeout(20 * 60_000),
   );
   expect(reinject.exitCode, resultText(reinject)).toBe(1);
 
@@ -420,4 +422,5 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
   await cleanup(host, sandbox);
   expect(fs.existsSync(SESSION_FILE)).toBe(false);
   await artifacts.target.complete({ id: "onboard-repair", status: "passed" });
-});
+  },
+);

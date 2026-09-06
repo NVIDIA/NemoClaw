@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PodmanExecutableStat } from "../podman/executable-authority";
-import { resolveOpenshell } from "./resolve";
+import { openshellNotFoundDiagnosticLines, resolveOpenshell } from "./resolve";
 import {
   assertHermesPortableOpenShellExecutableAuthority,
   captureHermesPortableOpenShellExecutableAuthority,
@@ -168,6 +168,19 @@ describe("lib/resolve-openshell", () => {
         checkExecutable: () => false,
       }),
     ).toBeNull();
+  });
+
+  it("lists every fallback candidate when OpenShell is unavailable (#9805)", () => {
+    expect(
+      openshellNotFoundDiagnosticLines({ HOME: "/fakehome", PATH: "/usr/bin" }),
+    ).toEqual(
+      expect.arrayContaining([
+        "    - /fakehome/.local/bin/openshell",
+        "    - /opt/homebrew/bin/openshell",
+        "    - /usr/local/bin/openshell",
+        "    - /usr/bin/openshell",
+      ]),
+    );
   });
 
   it("skips home candidate when home is not absolute", () => {

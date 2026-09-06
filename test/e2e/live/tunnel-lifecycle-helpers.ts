@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -24,8 +25,10 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const TEST_SANDBOX_PREFIX = "e2e-tunnel-life";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? TEST_SANDBOX_PREFIX;
 const LOCAL_DASHBOARD_PORT = process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789";
-const TEST_TIMEOUT_MS = Number(process.env.NEMOCLAW_E2E_TIMEOUT_SECONDS ?? 3_600) * 1_000;
-const ONBOARD_TIMEOUT_MS = 30 * 60_000;
+const TEST_TIMEOUT_MS = testTimeout(
+  Number(process.env.NEMOCLAW_E2E_TIMEOUT_SECONDS ?? 3_600) * 1_000,
+);
+const ONBOARD_TIMEOUT_MS = execTimeout(30 * 60_000);
 const COMMAND_TIMEOUT_MS = 60_000;
 const TUNNEL_URL_PATTERN = /https:\/\/[a-z0-9-]+\.trycloudflare\.com\b[\w./?%&=-]*/i;
 const DASHBOARD_MARKER_PATTERN = /<title>OpenClaw Control<\/title>|<openclaw-app/i;
@@ -173,7 +176,7 @@ export const TUNNEL_LIFECYCLE_TEST_TIMEOUT_MS = TEST_TIMEOUT_MS;
 
 type TunnelLifecycleFixtures = Pick<
   E2ETargetFixtures,
-  "artifacts" | "cleanup" | "host" | "progress" | "secrets"
+  "artifacts" | "cleanup" | "host" | "progress" | "runtimeProvider" | "secrets"
 > & {
   skip: (note?: string) => never;
 };
@@ -221,6 +224,7 @@ export async function runTunnelLifecycleContract({
   cleanup,
   host,
   progress,
+  runtimeProvider,
   secrets,
   skip,
 }: TunnelLifecycleFixtures): Promise<void> {
@@ -244,17 +248,10 @@ export async function runTunnelLifecycleContract({
 
   registerTunnelLifecycleCleanup(cleanup, host);
 
-  const docker = await host.command("docker", ["info"], {
+  await runtimeProvider.requireAvailable({
     artifactName: "prereq-docker-info-tunnel-lifecycle",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+    scenarioLabel: "tunnel lifecycle",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(`Docker is required for tunnel lifecycle E2E: ${resultText(docker)}`);
-    }
-    skip("Docker is required for tunnel lifecycle E2E");
-  }
 
   const cloudflared = await host.command("cloudflared", ["--version"], {
     artifactName: "prereq-cloudflared-version",
