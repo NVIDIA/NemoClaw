@@ -148,7 +148,7 @@ NEMOCLAW_CMD=("$@")
 
 _chat_ui_url_dashboard_settings() {
   [ -n "${CHAT_UI_URL:-}" ] || return 2
-  python3 - "$CHAT_UI_URL" <<'PYPORT'
+  python3 -I - "$CHAT_UI_URL" <<'PYPORT'
 import ipaddress
 import re
 import sys
@@ -724,57 +724,255 @@ cleanup_orphan_socat_forwarders() {
   done
 }
 
-remove_stale_gateway_file() {
-  local path="$1"
-  local label="$2"
+remove_stale_hermes_gateway_files() {
+  NEMOCLAW_HERMES_STALE_CLEANUP_ROOT="$HERMES_DIR" \
+    python3 -I - <<'PYSTALEGATEWAY'
+import errno
+import os
+import stat
+import sys
 
-  if [ -L "$path" ]; then
-    echo "[gateway] Removing unsafe stale Hermes ${label} symlink: ${path}" >&2
-    rm -f "$path" 2>/dev/null || echo "[gateway] WARNING: could not remove stale ${label}: ${path}" >&2
-    return
-  fi
-  if [ -f "$path" ]; then
-    echo "[gateway] Removing stale Hermes ${label}: ${path}" >&2
-    rm -f "$path" 2>/dev/null || echo "[gateway] WARNING: could not remove stale ${label}: ${path}" >&2
-  fi
+root = os.environ["NEMOCLAW_HERMES_STALE_CLEANUP_ROOT"]
+open_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+open_flags |= getattr(os, "O_CLOEXEC", 0)
+
+
+def fail(message: str) -> None:
+    print(
+        f"[SECURITY] Refusing Hermes stale gateway cleanup because {message}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+def open_child_directory(parent_fd: int, name: str, display: str) -> tuple[int, os.stat_result]:
+    try:
+        before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as exc:
+        fail(f"{display} could not be inspected: {exc.strerror}")
+    if stat.S_ISLNK(before.st_mode):
+        fail(f"{display} is a symlink")
+    if not stat.S_ISDIR(before.st_mode):
+        fail(f"{display} is not a directory")
+    try:
+        fd = os.open(name, open_flags, dir_fd=parent_fd)
+    except OSError as exc:
+        fail(f"{display} could not be opened safely: {exc.strerror}")
+    opened = os.fstat(fd)
+    if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+        os.close(fd)
+        fail(f"{display} changed while it was opened")
+    return fd, opened
+
+
+def remove_entry(parent_fd: int, name: str, display: str, label: str) -> None:
+    try:
+        entry = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        fail(f"{display} could not be inspected: {exc.strerror}")
+    if stat.S_ISLNK(entry.st_mode):
+        print(f"[gateway] Removing unsafe stale Hermes {label} symlink: {display}", file=sys.stderr)
+    elif stat.S_ISREG(entry.st_mode):
+        print(f"[gateway] Removing stale Hermes {label}: {display}", file=sys.stderr)
+    else:
+        fail(f"{display} is not a regular file or symlink")
+    try:
+        os.unlink(name, dir_fd=parent_fd)
+    except OSError as exc:
+        detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+        fail(f"{display} could not be removed safely: {detail}")
+
+
+try:
+    root_before = os.lstat(root)
+except OSError as exc:
+    fail(f"{root} could not be inspected: {exc.strerror}")
+if stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
+    fail(f"{root} is not a safe directory")
+
+root_fd = -1
+runtime_fd = -1
+try:
+    try:
+        root_fd = os.open(root, open_flags)
+    except OSError as exc:
+        fail(f"{root} could not be opened safely: {exc.strerror}")
+    root_open = os.fstat(root_fd)
+    if (root_open.st_dev, root_open.st_ino) != (root_before.st_dev, root_before.st_ino):
+        fail(f"{root} changed while it was opened")
+
+    runtime_path = f"{root}/runtime"
+    runtime_fd, runtime_open = open_child_directory(root_fd, "runtime", runtime_path)
+    remove_entry(runtime_fd, "gateway.pid", f"{runtime_path}/gateway.pid", "runtime PID file")
+    remove_entry(root_fd, "gateway.pid", f"{root}/gateway.pid", "legacy PID file")
+    remove_entry(runtime_fd, "gateway.lock", f"{runtime_path}/gateway.lock", "lock file")
+
+    runtime_after = os.stat("runtime", dir_fd=root_fd, follow_symlinks=False)
+    if (runtime_after.st_dev, runtime_after.st_ino) != (runtime_open.st_dev, runtime_open.st_ino):
+        fail(f"{runtime_path} changed during stale gateway cleanup")
+    root_after = os.lstat(root)
+    if (root_after.st_dev, root_after.st_ino) != (root_open.st_dev, root_open.st_ino):
+        fail(f"{root} changed during stale gateway cleanup")
+finally:
+    if runtime_fd >= 0:
+        os.close(runtime_fd)
+    if root_fd >= 0:
+        os.close(root_fd)
+PYSTALEGATEWAY
+}
+
+ensure_hermes_mutable_layout_dir() {
+  local dir_name="${1:?Hermes layout directory name required}"
+  local desired_mode="${2:?Hermes layout directory mode required}"
+  NEMOCLAW_HERMES_CONFIG_ROOT="$HERMES_DIR" \
+    NEMOCLAW_HERMES_LAYOUT_DIR_NAME="$dir_name" \
+    NEMOCLAW_HERMES_LAYOUT_DIR_MODE="$desired_mode" \
+    python3 -I - <<'PYMUTABLELAYOUT'
+import errno
+import grp
+import os
+import pwd
+import stat
+import sys
+
+root = os.environ["NEMOCLAW_HERMES_CONFIG_ROOT"]
+name = os.environ["NEMOCLAW_HERMES_LAYOUT_DIR_NAME"]
+
+
+def fail(message: str) -> None:
+    print(
+        f"[SECURITY] Refusing Hermes layout repair because {message}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+try:
+    desired_mode = int(os.environ["NEMOCLAW_HERMES_LAYOUT_DIR_MODE"], 8)
+except ValueError:
+    fail(f"{name} has an invalid requested mode")
+if name != "." and (not name or name in {".."} or "/" in name):
+    fail(f"{name} is not a direct Hermes layout directory")
+if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+    fail("descriptor-safe directory flags are unavailable")
+
+try:
+    root_before = os.lstat(root)
+except OSError as exc:
+    fail(f"{root} could not be inspected: {exc.strerror}")
+if stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
+    fail(f"{root} is not a safe directory")
+
+open_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+open_flags |= getattr(os, "O_CLOEXEC", 0)
+root_fd = -1
+target_fd = -1
+display = root if name == "." else f"{root}/{name}"
+try:
+    try:
+        root_fd = os.open(root, open_flags)
+    except OSError as exc:
+        fail(f"{root} could not be opened safely: {exc.strerror}")
+    root_open = os.fstat(root_fd)
+    if (root_open.st_dev, root_open.st_ino) != (
+        root_before.st_dev,
+        root_before.st_ino,
+    ):
+        fail(f"{root} changed while it was opened")
+
+    if name == ".":
+        target_fd = os.dup(root_fd)
+    else:
+        try:
+            target_fd = os.open(name, open_flags, dir_fd=root_fd)
+        except FileNotFoundError:
+            try:
+                os.mkdir(name, desired_mode, dir_fd=root_fd)
+            except FileExistsError:
+                pass
+            except OSError as exc:
+                fail(f"{display} could not be created: {exc.strerror}")
+            try:
+                target_fd = os.open(name, open_flags, dir_fd=root_fd)
+            except OSError as exc:
+                fail(f"{display} could not be opened after creation: {exc.strerror}")
+        except OSError as exc:
+            try:
+                unsafe = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+            except OSError:
+                unsafe = None
+            if unsafe is not None and stat.S_ISLNK(unsafe.st_mode):
+                fail(f"{display} is a symlink")
+            if unsafe is not None and not stat.S_ISDIR(unsafe.st_mode):
+                fail(f"{display} is not a directory")
+            detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+            fail(f"{display} could not be opened safely: {detail}")
+
+    if os.geteuid() == 0:
+        try:
+            sandbox_uid = pwd.getpwnam("sandbox").pw_uid
+            sandbox_gid = grp.getgrnam("sandbox").gr_gid
+        except KeyError as exc:
+            fail(f"sandbox account lookup failed: {exc}")
+        try:
+            os.fchown(target_fd, sandbox_uid, sandbox_gid)
+        except OSError as exc:
+            fail(f"{display} ownership could not be repaired: {exc.strerror}")
+    mode_already_correct = stat.S_IMODE(os.fstat(target_fd).st_mode) == desired_mode
+    try:
+        os.fchmod(target_fd, desired_mode)
+    except PermissionError as exc:
+        if os.geteuid() == 0 or not mode_already_correct:
+            fail(f"{display} mode could not be repaired: {exc.strerror}")
+    except OSError as exc:
+        fail(f"{display} mode could not be repaired: {exc.strerror}")
+
+    current = os.fstat(target_fd)
+    if not stat.S_ISDIR(current.st_mode):
+        fail(f"{display} is not a directory")
+    if stat.S_IMODE(current.st_mode) != desired_mode:
+        fail(
+            f"{display} mode is {stat.S_IMODE(current.st_mode):04o}, "
+            f"expected {desired_mode:04o}"
+        )
+    if os.geteuid() == 0 and (
+        current.st_uid != sandbox_uid or current.st_gid != sandbox_gid
+    ):
+        fail(f"{display} ownership did not match sandbox:sandbox after repair")
+
+    if name != ".":
+        try:
+            named = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        except OSError as exc:
+            fail(f"{display} no longer names the opened directory: {exc.strerror}")
+        if (named.st_dev, named.st_ino) != (current.st_dev, current.st_ino):
+            fail(f"{display} changed during repair")
+
+    try:
+        root_after = os.lstat(root)
+    except OSError as exc:
+        fail(f"{root} disappeared during repair: {exc.strerror}")
+    if (root_after.st_dev, root_after.st_ino) != (
+        root_open.st_dev,
+        root_open.st_ino,
+    ):
+        fail(f"{root} changed during repair")
+finally:
+    if target_fd >= 0:
+        os.close(target_fd)
+    if root_fd >= 0:
+        os.close(root_fd)
+PYMUTABLELAYOUT
 }
 
 ensure_hermes_config_root_mode() {
-  if [ -L "$HERMES_DIR" ] || [ ! -d "$HERMES_DIR" ]; then
-    echo "[SECURITY] Refusing Hermes layout repair because ${HERMES_DIR} is not a safe directory" >&2
-    return 1
-  fi
-
-  if [ "$(id -u)" -eq 0 ]; then
-    chown sandbox:sandbox "$HERMES_DIR" || return 1
-  fi
-  chmod 3770 "$HERMES_DIR"
+  ensure_hermes_mutable_layout_dir . 3770
 }
 
 ensure_hermes_state_dir() {
-  local dir="$1"
-  local mode="$2"
-
-  if [ -L "$dir" ]; then
-    echo "[SECURITY] Refusing Hermes layout repair because ${dir} is a symlink" >&2
-    return 1
-  fi
-  if [ -e "$dir" ] && [ ! -d "$dir" ]; then
-    echo "[SECURITY] Refusing Hermes layout repair because ${dir} is not a directory" >&2
-    return 1
-  fi
-
-  mkdir -p "$dir" || return 1
-
-  if [ -L "$dir" ] || [ ! -d "$dir" ]; then
-    echo "[SECURITY] Refusing Hermes layout repair because ${dir} did not resolve to a safe directory" >&2
-    return 1
-  fi
-
-  if [ "$(id -u)" -eq 0 ]; then
-    chown sandbox:sandbox "$dir" || return 1
-  fi
-  chmod "$mode" "$dir"
+  ensure_hermes_mutable_layout_dir "$1" "$2"
 }
 
 ensure_hermes_cross_uid_state_dir() {
@@ -927,11 +1125,8 @@ PYCROSSUIDDIR
 }
 
 repair_hermes_log_permissions() {
-  ensure_hermes_state_dir "${HERMES_DIR}/logs" 2770 || return 1
-  ensure_hermes_state_dir "${HERMES_DIR}/logs/curator" 2770 || return 1
-
-  NEMOCLAW_HERMES_LOG_DIR="${HERMES_DIR}/logs" \
-    python3 - <<'PYLOGS'
+  NEMOCLAW_HERMES_CONFIG_ROOT="$HERMES_DIR" \
+    python3 -I - <<'PYLOGS'
 import errno
 import grp
 import os
@@ -939,97 +1134,352 @@ import pwd
 import stat
 import sys
 
-root = os.environ["NEMOCLAW_HERMES_LOG_DIR"]
-mode = 0o660
-
-if not hasattr(os, "O_NOFOLLOW"):
-    print("[SECURITY] Refusing Hermes log repair because O_NOFOLLOW is unavailable", file=sys.stderr)
-    sys.exit(1)
-
-root_real = os.path.realpath(root)
-flags = os.O_RDONLY | os.O_NOFOLLOW
-for optional_flag in ("O_CLOEXEC", "O_NONBLOCK"):
-    flags |= getattr(os, optional_flag, 0)
-
+root = os.environ["NEMOCLAW_HERMES_CONFIG_ROOT"]
+directory_mode = 0o2770
+file_mode = 0o660
+max_repair_depth = 64
+max_repair_entries = 4096
 
 def fail(message: str) -> None:
     print(f"[SECURITY] Refusing Hermes log repair because {message}", file=sys.stderr)
     sys.exit(1)
 
 
-def describe_unsafe_existing_path(path: str) -> str:
-    try:
-        st = os.lstat(path)
-    except OSError:
-        return "could not be opened safely"
-    if stat.S_ISLNK(st.st_mode):
-        return "is a symlink"
-    if not stat.S_ISREG(st.st_mode):
-        return "is not a regular file"
-    return "could not be opened safely"
+if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+    fail("descriptor-safe directory flags are unavailable")
+
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+directory_flags |= getattr(os, "O_CLOEXEC", 0)
+file_flags = os.O_RDONLY | os.O_NOFOLLOW
+for optional_flag in ("O_CLOEXEC", "O_NONBLOCK"):
+    file_flags |= getattr(os, optional_flag, 0)
+
+sandbox_identity = None
 
 
-def repair_file(path: str) -> None:
+def resolve_sandbox_identity() -> tuple[int | None, int | None]:
+    global sandbox_identity
+    if os.geteuid() != 0:
+        return None, None
+    if sandbox_identity is not None:
+        return sandbox_identity
     try:
-        current = os.lstat(path)
+        sandbox_uid = pwd.getpwnam("sandbox").pw_uid
+        sandbox_gid = grp.getgrnam("sandbox").gr_gid
+    except KeyError as exc:
+        fail(f"sandbox account lookup failed: {exc}")
+    sandbox_identity = (sandbox_uid, sandbox_gid)
+    return sandbox_identity
+
+
+def require_non_root_ownership(current: os.stat_result, path: str) -> None:
+    if os.geteuid() == 0:
+        return
+    if current.st_uid != os.geteuid():
+        fail(f"{path} has unexpected owner uid {current.st_uid}")
+    if current.st_gid != os.getegid():
+        fail(f"{path} has unexpected group gid {current.st_gid}")
+
+
+def enforce_mode(fd: int, path: str, expected_mode: int) -> None:
+    before = os.fstat(fd)
+    require_non_root_ownership(before, path)
+    if os.geteuid() != 0 and stat.S_IMODE(before.st_mode) == expected_mode:
+        return
+    try:
+        os.fchmod(fd, expected_mode)
+    except PermissionError as exc:
+        current = os.fstat(fd)
+        require_non_root_ownership(current, path)
+        if os.geteuid() != 0 and stat.S_IMODE(current.st_mode) == expected_mode:
+            return
+        detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+        fail(f"{path} mode could not be repaired safely: {detail}")
+    except OSError as exc:
+        detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+        fail(f"{path} mode could not be repaired safely: {detail}")
+
+
+def stat_entry(parent_fd: int, name: str, path: str) -> os.stat_result:
+    try:
+        return os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     except OSError as exc:
         fail(f"{path} could not be statted safely: {exc.strerror}")
-    if stat.S_ISLNK(current.st_mode):
+
+
+def verify_named_inode(
+    parent_fd: int,
+    name: str,
+    path: str,
+    opened: os.stat_result,
+) -> None:
+    current = stat_entry(parent_fd, name, path)
+    if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+        fail(f"{path} changed during repair")
+
+
+def open_directory(
+    parent_fd: int,
+    name: str,
+    path: str,
+    *,
+    create: bool,
+) -> tuple[int, os.stat_result]:
+    try:
+        before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        if not create:
+            fail(f"{path} disappeared during repair")
+        try:
+            os.mkdir(name, directory_mode, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            fail(f"{path} could not be created: {exc.strerror}")
+        before = stat_entry(parent_fd, name, path)
+    except OSError as exc:
+        detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+        fail(f"{path} could not be inspected safely: {detail}")
+
+    if stat.S_ISLNK(before.st_mode):
         fail(f"{path} is a symlink")
-    if not stat.S_ISREG(current.st_mode):
+    if not stat.S_ISDIR(before.st_mode):
+        fail(f"{path} is not a directory")
+
+    try:
+        fd = os.open(name, directory_flags, dir_fd=parent_fd)
+    except OSError as exc:
+        current = stat_entry(parent_fd, name, path)
+        if stat.S_ISLNK(current.st_mode):
+            fail(f"{path} is a symlink")
+        if not stat.S_ISDIR(current.st_mode):
+            fail(f"{path} is not a directory")
+        detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+        fail(f"{path} could not be opened safely: {detail}")
+
+    opened = os.fstat(fd)
+    if not stat.S_ISDIR(opened.st_mode):
+        os.close(fd)
+        fail(f"{path} is not a directory")
+    if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+        os.close(fd)
+        fail(f"{path} changed while it was opened")
+    return fd, opened
+
+
+def repair_managed_directory(
+    parent_fd: int,
+    name: str,
+    path: str,
+) -> tuple[int, os.stat_result]:
+    fd, _opened = open_directory(parent_fd, name, path, create=True)
+    sandbox_uid, sandbox_gid = resolve_sandbox_identity()
+    if sandbox_uid is not None and sandbox_gid is not None:
+        os.fchown(fd, sandbox_uid, sandbox_gid)
+    enforce_mode(fd, path, directory_mode)
+    current = os.fstat(fd)
+    if stat.S_IMODE(current.st_mode) != directory_mode:
+        fail(
+            f"{path} mode is {stat.S_IMODE(current.st_mode):04o}, "
+            f"expected {directory_mode:04o}"
+        )
+    if sandbox_uid is not None and current.st_uid != sandbox_uid:
+        fail(f"{path} has owner uid {current.st_uid}, expected sandbox uid {sandbox_uid}")
+    if sandbox_gid is not None and current.st_gid != sandbox_gid:
+        fail(f"{path} has group gid {current.st_gid}, expected sandbox gid {sandbox_gid}")
+    require_non_root_ownership(current, path)
+    verify_named_inode(parent_fd, name, path, current)
+    return fd, current
+
+
+def repair_file(parent_fd: int, name: str, path: str) -> None:
+    before = stat_entry(parent_fd, name, path)
+    if stat.S_ISLNK(before.st_mode):
+        fail(f"{path} is a symlink")
+    if not stat.S_ISREG(before.st_mode):
         fail(f"{path} is not a regular file")
 
     try:
-        fd = os.open(path, flags)
+        fd = os.open(name, file_flags, dir_fd=parent_fd)
     except OSError as exc:
-        reason = describe_unsafe_existing_path(path)
+        current = stat_entry(parent_fd, name, path)
+        if stat.S_ISLNK(current.st_mode):
+            fail(f"{path} is a symlink")
+        if not stat.S_ISREG(current.st_mode):
+            fail(f"{path} is not a regular file")
         detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
-        fail(f"{path} {reason}: {detail}")
+        fail(f"{path} could not be opened safely: {detail}")
 
     try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode):
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
             fail(f"{path} is not a regular file")
-        if st.st_nlink != 1:
-            fail(f"{path} has hard-link count {st.st_nlink}")
-        current = os.stat(path, follow_symlinks=False)
-        if (current.st_dev, current.st_ino) != (st.st_dev, st.st_ino):
-            fail(f"{path} changed during repair")
-        if os.geteuid() == 0:
-            try:
-                uid = pwd.getpwnam("sandbox").pw_uid
-                gid = grp.getgrnam("sandbox").gr_gid
-            except KeyError as exc:
-                fail(f"sandbox account lookup failed: {exc}")
-            os.fchown(fd, uid, gid)
-        os.fchmod(fd, mode)
-        current = os.stat(path, follow_symlinks=False)
-        if (current.st_dev, current.st_ino) != (st.st_dev, st.st_ino):
-            fail(f"{path} changed during repair")
+        if opened.st_nlink != 1:
+            fail(f"{path} has hard-link count {opened.st_nlink}")
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            fail(f"{path} changed while it was opened")
+        sandbox_uid, sandbox_gid = resolve_sandbox_identity()
+        if sandbox_uid is not None and sandbox_gid is not None:
+            os.fchown(fd, sandbox_uid, sandbox_gid)
+        enforce_mode(fd, path, file_mode)
+        current = os.fstat(fd)
+        if stat.S_IMODE(current.st_mode) != file_mode:
+            fail(
+                f"{path} mode is {stat.S_IMODE(current.st_mode):04o}, "
+                f"expected {file_mode:04o}"
+            )
+        if sandbox_uid is not None and current.st_uid != sandbox_uid:
+            fail(f"{path} has owner uid {current.st_uid}, expected sandbox uid {sandbox_uid}")
+        if sandbox_gid is not None and current.st_gid != sandbox_gid:
+            fail(f"{path} has group gid {current.st_gid}, expected sandbox gid {sandbox_gid}")
+        require_non_root_ownership(current, path)
+        verify_named_inode(parent_fd, name, path, current)
     finally:
         os.close(fd)
 
 
-def on_walk_error(exc: OSError) -> None:
-    fail(f"{exc.filename} could not be scanned safely: {exc.strerror}")
+def account_repair_entry(entry_count: list[int]) -> None:
+    entry_count[0] += 1
+    if entry_count[0] > max_repair_entries:
+        fail(
+            f"{root}/logs exceeds maximum repair entry count "
+            f"{max_repair_entries}; archive or remove old retained logs "
+            "from a trusted host-side recovery environment before retrying"
+        )
 
 
-for dirpath, dirnames, filenames in os.walk(root, topdown=True, onerror=on_walk_error, followlinks=False):
-    dir_real = os.path.realpath(dirpath)
-    if os.path.commonpath([root_real, dir_real]) != root_real:
-        fail(f"{dirpath} escapes {root}")
-    for dirname in list(dirnames):
-        entry = os.path.join(dirpath, dirname)
+def scan_names(directory_fd: int, display_path: str):
+    try:
+        with os.scandir(directory_fd) as entries:
+            for entry in entries:
+                yield entry.name
+    except OSError as exc:
+        fail(f"{display_path} could not be scanned safely: {exc.strerror}")
+
+
+def repair_directory(
+    directory_fd: int,
+    display_path: str,
+    *,
+    entry_count: list[int],
+    skip_names: frozenset[str] = frozenset(),
+    depth: int = 0,
+) -> None:
+    if depth > max_repair_depth:
+        fail(f"{display_path} exceeds maximum repair depth {max_repair_depth}")
+
+    for name in scan_names(directory_fd, display_path):
+        account_repair_entry(entry_count)
+        if name in skip_names:
+            continue
+        path = f"{display_path}/{name}"
+        before = stat_entry(directory_fd, name, path)
+        if stat.S_ISDIR(before.st_mode):
+            child_fd, opened = open_directory(directory_fd, name, path, create=False)
+            if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                os.close(child_fd)
+                fail(f"{path} changed while it was opened")
+            try:
+                repair_directory(child_fd, path, entry_count=entry_count, depth=depth + 1)
+                verify_named_inode(directory_fd, name, path, os.fstat(child_fd))
+            finally:
+                os.close(child_fd)
+            continue
+        if stat.S_ISREG(before.st_mode):
+            repair_file(directory_fd, name, path)
+            continue
+        if stat.S_ISLNK(before.st_mode):
+            fail(f"{path} is a symlink")
+        fail(f"{path} is not a regular file or directory")
+
+
+def validate_repair_entry_budget(
+    directory_fd: int,
+    display_path: str,
+    *,
+    entry_count: list[int],
+    skip_names: frozenset[str] = frozenset(),
+    depth: int = 0,
+) -> None:
+    if depth > max_repair_depth:
+        fail(f"{display_path} exceeds maximum repair depth {max_repair_depth}")
+    for name in scan_names(directory_fd, display_path):
+        account_repair_entry(entry_count)
+        if name in skip_names:
+            continue
+        path = f"{display_path}/{name}"
+        before = stat_entry(directory_fd, name, path)
+        if not stat.S_ISDIR(before.st_mode):
+            continue
+        child_fd, opened = open_directory(directory_fd, name, path, create=False)
         try:
-            st = os.lstat(entry)
-        except OSError as exc:
-            fail(f"{entry} could not be statted safely: {exc.strerror}")
-        if stat.S_ISLNK(st.st_mode):
-            fail(f"{entry} is a symlink")
-        if not stat.S_ISDIR(st.st_mode):
-            fail(f"{entry} is not a directory")
-    for filename in filenames:
-        repair_file(os.path.join(dirpath, filename))
+            validate_repair_entry_budget(
+                child_fd,
+                path,
+                entry_count=entry_count,
+                depth=depth + 1,
+            )
+            verify_named_inode(directory_fd, name, path, os.fstat(child_fd))
+        finally:
+            os.close(child_fd)
+
+
+try:
+    root_before = os.lstat(root)
+except OSError as exc:
+    fail(f"{root} could not be inspected: {exc.strerror}")
+if stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
+    fail(f"{root} is not a safe directory")
+
+root_fd = -1
+logs_fd = -1
+curator_fd = -1
+try:
+    try:
+        root_fd = os.open(root, directory_flags)
+    except OSError as exc:
+        fail(f"{root} could not be opened safely: {exc.strerror}")
+    root_open = os.fstat(root_fd)
+    if (root_open.st_dev, root_open.st_ino) != (root_before.st_dev, root_before.st_ino):
+        fail(f"{root} changed while it was opened")
+
+    logs_path = f"{root}/logs"
+    logs_fd, logs_open = repair_managed_directory(root_fd, "logs", logs_path)
+    curator_path = f"{logs_path}/curator"
+    curator_fd, curator_open = repair_managed_directory(logs_fd, "curator", curator_path)
+
+    entry_count = [0]
+    validate_repair_entry_budget(curator_fd, curator_path, entry_count=entry_count)
+    validate_repair_entry_budget(
+        logs_fd,
+        logs_path,
+        entry_count=entry_count,
+        skip_names=frozenset({"curator"}),
+    )
+    entry_count = [0]
+    repair_directory(curator_fd, curator_path, entry_count=entry_count)
+    verify_named_inode(logs_fd, "curator", curator_path, curator_open)
+    repair_directory(
+        logs_fd,
+        logs_path,
+        entry_count=entry_count,
+        skip_names=frozenset({"curator"}),
+    )
+    verify_named_inode(root_fd, "logs", logs_path, logs_open)
+
+    try:
+        root_after = os.lstat(root)
+    except OSError as exc:
+        fail(f"{root} disappeared during repair: {exc.strerror}")
+    if (root_after.st_dev, root_after.st_ino) != (root_open.st_dev, root_open.st_ino):
+        fail(f"{root} changed during repair")
+finally:
+    if curator_fd >= 0:
+        os.close(curator_fd)
+    if logs_fd >= 0:
+        os.close(logs_fd)
+    if root_fd >= 0:
+        os.close(root_fd)
 PYLOGS
 }
 
@@ -1044,7 +1494,7 @@ ensure_hermes_history_file() {
   # O_NOFOLLOW + fstat/fchown/fchmod against the actual opened inode.
   NEMOCLAW_HERMES_HISTORY_FILE="$file" \
     NEMOCLAW_HERMES_HISTORY_MODE="$mode" \
-    python3 - <<'PYHISTORY'
+    python3 -I - <<'PYHISTORY'
 import errno
 import grp
 import os
@@ -1060,18 +1510,34 @@ except ValueError:
     print(f"[SECURITY] Refusing Hermes layout repair because requested mode {mode_text!r} is invalid", file=sys.stderr)
     sys.exit(1)
 
-if not hasattr(os, "O_NOFOLLOW"):
-    print("[SECURITY] Refusing Hermes layout repair because O_NOFOLLOW is unavailable", file=sys.stderr)
+if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+    print("[SECURITY] Refusing Hermes layout repair because descriptor-safe directory flags are unavailable", file=sys.stderr)
     sys.exit(1)
 
-flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+root, name = os.path.split(path)
+if not root or not name:
+    print(f"[SECURITY] Refusing Hermes layout repair because {path} is not a valid history path", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    root_before = os.lstat(root)
+except OSError as exc:
+    print(f"[SECURITY] Refusing Hermes layout repair because {root} could not be inspected: {exc.strerror}", file=sys.stderr)
+    sys.exit(1)
+if stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
+    print(f"[SECURITY] Refusing Hermes layout repair because {root} is not a safe directory", file=sys.stderr)
+    sys.exit(1)
+
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+directory_flags |= getattr(os, "O_CLOEXEC", 0)
+file_flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
 for optional_flag in ("O_CLOEXEC", "O_NONBLOCK"):
-    flags |= getattr(os, optional_flag, 0)
+    file_flags |= getattr(os, optional_flag, 0)
 
 
-def describe_unsafe_existing_path() -> str:
+def describe_unsafe_existing_path(root_fd: int) -> str:
     try:
-        st = os.lstat(path)
+        st = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
     except OSError:
         return "could not be opened safely"
     if stat.S_ISLNK(st.st_mode):
@@ -1080,15 +1546,27 @@ def describe_unsafe_existing_path() -> str:
         return "is not a regular file"
     return "could not be opened safely"
 
+root_fd = -1
+fd = -1
 try:
-    fd = os.open(path, flags, mode)
-except OSError as exc:
-    reason = describe_unsafe_existing_path()
-    detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
-    print(f"[SECURITY] Refusing Hermes layout repair because {path} {reason}: {detail}", file=sys.stderr)
-    sys.exit(1)
+    try:
+        root_fd = os.open(root, directory_flags)
+    except OSError as exc:
+        print(f"[SECURITY] Refusing Hermes layout repair because {root} could not be opened safely: {exc.strerror}", file=sys.stderr)
+        sys.exit(1)
+    root_open = os.fstat(root_fd)
+    if (root_open.st_dev, root_open.st_ino) != (root_before.st_dev, root_before.st_ino):
+        print(f"[SECURITY] Refusing Hermes layout repair because {root} changed while it was opened", file=sys.stderr)
+        sys.exit(1)
 
-try:
+    try:
+        fd = os.open(name, file_flags, mode, dir_fd=root_fd)
+    except OSError as exc:
+        reason = describe_unsafe_existing_path(root_fd)
+        detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} {reason}: {detail}", file=sys.stderr)
+        sys.exit(1)
+
     st = os.fstat(fd)
     if not stat.S_ISREG(st.st_mode):
         print(f"[SECURITY] Refusing Hermes layout repair because {path} is not a regular file", file=sys.stderr)
@@ -1102,65 +1580,125 @@ try:
 
     if os.geteuid() == 0:
         try:
-            uid = pwd.getpwnam("sandbox").pw_uid
+            uid = pwd.getpwnam("gateway").pw_uid
             gid = grp.getgrnam("sandbox").gr_gid
         except KeyError as exc:
-            print(f"[SECURITY] Refusing Hermes layout repair because sandbox account lookup failed: {exc}", file=sys.stderr)
+            print(f"[SECURITY] Refusing Hermes layout repair because gateway/sandbox account lookup failed: {exc}", file=sys.stderr)
             sys.exit(1)
         os.fchown(fd, uid, gid)
-    os.fchmod(fd, mode)
+        os.fchmod(fd, mode)
+    elif stat.S_IMODE(st.st_mode) != mode:
+        try:
+            os.fchmod(fd, mode)
+        except OSError as exc:
+            detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+            print(f"[SECURITY] Refusing Hermes layout repair because {path} has mode {stat.S_IMODE(st.st_mode):04o}, not {mode:04o}, and cannot be repaired: {detail}", file=sys.stderr)
+            sys.exit(1)
 
     st = os.fstat(fd)
+    if stat.S_IMODE(st.st_mode) != mode:
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} has mode {stat.S_IMODE(st.st_mode):04o}, not {mode:04o}, after repair", file=sys.stderr)
+        sys.exit(1)
+    if os.geteuid() == 0:
+        allowed_uids = {uid}
+        expected_gid = gid
+    else:
+        allowed_uids = {os.geteuid()}
+        try:
+            allowed_uids.add(pwd.getpwnam("gateway").pw_uid)
+            expected_gid = grp.getgrnam("sandbox").gr_gid
+        except KeyError:
+            expected_gid = None
+    if st.st_uid not in allowed_uids:
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} has unexpected owner uid {st.st_uid}", file=sys.stderr)
+        sys.exit(1)
+    if expected_gid is not None and st.st_gid != expected_gid:
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} has group gid {st.st_gid}, expected sandbox gid {expected_gid}", file=sys.stderr)
+        sys.exit(1)
     try:
-        current = os.stat(path, follow_symlinks=False)
+        current = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
     except OSError as exc:
         print(f"[SECURITY] Refusing Hermes layout repair because {path} no longer names the opened history file: {exc.strerror}", file=sys.stderr)
         sys.exit(1)
     if (current.st_dev, current.st_ino) != (st.st_dev, st.st_ino):
         print(f"[SECURITY] Refusing Hermes layout repair because {path} changed during repair", file=sys.stderr)
         sys.exit(1)
+    try:
+        root_after = os.lstat(root)
+    except OSError as exc:
+        print(f"[SECURITY] Refusing Hermes layout repair because {root} disappeared during repair: {exc.strerror}", file=sys.stderr)
+        sys.exit(1)
+    if (root_after.st_dev, root_after.st_ino) != (root_open.st_dev, root_open.st_ino):
+        print(f"[SECURITY] Refusing Hermes layout repair because {root} changed during repair", file=sys.stderr)
+        sys.exit(1)
 finally:
-    os.close(fd)
+    if fd >= 0:
+        os.close(fd)
+    if root_fd >= 0:
+        os.close(root_fd)
 PYHISTORY
 }
 
-repair_hermes_startup_layout() {
-  # The cron execution and Discord recovery ledgers are created by gateway and
-  # backed up/restored by sandbox. Maintain their descriptor-verified,
-  # group-writable runtime and gateway parents when the config root was wiped.
-  # The cron directory contains cron job definitions.
-  if ! ensure_hermes_cross_uid_state_dir gateway; then
-    echo "[gateway] Hermes pre-launch layout repair failed at gateway state directory" >&2
-    return 1
-  fi
-  if ! ensure_hermes_cross_uid_state_dir runtime; then
-    echo "[gateway] Hermes pre-launch layout repair failed at runtime state directory" >&2
-    return 1
-  fi
+fail_hermes_startup_layout_repair() {
+  local item="${1:?Hermes layout item is required}"
 
-  ensure_hermes_config_root_mode || return 1
-  repair_hermes_log_permissions || return 1
-  ensure_hermes_state_dir "${HERMES_DIR}/hooks" 770 || return 1
-  ensure_hermes_state_dir "${HERMES_DIR}/image_cache" 770 || return 1
-  ensure_hermes_state_dir "${HERMES_DIR}/audio_cache" 770 || return 1
-  ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660 || return 1
+  echo "[gateway] Hermes pre-launch layout repair failed at ${item}" >&2
+  echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
+  return 1
+}
+
+# EX_CONFIG: the persisted Hermes layout is unsafe or cannot be repaired. A
+# supervised relaunch cannot make this condition transient, so callers must
+# quarantine instead of retrying the same mutation forever.
+readonly HERMES_LAYOUT_REPAIR_REFUSED_STATUS=78
+
+repair_hermes_startup_layout() {
+  local state_dir
+
+  # The gateway writes state below sessions, gateway, and runtime. Sandbox
+  # backup and restore also access these directories. Keep them group-writable;
+  # the cron directory contains cron job definitions and remains separate.
+  for state_dir in sessions gateway runtime; do
+    if ! ensure_hermes_cross_uid_state_dir "$state_dir"; then
+      fail_hermes_startup_layout_repair "${state_dir} state directory"
+      return 1
+    fi
+  done
+
+  if ! ensure_hermes_config_root_mode; then
+    fail_hermes_startup_layout_repair "config root"
+    return 1
+  fi
+  if ! repair_hermes_log_permissions; then
+    fail_hermes_startup_layout_repair "logs directory"
+    return 1
+  fi
+  for state_dir in hooks image_cache audio_cache; do
+    if ! ensure_hermes_state_dir "$state_dir" 770; then
+      fail_hermes_startup_layout_repair "${state_dir} directory"
+      return 1
+    fi
+  done
+  if ! ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660; then
+    fail_hermes_startup_layout_repair "history file"
+    return 1
+  fi
 }
 
 cleanup_stale_hermes_gateway_runtime() {
-  local runtime_dir="${HERMES_DIR}/runtime"
-
   if has_live_hermes_gateway; then
     echo "[gateway] Existing Hermes gateway process detected; preserving runtime lock state" >&2
     return 0
   fi
 
-  repair_hermes_startup_layout || return 1
+  repair_hermes_startup_layout || return "$HERMES_LAYOUT_REPAIR_REFUSED_STATUS"
 
   # Hermes can leave gateway.lock behind after Docker GPU recreation kills the
   # old process namespace. Clear it only after confirming no gateway is alive.
-  remove_stale_gateway_file "${runtime_dir}/gateway.pid" "runtime PID file"
-  remove_stale_gateway_file "${HERMES_DIR}/gateway.pid" "legacy PID file"
-  remove_stale_gateway_file "${runtime_dir}/gateway.lock" "lock file"
+  if ! remove_stale_hermes_gateway_files; then
+    fail_hermes_startup_layout_repair "runtime state directory" || true
+    return "$HERMES_LAYOUT_REPAIR_REFUSED_STATUS"
+  fi
   cleanup_orphan_socat_forwarders
 }
 
@@ -2807,22 +3345,35 @@ prepare_hermes_nonroot_runtime() {
   # mutable default with a raw secret fails as generic MCP drift and bypasses
   # the actionable, redacted secret-boundary refusal. Repeat after the trusted
   # startup mutations below so their outputs remain covered as well.
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="initial-secret-boundary"
   validate_hermes_env_secret_boundary || return 1
   # The non-root Hermes runtime can persist safe config/env changes while it is
   # running. Reconcile that mutable compatibility anchor only after the secret
   # boundary is valid; refresh-hashes still requires the recorded MCP intent to
   # match exactly before it advances the anchor.
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="runtime-config-hash"
   refresh_hermes_runtime_config_hashes compat || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="initial-mcp-integrity"
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="lazy-dependencies"
   prepare_hermes_lazy_dependencies || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="api-server-key"
   ensure_hermes_runtime_api_server_key compat || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="final-secret-boundary"
   validate_hermes_env_secret_boundary || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="runtime-secret-boundary"
   validate_hermes_runtime_env_secret_boundary || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="provider-placeholders"
   refresh_hermes_provider_placeholders compat || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="final-config-hash"
   refresh_hermes_runtime_config_hashes compat || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="final-mcp-integrity"
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="messaging-channels"
   configure_messaging_channels || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE="tirith-retry-marker"
   prepare_tirith_marker_retry || return 1
+  HERMES_NONROOT_PREPARE_FAILURE_STAGE=
 }
 
 prepare_hermes_root_runtime_dir() {
@@ -2932,7 +3483,7 @@ prepare_hermes_root_runtime() {
 }
 
 launch_hermes_gateway_current_user() {
-  cleanup_stale_hermes_gateway_runtime || return 1
+  cleanup_stale_hermes_gateway_runtime || return $?
   HERMES_HOME="${HERMES_DIR}" \
     HOME=/sandbox \
     HERMES_LAZY_INSTALL_TARGET="${HERMES_SANDBOX_LAZY_INSTALL_TARGET}" \
@@ -3082,24 +3633,37 @@ record_hermes_managed_gateway_exit() {
 }
 
 recover_hermes_gateway_current_user() {
-  local replacement_reached_internal_health
+  local launch_status preparation_stage replacement_reached_internal_health
+  local layout_repair_refused_status="${HERMES_LAYOUT_REPAIR_REFUSED_STATUS:-78}"
 
   while :; do
     replacement_reached_internal_health=0
-    until prepare_hermes_nonroot_runtime; do
-      if [ "$HERMES_MCP_INTEGRITY_FAILED" -eq 1 ]; then
+    if ! prepare_hermes_nonroot_runtime; then
+      if [ "${HERMES_MCP_INTEGRITY_FAILED:-0}" -eq 1 ]; then
         echo "[SECURITY] Hermes automatic respawn is quarantined until MCP integrity is restored by rebuilding the sandbox" >&2
         quarantine_hermes_managed_gateway_relaunch
         return 1
       fi
-      echo "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s" >&2
-      sleep 5 || true
-    done
-    if ! launch_hermes_gateway_current_user; then
-      echo "[gateway] Hermes gateway launch failed; retrying under the same supervisor" >&2
-      sleep 5 || true
-      continue
+      preparation_stage="${HERMES_NONROOT_PREPARE_FAILURE_STAGE:-unknown}"
+      echo "[gateway] HERMES_RUNTIME_PREPARATION_FAILED stage=${preparation_stage}; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted" >&2
+      quarantine_hermes_managed_gateway_relaunch
+      return 1
     fi
+    launch_status=0
+    launch_hermes_gateway_current_user || launch_status=$?
+    case "$launch_status" in
+      "$layout_repair_refused_status")
+        echo "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation" >&2
+        quarantine_hermes_managed_gateway_relaunch
+        return 1
+        ;;
+      0) ;;
+      *)
+        echo "[gateway] Hermes gateway launch failed; retrying under the same supervisor" >&2
+        sleep 5 || true
+        continue
+        ;;
+    esac
     if wait_for_hermes_gateway_internal "$GATEWAY_PID"; then
       replacement_reached_internal_health=1
       # The gateway and its socat relay are separate supervised children. A
@@ -3233,6 +3797,26 @@ bootstrap_hermes_gateway_current_user() {
   refresh_hermes_supervised_child_pids
 }
 
+start_hermes_root_gateway() {
+  # Migrate and seed the dashboard profile before Hermes reads the shared home.
+  # Waiting until dashboard launch leaves restored legacy state in the gateway's
+  # HERMES_HOME during its readiness check.
+  prepare_hermes_dashboard_home sandbox:sandbox || return 1
+
+  # Start Hermes gateway. Messaging egress goes directly through OpenShell.
+  launch_hermes_gateway || return 1
+  start_gateway_log_stream || return 1
+  wait_for_hermes_gateway_internal "$GATEWAY_PID" || return 1
+  ensure_hermes_supervised_auxiliaries || return 1
+  finalize_tirith_marker_retry || return 1
+  if ! commit_hermes_mcp_applied_if_pending; then
+    echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
+    stop_hermes_gateway_fail_closed
+    return 1
+  fi
+  restore_hermes_config_permissions_after_dashboard_start || return 1
+}
+
 # ── Main ─────────────────────────────────────────────────────────
 
 # A PID 1 interruption within the same container writable layer can leave the
@@ -3340,23 +3924,7 @@ prepare_restricted_log /tmp/gateway.log gateway:gateway 600
 # shellcheck disable=SC2119
 validate_tmp_permissions
 
-# Migrate and seed the dashboard profile before Hermes reads the shared home.
-# Waiting until dashboard launch leaves restored legacy state in the gateway's
-# HERMES_HOME during its readiness check.
-prepare_hermes_dashboard_home sandbox:sandbox || exit 1
-
-# Start Hermes gateway. Messaging egress goes directly through OpenShell.
-launch_hermes_gateway
-start_gateway_log_stream
-wait_for_hermes_gateway_internal "$GATEWAY_PID"
-ensure_hermes_supervised_auxiliaries
-finalize_tirith_marker_retry
-if ! commit_hermes_mcp_applied_if_pending; then
-  echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
-  stop_hermes_gateway_fail_closed
-  exit 1
-fi
-restore_hermes_config_permissions_after_dashboard_start
+start_hermes_root_gateway || exit 1
 # NOTE: PIDs are collected after launch; a signal arriving between trap
 # registration and the final append is a small race window (same as before
 # the shared-library refactor). Acceptable for entrypoint-level cleanup.

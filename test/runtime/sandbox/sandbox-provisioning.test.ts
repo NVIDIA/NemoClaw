@@ -1306,6 +1306,9 @@ describe("Hermes sandbox provisioning", () => {
         expect(
           (fs.statSync(path.join(hermesDir, "logs", "curator")).mode & 0o7777).toString(8),
         ).toBe("2770");
+        expect((fs.statSync(path.join(hermesDir, "sessions")).mode & 0o7777).toString(8)).toBe(
+          "2770",
+        );
         const whatsappSessionDir = path.join(hermesDir, "platforms", "whatsapp", "session");
         expect((fs.statSync(whatsappSessionDir).mode & 0o7777).toString(8)).toBe("2770");
         expect((fs.statSync(path.join(hermesDir, "runtime")).mode & 0o7777).toString(8)).toBe(
@@ -1316,10 +1319,10 @@ describe("Hermes sandbox provisioning", () => {
         );
         expect(() => fs.lstatSync(path.join(hermesDir, "gateway.pid"))).toThrow();
         expect(run.calls).toContain(
-          `chown gateway:sandbox ${path.join(hermesDir, "cron")} ${path.join(
+          `chown gateway:sandbox ${path.join(hermesDir, "sessions")} ${path.join(
             hermesDir,
-            "gateway",
-          )} ${path.join(hermesDir, "runtime")}`,
+            "cron",
+          )} ${path.join(hermesDir, "gateway")} ${path.join(hermesDir, "runtime")}`,
         );
       });
     } finally {

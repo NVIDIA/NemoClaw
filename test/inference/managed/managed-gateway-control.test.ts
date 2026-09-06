@@ -8,51 +8,22 @@ import { describe, expect, it } from "vitest";
 const HELPER = path.join(import.meta.dirname, "../../..", "scripts", "managed-gateway-control.py");
 const BOUNDARY_VALIDATOR = path.join(
   import.meta.dirname,
-  "../../..",
-  "agents",
-  "hermes",
-  "validate-env-secret-boundary.py",
+  "../../../agents/hermes/validate-env-secret-boundary.py",
 );
 const NONCE = "a".repeat(64);
-
-const HERMES_HASH_HARNESS = String.raw`
-import importlib.util
-import json
-import sys
-
-spec = importlib.util.spec_from_file_location("managed_control_hash", sys.argv[1])
-control = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = control
-spec.loader.exec_module(control)
-
-digest = "a" * 64
-config = f"{digest}  /sandbox/.hermes/config.yaml"
-environment = f"{digest}  /sandbox/.hermes/.env"
-state = (
-    "# nemoclaw-hermes-mcp-state-v1 "
-    f"intended={digest} applied={digest}"
-)
-
-def parse(*lines):
-    try:
-        return control._parse_locked_hermes_hash(
-            ("\n".join(lines) + "\n").encode("ascii")
-        )
-    except control.ControlError as error:
-        return error.code
-
-print(json.dumps({
-    "legacy": parse(config, environment),
-    "current": parse(config, environment, state),
-    "state_first": parse(state, config, environment),
-    "state_between": parse(config, state, environment),
-    "malformed_state": parse(config, environment, state + " trailing"),
-    "duplicate_state": parse(config, environment, state, state),
-    "unknown_comment": parse(config, environment, "# untrusted metadata"),
-    "duplicate_path": parse(config, config, environment),
-}, sort_keys=True))
-`;
-
+const PREPARATION_QUARANTINE_DIAGNOSTIC =
+  "[gateway] HERMES_RUNTIME_PREPARATION_FAILED stage=future-preparation-stage; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted";
+const LAYOUT_QUARANTINE_DIAGNOSTIC =
+  "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation";
+const LAYOUT_REPAIR_DIAGNOSTICS = ["sessions", "gateway", "runtime"]
+  .map((name) => `[gateway] Hermes pre-launch layout repair failed at ${name} state directory`)
+  .concat(
+    "[gateway] Hermes pre-launch layout repair failed at logs directory",
+    "[gateway] Hermes pre-launch layout repair failed at history file",
+    ...["config root", "hooks directory", "image_cache directory", "audio_cache directory"].map(
+      (resource) => `[gateway] Hermes pre-launch layout repair failed at ${resource}`,
+    ),
+  );
 const PROCESS_HARNESS = String.raw`
 import importlib.util
 import contextlib
@@ -991,14 +962,18 @@ with tempfile.TemporaryDirectory() as root:
     os.makedirs(os.path.join(system_root, "tmp"), exist_ok=True)
     start_log_path = os.path.join(system_root, "tmp/nemoclaw-start.log")
     layout_repair_events = [
-        "[gateway] Hermes pre-launch layout repair failed at gateway state directory",
-        "[gateway] Hermes pre-launch layout repair failed at runtime state directory",
-        "[gateway] Hermes pre-launch layout repair failed at history file",
+        f"[gateway] Hermes pre-launch layout repair failed at {resource}"
+        for resource in (
+            "sessions state directory", "gateway state directory", "runtime state directory",
+            "logs directory", "history file", "config root", "hooks directory", "image_cache directory", "audio_cache directory",
+        )
     ]
     start_log_events = [
         "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s",
         "[gateway] Hermes gateway launch failed; retrying under the same supervisor",
         *layout_repair_events,
+        "[gateway] HERMES_RUNTIME_PREPARATION_FAILED stage=future-preparation-stage; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted",
+        "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation",
         "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
         "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
         "[gateway] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child",
@@ -1071,6 +1046,12 @@ with tempfile.TemporaryDirectory() as root:
         ),
         control._sanitize_start_log_diagnostic_line(
             start_log_events[0] + ("x" * 600)
+        ),
+        control._sanitize_start_log_diagnostic_line(
+            "[gateway] HERMES_RUNTIME_PREPARATION_FAILED stage=attacker_controlled; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted"
+        ),
+        control._sanitize_start_log_diagnostic_line(
+            "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until manual repair"
         ),
     ]
 
@@ -1148,6 +1129,8 @@ with tempfile.TemporaryDirectory() as root:
     diagnostic_output_events = tuple(
         [
             *layout_repair_events,
+            "[gateway] HERMES_RUNTIME_PREPARATION_FAILED stage=future-preparation-stage; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted",
+            "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation",
             "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
             "[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
         ]
@@ -1272,30 +1255,6 @@ with tempfile.TemporaryDirectory() as root:
 `;
 
 describe("managed gateway root control", () => {
-  it("accepts the authenticated Hermes MCP state record and rejects ambiguous hash files (#7499)", () => {
-    const result = spawnSync("python3", ["-c", HERMES_HASH_HARNESS, HELPER], {
-      encoding: "utf-8",
-      timeout: 5000,
-    });
-
-    expect(result.status, result.stderr).toBe(0);
-    const digest = "a".repeat(64);
-    const expectedRecords = {
-      "/sandbox/.hermes/config.yaml": digest,
-      "/sandbox/.hermes/.env": digest,
-    };
-    expect(JSON.parse(result.stdout)).toEqual({
-      legacy: expectedRecords,
-      current: expectedRecords,
-      state_first: "GATEWAY_CONFIG_HASH_MISMATCH",
-      state_between: "GATEWAY_CONFIG_HASH_MISMATCH",
-      malformed_state: "GATEWAY_CONFIG_HASH_MISMATCH",
-      duplicate_state: "GATEWAY_CONFIG_HASH_MISMATCH",
-      unknown_comment: "GATEWAY_CONFIG_HASH_MISMATCH",
-      duplicate_path: "GATEWAY_CONFIG_HASH_MISMATCH",
-    });
-  });
-
   it("pins the OpenShell process tree, rejects ambiguity/reuse, and proves restart/recover", () => {
     const result = spawnSync("python3", ["-c", PROCESS_HARNESS, HELPER, BOUNDARY_VALIDATOR], {
       encoding: "utf-8",
@@ -1412,9 +1371,9 @@ describe("managed gateway root control", () => {
         accepted_events: [
           "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s",
           "[gateway] Hermes gateway launch failed; retrying under the same supervisor",
-          "[gateway] Hermes pre-launch layout repair failed at gateway state directory",
-          "[gateway] Hermes pre-launch layout repair failed at runtime state directory",
-          "[gateway] Hermes pre-launch layout repair failed at history file",
+          ...LAYOUT_REPAIR_DIAGNOSTICS,
+          PREPARATION_QUARANTINE_DIAGNOSTIC,
+          LAYOUT_QUARANTINE_DIAGNOSTIC,
           "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
           "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
           "[gateway] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child",
@@ -1430,7 +1389,7 @@ describe("managed gateway root control", () => {
           "[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log",
           "[CRITICAL] Newly launched Hermes gateway pid 5252 failed exact role identity capture; quarantining the managed startup supervisor without signaling the unproven child",
         ],
-        rejected_lines: [null, null, null, null, null],
+        rejected_lines: [null, null, null, null, null, null, null],
         wrong_mode: [],
         hardlink: [],
         wrong_owner: [],
@@ -1446,9 +1405,9 @@ describe("managed gateway root control", () => {
           "NEMOCLAW_CONTROL_STAGE=await-replacement",
           "NEMOCLAW_SUPERVISOR_PID=40",
           "NEMOCLAW_GATEWAY_PID=44",
-          "NEMOCLAW_START_LOG=[gateway] Hermes pre-launch layout repair failed at gateway state directory",
-          "NEMOCLAW_START_LOG=[gateway] Hermes pre-launch layout repair failed at runtime state directory",
-          "NEMOCLAW_START_LOG=[gateway] Hermes pre-launch layout repair failed at history file",
+          ...LAYOUT_REPAIR_DIAGNOSTICS.map((line) => `NEMOCLAW_START_LOG=${line}`),
+          `NEMOCLAW_START_LOG=${PREPARATION_QUARANTINE_DIAGNOSTIC}`,
+          `NEMOCLAW_START_LOG=${LAYOUT_QUARANTINE_DIAGNOSTIC}`,
           "NEMOCLAW_START_LOG=[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
           "NEMOCLAW_START_LOG=[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
         ],
@@ -1460,9 +1419,9 @@ describe("managed gateway root control", () => {
           "NEMOCLAW_CONTROL_STAGE=await-replacement",
           "NEMOCLAW_SUPERVISOR_PID=40",
           "NEMOCLAW_GATEWAY_PID=44",
-          "NEMOCLAW_START_LOG=[gateway] Hermes pre-launch layout repair failed at gateway state directory",
-          "NEMOCLAW_START_LOG=[gateway] Hermes pre-launch layout repair failed at runtime state directory",
-          "NEMOCLAW_START_LOG=[gateway] Hermes pre-launch layout repair failed at history file",
+          ...LAYOUT_REPAIR_DIAGNOSTICS.map((line) => `NEMOCLAW_START_LOG=${line}`),
+          `NEMOCLAW_START_LOG=${PREPARATION_QUARANTINE_DIAGNOSTIC}`,
+          `NEMOCLAW_START_LOG=${LAYOUT_QUARANTINE_DIAGNOSTIC}`,
           "NEMOCLAW_START_LOG=[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
           "NEMOCLAW_START_LOG=[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
         ],

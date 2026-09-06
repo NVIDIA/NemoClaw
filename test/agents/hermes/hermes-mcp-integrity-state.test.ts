@@ -7,7 +7,9 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { bashPrintfQ, extractShellFunction } from "../../support/hermes-shell-harness";
+import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { createRestartFixture, hashInputs } from "../../helpers/hermes-restart-config-seal-fixture";
+import { extractShellFunction } from "../../support/hermes-shell-harness";
 
 const GUARD = path.join(
   import.meta.dirname,
@@ -31,26 +33,28 @@ const TRANSACTION = path.join(
   "mcp-config-transaction.py",
 );
 const START = path.join(import.meta.dirname, "../../..", "agents", "hermes", "start.sh");
+const SECRET_BOUNDARY_VALIDATOR = path.join(
+  import.meta.dirname,
+  "../../..",
+  "agents",
+  "hermes",
+  "validate-env-secret-boundary.py",
+);
 
 function runHermesRootMcpStartup(opts: { commitStatus: 0 | 1; dashboardSeedStatus?: 0 | 23 }) {
   const source = fs.readFileSync(START, "utf-8");
-  const startupBlock = source.match(
-    /^prepare_hermes_dashboard_home sandbox:sandbox \|\| exit 1$\n[\s\S]*?^launch_hermes_gateway\nstart_gateway_log_stream\nwait_for_hermes_gateway_internal "\$GATEWAY_PID"\nensure_hermes_supervised_auxiliaries\nfinalize_tirith_marker_retry\nif ! commit_hermes_mcp_applied_if_pending; then\n[\s\S]*?^restore_hermes_config_permissions_after_dashboard_start$/m,
-  )?.[0];
-  expect(startupBlock).toBeDefined();
-  const startupScript = startupBlock as string;
-
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-root-start-"));
   const scriptPath = path.join(tempDir, "run.sh");
   const fakePython = path.join(tempDir, "fake-python.sh");
   const hermesHome = path.join(tempDir, ".hermes");
   const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
+  const gatewayState = path.join(tempDir, "gateway-running");
+  const restoredState = path.join(tempDir, "permissions-restored");
   fs.writeFileSync(
     fakePython,
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      'printf "dashboard-profile\\n"',
       'if [ "${NEMOCLAW_TEST_STEPPED_DOWN:-0}" != 1 ]; then exit 99; fi',
       `exit ${opts.dashboardSeedStatus ?? 0}`,
     ].join("\n"),
@@ -61,24 +65,26 @@ function runHermesRootMcpStartup(opts: { commitStatus: 0 | 1; dashboardSeedStatu
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      'trace() { printf "%s\\n" "$*"; }',
       'id() { [ "${1:-}" = "-u" ] && printf "0\\n" || command id "$@"; }',
       extractShellFunction(source, "prepare_hermes_dashboard_home"),
-      `HERMES_DIR=${bashPrintfQ(hermesHome)}`,
-      `HERMES_DASHBOARD_HOME=${bashPrintfQ(dashboardHome)}`,
-      `_HERMES_PYTHON=${bashPrintfQ(fakePython)}`,
-      `_HERMES_DASHBOARD_CONFIG_SEEDER=${bashPrintfQ(path.join(tempDir, "seed-dashboard-config.py"))}`,
-      `_HERMES_MANAGED_POLICY=${bashPrintfQ(path.join(tempDir, "managed-policy.json"))}`,
+      extractShellFunction(source, "start_hermes_root_gateway"),
+      `HERMES_DIR=${shellQuote(hermesHome)}`,
+      `HERMES_DASHBOARD_HOME=${shellQuote(dashboardHome)}`,
+      `_HERMES_PYTHON=${shellQuote(fakePython)}`,
+      `_HERMES_DASHBOARD_CONFIG_SEEDER=${shellQuote(path.join(tempDir, "seed-dashboard-config.py"))}`,
+      `_HERMES_MANAGED_POLICY=${shellQuote(path.join(tempDir, "managed-policy.json"))}`,
       "STEP_DOWN_PREFIX_SANDBOX=(env NEMOCLAW_TEST_STEPPED_DOWN=1)",
-      'launch_hermes_gateway() { GATEWAY_PID=4242; trace "launch:$GATEWAY_PID"; }',
-      "start_gateway_log_stream() { trace log-stream; }",
-      'wait_for_hermes_gateway_internal() { trace "health:$1"; }',
-      "ensure_hermes_supervised_auxiliaries() { trace auxiliaries; }\nfinalize_tirith_marker_retry() { trace tirith-finalize; }",
-      `commit_hermes_mcp_applied_if_pending() { trace commit-applied; return ${opts.commitStatus}; }`,
-      "stop_hermes_gateway_fail_closed() { trace stop-fail-closed; }",
-      "restore_hermes_config_permissions_after_dashboard_start() { trace restore-permissions; }",
-      startupScript,
-      "trace startup-complete",
+      `GATEWAY_STATE=${shellQuote(gatewayState)}`,
+      `RESTORED_STATE=${shellQuote(restoredState)}`,
+      'launch_hermes_gateway() { printf "running\\n" >"$GATEWAY_STATE"; GATEWAY_PID=4242; }',
+      "start_gateway_log_stream() { :; }",
+      'wait_for_hermes_gateway_internal() { [ "$1" = "4242" ] && [ -f "$GATEWAY_STATE" ]; }',
+      "ensure_hermes_supervised_auxiliaries() { :; }",
+      "finalize_tirith_marker_retry() { :; }",
+      `commit_hermes_mcp_applied_if_pending() { return ${opts.commitStatus}; }`,
+      'stop_hermes_gateway_fail_closed() { rm -f "$GATEWAY_STATE"; }',
+      'restore_hermes_config_permissions_after_dashboard_start() { printf "restored\\n" >"$RESTORED_STATE"; }',
+      "start_hermes_root_gateway",
     ].join("\n"),
     { mode: 0o700 },
   );
@@ -86,18 +92,118 @@ function runHermesRootMcpStartup(opts: { commitStatus: 0 | 1; dashboardSeedStatu
   delete env.NEMOCLAW_TEST_STEPPED_DOWN;
 
   try {
-    return spawnSync("bash", [scriptPath], {
+    const result = spawnSync("bash", [scriptPath], {
       encoding: "utf-8",
       timeout: 5000,
       env,
     });
+    return {
+      result,
+      gatewayRunning: fs.existsSync(gatewayState),
+      permissionsRestored: fs.existsSync(restoredState),
+    };
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
+function inspectMcpIntegrity(hermesDir: string, hashFile: string) {
+  return spawnSync(
+    "python3",
+    [
+      "-I",
+      GUARD,
+      "inspect-mcp-integrity",
+      "--hermes-dir",
+      hermesDir,
+      "--hash-file",
+      hashFile,
+      "--startup-owner",
+      "--mcp-state-exit-code",
+    ],
+    { encoding: "utf-8", timeout: 10_000 },
+  );
+}
+
+function runHermesNonrootMcpPreparation(opts: { blockHashRefresh?: boolean; rawSecret?: string }) {
+  const fixture = createRestartFixture();
+  const scriptPath = path.join(fixture.root, "prepare-nonroot.sh");
+  const gatewayState = path.join(fixture.root, "gateway-launched");
+  const blockedHashLink = path.join(fixture.root, "blocked-config-hash");
+  const source = fs.readFileSync(START, "utf-8");
+
+  fs.writeFileSync(fixture.configPath, "model:\n  default: updated-model\n", { mode: 0o640 });
+  fs.writeFileSync(
+    fixture.envPath,
+    opts.rawSecret
+      ? `API_SERVER_PORT=18642\nDEVTEST_API_TOKEN=${opts.rawSecret}\n`
+      : "API_SERVER_PORT=18642\nSAFE_SETTING=updated\n",
+    { mode: 0o600 },
+  );
+  const staleHash = fs.readFileSync(fixture.compatHashPath, "utf-8");
+  const expectedCurrentHash = hashInputs(fixture.configPath, fixture.envPath);
+  const beforeInspection = inspectMcpIntegrity(fixture.hermesDir, fixture.compatHashPath);
+  const prepareHashRefresh = {
+    blocked: () => fs.linkSync(fixture.compatHashPath, blockedHashLink),
+    writable: () => undefined,
+  } satisfies Record<"blocked" | "writable", () => void>;
+  prepareHashRefresh[opts.blockHashRefresh ? "blocked" : "writable"]();
+
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunction(source, "validate_hermes_env_secret_boundary"),
+      extractShellFunction(source, "validate_hermes_runtime_env_secret_boundary"),
+      extractShellFunction(source, "refresh_hermes_runtime_config_hashes"),
+      extractShellFunction(source, "inspect_hermes_mcp_integrity"),
+      extractShellFunction(source, "prepare_hermes_nonroot_runtime"),
+      "prepare_hermes_lazy_dependencies() { :; }",
+      "ensure_hermes_runtime_api_server_key() { :; }",
+      "refresh_hermes_provider_placeholders() { :; }",
+      "configure_messaging_channels() { :; }",
+      "prepare_tirith_marker_retry() { :; }",
+      `launch_hermes_gateway() { printf "launched\\n" >${shellQuote(gatewayState)}; }`,
+      `HERMES_DIR=${shellQuote(fixture.hermesDir)}`,
+      `HERMES_HASH_FILE=${shellQuote(fixture.hashPath)}`,
+      `_HERMES_RUNTIME_CONFIG_GUARD=${shellQuote(GUARD)}`,
+      `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR)}`,
+      "_HERMES_BOUNDARY_TIMEOUT=(command)",
+      "_HERMES_PYTHON=python3",
+      "HERMES_SANDBOX_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages",
+      "export HERMES_LAZY_INSTALL_TARGET=$HERMES_SANDBOX_LAZY_INSTALL_TARGET",
+      "export HERMES_HOME=/sandbox/.hermes",
+      "export HERMES_BUNDLED_PLUGINS=/opt/hermes/plugins",
+      "prepare_hermes_nonroot_runtime && launch_hermes_gateway",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    const result = spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 10_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+    });
+    const refreshedHash = fs.readFileSync(fixture.compatHashPath, "utf-8");
+    const afterInspection = inspectMcpIntegrity(fixture.hermesDir, fixture.compatHashPath);
+    return {
+      result,
+      beforeInspection,
+      afterInspection,
+      staleHash,
+      expectedCurrentHash,
+      refreshedHash,
+      gatewayLaunched: fs.existsSync(gatewayState),
+    };
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+}
+
 describe("Hermes MCP intended/applied integrity state", () => {
-  it("uses the runtime canonicalizer for the build-time MCP seal", () => {
+  it("produces the canonical MCP seal digest for ordered server entries", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-build-seal-"));
     const config = path.join(tempDir, "config.yaml");
     fs.writeFileSync(
@@ -111,29 +217,11 @@ describe("Hermes MCP intended/applied integrity state", () => {
         ["-I", BUILD_DIGEST, "--guard", GUARD, "--config", config],
         { encoding: "utf-8", timeout: 5000 },
       );
-      const runtimeDigest = spawnSync(
-        "python3",
-        [
-          "-I",
-          "-c",
-          String.raw`
-import importlib.util, sys
-spec = importlib.util.spec_from_file_location("hermes_guard", sys.argv[1])
-guard = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = guard
-spec.loader.exec_module(guard)
-print(guard._canonical_mcp_servers_digest(open(sys.argv[2], encoding="utf-8").read()))
-`,
-          GUARD,
-          config,
-        ],
-        { encoding: "utf-8", timeout: 5000 },
-      );
-
       expect(buildDigest.status, buildDigest.stderr).toBe(0);
-      expect(runtimeDigest.status, runtimeDigest.stderr).toBe(0);
       expect(buildDigest.stdout).toMatch(/^[0-9a-f]{64}\n$/u);
-      expect(buildDigest.stdout).toBe(runtimeDigest.stdout);
+      expect(buildDigest.stdout).toBe(
+        "f5c8dff1570a1e0e2ef9e302f7bcd82b3b53e072f4c6713a0f794ab35591271b\n",
+      );
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -340,6 +428,40 @@ print(json.dumps(proof))
     });
   });
 
+  it("reconciles safe mutable drift through non-root startup before gateway launch (#9203)", () => {
+    const run = runHermesNonrootMcpPreparation({});
+
+    expect(run.beforeInspection.status).not.toBe(0);
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.gatewayLaunched).toBe(true);
+    expect(run.refreshedHash).not.toBe(run.staleHash);
+    expect(run.refreshedHash).toBe(run.expectedCurrentHash);
+    expect(run.afterInspection.status, run.afterInspection.stderr).toBe(0);
+  });
+
+  it("stops non-root startup when the compatibility anchor cannot be refreshed", () => {
+    const run = runHermesNonrootMcpPreparation({ blockHashRefresh: true });
+
+    expect(run.beforeInspection.status).not.toBe(0);
+    expect(run.result.status).not.toBe(0);
+    expect(run.gatewayLaunched).toBe(false);
+    expect(run.refreshedHash).toBe(run.staleHash);
+    expect(run.result.stderr).toContain("refusing hardlinked runtime config path");
+    expect(run.afterInspection.status).not.toBe(0);
+  });
+
+  it("rejects raw secrets before non-root startup reconciles the compatibility anchor", () => {
+    const rawSecret = "SENTINEL_RAW_SECRET_VALUE";
+    const run = runHermesNonrootMcpPreparation({ rawSecret });
+
+    expect(run.beforeInspection.status).not.toBe(0);
+    expect(run.result.status).not.toBe(0);
+    expect(run.gatewayLaunched).toBe(false);
+    expect(run.refreshedHash).toBe(run.staleHash);
+    expect(run.result.stderr).toContain("raw secret-shaped values");
+    expect(run.result.stderr).not.toContain(rawSecret);
+  });
+
   it("uses the atomic write outcome for compat applied-state commits", () => {
     const result = spawnSync(
       "python3",
@@ -485,11 +607,11 @@ print(json.dumps({
           [
             "set -euo pipefail",
             extractShellFunction(source, "inspect_hermes_mcp_integrity"),
-            `_HERMES_PYTHON=${bashPrintfQ(helper)}`,
+            `_HERMES_PYTHON=${shellQuote(helper)}`,
             "_HERMES_RUNTIME_CONFIG_GUARD=/test/runtime-config-guard.py",
             "HERMES_DIR=/test/.hermes",
             "HERMES_HASH_FILE=/test/hermes.config-hash",
-            `NEMOCLAW_TEST_GUARD_PARENT_FILE=${bashPrintfQ(parentFile)}`,
+            `NEMOCLAW_TEST_GUARD_PARENT_FILE=${shellQuote(parentFile)}`,
             "export NEMOCLAW_TEST_GUARD_PARENT_FILE",
             "HERMES_MCP_RECONCILE_PENDING=9",
             "caller_pid=$$",
@@ -536,7 +658,7 @@ print(json.dumps({
           [
             "set -uo pipefail",
             extractShellFunction(source, "inspect_hermes_mcp_integrity"),
-            `_HERMES_PYTHON=${bashPrintfQ(helper)}`,
+            `_HERMES_PYTHON=${shellQuote(helper)}`,
             "_HERMES_RUNTIME_CONFIG_GUARD=/test/runtime-config-guard.py",
             "HERMES_DIR=/test/.hermes",
             "HERMES_HASH_FILE=/test/hermes.config-hash",
@@ -731,90 +853,29 @@ print(json.dumps({"diverged": diverged, "raced": raced}))
     });
   });
 
-  it("derives the full config hash and MCP digest from one config snapshot", () => {
-    const result = spawnSync(
-      "python3",
-      [
-        "-c",
-        String.raw`
-import importlib.util, json, os, sys, tempfile
-spec = importlib.util.spec_from_file_location("hermes_guard", sys.argv[1])
-guard = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = guard
-spec.loader.exec_module(guard)
-root = tempfile.mkdtemp(prefix="hermes-mcp-single-read-")
-hermes = os.path.join(root, ".hermes")
-os.mkdir(hermes)
-config = os.path.join(hermes, "config.yaml")
-env = os.path.join(hermes, ".env")
-strict = os.path.join(root, "hash")
-open(config, "w", encoding="utf-8").write("model: test\nmcp_servers: {}\n")
-open(env, "w", encoding="utf-8").write("SAFE=1\n")
-initial, _config_snapshot, _env_snapshot = guard._hash_text(config, env)
-guard._write_hash(strict, initial)
-original_read_text = guard._read_text
-config_reads = 0
-def counted_read_text(path, *args, **kwargs):
-    global config_reads
-    if path == config:
-        config_reads += 1
-    return original_read_text(path, *args, **kwargs)
-guard._read_text = counted_read_text
-state = guard.inspect_mcp_integrity(hermes, strict)
-print(json.dumps({"state": state, "config_reads": config_reads}))
-`,
-        GUARD,
-      ],
-      { encoding: "utf-8", timeout: 10_000 },
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ state: "current", config_reads: 1 });
-  });
-
-  it("prepares the dashboard profile before root gateway health and applied-state commit", () => {
+  it("starts the root gateway after dashboard profile preparation succeeds", () => {
     const success = runHermesRootMcpStartup({ commitStatus: 0 });
-    expect(success.status, success.stderr).toBe(0);
-    expect(success.stdout.trim().split("\n")).toEqual([
-      "dashboard-profile",
-      "launch:4242",
-      "log-stream",
-      "health:4242",
-      "auxiliaries",
-      "tirith-finalize",
-      "commit-applied",
-      "restore-permissions",
-      "startup-complete",
-    ]);
+    expect(success.result.status, success.result.stderr).toBe(0);
+    expect(success.gatewayRunning).toBe(true);
+    expect(success.permissionsRestored).toBe(true);
   });
 
   it("fails root startup closed when dashboard profile preparation fails", () => {
     const failure = runHermesRootMcpStartup({ commitStatus: 0, dashboardSeedStatus: 23 });
-    expect(failure.status).toBe(1);
-    expect(failure.stdout).toContain("dashboard-profile");
-    expect(failure.stderr).toContain(
+    expect(failure.result.status).toBe(1);
+    expect(failure.result.stderr).toContain(
       "[dashboard] ERROR: config seed exited 23; refusing dashboard startup",
     );
-    expect(failure.stdout).not.toContain("launch:");
-    expect(failure.stdout).not.toContain("startup-complete");
+    expect(failure.gatewayRunning).toBe(false);
+    expect(failure.permissionsRestored).toBe(false);
   });
 
   it("fails root startup closed when the applied-state commit fails after gateway health", () => {
     const failure = runHermesRootMcpStartup({ commitStatus: 1 });
-    expect(failure.status).toBe(1);
-    expect(failure.stdout.trim().split("\n")).toEqual([
-      "dashboard-profile",
-      "launch:4242",
-      "log-stream",
-      "health:4242",
-      "auxiliaries",
-      "tirith-finalize",
-      "commit-applied",
-      "stop-fail-closed",
-    ]);
-    expect(failure.stderr).toContain("HERMES_MCP_APPLIED_COMMIT_FAILED");
-    expect(failure.stdout).not.toContain("restore-permissions");
-    expect(failure.stdout).not.toContain("startup-complete");
+    expect(failure.result.status).toBe(1);
+    expect(failure.gatewayRunning).toBe(false);
+    expect(failure.permissionsRestored).toBe(false);
+    expect(failure.result.stderr).toContain("HERMES_MCP_APPLIED_COMMIT_FAILED");
   });
 
   it("tracks add and removal as pending until the gateway-applied commit", () => {

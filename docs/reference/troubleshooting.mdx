@@ -1474,6 +1474,20 @@ NemoClaw cannot safely infer the pre-transaction ownership, modes, or inode flag
 Do not repair the paths with manual `chown`, `chmod`, or hash regeneration.
 Restore a trusted snapshot into a new sandbox as shown above, or recreate from host-side onboarding configuration if no state-preserving recovery is required.
 
+### Hermes startup refuses an unsafe state directory
+
+Hermes stops startup when `/sandbox/.hermes/sessions`, `/sandbox/.hermes/gateway`, or `/sandbox/.hermes/runtime` is a symbolic link, a file, or cannot be repaired safely.
+Startup also stops if the config root or its `hooks`, `image_cache`, or `audio_cache` directories cannot be repaired safely, or if any of those paths changes during descriptor-anchored repair.
+The same startup stops when the `logs` directory tree contains a symbolic link, a hard-linked file, another unsafe entry, or changes during descriptor-anchored repair.
+It also refuses to repair more than 4,096 retained log entries or a log tree deeper than 64 directories in one startup.
+Startup also stops when `/sandbox/.hermes/.hermes_history` is a symbolic link, a nonregular or hard-linked file, or cannot be repaired safely.
+`/tmp/nemoclaw-start.log` names the reported state item and reports `Hermes pre-launch layout repair failed`.
+When a host-side control command fails, its output can include matching startup diagnostics as `NEMOCLAW_START_LOG=...`.
+If the diagnostic reports the maximum log-entry count or repair depth, archive or remove old retained logs from a trusted host-side recovery environment and retry startup.
+For symbolic links, hard links, unsafe entry types, or paths that changed during repair, do not run `chown`, `chmod`, or another in-place repair on the reported path.
+For those unsafe-path failures, follow [Hermes startup reports HERMES_CONFIG_MUTATION_ORPHANED](#hermes-startup-reports-hermes_config_mutation_orphaned) to restore a trusted host-side snapshot into a recreated sandbox.
+If no trusted snapshot exists for an unsafe-path failure, recreate the sandbox from host-side onboarding configuration only if you accept losing its inaccessible state.
+
 </AgentOnly>
 
 ### Sandbox is running an outdated agent version
@@ -4365,8 +4379,16 @@ If the command instead reports `secret-boundary refusal`, inspect `/sandbox/.her
 ### Restart or recovery reports `relaunch quarantined`
 
 In the OpenShell-managed topology the strict root-owned hash is not a trust anchor for mutable config, so a direct edit of `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` is not refused by the host controller. The in-sandbox supervisor still refuses to start a gateway on configuration it cannot match to the persisted managed state, and it stops attempting relaunch once that refusal or repeated gateway exits exhaust its crash budget. `$$nemoclaw <name> gateway restart`, `$$nemoclaw <name> recover`, and `$$nemoclaw <name> connect` then report the `relaunch quarantined` failure layer.
+If the startup log reports `HERMES_RUNTIME_PREPARATION_FAILED stage=<stage>`, the named environment, config, dependency, provider, or messaging preparation failed before a replacement gateway launched. The supervisor quarantines that nontransient failure immediately instead of repeating it. Correct the named input through its supported host-side configuration or credential flow, then restart the sandbox:
 
-The refusal is deterministic, so retrying any of those commands cannot clear it. Restore the registered configuration and refresh its integrity metadata in one transaction:
+```bash
+$$nemoclaw <name> stop
+$$nemoclaw <name> start
+```
+
+Use `$$nemoclaw <name> rebuild --yes` only when the input or sandbox state cannot be repaired safely. Repeated recovery requests do not retry the quarantined preparation.
+
+When the relaunch quarantine instead comes from an integrity mismatch or an exhausted gateway crash budget, retrying the recovery command cannot clear it. Restore the registered configuration and refresh its integrity metadata in one transaction:
 
 ```bash
 nemohermes <name> rebuild --yes

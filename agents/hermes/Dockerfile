@@ -1192,6 +1192,7 @@ RUN set -eu; \
     rm -rf /root/.cache/pip /sandbox/.cache \
     && chown -R sandbox:sandbox /sandbox/.hermes \
     && chown gateway:sandbox \
+        /sandbox/.hermes/sessions \
         /sandbox/.hermes/cron \
         /sandbox/.hermes/gateway \
         /sandbox/.hermes/runtime \
@@ -1228,6 +1229,7 @@ RUN set -eu; \
         /sandbox/.hermes/platforms \
         /sandbox/.hermes/platforms/whatsapp \
         /sandbox/.hermes/platforms/whatsapp/session \
+        /sandbox/.hermes/sessions \
         /sandbox/.hermes/cron \
         /sandbox/.hermes/gateway \
         /sandbox/.hermes/runtime \
@@ -1318,6 +1320,7 @@ RUN set -eu; \
         /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
         /opt/hermes/.venv/bin/python -I -c \
         "from pathlib import Path; from hermes_cli.plugins import discover_plugins, get_plugin_manager; from plugins.memory import _get_user_plugins_dir as memory_user_dir; from plugins.cron_providers import _get_user_plugins_dir as cron_user_dir; from providers import _user_plugins_dir as model_user_dir; discover_plugins(); plugin = get_plugin_manager()._plugins['nemoclaw']; assert plugin.enabled is True and plugin.error is None; assert plugin.manifest.source == 'bundled'; assert Path(plugin.manifest.path).resolve() == Path('/opt/hermes/plugins/nemoclaw').resolve(); assert memory_user_dir() is None; assert cron_user_dir() is None; assert model_user_dir() is None"; \
+    test "$(stat -c '%U:%G %a' /sandbox/.hermes/sessions)" = 'gateway:sandbox 2770'; \
     cd "$project_root"; \
     HERMES_HOME=/sandbox/.hermes \
         HERMES_BUNDLED_PLUGINS="$fake_bundled" \
@@ -1518,7 +1521,30 @@ RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 277
     && rm -f /sandbox/.hermes/gateway/discord_message_recovery.db \
         /sandbox/.hermes/gateway/discord_message_recovery.db-wal \
         /sandbox/.hermes/gateway/discord_message_recovery.db-shm \
-    && rm -f /opt/nemoclaw-hermes-config/image-build-probes.py
+    && rm -f /opt/nemoclaw-hermes-config/image-build-probes.py \
+    && chown gateway:sandbox /sandbox/.hermes/sessions /sandbox/.hermes/cron \
+    && chown sandbox:sandbox \
+        /sandbox/.hermes/logs \
+        /sandbox/.hermes/logs/curator \
+        /sandbox/.hermes/memories \
+        /sandbox/.hermes/pairing \
+        /sandbox/.hermes/hooks \
+        /sandbox/.hermes/image_cache \
+        /sandbox/.hermes/audio_cache \
+        /sandbox/.hermes/skills \
+    && chmod 3770 /sandbox/.hermes \
+    && chmod 2770 \
+        /sandbox/.hermes/sessions \
+        /sandbox/.hermes/cron \
+        /sandbox/.hermes/logs \
+        /sandbox/.hermes/logs/curator \
+    && chmod 770 \
+        /sandbox/.hermes/memories \
+        /sandbox/.hermes/pairing \
+        /sandbox/.hermes/hooks \
+        /sandbox/.hermes/image_cache \
+        /sandbox/.hermes/audio_cache \
+        /sandbox/.hermes/skills
 
 # Pin config hash at build time for integrity verification at startup. Invoke
 # the installed runtime guard's `_canonical_mcp_servers_digest` directly so
@@ -1588,6 +1614,15 @@ RUN check_metadata() { \
         { [ ! -e "$path" ] && [ ! -L "$path" ]; } \
             || { echo "ERROR: build-only Hermes path leaked into the final image: $path" >&2; return 1; }; \
     }; \
+    if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
+        hermes_root_metadata='sandbox:sandbox 3777'; \
+        hermes_gateway_state_metadata='gateway:sandbox 2777'; \
+        hermes_log_metadata='sandbox:sandbox 2777'; \
+    else \
+        hermes_root_metadata='sandbox:sandbox 3770'; \
+        hermes_gateway_state_metadata='gateway:sandbox 2770'; \
+        hermes_log_metadata='sandbox:sandbox 2770'; \
+    fi; \
     check_absent /opt/hermes/tests \
     && check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \
     && check_absent /opt/nemoclaw-hermes-config/finalize-image-layout.sh \
@@ -1639,7 +1674,11 @@ RUN check_metadata() { \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py 'root:root 755' \
-    && check_metadata /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444'
+    && check_metadata /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444' \
+    && check_metadata /sandbox/.hermes "$hermes_root_metadata" \
+    && check_metadata /sandbox/.hermes/sessions "$hermes_gateway_state_metadata" \
+    && check_metadata /sandbox/.hermes/cron "$hermes_gateway_state_metadata" \
+    && check_metadata /sandbox/.hermes/logs "$hermes_log_metadata"
 
 # Verify the immutable security package inventory in the completed image.
 # hadolint ignore=DL4006
