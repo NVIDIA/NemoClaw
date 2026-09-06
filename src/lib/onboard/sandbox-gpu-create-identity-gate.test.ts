@@ -610,6 +610,11 @@ describe("created sandbox identity gate", () => {
     expect(patch.commitAfterReady).not.toHaveBeenCalled();
     expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
     expect(deps.installPortableDemoLifecycle).not.toHaveBeenCalled();
+    expect(mocks.addTraceEvent).toHaveBeenCalledWith("sandbox_create_identity_settlement", {
+      create_operation_state: "ready",
+      identity_state: "failed",
+      returned_identity_correlation: ALPHA_SANDBOX_ID_TRACE_CORRELATION,
+    });
   });
 
   it("blocks a restart-safe handoff timeout without create-attempt identity (#10769)", async () => {
@@ -921,6 +926,11 @@ describe("created sandbox identity gate", () => {
       expect.objectContaining({ ignoreError: true, suppressOutput: true }),
     );
     expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
+    expect(mocks.addTraceEvent).toHaveBeenCalledWith("sandbox_create_identity_settlement", {
+      create_operation_state: "create_client_exited",
+      identity_state: "matched",
+      returned_identity_correlation: ALPHA_SANDBOX_ID_TRACE_CORRELATION,
+    });
   });
 
   it("rejects a different owner-scoped sandbox identity before post-create effects (#9833)", async () => {

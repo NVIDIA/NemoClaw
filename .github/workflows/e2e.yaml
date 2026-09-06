@@ -2972,6 +2972,30 @@ jobs:
                   f"`{os.environ['TARGET_ID']}` | `(missing run-plan.json)` | "
                   "`(missing run-plan.json)` | `(missing)` | `(missing)` |"
               )
+          trace_summary_path = root / "cloud-onboard-trace-timing-summary.json"
+          trace_summary = {}
+          if trace_summary_path.exists():
+              trace_summary = json.loads(trace_summary_path.read_text(encoding="utf-8"))
+          settlement = trace_summary.get("sandbox_identity_settlement")
+          evidence_state = trace_summary.get("sandbox_identity_settlement_evidence")
+          print()
+          print("## Sandbox identity settlement")
+          if evidence_state == "invalid":
+              print(
+                  f"- Target `{os.environ['TARGET_ID']}`: `invalid` settlement evidence; "
+                  "inspect the retained recovery record and lifecycle logs."
+              )
+          elif isinstance(settlement, dict):
+              print(f"- Target: `{os.environ['TARGET_ID']}`")
+              print(f"- Create operation: `{settlement.get('create_operation_state')}`")
+              print(f"- Identity state: `{settlement.get('identity_state')}`")
+              print(f"- Trace ID: `{settlement.get('trace_id')}`")
+              print(
+                  "- Returned identity correlation: "
+                  f"`{settlement.get('returned_identity_correlation')}`"
+              )
+          else:
+              print(f"- Target `{os.environ['TARGET_ID']}`: no final settlement evidence emitted.")
           PY
 
       - name: Upload E2E artifacts

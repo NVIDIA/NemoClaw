@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -140,6 +141,41 @@ describe("e2e workflow live job boundary", () => {
       "step 'Build trusted live E2E timing summary' run script must include scripts/e2e/sanitize-trace-timing.py",
     );
   });
+
+  it("surfaces invalid settlement evidence in the target workflow summary", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-trace-summary-"));
+    const targetId = "channels-add-remove";
+    const targetRoot = path.join(tmp, targetId);
+    const summaryPath = path.join(tmp, "step-summary.md");
+    try {
+      fs.mkdirSync(targetRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(targetRoot, "cloud-onboard-trace-timing-summary.json"),
+        JSON.stringify({ sandbox_identity_settlement_evidence: "invalid" }),
+      );
+      const workflow = readWorkflow() as E2eWorkflow;
+      const run = String(liveStep(workflow, "Summarize artifacts").run ?? "");
+
+      const result = spawnSync("bash", ["-c", run], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          E2E_ARTIFACT_DIR: tmp,
+          GITHUB_STEP_SUMMARY: summaryPath,
+          TARGET_ID: targetId,
+          TARGET_LABEL: "Telegram add/remove",
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(summaryPath, "utf8")).toContain(
+        "Target `channels-add-remove`: `invalid` settlement evidence",
+      );
+    } finally {
+      fs.rmSync(tmp, { force: true, recursive: true });
+    }
+  });
 });
 
 const TRACE_SOURCE_ASSIGNMENT =
@@ -147,6 +183,6 @@ const TRACE_SOURCE_ASSIGNMENT =
 const TRACE_SOURCE_GUARD =
   'if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then\n' +
   '  echo "::error title=E2E trace sanitization refused::NEMOCLAW_TRACE_DIR does not match its workflow-owned RUNNER_TEMP path. No raw traces were read or uploaded. Correct the trace path configuration before rerunning." >&2\n' +
-  '  printf \'Expected trace path: %s\\n\' "${expected_trace_dir}" >&2\n' +
+  "  printf 'Expected trace path: %s\\n' \"${expected_trace_dir}\" >&2\n" +
   "  exit 1\n" +
   "fi\n";

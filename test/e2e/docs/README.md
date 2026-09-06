@@ -345,6 +345,8 @@ test/e2e/
   a failed settlement can use `null` when no identity was observed. Raw event
   attributes and the full identity fingerprint are excluded. Malformed
   settlement evidence is replaced with the bounded `invalid` evidence state.
+  The live target workflow summary reports the target and valid settlement
+  provenance, or calls out `invalid` evidence with the retained-recovery action.
   Raw onboard traces stay under the runner temporary directory and are deleted
   before artifact upload.
   These per-target summaries are artifact evidence only.
