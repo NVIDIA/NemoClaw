@@ -2393,7 +2393,7 @@ NemoClaw creates no installed-skill inventory, receipt, provenance record, mirro
 
 ### `$$nemoclaw <name> skill list`
 
-Invoke the unmodified selected agent's native list command and stream its stdout, stderr, and exit status. Native flags can be appended except `--` and lifecycle-bound `--agent` overrides, which NemoClaw refuses so the command remains bound to the sandbox-selected agent. This command is the authoritative view exposed by the selected agent; NemoClaw never reconstructs the result from host or sandbox state.
+Invoke the unmodified selected agent's native list command and stream its stdout, stderr, and exit status. Native flags can be appended except the option separator and lifecycle-bound agent-selection overrides, which NemoClaw refuses so the command remains bound to the sandbox-selected agent. This command is the authoritative view exposed by the selected agent; NemoClaw never reconstructs the result from host or sandbox state.
 
 ```bash
 $$nemoclaw my-assistant skill list
