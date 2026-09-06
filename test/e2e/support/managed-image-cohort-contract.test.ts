@@ -1,9 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
-import { validateManagedImageCohort } from "../../../tools/e2e/managed-image-cohort-contract.mts";
+import {
+  main,
+  validateManagedImageCohort,
+} from "../../../tools/e2e/managed-image-cohort-contract.mts";
 
 const REVISION = "a".repeat(40);
 const RUN_ID = 32707920950;
@@ -156,6 +163,27 @@ function platformPublication(value: Record<string, unknown>): PlatformPublicatio
   return agents.openclaw.platforms["linux/amd64"];
 }
 
+function expectedReceipt(): Record<string, unknown> {
+  return {
+    kind: "nemoclaw-managed-image-cohort-receipt-v1",
+    cohort: COHORT,
+    revision: REVISION,
+    runAttempt: RUN_ATTEMPT,
+    runId: RUN_ID,
+    images: Object.fromEntries(
+      EXPECTED_AGENT_IMAGES.map(({ agent, image }, agentIndex) => [
+        agent,
+        Object.fromEntries(
+          PLATFORMS.map((platform, platformIndex) => [
+            platform,
+            `${image}@${digest(agentIndex + platformIndex + 10)}`,
+          ]),
+        ),
+      ]),
+    ),
+  };
+}
+
 describe("managed-image cohort publication contract", () => {
   it("binds the literal shipped agents and architectures to the selected publication", () => {
     expect(
@@ -164,24 +192,39 @@ describe("managed-image cohort publication contract", () => {
         runAttempt: RUN_ATTEMPT,
         runId: RUN_ID,
       }),
-    ).toEqual({
-      kind: "nemoclaw-managed-image-cohort-receipt-v1",
-      cohort: COHORT,
-      revision: REVISION,
-      runAttempt: RUN_ATTEMPT,
-      runId: RUN_ID,
-      images: Object.fromEntries(
-        EXPECTED_AGENT_IMAGES.map(({ agent, image }, agentIndex) => [
-          agent,
-          Object.fromEntries(
-            PLATFORMS.map((platform, platformIndex) => [
-              platform,
-              `${image}@${digest(agentIndex + platformIndex + 10)}`,
-            ]),
-          ),
-        ]),
-      ),
-    });
+    ).toEqual(expectedReceipt());
+  });
+
+  it("writes only the receipt and revision outputs for a valid publication", () => {
+    const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cohort-output-"));
+    const cohortPath = path.join(temporaryRoot, "cohort.json");
+    const outputPath = path.join(temporaryRoot, "github-output");
+    try {
+      fs.writeFileSync(cohortPath, JSON.stringify(cohortContract()), "utf8");
+      main([cohortPath], {
+        GITHUB_OUTPUT: outputPath,
+        PUBLICATION_HEAD_SHA: REVISION,
+        PUBLICATION_RUN_ATTEMPT: String(RUN_ATTEMPT),
+        PUBLICATION_RUN_ID: String(RUN_ID),
+      });
+      const outputs = Object.fromEntries(
+        fs
+          .readFileSync(outputPath, "utf8")
+          .trimEnd()
+          .split("\n")
+          .map((line) => {
+            const separator = line.indexOf("=");
+            return [line.slice(0, separator), line.slice(separator + 1)];
+          }),
+      );
+
+      expect(outputs).toEqual({
+        receipt: JSON.stringify(expectedReceipt()),
+        revision: REVISION,
+      });
+    } finally {
+      fs.rmSync(temporaryRoot, { force: true, recursive: true });
+    }
   });
 
   it("accepts candidate evidence produced by an earlier rerun attempt", () => {
