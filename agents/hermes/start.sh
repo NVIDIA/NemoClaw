@@ -920,8 +920,12 @@ try:
             os.fchown(target_fd, sandbox_uid, sandbox_gid)
         except OSError as exc:
             fail(f"{display} ownership could not be repaired: {exc.strerror}")
+    mode_already_correct = stat.S_IMODE(os.fstat(target_fd).st_mode) == desired_mode
     try:
         os.fchmod(target_fd, desired_mode)
+    except PermissionError as exc:
+        if os.geteuid() == 0 or not mode_already_correct:
+            fail(f"{display} mode could not be repaired: {exc.strerror}")
     except OSError as exc:
         fail(f"{display} mode could not be repaired: {exc.strerror}")
 

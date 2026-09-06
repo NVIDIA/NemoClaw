@@ -156,13 +156,13 @@ async function waitForHealth(probe: DockerProbe, container: string): Promise<voi
     const health = await dockerExecSh(
       probe,
       container,
-      String.raw`
+      `
 tmp="$(mktemp)"
 code="$(curl -sS -o "$tmp" -w '%{http_code}' --max-time 2 http://127.0.0.1:8642/health 2>/dev/null || true)"
 body="$(cat "$tmp" 2>/dev/null || true)"
 rm -f "$tmp"
 code="\${code:-000}"
-printf '%s\n%s' "$code" "$body"
+printf '%s\\n%s' "$code" "$body"
 `,
       `${container}-health-${attempt}`,
     );
