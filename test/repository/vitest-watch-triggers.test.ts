@@ -72,6 +72,7 @@ const OPAQUE_INPUTS = [
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
   "nemoclaw/tsconfig.shared.json",
   "scripts/setup-jetson.sh",
+  "scripts/jetson-device-group-bootstrap.sh",
   "tools/e2e/contracts/v1/jetson-dispatch.json",
   ".github/workflows/base-image.yaml",
   ".github/workflows/base-image-platform.yaml",
@@ -258,6 +259,9 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/hosted-inference.test.ts",
     ]);
     expect(triggeredBy("scripts/setup-jetson.sh")).toEqual(["test/install/setup-jetson.test.ts"]);
+    expect(triggeredBy("scripts/jetson-device-group-bootstrap.sh")).toEqual([
+      "test/runtime/sandbox/jetson-device-group-bootstrap.test.ts",
+    ]);
     expect(triggeredBy("tools/e2e/contracts/v1/jetson-dispatch.json")).toEqual([
       "test/e2e/support/jetson-dispatch-client.test.ts",
     ]);

@@ -22,6 +22,10 @@ import {
   type StationProfile,
 } from "../readiness/station-qualification";
 import {
+  detectTegraGpuDevicePaths,
+  normalizeTegraGpuDevicePaths,
+} from "./docker-gpu-jetson-groups";
+import {
   allMessagingChannelPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
@@ -51,6 +55,7 @@ export function discloseInitialSandboxPolicy(policy: InitialSandboxPolicy): void
 const HERMES_MESSAGING_POLICY_KEYS = getMessagingPolicyKeysByChannel({ agent: "hermes" });
 
 const PROC_PATH = "/proc";
+const JETSON_GPU_LIBRARY_ROOT = "/opt/nvidia";
 const PROC_COMM_READ_WRITE_PATHS = ["/proc/self/comm", "/proc/self/task/*/comm"];
 const SYSFS_PATH = "/sys";
 const PCI_BDF_PATTERN = /^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$/iu;
@@ -82,6 +87,7 @@ function deduplicateDirectGpuSysfsEntries(
 type DirectGpuPolicyOptions = {
   procReadWrite?: boolean;
   sysfsReadOnlyPaths?: readonly string[];
+  jetsonGpuDevicePaths?: readonly string[];
 };
 
 export { isStationGb300ProductName };
@@ -228,6 +234,23 @@ export function buildDirectGpuPolicyYaml(
       }
     }
   }
+  const jetsonGpuDevicePaths = normalizeTegraGpuDevicePaths(options.jetsonGpuDevicePaths ?? []);
+  if (jetsonGpuDevicePaths.length > 0) {
+    if (
+      !fsPolicy.read_only.includes(JETSON_GPU_LIBRARY_ROOT) &&
+      !fsPolicy.read_write.includes(JETSON_GPU_LIBRARY_ROOT)
+    ) {
+      fsPolicy.read_only.push(JETSON_GPU_LIBRARY_ROOT);
+    }
+
+    const jetsonGpuDevicePathSet = new Set(jetsonGpuDevicePaths);
+    fsPolicy.read_only = fsPolicy.read_only.filter(
+      (entry: string) => !jetsonGpuDevicePathSet.has(entry),
+    );
+    for (const devicePath of jetsonGpuDevicePaths) {
+      if (!fsPolicy.read_write.includes(devicePath)) fsPolicy.read_write.push(devicePath);
+    }
+  }
   if (options.procReadWrite && !fsPolicy.read_write.includes(PROC_PATH)) {
     // This exists only for the legacy post-create Docker GPU compatibility
     // path, which recreates the container after `openshell sandbox create` and
@@ -319,6 +342,7 @@ type InitialPolicyOptions = {
   dockerGpuPatch?: boolean;
   hostGpuAvailable?: boolean;
   stationGb300SysfsReadOnlyPaths?: readonly string[];
+  jetsonGpuDevicePaths?: readonly string[];
   additionalPresets?: string[];
   agentName?: string | null;
   sandboxName?: string;
@@ -454,6 +478,10 @@ function resolveInitialSandboxCreatePolicy(
           discoverHostStationGb300SysfsReadOnlyPaths({
             hasNvidiaGpu: options.hostGpuAvailable,
           }),
+        jetsonGpuDevicePaths:
+          (options.agentName ?? "openclaw") === "openclaw"
+            ? (options.jetsonGpuDevicePaths ?? detectTegraGpuDevicePaths())
+            : [],
       }),
       "nemoclaw-gpu-policy",
     );

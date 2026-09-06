@@ -18,6 +18,7 @@ export function recreateOpenShellDockerSandboxWithStartupCommand(
     openshellSandboxCommand: readonly string[];
     requiredUlimits?: readonly import("./docker-gpu-patch-types").DockerUlimit[] | null;
     expectedOldContainerId?: string | null;
+    backend?: import("./docker-gpu-patch-types").DockerGpuPatchBackend;
   },
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchResult {

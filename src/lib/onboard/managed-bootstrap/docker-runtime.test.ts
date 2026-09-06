@@ -26,6 +26,9 @@ const adapterMocks = vi.hoisted(() => ({
   finalize: vi.fn<typeof import("./adapter").finalizeManagedBootstrapSequence>(),
   prepare: vi.fn<typeof import("./adapter").prepareManagedBootstrapSequence>(),
 }));
+const jetsonMocks = vi.hoisted(() => ({
+  detectTegraDeviceGroupGids: vi.fn(() => ["44", "110"]),
+}));
 const runtimeSnapshotMocks = vi.hoisted(() => ({
   query: vi.fn(),
 }));
@@ -55,6 +58,11 @@ vi.mock("./adapter", async (importOriginal) => ({
   activateManagedBootstrapSequence: adapterMocks.activate,
   finalizeManagedBootstrapSequence: adapterMocks.finalize,
   prepareManagedBootstrapSequence: adapterMocks.prepare,
+}));
+
+vi.mock("../docker-gpu-jetson-groups", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../docker-gpu-jetson-groups")>()),
+  detectTegraDeviceGroupGids: jetsonMocks.detectTegraDeviceGroupGids,
 }));
 
 vi.mock("../docker-gpu-sandbox-create", async (importOriginal) => ({
@@ -184,6 +192,7 @@ function gpuModeDependencies() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  jetsonMocks.detectTegraDeviceGroupGids.mockReturnValue(["44", "110"]);
   dockerAdapterMocks.imageInspect.mockReturnValue({ status: 0 });
   dockerAdapterMocks.pullWithProgressWatchdog.mockResolvedValue({
     status: 0,
@@ -496,6 +505,27 @@ describe("Docker managed-bootstrap GPU probe image", () => {
 });
 
 describe("Docker managed-bootstrap lifecycle composition", () => {
+  it("adds detected Jetson groups to an OpenClaw native replacement (#7610)", async () => {
+    const seed = authority("openclaw");
+    const { dependencies } = gpuModeDependencies();
+    const input = compatibilityLifecycleInput(seed, dependencies);
+
+    await runCompatibilityCreate(
+      {
+        ...input,
+        route: "native",
+        persistStartupCommand: true,
+        sandboxGpuConfig: { ...input.sandboxGpuConfig, hostGpuPlatform: "jetson" },
+      },
+      seed,
+    );
+
+    expect(adapterMocks.prepare.mock.calls[0]?.[1].replacementOptions.values).toMatchObject({
+      extraGroupGids: ["44", "110"],
+    });
+    expect(jetsonMocks.detectTegraDeviceGroupGids).toHaveBeenCalledOnce();
+  });
+
   it("activates a Ready managed hold before post-activation startup output", async () => {
     vi.useFakeTimers();
     const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-runtime-"));
