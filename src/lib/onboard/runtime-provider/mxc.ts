@@ -70,6 +70,7 @@ const MXC_NATIVE_ARTIFACT_PROFILE = {
     contractVersions: [NATIVE_ARTIFACT_WORKLOAD_CONTRACT_VERSION],
     startupProfileContractVersions: [MANAGED_STARTUP_PROFILE_SCHEMA_VERSION],
   },
+  portableAgentRuntimeSupport: null,
   hostArchitectures: ["x64"],
   managedImageSelectionPolicy: "require-managed",
   legacyDockerfileBuilds: false,

@@ -65,6 +65,7 @@ import {
   createManagedWorkloadOnboardRuntime,
   prepareHermesPortableSandboxWorkloadForLifecycle,
   prepareOnboardSandboxWorkloadLaunch,
+  resolveOnboardSandboxWorkloadReceipt,
   shouldActivateStockManagedRuntime,
 } from "./onboard-orchestration";
 
@@ -342,6 +343,35 @@ describe("managed workload onboard orchestration", () => {
     expect(ensurePreparedProfile).not.toHaveBeenCalled();
 
     await expectUnsupportedHermesPortableSources(runtime, prepared, expectedDockerfilePath);
+  });
+
+  it("keeps a portable image contract inert before lifecycle activation (#11079)", async () => {
+    const workload = {
+      source: { kind: "portable-image" },
+      release: null,
+      fallbackDiagnostic: null,
+    } as never;
+    const runtime = {
+      runtimeProvider: null,
+      ensurePreparedWorkload: vi.fn(async () => workload),
+      ensurePreparedProfile: vi.fn(),
+    } as never;
+
+    await expect(
+      prepareHermesPortableSandboxWorkloadForLifecycle(
+        runtime,
+        "/workspace/agents/hermes/Dockerfile",
+      ),
+    ).rejects.toThrow("Portable image workload activation is not enabled");
+    await expect(prepareOnboardSandboxWorkloadLaunch({ workload } as never)).rejects.toThrow(
+      "Portable image workload activation is not enabled",
+    );
+    expect(() =>
+      resolveOnboardSandboxWorkloadReceipt({
+        workload,
+        registryImageRef: "qualified@example.invalid",
+      } as never),
+    ).toThrow("Portable image workload activation is not enabled");
   });
 
   it("keeps failure cleanup armed until the caller commits registration", () => {
