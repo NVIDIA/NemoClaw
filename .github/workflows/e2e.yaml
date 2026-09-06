@@ -2896,8 +2896,8 @@ jobs:
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/registry-targets.test.ts --selector "^${TARGET_ID}:"
 
       # The sanitizer reads raw traces only after checking the workflow-owned
-      # runner-temp path, then writes the timing-only file into upload roots.
-      - name: Build trusted live E2E timing summary
+      # runner-temp path, then writes one allowlisted summary into upload roots.
+      - name: Build trusted live E2E trace summary
         if: always()
         env:
           TARGET_ID: ${{ matrix.id }}

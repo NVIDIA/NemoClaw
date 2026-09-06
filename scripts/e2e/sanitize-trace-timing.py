@@ -2,18 +2,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Reduce raw NemoClaw traces to a timing-only scorecard artifact.
+"""Reduce raw NemoClaw traces to an allowlisted scorecard artifact.
 
 The E2E target controls the raw trace directory, so CI must never upload it.
 This script accepts only the onboard timing shape needed by the scorecard and
-writes a single allowlisted summary without attributes, events, paths, prompts,
-environment data, or raw error messages.
+the final sandbox identity-settlement state needed for lifecycle diagnosis. It
+writes a single allowlisted summary without raw attributes, events, paths,
+prompts, environment data, or error messages.
 
 Source-of-truth note: raw trace shape is produced by src/lib/trace.ts
 TraceArtifact. This reducer is intentionally narrower than that source schema:
 raw traces remain useful local diagnostics, while CI only needs timing evidence.
-If the producer grows a timing-only artifact, this post-run reducer can be
-removed in favor of that source artifact.
+If the producer grows an equivalent allowlisted artifact, this post-run reducer
+can be removed in favor of that source artifact.
 """
 
 from __future__ import annotations
@@ -42,6 +43,10 @@ MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_SLOWEST_SPANS = 10
 TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 STATUS_VALUES = {"OK", "ERROR", "UNSET"}
+IDENTITY_SETTLEMENT_EVENT = "sandbox_create_identity_settlement"
+CREATE_OPERATION_STATES = {"ready", "create_client_exited"}
+IDENTITY_SETTLEMENT_STATES = {"matched", "failed"}
+IDENTITY_CORRELATION_RE = re.compile(r"^[0-9a-f]{16}$")
 
 
 def finite_number(value: Any) -> float | None:
@@ -108,6 +113,46 @@ def extract_spans(artifact: Any) -> list[dict[str, Any]]:
     return [span for span in spans if isinstance(span, dict)] if isinstance(spans, list) else []
 
 
+def extract_identity_settlement(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return the last schema-valid settlement event without copying raw attributes."""
+    selected = None
+    for span in spans:
+        if safe_span_name(span.get("name")) is None:
+            continue
+        events = span.get("events", [])
+        for event in events if isinstance(events, list) else []:
+            if not isinstance(event, dict) or event.get("name") != IDENTITY_SETTLEMENT_EVENT:
+                continue
+            attributes = event.get("attributes")
+            if not isinstance(attributes, dict):
+                continue
+            operation_state = attributes.get("create_operation_state")
+            identity_state = attributes.get("identity_state")
+            correlation = attributes.get("returned_identity_correlation")
+            valid_operation_state = (
+                isinstance(operation_state, str) and operation_state in CREATE_OPERATION_STATES
+            )
+            if not valid_operation_state:
+                continue
+            valid_identity_state = (
+                isinstance(identity_state, str) and identity_state in IDENTITY_SETTLEMENT_STATES
+            )
+            if not valid_identity_state:
+                continue
+            if correlation is not None and (
+                not isinstance(correlation, str) or not IDENTITY_CORRELATION_RE.fullmatch(correlation)
+            ):
+                continue
+            if identity_state == "matched" and correlation is None:
+                continue
+            selected = {
+                "create_operation_state": operation_state,
+                "identity_state": identity_state,
+                "returned_identity_correlation": correlation,
+            }
+    return selected
+
+
 def extract_candidate(artifact: Any) -> dict[str, Any] | None:
     """Extract the allowlisted subset of src/lib/trace.ts TraceArtifact."""
     if not isinstance(artifact, dict):
@@ -150,13 +195,17 @@ def extract_candidate(artifact: Any) -> dict[str, Any] | None:
             break
 
     trace_id = summary.get("trace_id")
-    return {
+    candidate = {
         "schema_version": SCHEMA_VERSION,
         "trace_id": trace_id if isinstance(trace_id, str) and TRACE_ID_RE.fullmatch(trace_id) else None,
         "total_duration_ms": round(total_ms, 3),
         "phases": {name: round(phases[name], 3) for name in sorted(phases)},
         "slowest_spans": slowest_spans,
     }
+    identity_settlement = extract_identity_settlement(spans)
+    if identity_settlement is not None:
+        candidate["sandbox_identity_settlement"] = identity_settlement
+    return candidate
 
 
 def main(argv: list[str]) -> int:
@@ -195,7 +244,7 @@ def main(argv: list[str]) -> int:
         return 2
     output.write_text(json.dumps(selected, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.chmod(output, 0o600)
-    print(f"Wrote trusted trace timing summary: {output}")
+    print(f"Wrote trusted trace summary: {output}")
     return 0
 
 

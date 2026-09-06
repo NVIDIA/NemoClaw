@@ -107,7 +107,16 @@ artifact = {
                     "duration_ms": 7.1234,
                     "status": {"code": "ERROR", "message": "raw error"},
                     "attributes": {"endpoint": "https://example.test/token"},
-                    "events": [],
+                    "events": [{
+                        "name": "sandbox_create_identity_settlement",
+                        "attributes": {
+                            "create_operation_state": "ready",
+                            "identity_state": "matched",
+                            "returned_identity_correlation": "8174fa2a5d657551",
+                            "durable_sandbox_id": "alpha-sandbox-id",
+                            "arbitrary": {"token": "do-not-retain"},
+                        },
+                    }],
                 },
             ],
         }],
@@ -130,6 +139,11 @@ print(json.dumps(module.extract_candidate(artifact), sort_keys=True))
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       phases: { "nemoclaw.onboard.phase.gateway": 7.123 },
+      sandbox_identity_settlement: {
+        create_operation_state: "ready",
+        identity_state: "matched",
+        returned_identity_correlation: "8174fa2a5d657551",
+      },
       schema_version: "nemoclaw.trace_timing.v1",
       slowest_spans: [
         { duration_ms: 7.123, name: "nemoclaw.onboard.phase.gateway", status: "ERROR" },
@@ -137,7 +151,9 @@ print(json.dumps(module.extract_candidate(artifact), sort_keys=True))
       total_duration_ms: 42.988,
       trace_id: "0123456789abcdef0123456789abcdef",
     });
-    expect(result.stdout).not.toMatch(/api_key|attributes|events|output_path|raw error|secret/u);
+    expect(result.stdout).not.toMatch(
+      /alpha-sandbox-id|api_key|arbitrary|attributes|do-not-retain|durable_sandbox_id|events|output_path|raw error|secret|token/u,
+    );
   });
 
   it("extract_candidate rejects non-onboard and incomplete traces", () => {

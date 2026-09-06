@@ -1181,9 +1181,11 @@ size limits.
 
 Raw cloud-onboard traces stay under the runner temporary directory. Before
 artifact upload, `scripts/e2e/sanitize-trace-timing.py` reduces them to the
-allowlisted `cloud-onboard-trace-timing-summary.json` timing schema and deletes
-the raw directory. Aggregation ratchets require `report-to-pr` and `scorecard`
-to wait for the same execution-job set.
+allowlisted `cloud-onboard-trace-timing-summary.json` schema and deletes the raw
+directory. In addition to timing fields, the summary may retain the final
+sandbox identity-settlement state and its 16-hex correlation. It never retains
+raw event attributes or the full identity fingerprint. Aggregation ratchets
+require `report-to-pr` and `scorecard` to wait for the same execution-job set.
 
 Registry-driven Vitest targets also enable onboard trace collection. Each live
 matrix target writes raw traces under the runner temporary directory, sanitizes

@@ -337,11 +337,14 @@ test/e2e/
   and attempt. Unsafe source files are quarantined or deleted. The workflow
   uploads only the staged copy, so later changes to the source directory cannot
   alter the approved payload.
-  The allowlist includes each target's sanitized onboard timing summary at
+  The allowlist includes each target's sanitized onboard trace summary at
   `e2e-artifacts/live/<target>/cloud-onboard-trace-timing-summary.json`.
+  The summary retains timing fields and may retain only the final sandbox
+  identity-settlement state plus its 16-hex correlation. Raw event attributes
+  and the full identity fingerprint are excluded.
   Raw onboard traces stay under the runner temporary directory and are deleted
   before artifact upload.
-  These per-target timing summaries are artifact evidence only.
+  These per-target summaries are artifact evidence only.
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
   Manual PR runs attach `test/e2e/risk-signal-reporter.ts` to live Vitest
