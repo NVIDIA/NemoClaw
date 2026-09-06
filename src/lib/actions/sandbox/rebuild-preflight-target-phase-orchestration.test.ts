@@ -71,7 +71,7 @@ describe("prepareRebuildTargetPreflights", () => {
   });
 
   async function prepareN1xTarget(
-    endpointSource: "onboard" | "inference-set",
+    endpointSource: "onboard" | "inference-set" | null,
     mcp: { bridges: Record<string, { server: string }> } | null = null,
     provider = "vllm-local",
     model = "nvidia/Qwen3.6-35B-A3B-NVFP4",
@@ -116,7 +116,8 @@ describe("prepareRebuildTargetPreflights", () => {
         openshellDriver: "docker",
         provider: resumeConfig.provider,
         model: resumeConfig.model,
-        endpointUrl: "http://host.openshell.internal:8000/v1",
+        endpointUrl:
+          endpointSource === null ? null : "http://host.openshell.internal:8000/v1",
         endpointSource,
         nimContainer,
         mcp,
@@ -206,6 +207,14 @@ describe("prepareRebuildTargetPreflights", () => {
 
   it("passes exact legacy N1x intent into authoritative readiness (#9292)", async () => {
     const readinessOptions = await prepareN1xTarget("onboard");
+
+    expect(readinessOptions).toEqual(
+      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
+    );
+  });
+
+  it("passes normalized N1x Express intent into readiness (#10959)", async () => {
+    const readinessOptions = await prepareN1xTarget(null);
 
     expect(readinessOptions).toEqual(
       expect.objectContaining({ allowDeferredN1xManagedVllm: true }),

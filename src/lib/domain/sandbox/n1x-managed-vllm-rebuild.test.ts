@@ -59,6 +59,15 @@ describe("recorded N1x managed-vLLM rebuild eligibility", () => {
     expect(eligible(sandboxEntry)).toBe(true);
   });
 
+  it("accepts normalized N1x Express intent with a derived endpoint (#10959)", () => {
+    expect(
+      eligible({
+        ...n1xExpressEntry,
+        endpointSource: null,
+      }),
+    ).toBe(true);
+  });
+
   it("accepts a canonical vLLM receipt on the exact N1x Express selection (#9292)", () => {
     const genericReceipt = hostLocalInferenceReceipt("docker");
     const n1xReceipt = serializeHostLocalInferenceReceipt({

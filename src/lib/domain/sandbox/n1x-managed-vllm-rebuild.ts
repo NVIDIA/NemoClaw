@@ -49,10 +49,14 @@ export function isRecordedN1xManagedVllmRebuildEligible(
   const canonicalEndpointUrl = `http://host.openshell.internal:${String(vllmPort)}/v1`;
   const recordedEndpointUsesCanonicalLocalRoute =
     sandboxEntry.endpointUrl === null || sandboxEntry.endpointUrl === canonicalEndpointUrl;
+  const recordedSourceIsEligible =
+    sandboxEntry.endpointSource === "onboard" ||
+    // Registry normalization clears the source when the canonical endpoint is derived.
+    (sandboxEntry.endpointSource === null && sandboxEntry.endpointUrl === null);
   if (
     !isN1xManagedVllmProviderModel(sandboxEntry.provider, sandboxEntry.model) ||
     !recordedEndpointUsesCanonicalLocalRoute ||
-    sandboxEntry.endpointSource !== "onboard" ||
+    !recordedSourceIsEligible ||
     sandboxEntry.openshellDriver !== "docker" ||
     rebuildSelection.provider !== sandboxEntry.provider ||
     rebuildSelection.model !== sandboxEntry.model ||
